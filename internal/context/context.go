@@ -12,7 +12,7 @@ import (
 )
 
 // Development-time standard library directory.
-const STD_LIB_DEV = "ferret_libs_dev"
+const STD_LIB_DEV = "ember_libs_dev"
 
 // Where a module was loaded from.
 type ModuleOrigin string
@@ -123,7 +123,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		diag = diagnostics.NewDiagnosticBag("")
 	}
 	if cfg.Extension == "" {
-		cfg.Extension = ".fer"
+		cfg.Extension = ".em"
 	}
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."

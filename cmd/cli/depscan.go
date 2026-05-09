@@ -85,7 +85,7 @@ func updateConstraint(version string) string {
 		return "latest"
 	}
 	if isExactVersion(version) {
-		// Exact resolved tags in fer.ret should still allow "ferret update".
+		// Exact resolved tags in ember should still allow "ember update".
 		return "latest"
 	}
 	return version

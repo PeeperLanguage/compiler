@@ -11,8 +11,8 @@ import (
 )
 
 func InitCommand(args []string) error {
-	if _, err := os.Stat("fer.ret"); err == nil {
-		return fmt.Errorf("fer.ret already exists in current directory")
+	if _, err := os.Stat("ember"); err == nil {
+		return fmt.Errorf("ember already exists in current directory")
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -41,7 +41,7 @@ func InitCommand(args []string) error {
 	description, _ := reader.ReadString('\n')
 	description = strings.TrimSpace(description)
 	if description == "" {
-		description = "A new Ferret project"
+		description = "A new Ember project"
 	}
 
 	fmt.Print("Author (optional): ")
@@ -54,31 +54,31 @@ version = "0.0.1"
 description = %q
 author = %q
 compiler = "<=%s"
-	entry = "main.fer"
+	entry = "main.em"
 
 [dependencies]
 `, projectName, description, author, compiler.COMPILER_VERSION)
 
-	if err := os.WriteFile("fer.ret", []byte(content), 0o644); err != nil {
+	if err := os.WriteFile("ember", []byte(content), 0o644); err != nil {
 		return err
 	}
 
-	if _, err := os.Stat("main.fer"); os.IsNotExist(err) {
+	if _, err := os.Stat("main.em"); os.IsNotExist(err) {
 		mainContent := `
 fn main() {
-	println("Hello from Ferret!")
+	println("Hello from Ember!")
 }
 `
-		if err := os.WriteFile("main.fer", []byte(mainContent), 0o644); err != nil {
+		if err := os.WriteFile("main.em", []byte(mainContent), 0o644); err != nil {
 			return err
 		}
-		printSuccess("Created main.fer")
+		printSuccess("Created main.em")
 	}
 
 	printSuccess(fmt.Sprintf("Initialized project: %s", projectName))
 	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Edit fer.ret to add dependencies")
-	fmt.Println("  2. Run: ferret get")
-	fmt.Println("  3. Run: ferret main.fer")
+	fmt.Println("  1. Edit ember to add dependencies")
+	fmt.Println("  2. Run: ember get")
+	fmt.Println("  3. Run: ember main.em")
 	return nil
 }

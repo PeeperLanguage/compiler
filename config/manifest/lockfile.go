@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const LockfileName = "ferret.lock"
+const LockfileName = "ember.lock"
 
 type LockfileEntry struct {
 	Version      string   `json:"version"`

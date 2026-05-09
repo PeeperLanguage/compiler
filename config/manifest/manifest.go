@@ -12,7 +12,7 @@ import (
 	"compiler/toml"
 )
 
-const FileName = "fer.ret"
+const FileName = "ember"
 
 type DependencyType int
 

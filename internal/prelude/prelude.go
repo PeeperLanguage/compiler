@@ -8,8 +8,8 @@ import (
 	"compiler/internal/context"
 )
 
-// Auto-loaded Ferret prelude file.
-const GlobalPreludeFile = "global.fer"
+// Auto-loaded Ember prelude file.
+const GlobalPreludeFile = "global.em"
 
 // Register global prelude source when it exists.
 func Load(ctx *context.CompilerContext) error {

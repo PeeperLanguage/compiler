@@ -1,6 +1,6 @@
 package diagnostics
 
-// Error codes for Ferret compiler
+// Error codes for Ember compiler
 const (
 	ErrMax = "E0010"
 

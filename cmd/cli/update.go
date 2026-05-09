@@ -23,7 +23,7 @@ func UpdateCommand(args []string) error {
 	}
 
 	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ferret", "modules")
+	cachePath := filepath.Join(projectRoot, ".ember", "modules")
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
 		return err
 	}

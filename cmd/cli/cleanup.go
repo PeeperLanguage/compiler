@@ -14,7 +14,7 @@ func CleanupCommand(args []string) error {
 		return err
 	}
 	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ferret", "modules")
+	cachePath := filepath.Join(projectRoot, ".ember", "modules")
 	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
 		printInfo("No cache directory found")
 		return nil

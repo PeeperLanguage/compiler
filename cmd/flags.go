@@ -38,7 +38,7 @@ func parseAndRunCommand(args []string) bool {
 
 	switch commandName {
 	case "lsp":
-		colors.CYAN.Fprintln(os.Stderr, "starting Ferret LSP server...")
+		colors.CYAN.Fprintln(os.Stderr, "starting Ember LSP server...")
 		if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
 			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -138,29 +138,29 @@ func parseCompilerFlags() compilerFlags {
 	flag.BoolVar(showHelp, "h", false, "alias for -help")
 
 	flag.Usage = func() {
-		colors.BLUE.Fprintln(os.Stderr, "Ferret compiler v"+compiler.COMPILER_VERSION)
+		colors.BLUE.Fprintln(os.Stderr, "Ember compiler v"+compiler.COMPILER_VERSION)
 		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
-		colors.GREEN.Fprintf(os.Stderr, "  ferret [options] <source-file-or-directory>\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ferret [command] [args]\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember [options] <source-file-or-directory>\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember [command] [args]\n")
 		colors.CYAN.Fprintln(os.Stderr, "\nOptions:")
 		flag.PrintDefaults()
 		colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
-		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with fer.ret")
-		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from fer.ret or specific packages")
+		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with ember")
+		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from ember or specific packages")
 		fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
-		fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that ferret update would apply")
-		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from fer.ret and lockfile")
+		fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that ember update would apply")
+		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from ember and lockfile")
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.fer only)")
+		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.em only)")
 		fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
 		fmt.Fprintln(os.Stderr, "  test[:llvm] [path] [args] build and run unit tests (default llvm)")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-		colors.GREEN.Fprintf(os.Stderr, "  ferret -backend llvm main.fer\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ferret -m32 -o app32 main.fer\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ferret -k main.fer\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ferret run main.fer arg1 arg2\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember -backend llvm main.em\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember -m32 -o app32 main.em\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember -k main.em\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember run main.em arg1 arg2\n")
 	}
 
 	flag.Parse()

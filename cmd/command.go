@@ -94,9 +94,9 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 		return errAlreadyReported
 	}
 
-	tempPattern := "ferret-run-*"
+	tempPattern := "ember-run-*"
 	if runtime.GOOS == "windows" {
-		tempPattern = "ferret-run-*.exe"
+		tempPattern = "ember-run-*.exe"
 	}
 	tempFile, err := os.CreateTemp("", tempPattern)
 	if err != nil {
@@ -240,7 +240,7 @@ func resolveManifestEntryPath(startPath string) (string, error) {
 	}
 	entry := strings.TrimSpace(file.Package.Entry)
 	if entry == "" {
-		return "", fmt.Errorf("%s: package.entry is required for `ferret run` without an explicit file", manifestPath)
+		return "", fmt.Errorf("%s: package.entry is required for `ember run` without an explicit file", manifestPath)
 	}
 
 	entry = strings.ReplaceAll(entry, "\\", "/")

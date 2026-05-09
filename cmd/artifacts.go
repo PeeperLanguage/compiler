@@ -21,7 +21,7 @@ type testTarget struct {
 	FilePath string
 	// Path shown in test output.
 	DisplayPath string
-	// Ferret test declaration name.
+	// Ember test declaration name.
 	TestName string
 }
 

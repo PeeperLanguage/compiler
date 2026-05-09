@@ -28,7 +28,7 @@ func TestUpdateConstraint(t *testing.T) {
 
 func TestListOrphanCandidatesIncludesLockAndStaleCache(t *testing.T) {
 	root := t.TempDir()
-	cachePath := filepath.Join(root, ".ferret", "modules")
+	cachePath := filepath.Join(root, ".ember", "modules")
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ name = "stale"
 
 func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 	root := t.TempDir()
-	cachePath := filepath.Join(root, ".ferret", "modules")
+	cachePath := filepath.Join(root, ".ember", "modules")
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -92,7 +92,7 @@ For behavior changes:
 Minimum validation before commit:
 - `gofmt` on touched Go files
 - `go test` for touched packages
-- targeted Ferret smoke/repro if language/runtime behavior changed
+- targeted Ember smoke/repro if language/runtime behavior changed
 
 ## 8) Commit hygiene
 

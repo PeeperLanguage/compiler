@@ -9,7 +9,7 @@ import (
 
 func RemoveCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ferret remove <package-name>")
+		return fmt.Errorf("usage: ember remove <package-name>")
 	}
 	packageName := args[0]
 
@@ -28,7 +28,7 @@ func RemoveCommand(args []string) error {
 	}
 
 	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ferret", "modules")
+	cachePath := filepath.Join(projectRoot, ".ember", "modules")
 	lockfile, err := manifest.LoadLockfile(projectRoot)
 	if err != nil {
 		return err

@@ -13,7 +13,7 @@ import (
 
 const COMPILER_VERSION = "0.1.0"
 
-const SOURCE_EXT = ".fer"
+const SOURCE_EXT = ".em"
 
 // Top-level orchestration for one compilation session.
 type Compiler struct {

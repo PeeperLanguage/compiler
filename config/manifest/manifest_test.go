@@ -108,7 +108,7 @@ func TestSaveWritesPackageEntry(t *testing.T) {
 	file := &File{
 		Package: PackageInfo{
 			Name:  "app",
-			Entry: "main.fer",
+			Entry: "main.em",
 		},
 		Dependencies: map[string]Dependency{},
 	}
@@ -121,7 +121,7 @@ func TestSaveWritesPackageEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	if loaded.Package.Entry != "main.fer" {
+	if loaded.Package.Entry != "main.em" {
 		t.Fatalf("expected package.entry to round-trip, got %q", loaded.Package.Entry)
 	}
 }

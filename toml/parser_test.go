@@ -8,7 +8,7 @@ import (
 
 func TestParseFileSupportsInlineTablesAndArrays(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fer.ret")
+	path := filepath.Join(dir, "ember")
 	src := `
 [package]
 name = "app"
@@ -41,7 +41,7 @@ flags = [true, 1, "x"]
 
 func TestParseFileRejectsDuplicateKeys(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fer.ret")
+	path := filepath.Join(dir, "ember")
 	src := `
 [package]
 name = "app"
