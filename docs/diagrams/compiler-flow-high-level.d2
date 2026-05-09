@@ -1,0 +1,21 @@
+direction: right
+
+parsePathWithBackend -> parsePathWithConfig
+parsePathWithTest -> parsePathWithConfig
+parseWorkspaceWithConfig -> workspaceFlow
+parsePathForCheck -> checkFlow
+
+parsePathWithConfig -> "diagnostics.NewDiagnosticBag"
+"diagnostics.NewDiagnosticBag" -> "project.Load (missing)"
+"project.Load (missing)" -> setContext
+setContext -> "compiler.NewWithConfig (missing)"
+"compiler.NewWithConfig (missing)" -> "compiler.ParseEntry (missing)"
+"compiler.ParseEntry (missing)" -> "compiler.Result"
+
+workspaceFlow: {
+  "project.Load (missing)" -> "compiler.NewWithConfig (missing)" -> "compiler.ParseWorkspace (missing)" -> "compiler.Result"
+}
+
+checkFlow: {
+  "project.Load (missing)" -> "compiler.NewWithConfig (missing)" -> "compiler.ParseEntry/ParseWorkspace (missing)" -> "compiler.Result"
+}

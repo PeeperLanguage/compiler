@@ -1,0 +1,67 @@
+direction: right
+
+installAllDependencies: {
+  "manifest.Find" -> "manifest.Load" -> "manifest.LoadLockfile"
+  "manifest.LoadLockfile" -> installPackageRecursive: "each dep"
+  installPackageRecursive -> "manifest.SaveLockfile"
+  "manifest.SaveLockfile" -> "manifest.Save"
+}
+
+installPackage: {
+  "manifest.ParseDependency" -> "manifest.Find" -> "manifest.Load"
+  "manifest.Load" -> "manifest.LoadLockfile"
+  "manifest.LoadLockfile" -> installPackageRecursive
+  installPackageRecursive -> "manifest.SaveLockfile"
+  "manifest.SaveLockfile" -> "manifest.Save"
+}
+
+installPackageRecursive: {
+  findBestLockedPackageID -> "packages.ListAvailableVersions"
+  "packages.ListAvailableVersions" -> "packages.FindBestMatchMultipleConstraints"
+  "packages.FindBestMatchMultipleConstraints" -> "packages.IsModuleCached"
+  "packages.IsModuleCached" -> "packages.DownloadRemotePackage": "if not cached"
+  "packages.DownloadRemotePackage" -> "manifest.Load (package)"
+  "manifest.Load (package)" -> "lockfile.SetDependency"
+  "lockfile.SetDependency" -> "lockfile.SetDirectDependency"
+  "lockfile.SetDependency" -> "lockfile.AddUsedBy"
+  "lockfile.SetDependency" -> "lockfile.UpdateDependencyEdges"
+  "manifest.Load (package)" -> installPackageRecursive: "transitives"
+}
+
+packages.DownloadRemotePackage: {
+  "downloadFromMock" -> "copyDir"
+  "downloadFromGit" -> "downloadFile" -> "extractTarGz"
+}
+
+UpdateCommand: {
+  collectUpdatePlans -> installPackageRecursive
+  installPackageRecursive -> pruneUnusedDependencies
+  pruneUnusedDependencies -> "manifest.SaveLockfile"
+  "manifest.SaveLockfile" -> "manifest.Save"
+}
+
+collectUpdatePlans: {
+  "lockfile.GetDirectDependency" -> "packages.ListAvailableVersions"
+  "packages.ListAvailableVersions" -> "packages.FindBestMatch"
+  "packages.FindBestMatch" -> "packages.ParseVersion"
+}
+
+RemoveCommand: {
+  "lockfile.RemoveDirectDependency" -> pruneUnusedDependencies
+  pruneUnusedDependencies -> "manifest.Save" -> "manifest.SaveLockfile"
+}
+
+CleanupCommand: {
+  listOrphanCandidates -> "os.RemoveAll"
+  listOrphanCandidates -> "lockfile.RemoveDependency"
+  "lockfile.RemoveDependency" -> pruneUnusedDependencies
+  pruneUnusedDependencies -> "manifest.SaveLockfile"
+}
+
+listOrphanCandidates: {
+  "lockfile.GetUnusedDependencies" -> discoverCachedPackagePaths
+}
+
+pruneUnusedDependencies: {
+  "lockfile.GetUnusedDependencies" -> "packages.DeleteModule" -> "lockfile.RemoveDependency"
+}

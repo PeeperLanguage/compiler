@@ -1,0 +1,41 @@
+direction: right
+
+main: "cmd/main.go main()"
+parseAndRunCommand: "parseAndRunCommand(args)"
+parseCompilerFlags: "parseCompilerFlags()"
+parsePathWithBackend: "parsePathWithBackend(path, backend, debug)"
+
+diagnostics: "Diagnostics (EmitAll/HasErrors)"
+printAST: "Print AST / module summaries"
+buildExecutable: "buildExecutable (missing)"
+emitKeepGenArtifacts: "emitKeepGenArtifacts (missing)"
+outputBinary: "Executable"
+
+main -> parseAndRunCommand: "args"
+parseAndRunCommand -> parseCompilerFlags: "returns false"
+parseAndRunCommand -> commandDispatch: "returns true"
+
+commandDispatch: {
+  "cli.InitCommand"
+  "cli.GetCommand"
+  "cli.UpdateCommand"
+  "cli.SniffCommand"
+  "cli.RemoveCommand"
+  "cli.ListCommand"
+  "cli.CleanupCommand"
+  "cli.OrphansCommand"
+  "runCommand"
+  "testCommand"
+  "checkCommand"
+  "lsp.Run (missing)"
+}
+
+parseCompilerFlags -> parsePathWithBackend
+parsePathWithBackend -> diagnostics
+parsePathWithBackend -> emitKeepGenArtifacts: "-keep-gen"
+
+diagnostics -> buildExecutable: "-o"
+diagnostics -> printAST: "no -o"
+
+buildExecutable -> outputBinary
+printAST -> "stdout"

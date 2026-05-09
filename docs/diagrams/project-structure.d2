@@ -1,0 +1,110 @@
+direction: right
+
+Compiler: {
+  go.mod
+
+  cmd: {
+    artifacts.go
+    command.go
+    flags.go
+    main.go
+    main_test.go
+    parse_helpers.go
+    test_helpers.go
+    cli: {
+      cleanup.go
+      depscan.go
+      depscan_test.go
+      get.go
+      get_test.go
+      init.go
+      list.go
+      orphans.go
+      remove.go
+      sniff.go
+      ui.go
+      ui_test.go
+      update.go
+    }
+  }
+
+  colors: {
+    color.go
+    logger.go
+    printer.go
+    printer_test.go
+  }
+
+  config: {
+    manifest: {
+      manifest.go
+      manifest_test.go
+      lockfile.go
+      lockfile_test.go
+    }
+    packages: {
+      cache.go
+      cache_test.go
+      download.go
+      download_test.go
+      versioning.go
+      versioning_test.go
+    }
+  }
+
+  core: {
+    abi: { abi.go }
+    diagnostics: {
+      bag.go
+      bag_test.go
+      codes.go
+      diagnostic.go
+      diagnostic_test.go
+      emitter.go
+      emitter_test.go
+      syntax_highlighter.go
+      syntax_highlighter_test.go
+    }
+    internal: {
+      context: { context.go }
+      tokens: { token.go; token_test.go }
+      utils: {
+        numeric: { numeric.go; numeric_test.go; value.go; value_test.go }
+      }
+    }
+    source: { location.go; position.go; source_test.go }
+  }
+
+  toml: {
+    data.go
+    parser.go
+    parser_test.go
+  }
+}
+
+# package-level usage (from imports)
+cmd -> colors
+cmd -> core.abi
+cmd -> core.diagnostics
+cmd -> config.manifest
+cmd.cli -> config.manifest
+cmd.cli -> config.packages
+
+config.manifest -> toml
+config.packages -> config.manifest
+
+core.diagnostics -> colors
+core.diagnostics -> core.source
+core.diagnostics -> core.internal.tokens
+core.diagnostics -> core.internal.utils.numeric
+
+missing_internal: {
+  label: "Referenced packages not present in this tree"
+  "compiler/internal/backend"
+  "compiler/internal/driver"
+  "compiler/internal/frontend/ast"
+  "compiler/internal/core/context"
+  "project (project.Load)"
+  "lsp (lsp.Run)"
+}
+cmd -> missing_internal

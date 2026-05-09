@@ -1,0 +1,37 @@
+direction: right
+
+InitCommand -> "writes fer.ret + main.fer"
+GetCommand -> "install deps"
+UpdateCommand -> "compute updates + reinstall"
+SniffCommand -> "check updates"
+RemoveCommand -> "remove direct dep"
+ListCommand -> "print deps"
+CleanupCommand -> "remove orphaned cache"
+OrphansCommand -> "list orphaned cache"
+
+GetCommand -> manifest.Find
+GetCommand -> manifest.Load
+GetCommand -> manifest.Save
+GetCommand -> manifest.SaveLockfile
+GetCommand -> packages.DownloadRemotePackage
+
+UpdateCommand -> collectUpdatePlans
+UpdateCommand -> installPackageRecursive
+UpdateCommand -> manifest.Save
+UpdateCommand -> manifest.SaveLockfile
+
+SniffCommand -> collectUpdatePlans
+
+RemoveCommand -> manifest.Load
+RemoveCommand -> manifest.Save
+RemoveCommand -> manifest.SaveLockfile
+RemoveCommand -> pruneUnusedDependencies
+
+ListCommand -> manifest.Load
+ListCommand -> manifest.LoadLockfile
+
+CleanupCommand -> listOrphanCandidates
+CleanupCommand -> pruneUnusedDependencies
+CleanupCommand -> manifest.SaveLockfile
+
+OrphansCommand -> listOrphanCandidates

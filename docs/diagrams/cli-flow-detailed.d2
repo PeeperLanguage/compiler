@@ -1,0 +1,61 @@
+direction: right
+
+runCommand: {
+  parseCommandArgs
+  resolveRunTarget
+  parsePathWithBackend
+  diagnostics
+  buildExecutable
+  execCommand
+
+  parseCommandArgs -> resolveRunTarget
+  resolveRunTarget -> parsePathWithBackend
+  parsePathWithBackend -> diagnostics
+  diagnostics -> buildExecutable
+  buildExecutable -> execCommand
+
+  resolveRunTarget -> resolveManifestEntryPath: "no path or dir"
+  resolveManifestEntryPath -> manifest.Find
+  resolveManifestEntryPath -> manifest.Load
+  manifest.Load -> "package.entry"
+}
+
+testCommand: {
+  parseCommandArgs
+  resolveRunTarget
+  parsePathWithTest
+  parseWorkspaceWithConfig
+  collectTestTargets
+  runSingleTest
+
+  parseCommandArgs -> resolveRunTarget
+  resolveRunTarget -> parsePathWithTest
+  resolveRunTarget -> resolveManifestEntryPath: "no path or dir"
+
+  parsePathWithTest -> parsePathWithConfig
+  parseWorkspaceWithConfig -> project.Load: "missing"
+  parseWorkspaceWithConfig -> compiler.NewWithConfig: "missing"
+  parseWorkspaceWithConfig -> compiler.ParseWorkspace: "missing"
+
+  collectTestTargets -> runSingleTest: "loop"
+  runSingleTest -> parsePathWithTest
+  runSingleTest -> buildExecutable
+  runSingleTest -> execCommand
+  runSingleTest -> parseTestFailureOutput
+  parseTestFailureOutput -> renderTestFailure
+}
+
+checkCommand: {
+  parseCommandArgs
+  parsePathForCheck
+  diagnostics
+
+  parseCommandArgs -> parsePathForCheck
+  parsePathForCheck -> diagnostics: "EmitAll"
+  parsePathForCheck -> project.Load: "missing"
+  parsePathForCheck -> compiler.NewWithConfig: "missing"
+  parsePathForCheck -> compiler.ParseEntry/ParseWorkspace: "missing"
+}
+
+parsePathWithBackend -> parsePathWithConfig
+parsePathWithTest -> parsePathWithConfig

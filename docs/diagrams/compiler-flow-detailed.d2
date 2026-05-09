@@ -1,0 +1,64 @@
+direction: right
+
+parsePathWithConfig: {
+  absPath
+  "diagnostics.NewDiagnosticBag"
+  extCheck
+  osStat
+  isDir?
+  resolveManifestEntryPath
+  "manifest.Find"
+  "manifest.Load"
+  entryPath
+  "project.Load (missing)"
+  setContext
+  "compiler.NewWithConfig (missing)"
+  "compiler.ParseEntry (missing)"
+
+  absPath -> "diagnostics.NewDiagnosticBag"
+  "diagnostics.NewDiagnosticBag" -> extCheck
+  extCheck -> osStat
+  osStat -> isDir?
+  isDir? -> resolveManifestEntryPath: "dir"
+  resolveManifestEntryPath -> "manifest.Find"
+  resolveManifestEntryPath -> "manifest.Load"
+  "manifest.Load" -> entryPath
+  entryPath -> "project.Load (missing)"
+
+  isDir? -> "project.Load (missing)": "file"
+  "project.Load (missing)" -> setContext
+  setContext -> "compiler.NewWithConfig (missing)"
+  "compiler.NewWithConfig (missing)" -> "compiler.ParseEntry (missing)"
+}
+
+parseWorkspaceWithConfig: {
+  absPath
+  "diagnostics.NewDiagnosticBag"
+  "project.Load (missing)"
+  setContext
+  "compiler.NewWithConfig (missing)"
+  "compiler.ParseWorkspace (missing)"
+
+  absPath -> "diagnostics.NewDiagnosticBag"
+  "diagnostics.NewDiagnosticBag" -> "project.Load (missing)"
+  "project.Load (missing)" -> setContext
+  setContext -> "compiler.NewWithConfig (missing)"
+  "compiler.NewWithConfig (missing)" -> "compiler.ParseWorkspace (missing)"
+}
+
+parsePathForCheck: {
+  absPath
+  "diagnostics.NewDiagnosticBag"
+  osStat
+  isDir?
+  "project.Load (missing)"
+  "compiler.NewWithConfig (missing)"
+  "compiler.ParseEntry/ParseWorkspace (missing)"
+
+  absPath -> "diagnostics.NewDiagnosticBag"
+  "diagnostics.NewDiagnosticBag" -> osStat
+  osStat -> isDir?
+  isDir? -> "project.Load (missing)"
+  "project.Load (missing)" -> "compiler.NewWithConfig (missing)"
+  "compiler.NewWithConfig (missing)" -> "compiler.ParseEntry/ParseWorkspace (missing)"
+}
