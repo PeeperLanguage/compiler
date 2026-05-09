@@ -1,6 +1,7 @@
 package context
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -33,14 +34,14 @@ type ResolvedImport struct {
 }
 
 type Module struct {
-	Key          string
-	ImportPath   string
-	FilePath     string
-	IsEntry      bool
-	Origin       ModuleOrigin
-	Dependency   string
-	Content      string
-	ContentHash  string
+	Key         string
+	ImportPath  string
+	FilePath    string
+	IsEntry     bool
+	Origin      ModuleOrigin
+	Dependency  string
+	Content     string
+	ContentHash string
 
 	Dependencies []string
 }
@@ -49,18 +50,21 @@ type CompilerContext struct {
 	Config      Config
 	Diagnostics *diagnostics.DiagnosticBag
 	GlobalScope *table.Scope
-	
+
 	modules      map[string]*Module
 	fileIndex    map[string]string
 	dependencies map[string]map[string]struct{}
-	
-	mu           sync.RWMutex
+
+	mu sync.RWMutex
 }
 
 func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *CompilerContext {
-	return nil
+	cfg := Config{
+		RootDir:   rootDir,
+		Extension: extension,
+	}
+	return NewWithConfig(cfg, diag)
 }
-
 
 type Config struct {
 	RootDir         string
@@ -95,21 +99,37 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		cfg.TargetBackend = "llvm"
 	}
 	cfg.RootDir = filepath.Clean(cfg.RootDir)
+	if !filepath.IsAbs(cfg.RootDir) {
+		if abs, err := filepath.Abs(cfg.RootDir); err == nil {
+			cfg.RootDir = abs
+		}
+	}
+	if cfg.StdlibRoot == "" {
+		cfg.StdlibRoot = filepath.Join(cfg.RootDir, STD_LIB_DEV)
+	}
+	cfg.StdlibRoot = filepath.Clean(cfg.StdlibRoot)
+	if !filepath.IsAbs(cfg.StdlibRoot) {
+		if abs, err := filepath.Abs(cfg.StdlibRoot); err == nil {
+			cfg.StdlibRoot = abs
+		}
+	}
+	if _, err := os.Stat(cfg.StdlibRoot); err != nil && !os.IsNotExist(err) {
+		diag.Add(diagnostics.NewWarning("failed to access stdlib root: " + err.Error()))
+	}
 	if cfg.DependencyRoots == nil {
 		cfg.DependencyRoots = make(map[string]string)
 	}
 	globalScope := predeclaredScope()
 	return &CompilerContext{
-		Config:       cfg,
-		Diagnostics:  diag,
-		GlobalScope:  globalScope,
-		
+		Config:      cfg,
+		Diagnostics: diag,
+		GlobalScope: globalScope,
+
 		modules:      make(map[string]*Module),
 		fileIndex:    make(map[string]string),
 		dependencies: make(map[string]map[string]struct{}),
 	}
 }
-
 
 func predeclaredScope() *table.Scope {
 	scope := table.New(nil)

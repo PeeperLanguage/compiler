@@ -48,8 +48,8 @@ func main() {
 		return
 	}
 
-	if result.Module != nil {
-		for _, decl := range result.Module.Decls {
+	if result.Module != nil && result.Module.AST != nil {
+		for _, decl := range result.Module.AST.Decls {
 			fmt.Println(ast.DeclSummary(decl))
 		}
 		return
