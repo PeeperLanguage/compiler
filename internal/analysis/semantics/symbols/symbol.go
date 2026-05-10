@@ -5,8 +5,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/core/source"
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/frontend/ast"
 )
 
@@ -41,8 +41,8 @@ type Symbol struct {
 	Receiver  semmeta.ReceiverKey
 	OwnerType string
 	// Mutable is a binder property for locals/params that don't have a dedicated AST node
-	// with mutability flags (e.g. for/lock/catch binders). For LetDecl/LetStmt, prefer
-	// the AST node's `IsMut` when available.
+	// with mutability flags (e.g. for/lock/catch binders). For binding declarations,
+	// prefer the AST node's IsMutable flag.
 	Flags semmeta.ValueFlags
 }
 

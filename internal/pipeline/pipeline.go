@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"compiler/core/diagnostics"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
@@ -49,11 +50,15 @@ func (p *Pipeline) Run(entry *context.Module) Result {
 
 	p.ctx.UpsertModule(entry)
 	result.EntryKey = entry.Key
+	var diag *diagnostics.DiagnosticBag
+	if p.ctx != nil {
+		diag = p.ctx.Diagnostics
+	}
 
 	for _, module := range p.ctx.Modules() {
 		stage := &StageArtifacts{Module: module}
-		stage.Tokens = lex(module)
-		stage.AST = parse(module, stage.Tokens)
+		stage.Tokens = lex(module, diag)
+		stage.AST = parse(module, stage.Tokens, diag)
 		stage.HasSem = analyze(module, stage.AST)
 		stage.HIRText = lowerHIR(module, stage.AST)
 		stage.MIRText = lowerMIR(module, stage.HIRText)

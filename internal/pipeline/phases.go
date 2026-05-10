@@ -1,38 +1,29 @@
 package pipeline
 
 import (
-	"compiler/core/source"
+	"compiler/core/diagnostics"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/parser"
 	"compiler/internal/tokens"
 )
 
 // Source text to tokens.
-// TODO: replace EOF scaffold with the real lexer.
-func lex(module *context.Module) []tokens.Token {
+func lex(module *context.Module, diag *diagnostics.DiagnosticBag) []tokens.Token {
 	if module == nil {
 		return nil
 	}
-	pos := source.NewPosition()
-	return []tokens.Token{{
-		Kind:    tokens.EOF,
-		Literal: "",
-		Start:   pos,
-		End:     pos,
-	}}
+	return lexer.Lex(module.FilePath, module.Content, diag)
 }
 
 // Tokens to frontend AST.
 // Should return partial ASTs after recoverable syntax errors.
-func parse(module *context.Module, _ []tokens.Token) *ast.Module {
+func parse(module *context.Module, stream []tokens.Token, diag *diagnostics.DiagnosticBag) *ast.Module {
 	if module == nil {
 		return nil
 	}
-	return &ast.Module{
-		FilePath: module.FilePath,
-		Decls:    make([]ast.Decl, 0),
-		Imports:  make([]*ast.ImportDecl, 0),
-	}
+	return parser.ParseModule(module.FilePath, stream, diag)
 }
 
 // Collector, resolver, type checker, CTFE, and related semantic passes.
