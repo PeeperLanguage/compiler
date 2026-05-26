@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/core/diagnostics"
@@ -110,5 +111,160 @@ func TestParseFunctionWithReceiverAndTypeParams(t *testing.T) {
 	}
 	if fn.TypeParams[1].Name == nil || fn.TypeParams[1].Name.Name != "U" {
 		t.Fatalf("second type param mismatch")
+	}
+}
+
+func TestParseRecoversMissingSemicolonAndContinuesTopLevel(t *testing.T) {
+	src := `let a: i32 = 10
+let b: i32 = 23;
+fn main(): i32 {
+	return b;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for missing semicolon")
+	}
+	if len(mod.Decls) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	}
+	if _, ok := mod.Decls[2].(*ast.FnDecl); !ok {
+		t.Fatalf("decl[2] expected fn")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "expected ';' after statement") {
+		t.Fatalf("expected targeted missing-semicolon diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseRecoversMissingParenInCallAndContinues(t *testing.T) {
+	src := `fn main(): i32 {
+	foo(1, 2;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for missing ')'")
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	if fn.Body == nil || len(fn.Body.Stmts) == 0 {
+		t.Fatalf("expected function body statements after recovery")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "expected ')' after arguments") {
+		t.Fatalf("expected missing-paren diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseRecoversMissingFunctionBlockAndContinues(t *testing.T) {
+	src := `fn myfunc()
+fn main(): i32 {
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for missing function block")
+	}
+	if len(mod.Decls) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "missing function body") {
+		t.Fatalf("expected missing-block diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseMissingFunctionBlockDoesNotBreakNextFunction(t *testing.T) {
+	src := `
+
+fn myfunc()
+
+fn main() {
+	let a : i32 = 10;
+	let b : i32 = 23;
+	let c = a + b;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if len(mod.Decls) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	}
+	out := diag.EmitAllToString()
+	if strings.Contains(out, " --> test.em:5:1") && strings.Contains(out, "expected '{'") {
+		t.Fatalf("unexpected extra missing-block diagnostic on second function:\n%s", out)
+	}
+}
+
+func TestParseAllowsExternalFunctionSemicolon(t *testing.T) {
+	src := `fn ext();
+fn main(): i32 {
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	if fn.Body != nil {
+		t.Fatalf("external fn body must be nil")
+	}
+}
+
+func TestParseAllowsFunctionAttributes(t *testing.T) {
+	src := `#[extern]
+fn ext();
+fn main(): i32 {
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	}
+}
+
+func TestParseMethodStyleFunctionNamePath(t *testing.T) {
+	src := `fn User::Method(self: i32, other: i32): i32 {
+	return other;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	if fn.Name == nil || fn.Name.Name != "User::Method" {
+		t.Fatalf("method name mismatch: got %#v", fn.Name)
 	}
 }

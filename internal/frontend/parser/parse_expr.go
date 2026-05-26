@@ -83,6 +83,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.advance()
 		expr := p.parseExpr(precLowest)
 		if p.consume(tokens.RPAREN, "expected ')'") == nil {
+			if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == tokens.COMMA || p.peek().Kind == tokens.RPAREN {
+				p.recoverMissingToken(tokens.RPAREN, "expected ')'", p.expectedInsertionPoint())
+				return expr
+			}
 			return nil
 		}
 		return expr
@@ -124,7 +128,17 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 		}
 	}
 	end := p.consume(tokens.RPAREN, "expected ')' after arguments")
-	if start == nil || end == nil {
+	if start == nil {
+		return nil
+	}
+	if end == nil {
+		if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == tokens.COMMA || p.peek().Kind == tokens.RPAREN {
+			end = p.recoverMissingToken(tokens.RPAREN, "expected ')' after arguments", p.expectedInsertionPoint())
+		} else {
+			return nil
+		}
+	}
+	if end == nil {
 		return nil
 	}
 	return &ast.CallExpr{
