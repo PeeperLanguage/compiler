@@ -53,13 +53,20 @@ fn add(a: i32, b: i32): i32 {
 	}
 }
 
-func TestParseRejectsNonI32Type(t *testing.T) {
-	src := `let x: i64 = 1;`
+func TestParseAllowsBuiltinNumericTypes(t *testing.T) {
+	src := `let x: i64 = 1;
+let y: f32 = 2;
+fn sum(a: i64, b: f32): f64 {
+	return 0;
+}`
 	diag := diagnostics.NewDiagnosticBag("test.em")
 	stream := lexer.Lex("test.em", src, diag)
-	_ = ParseModule("test.em", stream, diag)
-	if !diag.HasErrors() {
-		t.Fatalf("expected parser diagnostics")
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected parser diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Decls))
 	}
 }
 
@@ -266,5 +273,104 @@ func TestParseMethodStyleFunctionNamePath(t *testing.T) {
 	}
 	if fn.Name == nil || fn.Name.Name != "User::Method" {
 		t.Fatalf("method name mismatch: got %#v", fn.Name)
+	}
+}
+
+func TestParseAnonymousTypesInBindings(t *testing.T) {
+	src := `let a: struct {
+	x: i32;
+} = value;
+let b: interface {
+	call(x: i32): i32;
+} = value;
+let c: enum {
+	One,
+	Two,
+} = value;`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	}
+	l0 := mod.Decls[0].(*ast.LetDecl)
+	if _, ok := l0.Type.(*ast.StructType); !ok {
+		t.Fatalf("let a type expected struct")
+	}
+	l1 := mod.Decls[1].(*ast.LetDecl)
+	if _, ok := l1.Type.(*ast.InterfaceType); !ok {
+		t.Fatalf("let b type expected interface")
+	}
+	l2 := mod.Decls[2].(*ast.LetDecl)
+	if _, ok := l2.Type.(*ast.EnumType); !ok {
+		t.Fatalf("let c type expected enum")
+	}
+}
+
+func TestParseTypeDeclarations(t *testing.T) {
+	src := `type IntOp fn(i32, i32): i32;
+type Vec2 struct {
+	x: f32;
+	y: f32;
+};
+type Adder interface {
+	add(a: i32, b: i32): i32;
+};
+type Color enum {
+	Red,
+	Green,
+	Blue,
+};`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 4 {
+		t.Fatalf("decls: got %d want 4", len(mod.Decls))
+	}
+	a0, ok := mod.Decls[0].(*ast.TypeAliasDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected type alias")
+	}
+	if _, ok := a0.Type.(*ast.FuncType); !ok {
+		t.Fatalf("decl[0] expected func type")
+	}
+	a1, ok := mod.Decls[1].(*ast.TypeAliasDecl)
+	if !ok {
+		t.Fatalf("decl[1] expected type alias")
+	}
+	s, ok := a1.Type.(*ast.StructType)
+	if !ok {
+		t.Fatalf("decl[1] expected struct type")
+	}
+	if len(s.Fields) != 2 {
+		t.Fatalf("struct fields: got %d want 2", len(s.Fields))
+	}
+	a2, ok := mod.Decls[2].(*ast.TypeAliasDecl)
+	if !ok {
+		t.Fatalf("decl[2] expected type alias")
+	}
+	i, ok := a2.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("decl[2] expected interface type")
+	}
+	if len(i.Methods) != 1 {
+		t.Fatalf("interface methods: got %d want 1", len(i.Methods))
+	}
+	a3, ok := mod.Decls[3].(*ast.TypeAliasDecl)
+	if !ok {
+		t.Fatalf("decl[3] expected type alias")
+	}
+	e, ok := a3.Type.(*ast.EnumType)
+	if !ok {
+		t.Fatalf("decl[3] expected enum type")
+	}
+	if len(e.Variants) != 3 {
+		t.Fatalf("enum variants: got %d want 3", len(e.Variants))
 	}
 }
