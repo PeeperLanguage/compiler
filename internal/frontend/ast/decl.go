@@ -21,6 +21,58 @@ type NamedType struct {
 func (*NamedType) typeNode()              {}
 func (t *NamedType) Loc() source.Location { return t.Location }
 
+type FuncType struct {
+	Params   []TypeExpr
+	Return   TypeExpr
+	Location source.Location
+}
+
+func (*FuncType) typeNode()              {}
+func (t *FuncType) Loc() source.Location { return t.Location }
+
+type StructType struct {
+	Fields   []TypeField
+	Location source.Location
+}
+
+func (*StructType) typeNode()              {}
+func (t *StructType) Loc() source.Location { return t.Location }
+
+type InterfaceType struct {
+	Methods  []TypeMethod
+	Location source.Location
+}
+
+func (*InterfaceType) typeNode()              {}
+func (t *InterfaceType) Loc() source.Location { return t.Location }
+
+type EnumType struct {
+	Variants []EnumVariant
+	Location source.Location
+}
+
+func (*EnumType) typeNode()              {}
+func (t *EnumType) Loc() source.Location { return t.Location }
+
+type TypeField struct {
+	Name     *Ident
+	Type     TypeExpr
+	Location source.Location
+}
+
+type TypeMethod struct {
+	Name       *Ident
+	TypeParams []TypeParam
+	Params     []Param
+	ReturnType TypeExpr
+	Location   source.Location
+}
+
+type EnumVariant struct {
+	Name     *Ident
+	Location source.Location
+}
+
 type Param struct {
 	Name     *Ident
 	Type     TypeExpr
@@ -69,3 +121,43 @@ type FnDecl struct {
 
 func (*FnDecl) declNode()              {}
 func (d *FnDecl) Loc() source.Location { return d.Location }
+
+type TypeAliasDecl struct {
+	Name       *Ident
+	TypeParams []TypeParam
+	Type       TypeExpr
+	Location   source.Location
+}
+
+func (*TypeAliasDecl) declNode()              {}
+func (d *TypeAliasDecl) Loc() source.Location { return d.Location }
+
+type StructDecl struct {
+	Name       *Ident
+	TypeParams []TypeParam
+	Fields     []TypeField
+	Location   source.Location
+}
+
+func (*StructDecl) declNode()              {}
+func (d *StructDecl) Loc() source.Location { return d.Location }
+
+type InterfaceDecl struct {
+	Name       *Ident
+	TypeParams []TypeParam
+	Methods    []TypeMethod
+	Location   source.Location
+}
+
+func (*InterfaceDecl) declNode()              {}
+func (d *InterfaceDecl) Loc() source.Location { return d.Location }
+
+type EnumDecl struct {
+	Name       *Ident
+	TypeParams []TypeParam
+	Variants   []EnumVariant
+	Location   source.Location
+}
+
+func (*EnumDecl) declNode()              {}
+func (d *EnumDecl) Loc() source.Location { return d.Location }
