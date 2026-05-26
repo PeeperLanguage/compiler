@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/core/diagnostics"
 	"compiler/core/source"
@@ -14,6 +15,70 @@ type Parser struct {
 	stream   []tokens.Token
 	diag     *diagnostics.DiagnosticBag
 	pos      int
+}
+
+type blockOwner string
+
+const (
+	blockOwnerFunction blockOwner = "function"
+)
+
+type functionLikeSig struct {
+	Receiver   *ast.Param
+	Name       *ast.Ident
+	TypeParams []ast.TypeParam
+	Params     []ast.Param
+	ReturnType ast.TypeExpr
+}
+
+func (p *Parser) expectedInsertionPoint() source.Position {
+	tok := p.peek()
+	insert := tok.Start
+	if p.pos > 0 {
+		prev := p.stream[p.pos-1]
+		if prev.End.Index <= tok.Start.Index {
+			insert = prev.End
+		}
+	}
+	return insert
+}
+
+func (p *Parser) isDeclStart(kind tokens.Kind) bool {
+	switch kind {
+	case tokens.IMPORT, tokens.FN, tokens.LET, tokens.CONST, tokens.EOF:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) isStmtBoundary(kind tokens.Kind) bool {
+	switch kind {
+	case tokens.RBRACE, tokens.SEMICOLON, tokens.LET, tokens.CONST, tokens.RETURN, tokens.FN, tokens.IMPORT, tokens.EOF:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) recoverMissingToken(expected tokens.Kind, msg string, fallback source.Position) *tokens.Token {
+	insert := p.expectedInsertionPoint()
+	if fallback.Line > 0 {
+		insert = fallback
+	}
+	loc := source.NewLocation(p.filePath, insert, insert)
+	p.diag.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(&loc, fmt.Sprintf("add missing `%s` here", string(expected))),
+	)
+	synth := tokens.Token{
+		Kind:    expected,
+		Literal: string(expected),
+		Start:   insert,
+		End:     insert,
+	}
+	return &synth
 }
 
 func New(filePath string, stream []tokens.Token, diag *diagnostics.DiagnosticBag) *Parser {
@@ -86,6 +151,9 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 }
 
 func (p *Parser) parseDecl() ast.Decl {
+	if p.peek().Kind == tokens.HASH {
+		p.parseFnAttributes()
+	}
 	switch p.peek().Kind {
 	case tokens.FN:
 		return p.parseFnDecl()
@@ -99,41 +167,126 @@ func (p *Parser) parseDecl() ast.Decl {
 	}
 }
 
-func (p *Parser) parseFnDecl() ast.Decl {
-	start := p.consume(tokens.FN, "expected fn")
-	receiver := p.parseOptionalReceiver()
-	name := p.parseIdent()
-	if name == nil {
-		return nil
-	}
-	typeParams := p.parseOptionalTypeParams()
-	if p.consume(tokens.LPAREN, "expected '(' after function name") == nil {
-		return nil
-	}
-	params := p.parseParams()
-	if p.consume(tokens.RPAREN, "expected ')' after parameters") == nil {
-		return nil
-	}
-	retTy := ast.TypeExpr(&ast.NamedType{Name: "i32", Location: p.loc(*start, *start)})
-	if p.match(tokens.COLON) {
-		retTy = p.parseTypeI32()
-		if retTy == nil {
-			return nil
+func (p *Parser) parseFnAttributes() {
+	for p.peek().Kind == tokens.HASH {
+		p.advance()
+		if p.consume(tokens.LBRACK, "expected '[' after '#'") == nil {
+			return
+		}
+		if p.consume(tokens.IDENT, "expected attribute name") == nil {
+			return
+		}
+		if p.consume(tokens.RBRACK, "expected ']' after attribute") == nil {
+			return
 		}
 	}
-	body := p.parseBlock()
-	if body == nil {
+}
+
+func (p *Parser) parseFnDecl() ast.Decl {
+	start := p.consume(tokens.FN, "expected fn")
+	sig, ok := p.parseFunctionLikeSig(start)
+	if !ok {
+		return nil
+	}
+	body, _, ok := p.parseFnBody()
+	if !ok {
 		return nil
 	}
 	return &ast.FnDecl{
-		Receiver:   receiver,
-		Name:       name,
-		TypeParams: typeParams,
-		Params:     params,
-		ReturnType: retTy,
+		Receiver:   sig.Receiver,
+		Name:       sig.Name,
+		TypeParams: sig.TypeParams,
+		Params:     sig.Params,
+		ReturnType: sig.ReturnType,
 		Body:       body,
 		Location:   p.loc(*start, p.lastNonNilToken(*start)),
 	}
+}
+
+func (p *Parser) parseFunctionLikeSig(start *tokens.Token) (functionLikeSig, bool) {
+	sig := functionLikeSig{
+		ReturnType: ast.TypeExpr(&ast.NamedType{Name: "i32", Location: p.loc(*start, *start)}),
+	}
+	sig.Receiver = p.parseOptionalReceiver()
+	sig.Name = p.parseFunctionName()
+	if sig.Name == nil {
+		return functionLikeSig{}, false
+	}
+	sig.TypeParams = p.parseOptionalTypeParams()
+	if p.consume(tokens.LPAREN, "expected '(' after function name") == nil {
+		return functionLikeSig{}, false
+	}
+	sig.Params = p.parseParams()
+	if p.consume(tokens.RPAREN, "expected ')' after parameters") == nil {
+		return functionLikeSig{}, false
+	}
+	if p.match(tokens.COLON) {
+		sig.ReturnType = p.parseTypeI32()
+		if sig.ReturnType == nil {
+			return functionLikeSig{}, false
+		}
+	}
+	return sig, true
+}
+
+func (p *Parser) parseFunctionName() *ast.Ident {
+	first := p.parseIdent()
+	if first == nil {
+		return nil
+	}
+	parts := []string{first.Name}
+	end := first.Location
+	for p.match(tokens.DCOLON) {
+		next := p.parseIdent()
+		if next == nil {
+			return nil
+		}
+		parts = append(parts, next.Name)
+		end = next.Location
+	}
+	if len(parts) == 1 {
+		return first
+	}
+	return &ast.Ident{
+		Name:     strings.Join(parts, "::"),
+		Location: p.locFromNode(first, &ast.BadExpr{Location: end}),
+	}
+}
+
+func (p *Parser) parseFnBody() (*ast.BlockStmt, bool, bool) {
+	if p.match(tokens.SEMICOLON) {
+		return nil, true, true
+	}
+	body, ok := p.parseRequiredBlock(blockOwnerFunction)
+	if !ok {
+		return nil, false, false
+	}
+	return body, false, true
+}
+
+func (p *Parser) parseRequiredBlock(owner blockOwner) (*ast.BlockStmt, bool) {
+	if p.at(tokens.LBRACE) {
+		body := p.parseBlock()
+		if body == nil {
+			return nil, false
+		}
+		return body, true
+	}
+	if !p.isDeclStart(p.peek().Kind) && !p.isStmtBoundary(p.peek().Kind) {
+		return nil, false
+	}
+	insert := p.expectedInsertionPoint()
+	loc := source.NewLocation(p.filePath, insert, insert)
+	p.diag.Add(
+		diagnostics.NewError("missing "+string(owner)+" body").
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(&loc, "add missing `{}` here"),
+	)
+	empty := source.NewLocation(p.filePath, insert, insert)
+	return &ast.BlockStmt{
+		Stmts:    make([]ast.Stmt, 0),
+		Location: empty,
+	}, true
 }
 
 func (p *Parser) parseOptionalReceiver() *ast.Param {
@@ -242,10 +395,20 @@ func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.
 	if value == nil {
 		return nil, nil, nil, nil, false
 	}
-	end = p.consume(tokens.SEMICOLON, "expected ';' after "+string(token))
-	if end == nil {
+	if p.peek().Kind != tokens.SEMICOLON {
+		loc := value.Loc()
+		insertPos := source.NewPosition()
+		if loc.End != nil {
+			insertPos = *loc.End
+		}
+		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
+			end = p.recoverMissingToken(tokens.SEMICOLON, "expected ';' after statement", insertPos)
+			return name, ty, value, end, true
+		}
+		p.recoverMissingToken(tokens.SEMICOLON, "expected ';' after statement", insertPos)
 		return nil, nil, nil, nil, false
 	}
+	end = p.advance()
 	return name, ty, value, end, true
 }
 
@@ -335,7 +498,15 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 	}
 	end := p.consume(tokens.SEMICOLON, "expected ';' after return")
 	if end == nil {
-		return nil
+		insert := p.expectedInsertionPoint()
+		if value != nil && value.Loc().End != nil {
+			insert = *value.Loc().End
+		}
+		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
+			end = p.recoverMissingToken(tokens.SEMICOLON, "expected ';' after return", insert)
+		} else {
+			return nil
+		}
 	}
 	return &ast.ReturnStmt{
 		Value:    value,
@@ -350,7 +521,15 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 	}
 	end := p.consume(tokens.SEMICOLON, "expected ';' after expression")
 	if end == nil {
-		return nil
+		insert := p.expectedInsertionPoint()
+		if expr.Loc().End != nil {
+			insert = *expr.Loc().End
+		}
+		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
+			end = p.recoverMissingToken(tokens.SEMICOLON, "expected ';' after expression", insert)
+		} else {
+			return nil
+		}
 	}
 	return &ast.ExprStmt{
 		Expr:     expr,
@@ -427,6 +606,9 @@ func (p *Parser) synchronizeDecl() {
 func (p *Parser) synchronizeStmt() {
 	for !p.at(tokens.EOF) && !p.at(tokens.RBRACE) {
 		if p.match(tokens.SEMICOLON) {
+			return
+		}
+		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
 			return
 		}
 		p.advance()
