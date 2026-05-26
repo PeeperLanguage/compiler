@@ -7,8 +7,14 @@ import (
 	"sync"
 
 	"compiler/core/diagnostics"
+	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
+	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
+	"compiler/internal/tokens"
 )
 
 // Development-time standard library directory.
@@ -41,7 +47,6 @@ type ResolvedImport struct {
 }
 
 // Source unit shared by every compiler phase.
-// Phase outputs live in pipeline artifacts.
 type Module struct {
 	// Unique graph identity.
 	Key string
@@ -59,6 +64,20 @@ type Module struct {
 	Content string
 	// Reserved for incremental builds.
 	ContentHash string
+	// Lexer output.
+	Tokens []tokens.Token
+	// Parsed syntax tree.
+	AST *ast.Module
+	// Collected top-level declaration state.
+	Decls *declinfo.ModuleInfo
+	// Resolved binding state.
+	Bindings *binding.ModuleInfo
+	// Typed semantic state.
+	Types *typeinfo.ModuleInfo
+	// Canonical IR slots.
+	ir.Slots
+	// Top-level names visible in module.
+	ModuleScope *table.Scope
 
 	// Outgoing module graph keys.
 	Dependencies []string

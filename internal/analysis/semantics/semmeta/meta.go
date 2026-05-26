@@ -1,24 +1,29 @@
 package semmeta
 
-type ValueFlags uint8
+type BindingFlags uint8
 
 const (
-	FlagMutable ValueFlags = 1 << iota
-	FlagVariadic
+	FlagMutable BindingFlags = 1 << iota
 )
 
-func (f ValueFlags) Mutable() bool {
+func (f BindingFlags) Mutable() bool {
 	return f&FlagMutable != 0
 }
 
-func (f ValueFlags) Variadic() bool {
+type ParamFlags uint8
+
+const (
+	FlagVariadic ParamFlags = 1 << iota
+)
+
+func (f ParamFlags) Variadic() bool {
 	return f&FlagVariadic != 0
 }
 
-type ValueSpec[T any] struct {
+type ParamSpec[T any] struct {
 	Name       string
 	Type       T
-	Flags      ValueFlags
+	Flags      ParamFlags
 	HasDefault bool
 }
 
@@ -29,7 +34,7 @@ const (
 	ReceiverRef
 	ReceiverRefMut
 	ReceiverPtr
-	ReceiverRawPtr
+	ReceiverPtrMut
 )
 
 func ReceiverKindFromSyntax(receiver string) ReceiverKind {
@@ -38,12 +43,10 @@ func ReceiverKindFromSyntax(receiver string) ReceiverKind {
 		return ReceiverRef
 	case "&mut ":
 		return ReceiverRefMut
+	case "*mut":
+		return ReceiverPtrMut
 	case "*":
 		return ReceiverPtr
-	case "^":
-		return ReceiverRawPtr
-	case "^const ":
-		return ReceiverRawPtr
 	default:
 		return ReceiverValue
 	}
@@ -55,10 +58,10 @@ func (k ReceiverKind) Prefix() string {
 		return "&"
 	case ReceiverRefMut:
 		return "&mut "
+	case ReceiverPtrMut:
+		return "*mut "
 	case ReceiverPtr:
 		return "*"
-	case ReceiverRawPtr:
-		return "^"
 	default:
 		return ""
 	}

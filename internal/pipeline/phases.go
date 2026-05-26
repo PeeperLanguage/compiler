@@ -2,10 +2,16 @@ package pipeline
 
 import (
 	"compiler/core/diagnostics"
+	"compiler/internal/analysis/semantics/collector"
+	"compiler/internal/analysis/semantics/resolver"
+	"compiler/internal/analysis/semantics/typechecher"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/hir"
+	"compiler/internal/ir/hir_lower"
+	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
 )
 
@@ -14,7 +20,8 @@ func lex(module *context.Module, diag *diagnostics.DiagnosticBag) []tokens.Token
 	if module == nil {
 		return nil
 	}
-	return lexer.Lex(module.FilePath, module.Content, diag)
+	module.Tokens = lexer.Lex(module.FilePath, module.Content, diag)
+	return module.Tokens
 }
 
 // Tokens to frontend AST.
@@ -23,34 +30,59 @@ func parse(module *context.Module, stream []tokens.Token, diag *diagnostics.Diag
 	if module == nil {
 		return nil
 	}
-	return parser.ParseModule(module.FilePath, stream, diag)
+	module.AST = parser.ParseModule(module.FilePath, stream, diag)
+	return module.AST
 }
 
 // Collector, resolver, type checker, CTFE, and related semantic passes.
-func analyze(_ *context.Module, _ *ast.Module) bool {
-	return true
+func analyze(ctx *context.CompilerContext, module *context.Module, diag *diagnostics.DiagnosticBag) bool {
+	if !collector.Collect(ctx, module, diag) {
+		return false
+	}
+	if !resolver.Resolve(module, diag) {
+		return false
+	}
+	return typechecher.Check(module, diag)
 }
 
 // Checked AST/semantic data to high-level IR.
-func lowerHIR(module *context.Module, _ *ast.Module) string {
-	if module == nil {
-		return ""
+func lowerHIR(module *context.Module) (*hir.Module, string) {
+	if module == nil || module.Types == nil {
+		return nil, ""
 	}
-	return "; hir module " + module.ImportPath + "\n"
+	mod := hir_lower.LowerTyped(module)
+	if mod == nil {
+		return nil, ""
+	}
+	module.HIR = mod
+	return mod, mod.Text()
 }
 
 // HIR to target-independent mid-level IR.
-func lowerMIR(module *context.Module, _ string) string {
-	if module == nil {
-		return ""
+func lowerMIR(module *context.Module) (*mir.Module, string) {
+	if module == nil || module.HIR == nil {
+		return nil, ""
 	}
-	return "; mir module " + module.ImportPath + "\n"
+	hirMod, ok := module.HIR.(*hir.Module)
+	if !ok || hirMod == nil {
+		return nil, ""
+	}
+	mod := mir.LowerHIR(hirMod)
+	if mod == nil {
+		return nil, ""
+	}
+	module.MIR = mod
+	return mod, mod.Text()
 }
 
 // MIR to LLVM IR.
-func lowerLLVMIR(module *context.Module, _ string) string {
-	if module == nil {
+func lowerLLVMIR(module *context.Module) string {
+	if module == nil || module.MIR == nil {
 		return ""
 	}
-	return "; llvm ir module " + module.ImportPath + "\n"
+	mirMod, ok := module.MIR.(*mir.Module)
+	if !ok || mirMod == nil {
+		return ""
+	}
+	return lowerLLVMFromMIR(mirMod)
 }

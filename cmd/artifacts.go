@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -82,7 +83,6 @@ func compilerConfigFor(path, backendName string, debugBuild bool) context.Config
 }
 
 // Build final output after successful compilation.
-// TODO: replace IR file write with LLVM assemble/object/link steps.
 func buildExecutable(result compiler.ParseResult, outputPath string, target backend.BACKEND_TYPE) error {
 	if result.Diagnostics != nil && result.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
@@ -94,7 +94,25 @@ func buildExecutable(result compiler.ParseResult, outputPath string, target back
 	if target != backend.LLVM {
 		return fmt.Errorf("unsupported backend: %s", target)
 	}
-	return os.WriteFile(outputPath, []byte(ir), 0o755)
+	if strings.TrimSpace(ir) == "" {
+		return fmt.Errorf("empty LLVM IR for module %s", result.Module.ImportPath)
+	}
+	llPath := outputPath + ".ll"
+	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
+		return fmt.Errorf("write llvm ir: %w", err)
+	}
+	defer os.Remove(llPath)
+
+	clangPath, err := exec.LookPath("clang")
+	if err != nil {
+		return fmt.Errorf("clang not found in PATH; install LLVM clang to build LLVM IR")
+	}
+	cmd := exec.Command(clangPath, "-x", "ir", llPath, "-o", outputPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("clang link failed: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // Write -keep-gen artifacts for each module.
