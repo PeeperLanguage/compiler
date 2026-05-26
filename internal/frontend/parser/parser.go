@@ -222,7 +222,7 @@ func (p *Parser) parseFunctionLikeSig(start *tokens.Token) (functionLikeSig, boo
 	if p.consume(tokens.RPAREN, "expected ')' after parameters") == nil {
 		return functionLikeSig{}, false
 	}
-	if p.match(tokens.COLON) {
+	if p.match(tokens.ARROW) {
 		sig.ReturnType = p.parseTypeExpr()
 		if sig.ReturnType == nil {
 			return functionLikeSig{}, false
@@ -552,7 +552,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		return p.parseEnumTypeExpr()
 	case tokens.IDENT:
 		p.advance()
-		var name strings.Builder; 
+		var name strings.Builder
 		name.WriteString(tok.Literal)
 		end := tok
 		for p.match(tokens.DCOLON) {

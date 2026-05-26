@@ -59,10 +59,13 @@ func (p *Pipeline) Run(entry *context.Module) Result {
 		stage := &StageArtifacts{Module: module}
 		stage.Tokens = lex(module, diag)
 		stage.AST = parse(module, stage.Tokens, diag)
-		stage.HasSem = analyze(module, stage.AST)
-		stage.HIRText = lowerHIR(module, stage.AST)
-		stage.MIRText = lowerMIR(module, stage.HIRText)
-		stage.LLVMIR = lowerLLVMIR(module, stage.MIRText)
+		ok := analyze(p.ctx, module, diag)
+		stage.HasSem = ok
+		_, hirText := lowerHIR(module)
+		stage.HIRText = hirText
+		_, mirText := lowerMIR(module)
+		stage.MIRText = mirText
+		stage.LLVMIR = lowerLLVMIR(module)
 		result.Stages[module.Key] = stage
 	}
 	return result

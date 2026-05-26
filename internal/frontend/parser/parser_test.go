@@ -121,6 +121,29 @@ func TestParseFunctionWithReceiverAndTypeParams(t *testing.T) {
 	}
 }
 
+func TestParseFunctionReturnArrowSyntax(t *testing.T) {
+	src := `fn main() -> i32 {
+	return 10;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	ret, ok := fn.ReturnType.(*ast.NamedType)
+	if !ok || ret.Name != "i32" {
+		t.Fatalf("return type mismatch: %#v", fn.ReturnType)
+	}
+}
+
 func TestParseRecoversMissingSemicolonAndContinuesTopLevel(t *testing.T) {
 	src := `let a: i32 = 10
 let b: i32 = 23;

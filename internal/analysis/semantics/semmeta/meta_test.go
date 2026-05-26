@@ -2,45 +2,32 @@ package semmeta
 
 import "testing"
 
-func TestValueFlags(t *testing.T) {
-	var f ValueFlags
-	if f.Mutable() || f.Variadic() {
+func TestBindingFlags(t *testing.T) {
+	var f BindingFlags
+	if f.Mutable() {
 		t.Fatalf("expected zero flags to be false")
 	}
-	f = FlagMutable | FlagVariadic
-	if !f.Mutable() || !f.Variadic() {
-		t.Fatalf("expected all flags to be true")
+	f = FlagMutable
+	if !f.Mutable() {
+		t.Fatalf("expected mutable flag to be true")
 	}
 }
 
-func TestValueSpecDefaultFlag(t *testing.T) {
-	spec := ValueSpec[int]{Name: "value", Type: 7, HasDefault: true}
+func TestParamFlags(t *testing.T) {
+	var f ParamFlags
+	if f.Variadic() {
+		t.Fatalf("expected zero flags to be false")
+	}
+	f = FlagVariadic
+	if !f.Variadic() {
+		t.Fatalf("expected variadic flag to be true")
+	}
+}
+
+func TestParamSpecDefaultFlag(t *testing.T) {
+	spec := ParamSpec[int]{Name: "value", Type: 7, HasDefault: true}
 	if !spec.HasDefault {
-		t.Fatal("expected value spec to keep default metadata")
-	}
-}
-
-func TestReceiverKinds(t *testing.T) {
-	cases := []struct {
-		syntax string
-		kind   ReceiverKind
-		prefix string
-	}{
-		{"", ReceiverValue, ""},
-		{"&", ReceiverRef, "&"},
-		{"&mut ", ReceiverRefMut, "&mut "},
-		{"*", ReceiverPtr, "*"},
-		{"^", ReceiverRawPtr, "^"},
-		{"^const ", ReceiverRawPtr, "^"},
-	}
-	for _, tc := range cases {
-		got := ReceiverKindFromSyntax(tc.syntax)
-		if got != tc.kind {
-			t.Fatalf("syntax %q: got %v want %v", tc.syntax, got, tc.kind)
-		}
-		if got.Prefix() != tc.prefix {
-			t.Fatalf("syntax %q prefix: got %q want %q", tc.syntax, got.Prefix(), tc.prefix)
-		}
+		t.Fatal("expected param spec to keep default metadata")
 	}
 }
 
