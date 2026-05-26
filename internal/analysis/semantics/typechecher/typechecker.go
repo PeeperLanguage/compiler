@@ -6,7 +6,6 @@ import (
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
@@ -16,10 +15,8 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 	if module == nil || module.Decls == nil || module.Bindings == nil {
 		return false
 	}
-	module.Types = &typeinfo.ModuleInfo{
-		Externs:   append([]declinfo.ExternDecl(nil), module.Decls.Externs...),
-		Functions: make([]*typeinfo.Function, 0, len(module.Decls.Functions)),
-	}
+	module.Types = typeinfo.NewModuleInfo()
+	module.Types.Externs = append(module.Types.Externs, module.Decls.Externs...)
 	if len(module.Decls.Functions) == 0 {
 		return true
 	}
@@ -35,13 +32,8 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 			common.AddError(diag, module.FilePath, declFn.Decl, diagnostics.ErrUndefinedSymbol, "missing function binding")
 			return false
 		}
-		fn := &typeinfo.Function{
-			Symbol:   sym,
-			Decl:     declFn.Decl,
-			Scope:    declFn.Scope,
-			Bindings: make([]typeinfo.Binding, 0),
-			Returns:  make([]typeinfo.Return, 0),
-		}
+		module.Types.BindSymbolType(sym, "i32")
+		sawReturn := false
 		for _, stmt := range declFn.Decl.Body.Stmts {
 			switch node := stmt.(type) {
 			case *ast.LetDecl:
@@ -54,7 +46,8 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 					common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
 					return false
 				}
-				fn.Bindings = append(fn.Bindings, typeinfo.Binding{Symbol: bindRes.Symbol, Value: typedExpr})
+				module.Types.BindExpr(node.Value, typedExpr)
+				module.Types.BindSymbolType(bindRes.Symbol, typeinfo.ExprTypeName(typedExpr))
 			case *ast.ConstDecl:
 				typedExpr, ok := typeExpr(module, node.Value, diag)
 				if !ok {
@@ -65,7 +58,8 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 					common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
 					return false
 				}
-				fn.Bindings = append(fn.Bindings, typeinfo.Binding{Symbol: bindRes.Symbol, Value: typedExpr})
+				module.Types.BindExpr(node.Value, typedExpr)
+				module.Types.BindSymbolType(bindRes.Symbol, typeinfo.ExprTypeName(typedExpr))
 			case *ast.ReturnStmt:
 				if node.Value == nil {
 					common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
@@ -75,17 +69,18 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 				if !ok {
 					return false
 				}
-				fn.Returns = append(fn.Returns, typeinfo.Return{Stmt: node, Value: typedExpr})
+				module.Types.BindExpr(node.Value, typedExpr)
+				module.Types.BindFunctionReturn(declFn.Decl, typeinfo.ExprTypeName(typedExpr))
+				sawReturn = true
 			default:
 				common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
 				return false
 			}
 		}
-		if len(fn.Returns) == 0 {
+		if !sawReturn {
 			common.AddError(diag, module.FilePath, declFn.Decl, diagnostics.ErrMissingReturn, "function must contain return")
 			return false
 		}
-		module.Types.Functions = append(module.Types.Functions, fn)
 	}
 	return true
 }
@@ -119,14 +114,18 @@ func typeExpr(module *context.Module, expr ast.Expr, diag *diagnostics.Diagnosti
 			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidNumber, fmt.Sprintf("invalid i32 literal `%s`", node.Value))
 			return nil, false
 		}
-		return &typeinfo.IntLit{Value: int32(v)}, true
+		expr := &typeinfo.IntLit{Value: int32(v)}
+		module.Types.BindExpr(node, expr)
+		return expr, true
 	case *ast.Ident:
 		resolution, ok := module.Bindings.LookupNode(node)
 		if !ok || resolution == nil || resolution.Symbol == nil {
 			common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "unknown identifier `"+node.Name+"`")
 			return nil, false
 		}
-		return &typeinfo.Ident{Symbol: resolution.Symbol}, true
+		expr := &typeinfo.Ident{Symbol: resolution.Symbol}
+		module.Types.BindExpr(node, expr)
+		return expr, true
 	case *ast.UnaryExpr:
 		if node.Op != "-" && node.Op != "!" {
 			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidOperation, "unsupported unary operator `"+node.Op+"`")
@@ -136,7 +135,9 @@ func typeExpr(module *context.Module, expr ast.Expr, diag *diagnostics.Diagnosti
 		if !ok {
 			return nil, false
 		}
-		return &typeinfo.Unary{Op: node.Op, Arg: arg}, true
+		expr := &typeinfo.Unary{Op: node.Op, Arg: arg}
+		module.Types.BindExpr(node, expr)
+		return expr, true
 	case *ast.BinaryExpr:
 		if !allowedOp(node.Op) {
 			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidOperation, "unsupported binary operator `"+node.Op+"`")
@@ -150,7 +151,9 @@ func typeExpr(module *context.Module, expr ast.Expr, diag *diagnostics.Diagnosti
 		if !ok {
 			return nil, false
 		}
-		return &typeinfo.Binary{Op: node.Op, Left: left, Right: right}, true
+		expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right}
+		module.Types.BindExpr(node, expr)
+		return expr, true
 	default:
 		common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 		return nil, false
