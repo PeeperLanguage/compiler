@@ -3,19 +3,20 @@ package hir_lower
 import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 )
 
 func LowerTyped(module *context.Module) *hir.Module {
-	if module == nil || module.Types == nil {
+	if module == nil || module.Types == nil || module.Decls == nil || module.Bindings == nil {
 		return nil
 	}
 	in := module.Types
 	out := &hir.Module{
 		Name:    module.ImportPath,
 		Externs: make([]hir.Extern, 0, len(in.Externs)),
-		Funcs:   make([]*hir.Function, 0, len(in.Functions)),
+		Funcs:   make([]*hir.Function, 0, len(module.Decls.Functions)),
 	}
 	for _, ex := range in.Externs {
 		if ex.Symbol == nil || ex.Decl == nil {
@@ -35,32 +36,64 @@ func LowerTyped(module *context.Module) *hir.Module {
 			ReturnType: ir.TypeText(ex.Decl.ReturnType),
 		})
 	}
-	for _, typedFn := range in.Functions {
-		if typedFn == nil || typedFn.Decl == nil || typedFn.Symbol == nil {
+	for _, declFn := range module.Decls.Functions {
+		if declFn == nil || declFn.Decl == nil {
 			continue
 		}
-		fn := &hir.Function{
-			Name:       typedFn.Symbol.Name,
-			Params:     make([]ir.Param, 0, len(typedFn.Decl.Params)),
-			ReturnType: ir.TypeText(typedFn.Decl.ReturnType),
-			Bindings:   make([]hir.Binding, 0, len(typedFn.Bindings)),
-			Returns:    make([]ir.Expr, 0, len(typedFn.Returns)),
+		fnSym, ok := module.Bindings.FunctionSymbols[declFn.Decl]
+		if !ok || fnSym == nil {
+			continue
 		}
-		for _, param := range typedFn.Decl.Params {
+		retType, ok := module.Types.LookupFunctionReturn(declFn.Decl)
+		if !ok {
+			retType = ir.TypeText(declFn.Decl.ReturnType)
+		}
+		fn := &hir.Function{
+			Name:       fnSym.Name,
+			Params:     make([]ir.Param, 0, len(declFn.Decl.Params)),
+			ReturnType: retType,
+			Bindings:   make([]hir.Binding, 0),
+			Returns:    make([]ir.Expr, 0),
+		}
+		for _, param := range declFn.Decl.Params {
 			name := ""
 			if param.Name != nil {
 				name = param.Name.Name
 			}
 			fn.Params = append(fn.Params, ir.Param{Name: name, Type: ir.TypeText(param.Type)})
 		}
-		for _, bind := range typedFn.Bindings {
-			if bind.Symbol == nil {
-				continue
+		for _, stmt := range declFn.Decl.Body.Stmts {
+			switch node := stmt.(type) {
+			case *ast.LetDecl:
+				value, ok := module.Types.LookupExpr(node.Value)
+				if !ok {
+					continue
+				}
+				resolution, ok := module.Bindings.LookupNode(node.Name)
+				if !ok || resolution == nil || resolution.Symbol == nil {
+					continue
+				}
+				fn.Bindings = append(fn.Bindings, hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
+			case *ast.ConstDecl:
+				value, ok := module.Types.LookupExpr(node.Value)
+				if !ok {
+					continue
+				}
+				resolution, ok := module.Bindings.LookupNode(node.Name)
+				if !ok || resolution == nil || resolution.Symbol == nil {
+					continue
+				}
+				fn.Bindings = append(fn.Bindings, hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
+			case *ast.ReturnStmt:
+				if node.Value == nil {
+					continue
+				}
+				value, ok := module.Types.LookupExpr(node.Value)
+				if !ok {
+					continue
+				}
+				fn.Returns = append(fn.Returns, lowerExpr(value))
 			}
-			fn.Bindings = append(fn.Bindings, hir.Binding{Name: bind.Symbol.Name, Value: lowerExpr(bind.Value)})
-		}
-		for _, ret := range typedFn.Returns {
-			fn.Returns = append(fn.Returns, lowerExpr(ret.Value))
 		}
 		out.Funcs = append(out.Funcs, fn)
 	}
