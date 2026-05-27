@@ -58,7 +58,7 @@ func lowerHIR(module *context.Module, diag *diagnostics.DiagnosticBag) (*hir.Mod
 	}
 	mod = hir_fold.FoldModule(mod, diag)
 	module.HIR = mod
-	cfg.CheckReturns(mod, diag)
+	cfg.AnalyzeModule(mod, diag)
 	return mod, mod.Text()
 }
 
