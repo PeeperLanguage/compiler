@@ -24,16 +24,37 @@ type Function struct {
 	Name       string
 	Params     []ir.Param
 	ReturnType string
-	Instrs     []Instr
+	EntryID    int
+	Blocks     []*Block
+}
+
+type Block struct {
+	ID     int
+	Instrs []Instr
+	Term   Terminator
 }
 
 type Instr interface {
 	Text() string
 }
 
+type Terminator interface {
+	Text() string
+}
+
 type Assign struct {
 	Name  string
 	Value ValueExpr
+}
+
+type Jump struct {
+	TargetID int
+}
+
+type Branch struct {
+	Cond   ValueRef
+	ThenID int
+	ElseID int
 }
 
 type Ret struct {
@@ -77,6 +98,14 @@ func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
 }
 
+func (i *Jump) Text() string {
+	return fmt.Sprintf("jmp b%d", i.TargetID)
+}
+
+func (i *Branch) Text() string {
+	return fmt.Sprintf("br %s, b%d, b%d", i.Cond.Text(), i.ThenID, i.ElseID)
+}
+
 func (i *Ret) Text() string {
 	return "ret " + i.Value.Text()
 }
@@ -92,6 +121,13 @@ func (r *RefName) Text() string  { return r.Name }
 func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
+
+type lowerer struct {
+	fn          *Function
+	tmp         int
+	nextBlockID int
+	current     *Block
+}
 
 func LowerHIR(in *hir.Module) *Module {
 	if in == nil {
@@ -117,10 +153,13 @@ func LowerHIR(in *hir.Module) *Module {
 			Name:       hirFn.Name,
 			Params:     append([]ir.Param(nil), hirFn.Params...),
 			ReturnType: hirFn.ReturnType,
-			Instrs:     make([]Instr, 0),
+			EntryID:    0,
+			Blocks:     make([]*Block, 0),
 		}
-		tmp := 0
-		if !appendHIRBlock(hirFn.Body, &tmp, &fn.Instrs) {
+		l := &lowerer{fn: fn}
+		l.current = l.newBlock()
+		fn.EntryID = l.current.ID
+		if !l.appendBlock(hirFn.Body) {
 			return nil
 		}
 		out.Funcs = append(out.Funcs, fn)
@@ -128,38 +167,101 @@ func LowerHIR(in *hir.Module) *Module {
 	return out
 }
 
-func appendHIRBlock(block *hir.Block, tmp *int, out *[]Instr) bool {
+func (l *lowerer) newBlock() *Block {
+	block := &Block{
+		ID:     l.nextBlockID,
+		Instrs: make([]Instr, 0),
+	}
+	l.nextBlockID++
+	l.fn.Blocks = append(l.fn.Blocks, block)
+	return block
+}
+
+func (l *lowerer) appendBlock(block *hir.Block) bool {
 	if block == nil {
 		return true
 	}
 	for _, stmt := range block.Stmts {
-		if !appendHIRStmt(stmt, tmp, out) {
+		if !l.appendStmt(stmt) {
 			return false
+		}
+		if l.current == nil {
+			break
 		}
 	}
 	return true
 }
 
-func appendHIRStmt(stmt hir.Stmt, tmp *int, out *[]Instr) bool {
+func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
+	if l == nil || stmt == nil {
+		return true
+	}
 	switch node := stmt.(type) {
 	case *hir.Block:
-		return appendHIRBlock(node, tmp, out)
+		return l.appendBlock(node)
 	case *hir.Binding:
-		ref := lowerExpr(node.Value, tmp, out)
+		if l.current == nil {
+			return true
+		}
+		ref := lowerExpr(node.Value, &l.tmp, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
 			return true
 		}
-		*out = append(*out, &Assign{Name: node.Name, Value: asValueExpr(ref)})
+		l.current.Instrs = append(l.current.Instrs, &Assign{Name: node.Name, Value: asValueExpr(ref)})
 		return true
 	case *hir.Return:
-		retRef := lowerExpr(node.Value, tmp, out)
-		*out = append(*out, &Ret{Value: retRef})
+		if l.current == nil {
+			return true
+		}
+		retRef := lowerExpr(node.Value, &l.tmp, &l.current.Instrs)
+		l.current.Term = &Ret{Value: retRef}
+		l.current = nil
 		return true
 	case *hir.If:
-		return false
+		return l.appendIf(node)
 	default:
 		return false
 	}
+}
+
+func (l *lowerer) appendIf(node *hir.If) bool {
+	if l.current == nil || node == nil {
+		return true
+	}
+	condRef := lowerExpr(node.Cond, &l.tmp, &l.current.Instrs)
+	condBlock := l.current
+	thenBlock := l.newBlock()
+	elseBlock := l.newBlock()
+	condBlock.Term = &Branch{Cond: condRef, ThenID: thenBlock.ID, ElseID: elseBlock.ID}
+
+	l.current = thenBlock
+	if !l.appendBlock(node.Then) {
+		return false
+	}
+	thenFall := l.current
+
+	l.current = elseBlock
+	if node.Else != nil {
+		if !l.appendStmt(node.Else) {
+			return false
+		}
+	}
+	elseFall := l.current
+
+	if thenFall == nil && elseFall == nil {
+		l.current = nil
+		return true
+	}
+
+	join := l.newBlock()
+	if thenFall != nil && thenFall.Term == nil {
+		thenFall.Term = &Jump{TargetID: join.ID}
+	}
+	if elseFall != nil && elseFall.Term == nil {
+		elseFall.Term = &Jump{TargetID: join.ID}
+	}
+	l.current = join
+	return true
 }
 
 func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
@@ -218,10 +320,23 @@ func (m *Module) Text() string {
 		b.WriteString(fn.Name)
 		b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
 		b.WriteString(" {\n")
-		for _, instr := range fn.Instrs {
-			b.WriteString("  ")
-			b.WriteString(instr.Text())
-			b.WriteString("\n")
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			b.WriteString("  b")
+			b.WriteString(fmt.Sprintf("%d", block.ID))
+			b.WriteString(":\n")
+			for _, instr := range block.Instrs {
+				b.WriteString("    ")
+				b.WriteString(instr.Text())
+				b.WriteString("\n")
+			}
+			if block.Term != nil {
+				b.WriteString("    ")
+				b.WriteString(block.Term.Text())
+				b.WriteString("\n")
+			}
 		}
 		b.WriteString("}\n")
 	}

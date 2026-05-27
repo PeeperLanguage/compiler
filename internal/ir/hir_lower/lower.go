@@ -1,6 +1,9 @@
 package hir_lower
 
 import (
+	"fmt"
+
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
@@ -52,12 +55,17 @@ func LowerTyped(module *context.Module) *hir.Module {
 			Name:       fnSym.Name,
 			Params:     make([]ir.Param, 0, len(declFn.Decl.Params)),
 			ReturnType: retType,
-			Body:       &hir.Block{Stmts: make([]hir.Stmt, 0)},
+			Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: declFn.Decl.Body.Loc()},
+			Location:   declFn.Decl.Loc(),
 		}
 		for _, param := range declFn.Decl.Params {
 			name := ""
 			if param.Name != nil {
-				name = param.Name.Name
+				if resolution, ok := module.Bindings.LookupNode(param.Name); ok && resolution != nil && resolution.Symbol != nil {
+					name = symbolName(resolution.Symbol)
+				} else {
+					name = param.Name.Name
+				}
 			}
 			fn.Params = append(fn.Params, ir.Param{Name: name, Type: ir.TypeText(param.Type)})
 		}
@@ -71,6 +79,7 @@ func appendBlock(module *context.Module, out *hir.Block, block *ast.BlockStmt) {
 	if module == nil || out == nil || block == nil {
 		return
 	}
+	out.Location = block.Loc()
 	for _, stmt := range block.Stmts {
 		appendStmt(module, out, stmt)
 	}
@@ -79,7 +88,7 @@ func appendBlock(module *context.Module, out *hir.Block, block *ast.BlockStmt) {
 func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		block := &hir.Block{Stmts: make([]hir.Stmt, 0)}
+		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
 		appendBlock(module, block, node)
 		out.Stmts = append(out.Stmts, block)
 	case *ast.LetDecl:
@@ -91,7 +100,7 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		if !ok || resolution == nil || resolution.Symbol == nil {
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Value: lowerExpr(value), Location: node.Loc()})
 	case *ast.ConstDecl:
 		value, ok := module.Types.LookupExpr(node.Value)
 		if !ok {
@@ -101,15 +110,16 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		if !ok || resolution == nil || resolution.Symbol == nil {
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Value: lowerExpr(value), Location: node.Loc()})
 	case *ast.IfStmt:
 		cond, ok := module.Types.LookupExpr(node.Cond)
 		if !ok {
 			return
 		}
 		ifStmt := &hir.If{
-			Cond: lowerExpr(cond),
-			Then: &hir.Block{Stmts: make([]hir.Stmt, 0)},
+			Cond:     lowerExpr(cond),
+			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
+			Location: node.Loc(),
 		}
 		appendBlock(module, ifStmt.Then, node.Then)
 		if node.Else != nil {
@@ -124,14 +134,14 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		if !ok {
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Return{Value: lowerExpr(value)})
+		out.Stmts = append(out.Stmts, &hir.Return{Value: lowerExpr(value), Location: node.Loc()})
 	}
 }
 
 func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		block := &hir.Block{Stmts: make([]hir.Stmt, 0)}
+		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
 		appendBlock(module, block, node)
 		return block
 	case *ast.IfStmt:
@@ -140,8 +150,9 @@ func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
 			return nil
 		}
 		out := &hir.If{
-			Cond: lowerExpr(cond),
-			Then: &hir.Block{Stmts: make([]hir.Stmt, 0)},
+			Cond:     lowerExpr(cond),
+			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
+			Location: node.Loc(),
 		}
 		appendBlock(module, out.Then, node.Then)
 		if node.Else != nil {
@@ -161,7 +172,7 @@ func lowerExpr(expr typeinfo.Expr) ir.Expr {
 		if e.Symbol == nil {
 			return &ir.IntLit{Value: 0}
 		}
-		return &ir.Ident{Name: e.Symbol.Name}
+		return &ir.Ident{Name: symbolName(e.Symbol)}
 	case *typeinfo.Unary:
 		return &ir.Unary{Op: e.Op, Arg: lowerExpr(e.Arg)}
 	case *typeinfo.Binary:
@@ -169,4 +180,11 @@ func lowerExpr(expr typeinfo.Expr) ir.Expr {
 	default:
 		return &ir.IntLit{Value: 0}
 	}
+}
+
+func symbolName(sym *symbols.Symbol) string {
+	if sym == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
 }

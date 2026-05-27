@@ -1,0 +1,152 @@
+package hir_fold
+
+import (
+	"compiler/core/diagnostics"
+	"compiler/core/source"
+	"compiler/internal/ir"
+	"compiler/internal/ir/hir"
+)
+
+func FoldModule(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
+	if mod == nil {
+		return nil
+	}
+	for _, fn := range mod.Funcs {
+		if fn == nil || fn.Body == nil {
+			continue
+		}
+		fn.Body = foldBlock(fn.Body, diag)
+	}
+	return mod
+}
+
+func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag) *hir.Block {
+	if block == nil {
+		return nil
+	}
+	out := &hir.Block{
+		Stmts:    make([]hir.Stmt, 0, len(block.Stmts)),
+		Location: block.Location,
+	}
+	terminated := false
+	for _, stmt := range block.Stmts {
+		if stmt == nil {
+			continue
+		}
+		if terminated {
+			addUnreachableWarning(diag, stmtLoc(stmt))
+			continue
+		}
+		folded := foldStmt(stmt, diag)
+		for _, item := range folded {
+			out.Stmts = append(out.Stmts, item)
+			if stmtTerminates(item) {
+				terminated = true
+			}
+		}
+	}
+	return out
+}
+
+func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag) []hir.Stmt {
+	switch node := stmt.(type) {
+	case *hir.Block:
+		return []hir.Stmt{foldBlock(node, diag)}
+	case *hir.Binding:
+		return []hir.Stmt{&hir.Binding{Name: node.Name, Value: ir.FoldExpr(node.Value), Location: node.Location}}
+	case *hir.Return:
+		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value), Location: node.Location}}
+	case *hir.If:
+		thenBlock := foldBlock(node.Then, diag)
+		var elseStmt hir.Stmt
+		if node.Else != nil {
+			foldedElse := foldStmt(node.Else, diag)
+			if len(foldedElse) == 1 {
+				elseStmt = foldedElse[0]
+			} else if len(foldedElse) > 1 {
+				elseStmt = &hir.Block{Stmts: foldedElse, Location: stmtLoc(node.Else)}
+			}
+		}
+		cond := ir.FoldExpr(node.Cond)
+		if value, ok := ir.ConstInt(cond); ok {
+			if value != 0 {
+				addConstantConditionWarning(diag, node.Location, true)
+				if thenBlock == nil {
+					return nil
+				}
+				return []hir.Stmt{thenBlock}
+			}
+			addConstantConditionWarning(diag, node.Location, false)
+			if elseStmt == nil {
+				return nil
+			}
+			return []hir.Stmt{elseStmt}
+		}
+		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, Location: node.Location}}
+	default:
+		return []hir.Stmt{stmt}
+	}
+}
+
+func stmtTerminates(stmt hir.Stmt) bool {
+	switch node := stmt.(type) {
+	case *hir.Return:
+		return true
+	case *hir.Block:
+		if node == nil || len(node.Stmts) == 0 {
+			return false
+		}
+		return stmtTerminates(node.Stmts[len(node.Stmts)-1])
+	case *hir.If:
+		if node == nil || node.Else == nil {
+			return false
+		}
+		return stmtTerminates(node.Then) && stmtTerminates(node.Else)
+	default:
+		return false
+	}
+}
+
+func stmtLoc(stmt hir.Stmt) source.Location {
+	switch node := stmt.(type) {
+	case *hir.Block:
+		return node.Location
+	case *hir.Binding:
+		return node.Location
+	case *hir.Return:
+		return node.Location
+	case *hir.If:
+		return node.Location
+	default:
+		return source.Location{}
+	}
+}
+
+func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc source.Location, value bool) {
+	if diag == nil {
+		return
+	}
+	msg := "condition is always false"
+	code := diagnostics.WarnConstantConditionFalse
+	if value {
+		msg = "condition is always true"
+		code = diagnostics.WarnConstantConditionTrue
+	}
+	diag.Add(
+		diagnostics.NewWarning(msg).
+			WithCode(code).
+			WithPrimaryLabel(&loc, msg),
+	)
+}
+
+func addUnreachableWarning(diag *diagnostics.DiagnosticBag, loc source.Location) {
+	if diag == nil {
+		return
+	}
+	diag.Add(
+		diagnostics.NewWarning("unreachable code").
+			WithCode(diagnostics.WarnUnreachableCode).
+			WithPrimaryLabel(&loc, "this code is unreachable").
+			WithHelp("remove this code or restructure control flow"),
+	)
+}

@@ -3,6 +3,7 @@ package hir
 import (
 	"strings"
 
+	"compiler/core/source"
 	"compiler/internal/ir"
 )
 
@@ -23,6 +24,7 @@ type Function struct {
 	Params     []ir.Param
 	ReturnType string
 	Body       *Block
+	Location   source.Location
 }
 
 type Stmt interface {
@@ -32,22 +34,26 @@ type Stmt interface {
 }
 
 type Block struct {
-	Stmts []Stmt
+	Stmts    []Stmt
+	Location source.Location
 }
 
 type Binding struct {
-	Name  string
-	Value ir.Expr
+	Name     string
+	Value    ir.Expr
+	Location source.Location
 }
 
 type Return struct {
-	Value ir.Expr
+	Value    ir.Expr
+	Location source.Location
 }
 
 type If struct {
-	Cond ir.Expr
-	Then *Block
-	Else Stmt
+	Cond     ir.Expr
+	Then     *Block
+	Else     Stmt
+	Location source.Location
 }
 
 func (*Block) stmtNode()   {}

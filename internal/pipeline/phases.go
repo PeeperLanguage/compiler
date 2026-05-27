@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/hir"
+	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
@@ -46,7 +47,7 @@ func analyze(ctx *context.CompilerContext, module *context.Module, diag *diagnos
 }
 
 // Checked AST/semantic data to high-level IR.
-func lowerHIR(module *context.Module) (*hir.Module, string) {
+func lowerHIR(module *context.Module, diag *diagnostics.DiagnosticBag) (*hir.Module, string) {
 	if module == nil || module.Types == nil {
 		return nil, ""
 	}
@@ -54,6 +55,7 @@ func lowerHIR(module *context.Module) (*hir.Module, string) {
 	if mod == nil {
 		return nil, ""
 	}
+	mod = hir_fold.FoldModule(mod, diag)
 	module.HIR = mod
 	return mod, mod.Text()
 }
