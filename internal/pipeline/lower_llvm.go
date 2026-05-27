@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 )
 
@@ -77,7 +78,7 @@ func lowerLLVMFromMIR(mod *mir.Module) string {
 				lb.line(fmt.Sprintf("br i1 %s, label %%b%d, label %%b%d", cond, term.ThenID, term.ElseID))
 			case *mir.Ret:
 				val := emitRef(lb, term.Value)
-				lb.line("ret i32 " + val)
+				lb.line("ret " + mustLLVMType(fn.ReturnType) + " " + val)
 			}
 		}
 		b.WriteString("}\n")
@@ -86,9 +87,17 @@ func lowerLLVMFromMIR(mod *mir.Module) string {
 }
 
 func mustLLVMType(typeText string) string {
+	if signed, bits, ok := mirParseIntegerType(typeText); ok {
+		_ = signed
+		return fmt.Sprintf("i%d", bits)
+	}
 	switch typeText {
-	case "i32":
-		return "i32"
+	case "f32":
+		return "float"
+	case "f64":
+		return "double"
+	case "bool":
+		return "i1"
 	default:
 		panic("unsupported llvm type: " + typeText)
 	}
@@ -126,17 +135,18 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		return emitRef(b, e.Src)
 	case *mir.Unary:
 		arg := emitRef(b, e.Arg)
+		typ := mustLLVMType(e.Type)
 		switch e.Op {
 		case "-":
 			out := b.nextReg()
-			b.line(fmt.Sprintf("%s = sub i32 0, %s", out, arg))
+			if isLLVMFloatType(typ) {
+				b.line(fmt.Sprintf("%s = fsub %s 0.0, %s", out, typ, arg))
+			} else {
+				b.line(fmt.Sprintf("%s = sub %s 0, %s", out, typ, arg))
+			}
 			return out
 		case "!":
-			cmp := b.nextReg()
-			b.line(fmt.Sprintf("%s = icmp eq i32 %s, 0", cmp, arg))
-			out := b.nextReg()
-			b.line(fmt.Sprintf("%s = zext i1 %s to i32", out, cmp))
-			return out
+			return emitLogicalNot(b, arg, e.Arg)
 		default:
 			return arg
 		}
@@ -144,34 +154,62 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		left := emitRef(b, e.Left)
 		right := emitRef(b, e.Right)
 		out := b.nextReg()
+		leftType := mustLLVMType(mirRefType(e.Left))
 		switch e.Op {
 		case "+":
-			b.line(fmt.Sprintf("%s = add nsw i32 %s, %s", out, left, right))
+			if isLLVMFloatType(leftType) {
+				b.line(fmt.Sprintf("%s = fadd %s %s, %s", out, leftType, left, right))
+			} else {
+				b.line(fmt.Sprintf("%s = add %s %s, %s", out, leftType, left, right))
+			}
 		case "-":
-			b.line(fmt.Sprintf("%s = sub nsw i32 %s, %s", out, left, right))
+			if isLLVMFloatType(leftType) {
+				b.line(fmt.Sprintf("%s = fsub %s %s, %s", out, leftType, left, right))
+			} else {
+				b.line(fmt.Sprintf("%s = sub %s %s, %s", out, leftType, left, right))
+			}
 		case "*":
-			b.line(fmt.Sprintf("%s = mul nsw i32 %s, %s", out, left, right))
+			if isLLVMFloatType(leftType) {
+				b.line(fmt.Sprintf("%s = fmul %s %s, %s", out, leftType, left, right))
+			} else {
+				b.line(fmt.Sprintf("%s = mul %s %s, %s", out, leftType, left, right))
+			}
 		case "/":
-			b.line(fmt.Sprintf("%s = sdiv i32 %s, %s", out, left, right))
+			if isLLVMFloatType(leftType) {
+				b.line(fmt.Sprintf("%s = fdiv %s %s, %s", out, leftType, left, right))
+			} else if isUnsignedMIRType(mirRefType(e.Left)) {
+				b.line(fmt.Sprintf("%s = udiv %s %s, %s", out, leftType, left, right))
+			} else {
+				b.line(fmt.Sprintf("%s = sdiv %s %s, %s", out, leftType, left, right))
+			}
 		case "%":
-			b.line(fmt.Sprintf("%s = srem i32 %s, %s", out, left, right))
+			if isLLVMFloatType(leftType) {
+				b.line(fmt.Sprintf("%s = frem %s %s, %s", out, leftType, left, right))
+			} else if isUnsignedMIRType(mirRefType(e.Left)) {
+				b.line(fmt.Sprintf("%s = urem %s %s, %s", out, leftType, left, right))
+			} else {
+				b.line(fmt.Sprintf("%s = srem %s %s, %s", out, leftType, left, right))
+			}
 		case "==", "!=", "<", "<=", ">", ">=":
-			pred := map[string]string{"==": "eq", "!=": "ne", "<": "slt", "<=": "sle", ">": "sgt", ">=": "sge"}[e.Op]
 			cmp := b.nextReg()
-			b.line(fmt.Sprintf("%s = icmp %s i32 %s, %s", cmp, pred, left, right))
-			b.line(fmt.Sprintf("%s = zext i1 %s to i32", out, cmp))
+			if isLLVMFloatType(leftType) {
+				pred := map[string]string{"==": "oeq", "!=": "one", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
+				b.line(fmt.Sprintf("%s = fcmp %s %s %s, %s", cmp, pred, leftType, left, right))
+			} else {
+				pred := integerComparePred(e.Op, mirRefType(e.Left))
+				b.line(fmt.Sprintf("%s = icmp %s %s %s, %s", cmp, pred, leftType, left, right))
+			}
+			return cmp
 		case "&&", "||":
-			lc := b.nextReg()
-			b.line(fmt.Sprintf("%s = icmp ne i32 %s, 0", lc, left))
-			rc := b.nextReg()
-			b.line(fmt.Sprintf("%s = icmp ne i32 %s, 0", rc, right))
+			lc := emitCondRef(b, e.Left)
+			rc := emitCondRef(b, e.Right)
 			merged := b.nextReg()
 			if e.Op == "&&" {
 				b.line(fmt.Sprintf("%s = and i1 %s, %s", merged, lc, rc))
 			} else {
 				b.line(fmt.Sprintf("%s = or i1 %s, %s", merged, lc, rc))
 			}
-			b.line(fmt.Sprintf("%s = zext i1 %s to i32", out, merged))
+			return merged
 		default:
 			return left
 		}
@@ -184,7 +222,13 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 	switch v := ref.(type) {
 	case *mir.RefConst:
-		return fmt.Sprintf("%d", v.Value)
+		if v.Type == "bool" {
+			if v.Value == "0" {
+				return "false"
+			}
+			return "true"
+		}
+		return v.Value
 	case *mir.RefName:
 		if reg, ok := b.locals[v.Name]; ok {
 			return reg
@@ -197,15 +241,103 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 
 func emitCondRef(b *llvmBuilder, ref mir.ValueRef) string {
 	val := emitRef(b, ref)
+	refType := mirRefType(ref)
+	if refType == "bool" {
+		return val
+	}
 	switch v := ref.(type) {
 	case *mir.RefConst:
-		if v.Value == 0 {
+		if v.Type == "f32" || v.Type == "f64" {
+			if v.Value == "0" || v.Value == "0.0" {
+				return "false"
+			}
+			return "true"
+		}
+		if v.Value == "0" {
 			return "false"
 		}
 		return "true"
 	default:
 		out := b.nextReg()
-		b.line(fmt.Sprintf("%s = icmp ne i32 %s, 0", out, val))
+		llvmType := mustLLVMType(refType)
+		if isLLVMFloatType(llvmType) {
+			zero := "0.0"
+			b.line(fmt.Sprintf("%s = fcmp one %s %s, %s", out, llvmType, val, zero))
+		} else {
+			b.line(fmt.Sprintf("%s = icmp ne %s %s, 0", out, llvmType, val))
+		}
 		return out
 	}
+}
+
+func mirRefType(ref mir.ValueRef) string {
+	switch v := ref.(type) {
+	case *mir.RefConst:
+		return v.Type
+	case *mir.RefName:
+		return v.Type
+	default:
+		return "i32"
+	}
+}
+
+func emitLogicalNot(b *llvmBuilder, arg string, ref mir.ValueRef) string {
+	if mirRefType(ref) == "bool" {
+		out := b.nextReg()
+		b.line(fmt.Sprintf("%s = xor i1 %s, true", out, arg))
+		return out
+	}
+	cmp := emitCondRef(b, ref)
+	out := b.nextReg()
+	b.line(fmt.Sprintf("%s = xor i1 %s, true", out, cmp))
+	return out
+}
+
+func integerComparePred(op string, typeText string) string {
+	unsigned := isUnsignedMIRType(typeText)
+	switch op {
+	case "==":
+		return "eq"
+	case "!=":
+		return "ne"
+	case "<":
+		if unsigned {
+			return "ult"
+		}
+		return "slt"
+	case "<=":
+		if unsigned {
+			return "ule"
+		}
+		return "sle"
+	case ">":
+		if unsigned {
+			return "ugt"
+		}
+		return "sgt"
+	case ">=":
+		if unsigned {
+			return "uge"
+		}
+		return "sge"
+	default:
+		return "eq"
+	}
+}
+
+func isUnsignedMIRType(typeText string) bool {
+	signed, _, ok := mirParseIntegerType(typeText)
+	return ok && !signed
+}
+
+func mirParseIntegerType(typeText string) (bool, int, bool) {
+	return mirParseIntegerTypeImpl(typeText)
+}
+
+func mirParseIntegerTypeImpl(typeText string) (bool, int, bool) {
+	return ir.ParseIntegerType(typeText)
+}
+
+func isLLVMFloatType(typeText string) bool {
+	return typeText == "float" || typeText == "double"
 }

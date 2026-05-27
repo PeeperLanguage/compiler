@@ -3,6 +3,7 @@ package common
 import (
 	"compiler/core/diagnostics"
 	"compiler/core/source"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
 )
 
@@ -24,6 +25,5 @@ func AddError(diag *diagnostics.DiagnosticBag, filePath string, node ast.Node, c
 }
 
 func IsI32Type(typ ast.TypeExpr) bool {
-	named, ok := typ.(*ast.NamedType)
-	return ok && named != nil && named.Name == "i32"
+	return typeinfo.IsI32(typeinfo.TypeFromSyntax(typ))
 }

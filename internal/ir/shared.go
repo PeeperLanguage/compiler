@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/tokens"
+	"compiler/internal/utils/numeric"
 )
 
 type Param struct {
@@ -24,37 +26,120 @@ type Slots struct {
 type Expr interface {
 	exprNode()
 	String() string
+	TypeText() string
 }
 
 type IntLit struct {
-	Value int32
+	Value string
+	Type  string
+}
+
+type FloatLit struct {
+	Value string
+	Type  string
 }
 
 type Ident struct {
 	Name string
+	Type string
 }
 
 type Unary struct {
-	Op  string
-	Arg Expr
+	Op   string
+	Arg  Expr
+	Type string
 }
 
 type Binary struct {
 	Op    string
 	Left  Expr
 	Right Expr
+	Type  string
 }
 
-func (*IntLit) exprNode() {}
-func (*Ident) exprNode()  {}
-func (*Unary) exprNode()  {}
-func (*Binary) exprNode() {}
+func (*IntLit) exprNode()   {}
+func (*FloatLit) exprNode() {}
+func (*Ident) exprNode()    {}
+func (*Unary) exprNode()    {}
+func (*Binary) exprNode()   {}
 
-func (e *IntLit) String() string { return fmt.Sprintf("%d", e.Value) }
-func (e *Ident) String() string  { return e.Name }
-func (e *Unary) String() string  { return fmt.Sprintf("(%s %s)", e.Op, e.Arg.String()) }
+func (e *IntLit) String() string {
+	if e == nil {
+		return "0"
+	}
+	return e.Value
+}
+func (e *IntLit) TypeText() string {
+	if e == nil || e.Type == "" {
+		return "i32"
+	}
+	return e.Type
+}
+func (e *FloatLit) String() string {
+	if e == nil {
+		return "0.0"
+	}
+	return e.Value
+}
+func (e *FloatLit) TypeText() string {
+	if e == nil || e.Type == "" {
+		return "f64"
+	}
+	return e.Type
+}
+func (e *Ident) String() string { return e.Name }
+func (e *Ident) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+func (e *Unary) String() string { return fmt.Sprintf("(%s %s)", e.Op, e.Arg.String()) }
+func (e *Unary) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	if e.Type != "" {
+		return e.Type
+	}
+	if e.Arg != nil {
+		return e.Arg.TypeText()
+	}
+	return ""
+}
 func (e *Binary) String() string {
 	return fmt.Sprintf("(%s %s %s)", e.Op, e.Left.String(), e.Right.String())
+}
+func (e *Binary) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func IsFloatType(name string) bool {
+	return name == "f32" || name == "f64"
+}
+
+func IsIntegerType(name string) bool {
+	_, _, ok := ParseIntegerType(name)
+	return ok
+}
+
+func IsBoolType(name string) bool {
+	return name == "bool"
+}
+
+func ParseIntegerType(name string) (signed bool, bits int, ok bool) {
+	return tokens.ParseIntegerBuiltin(name)
+}
+
+func IsScalarType(name string) bool {
+	return IsIntegerType(name) || IsFloatType(name) || IsBoolType(name)
+}
+
+func IsFloatLiteral(text string) bool {
+	return numeric.LooksFloatLike(text)
 }
 
 func TypeText(typ ast.TypeExpr) string {

@@ -137,3 +137,22 @@ func TestResolveTypecheckIfElseReturns(t *testing.T) {
 		t.Fatalf("if/else semantics failed for %s:\n%s", module.FilePath, diag.EmitAllToString())
 	}
 }
+
+func TestResolveTypecheckBuiltinScalars(t *testing.T) {
+	src := `fn ints(a: i64, b: u64) -> u64 {
+	const c: u64 = 5;
+	return b + c;
+}
+
+fn floats(x: f32, y: f64) -> f64 {
+	return y + 2.5;
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	module, diag, ok := testModule(src)
+	if !ok {
+		t.Fatalf("builtin scalar semantics failed for %s:\n%s", module.FilePath, diag.EmitAllToString())
+	}
+}

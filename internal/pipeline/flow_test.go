@@ -182,6 +182,38 @@ func TestHIRFoldWarnsUnreachableAfterConstantIf(t *testing.T) {
 	}
 }
 
+func TestHIRFoldConstBindingCondition(t *testing.T) {
+	src := `fn main() -> i32 {
+	const a = 2 + 5;
+	if a < 10 {
+		return a;
+	}
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !ok || module.Types == nil {
+		t.Fatalf("analyze failed")
+	}
+	_, hirText := lowerHIR(module, diag)
+	if !strings.Contains(hirText, "const a$") || !strings.Contains(hirText, "const a$") || !strings.Contains(hirText, "return 7") || strings.Contains(hirText, "if ") {
+		t.Fatalf("hir lowering failed: %q", hirText)
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, diagnostics.WarnConstantConditionTrue) || !strings.Contains(out, diagnostics.WarnUnreachableCode) {
+		t.Fatalf("expected const-fold diagnostics, got: %s", out)
+	}
+}
+
 func TestHIRKeepsNonConstantIfElse(t *testing.T) {
 	src := `fn helper(x: i32) -> i32 {
 	if x {
@@ -211,6 +243,53 @@ func TestHIRKeepsNonConstantIfElse(t *testing.T) {
 	_, mirText := lowerMIR(module)
 	if !strings.Contains(mirText, "br x$") {
 		t.Fatalf("mir lowering failed: %q", mirText)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+}
+
+func TestFullFlowBuiltinScalarLowering(t *testing.T) {
+	src := `fn add_i64(a: i64, b: i64) -> i64 {
+	return a + b;
+}
+
+fn add_u64(a: u64, b: u64) -> u64 {
+	return a + b;
+}
+
+fn add_f64(a: f64, b: f64) -> f64 {
+	return a + b;
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !ok || module.Types == nil {
+		t.Fatalf("analyze failed")
+	}
+	_, hirText := lowerHIR(module, diag)
+	if !strings.Contains(hirText, "fn add_i64(") || !strings.Contains(hirText, "fn add_u64(") || !strings.Contains(hirText, "fn add_f64(") {
+		t.Fatalf("hir lowering failed: %q", hirText)
+	}
+	_, mirText := lowerMIR(module)
+	if !strings.Contains(mirText, "fn add_i64(") || !strings.Contains(mirText, "fn add_f64(") {
+		t.Fatalf("mir lowering failed: %q", mirText)
+	}
+	llvmText := lowerLLVMIR(module)
+	if !strings.Contains(llvmText, "define i64 @add_i64") || !strings.Contains(llvmText, "define i64 @add_u64") || !strings.Contains(llvmText, "define double @add_f64") || !strings.Contains(llvmText, "fadd double") {
+		t.Fatalf("llvm lowering failed:\n%s", llvmText)
 	}
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())

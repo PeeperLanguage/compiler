@@ -72,26 +72,31 @@ type ValueRef interface {
 }
 
 type RefConst struct {
-	Value int32
+	Value string
+	Type  string
 }
 
 type RefName struct {
 	Name string
+	Type string
 }
 
 type Unary struct {
-	Op  string
-	Arg ValueRef
+	Op   string
+	Arg  ValueRef
+	Type string
 }
 
 type Binary struct {
 	Op    string
 	Left  ValueRef
 	Right ValueRef
+	Type  string
 }
 
 type Move struct {
-	Src ValueRef
+	Src  ValueRef
+	Type string
 }
 
 func (i *Assign) Text() string {
@@ -116,7 +121,7 @@ func (*Move) valueExprNode()    {}
 func (*RefConst) valueRefNode() {}
 func (*RefName) valueRefNode()  {}
 
-func (r *RefConst) Text() string { return fmt.Sprintf("%d", r.Value) }
+func (r *RefConst) Text() string { return r.Value }
 func (r *RefName) Text() string  { return r.Name }
 func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
@@ -267,22 +272,24 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
 	case *ir.IntLit:
-		return &RefConst{Value: e.Value}
+		return &RefConst{Value: e.Value, Type: e.TypeText()}
+	case *ir.FloatLit:
+		return &RefConst{Value: e.Value, Type: e.TypeText()}
 	case *ir.Ident:
-		return &RefName{Name: e.Name}
+		return &RefName{Name: e.Name, Type: e.TypeText()}
 	case *ir.Unary:
 		arg := lowerExpr(e.Arg, tmp, out)
 		name := nextTemp(tmp)
-		*out = append(*out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg}})
-		return &RefName{Name: name}
+		*out = append(*out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Binary:
 		left := lowerExpr(e.Left, tmp, out)
 		right := lowerExpr(e.Right, tmp, out)
 		name := nextTemp(tmp)
-		*out = append(*out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right}})
-		return &RefName{Name: name}
+		*out = append(*out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
 	default:
-		return &RefConst{Value: 0}
+		return &RefConst{Value: "0", Type: "i32"}
 	}
 }
 
@@ -292,7 +299,14 @@ func nextTemp(tmp *int) string {
 }
 
 func asValueExpr(ref ValueRef) ValueExpr {
-	return &Move{Src: ref}
+	switch node := ref.(type) {
+	case *RefConst:
+		return &Move{Src: ref, Type: node.Type}
+	case *RefName:
+		return &Move{Src: ref, Type: node.Type}
+	default:
+		return &Move{Src: ref, Type: "i32"}
+	}
 }
 
 func (m *Module) Text() string {
