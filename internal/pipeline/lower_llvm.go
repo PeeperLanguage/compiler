@@ -58,12 +58,25 @@ func lowerLLVMFromMIR(mod *mir.Module) string {
 		for _, param := range fn.Params {
 			lb.locals[param.Name] = "%" + param.Name
 		}
-		for _, instr := range fn.Instrs {
-			switch in := instr.(type) {
-			case *mir.Assign:
-				lb.locals[in.Name] = emitValueExpr(lb, in.Value)
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			lb.label(block.ID)
+			for _, instr := range block.Instrs {
+				switch in := instr.(type) {
+				case *mir.Assign:
+					lb.locals[in.Name] = emitValueExpr(lb, in.Value)
+				}
+			}
+			switch term := block.Term.(type) {
+			case *mir.Jump:
+				lb.line(fmt.Sprintf("br label %%b%d", term.TargetID))
+			case *mir.Branch:
+				cond := emitCondRef(lb, term.Cond)
+				lb.line(fmt.Sprintf("br i1 %s, label %%b%d, label %%b%d", cond, term.ThenID, term.ElseID))
 			case *mir.Ret:
-				val := emitRef(lb, in.Value)
+				val := emitRef(lb, term.Value)
 				lb.line("ret i32 " + val)
 			}
 		}
@@ -101,6 +114,10 @@ func (b *llvmBuilder) line(text string) {
 	b.out.WriteString("  ")
 	b.out.WriteString(text)
 	b.out.WriteString("\n")
+}
+
+func (b *llvmBuilder) label(id int) {
+	b.out.WriteString(fmt.Sprintf("b%d:\n", id))
 }
 
 func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
@@ -175,5 +192,20 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		return "0"
 	default:
 		return "0"
+	}
+}
+
+func emitCondRef(b *llvmBuilder, ref mir.ValueRef) string {
+	val := emitRef(b, ref)
+	switch v := ref.(type) {
+	case *mir.RefConst:
+		if v.Value == 0 {
+			return "false"
+		}
+		return "true"
+	default:
+		out := b.nextReg()
+		b.line(fmt.Sprintf("%s = icmp ne i32 %s, 0", out, val))
+		return out
 	}
 }

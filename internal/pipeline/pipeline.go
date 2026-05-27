@@ -61,7 +61,7 @@ func (p *Pipeline) Run(entry *context.Module) Result {
 		stage.AST = parse(module, stage.Tokens, diag)
 		ok := analyze(p.ctx, module, diag)
 		stage.HasSem = ok
-		_, hirText := lowerHIR(module)
+		_, hirText := lowerHIR(module, diag)
 		stage.HIRText = hirText
 		_, mirText := lowerMIR(module)
 		stage.MIRText = mirText
