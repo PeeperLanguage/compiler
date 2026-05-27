@@ -13,11 +13,11 @@ type Location struct {
 	End      *Position
 }
 
-func NewLocation(file string, start, end Position) Location {
+func NewLocation(file string, start, end Position) *Location {
 	startCopy := start
 	endCopy := end
 	filename := file
-	return Location{
+	return &Location{
 		Filename: &filename,
 		Start:    &startCopy,
 		End:      &endCopy,
@@ -63,10 +63,12 @@ func (l *Location) GetText(cache SourceCache) string {
 			}
 		case l.End.Line:
 			if l.End.Column >= 1 && l.End.Column <= len(line)+1 {
-				result.WriteString("\n" + line[:l.End.Column-1])
+				result.WriteString("\n")
+				result.WriteString(line[:l.End.Column-1])
 			}
 		default:
-			result.WriteString("\n" + line)
+			result.WriteString("\n")
+			result.WriteString(line)
 		}
 	}
 	return result.String()

@@ -38,7 +38,7 @@ func TestLocationGetTextAndRange(t *testing.T) {
 	}
 
 	loc := NewLocation(path, Position{Line: 1, Column: 7}, Position{Line: 1, Column: 12})
-	if got := (&loc).GetText(nil); got != "world" {
+	if got := loc.GetText(nil); got != "world" {
 		t.Fatalf("GetText = %q, want world", got)
 	}
 

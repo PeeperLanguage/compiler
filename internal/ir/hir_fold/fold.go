@@ -127,7 +127,7 @@ func stmtTerminates(stmt hir.Stmt) bool {
 	}
 }
 
-func stmtLoc(stmt hir.Stmt) source.Location {
+func stmtLoc(stmt hir.Stmt) *source.Location {
 	switch node := stmt.(type) {
 	case *hir.Block:
 		return node.Location
@@ -138,11 +138,11 @@ func stmtLoc(stmt hir.Stmt) source.Location {
 	case *hir.If:
 		return node.Location
 	default:
-		return source.Location{}
+		return &source.Location{}
 	}
 }
 
-func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc source.Location, value bool) {
+func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc *source.Location, value bool) {
 	if diag == nil {
 		return
 	}
@@ -155,18 +155,18 @@ func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc source.Loc
 	diag.Add(
 		diagnostics.NewWarning(msg).
 			WithCode(code).
-			WithPrimaryLabel(&loc, msg),
+			WithPrimaryLabel(loc, msg),
 	)
 }
 
-func addUnreachableWarning(diag *diagnostics.DiagnosticBag, loc source.Location) {
+func addUnreachableWarning(diag *diagnostics.DiagnosticBag, loc *source.Location) {
 	if diag == nil {
 		return
 	}
 	diag.Add(
 		diagnostics.NewWarning("unreachable code").
 			WithCode(diagnostics.WarnUnreachableCode).
-			WithPrimaryLabel(&loc, "this code is unreachable").
+			WithPrimaryLabel(loc, "this code is unreachable").
 			WithHelp("remove this code or restructure control flow"),
 	)
 }

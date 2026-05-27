@@ -24,7 +24,7 @@ type Function struct {
 	Params     []ir.Param
 	ReturnType string
 	Body       *Block
-	Location   source.Location
+	Location   *source.Location
 }
 
 type Stmt interface {
@@ -35,26 +35,26 @@ type Stmt interface {
 
 type Block struct {
 	Stmts    []Stmt
-	Location source.Location
+	Location *source.Location
 }
 
 type Binding struct {
 	Name     string
 	Constant bool
 	Value    ir.Expr
-	Location source.Location
+	Location *source.Location
 }
 
 type Return struct {
 	Value    ir.Expr
-	Location source.Location
+	Location *source.Location
 }
 
 type If struct {
 	Cond     ir.Expr
 	Then     *Block
 	Else     Stmt
-	Location source.Location
+	Location *source.Location
 }
 
 func (*Block) stmtNode()   {}

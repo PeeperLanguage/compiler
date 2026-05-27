@@ -6,7 +6,7 @@ import (
 	"compiler/core/source"
 )
 
-func testLoc(file string, line, col int) source.Location {
+func testLoc(file string, line, col int) *source.Location {
 	start := source.Position{Line: line, Column: col}
 	end := source.Position{Line: line, Column: col + 1}
 	return source.NewLocation(file, start, end)
@@ -16,7 +16,7 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 	d := NewError("boom")
 	loc := testLoc("a.em", 1, 1)
 
-	d.WithSecondaryLabel(&loc, "context")
+	d.WithSecondaryLabel(loc, "context")
 	if d.Severity != Error {
 		t.Fatalf("expected severity error, got %v", d.Severity)
 	}
@@ -40,7 +40,7 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 	d := NewError("immutable")
 	loc := testLoc("main.em", 2, 5)
-	d.WithCodeReplacement(&loc, "maybe", "mut maybe")
+	d.WithCodeReplacement(loc, "maybe", "mut maybe")
 
 	if len(d.Extras) != 1 {
 		t.Fatalf("expected 1 extra entry, got %d", len(d.Extras))
@@ -66,7 +66,7 @@ func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 func TestWithPrimaryLabelSetsFilePath(t *testing.T) {
 	d := NewError("x")
 	loc := testLoc("sample.em", 3, 2)
-	d.WithPrimaryLabel(&loc, "here")
+	d.WithPrimaryLabel(loc, "here")
 
 	if d.FilePath != "sample.em" {
 		t.Fatalf("expected filepath sample.em, got %q", d.FilePath)

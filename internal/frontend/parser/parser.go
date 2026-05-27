@@ -70,7 +70,7 @@ func (p *Parser) recoverMissingToken(expected tokens.Kind, msg string, fallback 
 	p.diag.Add(
 		diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrExpectedToken).
-			WithPrimaryLabel(&loc, fmt.Sprintf("add missing `%s` here", string(expected))),
+			WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(expected))),
 	)
 	synth := tokens.Token{
 		Kind:    expected,
@@ -282,7 +282,7 @@ func (p *Parser) parseRequiredBlock(owner blockOwner) (*ast.BlockStmt, bool) {
 	p.diag.Add(
 		diagnostics.NewError("missing "+string(owner)+" body").
 			WithCode(diagnostics.ErrExpectedToken).
-			WithPrimaryLabel(&loc, "add missing `{}` here"),
+			WithPrimaryLabel(loc, "add missing `{}` here"),
 	)
 	empty := source.NewLocation(p.filePath, insert, insert)
 	return &ast.BlockStmt{
@@ -397,7 +397,7 @@ func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.
 	} else if token == tokens.CONST {
 		peek := p.peek()
 		diag := diagnostics.NewError("Missing initializer for const declaration")
-		diag.WithPrimaryLabel(new(p.loc(peek, peek)), "add initial value here")
+		diag.WithPrimaryLabel(p.loc(peek, peek), "add initial value here")
 		p.diag.Add(diag)
 	}
 
@@ -880,15 +880,15 @@ func (p *Parser) errorf(tok tokens.Token, code, msg string) {
 	p.diag.Add(
 		diagnostics.NewError(msg).
 			WithCode(code).
-			WithPrimaryLabel(&loc, fmt.Sprintf("found %s", tok.Kind)),
+			WithPrimaryLabel(loc, fmt.Sprintf("found %s", tok.Kind)),
 	)
 }
 
-func (p *Parser) loc(start, end tokens.Token) source.Location {
+func (p *Parser) loc(start, end tokens.Token) *source.Location {
 	return source.NewLocation(p.filePath, start.Start, end.End)
 }
 
-func (p *Parser) locFromNode(left, right ast.Node) source.Location {
+func (p *Parser) locFromNode(left, right ast.Node) *source.Location {
 	l := left.Loc()
 	r := right.Loc()
 	start := source.NewPosition()

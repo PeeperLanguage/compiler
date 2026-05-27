@@ -39,12 +39,12 @@ func reportMissingReturn(fn *hir.Function, diag *diagnostics.DiagnosticBag) {
 	d := diagnostics.NewError(msg).WithCode(diagnostics.ErrMissingReturn)
 
 	loc := fn.Location
-	d.WithPrimaryLabel(&loc, "expected `"+fn.ReturnType+"` because of this return type")
+	d.WithPrimaryLabel(loc, "expected `"+fn.ReturnType+"` because of this return type")
 
 	missing := collectMissingReturns(fn.Body)
 	for _, loc := range missing {
 		l := loc
-		d.WithSecondaryLabel(&l, "this branch does not return a value")
+		d.WithSecondaryLabel(l, "this branch does not return a value")
 	}
 	d.WithText("note", "some branch completes without a `return`, execution can fall off end of function", colors.CYAN)
 	d.WithHelp("fulfill the return or add a fallback return on parent scope")
@@ -55,12 +55,12 @@ func reportMissingReturn(fn *hir.Function, diag *diagnostics.DiagnosticBag) {
 // Strategy:
 // - only examine "tail position" of blocks (where fallthrough possible)
 // - descend into nested if-chains to pinpoint innermost missing branch
-func collectMissingReturns(b *hir.Block) []source.Location {
+func collectMissingReturns(b *hir.Block) []*source.Location {
 	if b == nil {
 		return nil
 	}
 	if len(b.Stmts) == 0 {
-		return []source.Location{b.Location}
+		return []*source.Location{b.Location}
 	}
 	if slices.ContainsFunc(b.Stmts, mustReturnStmt) {
 		return nil
@@ -69,10 +69,10 @@ func collectMissingReturns(b *hir.Block) []source.Location {
 	return collectMissingStmt(last, b.Location)
 }
 
-func collectMissingStmt(s hir.Stmt, fallback source.Location) []source.Location {
+func collectMissingStmt(s hir.Stmt, fallback *source.Location) []*source.Location {
 	switch n := s.(type) {
 	case *hir.If:
-		out := make([]source.Location, 0)
+		out := make([]*source.Location, 0)
 		if !mustReturnBlock(n.Then) {
 			out = append(out, collectMissingReturns(n.Then)...)
 			if len(out) == 0 {
@@ -98,11 +98,11 @@ func collectMissingStmt(s hir.Stmt, fallback source.Location) []source.Location 
 		return collectMissingReturns(n)
 	default:
 		// Tail statement not returning. Point at enclosing block tail.
-		return []source.Location{fallback}
+		return []*source.Location{fallback}
 	}
 }
 
-func stmtLoc(s hir.Stmt, fallback source.Location) source.Location {
+func stmtLoc(s hir.Stmt, fallback *source.Location) *source.Location {
 	if s == nil {
 		return fallback
 	}

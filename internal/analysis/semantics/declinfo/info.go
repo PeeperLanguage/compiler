@@ -28,5 +28,5 @@ type ExternDecl struct {
 
 type LocalDecl struct {
 	Name string
-	Loc  source.Location
+	Loc  *source.Location
 }

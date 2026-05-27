@@ -180,7 +180,7 @@ func charHandler(l *Lexer, re *regexp.Regexp) {
 		l.diag.Add(
 			diagnostics.NewError("character literal must contain exactly one character").
 				WithCode(diagnostics.ErrUnexpectedCharacter).
-				WithPrimaryLabel(&loc, "use exactly one character between single quotes"),
+				WithPrimaryLabel(loc, "use exactly one character between single quotes"),
 		)
 		l.push(tokens.Token{Kind: tokens.ILLEGAL, Literal: match, Start: start, End: l.pos})
 		return
@@ -199,7 +199,7 @@ func byteCharHandler(l *Lexer, re *regexp.Regexp) {
 		l.diag.Add(
 			diagnostics.NewError("byte literal must contain exactly one byte").
 				WithCode(diagnostics.ErrUnexpectedCharacter).
-				WithPrimaryLabel(&loc, "use exactly one byte after the b'...' prefix"),
+				WithPrimaryLabel(loc, "use exactly one byte after the b'...' prefix"),
 		)
 		l.push(tokens.Token{Kind: tokens.ILLEGAL, Literal: match, Start: start, End: l.pos})
 		return
@@ -233,7 +233,7 @@ func (l *Lexer) Tokenize() []tokens.Token {
 		l.diag.Add(
 			diagnostics.NewError(fmt.Sprintf("illegal character %q", bad)).
 				WithCode(diagnostics.ErrUnexpectedCharacter).
-				WithPrimaryLabel(&loc, "remove or replace this character"),
+				WithPrimaryLabel(loc, "remove or replace this character"),
 		)
 		l.push(tokens.Token{Kind: tokens.ILLEGAL, Literal: bad, Start: start, End: l.pos})
 	}
