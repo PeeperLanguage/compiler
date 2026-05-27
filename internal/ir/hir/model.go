@@ -40,6 +40,7 @@ type Block struct {
 
 type Binding struct {
 	Name     string
+	Constant bool
 	Value    ir.Expr
 	Location source.Location
 }
@@ -127,7 +128,11 @@ func (s *Block) appendInlineText(b *strings.Builder, indent int) {
 
 func (s *Binding) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
-	b.WriteString("let ")
+	if s.Constant {
+		b.WriteString("const ")
+	} else {
+		b.WriteString("let ")
+	}
 	b.WriteString(s.Name)
 	b.WriteString(" = ")
 	b.WriteString(s.Value.String())

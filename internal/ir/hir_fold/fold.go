@@ -1,6 +1,7 @@
 package hir_fold
 
 import (
+	"maps"
 	"compiler/core/diagnostics"
 	"compiler/core/source"
 	"compiler/internal/ir"
@@ -15,12 +16,12 @@ func FoldModule(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
 		if fn == nil || fn.Body == nil {
 			continue
 		}
-		fn.Body = foldBlock(fn.Body, diag)
+		fn.Body = foldBlock(fn.Body, diag, nil)
 	}
 	return mod
 }
 
-func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag) *hir.Block {
+func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[string]ir.ConstValue) *hir.Block {
 	if block == nil {
 		return nil
 	}
@@ -28,6 +29,7 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag) *hir.Block {
 		Stmts:    make([]hir.Stmt, 0, len(block.Stmts)),
 		Location: block.Location,
 	}
+	env := cloneConstEnv(parentEnv)
 	terminated := false
 	for _, stmt := range block.Stmts {
 		if stmt == nil {
@@ -37,7 +39,7 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag) *hir.Block {
 			addUnreachableWarning(diag, stmtLoc(stmt))
 			continue
 		}
-		folded := foldStmt(stmt, diag)
+		folded := foldStmt(stmt, diag, env)
 		for _, item := range folded {
 			out.Stmts = append(out.Stmts, item)
 			if stmtTerminates(item) {
@@ -48,44 +50,62 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag) *hir.Block {
 	return out
 }
 
-func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag) []hir.Stmt {
+func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.ConstValue) []hir.Stmt {
 	switch node := stmt.(type) {
 	case *hir.Block:
-		return []hir.Stmt{foldBlock(node, diag)}
+		return []hir.Stmt{foldBlock(node, diag, env)}
 	case *hir.Binding:
-		return []hir.Stmt{&hir.Binding{Name: node.Name, Value: ir.FoldExpr(node.Value), Location: node.Location}}
+		value := ir.FoldExpr(node.Value, env)
+		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Value: value, Location: node.Location}
+		if node.Constant {
+			if folded, ok := ir.ConstValueOf(value); ok {
+				env[node.Name] = folded
+			}
+		}
+		return []hir.Stmt{out}
 	case *hir.Return:
-		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value), Location: node.Location}}
+		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
 	case *hir.If:
-		thenBlock := foldBlock(node.Then, diag)
+		thenBlock := foldBlock(node.Then, diag, env)
 		var elseStmt hir.Stmt
 		if node.Else != nil {
-			foldedElse := foldStmt(node.Else, diag)
+			foldedElse := foldStmt(node.Else, diag, cloneConstEnv(env))
 			if len(foldedElse) == 1 {
 				elseStmt = foldedElse[0]
 			} else if len(foldedElse) > 1 {
 				elseStmt = &hir.Block{Stmts: foldedElse, Location: stmtLoc(node.Else)}
 			}
 		}
-		cond := ir.FoldExpr(node.Cond)
-		if value, ok := ir.ConstInt(cond); ok {
-			if value != 0 {
+		cond := ir.FoldExpr(node.Cond, env)
+		if value, ok := ir.ConstValueOf(cond); ok {
+			if truthy, ok := value.Truthy(); ok && truthy {
 				addConstantConditionWarning(diag, node.Location, true)
 				if thenBlock == nil {
 					return nil
 				}
 				return []hir.Stmt{thenBlock}
 			}
-			addConstantConditionWarning(diag, node.Location, false)
-			if elseStmt == nil {
-				return nil
+			if _, ok := value.Truthy(); ok {
+				addConstantConditionWarning(diag, node.Location, false)
+				if elseStmt == nil {
+					return nil
+				}
+				return []hir.Stmt{elseStmt}
 			}
-			return []hir.Stmt{elseStmt}
 		}
 		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, Location: node.Location}}
 	default:
 		return []hir.Stmt{stmt}
 	}
+}
+
+func cloneConstEnv(src map[string]ir.ConstValue) map[string]ir.ConstValue {
+	if len(src) == 0 {
+		return make(map[string]ir.ConstValue)
+	}
+	out := make(map[string]ir.ConstValue, len(src))
+	maps.Copy(out, src)
+	return out
 }
 
 func stmtTerminates(stmt hir.Stmt) bool {

@@ -1,7 +1,5 @@
-fn main() -> i32 {
-    const pi = 3;
-	if 1 < pi {
-		return 1;
-	}
-	return 2;
+fn main() -> i64 {
+	let a: i64 = 10;
+	let b: i64 = 3;
+	return a + b;
 }
