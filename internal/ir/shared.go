@@ -29,6 +29,11 @@ type Expr interface {
 	TypeText() string
 }
 
+type InvalidExpr struct {
+	Message string
+	Type    string
+}
+
 type IntLit struct {
 	Value string
 	Type  string
@@ -57,11 +62,25 @@ type Binary struct {
 	Type  string
 }
 
-func (*IntLit) exprNode()   {}
-func (*FloatLit) exprNode() {}
-func (*Ident) exprNode()    {}
-func (*Unary) exprNode()    {}
-func (*Binary) exprNode()   {}
+func (*InvalidExpr) exprNode() {}
+func (*IntLit) exprNode()      {}
+func (*FloatLit) exprNode()    {}
+func (*Ident) exprNode()       {}
+func (*Unary) exprNode()       {}
+func (*Binary) exprNode()      {}
+
+func (e *InvalidExpr) String() string {
+	if e == nil || e.Message == "" {
+		return "<invalid>"
+	}
+	return "<invalid: " + e.Message + ">"
+}
+func (e *InvalidExpr) TypeText() string {
+	if e == nil || e.Type == "" {
+		return "<invalid>"
+	}
+	return e.Type
+}
 
 func (e *IntLit) String() string {
 	if e == nil {

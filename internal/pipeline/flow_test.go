@@ -205,7 +205,8 @@ func TestHIRFoldConstBindingCondition(t *testing.T) {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
-	if !strings.Contains(hirText, "const a$") || !strings.Contains(hirText, "const a$") || !strings.Contains(hirText, "return 7") || strings.Contains(hirText, "if ") {
+
+	if !strings.Contains(hirText, "const a$") || !strings.Contains(hirText, "return 7") || strings.Contains(hirText, "if ") {
 		t.Fatalf("hir lowering failed: %q", hirText)
 	}
 	out := diag.EmitAllToString()
@@ -349,5 +350,73 @@ fn main() -> i32 {
 	}
 	if !foundBranch || !foundHelp {
 		t.Fatalf("expected missing-return branch label + safe help, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineSkipsHIRAfterSemanticError(t *testing.T) {
+	src := `fn main() -> i32 {
+	const b: i32;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	p := New(ctx)
+	entry := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	result := p.Run(entry)
+	stage := result.Stages[entry.Key]
+	if stage == nil {
+		t.Fatalf("missing stage result")
+	}
+	if !strings.Contains(stage.HIRText, "const b$") || !strings.Contains(stage.HIRText, "<invalid: missing initializer>") {
+		t.Fatalf("expected partial HIR with invalid sentinel, got HIR=%q", stage.HIRText)
+	}
+	if stage.MIRText != "" || stage.LLVMIR != "" {
+		t.Fatalf("expected MIR/LLVM to stop after semantic error, got MIR=%q LLVM=%q", stage.MIRText, stage.LLVMIR)
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, diagnostics.ErrMissingInitializer) {
+		t.Fatalf("expected missing initializer diagnostic, got:\n%s", out)
+	}
+	if !strings.Contains(out, diagnostics.ErrMissingReturn) {
+		t.Fatalf("expected missing return diagnostic too, got:\n%s", out)
+	}
+}
+
+func TestPipelineReportsMissingReturnAlongsideNonControlFlowBindingError(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a: i32 = 1;
+	const b: i32;
+	let c: i32 = 3;
+	if a > b {
+		return 10;
+	} else if a < b {
+		if a == b {
+			return 22;
+		} else {
+			return 23;
+		}
+	} else {
+	}
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	p := New(ctx)
+	entry := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	_ = p.Run(entry)
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, diagnostics.ErrMissingInitializer) {
+		t.Fatalf("expected missing initializer diagnostic, got:\n%s", out)
+	}
+	if !strings.Contains(out, diagnostics.ErrMissingReturn) {
+		t.Fatalf("expected missing return diagnostic too, got:\n%s", out)
 	}
 }

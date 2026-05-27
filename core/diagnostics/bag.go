@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"bytes"
 	"compiler/colors"
+	"compiler/core/source"
 	"fmt"
 	"io"
 	"os"
@@ -90,25 +91,32 @@ func (db *DiagnosticBag) Diagnostics() []*Diagnostic {
 	return result
 }
 
-// sortDiagnostics sorts diagnostics by primary label location (file, line, column)
+// sortDiagnostics sorts diagnostics by primary label location (file, line, column).
 func sortDiagnostics(diagnostics []*Diagnostic) {
 	sort.SliceStable(diagnostics, func(i, j int) bool {
-		if len(diagnostics[i].Labels) == 0 || len(diagnostics[j].Labels) == 0 {
-			return false // Keep original order if no labels
+		iDiag := diagnostics[i]
+		jDiag := diagnostics[j]
+		if iDiag == nil || jDiag == nil {
+			return jDiag != nil
 		}
 
-		iLoc := diagnostics[i].Labels[0].Location
-		jLoc := diagnostics[j].Labels[0].Location
+		iLoc := (*source.Location)(nil)
+		jLoc := (*source.Location)(nil)
+		if len(iDiag.Labels) > 0 {
+			iLoc = iDiag.Labels[0].Location
+		}
+		if len(jDiag.Labels) > 0 {
+			jLoc = jDiag.Labels[0].Location
+		}
 
-		// Handle nil locations
-		if iLoc == nil {
+		// No location sorts last.
+		if iLoc == nil || iLoc.Start == nil {
 			return false
 		}
-		if jLoc == nil {
+		if jLoc == nil || jLoc.Start == nil {
 			return true
 		}
 
-		// Compare filenames
 		iFile := ""
 		jFile := ""
 		if iLoc.Filename != nil {
@@ -117,20 +125,15 @@ func sortDiagnostics(diagnostics []*Diagnostic) {
 		if jLoc.Filename != nil {
 			jFile = *jLoc.Filename
 		}
-
 		if iFile != jFile {
 			return iFile < jFile
-		}
-
-		// Same file, compare by line
-		if iLoc.Start == nil || jLoc.Start == nil {
-			return false
 		}
 		if iLoc.Start.Line != jLoc.Start.Line {
 			return iLoc.Start.Line < jLoc.Start.Line
 		}
-
-		// Same line, keep original order (stable sort maintains phase order)
+		if iLoc.Start.Column != jLoc.Start.Column {
+			return iLoc.Start.Column < jLoc.Start.Column
+		}
 		return false
 	})
 }

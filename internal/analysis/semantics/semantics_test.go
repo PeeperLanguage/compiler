@@ -227,4 +227,103 @@ func TestResolveReportsUseBeforeDecl(t *testing.T) {
 	}
 }
 
-// Missing-return validation moved to CFG pass after HIR lowering.
+func TestConstInitializerRequiredInTypechecker(t *testing.T) {
+	src := `fn main() -> i32 {
+	const x: i32;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	stream := lexer.Lex("test.em", src, diag)
+	mod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+		AST:        mod,
+	}
+	if !collector.Collect(ctx, module, diag) || diag.HasErrors() {
+		t.Fatalf("collect failed unexpectedly: %s", diag.EmitAllToString())
+	}
+	if !resolver.Resolve(module, diag) || diag.HasErrors() {
+		t.Fatalf("resolver should defer missing initializer to typechecker: %s", diag.EmitAllToString())
+	}
+	if typechecher.Check(module, diag) {
+		t.Fatalf("typechecker should fail on const without initializer")
+	}
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrMissingInitializer) {
+		t.Fatalf("expected missing initializer diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestLetNeedsTypeOrInitializer(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	stream := lexer.Lex("test.em", src, diag)
+	mod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+		AST:        mod,
+	}
+	if !collector.Collect(ctx, module, diag) || diag.HasErrors() {
+		t.Fatalf("collect failed unexpectedly: %s", diag.EmitAllToString())
+	}
+	if !resolver.Resolve(module, diag) || diag.HasErrors() {
+		t.Fatalf("resolver should defer bare let validation to typechecker: %s", diag.EmitAllToString())
+	}
+	if typechecher.Check(module, diag) {
+		t.Fatalf("typechecker should fail on let without type and initializer")
+	}
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrMissingType) {
+		t.Fatalf("expected missing type diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTypedLetWithoutInitializerPassesSemantics(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32;
+	return 0;
+}`
+	module, diag, ok := testModule(src)
+	if !ok {
+		t.Fatalf("typed let semantics failed for %s:\n%s", module.FilePath, diag.EmitAllToString())
+	}
+}
+
+func TestFloatBindingRejectsIntegerLiteral(t *testing.T) {
+	src := `fn main() -> i32 {
+	let decimal: f32 = 13;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	stream := lexer.Lex("test.em", src, diag)
+	mod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+		AST:        mod,
+	}
+	if !collector.Collect(ctx, module, diag) || diag.HasErrors() {
+		t.Fatalf("collect failed unexpectedly: %s", diag.EmitAllToString())
+	}
+	if !resolver.Resolve(module, diag) || diag.HasErrors() {
+		t.Fatalf("resolver failed unexpectedly: %s", diag.EmitAllToString())
+	}
+	if typechecher.Check(module, diag) {
+		t.Fatalf("typechecker should reject integer literal for f32 binding")
+	}
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected type mismatch diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}

@@ -14,6 +14,10 @@ type Type interface {
 	Text() string
 }
 
+type InvalidType struct{}
+
+type UnknownType struct{}
+
 type IntegerType struct {
 	Signed bool
 	Bits   int
@@ -29,10 +33,15 @@ type NamedType struct {
 	Name string
 }
 
+func (*InvalidType) typeNode() {}
+func (*UnknownType) typeNode() {}
 func (*IntegerType) typeNode() {}
 func (*FloatType) typeNode()   {}
 func (*BoolType) typeNode()    {}
 func (*NamedType) typeNode()   {}
+
+func (*InvalidType) Text() string { return "<invalid>" }
+func (*UnknownType) Text() string { return "<unknown>" }
 
 func (t *IntegerType) Text() string {
 	if t == nil {
@@ -98,6 +107,12 @@ func IsI32(typ Type) bool {
 
 func SameType(left, right Type) bool {
 	switch l := left.(type) {
+	case *InvalidType:
+		_, ok := right.(*InvalidType)
+		return ok
+	case *UnknownType:
+		_, ok := right.(*UnknownType)
+		return ok
 	case *IntegerType:
 		r, ok := right.(*IntegerType)
 		return ok && r != nil && l.Signed == r.Signed && l.Bits == r.Bits
@@ -113,6 +128,101 @@ func SameType(left, right Type) bool {
 	default:
 		return left == nil && right == nil
 	}
+}
+
+type NumericFamily int
+
+const (
+	NumericInvalid NumericFamily = iota
+	NumericSigned
+	NumericUnsigned
+	NumericFloat
+)
+
+func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
+	switch typ := t.(type) {
+	case *IntegerType:
+		if typ == nil {
+			return NumericInvalid, 0, false
+		}
+		if typ.Signed {
+			return NumericSigned, typ.Bits, true
+		}
+		return NumericUnsigned, typ.Bits, true
+	case *FloatType:
+		if typ == nil {
+			return NumericInvalid, 0, false
+		}
+		return NumericFloat, typ.Bits, true
+	case *NamedType:
+		if typ == nil {
+			return NumericInvalid, 0, false
+		}
+		if signed, bits, ok := tokens.ParseIntegerBuiltin(typ.Name); ok {
+			if signed {
+				return NumericSigned, bits, true
+			}
+			return NumericUnsigned, bits, true
+		}
+		switch typ.Name {
+		case "f32":
+			return NumericFloat, 32, true
+		case "f64":
+			return NumericFloat, 64, true
+		default:
+			return NumericInvalid, 0, false
+		}
+	default:
+		return NumericInvalid, 0, false
+	}
+}
+
+func IsImplicitNumericWidening(dst, src Type) bool {
+	dstFamily, dstBits, okDst := NumericInfo(dst)
+	srcFamily, srcBits, okSrc := NumericInfo(src)
+	if !okDst || !okSrc {
+		return false
+	}
+	return dstFamily == srcFamily && dstBits >= srcBits
+}
+
+func CommonNumericType(a, b Type) Type {
+	if _, _, ok := NumericInfo(a); !ok {
+		return nil
+	}
+	if _, _, ok := NumericInfo(b); !ok {
+		return nil
+	}
+	if SameType(a, b) {
+		return a
+	}
+	if IsImplicitNumericWidening(a, b) {
+		return a
+	}
+	if IsImplicitNumericWidening(b, a) {
+		return b
+	}
+	return nil
+}
+
+func Assignable(dst, src Type) bool {
+	if dst == nil || src == nil {
+		return true
+	}
+	if IsInvalid(dst) || IsInvalid(src) || IsUnknown(dst) || IsUnknown(src) {
+		return true
+	}
+	return SameType(dst, src)
+}
+
+func IsInvalid(typ Type) bool {
+	_, ok := typ.(*InvalidType)
+	return ok
+}
+
+func IsUnknown(typ Type) bool {
+	_, ok := typ.(*UnknownType)
+	return ok
 }
 
 type ModuleInfo struct {
