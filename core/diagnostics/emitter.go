@@ -19,7 +19,29 @@ const (
 	GUTTER_BLANK = "%*s | "
 
 	LINE_POS = "%s--> %s:%d:%d\n"
+	TAB_WIDTH = 4
 )
+
+// expandTabs replaces tab characters with spaces to align with tab stops.
+// This ensures consistent visual alignment between source lines and diagnostic markers.
+func expandTabs(line string) string {
+	if !strings.ContainsRune(line, '\t') {
+		return line
+	}
+	var result strings.Builder
+	col := 0
+	for _, ch := range line {
+		if ch == '\t' {
+			spaces := TAB_WIDTH - (col % TAB_WIDTH)
+			result.WriteString(strings.Repeat(" ", spaces))
+			col += spaces
+		} else {
+			result.WriteRune(ch)
+			col++
+		}
+	}
+	return result.String()
+}
 
 // SourceCache caches source file contents for error reporting
 type SourceCache struct {
@@ -205,7 +227,7 @@ func (e *Emitter) printPrevNonEmptyLine(filepath string, line int) {
 	}
 	e.printGutter(line - 1)
 	colors.GREY.Fprint(e.writer, "")
-	e.highlighter.HighlightWithColor(prevLine, e.writer)
+	e.highlighter.HighlightWithColor(expandTabs(prevLine), e.writer)
 	fmt.Fprintln(e.writer)
 }
 
@@ -639,7 +661,7 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 	}
 
 	e.printCurrentGutter(ctx.line)
-	e.highlighter.HighlightWithColor(sourceLine, e.writer)
+	e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
 	fmt.Fprintln(e.writer)
 
 	if e.hasRenderableCodeHint(ctx.codeHint) {
@@ -780,10 +802,11 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 	if err != nil {
 		return false
 	}
+	expandedSourceLine := expandTabs(sourceLine)
 
 	oldFrag := lines[0].Code
 	start := ctx.startCol - 1
-	if start < 0 || start > len(sourceLine) {
+	if start < 0 || start > len(expandedSourceLine) {
 		return false
 	}
 	end := ctx.endCol - 1
@@ -791,19 +814,19 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 	// Some AST locations can be token-only or otherwise too narrow for replacement.
 	// Prefer replacing the old fragment at/near the diagnostic column when possible.
 	if oldFrag != "" {
-		if start+len(oldFrag) <= len(sourceLine) && sourceLine[start:start+len(oldFrag)] == oldFrag {
+		if start+len(oldFrag) <= len(expandedSourceLine) && expandedSourceLine[start:start+len(oldFrag)] == oldFrag {
 			end = start + len(oldFrag)
-		} else if idx := strings.Index(sourceLine, oldFrag); idx >= 0 {
+		} else if idx := strings.Index(expandedSourceLine, oldFrag); idx >= 0 {
 			start = idx
 			end = idx + len(oldFrag)
 		}
 	}
-	if end < start || end > len(sourceLine) {
+	if end < start || end > len(expandedSourceLine) {
 		return false
 	}
 
 	newFrag := lines[1].Code
-	replacementLine := sourceLine[:start] + newFrag + sourceLine[end:]
+	replacementLine := expandedSourceLine[:start] + newFrag + expandedSourceLine[end:]
 	oldAbsStart, oldDiffLen, newAbsStart, newDiffLen := diffHighlightSpans(start, oldFrag, newFrag)
 
 	e.printBlankGutter()
@@ -812,8 +835,8 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 	if oldAbsStart < 0 {
 		oldAbsStart = 0
 	}
-	if oldAbsStart > len(sourceLine) {
-		oldAbsStart = len(sourceLine)
+	if oldAbsStart > len(expandedSourceLine) {
+		oldAbsStart = len(expandedSourceLine)
 	}
 
 	relPath := e.diffDisplayPath(ctx.filepath)
@@ -826,7 +849,7 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 
 	e.printBlankGutter()
 	colors.RED.Fprint(e.writer, "- ")
-	e.printLineWithColoredSpan(sourceLine, oldAbsStart, oldDiffLen, colors.RED)
+	e.printLineWithColoredSpan(expandedSourceLine, oldAbsStart, oldDiffLen, colors.RED)
 	fmt.Fprintln(e.writer)
 
 	e.printBlankGutter()
@@ -982,7 +1005,8 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 	}
 
 	e.printCurrentGutter(ctx.startLine)
-	e.highlighter.HighlightWithColor(startSourceLine, e.writer)
+	expandedStartLine := expandTabs(startSourceLine)
+	e.highlighter.HighlightWithColor(expandedStartLine, e.writer)
 	fmt.Fprintln(e.writer)
 
 	// Print underline for start
@@ -1011,7 +1035,7 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 	if ctx.startCol <= len(startSourceLine) {
 		underlineColor.Fprint(
 			e.writer,
-			strings.Repeat("~", len(startSourceLine)-(ctx.startCol-1)),
+			strings.Repeat("~", len(expandedStartLine)-(ctx.startCol-1)),
 		)
 	}
 	fmt.Fprintln(e.writer)
@@ -1026,7 +1050,7 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 				continue
 			}
 			e.printCurrentGutter(i)
-			e.highlighter.HighlightWithColor(line, e.writer)
+			e.highlighter.HighlightWithColor(expandTabs(line), e.writer)
 			fmt.Fprintln(e.writer)
 		}
 	}
@@ -1036,7 +1060,8 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 	if err == nil {
 		// End line should be white like other displayed source lines
 		e.printCurrentGutter(ctx.endLine)
-		e.highlighter.HighlightWithColor(endSourceLine, e.writer)
+		expandedEndLine := expandTabs(endSourceLine)
+		e.highlighter.HighlightWithColor(expandedEndLine, e.writer)
 		fmt.Fprintln(e.writer)
 
 		e.printBlankGutter()
@@ -1143,8 +1168,9 @@ func (e *Emitter) printCompactDualLabel(filepath string, primary Label, secondar
 	if err != nil {
 		return
 	}
+	expandedSourceLine := expandTabs(sourceLine)
 	e.printCurrentGutter(line)
-	e.highlighter.HighlightWithColor(sourceLine, e.writer)
+	e.highlighter.HighlightWithColor(expandedSourceLine, e.writer)
 	fmt.Fprintln(e.writer)
 
 	leftPadding := leftStart.Column - 1
@@ -1287,7 +1313,7 @@ func (e *Emitter) printRoutedLabels(filepath string, primary Label, secondaries 
 		}
 
 		e.printCurrentGutter(lineNum)
-		e.highlighter.HighlightWithColor(sourceLine, e.writer)
+		e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
 		fmt.Fprintln(e.writer)
 
 		hasSecondary := false
