@@ -1,6 +1,7 @@
 package semantics
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/core/diagnostics"
@@ -154,5 +155,74 @@ fn main() -> i32 {
 	module, diag, ok := testModule(src)
 	if !ok {
 		t.Fatalf("builtin scalar semantics failed for %s:\n%s", module.FilePath, diag.EmitAllToString())
+	}
+}
+
+func TestResolveSuggestsClosestSymbol(t *testing.T) {
+	src := `fn main() -> i32 {
+	const pi = 3;
+	const pisa = 2;
+	if 1 < pis {
+		return 1;
+	}
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	if !collector.Collect(ctx, module, diag) {
+		t.Fatalf("collect failed unexpectedly: %s", diag.EmitAllToString())
+	}
+	if resolver.Resolve(module, diag) {
+		t.Fatalf("resolve should fail")
+	}
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || !strings.Contains(out, "did you mean `pisa`?") {
+		t.Fatalf("expected suggestion diagnostic, got:\n%s", out)
+	}
+}
+
+func TestResolveReportsUseBeforeDecl(t *testing.T) {
+	src := `fn main() -> i32 {
+	return total;
+	let total = 10;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	ctx := context.NewWithConfig(context.Config{}, diag)
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	if !collector.Collect(ctx, module, diag) {
+		t.Fatalf("collect failed unexpectedly: %s", diag.EmitAllToString())
+	}
+	if resolver.Resolve(module, diag) {
+		t.Fatalf("resolve should fail")
+	}
+	if !diag.HasErrors() {
+		t.Fatalf("expected use-before-decl diagnostic")
+	}
+	found := false
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrUseBeforeDecl && len(item.Labels) >= 2 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected use-before-decl diagnostic with secondary label, got:\n%s", diag.EmitAllToString())
 	}
 }

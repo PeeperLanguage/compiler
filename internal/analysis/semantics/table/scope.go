@@ -18,6 +18,13 @@ func New(parent *Scope) *Scope {
 	}
 }
 
+func (s *Scope) Parent() *Scope {
+	if s == nil {
+		return nil
+	}
+	return s.parent
+}
+
 func (s *Scope) Declare(sym *symbols.Symbol) bool {
 	if s == nil || sym == nil {
 		return false
