@@ -24,9 +24,8 @@ func (p *Position) Advance(toSkip string) *Position {
 			p.Column = 1
 			p.Index++
 		case '\t':
-			// Move to next tab stop (every 4 columns, starting from 1)
-			tabWidth := 4
-			p.Column += tabWidth - ((p.Column - 1) % tabWidth)
+			// Treat tab as single column to match editor behavior
+			p.Column++
 			p.Index++
 		default:
 			p.Column++
