@@ -52,8 +52,7 @@ func LowerTyped(module *context.Module) *hir.Module {
 			Name:       fnSym.Name,
 			Params:     make([]ir.Param, 0, len(declFn.Decl.Params)),
 			ReturnType: retType,
-			Bindings:   make([]hir.Binding, 0),
-			Returns:    make([]ir.Expr, 0),
+			Body:       &hir.Block{Stmts: make([]hir.Stmt, 0)},
 		}
 		for _, param := range declFn.Decl.Params {
 			name := ""
@@ -62,42 +61,96 @@ func LowerTyped(module *context.Module) *hir.Module {
 			}
 			fn.Params = append(fn.Params, ir.Param{Name: name, Type: ir.TypeText(param.Type)})
 		}
-		for _, stmt := range declFn.Decl.Body.Stmts {
-			switch node := stmt.(type) {
-			case *ast.LetDecl:
-				value, ok := module.Types.LookupExpr(node.Value)
-				if !ok {
-					continue
-				}
-				resolution, ok := module.Bindings.LookupNode(node.Name)
-				if !ok || resolution == nil || resolution.Symbol == nil {
-					continue
-				}
-				fn.Bindings = append(fn.Bindings, hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
-			case *ast.ConstDecl:
-				value, ok := module.Types.LookupExpr(node.Value)
-				if !ok {
-					continue
-				}
-				resolution, ok := module.Bindings.LookupNode(node.Name)
-				if !ok || resolution == nil || resolution.Symbol == nil {
-					continue
-				}
-				fn.Bindings = append(fn.Bindings, hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
-			case *ast.ReturnStmt:
-				if node.Value == nil {
-					continue
-				}
-				value, ok := module.Types.LookupExpr(node.Value)
-				if !ok {
-					continue
-				}
-				fn.Returns = append(fn.Returns, lowerExpr(value))
-			}
-		}
+		appendBlock(module, fn.Body, declFn.Decl.Body)
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
+}
+
+func appendBlock(module *context.Module, out *hir.Block, block *ast.BlockStmt) {
+	if module == nil || out == nil || block == nil {
+		return
+	}
+	for _, stmt := range block.Stmts {
+		appendStmt(module, out, stmt)
+	}
+}
+
+func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
+	switch node := stmt.(type) {
+	case *ast.BlockStmt:
+		block := &hir.Block{Stmts: make([]hir.Stmt, 0)}
+		appendBlock(module, block, node)
+		out.Stmts = append(out.Stmts, block)
+	case *ast.LetDecl:
+		value, ok := module.Types.LookupExpr(node.Value)
+		if !ok {
+			return
+		}
+		resolution, ok := module.Bindings.LookupNode(node.Name)
+		if !ok || resolution == nil || resolution.Symbol == nil {
+			return
+		}
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
+	case *ast.ConstDecl:
+		value, ok := module.Types.LookupExpr(node.Value)
+		if !ok {
+			return
+		}
+		resolution, ok := module.Bindings.LookupNode(node.Name)
+		if !ok || resolution == nil || resolution.Symbol == nil {
+			return
+		}
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: resolution.Symbol.Name, Value: lowerExpr(value)})
+	case *ast.IfStmt:
+		cond, ok := module.Types.LookupExpr(node.Cond)
+		if !ok {
+			return
+		}
+		ifStmt := &hir.If{
+			Cond: lowerExpr(cond),
+			Then: &hir.Block{Stmts: make([]hir.Stmt, 0)},
+		}
+		appendBlock(module, ifStmt.Then, node.Then)
+		if node.Else != nil {
+			ifStmt.Else = lowerElse(module, node.Else)
+		}
+		out.Stmts = append(out.Stmts, ifStmt)
+	case *ast.ReturnStmt:
+		if node.Value == nil {
+			return
+		}
+		value, ok := module.Types.LookupExpr(node.Value)
+		if !ok {
+			return
+		}
+		out.Stmts = append(out.Stmts, &hir.Return{Value: lowerExpr(value)})
+	}
+}
+
+func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
+	switch node := stmt.(type) {
+	case *ast.BlockStmt:
+		block := &hir.Block{Stmts: make([]hir.Stmt, 0)}
+		appendBlock(module, block, node)
+		return block
+	case *ast.IfStmt:
+		cond, ok := module.Types.LookupExpr(node.Cond)
+		if !ok {
+			return nil
+		}
+		out := &hir.If{
+			Cond: lowerExpr(cond),
+			Then: &hir.Block{Stmts: make([]hir.Stmt, 0)},
+		}
+		appendBlock(module, out.Then, node.Then)
+		if node.Else != nil {
+			out.Else = lowerElse(module, node.Else)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func lowerExpr(expr typeinfo.Expr) ir.Expr {

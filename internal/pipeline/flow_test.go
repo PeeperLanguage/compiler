@@ -73,3 +73,71 @@ func TestFullFlowUndefinedSymbolFailsInResolver(t *testing.T) {
 		t.Fatalf("expected diagnostics")
 	}
 }
+
+func TestFullFlowNestedBlockShadowing(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a = 1;
+	{
+		let a = 2;
+		return a;
+	}
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !ok || module.Types == nil {
+		t.Fatalf("analyze failed")
+	}
+	_, hirText := lowerHIR(module)
+	if !strings.Contains(hirText, "let a = 1") || !strings.Contains(hirText, "let a = 2") || !strings.Contains(hirText, "return a") {
+		t.Fatalf("hir lowering failed: %q", hirText)
+	}
+	_, mirText := lowerMIR(module)
+	if !strings.Contains(mirText, "ret a") {
+		t.Fatalf("mir lowering failed: %q", mirText)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+}
+
+func TestHIRLoweringIfElse(t *testing.T) {
+	src := `fn main() -> i32 {
+	if 1 < 2 {
+		return 1;
+	} else if 2 < 3 {
+		return 2;
+	} else {
+		return 3;
+	}
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !ok || module.Types == nil {
+		t.Fatalf("analyze failed")
+	}
+	_, hirText := lowerHIR(module)
+	if !strings.Contains(hirText, "if (< 1 2)") || !strings.Contains(hirText, "} else if (< 2 3)") || !strings.Contains(hirText, "return 3") {
+		t.Fatalf("hir lowering failed: %q", hirText)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+}

@@ -13,7 +13,7 @@ func TestParseModuleSubset(t *testing.T) {
 	src := `import "math" as m;
 const x: i32 = 1 + 2 * 3;
 let y: i32 = x;
-fn add(a: i32, b: i32): i32 {
+fn add(a: i32, b: i32) -> i32 {
 	let z: i32 = a + b;
 	return z;
 }`
@@ -56,7 +56,7 @@ fn add(a: i32, b: i32): i32 {
 func TestParseAllowsBuiltinNumericTypes(t *testing.T) {
 	src := `let x: i64 = 1;
 let y: f32 = 2;
-fn sum(a: i64, b: f32): f64 {
+fn sum(a: i64, b: f32) -> f64 {
 	return 0;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -91,7 +91,7 @@ func TestParseLetWithoutExplicitType(t *testing.T) {
 }
 
 func TestParseFunctionWithReceiverAndTypeParams(t *testing.T) {
-	src := `fn (r: i32) add[T, U](a: i32): i32 {
+	src := `fn (r: i32) add[T, U](a: i32) -> i32 {
 	return a;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -147,7 +147,7 @@ func TestParseFunctionReturnArrowSyntax(t *testing.T) {
 func TestParseRecoversMissingSemicolonAndContinuesTopLevel(t *testing.T) {
 	src := `let a: i32 = 10
 let b: i32 = 23;
-fn main(): i32 {
+fn main() -> i32 {
 	return b;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -169,7 +169,7 @@ fn main(): i32 {
 }
 
 func TestParseRecoversMissingParenInCallAndContinues(t *testing.T) {
-	src := `fn main(): i32 {
+	src := `fn main() -> i32 {
 	foo(1, 2;
 	return 0;
 }`
@@ -197,7 +197,7 @@ func TestParseRecoversMissingParenInCallAndContinues(t *testing.T) {
 
 func TestParseRecoversMissingFunctionBlockAndContinues(t *testing.T) {
 	src := `fn myfunc()
-fn main(): i32 {
+fn main() -> i32 {
 	return 0;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -239,7 +239,7 @@ fn main() {
 
 func TestParseAllowsExternalFunctionSemicolon(t *testing.T) {
 	src := `fn ext();
-fn main(): i32 {
+fn main() -> i32 {
 	return 0;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -263,7 +263,7 @@ fn main(): i32 {
 func TestParseAllowsFunctionAttributes(t *testing.T) {
 	src := `#[extern]
 fn ext();
-fn main(): i32 {
+fn main() -> i32 {
 	return 0;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -278,7 +278,7 @@ fn main(): i32 {
 }
 
 func TestParseMethodStyleFunctionNamePath(t *testing.T) {
-	src := `fn User::Method(self: i32, other: i32): i32 {
+	src := `fn User::Method(self: i32, other: i32) -> i32 {
 	return other;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -330,6 +330,92 @@ let c: enum {
 	l2 := mod.Decls[2].(*ast.LetDecl)
 	if _, ok := l2.Type.(*ast.EnumType); !ok {
 		t.Fatalf("let c type expected enum")
+	}
+}
+
+func TestParseNestedBlockStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+{
+let a = 1;
+return a;
+}
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() || mod == nil {
+		t.Fatalf("parse failed: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+	}
+	if _, ok := fn.Body.Stmts[0].(*ast.BlockStmt); !ok {
+		t.Fatalf("expected nested block stmt, got %#v", fn.Body.Stmts[0])
+	}
+}
+
+func TestParseIfElseStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+if 1 < 2 {
+	return 10;
+} else {
+	return 20;
+}
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() || mod == nil {
+		t.Fatalf("parse failed: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+	}
+	ifs, ok := fn.Body.Stmts[0].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected if stmt, got %#v", fn.Body.Stmts[0])
+	}
+	if ifs.Then == nil || len(ifs.Then.Stmts) != 1 {
+		t.Fatalf("missing then block")
+	}
+	elseBlock, ok := ifs.Else.(*ast.BlockStmt)
+	if !ok || len(elseBlock.Stmts) != 1 {
+		t.Fatalf("expected else block, got %#v", ifs.Else)
+	}
+}
+
+func TestParseElseIfStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+if 1 {
+	return 1;
+} else if 2 {
+	return 2;
+} else {
+	return 3;
+}
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() || mod == nil {
+		t.Fatalf("parse failed: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+	}
+	root, ok := fn.Body.Stmts[0].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected if stmt, got %#v", fn.Body.Stmts[0])
+	}
+	next, ok := root.Else.(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected else-if stmt, got %#v", root.Else)
+	}
+	if _, ok := next.Else.(*ast.BlockStmt); !ok {
+		t.Fatalf("expected final else block, got %#v", next.Else)
 	}
 }
 
