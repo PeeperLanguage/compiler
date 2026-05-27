@@ -35,12 +35,12 @@ type Symbol struct {
 	Name     string
 	Kind     Kind
 	IsPub    bool
-	Location source.Location
+	Location *source.Location
 	ASTNode  ast.Node
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {
-	loc := source.Location{}
+	loc := &source.Location{}
 	if node != nil {
 		loc = node.Loc()
 	}

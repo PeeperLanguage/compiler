@@ -19,8 +19,8 @@ func reportUnresolved(module *context.Module, decls *declinfo.ModuleInfo, fn *de
 		msg := fmt.Sprintf("symbol `%s` used before declaration", node.Name)
 		d := diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrUseBeforeDecl).
-			WithPrimaryLabel(new(node.Loc()), "used here before declaration").
-			WithSecondaryLabel(new(later.Loc), "declared later here").
+			WithPrimaryLabel(node.Loc(), "used here before declaration").
+			WithSecondaryLabel(later.Loc, "declared later here").
 			WithHelp("move declaration before first use")
 		diag.Add(d)
 		return false
@@ -29,13 +29,13 @@ func reportUnresolved(module *context.Module, decls *declinfo.ModuleInfo, fn *de
 		msg := "unknown identifier `" + node.Name + "`"
 		d := diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrUndefinedSymbol).
-			WithPrimaryLabel(new(node.Loc()), msg).
+			WithPrimaryLabel(node.Loc(), msg).
 			WithHelp("did you mean `" + match + "`?")
 		diag.Add(d)
 		return false
 	}
 	msg := "unknown identifier `" + node.Name + "`"
-	diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrUndefinedSymbol).WithPrimaryLabel(new(node.Loc()), msg))
+	diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrUndefinedSymbol).WithPrimaryLabel(node.Loc(), msg))
 	return false
 }
 

@@ -3,7 +3,7 @@ package ast
 import "compiler/core/source"
 
 type Node interface {
-	Loc() source.Location
+	Loc() *source.Location
 }
 
 type Decl interface {

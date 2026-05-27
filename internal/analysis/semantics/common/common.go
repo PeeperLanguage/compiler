@@ -21,7 +21,7 @@ func AddError(diag *diagnostics.DiagnosticBag, filePath string, node ast.Node, c
 		end = *loc.End
 	}
 	span := source.NewLocation(filePath, start, end)
-	diag.Add(diagnostics.NewError(msg).WithCode(code).WithPrimaryLabel(&span, msg))
+	diag.Add(diagnostics.NewError(msg).WithCode(code).WithPrimaryLabel(span, msg))
 }
 
 func IsI32Type(typ ast.TypeExpr) bool {

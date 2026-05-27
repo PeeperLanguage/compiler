@@ -17,8 +17,8 @@ func TestEmitterHandlesMultiplePrimaryLabelsWithoutPanic(t *testing.T) {
 	diag := NewError("broken diagnostic shape")
 	diag.FilePath = "main.em"
 	diag.Labels = []Label{
-		{Location: &loc1, Message: "first", Style: Primary},
-		{Location: &loc2, Message: "second", Style: Primary},
+		{Location: loc1, Message: "first", Style: Primary},
+		{Location: loc2, Message: "second", Style: Primary},
 	}
 
 	emitter.Emit(diag)
