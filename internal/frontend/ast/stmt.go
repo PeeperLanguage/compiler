@@ -25,3 +25,13 @@ type ReturnStmt struct {
 
 func (*ReturnStmt) stmtNode()              {}
 func (s *ReturnStmt) Loc() source.Location { return s.Location }
+
+type IfStmt struct {
+	Cond     Expr
+	Then     *BlockStmt
+	Else     Stmt
+	Location source.Location
+}
+
+func (*IfStmt) stmtNode()              {}
+func (s *IfStmt) Loc() source.Location { return s.Location }

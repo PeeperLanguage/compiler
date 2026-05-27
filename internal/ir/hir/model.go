@@ -22,14 +22,38 @@ type Function struct {
 	Name       string
 	Params     []ir.Param
 	ReturnType string
-	Bindings   []Binding
-	Returns    []ir.Expr
+	Body       *Block
+}
+
+type Stmt interface {
+	stmtNode()
+	appendText(*strings.Builder, int)
+	appendInlineText(*strings.Builder, int)
+}
+
+type Block struct {
+	Stmts []Stmt
 }
 
 type Binding struct {
 	Name  string
 	Value ir.Expr
 }
+
+type Return struct {
+	Value ir.Expr
+}
+
+type If struct {
+	Cond ir.Expr
+	Then *Block
+	Else Stmt
+}
+
+func (*Block) stmtNode()   {}
+func (*Binding) stmtNode() {}
+func (*Return) stmtNode()  {}
+func (*If) stmtNode()      {}
 
 func (m *Module) Text() string {
 	if m == nil {
@@ -56,19 +80,85 @@ func (m *Module) Text() string {
 		b.WriteString(fn.Name)
 		b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
 		b.WriteString(" {\n")
-		for _, bind := range fn.Bindings {
-			b.WriteString("  let ")
-			b.WriteString(bind.Name)
-			b.WriteString(" = ")
-			b.WriteString(bind.Value.String())
-			b.WriteString("\n")
-		}
-		for _, ret := range fn.Returns {
-			b.WriteString("  return ")
-			b.WriteString(ret.String())
-			b.WriteString("\n")
-		}
+		appendBlockText(&b, fn.Body, 1)
 		b.WriteString("}\n")
 	}
 	return b.String()
+}
+
+func appendBlockText(b *strings.Builder, block *Block, indent int) {
+	if b == nil || block == nil {
+		return
+	}
+	for _, stmt := range block.Stmts {
+		if stmt == nil {
+			continue
+		}
+		stmt.appendText(b, indent)
+	}
+}
+
+func writeIndent(b *strings.Builder, indent int) {
+	for i := 0; i < indent; i++ {
+		b.WriteString("  ")
+	}
+}
+
+func (s *Block) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString("{\n")
+	appendBlockText(b, s, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}\n")
+}
+
+func (s *Block) appendInlineText(b *strings.Builder, indent int) {
+	b.WriteString("{\n")
+	appendBlockText(b, s, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}\n")
+}
+
+func (s *Binding) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString("let ")
+	b.WriteString(s.Name)
+	b.WriteString(" = ")
+	b.WriteString(s.Value.String())
+	b.WriteString("\n")
+}
+
+func (s *Binding) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
+func (s *Return) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString("return ")
+	b.WriteString(s.Value.String())
+	b.WriteString("\n")
+}
+
+func (s *Return) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
+func (s *If) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	s.appendInlineText(b, indent)
+}
+
+func (s *If) appendInlineText(b *strings.Builder, indent int) {
+	b.WriteString("if ")
+	b.WriteString(s.Cond.String())
+	b.WriteString(" {\n")
+	appendBlockText(b, s.Then, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}")
+	if s.Else == nil {
+		b.WriteString("\n")
+		return
+	}
+	b.WriteString(" else ")
+	s.Else.appendInlineText(b, indent)
 }

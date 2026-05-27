@@ -120,20 +120,46 @@ func LowerHIR(in *hir.Module) *Module {
 			Instrs:     make([]Instr, 0),
 		}
 		tmp := 0
-		for _, bind := range hirFn.Bindings {
-			ref := lowerExpr(bind.Value, &tmp, &fn.Instrs)
-			if refName, ok := ref.(*RefName); ok && refName.Name == bind.Name {
-				continue
-			}
-			fn.Instrs = append(fn.Instrs, &Assign{Name: bind.Name, Value: asValueExpr(ref)})
-		}
-		for _, retExpr := range hirFn.Returns {
-			retRef := lowerExpr(retExpr, &tmp, &fn.Instrs)
-			fn.Instrs = append(fn.Instrs, &Ret{Value: retRef})
+		if !appendHIRBlock(hirFn.Body, &tmp, &fn.Instrs) {
+			return nil
 		}
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
+}
+
+func appendHIRBlock(block *hir.Block, tmp *int, out *[]Instr) bool {
+	if block == nil {
+		return true
+	}
+	for _, stmt := range block.Stmts {
+		if !appendHIRStmt(stmt, tmp, out) {
+			return false
+		}
+	}
+	return true
+}
+
+func appendHIRStmt(stmt hir.Stmt, tmp *int, out *[]Instr) bool {
+	switch node := stmt.(type) {
+	case *hir.Block:
+		return appendHIRBlock(node, tmp, out)
+	case *hir.Binding:
+		ref := lowerExpr(node.Value, tmp, out)
+		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
+			return true
+		}
+		*out = append(*out, &Assign{Name: node.Name, Value: asValueExpr(ref)})
+		return true
+	case *hir.Return:
+		retRef := lowerExpr(node.Value, tmp, out)
+		*out = append(*out, &Ret{Value: retRef})
+		return true
+	case *hir.If:
+		return false
+	default:
+		return false
+	}
 }
 
 func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {

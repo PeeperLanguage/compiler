@@ -33,49 +33,9 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 			return false
 		}
 		module.Types.BindSymbolType(sym, "i32")
-		sawReturn := false
-		for _, stmt := range declFn.Decl.Body.Stmts {
-			switch node := stmt.(type) {
-			case *ast.LetDecl:
-				typedExpr, ok := typeExpr(module, node.Value, diag)
-				if !ok {
-					return false
-				}
-				bindRes, ok := module.Bindings.LookupNode(node.Name)
-				if !ok || bindRes.Symbol == nil {
-					common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
-					return false
-				}
-				module.Types.BindExpr(node.Value, typedExpr)
-				module.Types.BindSymbolType(bindRes.Symbol, typeinfo.ExprTypeName(typedExpr))
-			case *ast.ConstDecl:
-				typedExpr, ok := typeExpr(module, node.Value, diag)
-				if !ok {
-					return false
-				}
-				bindRes, ok := module.Bindings.LookupNode(node.Name)
-				if !ok || bindRes.Symbol == nil {
-					common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
-					return false
-				}
-				module.Types.BindExpr(node.Value, typedExpr)
-				module.Types.BindSymbolType(bindRes.Symbol, typeinfo.ExprTypeName(typedExpr))
-			case *ast.ReturnStmt:
-				if node.Value == nil {
-					common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
-					return false
-				}
-				typedExpr, ok := typeExpr(module, node.Value, diag)
-				if !ok {
-					return false
-				}
-				module.Types.BindExpr(node.Value, typedExpr)
-				module.Types.BindFunctionReturn(declFn.Decl, typeinfo.ExprTypeName(typedExpr))
-				sawReturn = true
-			default:
-				common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
-				return false
-			}
+		sawReturn, ok := checkBlock(module, declFn.Decl, declFn.Decl.Body, diag)
+		if !ok {
+			return false
 		}
 		if !sawReturn {
 			common.AddError(diag, module.FilePath, declFn.Decl, diagnostics.ErrMissingReturn, "function must contain return")
@@ -83,6 +43,94 @@ func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 		}
 	}
 	return true
+}
+
+func checkBlock(module *context.Module, fn *ast.FnDecl, block *ast.BlockStmt, diag *diagnostics.DiagnosticBag) (bool, bool) {
+	if block == nil {
+		return false, true
+	}
+	sawReturn := false
+	for _, stmt := range block.Stmts {
+		stmtReturn, ok := checkStmt(module, fn, stmt, diag)
+		if !ok {
+			return false, false
+		}
+		sawReturn = sawReturn || stmtReturn
+	}
+	return sawReturn, true
+}
+
+func checkStmt(module *context.Module, fn *ast.FnDecl, stmt ast.Stmt, diag *diagnostics.DiagnosticBag) (bool, bool) {
+	switch node := stmt.(type) {
+	case *ast.BlockStmt:
+		return checkBlock(module, fn, node, diag)
+	case *ast.LetDecl:
+		typedExpr, ok := typeExpr(module, node.Value, diag)
+		if !ok {
+			return false, false
+		}
+		bindRes, ok := module.Bindings.LookupNode(node.Name)
+		if !ok || bindRes.Symbol == nil {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
+			return false, false
+		}
+		module.Types.BindExpr(node.Value, typedExpr)
+		module.Types.BindSymbolType(bindRes.Symbol, typeinfo.ExprTypeName(typedExpr))
+		return false, true
+	case *ast.ConstDecl:
+		typedExpr, ok := typeExpr(module, node.Value, diag)
+		if !ok {
+			return false, false
+		}
+		bindRes, ok := module.Bindings.LookupNode(node.Name)
+		if !ok || bindRes.Symbol == nil {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
+			return false, false
+		}
+		module.Types.BindExpr(node.Value, typedExpr)
+		module.Types.BindSymbolType(bindRes.Symbol, typeinfo.ExprTypeName(typedExpr))
+		return false, true
+	case *ast.ReturnStmt:
+		if node.Value == nil {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
+			return false, false
+		}
+		typedExpr, ok := typeExpr(module, node.Value, diag)
+		if !ok {
+			return false, false
+		}
+		module.Types.BindExpr(node.Value, typedExpr)
+		module.Types.BindFunctionReturn(fn, typeinfo.ExprTypeName(typedExpr))
+		return true, true
+	case *ast.IfStmt:
+		if node.Cond == nil {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
+			return false, false
+		}
+		cond, ok := typeExpr(module, node.Cond, diag)
+		if !ok {
+			return false, false
+		}
+		module.Types.BindExpr(node.Cond, cond)
+		thenReturn, ok := checkBlock(module, fn, node.Then, diag)
+		if !ok {
+			return false, false
+		}
+		if node.Else == nil {
+			return false, true
+		}
+		elseReturn, ok := checkStmt(module, fn, node.Else, diag)
+		if !ok {
+			return false, false
+		}
+		return thenReturn && elseReturn, true
+	case *ast.ExprStmt:
+		common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "expression statements unsupported in current compiler stage")
+		return false, false
+	default:
+		common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
+		return false, false
+	}
 }
 
 func checkFunctionShape(module *context.Module, decl *ast.FnDecl, diag *diagnostics.DiagnosticBag) bool {

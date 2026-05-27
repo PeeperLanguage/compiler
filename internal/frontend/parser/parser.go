@@ -54,7 +54,7 @@ func (p *Parser) isDeclStart(kind tokens.Kind) bool {
 
 func (p *Parser) isStmtBoundary(kind tokens.Kind) bool {
 	switch kind {
-	case tokens.RBRACE, tokens.SEMICOLON, tokens.LET, tokens.CONST, tokens.RETURN, tokens.FN, tokens.IMPORT, tokens.EOF:
+	case tokens.RBRACE, tokens.SEMICOLON, tokens.LET, tokens.CONST, tokens.IF, tokens.ELSE, tokens.RETURN, tokens.FN, tokens.IMPORT, tokens.EOF:
 		return true
 	default:
 		return false
@@ -478,14 +478,54 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 
 func (p *Parser) parseStmt() ast.Stmt {
 	switch p.peek().Kind {
+	case tokens.LBRACE:
+		return p.parseBlock()
 	case tokens.LET:
 		return p.parseLetDecl(false)
 	case tokens.CONST:
 		return p.parseConstDecl(false)
+	case tokens.IF:
+		return p.parseIfStmt()
 	case tokens.RETURN:
 		return p.parseReturnStmt()
 	default:
 		return p.parseExprStmt()
+	}
+}
+
+func (p *Parser) parseIfStmt() ast.Stmt {
+	start := p.consume(tokens.IF, "expected if")
+	if start == nil {
+		return nil
+	}
+	cond := p.parseExpr(0)
+	if cond == nil {
+		return nil
+	}
+	thenBlock, ok := p.parseRequiredBlock(blockOwner("if"))
+	if !ok {
+		return nil
+	}
+	endTok := p.lastTokenOfStmt(thenBlock, p.lastNonNilToken(*start))
+	var elseStmt ast.Stmt
+	if p.match(tokens.ELSE) {
+		elseTok := p.lastNonNilToken(*start)
+		if p.at(tokens.IF) {
+			elseStmt = p.parseIfStmt()
+		} else {
+			elseBlock, ok := p.parseRequiredBlock(blockOwner("else"))
+			if !ok {
+				return nil
+			}
+			elseStmt = elseBlock
+		}
+		endTok = p.lastTokenOfStmt(elseStmt, elseTok)
+	}
+	return &ast.IfStmt{
+		Cond:     cond,
+		Then:     thenBlock,
+		Else:     elseStmt,
+		Location: p.loc(*start, endTok),
 	}
 }
 
@@ -537,6 +577,23 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 		Expr:     expr,
 		Location: p.locFromNode(expr, &ast.BadExpr{Location: p.loc(*end, *end)}),
 	}
+}
+
+func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback tokens.Token) tokens.Token {
+	if stmt == nil {
+		return fallback
+	}
+	loc := stmt.Loc()
+	if loc.End == nil {
+		return fallback
+	}
+	for i := p.pos - 1; i >= 0; i-- {
+		tok := p.stream[i]
+		if tok.End.Index == loc.End.Index {
+			return tok
+		}
+	}
+	return fallback
 }
 
 func (p *Parser) parseTypeExpr() ast.TypeExpr {

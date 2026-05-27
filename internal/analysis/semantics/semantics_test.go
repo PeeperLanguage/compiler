@@ -107,3 +107,33 @@ func TestResolveRejectsUnknownSymbol(t *testing.T) {
 		t.Fatalf("expected diagnostics")
 	}
 }
+
+func TestResolveTypecheckNestedBlockShadowing(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a = 1;
+	{
+		let a = 2;
+		return a;
+	}
+}`
+	module, diag, ok := testModule(src)
+	if !ok {
+		t.Fatalf("nested block semantics failed for %s:\n%s", module.FilePath, diag.EmitAllToString())
+	}
+}
+
+func TestResolveTypecheckIfElseReturns(t *testing.T) {
+	src := `fn main() -> i32 {
+	if 1 < 2 {
+		return 1;
+	} else if 2 < 3 {
+		return 2;
+	} else {
+		return 3;
+	}
+}`
+	module, diag, ok := testModule(src)
+	if !ok {
+		t.Fatalf("if/else semantics failed for %s:\n%s", module.FilePath, diag.EmitAllToString())
+	}
+}

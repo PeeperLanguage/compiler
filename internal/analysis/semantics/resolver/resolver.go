@@ -46,55 +46,93 @@ func Resolve(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
 				Symbol: sym,
 			})
 		}
-		for _, stmt := range collectedFn.Decl.Body.Stmts {
-			switch node := stmt.(type) {
-			case *ast.LetDecl:
-				if !resolveExpr(module, collectedFn.Scope, node.Value, diag) {
-					return false
-				}
-				sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
-				if !collectedFn.Scope.Declare(sym) {
-					common.AddError(diag, module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
-					return false
-				}
-				module.Bindings.AddFunctionLocal(collectedFn.Decl, sym)
-				if node.Name != nil {
-					module.Bindings.BindNode(node.Name, &binding.Resolution{
-						Kind:   binding.ResolutionSymbol,
-						Symbol: sym,
-					})
-				}
-			case *ast.ConstDecl:
-				if !resolveExpr(module, collectedFn.Scope, node.Value, diag) {
-					return false
-				}
-				sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
-				if !collectedFn.Scope.Declare(sym) {
-					common.AddError(diag, module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
-					return false
-				}
-				module.Bindings.AddFunctionLocal(collectedFn.Decl, sym)
-				if node.Name != nil {
-					module.Bindings.BindNode(node.Name, &binding.Resolution{
-						Kind:   binding.ResolutionSymbol,
-						Symbol: sym,
-					})
-				}
-			case *ast.ReturnStmt:
-				if node.Value == nil {
-					common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
-					return false
-				}
-				if !resolveExpr(module, collectedFn.Scope, node.Value, diag) {
-					return false
-				}
-			default:
-				common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
-				return false
-			}
+		if !resolveBlock(module, collectedFn.Decl, collectedFn.Scope, collectedFn.Decl.Body, diag) {
+			return false
 		}
 	}
 	return true
+}
+
+func resolveBlock(module *context.Module, fn *ast.FnDecl, scope *table.Scope, block *ast.BlockStmt, diag *diagnostics.DiagnosticBag) bool {
+	if block == nil {
+		return true
+	}
+	for _, stmt := range block.Stmts {
+		if !resolveStmt(module, fn, scope, stmt, diag) {
+			return false
+		}
+	}
+	return true
+}
+
+func resolveStmt(module *context.Module, fn *ast.FnDecl, scope *table.Scope, stmt ast.Stmt, diag *diagnostics.DiagnosticBag) bool {
+	switch node := stmt.(type) {
+	case *ast.BlockStmt:
+		return resolveBlock(module, fn, table.New(scope), node, diag)
+	case *ast.LetDecl:
+		if !resolveExpr(module, scope, node.Value, diag) {
+			return false
+		}
+		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
+		if !scope.Declare(sym) {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
+			return false
+		}
+		module.Bindings.AddFunctionLocal(fn, sym)
+		if node.Name != nil {
+			module.Bindings.BindNode(node.Name, &binding.Resolution{
+				Kind:   binding.ResolutionSymbol,
+				Symbol: sym,
+			})
+		}
+		return true
+	case *ast.ConstDecl:
+		if !resolveExpr(module, scope, node.Value, diag) {
+			return false
+		}
+		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
+		if !scope.Declare(sym) {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
+			return false
+		}
+		module.Bindings.AddFunctionLocal(fn, sym)
+		if node.Name != nil {
+			module.Bindings.BindNode(node.Name, &binding.Resolution{
+				Kind:   binding.ResolutionSymbol,
+				Symbol: sym,
+			})
+		}
+		return true
+	case *ast.ReturnStmt:
+		if node.Value == nil {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
+			return false
+		}
+		return resolveExpr(module, scope, node.Value, diag)
+	case *ast.IfStmt:
+		if node.Cond == nil {
+			common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
+			return false
+		}
+		if !resolveExpr(module, scope, node.Cond, diag) {
+			return false
+		}
+		if !resolveBlock(module, fn, table.New(scope), node.Then, diag) {
+			return false
+		}
+		if node.Else == nil {
+			return true
+		}
+		if elseBlock, ok := node.Else.(*ast.BlockStmt); ok {
+			return resolveBlock(module, fn, table.New(scope), elseBlock, diag)
+		}
+		return resolveStmt(module, fn, scope, node.Else, diag)
+	case *ast.ExprStmt:
+		return resolveExpr(module, scope, node.Expr, diag)
+	default:
+		common.AddError(diag, module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
+		return false
+	}
 }
 
 func resolveExpr(module *context.Module, scope *table.Scope, expr ast.Expr, diag *diagnostics.DiagnosticBag) bool {
