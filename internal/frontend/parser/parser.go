@@ -381,6 +381,7 @@ func (p *Parser) parseParams() []ast.Param {
 
 func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *tokens.Token, ok bool) {
 	name = p.parseIdent()
+	fmt.Printf("Name: %s\n", name.Name)
 	if name == nil {
 		return nil, nil, nil, nil, false
 	}
@@ -390,13 +391,16 @@ func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.
 			return nil, nil, nil, nil, false
 		}
 	}
-	if p.consume(tokens.ASSIGN, "expected '=' after "+string(token)+" binding") == nil {
-		return nil, nil, nil, nil, false
+	
+	if p.match(tokens.ASSIGN) {
+	 	value = p.parseExpr(0)
+	} else if token == tokens.CONST {
+		peek := p.peek()
+		diag := diagnostics.NewError("Missing initializer for const declaration")
+		diag.WithPrimaryLabel(new(p.loc(peek, peek)), "add initial value here")
+		p.diag.Add(diag)
 	}
-	value = p.parseExpr(0)
-	if value == nil {
-		return nil, nil, nil, nil, false
-	}
+
 	if p.peek().Kind != tokens.SEMICOLON {
 		loc := value.Loc()
 		insertPos := source.NewPosition()
@@ -422,6 +426,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) *ast.LetDecl {
 	isMutable := p.match(tokens.MUT)
 	name, ty, value, end, ok := p.parseBindingFields(tokens.LET)
 	if !ok {
+		// TODO: Add proper handling
 		return nil
 	}
 	return &ast.LetDecl{
@@ -826,6 +831,13 @@ func (p *Parser) advance() *tokens.Token {
 	tok := p.stream[p.pos]
 	p.pos++
 	return &tok
+}
+
+func (p *Parser) eat() {
+	if p.pos >= len(p.stream) {
+		return
+	}
+	p.pos++
 }
 
 func (p *Parser) peekPrecedence() int {

@@ -58,12 +58,8 @@ func (c *checker) checkFunction(decl *ast.FnDecl) bool {
 		c.module.Types.BindSymbolType(res.Symbol, typeinfo.TypeFromSyntax(param.Type))
 	}
 	returnType := typeinfo.TypeFromSyntax(decl.ReturnType)
-	sawReturn, ok := c.checkBlock(decl, decl.Body, returnType)
+	_, ok = c.checkBlock(decl, decl.Body, returnType)
 	if !ok {
-		return false
-	}
-	if !sawReturn {
-		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrMissingReturn, "function must contain return")
 		return false
 	}
 	return true
@@ -73,15 +69,13 @@ func (c *checker) checkBlock(fn *ast.FnDecl, block *ast.BlockStmt, returnType ty
 	if block == nil {
 		return false, true
 	}
-	sawReturn := false
 	for _, stmt := range block.Stmts {
-		stmtReturn, ok := c.checkStmt(fn, stmt, returnType)
+		_, ok := c.checkStmt(fn, stmt, returnType)
 		if !ok {
 			return false, false
 		}
-		sawReturn = sawReturn || stmtReturn
 	}
-	return sawReturn, true
+	return false, true
 }
 
 func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.Type) (bool, bool) {
@@ -142,18 +136,18 @@ func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.T
 			return false, false
 		}
 		c.module.Types.BindExpr(node.Cond, cond)
-		thenReturn, ok := c.checkBlock(fn, node.Then, returnType)
+		_, ok = c.checkBlock(fn, node.Then, returnType)
 		if !ok {
 			return false, false
 		}
 		if node.Else == nil {
 			return false, true
 		}
-		elseReturn, ok := c.checkStmt(fn, node.Else, returnType)
+		_, ok = c.checkStmt(fn, node.Else, returnType)
 		if !ok {
 			return false, false
 		}
-		return thenReturn && elseReturn, true
+		return false, true
 	case *ast.ExprStmt:
 		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidStatement, "expression statements unsupported in current compiler stage")
 		return false, false
