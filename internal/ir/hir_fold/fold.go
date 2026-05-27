@@ -1,11 +1,11 @@
 package hir_fold
 
 import (
-	"maps"
 	"compiler/core/diagnostics"
 	"compiler/core/source"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"maps"
 )
 
 func FoldModule(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
@@ -63,6 +63,8 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 			}
 		}
 		return []hir.Stmt{out}
+	case *hir.Invalid:
+		return []hir.Stmt{node}
 	case *hir.Return:
 		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
 	case *hir.If:
@@ -134,6 +136,8 @@ func stmtLoc(stmt hir.Stmt) *source.Location {
 	case *hir.Binding:
 		return node.Location
 	case *hir.Return:
+		return node.Location
+	case *hir.Invalid:
 		return node.Location
 	case *hir.If:
 		return node.Location

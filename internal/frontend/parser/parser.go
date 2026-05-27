@@ -390,21 +390,20 @@ func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.
 			return nil, nil, nil, nil, false
 		}
 	}
-	
+
 	if p.match(tokens.ASSIGN) {
-	 	value = p.parseExpr(0)
-	} else if token == tokens.CONST {
-		peek := p.peek()
-		diag := diagnostics.NewError("Missing initializer for const declaration")
-		diag.WithPrimaryLabel(p.loc(peek, peek), "add initial value here")
-		p.diag.Add(diag)
+		value = p.parseExpr(0)
 	}
 
 	if p.peek().Kind != tokens.SEMICOLON {
-		loc := value.Loc()
 		insertPos := source.NewPosition()
-		if loc.End != nil {
-			insertPos = *loc.End
+		switch {
+		case value != nil && value.Loc().End != nil:
+			insertPos = *value.Loc().End
+		case ty != nil && ty.Loc().End != nil:
+			insertPos = *ty.Loc().End
+		case name.Loc().End != nil:
+			insertPos = *name.Loc().End
 		}
 		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
 			end = p.recoverMissingToken(tokens.SEMICOLON, "expected ';' after statement", insertPos)

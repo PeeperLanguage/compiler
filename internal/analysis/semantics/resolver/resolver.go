@@ -80,9 +80,6 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.BlockStmt:
 		return r.resolveBlock(fn, table.New(scope), node)
 	case *ast.LetDecl:
-		if !r.resolveExpr(fn, scope, node.Value) {
-			return false
-		}
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
 		if !scope.Declare(sym) {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
@@ -95,11 +92,11 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 				Symbol: sym,
 			})
 		}
-		return true
-	case *ast.ConstDecl:
-		if !r.resolveExpr(fn, scope, node.Value) {
-			return false
+		if node.Value == nil {
+			return true
 		}
+		return r.resolveExpr(fn, scope, node.Value)
+	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
 		if !scope.Declare(sym) {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
@@ -112,7 +109,10 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 				Symbol: sym,
 			})
 		}
-		return true
+		if node.Value == nil {
+			return true
+		}
+		return r.resolveExpr(fn, scope, node.Value)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
@@ -147,6 +147,8 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 
 func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr ast.Expr) bool {
 	switch node := expr.(type) {
+	case nil:
+		return true
 	case *ast.NumberLit:
 		return true
 	case *ast.Ident:

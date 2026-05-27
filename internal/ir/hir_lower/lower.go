@@ -92,32 +92,42 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		appendBlock(module, block, node)
 		out.Stmts = append(out.Stmts, block)
 	case *ast.LetDecl:
-		value, ok := module.Types.LookupExpr(node.Value)
-		if !ok {
-			return
-		}
 		resolution, ok := module.Bindings.LookupNode(node.Name)
 		if !ok || resolution == nil || resolution.Symbol == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol", Location: node.Loc()})
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: false, Value: lowerExpr(value), Location: node.Loc()})
+		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
+		if node.Value != nil {
+			if value, ok := module.Types.LookupExpr(node.Value); ok {
+				valueExpr = lowerExpr(value)
+			} else {
+				valueExpr = &ir.InvalidExpr{Message: "invalid initializer", Type: "<invalid>"}
+			}
+		}
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: false, Value: valueExpr, Location: node.Loc()})
 	case *ast.ConstDecl:
-		value, ok := module.Types.LookupExpr(node.Value)
-		if !ok {
-			return
-		}
 		resolution, ok := module.Bindings.LookupNode(node.Name)
 		if !ok || resolution == nil || resolution.Symbol == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol", Location: node.Loc()})
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: true, Value: lowerExpr(value), Location: node.Loc()})
+		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
+		if node.Value != nil {
+			if value, ok := module.Types.LookupExpr(node.Value); ok {
+				valueExpr = lowerExpr(value)
+			} else {
+				valueExpr = &ir.InvalidExpr{Message: "invalid initializer", Type: "<invalid>"}
+			}
+		}
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: true, Value: valueExpr, Location: node.Loc()})
 	case *ast.IfStmt:
-		cond, ok := module.Types.LookupExpr(node.Cond)
-		if !ok {
-			return
+		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
+		if cond, ok := module.Types.LookupExpr(node.Cond); ok {
+			condExpr = lowerExpr(cond)
 		}
 		ifStmt := &hir.If{
-			Cond:     lowerExpr(cond),
+			Cond:     condExpr,
 			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
 			Location: node.Loc(),
 		}
@@ -128,13 +138,14 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		out.Stmts = append(out.Stmts, ifStmt)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
+			out.Stmts = append(out.Stmts, &hir.Return{Value: &ir.InvalidExpr{Message: "missing return value", Type: "<invalid>"}, Location: node.Loc()})
 			return
 		}
-		value, ok := module.Types.LookupExpr(node.Value)
-		if !ok {
-			return
+		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid return value", Type: "<invalid>"})
+		if value, ok := module.Types.LookupExpr(node.Value); ok {
+			valueExpr = lowerExpr(value)
 		}
-		out.Stmts = append(out.Stmts, &hir.Return{Value: lowerExpr(value), Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: node.Loc()})
 	}
 }
 
@@ -145,12 +156,12 @@ func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
 		appendBlock(module, block, node)
 		return block
 	case *ast.IfStmt:
-		cond, ok := module.Types.LookupExpr(node.Cond)
-		if !ok {
-			return nil
+		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
+		if cond, ok := module.Types.LookupExpr(node.Cond); ok {
+			condExpr = lowerExpr(cond)
 		}
 		out := &hir.If{
-			Cond:     lowerExpr(cond),
+			Cond:     condExpr,
 			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
 			Location: node.Loc(),
 		}
@@ -160,7 +171,7 @@ func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
 		}
 		return out
 	default:
-		return nil
+		return &hir.Invalid{Message: "unsupported else branch", Location: node.Loc()}
 	}
 }
 
