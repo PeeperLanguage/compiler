@@ -38,11 +38,18 @@ func reportMissingReturn(fn *hir.Function, diag *diagnostics.DiagnosticBag) {
 	msg := "not all control paths return a value"
 	d := diagnostics.NewError(msg).WithCode(diagnostics.ErrMissingReturn)
 
-	loc := fn.Location
-	d.WithPrimaryLabel(loc, "expected `"+fn.ReturnType+"` because of this return type")
-
 	missing := collectMissingReturns(fn.Body)
+	if len(missing) > 0 && missing[0] != nil {
+		d.WithPrimaryLabel(missing[0], msg)
+	} else {
+		d.WithPrimaryLabel(fn.Location, msg)
+	}
+	d.WithSecondaryLabel(fn.Location, "expected `"+fn.ReturnType+"` because of this return type")
+
 	for _, loc := range missing {
+		if loc == nil {
+			continue
+		}
 		l := loc
 		d.WithSecondaryLabel(l, "this branch does not return a value")
 	}
