@@ -17,24 +17,20 @@ func (p Position) String() string {
 }
 
 func (p *Position) Advance(toSkip string) *Position {
-	prevWasTab := false
 	for _, char := range toSkip {
 		switch char {
 		case '\n':
 			p.Line++
 			p.Column = 1
 			p.Index++
-			prevWasTab = false
 		case '\t':
-			p.Column += 4
+			// Move to next tab stop (every 4 columns, starting from 1)
+			tabWidth := 4
+			p.Column += tabWidth - ((p.Column - 1) % tabWidth)
 			p.Index++
-			prevWasTab = true
 		default:
-			if !prevWasTab {
-				p.Column++
-			}
+			p.Column++
 			p.Index += len(string(char))
-			prevWasTab = false
 		}
 	}
 	return p
