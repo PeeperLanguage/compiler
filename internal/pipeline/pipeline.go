@@ -63,6 +63,10 @@ func (p *Pipeline) Run(entry *context.Module) Result {
 		stage.HasSem = ok
 		_, hirText := lowerHIR(module, diag)
 		stage.HIRText = hirText
+		if diag != nil && diag.HasErrors() {
+			result.Stages[module.Key] = stage
+			continue
+		}
 		_, mirText := lowerMIR(module)
 		stage.MIRText = mirText
 		stage.LLVMIR = lowerLLVMIR(module)

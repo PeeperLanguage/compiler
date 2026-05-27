@@ -295,3 +295,59 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 }
+
+func TestHIRCFGReturnCheckPointsToNestedIfBranch(t *testing.T) {
+	src := `fn f(a: i32) -> i32 {
+	if a < 2 {
+		return 10;
+	} else if a < 3 {
+		if a == 0 {
+			let x = 1;
+		} else {
+			return 23;
+		}
+	} else {
+		return 30;
+	}
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !ok || module.Types == nil {
+		t.Fatalf("analyze failed")
+	}
+	_, _ = lowerHIR(module, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected missing-return error")
+	}
+	foundBranch := false
+	foundHelp := false
+	for _, item := range diag.Diagnostics() {
+		if item == nil || item.Code != diagnostics.ErrMissingReturn {
+			continue
+		}
+		if strings.Contains(item.Help, "fulfill the return or add a fallback return on parent scope") {
+			foundHelp = true
+		}
+		for _, lab := range item.Labels {
+			if lab.Style == diagnostics.Secondary && strings.Contains(lab.Message, "this branch does not return a value") {
+				foundBranch = true
+			}
+		}
+	}
+	if !foundBranch || !foundHelp {
+		t.Fatalf("expected missing-return branch label + safe help, got:\n%s", diag.EmitAllToString())
+	}
+}

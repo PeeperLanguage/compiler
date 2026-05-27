@@ -226,3 +226,5 @@ func TestResolveReportsUseBeforeDecl(t *testing.T) {
 		t.Fatalf("expected use-before-decl diagnostic with secondary label, got:\n%s", diag.EmitAllToString())
 	}
 }
+
+// Missing-return validation moved to CFG pass after HIR lowering.

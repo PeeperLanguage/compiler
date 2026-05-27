@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"compiler/core/diagnostics"
+	"compiler/internal/analysis/cfg"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"
 	"compiler/internal/analysis/semantics/typechecher"
@@ -57,6 +58,7 @@ func lowerHIR(module *context.Module, diag *diagnostics.DiagnosticBag) (*hir.Mod
 	}
 	mod = hir_fold.FoldModule(mod, diag)
 	module.HIR = mod
+	cfg.CheckReturns(mod, diag)
 	return mod, mod.Text()
 }
 
