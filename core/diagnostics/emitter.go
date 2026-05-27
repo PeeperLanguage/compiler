@@ -43,6 +43,50 @@ func expandTabs(line string) string {
 	return result.String()
 }
 
+// visualColumnToPosition converts a character column (where tabs=1) to a visual position
+// in an expanded line (where tabs are expanded to TAB_WIDTH spaces).
+// This is used to align carets with source code when tabs are present.
+func visualColumnToPosition(line string, column int) int {
+	if column <= 0 {
+		return 0
+	}
+	if !strings.ContainsRune(line, '\t') {
+		// No tabs, column is already the correct position (1-indexed to 0-indexed)
+		return column - 1
+	}
+	// Iterate through characters, tracking both character column and visual position
+	charCol := 1  // 1-indexed character column
+	visualPos := 0 // 0-indexed visual position in expanded line
+	
+	for _, ch := range line {
+		if charCol >= column {
+			// Found the character at or past our target column
+			// For tabs, we need to check if the column falls within the tab expansion
+			if ch == '\t' {
+				// This tab starts at charCol and expands to visual positions
+				// The tab spans from charCol to charCol (it's one character)
+				// but visually it's from visualPos to visualPos+spaces-1
+				// Since column == charCol, we return visualPos
+				return visualPos
+			}
+			return visualPos
+		}
+		
+		if ch == '\t' {
+			spaces := TAB_WIDTH - (visualPos % TAB_WIDTH)
+			_ = spaces // suppress unused variable warning
+			visualPos += spaces
+			charCol++ // tab is one character
+		} else {
+			visualPos++
+			charCol++
+		}
+	}
+	
+	// If we get here, the column is beyond the end of the line
+	return visualPos
+}
+
 // SourceCache caches source file contents for error reporting
 type SourceCache struct {
 	files map[string][]string
@@ -673,7 +717,8 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 	// Underline leader
 	e.printBlankGutter()
 
-	padding := ctx.startCol - 1
+	// Calculate visual padding accounting for tabs in the source line
+	padding := visualColumnToPosition(sourceLine, ctx.startCol)
 	length := ctx.endCol - ctx.startCol
 	if length <= 0 {
 		length = 1
@@ -805,11 +850,12 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 	expandedSourceLine := expandTabs(sourceLine)
 
 	oldFrag := lines[0].Code
-	start := ctx.startCol - 1
+	// Convert character column to visual position in expanded line
+	start := visualColumnToPosition(sourceLine, ctx.startCol)
 	if start < 0 || start > len(expandedSourceLine) {
 		return false
 	}
-	end := ctx.endCol - 1
+	end := visualColumnToPosition(sourceLine, ctx.endCol)
 
 	// Some AST locations can be token-only or otherwise too narrow for replacement.
 	// Prefer replacing the old fragment at/near the diagnostic column when possible.
@@ -1030,12 +1076,13 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 		underlineColor = colors.BLUE
 	}
 
-	padding := ctx.startCol - 1
+	// Calculate visual padding accounting for tabs in the source line
+	padding := visualColumnToPosition(startSourceLine, ctx.startCol)
 	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
 	if ctx.startCol <= len(startSourceLine) {
 		underlineColor.Fprint(
 			e.writer,
-			strings.Repeat("~", len(expandedStartLine)-(ctx.startCol-1)),
+			strings.Repeat("~", len(expandedStartLine)-padding),
 		)
 	}
 	fmt.Fprintln(e.writer)
@@ -1065,7 +1112,8 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 		fmt.Fprintln(e.writer)
 
 		e.printBlankGutter()
-		endPadding := ctx.endCol - 1
+		// Calculate visual padding accounting for tabs in the source line
+		endPadding := visualColumnToPosition(endSourceLine, ctx.endCol)
 		fmt.Fprint(e.writer, strings.Repeat(" ", endPadding))
 		underlineColor.Fprint(e.writer, "^")
 		if ctx.label.Message != "" {
@@ -1173,14 +1221,18 @@ func (e *Emitter) printCompactDualLabel(filepath string, primary Label, secondar
 	e.highlighter.HighlightWithColor(expandedSourceLine, e.writer)
 	fmt.Fprintln(e.writer)
 
-	leftPadding := leftStart.Column - 1
-	leftLength := leftEnd.Column - leftStart.Column
+	// Calculate visual padding accounting for tabs in the source line
+	leftPadding := visualColumnToPosition(sourceLine, leftStart.Column)
+	// Calculate visual length by converting end column to position and subtracting
+	leftEndPos := visualColumnToPosition(sourceLine, leftEnd.Column)
+	leftLength := leftEndPos - leftPadding
 	if leftLength <= 0 {
 		leftLength = 1
 	}
 
-	rightPadding := rightStart.Column - 1
-	rightLength := rightEnd.Column - rightStart.Column
+	rightPadding := visualColumnToPosition(sourceLine, rightStart.Column)
+	rightEndPos := visualColumnToPosition(sourceLine, rightEnd.Column)
+	rightLength := rightEndPos - rightPadding
 	if rightLength <= 0 {
 		rightLength = 1
 	}
@@ -1335,8 +1387,10 @@ func (e *Emitter) printRoutedLabels(filepath string, primary Label, secondaries 
 					primaryEnd = primaryStart
 				}
 
-				padding := primaryStart.Column - 1
-				length := primaryEnd.Column - primaryStart.Column
+				// Calculate visual padding accounting for tabs in the source line
+				padding := visualColumnToPosition(sourceLine, primaryStart.Column)
+				endPos := visualColumnToPosition(sourceLine, primaryEnd.Column)
+				length := endPos - padding
 				if length <= 0 {
 					length = 1
 				}
@@ -1361,8 +1415,10 @@ func (e *Emitter) printRoutedLabels(filepath string, primary Label, secondaries 
 							secEnd = secStart
 						}
 
-						padding := secStart.Column - 1
-						length := secEnd.Column - secStart.Column
+						// Calculate visual padding accounting for tabs in the source line
+						padding := visualColumnToPosition(sourceLine, secStart.Column)
+						endPos := visualColumnToPosition(sourceLine, secEnd.Column)
+						length := endPos - padding
 						if length <= 0 {
 							length = 1
 						}
