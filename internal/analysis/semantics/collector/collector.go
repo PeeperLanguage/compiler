@@ -8,7 +8,6 @@ import (
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
-	"fmt"
 )
 
 type collector struct {
@@ -94,7 +93,6 @@ func (c *collector) collectStmt(stmt ast.Stmt, fn *declinfo.Function) {
 	case *ast.BlockStmt:
 		c.collectBlock(n, fn)
 	case *ast.LetDecl:
-		fmt.Printf("declaring %v, %v\n", n, fn)
 		c.addLocalDecl(n.Name, fn)
 	case *ast.ConstDecl:
 		c.addLocalDecl(n.Name, fn)

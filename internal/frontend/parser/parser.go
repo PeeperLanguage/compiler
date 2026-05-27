@@ -381,7 +381,6 @@ func (p *Parser) parseParams() []ast.Param {
 
 func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *tokens.Token, ok bool) {
 	name = p.parseIdent()
-	fmt.Printf("Name: %s\n", name.Name)
 	if name == nil {
 		return nil, nil, nil, nil, false
 	}
