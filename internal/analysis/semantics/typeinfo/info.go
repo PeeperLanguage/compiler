@@ -362,6 +362,19 @@ func (e *FloatLit) Type() Type {
 	return e.ExprType
 }
 
+type As struct {
+	Expr      Expr
+	CastType Type
+	ExprType Type
+}
+
+func (e *As) Type() Type {
+	if e == nil {
+		return nil
+	}
+	return e.ExprType
+}
+
 func itoa(v int) string {
 	return strconv.Itoa(v)
 }

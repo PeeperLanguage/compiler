@@ -99,6 +99,11 @@ type Move struct {
 	Type string
 }
 
+type Cast struct {
+	Arg  ValueRef
+	Type string
+}
+
 func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
 }
@@ -118,6 +123,7 @@ func (i *Ret) Text() string {
 func (*Unary) valueExprNode()   {}
 func (*Binary) valueExprNode()  {}
 func (*Move) valueExprNode()    {}
+func (*Cast) valueExprNode()    {}
 func (*RefConst) valueRefNode() {}
 func (*RefName) valueRefNode()  {}
 
@@ -126,6 +132,7 @@ func (r *RefName) Text() string  { return r.Name }
 func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
+func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
 
 type lowerer struct {
 	fn          *Function
@@ -319,6 +326,12 @@ func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
 		}
 		name := nextTemp(tmp)
 		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.Cast:
+		// Lower cast expression
+		arg := lowerExpr(e.Expr, tmp, out)
+		name := nextTemp(tmp)
+		*out = append(*out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	default:
 		return &RefConst{Value: "0", Type: "i32"}

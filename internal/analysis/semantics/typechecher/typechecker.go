@@ -277,9 +277,62 @@ func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) typeinfo.Expr{
 		callExpr := &typeinfo.Call{Callee: callee, Args: args, ExprType: callee.Type()}
 		c.module.Types.BindExpr(node, callExpr)
 		return callExpr
+	case *ast.AsExpr:
+		// Type check cast expression: expr as type
+		return c.typeAsExpr(node)
 	default:
 		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 		return nil
+	}
+}
+
+func (c *checker) typeAsExpr(node *ast.AsExpr) typeinfo.Expr {
+	if c == nil || node == nil {
+		return nil
+	}
+
+	// Type check the expression being cast
+	expr := c.typeExpr(node.Expr, nil)
+	if expr == nil || typeinfo.IsInvalid(expr.Type()) || typeinfo.IsUnknown(expr.Type()) {
+		return &typeinfo.As{
+			Expr:      expr,
+			CastType: typeinfo.TypeFromSyntax(node.TypeExpr),
+			ExprType: &typeinfo.InvalidType{},
+		}
+	}
+
+	// Get the target type from the type expression
+	targetType := typeinfo.TypeFromSyntax(node.TypeExpr)
+	if targetType == nil || typeinfo.IsInvalid(targetType) || typeinfo.IsUnknown(targetType) {
+		common.AddError(c.diag, c.module.FilePath, node.TypeExpr, diagnostics.ErrInvalidType, "invalid target type for cast")
+		return &typeinfo.As{
+			Expr:      expr,
+			CastType: targetType,
+			ExprType: &typeinfo.InvalidType{},
+		}
+	}
+
+	// Check if the cast is valid
+	// For explicit casts with "as", we allow:
+	// - Compatible (safe implicit conversions)
+	// - ExplicitCastable (lossy conversions like f64->i32, i32->f32)
+	// We only reject Incompatible (e.g., bool->i32)
+	compat := typeinfo.CheckNumericCompatibility(targetType, expr.Type())
+	if compat == typeinfo.Incompatible {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidCast,
+			fmt.Sprintf("cannot cast %s to %s", typeinfo.TypeText(expr.Type()), typeinfo.TypeText(targetType)))
+		return &typeinfo.As{
+			Expr:      expr,
+			CastType: targetType,
+			ExprType: &typeinfo.InvalidType{},
+		}
+	}
+
+	// The result type of the cast expression is the target type
+	return &typeinfo.As{
+		Expr:      expr,
+		CastType: targetType,
+		ExprType: targetType,
 	}
 }
 
