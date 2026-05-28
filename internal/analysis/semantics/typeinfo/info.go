@@ -1,12 +1,11 @@
 package typeinfo
 
 import (
-	"strconv"
-
 	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
+	"strconv"
 )
 
 type Type interface {
@@ -48,16 +47,16 @@ func (t *IntegerType) Text() string {
 		return ""
 	}
 	if t.Signed {
-		return "i" + itoa(t.Bits)
+		return "i" + strconv.Itoa(t.Bits)
 	}
-	return "u" + itoa(t.Bits)
+	return "u" + strconv.Itoa(t.Bits)
 }
 
 func (t *FloatType) Text() string {
 	if t == nil {
 		return ""
 	}
-	return "f" + itoa(t.Bits)
+	return "f" + strconv.Itoa(t.Bits)
 }
 
 func (*BoolType) Text() string { return "bool" }
@@ -373,8 +372,4 @@ func (e *As) Type() Type {
 		return nil
 	}
 	return e.ExprType
-}
-
-func itoa(v int) string {
-	return strconv.Itoa(v)
 }

@@ -63,11 +63,6 @@ func parseWorkspaceWithConfig(rootDir, backendName string) compiler.ParseResult 
 	return c.ParseFile(entry)
 }
 
-// Run front-end checks without backend execution.
-func parsePathForCheck(path string) compiler.ParseResult {
-	return parsePathWithBackend(path, string(backend.LLVM), false)
-}
-
 // Convert CLI inputs to compiler config.
 func compilerConfigFor(path, backendName string, debugBuild bool) context.Config {
 	rootDir := path

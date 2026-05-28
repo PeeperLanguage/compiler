@@ -6,7 +6,6 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
-	"compiler/internal/utils/numeric"
 )
 
 type Param struct {
@@ -191,24 +190,12 @@ func IsFloatType(name string) bool {
 }
 
 func IsIntegerType(name string) bool {
-	_, _, ok := ParseIntegerType(name)
+	_, _, ok := tokens.ParseIntegerBuiltin(name)
 	return ok
 }
 
 func IsBoolType(name string) bool {
 	return name == "bool"
-}
-
-func ParseIntegerType(name string) (signed bool, bits int, ok bool) {
-	return tokens.ParseIntegerBuiltin(name)
-}
-
-func IsScalarType(name string) bool {
-	return IsIntegerType(name) || IsFloatType(name) || IsBoolType(name)
-}
-
-func IsFloatLiteral(text string) bool {
-	return numeric.LooksFloatLike(text)
 }
 
 func TypeText(typ ast.TypeExpr) string {

@@ -34,10 +34,6 @@ func IsArithmetic(t Type) bool {
 	}
 }
 
-func IsOrderable(t Type) bool {
-	return IsArithmetic(t)
-}
-
 func IsEquatable(t Type) bool {
 	switch t.(type) {
 	case *IntegerType, *FloatType, *BoolType:
@@ -45,10 +41,6 @@ func IsEquatable(t Type) bool {
 	default:
 		return false
 	}
-}
-
-func IsLogical(t Type) bool {
-	return IsCondition(t)
 }
 
 func IsCondition(t Type) bool {

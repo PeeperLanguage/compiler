@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/tokens"
 )
 
 func lowerLLVMFromMIR(mod *mir.Module) string {
@@ -89,7 +89,7 @@ func lowerLLVMFromMIR(mod *mir.Module) string {
 }
 
 func mustLLVMType(typeText string) string {
-	if signed, bits, ok := mirParseIntegerType(typeText); ok {
+	if signed, bits, ok := tokens.ParseIntegerBuiltin(typeText); ok {
 		_ = signed
 		return fmt.Sprintf("i%d", bits)
 	}
@@ -452,16 +452,8 @@ func integerComparePred(op string, typeText string) string {
 }
 
 func isUnsignedMIRType(typeText string) bool {
-	signed, _, ok := mirParseIntegerType(typeText)
+	signed, _, ok := tokens.ParseIntegerBuiltin(typeText)
 	return ok && !signed
-}
-
-func mirParseIntegerType(typeText string) (bool, int, bool) {
-	return mirParseIntegerTypeImpl(typeText)
-}
-
-func mirParseIntegerTypeImpl(typeText string) (bool, int, bool) {
-	return ir.ParseIntegerType(typeText)
 }
 
 func isLLVMFloatType(typeText string) bool {

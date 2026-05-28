@@ -24,7 +24,7 @@ func TestSprintAndFprintWithColor(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	FprintWithColor(&buf, GREEN, "x")
+	GREEN.Fprint(&buf, "x")
 	out := buf.String()
 	if !strings.Contains(out, string(GREEN)) || !strings.Contains(out, "x") || !strings.Contains(out, string(RESET)) {
 		t.Fatalf("unexpected colored fprint output: %q", out)

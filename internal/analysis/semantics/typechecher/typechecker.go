@@ -116,7 +116,7 @@ func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.T
 				return
 			}
 			c.module.Types.BindExpr(node.Cond, cond)
-			if !isInvalidOrUnknown(cond.Type()) && !c.isConditionType(cond.Type()) {
+			if !isInvalidOrUnknown(cond.Type()) && !typeinfo.IsCondition(cond.Type()) {
 				common.AddError(c.diag, c.module.FilePath, node.Cond, diagnostics.ErrInvalidOperation,
 					"if condition must be bool or scalar number")
 			}
@@ -205,13 +205,13 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 			"receivers not supported in current compiler stage")
 		return
 	}
-	if !c.isSupportedScalarType(typeinfo.TypeFromSyntax(decl.ReturnType)) {
+	if !typeinfo.IsArithmetic(typeinfo.TypeFromSyntax(decl.ReturnType)) {
 		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
 			"function return type must be builtin integer or f32/f64 in current compiler stage")
 		return
 	}
 	for _, param := range decl.Params {
-		if !c.isSupportedScalarType(typeinfo.TypeFromSyntax(param.Type)) {
+		if !typeinfo.IsArithmetic(typeinfo.TypeFromSyntax(param.Type)) {
 			common.AddError(c.diag, c.module.FilePath, param.Name, diagnostics.ErrInvalidType,
 				"parameter type must be builtin integer or f32/f64 in current compiler stage")
 			return
@@ -533,9 +533,6 @@ func floatLiteralValue(value string) string {
 	return intValue.String() + ".0"
 }
 
-func (c *checker) isSupportedScalarType(typ typeinfo.Type) bool { return typeinfo.IsArithmetic(typ) }
-func (c *checker) isConditionType(typ typeinfo.Type) bool       { return typeinfo.IsCondition(typ) }
-
 func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {
 	case "+", "-", "*", "/":
@@ -545,9 +542,9 @@ func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 	case "==", "!=":
 		return typeinfo.IsEquatable(typ)
 	case "<", "<=", ">", ">=":
-		return typeinfo.IsOrderable(typ)
+		return typeinfo.IsArithmetic(typ)
 	case "&&", "||":
-		return typeinfo.IsLogical(typ)
+		return typeinfo.IsCondition(typ)
 	default:
 		return false
 	}
