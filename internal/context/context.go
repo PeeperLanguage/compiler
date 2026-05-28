@@ -205,5 +205,8 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	}
 	sym := symbols.New(name, symbols.SymbolConst, nil)
 	sym.IsPub = true
-	_ = scope.Declare(sym)
+	if err := scope.Declare(sym); err != nil {
+		// Predeclared constants should never fail to declare
+		panic(err)
+	}
 }

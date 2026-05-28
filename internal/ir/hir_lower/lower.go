@@ -196,6 +196,13 @@ func lowerExpr(expr typeinfo.Expr) ir.Expr {
 			args = append(args, lowerExpr(arg))
 		}
 		return &ir.Call{Callee: lowerExpr(e.Callee), Args: args, Type: typeinfo.TypeText(e.Type())}
+	case *typeinfo.As:
+		// Lower cast expression - emit a cast operation
+		// The type of the As expression is the target type
+		return &ir.Cast{
+			Expr: lowerExpr(e.Expr),
+			Type: typeinfo.TypeText(e.ExprType),
+		}
 	default:
 		return &ir.IntLit{Value: "0", Type: "i32"}
 	}

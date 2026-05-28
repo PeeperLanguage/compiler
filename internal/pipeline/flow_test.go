@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"compiler/core/diagnostics"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 )
@@ -30,8 +32,8 @@ fn main() -> i32 {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	hirMod, hirText := lowerHIR(module, diag)
@@ -51,6 +53,147 @@ fn main() -> i32 {
 	}
 }
 
+func TestFullFlowNumericCasts(t *testing.T) {
+	src := `fn main() -> i32 {
+	let f32_val: f32 = 3.14;
+	let f64_from_int: f64 = 10;
+	let from_f32: i32 = f32_val as i32;
+	let mixed: f64 = (10 as f64) + (2.5 as f64);
+	let small_i8: i8 = -128 as i8;
+	let large_u64: u64 = 18446744073709551615 as u64;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if _, hirText := lowerHIR(module, diag); !strings.Contains(hirText, "let mixed$") {
+		t.Fatalf("hir lowering failed: %q", hirText)
+	}
+	if _, mirText := lowerMIR(module); !strings.Contains(mirText, "cast") {
+		t.Fatalf("mir lowering failed: %q", mirText)
+	}
+	if ir := lowerLLVMIR(module); !strings.Contains(ir, "define i32 @main()") || !strings.Contains(ir, "float 0x") {
+		t.Fatalf("llvm lowering failed:\n%s", ir)
+	}
+}
+
+func TestFullFlowInferredIntegerUsesMinimumConcreteType(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a = 4294967295;
+	let b: i64 = a + 4;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if _, hirText := lowerHIR(module, diag); !strings.Contains(hirText, "4294967295") {
+		t.Fatalf("hir lowering failed: %q", hirText)
+	}
+}
+
+func TestFullFlowNegativeIntegerUsesSignedMinimumConcreteType(t *testing.T) {
+	src := `fn main() -> i64 {
+	let a = -9223372036854775808;
+	return a;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	mainFn := astMod.Decls[0].(*ast.FnDecl)
+	decl := mainFn.Body.Stmts[0].(*ast.LetDecl)
+	res, ok := module.Bindings.LookupNode(decl.Name)
+	if !ok || res == nil || res.Symbol == nil {
+		t.Fatalf("missing binding for a")
+	}
+	typ, ok := module.Types.LookupSymbolType(res.Symbol)
+	if !ok || !typeinfo.SameType(typ, &typeinfo.IntegerType{Signed: true, Bits: 64}) {
+		t.Fatalf("expected a to infer i64, got %s", typeinfo.TypeText(typ))
+	}
+}
+
+func TestFullFlowInferredBindingDoesNotRetypeFromLaterContext(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a = 2;
+	let b: i8 = a;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if out := diag.EmitAllToString(); !strings.Contains(out, "cannot assign i32 to i8") {
+		t.Fatalf("expected concrete inferred type mismatch, got:\n%s", out)
+	}
+}
+
+func TestFullFlowRejectsSelfReferentialInitializer(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a = a;
+	let b: i32 = a;
+	return b;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if out := diag.EmitAllToString(); !strings.Contains(out, "used before it's defined") {
+		t.Fatalf("expected use-before-def diagnostic for self init, got:\n%s", out)
+	}
+}
+
 func TestFullFlowUndefinedSymbolFailsInResolver(t *testing.T) {
 	src := `fn main() -> i32 {
 	return missing + 1;
@@ -65,12 +208,33 @@ func TestFullFlowUndefinedSymbolFailsInResolver(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if ok {
-		t.Fatalf("expected analyze failure")
-	}
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
+	}
+}
+
+func TestFullFlowMalformedLetDoesNotPanicInCollector(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = +;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	astMod := parser.ParseModule("test.em", stream, diag)
+	module := &context.Module{
+		Key:        "local:/tmp/test.em",
+		ImportPath: "test",
+		FilePath:   "test.em",
+		Content:    src,
+	}
+	module.AST = astMod
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if module.Types == nil {
+		t.Fatalf("analyze did not complete")
 	}
 }
 
@@ -92,8 +256,8 @@ func TestFullFlowNestedBlockShadowing(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -129,8 +293,8 @@ func TestHIRFoldConstantIfElse(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -168,8 +332,8 @@ func TestHIRFoldWarnsUnreachableAfterConstantIf(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -200,8 +364,8 @@ func TestHIRFoldConstBindingCondition(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -233,8 +397,8 @@ func TestHIRKeepsNonConstantIfElse(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -276,8 +440,8 @@ fn main() -> i32 {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -325,8 +489,8 @@ fn main() -> i32 {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, _ = lowerHIR(module, diag)

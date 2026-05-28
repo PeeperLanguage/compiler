@@ -47,14 +47,14 @@ testCommand: {
 
 checkCommand: {
   parseCommandArgs
-  parsePathForCheck
+  parsePathWithBackend
   diagnostics
 
-  parseCommandArgs -> parsePathForCheck
-  parsePathForCheck -> diagnostics: "EmitAll"
-  parsePathForCheck -> project.Load: "missing"
-  parsePathForCheck -> compiler.NewWithConfig: "missing"
-  parsePathForCheck -> compiler.ParseEntry/ParseWorkspace: "missing"
+  parseCommandArgs -> parsePathWithBackend
+  parsePathWithBackend -> diagnostics: "EmitAll"
+  parsePathWithBackend -> project.Load: "missing"
+  parsePathWithBackend -> compiler.NewWithConfig: "missing"
+  parsePathWithBackend -> compiler.ParseEntry/ParseWorkspace: "missing"
 }
 
 parsePathWithBackend -> parsePathWithConfig

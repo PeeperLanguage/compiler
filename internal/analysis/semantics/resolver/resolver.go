@@ -16,9 +16,9 @@ type resolver struct {
 	diag   *diagnostics.DiagnosticBag
 }
 
-func (r *resolver) resolveModule() bool {
+func (r *resolver) resolveModule() {
 	if r == nil || r.module == nil || r.module.Decls == nil {
-		return false
+		return
 	}
 	r.module.Bindings = binding.NewModuleInfo()
 	r.module.Types = nil
@@ -26,16 +26,13 @@ func (r *resolver) resolveModule() bool {
 		if collectedFn == nil || collectedFn.Decl == nil || collectedFn.Scope == nil {
 			continue
 		}
-		if !r.resolveFunction(collectedFn) {
-			return false
-		}
+		r.resolveFunction(collectedFn)
 	}
-	return true
 }
 
-func (r *resolver) resolveFunction(fn *declinfo.Function) bool {
+func (r *resolver) resolveFunction(fn *declinfo.Function) {
 	if r == nil || r.module == nil || fn == nil || fn.Decl == nil || fn.Scope == nil {
-		return false
+		return
 	}
 	r.module.Bindings.BindFunctionSymbol(fn.Decl, fn.Symbol)
 	if fn.Decl.Name != nil && fn.Symbol != nil {
@@ -47,12 +44,12 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) bool {
 	for _, param := range fn.Decl.Params {
 		if param.Name == nil || param.Name.Name == "" {
 			common.AddError(r.diag, r.module.FilePath, fn.Decl, diagnostics.ErrMissingIdentifier, "parameter name required")
-			return false
+			return
 		}
 		sym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
-		if !fn.Scope.Declare(sym) {
-			common.AddError(r.diag, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, "duplicate parameter `"+param.Name.Name+"`")
-			return false
+		if err := fn.Scope.Declare(sym); err != nil {
+			common.AddError(r.diag, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
+			return
 		}
 		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
 		r.module.Bindings.BindNode(param.Name, &binding.Resolution{
@@ -60,30 +57,34 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) bool {
 			Symbol: sym,
 		})
 	}
-	return r.resolveBlock(fn, fn.Scope, fn.Decl.Body)
+	r.resolveBlock(fn, fn.Scope, fn.Decl.Body)
 }
 
-func (r *resolver) resolveBlock(fn *declinfo.Function, scope *table.Scope, block *ast.BlockStmt) bool {
+func (r *resolver) resolveBlock(fn *declinfo.Function, scope *table.Scope, block *ast.BlockStmt) {
 	if block == nil {
-		return true
+		return
 	}
 	for _, stmt := range block.Stmts {
-		if !r.resolveStmt(fn, scope, stmt) {
-			return false
-		}
+		r.resolveStmt(fn, scope, stmt)
 	}
-	return true
 }
 
-func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.Stmt) bool {
+func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.Stmt) {
+	if stmt == nil {
+		return
+	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		return r.resolveBlock(fn, table.New(scope), node)
+		r.resolveBlock(fn, table.New(scope), node)
 	case *ast.LetDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
-		if !scope.Declare(sym) {
-			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
-			return false
+		sym.Initializing = true
+		defer func() {
+			sym.Initializing = false
+		}()
+		if err := scope.Declare(sym); err != nil {
+			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+			return
 		}
 		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
 		if node.Name != nil {
@@ -92,15 +93,18 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 				Symbol: sym,
 			})
 		}
-		if node.Value == nil {
-			return true
+		if node.Value != nil {
+			r.resolveExpr(fn, scope, node.Value)
 		}
-		return r.resolveExpr(fn, scope, node.Value)
 	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
-		if !scope.Declare(sym) {
-			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, "duplicate binding `"+node.Name.Name+"`")
-			return false
+		sym.Initializing = true
+		defer func() {
+			sym.Initializing = false
+		}()
+		if err := scope.Declare(sym); err != nil {
+			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+			return
 		}
 		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
 		if node.Name != nil {
@@ -109,82 +113,85 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 				Symbol: sym,
 			})
 		}
-		if node.Value == nil {
-			return true
+		if node.Value != nil {
+			r.resolveExpr(fn, scope, node.Value)
 		}
-		return r.resolveExpr(fn, scope, node.Value)
 	case *ast.ReturnStmt:
+		if node == nil {
+			return
+		}
 		if node.Value == nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
-			return false
+			return
 		}
-		return r.resolveExpr(fn, scope, node.Value)
+		r.resolveExpr(fn, scope, node.Value)
 	case *ast.IfStmt:
 		if node.Cond == nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
-			return false
+			return
 		}
-		if !r.resolveExpr(fn, scope, node.Cond) {
-			return false
-		}
-		if !r.resolveBlock(fn, table.New(scope), node.Then) {
-			return false
-		}
-		if node.Else == nil {
-			return true
-		}
+		r.resolveExpr(fn, scope, node.Cond)
+		r.resolveBlock(fn, table.New(scope), node.Then)
 		if elseBlock, ok := node.Else.(*ast.BlockStmt); ok {
-			return r.resolveBlock(fn, table.New(scope), elseBlock)
+			r.resolveBlock(fn, table.New(scope), elseBlock)
 		}
-		return r.resolveStmt(fn, scope, node.Else)
+		r.resolveStmt(fn, scope, node.Else)
 	case *ast.ExprStmt:
-		return r.resolveExpr(fn, scope, node.Expr)
+		r.resolveExpr(fn, scope, node.Expr)
 	default:
 		common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
-		return false
+		return
 	}
 }
 
-func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr ast.Expr) bool {
+func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr ast.Expr) {
 	switch node := expr.(type) {
-	case nil:
-		return true
 	case *ast.NumberLit:
-		return true
+		// nothing to look for literals
+		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok {
-			return reportUnresolved(r.module, r.module.Decls, fn, scope, node, r.diag)
+			reportUnresolved(r.module, r.module.Decls, fn, scope, node, r.diag)
+			return
+		}
+		if sym != nil && sym.Initializing {
+			msg := "symbol `" + node.Name + "` used before it's defined"
+			r.diag.Add(
+				diagnostics.NewError(msg).
+					WithCode(diagnostics.ErrUseBeforeDecl).
+					WithPrimaryLabel(node.Loc(), msg).
+					WithHelp("rename binding or use earlier value"),
+			)
+			return
 		}
 		r.module.Bindings.BindNode(node, &binding.Resolution{
 			Kind:   binding.ResolutionSymbol,
 			Symbol: sym,
 		})
-		return true
 	case *ast.UnaryExpr:
-		return r.resolveExpr(fn, scope, node.Expr)
+		r.resolveExpr(fn, scope, node.Expr)
 	case *ast.BinaryExpr:
-		return r.resolveExpr(fn, scope, node.Left) && r.resolveExpr(fn, scope, node.Right)
+		r.resolveExpr(fn, scope, node.Left)
+		r.resolveExpr(fn, scope, node.Right)
 	case *ast.CallExpr:
-		if !r.resolveExpr(fn, scope, node.Callee) {
-			return false
-		}
+		r.resolveExpr(fn, scope, node.Callee)
 		for _, arg := range node.Args {
-			if !r.resolveExpr(fn, scope, arg) {
-				return false
-			}
+			r.resolveExpr(fn, scope, arg)
 		}
-		return true
+	case *ast.AsExpr:
+		// Resolve the expression being cast
+		r.resolveExpr(fn, scope, node.Expr)
+		// The type expression doesn't need resolution
 	default:
 		common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
-		return false
 	}
 }
 
-func Resolve(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
+func Resolve(module *context.Module, diag *diagnostics.DiagnosticBag) {
 	if module == nil || module.Decls == nil || diag == nil {
-		return false
+		return
 	}
 	r := &resolver{module: module, diag: diag}
-	return r.resolveModule()
+	r.resolveModule()
 }
