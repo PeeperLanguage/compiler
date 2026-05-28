@@ -60,7 +60,7 @@ func (p *Pipeline) Run(entry *context.Module) Result {
 		stage.Tokens = lex(module, diag)
 		stage.AST = parse(module, stage.Tokens, diag)
 		analyze(p.ctx, module, diag)
-		stage.HasSem = true
+		stage.HasSem = module.Types != nil
 		_, hirText := lowerHIR(module, diag)
 		stage.HIRText = hirText
 		if diag != nil && diag.HasErrors() {
