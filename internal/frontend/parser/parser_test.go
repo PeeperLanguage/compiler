@@ -144,6 +144,89 @@ func TestParseFunctionReturnArrowSyntax(t *testing.T) {
 	}
 }
 
+func TestParseUnaryPlus(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = +(10 as i32);
+	return x;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[0])
+	}
+	unary, ok := letDecl.Value.(*ast.UnaryExpr)
+	if !ok || unary.Op != "+" {
+		t.Fatalf("expected unary plus, got %#v", letDecl.Value)
+	}
+}
+
+func TestParseCastBindsLooserThanUnary(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i8 = -128 as i8;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[0])
+	}
+	cast, ok := letDecl.Value.(*ast.AsExpr)
+	if !ok {
+		t.Fatalf("expected cast expression, got %#v", letDecl.Value)
+	}
+	if _, ok := cast.Expr.(*ast.UnaryExpr); !ok {
+		t.Fatalf("expected unary expression inside cast, got %#v", cast.Expr)
+	}
+}
+
+func TestParseMalformedLocalLetDoesNotAppendTypedNilStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = +;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil {
+		t.Fatalf("unexpected function decl: %#v", mod.Decls[0])
+	}
+	if len(fn.Body.Stmts) != 2 {
+		t.Fatalf("stmts: got %d want 2", len(fn.Body.Stmts))
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok || letDecl == nil {
+		t.Fatalf("expected non-nil let stmt, got %#v", fn.Body.Stmts[0])
+	}
+	if letDecl.Value != nil {
+		t.Fatalf("expected nil malformed initializer, got %#v", letDecl.Value)
+	}
+	if _, ok := fn.Body.Stmts[1].(*ast.ReturnStmt); !ok {
+		t.Fatalf("expected return stmt after recovery, got %#v", fn.Body.Stmts[1])
+	}
+}
+
 func TestParseRecoversMissingSemicolonAndContinuesTopLevel(t *testing.T) {
 	src := `let a: i32 = 10
 let b: i32 = 23;

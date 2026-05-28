@@ -363,7 +363,7 @@ func (e *FloatLit) Type() Type {
 }
 
 type As struct {
-	Expr      Expr
+	Expr     Expr
 	CastType Type
 	ExprType Type
 }

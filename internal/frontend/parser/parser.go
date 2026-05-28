@@ -158,9 +158,17 @@ func (p *Parser) parseDecl() ast.Decl {
 	case tokens.FN:
 		return p.parseFnDecl()
 	case tokens.LET:
-		return p.parseLetDecl(true)
+		decl := p.parseLetDecl(true)
+		if decl == nil {
+			return nil
+		}
+		return decl
 	case tokens.CONST:
-		return p.parseConstDecl(true)
+		decl := p.parseConstDecl(true)
+		if decl == nil {
+			return nil
+		}
+		return decl
 	case tokens.TYPE:
 		return p.parseTypeAliasDecl()
 	default:
@@ -482,11 +490,23 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 func (p *Parser) parseStmt() ast.Stmt {
 	switch p.peek().Kind {
 	case tokens.LBRACE:
-		return p.parseBlock()
+		block := p.parseBlock()
+		if block == nil {
+			return nil
+		}
+		return block
 	case tokens.LET:
-		return p.parseLetDecl(false)
+		decl := p.parseLetDecl(false)
+		if decl == nil {
+			return nil
+		}
+		return decl
 	case tokens.CONST:
-		return p.parseConstDecl(false)
+		decl := p.parseConstDecl(false)
+		if decl == nil {
+			return nil
+		}
+		return decl
 	case tokens.IF:
 		return p.parseIfStmt()
 	case tokens.RETURN:
