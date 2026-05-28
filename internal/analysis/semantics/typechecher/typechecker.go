@@ -66,6 +66,9 @@ func (c *checker) checkBlock(fn *ast.FnDecl, block *ast.BlockStmt, returnType ty
 }
 
 func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.Type) {
+	if stmt == nil {
+		return
+	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		c.checkBlock(fn, node, returnType)
@@ -187,6 +190,9 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 }
 
 func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) typeinfo.Expr{
+	if expr == nil {
+		return nil
+	}
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		typedExpr := c.typeNumber(node, expected)
@@ -291,20 +297,27 @@ func (c *checker) typeAsExpr(node *ast.AsExpr) typeinfo.Expr {
 		return nil
 	}
 
-	// Type check the expression being cast
-	expr := c.typeExpr(node.Expr, nil)
-	if expr == nil || typeinfo.IsInvalid(expr.Type()) || typeinfo.IsUnknown(expr.Type()) {
+	// Get the target type first
+	targetType := typeinfo.TypeFromSyntax(node.TypeExpr)
+	if targetType == nil || typeinfo.IsInvalid(targetType) || typeinfo.IsUnknown(targetType) {
+		common.AddError(c.diag, c.module.FilePath, node.TypeExpr, diagnostics.ErrInvalidType, "invalid target type for cast")
 		return &typeinfo.As{
-			Expr:      expr,
-			CastType: typeinfo.TypeFromSyntax(node.TypeExpr),
+			Expr:      nil,
+			CastType: targetType,
 			ExprType: &typeinfo.InvalidType{},
 		}
 	}
 
-	// Get the target type from the type expression
-	targetType := typeinfo.TypeFromSyntax(node.TypeExpr)
-	if targetType == nil || typeinfo.IsInvalid(targetType) || typeinfo.IsUnknown(targetType) {
-		common.AddError(c.diag, c.module.FilePath, node.TypeExpr, diagnostics.ErrInvalidType, "invalid target type for cast")
+	// Type check the expression being cast, using target type as expected
+	if node.Expr == nil {
+		return &typeinfo.As{
+			Expr:      nil,
+			CastType: targetType,
+			ExprType: &typeinfo.InvalidType{},
+		}
+	}
+	expr := c.typeExpr(node.Expr, targetType)
+	if expr == nil || typeinfo.IsInvalid(expr.Type()) || typeinfo.IsUnknown(expr.Type()) {
 		return &typeinfo.As{
 			Expr:      expr,
 			CastType: targetType,
