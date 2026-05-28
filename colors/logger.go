@@ -117,10 +117,6 @@ func (l *Logger) Format() LogFormat {
 	return format
 }
 
-func renderText(color COLOR, text string) string {
-	return defaultLogger.Render(color, text)
-}
-
 func (l *Logger) Render(color COLOR, text string) string {
 	switch l.Format() {
 	case LogFormatNormal:

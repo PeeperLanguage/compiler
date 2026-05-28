@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"compiler/colors"
-	"compiler/internal/backend"
-	"compiler/core/abi"
 	"compiler/config/manifest"
+	"compiler/core/abi"
+	"compiler/internal/backend"
 	compiler "compiler/internal/driver"
 )
 
@@ -282,7 +282,7 @@ func checkCommand(args []string) error {
 		path = parsedArgs[0]
 	}
 
-	result := parsePathForCheck(path)
+	result := parsePathWithBackend(path, string(backend.LLVM), false)
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
 	}
