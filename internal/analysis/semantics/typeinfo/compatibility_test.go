@@ -58,7 +58,6 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		{"i8 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 8}, Compatible},
 		{"i16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 16}, Compatible},
 		{"i32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 32}, Compatible},
-		// Note: u8 is treated as byte, so it requires explicit cast
 		{"u16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 16}, Compatible},
 		{"u32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 32}, Compatible},
 
@@ -69,7 +68,6 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		// f32 can represent i16 and smaller exactly (24-bit mantissa)
 		{"i8 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 8}, Compatible},
 		{"i16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 16}, Compatible},
-		// Note: u8 is treated as byte, so it requires explicit cast
 		{"u16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: false, Bits: 16}, Compatible},
 
 		// === FLOAT TO INTEGER ===

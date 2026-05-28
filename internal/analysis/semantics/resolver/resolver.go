@@ -79,6 +79,9 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.LetDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
 		sym.Initializing = true
+		defer func() {
+			sym.Initializing = false
+		}()
 		if err := scope.Declare(sym); err != nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
@@ -93,10 +96,12 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 		if node.Value != nil {
 			r.resolveExpr(fn, scope, node.Value)
 		}
-		sym.Initializing = false
 	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
 		sym.Initializing = true
+		defer func() {
+			sym.Initializing = false
+		}()
 		if err := scope.Declare(sym); err != nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
@@ -111,7 +116,6 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 		if node.Value != nil {
 			r.resolveExpr(fn, scope, node.Value)
 		}
-		sym.Initializing = false
 	case *ast.ReturnStmt:
 		if node == nil {
 			return
