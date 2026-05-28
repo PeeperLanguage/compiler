@@ -9,10 +9,10 @@ import (
 func TestScopeDeclareAndLookup(t *testing.T) {
 	global := New(nil)
 	sx := symbols.New("x", symbols.SymbolVar, nil)
-	if !global.Declare(sx) {
+	if _, ok := global.Declare(sx); !ok {
 		t.Fatalf("declare x failed")
 	}
-	if global.Declare(sx) {
+	if _, ok := global.Declare(sx); ok {
 		t.Fatalf("duplicate declaration should fail")
 	}
 	if got, ok := global.LookupLocal("x"); !ok || got != sx {
@@ -32,8 +32,8 @@ func TestScopeSymbolsOrder(t *testing.T) {
 	s := New(nil)
 	a := symbols.New("a", symbols.SymbolVar, nil)
 	b := symbols.New("b", symbols.SymbolVar, nil)
-	_ = s.Declare(a)
-	_ = s.Declare(b)
+	s.Declare(a)
+	s.Declare(b)
 	got := s.Symbols()
 	if len(got) != 2 || got[0] != a || got[1] != b {
 		t.Fatalf("unexpected symbol order: %#v", got)

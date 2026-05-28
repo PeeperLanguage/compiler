@@ -177,15 +177,6 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 	}
 }
 
-func IsImplicitNumericWidening(dst, src Type) bool {
-	dstFamily, dstBits, okDst := NumericInfo(dst)
-	srcFamily, srcBits, okSrc := NumericInfo(src)
-	if !okDst || !okSrc {
-		return false
-	}
-	return dstFamily == srcFamily && dstBits >= srcBits
-}
-
 func CommonNumericType(a, b Type) Type {
 	if _, _, ok := NumericInfo(a); !ok {
 		return nil
@@ -196,10 +187,11 @@ func CommonNumericType(a, b Type) Type {
 	if SameType(a, b) {
 		return a
 	}
-	if IsImplicitNumericWidening(a, b) {
+	// Use the new compatibility system
+	if CheckNumericCompatibility(a, b) == Compatible {
 		return a
 	}
-	if IsImplicitNumericWidening(b, a) {
+	if CheckNumericCompatibility(b, a) == Compatible {
 		return b
 	}
 	return nil
@@ -210,6 +202,10 @@ func Assignable(dst, src Type) bool {
 		return true
 	}
 	if IsInvalid(dst) || IsInvalid(src) || IsUnknown(dst) || IsUnknown(src) {
+		return true
+	}
+	// Check numeric compatibility for implicit conversions
+	if compat := CheckNumericCompatibility(dst, src); compat == Compatible {
 		return true
 	}
 	return SameType(dst, src)

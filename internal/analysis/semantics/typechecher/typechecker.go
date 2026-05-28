@@ -271,8 +271,9 @@ func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) typeinfo.Expr{
 			argExpr := c.typeExpr(arg, nil)
 			args = append(args, argExpr)
 		}
+		// Validate function call arguments
+		c.checkFunctionCall(node, callee, args)
 		// For now, just pass through the callee's type as the call's type
-		// TODO: Look up function signature and validate arguments
 		callExpr := &typeinfo.Call{Callee: callee, Args: args, ExprType: callee.Type()}
 		c.module.Types.BindExpr(node, callExpr)
 		return callExpr
@@ -382,6 +383,62 @@ func (c *checker) allowedOp(op string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// checkFunctionCall validates argument types against function parameter types
+func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, callee typeinfo.Expr, args []typeinfo.Expr) {
+	if c == nil || callExpr == nil || callee == nil {
+		return
+	}
+
+	// Get the function declaration from the callee
+	var fnDecl *ast.FnDecl
+
+	// Extract function declaration from callee expression
+	if ident, ok := callee.(*typeinfo.Ident); ok && ident != nil && ident.Symbol != nil {
+		// Look up the function declaration from bindings
+		for declFn, sym := range c.module.Bindings.FunctionSymbols {
+			if sym != nil && sym.ID == ident.Symbol.ID {
+				fnDecl = declFn
+				break
+			}
+		}
+	}
+
+	if fnDecl == nil {
+		// Can't find function declaration, skip argument checking
+		return
+	}
+
+	// Check argument count
+	if len(args) != len(fnDecl.Params) {
+		common.AddError(c.diag, c.module.FilePath, callExpr, diagnostics.ErrWrongArgumentCount,
+			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnDecl.Params)))
+		return
+	}
+
+	// Check each argument type against parameter type
+	for i, arg := range args {
+		if i >= len(fnDecl.Params) {
+			continue
+		}
+		param := &fnDecl.Params[i]
+
+		argType := arg.Type()
+		paramType := typeinfo.TypeFromSyntax(param.Type)
+
+		if argType == nil || paramType == nil {
+			continue
+		}
+
+		// Use the compatibility checker for numeric types
+		compat := typeinfo.CheckNumericCompatibility(paramType, argType)
+
+		if compat == typeinfo.ExplicitCastable {
+			common.AddError(c.diag, c.module.FilePath, callExpr.Args[i], diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("cannot implicitly convert %s to %s", typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
+		}
 	}
 }
 

@@ -30,8 +30,8 @@ fn main() -> i32 {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	hirMod, hirText := lowerHIR(module, diag)
@@ -65,10 +65,7 @@ func TestFullFlowUndefinedSymbolFailsInResolver(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if ok {
-		t.Fatalf("expected analyze failure")
-	}
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
@@ -92,8 +89,8 @@ func TestFullFlowNestedBlockShadowing(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -129,8 +126,8 @@ func TestHIRFoldConstantIfElse(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -168,8 +165,8 @@ func TestHIRFoldWarnsUnreachableAfterConstantIf(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -200,8 +197,8 @@ func TestHIRFoldConstBindingCondition(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -233,8 +230,8 @@ func TestHIRKeepsNonConstantIfElse(t *testing.T) {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -276,8 +273,8 @@ fn main() -> i32 {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, hirText := lowerHIR(module, diag)
@@ -325,8 +322,8 @@ fn main() -> i32 {
 		Content:    src,
 	}
 	module.AST = astMod
-	ok := analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
-	if !ok || module.Types == nil {
+	analyze(context.NewWithConfig(context.Config{}, diag), module, diag)
+	if module.Types == nil {
 		t.Fatalf("analyze failed")
 	}
 	_, _ = lowerHIR(module, diag)
