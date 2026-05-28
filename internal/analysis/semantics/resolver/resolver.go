@@ -152,7 +152,7 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 			return
 		}
 		if sym != nil && sym.Initializing {
-			msg := "symbol `" + node.Name + "` used before its defined"
+			msg := "symbol `" + node.Name + "` used before it's defined"
 			r.diag.Add(
 				diagnostics.NewError(msg).
 					WithCode(diagnostics.ErrUseBeforeDecl).
