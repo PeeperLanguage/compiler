@@ -231,6 +231,8 @@ func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) typeinfo.Expr 
 	case *ast.Ident:
 		resolution, ok := c.module.Bindings.LookupNode(node)
 		if !ok || resolution == nil || resolution.Symbol == nil {
+			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrUnknownIdentifier,
+				fmt.Sprintf("unknown identifier `%s`\n", node.Name))
 			expr := &typeinfo.Ident{Symbol: nil, ExprType: &typeinfo.InvalidType{}}
 			c.module.Types.BindExpr(node, expr)
 			return expr

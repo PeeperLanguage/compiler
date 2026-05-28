@@ -123,8 +123,3 @@ func isFloatFamily(f NumericFamily) bool {
 func isSignedFamily(f NumericFamily) bool {
 	return f == NumericSigned
 }
-
-// isUnsignedFamily returns true for unsigned integer family
-func isUnsignedFamily(f NumericFamily) bool {
-	return f == NumericUnsigned
-}
