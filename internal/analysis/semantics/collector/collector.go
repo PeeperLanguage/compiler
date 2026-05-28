@@ -16,9 +16,9 @@ type collector struct {
 	diag   *diagnostics.DiagnosticBag
 }
 
-func (c *collector) collectModule(mod *ast.Module) bool {
+func (c *collector) collectModule(mod *ast.Module) {
 	if c == nil || c.ctx == nil || c.module == nil || mod == nil {
-		return false
+		return
 	}
 	c.module.ModuleScope = table.New(c.ctx.GlobalScope)
 	c.module.Decls = &declinfo.ModuleInfo{
@@ -29,43 +29,40 @@ func (c *collector) collectModule(mod *ast.Module) bool {
 	c.module.Bindings = nil
 	c.module.Types = nil
 	for _, decl := range mod.Decls {
-		if !c.collectNode(decl) {
-			return false
-		}
+		c.collectNode(decl)
 	}
-	return true
 }
 
-func (c *collector) collectNode(node ast.Node) bool {
+func (c *collector) collectNode(node ast.Node) {
 	switch n := node.(type) {
 	case *ast.FnDecl:
-		return c.collectFnDecl(n)
+		c.collectFnDecl(n)
 	default:
-		return true
+		return
 	}
 }
 
-func (c *collector) collectFnDecl(fn *ast.FnDecl) bool {
+func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	if c == nil || c.module == nil || fn == nil {
-		return false
+		return
 	}
 	if fn.Name == nil || fn.Name.Name == "" {
 		common.AddError(c.diag, c.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "function name required")
-		return false
+		return
 	}
 	kind := symbols.SymbolFunc
 	if fn.Body == nil {
 		kind = symbols.SymbolUnknown
 	}
 	sym := symbols.New(fn.Name.Name, kind, fn)
-	if !c.module.ModuleScope.Declare(sym) {
-		common.AddError(c.diag, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, "duplicate function `"+fn.Name.Name+"`")
-		return false
+	if err, ok := c.module.ModuleScope.Declare(sym); !ok {
+		common.AddError(c.diag, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, err.Error())
+		return
 	}
 	c.module.Decls.NameIndex[sym.Name] = append(c.module.Decls.NameIndex[sym.Name], sym)
 	if fn.Body == nil {
 		c.module.Decls.Externs = append(c.module.Decls.Externs, declinfo.ExternDecl{Symbol: sym, Decl: fn})
-		return true
+		return
 	}
 	collected := &declinfo.Function{
 		Symbol:     sym,
@@ -76,7 +73,6 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) bool {
 	}
 	c.collectBlock(fn.Body, collected)
 	c.module.Decls.Functions = append(c.module.Decls.Functions, collected)
-	return true
 }
 
 func (c *collector) collectBlock(block *ast.BlockStmt, fn *declinfo.Function) {
@@ -115,10 +111,10 @@ func (c *collector) addLocalDecl(name *ast.Ident, fn *declinfo.Function) {
 	fn.LocalNames[name.Name] = append(fn.LocalNames[name.Name], local)
 }
 
-func Collect(ctx *context.CompilerContext, module *context.Module, diag *diagnostics.DiagnosticBag) bool {
+func Collect(ctx *context.CompilerContext, module *context.Module, diag *diagnostics.DiagnosticBag) {
 	if ctx == nil || module == nil || module.AST == nil || diag == nil {
-		return false
+		return
 	}
 	c := &collector{ctx: ctx, module: module, diag: diag}
-	return c.collectModule(module.AST)
+	c.collectModule(module.AST)
 }

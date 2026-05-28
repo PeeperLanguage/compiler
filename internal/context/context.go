@@ -205,5 +205,5 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	}
 	sym := symbols.New(name, symbols.SymbolConst, nil)
 	sym.IsPub = true
-	_ = scope.Declare(sym)
+	_, _ = scope.Declare(sym)
 }

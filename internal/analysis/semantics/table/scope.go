@@ -1,6 +1,10 @@
 package table
 
-import "compiler/internal/analysis/semantics/symbols"
+import (
+	"compiler/internal/analysis/semantics/symbols"
+	"errors"
+	"fmt"
+)
 
 type Scope struct {
 	parent *Scope
@@ -25,17 +29,17 @@ func (s *Scope) Parent() *Scope {
 	return s.parent
 }
 
-func (s *Scope) Declare(sym *symbols.Symbol) bool {
+func (s *Scope) Declare(sym *symbols.Symbol) (error, bool) {
 	if s == nil || sym == nil {
-		return false
+		return errors.New("invalid symbol or scope"), false
 	}
 	if _, exists := s.byName[sym.Name]; exists {
-		return false
+		return fmt.Errorf("`%s` already exists in this scope"), false
 	}
 	s.byName[sym.Name] = sym.ID
 	s.byID[sym.ID] = sym
 	s.order = append(s.order, sym.ID)
-	return true
+	return nil, true
 }
 
 func (s *Scope) LookupLocal(name string) (*symbols.Symbol, bool) {
