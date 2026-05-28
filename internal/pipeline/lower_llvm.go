@@ -125,30 +125,35 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		return argRef
 	}
 
-	// Determine the conversion based on types
-	out := b.nextReg()
-
 	// Handle numeric conversions
 	if isMIRFloatType(fromType) && isMIRIntegerType(toType) {
 		// Float to integer: use fptosi or fptoui
+		out := b.nextReg()
 		if isMIRSignedIntegerType(toType) {
 			b.line(fmt.Sprintf("%s = fptosi %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
 		} else {
 			b.line(fmt.Sprintf("%s = fptoui %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
 		}
+		return out
 	} else if isMIRIntegerType(fromType) && isMIRFloatType(toType) {
 		// Integer to float: use sitofp or uitofp
+		out := b.nextReg()
 		if isMIRSignedIntegerType(fromType) {
 			b.line(fmt.Sprintf("%s = sitofp %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
 		} else {
 			b.line(fmt.Sprintf("%s = uitofp %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
 		}
+		return out
 	} else if isMIRFloatType(fromType) && isMIRFloatType(toType) {
 		// Float to float: use fptrunc or fpext
 		if fromType == "f64" && toType == "f32" {
+			out := b.nextReg()
 			b.line(fmt.Sprintf("%s = fptrunc double %s to float", out, argRef))
+			return out
 		} else if fromType == "f32" && toType == "f64" {
+			out := b.nextReg()
 			b.line(fmt.Sprintf("%s = fpext float %s to double", out, argRef))
+			return out
 		} else {
 			// Same type, no conversion needed
 			return argRef
@@ -159,14 +164,18 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		toBits := mirParseIntegerTypeBits(toType)
 		if fromBits < toBits {
 			// Extend
+			out := b.nextReg()
 			if isMIRSignedIntegerType(fromType) {
 				b.line(fmt.Sprintf("%s = sext %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
 			} else {
 				b.line(fmt.Sprintf("%s = zext %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
 			}
+			return out
 		} else if fromBits > toBits {
 			// Truncate
+			out := b.nextReg()
 			b.line(fmt.Sprintf("%s = trunc %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+			return out
 		} else {
 			// Same size, no conversion
 			return argRef
@@ -175,8 +184,6 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		// Unsupported conversion, return default
 		return argRef
 	}
-
-	return out
 }
 
 // Helper functions for type checking
