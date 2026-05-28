@@ -158,17 +158,9 @@ func (p *Parser) parseDecl() ast.Decl {
 	case tokens.FN:
 		return p.parseFnDecl()
 	case tokens.LET:
-		decl := p.parseLetDecl(true)
-		if decl == nil {
-			return nil
-		}
-		return decl
+		return p.parseLetDecl(true)
 	case tokens.CONST:
-		decl := p.parseConstDecl(true)
-		if decl == nil {
-			return nil
-		}
-		return decl
+		return p.parseConstDecl(true)
 	case tokens.TYPE:
 		return p.parseTypeAliasDecl()
 	default:
@@ -276,11 +268,10 @@ func (p *Parser) parseFnBody() (*ast.BlockStmt, bool, bool) {
 
 func (p *Parser) parseRequiredBlock(owner blockOwner) (*ast.BlockStmt, bool) {
 	if p.at(tokens.LBRACE) {
-		body := p.parseBlock()
-		if body == nil {
-			return nil, false
+		if body := p.parseBlock(); body != nil {
+			return body.(*ast.BlockStmt), true
 		}
-		return body, true
+		return nil, false
 	}
 	if !p.isDeclStart(p.peek().Kind) && !p.isStmtBoundary(p.peek().Kind) {
 		return nil, false
@@ -424,7 +415,7 @@ func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.
 	return name, ty, value, end, true
 }
 
-func (p *Parser) parseLetDecl(isModuleVar bool) *ast.LetDecl {
+func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 	start := p.consume(tokens.LET, "expected let")
 	if start == nil {
 		return nil
@@ -445,7 +436,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) *ast.LetDecl {
 	}
 }
 
-func (p *Parser) parseConstDecl(isModuleVar bool) *ast.ConstDecl {
+func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 	start := p.consume(tokens.CONST, "expected const")
 	if start == nil {
 		return nil
@@ -463,7 +454,7 @@ func (p *Parser) parseConstDecl(isModuleVar bool) *ast.ConstDecl {
 	}
 }
 
-func (p *Parser) parseBlock() *ast.BlockStmt {
+func (p *Parser) parseBlock() ast.Stmt {
 	start := p.consume(tokens.LBRACE, "expected '{'")
 	if start == nil {
 		return nil
@@ -490,23 +481,17 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 func (p *Parser) parseStmt() ast.Stmt {
 	switch p.peek().Kind {
 	case tokens.LBRACE:
-		block := p.parseBlock()
-		if block == nil {
-			return nil
-		}
-		return block
+		return p.parseBlock()
 	case tokens.LET:
-		decl := p.parseLetDecl(false)
-		if decl == nil {
-			return nil
+		if stmt, ok := p.parseLetDecl(false).(ast.Stmt); ok {
+			return stmt
 		}
-		return decl
+		return nil
 	case tokens.CONST:
-		decl := p.parseConstDecl(false)
-		if decl == nil {
-			return nil
+		if stmt, ok := p.parseConstDecl(false).(ast.Stmt); ok {
+			return stmt
 		}
-		return decl
+		return nil
 	case tokens.IF:
 		return p.parseIfStmt()
 	case tokens.RETURN:
