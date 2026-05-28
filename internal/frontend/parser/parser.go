@@ -268,11 +268,10 @@ func (p *Parser) parseFnBody() (*ast.BlockStmt, bool, bool) {
 
 func (p *Parser) parseRequiredBlock(owner blockOwner) (*ast.BlockStmt, bool) {
 	if p.at(tokens.LBRACE) {
-		body := p.parseBlock()
-		if body == nil {
-			return nil, false
+		if body := p.parseBlock(); body != nil {
+			return body.(*ast.BlockStmt), true
 		}
-		return body, true
+		return nil, false
 	}
 	if !p.isDeclStart(p.peek().Kind) && !p.isStmtBoundary(p.peek().Kind) {
 		return nil, false
@@ -416,7 +415,7 @@ func (p *Parser) parseBindingFields(token tokens.Kind) (name *ast.Ident, ty ast.
 	return name, ty, value, end, true
 }
 
-func (p *Parser) parseLetDecl(isModuleVar bool) *ast.LetDecl {
+func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 	start := p.consume(tokens.LET, "expected let")
 	if start == nil {
 		return nil
@@ -437,7 +436,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) *ast.LetDecl {
 	}
 }
 
-func (p *Parser) parseConstDecl(isModuleVar bool) *ast.ConstDecl {
+func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 	start := p.consume(tokens.CONST, "expected const")
 	if start == nil {
 		return nil
@@ -455,7 +454,7 @@ func (p *Parser) parseConstDecl(isModuleVar bool) *ast.ConstDecl {
 	}
 }
 
-func (p *Parser) parseBlock() *ast.BlockStmt {
+func (p *Parser) parseBlock() ast.Stmt {
 	start := p.consume(tokens.LBRACE, "expected '{'")
 	if start == nil {
 		return nil
@@ -484,9 +483,15 @@ func (p *Parser) parseStmt() ast.Stmt {
 	case tokens.LBRACE:
 		return p.parseBlock()
 	case tokens.LET:
-		return p.parseLetDecl(false)
+		if stmt, ok := p.parseLetDecl(false).(ast.Stmt); ok {
+			return stmt
+		}
+		return nil
 	case tokens.CONST:
-		return p.parseConstDecl(false)
+		if stmt, ok := p.parseConstDecl(false).(ast.Stmt); ok {
+			return stmt
+		}
+		return nil
 	case tokens.IF:
 		return p.parseIfStmt()
 	case tokens.RETURN:

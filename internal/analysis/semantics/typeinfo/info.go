@@ -1,12 +1,11 @@
 package typeinfo
 
 import (
-	"strconv"
-
 	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
+	"strconv"
 )
 
 type Type interface {
@@ -48,16 +47,16 @@ func (t *IntegerType) Text() string {
 		return ""
 	}
 	if t.Signed {
-		return "i" + itoa(t.Bits)
+		return "i" + strconv.Itoa(t.Bits)
 	}
-	return "u" + itoa(t.Bits)
+	return "u" + strconv.Itoa(t.Bits)
 }
 
 func (t *FloatType) Text() string {
 	if t == nil {
 		return ""
 	}
-	return "f" + itoa(t.Bits)
+	return "f" + strconv.Itoa(t.Bits)
 }
 
 func (*BoolType) Text() string { return "bool" }
@@ -177,15 +176,6 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 	}
 }
 
-func IsImplicitNumericWidening(dst, src Type) bool {
-	dstFamily, dstBits, okDst := NumericInfo(dst)
-	srcFamily, srcBits, okSrc := NumericInfo(src)
-	if !okDst || !okSrc {
-		return false
-	}
-	return dstFamily == srcFamily && dstBits >= srcBits
-}
-
 func CommonNumericType(a, b Type) Type {
 	if _, _, ok := NumericInfo(a); !ok {
 		return nil
@@ -196,10 +186,11 @@ func CommonNumericType(a, b Type) Type {
 	if SameType(a, b) {
 		return a
 	}
-	if IsImplicitNumericWidening(a, b) {
+	// Use the new compatibility system
+	if CheckNumericCompatibility(a, b) == Compatible {
 		return a
 	}
-	if IsImplicitNumericWidening(b, a) {
+	if CheckNumericCompatibility(b, a) == Compatible {
 		return b
 	}
 	return nil
@@ -210,6 +201,10 @@ func Assignable(dst, src Type) bool {
 		return true
 	}
 	if IsInvalid(dst) || IsInvalid(src) || IsUnknown(dst) || IsUnknown(src) {
+		return true
+	}
+	// Check numeric compatibility for implicit conversions
+	if compat := CheckNumericCompatibility(dst, src); compat == Compatible {
 		return true
 	}
 	return SameType(dst, src)
@@ -366,6 +361,15 @@ func (e *FloatLit) Type() Type {
 	return e.ExprType
 }
 
-func itoa(v int) string {
-	return strconv.Itoa(v)
+type As struct {
+	Expr     Expr
+	CastType Type
+	ExprType Type
+}
+
+func (e *As) Type() Type {
+	if e == nil {
+		return nil
+	}
+	return e.ExprType
 }

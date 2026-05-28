@@ -31,12 +31,13 @@ const (
 )
 
 type Symbol struct {
-	ID       SymbolID
-	Name     string
-	Kind     Kind
-	IsPub    bool
-	Location *source.Location
-	ASTNode  ast.Node
+	ID    SymbolID
+	Name  string
+	Kind  Kind
+	IsPub bool
+	Initializing bool
+	Location     *source.Location
+	ASTNode      ast.Node
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {

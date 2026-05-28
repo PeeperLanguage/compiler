@@ -6,7 +6,6 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
-	"compiler/internal/utils/numeric"
 )
 
 type Param struct {
@@ -68,6 +67,11 @@ type Call struct {
 	Type   string
 }
 
+type Cast struct {
+	Expr Expr
+	Type string
+}
+
 func (*InvalidExpr) exprNode() {}
 func (*IntLit) exprNode()      {}
 func (*FloatLit) exprNode()    {}
@@ -75,6 +79,7 @@ func (*Ident) exprNode()       {}
 func (*Unary) exprNode()       {}
 func (*Binary) exprNode()      {}
 func (*Call) exprNode()        {}
+func (*Cast) exprNode()        {}
 
 func (e *InvalidExpr) String() string {
 	if e == nil || e.Message == "" {
@@ -166,29 +171,31 @@ func (e *Call) TypeText() string {
 	return e.Type
 }
 
+func (e *Cast) String() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("(%s as %s)", e.Expr.String(), e.Type)
+}
+
+func (e *Cast) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
 func IsFloatType(name string) bool {
 	return name == "f32" || name == "f64"
 }
 
 func IsIntegerType(name string) bool {
-	_, _, ok := ParseIntegerType(name)
+	_, _, ok := tokens.ParseIntegerBuiltin(name)
 	return ok
 }
 
 func IsBoolType(name string) bool {
 	return name == "bool"
-}
-
-func ParseIntegerType(name string) (signed bool, bits int, ok bool) {
-	return tokens.ParseIntegerBuiltin(name)
-}
-
-func IsScalarType(name string) bool {
-	return IsIntegerType(name) || IsFloatType(name) || IsBoolType(name)
-}
-
-func IsFloatLiteral(text string) bool {
-	return numeric.LooksFloatLike(text)
 }
 
 func TypeText(typ ast.TypeExpr) string {

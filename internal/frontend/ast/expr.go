@@ -62,3 +62,12 @@ type CallExpr struct {
 
 func (*CallExpr) exprNode()              {}
 func (e *CallExpr) Loc() *source.Location { return e.Location }
+
+type AsExpr struct {
+	Expr     Expr
+	TypeExpr TypeExpr
+	Location *source.Location
+}
+
+func (*AsExpr) exprNode()              {}
+func (e *AsExpr) Loc() *source.Location { return e.Location }

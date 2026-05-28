@@ -2,6 +2,7 @@ package typechecher
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
@@ -16,9 +17,23 @@ type checker struct {
 	diag   *diagnostics.DiagnosticBag
 }
 
-func (c *checker) checkModule() bool {
+// --- helpers -----------------------------------------------------------------
+
+// isInvalidOrUnknown replaces the repeated `typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)` pattern.
+func isInvalidOrUnknown(t typeinfo.Type) bool {
+	return typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)
+}
+
+// invalidAs builds the sentinel As node used in every early-return inside typeAsExpr.
+func (c *checker) invalidAs(expr typeinfo.Expr, castType typeinfo.Type) *typeinfo.As {
+	return &typeinfo.As{Expr: expr, CastType: castType, ExprType: &typeinfo.InvalidType{}}
+}
+
+// -----------------------------------------------------------------------------
+
+func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.Decls == nil || c.module.Bindings == nil {
-		return false
+		return
 	}
 	c.module.Types = typeinfo.NewModuleInfo()
 	c.module.Types.Externs = append(c.module.Types.Externs, c.module.Decls.Externs...)
@@ -26,24 +41,19 @@ func (c *checker) checkModule() bool {
 		if declFn == nil || declFn.Decl == nil || declFn.Scope == nil {
 			continue
 		}
-		if !c.checkFunction(declFn.Decl) {
-			return false
-		}
+		c.checkFunction(declFn.Decl)
 	}
-	return true
 }
 
-func (c *checker) checkFunction(decl *ast.FnDecl) bool {
+func (c *checker) checkFunction(decl *ast.FnDecl) {
 	if c == nil || decl == nil {
-		return false
+		return
 	}
-	if !c.checkFunctionShape(decl) {
-		return false
-	}
+	c.checkFunctionShape(decl)
 	sym, ok := c.module.Bindings.FunctionSymbols[decl]
 	if !ok || sym == nil {
 		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrUndefinedSymbol, "missing function binding")
-		return false
+		return
 	}
 	c.module.Types.BindSymbolType(sym, typeinfo.TypeFromSyntax(decl.ReturnType))
 	for _, param := range decl.Params {
@@ -53,90 +63,78 @@ func (c *checker) checkFunction(decl *ast.FnDecl) bool {
 		res, ok := c.module.Bindings.LookupNode(param.Name)
 		if !ok || res == nil || res.Symbol == nil {
 			common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrUndefinedSymbol, "missing parameter binding")
-			return false
+			return
 		}
 		c.module.Types.BindSymbolType(res.Symbol, typeinfo.TypeFromSyntax(param.Type))
 	}
-	returnType := typeinfo.TypeFromSyntax(decl.ReturnType)
-	if !c.checkBlock(decl, decl.Body, returnType) {
-		return false
-	}
-	return true
+	c.checkBlock(decl, decl.Body, typeinfo.TypeFromSyntax(decl.ReturnType))
 }
 
-func (c *checker) checkBlock(fn *ast.FnDecl, block *ast.BlockStmt, returnType typeinfo.Type) bool {
+func (c *checker) checkBlock(fn *ast.FnDecl, block *ast.BlockStmt, returnType typeinfo.Type) {
 	if block == nil {
-		return true
+		return
 	}
-	valid := true
 	for _, stmt := range block.Stmts {
-		if !c.checkStmt(fn, stmt, returnType) {
-			valid = false
-		}
+		c.checkStmt(fn, stmt, returnType)
 	}
-	return valid
 }
 
-func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.Type) bool {
+func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.Type) {
+	if stmt == nil {
+		return
+	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		return c.checkBlock(fn, node, returnType)
+		c.checkBlock(fn, node, returnType)
 	case *ast.LetDecl:
-		return c.checkBinding(node, false)
+		c.checkBinding(node, false)
 	case *ast.ConstDecl:
-		return c.checkBinding(node, true)
+		c.checkBinding(node, true)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
-			return false
+			return
 		}
-		typedExpr, ok := c.typeExpr(node.Value, returnType)
-		if !ok {
-			return false
+		typedExpr := c.typeExpr(node.Value, returnType)
+		if typedExpr == nil {
+			return
 		}
 		if !typeinfo.Assignable(returnType, typedExpr.Type()) {
-			common.AddError(c.diag, c.module.FilePath, node.Value, diagnostics.ErrTypeMismatch, fmt.Sprintf("cannot return %s from function returning %s", typeinfo.TypeText(typedExpr.Type()), typeinfo.TypeText(returnType)))
-			return false
+			common.AddError(c.diag, c.module.FilePath, node.Value, diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("cannot return %s from function returning %s",
+					typeinfo.TypeText(typedExpr.Type()), typeinfo.TypeText(returnType)))
+			return
 		}
 		c.module.Types.BindExpr(node.Value, typedExpr)
 		c.module.Types.BindFunctionReturn(fn, typedExpr.Type())
-		return true
 	case *ast.IfStmt:
-		valid := true
 		if node.Cond == nil {
 			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
-			valid = false
 		} else {
-			cond, ok := c.typeExpr(node.Cond, nil)
-			if !ok {
-				valid = false
-			} else {
-				c.module.Types.BindExpr(node.Cond, cond)
-				if !typeinfo.IsInvalid(cond.Type()) && !typeinfo.IsUnknown(cond.Type()) && !c.isConditionType(cond.Type()) {
-					common.AddError(c.diag, c.module.FilePath, node.Cond, diagnostics.ErrInvalidOperation, "if condition must be bool or scalar number")
-					valid = false
-				}
+			cond := c.typeExpr(node.Cond, nil)
+			if cond == nil {
+				return
+			}
+			c.module.Types.BindExpr(node.Cond, cond)
+			if !isInvalidOrUnknown(cond.Type()) && !typeinfo.IsCondition(cond.Type()) {
+				common.AddError(c.diag, c.module.FilePath, node.Cond, diagnostics.ErrInvalidOperation,
+					"if condition must be bool or scalar number")
 			}
 		}
-		if !c.checkBlock(fn, node.Then, returnType) {
-			valid = false
-		}
-		if node.Else != nil && !c.checkStmt(fn, node.Else, returnType) {
-			valid = false
-		}
-		return valid
+		c.checkBlock(fn, node.Then, returnType)
+		c.checkStmt(fn, node.Else, returnType)
 	case *ast.ExprStmt:
-		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidStatement, "expression statements unsupported in current compiler stage")
-		return false
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
+			"expression statements unsupported in current compiler stage")
 	default:
-		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
-		return false
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
+			"unsupported statement for arithmetic flow")
 	}
 }
 
-func (c *checker) checkBinding(node ast.Stmt, requireInitializer bool) bool {
+func (c *checker) checkBinding(node ast.Stmt, requireInitializer bool) {
 	if c == nil || node == nil {
-		return false
+		return
 	}
 	var (
 		nameNode *ast.Ident
@@ -153,83 +151,91 @@ func (c *checker) checkBinding(node ast.Stmt, requireInitializer bool) bool {
 		declType = typeinfo.TypeFromSyntax(bind.Type)
 		value = bind.Value
 	default:
-		return false
+		return
 	}
 
-	bindRes, ok := c.module.Bindings.LookupNode(nameNode)
-	if !ok || bindRes == nil || bindRes.Symbol == nil {
-		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
-		return false
+	bindRes, found := c.module.Bindings.LookupNode(nameNode)
+	if !found || bindRes == nil || bindRes.Symbol == nil {
+		return
 	}
 
 	if value == nil {
 		if requireInitializer {
 			c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrMissingInitializer, "missing initializer for const declaration")
-			return false
+			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrMissingInitializer,
+				"missing initializer for const declaration")
+			return
 		}
 		if declType == nil {
 			c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrMissingType, "let declaration needs type or initializer")
-			return false
+			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrMissingType,
+				"let declaration needs type or initializer")
+			return
 		}
 		c.module.Types.BindSymbolType(bindRes.Symbol, declType)
-		return true
+		return
 	}
 
-	typedExpr, ok := c.typeExpr(value, declType)
-	if ok {
-		if declType != nil && !typeinfo.Assignable(declType, typedExpr.Type()) {
-			common.AddError(c.diag, c.module.FilePath, value, diagnostics.ErrTypeMismatch, fmt.Sprintf("cannot assign %s to %s", typeinfo.TypeText(typedExpr.Type()), typeinfo.TypeText(declType)))
-			c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
-			return false
-		}
-		c.module.Types.BindExpr(value, typedExpr)
-		if declType != nil {
-			c.module.Types.BindSymbolType(bindRes.Symbol, declType)
-		} else {
-			c.module.Types.BindSymbolType(bindRes.Symbol, typedExpr.Type())
-		}
+	typedExpr := c.typeExpr(value, declType)
+	if typedExpr == nil {
+		return
 	}
-	return ok
+	if declType != nil && !typeinfo.Assignable(declType, typedExpr.Type()) {
+		common.AddError(c.diag, c.module.FilePath, value, diagnostics.ErrTypeMismatch,
+			fmt.Sprintf("cannot assign %s to %s",
+				typeinfo.TypeText(typedExpr.Type()), typeinfo.TypeText(declType)))
+		c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
+		return
+	}
+	c.module.Types.BindExpr(value, typedExpr)
+	if declType != nil {
+		c.module.Types.BindSymbolType(bindRes.Symbol, declType)
+	} else {
+		c.module.Types.BindSymbolType(bindRes.Symbol, typedExpr.Type())
+	}
 }
 
-func (c *checker) checkFunctionShape(decl *ast.FnDecl) bool {
+func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	if decl == nil {
-		return false
+		return
 	}
 	if decl.Receiver != nil {
-		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrInvalidMethodReceiver, "receivers not supported in current compiler stage")
-		return false
+		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrInvalidMethodReceiver,
+			"receivers not supported in current compiler stage")
+		return
 	}
-	retType := typeinfo.TypeFromSyntax(decl.ReturnType)
-	if !c.isSupportedScalarType(retType) {
-		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrInvalidReturn, "function return type must be builtin integer or f32/f64 in current compiler stage")
-		return false
+	if !typeinfo.IsArithmetic(typeinfo.TypeFromSyntax(decl.ReturnType)) {
+		common.AddError(c.diag, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
+			"function return type must be builtin integer or f32/f64 in current compiler stage")
+		return
 	}
 	for _, param := range decl.Params {
-		if !c.isSupportedScalarType(typeinfo.TypeFromSyntax(param.Type)) {
-			common.AddError(c.diag, c.module.FilePath, param.Name, diagnostics.ErrInvalidType, "parameter type must be builtin integer or f32/f64 in current compiler stage")
-			return false
+		if !typeinfo.IsArithmetic(typeinfo.TypeFromSyntax(param.Type)) {
+			common.AddError(c.diag, c.module.FilePath, param.Name, diagnostics.ErrInvalidType,
+				"parameter type must be builtin integer or f32/f64 in current compiler stage")
+			return
 		}
 	}
-	return true
 }
 
-func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) (typeinfo.Expr, bool) {
+func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) typeinfo.Expr {
+	if expr == nil {
+		return nil
+	}
 	switch node := expr.(type) {
 	case *ast.NumberLit:
-		typedExpr, ok := c.typeNumber(node, expected)
-		if !ok {
-			return nil, false
-		}
+		typedExpr := c.typeNumber(node, expected)
 		c.module.Types.BindExpr(node, typedExpr)
-		return typedExpr, true
+		return typedExpr
+
 	case *ast.Ident:
 		resolution, ok := c.module.Bindings.LookupNode(node)
 		if !ok || resolution == nil || resolution.Symbol == nil {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrUndefinedSymbol, "unknown identifier `"+node.Name+"`")
-			return nil, false
+			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrUnknownIdentifier,
+				fmt.Sprintf("unknown identifier `%s`\n", node.Name))
+			expr := &typeinfo.Ident{Symbol: nil, ExprType: &typeinfo.InvalidType{}}
+			c.module.Types.BindExpr(node, expr)
+			return expr
 		}
 		exprType, ok := c.module.Types.LookupSymbolType(resolution.Symbol)
 		if !ok || exprType == nil {
@@ -237,188 +243,309 @@ func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) (typeinfo.Expr
 		}
 		expr := &typeinfo.Ident{Symbol: resolution.Symbol, ExprType: exprType}
 		c.module.Types.BindExpr(node, expr)
-		return expr, true
+		return expr
+
 	case *ast.UnaryExpr:
-		if node.Op != "-" && node.Op != "!" {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation, "unsupported unary operator `"+node.Op+"`")
-			return nil, false
-		}
-		arg, ok := c.typeExpr(node.Expr, expected)
-		if !ok {
-			return nil, false
-		}
-		if typeinfo.IsInvalid(arg.Type()) || typeinfo.IsUnknown(arg.Type()) {
-			expr := &typeinfo.Unary{Op: node.Op, Arg: arg, ExprType: &typeinfo.InvalidType{}}
-			c.module.Types.BindExpr(node, expr)
-			return expr, true
-		}
-		if !c.isSupportedScalarType(arg.Type()) && !typeinfo.SameType(arg.Type(), &typeinfo.BoolType{}) {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation, "unsupported unary operand type")
-			return nil, false
-		}
-		exprType := arg.Type()
-		if node.Op == "!" {
-			exprType = &typeinfo.BoolType{}
-		}
-		expr := &typeinfo.Unary{Op: node.Op, Arg: arg, ExprType: exprType}
-		c.module.Types.BindExpr(node, expr)
-		return expr, true
+		return c.typeUnaryExpr(node, expected)
+
 	case *ast.BinaryExpr:
-		if !c.allowedOp(node.Op) {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation, "unsupported binary operator `"+node.Op+"`")
-			return nil, false
-		}
-		left, ok := c.typeExpr(node.Left, expected)
-		if !ok {
-			return nil, false
-		}
-		right, ok := c.typeExpr(node.Right, expected)
-		if !ok {
-			return nil, false
-		}
-		left, right, ok = c.coerceBinaryLiteralSides(node, left, right)
-		if !ok {
-			return nil, false
-		}
-		if typeinfo.IsInvalid(left.Type()) || typeinfo.IsUnknown(left.Type()) || typeinfo.IsInvalid(right.Type()) || typeinfo.IsUnknown(right.Type()) {
-			expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: &typeinfo.InvalidType{}}
-			c.module.Types.BindExpr(node, expr)
-			return expr, true
-		}
-		commonType := typeinfo.CommonNumericType(left.Type(), right.Type())
-		if commonType == nil && !typeinfo.Assignable(left.Type(), right.Type()) && !typeinfo.Assignable(right.Type(), left.Type()) {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrTypeMismatch, fmt.Sprintf("operand types mismatch: %s vs %s", typeinfo.TypeText(left.Type()), typeinfo.TypeText(right.Type())))
-			return nil, false
-		}
-		exprType := left.Type()
-		if commonType != nil {
-			exprType = commonType
-		}
-		switch node.Op {
-		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
-			exprType = &typeinfo.BoolType{}
-		}
-		if !c.validBinaryTypes(node.Op, left.Type()) {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation, "unsupported operand type for operator `"+node.Op+"`")
-			return nil, false
-		}
-		expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: exprType}
-		c.module.Types.BindExpr(node, expr)
-		return expr, true
+		return c.typeBinaryExpr(node, expected)
+
 	case *ast.CallExpr:
-		// Type check function call
-		callee, ok := c.typeExpr(node.Callee, expected)
-		if !ok {
-			return nil, false
-		}
-		args := make([]typeinfo.Expr, 0, len(node.Args))
-		for _, arg := range node.Args {
-			argExpr, ok := c.typeExpr(arg, nil)
-			if !ok {
-				return nil, false
-			}
-			args = append(args, argExpr)
-		}
-		// For now, just pass through the callee's type as the call's type
-		// TODO: Look up function signature and validate arguments
-		callExpr := &typeinfo.Call{Callee: callee, Args: args, ExprType: callee.Type()}
-		c.module.Types.BindExpr(node, callExpr)
-		return callExpr, true
+		return c.typeCallExpr(node, expected)
+
+	case *ast.AsExpr:
+		return c.typeAsExpr(node)
+
 	default:
-		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
-		return nil, false
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidExpression,
+			"unsupported expression for arithmetic flow")
+		return nil
 	}
 }
 
-func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) (typeinfo.Expr, bool) {
-	if node == nil {
-		return nil, false
+// typeUnaryExpr handles unary expression type-checking, extracted from the
+// large typeExpr switch to keep each case manageable.
+func (c *checker) typeUnaryExpr(node *ast.UnaryExpr, expected typeinfo.Type) typeinfo.Expr {
+	if node.Op != "+" && node.Op != "-" && node.Op != "!" {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation,
+			"unsupported unary operator `"+node.Op+"`")
+		return nil
 	}
-	if typeinfo.IsInvalid(expected) || typeinfo.IsUnknown(expected) {
+
+	argExpected := typeinfo.Type(nil)
+	if node.Op != "!" && expected != nil && typeinfo.IsArithmetic(expected) {
+		argExpected = expected
+		// `-128` fits i8, but raw literal `128` does not – type operand with
+		// default size first, then apply signed-fit rules below.
+		if node.Op == "-" {
+			if _, ok := expected.(*typeinfo.IntegerType); ok {
+				if _, ok := node.Expr.(*ast.NumberLit); ok {
+					argExpected = nil
+				}
+			}
+		}
+	}
+
+	arg := c.typeExpr(node.Expr, argExpected)
+	if arg == nil {
+		expr := &typeinfo.Unary{Op: node.Op, Arg: nil, ExprType: &typeinfo.InvalidType{}}
+		c.module.Types.BindExpr(node, expr)
+		return expr
+	}
+
+	if expected == nil && node.Op == "-" {
+		if literal, ok := node.Expr.(*ast.NumberLit); ok && !numeric.IsFloat(literal.Value) {
+			typed := &typeinfo.IntLit{
+				Value:    literal.Value,
+				ExprType: typeinfo.DefaultNumberType(signedLiteralText(node.Op, literal.Value)),
+			}
+			c.module.Types.BindExpr(literal, typed)
+			arg = typed
+		}
+	}
+
+	if expected != nil && node.Op != "!" && typeinfo.SameType(arg.Type(), typeinfo.DefaultIntegerType()) {
+		if c.signedNumberFits(node.Op, node.Expr, expected) {
+			if literal, ok := node.Expr.(*ast.NumberLit); ok && !numeric.IsFloat(literal.Value) {
+				typed := &typeinfo.IntLit{Value: literal.Value, ExprType: expected}
+				c.module.Types.BindExpr(literal, typed)
+				arg = typed
+			}
+		} else if literal, ok := node.Expr.(*ast.NumberLit); ok && node.Op == "-" {
+			common.AddError(c.diag, c.module.FilePath, literal, diagnostics.ErrInvalidNumber,
+				fmt.Sprintf("literal `%s` does not fit %s",
+					signedLiteralText(node.Op, literal.Value), typeinfo.TypeText(expected)))
+			return nil
+		}
+	}
+
+	if isInvalidOrUnknown(arg.Type()) {
+		expr := &typeinfo.Unary{Op: node.Op, Arg: arg, ExprType: &typeinfo.InvalidType{}}
+		c.module.Types.BindExpr(node, expr)
+		return expr
+	}
+
+	if !typeinfo.IsArithmetic(arg.Type()) && !typeinfo.SameType(arg.Type(), &typeinfo.BoolType{}) {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation,
+			"unsupported unary operand type")
+		return nil
+	}
+
+	exprType := arg.Type()
+	if node.Op == "!" {
+		exprType = &typeinfo.BoolType{}
+	}
+	expr := &typeinfo.Unary{Op: node.Op, Arg: arg, ExprType: exprType}
+	c.module.Types.BindExpr(node, expr)
+	return expr
+}
+
+// typeBinaryExpr handles binary expression type-checking.
+func (c *checker) typeBinaryExpr(node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Expr {
+	if !c.allowedOp(node.Op) {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation,
+			"unsupported binary operator `"+node.Op+"`")
+		return nil
+	}
+
+	left := c.typeExpr(node.Left, expected)
+	right := c.typeExpr(node.Right, expected)
+
+	// Build the sentinel early if either side is bad.
+	if left == nil || right == nil || isInvalidOrUnknown(left.Type()) || isInvalidOrUnknown(right.Type()) {
+		expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: &typeinfo.InvalidType{}}
+		c.module.Types.BindExpr(node, expr)
+		return expr
+	}
+
+	commonType := typeinfo.CommonNumericType(left.Type(), right.Type())
+	if commonType == nil && !typeinfo.Assignable(left.Type(), right.Type()) && !typeinfo.Assignable(right.Type(), left.Type()) {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrTypeMismatch,
+			fmt.Sprintf("operand types mismatch: %s vs %s",
+				typeinfo.TypeText(left.Type()), typeinfo.TypeText(right.Type())))
+		return nil
+	}
+
+	exprType := left.Type()
+	if commonType != nil {
+		exprType = commonType
+	}
+	switch node.Op {
+	case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+		exprType = &typeinfo.BoolType{}
+	}
+
+	if !c.validBinaryTypes(node.Op, left.Type()) {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidOperation,
+			"unsupported operand type for operator `"+node.Op+"`")
+		return nil
+	}
+
+	expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: exprType}
+	c.module.Types.BindExpr(node, expr)
+	return expr
+}
+
+// typeCallExpr handles call expression type-checking.
+func (c *checker) typeCallExpr(node *ast.CallExpr, expected typeinfo.Type) typeinfo.Expr {
+	callee := c.typeExpr(node.Callee, expected)
+	args := make([]typeinfo.Expr, 0, len(node.Args))
+	for _, arg := range node.Args {
+		args = append(args, c.typeExpr(arg, nil))
+	}
+	c.checkFunctionCall(node, callee, args)
+
+	exprType := typeinfo.Type(&typeinfo.InvalidType{})
+	if callee != nil {
+		exprType = callee.Type()
+	}
+	expr := &typeinfo.Call{Callee: callee, Args: args, ExprType: exprType}
+	c.module.Types.BindExpr(node, expr)
+	return expr
+}
+
+func (c *checker) typeAsExpr(node *ast.AsExpr) typeinfo.Expr {
+	if c == nil || node == nil {
+		return nil
+	}
+
+	targetType := typeinfo.TypeFromSyntax(node.TypeExpr)
+	if targetType == nil || isInvalidOrUnknown(targetType) {
+		common.AddError(c.diag, c.module.FilePath, node.TypeExpr, diagnostics.ErrInvalidType,
+			"invalid target type for cast")
+		return c.invalidAs(nil, targetType)
+	}
+
+	if node.Expr == nil {
+		return c.invalidAs(nil, targetType)
+	}
+
+	expr := c.typeExpr(node.Expr, nil)
+	if expr == nil || isInvalidOrUnknown(expr.Type()) {
+		return c.invalidAs(expr, targetType)
+	}
+
+	compat := typeinfo.CheckNumericCompatibility(targetType, expr.Type())
+	if compat == typeinfo.Incompatible {
+		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidCast,
+			fmt.Sprintf("cannot cast %s to %s",
+				typeinfo.TypeText(expr.Type()), typeinfo.TypeText(targetType)))
+		return c.invalidAs(expr, targetType)
+	}
+
+	return &typeinfo.As{Expr: expr, CastType: targetType, ExprType: targetType}
+}
+
+func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typeinfo.Expr {
+	if node == nil {
+		return nil
+	}
+	if isInvalidOrUnknown(expected) {
 		expected = nil
 	}
 	if expected != nil {
-		switch typ := expected.(type) {
-		case *typeinfo.IntegerType:
-			if !numeric.FitsIntegerLiteral(node.Value, typ.Bits, typ.Signed) {
-				common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidNumber, fmt.Sprintf("literal `%s` does not fit %s", node.Value, typ.Text()))
-				return nil, false
-			}
-			return &typeinfo.IntLit{Value: node.Value, ExprType: typ}, true
-		case *typeinfo.FloatType:
-			if !numeric.IsFloat(node.Value) {
-				common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrTypeMismatch, fmt.Sprintf("integer literal `%s` cannot be used as %s", node.Value, typ.Text()))
-				return nil, false
-			}
-			if !numeric.FitsFloatLiteral(node.Value, typ.Bits) {
-				common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidNumber, fmt.Sprintf("literal `%s` does not fit %s", node.Value, typ.Text()))
-				return nil, false
-			}
-			return &typeinfo.FloatLit{Value: node.Value, ExprType: typ}, true
+		// Type-level gate: e.g. float literal → integer type is Incompatible.
+		naturalType := typeinfo.DefaultNumberType(node.Value)
+		if typeinfo.CheckNumericCompatibility(expected, naturalType) == typeinfo.Incompatible {
+			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected)))
+			return nil
 		}
+		// Value-level gate: literal must actually fit the target type's range.
+		if !literalFitsType(node.Value, expected) {
+			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidNumber,
+				fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected)))
+			return nil
+		}
+		return buildNumberLiteral(node.Value, expected)
 	}
 	if numeric.IsFloat(node.Value) {
-		if !numeric.FitsFloatLiteral(node.Value, 64) {
-			common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidNumber, fmt.Sprintf("invalid f64 literal `%s`", node.Value))
-			return nil, false
-		}
-		return &typeinfo.FloatLit{Value: node.Value, ExprType: &typeinfo.FloatType{Bits: 64}}, true
+		return &typeinfo.FloatLit{Value: node.Value, ExprType: typeinfo.DefaultNumberType(node.Value)}
 	}
-	if !numeric.FitsIntegerLiteral(node.Value, 32, true) {
-		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidNumber, fmt.Sprintf("integer literal `%s` requires explicit type", node.Value))
-		return nil, false
-	}
-	return &typeinfo.IntLit{Value: node.Value, ExprType: &typeinfo.IntegerType{Signed: true, Bits: 32}}, true
+	return &typeinfo.IntLit{Value: node.Value, ExprType: typeinfo.DefaultNumberType(node.Value)}
 }
 
-func (c *checker) coerceBinaryLiteralSides(node *ast.BinaryExpr, left, right typeinfo.Expr) (typeinfo.Expr, typeinfo.Expr, bool) {
-	if node == nil {
-		return left, right, true
-	}
-	if _, ok := node.Left.(*ast.NumberLit); ok && c.isSupportedScalarType(right.Type()) {
-		if typed, ok := c.typeNumber(node.Left.(*ast.NumberLit), right.Type()); ok {
-			left = typed
-		} else {
-			return nil, nil, false
+// literalFitsType checks whether the raw literal value fits inside the target
+// numeric type's range. It is purely value-level; type-level compatibility
+// should already be confirmed before calling this.
+func literalFitsType(value string, typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case *typeinfo.IntegerType:
+		return numeric.FitsIntegerLiteral(value, t.Bits, t.Signed)
+	case *typeinfo.FloatType:
+		if numeric.IsFloat(value) {
+			return numeric.FitsFloatLiteral(value, t.Bits)
 		}
+		return numeric.FitsIntegerLiteralInFloat(value, t.Bits)
 	}
-	if _, ok := node.Right.(*ast.NumberLit); ok && c.isSupportedScalarType(left.Type()) {
-		if typed, ok := c.typeNumber(node.Right.(*ast.NumberLit), left.Type()); ok {
-			right = typed
-		} else {
-			return nil, nil, false
-		}
-	}
-	return left, right, true
+	return false
 }
 
-func (c *checker) isSupportedScalarType(typ typeinfo.Type) bool {
-	switch typ.(type) {
-	case *typeinfo.IntegerType, *typeinfo.FloatType:
-		return true
+// buildNumberLiteral constructs the correctly-typed literal node for a given
+// target type. Caller must ensure the value fits before calling.
+func buildNumberLiteral(value string, typ typeinfo.Type) typeinfo.Expr {
+	switch t := typ.(type) {
+	case *typeinfo.IntegerType:
+		return &typeinfo.IntLit{Value: value, ExprType: t}
+	case *typeinfo.FloatType:
+		return &typeinfo.FloatLit{Value: floatLiteralValue(value), ExprType: t}
+	}
+	return nil
+}
+
+func (c *checker) signedNumberFits(op string, expr ast.Expr, target typeinfo.Type) bool {
+	if op != "+" && op != "-" {
+		return false
+	}
+	literal, ok := expr.(*ast.NumberLit)
+	if !ok || target == nil {
+		return false
+	}
+	value := signedLiteralText(op, literal.Value)
+	switch typ := target.(type) {
+	case *typeinfo.IntegerType:
+		return !numeric.IsFloat(value) && numeric.FitsIntegerLiteral(value, typ.Bits, typ.Signed)
+	case *typeinfo.FloatType:
+		if numeric.IsFloat(value) {
+			return numeric.FitsFloatLiteral(value, typ.Bits)
+		}
+		return numeric.FitsIntegerLiteralInFloat(value, typ.Bits)
 	default:
 		return false
 	}
 }
 
-func (c *checker) isConditionType(typ typeinfo.Type) bool {
-	if _, ok := typ.(*typeinfo.BoolType); ok {
-		return true
+func signedLiteralText(op, value string) string {
+	if op == "-" && !strings.HasPrefix(value, "-") {
+		return "-" + value
 	}
-	return c.isSupportedScalarType(typ)
+	return value
+}
+
+func floatLiteralValue(value string) string {
+	if numeric.IsFloat(value) {
+		return value
+	}
+	intValue, err := numeric.StringToBigInt(value)
+	if err != nil {
+		return value
+	}
+	return intValue.String() + ".0"
 }
 
 func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {
 	case "+", "-", "*", "/":
-		return c.isSupportedScalarType(typ)
+		return typeinfo.IsArithmetic(typ)
 	case "%":
-		_, ok := typ.(*typeinfo.IntegerType)
-		return ok
-	case "==", "!=", "<", "<=", ">", ">=":
-		return c.isSupportedScalarType(typ)
+		return typeinfo.IsIntegral(typ)
+	case "==", "!=":
+		return typeinfo.IsEquatable(typ)
+	case "<", "<=", ">", ">=":
+		return typeinfo.IsArithmetic(typ)
 	case "&&", "||":
-		return c.isConditionType(typ)
+		return typeinfo.IsCondition(typ)
 	default:
 		return false
 	}
@@ -433,10 +560,52 @@ func (c *checker) allowedOp(op string) bool {
 	}
 }
 
-func Check(module *context.Module, diag *diagnostics.DiagnosticBag) bool {
-	if module == nil || module.Decls == nil || module.Bindings == nil || diag == nil {
-		return false
+func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, callee typeinfo.Expr, args []typeinfo.Expr) {
+	if c == nil || callExpr == nil || callee == nil {
+		return
 	}
-	c := &checker{module: module, diag: diag}
-	return c.checkModule()
+
+	ident, ok := callee.(*typeinfo.Ident)
+	if !ok || ident == nil || ident.Symbol == nil {
+		return
+	}
+
+	var fnDecl *ast.FnDecl
+	for declFn, sym := range c.module.Bindings.FunctionSymbols {
+		if sym != nil && sym.ID == ident.Symbol.ID {
+			fnDecl = declFn
+			break
+		}
+	}
+	if fnDecl == nil {
+		return
+	}
+
+	if len(args) != len(fnDecl.Params) {
+		common.AddError(c.diag, c.module.FilePath, callExpr, diagnostics.ErrWrongArgumentCount,
+			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnDecl.Params)))
+		return
+	}
+
+	for i, arg := range args {
+		if arg == nil {
+			continue
+		}
+		paramType := typeinfo.TypeFromSyntax(fnDecl.Params[i].Type)
+		if paramType == nil {
+			continue
+		}
+		if typeinfo.CheckNumericCompatibility(paramType, arg.Type()) != typeinfo.Compatible {
+			common.AddError(c.diag, c.module.FilePath, callExpr.Args[i], diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("cannot implicitly convert %s to %s",
+					typeinfo.TypeText(arg.Type()), typeinfo.TypeText(paramType)))
+		}
+	}
+}
+
+func Check(module *context.Module, diag *diagnostics.DiagnosticBag) {
+	if module == nil || module.Decls == nil || module.Bindings == nil || diag == nil {
+		return
+	}
+	(&checker{module: module, diag: diag}).checkModule()
 }

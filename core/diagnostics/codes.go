@@ -62,6 +62,7 @@ const (
 	ErrInvalidCopy             = "T0035"
 	ErrBorrowEscape            = "T0036"
 	ErrBorrowConflict          = "T0037"
+	ErrUnknownIdentifier	   = "T0038"
 
 	// Module/Import errors (M prefix)
 	ErrModuleNotFound    = "M0001"

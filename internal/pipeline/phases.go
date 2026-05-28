@@ -37,14 +37,10 @@ func parse(module *context.Module, stream []tokens.Token, diag *diagnostics.Diag
 }
 
 // Collector, resolver, type checker, CTFE, and related semantic passes.
-func analyze(ctx *context.CompilerContext, module *context.Module, diag *diagnostics.DiagnosticBag) bool {
-	if !collector.Collect(ctx, module, diag) {
-		return false
-	}
-	if !resolver.Resolve(module, diag) {
-		return false
-	}
-	return typechecher.Check(module, diag)
+func analyze(ctx *context.CompilerContext, module *context.Module, diag *diagnostics.DiagnosticBag) {
+	collector.Collect(ctx, module, diag)
+	resolver.Resolve(module, diag)
+	typechecher.Check(module, diag)
 }
 
 // Checked AST/semantic data to high-level IR.

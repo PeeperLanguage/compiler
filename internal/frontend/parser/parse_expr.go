@@ -14,6 +14,7 @@ const (
 	precCompare
 	precSum
 	precProduct
+	precCast
 	precPrefix
 	precCall
 )
@@ -32,8 +33,11 @@ var infixPrec = map[tokens.Kind]int{
 	tokens.ASTERISK: precProduct,
 	tokens.SLASH:    precProduct,
 	tokens.PERCENT:  precProduct,
+	tokens.AS:       precCast,
 	tokens.LPAREN:   precCall,
 }
+
+type ledFunc func(*Parser, ast.Expr, int) ast.Expr
 
 func (p *Parser) parseExpr(precedence int) ast.Expr {
 	left := p.parsePrefix()
@@ -45,16 +49,31 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 		if nextPrec <= precedence {
 			break
 		}
-		if p.peek().Kind == tokens.LPAREN {
-			left = p.parseCall(left)
-			continue
+		led, ok := ledFor(p.peek().Kind)
+		if !ok {
+			p.errorf(p.peek(), diagnostics.ErrInvalidExpression, "expected expression operator")
+			return left
 		}
-		left = p.parseInfix(left, nextPrec)
+		left = led(p, left, nextPrec)
 		if left == nil {
 			return nil
 		}
 	}
 	return left
+}
+
+func ledFor(kind tokens.Kind) (ledFunc, bool) {
+	switch kind {
+	case tokens.OROR, tokens.ANDAND, tokens.EQ, tokens.NEQ, tokens.LT, tokens.GT, tokens.LE, tokens.GE,
+		tokens.PLUS, tokens.MINUS, tokens.ASTERISK, tokens.SLASH, tokens.PERCENT:
+		return parseInfixLed, true
+	case tokens.AS:
+		return parseAsLed, true
+	case tokens.LPAREN:
+		return parseCallLed, true
+	default:
+		return nil, false
+	}
 }
 
 func (p *Parser) parsePrefix() ast.Expr {
@@ -68,7 +87,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.STRING:
 		p.advance()
 		return &ast.StringLit{Value: tok.Literal, Location: p.loc(tok, tok)}
-	case tokens.MINUS, tokens.BANG:
+	case tokens.PLUS, tokens.MINUS, tokens.BANG:
 		p.advance()
 		expr := p.parseExpr(precPrefix)
 		if expr == nil {
@@ -94,6 +113,18 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.errorf(tok, diagnostics.ErrInvalidExpression, "expected expression")
 		return nil
 	}
+}
+
+func parseInfixLed(p *Parser, left ast.Expr, precedence int) ast.Expr {
+	return p.parseInfix(left, precedence)
+}
+
+func parseCallLed(p *Parser, left ast.Expr, _ int) ast.Expr {
+	return p.parseCall(left)
+}
+
+func parseAsLed(p *Parser, left ast.Expr, _ int) ast.Expr {
+	return p.parseAsExpr(left)
 }
 
 func (p *Parser) parseInfix(left ast.Expr, precedence int) ast.Expr {
@@ -164,4 +195,26 @@ func (p *Parser) parseIdent() *ast.Ident {
 	}
 	p.advance()
 	return &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)}
+}
+
+// parseAsExpr parses an "as" cast expression: expr as type
+func (p *Parser) parseAsExpr(left ast.Expr) ast.Expr {
+	if left == nil {
+		return nil
+	}
+	asTok := p.advance()
+	if asTok == nil || asTok.Kind != tokens.AS {
+		return left
+	}
+	// Parse the type expression after "as"
+	typeExpr := p.parseTypeExpr()
+	if typeExpr == nil {
+		p.errorf(*asTok, diagnostics.ErrInvalidExpression, "expected type after 'as'")
+		return left
+	}
+	return &ast.AsExpr{
+		Expr:     left,
+		TypeExpr: typeExpr,
+		Location: p.locFromNode(left, typeExpr),
+	}
 }
