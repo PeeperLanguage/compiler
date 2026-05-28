@@ -154,9 +154,8 @@ func (c *checker) checkBinding(node ast.Stmt, requireInitializer bool) {
 		return
 	}
 
-	bindRes, ok := c.module.Bindings.LookupNode(nameNode)
-	if !ok || bindRes == nil || bindRes.Symbol == nil {
-		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrUndefinedSymbol, "missing binding symbol")
+	bindRes, found := c.module.Bindings.LookupNode(nameNode)
+	if !found || bindRes == nil || bindRes.Symbol == nil {
 		return
 	}
 
