@@ -41,8 +41,8 @@ func (m *ModuleInfo) LookupNode(node ast.Node) (*Resolution, bool) {
 	if m == nil || node == nil {
 		return nil, false
 	}
-	resolution, ok := m.Nodes[node]
-	return resolution, ok
+	resolution, found := m.Nodes[node]
+	return resolution, found
 }
 
 func (m *ModuleInfo) BindFunctionSymbol(fn *ast.FnDecl, sym *symbols.Symbol) {

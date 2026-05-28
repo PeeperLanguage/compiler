@@ -55,7 +55,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		kind = symbols.SymbolUnknown
 	}
 	sym := symbols.New(fn.Name.Name, kind, fn)
-	if err, ok := c.module.ModuleScope.Declare(sym); !ok {
+	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		common.AddError(c.diag, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, err.Error())
 		return
 	}

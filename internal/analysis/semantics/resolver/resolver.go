@@ -47,7 +47,7 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) {
 			return
 		}
 		sym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
-		if err, ok := fn.Scope.Declare(sym); !ok {
+		if err := fn.Scope.Declare(sym); err != nil {
 			common.AddError(r.diag, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
@@ -79,7 +79,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.LetDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
 		sym.Initializing = true
-		if err, ok := scope.Declare(sym); !ok {
+		if err := scope.Declare(sym); err != nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
@@ -97,7 +97,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
 		sym.Initializing = true
-		if err, ok := scope.Declare(sym); !ok {
+		if err := scope.Declare(sym); err != nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
