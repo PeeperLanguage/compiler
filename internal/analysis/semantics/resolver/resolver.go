@@ -154,6 +154,10 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 		for _, arg := range node.Args {
 			r.resolveExpr(fn, scope, arg)
 		}
+	case *ast.AsExpr:
+		// Resolve the expression being cast
+		r.resolveExpr(fn, scope, node.Expr)
+		// The type expression doesn't need resolution
 	default:
 		common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 	}

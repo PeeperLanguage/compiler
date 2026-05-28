@@ -68,6 +68,11 @@ type Call struct {
 	Type   string
 }
 
+type Cast struct {
+	Expr Expr
+	Type string
+}
+
 func (*InvalidExpr) exprNode() {}
 func (*IntLit) exprNode()      {}
 func (*FloatLit) exprNode()    {}
@@ -75,6 +80,7 @@ func (*Ident) exprNode()       {}
 func (*Unary) exprNode()       {}
 func (*Binary) exprNode()      {}
 func (*Call) exprNode()        {}
+func (*Cast) exprNode()        {}
 
 func (e *InvalidExpr) String() string {
 	if e == nil || e.Message == "" {
@@ -160,6 +166,20 @@ func (e *Call) String() string {
 	return b.String()
 }
 func (e *Call) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *Cast) String() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("(%s as %s)", e.Expr.String(), e.Type)
+}
+
+func (e *Cast) TypeText() string {
 	if e == nil {
 		return ""
 	}

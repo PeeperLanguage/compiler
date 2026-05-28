@@ -40,6 +40,10 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	if left == nil {
 		return nil
 	}
+	// Check for "as" cast expression (expr as type)
+	if p.peek().Kind == tokens.AS {
+		return p.parseAsExpr(left)
+	}
 	for !p.at(tokens.SEMICOLON) && !p.at(tokens.COMMA) && !p.at(tokens.RPAREN) && !p.at(tokens.RBRACE) {
 		nextPrec := p.peekPrecedence()
 		if nextPrec <= precedence {
@@ -52,6 +56,10 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 		left = p.parseInfix(left, nextPrec)
 		if left == nil {
 			return nil
+		}
+		// After parsing infix, check for "as" cast
+		if p.peek().Kind == tokens.AS {
+			return p.parseAsExpr(left)
 		}
 	}
 	return left
@@ -164,4 +172,26 @@ func (p *Parser) parseIdent() *ast.Ident {
 	}
 	p.advance()
 	return &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)}
+}
+
+// parseAsExpr parses an "as" cast expression: expr as type
+func (p *Parser) parseAsExpr(left ast.Expr) ast.Expr {
+	if left == nil {
+		return nil
+	}
+	asTok := p.advance()
+	if asTok == nil || asTok.Kind != tokens.AS {
+		return left
+	}
+	// Parse the type expression after "as"
+	typeExpr := p.parseTypeExpr()
+	if typeExpr == nil {
+		p.errorf(*asTok, diagnostics.ErrInvalidExpression, "expected type after 'as'")
+		return left
+	}
+	return &ast.AsExpr{
+		Expr:     left,
+		TypeExpr: typeExpr,
+		Location: p.locFromNode(left, typeExpr),
+	}
 }

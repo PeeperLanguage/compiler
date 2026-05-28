@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"strings"
+	"strconv"
 
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
@@ -109,6 +110,101 @@ type llvmBuilder struct {
 	locals map[string]string
 }
 
+
+func emitCast(b *llvmBuilder, cast *mir.Cast) string {
+	if b == nil || cast == nil || cast.Arg == nil {
+		return "0"
+	}
+
+	argRef := emitRef(b, cast.Arg)
+	fromType := mirRefType(cast.Arg)
+	toType := cast.Type
+
+	// If types are the same, no cast needed
+	if fromType == toType {
+		return argRef
+	}
+
+	// Determine the conversion based on types
+	out := b.nextReg()
+
+	// Handle numeric conversions
+	if isMIRFloatType(fromType) && isMIRIntegerType(toType) {
+		// Float to integer: use fptosi or fptoui
+		if isMIRSignedIntegerType(toType) {
+			b.line(fmt.Sprintf("%s = fptosi %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+		} else {
+			b.line(fmt.Sprintf("%s = fptoui %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+		}
+	} else if isMIRIntegerType(fromType) && isMIRFloatType(toType) {
+		// Integer to float: use sitofp or uitofp
+		if isMIRSignedIntegerType(fromType) {
+			b.line(fmt.Sprintf("%s = sitofp %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+		} else {
+			b.line(fmt.Sprintf("%s = uitofp %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+		}
+	} else if isMIRFloatType(fromType) && isMIRFloatType(toType) {
+		// Float to float: use fptrunc or fpext
+		if fromType == "f64" && toType == "f32" {
+			b.line(fmt.Sprintf("%s = fptrunc double %s to float", out, argRef))
+		} else if fromType == "f32" && toType == "f64" {
+			b.line(fmt.Sprintf("%s = fpext float %s to double", out, argRef))
+		} else {
+			// Same type, no conversion needed
+			return argRef
+		}
+	} else if isMIRIntegerType(fromType) && isMIRIntegerType(toType) {
+		// Integer to integer: use trunc, zext, or sext
+		fromBits := mirParseIntegerTypeBits(fromType)
+		toBits := mirParseIntegerTypeBits(toType)
+		if fromBits < toBits {
+			// Extend
+			if isMIRSignedIntegerType(fromType) {
+				b.line(fmt.Sprintf("%s = sext %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+			} else {
+				b.line(fmt.Sprintf("%s = zext %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+			}
+		} else if fromBits > toBits {
+			// Truncate
+			b.line(fmt.Sprintf("%s = trunc %s %s to %s", out, mustLLVMType(fromType), argRef, mustLLVMType(toType)))
+		} else {
+			// Same size, no conversion
+			return argRef
+		}
+	} else {
+		// Unsupported conversion, return default
+		return argRef
+	}
+
+	return out
+}
+
+// Helper functions for type checking
+func isMIRFloatType(typ string) bool {
+	return typ == "f32" || typ == "f64"
+}
+
+func isMIRIntegerType(typ string) bool {
+	return strings.HasPrefix(typ, "i") || strings.HasPrefix(typ, "u")
+}
+
+func isMIRSignedIntegerType(typ string) bool {
+	return strings.HasPrefix(typ, "i")
+}
+
+func mirParseIntegerTypeBits(typ string) int {
+	if isMIRIntegerType(typ) {
+		if len(typ) > 1 {
+			// Extract the bit width from the type name (e.g., "i32" -> 32)
+			if bits, err := strconv.Atoi(typ[1:]); err == nil {
+				return bits
+			}
+		}
+	}
+	return 0
+}
+
+
 func newLLVMBuilder(out *strings.Builder) *llvmBuilder {
 	return &llvmBuilder{out: out, nextID: 1, locals: make(map[string]string)}
 }
@@ -133,6 +229,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 	switch e := expr.(type) {
 	case *mir.Move:
 		return emitRef(b, e.Src)
+	case *mir.Cast:
+		return emitCast(b, e)
 	case *mir.Unary:
 		arg := emitRef(b, e.Arg)
 		typ := mustLLVMType(e.Type)
