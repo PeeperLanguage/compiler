@@ -85,6 +85,9 @@ func (c *collector) collectBlock(block *ast.BlockStmt, fn *declinfo.Function) {
 }
 
 func (c *collector) collectStmt(stmt ast.Stmt, fn *declinfo.Function) {
+	if stmt == nil {
+		return
+	}
 	switch n := stmt.(type) {
 	case *ast.BlockStmt:
 		c.collectBlock(n, fn)

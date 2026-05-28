@@ -70,6 +70,9 @@ func (r *resolver) resolveBlock(fn *declinfo.Function, scope *table.Scope, block
 }
 
 func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.Stmt) {
+	if stmt == nil {
+		return
+	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		r.resolveBlock(fn, table.New(scope), node)
@@ -105,6 +108,9 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 		}
 		r.resolveExpr(fn, scope, node.Value)
 	case *ast.ReturnStmt:
+		if node == nil {
+			return
+		}
 		if node.Value == nil {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
 			return
