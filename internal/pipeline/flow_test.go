@@ -189,7 +189,7 @@ func TestFullFlowRejectsSelfReferentialInitializer(t *testing.T) {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	if out := diag.EmitAllToString(); !strings.Contains(out, "used before its defined") {
+	if out := diag.EmitAllToString(); !strings.Contains(out, "used before it's defined") {
 		t.Fatalf("expected use-before-def diagnostic for self init, got:\n%s", out)
 	}
 }
