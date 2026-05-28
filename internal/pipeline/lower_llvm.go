@@ -214,6 +214,18 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			return left
 		}
 		return out
+	case *mir.Call:
+		// Emit function call
+		callee := emitRef(b, e.Callee)
+		llvmType := mustLLVMType(e.Type)
+		out := b.nextReg()
+		// Build argument list
+		args := make([]string, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, mustLLVMType(mirRefType(arg))+" "+emitRef(b, arg))
+		}
+		b.line(fmt.Sprintf("%s = call %s %s(%s)", out, llvmType, callee, strings.Join(args, ", ")))
+		return out
 	default:
 		return "0"
 	}
@@ -232,6 +244,12 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 	case *mir.RefName:
 		if reg, ok := b.locals[v.Name]; ok {
 			return reg
+		}
+		// Check if this is a function reference (symbol name with $ID suffix)
+		// Strip the $ID suffix to get the function name
+		if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
+			funcName := v.Name[:idx]
+			return "@" + strings.ReplaceAll(funcName, "::", "__")
 		}
 		return "0"
 	default:

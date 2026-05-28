@@ -305,6 +305,25 @@ func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) (typeinfo.Expr
 		expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: exprType}
 		c.module.Types.BindExpr(node, expr)
 		return expr, true
+	case *ast.CallExpr:
+		// Type check function call
+		callee, ok := c.typeExpr(node.Callee, expected)
+		if !ok {
+			return nil, false
+		}
+		args := make([]typeinfo.Expr, 0, len(node.Args))
+		for _, arg := range node.Args {
+			argExpr, ok := c.typeExpr(arg, nil)
+			if !ok {
+				return nil, false
+			}
+			args = append(args, argExpr)
+		}
+		// For now, just pass through the callee's type as the call's type
+		// TODO: Look up function signature and validate arguments
+		callExpr := &typeinfo.Call{Callee: callee, Args: args, ExprType: callee.Type()}
+		c.module.Types.BindExpr(node, callExpr)
+		return callExpr, true
 	default:
 		common.AddError(c.diag, c.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 		return nil, false

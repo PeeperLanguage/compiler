@@ -269,6 +269,29 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 	return true
 }
 
+// Call represents a function call in MIR
+type Call struct {
+	Callee ValueRef
+	Args   []ValueRef
+	Type   string
+}
+
+func (c *Call) valueExprNode() {}
+func (c *Call) Text() string {
+	var b strings.Builder
+	b.WriteString("call ")
+	b.WriteString(c.Callee.Text())
+	b.WriteString("(")
+	for i, arg := range c.Args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(arg.Text())
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
 func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
 	case *ir.IntLit:
@@ -287,6 +310,15 @@ func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
 		right := lowerExpr(e.Right, tmp, out)
 		name := nextTemp(tmp)
 		*out = append(*out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.Call:
+		callee := lowerExpr(e.Callee, tmp, out)
+		args := make([]ValueRef, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, lowerExpr(arg, tmp, out))
+		}
+		name := nextTemp(tmp)
+		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	default:
 		return &RefConst{Value: "0", Type: "i32"}
