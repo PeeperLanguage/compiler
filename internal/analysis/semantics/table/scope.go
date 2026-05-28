@@ -34,7 +34,7 @@ func (s *Scope) Declare(sym *symbols.Symbol) (error, bool) {
 		return errors.New("invalid symbol or scope"), false
 	}
 	if _, exists := s.byName[sym.Name]; exists {
-		return fmt.Errorf("`%s` already exists in this scope"), false
+		return fmt.Errorf("`%s` already exists in this scope", sym.Name), false
 	}
 	s.byName[sym.Name] = sym.ID
 	s.byID[sym.ID] = sym
