@@ -165,6 +165,16 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 		return r.resolveExpr(fn, scope, node.Expr)
 	case *ast.BinaryExpr:
 		return r.resolveExpr(fn, scope, node.Left) && r.resolveExpr(fn, scope, node.Right)
+	case *ast.CallExpr:
+		if !r.resolveExpr(fn, scope, node.Callee) {
+			return false
+		}
+		for _, arg := range node.Args {
+			if !r.resolveExpr(fn, scope, arg) {
+				return false
+			}
+		}
+		return true
 	default:
 		common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 		return false

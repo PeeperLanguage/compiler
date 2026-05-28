@@ -190,6 +190,12 @@ func lowerExpr(expr typeinfo.Expr) ir.Expr {
 		return &ir.Unary{Op: e.Op, Arg: lowerExpr(e.Arg), Type: typeinfo.TypeText(e.Type())}
 	case *typeinfo.Binary:
 		return &ir.Binary{Op: e.Op, Left: lowerExpr(e.Left), Right: lowerExpr(e.Right), Type: typeinfo.TypeText(e.Type())}
+	case *typeinfo.Call:
+		args := make([]ir.Expr, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, lowerExpr(arg))
+		}
+		return &ir.Call{Callee: lowerExpr(e.Callee), Args: args, Type: typeinfo.TypeText(e.Type())}
 	default:
 		return &ir.IntLit{Value: "0", Type: "i32"}
 	}

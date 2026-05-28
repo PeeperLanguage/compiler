@@ -1,7 +1,8 @@
-fn add_f64(a: f64, b: f64) -> f64 {
+fn add(a: i32, b: i32) -> i32 {
 	return a + b;
 }
 
 fn main() -> i32 {
-	return 0;
+    let res = add(1.3, 3);
+	return res;
 }

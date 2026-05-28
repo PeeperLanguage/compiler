@@ -62,12 +62,19 @@ type Binary struct {
 	Type  string
 }
 
+type Call struct {
+	Callee Expr
+	Args   []Expr
+	Type   string
+}
+
 func (*InvalidExpr) exprNode() {}
 func (*IntLit) exprNode()      {}
 func (*FloatLit) exprNode()    {}
 func (*Ident) exprNode()       {}
 func (*Unary) exprNode()       {}
 func (*Binary) exprNode()      {}
+func (*Call) exprNode()        {}
 
 func (e *InvalidExpr) String() string {
 	if e == nil || e.Message == "" {
@@ -130,6 +137,29 @@ func (e *Binary) String() string {
 	return fmt.Sprintf("(%s %s %s)", e.Op, e.Left.String(), e.Right.String())
 }
 func (e *Binary) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *Call) String() string {
+	if e == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(e.Callee.String())
+	b.WriteString("(")
+	for i, arg := range e.Args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(arg.String())
+	}
+	b.WriteString(")")
+	return b.String()
+}
+func (e *Call) TypeText() string {
 	if e == nil {
 		return ""
 	}

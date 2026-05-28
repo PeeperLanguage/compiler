@@ -7,7 +7,7 @@ fn main() -> i32 {
 		return 10;
 	} else if a < b {
 		if a == b {
-            //return 22;
+            return 22;
 		} else {
 		    return 23;
 		}

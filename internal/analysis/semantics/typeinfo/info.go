@@ -341,6 +341,19 @@ func (e *Binary) Type() Type {
 	return e.ExprType
 }
 
+type Call struct {
+	Callee   Expr
+	Args     []Expr
+	ExprType Type
+}
+
+func (e *Call) Type() Type {
+	if e == nil {
+		return nil
+	}
+	return e.ExprType
+}
+
 type FloatLit struct {
 	Value    string
 	ExprType Type
