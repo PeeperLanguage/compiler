@@ -2,8 +2,9 @@ package pipeline
 
 import (
 	"fmt"
-	"strings"
+	"math"
 	"strconv"
+	"strings"
 
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
@@ -110,7 +111,6 @@ type llvmBuilder struct {
 	locals map[string]string
 }
 
-
 func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 	if b == nil || cast == nil || cast.Arg == nil {
 		return "0"
@@ -203,7 +203,6 @@ func mirParseIntegerTypeBits(typ string) int {
 	}
 	return 0
 }
-
 
 func newLLVMBuilder(out *strings.Builder) *llvmBuilder {
 	return &llvmBuilder{out: out, nextID: 1, locals: make(map[string]string)}
@@ -338,6 +337,9 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 			}
 			return "true"
 		}
+		if v.Type == "f32" {
+			return llvmFloat32Const(v.Value)
+		}
 		return v.Value
 	case *mir.RefName:
 		if reg, ok := b.locals[v.Name]; ok {
@@ -353,6 +355,14 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 	default:
 		return "0"
 	}
+}
+
+func llvmFloat32Const(value string) string {
+	parsed, err := strconv.ParseFloat(value, 32)
+	if err != nil {
+		return value
+	}
+	return fmt.Sprintf("0x%016X", math.Float64bits(float64(float32(parsed))))
 }
 
 func emitCondRef(b *llvmBuilder, ref mir.ValueRef) string {

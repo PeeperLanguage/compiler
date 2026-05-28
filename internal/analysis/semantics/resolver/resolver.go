@@ -78,6 +78,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 		r.resolveBlock(fn, table.New(scope), node)
 	case *ast.LetDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
+		sym.Initializing = true
 		if err, ok := scope.Declare(sym); !ok {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
@@ -89,12 +90,13 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 				Symbol: sym,
 			})
 		}
-		if node.Value == nil {
-			return
+		if node.Value != nil {
+			r.resolveExpr(fn, scope, node.Value)
 		}
-		r.resolveExpr(fn, scope, node.Value)
+		sym.Initializing = false
 	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
+		sym.Initializing = true
 		if err, ok := scope.Declare(sym); !ok {
 			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
@@ -106,7 +108,10 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 				Symbol: sym,
 			})
 		}
-		r.resolveExpr(fn, scope, node.Value)
+		if node.Value != nil {
+			r.resolveExpr(fn, scope, node.Value)
+		}
+		sym.Initializing = false
 	case *ast.ReturnStmt:
 		if node == nil {
 			return
@@ -144,6 +149,16 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 		sym, ok := scope.Lookup(node.Name)
 		if !ok {
 			reportUnresolved(r.module, r.module.Decls, fn, scope, node, r.diag)
+			return
+		}
+		if sym != nil && sym.Initializing {
+			msg := "symbol `" + node.Name + "` used before its defined"
+			r.diag.Add(
+				diagnostics.NewError(msg).
+					WithCode(diagnostics.ErrUseBeforeDecl).
+					WithPrimaryLabel(node.Loc(), msg).
+					WithHelp("rename binding or use earlier value"),
+			)
 			return
 		}
 		r.module.Bindings.BindNode(node, &binding.Resolution{
