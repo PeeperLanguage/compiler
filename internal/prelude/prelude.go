@@ -31,6 +31,6 @@ func Load(ctx *context.CompilerContext) error {
 		Origin:     context.ModuleOriginStdlib,
 		Content:    string(content),
 	}
-	ctx.UpsertModule(module)
+	ctx.AddModule(module)
 	return nil
 }

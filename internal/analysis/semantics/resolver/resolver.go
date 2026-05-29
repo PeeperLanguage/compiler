@@ -12,8 +12,8 @@ import (
 )
 
 type resolver struct {
+	ctx    *context.CompilerContext
 	module *context.Module
-	diag   *diagnostics.DiagnosticBag
 }
 
 func (r *resolver) resolveModule() {
@@ -43,12 +43,12 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) {
 	}
 	for _, param := range fn.Decl.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			common.AddError(r.diag, r.module.FilePath, fn.Decl, diagnostics.ErrMissingIdentifier, "parameter name required")
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn.Decl, diagnostics.ErrMissingIdentifier, "parameter name required")
 			return
 		}
 		sym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
 		if err := fn.Scope.Declare(sym); err != nil {
-			common.AddError(r.diag, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
 		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
@@ -83,7 +83,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			sym.Initializing = false
 		}()
 		if err := scope.Declare(sym); err != nil {
-			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
 		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
@@ -103,7 +103,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			sym.Initializing = false
 		}()
 		if err := scope.Declare(sym); err != nil {
-			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
 		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
@@ -121,13 +121,13 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			return
 		}
 		if node.Value == nil {
-			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
 			return
 		}
 		r.resolveExpr(fn, scope, node.Value)
 	case *ast.IfStmt:
 		if node.Cond == nil {
-			common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
 			return
 		}
 		r.resolveExpr(fn, scope, node.Cond)
@@ -139,7 +139,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.ExprStmt:
 		r.resolveExpr(fn, scope, node.Expr)
 	default:
-		common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
 		return
 	}
 }
@@ -152,12 +152,12 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok {
-			reportUnresolved(r.module, r.module.Decls, fn, scope, node, r.diag)
+			reportUnresolved(r.module, r.module.Decls, fn, scope, node, r.ctx.Diagnostics)
 			return
 		}
 		if sym != nil && sym.Initializing {
 			msg := "symbol `" + node.Name + "` used before it's defined"
-			r.diag.Add(
+			r.ctx.Diagnostics.Add(
 				diagnostics.NewError(msg).
 					WithCode(diagnostics.ErrUseBeforeDecl).
 					WithPrimaryLabel(node.Loc(), msg).
@@ -184,14 +184,14 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 		r.resolveExpr(fn, scope, node.Expr)
 		// The type expression doesn't need resolution
 	default:
-		common.AddError(r.diag, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 	}
 }
 
-func Resolve(module *context.Module, diag *diagnostics.DiagnosticBag) {
-	if module == nil || module.Decls == nil || diag == nil {
+func Resolve(ctx *context.CompilerContext, module *context.Module) {
+	if module == nil || module.Decls == nil || ctx == nil {
 		return
 	}
-	r := &resolver{module: module, diag: diag}
+	r := &resolver{module: module, ctx: ctx}
 	r.resolveModule()
 }

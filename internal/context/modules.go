@@ -14,8 +14,8 @@ func canonicalPath(path string) string {
 	return filepath.ToSlash(clean)
 }
 
-// Register or replace a module in the shared graph.
-func (ctx *CompilerContext) UpsertModule(module *Module) {
+// Register a module in the shared graph.
+func (ctx *CompilerContext) AddModule(module *Module) {
 	if ctx == nil || module == nil || module.Key == "" {
 		return
 	}
