@@ -57,7 +57,7 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		return errors.New("empty pipeline")
 	}
 
-	p.ctx.UpsertModule(entry)
+	p.ctx.AddModule(entry)
 	var diag *diagnostics.DiagnosticBag
 	if p.ctx != nil {
 		diag = p.ctx.Diagnostics
@@ -68,9 +68,9 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		module.Tokens = lexer.Lex(module.FilePath, module.Content, diag)
 		
 		module.AST = parser.ParseModule(module.FilePath, module.Tokens, diag)
-		collector.Collect(p.ctx, module, diag)
-		resolver.Resolve(module, diag)
-		typechecher.Check(module, diag)
+		collector.Collect(p.ctx, module)
+		resolver.Resolve(p.ctx, module)
+		typechecher.Check(p.ctx, module)
 		
 		modhir := hir_lower.GenerateHIR(module)
 		if modhir == nil {

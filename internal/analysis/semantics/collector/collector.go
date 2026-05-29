@@ -13,7 +13,6 @@ import (
 type collector struct {
 	ctx    *context.CompilerContext
 	module *context.Module
-	diag   *diagnostics.DiagnosticBag
 }
 
 func (c *collector) collectModule(mod *ast.Module) {
@@ -47,7 +46,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		return
 	}
 	if fn.Name == nil || fn.Name.Name == "" {
-		common.AddError(c.diag, c.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "function name required")
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "function name required")
 		return
 	}
 	kind := symbols.SymbolFunc
@@ -56,7 +55,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	}
 	sym := symbols.New(fn.Name.Name, kind, fn)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		common.AddError(c.diag, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, err.Error())
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, err.Error())
 		return
 	}
 	c.module.Decls.NameIndex[sym.Name] = append(c.module.Decls.NameIndex[sym.Name], sym)
@@ -114,10 +113,10 @@ func (c *collector) addLocalDecl(name *ast.Ident, fn *declinfo.Function) {
 	fn.LocalNames[name.Name] = append(fn.LocalNames[name.Name], local)
 }
 
-func Collect(ctx *context.CompilerContext, module *context.Module, diag *diagnostics.DiagnosticBag) {
-	if ctx == nil || module == nil || module.AST == nil || diag == nil {
+func Collect(ctx *context.CompilerContext, module *context.Module) {
+	if ctx == nil || module == nil || module.AST == nil {
 		return
 	}
-	c := &collector{ctx: ctx, module: module, diag: diag}
+	c := &collector{ctx: ctx, module: module}
 	c.collectModule(module.AST)
 }
