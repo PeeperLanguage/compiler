@@ -17,11 +17,6 @@ type Module interface {
 	Text() string
 }
 
-type Slots struct {
-	HIR Module
-	MIR Module
-}
-
 type Expr interface {
 	exprNode()
 	String() string

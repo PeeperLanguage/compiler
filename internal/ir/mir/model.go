@@ -141,7 +141,7 @@ type lowerer struct {
 	current     *Block
 }
 
-func LowerHIR(in *hir.Module) *Module {
+func GenerateMIR(in *hir.Module) *Module {
 	if in == nil {
 		return nil
 	}
