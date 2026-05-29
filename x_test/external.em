@@ -1,0 +1,5 @@
+
+
+fn GetValue() -> i32 {
+    return 69;
+}
