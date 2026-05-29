@@ -2,9 +2,20 @@ package pipeline
 
 import (
 	"compiler/core/diagnostics"
+	"compiler/internal/analysis/cfg"
+	"compiler/internal/analysis/semantics/collector"
+	"compiler/internal/analysis/semantics/resolver"
+	"compiler/internal/analysis/semantics/typechecher"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/hir_fold"
+	"compiler/internal/ir/hir_lower"
+	"compiler/internal/ir/llvm"
+	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
+	"errors"
 )
 
 // Phase outputs for one module.
@@ -28,7 +39,6 @@ type StageArtifacts struct {
 // Complete output of one pipeline run.
 type Result struct {
 	EntryKey string
-	Stages   map[string]*StageArtifacts
 }
 
 // Ordered phase execution for one compiler context.
@@ -42,35 +52,42 @@ func New(ctx *context.CompilerContext) *Pipeline {
 }
 
 // Run the central lex -> parse -> analyze -> HIR -> MIR -> LLVM flow.
-func (p *Pipeline) Run(entry *context.Module) Result {
-	result := Result{Stages: make(map[string]*StageArtifacts)}
+func (p *Pipeline) Run(entry *context.Module) error {
 	if p == nil || p.ctx == nil || entry == nil {
-		return result
+		return errors.New("empty pipeline")
 	}
 
 	p.ctx.UpsertModule(entry)
-	result.EntryKey = entry.Key
 	var diag *diagnostics.DiagnosticBag
 	if p.ctx != nil {
 		diag = p.ctx.Diagnostics
 	}
 
 	for _, module := range p.ctx.Modules() {
-		stage := &StageArtifacts{Module: module}
-		stage.Tokens = lex(module, diag)
-		stage.AST = parse(module, stage.Tokens, diag)
-		analyze(p.ctx, module, diag)
-		stage.HasSem = module.Types != nil
-		_, hirText := lowerHIR(module, diag)
-		stage.HIRText = hirText
-		if diag != nil && diag.HasErrors() {
-			result.Stages[module.Key] = stage
+
+		module.Tokens = lexer.Lex(module.FilePath, module.Content, diag)
+		
+		module.AST = parser.ParseModule(module.FilePath, module.Tokens, diag)
+		collector.Collect(p.ctx, module, diag)
+		resolver.Resolve(module, diag)
+		typechecher.Check(module, diag)
+		
+		modhir := hir_lower.GenerateHIR(module)
+		if modhir == nil {
 			continue
 		}
-		_, mirText := lowerMIR(module)
-		stage.MIRText = mirText
-		stage.LLVMIR = lowerLLVMIR(module)
-		result.Stages[module.Key] = stage
+		modhir = hir_fold.ApplyConstantFolding(modhir, diag)
+		module.HIR = modhir
+		cfg.AnalyzeModule(modhir, diag)
+		module.HIR = modhir
+		if diag != nil && diag.HasErrors() {
+			continue
+		}
+
+		modmir := mir.GenerateMIR(module.HIR)
+
+		module.MIR = modmir
+		module.LLVMIR = llvm.GenerateLLVMIR(modmir)
 	}
-	return result
+	return nil
 }

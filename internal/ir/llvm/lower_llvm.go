@@ -1,4 +1,4 @@
-package pipeline
+package llvm
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"compiler/internal/tokens"
 )
 
-func lowerLLVMFromMIR(mod *mir.Module) string {
+func GenerateLLVMIR(mod *mir.Module) string {
 	if mod == nil {
 		return ""
 	}
@@ -228,7 +228,7 @@ func (b *llvmBuilder) line(text string) {
 }
 
 func (b *llvmBuilder) label(id int) {
-	b.out.WriteString(fmt.Sprintf("b%d:\n", id))
+	fmt.Fprintf(b.out, "b%d:\n", id)
 }
 
 func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {

@@ -8,7 +8,7 @@ import (
 	"maps"
 )
 
-func FoldModule(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
+func ApplyConstantFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
 	if mod == nil {
 		return nil
 	}

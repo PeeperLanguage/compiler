@@ -13,7 +13,8 @@ import (
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/ir"
+	"compiler/internal/ir/hir"
+	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
 )
 
@@ -75,7 +76,9 @@ type Module struct {
 	// Typed semantic state.
 	Types *typeinfo.ModuleInfo
 	// Canonical IR slots.
-	ir.Slots
+	HIR *hir.Module
+	MIR *mir.Module
+	LLVMIR string
 	// Top-level names visible in module.
 	ModuleScope *table.Scope
 

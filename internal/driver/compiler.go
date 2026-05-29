@@ -103,19 +103,23 @@ func (c *Compiler) ParseFile(path string) ParseResult {
 		Origin:     context.ModuleOriginLocal,
 		Content:    string(content),
 	}
-	pipelineResult := c.pipeline.Run(module)
-	for _, stage := range pipelineResult.Stages {
+	err = c.pipeline.Run(module)
+	if err != nil {
+		result.Diagnostics.Add(diagnostics.NewError("pipeline run: " + err.Error()))
+		return result
+	}
+	for _, module := range c.ctx.Modules() {
 		out := &CompiledModule{
-			Key:        stage.Module.Key,
-			ImportPath: stage.Module.ImportPath,
-			FilePath:   stage.Module.FilePath,
-			AST:        stage.AST,
-			HIR:        stage.HIRText,
-			MIR:        stage.MIRText,
-			LLVMIR:     stage.LLVMIR,
+			Key:        module.Key,
+			ImportPath: module.ImportPath,
+			FilePath:   module.FilePath,
+			AST:        module.AST,
+			HIR:        module.HIR.Text(),
+			MIR:        module.MIR.Text(),
+			LLVMIR:     module.LLVMIR,
 		}
 		result.Modules = append(result.Modules, out)
-		if stage.Module.Key == pipelineResult.EntryKey {
+		if module.IsEntry {
 			result.Module = out
 		}
 	}

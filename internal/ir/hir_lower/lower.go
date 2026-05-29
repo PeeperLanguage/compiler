@@ -11,7 +11,7 @@ import (
 	"compiler/internal/ir/hir"
 )
 
-func LowerTyped(module *context.Module) *hir.Module {
+func GenerateHIR(module *context.Module) *hir.Module {
 	if module == nil || module.Types == nil || module.Decls == nil || module.Bindings == nil {
 		return nil
 	}
