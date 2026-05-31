@@ -101,15 +101,6 @@ func parseAndRunCommand(args []string) bool {
 			os.Exit(1)
 		}
 		return true
-	case "test":
-		if err := testCommand(commandArgs, commandBackend); err != nil {
-			if errors.Is(err, errAlreadyReported) {
-				os.Exit(1)
-			}
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return true
 	case "check", "lint":
 		if err := checkCommand(commandArgs); err != nil {
 			if errors.Is(err, errAlreadyReported) {

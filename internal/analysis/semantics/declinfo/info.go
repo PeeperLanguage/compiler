@@ -7,10 +7,15 @@ import (
 	"compiler/internal/frontend/ast"
 )
 
-type ModuleInfo struct {
-	Externs   []ExternDecl
-	Functions []*Function
-	NameIndex map[string][]*symbols.Symbol
+type ResolutionKind string
+
+const (
+	ResolutionSymbol ResolutionKind = "symbol"
+)
+
+type Resolution struct {
+	Kind   ResolutionKind
+	Symbol *symbols.Symbol
 }
 
 type Function struct {

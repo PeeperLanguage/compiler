@@ -2,14 +2,13 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"compiler/colors"
+	"compiler/config/manifest"
 	"compiler/core/diagnostics"
 	"compiler/internal/backend"
 	"compiler/internal/context"
@@ -38,36 +37,22 @@ type testRunResult struct {
 	Elapsed time.Duration
 }
 
-// Compile/check path with a fresh compiler context.
-func parsePathWithBackend(path, backendName string, debugBuild bool) compiler.ParseResult {
-	cfg := compilerConfigFor(path, backendName, debugBuild)
-	c := compiler.NewWithConfig(cfg, diagnostics.NewDiagnosticBag(path))
-	return c.ParseFile(path)
-}
-
-// Compile one file in test mode.
-func parsePathWithTest(path, testName string, target backend.BACKEND_TYPE) compiler.ParseResult {
-	cfg := compilerConfigFor(path, string(target), false)
-	cfg.TestMode = true
-	cfg.TestName = testName
-	c := compiler.NewWithConfig(cfg, diagnostics.NewDiagnosticBag(path))
-	return c.ParseFile(path)
-}
-
-// Compile a workspace entry with explicit backend config.
-func parseWorkspaceWithConfig(rootDir, backendName string) compiler.ParseResult {
-	diag := diagnostics.NewDiagnosticBag(rootDir)
-	cfg := compilerConfigFor(rootDir, backendName, false)
-	c := compiler.NewWithConfig(cfg, diag)
-	entry := filepath.Join(rootDir, "main"+compiler.SOURCE_EXT)
-	return c.ParseFile(entry)
+// Compile one entry file with a fresh compiler context.
+func compileEntry(path, backendName string, debugBuild bool) (*context.CompilerContext, *context.Module) {
+	cfg := buildCompilerConfig(path, backendName, debugBuild)
+	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag(path))
+	entry := compiler.ParseFile(ctx, path)
+	return ctx, entry
 }
 
 // Convert CLI inputs to compiler config.
-func compilerConfigFor(path, backendName string, debugBuild bool) context.Config {
+func buildCompilerConfig(path, backendName string, debugBuild bool) context.Config {
 	rootDir := path
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
+	}
+	if manifestPath, err := manifest.Find(rootDir); err == nil {
+		rootDir = filepath.Dir(manifestPath)
 	}
 	return context.Config{
 		RootDir:       rootDir,
@@ -78,31 +63,57 @@ func compilerConfigFor(path, backendName string, debugBuild bool) context.Config
 }
 
 // Build final output after successful compilation.
-func buildExecutable(result compiler.ParseResult, outputPath string, target backend.BACKEND_TYPE) error {
-	if result.Diagnostics != nil && result.Diagnostics.HasErrors() {
+func buildExecutable(ctx *context.CompilerContext, entry *context.Module, outputPath string, target backend.BACKEND_TYPE) error {
+	if ctx != nil && ctx.Diagnostics != nil && ctx.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
 	}
-	if result.Module == nil {
+	if entry == nil {
 		return fmt.Errorf("no entry module produced")
 	}
-	ir := result.Module.LLVMIR
 	if target != backend.LLVM {
 		return fmt.Errorf("unsupported backend: %s", target)
 	}
-	if strings.TrimSpace(ir) == "" {
-		return fmt.Errorf("empty LLVM IR for module %s", result.Module.ImportPath)
+
+	modules := ctx.Modules()
+	if len(modules) == 0 {
+		return fmt.Errorf("no modules compiled")
 	}
-	llPath := outputPath + ".ll"
-	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
-		return fmt.Errorf("write llvm ir: %w", err)
+
+	llDir, err := os.MkdirTemp("", "ember-ll-")
+	if err != nil {
+		return fmt.Errorf("create llvm temp dir: %w", err)
 	}
-	defer os.Remove(llPath)
+	defer os.RemoveAll(llDir)
+
+	llPaths := make([]string, 0, len(modules))
+	for i, module := range modules {
+		if module == nil {
+			continue
+		}
+		ir := strings.TrimSpace(module.LLVMIR)
+		if ir == "" {
+			return fmt.Errorf("empty LLVM IR for module %s", module.ImportPath)
+		}
+		llPath := filepath.Join(llDir, fmt.Sprintf("mod_%d.ll", i))
+		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
+			return fmt.Errorf("write llvm ir: %w", err)
+		}
+		llPaths = append(llPaths, llPath)
+	}
+	if len(llPaths) == 0 {
+		return fmt.Errorf("no LLVM IR emitted")
+	}
 
 	clangPath, err := exec.LookPath("clang")
 	if err != nil {
 		return fmt.Errorf("clang not found in PATH; install LLVM clang to build LLVM IR")
 	}
-	cmd := exec.Command(clangPath, "-x", "ir", llPath, "-o", outputPath)
+	args := make([]string, 0, len(llPaths)*3+2)
+	for _, llPath := range llPaths {
+		args = append(args, "-x", "ir", llPath)
+	}
+	args = append(args, "-o", outputPath)
+	cmd := exec.Command(clangPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clang link failed: %w\n%s", err, strings.TrimSpace(string(out)))
@@ -111,16 +122,27 @@ func buildExecutable(result compiler.ParseResult, outputPath string, target back
 }
 
 // Write -keep-gen artifacts for each module.
-func emitKeepGenArtifacts(result compiler.ParseResult, backendName, dir string) error {
+func saveIRs(ctx *context.CompilerContext, backendName, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	for _, module := range result.Modules {
+	if ctx == nil {
+		return fmt.Errorf("missing compiler context")
+	}
+	for _, module := range ctx.Modules() {
 		base := strings.TrimSuffix(filepath.Base(module.FilePath), filepath.Ext(module.FilePath))
-		if err := os.WriteFile(filepath.Join(dir, base+".hir"), []byte(module.HIR), 0o644); err != nil {
+		hirText := ""
+		if module.HIR != nil {
+			hirText = module.HIR.Text()
+		}
+		if err := os.WriteFile(filepath.Join(dir, base+".hir"), []byte(hirText), 0o644); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, base+".mir"), []byte(module.MIR), 0o644); err != nil {
+		mirText := ""
+		if module.MIR != nil {
+			mirText = module.MIR.Text()
+		}
+		if err := os.WriteFile(filepath.Join(dir, base+".mir"), []byte(mirText), 0o644); err != nil {
 			return err
 		}
 		if backendName == string(backend.LLVM) {
@@ -130,47 +152,4 @@ func emitKeepGenArtifacts(result compiler.ParseResult, backendName, dir string) 
 		}
 	}
 	return nil
-}
-
-// Map compiled modules to executable test cases.
-// TODO: collect real test declarations from AST/semantics.
-func collectTestTargets(result compiler.ParseResult, resolvedPath string, _ bool) []testTarget {
-	if result.Module == nil {
-		return nil
-	}
-	return []testTarget{{
-		FilePath:    resolvedPath,
-		DisplayPath: resolvedPath,
-		TestName:    "module",
-	}}
-}
-
-// Execute one compiled test target.
-// TODO: compile, run, and capture the selected test entry.
-func runSingleTest(filePath, testName, runName string, runtimeArgs []string, target backend.BACKEND_TYPE) (testRunResult, error) {
-	start := time.Now()
-	_ = filePath
-	_ = testName
-	_ = runtimeArgs
-	_ = target
-	return testRunResult{
-		Name:    runName,
-		Passed:  true,
-		Output:  "",
-		Elapsed: time.Since(start),
-	}, nil
-}
-
-// Render one compact pass/fail line.
-func printTestStatus(w io.Writer, c colors.COLOR, status, name string, elapsed time.Duration) {
-	c.Fprintf(w, "  %-4s", status)
-	fmt.Fprintf(w, " %s (%s)\n", name, elapsed.Round(time.Millisecond))
-}
-
-// Print failure details.
-func renderTestFailure(name, output string, elapsed time.Duration) {
-	colors.RED.Fprintf(os.Stdout, "  FAIL %s (%s)\n", name, elapsed.Round(time.Millisecond))
-	if strings.TrimSpace(output) != "" {
-		fmt.Fprintln(os.Stdout, output)
-	}
 }

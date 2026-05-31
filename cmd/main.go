@@ -23,16 +23,20 @@ func main() {
 
 	opts := parseCompilerFlags()
 
-	result := parsePathWithBackend(opts.inputPath, opts.backend, opts.debugBuild)
-	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
-		result.Diagnostics.EmitAll()
+	ctx, entry := compileEntry(opts.inputPath, opts.backend, opts.debugBuild)
+	if ctx == nil || ctx.Diagnostics == nil {
+		colors.RED.Fprintln(os.Stderr, "compiler diagnostics unavailable")
+		os.Exit(1)
 	}
-	if result.Diagnostics.HasErrors() {
+	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
+		ctx.Diagnostics.EmitAll()
+	}
+	if ctx.Diagnostics.HasErrors() {
 		os.Exit(1)
 	}
 
 	if opts.keepGen {
-		if err := emitKeepGenArtifacts(result, opts.backend, "_gen"); err != nil {
+		if err := saveIRs(ctx, opts.backend, "_gen"); err != nil {
 			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -40,7 +44,7 @@ func main() {
 	}
 
 	if opts.outputPath != "" {
-		if err := buildExecutable(result, opts.outputPath, backend.BACKEND_TYPE(opts.backend)); err != nil {
+		if err := buildExecutable(ctx, entry, opts.outputPath, backend.BACKEND_TYPE(opts.backend)); err != nil {
 			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -48,14 +52,14 @@ func main() {
 		return
 	}
 
-	if result.Module != nil && result.Module.AST != nil {
-		for _, decl := range result.Module.AST.Decls {
+	if entry != nil && entry.AST != nil {
+		for _, decl := range entry.AST.Decls {
 			fmt.Println(ast.DeclSummary(decl))
 		}
 		return
 	}
 
-	for _, mod := range result.Modules {
+	for _, mod := range ctx.Modules() {
 		fmt.Printf("module %s\n", mod.ImportPath)
 		if mod.AST == nil {
 			continue

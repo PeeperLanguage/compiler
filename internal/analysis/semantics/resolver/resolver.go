@@ -2,13 +2,14 @@ package resolver
 
 import (
 	"compiler/core/diagnostics"
-	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/common"
 	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
+	"slices"
+	"strings"
 )
 
 type resolver struct {
@@ -17,12 +18,11 @@ type resolver struct {
 }
 
 func (r *resolver) resolveModule() {
-	if r == nil || r.module == nil || r.module.Decls == nil {
+	if r == nil || r.module == nil {
 		return
 	}
-	r.module.Bindings = binding.NewModuleInfo()
-	r.module.Types = nil
-	for _, collectedFn := range r.module.Decls.Functions {
+	r.module.ResetResolutions()
+	for _, collectedFn := range r.module.Functions {
 		if collectedFn == nil || collectedFn.Decl == nil || collectedFn.Scope == nil {
 			continue
 		}
@@ -34,10 +34,9 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) {
 	if r == nil || r.module == nil || fn == nil || fn.Decl == nil || fn.Scope == nil {
 		return
 	}
-	r.module.Bindings.BindFunctionSymbol(fn.Decl, fn.Symbol)
 	if fn.Decl.Name != nil && fn.Symbol != nil {
-		r.module.Bindings.BindNode(fn.Decl.Name, &binding.Resolution{
-			Kind:   binding.ResolutionSymbol,
+		r.module.BindResolution(fn.Decl.Name, &declinfo.Resolution{
+			Kind:   declinfo.ResolutionSymbol,
 			Symbol: fn.Symbol,
 		})
 	}
@@ -51,9 +50,8 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
-		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
-		r.module.Bindings.BindNode(param.Name, &binding.Resolution{
-			Kind:   binding.ResolutionSymbol,
+		r.module.BindResolution(param.Name, &declinfo.Resolution{
+			Kind:   declinfo.ResolutionSymbol,
 			Symbol: sym,
 		})
 	}
@@ -86,10 +84,9 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
-		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
 		if node.Name != nil {
-			r.module.Bindings.BindNode(node.Name, &binding.Resolution{
-				Kind:   binding.ResolutionSymbol,
+			r.module.BindResolution(node.Name, &declinfo.Resolution{
+				Kind:   declinfo.ResolutionSymbol,
 				Symbol: sym,
 			})
 		}
@@ -106,10 +103,9 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
-		r.module.Bindings.AddFunctionLocal(fn.Decl, sym)
 		if node.Name != nil {
-			r.module.Bindings.BindNode(node.Name, &binding.Resolution{
-				Kind:   binding.ResolutionSymbol,
+			r.module.BindResolution(node.Name, &declinfo.Resolution{
+				Kind:   declinfo.ResolutionSymbol,
 				Symbol: sym,
 			})
 		}
@@ -151,24 +147,34 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
-		if !ok {
-			reportUnresolved(r.module, r.module.Decls, fn, scope, node, r.ctx.Diagnostics)
+		if ok && sym != nil {
+			if sym.Kind == symbols.SymbolImport {
+				common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression,
+					"import alias must be qualified with `::`")
+				return
+			}
+			if sym.Initializing {
+				msg := "symbol `" + node.Name + "` used before it's defined"
+				r.ctx.Diagnostics.Add(
+					diagnostics.NewError(msg).
+						WithCode(diagnostics.ErrUseBeforeDecl).
+						WithPrimaryLabel(node.Loc(), msg).
+						WithHelp("rename binding or use earlier value"),
+				)
+				return
+			}
+			r.module.BindResolution(node, &declinfo.Resolution{
+				Kind:   declinfo.ResolutionSymbol,
+				Symbol: sym,
+			})
 			return
 		}
-		if sym != nil && sym.Initializing {
-			msg := "symbol `" + node.Name + "` used before it's defined"
-			r.ctx.Diagnostics.Add(
-				diagnostics.NewError(msg).
-					WithCode(diagnostics.ErrUseBeforeDecl).
-					WithPrimaryLabel(node.Loc(), msg).
-					WithHelp("rename binding or use earlier value"),
-			)
-			return
+		if strings.Contains(node.Name, "::") {
+			if r.resolveQualifiedIdent(node) {
+				return
+			}
 		}
-		r.module.Bindings.BindNode(node, &binding.Resolution{
-			Kind:   binding.ResolutionSymbol,
-			Symbol: sym,
-		})
+		reportUnresolved(r.module, fn, scope, node, r.ctx.Diagnostics)
 	case *ast.UnaryExpr:
 		r.resolveExpr(fn, scope, node.Expr)
 	case *ast.BinaryExpr:
@@ -189,9 +195,64 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 }
 
 func Resolve(ctx *context.CompilerContext, module *context.Module) {
-	if module == nil || module.Decls == nil || ctx == nil {
+	if module == nil || ctx == nil {
 		return
 	}
 	r := &resolver{module: module, ctx: ctx}
 	r.resolveModule()
+}
+
+func (r *resolver) resolveQualifiedIdent(node *ast.Ident) bool {
+	if r == nil || r.module == nil || node == nil {
+		return false
+	}
+	qualifier, member, ok := splitQualifiedName(node.Name)
+	if !ok {
+		return false
+	}
+	imp, ok := r.module.Imports[qualifier]
+	if !ok {
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrModuleNotFound,
+			"unknown import alias `"+qualifier+"`")
+		return false
+	}
+	mod, ok := r.ctx.ModuleByKey(imp.Key)
+	if !ok || mod == nil || mod.ModuleScope == nil {
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrModuleNotFound,
+			"imported module not loaded for `"+qualifier+"`")
+		return false
+	}
+	sym, ok := mod.ModuleScope.LookupLocal(member)
+	if !ok || sym == nil {
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrUndefinedSymbol,
+			"unknown identifier `"+member+"` in module `"+qualifier+"`")
+		return false
+	}
+	if !sym.IsPub {
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrSymbolNotExported,
+			"`"+member+"` is not exported from `"+qualifier+"`")
+		return false
+	}
+	r.module.BindResolution(node, &declinfo.Resolution{
+		Kind:   declinfo.ResolutionSymbol,
+		Symbol: sym,
+	})
+	return true
+}
+
+func splitQualifiedName(name string) (string, string, bool) {
+	if name == "" {
+		return "", "", false
+	}
+	parts := strings.Split(name, "::")
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	if parts[0] == "" {
+		return "", "", false
+	}
+	if slices.Contains(parts[1:], "") {
+		return "", "", false
+	}
+	return parts[0], strings.Join(parts[1:], "::"), true
 }

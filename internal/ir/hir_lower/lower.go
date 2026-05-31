@@ -12,43 +12,57 @@ import (
 )
 
 func GenerateHIR(module *context.Module) *hir.Module {
-	if module == nil || module.Types == nil || module.Decls == nil || module.Bindings == nil {
+	if module == nil {
 		return nil
 	}
-	in := module.Types
 	out := &hir.Module{
 		Name:    module.ImportPath,
-		Externs: make([]hir.Extern, 0, len(in.Externs)),
-		Funcs:   make([]*hir.Function, 0, len(module.Decls.Functions)),
+		Externs: make([]hir.Extern, 0, len(module.Externs)),
+		Funcs:   make([]*hir.Function, 0, len(module.Functions)),
 	}
-	for _, ex := range in.Externs {
+	for _, ex := range module.Externs {
 		if ex.Symbol == nil || ex.Decl == nil {
 			continue
 		}
+		fnType, _ := symbolType(ex.Symbol)
+		resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 		params := make([]ir.Param, 0, len(ex.Decl.Params))
-		for _, param := range ex.Decl.Params {
+		for i, param := range ex.Decl.Params {
 			name := ""
 			if param.Name != nil {
 				name = param.Name.Name
 			}
-			params = append(params, ir.Param{Name: name, Type: ir.TypeText(param.Type)})
+			paramType := typeinfo.TypeFromSyntax(param.Type)
+			if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
+				paramType = resolvedFnType.Params[i]
+			}
+			params = append(params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+		}
+		returnType := typeinfo.TypeFromSyntax(ex.Decl.ReturnType)
+		if resolvedFnType != nil && resolvedFnType.Return != nil {
+			returnType = resolvedFnType.Return
 		}
 		out.Externs = append(out.Externs, hir.Extern{
 			Name:       ex.Symbol.Name,
 			Params:     params,
-			ReturnType: ir.TypeText(ex.Decl.ReturnType),
+			ReturnType: typeinfo.TypeText(returnType),
 		})
 	}
-	for _, declFn := range module.Decls.Functions {
+	for _, declFn := range module.Functions {
 		if declFn == nil || declFn.Decl == nil {
 			continue
 		}
-		fnSym, ok := module.Bindings.FunctionSymbols[declFn.Decl]
-		if !ok || fnSym == nil {
+		fnSym := declFn.Symbol
+		if fnSym == nil {
 			continue
 		}
-		retType, ok := module.Types.LookupFunctionReturn(declFn.Decl)
-		if !ok {
+		retType, ok := symbolType(fnSym)
+		if ok {
+			if fnType, ok := retType.(*typeinfo.FuncType); ok && fnType != nil {
+				retType = fnType.Return
+			}
+		}
+		if !ok || retType == nil {
 			retType = typeinfo.TypeFromSyntax(declFn.Decl.ReturnType)
 		}
 		fn := &hir.Function{
@@ -60,14 +74,18 @@ func GenerateHIR(module *context.Module) *hir.Module {
 		}
 		for _, param := range declFn.Decl.Params {
 			name := ""
+			paramType := typeinfo.TypeFromSyntax(param.Type)
 			if param.Name != nil {
-				if resolution, ok := module.Bindings.LookupNode(param.Name); ok && resolution != nil && resolution.Symbol != nil {
+				if resolution, ok := module.LookupResolution(param.Name); ok && resolution != nil && resolution.Symbol != nil {
 					name = symbolName(resolution.Symbol)
+					if resolvedType, ok := symbolType(resolution.Symbol); ok {
+						paramType = resolvedType
+					}
 				} else {
 					name = param.Name.Name
 				}
 			}
-			fn.Params = append(fn.Params, ir.Param{Name: name, Type: typeinfo.TypeText(typeinfo.TypeFromSyntax(param.Type))})
+			fn.Params = append(fn.Params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
 		}
 		appendBlock(module, fn.Body, declFn.Decl.Body)
 		out.Funcs = append(out.Funcs, fn)
@@ -92,14 +110,14 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		appendBlock(module, block, node)
 		out.Stmts = append(out.Stmts, block)
 	case *ast.LetDecl:
-		resolution, ok := module.Bindings.LookupNode(node.Name)
+		resolution, ok := module.LookupResolution(node.Name)
 		if !ok || resolution == nil || resolution.Symbol == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol", Location: node.Loc()})
 			return
 		}
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
-			if value, ok := module.Types.LookupExpr(node.Value); ok {
+			if value, ok := module.LookupTypedExpr(node.Value); ok {
 				valueExpr = lowerExpr(value)
 			} else {
 				valueExpr = &ir.InvalidExpr{Message: "invalid initializer", Type: "<invalid>"}
@@ -107,14 +125,14 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: false, Value: valueExpr, Location: node.Loc()})
 	case *ast.ConstDecl:
-		resolution, ok := module.Bindings.LookupNode(node.Name)
+		resolution, ok := module.LookupResolution(node.Name)
 		if !ok || resolution == nil || resolution.Symbol == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol", Location: node.Loc()})
 			return
 		}
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
-			if value, ok := module.Types.LookupExpr(node.Value); ok {
+			if value, ok := module.LookupTypedExpr(node.Value); ok {
 				valueExpr = lowerExpr(value)
 			} else {
 				valueExpr = &ir.InvalidExpr{Message: "invalid initializer", Type: "<invalid>"}
@@ -123,7 +141,7 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: true, Value: valueExpr, Location: node.Loc()})
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
-		if cond, ok := module.Types.LookupExpr(node.Cond); ok {
+		if cond, ok := module.LookupTypedExpr(node.Cond); ok {
 			condExpr = lowerExpr(cond)
 		}
 		ifStmt := &hir.If{
@@ -142,7 +160,7 @@ func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
 			return
 		}
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid return value", Type: "<invalid>"})
-		if value, ok := module.Types.LookupExpr(node.Value); ok {
+		if value, ok := module.LookupTypedExpr(node.Value); ok {
 			valueExpr = lowerExpr(value)
 		}
 		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: node.Loc()})
@@ -157,7 +175,7 @@ func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
 		return block
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
-		if cond, ok := module.Types.LookupExpr(node.Cond); ok {
+		if cond, ok := module.LookupTypedExpr(node.Cond); ok {
 			condExpr = lowerExpr(cond)
 		}
 		out := &hir.If{
@@ -213,4 +231,12 @@ func symbolName(sym *symbols.Symbol) string {
 		return ""
 	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
+}
+
+func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
+	if sym == nil || sym.Type == nil {
+		return nil, false
+	}
+	typ, ok := sym.Type.(typeinfo.Type)
+	return typ, ok && typ != nil
 }

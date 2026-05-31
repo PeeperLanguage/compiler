@@ -4,6 +4,7 @@ import (
 	"compiler/core/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
+	"strings"
 )
 
 const (
@@ -184,7 +185,23 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 	if id == nil {
 		return nil
 	}
-	return id
+	parts := []string{id.Name}
+	end := id.Location
+	for p.match(tokens.DCOLON) {
+		next := p.parseIdent()
+		if next == nil {
+			return nil
+		}
+		parts = append(parts, next.Name)
+		end = next.Location
+	}
+	if len(parts) == 1 {
+		return id
+	}
+	return &ast.Ident{
+		Name:     strings.Join(parts, "::"),
+		Location: p.locFromNode(id, &ast.BadExpr{Location: end}),
+	}
 }
 
 func (p *Parser) parseIdent() *ast.Ident {
