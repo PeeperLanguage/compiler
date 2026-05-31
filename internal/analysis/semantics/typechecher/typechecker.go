@@ -6,6 +6,8 @@ import (
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
+	"compiler/internal/analysis/semantics/declinfo"
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
@@ -24,6 +26,68 @@ func isInvalidOrUnknown(t typeinfo.Type) bool {
 	return typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)
 }
 
+func isAllowedType(t typeinfo.Type) bool {
+	if typeinfo.IsArithmetic(t) {
+		return true
+	}
+	fn, ok := t.(*typeinfo.FuncType)
+	if !ok || fn == nil {
+		return false
+	}
+	for _, param := range fn.Params {
+		if !isAllowedType(param) {
+			return false
+		}
+	}
+	return isAllowedType(fn.Return)
+}
+
+func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
+	typ := typeinfo.TypeFromSyntax(node)
+	named, ok := typ.(*typeinfo.NamedType)
+	if !ok || named == nil || named.Name == "" || c == nil || c.module == nil || c.module.ModuleScope == nil {
+		return typ
+	}
+	sym, found := c.module.ModuleScope.Lookup(named.Name)
+	if !found || sym == nil || sym.Kind != symbols.SymbolType {
+		return typ
+	}
+	resolved, ok := lookupSymbolType(sym)
+	if !ok {
+		return typ
+	}
+	return resolved
+}
+
+func (c *checker) fnTypeFromDecl(decl *ast.FnDecl) *typeinfo.FuncType {
+	if decl == nil {
+		return nil
+	}
+	params := make([]typeinfo.Type, 0, len(decl.Params))
+	for _, param := range decl.Params {
+		params = append(params, c.typeFromSyntax(param.Type))
+	}
+	return &typeinfo.FuncType{
+		Params: params,
+		Return: c.typeFromSyntax(decl.ReturnType),
+	}
+}
+
+func bindSymbolType(sym *symbols.Symbol, typ typeinfo.Type) {
+	if sym == nil || typ == nil {
+		return
+	}
+	sym.Type = typ
+}
+
+func lookupSymbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
+	if sym == nil || sym.Type == nil {
+		return nil, false
+	}
+	typ, ok := sym.Type.(typeinfo.Type)
+	return typ, ok && typ != nil
+}
+
 // invalidAs builds the sentinel As node used in every early-return inside typeAsExpr.
 func (c *checker) invalidAs(expr typeinfo.Expr, castType typeinfo.Type) *typeinfo.As {
 	return &typeinfo.As{Expr: expr, CastType: castType, ExprType: &typeinfo.InvalidType{}}
@@ -32,42 +96,47 @@ func (c *checker) invalidAs(expr typeinfo.Expr, castType typeinfo.Type) *typeinf
 // -----------------------------------------------------------------------------
 
 func (c *checker) checkModule() {
-	if c == nil || c.module == nil || c.module.Decls == nil || c.module.Bindings == nil {
+	if c == nil || c.module == nil {
 		return
 	}
-	c.module.Types = typeinfo.NewModuleInfo()
-	c.module.Types.Externs = append(c.module.Types.Externs, c.module.Decls.Externs...)
-	for _, declFn := range c.module.Decls.Functions {
+	c.module.ResetTypedExprs()
+	for _, ex := range c.module.Externs {
+		if ex.Symbol == nil || ex.Decl == nil {
+			continue
+		}
+		bindSymbolType(ex.Symbol, c.fnTypeFromDecl(ex.Decl))
+	}
+	for _, declFn := range c.module.Functions {
 		if declFn == nil || declFn.Decl == nil || declFn.Scope == nil {
 			continue
 		}
-		c.checkFunction(declFn.Decl)
+		c.checkFunction(declFn)
 	}
 }
 
-func (c *checker) checkFunction(decl *ast.FnDecl) {
-	if c == nil || decl == nil {
+func (c *checker) checkFunction(fn *declinfo.Function) {
+	if c == nil || fn == nil || fn.Decl == nil {
 		return
 	}
+	decl := fn.Decl
 	c.checkFunctionShape(decl)
-	sym, ok := c.module.Bindings.FunctionSymbols[decl]
-	if !ok || sym == nil {
+	if fn.Symbol == nil {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrUndefinedSymbol, "missing function binding")
 		return
 	}
-	c.module.Types.BindSymbolType(sym, typeinfo.TypeFromSyntax(decl.ReturnType))
+	bindSymbolType(fn.Symbol, c.fnTypeFromDecl(decl))
 	for _, param := range decl.Params {
 		if param.Name == nil {
 			continue
 		}
-		res, ok := c.module.Bindings.LookupNode(param.Name)
+		res, ok := c.module.LookupResolution(param.Name)
 		if !ok || res == nil || res.Symbol == nil {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrUndefinedSymbol, "missing parameter binding")
 			return
 		}
-		c.module.Types.BindSymbolType(res.Symbol, typeinfo.TypeFromSyntax(param.Type))
+		bindSymbolType(res.Symbol, c.typeFromSyntax(param.Type))
 	}
-	c.checkBlock(decl, decl.Body, typeinfo.TypeFromSyntax(decl.ReturnType))
+	c.checkBlock(decl, decl.Body, c.typeFromSyntax(decl.ReturnType))
 }
 
 func (c *checker) checkBlock(fn *ast.FnDecl, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -105,8 +174,7 @@ func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.T
 					typeinfo.TypeText(typedExpr.Type()), typeinfo.TypeText(returnType)))
 			return
 		}
-		c.module.Types.BindExpr(node.Value, typedExpr)
-		c.module.Types.BindFunctionReturn(fn, typedExpr.Type())
+		c.module.BindTypedExpr(node.Value, typedExpr)
 	case *ast.IfStmt:
 		if node.Cond == nil {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
@@ -115,7 +183,7 @@ func (c *checker) checkStmt(fn *ast.FnDecl, stmt ast.Stmt, returnType typeinfo.T
 			if cond == nil {
 				return
 			}
-			c.module.Types.BindExpr(node.Cond, cond)
+			c.module.BindTypedExpr(node.Cond, cond)
 			if !isInvalidOrUnknown(cond.Type()) && !typeinfo.IsCondition(cond.Type()) {
 				common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Cond, diagnostics.ErrInvalidOperation,
 					"if condition must be bool or scalar number")
@@ -144,35 +212,35 @@ func (c *checker) checkBinding(node ast.Stmt, requireInitializer bool) {
 	switch bind := node.(type) {
 	case *ast.LetDecl:
 		nameNode = bind.Name
-		declType = typeinfo.TypeFromSyntax(bind.Type)
+		declType = c.typeFromSyntax(bind.Type)
 		value = bind.Value
 	case *ast.ConstDecl:
 		nameNode = bind.Name
-		declType = typeinfo.TypeFromSyntax(bind.Type)
+		declType = c.typeFromSyntax(bind.Type)
 		value = bind.Value
 	default:
 		return
 	}
 
-	bindRes, found := c.module.Bindings.LookupNode(nameNode)
+	bindRes, found := c.module.LookupResolution(nameNode)
 	if !found || bindRes == nil || bindRes.Symbol == nil {
 		return
 	}
 
 	if value == nil {
 		if requireInitializer {
-			c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
+			bindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrMissingInitializer,
 				"missing initializer for const declaration")
 			return
 		}
 		if declType == nil {
-			c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
+			bindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrMissingType,
 				"let declaration needs type or initializer")
 			return
 		}
-		c.module.Types.BindSymbolType(bindRes.Symbol, declType)
+		bindSymbolType(bindRes.Symbol, declType)
 		return
 	}
 
@@ -184,14 +252,14 @@ func (c *checker) checkBinding(node ast.Stmt, requireInitializer bool) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, value, diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(typedExpr.Type()), typeinfo.TypeText(declType)))
-		c.module.Types.BindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
+		bindSymbolType(bindRes.Symbol, &typeinfo.InvalidType{})
 		return
 	}
-	c.module.Types.BindExpr(value, typedExpr)
+	c.module.BindTypedExpr(value, typedExpr)
 	if declType != nil {
-		c.module.Types.BindSymbolType(bindRes.Symbol, declType)
+		bindSymbolType(bindRes.Symbol, declType)
 	} else {
-		c.module.Types.BindSymbolType(bindRes.Symbol, typedExpr.Type())
+		bindSymbolType(bindRes.Symbol, typedExpr.Type())
 	}
 }
 
@@ -204,15 +272,15 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 			"receivers not supported in current compiler stage")
 		return
 	}
-	if !typeinfo.IsArithmetic(typeinfo.TypeFromSyntax(decl.ReturnType)) {
+	if !isAllowedType(c.typeFromSyntax(decl.ReturnType)) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
-			"function return type must be builtin integer or f32/f64 in current compiler stage")
+			"function return type must be builtin integer, f32/f64, or function type in current compiler stage")
 		return
 	}
 	for _, param := range decl.Params {
-		if !typeinfo.IsArithmetic(typeinfo.TypeFromSyntax(param.Type)) {
+		if !isAllowedType(c.typeFromSyntax(param.Type)) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, param.Name, diagnostics.ErrInvalidType,
-				"parameter type must be builtin integer or f32/f64 in current compiler stage")
+				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage")
 			return
 		}
 	}
@@ -225,24 +293,24 @@ func (c *checker) typeExpr(expr ast.Expr, expected typeinfo.Type) typeinfo.Expr 
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		typedExpr := c.typeNumber(node, expected)
-		c.module.Types.BindExpr(node, typedExpr)
+		c.module.BindTypedExpr(node, typedExpr)
 		return typedExpr
 
 	case *ast.Ident:
-		resolution, ok := c.module.Bindings.LookupNode(node)
+		resolution, ok := c.module.LookupResolution(node)
 		if !ok || resolution == nil || resolution.Symbol == nil {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrUnknownIdentifier,
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name))
 			expr := &typeinfo.Ident{Symbol: nil, ExprType: &typeinfo.InvalidType{}}
-			c.module.Types.BindExpr(node, expr)
+			c.module.BindTypedExpr(node, expr)
 			return expr
 		}
-		exprType, ok := c.module.Types.LookupSymbolType(resolution.Symbol)
+		exprType, ok := lookupSymbolType(resolution.Symbol)
 		if !ok || exprType == nil {
 			exprType = &typeinfo.UnknownType{}
 		}
 		expr := &typeinfo.Ident{Symbol: resolution.Symbol, ExprType: exprType}
-		c.module.Types.BindExpr(node, expr)
+		c.module.BindTypedExpr(node, expr)
 		return expr
 
 	case *ast.UnaryExpr:
@@ -290,7 +358,7 @@ func (c *checker) typeUnaryExpr(node *ast.UnaryExpr, expected typeinfo.Type) typ
 	arg := c.typeExpr(node.Expr, argExpected)
 	if arg == nil {
 		expr := &typeinfo.Unary{Op: node.Op, Arg: nil, ExprType: &typeinfo.InvalidType{}}
-		c.module.Types.BindExpr(node, expr)
+		c.module.BindTypedExpr(node, expr)
 		return expr
 	}
 
@@ -300,7 +368,7 @@ func (c *checker) typeUnaryExpr(node *ast.UnaryExpr, expected typeinfo.Type) typ
 				Value:    literal.Value,
 				ExprType: typeinfo.DefaultNumberType(signedLiteralText(node.Op, literal.Value)),
 			}
-			c.module.Types.BindExpr(literal, typed)
+			c.module.BindTypedExpr(literal, typed)
 			arg = typed
 		}
 	}
@@ -309,7 +377,7 @@ func (c *checker) typeUnaryExpr(node *ast.UnaryExpr, expected typeinfo.Type) typ
 		if c.signedNumberFits(node.Op, node.Expr, expected) {
 			if literal, ok := node.Expr.(*ast.NumberLit); ok && !numeric.IsFloat(literal.Value) {
 				typed := &typeinfo.IntLit{Value: literal.Value, ExprType: expected}
-				c.module.Types.BindExpr(literal, typed)
+				c.module.BindTypedExpr(literal, typed)
 				arg = typed
 			}
 		} else if literal, ok := node.Expr.(*ast.NumberLit); ok && node.Op == "-" {
@@ -322,7 +390,7 @@ func (c *checker) typeUnaryExpr(node *ast.UnaryExpr, expected typeinfo.Type) typ
 
 	if isInvalidOrUnknown(arg.Type()) {
 		expr := &typeinfo.Unary{Op: node.Op, Arg: arg, ExprType: &typeinfo.InvalidType{}}
-		c.module.Types.BindExpr(node, expr)
+		c.module.BindTypedExpr(node, expr)
 		return expr
 	}
 
@@ -337,7 +405,7 @@ func (c *checker) typeUnaryExpr(node *ast.UnaryExpr, expected typeinfo.Type) typ
 		exprType = &typeinfo.BoolType{}
 	}
 	expr := &typeinfo.Unary{Op: node.Op, Arg: arg, ExprType: exprType}
-	c.module.Types.BindExpr(node, expr)
+	c.module.BindTypedExpr(node, expr)
 	return expr
 }
 
@@ -355,7 +423,7 @@ func (c *checker) typeBinaryExpr(node *ast.BinaryExpr, expected typeinfo.Type) t
 	// Build the sentinel early if either side is bad.
 	if left == nil || right == nil || isInvalidOrUnknown(left.Type()) || isInvalidOrUnknown(right.Type()) {
 		expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: &typeinfo.InvalidType{}}
-		c.module.Types.BindExpr(node, expr)
+		c.module.BindTypedExpr(node, expr)
 		return expr
 	}
 
@@ -383,7 +451,7 @@ func (c *checker) typeBinaryExpr(node *ast.BinaryExpr, expected typeinfo.Type) t
 	}
 
 	expr := &typeinfo.Binary{Op: node.Op, Left: left, Right: right, ExprType: exprType}
-	c.module.Types.BindExpr(node, expr)
+	c.module.BindTypedExpr(node, expr)
 	return expr
 }
 
@@ -396,13 +464,29 @@ func (c *checker) typeCallExpr(node *ast.CallExpr, expected typeinfo.Type) typei
 	}
 	c.checkFunctionCall(node, callee, args)
 
-	exprType := typeinfo.Type(&typeinfo.InvalidType{})
-	if callee != nil {
-		exprType = callee.Type()
-	}
-	expr := &typeinfo.Call{Callee: callee, Args: args, ExprType: exprType}
-	c.module.Types.BindExpr(node, expr)
+	returnType := c.callReturnType(node, callee)
+	expr := &typeinfo.Call{Callee: callee, Args: args, ExprType: returnType}
+	c.module.BindTypedExpr(node, expr)
 	return expr
+}
+
+func (c *checker) callReturnType(call *ast.CallExpr, callee typeinfo.Expr) typeinfo.Type {
+	if c == nil {
+		return &typeinfo.InvalidType{}
+	}
+	if callee != nil {
+		if fnType, ok := callee.Type().(*typeinfo.FuncType); ok && fnType != nil {
+			if fnType.Return != nil && !typeinfo.IsUnknown(fnType.Return) {
+				return fnType.Return
+			}
+			if call != nil && !isInvalidOrUnknown(fnType.Return) {
+				common.AddError(c.ctx.Diagnostics, c.module.FilePath, call, diagnostics.ErrInvalidType,
+					"call has unknown return type")
+			}
+			return &typeinfo.InvalidType{}
+		}
+	}
+	return &typeinfo.InvalidType{}
 }
 
 func (c *checker) typeAsExpr(node *ast.AsExpr) typeinfo.Expr {
@@ -410,7 +494,7 @@ func (c *checker) typeAsExpr(node *ast.AsExpr) typeinfo.Expr {
 		return nil
 	}
 
-	targetType := typeinfo.TypeFromSyntax(node.TypeExpr)
+	targetType := c.typeFromSyntax(node.TypeExpr)
 	if targetType == nil || isInvalidOrUnknown(targetType) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.TypeExpr, diagnostics.ErrInvalidType,
 			"invalid target type for cast")
@@ -565,25 +649,19 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, callee typeinfo.Expr
 		return
 	}
 
-	ident, ok := callee.(*typeinfo.Ident)
-	if !ok || ident == nil || ident.Symbol == nil {
-		return
-	}
-
-	var fnDecl *ast.FnDecl
-	for declFn, sym := range c.module.Bindings.FunctionSymbols {
-		if sym != nil && sym.ID == ident.Symbol.ID {
-			fnDecl = declFn
-			break
+	calleeType := callee.Type()
+	fnType, ok := calleeType.(*typeinfo.FuncType)
+	if !ok || fnType == nil {
+		if !isInvalidOrUnknown(calleeType) {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr, diagnostics.ErrNotCallable,
+				"call target is not a function")
 		}
-	}
-	if fnDecl == nil {
 		return
 	}
 
-	if len(args) != len(fnDecl.Params) {
+	if len(args) != len(fnType.Params) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr, diagnostics.ErrWrongArgumentCount,
-			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnDecl.Params)))
+			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnType.Params)))
 		return
 	}
 
@@ -591,11 +669,11 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, callee typeinfo.Expr
 		if arg == nil {
 			continue
 		}
-		paramType := typeinfo.TypeFromSyntax(fnDecl.Params[i].Type)
+		paramType := fnType.Params[i]
 		if paramType == nil {
 			continue
 		}
-		if typeinfo.CheckNumericCompatibility(paramType, arg.Type()) != typeinfo.Compatible {
+		if !typeinfo.Assignable(paramType, arg.Type()) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr.Args[i], diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(arg.Type()), typeinfo.TypeText(paramType)))
@@ -604,7 +682,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, callee typeinfo.Expr
 }
 
 func Check(ctx *context.CompilerContext, module *context.Module) {
-	if module == nil || module.Decls == nil || module.Bindings == nil || ctx == nil {
+	if module == nil || ctx == nil {
 		return
 	}
 	(&checker{ctx: ctx, module: module}).checkModule()

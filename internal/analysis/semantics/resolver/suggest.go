@@ -11,7 +11,7 @@ import (
 	"compiler/internal/frontend/ast"
 )
 
-func reportUnresolved(module *context.Module, decls *declinfo.ModuleInfo, fn *declinfo.Function, scope *table.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
+func reportUnresolved(module *context.Module, fn *declinfo.Function, scope *table.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
 	if module == nil || node == nil || diag == nil {
 		return false
 	}
@@ -25,7 +25,7 @@ func reportUnresolved(module *context.Module, decls *declinfo.ModuleInfo, fn *de
 		diag.Add(d)
 		return false
 	}
-	if match, ok := nearestSymbolName(node.Name, decls, fn, scope); ok {
+	if match, ok := nearestSymbolName(node.Name, fn, scope); ok {
 		msg := "unknown identifier `" + node.Name + "`"
 		d := diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrUndefinedSymbol).
@@ -67,7 +67,7 @@ func nearestLaterDecl(node *ast.Ident, fn *declinfo.Function) (declinfo.LocalDec
 	return best, found
 }
 
-func nearestSymbolName(name string, decls *declinfo.ModuleInfo, fn *declinfo.Function, scope *table.Scope) (string, bool) {
+func nearestSymbolName(name string, fn *declinfo.Function, scope *table.Scope) (string, bool) {
 	candidates := make([]rankedCandidate, 0)
 	seen := make(map[string]struct{})
 	scopeDepth := 0
@@ -91,15 +91,6 @@ func nearestSymbolName(name string, decls *declinfo.ModuleInfo, fn *declinfo.Fun
 			}
 			seen[candidate] = struct{}{}
 			candidates = append(candidates, rankedCandidate{Name: candidate, ScopeDepth: scopeDepth})
-		}
-	}
-	if decls != nil {
-		for candidate := range decls.NameIndex {
-			if _, ok := seen[candidate]; ok {
-				continue
-			}
-			seen[candidate] = struct{}{}
-			candidates = append(candidates, rankedCandidate{Name: candidate, ScopeDepth: 1 << 20})
 		}
 	}
 	best := rankedCandidate{}

@@ -6,14 +6,15 @@ import (
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"
 	"compiler/internal/analysis/semantics/typechecher"
+	"compiler/internal/backend/llvm"
 	"compiler/internal/context"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
-	"compiler/internal/ir/llvm"
 	"compiler/internal/ir/mir"
 	"errors"
+	"strings"
 )
 
 // Ordered phase execution for one compiler context.
@@ -38,15 +39,39 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		diag = p.ctx.Diagnostics
 	}
 
-	for _, module := range p.ctx.Modules() {
+	loader := newModuleLoader(p.ctx)
+	if err := loader.Load(entry); err != nil {
+		return err
+	}
 
+	for _, module := range p.ctx.Modules() {
+		if module == nil || module.AST != nil {
+			continue
+		}
 		module.Tokens = lexer.Lex(module.FilePath, module.Content, diag)
-		
 		module.AST = parser.ParseModule(module.FilePath, module.Tokens, diag)
+	}
+
+	ordered, cycles := topoSort(p.ctx.Modules(), p.ctx.DependenciesOf)
+	if len(cycles) > 0 && diag != nil {
+		for _, cycle := range cycles {
+			msg := "cyclic import detected"
+			if len(cycle) > 0 {
+				msg = "cyclic import detected: " + strings.Join(cycle, " -> ")
+			}
+			diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrCyclicImport))
+		}
+		return nil
+	}
+
+	for _, module := range ordered {
+		if module == nil || module.AST == nil {
+			continue
+		}
 		collector.Collect(p.ctx, module)
 		resolver.Resolve(p.ctx, module)
 		typechecher.Check(p.ctx, module)
-		
+
 		modhir := hir_lower.GenerateHIR(module)
 		if modhir == nil {
 			continue
@@ -60,9 +85,8 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		}
 
 		modmir := mir.GenerateMIR(module.HIR)
-
 		module.MIR = modmir
-		module.LLVMIR = llvm.GenerateLLVMIR(modmir)
+		module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag)
 	}
 	return nil
 }

@@ -85,12 +85,14 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 	if target == "" {
 		target = backend.LLVM
 	}
-	result := parsePathWithBackend(resolvedPath, string(target), false)
-
-	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
-		result.Diagnostics.EmitAll()
+	ctx, entry := compileEntry(resolvedPath, string(target), false)
+	if ctx == nil || ctx.Diagnostics == nil {
+		return fmt.Errorf("compiler diagnostics unavailable")
 	}
-	if result.Diagnostics.HasErrors() {
+	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
+		ctx.Diagnostics.EmitAll()
+	}
+	if ctx.Diagnostics.HasErrors() {
 		return errAlreadyReported
 	}
 
@@ -115,7 +117,7 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 		_ = os.Remove(tempPath)
 	}()
 
-	if err := buildExecutable(result, tempPath, target); err != nil {
+	if err := buildExecutable(ctx, entry, tempPath, target); err != nil {
 		return err
 	}
 
@@ -128,70 +130,6 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 			os.Exit(exitErr.ExitCode())
 		}
 		return fmt.Errorf("run program: %w", err)
-	}
-	return nil
-}
-
-func testCommand(args []string, target backend.BACKEND_TYPE) error {
-	parsedArgs, err := parseCommandArgs("test", args)
-	if err != nil {
-		return err
-	}
-
-	sourcePath := ""
-	runtimeArgs := []string{}
-	if len(parsedArgs) > 0 {
-		sourcePath = parsedArgs[0]
-		runtimeArgs = parsedArgs[1:]
-	}
-	resolvedPath, entryPath, selectedByDiscovery, err := resolveRunTarget(sourcePath)
-	if err != nil {
-		return err
-	}
-	if selectedByDiscovery {
-		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", entryPath)
-	}
-
-	if target == "" {
-		target = backend.LLVM
-	}
-	result := parsePathWithTest(resolvedPath, "", target)
-	if selectedByDiscovery {
-		result = parseWorkspaceWithConfig(filepath.Dir(resolvedPath), string(target))
-	}
-	if result.Diagnostics.HasErrors() {
-		result.Diagnostics.EmitErrors()
-		return errAlreadyReported
-	}
-	testTargets := collectTestTargets(result, resolvedPath, selectedByDiscovery)
-	if len(testTargets) == 0 {
-		return fmt.Errorf("no tests found in %s", resolvedPath)
-	}
-	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", len(testTargets))
-
-	passed := 0
-	failed := 0
-	currentFile := ""
-	for _, test := range testTargets {
-		if test.FilePath != currentFile {
-			fmt.Fprintln(os.Stdout, test.DisplayPath)
-			currentFile = test.FilePath
-		}
-		runResult, err := runSingleTest(test.FilePath, test.TestName, test.TestName, runtimeArgs, target)
-		if err != nil {
-			return err
-		}
-		if runResult.Passed {
-			passed++
-			printTestStatus(os.Stdout, colors.GREEN, "OK", runResult.Name, runResult.Elapsed)
-			continue
-		}
-		failed++
-		renderTestFailure(runResult.Name, runResult.Output, runResult.Elapsed)
-	}
-	fmt.Fprintf(os.Stdout, "\nSummary: %d passed, %d failed, %d total\n", passed, failed, len(testTargets))
-	if failed > 0 {
-		return fmt.Errorf("%d test(s) failed", failed)
 	}
 	return nil
 }
@@ -282,11 +220,14 @@ func checkCommand(args []string) error {
 		path = parsedArgs[0]
 	}
 
-	result := parsePathWithBackend(path, string(backend.LLVM), false)
-	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
-		result.Diagnostics.EmitAll()
+	ctx, _ := compileEntry(path, string(backend.LLVM), false)
+	if ctx == nil || ctx.Diagnostics == nil {
+		return fmt.Errorf("compiler diagnostics unavailable")
 	}
-	if result.Diagnostics.HasErrors() {
+	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
+		ctx.Diagnostics.EmitAll()
+	}
+	if ctx.Diagnostics.HasErrors() {
 		return errAlreadyReported
 	}
 	return nil

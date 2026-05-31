@@ -30,11 +30,16 @@ const (
 	SymbolUnknown Kind = "unknown"
 )
 
+type Type interface {
+	Text() string
+}
+
 type Symbol struct {
-	ID    SymbolID
-	Name  string
-	Kind  Kind
-	IsPub bool
+	ID           SymbolID
+	Name         string
+	Kind         Kind
+	Type         Type
+	IsPub        bool
 	Initializing bool
 	Location     *source.Location
 	ASTNode      ast.Node

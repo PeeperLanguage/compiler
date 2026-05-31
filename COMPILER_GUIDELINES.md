@@ -58,8 +58,8 @@ These decisions are already part of the language design and should not drift acc
 - Zig-style literals are used: `.{ ... }`
 - methods are declared outside types using attached-method syntax with receivers.
 - `defer` and `panic` are part of the core control-flow model
-- builtin functions are declared in `ember_libs_dev/global.fer`
-- stdlib source modules are declared in `ember_libs_dev/std/*.fer`
+- builtin functions are declared in `ember_libs_dev/global.em`
+- stdlib source modules are declared in `ember_libs_dev/std/*.em`
 - builtin declarations use `#[builtin]` and may omit a body
 - external declarations use `#[extern(\"...\")]` and may omit a body
 - error unions are explicit value-level control flow and are not exceptions

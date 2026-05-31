@@ -3,7 +3,6 @@ package compiler
 import (
 	"compiler/core/diagnostics"
 	"compiler/internal/context"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"
 	"os"
@@ -15,113 +14,49 @@ const COMPILER_VERSION = "0.1.0"
 
 const SOURCE_EXT = ".em"
 
-// Top-level orchestration for one compilation session.
-type Compiler struct {
-	// Shared graph, diagnostics, config, and semantic state.
-	ctx *context.CompilerContext
-	// Ordered compiler phases.
-	pipeline *pipeline.Pipeline
-}
-
-// Driver-facing module output.
-type CompiledModule struct {
-	// Matches context.Module.Key.
-	Key string
-	// Language module path.
-	ImportPath string
-	// Source file.
-	FilePath string
-	// Parsed syntax tree.
-	AST *ast.Module
-	// High-level IR.
-	HIR string
-	// Mid-level IR.
-	MIR string
-	// LLVM backend IR.
-	LLVMIR string
-}
-
-// Result returned to command-level callers.
-type ParseResult struct {
-	// Shared phase diagnostics.
-	Diagnostics *diagnostics.DiagnosticBag
-	// Selected entry module.
-	Module *CompiledModule
-	// All compiled modules, including prelude.
-	Modules []*CompiledModule
-}
-
-// Constructor for simple root/extension call sites.
-func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *Compiler {
-	cfg := context.Config{
-		RootDir:   rootDir,
-		Extension: extension,
-	}
-	return NewWithConfig(cfg, diag)
-}
-
-// Constructor with full compiler config.
-func NewWithConfig(cfg context.Config, diag *diagnostics.DiagnosticBag) *Compiler {
+// NewContext configures shared compiler state and loads the prelude.
+func NewContext(cfg context.Config, diag *diagnostics.DiagnosticBag) *context.CompilerContext {
 	ctx := context.NewWithConfig(cfg, diag)
 	if err := prelude.Load(ctx); err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
 	}
-	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
+	return ctx
 }
 
-// Shared compiler context.
-func (c *Compiler) Context() *context.CompilerContext {
-	return c.ctx
-}
-
-// Load one entry file and run the central pipeline.
-func (c *Compiler) ParseFile(path string) ParseResult {
-	if c == nil || c.ctx == nil {
-		result := ParseResult{Diagnostics: diagnostics.NewDiagnosticBag(path)}
-		result.Diagnostics.Add(diagnostics.NewError("compiler is not initialized"))
-		return result
+// ParseFile loads one entry file and runs the pipeline against the provided context.
+func ParseFile(ctx *context.CompilerContext, path string) *context.Module {
+	if ctx == nil {
+		return nil
 	}
-	result := ParseResult{Diagnostics: c.ctx.Diagnostics}
-	if result.Diagnostics == nil {
-		result.Diagnostics = diagnostics.NewDiagnosticBag(path)
+	diag := ctx.Diagnostics
+	if diag == nil {
+		diag = diagnostics.NewDiagnosticBag(path)
+		ctx.Diagnostics = diag
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		result.Diagnostics.Add(diagnostics.NewError("resolve input path: " + err.Error()))
-		return result
+		diag.Add(diagnostics.NewError("resolve input path: " + err.Error()))
+		return nil
 	}
 	content, err := os.ReadFile(absPath)
 	if err != nil {
-		result.Diagnostics.Add(diagnostics.NewError("read input file: " + err.Error()))
-		return result
+		diag.Add(diagnostics.NewError("read input file: " + err.Error()))
+		return nil
 	}
 	module := &context.Module{
-		Key:        "local:" + filepath.ToSlash(absPath),
+		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, absPath),
 		ImportPath: strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath)),
 		FilePath:   absPath,
 		IsEntry:    true,
 		Origin:     context.ModuleOriginLocal,
 		Content:    string(content),
 	}
-	err = c.pipeline.Run(module)
-	if err != nil {
-		result.Diagnostics.Add(diagnostics.NewError("pipeline run: " + err.Error()))
-		return result
+	if importPath, err := ctx.ImportPathForFile(context.ModuleOriginLocal, absPath); err == nil {
+		module.ImportPath = importPath
 	}
-	for _, module := range c.ctx.Modules() {
-		out := &CompiledModule{
-			Key:        module.Key,
-			ImportPath: module.ImportPath,
-			FilePath:   module.FilePath,
-			AST:        module.AST,
-			HIR:        module.HIR.Text(),
-			MIR:        module.MIR.Text(),
-			LLVMIR:     module.LLVMIR,
-		}
-		result.Modules = append(result.Modules, out)
-		if module.IsEntry {
-			result.Module = out
-		}
+	if err := pipeline.New(ctx).Run(module); err != nil {
+		diag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
+		return nil
 	}
-	return result
+	return module
 }
