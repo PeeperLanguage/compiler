@@ -1,31 +1,19 @@
 package resolver
 
 import (
-	"fmt"
 	"strings"
 
 	"compiler/core/diagnostics"
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 )
 
-func reportUnresolved(module *context.Module, fn *declinfo.Function, scope *table.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
+func reportUnresolved(module *context.Module, scope *table.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
 	if module == nil || node == nil || diag == nil {
 		return false
 	}
-	if later, ok := nearestLaterDecl(node, fn); ok {
-		msg := fmt.Sprintf("symbol `%s` used before declaration", node.Name)
-		d := diagnostics.NewError(msg).
-			WithCode(diagnostics.ErrUseBeforeDecl).
-			WithPrimaryLabel(node.Loc(), "used here before declaration").
-			WithSecondaryLabel(later.Loc, "declared later here").
-			WithHelp("move declaration before first use")
-		diag.Add(d)
-		return false
-	}
-	if match, ok := nearestSymbolName(node.Name, fn, scope); ok {
+	if match, ok := nearestSymbolName(node.Name, scope); ok {
 		msg := "unknown identifier `" + node.Name + "`"
 		d := diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrUndefinedSymbol).
@@ -39,35 +27,7 @@ func reportUnresolved(module *context.Module, fn *declinfo.Function, scope *tabl
 	return false
 }
 
-func nearestLaterDecl(node *ast.Ident, fn *declinfo.Function) (declinfo.LocalDecl, bool) {
-	if node == nil || fn == nil {
-		return declinfo.LocalDecl{}, false
-	}
-	candidates := fn.LocalNames[node.Name]
-	if len(candidates) == 0 {
-		return declinfo.LocalDecl{}, false
-	}
-	useLoc := node.Loc()
-	if useLoc.Start == nil {
-		return declinfo.LocalDecl{}, false
-	}
-	best := declinfo.LocalDecl{}
-	found := false
-	bestIndex := 0
-	for _, site := range candidates {
-		if site.Loc.Start == nil || site.Loc.Start.Index <= useLoc.Start.Index {
-			continue
-		}
-		if !found || site.Loc.Start.Index < bestIndex {
-			best = site
-			bestIndex = site.Loc.Start.Index
-			found = true
-		}
-	}
-	return best, found
-}
-
-func nearestSymbolName(name string, fn *declinfo.Function, scope *table.Scope) (string, bool) {
+func nearestSymbolName(name string, scope *table.Scope) (string, bool) {
 	candidates := make([]rankedCandidate, 0)
 	seen := make(map[string]struct{})
 	scopeDepth := 0
@@ -83,15 +43,6 @@ func nearestSymbolName(name string, fn *declinfo.Function, scope *table.Scope) (
 			candidates = append(candidates, rankedCandidate{Name: sym.Name, ScopeDepth: scopeDepth})
 		}
 		scopeDepth++
-	}
-	if fn != nil {
-		for candidate := range fn.LocalNames {
-			if _, ok := seen[candidate]; ok {
-				continue
-			}
-			seen[candidate] = struct{}{}
-			candidates = append(candidates, rankedCandidate{Name: candidate, ScopeDepth: scopeDepth})
-		}
 	}
 	best := rankedCandidate{}
 	found := false

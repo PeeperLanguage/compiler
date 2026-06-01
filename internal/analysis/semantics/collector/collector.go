@@ -3,7 +3,6 @@ package collector
 import (
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -67,23 +66,13 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		kind = symbols.SymbolUnknown
 	}
 	sym := symbols.New(fn.Name.Name, kind, fn)
+	if fn.Body != nil {
+		sym.Scope = table.New(c.module.ModuleScope)
+	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, err.Error())
 		return
 	}
-	if fn.Body == nil {
-		c.module.Externs = append(c.module.Externs, declinfo.ExternDecl{Symbol: sym, Decl: fn})
-		return
-	}
-	collected := &declinfo.Function{
-		Symbol:     sym,
-		Decl:       fn,
-		Scope:      table.New(c.module.ModuleScope),
-		LocalDecls: make([]declinfo.LocalDecl, 0),
-		LocalNames: make(map[string][]declinfo.LocalDecl),
-	}
-	c.collectBlock(fn.Body, collected)
-	c.module.Functions = append(c.module.Functions, collected)
 }
 
 func (c *collector) collectTypeAliasDecl(decl *ast.TypeAliasDecl) {
@@ -117,45 +106,6 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 	}
-}
-
-func (c *collector) collectBlock(block *ast.BlockStmt, fn *declinfo.Function) {
-	if c == nil || block == nil || fn == nil {
-		return
-	}
-	for _, stmt := range block.Stmts {
-		c.collectStmt(stmt, fn)
-	}
-}
-
-func (c *collector) collectStmt(stmt ast.Stmt, fn *declinfo.Function) {
-	if stmt == nil {
-		return
-	}
-	switch n := stmt.(type) {
-	case *ast.BlockStmt:
-		c.collectBlock(n, fn)
-	case *ast.LetDecl:
-		c.addLocalDecl(n.Name, fn)
-	case *ast.ConstDecl:
-		c.addLocalDecl(n.Name, fn)
-	case *ast.IfStmt:
-		c.collectBlock(n.Then, fn)
-		if elseBlock, ok := n.Else.(*ast.BlockStmt); ok {
-			c.collectBlock(elseBlock, fn)
-		} else if elseIf, ok := n.Else.(*ast.IfStmt); ok {
-			c.collectBlock(elseIf.Then, fn)
-		}
-	}
-}
-
-func (c *collector) addLocalDecl(name *ast.Ident, fn *declinfo.Function) {
-	if c == nil || fn == nil || name == nil || name.Name == "" {
-		return
-	}
-	local := declinfo.LocalDecl{Name: name.Name, Loc: name.Loc()}
-	fn.LocalDecls = append(fn.LocalDecls, local)
-	fn.LocalNames[name.Name] = append(fn.LocalNames[name.Name], local)
 }
 
 func Collect(ctx *context.CompilerContext, module *context.Module) {

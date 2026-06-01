@@ -3,7 +3,6 @@ package hir_lower
 import (
 	"fmt"
 
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -20,110 +19,111 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 	}
 	out := &hir.Module{
 		Name:    module.ImportPath,
-		Externs: make([]hir.Extern, 0, len(module.Externs)),
-		Funcs:   make([]*hir.Function, 0, len(module.Functions)),
+		Externs: make([]hir.Extern, 0),
+		Funcs:   make([]*hir.Function, 0),
 	}
-	for _, ex := range module.Externs {
-		if ex.Symbol == nil || ex.Decl == nil {
-			continue
-		}
-		fnType, _ := symbolType(ex.Symbol)
-		resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-		params := make([]ir.Param, 0, len(ex.Decl.Params))
-		for i, param := range ex.Decl.Params {
-			name := ""
-			if param.Name != nil {
-				name = param.Name.Name
+	for _, decl := range module.AST.Decls {
+		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil {
+			sym, found := module.ModuleScope.Lookup(fn.Name.Name)
+			if !found || sym == nil {
+				continue
 			}
-			paramType := typeinfo.TypeFromSyntax(param.Type)
-			if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
-				paramType = resolvedFnType.Params[i]
-			}
-			params = append(params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
-		}
-		returnType := typeinfo.TypeFromSyntax(ex.Decl.ReturnType)
-		if resolvedFnType != nil && resolvedFnType.Return != nil {
-			returnType = resolvedFnType.Return
-		}
-		out.Externs = append(out.Externs, hir.Extern{
-			Name:       ex.Symbol.Name,
-			Params:     params,
-			ReturnType: typeinfo.TypeText(returnType),
-		})
-	}
-	for _, declFn := range module.Functions {
-		if declFn == nil || declFn.Decl == nil || declFn.Scope == nil {
-			continue
-		}
-		fnSym := declFn.Symbol
-		if fnSym == nil {
-			continue
-		}
-		retType, ok := symbolType(fnSym)
-		if ok {
-			if fnType, ok := retType.(*typeinfo.FuncType); ok && fnType != nil {
-				retType = fnType.Return
-			}
-		}
-		if !ok || retType == nil {
-			retType = typeinfo.TypeFromSyntax(declFn.Decl.ReturnType)
-		}
-		retTypeStr := typeinfo.TypeText(retType)
-		fn := &hir.Function{
-			Name:       fnSym.Name,
-			Params:     make([]ir.Param, 0, len(declFn.Decl.Params)),
-			ReturnType: retTypeStr,
-			Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: declFn.Decl.Body.Loc()},
-			Location:   declFn.Decl.Loc(),
-		}
-		for _, param := range declFn.Decl.Params {
-			name := ""
-			paramType := typeinfo.TypeFromSyntax(param.Type)
-			if param.Name != nil {
-				// Look up the parameter symbol in the function scope to get the resolved type.
-				sym, ok := declFn.Scope.LookupLocal(param.Name.Name)
-				if ok && sym != nil {
-					name = symbolName(sym)
-					if t, ok := symbolType(sym); ok {
-						paramType = t
+			if fn.Body == nil {
+				fnType, _ := symbolType(sym)
+				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
+				params := make([]ir.Param, 0, len(fn.Params))
+				for i, param := range fn.Params {
+					name := ""
+					if param.Name != nil {
+						name = param.Name.Name
 					}
-				} else {
-					name = param.Name.Name
+					paramType := typeinfo.TypeFromSyntax(param.Type)
+					if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
+						paramType = resolvedFnType.Params[i]
+					}
+					params = append(params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+				}
+				returnType := typeinfo.TypeFromSyntax(fn.ReturnType)
+				if resolvedFnType != nil && resolvedFnType.Return != nil {
+					returnType = resolvedFnType.Return
+				}
+				out.Externs = append(out.Externs, hir.Extern{
+					Name:       sym.Name,
+					Params:     params,
+					ReturnType: typeinfo.TypeText(returnType),
+				})
+			} else {
+				hirFn := lowerASTFunction(ctx, module, sym, fn)
+				if hirFn != nil {
+					out.Funcs = append(out.Funcs, hirFn)
 				}
 			}
-			fn.Params = append(fn.Params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
 		}
-		appendBlock(declFn, fn.Body, declFn.Decl.Body, retTypeStr, ctx, module)
-		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
 }
 
-func appendBlock(fn *declinfo.Function, out *hir.Block, block *ast.BlockStmt, returnType string, ctx *context.CompilerContext, module *context.Module) {
+func lowerASTFunction(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl) *hir.Function {
+	if sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
+		return nil
+	}
+	funcScope := sym.Scope.(*table.Scope)
+	retType, ok := symbolType(sym)
+	if ok {
+		if fnType, ok := retType.(*typeinfo.FuncType); ok && fnType != nil {
+			retType = fnType.Return
+		}
+	}
+	if !ok || retType == nil {
+		retType = typeinfo.TypeFromSyntax(fn.ReturnType)
+	}
+	retTypeStr := typeinfo.TypeText(retType)
+	hirFn := &hir.Function{
+		Name:       sym.Name,
+		Params:     make([]ir.Param, 0, len(fn.Params)),
+		ReturnType: retTypeStr,
+		Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: fn.Body.Loc()},
+		Location:   fn.Loc(),
+	}
+	for _, param := range fn.Params {
+		name := ""
+		paramType := typeinfo.TypeFromSyntax(param.Type)
+		if param.Name != nil {
+			sym, ok := funcScope.LookupLocal(param.Name.Name)
+			if ok && sym != nil {
+				name = symbolName(sym)
+				if t, ok := symbolType(sym); ok {
+					paramType = t
+				}
+			} else {
+				name = param.Name.Name
+			}
+		}
+		hirFn.Params = append(hirFn.Params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+	}
+	appendBlock(module, funcScope, hirFn.Body, fn.Body, retTypeStr, ctx)
+	return hirFn
+}
+
+func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Block, block *ast.BlockStmt, returnType string, ctx *context.CompilerContext) {
 	if out == nil || block == nil {
 		return
 	}
 	out.Location = block.Loc()
-	// Use the scope that the resolver stored for this block.
-	scope := fn.Scope
-	if fn.BlockScopes != nil {
-		if s, ok := fn.BlockScopes[block]; ok {
-			scope = s
-		}
+	scope := parentScope
+	if s, ok := module.BlockScopes[block]; ok && s != nil {
+		scope = s
 	}
 	for _, stmt := range block.Stmts {
-		appendStmt(fn, scope, out, stmt, returnType, ctx, module)
+		appendStmt(module, scope, out, stmt, returnType, ctx)
 	}
 }
 
-// scopeForBlock is a dead helper left from before — removed.
-
-func appendStmt(fn *declinfo.Function, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType string, ctx *context.CompilerContext, module *context.Module) {
+func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType string, ctx *context.CompilerContext) {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		// Nested block — look up its stored scope from the resolver.
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
-		appendBlock(fn, block, node, returnType, ctx, module)
+		appendBlock(module, scope, block, node, returnType, ctx)
 		out.Stmts = append(out.Stmts, block)
 
 	case *ast.LetDecl:
@@ -170,9 +170,9 @@ func appendStmt(fn *declinfo.Function, scope *table.Scope, out *hir.Block, stmt 
 			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
 			Location: node.Loc(),
 		}
-		appendBlock(fn, ifStmt.Then, node.Then, returnType, ctx, module)
+		appendBlock(module, scope, ifStmt.Then, node.Then, returnType, ctx)
 		if node.Else != nil {
-			ifStmt.Else = lowerElse(fn, node.Else, returnType, ctx, module)
+			ifStmt.Else = lowerElse(module, scope, node.Else, returnType, ctx)
 		}
 		out.Stmts = append(out.Stmts, ifStmt)
 
@@ -186,26 +186,25 @@ func appendStmt(fn *declinfo.Function, scope *table.Scope, out *hir.Block, stmt 
 	}
 }
 
-func lowerElse(fn *declinfo.Function, stmt ast.Stmt, returnType string, ctx *context.CompilerContext, module *context.Module) hir.Stmt {
+func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, returnType string, ctx *context.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
-		appendBlock(fn, block, node, returnType, ctx, module)
+		appendBlock(module, scope, block, node, returnType, ctx)
 		return block
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
 		if node.Cond != nil {
-			enclosingScope := fn.Scope
-			condExpr = lowerASTExpr(ctx, module, enclosingScope, node.Cond, "bool")
+			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, "bool")
 		}
 		out := &hir.If{
 			Cond:     condExpr,
 			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
 			Location: node.Loc(),
 		}
-		appendBlock(fn, out.Then, node.Then, returnType, ctx, module)
+		appendBlock(module, scope, out.Then, node.Then, returnType, ctx)
 		if node.Else != nil {
-			out.Else = lowerElse(fn, node.Else, returnType, ctx, module)
+			out.Else = lowerElse(module, scope, node.Else, returnType, ctx)
 		}
 		return out
 	default:
