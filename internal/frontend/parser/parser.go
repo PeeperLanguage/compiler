@@ -617,21 +617,22 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		return p.parseEnumTypeExpr()
 	case tokens.IDENT:
 		p.advance()
-		var name strings.Builder
-		name.WriteString(tok.Literal)
-		end := tok
-		for p.match(tokens.DCOLON) {
+		id := &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)}
+		if p.match(tokens.DCOLON) {
 			next := p.peek()
 			if next.Kind != tokens.IDENT {
 				p.errorf(next, diagnostics.ErrInvalidType, "expected type segment after '::'")
 				return nil
 			}
 			p.advance()
-			name.WriteString("::")
-			name.WriteString(next.Literal)
-			end = next
+			member := &ast.Ident{Name: next.Literal, Location: p.loc(next, next)}
+			return &ast.ScopeResolution{
+				Module:   id,
+				Name:     member,
+				Location: p.loc(tok, next),
+			}
 		}
-		return &ast.NamedType{Name: name.String(), Location: p.loc(tok, end)}
+		return &ast.NamedType{Name: id.Name, Location: id.Location}
 	default:
 		p.errorf(tok, diagnostics.ErrInvalidType, "expected type")
 		return nil

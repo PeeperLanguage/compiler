@@ -12,6 +12,16 @@ type Ident struct {
 func (*Ident) exprNode()              {}
 func (e *Ident) Loc() *source.Location { return e.Location }
 
+type ScopeResolution struct {
+	Module   *Ident
+	Name     *Ident
+	Location *source.Location
+}
+
+func (*ScopeResolution) exprNode()              {}
+func (*ScopeResolution) typeNode()              {}
+func (e *ScopeResolution) Loc() *source.Location { return e.Location }
+
 type BadExpr struct {
 	Location *source.Location
 }

@@ -8,8 +8,6 @@ import (
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
-	"slices"
-	"strings"
 )
 
 type resolver struct {
@@ -21,7 +19,6 @@ func (r *resolver) resolveModule() {
 	if r == nil || r.module == nil {
 		return
 	}
-	r.module.ResetResolutions()
 	for _, collectedFn := range r.module.Functions {
 		if collectedFn == nil || collectedFn.Decl == nil || collectedFn.Scope == nil {
 			continue
@@ -34,12 +31,6 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) {
 	if r == nil || r.module == nil || fn == nil || fn.Decl == nil || fn.Scope == nil {
 		return
 	}
-	if fn.Decl.Name != nil && fn.Symbol != nil {
-		r.module.BindResolution(fn.Decl.Name, &declinfo.Resolution{
-			Kind:   declinfo.ResolutionSymbol,
-			Symbol: fn.Symbol,
-		})
-	}
 	for _, param := range fn.Decl.Params {
 		if param.Name == nil || param.Name.Name == "" {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn.Decl, diagnostics.ErrMissingIdentifier, "parameter name required")
@@ -50,18 +41,20 @@ func (r *resolver) resolveFunction(fn *declinfo.Function) {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
-		r.module.BindResolution(param.Name, &declinfo.Resolution{
-			Kind:   declinfo.ResolutionSymbol,
-			Symbol: sym,
-		})
 	}
 	r.resolveBlock(fn, fn.Scope, fn.Decl.Body)
 }
 
+// resolveBlock stores the scope for this block in fn.BlockScopes so downstream
+// phases (typechecker, hir_lower) can retrieve the live scope per block.
 func (r *resolver) resolveBlock(fn *declinfo.Function, scope *table.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
+	if fn.BlockScopes == nil {
+		fn.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
+	}
+	fn.BlockScopes[block] = scope
 	for _, stmt := range block.Stmts {
 		r.resolveStmt(fn, scope, stmt)
 	}
@@ -77,18 +70,10 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.LetDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
 		sym.Initializing = true
-		defer func() {
-			sym.Initializing = false
-		}()
+		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
-		}
-		if node.Name != nil {
-			r.module.BindResolution(node.Name, &declinfo.Resolution{
-				Kind:   declinfo.ResolutionSymbol,
-				Symbol: sym,
-			})
 		}
 		if node.Value != nil {
 			r.resolveExpr(fn, scope, node.Value)
@@ -96,26 +81,15 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
 		sym.Initializing = true
-		defer func() {
-			sym.Initializing = false
-		}()
+		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
-		}
-		if node.Name != nil {
-			r.module.BindResolution(node.Name, &declinfo.Resolution{
-				Kind:   declinfo.ResolutionSymbol,
-				Symbol: sym,
-			})
 		}
 		if node.Value != nil {
 			r.resolveExpr(fn, scope, node.Value)
 		}
 	case *ast.ReturnStmt:
-		if node == nil {
-			return
-		}
 		if node.Value == nil {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
 			return
@@ -136,14 +110,12 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 		r.resolveExpr(fn, scope, node.Expr)
 	default:
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
-		return
 	}
 }
 
 func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr ast.Expr) {
 	switch node := expr.(type) {
 	case *ast.NumberLit:
-		// nothing to look for literals
 		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
@@ -163,18 +135,13 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 				)
 				return
 			}
-			r.module.BindResolution(node, &declinfo.Resolution{
-				Kind:   declinfo.ResolutionSymbol,
-				Symbol: sym,
-			})
 			return
 		}
-		if strings.Contains(node.Name, "::") {
-			if r.resolveQualifiedIdent(node) {
-				return
-			}
-		}
 		reportUnresolved(r.module, fn, scope, node, r.ctx.Diagnostics)
+	case *ast.ScopeResolution:
+		if r.resolveScopeResolution(node) {
+			return
+		}
 	case *ast.UnaryExpr:
 		r.resolveExpr(fn, scope, node.Expr)
 	case *ast.BinaryExpr:
@@ -186,9 +153,7 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 			r.resolveExpr(fn, scope, arg)
 		}
 	case *ast.AsExpr:
-		// Resolve the expression being cast
 		r.resolveExpr(fn, scope, node.Expr)
-		// The type expression doesn't need resolution
 	default:
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 	}
@@ -202,14 +167,12 @@ func Resolve(ctx *context.CompilerContext, module *context.Module) {
 	r.resolveModule()
 }
 
-func (r *resolver) resolveQualifiedIdent(node *ast.Ident) bool {
+func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 	if r == nil || r.module == nil || node == nil {
 		return false
 	}
-	qualifier, member, ok := splitQualifiedName(node.Name)
-	if !ok {
-		return false
-	}
+	qualifier := node.Module.Name
+	member := node.Name.Name
 	imp, ok := r.module.Imports[qualifier]
 	if !ok {
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrModuleNotFound,
@@ -233,26 +196,5 @@ func (r *resolver) resolveQualifiedIdent(node *ast.Ident) bool {
 			"`"+member+"` is not exported from `"+qualifier+"`")
 		return false
 	}
-	r.module.BindResolution(node, &declinfo.Resolution{
-		Kind:   declinfo.ResolutionSymbol,
-		Symbol: sym,
-	})
 	return true
-}
-
-func splitQualifiedName(name string) (string, string, bool) {
-	if name == "" {
-		return "", "", false
-	}
-	parts := strings.Split(name, "::")
-	if len(parts) < 2 {
-		return "", "", false
-	}
-	if parts[0] == "" {
-		return "", "", false
-	}
-	if slices.Contains(parts[1:], "") {
-		return "", "", false
-	}
-	return parts[0], strings.Join(parts[1:], "::"), true
 }
