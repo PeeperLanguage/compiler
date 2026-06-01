@@ -38,6 +38,11 @@ func (p *Pipeline) Run(entry *context.Module) error {
 	}
 
 	loader := newModuleLoader(p.ctx)
+	if preludeMod, ok := p.ctx.ModuleByKey("stdlib:prelude/global"); ok {
+		if err := loader.Load(preludeMod); err != nil {
+			return err
+		}
+	}
 	if err := loader.Load(entry); err != nil {
 		return err
 	}
@@ -73,9 +78,17 @@ func (p *Pipeline) Run(entry *context.Module) error {
 			continue
 		}
 
-		modmir := mir.GenerateMIR(module.HIR)
+		modmir := mir.GenerateMIR(module.HIR, module.ModuleScope)
 		module.MIR = modmir
 		module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag)
+
+		if module.Key == "stdlib:prelude/global" {
+			if module.ModuleScope != nil {
+				for _, sym := range module.ModuleScope.Symbols() {
+					_ = p.ctx.GlobalScope.Declare(sym)
+				}
+			}
+		}
 	}
 	return nil
 }

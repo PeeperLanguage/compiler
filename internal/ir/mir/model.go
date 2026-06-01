@@ -4,20 +4,40 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/analysis/semantics/table"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 )
 
 type Module struct {
-	Name    string
-	Externs []Extern
-	Funcs   []*Function
+	Name       string
+	StaticData []*StaticEntry
+	Funcs      []*Function
 }
 
-type Extern struct {
-	Name       string
-	Params     []ir.Param
-	ReturnType string
+type StaticEntry struct {
+	Name  string
+	Type  string
+	Value string
+	Align int
+}
+
+func (m *Module) InternStatic(value string, elemType string, align int) string {
+	for _, entry := range m.StaticData {
+		if entry.Value == value && entry.Type == elemType && entry.Align == align {
+			return entry.Name
+		}
+	}
+	name := fmt.Sprintf("@.data.%d", len(m.StaticData))
+	m.StaticData = append(m.StaticData, &StaticEntry{
+		Name:  name,
+		Type:  elemType,
+		Value: value,
+		Align: align,
+	})
+	return name
 }
 
 type Function struct {
@@ -135,26 +155,77 @@ func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
 
 type lowerer struct {
+	module      *Module
 	fn          *Function
 	tmp         int
 	nextBlockID int
 	current     *Block
 }
 
-func GenerateMIR(in *hir.Module) *Module {
+func evalASTLiteral(expr ast.Expr) (string, bool) {
+	if expr == nil {
+		return "", false
+	}
+	switch e := expr.(type) {
+	case *ast.NumberLit:
+		return e.Value, true
+	case *ast.StringLit:
+		return e.Value, true
+	}
+	return "", false
+}
+
+func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 	if in == nil {
 		return nil
 	}
 	out := &Module{
-		Name:    in.Name,
-		Externs: make([]Extern, 0, len(in.Externs)),
-		Funcs:   make([]*Function, 0, len(in.Funcs)),
+		Name:       in.Name,
+		StaticData: make([]*StaticEntry, 0),
+		Funcs:      make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
 	}
+
+	if scope != nil {
+		for _, sym := range scope.Symbols() {
+			if sym == nil {
+				continue
+			}
+			if sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolConst {
+				var valExpr ast.Expr
+				if letDecl, ok := sym.ASTNode.(*ast.LetDecl); ok && letDecl != nil {
+					valExpr = letDecl.Value
+				} else if constDecl, ok := sym.ASTNode.(*ast.ConstDecl); ok && constDecl != nil {
+					valExpr = constDecl.Value
+				}
+				if valStr, ok := evalASTLiteral(valExpr); ok {
+					var typText string
+					if sym.Type != nil {
+						typText = sym.Type.Text()
+					} else {
+						typText = "i32"
+					}
+					align := 4
+					if typText == "cstr" {
+						align = 8
+					}
+					name := fmt.Sprintf("@%s$%d", sym.Name, sym.ID)
+					out.StaticData = append(out.StaticData, &StaticEntry{
+						Name:  name,
+						Type:  typText,
+						Value: valStr,
+						Align: align,
+					})
+				}
+			}
+		}
+	}
+
 	for _, ex := range in.Externs {
-		out.Externs = append(out.Externs, Extern{
+		out.Funcs = append(out.Funcs, &Function{
 			Name:       ex.Name,
 			Params:     append([]ir.Param(nil), ex.Params...),
 			ReturnType: ex.ReturnType,
+			Blocks:     nil,
 		})
 	}
 	for _, hirFn := range in.Funcs {
@@ -168,7 +239,7 @@ func GenerateMIR(in *hir.Module) *Module {
 			EntryID:    0,
 			Blocks:     make([]*Block, 0),
 		}
-		l := &lowerer{fn: fn}
+		l := &lowerer{module: out, fn: fn}
 		l.current = l.newBlock()
 		fn.EntryID = l.current.ID
 		if !l.appendBlock(hirFn.Body) {
@@ -215,7 +286,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		if l.current == nil {
 			return true
 		}
-		ref := lowerExpr(node.Value, &l.tmp, &l.current.Instrs)
+		ref := l.lowerExpr(node.Value, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
 			return true
 		}
@@ -225,7 +296,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		if l.current == nil {
 			return true
 		}
-		retRef := lowerExpr(node.Value, &l.tmp, &l.current.Instrs)
+		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
 		l.current.Term = &Ret{Value: retRef}
 		l.current = nil
 		return true
@@ -240,7 +311,7 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 	if l.current == nil || node == nil {
 		return true
 	}
-	condRef := lowerExpr(node.Cond, &l.tmp, &l.current.Instrs)
+	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
 	condBlock := l.current
 	thenBlock := l.newBlock()
 	elseBlock := l.newBlock()
@@ -299,40 +370,46 @@ func (c *Call) Text() string {
 	return b.String()
 }
 
-func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
+func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
 	case *ir.IntLit:
 		return &RefConst{Value: e.Value, Type: e.TypeText()}
 	case *ir.FloatLit:
 		return &RefConst{Value: e.Value, Type: e.TypeText()}
 	case *ir.StringLit:
-		return &RefConst{Value: e.Value, Type: e.TypeText()}
+		var name string
+		if l.module != nil {
+			elemType := fmt.Sprintf("[%d x i8]", len(e.Value)+1)
+			name = l.module.InternStatic(e.Value, elemType, 1)
+		} else {
+			name = "@.str.unknown"
+		}
+		return &RefName{Name: name, Type: "cstr"}
 	case *ir.Ident:
 		return &RefName{Name: e.Name, Type: e.TypeText()}
 	case *ir.Unary:
-		arg := lowerExpr(e.Arg, tmp, out)
-		name := nextTemp(tmp)
+		arg := l.lowerExpr(e.Arg, out)
+		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Binary:
-		left := lowerExpr(e.Left, tmp, out)
-		right := lowerExpr(e.Right, tmp, out)
-		name := nextTemp(tmp)
+		left := l.lowerExpr(e.Left, out)
+		right := l.lowerExpr(e.Right, out)
+		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Call:
-		callee := lowerExpr(e.Callee, tmp, out)
+		callee := l.lowerExpr(e.Callee, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
-			args = append(args, lowerExpr(arg, tmp, out))
+			args = append(args, l.lowerExpr(arg, out))
 		}
-		name := nextTemp(tmp)
+		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Cast:
-		// Lower cast expression
-		arg := lowerExpr(e.Expr, tmp, out)
-		name := nextTemp(tmp)
+		arg := l.lowerExpr(e.Expr, out)
+		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	default:
@@ -340,9 +417,9 @@ func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
 	}
 }
 
-func nextTemp(tmp *int) string {
-	*tmp = *tmp + 1
-	return fmt.Sprintf("t%d", *tmp)
+func (l *lowerer) nextTemp() string {
+	l.tmp++
+	return fmt.Sprintf("t%d", l.tmp)
 }
 
 func asValueExpr(ref ValueRef) ValueExpr {
@@ -364,42 +441,46 @@ func (m *Module) Text() string {
 	b.WriteString("; mir module ")
 	b.WriteString(m.Name)
 	b.WriteString("\n")
-	for _, ex := range m.Externs {
-		b.WriteString("extern fn ")
-		b.WriteString(ex.Name)
-		b.WriteString(ir.SignatureText(ex.Params, ex.ReturnType))
-		b.WriteString("\n")
+	for _, data := range m.StaticData {
+		b.WriteString(fmt.Sprintf("%s = constant %s %q, align %d\n", data.Name, data.Type, data.Value, data.Align))
 	}
-	if len(m.Externs) > 0 {
+	if len(m.StaticData) > 0 {
 		b.WriteString("\n")
 	}
 	if len(m.Funcs) == 0 {
 		return b.String()
 	}
 	for _, fn := range m.Funcs {
-		b.WriteString("fn ")
-		b.WriteString(fn.Name)
-		b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
-		b.WriteString(" {\n")
-		for _, block := range fn.Blocks {
-			if block == nil {
-				continue
+		if fn.Blocks == nil {
+			b.WriteString("extern fn ")
+			b.WriteString(fn.Name)
+			b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
+			b.WriteString("\n")
+		} else {
+			b.WriteString("fn ")
+			b.WriteString(fn.Name)
+			b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
+			b.WriteString(" {\n")
+			for _, block := range fn.Blocks {
+				if block == nil {
+					continue
+				}
+				b.WriteString("  b")
+				b.WriteString(fmt.Sprintf("%d", block.ID))
+				b.WriteString(":\n")
+				for _, instr := range block.Instrs {
+					b.WriteString("    ")
+					b.WriteString(instr.Text())
+					b.WriteString("\n")
+				}
+				if block.Term != nil {
+					b.WriteString("    ")
+					b.WriteString(block.Term.Text())
+					b.WriteString("\n")
+				}
 			}
-			b.WriteString("  b")
-			b.WriteString(fmt.Sprintf("%d", block.ID))
-			b.WriteString(":\n")
-			for _, instr := range block.Instrs {
-				b.WriteString("    ")
-				b.WriteString(instr.Text())
-				b.WriteString("\n")
-			}
-			if block.Term != nil {
-				b.WriteString("    ")
-				b.WriteString(block.Term.Text())
-				b.WriteString("\n")
-			}
+			b.WriteString("}\n")
 		}
-		b.WriteString("}\n")
 	}
 	return b.String()
 }

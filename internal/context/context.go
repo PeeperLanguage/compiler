@@ -16,7 +16,7 @@ import (
 )
 
 // Development-time standard library directory.
-const STD_LIB_DEV = "ember_libs_dev"
+const STD_LIB_DEV = "_builtin_library"
 
 // Where a module was loaded from.
 type ModuleOrigin string
@@ -159,7 +159,15 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		}
 	}
 	if cfg.StdlibRoot == "" {
-		cfg.StdlibRoot = filepath.Join(cfg.RootDir, STD_LIB_DEV)
+		if cwd, err := os.Getwd(); err == nil {
+			candidate := filepath.Join(cwd, STD_LIB_DEV)
+			if _, err := os.Stat(candidate); err == nil {
+				cfg.StdlibRoot = candidate
+			}
+		}
+		if cfg.StdlibRoot == "" {
+			cfg.StdlibRoot = filepath.Join(cfg.RootDir, STD_LIB_DEV)
+		}
 	}
 	cfg.StdlibRoot = filepath.Clean(cfg.StdlibRoot)
 	if !filepath.IsAbs(cfg.StdlibRoot) {

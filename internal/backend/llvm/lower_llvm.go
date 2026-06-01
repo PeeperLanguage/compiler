@@ -12,10 +12,11 @@ import (
 )
 
 type llvmEmitter struct {
-	diag     *diagnostics.DiagnosticBag
-	badTypes map[string]struct{}
-	invalid  bool
-	strMap   map[string]string
+	mod             *mir.Module
+	diag            *diagnostics.DiagnosticBag
+	badTypes        map[string]struct{}
+	invalid         bool
+	externalGlobals map[string]string
 }
 
 func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
@@ -23,76 +24,38 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		return ""
 	}
 
-	strMap := make(map[string]string)
-	var globalStrings []string
-	collectStr := func(ref mir.ValueRef) {
-		if rc, ok := ref.(*mir.RefConst); ok && rc != nil && rc.Type == "cstr" {
-			if _, ok := strMap[rc.Value]; !ok {
-				name := fmt.Sprintf("@.str.%d", len(globalStrings))
-				strMap[rc.Value] = name
-				globalStrings = append(globalStrings, rc.Value)
-			}
-		}
+	emitter := &llvmEmitter{
+		mod:             mod,
+		diag:            diag,
+		badTypes:        make(map[string]struct{}),
+		externalGlobals: make(map[string]string),
 	}
-
-	for _, fn := range mod.Funcs {
-		if fn == nil {
-			continue
-		}
-		for _, block := range fn.Blocks {
-			if block == nil {
-				continue
-			}
-			for _, instr := range block.Instrs {
-				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
-					switch valExpr := assign.Value.(type) {
-					case *mir.Move:
-						collectStr(valExpr.Src)
-					case *mir.Cast:
-						collectStr(valExpr.Arg)
-					case *mir.Call:
-						collectStr(valExpr.Callee)
-						for _, arg := range valExpr.Args {
-							collectStr(arg)
-						}
-					case *mir.Binary:
-						collectStr(valExpr.Left)
-						collectStr(valExpr.Right)
-					case *mir.Unary:
-						collectStr(valExpr.Arg)
-					}
-				}
-			}
-			if block.Term != nil {
-				switch term := block.Term.(type) {
-				case *mir.Ret:
-					collectStr(term.Value)
-				case *mir.Branch:
-					collectStr(term.Cond)
-				}
-			}
-		}
-	}
-
-	emitter := &llvmEmitter{diag: diag, badTypes: make(map[string]struct{}), strMap: strMap}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
 	b.WriteString(mod.Name)
 	b.WriteString("\"\n")
 	b.WriteString("target triple = \"x86_64-pc-linux-gnu\"\n\n")
 
-	for _, val := range globalStrings {
-		name := strMap[val]
-		escaped := llvmEscapeString(val)
-		length := len(val) + 1
-		b.WriteString(fmt.Sprintf("%s = private unnamed_addr constant [%d x i8] c\"%s\", align 1\n", name, length, escaped))
+	for _, entry := range mod.StaticData {
+		isStr := entry.Type == "cstr" || (strings.HasPrefix(entry.Type, "[") && strings.HasSuffix(entry.Type, " x i8]"))
+		if isStr {
+			escaped := llvmEscapeString(entry.Value)
+			b.WriteString(fmt.Sprintf("%s = private unnamed_addr constant %s c\"%s\", align %d\n", entry.Name, entry.Type, escaped, entry.Align))
+		} else {
+			llvmType := emitter.llvmType(entry.Type)
+			b.WriteString(fmt.Sprintf("%s = constant %s %s, align %d\n", entry.Name, llvmType, entry.Value, entry.Align))
+		}
 	}
-	if len(globalStrings) > 0 {
+	if len(mod.StaticData) > 0 {
 		b.WriteString("\n")
 	}
 
-	decls := collectCallDecls(mod, emitter)
-	for _, fn := range mod.Externs {
+	hasDecl := false
+	for _, fn := range mod.Funcs {
+		if fn == nil || fn.Blocks != nil {
+			continue
+		}
+		hasDecl = true
 		b.WriteString("declare ")
 		b.WriteString(emitter.llvmType(fn.ReturnType))
 		b.WriteString(" @")
@@ -106,6 +69,11 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		}
 		b.WriteString(")\n")
 	}
+	if hasDecl {
+		b.WriteString("\n")
+	}
+
+	decls := collectCallDecls(mod)
 	for _, decl := range decls {
 		b.WriteString("declare ")
 		b.WriteString(emitter.llvmType(decl.ReturnType))
@@ -120,14 +88,22 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		}
 		b.WriteString(")\n")
 	}
-	if len(mod.Externs) > 0 || len(decls) > 0 {
+	if len(decls) > 0 {
 		b.WriteString("\n")
 	}
-	if len(mod.Funcs) == 0 {
+
+	hasDefine := false
+	for _, fn := range mod.Funcs {
+		if fn != nil && fn.Blocks != nil {
+			hasDefine = true
+			break
+		}
+	}
+	if !hasDefine {
 		return finalLLVMText(&b, emitter)
 	}
 	for _, fn := range mod.Funcs {
-		if fn == nil {
+		if fn == nil || fn.Blocks == nil {
 			continue
 		}
 		b.WriteString("define ")
@@ -152,22 +128,24 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 			if block == nil {
 				continue
 			}
-			lb.label(block.ID)
+			b.WriteString(fmt.Sprintf("b%d:\n", block.ID))
 			for _, instr := range block.Instrs {
-				switch in := instr.(type) {
-				case *mir.Assign:
-					lb.locals[in.Name] = emitValueExpr(lb, in.Value)
+				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
+					val := emitValueExpr(lb, assign.Value)
+					lb.locals[assign.Name] = val
 				}
 			}
-			switch term := block.Term.(type) {
-			case *mir.Jump:
-				lb.line(fmt.Sprintf("br label %%b%d", term.TargetID))
-			case *mir.Branch:
-				cond := emitCondRef(lb, term.Cond)
-				lb.line(fmt.Sprintf("br i1 %s, label %%b%d, label %%b%d", cond, term.ThenID, term.ElseID))
-			case *mir.Ret:
-				val := emitRef(lb, term.Value)
-				lb.line("ret " + emitter.llvmType(fn.ReturnType) + " " + val)
+			if block.Term != nil {
+				switch term := block.Term.(type) {
+				case *mir.Jump:
+					lb.line(fmt.Sprintf("br label %%b%d", term.TargetID))
+				case *mir.Branch:
+					cond := emitCondRef(lb, term.Cond)
+					lb.line(fmt.Sprintf("br i1 %s, label %%b%d, label %%b%d", cond, term.ThenID, term.ElseID))
+				case *mir.Ret:
+					val := emitRef(lb, term.Value)
+					lb.line("ret " + emitter.llvmType(fn.ReturnType) + " " + val)
+				}
 			}
 		}
 		b.WriteString("}\n")
@@ -181,6 +159,13 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 	}
 	if b == nil {
 		return ""
+	}
+	if emitter != nil && len(emitter.externalGlobals) > 0 {
+		b.WriteString("\n; external globals\n")
+		for name, typeText := range emitter.externalGlobals {
+			llvmType := emitter.llvmType(typeText)
+			b.WriteString(fmt.Sprintf("%s = external global %s\n", name, llvmType))
+		}
 	}
 	return b.String()
 }
@@ -229,109 +214,7 @@ func llvmTypeName(typeText string) (string, bool) {
 	}
 }
 
-type callDecl struct {
-	Name       string
-	ReturnType string
-	Params     []string
-}
-
-func collectCallDecls(mod *mir.Module, emitter *llvmEmitter) []callDecl {
-	if mod == nil {
-		return nil
-	}
-	defined := make(map[string]struct{})
-	for _, ex := range mod.Externs {
-		if ex.Name != "" {
-			defined[ex.Name] = struct{}{}
-		}
-	}
-	for _, fn := range mod.Funcs {
-		if fn != nil && fn.Name != "" {
-			defined[fn.Name] = struct{}{}
-		}
-	}
-	decls := make(map[string]callDecl)
-	for _, fn := range mod.Funcs {
-		if fn == nil {
-			continue
-		}
-		for _, block := range fn.Blocks {
-			if block == nil {
-				continue
-			}
-			for _, instr := range block.Instrs {
-				assign, ok := instr.(*mir.Assign)
-				if !ok || assign == nil {
-					continue
-				}
-				call, ok := assign.Value.(*mir.Call)
-				if !ok || call == nil {
-					continue
-				}
-				name, ok := functionNameFromRef(call.Callee)
-				if !ok || name == "" {
-					continue
-				}
-				if _, ok := defined[name]; ok {
-					continue
-				}
-				params := make([]string, 0, len(call.Args))
-				for _, arg := range call.Args {
-					params = append(params, mirRefType(arg))
-				}
-				if existing, ok := decls[name]; ok {
-					if !sameDeclSignature(existing, call.Type, params) {
-						if emitter != nil && emitter.diag != nil {
-							msg := "conflicting call signatures for " + name
-							emitter.diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidType))
-							emitter.invalid = true
-						}
-					}
-					continue
-				}
-				decls[name] = callDecl{Name: name, ReturnType: call.Type, Params: params}
-			}
-		}
-	}
-	if len(decls) == 0 {
-		return nil
-	}
-	out := make([]callDecl, 0, len(decls))
-	for _, decl := range decls {
-		out = append(out, decl)
-	}
-	return out
-}
-
-func functionNameFromRef(ref mir.ValueRef) (string, bool) {
-	nameRef, ok := ref.(*mir.RefName)
-	if !ok || nameRef == nil || nameRef.Name == "" {
-		return "", false
-	}
-	name := nameRef.Name
-	if idx := strings.IndexByte(name, '$'); idx >= 0 {
-		name = name[:idx]
-	}
-	if name == "" {
-		return "", false
-	}
-	return name, true
-}
-
-func sameDeclSignature(existing callDecl, ret string, params []string) bool {
-	if existing.ReturnType != ret {
-		return false
-	}
-	if len(existing.Params) != len(params) {
-		return false
-	}
-	for i, param := range params {
-		if existing.Params[i] != param {
-			return false
-		}
-	}
-	return true
-}
+// collectCallDecls deleted
 
 type llvmBuilder struct {
 	out    *strings.Builder
@@ -565,10 +448,6 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 			return llvmFloat32Const(v.Value)
 		}
 		if v.Type == "cstr" {
-			if name, ok := b.types.strMap[v.Value]; ok {
-				length := len(v.Value) + 1
-				return fmt.Sprintf("getelementptr inbounds ([%d x i8], [%d x i8]* %s, i64 0, i64 0)", length, length, name)
-			}
 			return "null"
 		}
 		return v.Value
@@ -576,9 +455,52 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		if reg, ok := b.locals[v.Name]; ok {
 			return reg
 		}
+
+		isLocalStatic := false
+		var localEntry *mir.StaticEntry
+		if b.types != nil && b.types.mod != nil {
+			for _, entry := range b.types.mod.StaticData {
+				eName := strings.TrimPrefix(entry.Name, "@")
+				vName := strings.TrimPrefix(v.Name, "@")
+				if eName == vName {
+					isLocalStatic = true
+					localEntry = entry
+					break
+				}
+			}
+		}
+
+		if isLocalStatic && localEntry != nil {
+			if strings.HasPrefix(localEntry.Type, "[") && strings.HasSuffix(localEntry.Type, " x i8]") {
+				return fmt.Sprintf("getelementptr inbounds (%s, %s* %s, i64 0, i64 0)", localEntry.Type, localEntry.Type, localEntry.Name)
+			}
+			reg := b.nextReg()
+			llvmType := b.types.llvmType(localEntry.Type)
+			b.line(fmt.Sprintf("%s = load %s, %s* %s, align %d", reg, llvmType, llvmType, localEntry.Name, localEntry.Align))
+			return reg
+		}
+
 		if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
-			funcName := v.Name[:idx]
-			return "@" + strings.ReplaceAll(funcName, "::", "__")
+			isFunc := strings.HasPrefix(v.Type, "fn(") || strings.Contains(v.Type, "->")
+			if isFunc {
+				funcName := v.Name[:idx]
+				return "@" + strings.ReplaceAll(funcName, "::", "__")
+			}
+
+			name := "@" + v.Name
+			if b.types.externalGlobals == nil {
+				b.types.externalGlobals = make(map[string]string)
+			}
+			b.types.externalGlobals[name] = v.Type
+
+			reg := b.nextReg()
+			llvmType := b.types.llvmType(v.Type)
+			b.line(fmt.Sprintf("%s = load %s, %s* %s, align 4", reg, llvmType, llvmType, name))
+			return reg
+		}
+
+		if strings.HasPrefix(v.Name, "@") {
+			return v.Name
 		}
 		return "0"
 	default:
@@ -705,4 +627,64 @@ func llvmEscapeString(s string) string {
 	}
 	sb.WriteString(`\00`)
 	return sb.String()
+}
+
+type callDecl struct {
+	Name       string
+	ReturnType string
+	Params     []string
+}
+
+func collectCallDecls(mod *mir.Module) []callDecl {
+	if mod == nil {
+		return nil
+	}
+	defined := make(map[string]struct{})
+	for _, fn := range mod.Funcs {
+		if fn != nil && fn.Name != "" {
+			defined[fn.Name] = struct{}{}
+		}
+	}
+	decls := make(map[string]callDecl)
+	for _, fn := range mod.Funcs {
+		if fn == nil || fn.Blocks == nil {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			for _, instr := range block.Instrs {
+				assign, ok := instr.(*mir.Assign)
+				if !ok || assign == nil {
+					continue
+				}
+				call, ok := assign.Value.(*mir.Call)
+				if !ok || call == nil {
+					continue
+				}
+				nameRef, ok := call.Callee.(*mir.RefName)
+				if !ok || nameRef == nil {
+					continue
+				}
+				name := nameRef.Name
+				if idx := strings.IndexByte(name, '$'); idx >= 0 {
+					name = name[:idx]
+				}
+				if _, ok := defined[name]; ok {
+					continue
+				}
+				params := make([]string, 0, len(call.Args))
+				for _, arg := range call.Args {
+					params = append(params, mirRefType(arg))
+				}
+				decls[name] = callDecl{Name: name, ReturnType: call.Type, Params: params}
+			}
+		}
+	}
+	out := make([]callDecl, 0, len(decls))
+	for _, decl := range decls {
+		out = append(out, decl)
+	}
+	return out
 }
