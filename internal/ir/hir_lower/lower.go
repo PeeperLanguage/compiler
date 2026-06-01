@@ -3,15 +3,18 @@ package hir_lower
 import (
 	"fmt"
 
+	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/utils/numeric"
 )
 
-func GenerateHIR(module *context.Module) *hir.Module {
+func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Module {
 	if module == nil {
 		return nil
 	}
@@ -49,7 +52,7 @@ func GenerateHIR(module *context.Module) *hir.Module {
 		})
 	}
 	for _, declFn := range module.Functions {
-		if declFn == nil || declFn.Decl == nil {
+		if declFn == nil || declFn.Decl == nil || declFn.Scope == nil {
 			continue
 		}
 		fnSym := declFn.Symbol
@@ -65,10 +68,11 @@ func GenerateHIR(module *context.Module) *hir.Module {
 		if !ok || retType == nil {
 			retType = typeinfo.TypeFromSyntax(declFn.Decl.ReturnType)
 		}
+		retTypeStr := typeinfo.TypeText(retType)
 		fn := &hir.Function{
 			Name:       fnSym.Name,
 			Params:     make([]ir.Param, 0, len(declFn.Decl.Params)),
-			ReturnType: typeinfo.TypeText(retType),
+			ReturnType: retTypeStr,
 			Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: declFn.Decl.Body.Loc()},
 			Location:   declFn.Decl.Loc(),
 		}
@@ -76,10 +80,12 @@ func GenerateHIR(module *context.Module) *hir.Module {
 			name := ""
 			paramType := typeinfo.TypeFromSyntax(param.Type)
 			if param.Name != nil {
-				if resolution, ok := module.LookupResolution(param.Name); ok && resolution != nil && resolution.Symbol != nil {
-					name = symbolName(resolution.Symbol)
-					if resolvedType, ok := symbolType(resolution.Symbol); ok {
-						paramType = resolvedType
+				// Look up the parameter symbol in the function scope to get the resolved type.
+				sym, ok := declFn.Scope.LookupLocal(param.Name.Name)
+				if ok && sym != nil {
+					name = symbolName(sym)
+					if t, ok := symbolType(sym); ok {
+						paramType = t
 					}
 				} else {
 					name = param.Name.Name
@@ -87,105 +93,119 @@ func GenerateHIR(module *context.Module) *hir.Module {
 			}
 			fn.Params = append(fn.Params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
 		}
-		appendBlock(module, fn.Body, declFn.Decl.Body)
+		appendBlock(declFn, fn.Body, declFn.Decl.Body, retTypeStr, ctx, module)
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
 }
 
-func appendBlock(module *context.Module, out *hir.Block, block *ast.BlockStmt) {
-	if module == nil || out == nil || block == nil {
+func appendBlock(fn *declinfo.Function, out *hir.Block, block *ast.BlockStmt, returnType string, ctx *context.CompilerContext, module *context.Module) {
+	if out == nil || block == nil {
 		return
 	}
 	out.Location = block.Loc()
+	// Use the scope that the resolver stored for this block.
+	scope := fn.Scope
+	if fn.BlockScopes != nil {
+		if s, ok := fn.BlockScopes[block]; ok {
+			scope = s
+		}
+	}
 	for _, stmt := range block.Stmts {
-		appendStmt(module, out, stmt)
+		appendStmt(fn, scope, out, stmt, returnType, ctx, module)
 	}
 }
 
-func appendStmt(module *context.Module, out *hir.Block, stmt ast.Stmt) {
+// scopeForBlock is a dead helper left from before — removed.
+
+func appendStmt(fn *declinfo.Function, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType string, ctx *context.CompilerContext, module *context.Module) {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
+		// Nested block — look up its stored scope from the resolver.
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
-		appendBlock(module, block, node)
+		appendBlock(fn, block, node, returnType, ctx, module)
 		out.Stmts = append(out.Stmts, block)
+
 	case *ast.LetDecl:
-		resolution, ok := module.LookupResolution(node.Name)
-		if !ok || resolution == nil || resolution.Symbol == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol", Location: node.Loc()})
+		if node.Name == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing name", Location: node.Loc()})
 			return
 		}
+		sym, ok := scope.LookupLocal(node.Name.Name)
+		if !ok || sym == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, Location: node.Loc()})
+			return
+		}
+		symTypeStr := symTypeText(sym)
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
-			if value, ok := module.LookupTypedExpr(node.Value); ok {
-				valueExpr = lowerExpr(value)
-			} else {
-				valueExpr = &ir.InvalidExpr{Message: "invalid initializer", Type: "<invalid>"}
-			}
+			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, symTypeStr)
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: false, Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, Location: node.Loc()})
+
 	case *ast.ConstDecl:
-		resolution, ok := module.LookupResolution(node.Name)
-		if !ok || resolution == nil || resolution.Symbol == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol", Location: node.Loc()})
+		if node.Name == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing name", Location: node.Loc()})
 			return
 		}
+		sym, ok := scope.LookupLocal(node.Name.Name)
+		if !ok || sym == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, Location: node.Loc()})
+			return
+		}
+		symTypeStr := symTypeText(sym)
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
-			if value, ok := module.LookupTypedExpr(node.Value); ok {
-				valueExpr = lowerExpr(value)
-			} else {
-				valueExpr = &ir.InvalidExpr{Message: "invalid initializer", Type: "<invalid>"}
-			}
+			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, symTypeStr)
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(resolution.Symbol), Constant: true, Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, Location: node.Loc()})
+
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
-		if cond, ok := module.LookupTypedExpr(node.Cond); ok {
-			condExpr = lowerExpr(cond)
+		if node.Cond != nil {
+			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, "bool")
 		}
 		ifStmt := &hir.If{
 			Cond:     condExpr,
 			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
 			Location: node.Loc(),
 		}
-		appendBlock(module, ifStmt.Then, node.Then)
+		appendBlock(fn, ifStmt.Then, node.Then, returnType, ctx, module)
 		if node.Else != nil {
-			ifStmt.Else = lowerElse(module, node.Else)
+			ifStmt.Else = lowerElse(fn, node.Else, returnType, ctx, module)
 		}
 		out.Stmts = append(out.Stmts, ifStmt)
+
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			out.Stmts = append(out.Stmts, &hir.Return{Value: &ir.InvalidExpr{Message: "missing return value", Type: "<invalid>"}, Location: node.Loc()})
 			return
 		}
-		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid return value", Type: "<invalid>"})
-		if value, ok := module.LookupTypedExpr(node.Value); ok {
-			valueExpr = lowerExpr(value)
-		}
+		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, returnType)
 		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: node.Loc()})
 	}
 }
 
-func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
+func lowerElse(fn *declinfo.Function, stmt ast.Stmt, returnType string, ctx *context.CompilerContext, module *context.Module) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
-		appendBlock(module, block, node)
+		appendBlock(fn, block, node, returnType, ctx, module)
 		return block
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
-		if cond, ok := module.LookupTypedExpr(node.Cond); ok {
-			condExpr = lowerExpr(cond)
+		if node.Cond != nil {
+			enclosingScope := fn.Scope
+			condExpr = lowerASTExpr(ctx, module, enclosingScope, node.Cond, "bool")
 		}
 		out := &hir.If{
 			Cond:     condExpr,
 			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
 			Location: node.Loc(),
 		}
-		appendBlock(module, out.Then, node.Then)
+		appendBlock(fn, out.Then, node.Then, returnType, ctx, module)
 		if node.Else != nil {
-			out.Else = lowerElse(module, node.Else)
+			out.Else = lowerElse(fn, node.Else, returnType, ctx, module)
 		}
 		return out
 	default:
@@ -193,37 +213,132 @@ func lowerElse(module *context.Module, stmt ast.Stmt) hir.Stmt {
 	}
 }
 
-func lowerExpr(expr typeinfo.Expr) ir.Expr {
-	switch e := expr.(type) {
-	case *typeinfo.IntLit:
-		return &ir.IntLit{Value: e.Value, Type: typeinfo.TypeText(e.Type())}
-	case *typeinfo.FloatLit:
-		return &ir.FloatLit{Value: e.Value, Type: typeinfo.TypeText(e.Type())}
-	case *typeinfo.Ident:
-		if e.Symbol == nil {
-			return &ir.IntLit{Value: "0", Type: "i32"}
-		}
-		return &ir.Ident{Name: symbolName(e.Symbol), Type: typeinfo.TypeText(e.Type())}
-	case *typeinfo.Unary:
-		return &ir.Unary{Op: e.Op, Arg: lowerExpr(e.Arg), Type: typeinfo.TypeText(e.Type())}
-	case *typeinfo.Binary:
-		return &ir.Binary{Op: e.Op, Left: lowerExpr(e.Left), Right: lowerExpr(e.Right), Type: typeinfo.TypeText(e.Type())}
-	case *typeinfo.Call:
-		args := make([]ir.Expr, 0, len(e.Args))
-		for _, arg := range e.Args {
-			args = append(args, lowerExpr(arg))
-		}
-		return &ir.Call{Callee: lowerExpr(e.Callee), Args: args, Type: typeinfo.TypeText(e.Type())}
-	case *typeinfo.As:
-		// Lower cast expression - emit a cast operation
-		// The type of the As expression is the target type
-		return &ir.Cast{
-			Expr: lowerExpr(e.Expr),
-			Type: typeinfo.TypeText(e.ExprType),
-		}
-	default:
-		return &ir.IntLit{Value: "0", Type: "i32"}
+// lowerASTExpr directly lowers an AST expression to an IR expression using
+// scope lookup for symbol resolution and expectedType for literal coercion.
+func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType string) ir.Expr {
+	if expr == nil {
+		return &ir.InvalidExpr{Message: "nil expression", Type: "<invalid>"}
 	}
+	switch node := expr.(type) {
+	case *ast.NumberLit:
+		return lowerNumberLit(node, expectedType)
+
+	case *ast.Ident:
+		sym, ok := scope.Lookup(node.Name)
+		if !ok || sym == nil {
+			return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: "<invalid>"}
+		}
+		return &ir.Ident{Name: symbolName(sym), Type: symTypeText(sym)}
+
+	case *ast.ScopeResolution:
+		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
+			return &ir.Ident{Name: symbolName(sym), Type: symTypeText(sym)}
+		}
+		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.Module.Name + "::" + node.Name.Name, Type: "<invalid>"}
+
+	case *ast.UnaryExpr:
+		arg := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
+		exprType := arg.TypeText()
+		if node.Op == "!" {
+			exprType = "bool"
+		}
+		return &ir.Unary{Op: node.Op, Arg: arg, Type: exprType}
+
+	case *ast.BinaryExpr:
+		left := lowerASTExpr(ctx, module, scope, node.Left, expectedType)
+		right := lowerASTExpr(ctx, module, scope, node.Right, expectedType)
+		exprType := left.TypeText()
+		switch node.Op {
+		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+			exprType = "bool"
+		}
+		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: exprType}
+
+	case *ast.CallExpr:
+		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, "")
+		args := make([]ir.Expr, 0, len(node.Args))
+		for _, arg := range node.Args {
+			args = append(args, lowerASTExpr(ctx, module, scope, arg, ""))
+		}
+		// Get the return type from the callee symbol (handles qualified callees too).
+		retType := "<invalid>"
+		var sym *symbols.Symbol
+		switch callee := node.Callee.(type) {
+		case *ast.Ident:
+			if s, ok := scope.Lookup(callee.Name); ok {
+				sym = s
+			}
+		case *ast.ScopeResolution:
+			if s := lookupScopeResolutionSymbol(ctx, module, scope, callee); s != nil {
+				sym = s
+			}
+		}
+		if sym != nil {
+			if fnType, ok := sym.Type.(*typeinfo.FuncType); ok && fnType != nil && fnType.Return != nil {
+				retType = typeinfo.TypeText(fnType.Return)
+			}
+		}
+		return &ir.Call{Callee: calleeExpr, Args: args, Type: retType}
+
+	case *ast.AsExpr:
+		targetTypeStr := typeinfo.TypeText(typeinfo.TypeFromSyntax(node.TypeExpr))
+		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, targetTypeStr)
+		return &ir.Cast{Expr: subExpr, Type: targetTypeStr}
+
+	default:
+		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>"}
+	}
+}
+
+// lookupScopeResolutionSymbol resolves a ScopeResolution node in two steps:
+// 1. Find the imported module by alias in module.Imports.
+// 2. Look up the symbol in that module's scope.
+// Returns nil if resolution fails.
+func lookupScopeResolutionSymbol(ctx *context.CompilerContext, module *context.Module, _ *table.Scope, sr *ast.ScopeResolution) *symbols.Symbol {
+	if ctx == nil || module == nil || sr == nil {
+		return nil
+	}
+	alias := sr.Module.Name
+	member := sr.Name.Name
+	imp, ok := module.Imports[alias]
+	if !ok {
+		return nil
+	}
+	mod, ok := ctx.ModuleByKey(imp.Key)
+	if !ok || mod == nil || mod.ModuleScope == nil {
+		return nil
+	}
+	sym, ok := mod.ModuleScope.LookupLocal(member)
+	if !ok || sym == nil {
+		return nil
+	}
+	return sym
+}
+
+// lowerNumberLit produces the correct IR literal from a raw number token and
+// the expected type string (e.g. "i8", "f32") set by the typechecker via symbol.Type.
+func lowerNumberLit(node *ast.NumberLit, expectedType string) ir.Expr {
+	if node == nil {
+		return &ir.InvalidExpr{Message: "nil number literal", Type: "<invalid>"}
+	}
+	if expectedType == "" || expectedType == "<invalid>" || expectedType == "<unknown>" {
+		// No expected type — use language default.
+		if numeric.IsFloat(node.Value) {
+			return &ir.FloatLit{Value: node.Value, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value))}
+		}
+		return &ir.IntLit{Value: node.Value, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value))}
+	}
+	if ir.IsFloatType(expectedType) {
+		v := node.Value
+		if !numeric.IsFloat(v) {
+			// Convert integer text to float text for LLVM IR.
+			if iv, err := numeric.StringToBigInt(v); err == nil {
+				v = iv.String() + ".0"
+			}
+		}
+		return &ir.FloatLit{Value: v, Type: expectedType}
+	}
+	return &ir.IntLit{Value: node.Value, Type: expectedType}
 }
 
 func symbolName(sym *symbols.Symbol) string {
@@ -239,4 +354,11 @@ func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
 	}
 	typ, ok := sym.Type.(typeinfo.Type)
 	return typ, ok && typ != nil
+}
+
+func symTypeText(sym *symbols.Symbol) string {
+	if t, ok := symbolType(sym); ok {
+		return typeinfo.TypeText(t)
+	}
+	return "<unknown>"
 }

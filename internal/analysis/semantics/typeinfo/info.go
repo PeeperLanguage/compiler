@@ -186,6 +186,11 @@ func TypeText(typ Type) string {
 
 func TypeFromSyntax(node ast.TypeExpr) Type {
 	switch typ := node.(type) {
+	case *ast.ScopeResolution:
+		if typ == nil {
+			return nil
+		}
+		return &NamedType{Name: typ.Module.Name + "::" + typ.Name.Name}
 	case *ast.NamedType:
 		if typ == nil {
 			return nil

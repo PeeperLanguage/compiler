@@ -14,7 +14,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
-	"compiler/internal/tokens"
 )
 
 // Development-time standard library directory.
@@ -64,17 +63,11 @@ type Module struct {
 	Content string
 	// Reserved for incremental builds.
 	ContentHash string
-	// Lexer output.
-	Tokens []tokens.Token
 	// Parsed syntax tree.
 	AST *ast.Module
 	// Callable declarations owned by this module.
 	Functions []*declinfo.Function
 	Externs   []declinfo.ExternDecl
-	// AST node -> resolved symbol.
-	Resolutions map[ast.Node]*declinfo.Resolution
-	// AST expression -> typed expression annotation.
-	TypedExprs map[ast.Expr]typeinfo.Expr
 	// Canonical IR slots.
 	HIR    *hir.Module
 	MIR    *mir.Module
@@ -228,57 +221,4 @@ func (m *Module) ResetSemantics() {
 	}
 	m.Functions = make([]*declinfo.Function, 0)
 	m.Externs = make([]declinfo.ExternDecl, 0)
-	m.Resolutions = make(map[ast.Node]*declinfo.Resolution)
-	m.TypedExprs = make(map[ast.Expr]typeinfo.Expr)
-}
-
-func (m *Module) ResetResolutions() {
-	if m == nil {
-		return
-	}
-	m.Resolutions = make(map[ast.Node]*declinfo.Resolution)
-	m.TypedExprs = nil
-}
-
-func (m *Module) ResetTypedExprs() {
-	if m == nil {
-		return
-	}
-	m.TypedExprs = make(map[ast.Expr]typeinfo.Expr)
-}
-
-func (m *Module) BindResolution(node ast.Node, resolution *declinfo.Resolution) {
-	if m == nil || node == nil || resolution == nil {
-		return
-	}
-	if m.Resolutions == nil {
-		m.Resolutions = make(map[ast.Node]*declinfo.Resolution)
-	}
-	m.Resolutions[node] = resolution
-}
-
-func (m *Module) LookupResolution(node ast.Node) (*declinfo.Resolution, bool) {
-	if m == nil || node == nil {
-		return nil, false
-	}
-	resolution, found := m.Resolutions[node]
-	return resolution, found
-}
-
-func (m *Module) BindTypedExpr(node ast.Expr, expr typeinfo.Expr) {
-	if m == nil || node == nil || expr == nil {
-		return
-	}
-	if m.TypedExprs == nil {
-		m.TypedExprs = make(map[ast.Expr]typeinfo.Expr)
-	}
-	m.TypedExprs[node] = expr
-}
-
-func (m *Module) LookupTypedExpr(node ast.Expr) (typeinfo.Expr, bool) {
-	if m == nil || node == nil {
-		return nil, false
-	}
-	expr, ok := m.TypedExprs[node]
-	return expr, ok
 }

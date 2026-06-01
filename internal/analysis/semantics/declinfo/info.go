@@ -7,23 +7,13 @@ import (
 	"compiler/internal/frontend/ast"
 )
 
-type ResolutionKind string
-
-const (
-	ResolutionSymbol ResolutionKind = "symbol"
-)
-
-type Resolution struct {
-	Kind   ResolutionKind
-	Symbol *symbols.Symbol
-}
-
 type Function struct {
-	Symbol     *symbols.Symbol
-	Decl       *ast.FnDecl
-	Scope      *table.Scope
-	LocalDecls []LocalDecl
-	LocalNames map[string][]LocalDecl
+	Symbol      *symbols.Symbol
+	Decl        *ast.FnDecl
+	Scope       *table.Scope
+	BlockScopes map[*ast.BlockStmt]*table.Scope
+	LocalDecls  []LocalDecl
+	LocalNames  map[string][]LocalDecl
 }
 
 type ExternDecl struct {

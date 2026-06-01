@@ -99,8 +99,10 @@ func (l *moduleLoader) loadModule(module *context.Module) {
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
-	module.Tokens = lexer.Lex(module.FilePath, module.Content, l.ctx.Diagnostics)
-	module.AST = parser.ParseModule(module.FilePath, module.Tokens, l.ctx.Diagnostics)
+	toks := lexer.Lex(module.FilePath, module.Content, l.ctx.Diagnostics)
+	// Content is no longer needed after lexing; free the string.
+	module.Content = ""
+	module.AST = parser.ParseModule(module.FilePath, toks, l.ctx.Diagnostics)
 	l.resolveImports(module)
 }
 

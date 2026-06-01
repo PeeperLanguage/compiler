@@ -8,8 +8,6 @@ import (
 	"compiler/internal/analysis/semantics/typechecher"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/context"
-	"compiler/internal/frontend/lexer"
-	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
@@ -44,14 +42,6 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		return err
 	}
 
-	for _, module := range p.ctx.Modules() {
-		if module == nil || module.AST != nil {
-			continue
-		}
-		module.Tokens = lexer.Lex(module.FilePath, module.Content, diag)
-		module.AST = parser.ParseModule(module.FilePath, module.Tokens, diag)
-	}
-
 	ordered, cycles := topoSort(p.ctx.Modules(), p.ctx.DependenciesOf)
 	if len(cycles) > 0 && diag != nil {
 		for _, cycle := range cycles {
@@ -72,14 +62,13 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		resolver.Resolve(p.ctx, module)
 		typechecher.Check(p.ctx, module)
 
-		modhir := hir_lower.GenerateHIR(module)
+		modhir := hir_lower.GenerateHIR(p.ctx, module)
 		if modhir == nil {
 			continue
 		}
 		modhir = hir_fold.ApplyConstantFolding(modhir, diag)
 		module.HIR = modhir
 		cfg.AnalyzeModule(modhir, diag)
-		module.HIR = modhir
 		if diag != nil && diag.HasErrors() {
 			continue
 		}
