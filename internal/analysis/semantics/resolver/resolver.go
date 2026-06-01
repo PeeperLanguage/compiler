@@ -119,6 +119,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		return
+	case *ast.StringLit:
+		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {

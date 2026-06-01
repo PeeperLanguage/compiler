@@ -28,6 +28,8 @@ type FloatType struct {
 
 type BoolType struct{}
 
+type CStrType struct{}
+
 type NamedType struct {
 	Name string
 }
@@ -65,6 +67,7 @@ func (*UnknownType) typeNode()   {}
 func (*IntegerType) typeNode()   {}
 func (*FloatType) typeNode()     {}
 func (*BoolType) typeNode()      {}
+func (*CStrType) typeNode()      {}
 func (*NamedType) typeNode()     {}
 func (*FuncType) typeNode()      {}
 func (*StructType) typeNode()    {}
@@ -92,6 +95,8 @@ func (t *FloatType) Text() string {
 }
 
 func (*BoolType) Text() string { return "bool" }
+
+func (*CStrType) Text() string { return "cstr" }
 
 func (t *NamedType) Text() string {
 	if t == nil {
@@ -198,6 +203,9 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 		if typ.Name == "bool" {
 			return &BoolType{}
 		}
+		if typ.Name == "cstr" {
+			return &CStrType{}
+		}
 		if typ.Name == "f32" {
 			return &FloatType{Bits: 32}
 		}
@@ -292,6 +300,9 @@ func SameType(left, right Type) bool {
 		return ok && r != nil && l.Signed == r.Signed && l.Bits == r.Bits
 	case *BoolType:
 		_, ok := right.(*BoolType)
+		return ok
+	case *CStrType:
+		_, ok := right.(*CStrType)
 		return ok
 	case *FloatType:
 		r, ok := right.(*FloatType)

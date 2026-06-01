@@ -38,6 +38,11 @@ type FloatLit struct {
 	Type  string
 }
 
+type StringLit struct {
+	Value string
+	Type  string
+}
+
 type Ident struct {
 	Name string
 	Type string
@@ -70,6 +75,7 @@ type Cast struct {
 func (*InvalidExpr) exprNode() {}
 func (*IntLit) exprNode()      {}
 func (*FloatLit) exprNode()    {}
+func (*StringLit) exprNode()   {}
 func (*Ident) exprNode()       {}
 func (*Unary) exprNode()       {}
 func (*Binary) exprNode()      {}
@@ -110,6 +116,18 @@ func (e *FloatLit) String() string {
 func (e *FloatLit) TypeText() string {
 	if e == nil || e.Type == "" {
 		return "f64"
+	}
+	return e.Type
+}
+func (e *StringLit) String() string {
+	if e == nil {
+		return `""`
+	}
+	return fmt.Sprintf("%q", e.Value)
+}
+func (e *StringLit) TypeText() string {
+	if e == nil || e.Type == "" {
+		return "cstr"
 	}
 	return e.Type
 }

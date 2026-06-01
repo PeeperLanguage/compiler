@@ -15,18 +15,81 @@ type llvmEmitter struct {
 	diag     *diagnostics.DiagnosticBag
 	badTypes map[string]struct{}
 	invalid  bool
+	strMap   map[string]string
 }
 
 func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 	if mod == nil {
 		return ""
 	}
-	emitter := &llvmEmitter{diag: diag, badTypes: make(map[string]struct{})}
+
+	strMap := make(map[string]string)
+	var globalStrings []string
+	collectStr := func(ref mir.ValueRef) {
+		if rc, ok := ref.(*mir.RefConst); ok && rc != nil && rc.Type == "cstr" {
+			if _, ok := strMap[rc.Value]; !ok {
+				name := fmt.Sprintf("@.str.%d", len(globalStrings))
+				strMap[rc.Value] = name
+				globalStrings = append(globalStrings, rc.Value)
+			}
+		}
+	}
+
+	for _, fn := range mod.Funcs {
+		if fn == nil {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			for _, instr := range block.Instrs {
+				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
+					switch valExpr := assign.Value.(type) {
+					case *mir.Move:
+						collectStr(valExpr.Src)
+					case *mir.Cast:
+						collectStr(valExpr.Arg)
+					case *mir.Call:
+						collectStr(valExpr.Callee)
+						for _, arg := range valExpr.Args {
+							collectStr(arg)
+						}
+					case *mir.Binary:
+						collectStr(valExpr.Left)
+						collectStr(valExpr.Right)
+					case *mir.Unary:
+						collectStr(valExpr.Arg)
+					}
+				}
+			}
+			if block.Term != nil {
+				switch term := block.Term.(type) {
+				case *mir.Ret:
+					collectStr(term.Value)
+				case *mir.Branch:
+					collectStr(term.Cond)
+				}
+			}
+		}
+	}
+
+	emitter := &llvmEmitter{diag: diag, badTypes: make(map[string]struct{}), strMap: strMap}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
 	b.WriteString(mod.Name)
 	b.WriteString("\"\n")
 	b.WriteString("target triple = \"x86_64-pc-linux-gnu\"\n\n")
+
+	for _, val := range globalStrings {
+		name := strMap[val]
+		escaped := llvmEscapeString(val)
+		length := len(val) + 1
+		b.WriteString(fmt.Sprintf("%s = private unnamed_addr constant [%d x i8] c\"%s\", align 1\n", name, length, escaped))
+	}
+	if len(globalStrings) > 0 {
+		b.WriteString("\n")
+	}
 
 	decls := collectCallDecls(mod, emitter)
 	for _, fn := range mod.Externs {
@@ -159,6 +222,8 @@ func llvmTypeName(typeText string) (string, bool) {
 		return "i1", true
 	case "void":
 		return "void", true
+	case "cstr":
+		return "i8*", true
 	default:
 		return "", false
 	}
@@ -499,6 +564,13 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		if v.Type == "f32" {
 			return llvmFloat32Const(v.Value)
 		}
+		if v.Type == "cstr" {
+			if name, ok := b.types.strMap[v.Value]; ok {
+				length := len(v.Value) + 1
+				return fmt.Sprintf("getelementptr inbounds ([%d x i8], [%d x i8]* %s, i64 0, i64 0)", length, length, name)
+			}
+			return "null"
+		}
 		return v.Value
 	case *mir.RefName:
 		if reg, ok := b.locals[v.Name]; ok {
@@ -615,4 +687,22 @@ func isUnsignedMIRType(typeText string) bool {
 
 func isLLVMFloatType(typeText string) bool {
 	return typeText == "float" || typeText == "double"
+}
+
+func llvmEscapeString(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b == '\\' {
+			sb.WriteString(`\5C`)
+		} else if b == '"' {
+			sb.WriteString(`\22`)
+		} else if b >= 32 && b <= 126 {
+			sb.WriteByte(b)
+		} else {
+			sb.WriteString(fmt.Sprintf("\\%02X", b))
+		}
+	}
+	sb.WriteString(`\00`)
+	return sb.String()
 }
