@@ -288,6 +288,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.NumberLit:
 		return c.typeNumber(node, expected)
 
+	case *ast.StringLit:
+		return &typeinfo.CStrType{}
+
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok || sym == nil {

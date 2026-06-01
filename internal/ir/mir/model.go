@@ -305,6 +305,8 @@ func lowerExpr(expr ir.Expr, tmp *int, out *[]Instr) ValueRef {
 		return &RefConst{Value: e.Value, Type: e.TypeText()}
 	case *ir.FloatLit:
 		return &RefConst{Value: e.Value, Type: e.TypeText()}
+	case *ir.StringLit:
+		return &RefConst{Value: e.Value, Type: e.TypeText()}
 	case *ir.Ident:
 		return &RefName{Name: e.Name, Type: e.TypeText()}
 	case *ir.Unary:

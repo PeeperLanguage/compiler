@@ -222,6 +222,9 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 	case *ast.NumberLit:
 		return lowerNumberLit(node, expectedType)
 
+	case *ast.StringLit:
+		return &ir.StringLit{Value: node.Value, Type: "cstr"}
+
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok || sym == nil {
