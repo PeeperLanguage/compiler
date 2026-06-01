@@ -43,6 +43,7 @@ type Symbol struct {
 	Initializing bool
 	Location     *source.Location
 	ASTNode      ast.Node
+	Scope        interface{} // Pointer to table.Scope (only if Kind == SymbolFunc)
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {

@@ -5,7 +5,6 @@ import (
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -43,24 +42,6 @@ func isAllowedType(t typeinfo.Type) bool {
 }
 
 func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
-	if sr, ok := node.(*ast.ScopeResolution); ok && sr != nil {
-		alias := sr.Module.Name
-		member := sr.Name.Name
-		imp, ok := c.module.Imports[alias]
-		if ok {
-			mod, ok := c.ctx.ModuleByKey(imp.Key)
-			if ok && mod != nil && mod.ModuleScope != nil {
-				sym, found := mod.ModuleScope.LookupLocal(member)
-				if found && sym != nil && sym.Kind == symbols.SymbolType {
-					if resolved, ok := lookupSymbolType(sym); ok {
-						return resolved
-					}
-				}
-			}
-		}
-		return &typeinfo.NamedType{Name: alias + "::" + member}
-	}
-
 	typ := typeinfo.TypeFromSyntax(node)
 	named, ok := typ.(*typeinfo.NamedType)
 	if !ok || named == nil || named.Name == "" || c == nil || c.module == nil || c.module.ModuleScope == nil {
@@ -109,77 +90,72 @@ func lookupSymbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
 // -----------------------------------------------------------------------------
 
 func (c *checker) checkModule() {
-	if c == nil || c.module == nil {
+	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
-	for _, ex := range c.module.Externs {
-		if ex.Symbol == nil || ex.Decl == nil {
-			continue
+	for _, decl := range c.module.AST.Decls {
+		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil {
+			sym, found := c.module.ModuleScope.Lookup(fn.Name.Name)
+			if !found || sym == nil {
+				continue
+			}
+			if fn.Body == nil {
+				bindSymbolType(sym, c.fnTypeFromDecl(fn))
+			} else {
+				c.checkFunction(sym, fn)
+			}
 		}
-		bindSymbolType(ex.Symbol, c.fnTypeFromDecl(ex.Decl))
-	}
-	for _, declFn := range c.module.Functions {
-		if declFn == nil || declFn.Decl == nil || declFn.Scope == nil {
-			continue
-		}
-		c.checkFunction(declFn)
 	}
 }
 
-func (c *checker) checkFunction(fn *declinfo.Function) {
-	if c == nil || fn == nil || fn.Decl == nil {
+func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
+	if c == nil || sym == nil || fn == nil || fn.Body == nil {
 		return
 	}
-	decl := fn.Decl
-	c.checkFunctionShape(decl)
-	if fn.Symbol == nil {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrUndefinedSymbol, "missing function binding")
+	c.checkFunctionShape(fn)
+	bindSymbolType(sym, c.fnTypeFromDecl(fn))
+	if sym.Scope == nil {
 		return
 	}
-	bindSymbolType(fn.Symbol, c.fnTypeFromDecl(decl))
-	// Set parameter types via scope lookup.
-	for _, param := range decl.Params {
+	funcScope := sym.Scope.(*table.Scope)
+	for _, param := range fn.Params {
 		if param.Name == nil {
 			continue
 		}
-		sym, ok := fn.Scope.LookupLocal(param.Name.Name)
-		if !ok || sym == nil {
-			common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrUndefinedSymbol, "missing parameter binding")
+		paramSym, ok := funcScope.LookupLocal(param.Name.Name)
+		if !ok || paramSym == nil {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrUndefinedSymbol, "missing parameter binding")
 			return
 		}
-		bindSymbolType(sym, c.typeFromSyntax(param.Type))
+		bindSymbolType(paramSym, c.typeFromSyntax(param.Type))
 	}
-	c.checkBlock(fn, fn.Scope, decl.Body, c.typeFromSyntax(decl.ReturnType))
+	c.checkBlock(funcScope, fn.Body, c.typeFromSyntax(fn.ReturnType))
 }
 
-// checkBlock retrieves the stored scope for this block (set by the resolver)
-// and walks its statements.
-func (c *checker) checkBlock(fn *declinfo.Function, parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
+func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
 	if block == nil {
 		return
 	}
 	scope := parentScope
-	if fn.BlockScopes != nil {
-		if s, ok := fn.BlockScopes[block]; ok {
-			scope = s
-		}
+	if s, ok := c.module.BlockScopes[block]; ok && s != nil {
+		scope = s
 	}
 	for _, stmt := range block.Stmts {
-		c.checkStmt(fn, scope, stmt, returnType)
+		c.checkStmt(scope, stmt, returnType)
 	}
 }
 
-func (c *checker) checkStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type) {
+func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type) {
 	if stmt == nil {
 		return
 	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		c.checkBlock(fn, scope, node, returnType)
+		c.checkBlock(scope, node, returnType)
 	case *ast.LetDecl:
-		c.checkBinding(fn, scope, node, false)
+		c.checkBinding(scope, node, false)
 	case *ast.ConstDecl:
-		c.checkBinding(fn, scope, node, true)
+		c.checkBinding(scope, node, true)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
@@ -204,8 +180,8 @@ func (c *checker) checkStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.
 					"if condition must be bool or scalar number")
 			}
 		}
-		c.checkBlock(fn, scope, node.Then, returnType)
-		c.checkStmt(fn, scope, node.Else, returnType)
+		c.checkBlock(scope, node.Then, returnType)
+		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ExprStmt:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
 			"expression statements unsupported in current compiler stage")
@@ -215,7 +191,7 @@ func (c *checker) checkStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.
 	}
 }
 
-func (c *checker) checkBinding(fn *declinfo.Function, scope *table.Scope, node ast.Stmt, requireInitializer bool) {
+func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitializer bool) {
 	if c == nil || node == nil {
 		return
 	}
@@ -574,6 +550,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 		}
 	}
 }
+
 // qualifiedScopeType resolves the type of a `module::symbol` expression using ScopeResolution.
 func (c *checker) qualifiedScopeType(scope *table.Scope, node *ast.ScopeResolution) typeinfo.Type {
 	_ = scope // the current scope is not used for two-step foreign lookup

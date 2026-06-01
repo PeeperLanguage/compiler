@@ -3,7 +3,6 @@ package resolver
 import (
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
@@ -16,57 +15,59 @@ type resolver struct {
 }
 
 func (r *resolver) resolveModule() {
-	if r == nil || r.module == nil {
+	if r == nil || r.module == nil || r.module.AST == nil {
 		return
 	}
-	for _, collectedFn := range r.module.Functions {
-		if collectedFn == nil || collectedFn.Decl == nil || collectedFn.Scope == nil {
-			continue
+	if r.module.BlockScopes == nil {
+		r.module.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
+	}
+	for _, decl := range r.module.AST.Decls {
+		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil && fn.Body != nil {
+			r.resolveFunction(fn)
 		}
-		r.resolveFunction(collectedFn)
 	}
 }
 
-func (r *resolver) resolveFunction(fn *declinfo.Function) {
-	if r == nil || r.module == nil || fn == nil || fn.Decl == nil || fn.Scope == nil {
+func (r *resolver) resolveFunction(fn *ast.FnDecl) {
+	if r == nil || r.module == nil || fn == nil || fn.Body == nil {
 		return
 	}
-	for _, param := range fn.Decl.Params {
+	sym, found := r.module.ModuleScope.Lookup(fn.Name.Name)
+	if !found || sym == nil || sym.Scope == nil {
+		return
+	}
+	funcScope := sym.Scope.(*table.Scope)
+	for _, param := range fn.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn.Decl, diagnostics.ErrMissingIdentifier, "parameter name required")
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "parameter name required")
 			return
 		}
-		sym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
-		if err := fn.Scope.Declare(sym); err != nil {
+		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
+		if err := funcScope.Declare(paramSym); err != nil {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
 			return
 		}
 	}
-	r.resolveBlock(fn, fn.Scope, fn.Decl.Body)
+	r.resolveBlock(funcScope, fn.Body)
 }
 
-// resolveBlock stores the scope for this block in fn.BlockScopes so downstream
-// phases (typechecker, hir_lower) can retrieve the live scope per block.
-func (r *resolver) resolveBlock(fn *declinfo.Function, scope *table.Scope, block *ast.BlockStmt) {
+func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
-	if fn.BlockScopes == nil {
-		fn.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
-	}
-	fn.BlockScopes[block] = scope
+	r.module.BlockScopes[block] = scope
 	for _, stmt := range block.Stmts {
-		r.resolveStmt(fn, scope, stmt)
+		r.resolveStmt(scope, stmt)
 	}
 }
 
-func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt ast.Stmt) {
+func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	if stmt == nil {
 		return
 	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		r.resolveBlock(fn, table.New(scope), node)
+		r.resolveBlock(table.New(scope), node)
 	case *ast.LetDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
 		sym.Initializing = true
@@ -76,7 +77,7 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			return
 		}
 		if node.Value != nil {
-			r.resolveExpr(fn, scope, node.Value)
+			r.resolveExpr(scope, node.Value)
 		}
 	case *ast.ConstDecl:
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
@@ -87,33 +88,34 @@ func (r *resolver) resolveStmt(fn *declinfo.Function, scope *table.Scope, stmt a
 			return
 		}
 		if node.Value != nil {
-			r.resolveExpr(fn, scope, node.Value)
+			r.resolveExpr(scope, node.Value)
 		}
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
 			return
 		}
-		r.resolveExpr(fn, scope, node.Value)
+		r.resolveExpr(scope, node.Value)
 	case *ast.IfStmt:
 		if node.Cond == nil {
 			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
 			return
 		}
-		r.resolveExpr(fn, scope, node.Cond)
-		r.resolveBlock(fn, table.New(scope), node.Then)
+		r.resolveExpr(scope, node.Cond)
+		r.resolveBlock(table.New(scope), node.Then)
 		if elseBlock, ok := node.Else.(*ast.BlockStmt); ok {
-			r.resolveBlock(fn, table.New(scope), elseBlock)
+			r.resolveBlock(table.New(scope), elseBlock)
+		} else if node.Else != nil {
+			r.resolveStmt(scope, node.Else)
 		}
-		r.resolveStmt(fn, scope, node.Else)
 	case *ast.ExprStmt:
-		r.resolveExpr(fn, scope, node.Expr)
+		r.resolveExpr(scope, node.Expr)
 	default:
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
 	}
 }
 
-func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr ast.Expr) {
+func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		return
@@ -137,23 +139,23 @@ func (r *resolver) resolveExpr(fn *declinfo.Function, scope *table.Scope, expr a
 			}
 			return
 		}
-		reportUnresolved(r.module, fn, scope, node, r.ctx.Diagnostics)
+		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
 	case *ast.ScopeResolution:
 		if r.resolveScopeResolution(node) {
 			return
 		}
 	case *ast.UnaryExpr:
-		r.resolveExpr(fn, scope, node.Expr)
+		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
-		r.resolveExpr(fn, scope, node.Left)
-		r.resolveExpr(fn, scope, node.Right)
+		r.resolveExpr(scope, node.Left)
+		r.resolveExpr(scope, node.Right)
 	case *ast.CallExpr:
-		r.resolveExpr(fn, scope, node.Callee)
+		r.resolveExpr(scope, node.Callee)
 		for _, arg := range node.Args {
-			r.resolveExpr(fn, scope, arg)
+			r.resolveExpr(scope, arg)
 		}
 	case *ast.AsExpr:
-		r.resolveExpr(fn, scope, node.Expr)
+		r.resolveExpr(scope, node.Expr)
 	default:
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
 	}

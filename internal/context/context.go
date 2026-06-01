@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"compiler/core/diagnostics"
-	"compiler/internal/analysis/semantics/declinfo"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -65,15 +64,14 @@ type Module struct {
 	ContentHash string
 	// Parsed syntax tree.
 	AST *ast.Module
-	// Callable declarations owned by this module.
-	Functions []*declinfo.Function
-	Externs   []declinfo.ExternDecl
 	// Canonical IR slots.
 	HIR    *hir.Module
 	MIR    *mir.Module
 	LLVMIR string
 	// Top-level names visible in module.
 	ModuleScope *table.Scope
+	// Mappings from block statements to resolved block scopes.
+	BlockScopes map[*ast.BlockStmt]*table.Scope
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 
@@ -219,6 +217,5 @@ func (m *Module) ResetSemantics() {
 	if m == nil {
 		return
 	}
-	m.Functions = make([]*declinfo.Function, 0)
-	m.Externs = make([]declinfo.ExternDecl, 0)
+	m.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
 }
