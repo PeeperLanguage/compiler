@@ -84,6 +84,18 @@ func TestReturnBorrowExprIsRejectedAsEscape(t *testing.T) {
 	}
 }
 
+func TestReturnStoredBorrowIsRejectedAsEscape(t *testing.T) {
+	src := `fn main() -> &i32 {
+	let value: i32 = 0;
+	let r = &value;
+	return r;
+}`
+	diag := checkOwnershipSource(t, src)
+	if !hasCode(diag, diagnostics.ErrBorrowEscape) {
+		t.Fatalf("expected borrow-escape diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestInnerBlockBorrowEndsAtBlockBoundary(t *testing.T) {
 	src := `fn main() -> i32 {
 	let mut value: i32 = 0;

@@ -107,10 +107,14 @@ Properties:
 
 ## Current Slice
 
-This change starts Phase 1 only:
+This change starts Phase 1 and includes focused slices of Phases 2 and 3:
 
 - ownership syntax in parser
 - ownership shapes in semantic types
 - focused tests for the new forms
+- initial move tracking for local values with use-after-move diagnostics
+- basic shared vs exclusive borrow conflict checks
+- a basic borrow-escape check for returns
 
-Move analysis, aliasing enforcement, and unsafe-only operations remain follow-up work.
+Deeper move analysis, broader aliasing enforcement, precise lifetime reasoning, and
+unsafe-only operations remain follow-up work.
