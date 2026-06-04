@@ -111,7 +111,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	default:
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement for arithmetic flow")
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement")
 	}
 }
 
@@ -148,6 +148,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 	case *ast.UnaryExpr:
 		r.resolveExpr(scope, node.Expr)
+	case *ast.BorrowExpr:
+		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
 		r.resolveExpr(scope, node.Right)
@@ -159,7 +161,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.AsExpr:
 		r.resolveExpr(scope, node.Expr)
 	default:
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression for arithmetic flow")
+		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression type")
 	}
 }
 

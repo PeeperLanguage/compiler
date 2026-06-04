@@ -4,8 +4,9 @@ import (
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/cfg"
 	"compiler/internal/analysis/semantics/collector"
+	"compiler/internal/analysis/semantics/ownership"
 	"compiler/internal/analysis/semantics/resolver"
-	"compiler/internal/analysis/semantics/typechecher"
+	"compiler/internal/analysis/semantics/typechecker"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/context"
 	"compiler/internal/ir/hir_fold"
@@ -65,7 +66,8 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		}
 		collector.Collect(p.ctx, module)
 		resolver.Resolve(p.ctx, module)
-		typechecher.Check(p.ctx, module)
+		typechecker.Check(p.ctx, module)
+		ownership.Check(p.ctx, module)
 
 		modhir := hir_lower.GenerateHIR(p.ctx, module)
 		if modhir == nil {

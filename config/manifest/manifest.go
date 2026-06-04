@@ -112,7 +112,7 @@ func Load(path string) (*File, error) {
 			if alias == "std" {
 				return nil, fmt.Errorf("dependency alias %q is reserved", alias)
 			}
-			dep, err := parseDependency(raw)
+			dep, err := ParseDependency(raw)
 			if err != nil {
 				return nil, fmt.Errorf("invalid dependency %q: %w", alias, err)
 			}
@@ -134,11 +134,7 @@ func Load(path string) (*File, error) {
 	return manifest, nil
 }
 
-func ParseDependency(spec string) (Dependency, error) {
-	return parseDependencyString(spec)
-}
-
-func parseDependency(raw toml.Value) (Dependency, error) {
+func ParseDependency(raw toml.Value) (Dependency, error) {
 	switch value := raw.(type) {
 	case string:
 		return parseDependencyString(value)

@@ -217,6 +217,16 @@ func TypeText(typ ast.TypeExpr) string {
 		return ""
 	case *ast.NamedType:
 		return node.Name
+	case *ast.RefType:
+		if node.Mutable {
+			return "&mut " + TypeText(node.Target)
+		}
+		return "&" + TypeText(node.Target)
+	case *ast.RawPtrType:
+		if node.Mutable {
+			return "*mut " + TypeText(node.Target)
+		}
+		return "*const " + TypeText(node.Target)
 	case *ast.FuncType:
 		var b strings.Builder
 		b.WriteString("fn(")

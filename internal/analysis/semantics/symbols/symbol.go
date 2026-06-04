@@ -11,7 +11,7 @@ import (
 
 type SymbolID uint64
 
-var nextSymbolID uint64
+var nextSymbolID atomic.Uint64
 
 type Kind string
 
@@ -31,6 +31,7 @@ const (
 )
 
 type Type interface {
+	TypeNode()
 	Text() string
 }
 
@@ -52,13 +53,31 @@ func New(name string, kind Kind, node ast.Node) *Symbol {
 		loc = node.Loc()
 	}
 	return &Symbol{
-		ID:       SymbolID(atomic.AddUint64(&nextSymbolID, 1)),
+		ID:       SymbolID(nextSymbolID.Add(1)),
 		Name:     name,
 		Kind:     kind,
 		IsPub:    IsPubName(name),
 		Location: loc,
 		ASTNode:  node,
 	}
+}
+
+func (s *Symbol) BindType(typ Type) bool {
+	if s == nil || typ == nil {
+		return false
+	}
+	s.Type = typ
+	return true
+}
+
+// SymbolType returns the semantic type stored on sym, or (nil, false) if sym
+// carries no type.
+// This is the canonical single-source-of-truth lookup shared across all passes.
+func GetSymbolType(sym *Symbol) (Type, bool) {
+	if sym == nil || sym.Type == nil {
+		return nil, false
+	}
+	return sym.Type, true
 }
 
 func IsPubName(name string) bool {
