@@ -18,8 +18,8 @@ func (r *resolver) resolveModule() {
 	if r == nil || r.module == nil || r.module.AST == nil {
 		return
 	}
-	if r.module.BlockScopes == nil {
-		r.module.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
+	if r.module.Semantics == nil {
+		r.module.Semantics = context.NewSemanticInfo()
 	}
 	for _, decl := range r.module.AST.Decls {
 		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil && fn.Body != nil {
@@ -55,7 +55,7 @@ func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
-	r.module.BlockScopes[block] = scope
+	r.module.Semantics.BlockScopes[block.ID()] = scope
 	for _, stmt := range block.Stmts {
 		r.resolveStmt(scope, stmt)
 	}

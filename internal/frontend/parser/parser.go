@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"compiler/core/diagnostics"
@@ -15,6 +16,7 @@ type Parser struct {
 	stream   []tokens.Token
 	diag     *diagnostics.DiagnosticBag
 	pos      int
+	nodeID   ast.NodeID
 }
 
 type blockOwner string
@@ -89,6 +91,26 @@ func New(filePath string, stream []tokens.Token, diag *diagnostics.DiagnosticBag
 	}
 }
 
+func (p *Parser) nextID() ast.NodeID {
+	p.nodeID++
+	return p.nodeID
+}
+
+func isNilNode(n ast.Node) bool {
+	if n == nil {
+		return true
+	}
+	v := reflect.ValueOf(n)
+	return v.Kind() == reflect.Pointer && v.IsNil()
+}
+
+func reg[T ast.Node](p *Parser, n T) T {
+	if !isNilNode(n) {
+		n.SetID(p.nextID())
+	}
+	return n
+}
+
 func (p *Parser) ParseModule() *ast.Module {
 	mod := &ast.Module{
 		FilePath: p.filePath,
@@ -122,10 +144,10 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 	switch p.peek().Kind {
 	case tokens.STRING:
 		tok := p.advance()
-		path = &ast.StringLit{
+		path = reg(p, &ast.StringLit{
 			Value:    tok.Literal,
 			Location: p.loc(*tok, *tok),
-		}
+		})
 	case tokens.IDENT:
 		path = p.parseIdentExpr()
 	default:
@@ -143,11 +165,11 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 	if end == nil {
 		return nil
 	}
-	return &ast.ImportDecl{
+	return reg(p, &ast.ImportDecl{
 		Path:     path,
 		Alias:    alias,
 		Location: p.loc(*start, *end),
-	}
+	})
 }
 
 func (p *Parser) parseDecl() ast.Decl {
@@ -194,7 +216,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	if !ok {
 		return nil
 	}
-	return &ast.FnDecl{
+	return reg(p, &ast.FnDecl{
 		Receiver:   sig.Receiver,
 		Name:       sig.Name,
 		TypeParams: sig.TypeParams,
@@ -202,12 +224,12 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		ReturnType: sig.ReturnType,
 		Body:       body,
 		Location:   p.loc(*start, p.lastNonNilToken(*start)),
-	}
+	})
 }
 
 func (p *Parser) parseFunctionLikeSig(start *tokens.Token) (functionLikeSig, bool) {
 	sig := functionLikeSig{
-		ReturnType: ast.TypeExpr(&ast.NamedType{Name: "i32", Location: p.loc(*start, *start)}),
+		ReturnType: ast.TypeExpr(reg(p, &ast.NamedType{Name: "i32", Location: p.loc(*start, *start)})),
 	}
 	sig.Receiver = p.parseOptionalReceiver()
 	sig.Name = p.parseFunctionName()
@@ -249,10 +271,10 @@ func (p *Parser) parseFunctionName() *ast.Ident {
 	if len(parts) == 1 {
 		return first
 	}
-	return &ast.Ident{
+	return reg(p, &ast.Ident{
 		Name:     strings.Join(parts, "::"),
-		Location: p.locFromNode(first, &ast.BadExpr{Location: end}),
-	}
+		Location: p.locFromNode(first, reg(p, &ast.BadExpr{Location: end})),
+	})
 }
 
 func (p *Parser) parseFnBody() (*ast.BlockStmt, bool, bool) {
@@ -284,10 +306,10 @@ func (p *Parser) parseRequiredBlock(owner blockOwner) (*ast.BlockStmt, bool) {
 			WithPrimaryLabel(loc, "add missing `{}` here"),
 	)
 	empty := source.NewLocation(p.filePath, insert, insert)
-	return &ast.BlockStmt{
+	return reg(p, &ast.BlockStmt{
 		Stmts:    make([]ast.Stmt, 0),
 		Location: empty,
-	}, true
+	}), true
 }
 
 func (p *Parser) parseOptionalReceiver() *ast.Param {
@@ -426,14 +448,14 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 		// TODO: Add proper handling
 		return nil
 	}
-	return &ast.LetDecl{
+	return reg(p, &ast.LetDecl{
 		Name:        name,
 		Type:        ty,
 		Value:       value,
 		IsMutable:   isMutable,
 		IsModuleVar: isModuleVar,
 		Location:    p.loc(*start, *end),
-	}
+	})
 }
 
 func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
@@ -445,13 +467,13 @@ func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 	if !ok {
 		return nil
 	}
-	return &ast.ConstDecl{
+	return reg(p, &ast.ConstDecl{
 		Name:        name,
 		Type:        ty,
 		Value:       value,
 		IsModuleVar: isModuleVar,
 		Location:    p.loc(*start, *end),
-	}
+	})
 }
 
 func (p *Parser) parseBlock() ast.Stmt {
@@ -472,10 +494,10 @@ func (p *Parser) parseBlock() ast.Stmt {
 	if end == nil {
 		return nil
 	}
-	return &ast.BlockStmt{
+	return reg(p, &ast.BlockStmt{
 		Stmts:    stmts,
 		Location: p.loc(*start, *end),
-	}
+	})
 }
 
 func (p *Parser) parseStmt() ast.Stmt {
@@ -529,12 +551,12 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		}
 		endTok = p.lastTokenOfStmt(elseStmt, elseTok)
 	}
-	return &ast.IfStmt{
+	return reg(p, &ast.IfStmt{
 		Cond:     cond,
 		Then:     thenBlock,
 		Else:     elseStmt,
 		Location: p.loc(*start, endTok),
-	}
+	})
 }
 
 func (p *Parser) parseReturnStmt() ast.Stmt {
@@ -558,10 +580,10 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 			return nil
 		}
 	}
-	return &ast.ReturnStmt{
+	return reg(p, &ast.ReturnStmt{
 		Value:    value,
 		Location: p.loc(*start, *end),
-	}
+	})
 }
 
 func (p *Parser) parseExprStmt() ast.Stmt {
@@ -581,10 +603,10 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 			return nil
 		}
 	}
-	return &ast.ExprStmt{
+	return reg(p, &ast.ExprStmt{
 		Expr:     expr,
-		Location: p.locFromNode(expr, &ast.BadExpr{Location: p.loc(*end, *end)}),
-	}
+		Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+	})
 }
 
 func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback tokens.Token) tokens.Token {
@@ -621,7 +643,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		return p.parseEnumTypeExpr()
 	case tokens.IDENT:
 		p.advance()
-		id := &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)}
+		id := reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
 		if p.match(tokens.DCOLON) {
 			next := p.peek()
 			if next.Kind != tokens.IDENT {
@@ -629,14 +651,14 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 				return nil
 			}
 			p.advance()
-			member := &ast.Ident{Name: next.Literal, Location: p.loc(next, next)}
-			return &ast.ScopeResolution{
+			member := reg(p, &ast.Ident{Name: next.Literal, Location: p.loc(next, next)})
+			return reg(p, &ast.ScopeResolution{
 				Module:   id,
 				Name:     member,
 				Location: p.loc(tok, next),
-			}
+			})
 		}
-		return &ast.NamedType{Name: id.Name, Location: id.Location}
+		return reg(p, &ast.NamedType{Name: id.Name, Location: id.Location})
 	default:
 		p.errorf(tok, diagnostics.ErrInvalidType, "expected type")
 		return nil
@@ -653,11 +675,11 @@ func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
 	if target == nil {
 		return nil
 	}
-	return &ast.RefType{
+	return reg(p, &ast.RefType{
 		Mutable:  isMutable,
 		Target:   target,
-		Location: p.locFromNode(&ast.BadExpr{Location: p.loc(*start, *start)}, target),
-	}
+		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
+	})
 }
 
 func (p *Parser) parseRawPtrTypeExpr() ast.TypeExpr {
@@ -679,11 +701,11 @@ func (p *Parser) parseRawPtrTypeExpr() ast.TypeExpr {
 	if target == nil {
 		return nil
 	}
-	return &ast.RawPtrType{
+	return reg(p, &ast.RawPtrType{
 		Mutable:  isMutable,
 		Target:   target,
-		Location: p.locFromNode(&ast.BadExpr{Location: p.loc(*start, *start)}, target),
-	}
+		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
+	})
 }
 
 func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
@@ -710,14 +732,14 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	if p.consume(tokens.RPAREN, "expected ')' after function type parameters") == nil {
 		return nil
 	}
-	ret := ast.TypeExpr(&ast.NamedType{Name: "void", Location: p.loc(*start, *start)})
+	ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: "void", Location: p.loc(*start, *start)}))
 	if p.match(tokens.COLON) {
 		ret = p.parseTypeExpr()
 		if ret == nil {
 			return nil
 		}
 	}
-	return &ast.FuncType{Params: params, Return: ret, Location: p.loc(*start, p.lastNonNilToken(*start))}
+	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: p.loc(*start, p.lastNonNilToken(*start))})
 }
 
 func (p *Parser) parseTypeAliasDecl() ast.Decl {
@@ -739,7 +761,7 @@ func (p *Parser) parseTypeAliasDecl() ast.Decl {
 	if end == nil {
 		return nil
 	}
-	return &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: p.loc(*start, *end)}
+	return reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: p.loc(*start, *end)})
 }
 
 func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
@@ -772,7 +794,7 @@ func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
 	if end == nil {
 		return nil
 	}
-	return &ast.StructType{Fields: fields, Location: p.loc(*start, *end)}
+	return reg(p, &ast.StructType{Fields: fields, Location: p.loc(*start, *end)})
 }
 
 func (p *Parser) parseInterfaceTypeExpr() ast.TypeExpr {
@@ -797,7 +819,7 @@ func (p *Parser) parseInterfaceTypeExpr() ast.TypeExpr {
 		if p.consume(tokens.RPAREN, "expected ')' after method parameters") == nil {
 			return nil
 		}
-		ret := ast.TypeExpr(&ast.NamedType{Name: "void", Location: methodName.Location})
+		ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: "void", Location: methodName.Location}))
 		if p.match(tokens.COLON) {
 			ret = p.parseTypeExpr()
 			if ret == nil {
@@ -813,7 +835,7 @@ func (p *Parser) parseInterfaceTypeExpr() ast.TypeExpr {
 	if end == nil {
 		return nil
 	}
-	return &ast.InterfaceType{Methods: methods, Location: p.loc(*start, *end)}
+	return reg(p, &ast.InterfaceType{Methods: methods, Location: p.loc(*start, *end)})
 }
 
 func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
@@ -845,7 +867,7 @@ func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
 	if end == nil {
 		return nil
 	}
-	return &ast.EnumType{Variants: variants, Location: p.loc(*start, *end)}
+	return reg(p, &ast.EnumType{Variants: variants, Location: p.loc(*start, *end)})
 }
 
 func (p *Parser) consume(kind tokens.Kind, msg string) *tokens.Token {

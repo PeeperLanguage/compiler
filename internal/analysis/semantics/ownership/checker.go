@@ -76,8 +76,10 @@ func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt) {
 		return
 	}
 	scope := parentScope
-	if s, ok := c.module.BlockScopes[block]; ok && s != nil {
-		scope = s
+	if c.module.Semantics != nil {
+		if s, ok := c.module.Semantics.BlockScopes[block.ID()]; ok && s != nil {
+			scope = s
+		}
 	}
 	prevBorrowScope := c.borrowScope
 	if prevBorrowScope == nil {
@@ -252,8 +254,8 @@ func (c *checker) exprType(scope *table.Scope, expr ast.Expr) symbols.Type {
 	if c == nil || scope == nil || expr == nil {
 		return nil
 	}
-	if c.module != nil && c.module.ExprTypes != nil {
-		if t, ok := c.module.ExprTypes[expr]; ok && t != nil {
+	if c.module != nil && c.module.Semantics != nil {
+		if t, ok := c.module.Semantics.ExprTypes[expr.ID()]; ok && t != nil {
 			return t
 		}
 	}

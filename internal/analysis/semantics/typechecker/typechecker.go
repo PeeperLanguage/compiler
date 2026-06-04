@@ -134,8 +134,10 @@ func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, ret
 		return
 	}
 	scope := parentScope
-	if s, ok := c.module.BlockScopes[block]; ok && s != nil {
-		scope = s
+	if c.module.Semantics != nil {
+		if s, ok := c.module.Semantics.BlockScopes[block.ID()]; ok && s != nil {
+			scope = s
+		}
 	}
 	for _, stmt := range block.Stmts {
 		c.checkStmt(scope, stmt, returnType)
@@ -281,11 +283,8 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return nil
 	}
 	defer func() {
-		if resolved != nil && c.module != nil {
-			if c.module.ExprTypes == nil {
-				c.module.ExprTypes = make(map[ast.Expr]typeinfo.Type)
-			}
-			c.module.ExprTypes[expr] = resolved
+		if resolved != nil && c.module != nil && c.module.Semantics != nil {
+			c.module.Semantics.ExprTypes[expr.ID()] = resolved
 		}
 	}()
 	switch node := expr.(type) {
