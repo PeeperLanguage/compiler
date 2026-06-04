@@ -607,6 +607,10 @@ func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback tokens.Token) tokens.To
 func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	tok := p.peek()
 	switch tok.Kind {
+	case tokens.AMP:
+		return p.parseRefTypeExpr()
+	case tokens.ASTERISK:
+		return p.parseRawPtrTypeExpr()
 	case tokens.FN:
 		return p.parseFuncTypeExpr()
 	case tokens.STRUCT:
@@ -636,6 +640,49 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	default:
 		p.errorf(tok, diagnostics.ErrInvalidType, "expected type")
 		return nil
+	}
+}
+
+func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
+	start := p.consume(tokens.AMP, "expected '&' in reference type")
+	if start == nil {
+		return nil
+	}
+	isMutable := p.match(tokens.MUT)
+	target := p.parseTypeExpr()
+	if target == nil {
+		return nil
+	}
+	return &ast.RefType{
+		Mutable:  isMutable,
+		Target:   target,
+		Location: p.locFromNode(&ast.BadExpr{Location: p.loc(*start, *start)}, target),
+	}
+}
+
+func (p *Parser) parseRawPtrTypeExpr() ast.TypeExpr {
+	start := p.consume(tokens.ASTERISK, "expected '*' in raw pointer type")
+	if start == nil {
+		return nil
+	}
+	var isMutable bool
+	switch {
+	case p.match(tokens.CONST):
+		isMutable = false
+	case p.match(tokens.MUT):
+		isMutable = true
+	default:
+		p.errorf(p.peek(), diagnostics.ErrInvalidType, "expected 'const' or 'mut' after '*' in raw pointer type")
+		return nil
+	}
+	target := p.parseTypeExpr()
+	if target == nil {
+		return nil
+	}
+	return &ast.RawPtrType{
+		Mutable:  isMutable,
+		Target:   target,
+		Location: p.locFromNode(&ast.BadExpr{Location: p.loc(*start, *start)}, target),
 	}
 }
 

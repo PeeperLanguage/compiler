@@ -34,6 +34,16 @@ type NamedType struct {
 	Name string
 }
 
+type RefType struct {
+	Mutable bool
+	Target  Type
+}
+
+type RawPtrType struct {
+	Mutable bool
+	Target  Type
+}
+
 type FuncType struct {
 	Params []Type
 	Return Type
@@ -69,6 +79,8 @@ func (*FloatType) typeNode()     {}
 func (*BoolType) typeNode()      {}
 func (*CStrType) typeNode()      {}
 func (*NamedType) typeNode()     {}
+func (*RefType) typeNode()       {}
+func (*RawPtrType) typeNode()    {}
 func (*FuncType) typeNode()      {}
 func (*StructType) typeNode()    {}
 func (*InterfaceType) typeNode() {}
@@ -103,6 +115,28 @@ func (t *NamedType) Text() string {
 		return ""
 	}
 	return t.Name
+}
+
+func (t *RefType) Text() string {
+	if t == nil {
+		return ""
+	}
+	prefix := "&"
+	if t.Mutable {
+		prefix = "&mut "
+	}
+	return prefix + TypeText(t.Target)
+}
+
+func (t *RawPtrType) Text() string {
+	if t == nil {
+		return ""
+	}
+	prefix := "*const "
+	if t.Mutable {
+		prefix = "*mut "
+	}
+	return prefix + TypeText(t.Target)
 }
 
 func (t *FuncType) Text() string {
@@ -216,6 +250,16 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 			return &IntegerType{Signed: signed, Bits: bits}
 		}
 		return &NamedType{Name: typ.Name}
+	case *ast.RefType:
+		if typ == nil {
+			return nil
+		}
+		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
+	case *ast.RawPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &RawPtrType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
@@ -310,6 +354,12 @@ func SameType(left, right Type) bool {
 	case *NamedType:
 		r, ok := right.(*NamedType)
 		return ok && r != nil && l.Name == r.Name
+	case *RefType:
+		r, ok := right.(*RefType)
+		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
+	case *RawPtrType:
+		r, ok := right.(*RawPtrType)
+		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
 	case *FuncType:
 		r, ok := right.(*FuncType)
 		if !ok || r == nil || l == nil {
