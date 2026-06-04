@@ -111,8 +111,10 @@ func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Bloc
 	}
 	out.Location = block.Loc()
 	scope := parentScope
-	if s, ok := module.BlockScopes[block]; ok && s != nil {
-		scope = s
+	if module.Semantics != nil {
+		if s, ok := module.Semantics.BlockScopes[block.ID()]; ok && s != nil {
+			scope = s
+		}
 	}
 	for _, stmt := range block.Stmts {
 		appendStmt(module, scope, out, stmt, returnType, ctx)
@@ -221,8 +223,8 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 
 	// Fetch canonical type from the typechecker side-table when available.
 	resolvedTypeStr := ""
-	if module != nil && module.ExprTypes != nil {
-		if t, ok := module.ExprTypes[expr]; ok && t != nil {
+	if module != nil && module.Semantics != nil {
+		if t, ok := module.Semantics.ExprTypes[expr.ID()]; ok && t != nil {
 			resolvedTypeStr = typeinfo.TypeText(t)
 		}
 	}
