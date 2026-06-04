@@ -30,7 +30,8 @@ const (
 	SymbolUnknown Kind = "unknown"
 )
 
-type Type interface {
+type Type interface{
+	TypeNode()
 	Text() string
 }
 
@@ -59,6 +60,24 @@ func New(name string, kind Kind, node ast.Node) *Symbol {
 		Location: loc,
 		ASTNode:  node,
 	}
+}
+
+func (s *Symbol) BindType(typ Type) bool {
+	if s == nil || typ == nil {
+		return false
+	}
+	s.Type = typ
+	return true
+}
+
+// SymbolType returns the semantic type stored on sym, or (nil, false) if sym
+// carries no type or the stored value does not implement typeinfo.Type.
+// This is the canonical single-source-of-truth lookup shared across all passes.
+func GetSymbolType(sym *Symbol) (Type, bool) {
+	if sym == nil || sym.Type == nil {
+		return nil, false
+	}
+	return sym.Type, true
 }
 
 func IsPubName(name string) bool {

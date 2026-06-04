@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -650,5 +652,29 @@ func TestParseBorrowExpressions(t *testing.T) {
 	bBorrow, ok := bDecl.Value.(*ast.BorrowExpr)
 	if !ok || !bBorrow.Mutable {
 		t.Fatalf("stmt[2] expected mutable borrow, got %#v", bDecl.Value)
+	}
+}
+
+func TestParseOwnershipFixture(t *testing.T) {
+	srcPath := filepath.Join("..", "..", "..", "x_test", "ownership_0.em")
+	src, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	diag := diagnostics.NewDiagnosticBag(srcPath)
+	stream := lexer.Lex(srcPath, string(src), diag)
+	mod := ParseModule(srcPath, stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 8 {
+		t.Fatalf("decls: got %d want 8", len(mod.Decls))
+	}
+	mainFn, ok := mod.Decls[7].(*ast.FnDecl)
+	if !ok || mainFn.Body == nil {
+		t.Fatalf("last decl expected function with body, got %#v", mod.Decls[7])
+	}
+	if len(mainFn.Body.Stmts) != 4 {
+		t.Fatalf("main stmts: got %d want 4", len(mainFn.Body.Stmts))
 	}
 }

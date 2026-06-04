@@ -1,4 +1,4 @@
-package typechecher
+package typechecker
 
 import (
 	"fmt"
@@ -20,31 +20,37 @@ type checker struct {
 
 // --- helpers -----------------------------------------------------------------
 
-// isInvalidOrUnknown replaces the repeated `typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)` pattern.
-func isInvalidOrUnknown(t typeinfo.Type) bool {
-	return typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)
-}
-
-func isAllowedType(t typeinfo.Type) bool {
-	if typeinfo.IsArithmetic(t) {
-		return true
-	}
+func isLowerableType(t typeinfo.Type) bool {
 	switch typ := t.(type) {
+	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
+		return true
 	case *typeinfo.RefType:
-		return typ != nil && isAllowedType(typ.Target)
+		return typ != nil && isLowerableType(typ.Target)
 	case *typeinfo.RawPtrType:
-		return typ != nil && isAllowedType(typ.Target)
+		return typ != nil && isLowerableType(typ.Target)
+	case *typeinfo.StructType:
+		if typ == nil {
+			return false
+		}
+		for _, field := range typ.Fields {
+			if !isLowerableType(field.Type) {
+				return false
+			}
+		}
+		return true
+	case *typeinfo.EnumType:
+		return typ != nil
 	}
 	fn, ok := t.(*typeinfo.FuncType)
 	if !ok || fn == nil {
 		return false
 	}
 	for _, param := range fn.Params {
-		if !isAllowedType(param) {
+		if !isLowerableType(param) {
 			return false
 		}
 	}
-	return isAllowedType(fn.Return)
+	return isLowerableType(fn.Return)
 }
 
 func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
@@ -57,7 +63,7 @@ func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
 	if !found || sym == nil || sym.Kind != symbols.SymbolType {
 		return typ
 	}
-	resolved, ok := lookupSymbolType(sym)
+	resolved, ok := symbols.GetSymbolType(sym)
 	if !ok {
 		return typ
 	}
@@ -78,21 +84,6 @@ func (c *checker) fnTypeFromDecl(decl *ast.FnDecl) *typeinfo.FuncType {
 	}
 }
 
-func bindSymbolType(sym *symbols.Symbol, typ typeinfo.Type) {
-	if sym == nil || typ == nil {
-		return
-	}
-	sym.Type = typ
-}
-
-func lookupSymbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
-	if sym == nil || sym.Type == nil {
-		return nil, false
-	}
-	typ, ok := sym.Type.(typeinfo.Type)
-	return typ, ok && typ != nil
-}
-
 // -----------------------------------------------------------------------------
 
 func (c *checker) checkModule() {
@@ -106,7 +97,7 @@ func (c *checker) checkModule() {
 				continue
 			}
 			if fn.Body == nil {
-				bindSymbolType(sym, c.fnTypeFromDecl(fn))
+				sym.BindType(c.fnTypeFromDecl(fn))
 			} else {
 				c.checkFunction(sym, fn)
 			}
@@ -119,7 +110,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		return
 	}
 	c.checkFunctionShape(fn)
-	bindSymbolType(sym, c.fnTypeFromDecl(fn))
+	sym.BindType(c.fnTypeFromDecl(fn))
 	if sym.Scope == nil {
 		return
 	}
@@ -133,7 +124,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrUndefinedSymbol, "missing parameter binding")
 			return
 		}
-		bindSymbolType(paramSym, c.typeFromSyntax(param.Type))
+		paramSym.BindType(c.typeFromSyntax(param.Type))
 	}
 	c.checkBlock(funcScope, fn.Body, c.typeFromSyntax(fn.ReturnType))
 }
@@ -181,7 +172,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
 		} else {
 			condType := c.typeExpr(scope, node.Cond, nil)
-			if condType != nil && !isInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
+			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 				common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Cond, diagnostics.ErrInvalidOperation,
 					"if condition must be bool or scalar number")
 			}
@@ -190,10 +181,10 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ExprStmt:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
-			"expression statements unsupported in current compiler stage")
+			"expression statements are not yet supported")
 	default:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
-			"unsupported statement for arithmetic flow")
+			"unsupported statement")
 	}
 }
 
@@ -227,18 +218,18 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 
 	if value == nil {
 		if requireInitializer {
-			bindSymbolType(sym, &typeinfo.InvalidType{})
+			sym.BindType(&typeinfo.InvalidType{})
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrMissingInitializer,
 				"missing initializer for const declaration")
 			return
 		}
 		if declType == nil {
-			bindSymbolType(sym, &typeinfo.InvalidType{})
+			sym.BindType(&typeinfo.InvalidType{})
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrMissingType,
 				"let declaration needs type or initializer")
 			return
 		}
-		bindSymbolType(sym, declType)
+		sym.BindType(declType)
 		return
 	}
 
@@ -250,13 +241,13 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, value, diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valType), typeinfo.TypeText(declType)))
-		bindSymbolType(sym, &typeinfo.InvalidType{})
+		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
 	if declType != nil {
-		bindSymbolType(sym, declType)
+		sym.BindType(declType)
 	} else {
-		bindSymbolType(sym, valType)
+		sym.BindType(valType)
 	}
 }
 
@@ -269,13 +260,13 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 			"receivers not supported in current compiler stage")
 		return
 	}
-	if !isAllowedType(c.typeFromSyntax(decl.ReturnType)) {
+	if !isLowerableType(c.typeFromSyntax(decl.ReturnType)) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
 			"function return type must be builtin integer, f32/f64, or function type in current compiler stage")
 		return
 	}
 	for _, param := range decl.Params {
-		if !isAllowedType(c.typeFromSyntax(param.Type)) {
+		if !isLowerableType(c.typeFromSyntax(param.Type)) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, param.Name, diagnostics.ErrInvalidType,
 				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage")
 			return
@@ -304,7 +295,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name))
 			return &typeinfo.InvalidType{}
 		}
-		t, ok := lookupSymbolType(sym)
+		t, ok := symbols.GetSymbolType(sym)
 		if !ok || t == nil {
 			return &typeinfo.UnknownType{}
 		}
@@ -330,7 +321,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 
 	default:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidExpression,
-			"unsupported expression for arithmetic flow")
+			"unsupported expression type")
 		return nil
 	}
 }
@@ -358,7 +349,7 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 	if argType == nil {
 		return &typeinfo.InvalidType{}
 	}
-	if isInvalidOrUnknown(argType) {
+	if typeinfo.IsInvalidOrUnknown(argType) {
 		return &typeinfo.InvalidType{}
 	}
 	if !typeinfo.IsArithmetic(argType) && !typeinfo.SameType(argType, &typeinfo.BoolType{}) {
@@ -382,7 +373,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	left := c.typeExpr(scope, node.Left, expected)
 	right := c.typeExpr(scope, node.Right, expected)
 
-	if left == nil || right == nil || isInvalidOrUnknown(left) || isInvalidOrUnknown(right) {
+	if left == nil || right == nil || typeinfo.IsInvalidOrUnknown(left) || typeinfo.IsInvalidOrUnknown(right) {
 		return &typeinfo.InvalidType{}
 	}
 
@@ -430,7 +421,7 @@ func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) t
 			if fnType.Return != nil && !typeinfo.IsUnknown(fnType.Return) {
 				return fnType.Return
 			}
-			if call != nil && !isInvalidOrUnknown(fnType.Return) {
+			if call != nil && !typeinfo.IsInvalidOrUnknown(fnType.Return) {
 				common.AddError(c.ctx.Diagnostics, c.module.FilePath, call, diagnostics.ErrInvalidType,
 					"call has unknown return type")
 			}
@@ -445,7 +436,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 		return nil
 	}
 	targetType := c.typeFromSyntax(node.TypeExpr)
-	if targetType == nil || isInvalidOrUnknown(targetType) {
+	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.TypeExpr, diagnostics.ErrInvalidType,
 			"invalid target type for cast")
 		return &typeinfo.InvalidType{}
@@ -454,7 +445,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 		return &typeinfo.InvalidType{}
 	}
 	exprType := c.typeExpr(scope, node.Expr, nil)
-	if exprType == nil || isInvalidOrUnknown(exprType) {
+	if exprType == nil || typeinfo.IsInvalidOrUnknown(exprType) {
 		return &typeinfo.InvalidType{}
 	}
 	compat := typeinfo.CheckNumericCompatibility(targetType, exprType)
@@ -472,7 +463,7 @@ func (c *checker) typeBorrowExpr(scope *table.Scope, node *ast.BorrowExpr) typei
 		return &typeinfo.InvalidType{}
 	}
 	target := c.typeExpr(scope, node.Expr, nil)
-	if target == nil || isInvalidOrUnknown(target) {
+	if target == nil || typeinfo.IsInvalidOrUnknown(target) {
 		return &typeinfo.InvalidType{}
 	}
 	return &typeinfo.RefType{
@@ -485,7 +476,7 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 	if node == nil {
 		return nil
 	}
-	if isInvalidOrUnknown(expected) {
+	if typeinfo.IsInvalidOrUnknown(expected) {
 		expected = nil
 	}
 	if expected != nil {
@@ -550,7 +541,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	}
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
-		if !isInvalidOrUnknown(calleeType) {
+		if !typeinfo.IsInvalidOrUnknown(calleeType) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr, diagnostics.ErrNotCallable,
 				"call target is not a function")
 		}
@@ -600,7 +591,7 @@ func (c *checker) qualifiedScopeType(scope *table.Scope, node *ast.ScopeResoluti
 			"unknown identifier `"+member+"` in module `"+alias+"`")
 		return &typeinfo.InvalidType{}
 	}
-	t, ok := lookupSymbolType(sym)
+	t, ok := symbols.GetSymbolType(sym)
 	if !ok || t == nil {
 		return &typeinfo.UnknownType{}
 	}

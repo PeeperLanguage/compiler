@@ -9,7 +9,7 @@ import (
 )
 
 type Type interface {
-	typeNode()
+	TypeNode()
 	Text() string
 }
 
@@ -72,19 +72,19 @@ type EnumType struct {
 	Variants []string
 }
 
-func (*InvalidType) typeNode()   {}
-func (*UnknownType) typeNode()   {}
-func (*IntegerType) typeNode()   {}
-func (*FloatType) typeNode()     {}
-func (*BoolType) typeNode()      {}
-func (*CStrType) typeNode()      {}
-func (*NamedType) typeNode()     {}
-func (*RefType) typeNode()       {}
-func (*RawPtrType) typeNode()    {}
-func (*FuncType) typeNode()      {}
-func (*StructType) typeNode()    {}
-func (*InterfaceType) typeNode() {}
-func (*EnumType) typeNode()      {}
+func (*InvalidType) TypeNode()   {}
+func (*UnknownType) TypeNode()   {}
+func (*IntegerType) TypeNode()   {}
+func (*FloatType) TypeNode()     {}
+func (*BoolType) TypeNode()      {}
+func (*CStrType) TypeNode()      {}
+func (*NamedType) TypeNode()     {}
+func (*RefType) TypeNode()       {}
+func (*RawPtrType) TypeNode()    {}
+func (*FuncType) TypeNode()      {}
+func (*StructType) TypeNode()    {}
+func (*InterfaceType) TypeNode() {}
+func (*EnumType) TypeNode()      {}
 
 func (*InvalidType) Text() string { return "<invalid>" }
 func (*UnknownType) Text() string { return "<unknown>" }
@@ -511,6 +511,11 @@ func IsInvalid(typ Type) bool {
 func IsUnknown(typ Type) bool {
 	_, ok := typ.(*UnknownType)
 	return ok
+}
+
+// isInvalidOrUnknown replaces the repeated `typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)` pattern.
+func IsInvalidOrUnknown(t Type) bool {
+	return IsInvalid(t) || IsUnknown(t)
 }
 
 type Expr interface {
