@@ -9,7 +9,7 @@ type Ident struct {
 	Location *source.Location
 }
 
-func (*Ident) exprNode()              {}
+func (*Ident) exprNode()               {}
 func (e *Ident) Loc() *source.Location { return e.Location }
 
 type ScopeResolution struct {
@@ -18,15 +18,15 @@ type ScopeResolution struct {
 	Location *source.Location
 }
 
-func (*ScopeResolution) exprNode()              {}
-func (*ScopeResolution) typeNode()              {}
+func (*ScopeResolution) exprNode()               {}
+func (*ScopeResolution) typeNode()               {}
 func (e *ScopeResolution) Loc() *source.Location { return e.Location }
 
 type BadExpr struct {
 	Location *source.Location
 }
 
-func (*BadExpr) exprNode()              {}
+func (*BadExpr) exprNode()               {}
 func (e *BadExpr) Loc() *source.Location { return e.Location }
 
 type NumberLit struct {
@@ -34,7 +34,7 @@ type NumberLit struct {
 	Location *source.Location
 }
 
-func (*NumberLit) exprNode()              {}
+func (*NumberLit) exprNode()               {}
 func (e *NumberLit) Loc() *source.Location { return e.Location }
 
 type StringLit struct {
@@ -42,7 +42,7 @@ type StringLit struct {
 	Location *source.Location
 }
 
-func (*StringLit) exprNode()              {}
+func (*StringLit) exprNode()               {}
 func (e *StringLit) Loc() *source.Location { return e.Location }
 
 type UnaryExpr struct {
@@ -51,8 +51,17 @@ type UnaryExpr struct {
 	Location *source.Location
 }
 
-func (*UnaryExpr) exprNode()              {}
+func (*UnaryExpr) exprNode()               {}
 func (e *UnaryExpr) Loc() *source.Location { return e.Location }
+
+type BorrowExpr struct {
+	Mutable  bool
+	Expr     Expr
+	Location *source.Location
+}
+
+func (*BorrowExpr) exprNode()               {}
+func (e *BorrowExpr) Loc() *source.Location { return e.Location }
 
 type BinaryExpr struct {
 	Left     Expr
@@ -61,7 +70,7 @@ type BinaryExpr struct {
 	Location *source.Location
 }
 
-func (*BinaryExpr) exprNode()              {}
+func (*BinaryExpr) exprNode()               {}
 func (e *BinaryExpr) Loc() *source.Location { return e.Location }
 
 type CallExpr struct {
@@ -70,7 +79,7 @@ type CallExpr struct {
 	Location *source.Location
 }
 
-func (*CallExpr) exprNode()              {}
+func (*CallExpr) exprNode()               {}
 func (e *CallExpr) Loc() *source.Location { return e.Location }
 
 type AsExpr struct {
@@ -79,5 +88,5 @@ type AsExpr struct {
 	Location *source.Location
 }
 
-func (*AsExpr) exprNode()              {}
+func (*AsExpr) exprNode()               {}
 func (e *AsExpr) Loc() *source.Location { return e.Location }

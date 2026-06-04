@@ -50,3 +50,29 @@ func IsCondition(t Type) bool {
 	_, ok := t.(*BoolType)
 	return ok
 }
+
+func IsCopyType(t Type) bool {
+	switch typ := t.(type) {
+	case nil:
+		return false
+	case *InvalidType, *UnknownType:
+		return false
+	case *IntegerType, *FloatType, *BoolType, *CStrType:
+		return true
+	case *RefType, *RawPtrType:
+		return true
+	case *FuncType:
+		if typ == nil {
+			return false
+		}
+		return true
+	case *EnumType:
+		return typ != nil
+	case *StructType:
+		// Conservative v1 rule: structs are move-only until Ember grows an
+		// explicit Copy story for user-defined aggregate types.
+		return false
+	default:
+		return false
+	}
+}
