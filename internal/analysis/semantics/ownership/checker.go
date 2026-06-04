@@ -252,6 +252,11 @@ func (c *checker) exprType(scope *table.Scope, expr ast.Expr) symbols.Type {
 	if c == nil || scope == nil || expr == nil {
 		return nil
 	}
+	if c.module != nil && c.module.ExprTypes != nil {
+		if t, ok := c.module.ExprTypes[expr]; ok && t != nil {
+			return t
+		}
+	}
 	switch node := expr.(type) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)

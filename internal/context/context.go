@@ -72,6 +72,8 @@ type Module struct {
 	ModuleScope *table.Scope
 	// Mappings from block statements to resolved block scopes.
 	BlockScopes map[*ast.BlockStmt]*table.Scope
+	// Mappings from expressions to resolved types.
+	ExprTypes map[ast.Expr]typeinfo.Type
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 
@@ -221,9 +223,10 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	}
 }
 
-func (m *Module) ResetSemantics() {
+func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
 	m.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
+	m.ExprTypes = make(map[ast.Expr]typeinfo.Type)
 }
