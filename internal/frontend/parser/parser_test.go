@@ -566,3 +566,89 @@ type Color enum {
 		t.Fatalf("enum variants: got %d want 3", len(e.Variants))
 	}
 }
+
+func TestParseReferenceAndRawPointerTypes(t *testing.T) {
+	src := `type Reader fn(&i32, &mut i32, *const i32, *mut i32): &i32;
+let shared: &i32;
+let unique: &mut i32;
+let rawConst: *const i32;
+let rawMut: *mut i32;`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 5 {
+		t.Fatalf("decls: got %d want 5", len(mod.Decls))
+	}
+	alias, ok := mod.Decls[0].(*ast.TypeAliasDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected type alias")
+	}
+	fnType, ok := alias.Type.(*ast.FuncType)
+	if !ok {
+		t.Fatalf("decl[0] expected func type")
+	}
+	if len(fnType.Params) != 4 {
+		t.Fatalf("func params: got %d want 4", len(fnType.Params))
+	}
+	ref0, ok := fnType.Params[0].(*ast.RefType)
+	if !ok || ref0.Mutable {
+		t.Fatalf("param[0] expected shared ref type, got %#v", fnType.Params[0])
+	}
+	ref1, ok := fnType.Params[1].(*ast.RefType)
+	if !ok || !ref1.Mutable {
+		t.Fatalf("param[1] expected mutable ref type, got %#v", fnType.Params[1])
+	}
+	ptr2, ok := fnType.Params[2].(*ast.RawPtrType)
+	if !ok || ptr2.Mutable {
+		t.Fatalf("param[2] expected const raw ptr type, got %#v", fnType.Params[2])
+	}
+	ptr3, ok := fnType.Params[3].(*ast.RawPtrType)
+	if !ok || !ptr3.Mutable {
+		t.Fatalf("param[3] expected mutable raw ptr type, got %#v", fnType.Params[3])
+	}
+	ret, ok := fnType.Return.(*ast.RefType)
+	if !ok || ret.Mutable {
+		t.Fatalf("return expected shared ref type, got %#v", fnType.Return)
+	}
+}
+
+func TestParseBorrowExpressions(t *testing.T) {
+	src := `fn main() -> i32 {
+	let mut value: i32 = 0;
+	let a = &value;
+	let b = &mut value;
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil {
+		t.Fatalf("expected function decl, got %#v", mod.Decls[0])
+	}
+	if len(fn.Body.Stmts) != 4 {
+		t.Fatalf("stmts: got %d want 4", len(fn.Body.Stmts))
+	}
+	aDecl, ok := fn.Body.Stmts[1].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("stmt[1] expected let, got %#v", fn.Body.Stmts[1])
+	}
+	aBorrow, ok := aDecl.Value.(*ast.BorrowExpr)
+	if !ok || aBorrow.Mutable {
+		t.Fatalf("stmt[1] expected shared borrow, got %#v", aDecl.Value)
+	}
+	bDecl, ok := fn.Body.Stmts[2].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("stmt[2] expected let, got %#v", fn.Body.Stmts[2])
+	}
+	bBorrow, ok := bDecl.Value.(*ast.BorrowExpr)
+	if !ok || !bBorrow.Mutable {
+		t.Fatalf("stmt[2] expected mutable borrow, got %#v", bDecl.Value)
+	}
+}

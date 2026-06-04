@@ -29,6 +29,12 @@ func isAllowedType(t typeinfo.Type) bool {
 	if typeinfo.IsArithmetic(t) {
 		return true
 	}
+	switch typ := t.(type) {
+	case *typeinfo.RefType:
+		return typ != nil && isAllowedType(typ.Target)
+	case *typeinfo.RawPtrType:
+		return typ != nil && isAllowedType(typ.Target)
+	}
 	fn, ok := t.(*typeinfo.FuncType)
 	if !ok || fn == nil {
 		return false
@@ -319,6 +325,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.AsExpr:
 		return c.typeAsExpr(scope, node)
 
+	case *ast.BorrowExpr:
+		return c.typeBorrowExpr(scope, node)
+
 	default:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidExpression,
 			"unsupported expression for arithmetic flow")
@@ -456,6 +465,20 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 		return &typeinfo.InvalidType{}
 	}
 	return targetType
+}
+
+func (c *checker) typeBorrowExpr(scope *table.Scope, node *ast.BorrowExpr) typeinfo.Type {
+	if c == nil || node == nil || node.Expr == nil {
+		return &typeinfo.InvalidType{}
+	}
+	target := c.typeExpr(scope, node.Expr, nil)
+	if target == nil || isInvalidOrUnknown(target) {
+		return &typeinfo.InvalidType{}
+	}
+	return &typeinfo.RefType{
+		Mutable: node.Mutable,
+		Target:  target,
+	}
 }
 
 func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typeinfo.Type {
