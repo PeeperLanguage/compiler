@@ -213,48 +213,79 @@ func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, return
 }
 
 // lowerASTExpr directly lowers an AST expression to an IR expression using
-// scope lookup for symbol resolution and expectedType for literal coercion.
+// the module context's resolved expression types side-table.
 func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType string) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: "<invalid>"}
 	}
+
+	// Fetch canonical type from the typechecker side-table when available.
+	resolvedTypeStr := ""
+	if module != nil && module.ExprTypes != nil {
+		if t, ok := module.ExprTypes[expr]; ok && t != nil {
+			resolvedTypeStr = typeinfo.TypeText(t)
+		}
+	}
+
 	switch node := expr.(type) {
 	case *ast.NumberLit:
-		return lowerNumberLit(node, expectedType)
+		t := resolvedTypeStr
+		if t == "" {
+			t = expectedType
+		}
+		return lowerNumberLit(node, t)
 
 	case *ast.StringLit:
-		return &ir.StringLit{Value: node.Value, Type: "cstr"}
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" {
+			t = "cstr"
+		}
+		return &ir.StringLit{Value: node.Value, Type: t}
 
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok || sym == nil {
 			return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: "<invalid>"}
 		}
-		return &ir.Ident{Name: symbolName(sym), Type: symTypeText(sym)}
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" || t == "<unknown>" {
+			t = symTypeText(sym)
+		}
+		return &ir.Ident{Name: symbolName(sym), Type: t}
 
 	case *ast.ScopeResolution:
 		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
-			return &ir.Ident{Name: symbolName(sym), Type: symTypeText(sym)}
+			t := resolvedTypeStr
+			if t == "" || t == "<invalid>" || t == "<unknown>" {
+				t = symTypeText(sym)
+			}
+			return &ir.Ident{Name: symbolName(sym), Type: t}
 		}
 		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.Module.Name + "::" + node.Name.Name, Type: "<invalid>"}
 
 	case *ast.UnaryExpr:
 		arg := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
-		exprType := arg.TypeText()
-		if node.Op == "!" {
-			exprType = "bool"
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" {
+			t = arg.TypeText()
+			if node.Op == "!" {
+				t = "bool"
+			}
 		}
-		return &ir.Unary{Op: node.Op, Arg: arg, Type: exprType}
+		return &ir.Unary{Op: node.Op, Arg: arg, Type: t}
 
 	case *ast.BinaryExpr:
 		left := lowerASTExpr(ctx, module, scope, node.Left, expectedType)
 		right := lowerASTExpr(ctx, module, scope, node.Right, expectedType)
-		exprType := left.TypeText()
-		switch node.Op {
-		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
-			exprType = "bool"
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" {
+			t = left.TypeText()
+			switch node.Op {
+			case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+				t = "bool"
+			}
 		}
-		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: exprType}
+		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t}
 
 	case *ast.CallExpr:
 		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, "")
@@ -262,30 +293,34 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		for _, arg := range node.Args {
 			args = append(args, lowerASTExpr(ctx, module, scope, arg, ""))
 		}
-		// Get the return type from the callee symbol (handles qualified callees too).
-		retType := "<invalid>"
-		var sym *symbols.Symbol
-		switch callee := node.Callee.(type) {
-		case *ast.Ident:
-			if s, ok := scope.Lookup(callee.Name); ok {
-				sym = s
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" {
+			var sym *symbols.Symbol
+			switch callee := node.Callee.(type) {
+			case *ast.Ident:
+				if s, ok := scope.Lookup(callee.Name); ok {
+					sym = s
+				}
+			case *ast.ScopeResolution:
+				if s := lookupScopeResolutionSymbol(ctx, module, scope, callee); s != nil {
+					sym = s
+				}
 			}
-		case *ast.ScopeResolution:
-			if s := lookupScopeResolutionSymbol(ctx, module, scope, callee); s != nil {
-				sym = s
+			if sym != nil {
+				if fnType, ok := sym.Type.(*typeinfo.FuncType); ok && fnType != nil && fnType.Return != nil {
+					t = typeinfo.TypeText(fnType.Return)
+				}
 			}
 		}
-		if sym != nil {
-			if fnType, ok := sym.Type.(*typeinfo.FuncType); ok && fnType != nil && fnType.Return != nil {
-				retType = typeinfo.TypeText(fnType.Return)
-			}
-		}
-		return &ir.Call{Callee: calleeExpr, Args: args, Type: retType}
+		return &ir.Call{Callee: calleeExpr, Args: args, Type: t}
 
 	case *ast.AsExpr:
-		targetTypeStr := typeinfo.TypeText(typeinfo.TypeFromSyntax(node.TypeExpr))
-		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, targetTypeStr)
-		return &ir.Cast{Expr: subExpr, Type: targetTypeStr}
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" {
+			t = typeinfo.TypeText(typeinfo.TypeFromSyntax(node.TypeExpr))
+		}
+		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, t)
+		return &ir.Cast{Expr: subExpr, Type: t}
 
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>"}

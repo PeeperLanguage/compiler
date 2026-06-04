@@ -274,13 +274,20 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 }
 
-// typeExpr computes the type of an expression using scope lookup and returns it.
-// The typechecker no longer builds a parallel typeinfo.Expr tree — types are
-// stored directly on symbols. HIR-lower will re-derive types during lowering.
-func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+// typeExpr computes the type of an expression using scope lookup, records it in the
+// module's ExprTypes side table for downstream phases, and returns it.
+func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (resolved typeinfo.Type) {
 	if expr == nil {
 		return nil
 	}
+	defer func() {
+		if resolved != nil && c.module != nil {
+			if c.module.ExprTypes == nil {
+				c.module.ExprTypes = make(map[ast.Expr]typeinfo.Type)
+			}
+			c.module.ExprTypes[expr] = resolved
+		}
+	}()
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		return c.typeNumber(node, expected)
