@@ -149,17 +149,15 @@ func levenshtein(a, b string) int {
 			if a[i-1] != b[j-1] {
 				cost = 1
 			}
-			cur[j] = min3(
-				prev[j]+1,
-				cur[j-1]+1,
+			cur[j] = min(
+				min(
+					prev[j]+1,
+					cur[j-1]+1,
+				),
 				prev[j-1]+cost,
 			)
 		}
 		prev, cur = cur, prev
 	}
 	return prev[len(b)]
-}
-
-func min3(a, b, c int) int {
-	return min(min(a, b), c)
 }

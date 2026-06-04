@@ -1,9 +1,15 @@
 package diagnostics
 
-// Error codes for Ember compiler
+// Error codes for Ember compiler.
+// Codes are grouped by prefix:
+//   L – lexer errors
+//   P – parser errors
+//   D – declaration errors
+//   T – type-checker / semantic errors
+//   M – module / import errors
+//   S – style / info codes
+//   W – warnings
 const (
-	ErrMax = "E0010"
-
 	// Lexer errors (L prefix)
 	ErrUnexpectedCharacter = "L0001"
 	ErrUnterminatedString  = "L0002"
