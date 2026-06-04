@@ -13,7 +13,7 @@ The goal is not to copy Rust or any other compiler blindly. The goal is to build
 
 Do not cargo-cult architecture.
 
-When reusing ideas from Rust or any other compiler:
+When reusing ideas from Rust, Zig or any other compiler:
 
 - copy the idea only if it fits this language
 - simplify when the full design is not needed yet
@@ -58,10 +58,9 @@ These decisions are already part of the language design and should not drift acc
 - Zig-style literals are used: `.{ ... }`
 - methods are declared outside types using attached-method syntax with receivers.
 - `defer` and `panic` are part of the core control-flow model
-- builtin functions are declared in `ember_libs_dev/global.em`
-- stdlib source modules are declared in `ember_libs_dev/std/*.em`
-- builtin declarations use `#[builtin]` and may omit a body
-- external declarations use `#[extern(\"...\")]` and may omit a body
+- builtin functions are declared in `_builtin_library/global.em`
+- stdlib source modules are declared in `_builtin_library/std/*.em`
+- external declarations use `#[extern(\"...\")]` and may omit a body. extern can contain the external linking function name as parameter or keep empty for default behavior.
 - error unions are explicit value-level control flow and are not exceptions
 
 If implementation changes conflict with this, update the language spec first.
@@ -77,10 +76,6 @@ The compiler should be split into clear layers.
 - `hir`: all HIR data structures and HIR-local transforms
 - `mir`: MIR and MIR-local transforms
 - `semantics`: name resolution, type checking, ownership checks
-- `layout`: physical type layout, alignment, size, and field-slot mapping
-- `cfg`: CFG data model only
-- `cfganalysis`: CFG construction and CFG-based analyses
-- `codegen`: lowering and backend work
 
 No package should mix all of these concerns.
 
@@ -90,27 +85,7 @@ HIR-specific rule:
 - keep HIR-related code under `hir`
 - if HIR grows, prefer subpackages under `hir/...` over creating parallel top-level `hir*` packages again
 
-## 5. Lexer Rules
-
-The lexer is not a parser.
-
-- tokenize only
-- no semantic decisions
-- no type inference
-- no ownership analysis
-- no parser-level hacks
-
-Use regex/token-pattern driven tokenization when it improves clarity.
-Do not use regex just because another compiler did. Use it only when the token class is naturally pattern-based, such as numeric literals.
-
-When adding token support:
-
-- keep token names general enough for later phases
-- prefer `NUMBER` over fake subcategories unless syntax requires the split
-- keep literals normalized only when that is clearly beneficial
-- do not silently erase information needed by later phases
-
-## 6. Parser Rules
+## 5. Parser Rules
 
 The parser should build syntax, not interpretation.
 
@@ -127,7 +102,7 @@ Parser code should answer:
 
 If a function makes that hard to see, rewrite it.
 
-## 7. AST Rules
+## 6. AST Rules
 
 AST nodes represent source structure, not semantic conclusions.
 
@@ -140,7 +115,7 @@ Examples:
 - `NumberLit` is better than `IntLit` if the lexer accepts non-integer numerics
 - `ImportDecl` should exist if imports are part of module syntax
 
-## 8. Context And Pipeline Rules
+## 7. Context And Pipeline Rules
 
 Use a central compiler context for shared state.
 
@@ -175,7 +150,7 @@ The pipeline owns:
 
 Do not hide pipeline behavior inside parser or lexer code.
 
-## 8.1 Phase Responsibilities
+## 7.1 Phase Responsibilities
 
 Phase ownership must stay explicit.
 
@@ -255,7 +230,7 @@ Reason:
 - it interacts with control flow, reinitialization, and escapes
 - keeping it separate makes the typechecker simpler and keeps ownership logic aligned with later CFG/data-flow work
 
-## 8.2 Unwind And Error Model
+## 7.2 Unwind And Error Model
 
 Do not conflate `panic` with `E!T`.
 
@@ -273,7 +248,7 @@ This implies:
 
 Do not fake panic semantics by lowering it to an ordinary call and hoping codegen reconstructs unwind behavior later.
 
-## 8.3 Semantic Order vs Physical Layout
+## 7.3 Semantic Order vs Physical Layout
 
 Semantic field order and physical field layout are different concepts.
 
