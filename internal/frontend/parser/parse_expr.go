@@ -83,21 +83,21 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return p.parseIdentExpr()
 	case tokens.NUMBER:
 		p.advance()
-		return &ast.NumberLit{Value: tok.Literal, Location: p.loc(tok, tok)}
+		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: p.loc(tok, tok)})
 	case tokens.STRING:
 		p.advance()
-		return &ast.StringLit{Value: tok.Literal, Location: p.loc(tok, tok)}
+		return reg(p, &ast.StringLit{Value: tok.Literal, Location: p.loc(tok, tok)})
 	case tokens.PLUS, tokens.MINUS, tokens.BANG:
 		p.advance()
 		expr := p.parseExpr(precPrefix)
 		if expr == nil {
 			return nil
 		}
-		return &ast.UnaryExpr{
+		return reg(p, &ast.UnaryExpr{
 			Op:       tok.Literal,
 			Expr:     expr,
 			Location: p.loc(tok, tok),
-		}
+		})
 	case tokens.AMP:
 		p.advance()
 		isMutable := p.match(tokens.MUT)
@@ -105,11 +105,11 @@ func (p *Parser) parsePrefix() ast.Expr {
 		if expr == nil {
 			return nil
 		}
-		return &ast.BorrowExpr{
+		return reg(p, &ast.BorrowExpr{
 			Mutable:  isMutable,
 			Expr:     expr,
-			Location: p.locFromNode(&ast.BadExpr{Location: p.loc(tok, tok)}, expr),
-		}
+			Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(tok, tok)}), expr),
+		})
 	case tokens.LPAREN:
 		p.advance()
 		expr := p.parseExpr(precLowest)
@@ -148,12 +148,12 @@ func (p *Parser) parseInfix(left ast.Expr, precedence int) ast.Expr {
 	if right == nil {
 		return nil
 	}
-	return &ast.BinaryExpr{
+	return reg(p, &ast.BinaryExpr{
 		Left:     left,
 		Op:       op.Literal,
 		Right:    right,
 		Location: p.locFromNode(left, right),
-	}
+	})
 }
 
 func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
@@ -184,11 +184,11 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	if end == nil {
 		return nil
 	}
-	return &ast.CallExpr{
+	return reg(p, &ast.CallExpr{
 		Callee:   callee,
 		Args:     args,
-		Location: p.locFromNode(callee, &ast.BadExpr{Location: p.loc(*end, *end)}),
-	}
+		Location: p.locFromNode(callee, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+	})
 }
 
 func (p *Parser) parseIdentExpr() ast.Expr {
@@ -201,11 +201,11 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 		if member == nil {
 			return nil
 		}
-		return &ast.ScopeResolution{
+		return reg(p, &ast.ScopeResolution{
 			Module:   id,
 			Name:     member,
 			Location: p.locFromNode(id, member),
-		}
+		})
 	}
 	return id
 }
@@ -217,7 +217,7 @@ func (p *Parser) parseIdent() *ast.Ident {
 		return nil
 	}
 	p.advance()
-	return &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)}
+	return reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
 }
 
 // parseAsExpr parses an "as" cast expression: expr as type
@@ -235,9 +235,9 @@ func (p *Parser) parseAsExpr(left ast.Expr) ast.Expr {
 		p.errorf(*asTok, diagnostics.ErrInvalidExpression, "expected type after 'as'")
 		return left
 	}
-	return &ast.AsExpr{
+	return reg(p, &ast.AsExpr{
 		Expr:     left,
 		TypeExpr: typeExpr,
 		Location: p.locFromNode(left, typeExpr),
-	}
+	})
 }

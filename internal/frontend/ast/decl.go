@@ -5,6 +5,7 @@ import (
 )
 
 type ImportDecl struct {
+	NodeIDHolder
 	Path     Expr
 	Alias    *Ident
 	Location *source.Location
@@ -14,6 +15,7 @@ func (*ImportDecl) declNode()               {}
 func (d *ImportDecl) Loc() *source.Location { return d.Location }
 
 type NamedType struct {
+	NodeIDHolder
 	Name     string
 	Location *source.Location
 }
@@ -22,6 +24,7 @@ func (*NamedType) typeNode()               {}
 func (t *NamedType) Loc() *source.Location { return t.Location }
 
 type RefType struct {
+	NodeIDHolder
 	Mutable  bool
 	Target   TypeExpr
 	Location *source.Location
@@ -31,6 +34,7 @@ func (*RefType) typeNode()               {}
 func (t *RefType) Loc() *source.Location { return t.Location }
 
 type RawPtrType struct {
+	NodeIDHolder
 	Mutable  bool
 	Target   TypeExpr
 	Location *source.Location
@@ -40,6 +44,7 @@ func (*RawPtrType) typeNode()               {}
 func (t *RawPtrType) Loc() *source.Location { return t.Location }
 
 type FuncType struct {
+	NodeIDHolder
 	Params   []TypeExpr
 	Return   TypeExpr
 	Location *source.Location
@@ -49,6 +54,7 @@ func (*FuncType) typeNode()               {}
 func (t *FuncType) Loc() *source.Location { return t.Location }
 
 type StructType struct {
+	NodeIDHolder
 	Fields   []TypeField
 	Location *source.Location
 }
@@ -57,6 +63,7 @@ func (*StructType) typeNode()               {}
 func (t *StructType) Loc() *source.Location { return t.Location }
 
 type InterfaceType struct {
+	NodeIDHolder
 	Methods  []TypeMethod
 	Location *source.Location
 }
@@ -65,6 +72,7 @@ func (*InterfaceType) typeNode()               {}
 func (t *InterfaceType) Loc() *source.Location { return t.Location }
 
 type EnumType struct {
+	NodeIDHolder
 	Variants []EnumVariant
 	Location *source.Location
 }
@@ -103,6 +111,7 @@ type TypeParam struct {
 }
 
 type LetDecl struct {
+	NodeIDHolder
 	Name        *Ident
 	Type        TypeExpr
 	Value       Expr
@@ -116,6 +125,7 @@ func (d *LetDecl) Loc() *source.Location { return d.Location }
 func (*LetDecl) stmtNode()               {}
 
 type ConstDecl struct {
+	NodeIDHolder
 	Name        *Ident
 	Type        TypeExpr
 	Value       Expr
@@ -128,6 +138,7 @@ func (d *ConstDecl) Loc() *source.Location { return d.Location }
 func (*ConstDecl) stmtNode()               {}
 
 type FnDecl struct {
+	NodeIDHolder
 	Receiver   *Param
 	Name       *Ident
 	TypeParams []TypeParam
@@ -141,6 +152,7 @@ func (*FnDecl) declNode()               {}
 func (d *FnDecl) Loc() *source.Location { return d.Location }
 
 type TypeAliasDecl struct {
+	NodeIDHolder
 	Name       *Ident
 	TypeParams []TypeParam
 	Type       TypeExpr
@@ -151,6 +163,7 @@ func (*TypeAliasDecl) declNode()               {}
 func (d *TypeAliasDecl) Loc() *source.Location { return d.Location }
 
 type StructDecl struct {
+	NodeIDHolder
 	Name       *Ident
 	TypeParams []TypeParam
 	Fields     []TypeField
@@ -161,6 +174,7 @@ func (*StructDecl) declNode()               {}
 func (d *StructDecl) Loc() *source.Location { return d.Location }
 
 type InterfaceDecl struct {
+	NodeIDHolder
 	Name       *Ident
 	TypeParams []TypeParam
 	Methods    []TypeMethod
@@ -171,6 +185,7 @@ func (*InterfaceDecl) declNode()               {}
 func (d *InterfaceDecl) Loc() *source.Location { return d.Location }
 
 type EnumDecl struct {
+	NodeIDHolder
 	Name       *Ident
 	TypeParams []TypeParam
 	Variants   []EnumVariant

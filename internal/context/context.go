@@ -70,10 +70,8 @@ type Module struct {
 	LLVMIR string
 	// Top-level names visible in module.
 	ModuleScope *table.Scope
-	// Mappings from block statements to resolved block scopes.
-	BlockScopes map[*ast.BlockStmt]*table.Scope
-	// Mappings from expressions to resolved types.
-	ExprTypes map[ast.Expr]typeinfo.Type
+	// Grouped semantic analysis metadata.
+	Semantics *SemanticInfo
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 
@@ -223,10 +221,21 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	}
 }
 
+type SemanticInfo struct {
+	BlockScopes map[ast.NodeID]*table.Scope
+	ExprTypes   map[ast.NodeID]typeinfo.Type
+}
+
+func NewSemanticInfo() *SemanticInfo {
+	return &SemanticInfo{
+		BlockScopes: make(map[ast.NodeID]*table.Scope),
+		ExprTypes:   make(map[ast.NodeID]typeinfo.Type),
+	}
+}
+
 func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
-	m.BlockScopes = make(map[*ast.BlockStmt]*table.Scope)
-	m.ExprTypes = make(map[ast.Expr]typeinfo.Type)
+	m.Semantics = NewSemanticInfo()
 }

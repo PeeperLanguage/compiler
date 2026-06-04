@@ -2,8 +2,19 @@ package ast
 
 import "compiler/core/source"
 
+type NodeID uint32
+
+type NodeIDHolder struct {
+	NodeID NodeID
+}
+
+func (h *NodeIDHolder) ID() NodeID      { return h.NodeID }
+func (h *NodeIDHolder) SetID(id NodeID) { h.NodeID = id }
+
 type Node interface {
 	Loc() *source.Location
+	ID() NodeID
+	SetID(NodeID)
 }
 
 type Decl interface {
