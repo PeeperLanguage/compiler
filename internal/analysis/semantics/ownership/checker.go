@@ -143,13 +143,36 @@ func (c *checker) checkReturn(scope *table.Scope, value ast.Expr) {
 	if c == nil || scope == nil || value == nil {
 		return
 	}
-	if _, ok := value.(*ast.BorrowExpr); ok {
+	if c.isEscapingBorrowReturn(scope, value) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, value, diagnostics.ErrBorrowEscape,
 			"borrowed reference escapes by return")
 		return
 	}
 	c.consumeByValue(scope, value)
 	c.checkExpr(scope, value)
+}
+
+func (c *checker) isEscapingBorrowReturn(scope *table.Scope, value ast.Expr) bool {
+	if c == nil || scope == nil || value == nil {
+		return false
+	}
+	if _, ok := value.(*ast.BorrowExpr); ok {
+		return true
+	}
+	id, ok := value.(*ast.Ident)
+	if !ok || id == nil {
+		return false
+	}
+	sym, found := scope.Lookup(id.Name)
+	if !found || sym == nil {
+		return false
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		return false
+	}
+	_, isRef := typ.(*typeinfo.RefType)
+	return isRef
 }
 
 func (c *checker) checkExpr(scope *table.Scope, expr ast.Expr) {
