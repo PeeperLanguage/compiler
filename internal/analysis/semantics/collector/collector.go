@@ -20,7 +20,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 		return
 	}
 	c.module.ModuleScope = table.New(c.ctx.GlobalScope)
-	c.module.ResetSemantics()
+	c.module.ResetSemanticData()
 	for alias := range c.module.Imports {
 		if alias == "" {
 			continue
