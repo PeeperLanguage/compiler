@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
@@ -59,10 +60,31 @@ func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
 	if !ok || named == nil || named.Name == "" || c == nil || c.module == nil || c.module.ModuleScope == nil {
 		return typ
 	}
-	sym, found := c.module.ModuleScope.Lookup(named.Name)
+	var sym *symbols.Symbol
+	var found bool
+	if strings.Contains(named.Name, "::") {
+		parts := strings.Split(named.Name, "::")
+		if len(parts) == 2 {
+			qualifier := parts[0]
+			member := parts[1]
+			imp, ok := c.module.Imports[qualifier]
+			if ok {
+				if impSym, ok := c.module.ModuleScope.LookupLocal(qualifier); ok && impSym != nil {
+					impSym.Used = true
+				}
+				mod, ok := c.ctx.ModuleByKey(imp.Key)
+				if ok && mod != nil && mod.ModuleScope != nil {
+					sym, found = mod.ModuleScope.LookupLocal(member)
+				}
+			}
+		}
+	} else {
+		sym, found = c.module.ModuleScope.Lookup(named.Name)
+	}
 	if !found || sym == nil || sym.Kind != symbols.SymbolType {
 		return typ
 	}
+	sym.Used = true
 	resolved, ok := symbols.GetSymbolType(sym)
 	if !ok {
 		return typ

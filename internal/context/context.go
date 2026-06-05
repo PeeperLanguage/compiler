@@ -25,7 +25,7 @@ const (
 	// Project source file.
 	ModuleOriginLocal ModuleOrigin = "local"
 	// Standard library source file.
-	ModuleOriginStdlib ModuleOrigin = "stdlib"
+	ModuleOriginStdlib ModuleOrigin = "core"
 	// Package dependency source file.
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
@@ -36,6 +36,8 @@ type ResolvedImport struct {
 	Key string
 	// Module path as written in source.
 	ImportPath string
+	// Source import declaration, when resolved from parsed syntax.
+	Decl *ast.ImportDecl
 	// Absolute source path.
 	FilePath string
 	// Local, stdlib, or dependency.

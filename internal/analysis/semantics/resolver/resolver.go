@@ -124,6 +124,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
+			sym.Used = true
 			if sym.Kind == symbols.SymbolImport {
 				common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression,
 					"import alias must be qualified with `::`")
@@ -201,6 +202,10 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrSymbolNotExported,
 			"`"+member+"` is not exported from `"+qualifier+"`")
 		return false
+	}
+	sym.Used = true
+	if impSym, ok := r.module.ModuleScope.LookupLocal(qualifier); ok && impSym != nil {
+		impSym.Used = true
 	}
 	return true
 }
