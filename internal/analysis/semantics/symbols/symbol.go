@@ -48,7 +48,7 @@ type Symbol struct {
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {
-	loc := &source.Location{}
+	var loc *source.Location
 	if node != nil {
 		loc = node.Loc()
 	}
