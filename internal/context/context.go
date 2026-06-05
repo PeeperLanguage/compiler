@@ -25,7 +25,7 @@ const (
 	// Project source file.
 	ModuleOriginLocal ModuleOrigin = "local"
 	// Standard library source file.
-	ModuleOriginStdlib ModuleOrigin = "stdlib"
+	ModuleOriginStdlib ModuleOrigin = "core"
 	// Package dependency source file.
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
