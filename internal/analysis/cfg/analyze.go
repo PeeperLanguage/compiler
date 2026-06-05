@@ -106,6 +106,8 @@ func firstLoc(stmt hir.Stmt) *source.Location {
 		return s.Location
 	case *hir.Return:
 		return s.Location
+	case *hir.ExprStmt:
+		return s.Location
 	case *hir.If:
 		return s.Location
 	case *hir.Block:

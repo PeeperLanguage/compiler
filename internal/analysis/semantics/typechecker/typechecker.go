@@ -204,8 +204,12 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ExprStmt:
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
-			"expression statements are not yet supported")
+		if node.Expr == nil {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
+				"expression statement requires an expression")
+			return
+		}
+		c.typeExpr(scope, node.Expr, nil)
 	default:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
 			"unsupported statement")

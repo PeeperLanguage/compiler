@@ -18,7 +18,6 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
 			if !sym.Used {
-				fmt.Printf("import loc: %v\n", sym.Location)
 				addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedImport,
 					fmt.Sprintf("unused import `%s`", sym.Name))
 			}

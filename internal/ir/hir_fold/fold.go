@@ -63,6 +63,8 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 			}
 		}
 		return []hir.Stmt{out}
+	case *hir.ExprStmt:
+		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:
@@ -136,6 +138,8 @@ func stmtLoc(stmt hir.Stmt) *source.Location {
 	case *hir.Binding:
 		return node.Location
 	case *hir.Return:
+		return node.Location
+	case *hir.ExprStmt:
 		return node.Location
 	case *hir.Invalid:
 		return node.Location

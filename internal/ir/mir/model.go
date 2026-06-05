@@ -300,6 +300,12 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.current.Term = &Ret{Value: retRef}
 		l.current = nil
 		return true
+	case *hir.ExprStmt:
+		if l.current == nil {
+			return true
+		}
+		l.lowerExpr(node.Value, &l.current.Instrs)
+		return true
 	case *hir.If:
 		return l.appendIf(node)
 	default:
