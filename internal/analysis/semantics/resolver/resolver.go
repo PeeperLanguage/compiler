@@ -187,6 +187,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		if r.resolveScopeResolution(node) {
 			return
 		}
+	case *ast.SelectorExpr:
+		r.resolveExpr(scope, node.Expr)
 	case *ast.UnaryExpr:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.BorrowExpr:

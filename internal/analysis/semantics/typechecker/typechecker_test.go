@@ -84,3 +84,35 @@ func TestSelfOutsideInterfaceOrImplIsRejected(t *testing.T) {
 		t.Fatalf("expected invalid type diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestBuiltinMethodCallResolvesThroughImpl(t *testing.T) {
+	src := `impl i32 {
+	fn abs(self: Self) -> Self {
+		return self;
+	}
+}
+
+fn main() -> i32 {
+	let x: i32 = 1;
+	return x.abs();
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestStructFieldAccessResolves(t *testing.T) {
+	src := `struct Point {
+	x: i32,
+}
+
+fn main() -> i32 {
+	let p: Point;
+	return p.x;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}

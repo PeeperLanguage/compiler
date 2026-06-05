@@ -585,6 +585,44 @@ func TestParseImplDecl(t *testing.T) {
 	}
 }
 
+func TestParseSelectorAndMethodCall(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = 1;
+	x.abs();
+	return x.value;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 3 {
+		t.Fatalf("unexpected function body")
+	}
+	exprStmt, ok := fn.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("stmt[1] expected expr stmt")
+	}
+	call, ok := exprStmt.Expr.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("stmt[1] expected call expr")
+	}
+	selector, ok := call.Callee.(*ast.SelectorExpr)
+	if !ok || selector.Name == nil || selector.Name.Name != "abs" {
+		t.Fatalf("expected selector callee, got %#v", call.Callee)
+	}
+	ret, ok := fn.Body.Stmts[2].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt[2] expected return")
+	}
+	field, ok := ret.Value.(*ast.SelectorExpr)
+	if !ok || field.Name == nil || field.Name.Name != "value" {
+		t.Fatalf("expected selector return expr, got %#v", ret.Value)
+	}
+}
+
 func TestParseReferenceAndRawPointerTypes(t *testing.T) {
 	src := `let shared: &i32;
 let unique: &mut i32;

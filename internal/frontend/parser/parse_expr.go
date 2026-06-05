@@ -35,6 +35,7 @@ var infixPrec = map[tokens.Kind]int{
 	tokens.PERCENT:  precProduct,
 	tokens.AS:       precCast,
 	tokens.LPAREN:   precCall,
+	tokens.DOT:      precCall,
 }
 
 type ledFunc func(*Parser, ast.Expr, int) ast.Expr
@@ -71,6 +72,8 @@ func ledFor(kind tokens.Kind) (ledFunc, bool) {
 		return parseAsLed, true
 	case tokens.LPAREN:
 		return parseCallLed, true
+	case tokens.DOT:
+		return parseSelectorLed, true
 	default:
 		return nil, false
 	}
@@ -133,6 +136,10 @@ func parseInfixLed(p *Parser, left ast.Expr, precedence int) ast.Expr {
 
 func parseCallLed(p *Parser, left ast.Expr, _ int) ast.Expr {
 	return p.parseCall(left)
+}
+
+func parseSelectorLed(p *Parser, left ast.Expr, _ int) ast.Expr {
+	return p.parseSelector(left)
 }
 
 func parseAsLed(p *Parser, left ast.Expr, _ int) ast.Expr {
@@ -208,6 +215,22 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 		})
 	}
 	return id
+}
+
+func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
+	dot := p.consume(tokens.DOT, "expected '.'")
+	if dot == nil {
+		return left
+	}
+	name := p.parseIdent()
+	if name == nil {
+		return nil
+	}
+	return reg(p, &ast.SelectorExpr{
+		Expr:     left,
+		Name:     name,
+		Location: p.locFromNode(left, name),
+	})
 }
 
 func (p *Parser) parseIdent() *ast.Ident {
