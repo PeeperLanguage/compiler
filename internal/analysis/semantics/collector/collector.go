@@ -25,7 +25,8 @@ func (c *collector) collectModule(mod *ast.Module) {
 		if alias == "" {
 			continue
 		}
-		impSym := symbols.New(alias, symbols.SymbolImport, nil)
+		imp := c.module.Imports[alias]
+		impSym := symbols.New(alias, symbols.SymbolImport, imp.Decl)
 		impSym.Type = &typeinfo.UnknownType{}
 		if err := c.module.ModuleScope.Declare(impSym); err != nil {
 			if c.ctx != nil && c.ctx.Diagnostics != nil {

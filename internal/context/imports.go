@@ -77,18 +77,22 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 	if importPath == "" {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "empty import path"}
 	}
-	if err := validateImportPath(importPath); err != nil {
-		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
-	}
-	if isStdlibImport(importPath) {
-		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "stdlib imports are not supported yet"}
-	}
-	if isRemoteImport(importPath) {
-		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "remote imports are not supported yet"}
-	}
-
 	origin := ModuleOriginLocal
-	basePath := filepath.Join(ctx.Config.RootDir, filepath.FromSlash(importPath))
+	var basePath string
+
+	if isStdlibImport(importPath) {
+		origin = ModuleOriginStdlib
+		libPath := strings.TrimPrefix(importPath, "core:")
+		basePath = filepath.Join(ctx.Config.StdlibRoot, filepath.FromSlash(libPath))
+	} else {
+		if err := validateImportPath(importPath); err != nil {
+			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
+		}
+		if isRemoteImport(importPath) {
+			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "remote imports are not supported yet"}
+		}
+		basePath = filepath.Join(ctx.Config.RootDir, filepath.FromSlash(importPath))
+	}
 
 	if basePath == "" {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "invalid import path"}
@@ -110,13 +114,25 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 	}
 	absPath = filepath.Clean(absPath)
 
-	if root := ctx.Config.RootDir; root != "" {
-		rel, err := filepath.Rel(root, absPath)
-		if err != nil {
-			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
+	if origin == ModuleOriginLocal {
+		if root := ctx.Config.RootDir; root != "" {
+			rel, err := filepath.Rel(root, absPath)
+			if err != nil {
+				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
+			}
+			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the project root"}
+			}
 		}
-		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the project root"}
+	} else if origin == ModuleOriginStdlib {
+		if root := ctx.Config.StdlibRoot; root != "" {
+			rel, err := filepath.Rel(root, absPath)
+			if err != nil {
+				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
+			}
+			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the stdlib root"}
+			}
 		}
 	}
 
@@ -164,5 +180,5 @@ func isRemoteImport(path string) bool {
 }
 
 func isStdlibImport(path string) bool {
-	return strings.HasPrefix(path, "std/") || strings.HasPrefix(path, "stdlib/")
+	return strings.HasPrefix(path, "core:")
 }

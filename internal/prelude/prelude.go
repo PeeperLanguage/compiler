@@ -25,7 +25,7 @@ func Load(ctx *context.CompilerContext) error {
 		return fmt.Errorf("load prelude %s: %w", preludePath, err)
 	}
 	module := &context.Module{
-		Key:        "stdlib:prelude/global",
+		Key:        "core:prelude/global",
 		ImportPath: "prelude/global",
 		FilePath:   preludePath,
 		Origin:     context.ModuleOriginStdlib,

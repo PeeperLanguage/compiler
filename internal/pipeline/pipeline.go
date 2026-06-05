@@ -4,9 +4,9 @@ import (
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/cfg"
 	"compiler/internal/analysis/semantics/collector"
-	"compiler/internal/analysis/semantics/ownership"
 	"compiler/internal/analysis/semantics/resolver"
 	"compiler/internal/analysis/semantics/typechecker"
+	"compiler/internal/analysis/semantics/usage"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/context"
 	"compiler/internal/ir/hir_fold"
@@ -39,7 +39,7 @@ func (p *Pipeline) Run(entry *context.Module) error {
 	}
 
 	loader := newModuleLoader(p.ctx)
-	if preludeMod, ok := p.ctx.ModuleByKey("stdlib:prelude/global"); ok {
+	if preludeMod, ok := p.ctx.ModuleByKey("core:prelude/global"); ok {
 		if err := loader.Load(preludeMod); err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		collector.Collect(p.ctx, module)
 		resolver.Resolve(p.ctx, module)
 		typechecker.Check(p.ctx, module)
-		ownership.Check(p.ctx, module)
+		usage.Analyze(p.ctx, module)
 
 		modhir := hir_lower.GenerateHIR(p.ctx, module)
 		if modhir == nil {
@@ -84,7 +84,7 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		module.MIR = modmir
 		module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag)
 
-		if module.Key == "stdlib:prelude/global" {
+		if module.Key == "core:prelude/global" {
 			if module.ModuleScope != nil {
 				for _, sym := range module.ModuleScope.Symbols() {
 					_ = p.ctx.GlobalScope.Declare(sym)
