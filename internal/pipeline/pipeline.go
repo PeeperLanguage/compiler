@@ -33,19 +33,28 @@ func (p *Pipeline) Run(entry *context.Module) error {
 	}
 
 	p.ctx.AddModule(entry)
-	var diag *diagnostics.DiagnosticBag
-	if p.ctx != nil {
-		diag = p.ctx.Diagnostics
-	}
+	diag := p.ctx.Diagnostics
 
 	loader := newModuleLoader(p.ctx)
+	preludeKey := ""
 	if preludeMod, ok := p.ctx.ModuleByKey("core:prelude/global"); ok {
 		if err := loader.Load(preludeMod); err != nil {
 			return err
 		}
+		preludeKey = preludeMod.Key
 	}
 	if err := loader.Load(entry); err != nil {
 		return err
+	}
+
+	// Ensure topo-sort puts prelude first by making all non-prelude modules
+	// depend on it. This removes the need for any special-case ordering logic.
+	if preludeKey != "" {
+		for _, mod := range p.ctx.Modules() {
+			if mod != nil && mod.Key != preludeKey {
+				p.ctx.AddDependency(mod.Key, preludeKey)
+			}
+		}
 	}
 
 	ordered, cycles := topoSort(p.ctx.Modules(), p.ctx.DependenciesOf)
@@ -60,39 +69,22 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		return nil
 	}
 
-	p.runOrdered(ordered, diag)
-	return nil
-}
-
-func (p *Pipeline) runOrdered(ordered []*context.Module, diag *diagnostics.DiagnosticBag) {
-	if p == nil {
-		return
-	}
-	processed := make(map[string]struct{}, len(ordered))
-	if prelude := findPreludeModule(ordered); prelude != nil {
-		p.processModule(prelude, diag)
-		processed[prelude.Key] = struct{}{}
-	}
-
 	for _, module := range ordered {
 		if module == nil || module.Key == "" {
 			continue
 		}
-		if _, ok := processed[module.Key]; ok {
-			continue
-		}
 		p.processModule(module, diag)
-	}
-}
-
-func findPreludeModule(modules []*context.Module) *context.Module {
-	for _, module := range modules {
-		if module != nil && module.Key == "core:prelude/global" {
-			return module
+		// Inject prelude symbols into GlobalScope immediately after prelude is
+		// compiled so subsequent modules can resolve them.
+		if module.Key == preludeKey && module.ModuleScope != nil {
+			for _, sym := range module.ModuleScope.Symbols() {
+				_ = p.ctx.GlobalScope.Declare(sym)
+			}
 		}
 	}
 	return nil
 }
+
 
 func (p *Pipeline) processModule(module *context.Module, diag *diagnostics.DiagnosticBag) {
 	if p == nil || module == nil || module.AST == nil {
@@ -102,12 +94,6 @@ func (p *Pipeline) processModule(module *context.Module, diag *diagnostics.Diagn
 	resolver.Resolve(p.ctx, module)
 	typechecker.Check(p.ctx, module)
 	usage.Analyze(p.ctx, module)
-
-	if module.Key == "core:prelude/global" && module.ModuleScope != nil {
-		for _, sym := range module.ModuleScope.Symbols() {
-			_ = p.ctx.GlobalScope.Declare(sym)
-		}
-	}
 
 	modhir := hir_lower.GenerateHIR(p.ctx, module)
 	if modhir == nil {
