@@ -72,6 +72,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 	if hasDecl {
 		b.WriteString("\n")
 	}
+	if usesInterfaceBoxing(mod) {
+		b.WriteString("declare i8* @malloc(i64)\n\n")
+	}
 
 	decls := collectCallDecls(mod)
 	for _, decl := range decls {
@@ -101,6 +104,12 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 	}
 	if !hasDefine {
 		return finalLLVMText(&b, emitter)
+	}
+	for _, wrapper := range mod.InterfaceWrappers {
+		emitInterfaceWrapper(&b, emitter, wrapper)
+	}
+	if len(mod.InterfaceWrappers) > 0 {
+		b.WriteString("\n")
 	}
 	for _, fn := range mod.Funcs {
 		if fn == nil || fn.Blocks == nil {
@@ -193,14 +202,48 @@ func (e *llvmEmitter) llvmType(typeText string) string {
 	return "i32"
 }
 
+func (e *llvmEmitter) markInvalid(msg string) {
+	if e == nil {
+		return
+	}
+	e.invalid = true
+	if e.diag != nil {
+		e.diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidType))
+	}
+}
+
 func llvmTypeName(typeText string) (string, bool) {
 	typeText = strings.TrimSpace(typeText)
+	if strings.HasPrefix(typeText, "fn(") {
+		return llvmFunctionPtrType(typeText)
+	}
 	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
 		target, ok := llvmTypeName(strings.TrimSpace(remainder))
 		if !ok {
 			return "", false
 		}
 		return target + "*", true
+	}
+	if strings.HasPrefix(typeText, "interface{") && strings.HasSuffix(typeText, "}") {
+		body := strings.TrimSuffix(strings.TrimPrefix(typeText, "interface{"), "}")
+		methods := splitTopLevel(body, ';')
+		parts := []string{"i8*"}
+		for _, method := range methods {
+			method = strings.TrimSpace(method)
+			if method == "" {
+				continue
+			}
+			slotTypeText, ok := interfaceMethodSlotTypeText(method)
+			if !ok {
+				return "", false
+			}
+			slotType, ok := llvmTypeName(slotTypeText)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, slotType)
+		}
+		return "{ " + strings.Join(parts, ", ") + " }", true
 	}
 	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
 		body := strings.TrimSuffix(strings.TrimPrefix(typeText, "struct{"), "}")
@@ -243,6 +286,120 @@ func llvmTypeName(typeText string) (string, bool) {
 	}
 }
 
+func llvmFunctionPtrType(typeText string) (string, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if !strings.HasPrefix(typeText, "fn(") {
+		return "", false
+	}
+	start := strings.Index(typeText, "(")
+	end := matchingParenIndex(typeText, start)
+	if start < 0 || end < 0 {
+		return "", false
+	}
+	paramsText := strings.TrimSpace(typeText[start+1 : end])
+	returnText := "void"
+	remainder := strings.TrimSpace(typeText[end+1:])
+	if strings.HasPrefix(remainder, "->") {
+		ret, ok := llvmTypeName(strings.TrimSpace(strings.TrimPrefix(remainder, "->")))
+		if !ok {
+			return "", false
+		}
+		returnText = ret
+	}
+	params := splitTopLevel(paramsText, ',')
+	llvmParams := make([]string, 0, len(params))
+	for _, param := range params {
+		param = strings.TrimSpace(param)
+		if param == "" {
+			continue
+		}
+		if idx := topLevelColonIndex(param); idx >= 0 {
+			param = strings.TrimSpace(param[idx+1:])
+		}
+		llvmParam, ok := llvmTypeName(param)
+		if !ok {
+			return "", false
+		}
+		llvmParams = append(llvmParams, llvmParam)
+	}
+	return returnText + " (" + strings.Join(llvmParams, ", ") + ")*", true
+}
+
+func interfaceMethodSlotTypeText(methodText string) (string, bool) {
+	open := strings.Index(methodText, "(")
+	if open < 0 {
+		return "", false
+	}
+	close := matchingParenIndex(methodText, open)
+	if close < 0 {
+		return "", false
+	}
+	paramsText := strings.TrimSpace(methodText[open+1 : close])
+	parts := []string{"^u8"}
+	params := splitTopLevel(paramsText, ',')
+	for i, param := range params {
+		if i == 0 {
+			continue
+		}
+		param = strings.TrimSpace(param)
+		if param == "" {
+			continue
+		}
+		if idx := topLevelColonIndex(param); idx >= 0 {
+			param = strings.TrimSpace(param[idx+1:])
+		}
+		parts = append(parts, param)
+	}
+	var b strings.Builder
+	b.WriteString("fn(")
+	b.WriteString(strings.Join(parts, ", "))
+	b.WriteString(")")
+	remainder := strings.TrimSpace(methodText[close+1:])
+	if strings.HasPrefix(remainder, ":") {
+		b.WriteString(" -> ")
+		b.WriteString(strings.TrimSpace(strings.TrimPrefix(remainder, ":")))
+	}
+	return b.String(), true
+}
+
+func matchingParenIndex(text string, open int) int {
+	if open < 0 || open >= len(text) || text[open] != '(' {
+		return -1
+	}
+	depth := 0
+	for i := open; i < len(text); i++ {
+		switch text[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func topLevelColonIndex(text string) int {
+	depth := 0
+	for i, r := range text {
+		switch r {
+		case '{', '(', '[':
+			depth++
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case ':':
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 func splitTopLevel(text string, sep rune) []string {
 	if text == "" {
 		return nil
@@ -267,6 +424,174 @@ func splitTopLevel(text string, sep rune) []string {
 	}
 	parts = append(parts, text[start:])
 	return parts
+}
+
+func usesInterfaceBoxing(mod *mir.Module) bool {
+	if mod == nil {
+		return false
+	}
+	for _, fn := range mod.Funcs {
+		if fn == nil || fn.Blocks == nil {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			for _, instr := range block.Instrs {
+				assign, ok := instr.(*mir.Assign)
+				if !ok || assign == nil {
+					continue
+				}
+				makeVal, ok := assign.Value.(*mir.InterfaceMake)
+				if ok && makeVal != nil && makeVal.BoxValue {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (string, bool) {
+	interfaceTypeText = strings.TrimSpace(interfaceTypeText)
+	if !strings.HasPrefix(interfaceTypeText, "interface{") || !strings.HasSuffix(interfaceTypeText, "}") {
+		return "", false
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(interfaceTypeText, "interface{"), "}")
+	methods := splitTopLevel(body, ';')
+	if slot < 0 || slot >= len(methods) {
+		return "", false
+	}
+	slotTypeText, ok := interfaceMethodSlotTypeText(strings.TrimSpace(methods[slot]))
+	if !ok {
+		return "", false
+	}
+	return llvmTypeName(slotTypeText)
+}
+
+func emitInterfaceWrapper(out *strings.Builder, emitter *llvmEmitter, wrapper *mir.InterfaceWrapper) {
+	if out == nil || emitter == nil || wrapper == nil {
+		return
+	}
+	actualLLVMType, ok := llvmTypeName(wrapper.FuncType)
+	if !ok {
+		emitter.markInvalid("unsupported interface wrapper function type: " + wrapper.FuncType)
+		return
+	}
+	actualFn, actualRet, actualParams, ok := parseFunctionTypeText(wrapper.FuncType)
+	if !ok || actualFn != actualLLVMType {
+		emitter.markInvalid("failed to parse interface wrapper function type: " + wrapper.FuncType)
+		return
+	}
+	dataLLVMType, ok := llvmTypeName(wrapper.DataType)
+	if !ok {
+		emitter.markInvalid("unsupported interface wrapper data type: " + wrapper.DataType)
+		return
+	}
+	_, slotRet, slotParams, ok := parseFunctionTypeText(wrapper.SlotType)
+	if !ok || len(slotParams) == 0 || len(actualParams) == 0 {
+		emitter.markInvalid("failed to parse interface wrapper slot type: " + wrapper.SlotType)
+		return
+	}
+	out.WriteString("define ")
+	out.WriteString(slotRet)
+	out.WriteString(" @")
+	out.WriteString(wrapper.Name)
+	out.WriteString("(")
+	for i, param := range slotParams {
+		if i > 0 {
+			out.WriteString(", ")
+		}
+		out.WriteString(param)
+		out.WriteString(" %p")
+		out.WriteString(strconv.Itoa(i))
+	}
+	out.WriteString(") {\n")
+	builder := newLLVMBuilder(out, emitter)
+	if strings.HasSuffix(actualParams[0], "*") {
+		cast := builder.nextReg()
+		builder.line(fmt.Sprintf("%s = bitcast i8* %%p0 to %s", cast, actualParams[0]))
+		callArgs := []string{actualParams[0] + " " + cast}
+		for i := 1; i < len(slotParams); i++ {
+			callArgs = append(callArgs, actualParams[i]+" %p"+strconv.Itoa(i))
+		}
+		funcName := wrapper.FuncName
+		if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
+			funcName = funcName[:idx]
+		}
+		if actualRet == "void" {
+			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line("ret void")
+		} else {
+			result := builder.nextReg()
+			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line("ret " + actualRet + " " + result)
+		}
+	} else {
+		cast := builder.nextReg()
+		builder.line(fmt.Sprintf("%s = bitcast i8* %%p0 to %s*", cast, dataLLVMType))
+		loaded := builder.nextReg()
+		builder.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, dataLLVMType, dataLLVMType, cast))
+		callArgs := []string{actualParams[0] + " " + loaded}
+		for i := 1; i < len(slotParams); i++ {
+			callArgs = append(callArgs, actualParams[i]+" %p"+strconv.Itoa(i))
+		}
+		funcName := wrapper.FuncName
+		if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
+			funcName = funcName[:idx]
+		}
+		if actualRet == "void" {
+			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line("ret void")
+		} else {
+			result := builder.nextReg()
+			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line("ret " + actualRet + " " + result)
+		}
+	}
+	out.WriteString("}\n")
+}
+
+func parseFunctionTypeText(typeText string) (string, string, []string, bool) {
+	fnType, ok := llvmTypeName(typeText)
+	if !ok {
+		return "", "", nil, false
+	}
+	open := strings.Index(fnType, "(")
+	close := matchingParenIndex(fnType, open)
+	if open < 0 || close < 0 || !strings.HasSuffix(fnType, "*") {
+		return "", "", nil, false
+	}
+	ret := strings.TrimSpace(fnType[:open])
+	paramsText := strings.TrimSpace(fnType[open+1 : close])
+	params := splitTopLevel(paramsText, ',')
+	out := make([]string, 0, len(params))
+	for _, param := range params {
+		param = strings.TrimSpace(param)
+		if param != "" {
+			out = append(out, param)
+		}
+	}
+	return fnType, ret, out, true
+}
+
+func emitInterfaceBoxedData(b *llvmBuilder, value mir.ValueRef, dataType string) string {
+	if b == nil || value == nil {
+		return "null"
+	}
+	llvmType := b.types.llvmType(dataType)
+	sizePtr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr %s, %s* null, i32 1", sizePtr, llvmType, llvmType))
+	size := b.nextReg()
+	b.line(fmt.Sprintf("%s = ptrtoint %s* %s to i64", size, llvmType, sizePtr))
+	mem := b.nextReg()
+	b.line(fmt.Sprintf("%s = call i8* @malloc(i64 %s)", mem, size))
+	typed := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast i8* %s to %s*", typed, mem, llvmType))
+	val := emitRef(b, value)
+	b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, typed))
+	return mem
 }
 
 func pointedTypeText(typeText string) (string, bool) {
@@ -534,6 +859,49 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			current = next
 		}
 		return current
+	case *mir.InterfaceMake:
+		llvmType := b.types.llvmType(e.Type)
+		dataPtr := "null"
+		if e.BoxValue {
+			dataPtr = emitInterfaceBoxedData(b, e.Value, e.DataType)
+		} else {
+			value := emitRef(b, e.Value)
+			valueType := b.types.llvmType(mirRefType(e.Value))
+			cast := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, valueType, value))
+			dataPtr = cast
+		}
+		current := "zeroinitializer"
+		next := b.nextReg()
+		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", next, llvmType, current, dataPtr))
+		current = next
+		for i, slot := range e.Slots {
+			value := emitRef(b, slot)
+			slotType := b.types.llvmType(mirRefType(slot))
+			next = b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, slotType, value, i+1))
+			current = next
+		}
+		return current
+	case *mir.InterfaceCall:
+		base := emitRef(b, e.Base)
+		baseType := b.types.llvmType(mirRefType(e.Base))
+		data := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, baseType, base))
+		slotTypeText, ok := interfaceSlotLLVMTypeFromInterface(mirRefType(e.Base), e.Slot)
+		if !ok {
+			return "0"
+		}
+		fn := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", fn, baseType, base, e.Slot+1))
+		out := b.nextReg()
+		args := []string{"i8* " + data}
+		for _, arg := range e.Args {
+			args = append(args, b.types.llvmType(mirRefType(arg))+" "+emitRef(b, arg))
+		}
+		b.line(fmt.Sprintf("%s = call %s %s(%s)", out, b.types.llvmType(e.Type), fn, strings.Join(args, ", ")))
+		_ = slotTypeText
+		return out
 	default:
 		return "0"
 	}
@@ -556,8 +924,16 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		}
 		return v.Value
 	case *mir.RefName:
+		isFunc := strings.HasPrefix(v.Type, "fn(") || strings.Contains(v.Type, "->")
 		if reg, ok := b.locals[v.Name]; ok {
 			return reg
+		}
+		if isFunc {
+			funcName := v.Name
+			if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
+				funcName = funcName[:idx]
+			}
+			return "@" + strings.ReplaceAll(funcName, "::", "__")
 		}
 
 		isLocalStatic := false
@@ -585,12 +961,6 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		}
 
 		if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
-			isFunc := strings.HasPrefix(v.Type, "fn(") || strings.Contains(v.Type, "->")
-			if isFunc {
-				funcName := v.Name[:idx]
-				return "@" + strings.ReplaceAll(funcName, "::", "__")
-			}
-
 			name := "@" + v.Name
 			if b.types.externalGlobals == nil {
 				b.types.externalGlobals = make(map[string]string)

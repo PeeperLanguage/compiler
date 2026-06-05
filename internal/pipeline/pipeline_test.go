@@ -196,3 +196,67 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPipelineLowersInterfaceDispatchForValueReceiver(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Summer {
+	sum(Self): i32,
+}
+
+struct Point {
+	x: i32,
+	y: i32,
+}
+
+impl Point {
+	fn sum(self: Self) -> i32 {
+		return self.x + self.y;
+	}
+}
+
+fn total(v: Summer) -> i32 {
+	return v.sum();
+}
+
+fn main() -> i32 {
+	let p: Point = .{ x = 10, y = 20 };
+	return total(p);
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersInterfaceDispatchForPointerReceiver(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Reader {
+	read(^Self, buf: cstr): i32,
+}
+
+struct File {}
+
+#[extern]
+fn open_file() -> ^File;
+
+impl File {
+	fn read(self: ^Self, buf: cstr) -> i32 {
+		return 7;
+	}
+}
+
+fn use(reader: Reader) -> i32 {
+	return reader.read("ok");
+}
+
+fn main() -> i32 {
+	let file = open_file();
+	return use(file);
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}

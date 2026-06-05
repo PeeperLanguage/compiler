@@ -15,7 +15,16 @@ import (
 type Module struct {
 	Name       string
 	StaticData []*StaticEntry
+	InterfaceWrappers []*InterfaceWrapper
 	Funcs      []*Function
+}
+
+type InterfaceWrapper struct {
+	Name     string
+	SlotType string
+	FuncName string
+	FuncType string
+	DataType string
 }
 
 type StaticEntry struct {
@@ -137,6 +146,21 @@ type StructLit struct {
 	Type   string
 }
 
+type InterfaceMake struct {
+	Value    ValueRef
+	DataType string
+	BoxValue bool
+	Slots    []ValueRef
+	Type     string
+}
+
+type InterfaceCall struct {
+	Base ValueRef
+	Slot int
+	Args []ValueRef
+	Type string
+}
+
 func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
 }
@@ -159,6 +183,8 @@ func (*Move) valueExprNode()    {}
 func (*Cast) valueExprNode()    {}
 func (*Field) valueExprNode()   {}
 func (*StructLit) valueExprNode() {}
+func (*InterfaceMake) valueExprNode() {}
+func (*InterfaceCall) valueExprNode() {}
 func (*RefConst) valueRefNode() {}
 func (*RefName) valueRefNode()  {}
 
@@ -182,12 +208,38 @@ func (v *StructLit) Text() string {
 	return b.String()
 }
 
+func (v *InterfaceMake) Text() string {
+	if v == nil {
+		return "iface()"
+	}
+	return "iface(" + v.Value.Text() + ")"
+}
+
+func (v *InterfaceCall) Text() string {
+	if v == nil {
+		return "ifacecall()"
+	}
+	var b strings.Builder
+	b.WriteString("ifacecall ")
+	b.WriteString(v.Base.Text())
+	b.WriteString("(")
+	for i, arg := range v.Args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(arg.Text())
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
 type lowerer struct {
 	module      *Module
 	fn          *Function
 	tmp         int
 	nextBlockID int
 	current     *Block
+	wrappers    map[string]*InterfaceWrapper
 }
 
 func evalASTLiteral(expr ast.Expr) (string, bool) {
@@ -210,6 +262,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 	out := &Module{
 		Name:       in.Name,
 		StaticData: make([]*StaticEntry, 0),
+		InterfaceWrappers: make([]*InterfaceWrapper, 0),
 		Funcs:      make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
 	}
 
@@ -454,6 +507,31 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.InterfaceMake:
+		slots := make([]ValueRef, 0, len(e.Slots))
+		for _, slot := range e.Slots {
+			l.ensureInterfaceWrapper(slot)
+			slots = append(slots, &RefName{Name: slot.WrapperName, Type: slot.SlotType})
+		}
+		value := l.lowerExpr(e.Value, out)
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &InterfaceMake{
+			Value:    value,
+			DataType: e.DataType,
+			BoxValue: e.BoxValue,
+			Slots:    slots,
+			Type:     e.TypeText(),
+		}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.InterfaceCall:
+		base := l.lowerExpr(e.Base, out)
+		args := make([]ValueRef, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, l.lowerExpr(arg, out))
+		}
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
@@ -462,6 +540,27 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	default:
 		return &RefConst{Value: "0", Type: "i32"}
 	}
+}
+
+func (l *lowerer) ensureInterfaceWrapper(slot ir.InterfaceSlot) {
+	if l == nil || l.module == nil || slot.WrapperName == "" {
+		return
+	}
+	if l.wrappers == nil {
+		l.wrappers = make(map[string]*InterfaceWrapper)
+	}
+	if _, ok := l.wrappers[slot.WrapperName]; ok {
+		return
+	}
+	wrapper := &InterfaceWrapper{
+		Name:     slot.WrapperName,
+		SlotType: slot.SlotType,
+		FuncName: slot.FuncName,
+		FuncType: slot.FuncType,
+		DataType: slot.DataType,
+	}
+	l.wrappers[slot.WrapperName] = wrapper
+	l.module.InterfaceWrappers = append(l.module.InterfaceWrappers, wrapper)
 }
 
 func (l *lowerer) nextTemp() string {

@@ -157,11 +157,11 @@ func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module,
 		}
 		hirFn.Params = append(hirFn.Params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
 	}
-	appendBlock(module, funcScope, hirFn.Body, fn.Body, retTypeStr, ctx)
+	appendBlock(module, funcScope, hirFn.Body, fn.Body, retType, ctx)
 	return hirFn
 }
 
-func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Block, block *ast.BlockStmt, returnType string, ctx *context.CompilerContext) {
+func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Block, block *ast.BlockStmt, returnType typeinfo.Type, ctx *context.CompilerContext) {
 	if out == nil || block == nil {
 		return
 	}
@@ -177,7 +177,7 @@ func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Bloc
 	}
 }
 
-func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType string, ctx *context.CompilerContext) {
+func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *context.CompilerContext) {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
@@ -194,10 +194,9 @@ func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, Location: node.Loc()})
 			return
 		}
-		symTypeStr := symTypeText(sym)
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
-			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, symTypeStr)
+			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, Location: node.Loc()})
 
@@ -211,17 +210,16 @@ func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, Location: node.Loc()})
 			return
 		}
-		symTypeStr := symTypeText(sym)
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
-			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, symTypeStr)
+			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, Location: node.Loc()})
 
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
 		if node.Cond != nil {
-			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, "bool")
+			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, &typeinfo.BoolType{})
 		}
 		ifStmt := &hir.If{
 			Cond:     condExpr,
@@ -247,12 +245,12 @@ func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "expression statement missing expression", Location: node.Loc()})
 			return
 		}
-		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, "")
+		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, nil)
 		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: node.Loc()})
 	}
 }
 
-func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, returnType string, ctx *context.CompilerContext) hir.Stmt {
+func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *context.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
@@ -261,7 +259,7 @@ func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, return
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
 		if node.Cond != nil {
-			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, "bool")
+			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, &typeinfo.BoolType{})
 		}
 		out := &hir.If{
 			Cond:     condExpr,
@@ -280,7 +278,7 @@ func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, return
 
 // lowerASTExpr directly lowers an AST expression to an IR expression using
 // the module context's resolved expression types side-table.
-func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType string) ir.Expr {
+func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: "<invalid>"}
 	}
@@ -292,12 +290,16 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 			resolvedTypeStr = loweredTypeText(t)
 		}
 	}
+	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
+		return ifaceExpr
+	}
+	expectedTypeStr := loweredTypeText(expectedType)
 
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		t := resolvedTypeStr
 		if t == "" {
-			t = expectedType
+			t = expectedTypeStr
 		}
 		return lowerNumberLit(node, t)
 
@@ -357,10 +359,18 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
 			return lowerSelectorMethodCall(ctx, module, scope, selector, node)
 		}
-		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, "")
+		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, nil)
 		args := make([]ir.Expr, 0, len(node.Args))
+		var fnType *typeinfo.FuncType
+		if resolved := exprResolvedType(module, node.Callee); resolved != nil {
+			fnType, _ = typeinfo.Underlying(resolved).(*typeinfo.FuncType)
+		}
 		for _, arg := range node.Args {
-			args = append(args, lowerASTExpr(ctx, module, scope, arg, ""))
+			var paramExpected typeinfo.Type
+			if fnType != nil && len(args) < len(fnType.Params) {
+				paramExpected = fnType.Params[len(args)]
+			}
+			args = append(args, lowerASTExpr(ctx, module, scope, arg, paramExpected))
 		}
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
@@ -388,7 +398,7 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		if t == "" || t == "<invalid>" {
 			t = loweredTypeText(typeinfo.TypeFromSyntax(node.TypeExpr))
 		}
-		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, t)
+		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
 		return &ir.Cast{Expr: subExpr, Type: t}
 
 	case *ast.SelectorExpr:
@@ -407,15 +417,35 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 		return &ir.InvalidExpr{Message: "invalid selector call", Type: "<invalid>"}
 	}
 	baseType := exprResolvedType(module, selector.Expr)
+	if iface, slot, ok := lookupInterfaceMethod(baseType, selector.Name.Name); ok {
+		args := make([]ir.Expr, 0, len(call.Args))
+		for i, arg := range call.Args {
+			var argExpected typeinfo.Type
+			if i+1 < len(iface.Params) {
+				argExpected = iface.Params[i+1].Type
+			}
+			args = append(args, lowerASTExpr(ctx, module, scope, arg, argExpected))
+		}
+		return &ir.InterfaceCall{
+			Base: lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+			Slot: slot,
+			Args: args,
+			Type: loweredTypeText(iface.Return),
+		}
+	}
 	methodOwnerKey, methodSym, fnType := lookupLoweredMethod(module, baseType, selector.Name.Name)
 	if methodSym == nil || fnType == nil {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
 	}
-	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, "")
+	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, nil)
 	args := make([]ir.Expr, 0, len(call.Args)+1)
 	args = append(args, baseExpr)
-	for _, arg := range call.Args {
-		args = append(args, lowerASTExpr(ctx, module, scope, arg, ""))
+	for i, arg := range call.Args {
+		var argExpected typeinfo.Type
+		if i+1 < len(fnType.Params) {
+			argExpected = fnType.Params[i+1]
+		}
+		args = append(args, lowerASTExpr(ctx, module, scope, arg, argExpected))
 	}
 	return &ir.Call{
 		Callee: &ir.Ident{
@@ -435,7 +465,7 @@ func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, sco
 	if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
 		_, throughPtr := baseType.(*typeinfo.RawPtrType)
 		return &ir.Field{
-			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, ""),
+			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Index:      fieldIndex,
 			ThroughPtr: throughPtr,
 			Type:       loweredTypeText(fieldType),
@@ -466,12 +496,123 @@ func lowerStructLiteralExpr(ctx *context.CompilerContext, module *context.Module
 		if !ok {
 			return &ir.InvalidExpr{Message: "struct literal field missing during lowering", Type: "<invalid>"}
 		}
-		values = append(values, lowerASTExpr(ctx, module, scope, value, loweredTypeText(field.Type)))
+		values = append(values, lowerASTExpr(ctx, module, scope, value, field.Type))
 	}
 	return &ir.StructLit{
 		Fields: values,
 		Type:   loweredTypeText(resolved),
 	}
+}
+
+func maybeLowerInterfaceExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+	if expectedType == nil {
+		return nil
+	}
+	iface, ok := loweredRuntimeType(expectedType).(*typeinfo.InterfaceType)
+	if !ok || iface == nil {
+		return nil
+	}
+	resolved := exprResolvedType(module, expr)
+	if resolved == nil {
+		return nil
+	}
+	if _, ok := loweredRuntimeType(resolved).(*typeinfo.InterfaceType); ok {
+		return nil
+	}
+	boxed, dataType := interfaceDataModel(resolved)
+	if dataType == "" {
+		return &ir.InvalidExpr{Message: "unsupported interface value lowering", Type: "<invalid>"}
+	}
+	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
+	for index, method := range iface.Methods {
+		actualType, methodSym, ownerKey, ok := lookupInterfaceImplementation(module, resolved, method.Name)
+		if !ok || actualType == nil || methodSym == nil {
+			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: "<invalid>"}
+		}
+		slotType := interfaceSlotTypeText(method)
+		if slotType == "" {
+			return &ir.InvalidExpr{Message: "unsupported interface method shape", Type: "<invalid>"}
+		}
+		slots = append(slots, ir.InterfaceSlot{
+			WrapperName: interfaceWrapperName(expectedType, resolved, method.Name, index),
+			SlotType:    slotType,
+			FuncName:    methodSymbolRefName(ownerKey, methodSym),
+			FuncType:    loweredTypeText(actualType),
+			DataType:    dataType,
+		})
+	}
+	return &ir.InterfaceMake{
+		Value:    lowerASTExpr(ctx, module, scope, expr, nil),
+		DataType: dataType,
+		BoxValue: boxed,
+		Slots:    slots,
+		Type:     loweredTypeText(expectedType),
+	}
+}
+
+func interfaceDataModel(concrete typeinfo.Type) (bool, string) {
+	if ptr, ok := concrete.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		return false, loweredTypeText(ptr.Target)
+	}
+	return true, loweredTypeText(concrete)
+}
+
+func lookupInterfaceImplementation(module *context.Module, concrete typeinfo.Type, name string) (*typeinfo.FuncType, *symbols.Symbol, string, bool) {
+	owner := concrete
+	if ptr, ok := concrete.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		owner = ptr.Target
+	}
+	ownerKey, sym, fnType := lookupLoweredMethod(module, owner, name)
+	if sym == nil || fnType == nil {
+		return nil, nil, "", false
+	}
+	return fnType, sym, ownerKey, true
+}
+
+func lookupInterfaceMethod(baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
+	iface, ok := loweredRuntimeType(baseType).(*typeinfo.InterfaceType)
+	if !ok || iface == nil {
+		return nil, -1, false
+	}
+	for i := range iface.Methods {
+		if iface.Methods[i].Name == name {
+			return &iface.Methods[i], i, true
+		}
+	}
+	return nil, -1, false
+}
+
+func interfaceSlotTypeText(method typeinfo.Method) string {
+	var b strings.Builder
+	b.WriteString("fn(^u8")
+	for i, param := range method.Params {
+		if i == 0 {
+			continue
+		}
+		text := loweredTypeText(param.Type)
+		if text == "" || strings.Contains(text, "Self") {
+			return ""
+		}
+		b.WriteString(", ")
+		b.WriteString(text)
+	}
+	b.WriteString(")")
+	if ret := loweredTypeText(method.Return); ret != "" {
+		if strings.Contains(ret, "Self") {
+			return ""
+		}
+		b.WriteString(" -> ")
+		b.WriteString(ret)
+	}
+	return b.String()
+}
+
+func interfaceWrapperName(ifaceType, concrete typeinfo.Type, methodName string, index int) string {
+	return fmt.Sprintf("__ifacewrap__%s__%s__%s__%d",
+		sanitizeMethodName(loweredTypeText(ifaceType)),
+		sanitizeMethodName(loweredTypeText(concrete)),
+		sanitizeMethodName(methodName),
+		index)
 }
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
