@@ -519,12 +519,8 @@ func maybeLowerInterfaceExpr(ctx *context.CompilerContext, module *context.Modul
 	if _, ok := loweredRuntimeType(resolved).(*typeinfo.InterfaceType); ok {
 		return nil
 	}
-	boxed, dataType := interfaceDataModel(resolved)
-	if dataType == "" {
-		return &ir.InvalidExpr{Message: "unsupported interface value lowering", Type: "<invalid>"}
-	}
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
-	for index, method := range iface.Methods {
+	for _, method := range iface.Methods {
 		actualType, methodSym, ownerKey, ok := lookupInterfaceImplementation(module, resolved, method.Name)
 		if !ok || actualType == nil || methodSym == nil {
 			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: "<invalid>"}
@@ -534,27 +530,19 @@ func maybeLowerInterfaceExpr(ctx *context.CompilerContext, module *context.Modul
 			return &ir.InvalidExpr{Message: "unsupported interface method shape", Type: "<invalid>"}
 		}
 		slots = append(slots, ir.InterfaceSlot{
-			WrapperName: interfaceWrapperName(expectedType, resolved, method.Name, index),
-			SlotType:    slotType,
-			FuncName:    methodSymbolRefName(ownerKey, methodSym),
-			FuncType:    loweredTypeText(actualType),
-			DataType:    dataType,
+			InterfaceType: loweredTypeText(expectedType),
+			MethodName:    method.Name,
+			SlotType:      slotType,
+			FuncName:      methodSymbolRefName(ownerKey, methodSym),
+			FuncType:      loweredTypeText(actualType),
+			DataType:      loweredTypeText(resolved),
 		})
 	}
 	return &ir.InterfaceMake{
-		Value:    lowerASTExpr(ctx, module, scope, expr, nil),
-		DataType: dataType,
-		BoxValue: boxed,
-		Slots:    slots,
-		Type:     loweredTypeText(expectedType),
+		Value: lowerASTExpr(ctx, module, scope, expr, nil),
+		Slots: slots,
+		Type:  loweredTypeText(expectedType),
 	}
-}
-
-func interfaceDataModel(concrete typeinfo.Type) (bool, string) {
-	if ptr, ok := concrete.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		return false, loweredTypeText(ptr.Target)
-	}
-	return true, loweredTypeText(concrete)
 }
 
 func lookupInterfaceImplementation(module *context.Module, concrete typeinfo.Type, name string) (*typeinfo.FuncType, *symbols.Symbol, string, bool) {
@@ -607,13 +595,6 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 	return b.String()
 }
 
-func interfaceWrapperName(ifaceType, concrete typeinfo.Type, methodName string, index int) string {
-	return fmt.Sprintf("__ifacewrap__%s__%s__%s__%d",
-		sanitizeMethodName(loweredTypeText(ifaceType)),
-		sanitizeMethodName(loweredTypeText(concrete)),
-		sanitizeMethodName(methodName),
-		index)
-}
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
 	if module == nil || module.Semantics == nil || expr == nil {

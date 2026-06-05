@@ -68,17 +68,17 @@ type Call struct {
 }
 
 type InterfaceSlot struct {
-	WrapperName string
-	SlotType    string
-	FuncName    string
-	FuncType    string
-	DataType    string
+	InterfaceType string
+	MethodName    string
+	WrapperName   string
+	SlotType      string
+	FuncName      string
+	FuncType      string
+	DataType      string
 }
 
 type InterfaceMake struct {
 	Value       Expr
-	DataType    string
-	BoxValue    bool
 	Slots       []InterfaceSlot
 	Type        string
 }
