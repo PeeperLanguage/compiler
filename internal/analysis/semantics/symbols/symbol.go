@@ -43,6 +43,7 @@ type Symbol struct {
 	Type         Type
 	IsPub        bool
 	Initializing bool
+	Used         bool
 	Location     *source.Location
 	ASTNode      ast.Node
 	Scope        interface{} // Pointer to table.Scope (only if Kind == SymbolFunc)
