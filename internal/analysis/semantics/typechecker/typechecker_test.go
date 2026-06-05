@@ -116,3 +116,50 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPointerSelfInterfaceAssignmentRequiresPointerValue(t *testing.T) {
+	src := `interface Reader {
+	read(^Self, buf: cstr): i32,
+}
+
+struct File {}
+
+impl File {
+	fn read(self: ^Self, buf: cstr) -> i32 {
+		return 0;
+	}
+}
+
+fn main(file: ^File) -> i32 {
+	let reader: Reader = file;
+	return reader.read("ok");
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointerSelfInterfaceAssignmentRejectsValue(t *testing.T) {
+	src := `interface Reader {
+	read(^Self, buf: cstr): i32,
+}
+
+struct File {}
+
+impl File {
+	fn read(self: ^Self, buf: cstr) -> i32 {
+		return 0;
+	}
+}
+
+fn main() -> i32 {
+	let file: File;
+	let reader: Reader = file;
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected type mismatch diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}

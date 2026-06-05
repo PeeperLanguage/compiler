@@ -298,7 +298,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		if retType == nil {
 			return
 		}
-		if !typeinfo.Assignable(returnType, retType) {
+		if !c.assignable(returnType, retType) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Value, diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot return %s from function returning %s",
 					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)))
@@ -377,7 +377,7 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	if valType == nil {
 		return
 	}
-	if declType != nil && !typeinfo.Assignable(declType, valType) {
+	if declType != nil && !c.assignable(declType, valType) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, value, diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valType), typeinfo.TypeText(declType)))
@@ -456,6 +456,100 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 			continue
 		}
 		c.checkFunctionWithSelf(sym, method, selfType, false)
+	}
+}
+
+func (c *checker) assignable(dst, src typeinfo.Type) bool {
+	if typeinfo.Assignable(dst, src) {
+		return true
+	}
+	if c == nil {
+		return false
+	}
+	if iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
+		return c.satisfiesInterface(iface, src)
+	}
+	return false
+}
+
+func (c *checker) satisfiesInterface(iface *typeinfo.InterfaceType, src typeinfo.Type) bool {
+	if c == nil || iface == nil || src == nil {
+		return false
+	}
+	owner := c.interfaceImplementorType(src)
+	if owner == nil {
+		return false
+	}
+	for _, required := range iface.Methods {
+		requiredType := c.instantiateInterfaceMethod(required, owner)
+		actualType, _, ok := c.lookupMethodType(owner, required.Name)
+		if !ok || actualType == nil {
+			return false
+		}
+		if !typeinfo.SameType(requiredType, actualType) {
+			return false
+		}
+		fnType, ok := requiredType.(*typeinfo.FuncType)
+		if !ok || fnType == nil || len(fnType.Params) == 0 {
+			return false
+		}
+		if !typeinfo.Assignable(fnType.Params[0], src) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
+	if src == nil {
+		return nil
+	}
+	if ptr, ok := src.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		return ptr.Target
+	}
+	return src
+}
+
+func (c *checker) instantiateInterfaceMethod(method typeinfo.Method, ownerType typeinfo.Type) typeinfo.Type {
+	params := make([]typeinfo.Type, 0, len(method.Params))
+	for _, param := range method.Params {
+		t := c.replaceAbstractSelf(param.Type, ownerType)
+		params = append(params, t)
+	}
+	return &typeinfo.FuncType{
+		Params: params,
+		Return: c.replaceAbstractSelf(method.Return, ownerType),
+	}
+}
+
+func (c *checker) replaceAbstractSelf(t typeinfo.Type, ownerType typeinfo.Type) typeinfo.Type {
+	switch typ := t.(type) {
+	case *typeinfo.NamedType:
+		if typ != nil && typ.Name == "Self" {
+			return ownerType
+		}
+		return t
+	case *typeinfo.RefType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.RefType{Mutable: typ.Mutable, Target: c.replaceAbstractSelf(typ.Target, ownerType)}
+	case *typeinfo.RawPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: c.replaceAbstractSelf(typ.Target, ownerType)}
+	case *typeinfo.FuncType:
+		if typ == nil {
+			return nil
+		}
+		params := make([]typeinfo.Type, 0, len(typ.Params))
+		for _, param := range typ.Params {
+			params = append(params, c.replaceAbstractSelf(param, ownerType))
+		}
+		return &typeinfo.FuncType{Params: params, Return: c.replaceAbstractSelf(typ.Return, ownerType)}
+	default:
+		return t
 	}
 }
 
@@ -570,7 +664,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	}
 
 	commonType := typeinfo.CommonNumericType(left, right)
-	if commonType == nil && !typeinfo.Assignable(left, right) && !typeinfo.Assignable(right, left) {
+	if commonType == nil && !c.assignable(left, right) && !c.assignable(right, left) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
 				typeinfo.TypeText(left), typeinfo.TypeText(right)))
@@ -669,6 +763,14 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 	if c == nil || c.module == nil || c.module.Semantics == nil {
 		return nil, nil, false
 	}
+	if iface, ok := typeinfo.Underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
+		for _, method := range iface.Methods {
+			if method.Name != name {
+				continue
+			}
+			return c.boundInterfaceMethodType(method, baseType), nil, true
+		}
+	}
 	keys := []string{typeinfo.TypeText(baseType)}
 	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
 		keys = append(keys, typeinfo.TypeText(underlying))
@@ -686,6 +788,21 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 		}
 	}
 	return nil, nil, false
+}
+
+func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType typeinfo.Type) typeinfo.Type {
+	params := make([]typeinfo.Type, 0, len(method.Params))
+	for i, param := range method.Params {
+		t := c.replaceAbstractSelf(param.Type, receiverType)
+		if i == 0 {
+			t = receiverType
+		}
+		params = append(params, t)
+	}
+	return &typeinfo.FuncType{
+		Params: params,
+		Return: c.replaceAbstractSelf(method.Return, receiverType),
+	}
 }
 
 func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) typeinfo.Type {
@@ -836,7 +953,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 		if paramType == nil {
 			continue
 		}
-		if !typeinfo.Assignable(paramType, argType) {
+		if !c.assignable(paramType, argType) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr.Args[i], diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
@@ -869,7 +986,7 @@ func (c *checker) checkMethodCall(callExpr *ast.CallExpr, calleeType typeinfo.Ty
 		if paramType == nil {
 			continue
 		}
-		if !typeinfo.Assignable(paramType, argType) {
+		if !c.assignable(paramType, argType) {
 			site := ast.Node(callExpr)
 			if i > 0 && i-1 < len(callExpr.Args) {
 				site = callExpr.Args[i-1]
