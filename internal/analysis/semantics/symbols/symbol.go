@@ -1,6 +1,7 @@
 package symbols
 
 import (
+	"reflect"
 	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
@@ -49,7 +50,7 @@ type Symbol struct {
 
 func New(name string, kind Kind, node ast.Node) *Symbol {
 	var loc *source.Location
-	if node != nil {
+	if !isNilNode(node) {
 		loc = node.Loc()
 	}
 	return &Symbol{
@@ -59,6 +60,19 @@ func New(name string, kind Kind, node ast.Node) *Symbol {
 		IsPub:    IsPubName(name),
 		Location: loc,
 		ASTNode:  node,
+	}
+}
+
+func isNilNode(node ast.Node) bool {
+	if node == nil {
+		return true
+	}
+	v := reflect.ValueOf(node)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
 	}
 }
 
