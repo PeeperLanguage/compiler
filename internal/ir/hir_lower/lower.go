@@ -393,6 +393,9 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 	case *ast.SelectorExpr:
 		return lowerSelectorExpr(ctx, module, scope, node)
 
+	case *ast.StructLit:
+		return lowerStructLiteralExpr(ctx, module, scope, node)
+
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>"}
 	}
@@ -437,6 +440,36 @@ func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, sco
 		}
 	}
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>"}
+}
+
+func lowerStructLiteralExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {
+	if module == nil || node == nil {
+		return &ir.InvalidExpr{Message: "invalid struct literal", Type: "<invalid>"}
+	}
+	resolved := exprResolvedType(module, node)
+	strct, ok := loweredRuntimeType(resolved).(*typeinfo.StructType)
+	if !ok || strct == nil {
+		return &ir.InvalidExpr{Message: "struct literal type missing", Type: "<invalid>"}
+	}
+	fieldsByName := make(map[string]ast.Expr, len(node.Fields))
+	for _, field := range node.Fields {
+		if field.Name == nil || field.Value == nil {
+			continue
+		}
+		fieldsByName[field.Name.Name] = field.Value
+	}
+	values := make([]ir.Expr, 0, len(strct.Fields))
+	for _, field := range strct.Fields {
+		value, ok := fieldsByName[field.Name]
+		if !ok {
+			return &ir.InvalidExpr{Message: "struct literal field missing during lowering", Type: "<invalid>"}
+		}
+		values = append(values, lowerASTExpr(ctx, module, scope, value, loweredTypeText(field.Type)))
+	}
+	return &ir.StructLit{
+		Fields: values,
+		Type:   loweredTypeText(resolved),
+	}
 }
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {

@@ -189,6 +189,10 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 	case *ast.SelectorExpr:
 		r.resolveExpr(scope, node.Expr)
+	case *ast.StructLit:
+		for _, field := range node.Fields {
+			r.resolveExpr(scope, field.Value)
+		}
 	case *ast.UnaryExpr:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.BorrowExpr:

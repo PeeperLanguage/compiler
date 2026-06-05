@@ -502,6 +502,17 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		out := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", out, llvmBaseType, base, e.Index))
 		return out
+	case *mir.StructLit:
+		llvmType := b.types.llvmType(e.Type)
+		current := "zeroinitializer"
+		for i, field := range e.Fields {
+			value := emitRef(b, field)
+			next := b.nextReg()
+			fieldType := b.types.llvmType(mirRefType(field))
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, fieldType, value, i))
+			current = next
+		}
+		return current
 	default:
 		return "0"
 	}

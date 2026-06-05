@@ -152,11 +152,21 @@ func TestPipelineLowersStructFieldAccess(t *testing.T) {
 	y: i32,
 }
 
-#[extern]
-fn make_point() -> Point;
-
 fn main() -> i32 {
-	let p = make_point();
+	let p: Point = .{ x = 1, y = 2 };
+	return p.x;
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	let p = .{ x = 1, y = 2 };
 	return p.x;
 }`
 

@@ -73,6 +73,11 @@ type Field struct {
 	Type  string
 }
 
+type StructLit struct {
+	Fields []Expr
+	Type   string
+}
+
 type Cast struct {
 	Expr Expr
 	Type string
@@ -87,6 +92,7 @@ func (*Unary) exprNode()       {}
 func (*Binary) exprNode()      {}
 func (*Call) exprNode()        {}
 func (*Field) exprNode()       {}
+func (*StructLit) exprNode()   {}
 func (*Cast) exprNode()        {}
 
 func (e *InvalidExpr) String() string {
@@ -199,6 +205,31 @@ func (e *Field) String() string {
 }
 
 func (e *Field) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *StructLit) String() string {
+	if e == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(".{")
+	for i, field := range e.Fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if field != nil {
+			b.WriteString(field.String())
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (e *StructLit) TypeText() string {
 	if e == nil {
 		return ""
 	}

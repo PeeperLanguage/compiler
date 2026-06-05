@@ -590,6 +590,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
 
+	case *ast.StructLit:
+		return c.typeStructLit(scope, node, expected)
+
 	case *ast.UnaryExpr:
 		return c.typeUnaryExpr(scope, node, expected)
 
@@ -694,8 +697,13 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	calleeType := c.typeExpr(scope, node.Callee, expected)
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
-	for _, arg := range node.Args {
-		argTypes = append(argTypes, c.typeExpr(scope, arg, nil))
+	fnType, _ := calleeType.(*typeinfo.FuncType)
+	for i, arg := range node.Args {
+		var paramExpected typeinfo.Type
+		if fnType != nil && i < len(fnType.Params) {
+			paramExpected = fnType.Params[i]
+		}
+		argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 	}
 	c.checkFunctionCall(node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
@@ -729,8 +737,13 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	if ok {
 		argTypes := make([]typeinfo.Type, 0, len(call.Args)+1)
 		argTypes = append(argTypes, baseType)
-		for _, arg := range call.Args {
-			argTypes = append(argTypes, c.typeExpr(scope, arg, nil))
+		fnType, _ := methodType.(*typeinfo.FuncType)
+		for i, arg := range call.Args {
+			var paramExpected typeinfo.Type
+			if fnType != nil && i+1 < len(fnType.Params) {
+				paramExpected = fnType.Params[i+1]
+			}
+			argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 		}
 		c.checkMethodCall(call, methodType, argTypes, methodSym)
 		return c.callReturnType(call, methodType)
@@ -743,6 +756,90 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	common.AddError(c.ctx.Diagnostics, c.module.FilePath, selector.Name, diagnostics.ErrMethodNotFound,
 		fmt.Sprintf("unknown method `%s`", selector.Name.Name))
 	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expected typeinfo.Type) typeinfo.Type {
+	if node == nil {
+		return &typeinfo.InvalidType{}
+	}
+	targetStruct, targetType := c.expectedStructType(expected)
+	if targetStruct != nil {
+		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)
+	}
+	return c.typeStructLitAnonymous(scope, node)
+}
+
+func (c *checker) expectedStructType(expected typeinfo.Type) (*typeinfo.StructType, typeinfo.Type) {
+	if expected == nil {
+		return nil, nil
+	}
+	if strct, ok := typeinfo.Underlying(expected).(*typeinfo.StructType); ok && strct != nil {
+		return strct, expected
+	}
+	return nil, nil
+}
+
+func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.StructLit, targetStruct *typeinfo.StructType, targetType typeinfo.Type) typeinfo.Type {
+	if targetStruct == nil {
+		return &typeinfo.InvalidType{}
+	}
+	fieldsByName := make(map[string]ast.StructLitField, len(node.Fields))
+	for _, field := range node.Fields {
+		if field.Name == nil || field.Name.Name == "" {
+			continue
+		}
+		if _, exists := fieldsByName[field.Name.Name]; exists {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, field.Name, diagnostics.ErrRedeclaredSymbol,
+				"duplicate struct literal field `"+field.Name.Name+"`")
+			continue
+		}
+		fieldsByName[field.Name.Name] = field
+	}
+	for _, targetField := range targetStruct.Fields {
+		field, ok := fieldsByName[targetField.Name]
+		if !ok {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrMissingInitializer,
+				"missing struct literal field `"+targetField.Name+"`")
+			continue
+		}
+		valueType := c.typeExpr(scope, field.Value, targetField.Type)
+		if valueType == nil {
+			continue
+		}
+		if !c.assignable(targetField.Type, valueType) {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, field.Value, diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
+					typeinfo.TypeText(valueType), targetField.Name, typeinfo.TypeText(targetField.Type)))
+		}
+		delete(fieldsByName, targetField.Name)
+	}
+	for name, field := range fieldsByName {
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, field.Name, diagnostics.ErrFieldNotFound,
+			"unknown struct literal field `"+name+"`")
+	}
+	return targetType
+}
+
+func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit) typeinfo.Type {
+	fields := make([]typeinfo.Field, 0, len(node.Fields))
+	seen := make(map[string]struct{}, len(node.Fields))
+	for _, field := range node.Fields {
+		if field.Name == nil || field.Name.Name == "" {
+			continue
+		}
+		if _, exists := seen[field.Name.Name]; exists {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, field.Name, diagnostics.ErrRedeclaredSymbol,
+				"duplicate struct literal field `"+field.Name.Name+"`")
+			continue
+		}
+		seen[field.Name.Name] = struct{}{}
+		valueType := c.typeExpr(scope, field.Value, nil)
+		if valueType == nil {
+			valueType = &typeinfo.InvalidType{}
+		}
+		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
+	}
+	return &typeinfo.StructType{Fields: fields}
 }
 
 func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo.Type, bool) {
