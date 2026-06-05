@@ -2,6 +2,7 @@ package hir_lower
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
@@ -23,7 +24,9 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 		Funcs:   make([]*hir.Function, 0),
 	}
 	for _, decl := range module.AST.Decls {
-		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil {
+		switch node := decl.(type) {
+		case *ast.FnDecl:
+			fn := node
 			sym, found := module.ModuleScope.Lookup(fn.Name.Name)
 			if !found || sym == nil {
 				continue
@@ -58,12 +61,64 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 					out.Funcs = append(out.Funcs, hirFn)
 				}
 			}
+		case *ast.ImplDecl:
+			lowerImplDecl(ctx, module, out, node)
 		}
 	}
 	return out
 }
 
+func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hir.Module, decl *ast.ImplDecl) {
+	if module == nil || out == nil || decl == nil || decl.Target == nil || module.Semantics == nil {
+		return
+	}
+	targetType := typeinfo.TypeFromSyntax(decl.Target)
+	for _, method := range decl.Methods {
+		if method == nil || method.Name == nil {
+			continue
+		}
+		sym, ok := module.Semantics.MethodSymbol[method.ID()]
+		if !ok || sym == nil {
+			continue
+		}
+		if method.Body == nil {
+			fnType, _ := symbolType(sym)
+			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
+			params := make([]ir.Param, 0, len(method.Params))
+			for i, param := range method.Params {
+				name := ""
+				if param.Name != nil {
+					name = param.Name.Name
+				}
+				paramType := typeinfo.TypeFromSyntax(param.Type)
+				if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
+					paramType = resolvedFnType.Params[i]
+				}
+				params = append(params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+			}
+			returnType := typeinfo.TypeFromSyntax(method.ReturnType)
+			if resolvedFnType != nil && resolvedFnType.Return != nil {
+				returnType = resolvedFnType.Return
+			}
+			out.Externs = append(out.Externs, hir.Extern{
+				Name:       methodFunctionName(targetType, method.Name.Name),
+				Params:     params,
+				ReturnType: typeinfo.TypeText(returnType),
+			})
+			continue
+		}
+		hirFn := lowerASTFunctionNamed(ctx, module, sym, method, methodFunctionName(targetType, method.Name.Name))
+		if hirFn != nil {
+			out.Funcs = append(out.Funcs, hirFn)
+		}
+	}
+}
+
 func lowerASTFunction(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl) *hir.Function {
+	return lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
+}
+
+func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
 	if sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
 		return nil
 	}
@@ -79,7 +134,7 @@ func lowerASTFunction(ctx *context.CompilerContext, module *context.Module, sym 
 	}
 	retTypeStr := typeinfo.TypeText(retType)
 	hirFn := &hir.Function{
-		Name:       sym.Name,
+		Name:       emittedName,
 		Params:     make([]ir.Param, 0, len(fn.Params)),
 		ReturnType: retTypeStr,
 		Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: fn.Body.Loc()},
@@ -298,6 +353,9 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t}
 
 	case *ast.CallExpr:
+		if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
+			return lowerSelectorMethodCall(ctx, module, scope, selector, node)
+		}
 		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, "")
 		args := make([]ir.Expr, 0, len(node.Args))
 		for _, arg := range node.Args {
@@ -332,9 +390,140 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, t)
 		return &ir.Cast{Expr: subExpr, Type: t}
 
+	case *ast.SelectorExpr:
+		return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>"}
+
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>"}
 	}
+}
+
+func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {
+	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
+		return &ir.InvalidExpr{Message: "invalid selector call", Type: "<invalid>"}
+	}
+	baseType := exprResolvedType(module, selector.Expr)
+	methodSym, fnType := lookupLoweredMethod(module, baseType, selector.Name.Name)
+	if methodSym == nil || fnType == nil {
+		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
+	}
+	targetType := loweredMethodTargetType(baseType)
+	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, "")
+	args := make([]ir.Expr, 0, len(call.Args)+1)
+	args = append(args, baseExpr)
+	for _, arg := range call.Args {
+		args = append(args, lowerASTExpr(ctx, module, scope, arg, ""))
+	}
+	return &ir.Call{
+		Callee: &ir.Ident{
+			Name: methodSymbolRefName(targetType, methodSym),
+			Type: typeinfo.TypeText(fnType),
+		},
+		Args: args,
+		Type: typeinfo.TypeText(fnType.Return),
+	}
+}
+
+func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
+	if module == nil || module.Semantics == nil || expr == nil {
+		return nil
+	}
+	return module.Semantics.ExprTypes[expr.ID()]
+}
+
+func lookupLoweredMethod(module *context.Module, baseType typeinfo.Type, name string) (*symbols.Symbol, *typeinfo.FuncType) {
+	if module == nil || module.Semantics == nil || baseType == nil || name == "" {
+		return nil, nil
+	}
+	for _, key := range loweredMethodLookupKeys(baseType) {
+		for _, method := range module.Semantics.MethodSets[key] {
+			if method == nil || method.Name != name {
+				continue
+			}
+			typ, ok := symbolType(method)
+			if !ok {
+				continue
+			}
+			fnType, ok := typ.(*typeinfo.FuncType)
+			if ok && fnType != nil {
+				return method, fnType
+			}
+		}
+	}
+	return nil, nil
+}
+
+func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
+	keys := make([]string, 0, 4)
+	appendKey := func(typ typeinfo.Type) {
+		if typ == nil {
+			return
+		}
+		key := typeinfo.TypeText(typ)
+		if key == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
+	}
+	appendKey(baseType)
+	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
+		appendKey(underlying)
+	}
+	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		appendKey(ptr.Target)
+		if underlying := typeinfo.Underlying(ptr.Target); underlying != ptr.Target {
+			appendKey(underlying)
+		}
+	}
+	return keys
+}
+
+func loweredMethodTargetType(baseType typeinfo.Type) typeinfo.Type {
+	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		return ptr.Target
+	}
+	return baseType
+}
+
+func methodFunctionName(targetType typeinfo.Type, methodName string) string {
+	var b strings.Builder
+	b.WriteString("__impl__")
+	b.WriteString(sanitizeMethodName(typeinfo.TypeText(targetType)))
+	b.WriteString("__")
+	b.WriteString(methodName)
+	return b.String()
+}
+
+func methodSymbolRefName(targetType typeinfo.Type, sym *symbols.Symbol) string {
+	if sym == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s$%d", methodFunctionName(targetType, sym.Name), sym.ID)
+}
+
+func sanitizeMethodName(text string) string {
+	if text == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // lookupScopeResolutionSymbol resolves a ScopeResolution node in two steps:
