@@ -239,7 +239,6 @@ type lowerer struct {
 	tmp         int
 	nextBlockID int
 	current     *Block
-	wrappers    map[string]*InterfaceWrapper
 }
 
 func evalASTLiteral(expr ast.Expr) (string, bool) {
@@ -508,17 +507,35 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		*out = append(*out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.InterfaceMake:
-		slots := make([]ValueRef, 0, len(e.Slots))
-		for _, slot := range e.Slots {
-			l.ensureInterfaceWrapper(slot)
-			slots = append(slots, &RefName{Name: slot.WrapperName, Type: slot.SlotType})
-		}
 		value := l.lowerExpr(e.Value, out)
+		var dataType string
+		var boxValue bool
+		valType := e.Value.TypeText()
+		if remainder, ok := strings.CutPrefix(valType, "^"); ok {
+			dataType = remainder
+			boxValue = false
+		} else {
+			dataType = valType
+			boxValue = true
+		}
+
+		slots := make([]ValueRef, 0, len(e.Slots))
+		for index, slot := range e.Slots {
+			wrapperName := fmt.Sprintf("__ifacewrap__%s__%s__%s__%d",
+				sanitizeMethodName(slot.InterfaceType),
+				sanitizeMethodName(dataType),
+				sanitizeMethodName(slot.MethodName),
+				index)
+			slot.WrapperName = wrapperName
+			slot.DataType = dataType
+			l.ensureInterfaceWrapper(slot)
+			slots = append(slots, &RefName{Name: wrapperName, Type: slot.SlotType})
+		}
 		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &InterfaceMake{
 			Value:    value,
-			DataType: e.DataType,
-			BoxValue: e.BoxValue,
+			DataType: dataType,
+			BoxValue: boxValue,
 			Slots:    slots,
 			Type:     e.TypeText(),
 		}})
@@ -546,11 +563,10 @@ func (l *lowerer) ensureInterfaceWrapper(slot ir.InterfaceSlot) {
 	if l == nil || l.module == nil || slot.WrapperName == "" {
 		return
 	}
-	if l.wrappers == nil {
-		l.wrappers = make(map[string]*InterfaceWrapper)
-	}
-	if _, ok := l.wrappers[slot.WrapperName]; ok {
-		return
+	for _, w := range l.module.InterfaceWrappers {
+		if w.Name == slot.WrapperName {
+			return
+		}
 	}
 	wrapper := &InterfaceWrapper{
 		Name:     slot.WrapperName,
@@ -559,7 +575,6 @@ func (l *lowerer) ensureInterfaceWrapper(slot ir.InterfaceSlot) {
 		FuncType: slot.FuncType,
 		DataType: slot.DataType,
 	}
-	l.wrappers[slot.WrapperName] = wrapper
 	l.module.InterfaceWrappers = append(l.module.InterfaceWrappers, wrapper)
 }
 
@@ -630,3 +645,24 @@ func (m *Module) Text() string {
 	}
 	return b.String()
 }
+
+func sanitizeMethodName(text string) string {
+	if text == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+

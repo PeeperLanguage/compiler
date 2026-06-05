@@ -260,3 +260,71 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPipelineInterfaceDuplicateWrappers(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Summer {
+	sum(Self): i32,
+}
+
+struct Point {
+	x: i32,
+	y: i32,
+}
+
+impl Point {
+	fn sum(self: Self) -> i32 {
+		return self.x + self.y;
+	}
+}
+
+fn make_summer_1() -> Summer {
+	let p: Point = .{ x = 10, y = 20 };
+	return p;
+}
+
+fn make_summer_2() -> Summer {
+	let p: Point = .{ x = 30, y = 40 };
+	return p;
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+
+
+	const preludePath = "_builtin_library/global.em"
+	const entryPath = "entry.em"
+
+	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag.AddSourceContent(preludePath, preludeSrc)
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := context.New(".", ".em", diag)
+
+	entry := &context.Module{
+		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+		ImportPath: strings.TrimSuffix(entryPath, ".em"),
+		FilePath:   entryPath,
+		Origin:     context.ModuleOriginLocal,
+		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
+		Imports:    make(map[string]context.ResolvedImport),
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+
+	// The wrapper function for Summer -> Point -> sum should be defined exactly once.
+	// We count "define i32 @__ifacewrap__" to verify.
+	wrapperDef := "define i32 @__ifacewrap__"
+	count := strings.Count(entry.LLVMIR, wrapperDef)
+	if count != 1 {
+		t.Errorf("expected exactly 1 definition of the interface wrapper function, got %d. LLVM IR:\n%s", count, entry.LLVMIR)
+	}
+}
+
+
