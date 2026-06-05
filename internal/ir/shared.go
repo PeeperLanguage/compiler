@@ -435,7 +435,7 @@ func SignatureText(params []Param, returnType string) string {
 	return b.String()
 }
 
-func SanitizeMethodName(text string) string {
+func SanitizeSymbolName(text string) string {
 	if text == "" {
 		return "unknown"
 	}
@@ -454,4 +454,5 @@ func SanitizeMethodName(text string) string {
 	}
 	return b.String()
 }
+
 

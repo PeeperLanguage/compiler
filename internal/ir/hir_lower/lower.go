@@ -674,7 +674,7 @@ func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
 func methodFunctionName(targetText, methodName string) string {
 	var b strings.Builder
 	b.WriteString("__impl__")
-	b.WriteString(ir.SanitizeMethodName(targetText))
+	b.WriteString(ir.SanitizeSymbolName(targetText))
 	b.WriteString("__")
 	b.WriteString(methodName)
 	return b.String()
