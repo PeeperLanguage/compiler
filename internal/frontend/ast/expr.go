@@ -24,6 +24,16 @@ func (*ScopeResolution) exprNode()               {}
 func (*ScopeResolution) typeNode()               {}
 func (e *ScopeResolution) Loc() *source.Location { return e.Location }
 
+type SelectorExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Name     *Ident
+	Location *source.Location
+}
+
+func (*SelectorExpr) exprNode()               {}
+func (e *SelectorExpr) Loc() *source.Location { return e.Location }
+
 type BadExpr struct {
 	NodeIDHolder
 	Location *source.Location

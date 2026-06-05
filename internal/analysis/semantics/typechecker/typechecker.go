@@ -493,6 +493,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.ScopeResolution:
 		return c.qualifiedScopeType(scope, node)
 
+	case *ast.SelectorExpr:
+		return c.typeSelectorExpr(scope, node)
+
 	case *ast.UnaryExpr:
 		return c.typeUnaryExpr(scope, node, expected)
 
@@ -592,6 +595,9 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 }
 
 func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
+	if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
+		return c.typeSelectorCall(scope, selector, node, expected)
+	}
 	calleeType := c.typeExpr(scope, node.Callee, expected)
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
 	for _, arg := range node.Args {
@@ -599,6 +605,87 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	c.checkFunctionCall(node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
+}
+
+func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) typeinfo.Type {
+	if node == nil || node.Expr == nil || node.Name == nil {
+		return &typeinfo.InvalidType{}
+	}
+	baseType := c.typeExpr(scope, node.Expr, nil)
+	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
+		return &typeinfo.InvalidType{}
+	}
+	if fieldType, ok := c.lookupFieldType(baseType, node.Name.Name); ok {
+		return fieldType
+	}
+	if methodType, _, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
+		return methodType
+	}
+	common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Name, diagnostics.ErrFieldNotFound,
+		fmt.Sprintf("unknown member `%s`", node.Name.Name))
+	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
+	baseType := c.typeExpr(scope, selector.Expr, nil)
+	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
+		return &typeinfo.InvalidType{}
+	}
+	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
+	if ok {
+		argTypes := make([]typeinfo.Type, 0, len(call.Args)+1)
+		argTypes = append(argTypes, baseType)
+		for _, arg := range call.Args {
+			argTypes = append(argTypes, c.typeExpr(scope, arg, nil))
+		}
+		c.checkMethodCall(call, methodType, argTypes, methodSym)
+		return c.callReturnType(call, methodType)
+	}
+	if _, fieldOK := c.lookupFieldType(baseType, selector.Name.Name); fieldOK {
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, selector.Name, diagnostics.ErrNotCallable,
+			fmt.Sprintf("field `%s` is not callable", selector.Name.Name))
+		return &typeinfo.InvalidType{}
+	}
+	common.AddError(c.ctx.Diagnostics, c.module.FilePath, selector.Name, diagnostics.ErrMethodNotFound,
+		fmt.Sprintf("unknown method `%s`", selector.Name.Name))
+	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo.Type, bool) {
+	underlying := typeinfo.Underlying(baseType)
+	strct, ok := underlying.(*typeinfo.StructType)
+	if !ok || strct == nil {
+		return nil, false
+	}
+	for _, field := range strct.Fields {
+		if field.Name == name {
+			return field.Type, true
+		}
+	}
+	return nil, false
+}
+
+func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {
+	if c == nil || c.module == nil || c.module.Semantics == nil {
+		return nil, nil, false
+	}
+	keys := []string{typeinfo.TypeText(baseType)}
+	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
+		keys = append(keys, typeinfo.TypeText(underlying))
+	}
+	for _, key := range keys {
+		methods := c.module.Semantics.MethodSets[key]
+		for _, method := range methods {
+			if method == nil || method.Name != name {
+				continue
+			}
+			typ, ok := symbols.GetSymbolType(method)
+			if ok && typ != nil {
+				return typ, method, true
+			}
+		}
+	}
+	return nil, nil, false
 }
 
 func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) typeinfo.Type {
@@ -751,6 +838,43 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 		}
 		if !typeinfo.Assignable(paramType, argType) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr.Args[i], diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("cannot implicitly convert %s to %s",
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
+		}
+	}
+}
+
+func (c *checker) checkMethodCall(callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type, _ *symbols.Symbol) {
+	if c == nil || callExpr == nil || calleeType == nil {
+		return
+	}
+	fnType, ok := calleeType.(*typeinfo.FuncType)
+	if !ok || fnType == nil {
+		if !typeinfo.IsInvalidOrUnknown(calleeType) {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr, diagnostics.ErrNotCallable,
+				"call target is not a method")
+		}
+		return
+	}
+	if len(args) != len(fnType.Params) {
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, callExpr, diagnostics.ErrWrongArgumentCount,
+			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args)-1, len(fnType.Params)-1))
+		return
+	}
+	for i, argType := range args {
+		if argType == nil {
+			continue
+		}
+		paramType := fnType.Params[i]
+		if paramType == nil {
+			continue
+		}
+		if !typeinfo.Assignable(paramType, argType) {
+			site := ast.Node(callExpr)
+			if i > 0 && i-1 < len(callExpr.Args) {
+				site = callExpr.Args[i-1]
+			}
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, site, diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
 		}
