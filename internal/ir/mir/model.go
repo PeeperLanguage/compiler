@@ -522,9 +522,9 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		slots := make([]ValueRef, 0, len(e.Slots))
 		for index, slot := range e.Slots {
 			wrapperName := fmt.Sprintf("__ifacewrap__%s__%s__%s__%d",
-				ir.SanitizeMethodName(slot.InterfaceType),
-				ir.SanitizeMethodName(dataType),
-				ir.SanitizeMethodName(slot.MethodName),
+				ir.SanitizeSymbolName(slot.InterfaceType),
+				ir.SanitizeSymbolName(dataType),
+				ir.SanitizeSymbolName(slot.MethodName),
 				index)
 			slot.WrapperName = wrapperName
 			slot.DataType = dataType
