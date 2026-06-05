@@ -67,6 +67,29 @@ type Call struct {
 	Type   string
 }
 
+type InterfaceSlot struct {
+	WrapperName string
+	SlotType    string
+	FuncName    string
+	FuncType    string
+	DataType    string
+}
+
+type InterfaceMake struct {
+	Value       Expr
+	DataType    string
+	BoxValue    bool
+	Slots       []InterfaceSlot
+	Type        string
+}
+
+type InterfaceCall struct {
+	Base  Expr
+	Slot  int
+	Args  []Expr
+	Type  string
+}
+
 type Field struct {
 	Base       Expr
 	Index      int
@@ -92,6 +115,8 @@ func (*Ident) exprNode()       {}
 func (*Unary) exprNode()       {}
 func (*Binary) exprNode()      {}
 func (*Call) exprNode()        {}
+func (*InterfaceMake) exprNode() {}
+func (*InterfaceCall) exprNode() {}
 func (*Field) exprNode()       {}
 func (*StructLit) exprNode()   {}
 func (*Cast) exprNode()        {}
@@ -192,6 +217,44 @@ func (e *Call) String() string {
 	return b.String()
 }
 func (e *Call) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *InterfaceMake) String() string {
+	if e == nil || e.Value == nil {
+		return "<iface>"
+	}
+	return fmt.Sprintf("iface(%s)", e.Value.String())
+}
+
+func (e *InterfaceMake) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *InterfaceCall) String() string {
+	if e == nil || e.Base == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("ifacecall(")
+	b.WriteString(e.Base.String())
+	for _, arg := range e.Args {
+		b.WriteString(", ")
+		if arg != nil {
+			b.WriteString(arg.String())
+		}
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
+func (e *InterfaceCall) TypeText() string {
 	if e == nil {
 		return ""
 	}

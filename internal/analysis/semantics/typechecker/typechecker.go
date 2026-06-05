@@ -37,6 +37,27 @@ func isLowerableType(t typeinfo.Type) bool {
 			}
 		}
 		return true
+	case *typeinfo.InterfaceType:
+		if typ == nil {
+			return false
+		}
+		for _, method := range typ.Methods {
+			if len(method.Params) == 0 {
+				return false
+			}
+			for i, param := range method.Params {
+				if i == 0 {
+					continue
+				}
+				if containsAbstractSelf(param.Type) || !isLowerableType(param.Type) {
+					return false
+				}
+			}
+			if containsAbstractSelf(method.Return) || !isLowerableType(method.Return) {
+				return false
+			}
+		}
+		return true
 	case *typeinfo.EnumType:
 		return typ != nil
 	}
@@ -50,6 +71,27 @@ func isLowerableType(t typeinfo.Type) bool {
 		}
 	}
 	return isLowerableType(fn.Return)
+}
+
+func containsAbstractSelf(t typeinfo.Type) bool {
+	switch typ := t.(type) {
+	case *typeinfo.NamedType:
+		return typ != nil && typ.Name == "Self"
+	case *typeinfo.RawPtrType:
+		return typ != nil && containsAbstractSelf(typ.Target)
+	case *typeinfo.FuncType:
+		if typ == nil {
+			return false
+		}
+		for _, param := range typ.Params {
+			if containsAbstractSelf(param) {
+				return true
+			}
+		}
+		return containsAbstractSelf(typ.Return)
+	default:
+		return false
+	}
 }
 
 func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
