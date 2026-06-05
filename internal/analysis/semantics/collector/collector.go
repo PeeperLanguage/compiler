@@ -51,6 +51,8 @@ func (c *collector) collectNode(node ast.Node) {
 		c.collectConcreteTypeDecl(n.Name, &ast.InterfaceType{Methods: n.Methods, Location: n.Location}, n)
 	case *ast.EnumDecl:
 		c.collectConcreteTypeDecl(n.Name, &ast.EnumType{Variants: n.Variants, Location: n.Location}, n)
+	case *ast.ImplDecl:
+		c.collectImplDecl(n)
 	case *ast.LetDecl:
 		c.collectModuleBinding(n.Name, symbols.SymbolVar, n.Type, n)
 	case *ast.ConstDecl:
@@ -95,7 +97,10 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		return
 	}
 	sym := symbols.New(name.Name, symbols.SymbolType, node)
-	sym.Type = typeinfo.TypeFromSyntax(typ)
+	sym.Type = &typeinfo.DefinedType{
+		Name:       name.Name,
+		Underlying: typeinfo.TypeFromSyntax(typ),
+	}
 	if sym.Type == nil {
 		sym.Type = &typeinfo.InvalidType{}
 	}
@@ -116,6 +121,35 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+	}
+}
+
+func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
+		return
+	}
+	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target))
+	for _, method := range decl.Methods {
+		if method == nil || method.Name == nil || method.Name.Name == "" {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrMissingIdentifier, "method name required")
+			continue
+		}
+		existing := c.module.Semantics.MethodSets[targetKey]
+		duplicate := false
+		for _, item := range existing {
+			if item != nil && item.Name == method.Name.Name {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, method, diagnostics.ErrRedeclaredSymbol, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`")
+			continue
+		}
+		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method)
+		sym.Scope = table.New(c.module.ModuleScope)
+		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
+		c.module.Semantics.MethodSymbol[method.ID()] = sym
 	}
 }
 

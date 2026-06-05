@@ -616,6 +616,8 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	switch tok.Kind {
 	case tokens.AMP:
 		return p.parseRefTypeExpr()
+	case tokens.CARET:
+		return p.parseCaretPtrTypeExpr()
 	case tokens.ASTERISK:
 		return p.parseRawPtrTypeExpr()
 	case tokens.FN:
@@ -662,6 +664,22 @@ func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
 	}
 	return reg(p, &ast.RefType{
 		Mutable:  isMutable,
+		Target:   target,
+		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
+	})
+}
+
+func (p *Parser) parseCaretPtrTypeExpr() ast.TypeExpr {
+	start := p.consume(tokens.CARET, "expected '^' in pointer type")
+	if start == nil {
+		return nil
+	}
+	target := p.parseTypeExpr()
+	if target == nil {
+		return nil
+	}
+	return reg(p, &ast.RawPtrType{
+		Mutable:  true,
 		Target:   target,
 		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
 	})
