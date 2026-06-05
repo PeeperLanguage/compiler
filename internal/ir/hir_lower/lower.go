@@ -73,6 +73,7 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 		return
 	}
 	targetType := typeinfo.TypeFromSyntax(decl.Target)
+	targetText := typeinfo.TypeText(targetType)
 	for _, method := range decl.Methods {
 		if method == nil || method.Name == nil {
 			continue
@@ -101,13 +102,13 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 				returnType = resolvedFnType.Return
 			}
 			out.Externs = append(out.Externs, hir.Extern{
-				Name:       methodFunctionName(targetType, method.Name.Name),
+				Name:       methodFunctionName(targetText, method.Name.Name),
 				Params:     params,
 				ReturnType: loweredTypeText(returnType),
 			})
 			continue
 		}
-		hirFn := lowerASTFunctionNamed(ctx, module, sym, method, methodFunctionName(targetType, method.Name.Name))
+		hirFn := lowerASTFunctionNamed(ctx, module, sym, method, methodFunctionName(targetText, method.Name.Name))
 		if hirFn != nil {
 			out.Funcs = append(out.Funcs, hirFn)
 		}
@@ -406,11 +407,10 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 		return &ir.InvalidExpr{Message: "invalid selector call", Type: "<invalid>"}
 	}
 	baseType := exprResolvedType(module, selector.Expr)
-	methodSym, fnType := lookupLoweredMethod(module, baseType, selector.Name.Name)
+	methodOwnerKey, methodSym, fnType := lookupLoweredMethod(module, baseType, selector.Name.Name)
 	if methodSym == nil || fnType == nil {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
 	}
-	targetType := loweredMethodTargetType(baseType)
 	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, "")
 	args := make([]ir.Expr, 0, len(call.Args)+1)
 	args = append(args, baseExpr)
@@ -419,7 +419,7 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 	}
 	return &ir.Call{
 		Callee: &ir.Ident{
-			Name: methodSymbolRefName(targetType, methodSym),
+			Name: methodSymbolRefName(methodOwnerKey, methodSym),
 			Type: loweredTypeText(fnType),
 		},
 		Args: args,
@@ -433,10 +433,12 @@ func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, sco
 	}
 	baseType := exprResolvedType(module, selector.Expr)
 	if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
+		_, throughPtr := baseType.(*typeinfo.RawPtrType)
 		return &ir.Field{
-			Base:  lowerASTExpr(ctx, module, scope, selector.Expr, ""),
-			Index: fieldIndex,
-			Type:  loweredTypeText(fieldType),
+			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, ""),
+			Index:      fieldIndex,
+			ThroughPtr: throughPtr,
+			Type:       loweredTypeText(fieldType),
 		}
 	}
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>"}
@@ -479,9 +481,9 @@ func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
 	return module.Semantics.ExprTypes[expr.ID()]
 }
 
-func lookupLoweredMethod(module *context.Module, baseType typeinfo.Type, name string) (*symbols.Symbol, *typeinfo.FuncType) {
+func lookupLoweredMethod(module *context.Module, baseType typeinfo.Type, name string) (string, *symbols.Symbol, *typeinfo.FuncType) {
 	if module == nil || module.Semantics == nil || baseType == nil || name == "" {
-		return nil, nil
+		return "", nil, nil
 	}
 	for _, key := range loweredMethodLookupKeys(baseType) {
 		for _, method := range module.Semantics.MethodSets[key] {
@@ -494,14 +496,17 @@ func lookupLoweredMethod(module *context.Module, baseType typeinfo.Type, name st
 			}
 			fnType, ok := typ.(*typeinfo.FuncType)
 			if ok && fnType != nil {
-				return method, fnType
+				return key, method, fnType
 			}
 		}
 	}
-	return nil, nil
+	return "", nil, nil
 }
 
 func lookupStructField(baseType typeinfo.Type, name string) (typeinfo.Type, int, bool) {
+	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		baseType = ptr.Target
+	}
 	strct, ok := loweredRuntimeType(baseType).(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return nil, -1, false
@@ -544,27 +549,20 @@ func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
 	return keys
 }
 
-func loweredMethodTargetType(baseType typeinfo.Type) typeinfo.Type {
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		return ptr.Target
-	}
-	return baseType
-}
-
-func methodFunctionName(targetType typeinfo.Type, methodName string) string {
+func methodFunctionName(targetText, methodName string) string {
 	var b strings.Builder
 	b.WriteString("__impl__")
-	b.WriteString(sanitizeMethodName(loweredTypeText(targetType)))
+	b.WriteString(sanitizeMethodName(targetText))
 	b.WriteString("__")
 	b.WriteString(methodName)
 	return b.String()
 }
 
-func methodSymbolRefName(targetType typeinfo.Type, sym *symbols.Symbol) string {
+func methodSymbolRefName(targetText string, sym *symbols.Symbol) string {
 	if sym == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s$%d", methodFunctionName(targetType, sym.Name), sym.ID)
+	return fmt.Sprintf("%s$%d", methodFunctionName(targetText, sym.Name), sym.ID)
 }
 
 func sanitizeMethodName(text string) string {
@@ -682,11 +680,6 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 			return nil
 		}
 		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target)}
-	case *typeinfo.RefType:
-		if typ == nil {
-			return nil
-		}
-		return &typeinfo.RefType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target)}
 	case *typeinfo.StructType:
 		if typ == nil {
 			return nil

@@ -85,16 +85,6 @@ type UnaryExpr struct {
 func (*UnaryExpr) exprNode()               {}
 func (e *UnaryExpr) Loc() *source.Location { return e.Location }
 
-type BorrowExpr struct {
-	NodeIDHolder
-	Mutable  bool
-	Expr     Expr
-	Location *source.Location
-}
-
-func (*BorrowExpr) exprNode()               {}
-func (e *BorrowExpr) Loc() *source.Location { return e.Location }
-
 type BinaryExpr struct {
 	NodeIDHolder
 	Left     Expr

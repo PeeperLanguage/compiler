@@ -25,8 +25,6 @@ func isLowerableType(t typeinfo.Type) bool {
 	switch typ := t.(type) {
 	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
 		return true
-	case *typeinfo.RefType:
-		return typ != nil && isLowerableType(typ.Target)
 	case *typeinfo.RawPtrType:
 		return typ != nil && isLowerableType(typ.Target)
 	case *typeinfo.StructType:
@@ -94,11 +92,6 @@ func (c *checker) typeFromSyntaxWithSelf(node ast.TypeExpr, selfType typeinfo.Ty
 		return resolved
 	case *ast.ScopeResolution:
 		return c.resolveQualifiedType(typ)
-	case *ast.RefType:
-		if typ == nil {
-			return nil
-		}
-		return &typeinfo.RefType{Mutable: typ.Mutable, Target: c.typeFromSyntaxWithSelf(typ.Target, selfType, allowAbstractSelf)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
@@ -529,11 +522,6 @@ func (c *checker) replaceAbstractSelf(t typeinfo.Type, ownerType typeinfo.Type) 
 			return ownerType
 		}
 		return t
-	case *typeinfo.RefType:
-		if typ == nil {
-			return nil
-		}
-		return &typeinfo.RefType{Mutable: typ.Mutable, Target: c.replaceAbstractSelf(typ.Target, ownerType)}
 	case *typeinfo.RawPtrType:
 		if typ == nil {
 			return nil
@@ -604,9 +592,6 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 
 	case *ast.AsExpr:
 		return c.typeAsExpr(scope, node)
-
-	case *ast.BorrowExpr:
-		return c.typeBorrowExpr(scope, node)
 
 	default:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidExpression,
@@ -843,6 +828,9 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 }
 
 func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo.Type, bool) {
+	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		baseType = ptr.Target
+	}
 	underlying := typeinfo.Underlying(baseType)
 	strct, ok := underlying.(*typeinfo.StructType)
 	if !ok || strct == nil {
@@ -968,20 +956,6 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 		return &typeinfo.InvalidType{}
 	}
 	return targetType
-}
-
-func (c *checker) typeBorrowExpr(scope *table.Scope, node *ast.BorrowExpr) typeinfo.Type {
-	if c == nil || node == nil || node.Expr == nil {
-		return &typeinfo.InvalidType{}
-	}
-	target := c.typeExpr(scope, node.Expr, nil)
-	if target == nil || typeinfo.IsInvalidOrUnknown(target) {
-		return &typeinfo.InvalidType{}
-	}
-	return &typeinfo.RefType{
-		Mutable: node.Mutable,
-		Target:  target,
-	}
 }
 
 func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typeinfo.Type {
