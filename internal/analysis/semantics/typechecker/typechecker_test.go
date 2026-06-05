@@ -181,3 +181,30 @@ fn main(file: ^File) -> i32 {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestStructLiteralAssignsToNamedStruct(t *testing.T) {
+	src := `struct Point {
+	x: i32,
+	y: i32,
+}
+
+fn main() -> i32 {
+	let p: Point = .{ x = 1, y = 2 };
+	return p.x;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestAnonymousStructLiteralInfersShape(t *testing.T) {
+	src := `fn main() -> i32 {
+	let p = .{ x = 1, y = 2 };
+	return p.x;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}

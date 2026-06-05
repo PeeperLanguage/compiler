@@ -131,6 +131,11 @@ type Field struct {
 	Type  string
 }
 
+type StructLit struct {
+	Fields []ValueRef
+	Type   string
+}
+
 func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
 }
@@ -152,6 +157,7 @@ func (*Binary) valueExprNode()  {}
 func (*Move) valueExprNode()    {}
 func (*Cast) valueExprNode()    {}
 func (*Field) valueExprNode()   {}
+func (*StructLit) valueExprNode() {}
 func (*RefConst) valueRefNode() {}
 func (*RefName) valueRefNode()  {}
 
@@ -162,6 +168,18 @@ func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text(
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
 func (v *Field) Text() string    { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
+func (v *StructLit) Text() string {
+	var b strings.Builder
+	b.WriteString("struct(")
+	for i, field := range v.Fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(field.Text())
+	}
+	b.WriteString(")")
+	return b.String()
+}
 
 type lowerer struct {
 	module      *Module
@@ -426,6 +444,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.StructLit:
+		fields := make([]ValueRef, 0, len(e.Fields))
+		for _, field := range e.Fields {
+			fields = append(fields, l.lowerExpr(field, out))
+		}
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)

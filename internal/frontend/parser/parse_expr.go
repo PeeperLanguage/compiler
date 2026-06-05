@@ -124,6 +124,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 			return nil
 		}
 		return expr
+	case tokens.DOT:
+		return p.parseStructLiteral()
 	default:
 		p.errorf(tok, diagnostics.ErrInvalidExpression, "expected expression")
 		return nil
@@ -230,6 +232,51 @@ func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 		Expr:     left,
 		Name:     name,
 		Location: p.locFromNode(left, name),
+	})
+}
+
+func (p *Parser) parseStructLiteral() ast.Expr {
+	start := p.consume(tokens.DOT, "expected '.'")
+	if start == nil {
+		return nil
+	}
+	if p.consume(tokens.LBRACE, "expected '{' after '.'") == nil {
+		return nil
+	}
+	fields := make([]ast.StructLitField, 0)
+	if !p.at(tokens.RBRACE) {
+		for {
+			name := p.parseIdent()
+			if name == nil {
+				return nil
+			}
+			if p.consume(tokens.ASSIGN, "expected '=' after struct literal field name") == nil {
+				return nil
+			}
+			value := p.parseExpr(precLowest)
+			if value == nil {
+				return nil
+			}
+			fields = append(fields, ast.StructLitField{
+				Name:     name,
+				Value:    value,
+				Location: p.locFromNode(name, value),
+			})
+			if !p.match(tokens.COMMA) {
+				break
+			}
+			if p.at(tokens.RBRACE) {
+				break
+			}
+		}
+	}
+	end := p.consume(tokens.RBRACE, "expected '}' after struct literal")
+	if end == nil {
+		return nil
+	}
+	return reg(p, &ast.StructLit{
+		Fields:   fields,
+		Location: p.loc(*start, *end),
 	})
 }
 

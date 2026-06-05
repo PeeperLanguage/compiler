@@ -623,6 +623,40 @@ func TestParseSelectorAndMethodCall(t *testing.T) {
 	}
 }
 
+func TestParseStructLiteral(t *testing.T) {
+	src := `fn main() -> i32 {
+	let p = .{ x = 1, y = 2, };
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body")
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("stmt[0] expected let")
+	}
+	lit, ok := letDecl.Value.(*ast.StructLit)
+	if !ok {
+		t.Fatalf("stmt[0] expected struct literal, got %#v", letDecl.Value)
+	}
+	if len(lit.Fields) != 2 {
+		t.Fatalf("literal fields: got %d want 2", len(lit.Fields))
+	}
+	if lit.Fields[0].Name == nil || lit.Fields[0].Name.Name != "x" {
+		t.Fatalf("first literal field mismatch")
+	}
+	if lit.Fields[1].Name == nil || lit.Fields[1].Name.Name != "y" {
+		t.Fatalf("second literal field mismatch")
+	}
+}
+
 func TestParseReferenceAndRawPointerTypes(t *testing.T) {
 	src := `let shared: &i32;
 let unique: &mut i32;
