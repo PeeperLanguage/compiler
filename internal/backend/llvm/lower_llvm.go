@@ -195,14 +195,7 @@ func (e *llvmEmitter) llvmType(typeText string) string {
 
 func llvmTypeName(typeText string) (string, bool) {
 	typeText = strings.TrimSpace(typeText)
-	if remainder, ok := strings.CutPrefix(typeText, "*mut "); ok {
-		target, ok := llvmTypeName(strings.TrimSpace(remainder))
-		if !ok {
-			return "", false
-		}
-		return target + "*", true
-	}
-	if remainder, ok := strings.CutPrefix(typeText, "*const "); ok {
+	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
 		target, ok := llvmTypeName(strings.TrimSpace(remainder))
 		if !ok {
 			return "", false
@@ -274,6 +267,14 @@ func splitTopLevel(text string, sep rune) []string {
 	}
 	parts = append(parts, text[start:])
 	return parts
+}
+
+func pointedTypeText(typeText string) (string, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
+		return strings.TrimSpace(remainder), true
+	}
+	return "", false
 }
 
 // collectCallDecls deleted
@@ -495,6 +496,26 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 	case *mir.Field:
 		base := emitRef(b, e.Base)
 		baseType := mirRefType(e.Base)
+		if e.ThroughPtr {
+			llvmPtrType, ok := llvmTypeName(baseType)
+			if !ok {
+				return "0"
+			}
+			structTypeText, ok := pointedTypeText(baseType)
+			if !ok {
+				return "0"
+			}
+			llvmStructType, ok := llvmTypeName(structTypeText)
+			if !ok {
+				return "0"
+			}
+			ptr := b.nextReg()
+			b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, e.Index))
+			out := b.nextReg()
+			llvmFieldType := b.types.llvmType(e.Type)
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmFieldType, llvmFieldType, ptr))
+			return out
+		}
 		llvmBaseType, ok := llvmTypeName(baseType)
 		if !ok {
 			return "0"

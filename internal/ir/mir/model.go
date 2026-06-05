@@ -126,9 +126,10 @@ type Cast struct {
 }
 
 type Field struct {
-	Base  ValueRef
-	Index int
-	Type  string
+	Base       ValueRef
+	Index      int
+	ThroughPtr bool
+	Type       string
 }
 
 type StructLit struct {
@@ -443,7 +444,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
-		*out = append(*out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeText()}})
+		*out = append(*out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))

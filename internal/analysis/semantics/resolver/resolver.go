@@ -195,8 +195,6 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 	case *ast.UnaryExpr:
 		r.resolveExpr(scope, node.Expr)
-	case *ast.BorrowExpr:
-		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
 		r.resolveExpr(scope, node.Right)

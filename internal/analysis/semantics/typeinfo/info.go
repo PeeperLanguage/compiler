@@ -39,11 +39,6 @@ type DefinedType struct {
 	Underlying Type
 }
 
-type RefType struct {
-	Mutable bool
-	Target  Type
-}
-
 type RawPtrType struct {
 	Mutable bool
 	Target  Type
@@ -85,7 +80,6 @@ func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
 func (*NamedType) TypeNode()     {}
 func (*DefinedType) TypeNode()   {}
-func (*RefType) TypeNode()       {}
 func (*RawPtrType) TypeNode()    {}
 func (*FuncType) TypeNode()      {}
 func (*StructType) TypeNode()    {}
@@ -135,31 +129,16 @@ func Underlying(t Type) Type {
 		defined, ok := t.(*DefinedType)
 		if !ok || defined == nil || defined.Underlying == nil {
 			return t
-		}
-		t = defined.Underlying
 	}
-}
-
-func (t *RefType) Text() string {
-	if t == nil {
-		return ""
+	t = defined.Underlying
 	}
-	prefix := "&"
-	if t.Mutable {
-		prefix = "&mut "
-	}
-	return prefix + TypeText(t.Target)
 }
 
 func (t *RawPtrType) Text() string {
 	if t == nil {
 		return ""
 	}
-	prefix := "*const "
-	if t.Mutable {
-		prefix = "*mut "
-	}
-	return prefix + TypeText(t.Target)
+	return "^" + TypeText(t.Target)
 }
 
 func (t *FuncType) Text() string {
@@ -273,11 +252,6 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 			return &IntegerType{Signed: signed, Bits: bits}
 		}
 		return &NamedType{Name: typ.Name}
-	case *ast.RefType:
-		if typ == nil {
-			return nil
-		}
-		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
@@ -379,9 +353,6 @@ func SameType(left, right Type) bool {
 	case *NamedType:
 		r, ok := right.(*NamedType)
 		return ok && r != nil && l.Name == r.Name
-	case *RefType:
-		r, ok := right.(*RefType)
-		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
 	case *RawPtrType:
 		r, ok := right.(*RawPtrType)
 		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)

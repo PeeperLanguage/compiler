@@ -175,3 +175,24 @@ func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPipelineLowersPointerFieldAccess(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Point {
+	x: i32,
+	y: i32,
+}
+
+#[extern]
+fn open_point() -> ^Point;
+
+fn main() -> i32 {
+	let p = open_point();
+	return p.x;
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}

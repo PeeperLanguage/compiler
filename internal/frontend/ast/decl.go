@@ -23,16 +23,6 @@ type NamedType struct {
 func (*NamedType) typeNode()               {}
 func (t *NamedType) Loc() *source.Location { return t.Location }
 
-type RefType struct {
-	NodeIDHolder
-	Mutable  bool
-	Target   TypeExpr
-	Location *source.Location
-}
-
-func (*RefType) typeNode()               {}
-func (t *RefType) Loc() *source.Location { return t.Location }
-
 type RawPtrType struct {
 	NodeIDHolder
 	Mutable  bool

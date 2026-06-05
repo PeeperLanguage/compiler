@@ -101,18 +101,6 @@ func (p *Parser) parsePrefix() ast.Expr {
 			Expr:     expr,
 			Location: p.loc(tok, tok),
 		})
-	case tokens.AMP:
-		p.advance()
-		isMutable := p.match(tokens.MUT)
-		expr := p.parseExpr(precPrefix)
-		if expr == nil {
-			return nil
-		}
-		return reg(p, &ast.BorrowExpr{
-			Mutable:  isMutable,
-			Expr:     expr,
-			Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(tok, tok)}), expr),
-		})
 	case tokens.LPAREN:
 		p.advance()
 		expr := p.parseExpr(precLowest)

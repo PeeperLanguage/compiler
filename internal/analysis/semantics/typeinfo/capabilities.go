@@ -63,7 +63,7 @@ func IsCopyType(t Type) bool {
 		return false
 	case *IntegerType, *FloatType, *BoolType, *CStrType:
 		return true
-	case *RefType, *RawPtrType:
+	case *RawPtrType:
 		return true
 	case *FuncType:
 		if typ == nil {
