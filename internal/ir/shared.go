@@ -434,3 +434,24 @@ func SignatureText(params []Param, returnType string) string {
 	}
 	return b.String()
 }
+
+func SanitizeMethodName(text string) string {
+	if text == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+

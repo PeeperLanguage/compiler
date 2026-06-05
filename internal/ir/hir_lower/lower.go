@@ -674,7 +674,7 @@ func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
 func methodFunctionName(targetText, methodName string) string {
 	var b strings.Builder
 	b.WriteString("__impl__")
-	b.WriteString(sanitizeMethodName(targetText))
+	b.WriteString(ir.SanitizeMethodName(targetText))
 	b.WriteString("__")
 	b.WriteString(methodName)
 	return b.String()
@@ -685,26 +685,6 @@ func methodSymbolRefName(targetText string, sym *symbols.Symbol) string {
 		return ""
 	}
 	return fmt.Sprintf("%s$%d", methodFunctionName(targetText, sym.Name), sym.ID)
-}
-
-func sanitizeMethodName(text string) string {
-	if text == "" {
-		return "unknown"
-	}
-	var b strings.Builder
-	for _, r := range text {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
 }
 
 // lookupScopeResolutionSymbol resolves a ScopeResolution node in two steps:
