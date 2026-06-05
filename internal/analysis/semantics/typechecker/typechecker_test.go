@@ -163,3 +163,21 @@ fn main() -> i32 {
 		t.Fatalf("expected type mismatch diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPointerSelfMethodCallResolvesOnPointerValue(t *testing.T) {
+	src := `struct File {}
+
+impl File {
+	fn read(self: ^Self, buf: cstr) -> i32 {
+		return 0;
+	}
+}
+
+fn main(file: ^File) -> i32 {
+	return file.read("ok");
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}

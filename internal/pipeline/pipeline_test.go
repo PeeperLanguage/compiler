@@ -101,3 +101,22 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 		}
 	}
 }
+
+func TestPipelineLowersImplMethodCalls(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `impl i32 {
+	fn abs(self: Self) -> Self {
+		return self;
+	}
+}
+
+fn main() -> i32 {
+	let x: i32 = 1;
+	return x.abs();
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
