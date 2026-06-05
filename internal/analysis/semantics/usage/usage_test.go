@@ -24,7 +24,9 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 
 	if setupImports {
 		// Mock an external dependency module named "external"
-		extSrc := `type MyType i32;
+		extSrc := `struct MyType {
+	value: i32,
+}
 fn GetValue() -> i32 { return 42; }`
 		extAST := parser.ParseModule("external.em", lexer.Lex("external.em", extSrc, diag), diag)
 		extMod := &context.Module{
@@ -187,8 +189,8 @@ fn main() -> i32 {
 func TestUsedImportInType(t *testing.T) {
 	src := `import "external";
 fn main() -> i32 {
-	let x: external::MyType = 12;
-	return x;
+	let x: external::MyType;
+	return 0;
 }`
 	diag := checkUsageSource(t, src, true)
 	if hasCode(diag, diagnostics.WarnUnusedImport) {

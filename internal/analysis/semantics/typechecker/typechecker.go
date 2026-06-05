@@ -283,11 +283,6 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	if decl == nil {
 		return
 	}
-	if decl.Receiver != nil {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrInvalidMethodReceiver,
-			"receivers not supported in current compiler stage")
-		return
-	}
 	if !isLowerableType(c.typeFromSyntax(decl.ReturnType)) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
 			"function return type must be builtin integer, f32/f64, or function type in current compiler stage")
@@ -295,7 +290,11 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 	for _, param := range decl.Params {
 		if !isLowerableType(c.typeFromSyntax(param.Type)) {
-			common.AddError(c.ctx.Diagnostics, c.module.FilePath, param.Name, diagnostics.ErrInvalidType,
+			site := ast.Node(decl)
+			if param.Name != nil {
+				site = param.Name
+			}
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, site, diagnostics.ErrInvalidType,
 				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage")
 			return
 		}
