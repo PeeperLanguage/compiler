@@ -60,37 +60,67 @@ func (p *Pipeline) Run(entry *context.Module) error {
 		return nil
 	}
 
+	p.runOrdered(ordered, diag)
+	return nil
+}
+
+func (p *Pipeline) runOrdered(ordered []*context.Module, diag *diagnostics.DiagnosticBag) {
+	if p == nil {
+		return
+	}
+	processed := make(map[string]struct{}, len(ordered))
+	if prelude := findPreludeModule(ordered); prelude != nil {
+		p.processModule(prelude, diag)
+		processed[prelude.Key] = struct{}{}
+	}
+
 	for _, module := range ordered {
-		if module == nil || module.AST == nil {
+		if module == nil || module.Key == "" {
 			continue
 		}
-		collector.Collect(p.ctx, module)
-		resolver.Resolve(p.ctx, module)
-		typechecker.Check(p.ctx, module)
-		usage.Analyze(p.ctx, module)
-
-		modhir := hir_lower.GenerateHIR(p.ctx, module)
-		if modhir == nil {
+		if _, ok := processed[module.Key]; ok {
 			continue
 		}
-		modhir = hir_fold.ApplyConstantFolding(modhir, diag)
-		module.HIR = modhir
-		cfg.AnalyzeModule(modhir, diag)
-		if diag != nil && diag.HasErrors() {
-			continue
-		}
+		p.processModule(module, diag)
+	}
+}
 
-		modmir := mir.GenerateMIR(module.HIR, module.ModuleScope)
-		module.MIR = modmir
-		module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag)
-
-		if module.Key == "core:prelude/global" {
-			if module.ModuleScope != nil {
-				for _, sym := range module.ModuleScope.Symbols() {
-					_ = p.ctx.GlobalScope.Declare(sym)
-				}
-			}
+func findPreludeModule(modules []*context.Module) *context.Module {
+	for _, module := range modules {
+		if module != nil && module.Key == "core:prelude/global" {
+			return module
 		}
 	}
 	return nil
+}
+
+func (p *Pipeline) processModule(module *context.Module, diag *diagnostics.DiagnosticBag) {
+	if p == nil || module == nil || module.AST == nil {
+		return
+	}
+	collector.Collect(p.ctx, module)
+	resolver.Resolve(p.ctx, module)
+	typechecker.Check(p.ctx, module)
+	usage.Analyze(p.ctx, module)
+
+	if module.Key == "core:prelude/global" && module.ModuleScope != nil {
+		for _, sym := range module.ModuleScope.Symbols() {
+			_ = p.ctx.GlobalScope.Declare(sym)
+		}
+	}
+
+	modhir := hir_lower.GenerateHIR(p.ctx, module)
+	if modhir == nil {
+		return
+	}
+	modhir = hir_fold.ApplyConstantFolding(modhir, diag)
+	module.HIR = modhir
+	cfg.AnalyzeModule(modhir, diag)
+	if diag != nil && diag.HasErrors() {
+		return
+	}
+
+	modmir := mir.GenerateMIR(module.HIR, module.ModuleScope)
+	module.MIR = modmir
+	module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag)
 }
