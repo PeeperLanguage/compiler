@@ -21,11 +21,13 @@ func DefaultIntegerType() Type {
 }
 
 func IsIntegral(t Type) bool {
+	t = Underlying(t)
 	_, ok := t.(*IntegerType)
 	return ok
 }
 
 func IsArithmetic(t Type) bool {
+	t = Underlying(t)
 	switch t.(type) {
 	case *IntegerType, *FloatType:
 		return true
@@ -35,6 +37,7 @@ func IsArithmetic(t Type) bool {
 }
 
 func IsEquatable(t Type) bool {
+	t = Underlying(t)
 	switch t.(type) {
 	case *IntegerType, *FloatType, *BoolType:
 		return true
@@ -52,6 +55,7 @@ func IsCondition(t Type) bool {
 }
 
 func IsCopyType(t Type) bool {
+	t = Underlying(t)
 	switch typ := t.(type) {
 	case nil:
 		return false

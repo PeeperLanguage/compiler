@@ -22,8 +22,13 @@ func (r *resolver) resolveModule() {
 		r.module.Semantics = context.NewSemanticInfo()
 	}
 	for _, decl := range r.module.AST.Decls {
-		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil && fn.Body != nil {
-			r.resolveFunction(fn)
+		switch node := decl.(type) {
+		case *ast.FnDecl:
+			if node != nil && node.Body != nil {
+				r.resolveFunction(node)
+			}
+		case *ast.ImplDecl:
+			r.resolveImpl(node)
 		}
 	}
 }
@@ -49,6 +54,41 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 		}
 	}
 	r.resolveBlock(funcScope, fn.Body)
+}
+
+func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
+	if r == nil || r.module == nil || sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
+		return
+	}
+	funcScope := sym.Scope.(*table.Scope)
+	for _, param := range fn.Params {
+		if param.Name == nil || param.Name.Name == "" {
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "parameter name required")
+			return
+		}
+		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
+		if err := funcScope.Declare(paramSym); err != nil {
+			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
+			return
+		}
+	}
+	r.resolveBlock(funcScope, fn.Body)
+}
+
+func (r *resolver) resolveImpl(decl *ast.ImplDecl) {
+	if r == nil || r.module == nil || r.module.Semantics == nil || decl == nil {
+		return
+	}
+	for _, method := range decl.Methods {
+		if method == nil || method.Body == nil {
+			continue
+		}
+		sym, ok := r.module.Semantics.MethodSymbol[method.ID()]
+		if !ok || sym == nil {
+			continue
+		}
+		r.resolveMethod(sym, method)
+	}
 }
 
 func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {

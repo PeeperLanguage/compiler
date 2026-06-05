@@ -2,7 +2,6 @@ package typechecker
 
 import (
 	"fmt"
-	"strings"
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/common"
@@ -22,6 +21,7 @@ type checker struct {
 // --- helpers -----------------------------------------------------------------
 
 func isLowerableType(t typeinfo.Type) bool {
+	t = typeinfo.Underlying(t)
 	switch typ := t.(type) {
 	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
 		return true
@@ -55,54 +55,154 @@ func isLowerableType(t typeinfo.Type) bool {
 }
 
 func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
-	typ := typeinfo.TypeFromSyntax(node)
-	named, ok := typ.(*typeinfo.NamedType)
-	if !ok || named == nil || named.Name == "" || c == nil || c.module == nil || c.module.ModuleScope == nil {
-		return typ
+	return c.typeFromSyntaxWithSelf(node, nil, false)
+}
+
+func (c *checker) typeFromSyntaxWithSelf(node ast.TypeExpr, selfType typeinfo.Type, allowAbstractSelf bool) typeinfo.Type {
+	if node == nil {
+		return nil
 	}
-	var sym *symbols.Symbol
-	var found bool
-	if strings.Contains(named.Name, "::") {
-		parts := strings.Split(named.Name, "::")
-		if len(parts) == 2 {
-			qualifier := parts[0]
-			member := parts[1]
-			imp, ok := c.module.Imports[qualifier]
-			if ok {
-				if impSym, ok := c.module.ModuleScope.LookupLocal(qualifier); ok && impSym != nil {
-					impSym.Used = true
-				}
-				mod, ok := c.ctx.ModuleByKey(imp.Key)
-				if ok && mod != nil && mod.ModuleScope != nil {
-					sym, found = mod.ModuleScope.LookupLocal(member)
-				}
-			}
+	switch typ := node.(type) {
+	case *ast.NamedType:
+		if typ == nil {
+			return nil
 		}
-	} else {
-		sym, found = c.module.ModuleScope.Lookup(named.Name)
+		if typ.Name == "Self" {
+			if selfType != nil {
+				return selfType
+			}
+			if allowAbstractSelf {
+				return &typeinfo.NamedType{Name: "Self"}
+			}
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, typ, diagnostics.ErrInvalidType,
+				"`Self` can only be used in interface methods and impl blocks")
+			return &typeinfo.InvalidType{}
+		}
+		base := typeinfo.TypeFromSyntax(typ)
+		if _, ok := base.(*typeinfo.NamedType); !ok || c == nil || c.module == nil || c.module.ModuleScope == nil {
+			return base
+		}
+		sym, found := c.module.ModuleScope.Lookup(typ.Name)
+		if !found || sym == nil || sym.Kind != symbols.SymbolType {
+			return base
+		}
+		sym.Used = true
+		resolved, ok := symbols.GetSymbolType(sym)
+		if !ok {
+			return base
+		}
+		return resolved
+	case *ast.ScopeResolution:
+		return c.resolveQualifiedType(typ)
+	case *ast.RefType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.RefType{Mutable: typ.Mutable, Target: c.typeFromSyntaxWithSelf(typ.Target, selfType, allowAbstractSelf)}
+	case *ast.RawPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: c.typeFromSyntaxWithSelf(typ.Target, selfType, allowAbstractSelf)}
+	case *ast.FuncType:
+		if typ == nil {
+			return nil
+		}
+		params := make([]typeinfo.Type, 0, len(typ.Params))
+		for _, param := range typ.Params {
+			params = append(params, c.typeFromSyntaxWithSelf(param, selfType, allowAbstractSelf))
+		}
+		return &typeinfo.FuncType{
+			Params: params,
+			Return: c.typeFromSyntaxWithSelf(typ.Return, selfType, allowAbstractSelf),
+		}
+	case *ast.StructType:
+		if typ == nil {
+			return nil
+		}
+		fields := make([]typeinfo.Field, 0, len(typ.Fields))
+		for _, field := range typ.Fields {
+			name := ""
+			if field.Name != nil {
+				name = field.Name.Name
+			}
+			fields = append(fields, typeinfo.Field{Name: name, Type: c.typeFromSyntaxWithSelf(field.Type, selfType, allowAbstractSelf)})
+		}
+		return &typeinfo.StructType{Fields: fields}
+	case *ast.InterfaceType:
+		if typ == nil {
+			return nil
+		}
+		methods := make([]typeinfo.Method, 0, len(typ.Methods))
+		for _, method := range typ.Methods {
+			params := make([]typeinfo.Field, 0, len(method.Params))
+			for _, param := range method.Params {
+				name := ""
+				if param.Name != nil {
+					name = param.Name.Name
+				}
+				params = append(params, typeinfo.Field{Name: name, Type: c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf)})
+			}
+			name := ""
+			if method.Name != nil {
+				name = method.Name.Name
+			}
+			methods = append(methods, typeinfo.Method{
+				Name:   name,
+				Params: params,
+				Return: c.typeFromSyntaxWithSelf(method.ReturnType, selfType, allowAbstractSelf),
+			})
+		}
+		return &typeinfo.InterfaceType{Methods: methods}
+	default:
+		return typeinfo.TypeFromSyntax(node)
 	}
+}
+
+func (c *checker) resolveQualifiedType(node *ast.ScopeResolution) typeinfo.Type {
+	if c == nil || c.module == nil || c.ctx == nil || node == nil || c.module.ModuleScope == nil {
+		return typeinfo.TypeFromSyntax(node)
+	}
+	qualifier := node.Module.Name
+	member := node.Name.Name
+	imp, ok := c.module.Imports[qualifier]
+	if !ok {
+		return typeinfo.TypeFromSyntax(node)
+	}
+	if impSym, ok := c.module.ModuleScope.LookupLocal(qualifier); ok && impSym != nil {
+		impSym.Used = true
+	}
+	mod, ok := c.ctx.ModuleByKey(imp.Key)
+	if !ok || mod == nil || mod.ModuleScope == nil {
+		return typeinfo.TypeFromSyntax(node)
+	}
+	sym, found := mod.ModuleScope.LookupLocal(member)
 	if !found || sym == nil || sym.Kind != symbols.SymbolType {
-		return typ
+		return typeinfo.TypeFromSyntax(node)
 	}
 	sym.Used = true
 	resolved, ok := symbols.GetSymbolType(sym)
 	if !ok {
-		return typ
+		return typeinfo.TypeFromSyntax(node)
 	}
 	return resolved
 }
 
 func (c *checker) fnTypeFromDecl(decl *ast.FnDecl) *typeinfo.FuncType {
+	return c.fnTypeFromDeclWithSelf(decl, nil, false)
+}
+
+func (c *checker) fnTypeFromDeclWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) *typeinfo.FuncType {
 	if decl == nil {
 		return nil
 	}
 	params := make([]typeinfo.Type, 0, len(decl.Params))
 	for _, param := range decl.Params {
-		params = append(params, c.typeFromSyntax(param.Type))
+		params = append(params, c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf))
 	}
 	return &typeinfo.FuncType{
 		Params: params,
-		Return: c.typeFromSyntax(decl.ReturnType),
+		Return: c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf),
 	}
 }
 
@@ -113,26 +213,38 @@ func (c *checker) checkModule() {
 		return
 	}
 	for _, decl := range c.module.AST.Decls {
-		if fn, ok := decl.(*ast.FnDecl); ok && fn != nil {
-			sym, found := c.module.ModuleScope.Lookup(fn.Name.Name)
+		switch node := decl.(type) {
+		case *ast.FnDecl:
+			if node == nil {
+				continue
+			}
+			sym, found := c.module.ModuleScope.Lookup(node.Name.Name)
 			if !found || sym == nil {
 				continue
 			}
-			if fn.Body == nil {
-				sym.BindType(c.fnTypeFromDecl(fn))
+			if node.Body == nil {
+				sym.BindType(c.fnTypeFromDecl(node))
 			} else {
-				c.checkFunction(sym, fn)
+				c.checkFunction(sym, node)
 			}
+		case *ast.InterfaceDecl:
+			c.checkInterfaceDecl(node)
+		case *ast.ImplDecl:
+			c.checkImplDecl(node)
 		}
 	}
 }
 
 func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
+	c.checkFunctionWithSelf(sym, fn, nil, false)
+}
+
+func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if c == nil || sym == nil || fn == nil || fn.Body == nil {
 		return
 	}
-	c.checkFunctionShape(fn)
-	sym.BindType(c.fnTypeFromDecl(fn))
+	c.checkFunctionShapeWithSelf(fn, selfType, allowAbstractSelf)
+	sym.BindType(c.fnTypeFromDeclWithSelf(fn, selfType, allowAbstractSelf))
 	if sym.Scope == nil {
 		return
 	}
@@ -146,9 +258,9 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 			common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrUndefinedSymbol, "missing parameter binding")
 			return
 		}
-		paramSym.BindType(c.typeFromSyntax(param.Type))
+		paramSym.BindType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf))
 	}
-	c.checkBlock(funcScope, fn.Body, c.typeFromSyntax(fn.ReturnType))
+	c.checkBlock(funcScope, fn.Body, c.typeFromSyntaxWithSelf(fn.ReturnType, selfType, allowAbstractSelf))
 }
 
 func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -280,16 +392,20 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 }
 
 func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
+	c.checkFunctionShapeWithSelf(decl, nil, false)
+}
+
+func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if decl == nil {
 		return
 	}
-	if !isLowerableType(c.typeFromSyntax(decl.ReturnType)) {
+	if !isLowerableType(c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf)) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
 			"function return type must be builtin integer, f32/f64, or function type in current compiler stage")
 		return
 	}
 	for _, param := range decl.Params {
-		if !isLowerableType(c.typeFromSyntax(param.Type)) {
+		if !isLowerableType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf)) {
 			site := ast.Node(decl)
 			if param.Name != nil {
 				site = param.Name
@@ -298,6 +414,48 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage")
 			return
 		}
+	}
+}
+
+func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
+	if c == nil || decl == nil {
+		return
+	}
+	for _, method := range decl.Methods {
+		if method.Name == nil || method.Name.Name == "" {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrMissingIdentifier, "interface method name required")
+			continue
+		}
+		for _, param := range method.Params {
+			_ = c.typeFromSyntaxWithSelf(param.Type, nil, true)
+		}
+		_ = c.typeFromSyntaxWithSelf(method.ReturnType, nil, true)
+	}
+}
+
+func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
+		return
+	}
+	selfType := c.typeFromSyntax(decl.Target)
+	for _, method := range decl.Methods {
+		if method == nil {
+			continue
+		}
+		sym, ok := c.module.Semantics.MethodSymbol[method.ID()]
+		if !ok || sym == nil {
+			continue
+		}
+		if len(method.Params) == 0 || method.Params[0].Name == nil || method.Params[0].Name.Name != "self" {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, method, diagnostics.ErrInvalidMethodReceiver,
+				"impl methods must declare `self` as the first parameter")
+			continue
+		}
+		if method.Body == nil {
+			sym.BindType(c.fnTypeFromDeclWithSelf(method, selfType, false))
+			continue
+		}
+		c.checkFunctionWithSelf(sym, method, selfType, false)
 	}
 }
 

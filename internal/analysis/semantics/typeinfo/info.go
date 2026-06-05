@@ -34,6 +34,11 @@ type NamedType struct {
 	Name string
 }
 
+type DefinedType struct {
+	Name       string
+	Underlying Type
+}
+
 type RefType struct {
 	Mutable bool
 	Target  Type
@@ -79,6 +84,7 @@ func (*FloatType) TypeNode()     {}
 func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
 func (*NamedType) TypeNode()     {}
+func (*DefinedType) TypeNode()   {}
 func (*RefType) TypeNode()       {}
 func (*RawPtrType) TypeNode()    {}
 func (*FuncType) TypeNode()      {}
@@ -115,6 +121,23 @@ func (t *NamedType) Text() string {
 		return ""
 	}
 	return t.Name
+}
+
+func (t *DefinedType) Text() string {
+	if t == nil {
+		return ""
+	}
+	return t.Name
+}
+
+func Underlying(t Type) Type {
+	for {
+		defined, ok := t.(*DefinedType)
+		if !ok || defined == nil || defined.Underlying == nil {
+			return t
+		}
+		t = defined.Underlying
+	}
 }
 
 func (t *RefType) Text() string {
@@ -332,6 +355,8 @@ func IsI32(typ Type) bool {
 }
 
 func SameType(left, right Type) bool {
+	left = Underlying(left)
+	right = Underlying(right)
 	switch l := left.(type) {
 	case *InvalidType:
 		_, ok := right.(*InvalidType)
@@ -432,6 +457,7 @@ const (
 )
 
 func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
+	t = Underlying(t)
 	switch typ := t.(type) {
 	case *IntegerType:
 		if typ == nil {
