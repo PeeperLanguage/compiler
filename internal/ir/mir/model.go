@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
@@ -124,6 +125,12 @@ type Cast struct {
 	Type string
 }
 
+type Field struct {
+	Base  ValueRef
+	Index int
+	Type  string
+}
+
 func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
 }
@@ -144,6 +151,7 @@ func (*Unary) valueExprNode()   {}
 func (*Binary) valueExprNode()  {}
 func (*Move) valueExprNode()    {}
 func (*Cast) valueExprNode()    {}
+func (*Field) valueExprNode()   {}
 func (*RefConst) valueRefNode() {}
 func (*RefName) valueRefNode()  {}
 
@@ -153,6 +161,7 @@ func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
+func (v *Field) Text() string    { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 
 type lowerer struct {
 	module      *Module
@@ -200,7 +209,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 				if valStr, ok := evalASTLiteral(valExpr); ok {
 					var typText string
 					if sym.Type != nil {
-						typText = sym.Type.Text()
+						typText = typeinfo.TypeText(typeinfo.Underlying(sym.Type))
 					} else {
 						typText = "i32"
 					}
@@ -412,6 +421,11 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.Field:
+		base := l.lowerExpr(e.Base, out)
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
