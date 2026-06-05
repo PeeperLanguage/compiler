@@ -139,7 +139,6 @@ func (*ConstDecl) stmtNode()               {}
 
 type FnDecl struct {
 	NodeIDHolder
-	Receiver   *Param
 	Name       *Ident
 	TypeParams []TypeParam
 	Params     []Param
@@ -194,3 +193,13 @@ type EnumDecl struct {
 
 func (*EnumDecl) declNode()               {}
 func (d *EnumDecl) Loc() *source.Location { return d.Location }
+
+type ImplDecl struct {
+	NodeIDHolder
+	Target   TypeExpr
+	Methods  []*FnDecl
+	Location *source.Location
+}
+
+func (*ImplDecl) declNode()               {}
+func (d *ImplDecl) Loc() *source.Location { return d.Location }

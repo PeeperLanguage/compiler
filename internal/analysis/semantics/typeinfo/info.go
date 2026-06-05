@@ -397,7 +397,7 @@ func SameType(left, right Type) bool {
 			for j := range l.Methods[i].Params {
 				lp := l.Methods[i].Params[j]
 				rp := r.Methods[i].Params[j]
-				if lp.Name != rp.Name || !SameType(lp.Type, rp.Type) {
+				if !SameType(lp.Type, rp.Type) {
 					return false
 				}
 			}

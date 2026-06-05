@@ -45,6 +45,12 @@ func (c *collector) collectNode(node ast.Node) {
 		c.collectFnDecl(n)
 	case *ast.TypeAliasDecl:
 		c.collectTypeAliasDecl(n)
+	case *ast.StructDecl:
+		c.collectConcreteTypeDecl(n.Name, &ast.StructType{Fields: n.Fields, Location: n.Location}, n)
+	case *ast.InterfaceDecl:
+		c.collectConcreteTypeDecl(n.Name, &ast.InterfaceType{Methods: n.Methods, Location: n.Location}, n)
+	case *ast.EnumDecl:
+		c.collectConcreteTypeDecl(n.Name, &ast.EnumType{Variants: n.Variants, Location: n.Location}, n)
 	case *ast.LetDecl:
 		c.collectModuleBinding(n.Name, symbols.SymbolVar, n.Type, n)
 	case *ast.ConstDecl:
@@ -77,20 +83,24 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 }
 
 func (c *collector) collectTypeAliasDecl(decl *ast.TypeAliasDecl) {
-	if c == nil || c.module == nil || decl == nil {
+	c.collectConcreteTypeDecl(decl.Name, decl.Type, decl)
+}
+
+func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, node ast.Node) {
+	if c == nil || c.module == nil || node == nil {
 		return
 	}
-	if decl.Name == nil || decl.Name.Name == "" {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrMissingIdentifier, "type name required")
+	if name == nil || name.Name == "" {
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrMissingIdentifier, "type name required")
 		return
 	}
-	sym := symbols.New(decl.Name.Name, symbols.SymbolType, decl)
-	sym.Type = typeinfo.TypeFromSyntax(decl.Type)
+	sym := symbols.New(name.Name, symbols.SymbolType, node)
+	sym.Type = typeinfo.TypeFromSyntax(typ)
 	if sym.Type == nil {
 		sym.Type = &typeinfo.InvalidType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrRedeclaredSymbol, err.Error())
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
 		return
 	}
 }

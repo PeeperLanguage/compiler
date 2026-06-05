@@ -104,6 +104,7 @@ const (
 	CATCH     Kind = "CATCH"
 	NONE      Kind = "NONE"
 	UNSAFE    Kind = "UNSAFE"
+	IMPL      Kind = "IMPL"
 )
 
 var keywords = map[string]Kind{
@@ -138,6 +139,7 @@ var keywords = map[string]Kind{
 	"catch":     CATCH,
 	"none":      NONE,
 	"unsafe":    UNSAFE,
+	"impl":      IMPL,
 }
 
 var keywordDocs = map[Kind]string{
@@ -172,6 +174,7 @@ var keywordDocs = map[Kind]string{
 	CATCH:     "Handle error-union fallback path.",
 	NONE:      "Optional-value sentinel representing no value.",
 	UNSAFE:    "Enter an unsafe context for unchecked operations.",
+	IMPL:      "Attach methods to a target type.",
 }
 
 func LookupIdent(ident string) Kind {

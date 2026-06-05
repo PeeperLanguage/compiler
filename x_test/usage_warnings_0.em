@@ -1,6 +1,8 @@
 import "external";
 
-type unused_private_type i32;
+struct unused_private_type {
+    value: i32,
+}
 
 fn unused_private_func() -> i32 {
     let unused_local: i32 = 10;
