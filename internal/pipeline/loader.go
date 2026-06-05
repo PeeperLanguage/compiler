@@ -133,7 +133,9 @@ func (l *moduleLoader) resolveImports(module *context.Module) {
 			l.addImportError(imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
 		}
-		module.Imports[alias] = *resolved
+		resolvedImport := *resolved
+		resolvedImport.Decl = imp
+		module.Imports[alias] = resolvedImport
 		module.Dependencies = appendUnique(module.Dependencies, resolved.Key)
 		l.ctx.AddDependency(module.Key, resolved.Key)
 
