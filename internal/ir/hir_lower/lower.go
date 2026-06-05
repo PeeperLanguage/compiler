@@ -185,6 +185,14 @@ func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, returnType)
 		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: node.Loc()})
+
+	case *ast.ExprStmt:
+		if node.Expr == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "expression statement missing expression", Location: node.Loc()})
+			return
+		}
+		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, "")
+		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: node.Loc()})
 	}
 }
 

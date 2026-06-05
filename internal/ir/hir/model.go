@@ -45,6 +45,11 @@ type Binding struct {
 	Location *source.Location
 }
 
+type ExprStmt struct {
+	Value    ir.Expr
+	Location *source.Location
+}
+
 type Invalid struct {
 	Message  string
 	Location *source.Location
@@ -62,11 +67,12 @@ type If struct {
 	Location *source.Location
 }
 
-func (*Block) stmtNode()   {}
-func (*Binding) stmtNode() {}
-func (*Invalid) stmtNode() {}
-func (*Return) stmtNode()  {}
-func (*If) stmtNode()      {}
+func (*Block) stmtNode()    {}
+func (*Binding) stmtNode()  {}
+func (*ExprStmt) stmtNode() {}
+func (*Invalid) stmtNode()  {}
+func (*Return) stmtNode()   {}
+func (*If) stmtNode()       {}
 
 func (m *Module) Text() string {
 	if m == nil {
@@ -146,6 +152,16 @@ func (s *Binding) appendText(b *strings.Builder, indent int) {
 }
 
 func (s *Binding) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
+func (s *ExprStmt) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString(s.Value.String())
+	b.WriteString("\n")
+}
+
+func (s *ExprStmt) appendInlineText(b *strings.Builder, indent int) {
 	s.appendText(b, indent)
 }
 

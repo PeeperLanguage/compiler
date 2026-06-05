@@ -59,6 +59,9 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 	case *hir.Binding:
 		current.Stmts = append(current.Stmts, s)
 		return current
+	case *hir.ExprStmt:
+		current.Stmts = append(current.Stmts, s)
+		return current
 	case *hir.Invalid:
 		current.Stmts = append(current.Stmts, s)
 		return current
