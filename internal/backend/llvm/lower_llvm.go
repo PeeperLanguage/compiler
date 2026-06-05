@@ -194,6 +194,42 @@ func (e *llvmEmitter) llvmType(typeText string) string {
 }
 
 func llvmTypeName(typeText string) (string, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if remainder, ok := strings.CutPrefix(typeText, "*mut "); ok {
+		target, ok := llvmTypeName(strings.TrimSpace(remainder))
+		if !ok {
+			return "", false
+		}
+		return target + "*", true
+	}
+	if remainder, ok := strings.CutPrefix(typeText, "*const "); ok {
+		target, ok := llvmTypeName(strings.TrimSpace(remainder))
+		if !ok {
+			return "", false
+		}
+		return target + "*", true
+	}
+	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
+		body := strings.TrimSuffix(strings.TrimPrefix(typeText, "struct{"), "}")
+		fields := splitTopLevel(body, ';')
+		parts := make([]string, 0, len(fields))
+		for _, field := range fields {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				continue
+			}
+			fieldTypeText := field
+			if _, remainder, ok := strings.Cut(field, ":"); ok {
+				fieldTypeText = strings.TrimSpace(remainder)
+			}
+			fieldType, ok := llvmTypeName(fieldTypeText)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, fieldType)
+		}
+		return "{ " + strings.Join(parts, ", ") + " }", true
+	}
 	if signed, bits, ok := tokens.ParseIntegerBuiltin(typeText); ok {
 		_ = signed
 		return fmt.Sprintf("i%d", bits), true
@@ -212,6 +248,32 @@ func llvmTypeName(typeText string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func splitTopLevel(text string, sep rune) []string {
+	if text == "" {
+		return nil
+	}
+	parts := make([]string, 0, 4)
+	depth := 0
+	start := 0
+	for i, r := range text {
+		switch r {
+		case '{', '(', '[':
+			depth++
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if r == sep && depth == 0 {
+				parts = append(parts, text[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, text[start:])
+	return parts
 }
 
 // collectCallDecls deleted
@@ -429,6 +491,16 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			args = append(args, b.types.llvmType(mirRefType(arg))+" "+emitRef(b, arg))
 		}
 		b.line(fmt.Sprintf("%s = call %s %s(%s)", out, llvmType, callee, strings.Join(args, ", ")))
+		return out
+	case *mir.Field:
+		base := emitRef(b, e.Base)
+		baseType := mirRefType(e.Base)
+		llvmBaseType, ok := llvmTypeName(baseType)
+		if !ok {
+			return "0"
+		}
+		out := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", out, llvmBaseType, base, e.Index))
 		return out
 	default:
 		return "0"

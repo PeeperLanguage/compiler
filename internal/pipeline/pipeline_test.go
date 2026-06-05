@@ -120,3 +120,48 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPipelineLowersPointerReceiverOnNamedStruct(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct File {}
+
+#[extern]
+fn open_file() -> ^File;
+
+impl File {
+	fn read(self: ^Self, buf: cstr) -> i32 {
+		return 0;
+	}
+}
+
+fn main() -> i32 {
+	let file = open_file();
+	return file.read("ok");
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersStructFieldAccess(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Point {
+	x: i32,
+	y: i32,
+}
+
+#[extern]
+fn make_point() -> Point;
+
+fn main() -> i32 {
+	let p = make_point();
+	return p.x;
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}

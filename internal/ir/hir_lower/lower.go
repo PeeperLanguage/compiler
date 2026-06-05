@@ -44,7 +44,7 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 					if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
 						paramType = resolvedFnType.Params[i]
 					}
-					params = append(params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+					params = append(params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
 				}
 				returnType := typeinfo.TypeFromSyntax(fn.ReturnType)
 				if resolvedFnType != nil && resolvedFnType.Return != nil {
@@ -53,7 +53,7 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 				out.Externs = append(out.Externs, hir.Extern{
 					Name:       sym.Name,
 					Params:     params,
-					ReturnType: typeinfo.TypeText(returnType),
+					ReturnType: loweredTypeText(returnType),
 				})
 			} else {
 				hirFn := lowerASTFunction(ctx, module, sym, fn)
@@ -94,7 +94,7 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 				if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
 					paramType = resolvedFnType.Params[i]
 				}
-				params = append(params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+				params = append(params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
 			}
 			returnType := typeinfo.TypeFromSyntax(method.ReturnType)
 			if resolvedFnType != nil && resolvedFnType.Return != nil {
@@ -103,7 +103,7 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 			out.Externs = append(out.Externs, hir.Extern{
 				Name:       methodFunctionName(targetType, method.Name.Name),
 				Params:     params,
-				ReturnType: typeinfo.TypeText(returnType),
+				ReturnType: loweredTypeText(returnType),
 			})
 			continue
 		}
@@ -132,7 +132,7 @@ func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module,
 	if !ok || retType == nil {
 		retType = typeinfo.TypeFromSyntax(fn.ReturnType)
 	}
-	retTypeStr := typeinfo.TypeText(retType)
+	retTypeStr := loweredTypeText(retType)
 	hirFn := &hir.Function{
 		Name:       emittedName,
 		Params:     make([]ir.Param, 0, len(fn.Params)),
@@ -154,7 +154,7 @@ func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module,
 				name = param.Name.Name
 			}
 		}
-		hirFn.Params = append(hirFn.Params, ir.Param{Name: name, Type: typeinfo.TypeText(paramType)})
+		hirFn.Params = append(hirFn.Params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
 	}
 	appendBlock(module, funcScope, hirFn.Body, fn.Body, retTypeStr, ctx)
 	return hirFn
@@ -288,7 +288,7 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 	resolvedTypeStr := ""
 	if module != nil && module.Semantics != nil {
 		if t, ok := module.Semantics.ExprTypes[expr.ID()]; ok && t != nil {
-			resolvedTypeStr = typeinfo.TypeText(t)
+			resolvedTypeStr = loweredTypeText(t)
 		}
 	}
 
@@ -376,7 +376,7 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 			}
 			if sym != nil {
 				if fnType, ok := sym.Type.(*typeinfo.FuncType); ok && fnType != nil && fnType.Return != nil {
-					t = typeinfo.TypeText(fnType.Return)
+					t = loweredTypeText(fnType.Return)
 				}
 			}
 		}
@@ -385,13 +385,13 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 	case *ast.AsExpr:
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
-			t = typeinfo.TypeText(typeinfo.TypeFromSyntax(node.TypeExpr))
+			t = loweredTypeText(typeinfo.TypeFromSyntax(node.TypeExpr))
 		}
 		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, t)
 		return &ir.Cast{Expr: subExpr, Type: t}
 
 	case *ast.SelectorExpr:
-		return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>"}
+		return lowerSelectorExpr(ctx, module, scope, node)
 
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>"}
@@ -417,11 +417,26 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 	return &ir.Call{
 		Callee: &ir.Ident{
 			Name: methodSymbolRefName(targetType, methodSym),
-			Type: typeinfo.TypeText(fnType),
+			Type: loweredTypeText(fnType),
 		},
 		Args: args,
-		Type: typeinfo.TypeText(fnType.Return),
+		Type: loweredTypeText(fnType.Return),
 	}
+}
+
+func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
+	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
+		return &ir.InvalidExpr{Message: "invalid selector", Type: "<invalid>"}
+	}
+	baseType := exprResolvedType(module, selector.Expr)
+	if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
+		return &ir.Field{
+			Base:  lowerASTExpr(ctx, module, scope, selector.Expr, ""),
+			Index: fieldIndex,
+			Type:  loweredTypeText(fieldType),
+		}
+	}
+	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>"}
 }
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
@@ -451,6 +466,19 @@ func lookupLoweredMethod(module *context.Module, baseType typeinfo.Type, name st
 		}
 	}
 	return nil, nil
+}
+
+func lookupStructField(baseType typeinfo.Type, name string) (typeinfo.Type, int, bool) {
+	strct, ok := loweredRuntimeType(baseType).(*typeinfo.StructType)
+	if !ok || strct == nil {
+		return nil, -1, false
+	}
+	for i, field := range strct.Fields {
+		if field.Name == name {
+			return field.Type, i, true
+		}
+	}
+	return nil, -1, false
 }
 
 func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
@@ -493,7 +521,7 @@ func loweredMethodTargetType(baseType typeinfo.Type) typeinfo.Type {
 func methodFunctionName(targetType typeinfo.Type, methodName string) string {
 	var b strings.Builder
 	b.WriteString("__impl__")
-	b.WriteString(sanitizeMethodName(typeinfo.TypeText(targetType)))
+	b.WriteString(sanitizeMethodName(loweredTypeText(targetType)))
 	b.WriteString("__")
 	b.WriteString(methodName)
 	return b.String()
@@ -594,7 +622,57 @@ func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
 
 func symTypeText(sym *symbols.Symbol) string {
 	if t, ok := symbolType(sym); ok {
-		return typeinfo.TypeText(t)
+		return loweredTypeText(t)
 	}
 	return "<unknown>"
+}
+
+func loweredTypeText(t typeinfo.Type) string {
+	if t == nil {
+		return ""
+	}
+	return typeinfo.TypeText(loweredRuntimeType(t))
+}
+
+func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
+	if t == nil {
+		return nil
+	}
+	switch typ := t.(type) {
+	case *typeinfo.DefinedType:
+		if typ == nil {
+			return nil
+		}
+		return loweredRuntimeType(typ.Underlying)
+	case *typeinfo.RawPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target)}
+	case *typeinfo.RefType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.RefType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target)}
+	case *typeinfo.StructType:
+		if typ == nil {
+			return nil
+		}
+		fields := make([]typeinfo.Field, 0, len(typ.Fields))
+		for _, field := range typ.Fields {
+			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type)})
+		}
+		return &typeinfo.StructType{Fields: fields}
+	case *typeinfo.FuncType:
+		if typ == nil {
+			return nil
+		}
+		params := make([]typeinfo.Type, 0, len(typ.Params))
+		for _, param := range typ.Params {
+			params = append(params, loweredRuntimeType(param))
+		}
+		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(typ.Return)}
+	default:
+		return typeinfo.Underlying(t)
+	}
 }
