@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"compiler/core/diagnostics"
+	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
 )
@@ -59,7 +60,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		b.WriteString("declare ")
 		b.WriteString(emitter.llvmType(fn.ReturnType))
 		b.WriteString(" @")
-		b.WriteString(strings.ReplaceAll(fn.Name, "::", "__"))
+		b.WriteString(ir.SanitizeSymbolName(fn.Name))
 		b.WriteString("(")
 		for i, param := range fn.Params {
 			if i > 0 {
@@ -81,7 +82,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		b.WriteString("declare ")
 		b.WriteString(emitter.llvmType(decl.ReturnType))
 		b.WriteString(" @")
-		b.WriteString(strings.ReplaceAll(decl.Name, "::", "__"))
+		b.WriteString(ir.SanitizeSymbolName(decl.Name))
 		b.WriteString("(")
 		for i, param := range decl.Params {
 			if i > 0 {
@@ -118,7 +119,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		b.WriteString("define ")
 		b.WriteString(emitter.llvmType(fn.ReturnType))
 		b.WriteString(" @")
-		b.WriteString(strings.ReplaceAll(fn.Name, "::", "__"))
+		b.WriteString(ir.SanitizeSymbolName(fn.Name))
 		b.WriteString("(")
 		for i, param := range fn.Params {
 			if i > 0 {
@@ -521,11 +522,11 @@ func emitInterfaceWrapper(out *strings.Builder, emitter *llvmEmitter, wrapper *m
 			funcName = funcName[:idx]
 		}
 		if actualRet == "void" {
-			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
 			builder.line("ret void")
 		} else {
 			result := builder.nextReg()
-			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
 			builder.line("ret " + actualRet + " " + result)
 		}
 	} else {
@@ -542,11 +543,11 @@ func emitInterfaceWrapper(out *strings.Builder, emitter *llvmEmitter, wrapper *m
 			funcName = funcName[:idx]
 		}
 		if actualRet == "void" {
-			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
 			builder.line("ret void")
 		} else {
 			result := builder.nextReg()
-			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, strings.ReplaceAll(funcName, "::", "__"), strings.Join(callArgs, ", ")))
+			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
 			builder.line("ret " + actualRet + " " + result)
 		}
 	}
@@ -933,7 +934,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 			if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
 				funcName = funcName[:idx]
 			}
-			return "@" + strings.ReplaceAll(funcName, "::", "__")
+			return "@" + ir.SanitizeSymbolName(funcName)
 		}
 
 		isLocalStatic := false
