@@ -10,21 +10,46 @@ import (
 	"compiler/internal/frontend/parser"
 )
 
-func parseModuleForTest(filePath, src string, origin context.ModuleOrigin, diag *diagnostics.DiagnosticBag) *context.Module {
-	return &context.Module{
-		Key:        context.ModuleKeyFor(origin, filePath),
-		ImportPath: strings.TrimSuffix(filePath, ".em"),
-		FilePath:   filePath,
-		Origin:     origin,
-		AST:        parser.ParseModule(filePath, lexer.Lex(filePath, src, diag), diag),
-		Imports:    make(map[string]context.ResolvedImport),
-	}
-}
-
-func TestRunOrderedProcessesPreludeBeforeEntry(t *testing.T) {
+func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
+	t.Helper()
 	const preludePath = "_builtin_library/global.em"
 	const entryPath = "entry.em"
 
+	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag.AddSourceContent(preludePath, preludeSrc)
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := context.New(".", ".em", diag)
+
+	// Register the prelude so the pipeline loader can find it.
+	prelude := &context.Module{
+		Key:        "core:prelude/global",
+		ImportPath: "prelude/global",
+		FilePath:   preludePath,
+		Origin:     context.ModuleOriginStdlib,
+		AST:        parser.ParseModule(preludePath, lexer.Lex(preludePath, preludeSrc, diag), diag),
+		Imports:    make(map[string]context.ResolvedImport),
+	}
+	ctx.AddModule(prelude)
+
+	entry := &context.Module{
+		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+		ImportPath: strings.TrimSuffix(entryPath, ".em"),
+		FilePath:   entryPath,
+		Origin:     context.ModuleOriginLocal,
+		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
+		Imports:    make(map[string]context.ResolvedImport),
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	return diag
+}
+
+// TestPipelinePreludeSymbolsVisibleInEntry verifies that prelude-defined symbols
+// (write, stdout, etc.) are resolved correctly in user entry modules even when
+// the entry module has no explicit import of the prelude.
+func TestPipelinePreludeSymbolsVisibleInEntry(t *testing.T) {
 	preludeSrc := `let stdin:  i32 = 0;
 let stdout: i32 = 1;
 let stderr: i32 = 2;
@@ -38,37 +63,23 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	return 0;
 }`
 
-	diag := diagnostics.NewDiagnosticBag(entryPath)
-	diag.AddSourceContent(preludePath, preludeSrc)
-	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := context.New(".", ".em", diag)
-
-	prelude := parseModuleForTest(preludePath, preludeSrc, context.ModuleOriginStdlib, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	entry := parseModuleForTest(entryPath, entrySrc, context.ModuleOriginLocal, diag)
-	ctx.AddModule(prelude)
-	ctx.AddModule(entry)
-
-	New(ctx).runOrdered([]*context.Module{entry, prelude}, diag)
-
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
 		}
 		if item.Code == diagnostics.ErrUndefinedSymbol && strings.Contains(item.Message, "write") {
-			t.Fatalf("unexpected undefined prelude symbol for write: %s", diag.EmitAllToString())
+			t.Fatalf("unexpected undefined prelude symbol 'write': %s", diag.EmitAllToString())
 		}
 		if item.Code == diagnostics.ErrUndefinedSymbol && strings.Contains(item.Message, "stdout") {
-			t.Fatalf("unexpected undefined prelude symbol for stdout: %s", diag.EmitAllToString())
+			t.Fatalf("unexpected undefined prelude symbol 'stdout': %s", diag.EmitAllToString())
 		}
 	}
 }
 
-func TestRunOrderedAllowsExpressionStatements(t *testing.T) {
-	const preludePath = "_builtin_library/global.em"
-	const entryPath = "entry.em"
-
+// TestPipelineAllowsExpressionStatements verifies that call expressions used as
+// statements (discarding the return value) do not produce invalid-statement errors.
+func TestPipelineAllowsExpressionStatements(t *testing.T) {
 	preludeSrc := `let stdout: i32 = 1;
 
 #[extern]
@@ -80,20 +91,7 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	return 0;
 }`
 
-	diag := diagnostics.NewDiagnosticBag(entryPath)
-	diag.AddSourceContent(preludePath, preludeSrc)
-	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := context.New(".", ".em", diag)
-
-	prelude := parseModuleForTest(preludePath, preludeSrc, context.ModuleOriginStdlib, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	entry := parseModuleForTest(entryPath, entrySrc, context.ModuleOriginLocal, diag)
-	ctx.AddModule(prelude)
-	ctx.AddModule(entry)
-
-	New(ctx).runOrdered([]*context.Module{entry, prelude}, diag)
-
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
