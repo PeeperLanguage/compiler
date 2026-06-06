@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/pkg/diagnostics"
 	"compiler/internal/context"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/pkg/diagnostics"
 )
 
 func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
@@ -594,7 +594,13 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
+	if strings.Contains(entry.HIR.Text(), "<invalid: unsupported interface method shape>") {
+		t.Fatalf("unexpected invalid interface lowering in HIR:\n%s", entry.HIR.Text())
+	}
 	if !strings.Contains(entry.LLVMIR, "@malloc") {
 		t.Fatalf("expected escaping interface values to use malloc, LLVM IR:\n%s", entry.LLVMIR)
+	}
+	if strings.Contains(entry.LLVMIR, "extractvalue { i8*, i8* } 0") {
+		t.Fatalf("unexpected zero interface receiver in LLVM IR:\n%s", entry.LLVMIR)
 	}
 }
