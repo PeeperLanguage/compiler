@@ -1,7 +1,7 @@
 package compiler
 
 import (
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/context"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"

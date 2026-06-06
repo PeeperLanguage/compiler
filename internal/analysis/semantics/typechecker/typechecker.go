@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"slices"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/utils/numeric"
+	"compiler/pkg/numeric"
 )
 
 type checker struct {

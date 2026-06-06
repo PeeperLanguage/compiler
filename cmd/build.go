@@ -6,36 +6,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"compiler/config/manifest"
-	"compiler/core/diagnostics"
+	"compiler/pkg/manifest"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/backend"
 	"compiler/internal/context"
 	compiler "compiler/internal/driver"
 )
-
-// One test entry discovered by the checker.
-type testTarget struct {
-	// Source file owning the test.
-	FilePath string
-	// Path shown in test output.
-	DisplayPath string
-	// Ember test declaration name.
-	TestName string
-}
-
-// Observable test execution result.
-type testRunResult struct {
-	// Printed test name.
-	Name string
-	// Pass/fail status.
-	Passed bool
-	// Captured failure output.
-	Output string
-	// Execution time.
-	Elapsed time.Duration
-}
 
 // Compile one entry file with a fresh compiler context.
 func compileEntry(path, backendName string, debugBuild bool) (*context.CompilerContext, *context.Module) {
@@ -117,39 +94,6 @@ func buildExecutable(ctx *context.CompilerContext, entry *context.Module, output
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clang link failed: %w\n%s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// Write -keep-gen artifacts for each module.
-func saveIRs(ctx *context.CompilerContext, backendName, dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if ctx == nil {
-		return fmt.Errorf("missing compiler context")
-	}
-	for _, module := range ctx.Modules() {
-		base := strings.TrimSuffix(filepath.Base(module.FilePath), filepath.Ext(module.FilePath))
-		hirText := ""
-		if module.HIR != nil {
-			hirText = module.HIR.Text()
-		}
-		if err := os.WriteFile(filepath.Join(dir, base+".hir"), []byte(hirText), 0o644); err != nil {
-			return err
-		}
-		mirText := ""
-		if module.MIR != nil {
-			mirText = module.MIR.Text()
-		}
-		if err := os.WriteFile(filepath.Join(dir, base+".mir"), []byte(mirText), 0o644); err != nil {
-			return err
-		}
-		if backendName == string(backend.LLVM) {
-			if err := os.WriteFile(filepath.Join(dir, base+".ll"), []byte(module.LLVMIR), 0o644); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
 }

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"
 	"compiler/internal/context"

@@ -3,7 +3,7 @@ package hir
 import (
 	"strings"
 
-	"compiler/core/source"
+	"compiler/pkg/source"
 	"compiler/internal/ir"
 )
 

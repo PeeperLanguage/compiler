@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/core/abi"
-	"compiler/core/source"
+	"compiler/pkg/abi"
+	"compiler/pkg/source"
 )
 
 type Kind string

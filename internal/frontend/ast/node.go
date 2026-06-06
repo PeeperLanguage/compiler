@@ -1,6 +1,6 @@
 package ast
 
-import "compiler/core/source"
+import "compiler/pkg/source"
 
 type NodeID uint32
 

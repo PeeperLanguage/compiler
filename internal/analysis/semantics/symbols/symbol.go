@@ -6,7 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"compiler/core/source"
+	"compiler/pkg/source"
 	"compiler/internal/frontend/ast"
 )
 

@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"compiler/config/manifest"
-	"compiler/config/packages"
+	"compiler/pkg/manifest"
+	"compiler/pkg/registry"
 )
 
 type updatePlan struct {
@@ -54,17 +54,17 @@ func collectUpdatePlans(file *manifest.File, lockfile *manifest.Lockfile, devCon
 		}
 		checked++
 		constraint := updateConstraint(dep.Version)
-		available, err := packages.ListAvailableVersions(dep.Path, devConfig)
+		available, err := registry.ListAvailableVersions(dep.Path, devConfig)
 		if err != nil {
 			printWarning(fmt.Sprintf("%s: %v", dep.Path, err))
 			continue
 		}
-		target, err := packages.FindBestMatch(available, constraint)
+		target, err := registry.FindBestMatch(available, constraint)
 		if err != nil {
 			continue
 		}
-		currentParsed, currentErr := packages.ParseVersion(entry.Version)
-		targetParsed, targetErr := packages.ParseVersion(target)
+		currentParsed, currentErr := registry.ParseVersion(entry.Version)
+		targetParsed, targetErr := registry.ParseVersion(target)
 		if currentErr != nil || targetErr != nil || targetParsed.Compare(currentParsed) <= 0 {
 			continue
 		}
@@ -100,7 +100,7 @@ func isExactVersion(version string) bool {
 			return false
 		}
 	}
-	_, err := packages.ParseVersion(version)
+	_, err := registry.ParseVersion(version)
 	return err == nil
 }
 
@@ -207,7 +207,7 @@ func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) []st
 				version = parsedVersion
 			}
 			if repo != "" && version != "" {
-				_ = packages.DeleteModule(cachePath, repo, version)
+				_ = registry.DeleteModule(cachePath, repo, version)
 			}
 			lockfile.RemoveDependency(packageID)
 			seen[packageID] = struct{}{}

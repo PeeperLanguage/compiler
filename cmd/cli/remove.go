@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"compiler/config/manifest"
+	"compiler/pkg/manifest"
 )
 
 func RemoveCommand(args []string) error {

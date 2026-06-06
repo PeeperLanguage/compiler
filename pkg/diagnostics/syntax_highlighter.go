@@ -9,7 +9,7 @@ import (
 
 	"compiler/colors"
 	"compiler/internal/tokens"
-	"compiler/internal/utils/numeric"
+	"compiler/pkg/numeric"
 )
 
 type keytype int

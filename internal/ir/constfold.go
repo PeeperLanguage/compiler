@@ -4,7 +4,7 @@ import (
 	"math/big"
 	"strconv"
 
-	"compiler/internal/utils/numeric"
+	"compiler/pkg/numeric"
 )
 
 type ConstValue interface {

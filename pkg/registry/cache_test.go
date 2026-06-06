@@ -1,4 +1,4 @@
-package packages
+package registry
 
 import (
 	"os"

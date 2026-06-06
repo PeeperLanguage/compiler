@@ -1,7 +1,7 @@
 package resolver
 
 import(
-	"compiler/core/source"
+	"compiler/pkg/source"
 	"testing"
 )
 

@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"compiler/config/manifest"
-	"compiler/config/packages"
+	"compiler/pkg/manifest"
+	"compiler/pkg/registry"
 )
 
 func GetCommand(args []string) error {
@@ -91,20 +91,20 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 		return err
 	}
 	if !found {
-		availableVersions, listErr := packages.ListAvailableVersions(repoPath, devConfig)
+		availableVersions, listErr := registry.ListAvailableVersions(repoPath, devConfig)
 		if listErr != nil {
 			return fmt.Errorf("list versions for %s: %w", repoPath, listErr)
 		}
-		version, err = packages.FindBestMatchMultipleConstraints(availableVersions, constraints[repoPath])
+		version, err = registry.FindBestMatchMultipleConstraints(availableVersions, constraints[repoPath])
 		if err != nil {
 			return err
 		}
 		packageID = manifest.PackageID(repoPath, version)
 	}
 	printPackage(repoPath, version)
-	if !packages.IsModuleCached(cachePath, repoPath, version) {
+	if !registry.IsModuleCached(cachePath, repoPath, version) {
 		printDownload(fmt.Sprintf("Downloading %s@%s...", repoPath, version))
-		if err := packages.DownloadRemotePackage(cachePath, repoPath, version, devConfig); err != nil {
+		if err := registry.DownloadRemotePackage(cachePath, repoPath, version, devConfig); err != nil {
 			return fmt.Errorf("download %s@%s: %w", repoPath, version, err)
 		}
 		printCached()
@@ -112,7 +112,7 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 		printCached()
 	}
 
-	modulePath := packages.GetModulePath(cachePath, repoPath, version)
+	modulePath := registry.GetModulePath(cachePath, repoPath, version)
 	packageManifest, err := manifest.Load(filepath.Join(modulePath, manifest.FileName))
 	if err != nil {
 		return fmt.Errorf("load package manifest for %s: %w", repoPath, err)
@@ -248,7 +248,7 @@ func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, const
 	}
 	bestID := ""
 	bestVersion := ""
-	var bestParsed *packages.Version
+	var bestParsed *registry.Version
 	for _, id := range ids {
 		entry, ok := lockfile.GetDependency(id)
 		if !ok || entry.Version == "" {
@@ -256,7 +256,7 @@ func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, const
 		}
 		matchesAll := true
 		for _, constraint := range constraintSet {
-			matches, err := packages.MatchesConstraint(entry.Version, constraint)
+			matches, err := registry.MatchesConstraint(entry.Version, constraint)
 			if err != nil {
 				return "", "", false, fmt.Errorf("version conflict for %s: %s does not satisfy %s", repoPath, entry.Version, constraint)
 			}
@@ -268,7 +268,7 @@ func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, const
 		if !matchesAll {
 			continue
 		}
-		parsed, err := packages.ParseVersion(entry.Version)
+		parsed, err := registry.ParseVersion(entry.Version)
 		if err != nil {
 			continue
 		}

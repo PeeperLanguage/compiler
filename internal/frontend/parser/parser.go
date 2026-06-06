@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"strings"
 
-	"compiler/core/diagnostics"
-	"compiler/core/source"
+	"compiler/pkg/diagnostics"
+	"compiler/pkg/source"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
 )

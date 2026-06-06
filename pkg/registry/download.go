@@ -1,4 +1,4 @@
-package packages
+package registry
 
 import (
 	"archive/tar"
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"compiler/config/manifest"
+	"compiler/pkg/manifest"
 )
 
 func DownloadRemotePackage(cachePath, repoName, version string, devConfig *manifest.DevConfig) error {

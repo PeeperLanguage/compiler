@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"

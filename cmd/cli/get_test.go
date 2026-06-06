@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"compiler/config/manifest"
+	"compiler/pkg/manifest"
 )
 
 func TestInstallAllDependenciesRestoresMissingLockedCache(t *testing.T) {

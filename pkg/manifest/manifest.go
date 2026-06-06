@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/toml"
+	"compiler/pkg/toml"
 )
 
 const FileName = "ember"

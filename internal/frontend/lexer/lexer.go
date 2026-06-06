@@ -6,10 +6,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"compiler/core/diagnostics"
-	"compiler/core/source"
+	"compiler/pkg/diagnostics"
+	"compiler/pkg/source"
 	"compiler/internal/tokens"
-	"compiler/internal/utils/numeric"
+	"compiler/pkg/numeric"
 )
 
 type regexHandler func(lex *Lexer, regex *regexp.Regexp)

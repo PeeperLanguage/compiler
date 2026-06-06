@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"compiler/config/manifest"
+	"compiler/pkg/manifest"
 )
 
 func UpdateCommand(args []string) error {

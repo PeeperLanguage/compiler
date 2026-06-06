@@ -2,7 +2,7 @@ package diagnostics
 
 import (
 	"compiler/colors"
-	"compiler/core/source"
+	"compiler/pkg/source"
 )
 
 // Severity represents the severity level of a diagnostic

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/core/abi"
+	"compiler/pkg/abi"
 )
 
 func TestLookupIdentAndKeywordHelpers(t *testing.T) {

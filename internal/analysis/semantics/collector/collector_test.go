@@ -3,7 +3,7 @@ package collector
 import (
 	"testing"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/context"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
