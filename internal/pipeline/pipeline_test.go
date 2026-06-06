@@ -145,6 +145,25 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersAutoAddressedPointerReceiverOnValue(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `impl i32 {
+	fn id(self: ^Self) -> i32 {
+		return 7;
+	}
+}
+
+fn main() -> i32 {
+	let x: i32 = 1;
+	return x.id();
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersStructFieldAccess(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Point {
@@ -292,7 +311,6 @@ fn main() -> i32 {
 	return 0;
 }`
 
-
 	const preludePath = "_builtin_library/global.em"
 	const entryPath = "entry.em"
 
@@ -318,13 +336,11 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 
-	// The wrapper function for Summer -> Point -> sum should be defined exactly once.
-	// We count "define i32 @__ifacewrap__" to verify.
-	wrapperDef := "define i32 @__ifacewrap__"
+	// The thunk function for Summer -> Point -> sum should be defined exactly once.
+	// We count "define i32 @__ifacethunk__" to verify.
+	wrapperDef := "define i32 @__ifacethunk__"
 	count := strings.Count(entry.LLVMIR, wrapperDef)
 	if count != 1 {
 		t.Errorf("expected exactly 1 definition of the interface wrapper function, got %d. LLVM IR:\n%s", count, entry.LLVMIR)
 	}
 }
-
-

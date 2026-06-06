@@ -13,13 +13,13 @@ import (
 )
 
 type Module struct {
-	Name       string
-	StaticData []*StaticEntry
-	InterfaceWrappers []*InterfaceWrapper
-	Funcs      []*Function
+	Name            string
+	StaticData      []*StaticEntry
+	InterfaceThunks []*InterfaceThunk
+	Funcs           []*Function
 }
 
-type InterfaceWrapper struct {
+type InterfaceThunk struct {
 	Name     string
 	SlotType string
 	FuncName string
@@ -134,6 +134,11 @@ type Cast struct {
 	Type string
 }
 
+type AddrOf struct {
+	Base ValueRef
+	Type string
+}
+
 type Field struct {
 	Base       ValueRef
 	Index      int
@@ -177,16 +182,17 @@ func (i *Ret) Text() string {
 	return "ret " + i.Value.Text()
 }
 
-func (*Unary) valueExprNode()   {}
-func (*Binary) valueExprNode()  {}
-func (*Move) valueExprNode()    {}
-func (*Cast) valueExprNode()    {}
-func (*Field) valueExprNode()   {}
-func (*StructLit) valueExprNode() {}
+func (*Unary) valueExprNode()         {}
+func (*Binary) valueExprNode()        {}
+func (*Move) valueExprNode()          {}
+func (*Cast) valueExprNode()          {}
+func (*AddrOf) valueExprNode()        {}
+func (*Field) valueExprNode()         {}
+func (*StructLit) valueExprNode()     {}
 func (*InterfaceMake) valueExprNode() {}
 func (*InterfaceCall) valueExprNode() {}
-func (*RefConst) valueRefNode() {}
-func (*RefName) valueRefNode()  {}
+func (*RefConst) valueRefNode()       {}
+func (*RefName) valueRefNode()        {}
 
 func (r *RefConst) Text() string { return r.Value }
 func (r *RefName) Text() string  { return r.Name }
@@ -194,6 +200,7 @@ func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
+func (v *AddrOf) Text() string   { return fmt.Sprintf("addr %s", v.Base.Text()) }
 func (v *Field) Text() string    { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 func (v *StructLit) Text() string {
 	var b strings.Builder
@@ -259,10 +266,10 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 		return nil
 	}
 	out := &Module{
-		Name:       in.Name,
-		StaticData: make([]*StaticEntry, 0),
-		InterfaceWrappers: make([]*InterfaceWrapper, 0),
-		Funcs:      make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
+		Name:            in.Name,
+		StaticData:      make([]*StaticEntry, 0),
+		InterfaceThunks: make([]*InterfaceThunk, 0),
+		Funcs:           make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
 	}
 
 	if scope != nil {
@@ -493,6 +500,11 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.AddrOf:
+		base := l.lowerExpr(e.Expr, out)
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
@@ -508,27 +520,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
-		var dataType string
-		var boxValue bool
-		valType := e.Value.TypeText()
-		if remainder, ok := strings.CutPrefix(valType, "^"); ok {
-			dataType = remainder
-			boxValue = false
-		} else {
-			dataType = valType
-			boxValue = true
-		}
+		dataType, boxValue := interfaceStorageFor(e.Value.TypeText())
 
 		slots := make([]ValueRef, 0, len(e.Slots))
 		for index, slot := range e.Slots {
-			wrapperName := fmt.Sprintf("__ifacewrap__%s__%s__%s__%d",
-				ir.SanitizeSymbolName(slot.InterfaceType),
-				ir.SanitizeSymbolName(dataType),
-				ir.SanitizeSymbolName(slot.MethodName),
-				index)
+			wrapperName := ir.InterfaceThunkName(slot.InterfaceType, dataType, slot.MethodName, index)
 			slot.WrapperName = wrapperName
 			slot.DataType = dataType
-			l.ensureInterfaceWrapper(slot)
+			l.registerInterfaceThunk(slot)
 			slots = append(slots, &RefName{Name: wrapperName, Type: slot.SlotType})
 		}
 		name := l.nextTemp()
@@ -559,23 +558,30 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	}
 }
 
-func (l *lowerer) ensureInterfaceWrapper(slot ir.InterfaceSlot) {
+func interfaceStorageFor(typeText string) (string, bool) {
+	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
+		return remainder, false
+	}
+	return typeText, true
+}
+
+func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {
 	if l == nil || l.module == nil || slot.WrapperName == "" {
 		return
 	}
-	for _, w := range l.module.InterfaceWrappers {
+	for _, w := range l.module.InterfaceThunks {
 		if w.Name == slot.WrapperName {
 			return
 		}
 	}
-	wrapper := &InterfaceWrapper{
+	thunk := &InterfaceThunk{
 		Name:     slot.WrapperName,
 		SlotType: slot.SlotType,
 		FuncName: slot.FuncName,
 		FuncType: slot.FuncType,
 		DataType: slot.DataType,
 	}
-	l.module.InterfaceWrappers = append(l.module.InterfaceWrappers, wrapper)
+	l.module.InterfaceThunks = append(l.module.InterfaceThunks, thunk)
 }
 
 func (l *lowerer) nextTemp() string {
@@ -645,4 +651,3 @@ func (m *Module) Text() string {
 	}
 	return b.String()
 }
-

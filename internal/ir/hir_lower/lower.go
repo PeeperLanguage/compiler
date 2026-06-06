@@ -2,6 +2,7 @@ package hir_lower
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"compiler/internal/analysis/semantics/symbols"
@@ -438,6 +439,12 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
 	}
 	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, nil)
+	if receiverNeedsAddress(fnType, baseType, selector.Expr) {
+		baseExpr = &ir.AddrOf{
+			Expr: baseExpr,
+			Type: loweredTypeText(fnType.Params[0]),
+		}
+	}
 	args := make([]ir.Expr, 0, len(call.Args)+1)
 	args = append(args, baseExpr)
 	for i, arg := range call.Args {
@@ -454,6 +461,25 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 		},
 		Args: args,
 		Type: loweredTypeText(fnType.Return),
+	}
+}
+
+func receiverNeedsAddress(fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
+	if fnType == nil || len(fnType.Params) == 0 || receiver == nil {
+		return false
+	}
+	ptrType, ok := fnType.Params[0].(*typeinfo.RawPtrType)
+	if !ok || ptrType == nil || ptrType.Target == nil {
+		return false
+	}
+	if !typeinfo.SameType(ptrType.Target, baseType) {
+		return false
+	}
+	switch receiver.(type) {
+	case *ast.Ident:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -577,24 +603,45 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		if i == 0 {
 			continue
 		}
+		if containsAbstractSelfType(param.Type) {
+			return ""
+		}
 		text := loweredTypeText(param.Type)
-		if text == "" || strings.Contains(text, "Self") {
+		if text == "" {
 			return ""
 		}
 		b.WriteString(", ")
 		b.WriteString(text)
 	}
 	b.WriteString(")")
+	if containsAbstractSelfType(method.Return) {
+		return ""
+	}
 	if ret := loweredTypeText(method.Return); ret != "" {
-		if strings.Contains(ret, "Self") {
-			return ""
-		}
 		b.WriteString(" -> ")
 		b.WriteString(ret)
 	}
 	return b.String()
 }
 
+func containsAbstractSelfType(t typeinfo.Type) bool {
+	switch typ := t.(type) {
+	case *typeinfo.NamedType:
+		return typ != nil && typ.Name == "Self"
+	case *typeinfo.RawPtrType:
+		return typ != nil && containsAbstractSelfType(typ.Target)
+	case *typeinfo.FuncType:
+		if typ == nil {
+			return false
+		}
+		if slices.ContainsFunc(typ.Params, containsAbstractSelfType) {
+			return true
+		}
+		return containsAbstractSelfType(typ.Return)
+	default:
+		return false
+	}
+}
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
 	if module == nil || module.Semantics == nil || expr == nil {
