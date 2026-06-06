@@ -12,6 +12,15 @@ import (
 	"compiler/pkg/registry"
 )
 
+type installContext struct {
+	manifestPath string
+	projectRoot  string
+	cachePath    string
+	file         *manifest.File
+	lockfile     *manifest.Lockfile
+	devConfig    manifest.DevConfig
+}
+
 func GetCommand(args []string) error {
 	if len(args) == 0 {
 		return installAllDependencies()
@@ -24,57 +33,74 @@ func GetCommand(args []string) error {
 	return nil
 }
 
-func installAllDependencies() error {
+func prepareInstallContext() (*installContext, error) {
 	manifestPath, err := manifest.Find(".")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	file, err := manifest.Load(manifestPath)
 	if err != nil {
-		return err
-	}
-	if len(file.Dependencies) == 0 {
-		printInfo("No dependencies to install")
-		return nil
+		return nil, err
 	}
 
 	projectRoot := filepath.Dir(manifestPath)
 	cachePath := filepath.Join(projectRoot, ".ember", "modules")
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
-		return err
+		return nil, err
 	}
 
 	lockfile, err := manifest.LoadLockfile(projectRoot)
 	if err != nil {
 		lockfile = manifest.NewLockfile()
 	}
-	lockfile.DirectDeps = map[string]string{}
 
 	devConfig := file.Dev
 	if devConfig.MockRemote && devConfig.MockPath != "" {
 		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
 	}
 
+	return &installContext{
+		manifestPath: manifestPath,
+		projectRoot:  projectRoot,
+		cachePath:    cachePath,
+		file:         file,
+		lockfile:     lockfile,
+		devConfig:    devConfig,
+	}, nil
+}
+
+func installAllDependencies() error {
+	ctx, err := prepareInstallContext()
+	if err != nil {
+		return err
+	}
+	if len(ctx.file.Dependencies) == 0 {
+		printInfo("No dependencies to install")
+		return nil
+	}
+
+	ctx.lockfile.DirectDeps = map[string]string{}
+
 	constraints := make(map[string][]string)
-	printHeader(fmt.Sprintf("Installing dependencies for %s", file.Package.Name))
-	for name, dep := range file.Dependencies {
+	printHeader(fmt.Sprintf("Installing dependencies for %s", ctx.file.Package.Name))
+	for name, dep := range ctx.file.Dependencies {
 		if dep.Type == manifest.DependencyNeighbor {
 			printPackage(name, "neighbor")
 			printDim(fmt.Sprintf("  Local: %s", dep.Path))
 			continue
 		}
-		if err := installPackageRecursive(cachePath, dep.Path, dep.Version, &devConfig, lockfile, constraints, name, "", map[string]bool{}); err != nil {
+		if err := installPackageRecursive(ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, name, "", map[string]bool{}); err != nil {
 			return err
 		}
-		if resolved, ok := resolvedDirectVersion(lockfile, name); ok {
+		if resolved, ok := resolvedDirectVersion(ctx.lockfile, name); ok {
 			dep.Version = resolved
-			file.Dependencies[name] = dep
+			ctx.file.Dependencies[name] = dep
 		}
 	}
-	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
+	if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
 		return err
 	}
-	if err := manifest.Save(manifestPath, file); err != nil {
+	if err := manifest.Save(ctx.manifestPath, ctx.file); err != nil {
 		return err
 	}
 	printSuccess("All dependencies installed successfully")
@@ -186,11 +212,7 @@ func installPackage(packageSpec string) error {
 	if err != nil {
 		return err
 	}
-	manifestPath, err := manifest.Find(".")
-	if err != nil {
-		return err
-	}
-	file, err := manifest.Load(manifestPath)
+	ctx, err := prepareInstallContext()
 	if err != nil {
 		return err
 	}
@@ -201,37 +223,21 @@ func installPackage(packageSpec string) error {
 		depName = parts[len(parts)-1]
 	}
 
-	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ember", "modules")
-	if err := os.MkdirAll(cachePath, 0o755); err != nil {
-		return err
-	}
-
-	lockfile, err := manifest.LoadLockfile(projectRoot)
-	if err != nil {
-		lockfile = manifest.NewLockfile()
-	}
-
-	devConfig := file.Dev
-	if devConfig.MockRemote && devConfig.MockPath != "" {
-		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
-	}
-
 	if dep.Type == manifest.DependencyRemote {
 		constraints := map[string][]string{}
-		if err := installPackageRecursive(cachePath, dep.Path, dep.Version, &devConfig, lockfile, constraints, depName, "", map[string]bool{}); err != nil {
+		if err := installPackageRecursive(ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, depName, "", map[string]bool{}); err != nil {
 			return err
 		}
-		if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
+		if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
 			return err
 		}
-		if resolved, ok := resolvedDirectVersion(lockfile, depName); ok {
+		if resolved, ok := resolvedDirectVersion(ctx.lockfile, depName); ok {
 			dep.Version = resolved
 		}
 	}
 
-	file.Dependencies[depName] = dep
-	if err := manifest.Save(manifestPath, file); err != nil {
+	ctx.file.Dependencies[depName] = dep
+	if err := manifest.Save(ctx.manifestPath, ctx.file); err != nil {
 		return err
 	}
 	printSuccess(fmt.Sprintf("Installed %s", dep.Path))
