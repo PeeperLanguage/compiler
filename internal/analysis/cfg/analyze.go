@@ -278,7 +278,7 @@ func findMissingReturnBranches(fn *Function) []*Block {
 func sortMissingBranches(blocks []*Block) {
 	// Prefer deeper/inner by later source position.
 	// Stable fallback to keep deterministic.
-	for i := 0; i < len(blocks); i++ {
+	for i := range blocks {
 		for j := i + 1; j < len(blocks); j++ {
 			if blocks[i] == nil || blocks[j] == nil {
 				continue

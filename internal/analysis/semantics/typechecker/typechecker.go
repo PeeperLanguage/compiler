@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"slices"
 
 	"compiler/core/diagnostics"
 	"compiler/internal/analysis/semantics/symbols"
@@ -1048,10 +1049,8 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 		if key == "" {
 			return
 		}
-		for _, existing := range keys {
-			if existing == key {
-				return
-			}
+		if slices.Contains(keys, key) {
+			return
 		}
 		keys = append(keys, key)
 	}

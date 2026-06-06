@@ -18,7 +18,7 @@ const (
 	GUTTER_FMT   = "%*d | "
 	GUTTER_BLANK = "%*s | "
 
-	LINE_POS = "%s--> %s:%d:%d\n"
+	LINE_POS  = "%s--> %s:%d:%d\n"
 	TAB_WIDTH = 4
 )
 
@@ -55,9 +55,9 @@ func visualColumnToPosition(line string, column int) int {
 		return column - 1
 	}
 	// Iterate through characters, tracking both character column and visual position
-	charCol := 1  // 1-indexed character column
+	charCol := 1   // 1-indexed character column
 	visualPos := 0 // 0-indexed visual position in expanded line
-	
+
 	for _, ch := range line {
 		if charCol >= column {
 			// Found the character at or past our target column
@@ -71,7 +71,7 @@ func visualColumnToPosition(line string, column int) int {
 			}
 			return visualPos
 		}
-		
+
 		if ch == '\t' {
 			spaces := TAB_WIDTH - (visualPos % TAB_WIDTH)
 			_ = spaces // suppress unused variable warning
@@ -82,7 +82,7 @@ func visualColumnToPosition(line string, column int) int {
 			charCol++
 		}
 	}
-	
+
 	// If we get here, the column is beyond the end of the line
 	return visualPos
 }
@@ -941,10 +941,7 @@ func (e *Emitter) printLineWithColoredSpan(line string, start, length int, spanC
 		e.highlighter.HighlightWithColor(line, e.writer)
 		return
 	}
-	end := start + length
-	if end > len(line) {
-		end = len(line)
-	}
+	end := min(start+length, len(line))
 	if start >= end {
 		e.highlighter.HighlightWithColor(line, e.writer)
 		return

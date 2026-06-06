@@ -2,6 +2,7 @@ package hir_lower
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"compiler/internal/analysis/semantics/symbols"
@@ -733,10 +734,8 @@ func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
 		if key == "" {
 			return
 		}
-		for _, existing := range keys {
-			if existing == key {
-				return
-			}
+		if slices.Contains(keys, key) {
+			return
 		}
 		keys = append(keys, key)
 	}

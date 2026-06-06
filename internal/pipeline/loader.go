@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path"
+	"slices"
 	"sync"
 
 	"compiler/core/diagnostics"
@@ -218,10 +219,8 @@ func importAlias(imp *ast.ImportDecl, importPath string) string {
 }
 
 func appendUnique(list []string, value string) []string {
-	for _, item := range list {
-		if item == value {
-			return list
-		}
+	if slices.Contains(list, value) {
+		return list
 	}
 	return append(list, value)
 }

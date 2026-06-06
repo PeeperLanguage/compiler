@@ -81,8 +81,8 @@ func MatchesConstraint(version, constraint string) (bool, error) {
 	if strings.HasPrefix(constraint, "<") {
 		return parseAndCompare("<", func(cmp int) bool { return cmp < 0 })
 	}
-	if strings.HasPrefix(constraint, "^") {
-		reference, err := ParseVersion(strings.TrimPrefix(constraint, "^"))
+	if after, ok := strings.CutPrefix(constraint, "^"); ok {
+		reference, err := ParseVersion(after)
 		if err != nil {
 			return false, err
 		}

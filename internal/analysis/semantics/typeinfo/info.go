@@ -4,6 +4,7 @@ import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -450,10 +451,8 @@ func ContainsAbstractSelf(t Type) bool {
 		if typ == nil {
 			return false
 		}
-		for _, param := range typ.Params {
-			if ContainsAbstractSelf(param) {
-				return true
-			}
+		if slices.ContainsFunc(typ.Params, ContainsAbstractSelf) {
+			return true
 		}
 		return ContainsAbstractSelf(typ.Return)
 	case *StructType:

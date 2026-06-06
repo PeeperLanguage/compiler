@@ -120,8 +120,8 @@ func listMockVersions(repoName, mockBasePath string) ([]string, error) {
 			continue
 		}
 		name := entry.Name()
-		if strings.HasPrefix(name, packageName+"-") {
-			versions = append(versions, strings.TrimPrefix(name, packageName+"-"))
+		if after, ok := strings.CutPrefix(name, packageName+"-"); ok {
+			versions = append(versions, after)
 		}
 	}
 	if len(versions) == 0 {
@@ -229,8 +229,8 @@ func fetchBitbucketVersions(repoName string) ([]string, error) {
 
 func stripProviderPrefix(repo string) string {
 	for _, prefix := range []string{"github.com/", "gitlab.com/", "bitbucket.org/"} {
-		if strings.HasPrefix(repo, prefix) {
-			return strings.TrimPrefix(repo, prefix)
+		if after, ok := strings.CutPrefix(repo, prefix); ok {
+			return after
 		}
 	}
 	return repo

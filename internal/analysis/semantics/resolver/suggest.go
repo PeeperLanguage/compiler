@@ -106,12 +106,9 @@ func rankCandidate(query string, candidate rankedCandidate) candidateScore {
 }
 
 func sharedPrefixLen(a, b string) int {
-	limit := len(a)
-	if len(b) < limit {
-		limit = len(b)
-	}
+	limit := min(len(b), len(a))
 	n := 0
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		if a[i] != b[i] {
 			break
 		}

@@ -46,7 +46,7 @@ type Symbol struct {
 	Used         bool
 	Location     *source.Location
 	ASTNode      ast.Node
-	Scope        interface{} // Pointer to table.Scope (only if Kind == SymbolFunc)
+	Scope        any // Pointer to table.Scope (only if Kind == SymbolFunc)
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {
@@ -102,7 +102,6 @@ func (s *Symbol) IsMutable() bool {
 	decl, ok := s.ASTNode.(*ast.LetDecl)
 	return ok && decl != nil && decl.IsMutable
 }
-
 
 func IsPubName(name string) bool {
 	if name == "" {
