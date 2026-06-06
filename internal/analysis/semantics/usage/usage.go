@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/context"
 )

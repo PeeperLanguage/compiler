@@ -1,7 +1,7 @@
 package cfg
 
 import (
-	"compiler/core/source"
+	"compiler/pkg/source"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 )

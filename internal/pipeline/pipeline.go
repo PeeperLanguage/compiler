@@ -1,7 +1,7 @@
 package pipeline
 
 import (
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/cfg"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"

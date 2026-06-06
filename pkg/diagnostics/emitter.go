@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"compiler/colors"
-	"compiler/core/source"
+	"compiler/pkg/source"
 )
 
 const (

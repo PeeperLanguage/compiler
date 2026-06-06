@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"

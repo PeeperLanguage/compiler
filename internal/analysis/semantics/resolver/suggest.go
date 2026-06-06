@@ -3,7 +3,7 @@ package resolver
 import (
 	"strings"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"

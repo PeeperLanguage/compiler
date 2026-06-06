@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"compiler/config/manifest"
+	"compiler/pkg/manifest"
 )
 
 func TestUpdateConstraint(t *testing.T) {

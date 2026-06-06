@@ -12,7 +12,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
-	"compiler/internal/utils/numeric"
+	"compiler/pkg/numeric"
 )
 
 var currentModuleScope *table.Scope

@@ -5,23 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"compiler/cmd/cli"
 	"compiler/colors"
-	"compiler/core/abi"
-	"compiler/internal/driver"
-	"compiler/internal/backend"	
+	compiler "compiler/internal/driver"
 	"compiler/internal/lsp"
 )
-
-type compilerFlags struct {
-	backend    string
-	outputPath string
-	keepGen    bool
-	debugBuild bool
-	inputPath  string
-}
 
 func parseAndRunCommand(args []string) bool {
 	if len(args) == 0 {
@@ -37,6 +26,15 @@ func parseAndRunCommand(args []string) bool {
 	}
 
 	switch commandName {
+	case "build":
+		if err := buildCommand(commandArgs, commandBackend); err != nil {
+			if errors.Is(err, errAlreadyReported) {
+				os.Exit(1)
+			}
+			colors.RED.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
 	case "lsp":
 		colors.CYAN.Fprintln(os.Stderr, "starting Ember LSP server...")
 		if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
@@ -115,14 +113,9 @@ func parseAndRunCommand(args []string) bool {
 	}
 }
 
-func parseCompilerFlags() compilerFlags {
-	backendTarget := flag.String("backend", "llvm", "backend target (llvm)")
-	logFormat := flag.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
-	m32 := flag.Bool("m32", false, "target 32-bit ABI")
-	outputPath := flag.String("o", "", "compile and link to executable")
-	keepGen := flag.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
-	flag.BoolVar(keepGen, "k", false, "alias for -keep-gen")
-	debugBuild := flag.Bool("debug", false, "enable debug build mode (emits debug info and debug-friendly codegen)")
+func printUsageAndExit(code int) {
+	flag.CommandLine.SetOutput(os.Stderr)
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	showVersion := flag.Bool("version", false, "show compiler version")
 	flag.BoolVar(showVersion, "v", false, "alias for -version")
 	showHelp := flag.Bool("help", false, "show help")
@@ -131,11 +124,11 @@ func parseCompilerFlags() compilerFlags {
 	flag.Usage = func() {
 		colors.BLUE.Fprintln(os.Stderr, "Ember compiler v"+compiler.COMPILER_VERSION)
 		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
-		colors.GREEN.Fprintf(os.Stderr, "  ember [options] <source-file-or-directory>\n")
 		colors.GREEN.Fprintf(os.Stderr, "  ember [command] [args]\n")
-		colors.CYAN.Fprintln(os.Stderr, "\nOptions:")
-		flag.PrintDefaults()
 		colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
+		fmt.Fprintln(os.Stderr, "  build[:llvm] [path]     build a program or use package.entry from ember")
+		fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
+		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.em only)")
 		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with ember")
 		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from ember or specific packages")
 		fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
@@ -144,58 +137,21 @@ func parseCompilerFlags() compilerFlags {
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.em only)")
-		fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
-		fmt.Fprintln(os.Stderr, "  test[:llvm] [path] [args] build and run unit tests (default llvm)")
+		fmt.Fprintln(os.Stderr, "  lsp                     start the Ember language server")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-		colors.GREEN.Fprintf(os.Stderr, "  ember -backend llvm main.em\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ember -m32 -o app32 main.em\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ember -k main.em\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember build\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember build src/main.em\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ember build -o app\n")
 		colors.GREEN.Fprintf(os.Stderr, "  ember run main.em arg1 arg2\n")
 	}
 
-	flag.Parse()
-	if err := colors.SetLogFormatString(*logFormat); err != nil {
-		colors.RED.Fprintln(os.Stderr, err)
-		os.Exit(2)
+	if len(os.Args) > 1 {
+		_ = flag.CommandLine.Parse(os.Args[1:])
 	}
-	if *m32 {
-		if err := abi.SetSizeBits(abi.Bits32); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-	} else if err := abi.SetSizeBits(0); err != nil {
-		colors.RED.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-
 	if *showVersion {
 		fmt.Printf("v%s\n", compiler.COMPILER_VERSION)
 		os.Exit(0)
 	}
-	if *showHelp {
-		flag.Usage()
-		os.Exit(0)
-	}
-	if flag.NArg() != 1 {
-		flag.Usage()
-		os.Exit(2)
-	}
-
-	selectedBackend := strings.ToLower(strings.TrimSpace(*backendTarget))
-	if selectedBackend == "" {
-		selectedBackend = "llvm"
-	}
-	if selectedBackend != string(backend.LLVM) {
-		colors.RED.Fprintf(os.Stderr, "Error: invalid backend %q (expected llvm)\n", selectedBackend)
-		os.Exit(2)
-	}
-
-	return compilerFlags{
-		backend:    selectedBackend,
-		outputPath: *outputPath,
-		keepGen:    *keepGen,
-		debugBuild: *debugBuild,
-		inputPath:  flag.Arg(0),
-	}
+	flag.Usage()
+	os.Exit(code)
 }

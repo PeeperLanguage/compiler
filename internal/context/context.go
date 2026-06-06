@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"sync"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"

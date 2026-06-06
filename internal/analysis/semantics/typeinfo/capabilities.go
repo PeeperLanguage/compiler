@@ -1,6 +1,6 @@
 package typeinfo
 
-import "compiler/internal/utils/numeric"
+import "compiler/pkg/numeric"
 
 // Capability queries for typing rules.
 // Keep checker dumb: checker asks "can op apply?", type system answers.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compiler/core/diagnostics"
+	"compiler/pkg/diagnostics"
 )
 
 // ImportError reports a resolved import failure with a diagnostic code.

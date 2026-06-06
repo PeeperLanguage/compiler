@@ -1,8 +1,8 @@
 package cfg
 
 import (
-	"compiler/core/diagnostics"
-	"compiler/core/source"
+	"compiler/pkg/diagnostics"
+	"compiler/pkg/source"
 	"compiler/internal/ir/hir"
 )
 

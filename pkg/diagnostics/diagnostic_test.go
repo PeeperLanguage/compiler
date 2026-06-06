@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"testing"
 
-	"compiler/core/source"
+	"compiler/pkg/source"
 )
 
 func testLoc(file string, line, col int) *source.Location {
