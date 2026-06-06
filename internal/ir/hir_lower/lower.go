@@ -342,10 +342,8 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 
 	// Fetch canonical type from the typechecker side-table when available.
 	resolvedTypeStr := ""
-	if module != nil && module.Semantics != nil {
-		if t, ok := module.Semantics.ExprTypes[expr.ID()]; ok && t != nil {
-			resolvedTypeStr = loweredTypeText(t)
-		}
+	if t := exprResolvedType(module, expr); t != nil {
+		resolvedTypeStr = loweredTypeText(t)
 	}
 	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
 		return ifaceExpr
@@ -374,7 +372,11 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		}
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" || t == "<unknown>" {
-			t = symTypeText(sym)
+			if symType, ok := symbolType(sym); ok {
+				t = loweredTypeText(symType)
+			} else {
+				t = "<unknown>"
+			}
 		}
 		return &ir.Ident{Name: symbolName(sym), Type: t}
 
@@ -382,7 +384,11 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
 			t := resolvedTypeStr
 			if t == "" || t == "<invalid>" || t == "<unknown>" {
-				t = symTypeText(sym)
+				if symType, ok := symbolType(sym); ok {
+					t = loweredTypeText(symType)
+				} else {
+					t = "<unknown>"
+				}
 			}
 			return &ir.Ident{Name: symbolName(sym), Type: t}
 		}
@@ -847,13 +853,6 @@ func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
 	}
 	typ, ok := sym.Type.(typeinfo.Type)
 	return typ, ok && typ != nil
-}
-
-func symTypeText(sym *symbols.Symbol) string {
-	if t, ok := symbolType(sym); ok {
-		return loweredTypeText(t)
-	}
-	return "<unknown>"
 }
 
 func loweredTypeText(t typeinfo.Type) string {
