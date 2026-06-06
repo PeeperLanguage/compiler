@@ -6,15 +6,25 @@ import (
 
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 )
 
 type Module struct {
-	Name       string
-	StaticData []*StaticEntry
-	Funcs      []*Function
+	Name            string
+	StaticData      []*StaticEntry
+	InterfaceThunks []*InterfaceThunk
+	Funcs           []*Function
+}
+
+type InterfaceThunk struct {
+	Name     string
+	SlotType string
+	FuncName string
+	FuncType string
+	DataType string
 }
 
 type StaticEntry struct {
@@ -65,6 +75,12 @@ type Terminator interface {
 type Assign struct {
 	Name  string
 	Value ValueExpr
+}
+
+type StoreField struct {
+	Base  ValueRef
+	Index int
+	Value ValueRef
 }
 
 type Jump struct {
@@ -124,8 +140,45 @@ type Cast struct {
 	Type string
 }
 
+type AddrOf struct {
+	Base ValueRef
+	Type string
+}
+
+type Field struct {
+	Base       ValueRef
+	Index      int
+	ThroughPtr bool
+	Type       string
+}
+
+type StructLit struct {
+	Fields []ValueRef
+	Type   string
+}
+
+type InterfaceMake struct {
+	Value    ValueRef
+	DataType string
+	BoxValue bool
+	StackBox bool
+	Slots    []ValueRef
+	Type     string
+}
+
+type InterfaceCall struct {
+	Base ValueRef
+	Slot int
+	Args []ValueRef
+	Type string
+}
+
 func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
+}
+
+func (i *StoreField) Text() string {
+	return fmt.Sprintf("storefield %s, %d, %s", i.Base.Text(), i.Index, i.Value.Text())
 }
 
 func (i *Jump) Text() string {
@@ -140,12 +193,17 @@ func (i *Ret) Text() string {
 	return "ret " + i.Value.Text()
 }
 
-func (*Unary) valueExprNode()   {}
-func (*Binary) valueExprNode()  {}
-func (*Move) valueExprNode()    {}
-func (*Cast) valueExprNode()    {}
-func (*RefConst) valueRefNode() {}
-func (*RefName) valueRefNode()  {}
+func (*Unary) valueExprNode()         {}
+func (*Binary) valueExprNode()        {}
+func (*Move) valueExprNode()          {}
+func (*Cast) valueExprNode()          {}
+func (*AddrOf) valueExprNode()        {}
+func (*Field) valueExprNode()         {}
+func (*StructLit) valueExprNode()     {}
+func (*InterfaceMake) valueExprNode() {}
+func (*InterfaceCall) valueExprNode() {}
+func (*RefConst) valueRefNode()       {}
+func (*RefName) valueRefNode()        {}
 
 func (r *RefConst) Text() string { return r.Value }
 func (r *RefName) Text() string  { return r.Name }
@@ -153,6 +211,45 @@ func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
+func (v *AddrOf) Text() string   { return fmt.Sprintf("addr %s", v.Base.Text()) }
+func (v *Field) Text() string    { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
+func (v *StructLit) Text() string {
+	var b strings.Builder
+	b.WriteString("struct(")
+	for i, field := range v.Fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(field.Text())
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
+func (v *InterfaceMake) Text() string {
+	if v == nil {
+		return "iface()"
+	}
+	return "iface(" + v.Value.Text() + ")"
+}
+
+func (v *InterfaceCall) Text() string {
+	if v == nil {
+		return "ifacecall()"
+	}
+	var b strings.Builder
+	b.WriteString("ifacecall ")
+	b.WriteString(v.Base.Text())
+	b.WriteString("(")
+	for i, arg := range v.Args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(arg.Text())
+	}
+	b.WriteString(")")
+	return b.String()
+}
 
 type lowerer struct {
 	module      *Module
@@ -180,9 +277,10 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 		return nil
 	}
 	out := &Module{
-		Name:       in.Name,
-		StaticData: make([]*StaticEntry, 0),
-		Funcs:      make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
+		Name:            in.Name,
+		StaticData:      make([]*StaticEntry, 0),
+		InterfaceThunks: make([]*InterfaceThunk, 0),
+		Funcs:           make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
 	}
 
 	if scope != nil {
@@ -200,7 +298,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 				if valStr, ok := evalASTLiteral(valExpr); ok {
 					var typText string
 					if sym.Type != nil {
-						typText = sym.Type.Text()
+						typText = typeinfo.TypeText(typeinfo.Underlying(sym.Type))
 					} else {
 						typText = "i32"
 					}
@@ -245,6 +343,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 		if !l.appendBlock(hirFn.Body) {
 			return nil
 		}
+		markLocalInterfaceBoxing(fn)
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
@@ -306,6 +405,25 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		}
 		l.lowerExpr(node.Value, &l.current.Instrs)
 		return true
+	case *hir.Assign:
+		if l.current == nil {
+			return true
+		}
+		value := l.lowerExpr(node.Value, &l.current.Instrs)
+		switch target := node.Target.(type) {
+		case *ir.Ident:
+			l.current.Instrs = append(l.current.Instrs, &Assign{Name: target.Name, Value: asValueExpr(value)})
+			return true
+		case *ir.Field:
+			if !target.ThroughPtr {
+				return false
+			}
+			base := l.lowerExpr(target.Base, &l.current.Instrs)
+			l.current.Instrs = append(l.current.Instrs, &StoreField{Base: base, Index: target.Index, Value: value})
+			return true
+		default:
+			return false
+		}
 	case *hir.If:
 		return l.appendIf(node)
 	default:
@@ -413,6 +531,54 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
 		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.AddrOf:
+		base := l.lowerExpr(e.Expr, out)
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.Field:
+		base := l.lowerExpr(e.Base, out)
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.StructLit:
+		fields := make([]ValueRef, 0, len(e.Fields))
+		for _, field := range e.Fields {
+			fields = append(fields, l.lowerExpr(field, out))
+		}
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.InterfaceMake:
+		value := l.lowerExpr(e.Value, out)
+		dataType, boxValue := interfaceStorageFor(e.Value.TypeText())
+
+		slots := make([]ValueRef, 0, len(e.Slots))
+		for index, slot := range e.Slots {
+			wrapperName := ir.InterfaceThunkName(slot.InterfaceType, dataType, slot.MethodName, index)
+			slot.WrapperName = wrapperName
+			slot.DataType = dataType
+			l.registerInterfaceThunk(slot)
+			slots = append(slots, &RefName{Name: wrapperName, Type: slot.SlotType})
+		}
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &InterfaceMake{
+			Value:    value,
+			DataType: dataType,
+			BoxValue: boxValue,
+			Slots:    slots,
+			Type:     e.TypeText(),
+		}})
+		return &RefName{Name: name, Type: e.TypeText()}
+	case *ir.InterfaceCall:
+		base := l.lowerExpr(e.Base, out)
+		args := make([]ValueRef, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, l.lowerExpr(arg, out))
+		}
+		name := l.nextTemp()
+		*out = append(*out, &Assign{Name: name, Value: &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText()}})
+		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
@@ -421,6 +587,171 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	default:
 		return &RefConst{Value: "0", Type: "i32"}
 	}
+}
+
+func interfaceStorageFor(typeText string) (string, bool) {
+	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
+		return remainder, false
+	}
+	return typeText, true
+}
+
+func markLocalInterfaceBoxing(fn *Function) {
+	if fn == nil || fn.Blocks == nil {
+		return
+	}
+	producers := make(map[string]ValueExpr)
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instrs {
+			assign, ok := instr.(*Assign)
+			if !ok || assign == nil || assign.Name == "" || assign.Value == nil {
+				continue
+			}
+			producers[assign.Name] = assign.Value
+		}
+	}
+
+	rootCache := make(map[string]map[string]struct{})
+	var rootsOfName func(string, map[string]struct{}) map[string]struct{}
+	rootsOfName = func(name string, seen map[string]struct{}) map[string]struct{} {
+		if cached, ok := rootCache[name]; ok {
+			return cached
+		}
+		if _, ok := seen[name]; ok {
+			return nil
+		}
+		seen[name] = struct{}{}
+		value := producers[name]
+		switch node := value.(type) {
+		case *InterfaceMake:
+			if node != nil && node.BoxValue {
+				out := map[string]struct{}{name: {}}
+				rootCache[name] = out
+				return out
+			}
+		case *Move:
+			out := rootsOfRef(node.Src, rootsOfName, seen)
+			rootCache[name] = out
+			return out
+		}
+		rootCache[name] = nil
+		return nil
+	}
+
+	escapes := make(map[string]bool)
+	markEscape := func(ref ValueRef) {
+		for root := range rootsOfRef(ref, rootsOfName, nil) {
+			escapes[root] = true
+		}
+	}
+
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instrs {
+			assign, ok := instr.(*Assign)
+			if !ok || assign == nil || assign.Value == nil {
+				continue
+			}
+			switch value := assign.Value.(type) {
+			case *Move:
+				// pure alias, safe
+			case *InterfaceCall:
+				// local dispatch is safe; boxed payload only needs to live for this function
+			case *Call:
+				for _, arg := range value.Args {
+					markEscape(arg)
+				}
+			default:
+				for _, ref := range valueRefsOf(value) {
+					markEscape(ref)
+				}
+			}
+		}
+		if term, ok := block.Term.(*Ret); ok && term != nil {
+			markEscape(term.Value)
+		}
+	}
+
+	for name, value := range producers {
+		makeVal, ok := value.(*InterfaceMake)
+		if !ok || makeVal == nil || !makeVal.BoxValue {
+			continue
+		}
+		if !escapes[name] {
+			makeVal.StackBox = true
+		}
+	}
+}
+
+func rootsOfRef(ref ValueRef, rootsOfName func(string, map[string]struct{}) map[string]struct{}, seen map[string]struct{}) map[string]struct{} {
+	nameRef, ok := ref.(*RefName)
+	if !ok || nameRef == nil || rootsOfName == nil {
+		return nil
+	}
+	if seen == nil {
+		seen = make(map[string]struct{})
+	}
+	return rootsOfName(nameRef.Name, seen)
+}
+
+func valueRefsOf(expr ValueExpr) []ValueRef {
+	switch node := expr.(type) {
+	case *Move:
+		return []ValueRef{node.Src}
+	case *Unary:
+		return []ValueRef{node.Arg}
+	case *Binary:
+		return []ValueRef{node.Left, node.Right}
+	case *Cast:
+		return []ValueRef{node.Arg}
+	case *AddrOf:
+		return []ValueRef{node.Base}
+	case *Field:
+		return []ValueRef{node.Base}
+	case *StructLit:
+		return append([]ValueRef(nil), node.Fields...)
+	case *InterfaceMake:
+		refs := make([]ValueRef, 0, len(node.Slots)+1)
+		refs = append(refs, node.Value)
+		refs = append(refs, node.Slots...)
+		return refs
+	case *InterfaceCall:
+		refs := make([]ValueRef, 0, len(node.Args)+1)
+		refs = append(refs, node.Base)
+		refs = append(refs, node.Args...)
+		return refs
+	case *Call:
+		refs := make([]ValueRef, 0, len(node.Args)+1)
+		refs = append(refs, node.Callee)
+		refs = append(refs, node.Args...)
+		return refs
+	default:
+		return nil
+	}
+}
+
+func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {
+	if l == nil || l.module == nil || slot.WrapperName == "" {
+		return
+	}
+	for _, w := range l.module.InterfaceThunks {
+		if w.Name == slot.WrapperName {
+			return
+		}
+	}
+	thunk := &InterfaceThunk{
+		Name:     slot.WrapperName,
+		SlotType: slot.SlotType,
+		FuncName: slot.FuncName,
+		FuncType: slot.FuncType,
+		DataType: slot.DataType,
+	}
+	l.module.InterfaceThunks = append(l.module.InterfaceThunks, thunk)
 }
 
 func (l *lowerer) nextTemp() string {

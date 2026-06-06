@@ -35,6 +35,7 @@ var infixPrec = map[tokens.Kind]int{
 	tokens.PERCENT:  precProduct,
 	tokens.AS:       precCast,
 	tokens.LPAREN:   precCall,
+	tokens.DOT:      precCall,
 }
 
 type ledFunc func(*Parser, ast.Expr, int) ast.Expr
@@ -71,6 +72,8 @@ func ledFor(kind tokens.Kind) (ledFunc, bool) {
 		return parseAsLed, true
 	case tokens.LPAREN:
 		return parseCallLed, true
+	case tokens.DOT:
+		return parseSelectorLed, true
 	default:
 		return nil, false
 	}
@@ -98,18 +101,6 @@ func (p *Parser) parsePrefix() ast.Expr {
 			Expr:     expr,
 			Location: p.loc(tok, tok),
 		})
-	case tokens.AMP:
-		p.advance()
-		isMutable := p.match(tokens.MUT)
-		expr := p.parseExpr(precPrefix)
-		if expr == nil {
-			return nil
-		}
-		return reg(p, &ast.BorrowExpr{
-			Mutable:  isMutable,
-			Expr:     expr,
-			Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(tok, tok)}), expr),
-		})
 	case tokens.LPAREN:
 		p.advance()
 		expr := p.parseExpr(precLowest)
@@ -121,6 +112,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 			return nil
 		}
 		return expr
+	case tokens.DOT:
+		return p.parseStructLiteral()
 	default:
 		p.errorf(tok, diagnostics.ErrInvalidExpression, "expected expression")
 		return nil
@@ -133,6 +126,10 @@ func parseInfixLed(p *Parser, left ast.Expr, precedence int) ast.Expr {
 
 func parseCallLed(p *Parser, left ast.Expr, _ int) ast.Expr {
 	return p.parseCall(left)
+}
+
+func parseSelectorLed(p *Parser, left ast.Expr, _ int) ast.Expr {
+	return p.parseSelector(left)
 }
 
 func parseAsLed(p *Parser, left ast.Expr, _ int) ast.Expr {
@@ -208,6 +205,67 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 		})
 	}
 	return id
+}
+
+func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
+	dot := p.consume(tokens.DOT, "expected '.'")
+	if dot == nil {
+		return left
+	}
+	name := p.parseIdent()
+	if name == nil {
+		return nil
+	}
+	return reg(p, &ast.SelectorExpr{
+		Expr:     left,
+		Name:     name,
+		Location: p.locFromNode(left, name),
+	})
+}
+
+func (p *Parser) parseStructLiteral() ast.Expr {
+	start := p.consume(tokens.DOT, "expected '.'")
+	if start == nil {
+		return nil
+	}
+	if p.consume(tokens.LBRACE, "expected '{' after '.'") == nil {
+		return nil
+	}
+	fields := make([]ast.StructLitField, 0)
+	if !p.at(tokens.RBRACE) {
+		for {
+			name := p.parseIdent()
+			if name == nil {
+				return nil
+			}
+			if p.consume(tokens.ASSIGN, "expected '=' after struct literal field name") == nil {
+				return nil
+			}
+			value := p.parseExpr(precLowest)
+			if value == nil {
+				return nil
+			}
+			fields = append(fields, ast.StructLitField{
+				Name:     name,
+				Value:    value,
+				Location: p.locFromNode(name, value),
+			})
+			if !p.match(tokens.COMMA) {
+				break
+			}
+			if p.at(tokens.RBRACE) {
+				break
+			}
+		}
+	}
+	end := p.consume(tokens.RBRACE, "expected '}' after struct literal")
+	if end == nil {
+		return nil
+	}
+	return reg(p, &ast.StructLit{
+		Fields:   fields,
+		Location: p.loc(*start, *end),
+	})
 }
 
 func (p *Parser) parseIdent() *ast.Ident {

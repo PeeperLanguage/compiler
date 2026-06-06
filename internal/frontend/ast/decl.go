@@ -23,16 +23,6 @@ type NamedType struct {
 func (*NamedType) typeNode()               {}
 func (t *NamedType) Loc() *source.Location { return t.Location }
 
-type RefType struct {
-	NodeIDHolder
-	Mutable  bool
-	Target   TypeExpr
-	Location *source.Location
-}
-
-func (*RefType) typeNode()               {}
-func (t *RefType) Loc() *source.Location { return t.Location }
-
 type RawPtrType struct {
 	NodeIDHolder
 	Mutable  bool
@@ -139,7 +129,6 @@ func (*ConstDecl) stmtNode()               {}
 
 type FnDecl struct {
 	NodeIDHolder
-	Receiver   *Param
 	Name       *Ident
 	TypeParams []TypeParam
 	Params     []Param
@@ -194,3 +183,13 @@ type EnumDecl struct {
 
 func (*EnumDecl) declNode()               {}
 func (d *EnumDecl) Loc() *source.Location { return d.Location }
+
+type ImplDecl struct {
+	NodeIDHolder
+	Target   TypeExpr
+	Methods  []*FnDecl
+	Location *source.Location
+}
+
+func (*ImplDecl) declNode()               {}
+func (d *ImplDecl) Loc() *source.Location { return d.Location }

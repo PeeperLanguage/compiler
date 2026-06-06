@@ -18,8 +18,8 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
 			if !sym.Used {
-				addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedImport,
-					fmt.Sprintf("unused import `%s`", sym.Name))
+				ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedImport,
+					fmt.Sprintf("unused import `%s`", sym.Name), sym.Location, "")
 			}
 		}
 	}
@@ -51,7 +51,7 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 				default:
 					continue
 				}
-				addWarning(ctx.Diagnostics, module.FilePath, sym, code, msg)
+				ctx.Diagnostics.AddWarning(code, msg, sym.Location, "")
 			}
 		}
 	}
@@ -68,24 +68,13 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 				}
 				switch sym.Kind {
 				case symbols.SymbolParam:
-					addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedParameter,
-						fmt.Sprintf("unused parameter `%s`", sym.Name))
+					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
+						fmt.Sprintf("unused parameter `%s`", sym.Name), sym.Location, "use it or add `_` prefix to suppress warning")
 				case symbols.SymbolVar, symbols.SymbolConst:
-					addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedLocal,
-						fmt.Sprintf("unused local `%s`", sym.Name))
+					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
+						fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or add `_` prefix to suppress warning")
 				}
 			}
 		}
 	}
-}
-
-func addWarning(diag *diagnostics.DiagnosticBag, filePath string, sym *symbols.Symbol, code, msg string) {
-	if diag == nil || sym == nil {
-		return
-	}
-	d := diagnostics.NewWarning(msg).WithCode(code)
-	if sym.Location != nil {
-		d.WithPrimaryLabel(sym.Location, msg)
-	}
-	diag.Add(d)
 }

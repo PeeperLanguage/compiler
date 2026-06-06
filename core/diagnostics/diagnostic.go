@@ -174,6 +174,14 @@ func (d *Diagnostic) WithLabel(loc *source.Location, message string, style Label
 	return d
 }
 
+func (d *Diagnostic) At(loc *source.Location) *Diagnostic {
+	if loc == nil {
+		return d
+	}
+	d.FilePath = *loc.Filename
+	return d
+}
+
 // WithPrimaryLabel adds a primary labeled location
 // Must be called before any WithSecondaryLabel calls
 func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Diagnostic {
