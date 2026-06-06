@@ -95,6 +95,15 @@ func GetSymbolType(sym *Symbol) (Type, bool) {
 	return sym.Type, true
 }
 
+func (s *Symbol) IsMutable() bool {
+	if s == nil {
+		return false
+	}
+	decl, ok := s.ASTNode.(*ast.LetDecl)
+	return ok && decl != nil && decl.IsMutable
+}
+
+
 func IsPubName(name string) bool {
 	if name == "" {
 		return false
