@@ -24,6 +24,51 @@ type orphanCandidate struct {
 	InLock    bool
 }
 
+type updateScanContext struct {
+	manifestPath string
+	projectRoot  string
+	file         *manifest.File
+	lockfile     *manifest.Lockfile
+	devConfig    manifest.DevConfig
+	filter       map[string]bool
+}
+
+func prepareUpdateScanContext(args []string) (*updateScanContext, error) {
+	manifestPath, err := manifest.Find(".")
+	if err != nil {
+		return nil, err
+	}
+	file, err := manifest.Load(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+
+	projectRoot := filepath.Dir(manifestPath)
+	lockfile, err := manifest.LoadLockfile(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	filter := make(map[string]bool)
+	for _, arg := range args {
+		filter[arg] = true
+	}
+
+	devConfig := file.Dev
+	if devConfig.MockRemote && devConfig.MockPath != "" {
+		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
+	}
+
+	return &updateScanContext{
+		manifestPath: manifestPath,
+		projectRoot:  projectRoot,
+		file:         file,
+		lockfile:     lockfile,
+		devConfig:    devConfig,
+		filter:       filter,
+	}, nil
+}
+
 func collectUpdatePlans(file *manifest.File, lockfile *manifest.Lockfile, devConfig *manifest.DevConfig, filter map[string]bool) ([]updatePlan, int, error) {
 	if file == nil {
 		return nil, 0, nil
