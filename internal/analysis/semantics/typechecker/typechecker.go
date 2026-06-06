@@ -94,6 +94,20 @@ func containsAbstractSelf(t typeinfo.Type) bool {
 	}
 }
 
+func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
+	if paramType == nil || selfType == nil {
+		return false
+	}
+	if typeinfo.SameType(paramType, selfType) {
+		return true
+	}
+	ptr, ok := paramType.(*typeinfo.RawPtrType)
+	if !ok || ptr == nil || ptr.Target == nil {
+		return false
+	}
+	return typeinfo.SameType(ptr.Target, selfType)
+}
+
 func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
 	return c.typeFromSyntaxWithSelf(node, nil, false)
 }
@@ -481,11 +495,17 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 		if !ok || sym == nil {
 			continue
 		}
-		if len(method.Params) == 0 || method.Params[0].Name == nil || method.Params[0].Name.Name != "self" {
-			common.AddError(c.ctx.Diagnostics, c.module.FilePath, method, diagnostics.ErrInvalidMethodReceiver,
-				"impl methods must declare `self` as the first parameter")
+		errmsg := "impl methods must declare a `Self` receiver as the first parameter"
+		if len(method.Params) == 0 {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, method, diagnostics.ErrInvalidMethodReceiver, errmsg)
 			continue
 		}
+		firstParamType := c.typeFromSyntaxWithSelf(method.Params[0].Type, selfType, true)
+		if !isValidReceiverType(firstParamType, selfType) {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, method, diagnostics.ErrInvalidMethodReceiver, errmsg)
+			continue
+		}
+
 		if method.Body == nil {
 			sym.BindType(c.fnTypeFromDeclWithSelf(method, selfType, false))
 			continue
@@ -772,7 +792,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 			}
 			argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 		}
-		c.checkMethodCall(call, methodType, argTypes, methodSym)
+		c.checkMethodCall(selector.Expr, call, methodType, argTypes, methodSym)
 		return c.callReturnType(call, methodType)
 	}
 	if _, fieldOK := c.lookupFieldType(baseType, selector.Name.Name); fieldOK {
@@ -1096,7 +1116,16 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	}
 }
 
-func (c *checker) checkMethodCall(callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type, _ *symbols.Symbol) {
+func isAddressableExpr(expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.Ident:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *checker) checkMethodCall(receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type, _ *symbols.Symbol) {
 	if c == nil || callExpr == nil || calleeType == nil {
 		return
 	}
@@ -1120,6 +1149,11 @@ func (c *checker) checkMethodCall(callExpr *ast.CallExpr, calleeType typeinfo.Ty
 		paramType := fnType.Params[i]
 		if paramType == nil {
 			continue
+		}
+		if i == 0 {
+			if ptrType, ok := paramType.(*typeinfo.RawPtrType); ok && ptrType != nil && typeinfo.SameType(ptrType.Target, argType) && isAddressableExpr(receiverExpr) {
+				continue
+			}
 		}
 		if !c.assignable(paramType, argType) {
 			site := ast.Node(callExpr)

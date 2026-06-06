@@ -106,10 +106,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 	if !hasDefine {
 		return finalLLVMText(&b, emitter)
 	}
-	for _, wrapper := range mod.InterfaceWrappers {
-		emitInterfaceWrapper(&b, emitter, wrapper)
+	for _, thunk := range mod.InterfaceThunks {
+		emitInterfaceThunk(&b, emitter, thunk)
 	}
-	if len(mod.InterfaceWrappers) > 0 {
+	if len(mod.InterfaceThunks) > 0 {
 		b.WriteString("\n")
 	}
 	for _, fn := range mod.Funcs {
@@ -471,34 +471,34 @@ func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (str
 	return llvmTypeName(slotTypeText)
 }
 
-func emitInterfaceWrapper(out *strings.Builder, emitter *llvmEmitter, wrapper *mir.InterfaceWrapper) {
-	if out == nil || emitter == nil || wrapper == nil {
+func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.InterfaceThunk) {
+	if out == nil || emitter == nil || thunk == nil {
 		return
 	}
-	actualLLVMType, ok := llvmTypeName(wrapper.FuncType)
+	actualLLVMType, ok := llvmTypeName(thunk.FuncType)
 	if !ok {
-		emitter.markInvalid("unsupported interface wrapper function type: " + wrapper.FuncType)
+		emitter.markInvalid("unsupported interface thunk function type: " + thunk.FuncType)
 		return
 	}
-	actualFn, actualRet, actualParams, ok := parseFunctionTypeText(wrapper.FuncType)
+	actualFn, actualRet, actualParams, ok := parseFunctionTypeText(thunk.FuncType)
 	if !ok || actualFn != actualLLVMType {
-		emitter.markInvalid("failed to parse interface wrapper function type: " + wrapper.FuncType)
+		emitter.markInvalid("failed to parse interface thunk function type: " + thunk.FuncType)
 		return
 	}
-	dataLLVMType, ok := llvmTypeName(wrapper.DataType)
+	dataLLVMType, ok := llvmTypeName(thunk.DataType)
 	if !ok {
-		emitter.markInvalid("unsupported interface wrapper data type: " + wrapper.DataType)
+		emitter.markInvalid("unsupported interface thunk data type: " + thunk.DataType)
 		return
 	}
-	_, slotRet, slotParams, ok := parseFunctionTypeText(wrapper.SlotType)
+	_, slotRet, slotParams, ok := parseFunctionTypeText(thunk.SlotType)
 	if !ok || len(slotParams) == 0 || len(actualParams) == 0 {
-		emitter.markInvalid("failed to parse interface wrapper slot type: " + wrapper.SlotType)
+		emitter.markInvalid("failed to parse interface thunk slot type: " + thunk.SlotType)
 		return
 	}
 	out.WriteString("define ")
 	out.WriteString(slotRet)
 	out.WriteString(" @")
-	out.WriteString(wrapper.Name)
+	out.WriteString(thunk.Name)
 	out.WriteString("(")
 	for i, param := range slotParams {
 		if i > 0 {
@@ -517,18 +517,7 @@ func emitInterfaceWrapper(out *strings.Builder, emitter *llvmEmitter, wrapper *m
 		for i := 1; i < len(slotParams); i++ {
 			callArgs = append(callArgs, actualParams[i]+" %p"+strconv.Itoa(i))
 		}
-		funcName := wrapper.FuncName
-		if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
-			funcName = funcName[:idx]
-		}
-		if actualRet == "void" {
-			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
-			builder.line("ret void")
-		} else {
-			result := builder.nextReg()
-			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
-			builder.line("ret " + actualRet + " " + result)
-		}
+		emitThunkTargetCall(builder, actualRet, thunk.FuncName, callArgs)
 	} else {
 		cast := builder.nextReg()
 		builder.line(fmt.Sprintf("%s = bitcast i8* %%p0 to %s*", cast, dataLLVMType))
@@ -538,20 +527,24 @@ func emitInterfaceWrapper(out *strings.Builder, emitter *llvmEmitter, wrapper *m
 		for i := 1; i < len(slotParams); i++ {
 			callArgs = append(callArgs, actualParams[i]+" %p"+strconv.Itoa(i))
 		}
-		funcName := wrapper.FuncName
-		if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
-			funcName = funcName[:idx]
-		}
-		if actualRet == "void" {
-			builder.line(fmt.Sprintf("call %s @%s(%s)", actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
-			builder.line("ret void")
-		} else {
-			result := builder.nextReg()
-			builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, actualRet, ir.SanitizeSymbolName(funcName), strings.Join(callArgs, ", ")))
-			builder.line("ret " + actualRet + " " + result)
-		}
+		emitThunkTargetCall(builder, actualRet, thunk.FuncName, callArgs)
 	}
 	out.WriteString("}\n")
+}
+
+func emitThunkTargetCall(builder *llvmBuilder, returnType string, funcName string, callArgs []string) {
+	if builder == nil {
+		return
+	}
+	symbol := ir.SanitizeSymbolName(ir.StripSymbolInstance(funcName))
+	if returnType == "void" {
+		builder.line(fmt.Sprintf("call %s @%s(%s)", returnType, symbol, strings.Join(callArgs, ", ")))
+		builder.line("ret void")
+		return
+	}
+	result := builder.nextReg()
+	builder.line(fmt.Sprintf("%s = call %s @%s(%s)", result, returnType, symbol, strings.Join(callArgs, ", ")))
+	builder.line("ret " + returnType + " " + result)
 }
 
 func parseFunctionTypeText(typeText string) (string, string, []string, bool) {
@@ -819,6 +812,14 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		}
 		b.line(fmt.Sprintf("%s = call %s %s(%s)", out, llvmType, callee, strings.Join(args, ", ")))
 		return out
+	case *mir.AddrOf:
+		baseType := mirRefType(e.Base)
+		llvmBaseType := b.types.llvmType(baseType)
+		ptr := b.nextReg()
+		b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmBaseType))
+		value := emitRef(b, e.Base)
+		b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
+		return ptr
 	case *mir.Field:
 		base := emitRef(b, e.Base)
 		baseType := mirRefType(e.Base)
@@ -930,11 +931,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 			return reg
 		}
 		if isFunc {
-			funcName := v.Name
-			if idx := strings.IndexByte(funcName, '$'); idx >= 0 {
-				funcName = funcName[:idx]
-			}
-			return "@" + ir.SanitizeSymbolName(funcName)
+			return "@" + ir.SanitizeSymbolName(ir.StripSymbolInstance(v.Name))
 		}
 
 		isLocalStatic := false

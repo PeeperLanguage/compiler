@@ -57,6 +57,18 @@ func TestImplMethodAllowsSelfForBuiltinTarget(t *testing.T) {
 	}
 }
 
+func TestImplMethodAllowsNonSelfReceiverName(t *testing.T) {
+	src := `impl i32 {
+	fn abs(value: Self) -> Self {
+		return value;
+	}
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestInterfaceAndImplAllowSelf(t *testing.T) {
 	src := `interface Reader {
 	read(^Self, buf: cstr): i32,
@@ -175,6 +187,24 @@ impl File {
 
 fn main(file: ^File) -> i32 {
 	return file.read("ok");
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointerSelfMethodCallResolvesOnAddressableValue(t *testing.T) {
+	src := `impl i32 {
+	fn to_str(receiver: ^Self) -> cstr {
+		return "ok";
+	}
+}
+
+fn main() -> i32 {
+	let i: i32 = 42;
+	let s: cstr = i.to_str();
+	return 0;
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {

@@ -67,6 +67,11 @@ type Call struct {
 	Type   string
 }
 
+type AddrOf struct {
+	Expr Expr
+	Type string
+}
+
 type InterfaceSlot struct {
 	InterfaceType string
 	MethodName    string
@@ -78,16 +83,16 @@ type InterfaceSlot struct {
 }
 
 type InterfaceMake struct {
-	Value       Expr
-	Slots       []InterfaceSlot
-	Type        string
+	Value Expr
+	Slots []InterfaceSlot
+	Type  string
 }
 
 type InterfaceCall struct {
-	Base  Expr
-	Slot  int
-	Args  []Expr
-	Type  string
+	Base Expr
+	Slot int
+	Args []Expr
+	Type string
 }
 
 type Field struct {
@@ -107,19 +112,20 @@ type Cast struct {
 	Type string
 }
 
-func (*InvalidExpr) exprNode() {}
-func (*IntLit) exprNode()      {}
-func (*FloatLit) exprNode()    {}
-func (*StringLit) exprNode()   {}
-func (*Ident) exprNode()       {}
-func (*Unary) exprNode()       {}
-func (*Binary) exprNode()      {}
-func (*Call) exprNode()        {}
+func (*InvalidExpr) exprNode()   {}
+func (*IntLit) exprNode()        {}
+func (*FloatLit) exprNode()      {}
+func (*StringLit) exprNode()     {}
+func (*Ident) exprNode()         {}
+func (*Unary) exprNode()         {}
+func (*Binary) exprNode()        {}
+func (*Call) exprNode()          {}
+func (*AddrOf) exprNode()        {}
 func (*InterfaceMake) exprNode() {}
 func (*InterfaceCall) exprNode() {}
-func (*Field) exprNode()       {}
-func (*StructLit) exprNode()   {}
-func (*Cast) exprNode()        {}
+func (*Field) exprNode()         {}
+func (*StructLit) exprNode()     {}
+func (*Cast) exprNode()          {}
 
 func (e *InvalidExpr) String() string {
 	if e == nil || e.Message == "" {
@@ -217,6 +223,20 @@ func (e *Call) String() string {
 	return b.String()
 }
 func (e *Call) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *AddrOf) String() string {
+	if e == nil || e.Expr == nil {
+		return ""
+	}
+	return "^(" + e.Expr.String() + ")"
+}
+
+func (e *AddrOf) TypeText() string {
 	if e == nil {
 		return ""
 	}
@@ -455,4 +475,17 @@ func SanitizeSymbolName(text string) string {
 	return b.String()
 }
 
+func StripSymbolInstance(text string) string {
+	if idx := strings.IndexByte(text, '$'); idx >= 0 {
+		return text[:idx]
+	}
+	return text
+}
 
+func InterfaceThunkName(interfaceTypeText, dataType, methodName string, index int) string {
+	return fmt.Sprintf("__ifacethunk__%s__%s__%s__%d",
+		SanitizeSymbolName(interfaceTypeText),
+		SanitizeSymbolName(dataType),
+		SanitizeSymbolName(methodName),
+		index)
+}

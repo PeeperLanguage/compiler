@@ -125,6 +125,22 @@ func TestUnusedParameterIgnoredWithUnderscore(t *testing.T) {
 	}
 }
 
+func TestUnusedReceiverParameterWarnsLikeAnyOtherParam(t *testing.T) {
+	src := `impl i32 {
+	fn to_str(value: Self) -> cstr {
+		return "ok";
+	}
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if !hasCode(diag, diagnostics.WarnUnusedParameter) {
+		t.Fatalf("expected unused parameter warning for receiver param, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestUnusedPrivateFunction(t *testing.T) {
 	src := `fn unused_func() -> i32 {
 	return 42;
