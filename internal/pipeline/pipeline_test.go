@@ -389,3 +389,76 @@ fn main() -> i32 {
 		t.Errorf("expected exactly 1 definition of the interface wrapper function, got %d. LLVM IR:\n%s", count, entry.LLVMIR)
 	}
 }
+
+func TestPipelineLowersNestedFieldAssignment(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Inner {
+	value: i32,
+}
+struct Outer {
+	inner: Inner,
+}
+fn main() -> i32 {
+	let mut out: Outer = .{ inner = .{ value = 1 } };
+	out.inner.value = 42;
+	return out.inner.value;
+}`
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersPointerReceiverOnNestedField(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Counter {
+	value: i32,
+}
+impl Counter {
+	fn bump(self: ^Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+}
+struct Container {
+	counter: Counter,
+}
+fn main() -> i32 {
+	let mut c: Container = .{ counter = .{ value = 10 } };
+	return c.counter.bump();
+}`
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsNestedFieldAssignmentOnImmutable(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Inner {
+	value: i32,
+}
+struct Outer {
+	inner: Inner,
+}
+fn main() -> i32 {
+	let out: Outer = .{ inner = .{ value = 1 } };
+	out.inner.value = 42;
+	return out.inner.value;
+}`
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if !diag.HasErrors() {
+		t.Fatalf("expected assignment to immutable binding error, but compiled successfully")
+	}
+	found := false
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrInvalidAssignment {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ErrInvalidAssignment error, got:\n%s", diag.EmitAllToString())
+	}
+}
+

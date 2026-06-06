@@ -20,19 +20,39 @@ type checker struct {
 
 // --- helpers -----------------------------------------------------------------
 
-func isLowerableType(t typeinfo.Type) bool {
-	t = typeinfo.Underlying(t)
+func (c *checker) resolveType(t typeinfo.Type) typeinfo.Type {
+	if c == nil || c.module == nil || c.module.ModuleScope == nil || t == nil {
+		return t
+	}
+	if named, ok := t.(*typeinfo.NamedType); ok && named != nil {
+		sym, found := c.module.ModuleScope.Lookup(named.Name)
+		if found && sym != nil && sym.Kind == symbols.SymbolType {
+			sym.Used = true
+			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
+				return c.resolveType(resolved)
+			}
+		}
+	}
+	return t
+}
+
+func (c *checker) underlying(t typeinfo.Type) typeinfo.Type {
+	return typeinfo.Underlying(c.resolveType(t))
+}
+
+func (c *checker) isLowerableType(t typeinfo.Type) bool {
+	t = c.underlying(t)
 	switch typ := t.(type) {
 	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
 		return true
 	case *typeinfo.RawPtrType:
-		return typ != nil && isLowerableType(typ.Target)
+		return typ != nil && c.isLowerableType(typ.Target)
 	case *typeinfo.StructType:
 		if typ == nil {
 			return false
 		}
 		for _, field := range typ.Fields {
-			if !isLowerableType(field.Type) {
+			if !c.isLowerableType(field.Type) {
 				return false
 			}
 		}
@@ -49,11 +69,11 @@ func isLowerableType(t typeinfo.Type) bool {
 				if i == 0 {
 					continue
 				}
-				if containsAbstractSelf(param.Type) || !isLowerableType(param.Type) {
+				if containsAbstractSelf(param.Type) || !c.isLowerableType(param.Type) {
 					return false
 				}
 			}
-			if containsAbstractSelf(method.Return) || !isLowerableType(method.Return) {
+			if containsAbstractSelf(method.Return) || !c.isLowerableType(method.Return) {
 				return false
 			}
 		}
@@ -66,11 +86,11 @@ func isLowerableType(t typeinfo.Type) bool {
 		return false
 	}
 	for _, param := range fn.Params {
-		if !isLowerableType(param) {
+		if !c.isLowerableType(param) {
 			return false
 		}
 	}
-	return isLowerableType(fn.Return)
+	return c.isLowerableType(fn.Return)
 }
 
 func containsAbstractSelf(t typeinfo.Type) bool {
@@ -411,7 +431,7 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 				"cannot assign to const `"+target.Name+"`")
 			return
 		case symbols.SymbolVar:
-			if !isMutableBinding(sym) {
+			if !sym.IsMutable() {
 				common.AddError(c.ctx.Diagnostics, c.module.FilePath, target, diagnostics.ErrInvalidAssignment,
 					"cannot assign to immutable binding `"+target.Name+"`")
 				return
@@ -436,14 +456,6 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Target, diagnostics.ErrInvalidAssignment,
 			"invalid assignment target")
 	}
-}
-
-func isMutableBinding(sym *symbols.Symbol) bool {
-	if sym == nil {
-		return false
-	}
-	decl, ok := sym.ASTNode.(*ast.LetDecl)
-	return ok && decl != nil && decl.IsMutable
 }
 
 func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitializer bool) {
@@ -517,13 +529,13 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 	if decl == nil {
 		return
 	}
-	if !isLowerableType(c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf)) {
+	if !c.isLowerableType(c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf)) {
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrInvalidReturn,
 			"function return type must be builtin integer, f32/f64, or function type in current compiler stage")
 		return
 	}
 	for _, param := range decl.Params {
-		if !isLowerableType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf)) {
+		if !c.isLowerableType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf)) {
 			site := ast.Node(decl)
 			if param.Name != nil {
 				site = param.Name
@@ -584,13 +596,15 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 }
 
 func (c *checker) assignable(dst, src typeinfo.Type) bool {
+	if c == nil {
+		return typeinfo.Assignable(dst, src)
+	}
+	dst = c.resolveType(dst)
+	src = c.resolveType(src)
 	if typeinfo.Assignable(dst, src) {
 		return true
 	}
-	if c == nil {
-		return false
-	}
-	if iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
+	if iface, ok := c.underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
 		return c.satisfiesInterface(iface, src)
 	}
 	return false
@@ -679,8 +693,11 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return nil
 	}
 	defer func() {
-		if resolved != nil && c.module != nil && c.module.Semantics != nil {
-			c.module.Semantics.ExprTypes[expr.ID()] = resolved
+		if resolved != nil {
+			resolved = c.resolveType(resolved)
+			if c.module != nil && c.module.Semantics != nil {
+				c.module.Semantics.ExprTypes[expr.ID()] = resolved
+			}
 		}
 	}()
 	switch node := expr.(type) {
@@ -889,7 +906,7 @@ func (c *checker) expectedStructType(expected typeinfo.Type) (*typeinfo.StructTy
 	if expected == nil {
 		return nil, nil
 	}
-	if strct, ok := typeinfo.Underlying(expected).(*typeinfo.StructType); ok && strct != nil {
+	if strct, ok := c.underlying(expected).(*typeinfo.StructType); ok && strct != nil {
 		return strct, expected
 	}
 	return nil, nil
@@ -962,7 +979,7 @@ func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo
 	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		baseType = ptr.Target
 	}
-	underlying := typeinfo.Underlying(baseType)
+	underlying := c.underlying(baseType)
 	strct, ok := underlying.(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return nil, false
@@ -979,7 +996,7 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 	if c == nil || c.module == nil || c.module.Semantics == nil {
 		return nil, nil, false
 	}
-	if iface, ok := typeinfo.Underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
+	if iface, ok := c.underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
 		for _, method := range iface.Methods {
 			if method.Name != name {
 				continue
@@ -1004,12 +1021,12 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 		keys = append(keys, key)
 	}
 	appendKey(baseType)
-	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
+	if underlying := c.underlying(baseType); underlying != baseType {
 		appendKey(underlying)
 	}
 	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		appendKey(ptr.Target)
-		if underlying := typeinfo.Underlying(ptr.Target); underlying != ptr.Target {
+		if underlying := c.underlying(ptr.Target); underlying != ptr.Target {
 			appendKey(underlying)
 		}
 	}
@@ -1189,22 +1206,32 @@ func (c *checker) isMutableAddressableExpr(scope *table.Scope, expr ast.Expr) bo
 	if c == nil || scope == nil || expr == nil {
 		return false
 	}
-	ident, ok := expr.(*ast.Ident)
-	if !ok || ident == nil {
-		return false
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return scope.IsMutableVar(e.Name)
+	case *ast.SelectorExpr:
+		baseType := c.typeExpr(scope, e.Expr, nil)
+		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
+			return true
+		}
+		return c.isMutableAddressableExpr(scope, e.Expr)
 	}
-	sym, found := scope.Lookup(ident.Name)
-	if !found || sym == nil || sym.Kind != symbols.SymbolVar {
-		return false
-	}
-	return isMutableBinding(sym)
+	return false
 }
 
 func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {
 	if c == nil || scope == nil || expr == nil {
 		return nil, "", false
 	}
-	ident, ok := expr.(*ast.Ident)
+	curr := expr
+	for {
+		if sel, ok := curr.(*ast.SelectorExpr); ok && sel != nil {
+			curr = sel.Expr
+		} else {
+			break
+		}
+	}
+	ident, ok := curr.(*ast.Ident)
 	if !ok || ident == nil {
 		return nil, "", false
 	}
@@ -1214,10 +1241,10 @@ func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (
 	}
 	switch sym.Kind {
 	case symbols.SymbolConst:
-		return ident, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is const", true
+		return expr, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is const", true
 	case symbols.SymbolVar:
-		if !isMutableBinding(sym) {
-			return ident, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is immutable", true
+		if !sym.IsMutable() {
+			return expr, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is immutable", true
 		}
 	}
 	return nil, "", false

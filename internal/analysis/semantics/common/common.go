@@ -30,6 +30,7 @@ func AddWarning(diag *diagnostics.DiagnosticBag, sym *symbols.Symbol, code, msg 
 	}
 	d := diagnostics.NewWarning(msg).WithCode(code)
 	if sym.Location != nil {
+		d.WithPrimaryLabel(sym.Location, msg)
 		for _, label := range labels {
 			d.WithLabel(label.Location, label.Message, label.Style)
 		}

@@ -15,10 +15,16 @@ import (
 	"compiler/internal/utils/numeric"
 )
 
+var currentModuleScope *table.Scope
+
 func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Module {
 	if module == nil {
 		return nil
 	}
+	currentModuleScope = module.ModuleScope
+	defer func() {
+		currentModuleScope = nil
+	}()
 	out := &hir.Module{
 		Name:    module.ImportPath,
 		Externs: make([]hir.Extern, 0),
@@ -272,10 +278,10 @@ func lowerAssignTargetExpr(ctx *context.CompilerContext, module *context.Module,
 					Type:       loweredTypeText(fieldType),
 				}
 			}
-			if isMutableLocalIdent(scope, selector.Expr) {
+			if isAddressableExpr(module, scope, selector.Expr) {
 				return &ir.Field{
 					Base: &ir.AddrOf{
-						Expr: lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+						Expr: lowerAssignTargetExpr(ctx, module, scope, selector.Expr),
 						Type: "^" + loweredTypeText(baseType),
 					},
 					Index:      fieldIndex,
@@ -288,20 +294,21 @@ func lowerAssignTargetExpr(ctx *context.CompilerContext, module *context.Module,
 	return lowerASTExpr(ctx, module, scope, expr, nil)
 }
 
-func isMutableLocalIdent(scope *table.Scope, expr ast.Expr) bool {
+func isAddressableExpr(module *context.Module, scope *table.Scope, expr ast.Expr) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
-	ident, ok := expr.(*ast.Ident)
-	if !ok || ident == nil {
-		return false
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return scope.IsMutableVar(e.Name)
+	case *ast.SelectorExpr:
+		baseType := exprResolvedType(module, e.Expr)
+		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
+			return true
+		}
+		return isAddressableExpr(module, scope, e.Expr)
 	}
-	sym, found := scope.Lookup(ident.Name)
-	if !found || sym == nil || sym.Kind != symbols.SymbolVar {
-		return false
-	}
-	decl, ok := sym.ASTNode.(*ast.LetDecl)
-	return ok && decl != nil && decl.IsMutable
+	return false
 }
 
 func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *context.CompilerContext) hir.Stmt {
@@ -492,7 +499,7 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
 	}
 	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, nil)
-	if receiverNeedsAddress(scope, fnType, baseType, selector.Expr) {
+	if receiverNeedsAddress(module, scope, fnType, baseType, selector.Expr) {
 		baseExpr = &ir.AddrOf{
 			Expr: baseExpr,
 			Type: loweredTypeText(fnType.Params[0]),
@@ -517,7 +524,7 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 	}
 }
 
-func receiverNeedsAddress(scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
+func receiverNeedsAddress(module *context.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
 	if scope == nil || fnType == nil || len(fnType.Params) == 0 || receiver == nil {
 		return false
 	}
@@ -528,16 +535,7 @@ func receiverNeedsAddress(scope *table.Scope, fnType *typeinfo.FuncType, baseTyp
 	if !typeinfo.SameType(ptrType.Target, baseType) {
 		return false
 	}
-	ident, ok := receiver.(*ast.Ident)
-	if !ok || ident == nil {
-		return false
-	}
-	sym, found := scope.Lookup(ident.Name)
-	if !found || sym == nil || sym.Kind != symbols.SymbolVar {
-		return false
-	}
-	decl, ok := sym.ASTNode.(*ast.LetDecl)
-	return ok && decl != nil && decl.IsMutable
+	return isAddressableExpr(module, scope, receiver)
 }
 
 func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
@@ -875,6 +873,7 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 	if t == nil {
 		return nil
 	}
+	t = resolveTypeWithScope(currentModuleScope, t)
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
 		if typ == nil {
@@ -907,4 +906,19 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 	default:
 		return typeinfo.Underlying(t)
 	}
+}
+
+func resolveTypeWithScope(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
+	if scope == nil || t == nil {
+		return t
+	}
+	if named, ok := t.(*typeinfo.NamedType); ok && named != nil {
+		sym, found := scope.Lookup(named.Name)
+		if found && sym != nil && sym.Kind == symbols.SymbolType {
+			if resolved, ok := symbolType(sym); ok && resolved != nil {
+				return resolveTypeWithScope(scope, resolved)
+			}
+		}
+	}
+	return t
 }

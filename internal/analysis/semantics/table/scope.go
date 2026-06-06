@@ -79,3 +79,9 @@ func (s *Scope) Symbols() []*symbols.Symbol {
 	}
 	return out
 }
+
+func (s *Scope) IsMutableVar(name string) bool {
+	sym, found := s.Lookup(name)
+	return found && sym != nil && sym.Kind == symbols.SymbolVar && sym.IsMutable()
+}
+

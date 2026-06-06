@@ -255,3 +255,28 @@ func TestUsageWarningsFixture(t *testing.T) {
 		}
 	}
 }
+
+func TestUnusedLocalHasLocation(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = 0;
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	found := false
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnUnusedLocal {
+			found = true
+			if len(item.Labels) == 0 {
+				t.Fatalf("expected warning to have label / location info, got none")
+			}
+			loc := item.Labels[0].Location
+			if loc == nil || loc.Start == nil || loc.Start.Line != 2 {
+				t.Fatalf("expected warning label to point to line 2, got: %+v", loc.Start)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected unused local warning")
+	}
+}
+
