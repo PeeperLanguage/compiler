@@ -296,6 +296,36 @@ func TestAssignmentRequiresMutableBinding(t *testing.T) {
 	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
 		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
 	}
+	var targetDiag *diagnostics.Diagnostic
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrInvalidAssignment {
+			targetDiag = item
+			break
+		}
+	}
+	if targetDiag == nil {
+		t.Fatalf("expected ErrInvalidAssignment")
+	}
+	if targetDiag.Message != "modification to immutable symbol" {
+		t.Fatalf("expected title 'modification to immutable symbol', got %q", targetDiag.Message)
+	}
+	if len(targetDiag.Labels) != 2 {
+		t.Fatalf("expected 2 labels, got %d", len(targetDiag.Labels))
+	}
+	// Verify primary label
+	if targetDiag.Labels[0].Style != diagnostics.Primary {
+		t.Fatalf("expected first label to be primary")
+	}
+	if targetDiag.Labels[0].Message != "cannot assign to immutable binding `x`" {
+		t.Fatalf("expected primary label msg, got %q", targetDiag.Labels[0].Message)
+	}
+	// Verify secondary label
+	if targetDiag.Labels[1].Style != diagnostics.Secondary {
+		t.Fatalf("expected second label to be secondary")
+	}
+	if targetDiag.Labels[1].Message != "make this binding mutable" {
+		t.Fatalf("expected secondary label msg, got %q", targetDiag.Labels[1].Message)
+	}
 }
 
 func TestPointerFieldAssignmentResolves(t *testing.T) {
