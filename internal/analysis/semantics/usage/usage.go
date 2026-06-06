@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"compiler/core/diagnostics"
+	"compiler/internal/analysis/semantics/common"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/context"
 )
@@ -18,7 +19,7 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
 			if !sym.Used {
-				addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedImport,
+				common.AddWarning(ctx.Diagnostics, sym, diagnostics.WarnUnusedImport,
 					fmt.Sprintf("unused import `%s`", sym.Name))
 			}
 		}
@@ -51,7 +52,7 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 				default:
 					continue
 				}
-				addWarning(ctx.Diagnostics, module.FilePath, sym, code, msg)
+				common.AddWarning(ctx.Diagnostics, sym, code, msg)
 			}
 		}
 	}
@@ -68,24 +69,13 @@ func Analyze(ctx *context.CompilerContext, module *context.Module) {
 				}
 				switch sym.Kind {
 				case symbols.SymbolParam:
-					addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedParameter,
-						fmt.Sprintf("unused parameter `%s`", sym.Name))
+					common.AddWarning(ctx.Diagnostics, sym, diagnostics.WarnUnusedParameter,
+						fmt.Sprintf("unused parameter `%s`", sym.Name), diagnostics.Label{Location: sym.Location, Message: "use it or add `_` prefix to suppress warning", Style: diagnostics.Secondary})
 				case symbols.SymbolVar, symbols.SymbolConst:
-					addWarning(ctx.Diagnostics, module.FilePath, sym, diagnostics.WarnUnusedLocal,
-						fmt.Sprintf("unused local `%s`", sym.Name))
+					common.AddWarning(ctx.Diagnostics, sym, diagnostics.WarnUnusedLocal,
+						fmt.Sprintf("unused local `%s`", sym.Name), diagnostics.Label{Location: sym.Location, Message: "use it or add `_` prefix to suppress warning", Style: diagnostics.Secondary})
 				}
 			}
 		}
 	}
-}
-
-func addWarning(diag *diagnostics.DiagnosticBag, filePath string, sym *symbols.Symbol, code, msg string) {
-	if diag == nil || sym == nil {
-		return
-	}
-	d := diagnostics.NewWarning(msg).WithCode(code)
-	if sym.Location != nil {
-		d.WithPrimaryLabel(sym.Location, msg)
-	}
-	diag.Add(d)
 }

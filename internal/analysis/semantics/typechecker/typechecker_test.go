@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/core/diagnostics"
@@ -202,13 +203,59 @@ func TestPointerSelfMethodCallResolvesOnAddressableValue(t *testing.T) {
 }
 
 fn main() -> i32 {
-	let i: i32 = 42;
+	let mut i: i32 = 42;
 	let s: cstr = i.to_str();
 	return 0;
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointerSelfMethodCallRejectsImmutableValue(t *testing.T) {
+	src := `impl i32 {
+	fn to_str(receiver: ^Self) -> cstr {
+		return "ok";
+	}
+}
+
+	fn main() -> i32 {
+	let i: i32 = 42;
+	let s: cstr = i.to_str();
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "mutable binding") {
+		t.Fatalf("expected mutable binding diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointerSelfMethodCallRejectsConstValue(t *testing.T) {
+	src := `struct Counter {
+	value: i32,
+}
+
+impl Counter {
+	fn bump(self: ^Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+}
+
+fn main() -> i32 {
+	const c: Counter = .{ value = 0 };
+	return c.bump();
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "is const") {
+		t.Fatalf("expected const receiver diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -232,6 +279,51 @@ func TestAnonymousStructLiteralInfersShape(t *testing.T) {
 	src := `fn main() -> i32 {
 	let p = .{ x = 1, y = 2 };
 	return p.x;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestAssignmentRequiresMutableBinding(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = 1;
+	x = 2;
+	return x;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointerFieldAssignmentResolves(t *testing.T) {
+	src := `struct Counter {
+	value: i32,
+}
+
+impl Counter {
+	fn bump(self: ^Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableLocalFieldAssignmentResolves(t *testing.T) {
+	src := `struct Counter {
+	value: i32,
+}
+
+fn main() -> i32 {
+	let mut c: Counter = .{ value = 0 };
+	c.value = 100;
+	return c.value;
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {

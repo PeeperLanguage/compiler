@@ -77,6 +77,12 @@ type Assign struct {
 	Value ValueExpr
 }
 
+type StoreField struct {
+	Base  ValueRef
+	Index int
+	Value ValueRef
+}
+
 type Jump struct {
 	TargetID int
 }
@@ -168,6 +174,10 @@ type InterfaceCall struct {
 
 func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
+}
+
+func (i *StoreField) Text() string {
+	return fmt.Sprintf("storefield %s, %d, %s", i.Base.Text(), i.Index, i.Value.Text())
 }
 
 func (i *Jump) Text() string {
@@ -393,6 +403,25 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		}
 		l.lowerExpr(node.Value, &l.current.Instrs)
 		return true
+	case *hir.Assign:
+		if l.current == nil {
+			return true
+		}
+		value := l.lowerExpr(node.Value, &l.current.Instrs)
+		switch target := node.Target.(type) {
+		case *ir.Ident:
+			l.current.Instrs = append(l.current.Instrs, &Assign{Name: target.Name, Value: asValueExpr(value)})
+			return true
+		case *ir.Field:
+			if !target.ThroughPtr {
+				return false
+			}
+			base := l.lowerExpr(target.Base, &l.current.Instrs)
+			l.current.Instrs = append(l.current.Instrs, &StoreField{Base: base, Index: target.Index, Value: value})
+			return true
+		default:
+			return false
+		}
 	case *hir.If:
 		return l.appendIf(node)
 	default:

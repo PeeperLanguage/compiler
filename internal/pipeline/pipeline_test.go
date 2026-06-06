@@ -154,8 +154,53 @@ func TestPipelineLowersAutoAddressedPointerReceiverOnValue(t *testing.T) {
 }
 
 fn main() -> i32 {
-	let x: i32 = 1;
+	let mut x: i32 = 1;
 	return x.id();
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersPointerFieldAssignment(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Counter {
+	value: i32,
+}
+
+#[extern]
+fn open_counter() -> ^Counter;
+
+impl Counter {
+	fn bump(self: ^Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+}
+
+fn main() -> i32 {
+	let c = open_counter();
+	return c.bump();
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersMutableLocalFieldAssignment(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Counter {
+	value: i32,
+}
+
+fn main() -> i32 {
+	let mut c: Counter = .{ value = 0 };
+	c.value = 100;
+	return c.value;
 }`
 
 	diag := buildPipelineTest(t, preludeSrc, entrySrc)
