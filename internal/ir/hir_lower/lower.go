@@ -41,26 +41,11 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 			if fn.Body == nil {
 				fnType, _ := symbolType(sym)
 				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-				params := make([]ir.Param, 0, len(fn.Params))
-				for i, param := range fn.Params {
-					name := ""
-					if param.Name != nil {
-						name = param.Name.Name
-					}
-					paramType := typeinfo.TypeFromSyntax(param.Type)
-					if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
-						paramType = resolvedFnType.Params[i]
-					}
-					params = append(params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
-				}
-				returnType := typeinfo.TypeFromSyntax(fn.ReturnType)
-				if resolvedFnType != nil && resolvedFnType.Return != nil {
-					returnType = resolvedFnType.Return
-				}
+				params, returnType := lowerExternSignature(fn.Params, fn.ReturnType, resolvedFnType)
 				out.Externs = append(out.Externs, hir.Extern{
 					Name:       sym.Name,
 					Params:     params,
-					ReturnType: loweredTypeText(returnType),
+					ReturnType: returnType,
 				})
 			} else {
 				hirFn := lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
@@ -92,26 +77,11 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 		if method.Body == nil {
 			fnType, _ := symbolType(sym)
 			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-			params := make([]ir.Param, 0, len(method.Params))
-			for i, param := range method.Params {
-				name := ""
-				if param.Name != nil {
-					name = param.Name.Name
-				}
-				paramType := typeinfo.TypeFromSyntax(param.Type)
-				if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
-					paramType = resolvedFnType.Params[i]
-				}
-				params = append(params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
-			}
-			returnType := typeinfo.TypeFromSyntax(method.ReturnType)
-			if resolvedFnType != nil && resolvedFnType.Return != nil {
-				returnType = resolvedFnType.Return
-			}
+			params, returnType := lowerExternSignature(method.Params, method.ReturnType, resolvedFnType)
 			out.Externs = append(out.Externs, hir.Extern{
 				Name:       methodFunctionName(targetText, method.Name.Name),
 				Params:     params,
-				ReturnType: loweredTypeText(returnType),
+				ReturnType: returnType,
 			})
 			continue
 		}
@@ -120,6 +90,27 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 			out.Funcs = append(out.Funcs, hirFn)
 		}
 	}
+}
+
+func lowerExternSignature(params []ast.Param, fallbackReturnType ast.TypeExpr, resolvedFnType *typeinfo.FuncType) ([]ir.Param, string) {
+	loweredParams := make([]ir.Param, 0, len(params))
+	for i, param := range params {
+		name := ""
+		if param.Name != nil {
+			name = param.Name.Name
+		}
+		paramType := typeinfo.TypeFromSyntax(param.Type)
+		if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
+			paramType = resolvedFnType.Params[i]
+		}
+		loweredParams = append(loweredParams, ir.Param{Name: name, Type: loweredTypeText(paramType)})
+	}
+
+	returnType := typeinfo.TypeFromSyntax(fallbackReturnType)
+	if resolvedFnType != nil && resolvedFnType.Return != nil {
+		returnType = resolvedFnType.Return
+	}
+	return loweredParams, loweredTypeText(returnType)
 }
 
 func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
