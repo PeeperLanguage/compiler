@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"compiler/colors"
+	"compiler/pkg/colors"
 	"compiler/internal/tokens"
 	"compiler/pkg/numeric"
 )

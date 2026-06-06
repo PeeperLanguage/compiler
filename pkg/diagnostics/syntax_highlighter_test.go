@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"testing"
 
-	"compiler/colors"
+	"compiler/pkg/colors"
 )
 
 func TestSyntaxHighlighterKeepsPrefixedAndScientificNumbersTogether(t *testing.T) {

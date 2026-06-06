@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"compiler/colors"
+	"compiler/pkg/colors"
 	"compiler/pkg/source"
 )
 

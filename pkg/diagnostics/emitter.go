@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"compiler/colors"
+	"compiler/pkg/colors"
 	"compiler/pkg/source"
 )
 

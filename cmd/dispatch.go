@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"compiler/cmd/cli"
-	"compiler/colors"
+	"compiler/pkg/colors"
 	compiler "compiler/internal/driver"
 	"compiler/internal/lsp"
 )
