@@ -3,6 +3,7 @@ package common
 import (
 	"compiler/core/diagnostics"
 	"compiler/core/source"
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/frontend/ast"
 )
 
@@ -22,3 +23,17 @@ func AddError(diag *diagnostics.DiagnosticBag, filePath string, node ast.Node, c
 	span := source.NewLocation(filePath, start, end)
 	diag.Add(diagnostics.NewError(msg).WithCode(code).WithPrimaryLabel(span, msg))
 }
+
+func AddWarning(diag *diagnostics.DiagnosticBag, sym *symbols.Symbol, code, msg string, labels ...diagnostics.Label) {
+	if diag == nil || sym == nil {
+		return
+	}
+	d := diagnostics.NewWarning(msg).WithCode(code)
+	if sym.Location != nil {
+		for _, label := range labels {
+			d.WithLabel(label.Location, label.Message, label.Style)
+		}
+	}
+	diag.Add(d)
+}
+

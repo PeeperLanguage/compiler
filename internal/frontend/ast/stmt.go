@@ -20,6 +20,16 @@ type ExprStmt struct {
 func (*ExprStmt) stmtNode()               {}
 func (s *ExprStmt) Loc() *source.Location { return s.Location }
 
+type AssignStmt struct {
+	NodeIDHolder
+	Target   Expr
+	Value    Expr
+	Location *source.Location
+}
+
+func (*AssignStmt) stmtNode()               {}
+func (s *AssignStmt) Loc() *source.Location { return s.Location }
+
 type ReturnStmt struct {
 	NodeIDHolder
 	Value    Expr

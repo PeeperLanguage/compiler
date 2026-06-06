@@ -248,7 +248,60 @@ func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, nil)
 		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: node.Loc()})
+	case *ast.AssignStmt:
+		if node.Target == nil || node.Value == nil {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "assignment missing target or value", Location: node.Loc()})
+			return
+		}
+		targetExpr := lowerAssignTargetExpr(ctx, module, scope, node.Target)
+		targetType := exprResolvedType(module, node.Target)
+		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
+		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, Location: node.Loc()})
 	}
+}
+
+func lowerAssignTargetExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr) ir.Expr {
+	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil {
+		baseType := exprResolvedType(module, selector.Expr)
+		if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
+			if _, throughPtr := baseType.(*typeinfo.RawPtrType); throughPtr {
+				return &ir.Field{
+					Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+					Index:      fieldIndex,
+					ThroughPtr: true,
+					Type:       loweredTypeText(fieldType),
+				}
+			}
+			if isMutableLocalIdent(scope, selector.Expr) {
+				return &ir.Field{
+					Base: &ir.AddrOf{
+						Expr: lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+						Type: "^" + loweredTypeText(baseType),
+					},
+					Index:      fieldIndex,
+					ThroughPtr: true,
+					Type:       loweredTypeText(fieldType),
+				}
+			}
+		}
+	}
+	return lowerASTExpr(ctx, module, scope, expr, nil)
+}
+
+func isMutableLocalIdent(scope *table.Scope, expr ast.Expr) bool {
+	if scope == nil || expr == nil {
+		return false
+	}
+	ident, ok := expr.(*ast.Ident)
+	if !ok || ident == nil {
+		return false
+	}
+	sym, found := scope.Lookup(ident.Name)
+	if !found || sym == nil || sym.Kind != symbols.SymbolVar {
+		return false
+	}
+	decl, ok := sym.ASTNode.(*ast.LetDecl)
+	return ok && decl != nil && decl.IsMutable
 }
 
 func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *context.CompilerContext) hir.Stmt {
@@ -439,7 +492,7 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
 	}
 	baseExpr := lowerASTExpr(ctx, module, scope, selector.Expr, nil)
-	if receiverNeedsAddress(fnType, baseType, selector.Expr) {
+	if receiverNeedsAddress(scope, fnType, baseType, selector.Expr) {
 		baseExpr = &ir.AddrOf{
 			Expr: baseExpr,
 			Type: loweredTypeText(fnType.Params[0]),
@@ -464,8 +517,8 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 	}
 }
 
-func receiverNeedsAddress(fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
-	if fnType == nil || len(fnType.Params) == 0 || receiver == nil {
+func receiverNeedsAddress(scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
+	if scope == nil || fnType == nil || len(fnType.Params) == 0 || receiver == nil {
 		return false
 	}
 	ptrType, ok := fnType.Params[0].(*typeinfo.RawPtrType)
@@ -475,12 +528,16 @@ func receiverNeedsAddress(fnType *typeinfo.FuncType, baseType typeinfo.Type, rec
 	if !typeinfo.SameType(ptrType.Target, baseType) {
 		return false
 	}
-	switch receiver.(type) {
-	case *ast.Ident:
-		return true
-	default:
+	ident, ok := receiver.(*ast.Ident)
+	if !ok || ident == nil {
 		return false
 	}
+	sym, found := scope.Lookup(ident.Name)
+	if !found || sym == nil || sym.Kind != symbols.SymbolVar {
+		return false
+	}
+	decl, ok := sym.ASTNode.(*ast.LetDecl)
+	return ok && decl != nil && decl.IsMutable
 }
 
 func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {

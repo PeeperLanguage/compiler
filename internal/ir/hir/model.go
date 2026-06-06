@@ -50,6 +50,12 @@ type ExprStmt struct {
 	Location *source.Location
 }
 
+type Assign struct {
+	Target   ir.Expr
+	Value    ir.Expr
+	Location *source.Location
+}
+
 type Invalid struct {
 	Message  string
 	Location *source.Location
@@ -70,6 +76,7 @@ type If struct {
 func (*Block) stmtNode()    {}
 func (*Binding) stmtNode()  {}
 func (*ExprStmt) stmtNode() {}
+func (*Assign) stmtNode()   {}
 func (*Invalid) stmtNode()  {}
 func (*Return) stmtNode()   {}
 func (*If) stmtNode()       {}
@@ -162,6 +169,18 @@ func (s *ExprStmt) appendText(b *strings.Builder, indent int) {
 }
 
 func (s *ExprStmt) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
+func (s *Assign) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString(s.Target.String())
+	b.WriteString(" = ")
+	b.WriteString(s.Value.String())
+	b.WriteString("\n")
+}
+
+func (s *Assign) appendInlineText(b *strings.Builder, indent int) {
 	s.appendText(b, indent)
 }
 

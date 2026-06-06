@@ -150,6 +150,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		}
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
+	case *ast.AssignStmt:
+		r.resolveExpr(scope, node.Target)
+		r.resolveExpr(scope, node.Value)
 	default:
 		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement")
 	}

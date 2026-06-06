@@ -371,10 +371,79 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 			return
 		}
 		c.typeExpr(scope, node.Expr, nil)
+	case *ast.AssignStmt:
+		c.checkAssign(scope, node)
 	default:
 		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrInvalidStatement,
 			"unsupported statement")
 	}
+}
+
+func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
+	if c == nil || scope == nil || node == nil || node.Target == nil || node.Value == nil {
+		return
+	}
+	targetType := c.typeExpr(scope, node.Target, nil)
+	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
+		return
+	}
+	valueType := c.typeExpr(scope, node.Value, targetType)
+	if valueType == nil || typeinfo.IsInvalidOrUnknown(valueType) {
+		return
+	}
+	if !c.assignable(targetType, valueType) {
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Value, diagnostics.ErrTypeMismatch,
+			fmt.Sprintf("cannot assign %s to %s",
+				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType)))
+		return
+	}
+	switch target := node.Target.(type) {
+	case *ast.Ident:
+		sym, ok := scope.Lookup(target.Name)
+		if !ok || sym == nil {
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, target, diagnostics.ErrUndefinedSymbol,
+				"unknown assignment target `"+target.Name+"`")
+			return
+		}
+		switch sym.Kind {
+		case symbols.SymbolConst:
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, target, diagnostics.ErrConstantReassignment,
+				"cannot assign to const `"+target.Name+"`")
+			return
+		case symbols.SymbolVar:
+			if !isMutableBinding(sym) {
+				common.AddError(c.ctx.Diagnostics, c.module.FilePath, target, diagnostics.ErrInvalidAssignment,
+					"cannot assign to immutable binding `"+target.Name+"`")
+				return
+			}
+		default:
+			common.AddError(c.ctx.Diagnostics, c.module.FilePath, target, diagnostics.ErrInvalidAssignment,
+				"invalid assignment target `"+target.Name+"`")
+			return
+		}
+	case *ast.SelectorExpr:
+		baseType := c.typeExpr(scope, target.Expr, nil)
+		if ptrType, ok := baseType.(*typeinfo.RawPtrType); ok && ptrType != nil {
+			return
+		}
+		if c.isMutableAddressableExpr(scope, target.Expr) {
+			return
+		}
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, target, diagnostics.ErrInvalidAssignment,
+			"field assignment requires a mutable pointer or mutable local binding")
+		return
+	default:
+		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node.Target, diagnostics.ErrInvalidAssignment,
+			"invalid assignment target")
+	}
+}
+
+func isMutableBinding(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	decl, ok := sym.ASTNode.(*ast.LetDecl)
+	return ok && decl != nil && decl.IsMutable
 }
 
 func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitializer bool) {
@@ -792,7 +861,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 			}
 			argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 		}
-		c.checkMethodCall(selector.Expr, call, methodType, argTypes, methodSym)
+		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes, methodSym)
 		return c.callReturnType(call, methodType)
 	}
 	if _, fieldOK := c.lookupFieldType(baseType, selector.Name.Name); fieldOK {
@@ -1116,16 +1185,45 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	}
 }
 
-func isAddressableExpr(expr ast.Expr) bool {
-	switch expr.(type) {
-	case *ast.Ident:
-		return true
-	default:
+func (c *checker) isMutableAddressableExpr(scope *table.Scope, expr ast.Expr) bool {
+	if c == nil || scope == nil || expr == nil {
 		return false
 	}
+	ident, ok := expr.(*ast.Ident)
+	if !ok || ident == nil {
+		return false
+	}
+	sym, found := scope.Lookup(ident.Name)
+	if !found || sym == nil || sym.Kind != symbols.SymbolVar {
+		return false
+	}
+	return isMutableBinding(sym)
 }
 
-func (c *checker) checkMethodCall(receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type, _ *symbols.Symbol) {
+func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {
+	if c == nil || scope == nil || expr == nil {
+		return nil, "", false
+	}
+	ident, ok := expr.(*ast.Ident)
+	if !ok || ident == nil {
+		return nil, "", false
+	}
+	sym, found := scope.Lookup(ident.Name)
+	if !found || sym == nil {
+		return nil, "", false
+	}
+	switch sym.Kind {
+	case symbols.SymbolConst:
+		return ident, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is const", true
+	case symbols.SymbolVar:
+		if !isMutableBinding(sym) {
+			return ident, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is immutable", true
+		}
+	}
+	return nil, "", false
+}
+
+func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type, _ *symbols.Symbol) {
 	if c == nil || callExpr == nil || calleeType == nil {
 		return
 	}
@@ -1151,8 +1249,14 @@ func (c *checker) checkMethodCall(receiverExpr ast.Expr, callExpr *ast.CallExpr,
 			continue
 		}
 		if i == 0 {
-			if ptrType, ok := paramType.(*typeinfo.RawPtrType); ok && ptrType != nil && typeinfo.SameType(ptrType.Target, argType) && isAddressableExpr(receiverExpr) {
-				continue
+			if ptrType, ok := paramType.(*typeinfo.RawPtrType); ok && ptrType != nil && c.matchesPointerReceiverTarget(ptrType.Target, argType) {
+				if c.isMutableAddressableExpr(scope, receiverExpr) {
+					continue
+				}
+				if site, msg, ok := c.mutableReceiverDiagnostic(scope, receiverExpr); ok {
+					common.AddError(c.ctx.Diagnostics, c.module.FilePath, site, diagnostics.ErrInvalidAssignment, msg)
+					continue
+				}
 			}
 		}
 		if !c.assignable(paramType, argType) {
@@ -1165,6 +1269,13 @@ func (c *checker) checkMethodCall(receiverExpr ast.Expr, callExpr *ast.CallExpr,
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
 		}
 	}
+}
+
+func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
+	if c == nil || target == nil || arg == nil {
+		return false
+	}
+	return typeinfo.SameType(target, arg) || c.assignable(target, arg) || c.assignable(arg, target)
 }
 
 // qualifiedScopeType resolves the type of a `module::symbol` expression using ScopeResolution.

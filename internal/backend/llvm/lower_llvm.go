@@ -133,6 +133,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		lb := newLLVMBuilder(&b, emitter)
 		for _, param := range fn.Params {
 			lb.locals[param.Name] = "%" + param.Name
+			lb.localTypes[param.Name] = param.Type
 		}
 		for _, block := range fn.Blocks {
 			if block == nil {
@@ -142,7 +143,20 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 			for _, instr := range block.Instrs {
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					val := emitValueExpr(lb, assign.Value)
-					lb.locals[assign.Name] = val
+					valueType := mirValueType(assign.Value)
+					if ptr, ok := lb.localPtrs[assign.Name]; ok && ptr != "" {
+						llvmType := lb.types.llvmType(lb.localTypes[assign.Name])
+						lb.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, ptr))
+					} else {
+						lb.locals[assign.Name] = val
+						if valueType != "" {
+							lb.localTypes[assign.Name] = valueType
+						}
+					}
+					continue
+				}
+				if store, ok := instr.(*mir.StoreField); ok && store != nil {
+					emitStoreField(lb, store)
 				}
 			}
 			if block.Term != nil {
@@ -547,6 +561,58 @@ func emitThunkTargetCall(builder *llvmBuilder, returnType string, funcName strin
 	builder.line("ret " + returnType + " " + result)
 }
 
+func emitStoreField(b *llvmBuilder, store *mir.StoreField) {
+	if b == nil || store == nil || store.Base == nil || store.Value == nil {
+		return
+	}
+	base := emitRef(b, store.Base)
+	baseType := mirRefType(store.Base)
+	llvmPtrType, ok := llvmTypeName(baseType)
+	if !ok {
+		return
+	}
+	structTypeText, ok := pointedTypeText(baseType)
+	if !ok {
+		return
+	}
+	llvmStructType, ok := llvmTypeName(structTypeText)
+	if !ok {
+		return
+	}
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, store.Index))
+	value := emitRef(b, store.Value)
+	valueType := b.types.llvmType(mirRefType(store.Value))
+	b.line(fmt.Sprintf("store %s %s, %s* %s", valueType, value, valueType, ptr))
+}
+
+func mirValueType(expr mir.ValueExpr) string {
+	switch v := expr.(type) {
+	case *mir.Move:
+		return mirRefType(v.Src)
+	case *mir.Unary:
+		return v.Type
+	case *mir.Binary:
+		return v.Type
+	case *mir.Cast:
+		return v.Type
+	case *mir.AddrOf:
+		return v.Type
+	case *mir.Field:
+		return v.Type
+	case *mir.StructLit:
+		return v.Type
+	case *mir.InterfaceMake:
+		return v.Type
+	case *mir.InterfaceCall:
+		return v.Type
+	case *mir.Call:
+		return v.Type
+	default:
+		return ""
+	}
+}
+
 func parseFunctionTypeText(typeText string) (string, string, []string, bool) {
 	fnType, ok := llvmTypeName(typeText)
 	if !ok {
@@ -599,10 +665,12 @@ func pointedTypeText(typeText string) (string, bool) {
 // collectCallDecls deleted
 
 type llvmBuilder struct {
-	out    *strings.Builder
-	nextID int
-	locals map[string]string
-	types  *llvmEmitter
+	out        *strings.Builder
+	nextID     int
+	locals     map[string]string
+	localPtrs  map[string]string
+	localTypes map[string]string
+	types      *llvmEmitter
 }
 
 func emitCast(b *llvmBuilder, cast *mir.Cast) string {
@@ -696,7 +764,14 @@ func mirParseIntegerTypeBits(typ string) int {
 }
 
 func newLLVMBuilder(out *strings.Builder, types *llvmEmitter) *llvmBuilder {
-	return &llvmBuilder{out: out, nextID: 1, locals: make(map[string]string), types: types}
+	return &llvmBuilder{
+		out:        out,
+		nextID:     1,
+		locals:     make(map[string]string),
+		localPtrs:  make(map[string]string),
+		localTypes: make(map[string]string),
+		types:      types,
+	}
 }
 
 func (b *llvmBuilder) nextReg() string {
@@ -813,6 +888,11 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		b.line(fmt.Sprintf("%s = call %s %s(%s)", out, llvmType, callee, strings.Join(args, ", ")))
 		return out
 	case *mir.AddrOf:
+		if ref, ok := e.Base.(*mir.RefName); ok && ref != nil {
+			if ptr := ensureLocalAddr(b, ref); ptr != "" {
+				return ptr
+			}
+		}
 		baseType := mirRefType(e.Base)
 		llvmBaseType := b.types.llvmType(baseType)
 		ptr := b.nextReg()
@@ -927,6 +1007,12 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		return v.Value
 	case *mir.RefName:
 		isFunc := strings.HasPrefix(v.Type, "fn(") || strings.Contains(v.Type, "->")
+		if ptr, ok := b.localPtrs[v.Name]; ok && ptr != "" {
+			reg := b.nextReg()
+			llvmType := b.types.llvmType(b.localTypes[v.Name])
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", reg, llvmType, llvmType, ptr))
+			return reg
+		}
 		if reg, ok := b.locals[v.Name]; ok {
 			return reg
 		}
@@ -978,6 +1064,33 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 	default:
 		return "0"
 	}
+}
+
+func ensureLocalAddr(b *llvmBuilder, ref *mir.RefName) string {
+	if b == nil || ref == nil {
+		return ""
+	}
+	if ptr, ok := b.localPtrs[ref.Name]; ok && ptr != "" {
+		return ptr
+	}
+	reg, ok := b.locals[ref.Name]
+	if !ok || reg == "" {
+		return ""
+	}
+	typeText := b.localTypes[ref.Name]
+	if typeText == "" {
+		typeText = ref.Type
+	}
+	if typeText == "" {
+		return ""
+	}
+	llvmType := b.types.llvmType(typeText)
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmType))
+	b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, reg, llvmType, ptr))
+	b.localPtrs[ref.Name] = ptr
+	b.localTypes[ref.Name] = typeText
+	return ptr
 }
 
 func llvmFloat32Const(value string) string {

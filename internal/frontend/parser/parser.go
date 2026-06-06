@@ -576,6 +576,29 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 	if expr == nil {
 		return nil
 	}
+	if p.match(tokens.ASSIGN) {
+		value := p.parseExpr(0)
+		if value == nil {
+			return nil
+		}
+		end := p.consume(tokens.SEMICOLON, "expected ';' after assignment")
+		if end == nil {
+			insert := p.expectedInsertionPoint()
+			if value.Loc().End != nil {
+				insert = *value.Loc().End
+			}
+			if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
+				end = p.recoverMissingToken(tokens.SEMICOLON, "expected ';' after assignment", insert)
+			} else {
+				return nil
+			}
+		}
+		return reg(p, &ast.AssignStmt{
+			Target:   expr,
+			Value:    value,
+			Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+		})
+	}
 	end := p.consume(tokens.SEMICOLON, "expected ';' after expression")
 	if end == nil {
 		insert := p.expectedInsertionPoint()
