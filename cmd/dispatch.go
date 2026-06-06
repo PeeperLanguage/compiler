@@ -12,6 +12,17 @@ import (
 	"compiler/internal/lsp"
 )
 
+func exitOnCommandError(err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, errAlreadyReported) {
+		os.Exit(1)
+	}
+	colors.RED.Fprintln(os.Stderr, err)
+	os.Exit(1)
+}
+
 func parseAndRunCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -27,13 +38,7 @@ func parseAndRunCommand(args []string) bool {
 
 	switch commandName {
 	case "build":
-		if err := buildCommand(commandArgs, commandBackend); err != nil {
-			if errors.Is(err, errAlreadyReported) {
-				os.Exit(1)
-			}
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(buildCommand(commandArgs, commandBackend))
 		return true
 	case "lsp":
 		colors.CYAN.Fprintln(os.Stderr, "starting Ember LSP server...")
@@ -43,70 +48,34 @@ func parseAndRunCommand(args []string) bool {
 		}
 		return true
 	case "init":
-		if err := cli.InitCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.InitCommand(commandArgs))
 		return true
 	case "get":
-		if err := cli.GetCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.GetCommand(commandArgs))
 		return true
 	case "update":
-		if err := cli.UpdateCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.UpdateCommand(commandArgs))
 		return true
 	case "sniff":
-		if err := cli.SniffCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.SniffCommand(commandArgs))
 		return true
 	case "remove", "rm":
-		if err := cli.RemoveCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.RemoveCommand(commandArgs))
 		return true
 	case "list", "ls":
-		if err := cli.ListCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.ListCommand(commandArgs))
 		return true
 	case "clean":
-		if err := cli.CleanupCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.CleanupCommand(commandArgs))
 		return true
 	case "orphans":
-		if err := cli.OrphansCommand(commandArgs); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(cli.OrphansCommand(commandArgs))
 		return true
 	case "run":
-		if err := runCommand(commandArgs, commandBackend); err != nil {
-			if errors.Is(err, errAlreadyReported) {
-				os.Exit(1)
-			}
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(runCommand(commandArgs, commandBackend))
 		return true
 	case "check", "lint":
-		if err := checkCommand(commandArgs); err != nil {
-			if errors.Is(err, errAlreadyReported) {
-				os.Exit(1)
-			}
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		exitOnCommandError(checkCommand(commandArgs))
 		return true
 	default:
 		return false
