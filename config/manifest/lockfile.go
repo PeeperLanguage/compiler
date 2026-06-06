@@ -3,8 +3,10 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -325,10 +327,8 @@ func (l *Lockfile) AddUsedBy(depKey, parentKey string) {
 	if !ok {
 		return
 	}
-	for _, usedBy := range entry.UsedBy {
-		if usedBy == parentKey {
-			return
-		}
+	if slices.Contains(entry.UsedBy, parentKey) {
+		return
 	}
 	entry.UsedBy = append(entry.UsedBy, parentKey)
 	l.SetDependency(depKey, entry)
@@ -459,9 +459,7 @@ func copyEntries(src map[string]LockfileEntry) map[string]LockfileEntry {
 		return nil
 	}
 	dst := make(map[string]LockfileEntry, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 

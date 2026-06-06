@@ -164,8 +164,8 @@ func validateImportPath(importPath string) error {
 	if filepath.IsAbs(importPath) || strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
 		return fmt.Errorf("import path must be root-relative (go-style)")
 	}
-	parts := strings.Split(importPath, "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(importPath, "/")
+	for part := range parts {
 		if part == "" || part == "." || part == ".." {
 			return fmt.Errorf("import path must be root-relative (go-style)")
 		}

@@ -125,7 +125,7 @@ func appendBlockText(b *strings.Builder, block *Block, indent int) {
 }
 
 func writeIndent(b *strings.Builder, indent int) {
-	for i := 0; i < indent; i++ {
+	for range indent {
 		b.WriteString("  ")
 	}
 }

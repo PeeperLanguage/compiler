@@ -354,8 +354,8 @@ func llvmFunctionPtrType(typeText string) (string, bool) {
 	paramsText := strings.TrimSpace(typeText[start+1 : end])
 	returnText := "void"
 	remainder := strings.TrimSpace(typeText[end+1:])
-	if strings.HasPrefix(remainder, "->") {
-		ret, ok := llvmTypeName(strings.TrimSpace(strings.TrimPrefix(remainder, "->")))
+	if after, ok := strings.CutPrefix(remainder, "->"); ok {
+		ret, ok := llvmTypeName(strings.TrimSpace(after))
 		if !ok {
 			return "", false
 		}
@@ -512,7 +512,6 @@ func itabSymbolName(interfaceType, dataType string) string {
 	raw := fmt.Sprintf("__itab__%s__%s", interfaceType, dataType)
 	return "@" + ir.SanitizeSymbolName(raw)
 }
-
 
 func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (string, bool) {
 	interfaceTypeText = strings.TrimSpace(interfaceTypeText)

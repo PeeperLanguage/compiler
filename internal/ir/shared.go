@@ -476,8 +476,8 @@ func SanitizeSymbolName(text string) string {
 }
 
 func StripSymbolInstance(text string) string {
-	if idx := strings.IndexByte(text, '$'); idx >= 0 {
-		return text[:idx]
+	if before, _, ok := strings.Cut(text, "$"); ok {
+		return before
 	}
 	return text
 }
