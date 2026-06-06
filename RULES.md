@@ -6,7 +6,7 @@ This file defines mandatory engineering rules for the `compiler` repository.
 
 ### Rule: no pass-through wrappers, no duplicated logic
 
-Use existing functions directly. If behavior is identical, do not add a new function that only forwards arguments/returns results.
+Before creating any new function, check for existing similar codes. Use existing functions directly if behavior is identical, do not add a new function that only forwards arguments/returns results.
 
 Why:
 - Increases maintenance cost
