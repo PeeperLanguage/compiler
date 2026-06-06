@@ -83,7 +83,10 @@ func Load(path string) (*File, error) {
 	if !ok {
 		return nil, fmt.Errorf("missing [package] section")
 	}
-	name, ok := pkg["name"].(string)
+	name, ok, err := toml.LookupKey[string](pkg, "name")
+	if err != nil {
+		return nil, fmt.Errorf("package.name: %w", err)
+	}
 	if !ok || name == "" {
 		return nil, fmt.Errorf("package.name is required")
 	}
@@ -91,16 +94,22 @@ func Load(path string) (*File, error) {
 		return nil, fmt.Errorf("invalid package.name %q", name)
 	}
 	manifest.Package.Name = name
-	if version, ok := pkg["version"].(string); ok {
+	if version, ok, err := toml.LookupKey[string](pkg, "version"); err != nil {
+		return nil, fmt.Errorf("package.version: %w", err)
+	} else if ok {
 		if version != "" && !versionPattern.MatchString(version) {
 			return nil, fmt.Errorf("invalid package.version %q", version)
 		}
 		manifest.Package.Version = version
 	}
-	if compilerVersion, ok := pkg["compiler"].(string); ok {
+	if compilerVersion, ok, err := toml.LookupKey[string](pkg, "compiler"); err != nil {
+		return nil, fmt.Errorf("package.compiler: %w", err)
+	} else if ok {
 		manifest.Package.CompilerVersion = compilerVersion
 	}
-	if entry, ok := pkg["entry"].(string); ok {
+	if entry, ok, err := toml.LookupKey[string](pkg, "entry"); err != nil {
+		return nil, fmt.Errorf("package.entry: %w", err)
+	} else if ok {
 		manifest.Package.Entry = strings.TrimSpace(entry)
 	}
 
@@ -124,10 +133,14 @@ func Load(path string) (*File, error) {
 	}
 
 	if dev, ok := data.Sections["dev"]; ok {
-		if mockRemote, ok := dev["mock_remote"].(bool); ok {
+		if mockRemote, ok, err := toml.LookupKey[bool](dev, "mock_remote"); err != nil {
+			return nil, fmt.Errorf("dev.mock_remote: %w", err)
+		} else if ok {
 			manifest.Dev.MockRemote = mockRemote
 		}
-		if mockPath, ok := dev["mock_path"].(string); ok {
+		if mockPath, ok, err := toml.LookupKey[string](dev, "mock_path"); err != nil {
+			return nil, fmt.Errorf("dev.mock_path: %w", err)
+		} else if ok {
 			manifest.Dev.MockPath = mockPath
 		}
 	}
@@ -168,10 +181,22 @@ func parseDependencyString(value string) (Dependency, error) {
 }
 
 func parseDependencyTable(table toml.Table) (Dependency, error) {
-	typeName, _ := table["type"].(string)
-	path, _ := table["path"].(string)
-	repo, _ := table["repo"].(string)
-	version, _ := table["version"].(string)
+	typeName, _, err := toml.LookupKey[string](table, "type")
+	if err != nil {
+		return Dependency{}, fmt.Errorf("type: %w", err)
+	}
+	path, _, err := toml.LookupKey[string](table, "path")
+	if err != nil {
+		return Dependency{}, fmt.Errorf("path: %w", err)
+	}
+	repo, _, err := toml.LookupKey[string](table, "repo")
+	if err != nil {
+		return Dependency{}, fmt.Errorf("repo: %w", err)
+	}
+	version, _, err := toml.LookupKey[string](table, "version")
+	if err != nil {
+		return Dependency{}, fmt.Errorf("version: %w", err)
+	}
 
 	switch typeName {
 	case "", "neighbor":
