@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"compiler/colors"
+	"compiler/pkg/colors"
 	"compiler/internal/backend"
 	compiler "compiler/internal/driver"
 	"compiler/pkg/abi"

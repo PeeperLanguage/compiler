@@ -2,7 +2,7 @@ package diagnostics
 
 import (
 	"bytes"
-	"compiler/colors"
+	"compiler/pkg/colors"
 	"compiler/pkg/source"
 	"fmt"
 	"io"
