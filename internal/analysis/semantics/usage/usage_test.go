@@ -24,7 +24,9 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 
 	if setupImports {
 		// Mock an external dependency module named "external"
-		extSrc := `type MyType i32;
+		extSrc := `struct MyType {
+	value: i32,
+}
 fn GetValue() -> i32 { return 42; }`
 		extAST := parser.ParseModule("external.em", lexer.Lex("external.em", extSrc, diag), diag)
 		extMod := &context.Module{
@@ -123,6 +125,22 @@ func TestUnusedParameterIgnoredWithUnderscore(t *testing.T) {
 	}
 }
 
+func TestUnusedReceiverParameterWarnsLikeAnyOtherParam(t *testing.T) {
+	src := `impl i32 {
+	fn to_str(value: Self) -> cstr {
+		return "ok";
+	}
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if !hasCode(diag, diagnostics.WarnUnusedParameter) {
+		t.Fatalf("expected unused parameter warning for receiver param, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestUnusedPrivateFunction(t *testing.T) {
 	src := `fn unused_func() -> i32 {
 	return 42;
@@ -187,8 +205,8 @@ fn main() -> i32 {
 func TestUsedImportInType(t *testing.T) {
 	src := `import "external";
 fn main() -> i32 {
-	let x: external::MyType = 12;
-	return x;
+	let x: external::MyType;
+	return 0;
 }`
 	diag := checkUsageSource(t, src, true)
 	if hasCode(diag, diagnostics.WarnUnusedImport) {
@@ -237,3 +255,28 @@ func TestUsageWarningsFixture(t *testing.T) {
 		}
 	}
 }
+
+func TestUnusedLocalHasLocation(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = 0;
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	found := false
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnUnusedLocal {
+			found = true
+			if len(item.Labels) == 0 {
+				t.Fatalf("expected warning to have label / location info, got none")
+			}
+			loc := item.Labels[0].Location
+			if loc == nil || loc.Start == nil || loc.Start.Line != 2 {
+				t.Fatalf("expected warning label to point to line 2, got: %+v", loc.Start)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected unused local warning")
+	}
+}
+

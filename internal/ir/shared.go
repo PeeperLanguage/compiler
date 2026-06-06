@@ -67,20 +67,65 @@ type Call struct {
 	Type   string
 }
 
+type AddrOf struct {
+	Expr Expr
+	Type string
+}
+
+type InterfaceSlot struct {
+	InterfaceType string
+	MethodName    string
+	WrapperName   string
+	SlotType      string
+	FuncName      string
+	FuncType      string
+	DataType      string
+}
+
+type InterfaceMake struct {
+	Value Expr
+	Slots []InterfaceSlot
+	Type  string
+}
+
+type InterfaceCall struct {
+	Base Expr
+	Slot int
+	Args []Expr
+	Type string
+}
+
+type Field struct {
+	Base       Expr
+	Index      int
+	ThroughPtr bool
+	Type       string
+}
+
+type StructLit struct {
+	Fields []Expr
+	Type   string
+}
+
 type Cast struct {
 	Expr Expr
 	Type string
 }
 
-func (*InvalidExpr) exprNode() {}
-func (*IntLit) exprNode()      {}
-func (*FloatLit) exprNode()    {}
-func (*StringLit) exprNode()   {}
-func (*Ident) exprNode()       {}
-func (*Unary) exprNode()       {}
-func (*Binary) exprNode()      {}
-func (*Call) exprNode()        {}
-func (*Cast) exprNode()        {}
+func (*InvalidExpr) exprNode()   {}
+func (*IntLit) exprNode()        {}
+func (*FloatLit) exprNode()      {}
+func (*StringLit) exprNode()     {}
+func (*Ident) exprNode()         {}
+func (*Unary) exprNode()         {}
+func (*Binary) exprNode()        {}
+func (*Call) exprNode()          {}
+func (*AddrOf) exprNode()        {}
+func (*InterfaceMake) exprNode() {}
+func (*InterfaceCall) exprNode() {}
+func (*Field) exprNode()         {}
+func (*StructLit) exprNode()     {}
+func (*Cast) exprNode()          {}
 
 func (e *InvalidExpr) String() string {
 	if e == nil || e.Message == "" {
@@ -184,6 +229,97 @@ func (e *Call) TypeText() string {
 	return e.Type
 }
 
+func (e *AddrOf) String() string {
+	if e == nil || e.Expr == nil {
+		return ""
+	}
+	return "^(" + e.Expr.String() + ")"
+}
+
+func (e *AddrOf) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *InterfaceMake) String() string {
+	if e == nil || e.Value == nil {
+		return "<iface>"
+	}
+	return fmt.Sprintf("iface(%s)", e.Value.String())
+}
+
+func (e *InterfaceMake) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *InterfaceCall) String() string {
+	if e == nil || e.Base == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("ifacecall(")
+	b.WriteString(e.Base.String())
+	for _, arg := range e.Args {
+		b.WriteString(", ")
+		if arg != nil {
+			b.WriteString(arg.String())
+		}
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
+func (e *InterfaceCall) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *Field) String() string {
+	if e == nil || e.Base == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s.%d", e.Base.String(), e.Index)
+}
+
+func (e *Field) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *StructLit) String() string {
+	if e == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(".{")
+	for i, field := range e.Fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if field != nil {
+			b.WriteString(field.String())
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (e *StructLit) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
 func (e *Cast) String() string {
 	if e == nil {
 		return ""
@@ -217,16 +353,8 @@ func TypeText(typ ast.TypeExpr) string {
 		return ""
 	case *ast.NamedType:
 		return node.Name
-	case *ast.RefType:
-		if node.Mutable {
-			return "&mut " + TypeText(node.Target)
-		}
-		return "&" + TypeText(node.Target)
 	case *ast.RawPtrType:
-		if node.Mutable {
-			return "*mut " + TypeText(node.Target)
-		}
-		return "*const " + TypeText(node.Target)
+		return "^" + TypeText(node.Target)
 	case *ast.FuncType:
 		var b strings.Builder
 		b.WriteString("fn(")
@@ -325,4 +453,39 @@ func SignatureText(params []Param, returnType string) string {
 		b.WriteString(returnType)
 	}
 	return b.String()
+}
+
+func SanitizeSymbolName(text string) string {
+	if text == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func StripSymbolInstance(text string) string {
+	if idx := strings.IndexByte(text, '$'); idx >= 0 {
+		return text[:idx]
+	}
+	return text
+}
+
+func InterfaceThunkName(interfaceTypeText, dataType, methodName string, index int) string {
+	return fmt.Sprintf("__ifacethunk__%s__%s__%s__%d",
+		SanitizeSymbolName(interfaceTypeText),
+		SanitizeSymbolName(dataType),
+		SanitizeSymbolName(methodName),
+		index)
 }

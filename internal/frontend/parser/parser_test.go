@@ -1,8 +1,6 @@
 package parser
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,8 +90,8 @@ func TestParseLetWithoutExplicitType(t *testing.T) {
 	}
 }
 
-func TestParseFunctionWithReceiverAndTypeParams(t *testing.T) {
-	src := `fn (r: i32) add[T, U](a: i32) -> i32 {
+func TestParseFunctionWithTypeParams(t *testing.T) {
+	src := `fn add[T, U](a: i32) -> i32 {
 	return a;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -108,9 +106,6 @@ func TestParseFunctionWithReceiverAndTypeParams(t *testing.T) {
 	fn, ok := mod.Decls[0].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected fn")
-	}
-	if fn.Receiver == nil || fn.Receiver.Name == nil || fn.Receiver.Name.Name != "r" {
-		t.Fatalf("receiver not parsed")
 	}
 	if len(fn.TypeParams) != 2 {
 		t.Fatalf("type params: got %d want 2", len(fn.TypeParams))
@@ -386,10 +381,10 @@ func TestParseMethodStyleFunctionNamePath(t *testing.T) {
 
 func TestParseAnonymousTypesInBindings(t *testing.T) {
 	src := `let a: struct {
-	x: i32;
+	x: i32,
 } = value;
 let b: interface {
-	call(x: i32): i32;
+	call(x: i32): i32,
 } = value;
 let c: enum {
 	One,
@@ -505,123 +500,132 @@ if 1 {
 }
 
 func TestParseTypeDeclarations(t *testing.T) {
-	src := `type IntOp fn(i32, i32): i32;
-type Vec2 struct {
-	x: f32;
-	y: f32;
-};
-type Adder interface {
-	add(a: i32, b: i32): i32;
-};
-type Color enum {
+	src := `struct Vec2 {
+	x: f32,
+	y: f32,
+}
+interface Adder {
+	add(i32, i32): i32,
+}
+enum Color {
 	Red,
 	Green,
 	Blue,
-};`
+}`
 	diag := diagnostics.NewDiagnosticBag("test.em")
 	stream := lexer.Lex("test.em", src, diag)
 	mod := ParseModule("test.em", stream, diag)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 4 {
-		t.Fatalf("decls: got %d want 4", len(mod.Decls))
+	if len(mod.Decls) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Decls))
 	}
-	a0, ok := mod.Decls[0].(*ast.TypeAliasDecl)
+	a0, ok := mod.Decls[0].(*ast.StructDecl)
 	if !ok {
-		t.Fatalf("decl[0] expected type alias")
+		t.Fatalf("decl[0] expected struct decl")
 	}
-	if _, ok := a0.Type.(*ast.FuncType); !ok {
-		t.Fatalf("decl[0] expected func type")
+	if len(a0.Fields) != 2 {
+		t.Fatalf("struct fields: got %d want 2", len(a0.Fields))
 	}
-	a1, ok := mod.Decls[1].(*ast.TypeAliasDecl)
+	a1, ok := mod.Decls[1].(*ast.InterfaceDecl)
 	if !ok {
-		t.Fatalf("decl[1] expected type alias")
+		t.Fatalf("decl[1] expected interface decl")
 	}
-	s, ok := a1.Type.(*ast.StructType)
+	if len(a1.Methods) != 1 {
+		t.Fatalf("interface methods: got %d want 1", len(a1.Methods))
+	}
+	if got := len(a1.Methods[0].Params); got != 2 {
+		t.Fatalf("interface params: got %d want 2", got)
+	}
+	if a1.Methods[0].Params[0].Name != nil {
+		t.Fatalf("first interface param should be unnamed")
+	}
+	a2, ok := mod.Decls[2].(*ast.EnumDecl)
 	if !ok {
-		t.Fatalf("decl[1] expected struct type")
+		t.Fatalf("decl[2] expected enum decl")
 	}
-	if len(s.Fields) != 2 {
-		t.Fatalf("struct fields: got %d want 2", len(s.Fields))
-	}
-	a2, ok := mod.Decls[2].(*ast.TypeAliasDecl)
-	if !ok {
-		t.Fatalf("decl[2] expected type alias")
-	}
-	i, ok := a2.Type.(*ast.InterfaceType)
-	if !ok {
-		t.Fatalf("decl[2] expected interface type")
-	}
-	if len(i.Methods) != 1 {
-		t.Fatalf("interface methods: got %d want 1", len(i.Methods))
-	}
-	a3, ok := mod.Decls[3].(*ast.TypeAliasDecl)
-	if !ok {
-		t.Fatalf("decl[3] expected type alias")
-	}
-	e, ok := a3.Type.(*ast.EnumType)
-	if !ok {
-		t.Fatalf("decl[3] expected enum type")
-	}
-	if len(e.Variants) != 3 {
-		t.Fatalf("enum variants: got %d want 3", len(e.Variants))
+	if len(a2.Variants) != 3 {
+		t.Fatalf("enum variants: got %d want 3", len(a2.Variants))
 	}
 }
 
-func TestParseReferenceAndRawPointerTypes(t *testing.T) {
-	src := `type Reader fn(&i32, &mut i32, *const i32, *mut i32): &i32;
-let shared: &i32;
-let unique: &mut i32;
-let rawConst: *const i32;
-let rawMut: *mut i32;`
+func TestParseImplDecl(t *testing.T) {
+	src := `impl i32 {
+	fn abs(self: Self) -> Self {
+		return self;
+	}
+}`
 	diag := diagnostics.NewDiagnosticBag("test.em")
 	stream := lexer.Lex("test.em", src, diag)
 	mod := ParseModule("test.em", stream, diag)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 5 {
-		t.Fatalf("decls: got %d want 5", len(mod.Decls))
+	if len(mod.Decls) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Decls))
 	}
-	alias, ok := mod.Decls[0].(*ast.TypeAliasDecl)
+	implDecl, ok := mod.Decls[0].(*ast.ImplDecl)
 	if !ok {
-		t.Fatalf("decl[0] expected type alias")
+		t.Fatalf("decl[0] expected impl decl")
 	}
-	fnType, ok := alias.Type.(*ast.FuncType)
-	if !ok {
-		t.Fatalf("decl[0] expected func type")
+	target, ok := implDecl.Target.(*ast.NamedType)
+	if !ok || target.Name != "i32" {
+		t.Fatalf("impl target mismatch: %#v", implDecl.Target)
 	}
-	if len(fnType.Params) != 4 {
-		t.Fatalf("func params: got %d want 4", len(fnType.Params))
+	if len(implDecl.Methods) != 1 {
+		t.Fatalf("methods: got %d want 1", len(implDecl.Methods))
 	}
-	ref0, ok := fnType.Params[0].(*ast.RefType)
-	if !ok || ref0.Mutable {
-		t.Fatalf("param[0] expected shared ref type, got %#v", fnType.Params[0])
+	method := implDecl.Methods[0]
+	if method.Name == nil || method.Name.Name != "abs" {
+		t.Fatalf("method name mismatch: %#v", method.Name)
 	}
-	ref1, ok := fnType.Params[1].(*ast.RefType)
-	if !ok || !ref1.Mutable {
-		t.Fatalf("param[1] expected mutable ref type, got %#v", fnType.Params[1])
-	}
-	ptr2, ok := fnType.Params[2].(*ast.RawPtrType)
-	if !ok || ptr2.Mutable {
-		t.Fatalf("param[2] expected const raw ptr type, got %#v", fnType.Params[2])
-	}
-	ptr3, ok := fnType.Params[3].(*ast.RawPtrType)
-	if !ok || !ptr3.Mutable {
-		t.Fatalf("param[3] expected mutable raw ptr type, got %#v", fnType.Params[3])
-	}
-	ret, ok := fnType.Return.(*ast.RefType)
-	if !ok || ret.Mutable {
-		t.Fatalf("return expected shared ref type, got %#v", fnType.Return)
+	if len(method.Params) != 1 || method.Params[0].Name == nil || method.Params[0].Name.Name != "self" {
+		t.Fatalf("self parameter not parsed")
 	}
 }
 
-func TestParseBorrowExpressions(t *testing.T) {
+func TestParseSelectorAndMethodCall(t *testing.T) {
 	src := `fn main() -> i32 {
-	let mut value: i32 = 0;
-	let a = &value;
-	let b = &mut value;
+	let x: i32 = 1;
+	x.abs();
+	return x.value;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 3 {
+		t.Fatalf("unexpected function body")
+	}
+	exprStmt, ok := fn.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("stmt[1] expected expr stmt")
+	}
+	call, ok := exprStmt.Expr.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("stmt[1] expected call expr")
+	}
+	selector, ok := call.Callee.(*ast.SelectorExpr)
+	if !ok || selector.Name == nil || selector.Name.Name != "abs" {
+		t.Fatalf("expected selector callee, got %#v", call.Callee)
+	}
+	ret, ok := fn.Body.Stmts[2].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt[2] expected return")
+	}
+	field, ok := ret.Value.(*ast.SelectorExpr)
+	if !ok || field.Name == nil || field.Name.Name != "value" {
+		t.Fatalf("expected selector return expr, got %#v", ret.Value)
+	}
+}
+
+func TestParseStructLiteral(t *testing.T) {
+	src := `fn main() -> i32 {
+	let p = .{ x = 1, y = 2, };
 	return 0;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -631,50 +635,45 @@ func TestParseBorrowExpressions(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	fn, ok := mod.Decls[0].(*ast.FnDecl)
-	if !ok || fn.Body == nil {
-		t.Fatalf("expected function decl, got %#v", mod.Decls[0])
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body")
 	}
-	if len(fn.Body.Stmts) != 4 {
-		t.Fatalf("stmts: got %d want 4", len(fn.Body.Stmts))
-	}
-	aDecl, ok := fn.Body.Stmts[1].(*ast.LetDecl)
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
 	if !ok {
-		t.Fatalf("stmt[1] expected let, got %#v", fn.Body.Stmts[1])
+		t.Fatalf("stmt[0] expected let")
 	}
-	aBorrow, ok := aDecl.Value.(*ast.BorrowExpr)
-	if !ok || aBorrow.Mutable {
-		t.Fatalf("stmt[1] expected shared borrow, got %#v", aDecl.Value)
-	}
-	bDecl, ok := fn.Body.Stmts[2].(*ast.LetDecl)
+	lit, ok := letDecl.Value.(*ast.StructLit)
 	if !ok {
-		t.Fatalf("stmt[2] expected let, got %#v", fn.Body.Stmts[2])
+		t.Fatalf("stmt[0] expected struct literal, got %#v", letDecl.Value)
 	}
-	bBorrow, ok := bDecl.Value.(*ast.BorrowExpr)
-	if !ok || !bBorrow.Mutable {
-		t.Fatalf("stmt[2] expected mutable borrow, got %#v", bDecl.Value)
+	if len(lit.Fields) != 2 {
+		t.Fatalf("literal fields: got %d want 2", len(lit.Fields))
+	}
+	if lit.Fields[0].Name == nil || lit.Fields[0].Name.Name != "x" {
+		t.Fatalf("first literal field mismatch")
+	}
+	if lit.Fields[1].Name == nil || lit.Fields[1].Name.Name != "y" {
+		t.Fatalf("second literal field mismatch")
 	}
 }
 
-func TestParseOwnershipFixture(t *testing.T) {
-	srcPath := filepath.Join("..", "..", "..", "x_test", "ownership_0.em")
-	src, err := os.ReadFile(srcPath)
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	diag := diagnostics.NewDiagnosticBag(srcPath)
-	stream := lexer.Lex(srcPath, string(src), diag)
-	mod := ParseModule(srcPath, stream, diag)
+func TestParsePointerTypes(t *testing.T) {
+	src := `let ptr: ^i32;`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 8 {
-		t.Fatalf("decls: got %d want 8", len(mod.Decls))
+	if len(mod.Decls) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Decls))
 	}
-	mainFn, ok := mod.Decls[7].(*ast.FnDecl)
-	if !ok || mainFn.Body == nil {
-		t.Fatalf("last decl expected function with body, got %#v", mod.Decls[7])
+	ptrDecl, ok := mod.Decls[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected let")
 	}
-	if len(mainFn.Body.Stmts) != 4 {
-		t.Fatalf("main stmts: got %d want 4", len(mainFn.Body.Stmts))
+	ptr, ok := ptrDecl.Type.(*ast.RawPtrType)
+	if !ok || !ptr.Mutable {
+		t.Fatalf("decl[0] expected pointer type, got %#v", ptrDecl.Type)
 	}
 }

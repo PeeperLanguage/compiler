@@ -34,9 +34,9 @@ type NamedType struct {
 	Name string
 }
 
-type RefType struct {
-	Mutable bool
-	Target  Type
+type DefinedType struct {
+	Name       string
+	Underlying Type
 }
 
 type RawPtrType struct {
@@ -79,7 +79,7 @@ func (*FloatType) TypeNode()     {}
 func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
 func (*NamedType) TypeNode()     {}
-func (*RefType) TypeNode()       {}
+func (*DefinedType) TypeNode()   {}
 func (*RawPtrType) TypeNode()    {}
 func (*FuncType) TypeNode()      {}
 func (*StructType) TypeNode()    {}
@@ -117,26 +117,28 @@ func (t *NamedType) Text() string {
 	return t.Name
 }
 
-func (t *RefType) Text() string {
+func (t *DefinedType) Text() string {
 	if t == nil {
 		return ""
 	}
-	prefix := "&"
-	if t.Mutable {
-		prefix = "&mut "
+	return t.Name
+}
+
+func Underlying(t Type) Type {
+	for {
+		defined, ok := t.(*DefinedType)
+		if !ok || defined == nil || defined.Underlying == nil {
+			return t
 	}
-	return prefix + TypeText(t.Target)
+	t = defined.Underlying
+	}
 }
 
 func (t *RawPtrType) Text() string {
 	if t == nil {
 		return ""
 	}
-	prefix := "*const "
-	if t.Mutable {
-		prefix = "*mut "
-	}
-	return prefix + TypeText(t.Target)
+	return "^" + TypeText(t.Target)
 }
 
 func (t *FuncType) Text() string {
@@ -250,11 +252,6 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 			return &IntegerType{Signed: signed, Bits: bits}
 		}
 		return &NamedType{Name: typ.Name}
-	case *ast.RefType:
-		if typ == nil {
-			return nil
-		}
-		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
@@ -332,6 +329,8 @@ func IsI32(typ Type) bool {
 }
 
 func SameType(left, right Type) bool {
+	left = Underlying(left)
+	right = Underlying(right)
 	switch l := left.(type) {
 	case *InvalidType:
 		_, ok := right.(*InvalidType)
@@ -354,9 +353,6 @@ func SameType(left, right Type) bool {
 	case *NamedType:
 		r, ok := right.(*NamedType)
 		return ok && r != nil && l.Name == r.Name
-	case *RefType:
-		r, ok := right.(*RefType)
-		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
 	case *RawPtrType:
 		r, ok := right.(*RawPtrType)
 		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
@@ -397,7 +393,7 @@ func SameType(left, right Type) bool {
 			for j := range l.Methods[i].Params {
 				lp := l.Methods[i].Params[j]
 				rp := r.Methods[i].Params[j]
-				if lp.Name != rp.Name || !SameType(lp.Type, rp.Type) {
+				if !SameType(lp.Type, rp.Type) {
 					return false
 				}
 			}
@@ -432,6 +428,7 @@ const (
 )
 
 func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
+	t = Underlying(t)
 	switch typ := t.(type) {
 	case *IntegerType:
 		if typ == nil {

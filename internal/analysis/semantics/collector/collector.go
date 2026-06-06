@@ -2,7 +2,6 @@ package collector
 
 import (
 	"compiler/core/diagnostics"
-	"compiler/internal/analysis/semantics/common"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -45,6 +44,14 @@ func (c *collector) collectNode(node ast.Node) {
 		c.collectFnDecl(n)
 	case *ast.TypeAliasDecl:
 		c.collectTypeAliasDecl(n)
+	case *ast.StructDecl:
+		c.collectConcreteTypeDecl(n.Name, &ast.StructType{Fields: n.Fields, Location: n.Location}, n)
+	case *ast.InterfaceDecl:
+		c.collectConcreteTypeDecl(n.Name, &ast.InterfaceType{Methods: n.Methods, Location: n.Location}, n)
+	case *ast.EnumDecl:
+		c.collectConcreteTypeDecl(n.Name, &ast.EnumType{Variants: n.Variants, Location: n.Location}, n)
+	case *ast.ImplDecl:
+		c.collectImplDecl(n)
 	case *ast.LetDecl:
 		c.collectModuleBinding(n.Name, symbols.SymbolVar, n.Type, n)
 	case *ast.ConstDecl:
@@ -59,7 +66,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		return
 	}
 	if fn.Name == nil || fn.Name.Name == "" {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "function name required")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", fn.Loc(), "")
 		return
 	}
 	kind := symbols.SymbolFunc
@@ -71,26 +78,33 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		sym.Scope = table.New(c.module.ModuleScope)
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, fn, diagnostics.ErrRedeclaredSymbol, err.Error())
+		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), fn.Loc(), "")
 		return
 	}
 }
 
 func (c *collector) collectTypeAliasDecl(decl *ast.TypeAliasDecl) {
-	if c == nil || c.module == nil || decl == nil {
+	c.collectConcreteTypeDecl(decl.Name, decl.Type, decl)
+}
+
+func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, node ast.Node) {
+	if c == nil || c.module == nil || node == nil {
 		return
 	}
-	if decl.Name == nil || decl.Name.Name == "" {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrMissingIdentifier, "type name required")
+	if name == nil || name.Name == "" {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "type name required", node.Loc(), "")
 		return
 	}
-	sym := symbols.New(decl.Name.Name, symbols.SymbolType, decl)
-	sym.Type = typeinfo.TypeFromSyntax(decl.Type)
+	sym := symbols.New(name.Name, symbols.SymbolType, node)
+	sym.Type = &typeinfo.DefinedType{
+		Name:       name.Name,
+		Underlying: typeinfo.TypeFromSyntax(typ),
+	}
 	if sym.Type == nil {
 		sym.Type = &typeinfo.InvalidType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, decl, diagnostics.ErrRedeclaredSymbol, err.Error())
+		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
 		return
 	}
 }
@@ -105,7 +119,36 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 		sym.Type = &typeinfo.UnknownType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		common.AddError(c.ctx.Diagnostics, c.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
+	}
+}
+
+func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
+		return
+	}
+	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target))
+	for _, method := range decl.Methods {
+		if method == nil || method.Name == nil || method.Name.Name == "" {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", decl.Loc(), "")
+			continue
+		}
+		existing := c.module.Semantics.MethodSets[targetKey]
+		duplicate := false
+		for _, item := range existing {
+			if item != nil && item.Name == method.Name.Name {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", method.Loc(), "")
+			continue
+		}
+		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method)
+		sym.Scope = table.New(c.module.ModuleScope)
+		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
+		c.module.Semantics.MethodSymbol[method.ID()] = sym
 	}
 }
 

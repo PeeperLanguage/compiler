@@ -24,6 +24,31 @@ func (*ScopeResolution) exprNode()               {}
 func (*ScopeResolution) typeNode()               {}
 func (e *ScopeResolution) Loc() *source.Location { return e.Location }
 
+type SelectorExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Name     *Ident
+	Location *source.Location
+}
+
+func (*SelectorExpr) exprNode()               {}
+func (e *SelectorExpr) Loc() *source.Location { return e.Location }
+
+type StructLitField struct {
+	Name     *Ident
+	Value    Expr
+	Location *source.Location
+}
+
+type StructLit struct {
+	NodeIDHolder
+	Fields   []StructLitField
+	Location *source.Location
+}
+
+func (*StructLit) exprNode()               {}
+func (e *StructLit) Loc() *source.Location { return e.Location }
+
 type BadExpr struct {
 	NodeIDHolder
 	Location *source.Location
@@ -59,16 +84,6 @@ type UnaryExpr struct {
 
 func (*UnaryExpr) exprNode()               {}
 func (e *UnaryExpr) Loc() *source.Location { return e.Location }
-
-type BorrowExpr struct {
-	NodeIDHolder
-	Mutable  bool
-	Expr     Expr
-	Location *source.Location
-}
-
-func (*BorrowExpr) exprNode()               {}
-func (e *BorrowExpr) Loc() *source.Location { return e.Location }
 
 type BinaryExpr struct {
 	NodeIDHolder
