@@ -161,6 +161,7 @@ type InterfaceMake struct {
 	Value    ValueRef
 	DataType string
 	BoxValue bool
+	StackBox bool
 	Slots    []ValueRef
 	Type     string
 }
@@ -342,6 +343,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 		if !l.appendBlock(hirFn.Body) {
 			return nil
 		}
+		markLocalInterfaceBoxing(fn)
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
@@ -592,6 +594,145 @@ func interfaceStorageFor(typeText string) (string, bool) {
 		return remainder, false
 	}
 	return typeText, true
+}
+
+func markLocalInterfaceBoxing(fn *Function) {
+	if fn == nil || fn.Blocks == nil {
+		return
+	}
+	producers := make(map[string]ValueExpr)
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instrs {
+			assign, ok := instr.(*Assign)
+			if !ok || assign == nil || assign.Name == "" || assign.Value == nil {
+				continue
+			}
+			producers[assign.Name] = assign.Value
+		}
+	}
+
+	rootCache := make(map[string]map[string]struct{})
+	var rootsOfName func(string, map[string]struct{}) map[string]struct{}
+	rootsOfName = func(name string, seen map[string]struct{}) map[string]struct{} {
+		if cached, ok := rootCache[name]; ok {
+			return cached
+		}
+		if _, ok := seen[name]; ok {
+			return nil
+		}
+		seen[name] = struct{}{}
+		value := producers[name]
+		switch node := value.(type) {
+		case *InterfaceMake:
+			if node != nil && node.BoxValue {
+				out := map[string]struct{}{name: {}}
+				rootCache[name] = out
+				return out
+			}
+		case *Move:
+			out := rootsOfRef(node.Src, rootsOfName, seen)
+			rootCache[name] = out
+			return out
+		}
+		rootCache[name] = nil
+		return nil
+	}
+
+	escapes := make(map[string]bool)
+	markEscape := func(ref ValueRef) {
+		for root := range rootsOfRef(ref, rootsOfName, nil) {
+			escapes[root] = true
+		}
+	}
+
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instrs {
+			assign, ok := instr.(*Assign)
+			if !ok || assign == nil || assign.Value == nil {
+				continue
+			}
+			switch value := assign.Value.(type) {
+			case *Move:
+				// pure alias, safe
+			case *InterfaceCall:
+				// local dispatch is safe; boxed payload only needs to live for this function
+			case *Call:
+				for _, arg := range value.Args {
+					markEscape(arg)
+				}
+			default:
+				for _, ref := range valueRefsOf(value) {
+					markEscape(ref)
+				}
+			}
+		}
+		if term, ok := block.Term.(*Ret); ok && term != nil {
+			markEscape(term.Value)
+		}
+	}
+
+	for name, value := range producers {
+		makeVal, ok := value.(*InterfaceMake)
+		if !ok || makeVal == nil || !makeVal.BoxValue {
+			continue
+		}
+		if !escapes[name] {
+			makeVal.StackBox = true
+		}
+	}
+}
+
+func rootsOfRef(ref ValueRef, rootsOfName func(string, map[string]struct{}) map[string]struct{}, seen map[string]struct{}) map[string]struct{} {
+	nameRef, ok := ref.(*RefName)
+	if !ok || nameRef == nil || rootsOfName == nil {
+		return nil
+	}
+	if seen == nil {
+		seen = make(map[string]struct{})
+	}
+	return rootsOfName(nameRef.Name, seen)
+}
+
+func valueRefsOf(expr ValueExpr) []ValueRef {
+	switch node := expr.(type) {
+	case *Move:
+		return []ValueRef{node.Src}
+	case *Unary:
+		return []ValueRef{node.Arg}
+	case *Binary:
+		return []ValueRef{node.Left, node.Right}
+	case *Cast:
+		return []ValueRef{node.Arg}
+	case *AddrOf:
+		return []ValueRef{node.Base}
+	case *Field:
+		return []ValueRef{node.Base}
+	case *StructLit:
+		return append([]ValueRef(nil), node.Fields...)
+	case *InterfaceMake:
+		refs := make([]ValueRef, 0, len(node.Slots)+1)
+		refs = append(refs, node.Value)
+		refs = append(refs, node.Slots...)
+		return refs
+	case *InterfaceCall:
+		refs := make([]ValueRef, 0, len(node.Args)+1)
+		refs = append(refs, node.Base)
+		refs = append(refs, node.Args...)
+		return refs
+	case *Call:
+		refs := make([]ValueRef, 0, len(node.Args)+1)
+		refs = append(refs, node.Callee)
+		refs = append(refs, node.Args...)
+		return refs
+	default:
+		return nil
+	}
 }
 
 func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {
