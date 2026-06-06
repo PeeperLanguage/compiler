@@ -512,3 +512,89 @@ fn main() -> i32 {
 		t.Fatalf("expected ErrInvalidAssignment error, got:\n%s", diag.EmitAllToString())
 	}
 }
+
+func TestPipelineInterfaceEscapesViaStoreFieldAndInterfaceCall(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Summer {
+	sum(Self): i32,
+}
+
+struct Point {
+	x: i32,
+	y: i32,
+}
+
+impl Point {
+	fn sum(self: Self) -> i32 {
+		return self.x + self.y;
+	}
+}
+
+struct SummerHolder {
+	s: Summer,
+}
+
+#[extern]
+fn consume_holder(h: SummerHolder);
+
+#[extern]
+fn consume_summer(s: Summer);
+
+interface SummerConsumer {
+	consume(Self, val: Summer): i32,
+}
+
+#[extern]
+fn get_consumer() -> SummerConsumer;
+
+fn test_store_field() -> i32 {
+	let p: Point = .{ x = 10, y = 20 };
+	let s: Summer = p;
+	let mut h: SummerHolder = .{ s = s };
+	h.s = s;
+	consume_holder(h);
+	return 0;
+}
+
+fn test_interface_call_arg(c: SummerConsumer) -> i32 {
+	let p: Point = .{ x = 10, y = 20 };
+	let s: Summer = p;
+	let _ = c.consume(s);
+	consume_summer(s);
+	return 0;
+}
+
+fn main() -> i32 {
+	test_store_field();
+	let c = get_consumer();
+	test_interface_call_arg(c);
+	return 0;
+}`
+
+	const preludePath = "_builtin_library/global.em"
+	const entryPath = "entry.em"
+
+	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag.AddSourceContent(preludePath, preludeSrc)
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := context.New(".", ".em", diag)
+
+	entry := &context.Module{
+		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+		ImportPath: strings.TrimSuffix(entryPath, ".em"),
+		FilePath:   entryPath,
+		Origin:     context.ModuleOriginLocal,
+		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
+		Imports:    make(map[string]context.ResolvedImport),
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(entry.LLVMIR, "@malloc") {
+		t.Fatalf("expected escaping interface values to use malloc, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}

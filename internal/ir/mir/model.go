@@ -653,23 +653,30 @@ func markLocalInterfaceBoxing(fn *Function) {
 			continue
 		}
 		for _, instr := range block.Instrs {
-			assign, ok := instr.(*Assign)
-			if !ok || assign == nil || assign.Value == nil {
-				continue
-			}
-			switch value := assign.Value.(type) {
-			case *Move:
-				// pure alias, safe
-			case *InterfaceCall:
-				// local dispatch is safe; boxed payload only needs to live for this function
-			case *Call:
-				for _, arg := range value.Args {
-					markEscape(arg)
+			if assign, ok := instr.(*Assign); ok && assign != nil {
+				if assign.Value == nil {
+					continue
 				}
-			default:
-				for _, ref := range valueRefsOf(value) {
-					markEscape(ref)
+				switch value := assign.Value.(type) {
+				case *Move:
+					// pure alias, safe
+				case *InterfaceCall:
+					// The dispatch on the receiver is safe, but arguments passed can escape
+					for _, arg := range value.Args {
+						markEscape(arg)
+					}
+				case *Call:
+					for _, arg := range value.Args {
+						markEscape(arg)
+					}
+				default:
+					for _, ref := range valueRefsOf(value) {
+						markEscape(ref)
+					}
 				}
+			} else if store, ok := instr.(*StoreField); ok && store != nil {
+				// Interface values stored in struct fields escape
+				markEscape(store.Value)
 			}
 		}
 		if term, ok := block.Term.(*Ret); ok && term != nil {

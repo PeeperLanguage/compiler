@@ -2,7 +2,6 @@ package hir_lower
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"compiler/internal/analysis/semantics/symbols"
@@ -658,7 +657,7 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		if i == 0 {
 			continue
 		}
-		if containsAbstractSelfType(param.Type) {
+		if typeinfo.ContainsAbstractSelf(param.Type) {
 			return ""
 		}
 		text := loweredTypeText(param.Type)
@@ -669,7 +668,7 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		b.WriteString(text)
 	}
 	b.WriteString(")")
-	if containsAbstractSelfType(method.Return) {
+	if typeinfo.ContainsAbstractSelf(method.Return) {
 		return ""
 	}
 	if ret := loweredTypeText(method.Return); ret != "" {
@@ -677,25 +676,6 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		b.WriteString(ret)
 	}
 	return b.String()
-}
-
-func containsAbstractSelfType(t typeinfo.Type) bool {
-	switch typ := t.(type) {
-	case *typeinfo.NamedType:
-		return typ != nil && typ.Name == "Self"
-	case *typeinfo.RawPtrType:
-		return typ != nil && containsAbstractSelfType(typ.Target)
-	case *typeinfo.FuncType:
-		if typ == nil {
-			return false
-		}
-		if slices.ContainsFunc(typ.Params, containsAbstractSelfType) {
-			return true
-		}
-		return containsAbstractSelfType(typ.Return)
-	default:
-		return false
-	}
 }
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
@@ -894,6 +874,26 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type)})
 		}
 		return &typeinfo.StructType{Fields: fields}
+	case *typeinfo.InterfaceType:
+		if typ == nil {
+			return nil
+		}
+		methods := make([]typeinfo.Method, 0, len(typ.Methods))
+		for _, method := range typ.Methods {
+			params := make([]typeinfo.Field, 0, len(method.Params))
+			for _, param := range method.Params {
+				params = append(params, typeinfo.Field{
+					Name: param.Name,
+					Type: loweredRuntimeType(param.Type),
+				})
+			}
+			methods = append(methods, typeinfo.Method{
+				Name:   method.Name,
+				Params: params,
+				Return: loweredRuntimeType(method.Return),
+			})
+		}
+		return &typeinfo.InterfaceType{Methods: methods}
 	case *typeinfo.FuncType:
 		if typ == nil {
 			return nil
