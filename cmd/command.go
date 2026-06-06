@@ -60,7 +60,7 @@ func parseCommandBackend(command string) (string, backend.BACKEND_TYPE, error) {
 	}
 	base, suffix, hasSuffix := strings.Cut(command, ":")
 	switch base {
-	case "build", "run", "test":
+	case "build", "run":
 		if !hasSuffix || strings.TrimSpace(suffix) == "" {
 			return base, backend.LLVM, nil
 		}
@@ -229,7 +229,6 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 
 type buildTarget struct {
 	EntryPath           string
-	ManifestPath        string
 	SelectedByDiscovery bool
 	DefaultOutputPath   string
 }
@@ -315,7 +314,6 @@ func resolveManifestBuildTarget(commandName, startPath string) (buildTarget, err
 	}
 	return buildTarget{
 		EntryPath:           entryPath,
-		ManifestPath:        manifestPath,
 		SelectedByDiscovery: true,
 		DefaultOutputPath:   outputPath,
 	}, nil
