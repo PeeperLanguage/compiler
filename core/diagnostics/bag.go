@@ -60,6 +60,27 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	}
 }
 
+// AddError adds an error diagnostic to the bag and returns it for chaining/customization.
+func (db *DiagnosticBag) AddError(code, msg string, loc *source.Location, labelMsg string) *Diagnostic {
+	d := NewError(msg).WithCode(code)
+	if loc != nil {
+		d.WithPrimaryLabel(loc, labelMsg)
+	}
+	db.Add(d)
+	return d
+}
+
+// AddWarning adds a warning diagnostic to the bag and returns it for chaining/customization.
+func (db *DiagnosticBag) AddWarning(code, msg string, loc *source.Location, labelMsg string) *Diagnostic {
+	d := NewWarning(msg).WithCode(code)
+	if loc != nil {
+		d.WithPrimaryLabel(loc, labelMsg)
+	}
+	db.Add(d)
+	return d
+}
+
+
 // HasErrors returns true if there are any errors
 func (db *DiagnosticBag) HasErrors() bool {
 	db.mu.Lock()

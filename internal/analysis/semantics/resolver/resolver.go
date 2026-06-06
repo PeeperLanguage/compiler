@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"compiler/core/diagnostics"
-	"compiler/internal/analysis/semantics/common"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/context"
@@ -44,12 +43,12 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	funcScope := sym.Scope.(*table.Scope)
 	for _, param := range fn.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "parameter name required")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", fn.Loc(), "")
 			return
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
 		if err := funcScope.Declare(paramSym); err != nil {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), param.Name.Loc(), "")
 			return
 		}
 	}
@@ -63,12 +62,12 @@ func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
 	funcScope := sym.Scope.(*table.Scope)
 	for _, param := range fn.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, fn, diagnostics.ErrMissingIdentifier, "parameter name required")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", fn.Loc(), "")
 			return
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
 		if err := funcScope.Declare(paramSym); err != nil {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, param.Name, diagnostics.ErrRedeclaredSymbol, err.Error())
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), param.Name.Loc(), "")
 			return
 		}
 	}
@@ -113,7 +112,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		sym.Initializing = true
 		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
 			return
 		}
 		if node.Value != nil {
@@ -124,7 +123,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		sym.Initializing = true
 		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrRedeclaredSymbol, err.Error())
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
 			return
 		}
 		if node.Value != nil {
@@ -132,13 +131,13 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		}
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidReturn, "return value required")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", node.Loc(), "")
 			return
 		}
 		r.resolveExpr(scope, node.Value)
 	case *ast.IfStmt:
 		if node.Cond == nil {
-			common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "if condition required")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", node.Loc(), "")
 			return
 		}
 		r.resolveExpr(scope, node.Cond)
@@ -154,7 +153,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveExpr(scope, node.Target)
 		r.resolveExpr(scope, node.Value)
 	default:
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidStatement, "unsupported statement")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", node.Loc(), "")
 	}
 }
 
@@ -169,8 +168,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		if ok && sym != nil {
 			sym.Used = true
 			if sym.Kind == symbols.SymbolImport {
-				common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression,
-					"import alias must be qualified with `::`")
+				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", node.Loc(), "")
 				return
 			}
 			if sym.Initializing {
@@ -209,7 +207,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.AsExpr:
 		r.resolveExpr(scope, node.Expr)
 	default:
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrInvalidExpression, "unsupported expression type")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", node.Loc(), "")
 	}
 }
 
@@ -229,25 +227,21 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 	member := node.Name.Name
 	imp, ok := r.module.Imports[qualifier]
 	if !ok {
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrModuleNotFound,
-			"unknown import alias `"+qualifier+"`")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", node.Loc(), "")
 		return false
 	}
 	mod, ok := r.ctx.ModuleByKey(imp.Key)
 	if !ok || mod == nil || mod.ModuleScope == nil {
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrModuleNotFound,
-			"imported module not loaded for `"+qualifier+"`")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", node.Loc(), "")
 		return false
 	}
 	sym, ok := mod.ModuleScope.LookupLocal(member)
 	if !ok || sym == nil {
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrUndefinedSymbol,
-			"unknown identifier `"+member+"` in module `"+qualifier+"`")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", node.Loc(), "")
 		return false
 	}
 	if !sym.IsPub {
-		common.AddError(r.ctx.Diagnostics, r.module.FilePath, node, diagnostics.ErrSymbolNotExported,
-			"`"+member+"` is not exported from `"+qualifier+"`")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", node.Loc(), "")
 		return false
 	}
 	sym.Used = true
