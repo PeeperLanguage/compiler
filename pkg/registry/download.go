@@ -143,23 +143,27 @@ func fetchAvailableVersions(repoName string) ([]string, error) {
 	return nil, fmt.Errorf("unsupported remote host for %s", repoName)
 }
 
-func fetchGitHubVersions(repoName string) ([]string, error) {
-	parts := strings.TrimPrefix(repoName, "github.com/")
-	url := fmt.Sprintf("https://api.github.com/repos/%s/tags", parts)
+type versionTag struct {
+	Name string `json:"name"`
+}
+
+type bitbucketTagResponse struct {
+	Values []versionTag `json:"values"`
+}
+
+func fetchJSON(url, statusLabel string, target any) error {
 	response, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github tags API status %d", response.StatusCode)
+		return fmt.Errorf("%s status %d", statusLabel, response.StatusCode)
 	}
-	var tags []struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&tags); err != nil {
-		return nil, err
-	}
+	return json.NewDecoder(response.Body).Decode(target)
+}
+
+func collectVersionNames(repoName string, tags []versionTag) ([]string, error) {
 	versions := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		versions = append(versions, tag.Name)
@@ -168,63 +172,37 @@ func fetchGitHubVersions(repoName string) ([]string, error) {
 		return nil, fmt.Errorf("no versions found for %s", repoName)
 	}
 	return versions, nil
+}
+
+func fetchGitHubVersions(repoName string) ([]string, error) {
+	parts := strings.TrimPrefix(repoName, "github.com/")
+	url := fmt.Sprintf("https://api.github.com/repos/%s/tags", parts)
+	var tags []versionTag
+	if err := fetchJSON(url, "github tags API", &tags); err != nil {
+		return nil, err
+	}
+	return collectVersionNames(repoName, tags)
 }
 
 func fetchGitLabVersions(repoName string) ([]string, error) {
 	parts := strings.TrimPrefix(repoName, "gitlab.com/")
 	encoded := strings.ReplaceAll(parts, "/", "%2F")
 	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/repository/tags", encoded)
-	response, err := http.Get(url)
-	if err != nil {
+	var tags []versionTag
+	if err := fetchJSON(url, "gitlab tags API", &tags); err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gitlab tags API status %d", response.StatusCode)
-	}
-	var tags []struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&tags); err != nil {
-		return nil, err
-	}
-	versions := make([]string, 0, len(tags))
-	for _, tag := range tags {
-		versions = append(versions, tag.Name)
-	}
-	if len(versions) == 0 {
-		return nil, fmt.Errorf("no versions found for %s", repoName)
-	}
-	return versions, nil
+	return collectVersionNames(repoName, tags)
 }
 
 func fetchBitbucketVersions(repoName string) ([]string, error) {
 	parts := strings.TrimPrefix(repoName, "bitbucket.org/")
 	url := fmt.Sprintf("https://api.bitbucket.org/2.0/repositories/%s/refs/tags", parts)
-	response, err := http.Get(url)
-	if err != nil {
+	var payload bitbucketTagResponse
+	if err := fetchJSON(url, "bitbucket tags API", &payload); err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bitbucket tags API status %d", response.StatusCode)
-	}
-	var payload struct {
-		Values []struct {
-			Name string `json:"name"`
-		} `json:"values"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return nil, err
-	}
-	versions := make([]string, 0, len(payload.Values))
-	for _, value := range payload.Values {
-		versions = append(versions, value.Name)
-	}
-	if len(versions) == 0 {
-		return nil, fmt.Errorf("no versions found for %s", repoName)
-	}
-	return versions, nil
+	return collectVersionNames(repoName, payload.Values)
 }
 
 func stripProviderPrefix(repo string) string {

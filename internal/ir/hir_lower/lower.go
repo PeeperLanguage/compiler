@@ -63,7 +63,7 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 					ReturnType: loweredTypeText(returnType),
 				})
 			} else {
-				hirFn := lowerASTFunction(ctx, module, sym, fn)
+				hirFn := lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
 				if hirFn != nil {
 					out.Funcs = append(out.Funcs, hirFn)
 				}
@@ -120,10 +120,6 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 			out.Funcs = append(out.Funcs, hirFn)
 		}
 	}
-}
-
-func lowerASTFunction(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl) *hir.Function {
-	return lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
 }
 
 func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
@@ -658,10 +654,10 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		if i == 0 {
 			continue
 		}
-		if typeinfo.ContainsAbstractSelf(param.Type) {
+		text, ok := lowerInterfaceSlotValueType(param.Type)
+		if !ok {
 			return ""
 		}
-		text := loweredTypeText(param.Type)
 		if text == "" {
 			return ""
 		}
@@ -669,14 +665,33 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		b.WriteString(text)
 	}
 	b.WriteString(")")
-	if typeinfo.ContainsAbstractSelf(method.Return) {
+	text, ok := lowerInterfaceSlotValueType(method.Return)
+	if !ok {
 		return ""
 	}
-	if ret := loweredTypeText(method.Return); ret != "" {
+	if text != "" {
 		b.WriteString(" -> ")
-		b.WriteString(ret)
+		b.WriteString(text)
 	}
 	return b.String()
+}
+
+func lowerInterfaceSlotValueType(t typeinfo.Type) (string, bool) {
+	if t == nil {
+		return "", true
+	}
+	runtimeType := loweredRuntimeType(t)
+	if _, ok := runtimeType.(*typeinfo.InterfaceType); ok {
+		return loweredTypeText(runtimeType), true
+	}
+	if typeinfo.ContainsAbstractSelf(runtimeType) {
+		return "", false
+	}
+	text := loweredTypeText(runtimeType)
+	if text == "" {
+		return "", false
+	}
+	return text, true
 }
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
