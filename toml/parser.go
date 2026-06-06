@@ -2,7 +2,9 @@ package toml
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -27,10 +29,22 @@ func ParseFile(filename string) (Data, error) {
 	}
 	defer file.Close()
 
+	return Parse(file)
+}
+
+func ParseString(src string) (Data, error) {
+	return Parse(strings.NewReader(src))
+}
+
+func ParseBytes(src []byte) (Data, error) {
+	return Parse(bytes.NewReader(src))
+}
+
+func Parse(reader io.Reader) (Data, error) {
 	data := NewData()
 	currentSection := ""
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
@@ -184,16 +198,16 @@ func parseInlineTable(text string) (Table, error) {
 	return table, nil
 }
 
-func parseArray(text string) ([]Value, error) {
+func parseArray(text string) (Array, error) {
 	body := strings.TrimSpace(text[1 : len(text)-1])
 	if body == "" {
-		return []Value{}, nil
+		return Array{}, nil
 	}
 	parts, err := splitTopLevel(body, ',')
 	if err != nil {
 		return nil, err
 	}
-	values := make([]Value, 0, len(parts))
+	values := make(Array, 0, len(parts))
 	for _, part := range parts {
 		value, err := parseValue(strings.TrimSpace(part))
 		if err != nil {
