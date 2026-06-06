@@ -9,43 +9,21 @@ import (
 )
 
 func UpdateCommand(args []string) error {
-	manifestPath, err := manifest.Find(".")
+	ctx, err := prepareUpdateScanContext(args)
 	if err != nil {
 		return err
 	}
-	file, err := manifest.Load(manifestPath)
-	if err != nil {
-		return err
-	}
-	if len(file.Dependencies) == 0 {
+	if len(ctx.file.Dependencies) == 0 {
 		printInfo("No dependencies to update")
 		return nil
 	}
 
-	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ember", "modules")
+	cachePath := filepath.Join(ctx.projectRoot, ".ember", "modules")
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
 		return err
 	}
 
-	lockfile, err := manifest.LoadLockfile(projectRoot)
-	if err != nil {
-		return err
-	}
-
-	filter := map[string]bool{}
-	if len(args) > 0 {
-		for _, arg := range args {
-			filter[arg] = true
-		}
-	}
-
-	devConfig := file.Dev
-	if devConfig.MockRemote && devConfig.MockPath != "" {
-		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
-	}
-
-	plans, checked, err := collectUpdatePlans(file, lockfile, &devConfig, filter)
+	plans, checked, err := collectUpdatePlans(ctx.file, ctx.lockfile, &ctx.devConfig, ctx.filter)
 	if err != nil {
 		return err
 	}
@@ -56,25 +34,25 @@ func UpdateCommand(args []string) error {
 		constraints := map[string][]string{
 			plan.RepoPath: []string{">" + plan.CurrentVersion, "<=" + plan.TargetVersion},
 		}
-		if err := installPackageRecursive(cachePath, plan.RepoPath, "latest", &devConfig, lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
+		if err := installPackageRecursive(cachePath, plan.RepoPath, "latest", &ctx.devConfig, ctx.lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
 			printError(fmt.Sprintf("Failed to update %s: %v", plan.RepoPath, err))
 			continue
 		}
-		if dep, ok := file.Dependencies[plan.Alias]; ok {
+		if dep, ok := ctx.file.Dependencies[plan.Alias]; ok {
 			dep.Version = plan.TargetVersion
-			file.Dependencies[plan.Alias] = dep
+			ctx.file.Dependencies[plan.Alias] = dep
 		}
 		updated++
 	}
 	if updated > 0 {
-		pruneUnusedDependencies(lockfile, cachePath)
+		pruneUnusedDependencies(ctx.lockfile, cachePath)
 	}
 
-	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
+	if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
 		return err
 	}
 	if updated > 0 {
-		if err := manifest.Save(manifestPath, file); err != nil {
+		if err := manifest.Save(ctx.manifestPath, ctx.file); err != nil {
 			return err
 		}
 	}

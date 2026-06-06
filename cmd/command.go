@@ -11,29 +11,43 @@ import (
 	"strings"
 
 	"compiler/colors"
-	"compiler/pkg/manifest"
-	"compiler/pkg/abi"
 	"compiler/internal/backend"
 	compiler "compiler/internal/driver"
+	"compiler/pkg/abi"
+	"compiler/pkg/manifest"
 )
 
 var errAlreadyReported = errors.New("diagnostics already reported")
 
+type commandCommonFlags struct {
+	logFormat *string
+	m32       *bool
+}
+
+func addCommandCommonFlags(fs *flag.FlagSet) commandCommonFlags {
+	return commandCommonFlags{
+		logFormat: fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
+		m32:       fs.Bool("m32", false, "target 32-bit ABI"),
+	}
+}
+
+func applyCommandCommonFlags(flags commandCommonFlags) error {
+	if err := colors.SetLogFormatString(*flags.logFormat); err != nil {
+		return err
+	}
+	if *flags.m32 {
+		return abi.SetSizeBits(abi.Bits32)
+	}
+	return abi.SetSizeBits(0)
+}
+
 func parseCommandArgs(name string, args []string) ([]string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	logFormat := fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
-	m32 := fs.Bool("m32", false, "target 32-bit ABI")
+	common := addCommandCommonFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if err := colors.SetLogFormatString(*logFormat); err != nil {
-		return nil, err
-	}
-	if *m32 {
-		if err := abi.SetSizeBits(abi.Bits32); err != nil {
-			return nil, err
-		}
-	} else if err := abi.SetSizeBits(0); err != nil {
+	if err := applyCommandCommonFlags(common); err != nil {
 		return nil, err
 	}
 	return fs.Args(), nil
@@ -46,7 +60,7 @@ func parseCommandBackend(command string) (string, backend.BACKEND_TYPE, error) {
 	}
 	base, suffix, hasSuffix := strings.Cut(command, ":")
 	switch base {
-	case "build", "run", "test":
+	case "build", "run":
 		if !hasSuffix || strings.TrimSpace(suffix) == "" {
 			return base, backend.LLVM, nil
 		}
@@ -123,8 +137,7 @@ func buildCommand(args []string, target backend.BACKEND_TYPE) error {
 
 func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	logFormat := fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
-	m32 := fs.Bool("m32", false, "target 32-bit ABI")
+	common := addCommandCommonFlags(fs)
 	outputPath := fs.String("o", "", "compile and link to executable")
 	keepGen := fs.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
 	fs.BoolVar(keepGen, "k", false, "alias for -keep-gen")
@@ -132,14 +145,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	if err := fs.Parse(args); err != nil {
 		return buildFlags{}, nil, err
 	}
-	if err := colors.SetLogFormatString(*logFormat); err != nil {
-		return buildFlags{}, nil, err
-	}
-	if *m32 {
-		if err := abi.SetSizeBits(abi.Bits32); err != nil {
-			return buildFlags{}, nil, err
-		}
-	} else if err := abi.SetSizeBits(0); err != nil {
+	if err := applyCommandCommonFlags(common); err != nil {
 		return buildFlags{}, nil, err
 	}
 	return buildFlags{
@@ -223,7 +229,6 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 
 type buildTarget struct {
 	EntryPath           string
-	ManifestPath        string
 	SelectedByDiscovery bool
 	DefaultOutputPath   string
 }
@@ -309,7 +314,6 @@ func resolveManifestBuildTarget(commandName, startPath string) (buildTarget, err
 	}
 	return buildTarget{
 		EntryPath:           entryPath,
-		ManifestPath:        manifestPath,
 		SelectedByDiscovery: true,
 		DefaultOutputPath:   outputPath,
 	}, nil

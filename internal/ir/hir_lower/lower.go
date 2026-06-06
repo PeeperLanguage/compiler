@@ -41,29 +41,14 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 			if fn.Body == nil {
 				fnType, _ := symbolType(sym)
 				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-				params := make([]ir.Param, 0, len(fn.Params))
-				for i, param := range fn.Params {
-					name := ""
-					if param.Name != nil {
-						name = param.Name.Name
-					}
-					paramType := typeinfo.TypeFromSyntax(param.Type)
-					if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
-						paramType = resolvedFnType.Params[i]
-					}
-					params = append(params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
-				}
-				returnType := typeinfo.TypeFromSyntax(fn.ReturnType)
-				if resolvedFnType != nil && resolvedFnType.Return != nil {
-					returnType = resolvedFnType.Return
-				}
+				params, returnType := lowerExternSignature(fn.Params, fn.ReturnType, resolvedFnType)
 				out.Externs = append(out.Externs, hir.Extern{
 					Name:       sym.Name,
 					Params:     params,
-					ReturnType: loweredTypeText(returnType),
+					ReturnType: returnType,
 				})
 			} else {
-				hirFn := lowerASTFunction(ctx, module, sym, fn)
+				hirFn := lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
 				if hirFn != nil {
 					out.Funcs = append(out.Funcs, hirFn)
 				}
@@ -92,26 +77,11 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 		if method.Body == nil {
 			fnType, _ := symbolType(sym)
 			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-			params := make([]ir.Param, 0, len(method.Params))
-			for i, param := range method.Params {
-				name := ""
-				if param.Name != nil {
-					name = param.Name.Name
-				}
-				paramType := typeinfo.TypeFromSyntax(param.Type)
-				if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
-					paramType = resolvedFnType.Params[i]
-				}
-				params = append(params, ir.Param{Name: name, Type: loweredTypeText(paramType)})
-			}
-			returnType := typeinfo.TypeFromSyntax(method.ReturnType)
-			if resolvedFnType != nil && resolvedFnType.Return != nil {
-				returnType = resolvedFnType.Return
-			}
+			params, returnType := lowerExternSignature(method.Params, method.ReturnType, resolvedFnType)
 			out.Externs = append(out.Externs, hir.Extern{
 				Name:       methodFunctionName(targetText, method.Name.Name),
 				Params:     params,
-				ReturnType: loweredTypeText(returnType),
+				ReturnType: returnType,
 			})
 			continue
 		}
@@ -122,8 +92,25 @@ func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hi
 	}
 }
 
-func lowerASTFunction(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl) *hir.Function {
-	return lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
+func lowerExternSignature(params []ast.Param, fallbackReturnType ast.TypeExpr, resolvedFnType *typeinfo.FuncType) ([]ir.Param, string) {
+	loweredParams := make([]ir.Param, 0, len(params))
+	for i, param := range params {
+		name := ""
+		if param.Name != nil {
+			name = param.Name.Name
+		}
+		paramType := typeinfo.TypeFromSyntax(param.Type)
+		if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
+			paramType = resolvedFnType.Params[i]
+		}
+		loweredParams = append(loweredParams, ir.Param{Name: name, Type: loweredTypeText(paramType)})
+	}
+
+	returnType := typeinfo.TypeFromSyntax(fallbackReturnType)
+	if resolvedFnType != nil && resolvedFnType.Return != nil {
+		returnType = resolvedFnType.Return
+	}
+	return loweredParams, loweredTypeText(returnType)
 }
 
 func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
@@ -346,10 +333,8 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 
 	// Fetch canonical type from the typechecker side-table when available.
 	resolvedTypeStr := ""
-	if module != nil && module.Semantics != nil {
-		if t, ok := module.Semantics.ExprTypes[expr.ID()]; ok && t != nil {
-			resolvedTypeStr = loweredTypeText(t)
-		}
+	if t := exprResolvedType(module, expr); t != nil {
+		resolvedTypeStr = loweredTypeText(t)
 	}
 	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
 		return ifaceExpr
@@ -378,7 +363,11 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		}
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" || t == "<unknown>" {
-			t = symTypeText(sym)
+			if symType, ok := symbolType(sym); ok {
+				t = loweredTypeText(symType)
+			} else {
+				t = "<unknown>"
+			}
 		}
 		return &ir.Ident{Name: symbolName(sym), Type: t}
 
@@ -386,7 +375,11 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
 			t := resolvedTypeStr
 			if t == "" || t == "<invalid>" || t == "<unknown>" {
-				t = symTypeText(sym)
+				if symType, ok := symbolType(sym); ok {
+					t = loweredTypeText(symType)
+				} else {
+					t = "<unknown>"
+				}
 			}
 			return &ir.Ident{Name: symbolName(sym), Type: t}
 		}
@@ -658,10 +651,10 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		if i == 0 {
 			continue
 		}
-		if typeinfo.ContainsAbstractSelf(param.Type) {
+		text, ok := lowerInterfaceSlotValueType(param.Type)
+		if !ok {
 			return ""
 		}
-		text := loweredTypeText(param.Type)
 		if text == "" {
 			return ""
 		}
@@ -669,14 +662,33 @@ func interfaceSlotTypeText(method typeinfo.Method) string {
 		b.WriteString(text)
 	}
 	b.WriteString(")")
-	if typeinfo.ContainsAbstractSelf(method.Return) {
+	text, ok := lowerInterfaceSlotValueType(method.Return)
+	if !ok {
 		return ""
 	}
-	if ret := loweredTypeText(method.Return); ret != "" {
+	if text != "" {
 		b.WriteString(" -> ")
-		b.WriteString(ret)
+		b.WriteString(text)
 	}
 	return b.String()
+}
+
+func lowerInterfaceSlotValueType(t typeinfo.Type) (string, bool) {
+	if t == nil {
+		return "", true
+	}
+	runtimeType := loweredRuntimeType(t)
+	if _, ok := runtimeType.(*typeinfo.InterfaceType); ok {
+		return loweredTypeText(runtimeType), true
+	}
+	if typeinfo.ContainsAbstractSelf(runtimeType) {
+		return "", false
+	}
+	text := loweredTypeText(runtimeType)
+	if text == "" {
+		return "", false
+	}
+	return text, true
 }
 
 func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
@@ -832,13 +844,6 @@ func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
 	}
 	typ, ok := sym.Type.(typeinfo.Type)
 	return typ, ok && typ != nil
-}
-
-func symTypeText(sym *symbols.Symbol) string {
-	if t, ok := symbolType(sym); ok {
-		return loweredTypeText(t)
-	}
-	return "<unknown>"
 }
 
 func loweredTypeText(t typeinfo.Type) string {
