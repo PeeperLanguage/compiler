@@ -51,6 +51,64 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		b.WriteString("\n")
 	}
 
+	// Collect and emit unique static itabs used by InterfaceMake instructions
+	emittedItabs := make(map[string]bool)
+	hasItab := false
+	for _, fn := range mod.Funcs {
+		if fn == nil || fn.Blocks == nil {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			for _, instr := range block.Instrs {
+				assign, ok := instr.(*mir.Assign)
+				if !ok || assign == nil || assign.Value == nil {
+					continue
+				}
+				makeVal, ok := assign.Value.(*mir.InterfaceMake)
+				if !ok || makeVal == nil {
+					continue
+				}
+				itabSym := itabSymbolName(makeVal.Type, makeVal.DataType)
+				if emittedItabs[itabSym] {
+					continue
+				}
+				emittedItabs[itabSym] = true
+				hasItab = true
+
+				b.WriteString(itabSym)
+				b.WriteString(fmt.Sprintf(" = private constant [%d x i8*] [", len(makeVal.Slots)))
+				for i, slot := range makeVal.Slots {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					refName, ok := slot.(*mir.RefName)
+					slotName := ""
+					if ok && refName != nil {
+						slotName = "@" + ir.SanitizeSymbolName(ir.StripSymbolInstance(refName.Name))
+					} else {
+						slotName = "null"
+					}
+					slotType, ok := interfaceSlotLLVMTypeFromInterface(makeVal.Type, i)
+					if !ok {
+						slotType = "i8*"
+					}
+					if slotName == "null" {
+						b.WriteString("i8* null")
+					} else {
+						b.WriteString(fmt.Sprintf("i8* bitcast (%s %s to i8*)", slotType, slotName))
+					}
+				}
+				b.WriteString("], align 8\n")
+			}
+		}
+	}
+	if hasItab {
+		b.WriteString("\n")
+	}
+
 	hasDecl := false
 	for _, fn := range mod.Funcs {
 		if fn == nil || fn.Blocks != nil {
@@ -240,25 +298,7 @@ func llvmTypeName(typeText string) (string, bool) {
 		return target + "*", true
 	}
 	if strings.HasPrefix(typeText, "interface{") && strings.HasSuffix(typeText, "}") {
-		body := strings.TrimSuffix(strings.TrimPrefix(typeText, "interface{"), "}")
-		methods := splitTopLevel(body, ';')
-		parts := []string{"i8*"}
-		for _, method := range methods {
-			method = strings.TrimSpace(method)
-			if method == "" {
-				continue
-			}
-			slotTypeText, ok := interfaceMethodSlotTypeText(method)
-			if !ok {
-				return "", false
-			}
-			slotType, ok := llvmTypeName(slotTypeText)
-			if !ok {
-				return "", false
-			}
-			parts = append(parts, slotType)
-		}
-		return "{ " + strings.Join(parts, ", ") + " }", true
+		return "{ i8*, i8* }", true
 	}
 	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
 		body := strings.TrimSuffix(strings.TrimPrefix(typeText, "struct{"), "}")
@@ -467,6 +507,12 @@ func usesInterfaceBoxing(mod *mir.Module) bool {
 	}
 	return false
 }
+
+func itabSymbolName(interfaceType, dataType string) string {
+	raw := fmt.Sprintf("__itab__%s__%s", interfaceType, dataType)
+	return "@" + ir.SanitizeSymbolName(raw)
+}
+
 
 func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (string, bool) {
 	interfaceTypeText = strings.TrimSpace(interfaceTypeText)
@@ -962,36 +1008,44 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, valueType, value))
 			dataPtr = cast
 		}
-		current := "zeroinitializer"
-		next := b.nextReg()
-		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", next, llvmType, current, dataPtr))
-		current = next
-		for i, slot := range e.Slots {
-			value := emitRef(b, slot)
-			slotType := b.types.llvmType(mirRefType(slot))
-			next = b.nextReg()
-			b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, slotType, value, i+1))
-			current = next
+		itabPtr := "null"
+		if len(e.Slots) > 0 {
+			itabSym := itabSymbolName(e.Type, e.DataType)
+			itabCast := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabCast, len(e.Slots), itabSym))
+			itabPtr = itabCast
 		}
-		return current
+		current := "zeroinitializer"
+		reg1 := b.nextReg()
+		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataPtr))
+		reg2 := b.nextReg()
+		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 1", reg2, llvmType, reg1, itabPtr))
+		return reg2
 	case *mir.InterfaceCall:
 		base := emitRef(b, e.Base)
 		baseType := b.types.llvmType(mirRefType(e.Base))
 		data := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, baseType, base))
-		slotTypeText, ok := interfaceSlotLLVMTypeFromInterface(mirRefType(e.Base), e.Slot)
+		itab := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", itab, baseType, base))
+		slotType, ok := interfaceSlotLLVMTypeFromInterface(mirRefType(e.Base), e.Slot)
 		if !ok {
 			return "0"
 		}
+		vtable := b.nextReg()
+		b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", vtable, itab))
+		fnPtrPtr := b.nextReg()
+		b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", fnPtrPtr, vtable, e.Slot))
+		fnI8 := b.nextReg()
+		b.line(fmt.Sprintf("%s = load i8*, i8** %s", fnI8, fnPtrPtr))
 		fn := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", fn, baseType, base, e.Slot+1))
+		b.line(fmt.Sprintf("%s = bitcast i8* %s to %s", fn, fnI8, slotType))
 		out := b.nextReg()
 		args := []string{"i8* " + data}
 		for _, arg := range e.Args {
 			args = append(args, b.types.llvmType(mirRefType(arg))+" "+emitRef(b, arg))
 		}
 		b.line(fmt.Sprintf("%s = call %s %s(%s)", out, b.types.llvmType(e.Type), fn, strings.Join(args, ", ")))
-		_ = slotTypeText
 		return out
 	default:
 		return "0"

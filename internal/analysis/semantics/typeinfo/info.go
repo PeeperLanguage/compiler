@@ -129,8 +129,8 @@ func Underlying(t Type) Type {
 		defined, ok := t.(*DefinedType)
 		if !ok || defined == nil || defined.Underlying == nil {
 			return t
-	}
-	t = defined.Underlying
+		}
+		t = defined.Underlying
 	}
 }
 
@@ -354,65 +354,15 @@ func SameType(left, right Type) bool {
 		r, ok := right.(*NamedType)
 		return ok && r != nil && l.Name == r.Name
 	case *RawPtrType:
-		r, ok := right.(*RawPtrType)
-		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
+		return checkPointerCompatibility(l, right) == Compatible
 	case *FuncType:
-		r, ok := right.(*FuncType)
-		if !ok || r == nil || l == nil {
-			return false
-		}
-		if len(l.Params) != len(r.Params) {
-			return false
-		}
-		for i := range l.Params {
-			if !SameType(l.Params[i], r.Params[i]) {
-				return false
-			}
-		}
-		return SameType(l.Return, r.Return)
+		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
-		r, ok := right.(*StructType)
-		if !ok || r == nil || l == nil || len(l.Fields) != len(r.Fields) {
-			return false
-		}
-		for i := range l.Fields {
-			if l.Fields[i].Name != r.Fields[i].Name || !SameType(l.Fields[i].Type, r.Fields[i].Type) {
-				return false
-			}
-		}
-		return true
+		return checkStructCompatibility(l, right) == Compatible
 	case *InterfaceType:
-		r, ok := right.(*InterfaceType)
-		if !ok || r == nil || l == nil || len(l.Methods) != len(r.Methods) {
-			return false
-		}
-		for i := range l.Methods {
-			if l.Methods[i].Name != r.Methods[i].Name || len(l.Methods[i].Params) != len(r.Methods[i].Params) {
-				return false
-			}
-			for j := range l.Methods[i].Params {
-				lp := l.Methods[i].Params[j]
-				rp := r.Methods[i].Params[j]
-				if !SameType(lp.Type, rp.Type) {
-					return false
-				}
-			}
-			if !SameType(l.Methods[i].Return, r.Methods[i].Return) {
-				return false
-			}
-		}
-		return true
+		return checkInterfaceCompatibility(l, right) == Compatible
 	case *EnumType:
-		r, ok := right.(*EnumType)
-		if !ok || r == nil || l == nil || len(l.Variants) != len(r.Variants) {
-			return false
-		}
-		for i := range l.Variants {
-			if l.Variants[i] != r.Variants[i] {
-				return false
-			}
-		}
-		return true
+		return checkEnumCompatibility(l, right) == Compatible
 	default:
 		return left == nil && right == nil
 	}
@@ -487,17 +437,105 @@ func CommonNumericType(a, b Type) Type {
 }
 
 func Assignable(dst, src Type) bool {
-	if dst == nil || src == nil {
-		return true
+	return CheckCompatibility(dst, src) == Compatible
+}
+
+func ContainsAbstractSelf(t Type) bool {
+	switch typ := t.(type) {
+	case *NamedType:
+		return typ != nil && typ.Name == "Self"
+	case *RawPtrType:
+		return typ != nil && ContainsAbstractSelf(typ.Target)
+	case *FuncType:
+		if typ == nil {
+			return false
+		}
+		for _, param := range typ.Params {
+			if ContainsAbstractSelf(param) {
+				return true
+			}
+		}
+		return ContainsAbstractSelf(typ.Return)
+	case *StructType:
+		if typ == nil {
+			return false
+		}
+		for _, field := range typ.Fields {
+			if ContainsAbstractSelf(field.Type) {
+				return true
+			}
+		}
+		return false
+	case *InterfaceType:
+		if typ == nil {
+			return false
+		}
+		for _, method := range typ.Methods {
+			for _, param := range method.Params {
+				if ContainsAbstractSelf(param.Type) {
+					return true
+				}
+			}
+			if ContainsAbstractSelf(method.Return) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
 	}
-	if IsInvalid(dst) || IsInvalid(src) || IsUnknown(dst) || IsUnknown(src) {
-		return true
+}
+
+func ReplaceAbstractSelf(t Type, ownerType Type) Type {
+	switch typ := t.(type) {
+	case *NamedType:
+		if typ != nil && typ.Name == "Self" {
+			return ownerType
+		}
+		return t
+	case *RawPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &RawPtrType{Mutable: typ.Mutable, Target: ReplaceAbstractSelf(typ.Target, ownerType)}
+	case *FuncType:
+		if typ == nil {
+			return nil
+		}
+		params := make([]Type, 0, len(typ.Params))
+		for _, param := range typ.Params {
+			params = append(params, ReplaceAbstractSelf(param, ownerType))
+		}
+		return &FuncType{Params: params, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
+	case *StructType:
+		if typ == nil {
+			return nil
+		}
+		fields := make([]Field, 0, len(typ.Fields))
+		for _, field := range typ.Fields {
+			fields = append(fields, Field{Name: field.Name, Type: ReplaceAbstractSelf(field.Type, ownerType)})
+		}
+		return &StructType{Fields: fields}
+	case *InterfaceType:
+		if typ == nil {
+			return nil
+		}
+		methods := make([]Method, 0, len(typ.Methods))
+		for _, method := range typ.Methods {
+			params := make([]Field, 0, len(method.Params))
+			for _, param := range method.Params {
+				params = append(params, Field{Name: param.Name, Type: ReplaceAbstractSelf(param.Type, ownerType)})
+			}
+			methods = append(methods, Method{
+				Name:   method.Name,
+				Params: params,
+				Return: ReplaceAbstractSelf(method.Return, ownerType),
+			})
+		}
+		return &InterfaceType{Methods: methods}
+	default:
+		return t
 	}
-	// Check numeric compatibility for implicit conversions
-	if compat := CheckNumericCompatibility(dst, src); compat == Compatible {
-		return true
-	}
-	return SameType(dst, src)
 }
 
 func IsInvalid(typ Type) bool {

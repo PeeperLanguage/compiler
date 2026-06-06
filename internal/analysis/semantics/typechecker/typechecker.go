@@ -31,6 +31,87 @@ func (c *checker) resolveType(t typeinfo.Type) typeinfo.Type {
 				return c.resolveType(resolved)
 			}
 		}
+		return t
+	}
+	switch typ := t.(type) {
+	case *typeinfo.DefinedType:
+		if typ == nil {
+			return nil
+		}
+		typ.Underlying = c.resolveType(typ.Underlying)
+	case *typeinfo.RawPtrType:
+		if typ == nil {
+			return nil
+		}
+		resolvedTarget := c.resolveType(typ.Target)
+		if resolvedTarget != typ.Target {
+			return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: resolvedTarget}
+		}
+	case *typeinfo.FuncType:
+		if typ == nil {
+			return nil
+		}
+		paramsChanged := false
+		resolvedParams := make([]typeinfo.Type, len(typ.Params))
+		for i, param := range typ.Params {
+			resolvedParams[i] = c.resolveType(param)
+			if resolvedParams[i] != param {
+				paramsChanged = true
+			}
+		}
+		resolvedReturn := c.resolveType(typ.Return)
+		if paramsChanged || resolvedReturn != typ.Return {
+			return &typeinfo.FuncType{Params: resolvedParams, Return: resolvedReturn}
+		}
+	case *typeinfo.StructType:
+		if typ == nil {
+			return nil
+		}
+		fieldsChanged := false
+		resolvedFields := make([]typeinfo.Field, len(typ.Fields))
+		for i, field := range typ.Fields {
+			resolvedFields[i] = typeinfo.Field{
+				Name: field.Name,
+				Type: c.resolveType(field.Type),
+			}
+			if resolvedFields[i].Type != field.Type {
+				fieldsChanged = true
+			}
+		}
+		if fieldsChanged {
+			return &typeinfo.StructType{Fields: resolvedFields}
+		}
+	case *typeinfo.InterfaceType:
+		if typ == nil {
+			return nil
+		}
+		methodsChanged := false
+		resolvedMethods := make([]typeinfo.Method, len(typ.Methods))
+		for i, method := range typ.Methods {
+			paramsChanged := false
+			resolvedParams := make([]typeinfo.Field, len(method.Params))
+			for j, param := range method.Params {
+				resolvedParams[j] = typeinfo.Field{
+					Name: param.Name,
+					Type: c.resolveType(param.Type),
+				}
+				if resolvedParams[j].Type != param.Type {
+					paramsChanged = true
+				}
+			}
+			resolvedReturn := c.resolveType(method.Return)
+			resolvedMethods[i] = typeinfo.Method{
+				Name:   method.Name,
+				Params: resolvedParams,
+				Return: resolvedReturn,
+			}
+			if paramsChanged || resolvedReturn != method.Return {
+				methodsChanged = true
+			}
+		}
+		if methodsChanged {
+			return &typeinfo.InterfaceType{Methods: resolvedMethods}
+		}
 	}
 	return t
 }
@@ -68,11 +149,11 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 				if i == 0 {
 					continue
 				}
-				if containsAbstractSelf(param.Type) || !c.isLowerableType(param.Type) {
+				if typeinfo.ContainsAbstractSelf(param.Type) || !c.isLowerableType(param.Type) {
 					return false
 				}
 			}
-			if containsAbstractSelf(method.Return) || !c.isLowerableType(method.Return) {
+			if typeinfo.ContainsAbstractSelf(method.Return) || !c.isLowerableType(method.Return) {
 				return false
 			}
 		}
@@ -90,27 +171,6 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 		}
 	}
 	return c.isLowerableType(fn.Return)
-}
-
-func containsAbstractSelf(t typeinfo.Type) bool {
-	switch typ := t.(type) {
-	case *typeinfo.NamedType:
-		return typ != nil && typ.Name == "Self"
-	case *typeinfo.RawPtrType:
-		return typ != nil && containsAbstractSelf(typ.Target)
-	case *typeinfo.FuncType:
-		if typ == nil {
-			return false
-		}
-		for _, param := range typ.Params {
-			if containsAbstractSelf(param) {
-				return true
-			}
-		}
-		return containsAbstractSelf(typ.Return)
-	default:
-		return false
-	}
 }
 
 func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
@@ -653,38 +713,12 @@ func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
 func (c *checker) instantiateInterfaceMethod(method typeinfo.Method, ownerType typeinfo.Type) typeinfo.Type {
 	params := make([]typeinfo.Type, 0, len(method.Params))
 	for _, param := range method.Params {
-		t := c.replaceAbstractSelf(param.Type, ownerType)
+		t := typeinfo.ReplaceAbstractSelf(param.Type, ownerType)
 		params = append(params, t)
 	}
 	return &typeinfo.FuncType{
 		Params: params,
-		Return: c.replaceAbstractSelf(method.Return, ownerType),
-	}
-}
-
-func (c *checker) replaceAbstractSelf(t typeinfo.Type, ownerType typeinfo.Type) typeinfo.Type {
-	switch typ := t.(type) {
-	case *typeinfo.NamedType:
-		if typ != nil && typ.Name == "Self" {
-			return ownerType
-		}
-		return t
-	case *typeinfo.RawPtrType:
-		if typ == nil {
-			return nil
-		}
-		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: c.replaceAbstractSelf(typ.Target, ownerType)}
-	case *typeinfo.FuncType:
-		if typ == nil {
-			return nil
-		}
-		params := make([]typeinfo.Type, 0, len(typ.Params))
-		for _, param := range typ.Params {
-			params = append(params, c.replaceAbstractSelf(param, ownerType))
-		}
-		return &typeinfo.FuncType{Params: params, Return: c.replaceAbstractSelf(typ.Return, ownerType)}
-	default:
-		return t
+		Return: typeinfo.ReplaceAbstractSelf(method.Return, ownerType),
 	}
 }
 
@@ -1049,7 +1083,7 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType typeinfo.Type) typeinfo.Type {
 	params := make([]typeinfo.Type, 0, len(method.Params))
 	for i, param := range method.Params {
-		t := c.replaceAbstractSelf(param.Type, receiverType)
+		t := typeinfo.ReplaceAbstractSelf(param.Type, receiverType)
 		if i == 0 {
 			t = receiverType
 		}
@@ -1057,7 +1091,7 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 	}
 	return &typeinfo.FuncType{
 		Params: params,
-		Return: c.replaceAbstractSelf(method.Return, receiverType),
+		Return: typeinfo.ReplaceAbstractSelf(method.Return, receiverType),
 	}
 }
 

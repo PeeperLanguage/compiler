@@ -1,0 +1,54 @@
+interface Summer {
+    sum(Self): i32,
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    fn sum(self: Self) -> i32 {
+        return self.x + self.y;
+    }
+}
+
+struct SummerHolder {
+    s: Summer,
+}
+
+interface SummerConsumer {
+    consume(Self, val: Summer): i32,
+}
+
+struct ConsumerImpl {}
+
+impl ConsumerImpl {
+    fn consume(_self: Self, val: Summer) -> i32 {
+        return val.sum();
+    }
+}
+
+fn main() -> i32 {
+    let p: Point = .{ x = 15, y = 25 };
+    let s: Summer = p;
+
+    // Test escaping interface via Struct Field (StoreField)
+    let mut h: SummerHolder = .{ s = s };
+    h.s = s;
+
+    // Test Interface Call with another Interface as argument
+    let impl_val: ConsumerImpl = .{};
+    let c: SummerConsumer = impl_val;
+    let result: i32 = c.consume(s);
+
+    if result == 40 {
+        let ok: cstr = "nested interface ok\n";
+        write(stdout, ok, 20);
+        return 0;
+    }
+
+    let bad: cstr = "nested interface bad\n";
+    write(stdout, bad, 21);
+    return 1;
+}
