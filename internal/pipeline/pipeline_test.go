@@ -390,6 +390,57 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineUsesStackBoxForNonEscapingInterfaceValue(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Summer {
+	sum(Self): i32,
+}
+
+struct Point {
+	x: i32,
+	y: i32,
+}
+
+impl Point {
+	fn sum(self: Self) -> i32 {
+		return self.x + self.y;
+	}
+}
+
+fn main() -> i32 {
+	let p: Point = .{ x = 10, y = 20 };
+	let s: Summer = p;
+	return s.sum();
+}`
+
+	const preludePath = "_builtin_library/global.em"
+	const entryPath = "entry.em"
+
+	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag.AddSourceContent(preludePath, preludeSrc)
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := context.New(".", ".em", diag)
+
+	entry := &context.Module{
+		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+		ImportPath: strings.TrimSuffix(entryPath, ".em"),
+		FilePath:   entryPath,
+		Origin:     context.ModuleOriginLocal,
+		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
+		Imports:    make(map[string]context.ResolvedImport),
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if strings.Contains(entry.LLVMIR, "@malloc") {
+		t.Fatalf("expected non-escaping local interface value to avoid malloc, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}
+
 func TestPipelineLowersNestedFieldAssignment(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Inner {
@@ -461,4 +512,3 @@ fn main() -> i32 {
 		t.Fatalf("expected ErrInvalidAssignment error, got:\n%s", diag.EmitAllToString())
 	}
 }
-

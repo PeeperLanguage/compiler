@@ -459,7 +459,7 @@ func usesInterfaceBoxing(mod *mir.Module) bool {
 					continue
 				}
 				makeVal, ok := assign.Value.(*mir.InterfaceMake)
-				if ok && makeVal != nil && makeVal.BoxValue {
+				if ok && makeVal != nil && makeVal.BoxValue && !makeVal.StackBox {
 					return true
 				}
 			}
@@ -636,11 +636,20 @@ func parseFunctionTypeText(typeText string) (string, string, []string, bool) {
 	return fnType, ret, out, true
 }
 
-func emitInterfaceBoxedData(b *llvmBuilder, value mir.ValueRef, dataType string) string {
+func emitInterfaceBoxedData(b *llvmBuilder, value mir.ValueRef, dataType string, stackBox bool) string {
 	if b == nil || value == nil {
 		return "null"
 	}
 	llvmType := b.types.llvmType(dataType)
+	if stackBox {
+		typed := b.nextReg()
+		b.line(fmt.Sprintf("%s = alloca %s", typed, llvmType))
+		val := emitRef(b, value)
+		b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, typed))
+		cast := b.nextReg()
+		b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", cast, llvmType, typed))
+		return cast
+	}
 	sizePtr := b.nextReg()
 	b.line(fmt.Sprintf("%s = getelementptr %s, %s* null, i32 1", sizePtr, llvmType, llvmType))
 	size := b.nextReg()
@@ -945,7 +954,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		llvmType := b.types.llvmType(e.Type)
 		dataPtr := "null"
 		if e.BoxValue {
-			dataPtr = emitInterfaceBoxedData(b, e.Value, e.DataType)
+			dataPtr = emitInterfaceBoxedData(b, e.Value, e.DataType, e.StackBox)
 		} else {
 			value := emitRef(b, e.Value)
 			valueType := b.types.llvmType(mirRefType(e.Value))
