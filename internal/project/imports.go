@@ -114,7 +114,8 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 	}
 	absPath = filepath.Clean(absPath)
 
-	if origin == ModuleOriginLocal {
+	switch origin {
+	case ModuleOriginLocal:
 		if root := ctx.Config.RootDir; root != "" {
 			rel, err := filepath.Rel(root, absPath)
 			if err != nil {
@@ -124,7 +125,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the project root"}
 			}
 		}
-	} else if origin == ModuleOriginStdlib {
+	case ModuleOriginStdlib:
 		if root := ctx.Config.StdlibRoot; root != "" {
 			rel, err := filepath.Rel(root, absPath)
 			if err != nil {
