@@ -21,7 +21,10 @@ import (
 var errAlreadyReported = errors.New("diagnostics already reported")
 
 // tempRunFilePrefix is the prefix for the temporary executable created by 'ember run'.
-const tempRunFilePrefix = "ember-run-"
+const (
+	tempRunFilePrefix = "ember-run-"
+	genArtifactsDir   = "_gen"
+)
 
 // emitAndCheckDiagnostics prints all pending diagnostics and returns errAlreadyReported
 // if any errors are present. Shared by build, run, and check commands.
@@ -138,10 +141,10 @@ func buildCommand(args []string, target backend.BACKEND_TYPE) error {
 	}
 
 	if opts.keepGen {
-		if err := saveIRs(ctx, string(target), "_gen"); err != nil {
+		if err := saveIRs(ctx, string(target), genArtifactsDir); err != nil {
 			return err
 		}
-		colors.GREEN.Fprintln(os.Stdout, "Generated artifacts in _gen")
+		colors.GREEN.Fprintln(os.Stdout, "Generated artifacts in "+genArtifactsDir)
 	}
 
 	outputPath := opts.outputPath

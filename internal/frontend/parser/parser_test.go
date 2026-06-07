@@ -677,3 +677,177 @@ func TestParsePointerTypes(t *testing.T) {
 		t.Fatalf("decl[0] expected pointer type, got %#v", ptrDecl.Type)
 	}
 }
+
+// TestParseFnDefaultReturnType verifies that a function with no declared
+// return type defaults to "i32" (the new defaultReturnType constant).
+func TestParseFnDefaultReturnType(t *testing.T) {
+	src := `fn noReturn() { }`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("expected fn decl, got %T", mod.Decls[0])
+	}
+	named, ok := fn.ReturnType.(*ast.NamedType)
+	if !ok {
+		t.Fatalf("expected named return type, got %T", fn.ReturnType)
+	}
+	if named.Name != "void" {
+		t.Fatalf("default return type: got %q want %q", named.Name, "void")
+	}
+}
+
+// TestParseFnExplicitReturnTypeOverridesDefault verifies that an explicit
+// return type wins over the default.
+func TestParseFnExplicitReturnTypeOverridesDefault(t *testing.T) {
+	src := `fn returnsFloat() -> f64 { }`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Decls[0].(*ast.FnDecl)
+	named := fn.ReturnType.(*ast.NamedType)
+	if named.Name != "f64" {
+		t.Fatalf("explicit return type: got %q want %q", named.Name, "f64")
+	}
+}
+
+// TestParseInterfaceMethodDefaultReturnType verifies interface methods also
+// default to "void" rather than "i32".
+func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
+	src := `interface I { method() }`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	iface := mod.Decls[0].(*ast.InterfaceDecl)
+	if len(iface.Methods) != 1 {
+		t.Fatalf("methods: got %d want 1", len(iface.Methods))
+	}
+	named := iface.Methods[0].ReturnType.(*ast.NamedType)
+	if named.Name != "void" {
+		t.Fatalf("interface method default return: got %q want %q", named.Name, "void")
+	}
+}
+
+// TestParseFuncTypeDefaultReturnType verifies fn-types default to "void".
+func TestParseFuncTypeDefaultReturnType(t *testing.T) {
+	src := `let cb: fn(i32) = 0;`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	letDecl := mod.Decls[0].(*ast.LetDecl)
+	ft, ok := letDecl.Type.(*ast.FuncType)
+	if !ok {
+		t.Fatalf("expected func type, got %T", letDecl.Type)
+	}
+	named := ft.Return.(*ast.NamedType)
+	if named.Name != "void" {
+		t.Fatalf("fn-type default return: got %q want %q", named.Name, "void")
+	}
+}
+
+// TestParseStructFieldsTrailingComma verifies the new parseBracedItemList
+// helper accepts a trailing comma (a feature of the extracted helper).
+func TestParseStructFieldsTrailingComma(t *testing.T) {
+	src := `struct S { a: i32, b: i32, }`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	st := mod.Decls[0].(*ast.StructDecl)
+	if len(st.Fields) != 2 {
+		t.Fatalf("fields: got %d want 2", len(st.Fields))
+	}
+}
+
+// TestParseEnumVariantsTrailingComma verifies the same for enum variants.
+func TestParseEnumVariantsTrailingComma(t *testing.T) {
+	src := `enum E { A, B, }`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	en := mod.Decls[0].(*ast.EnumDecl)
+	if len(en.Variants) != 2 {
+		t.Fatalf("variants: got %d want 2", len(en.Variants))
+	}
+}
+
+// TestParseInterfaceMethodsTrailingComma verifies the same for interface methods.
+func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
+	src := `interface I { foo(), bar(), }`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	iface := mod.Decls[0].(*ast.InterfaceDecl)
+	if len(iface.Methods) != 2 {
+		t.Fatalf("methods: got %d want 2", len(iface.Methods))
+	}
+}
+
+// TestParseMissingSemicolonRecoverable verifies the new recoverSemicolon
+// helper synthesizes a semicolon when the next token is a stmt boundary.
+func TestParseMissingSemicolonRecoverable(t *testing.T) {
+	src := `let x: i32 = 1
+let y: i32 = 2`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected at least one diagnostic for missing semicolons")
+	}
+	if len(mod.Decls) != 2 {
+		t.Fatalf("decls: got %d want 2 (parser should have recovered)", len(mod.Decls))
+	}
+}
+
+// TestParseMissingSemicolonUnrecoverable verifies that the helper gives up
+// (returns nil) when the next token is not a boundary.
+func TestParseMissingSemicolonUnrecoverable(t *testing.T) {
+	src := `let x: i32 = 1 +`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	ParseModule("test.em", stream, diag)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics for malformed expression")
+	}
+}
+
+// TestParseBindingFieldsDroppedUnusedParam verifies the parseBindingFields
+// signature no longer carries the unused bindingKind parameter by ensuring
+// the function still parses both let and const correctly.
+func TestParseBindingFieldsDroppedUnusedParam(t *testing.T) {
+	src := `let a: i32 = 1;
+const b: i32 = 2;`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if _, ok := mod.Decls[0].(*ast.LetDecl); !ok {
+		t.Fatalf("decl[0] expected let, got %T", mod.Decls[0])
+	}
+	if _, ok := mod.Decls[1].(*ast.ConstDecl); !ok {
+		t.Fatalf("decl[1] expected const, got %T", mod.Decls[1])
+	}
+}

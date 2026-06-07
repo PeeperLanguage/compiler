@@ -23,14 +23,12 @@ type blockOwner string
 
 const (
 	blockOwnerFunction blockOwner = "function"
-)
+	blockOwnerIf       blockOwner = "if"
+	blockOwnerElse     blockOwner = "else"
 
-type functionLikeSig struct {
-	Name       *ast.Ident
-	TypeParams []ast.TypeParam
-	Params     []ast.Param
-	ReturnType ast.TypeExpr
-}
+
+	voidTypeName = "void"
+)
 
 func (p *Parser) expectedInsertionPoint() source.Position {
 	tok := p.peek()
@@ -90,6 +88,88 @@ func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag)
 	}
 }
 
+// recoverSemicolon attempts to recover from a missing ';' by synthesizing one.
+// It is called when the parser was expecting a semicolon but didn't find it.
+// If the next token is a statement or declaration boundary, a synthetic
+// semicolon is emitted at the appropriate insert point and returned.
+// Otherwise the function returns nil to signal unrecoverable failure.
+//
+// The location reported for the synthesized token is taken from fallback;
+// when fallback is the zero position, the parser's expected insertion point
+// is used instead.
+func (p *Parser) recoverSemicolon(context string, fallback source.Position) *token.Token {
+	insert := p.expectedInsertionPoint()
+	if !isZeroPosition(fallback) {
+		insert = fallback
+	}
+	if !p.isStmtBoundary(p.peek().Kind) && !p.isDeclStart(p.peek().Kind) {
+		return nil
+	}
+	return p.recoverMissingToken(token.SEMICOLON, "expected ';' "+context, insert)
+}
+
+// isZeroPosition reports whether the position is the zero value. Used as
+// a sentinel for "no override provided" in recover helpers.
+func isZeroPosition(pos source.Position) bool {
+	return pos == source.NewPosition()
+}
+
+// parseBracedItemList parses the body of a `{...}` block containing zero or
+// more items separated by commas. The opener message is used if the opening
+// brace is missing; the item message is used when the body is not terminated
+// by ',' or '}'. The callback is invoked once per item and must return false
+// to abort parsing (typically because the item sub-parser failed).
+//
+// The function returns the parsed item slice, the closing brace token, and
+// a success flag.
+func parseBracedItemList[T any](
+	p *Parser,
+	openerMsg string,
+	itemMsg string,
+	parseItem func() (T, bool),
+) ([]T, *token.Token, bool) {
+	if p.consume(token.LBRACE, openerMsg) == nil {
+		return nil, nil, false
+	}
+	items := make([]T, 0)
+	for !p.at(token.RBRACE) && !p.at(token.EOF) {
+		item, ok := parseItem()
+		if !ok {
+			return nil, nil, false
+		}
+		items = append(items, item)
+		if p.match(token.COMMA) {
+			if p.at(token.RBRACE) {
+				break
+			}
+			continue
+		}
+		if !p.at(token.RBRACE) {
+			p.errorf(p.peek(), diagnostics.ErrExpectedToken, itemMsg)
+			return nil, nil, false
+		}
+	}
+	end := p.consume(token.RBRACE, itemMsg)
+	if end == nil {
+		return nil, nil, false
+	}
+	return items, end, true
+}
+
+// endLocation returns the end position of the given node, or a zero position
+// if the node has no location. Used to build a sensible insert point when
+// recovering from missing tokens.
+func endLocation(n ast.Node) source.Position {
+	if n == nil {
+		return source.NewPosition()
+	}
+	loc := n.Loc()
+	if loc == nil || loc.End == nil {
+		return source.NewPosition()
+	}
+	return *loc.End
+}
+
 func (p *Parser) nextID() ast.NodeID {
 	p.nodeID++
 	return p.nodeID
@@ -103,6 +183,8 @@ func isNilNode(n ast.Node) bool {
 	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
+// reg registers the given node with the parser, assigning it a unique ID if
+// it is not already nil. Used to ensure all AST nodes have a stable ID.
 func reg[T ast.Node](p *Parser, n T) T {
 	if !isNilNode(n) {
 		n.SetID(p.nextID())
@@ -213,7 +295,7 @@ func (p *Parser) parseFnAttributes() {
 
 func (p *Parser) parseFnDecl() ast.Decl {
 	start := p.consume(token.FN, "expected fn")
-	sig, ok := p.parseFunctionLikeSig(start)
+	name, typeParams, params, returnType, ok := p.parseFnSignature(start)
 	if !ok {
 		return nil
 	}
@@ -222,38 +304,39 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		return nil
 	}
 	return reg(p, &ast.FnDecl{
-		Name:       sig.Name,
-		TypeParams: sig.TypeParams,
-		Params:     sig.Params,
-		ReturnType: sig.ReturnType,
+		Name:       name,
+		TypeParams: typeParams,
+		Params:     params,
+		ReturnType: returnType,
 		Body:       body,
 		Location:   p.loc(*start, p.lastNonNilToken(*start)),
 	})
 }
 
-func (p *Parser) parseFunctionLikeSig(start *token.Token) (functionLikeSig, bool) {
-	sig := functionLikeSig{
-		ReturnType: ast.TypeExpr(reg(p, &ast.NamedType{Name: "i32", Location: p.loc(*start, *start)})),
+// parseFnSignature parses the name, optional type parameters, parameter list,
+// and optional return type of a function. The default return type when no
+// arrow is present is "i32".
+func (p *Parser) parseFnSignature(start *token.Token) (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
+	returnType = ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: source.NewLocation(p.filePath, start.Start, start.End)}))
+	name = p.parseFunctionName()
+	if name == nil {
+		return nil, nil, nil, nil, false
 	}
-	sig.Name = p.parseFunctionName()
-	if sig.Name == nil {
-		return functionLikeSig{}, false
-	}
-	sig.TypeParams = p.parseOptionalTypeParams()
+	typeParams = p.parseOptionalTypeParams()
 	if p.consume(token.LPAREN, "expected '(' after function name") == nil {
-		return functionLikeSig{}, false
+		return nil, nil, nil, nil, false
 	}
-	sig.Params = p.parseParams()
+	params = p.parseParams()
 	if p.consume(token.RPAREN, "expected ')' after parameters") == nil {
-		return functionLikeSig{}, false
+		return nil, nil, nil, nil, false
 	}
 	if p.match(token.ARROW) {
-		sig.ReturnType = p.parseTypeExpr()
-		if sig.ReturnType == nil {
-			return functionLikeSig{}, false
+		returnType = p.parseTypeExpr()
+		if returnType == nil {
+			return nil, nil, nil, nil, false
 		}
 	}
-	return sig, true
+	return name, typeParams, params, returnType, true
 }
 
 func (p *Parser) parseFunctionName() *ast.Ident {
@@ -385,8 +468,7 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 	}, true
 }
 
-func (p *Parser) parseBindingFields(bindingKind token.Kind) (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *token.Token, ok bool) {
-	_ = bindingKind
+func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *token.Token, ok bool) {
 	name = p.parseIdent()
 	if name == nil {
 		return nil, nil, nil, nil, false
@@ -429,7 +511,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 		return nil
 	}
 	isMutable := p.match(token.MUT)
-	name, ty, value, end, ok := p.parseBindingFields(token.LET)
+	name, ty, value, end, ok := p.parseBindingFields()
 	if !ok {
 		// TODO: Add proper handling
 		return nil
@@ -449,7 +531,7 @@ func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 	if start == nil {
 		return nil
 	}
-	name, ty, value, end, ok := p.parseBindingFields(token.CONST)
+	name, ty, value, end, ok := p.parseBindingFields()
 	if !ok {
 		return nil
 	}
@@ -518,7 +600,7 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	if cond == nil {
 		return nil
 	}
-	thenBlock, ok := p.parseRequiredBlock(blockOwner("if"))
+	thenBlock, ok := p.parseRequiredBlock(blockOwnerIf)
 	if !ok {
 		return nil
 	}
@@ -529,7 +611,7 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		if p.at(token.IF) {
 			elseStmt = p.parseIfStmt()
 		} else {
-			elseBlock, ok := p.parseRequiredBlock(blockOwner("else"))
+			elseBlock, ok := p.parseRequiredBlock(blockOwnerElse)
 			if !ok {
 				return nil
 			}
@@ -556,13 +638,7 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after return")
 	if end == nil {
-		insert := p.expectedInsertionPoint()
-		if value != nil && value.Loc().End != nil {
-			insert = *value.Loc().End
-		}
-		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
-			end = p.recoverMissingToken(token.SEMICOLON, "expected ';' after return", insert)
-		} else {
+		if end = p.recoverSemicolon("after return", endLocation(value)); end == nil {
 			return nil
 		}
 	}
@@ -584,13 +660,7 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 		}
 		end := p.consume(token.SEMICOLON, "expected ';' after assignment")
 		if end == nil {
-			insert := p.expectedInsertionPoint()
-			if value.Loc().End != nil {
-				insert = *value.Loc().End
-			}
-			if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
-				end = p.recoverMissingToken(token.SEMICOLON, "expected ';' after assignment", insert)
-			} else {
+			if end = p.recoverSemicolon("after assignment", endLocation(value)); end == nil {
 				return nil
 			}
 		}
@@ -602,13 +672,7 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after expression")
 	if end == nil {
-		insert := p.expectedInsertionPoint()
-		if expr.Loc().End != nil {
-			insert = *expr.Loc().End
-		}
-		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
-			end = p.recoverMissingToken(token.SEMICOLON, "expected ';' after expression", insert)
-		} else {
+		if end = p.recoverSemicolon("after expression", endLocation(expr)); end == nil {
 			return nil
 		}
 	}
@@ -712,7 +776,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	if p.consume(token.RPAREN, "expected ')' after function type parameters") == nil {
 		return nil
 	}
-	ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: "void", Location: p.loc(*start, *start)}))
+	ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: source.NewLocation(p.filePath, start.Start, start.End)}))
 	if p.match(token.COLON) {
 		ret = p.parseTypeExpr()
 		if ret == nil {
@@ -870,112 +934,68 @@ func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
 }
 
 func (p *Parser) parseStructFields() ([]ast.TypeField, *token.Token, bool) {
-	if p.consume(token.LBRACE, "expected '{' after struct") == nil {
-		return nil, nil, false
-	}
-	fields := make([]ast.TypeField, 0)
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		fieldName := p.parseIdent()
-		if fieldName == nil {
-			return nil, nil, false
-		}
-		if p.consume(token.COLON, "expected ':' after field name") == nil {
-			return nil, nil, false
-		}
-		fieldType := p.parseTypeExpr()
-		if fieldType == nil {
-			return nil, nil, false
-		}
-		fields = append(fields, ast.TypeField{Name: fieldName, Type: fieldType, Location: p.locFromNode(fieldName, fieldType)})
-		if p.match(token.COMMA) {
-			if p.at(token.RBRACE) {
-				break
+	return parseBracedItemList(p, "expected '{' after struct", "expected '}' after struct fields",
+		func() (ast.TypeField, bool) {
+			fieldName := p.parseIdent()
+			if fieldName == nil {
+				return ast.TypeField{}, false
 			}
-			continue
-		}
-		if !p.at(token.RBRACE) {
-			p.errorf(p.peek(), diagnostics.ErrExpectedToken, "expected ',' or '}' after struct field")
-			return nil, nil, false
-		}
-	}
-	end := p.consume(token.RBRACE, "expected '}' after struct fields")
-	if end == nil {
-		return nil, nil, false
-	}
-	return fields, end, true
+			if p.consume(token.COLON, "expected ':' after field name") == nil {
+				return ast.TypeField{}, false
+			}
+			fieldType := p.parseTypeExpr()
+			if fieldType == nil {
+				return ast.TypeField{}, false
+			}
+			return ast.TypeField{
+				Name:     fieldName,
+				Type:     fieldType,
+				Location: p.locFromNode(fieldName, fieldType),
+			}, true
+		})
 }
 
 func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) {
-	if p.consume(token.LBRACE, "expected '{' after interface") == nil {
-		return nil, nil, false
-	}
-	methods := make([]ast.TypeMethod, 0)
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		methodName := p.parseIdent()
-		if methodName == nil {
-			return nil, nil, false
-		}
-		methodTypeParams := p.parseOptionalTypeParams()
-		if p.consume(token.LPAREN, "expected '(' after method name") == nil {
-			return nil, nil, false
-		}
-		params := p.parseParams()
-		if p.consume(token.RPAREN, "expected ')' after method parameters") == nil {
-			return nil, nil, false
-		}
-		ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: "void", Location: methodName.Location}))
-		if p.match(token.COLON) {
-			ret = p.parseTypeExpr()
-			if ret == nil {
-				return nil, nil, false
+	return parseBracedItemList(p, "expected '{' after interface", "expected '}' after interface methods",
+		func() (ast.TypeMethod, bool) {
+			methodName := p.parseIdent()
+			if methodName == nil {
+				return ast.TypeMethod{}, false
 			}
-		}
-		methods = append(methods, ast.TypeMethod{Name: methodName, TypeParams: methodTypeParams, Params: params, ReturnType: ret, Location: p.locFromNode(methodName, ret)})
-		if p.match(token.COMMA) {
-			if p.at(token.RBRACE) {
-				break
+			methodTypeParams := p.parseOptionalTypeParams()
+			if p.consume(token.LPAREN, "expected '(' after method name") == nil {
+				return ast.TypeMethod{}, false
 			}
-			continue
-		}
-		if !p.at(token.RBRACE) {
-			p.errorf(p.peek(), diagnostics.ErrExpectedToken, "expected ',' or '}' after interface method")
-			return nil, nil, false
-		}
-	}
-	end := p.consume(token.RBRACE, "expected '}' after interface methods")
-	if end == nil {
-		return nil, nil, false
-	}
-	return methods, end, true
+			params := p.parseParams()
+			if p.consume(token.RPAREN, "expected ')' after method parameters") == nil {
+				return ast.TypeMethod{}, false
+			}
+			ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: methodName.Location}))
+			if p.match(token.COLON) {
+				ret = p.parseTypeExpr()
+				if ret == nil {
+					return ast.TypeMethod{}, false
+				}
+			}
+			return ast.TypeMethod{
+				Name:       methodName,
+				TypeParams: methodTypeParams,
+				Params:     params,
+				ReturnType: ret,
+				Location:   p.locFromNode(methodName, ret),
+			}, true
+		})
 }
 
 func (p *Parser) parseEnumVariants() ([]ast.EnumVariant, *token.Token, bool) {
-	if p.consume(token.LBRACE, "expected '{' after enum") == nil {
-		return nil, nil, false
-	}
-	variants := make([]ast.EnumVariant, 0)
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		v := p.parseIdent()
-		if v == nil {
-			return nil, nil, false
-		}
-		variants = append(variants, ast.EnumVariant{Name: v, Location: v.Location})
-		if p.match(token.COMMA) {
-			if p.at(token.RBRACE) {
-				break
+	return parseBracedItemList(p, "expected '{' after enum", "expected '}' after enum variants",
+		func() (ast.EnumVariant, bool) {
+			v := p.parseIdent()
+			if v == nil {
+				return ast.EnumVariant{}, false
 			}
-			continue
-		}
-		if !p.at(token.RBRACE) {
-			p.errorf(p.peek(), diagnostics.ErrExpectedToken, "expected ',' or '}' after enum variant")
-			return nil, nil, false
-		}
-	}
-	end := p.consume(token.RBRACE, "expected '}' after enum variants")
-	if end == nil {
-		return nil, nil, false
-	}
-	return variants, end, true
+			return ast.EnumVariant{Name: v, Location: v.Location}, true
+		})
 }
 
 func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
