@@ -1,10 +1,10 @@
 package hir_fold
 
 import (
-	"compiler/pkg/diagnostics"
-	"compiler/pkg/source"
+	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/source"
 	"maps"
 )
 

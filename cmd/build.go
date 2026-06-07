@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compiler/pkg/manifest"
-	"compiler/pkg/diagnostics"
 	"compiler/internal/backend"
-	"compiler/internal/context"
+	"compiler/internal/diagnostics"
 	compiler "compiler/internal/driver"
+	"compiler/internal/project"
+	"compiler/pkg/manifest"
 )
 
-// Compile one entry file with a fresh compiler context.
-func compileEntry(path, backendName string, debugBuild bool) (*context.CompilerContext, *context.Module) {
+// Compile one entry file with a fresh compiler project.
+func compileEntry(path, backendName string, debugBuild bool) (*project.CompilerContext, *project.Module) {
 	cfg := buildCompilerConfig(path, backendName, debugBuild)
 	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag(path))
 	entry := compiler.ParseFile(ctx, path)
@@ -23,7 +23,7 @@ func compileEntry(path, backendName string, debugBuild bool) (*context.CompilerC
 }
 
 // Convert CLI inputs to compiler config.
-func buildCompilerConfig(path, backendName string, debugBuild bool) context.Config {
+func buildCompilerConfig(path, backendName string, debugBuild bool) project.Config {
 	rootDir := path
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
@@ -31,7 +31,7 @@ func buildCompilerConfig(path, backendName string, debugBuild bool) context.Conf
 	if manifestPath, err := manifest.Find(rootDir); err == nil {
 		rootDir = filepath.Dir(manifestPath)
 	}
-	return context.Config{
+	return project.Config{
 		RootDir:       rootDir,
 		Extension:     compiler.SOURCE_EXT,
 		TargetBackend: backendName,
@@ -40,7 +40,7 @@ func buildCompilerConfig(path, backendName string, debugBuild bool) context.Conf
 }
 
 // Build final output after successful compilation.
-func buildExecutable(ctx *context.CompilerContext, entry *context.Module, outputPath string, target backend.BACKEND_TYPE) error {
+func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string, target backend.BACKEND_TYPE) error {
 	if ctx != nil && ctx.Diagnostics != nil && ctx.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
 	}

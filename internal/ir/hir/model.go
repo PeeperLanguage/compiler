@@ -3,8 +3,8 @@ package hir
 import (
 	"strings"
 
-	"compiler/pkg/source"
 	"compiler/internal/ir"
+	"compiler/internal/source"
 )
 
 type Module struct {

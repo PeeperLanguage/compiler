@@ -5,14 +5,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"compiler/internal/context"
+	"compiler/internal/project"
 )
 
 // Auto-loaded Ember prelude file.
 const GlobalPreludeFile = "global.em"
 
 // Register global prelude source when it exists.
-func Load(ctx *context.CompilerContext) error {
+func Load(ctx *project.CompilerContext) error {
 	if ctx == nil {
 		return fmt.Errorf("nil compiler context")
 	}
@@ -24,11 +24,11 @@ func Load(ctx *context.CompilerContext) error {
 		}
 		return fmt.Errorf("load prelude %s: %w", preludePath, err)
 	}
-	module := &context.Module{
+	module := &project.Module{
 		Key:        "core:prelude/global",
 		ImportPath: "prelude/global",
 		FilePath:   preludePath,
-		Origin:     context.ModuleOriginStdlib,
+		Origin:     project.ModuleOriginStdlib,
 		Content:    string(content),
 	}
 	ctx.AddModule(module)

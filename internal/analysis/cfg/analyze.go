@@ -1,31 +1,31 @@
 package cfg
 
 import (
-	"compiler/pkg/diagnostics"
-	"compiler/pkg/source"
+	"compiler/internal/diagnostics"
 	"compiler/internal/ir/hir"
+	"compiler/internal/source"
 )
 
 // AnalyzeModule builds CFG from lowered HIR and emits flow diagnostics:
 // - missing return paths for non-void functions
 // - unreachable code warnings
-func AnalyzeModule(hirMod *hir.Module, diag *diagnostics.DiagnosticBag) *Module {
+func AnalyzeModule(hirMod *hir.Module, diag *diagnostics.DiagnosticBag) []*Graph {
 	if hirMod == nil {
 		return nil
 	}
-	mod := &Module{Functions: make([]*Function, 0, len(hirMod.Funcs))}
+	graphs := make([]*Graph, 0, len(hirMod.Funcs))
 	for _, fn := range hirMod.Funcs {
-		mod.Functions = append(mod.Functions, buildFunction(fn))
+		graphs = append(graphs, buildCFGFunction(fn))
 	}
-	for _, fn := range mod.Functions {
+	for _, fn := range graphs {
 		if fn != nil {
 			analyzeFunction(fn, diag)
 		}
 	}
-	return mod
+	return graphs
 }
 
-func analyzeFunction(fn *Function, diag *diagnostics.DiagnosticBag) {
+func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
@@ -64,7 +64,7 @@ func markReachable(block *Block, seen map[int]bool) {
 	}
 }
 
-func rebuildPredecessors(fn *Function) {
+func rebuildPredecessors(fn *Graph) {
 	if fn == nil {
 		return
 	}
@@ -119,7 +119,7 @@ func firstLoc(stmt hir.Stmt) *source.Location {
 	}
 }
 
-func reportMissingReturnCFG(fn *Function, diag *diagnostics.DiagnosticBag) {
+func reportMissingReturnCFG(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || diag == nil || fn.Source == nil {
 		return
 	}
@@ -203,7 +203,7 @@ func posLess(a, b *source.Position) bool {
 	return a.Column < b.Column
 }
 
-func findMissingReturnBranches(fn *Function) []*Block {
+func findMissingReturnBranches(fn *Graph) []*Block {
 	if fn == nil || fn.Entry == nil || fn.Exit == nil {
 		return nil
 	}

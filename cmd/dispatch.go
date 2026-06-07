@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"compiler/cmd/cli"
-	"compiler/pkg/colors"
 	compiler "compiler/internal/driver"
 	"compiler/internal/lsp"
+	"compiler/pkg/colors"
 )
 
 func exitOnCommandError(err error) {
@@ -115,7 +115,11 @@ func printUsageAndExit(code int) {
 	}
 
 	if len(os.Args) > 1 {
-		_ = flag.CommandLine.Parse(os.Args[1:])
+		err := flag.CommandLine.Parse(os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	if *showVersion {
 		fmt.Printf("v%s\n", compiler.COMPILER_VERSION)

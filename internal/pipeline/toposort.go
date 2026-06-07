@@ -1,6 +1,6 @@
 package pipeline
 
-import "compiler/internal/context"
+import "compiler/internal/project"
 
 type visitState int
 
@@ -10,11 +10,11 @@ const (
 	visitDone
 )
 
-func topoSort(mods []*context.Module, deps func(string) []string) ([]*context.Module, [][]string) {
+func topoSort(mods []*project.Module, deps func(string) []string) ([]*project.Module, [][]string) {
 	if len(mods) == 0 {
 		return nil, nil
 	}
-	index := make(map[string]*context.Module, len(mods))
+	index := make(map[string]*project.Module, len(mods))
 	for _, mod := range mods {
 		if mod == nil || mod.Key == "" {
 			continue
@@ -22,7 +22,7 @@ func topoSort(mods []*context.Module, deps func(string) []string) ([]*context.Mo
 		index[mod.Key] = mod
 	}
 	state := make(map[string]visitState, len(index))
-	order := make([]*context.Module, 0, len(index))
+	order := make([]*project.Module, 0, len(index))
 	stack := make([]string, 0, len(index))
 	cycles := make([][]string, 0)
 

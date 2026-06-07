@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"compiler/internal/analysis/semantics/symbols"
-	"compiler/internal/analysis/semantics/table"
-	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 )
 
 type Module struct {

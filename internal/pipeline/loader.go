@@ -7,28 +7,28 @@ import (
 	"slices"
 	"sync"
 
-	"compiler/pkg/diagnostics"
-	"compiler/internal/context"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/project"
 )
 
 type moduleLoader struct {
-	ctx       *context.CompilerContext
+	ctx       *project.CompilerContext
 	mu        sync.Mutex
 	scheduled map[string]struct{}
 	wg        sync.WaitGroup
 }
 
-func newModuleLoader(ctx *context.CompilerContext) *moduleLoader {
+func newModuleLoader(ctx *project.CompilerContext) *moduleLoader {
 	return &moduleLoader{
 		ctx:       ctx,
 		scheduled: make(map[string]struct{}),
 	}
 }
 
-func (l *moduleLoader) Load(entry *context.Module) error {
+func (l *moduleLoader) Load(entry *project.Module) error {
 	if l == nil || l.ctx == nil {
 		return errors.New("nil module loader")
 	}
@@ -40,7 +40,7 @@ func (l *moduleLoader) Load(entry *context.Module) error {
 	return nil
 }
 
-func (l *moduleLoader) enqueue(module *context.Module) {
+func (l *moduleLoader) enqueue(module *project.Module) {
 	if l == nil || l.ctx == nil || module == nil {
 		return
 	}
@@ -67,12 +67,12 @@ func (l *moduleLoader) enqueue(module *context.Module) {
 	go l.loadModule(module)
 }
 
-func (l *moduleLoader) ensureModuleIdentity(module *context.Module) {
+func (l *moduleLoader) ensureModuleIdentity(module *project.Module) {
 	if module == nil || l == nil || l.ctx == nil {
 		return
 	}
 	if module.Key == "" && module.FilePath != "" {
-		module.Key = context.ModuleKeyFor(module.Origin, module.FilePath)
+		module.Key = project.ModuleKeyFor(module.Origin, module.FilePath)
 	}
 	if module.ImportPath == "" && module.FilePath != "" {
 		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.FilePath); err == nil {
@@ -81,7 +81,7 @@ func (l *moduleLoader) ensureModuleIdentity(module *context.Module) {
 	}
 }
 
-func (l *moduleLoader) loadModule(module *context.Module) {
+func (l *moduleLoader) loadModule(module *project.Module) {
 	defer l.wg.Done()
 	if module == nil || l == nil {
 		return
@@ -107,12 +107,12 @@ func (l *moduleLoader) loadModule(module *context.Module) {
 	l.resolveImports(module)
 }
 
-func (l *moduleLoader) resolveImports(module *context.Module) {
+func (l *moduleLoader) resolveImports(module *project.Module) {
 	if module == nil || module.AST == nil {
 		return
 	}
 	if module.Imports == nil {
-		module.Imports = make(map[string]context.ResolvedImport)
+		module.Imports = make(map[string]project.ResolvedImport)
 	}
 	for _, imp := range module.AST.Imports {
 		rawPath, ok := importPathFromDecl(imp)
@@ -144,7 +144,7 @@ func (l *moduleLoader) resolveImports(module *context.Module) {
 			l.enqueue(existing)
 			continue
 		}
-		l.enqueue(&context.Module{
+		l.enqueue(&project.Module{
 			Key:        resolved.Key,
 			ImportPath: resolved.ImportPath,
 			FilePath:   resolved.FilePath,
@@ -162,7 +162,7 @@ func (l *moduleLoader) addImportResolveError(imp *ast.ImportDecl, err error) {
 	if err != nil {
 		msg = err.Error()
 	}
-	if impErr, ok := err.(*context.ImportError); ok {
+	if impErr, ok := err.(*project.ImportError); ok {
 		code = impErr.Code
 		if impErr.Msg != "" {
 			msg = impErr.Msg
@@ -184,7 +184,7 @@ func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
 	l.ctx.Diagnostics.Add(d)
 }
 
-func (l *moduleLoader) addModuleError(module *context.Module, code, msg string) {
+func (l *moduleLoader) addModuleError(module *project.Module, code, msg string) {
 	if l == nil || l.ctx == nil || l.ctx.Diagnostics == nil {
 		return
 	}

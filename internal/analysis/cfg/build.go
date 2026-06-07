@@ -5,15 +5,20 @@ import (
 )
 
 type builder struct {
-	fn     *Function
+	fn     *Graph
 	nextID int
 }
 
-func buildFunction(sourceFn *hir.Function) *Function {
+// buildCFGFunction lowers one HIR function body into a control-flow graph.
+//
+// The CFG normalizes structured HIR into basic blocks with explicit
+// terminators so later analyses can reason about reachability,
+// fallthrough, and return paths without reinterpreting syntax trees.
+func buildCFGFunction(sourceFn *hir.Function) *Graph {
 	if sourceFn == nil {
 		return nil
 	}
-	fn := &Function{
+	fn := &Graph{
 		Name:       sourceFn.Name,
 		ReturnType: sourceFn.ReturnType,
 		Source:     sourceFn,
@@ -24,11 +29,13 @@ func buildFunction(sourceFn *hir.Function) *Function {
 	fn.Exit = b.newBlock()
 	next := b.buildBlock(sourceFn.Body, fn.Entry)
 	if next != nil && next.Terminator == nil {
-		next.Terminator = &JumpTerm{Target: fn.Exit}
+		next.Terminator = &Jump{Target: fn.Exit}
 	}
 	return fn
 }
 
+// newBlock allocates a basic block, assigns it a stable ID, and registers it
+// on the owning CFG function in creation order.
 func (b *builder) newBlock() *Block {
 	block := &Block{ID: b.nextID, Stmts: make([]hir.Stmt, 0)}
 	b.nextID++
@@ -36,6 +43,8 @@ func (b *builder) newBlock() *Block {
 	return block
 }
 
+// buildBlock appends each HIR statement into the current CFG region until a
+// statement terminates control flow and returns nil.
 func (b *builder) buildBlock(block *hir.Block, current *Block) *Block {
 	if b == nil || block == nil {
 		return current
@@ -50,6 +59,11 @@ func (b *builder) buildBlock(block *hir.Block, current *Block) *Block {
 	return next
 }
 
+// buildStmt maps one HIR statement onto CFG blocks.
+//
+// Most statements stay in the current block. Control-flow statements create
+// explicit terminators and successor blocks so the resulting graph has no
+// implicit branch or fallthrough edges.
 func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 	switch s := stmt.(type) {
 	case nil:
@@ -67,10 +81,14 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		return current
 	case *hir.Return:
 		current.Stmts = append(current.Stmts, s)
-		current.Terminator = &ReturnTerm{Value: s.Value}
+		current.Terminator = &Return{Value: s.Value}
 		current.Returns = true
 		return nil
 	case *hir.If:
+		// Structured HIR "if" becomes three CFG regions:
+		//   1. then branch
+		//   2. else branch
+		//   3. join block for paths that continue after the conditional
 		thenBlock := b.newBlock()
 		elseBlock := b.newBlock()
 		join := b.newBlock()
@@ -78,21 +96,25 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		thenBlock.BranchKind = "if"
 		elseBlock.Location = s.Location
 		elseBlock.BranchKind = "else"
-		current.Terminator = &BranchTerm{Cond: s.Cond, TrueTarget: thenBlock, FalseTarget: elseBlock}
+		current.Terminator = &Branch{Cond: s.Cond, TrueTarget: thenBlock, FalseTarget: elseBlock}
 
 		thenEnd := b.buildBlock(s.Then, thenBlock)
 		thenFallsThrough := thenEnd != nil
 		if thenEnd != nil && thenEnd.Terminator == nil {
-			thenEnd.Terminator = &JumpTerm{Target: join}
+			// A branch with no explicit terminator continues into the join block.
+			thenEnd.Terminator = &Jump{Target: join}
 		}
 
 		elseEnd := b.buildStmt(s.Else, elseBlock)
 		elseFallsThrough := elseEnd != nil
 		if elseEnd != nil && elseEnd.Terminator == nil {
-			elseEnd.Terminator = &JumpTerm{Target: join}
+			// Same rule for the else branch: make fallthrough explicit.
+			elseEnd.Terminator = &Jump{Target: join}
 		}
 
 		if !thenFallsThrough && !elseFallsThrough {
+			// Both branches terminate, so there is no live successor block after
+			// this conditional.
 			return nil
 		}
 		return join

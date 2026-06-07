@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/pkg/diagnostics"
+	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
-	"compiler/internal/tokens"
 )
 
 type llvmEmitter struct {
@@ -321,8 +321,7 @@ func llvmTypeName(typeText string) (string, bool) {
 		}
 		return "{ " + strings.Join(parts, ", ") + " }", true
 	}
-	if signed, bits, ok := tokens.ParseIntegerBuiltin(typeText); ok {
-		_ = signed
+	if _, bits, ok := token.ParseIntegerBuiltin(typeText); ok {
 		return fmt.Sprintf("i%d", bits), true
 	}
 	switch typeText {
@@ -1250,7 +1249,7 @@ func integerComparePred(op string, typeText string) string {
 }
 
 func isUnsignedMIRType(typeText string) bool {
-	signed, _, ok := tokens.ParseIntegerBuiltin(typeText)
+	signed, _, ok := token.ParseIntegerBuiltin(typeText)
 	return ok && !signed
 }
 
