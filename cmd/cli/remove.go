@@ -28,7 +28,7 @@ func RemoveCommand(args []string) error {
 	}
 
 	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ember", "modules")
+	cachePath := manifest.CacheModulesDir(projectRoot)
 	lockfile, err := manifest.LoadLockfile(projectRoot)
 	if err != nil {
 		return err

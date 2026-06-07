@@ -12,12 +12,40 @@ import (
 
 	"compiler/internal/backend"
 	compiler "compiler/internal/driver"
+	"compiler/internal/project"
 	"compiler/internal/target"
 	"compiler/pkg/colors"
 	"compiler/pkg/manifest"
 )
 
 var errAlreadyReported = errors.New("diagnostics already reported")
+
+// tempRunFilePrefix is the prefix for the temporary executable created by 'ember run'.
+const tempRunFilePrefix = "ember-run-"
+
+// emitAndCheckDiagnostics prints all pending diagnostics and returns errAlreadyReported
+// if any errors are present. Shared by build, run, and check commands.
+func emitAndCheckDiagnostics(ctx *project.CompilerContext) error {
+	if ctx == nil || ctx.Diagnostics == nil {
+		return fmt.Errorf("compiler diagnostics unavailable")
+	}
+	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
+		ctx.Diagnostics.EmitAll()
+	}
+	if ctx.Diagnostics.HasErrors() {
+		return errAlreadyReported
+	}
+	return nil
+}
+
+// parseBackendType returns backend.LLVM when target is empty.
+// build and run default to LLVM when no explicit backend is specified.
+func parseBackendType(t backend.BACKEND_TYPE) backend.BACKEND_TYPE {
+	if t == "" {
+		return backend.LLVM
+	}
+	return t
+}
 
 type commandCommonFlags struct {
 	logFormat *string
@@ -103,18 +131,10 @@ func buildCommand(args []string, target backend.BACKEND_TYPE) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 
-	if target == "" {
-		target = backend.LLVM
-	}
+	target = parseBackendType(target)
 	ctx, entry := compileEntry(resolvedPath, string(target), opts.debugBuild)
-	if ctx == nil || ctx.Diagnostics == nil {
-		return fmt.Errorf("compiler diagnostics unavailable")
-	}
-	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
-		ctx.Diagnostics.EmitAll()
-	}
-	if ctx.Diagnostics.HasErrors() {
-		return errAlreadyReported
+	if err := emitAndCheckDiagnostics(ctx); err != nil {
+		return err
 	}
 
 	if opts.keepGen {
@@ -175,23 +195,15 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 
-	if target == "" {
-		target = backend.LLVM
-	}
+	target = parseBackendType(target)
 	ctx, entry := compileEntry(resolvedPath, string(target), false)
-	if ctx == nil || ctx.Diagnostics == nil {
-		return fmt.Errorf("compiler diagnostics unavailable")
-	}
-	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
-		ctx.Diagnostics.EmitAll()
-	}
-	if ctx.Diagnostics.HasErrors() {
-		return errAlreadyReported
+	if err := emitAndCheckDiagnostics(ctx); err != nil {
+		return err
 	}
 
-	tempPattern := "ember-run-*"
+	tempPattern := tempRunFilePrefix + "*"
 	if runtime.GOOS == "windows" {
-		tempPattern = "ember-run-*.exe"
+		tempPattern = tempRunFilePrefix + "*.exe"
 	}
 	tempFile, err := os.CreateTemp("", tempPattern)
 	if err != nil {
@@ -259,9 +271,6 @@ func resolveBuildTarget(commandName, path string) (resolvedPath string, info bui
 			return "", buildTarget{}, err
 		}
 		return targetInfo.EntryPath, targetInfo, nil
-	}
-	if !strings.EqualFold(filepath.Ext(resolvedPath), compiler.SOURCE_EXT) {
-		return "", buildTarget{}, fmt.Errorf("unsupported source file extension %q (expected %s)", filepath.Ext(resolvedPath), compiler.SOURCE_EXT)
 	}
 	return resolvedPath, buildTarget{
 		EntryPath:         resolvedPath,
@@ -336,14 +345,8 @@ func checkCommand(args []string) error {
 	}
 
 	ctx, _ := compileEntry(path, string(backend.LLVM), false)
-	if ctx == nil || ctx.Diagnostics == nil {
-		return fmt.Errorf("compiler diagnostics unavailable")
-	}
-	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
-		ctx.Diagnostics.EmitAll()
-	}
-	if ctx.Diagnostics.HasErrors() {
-		return errAlreadyReported
+	if err := emitAndCheckDiagnostics(ctx); err != nil {
+		return err
 	}
 	return nil
 }

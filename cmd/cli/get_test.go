@@ -11,8 +11,9 @@ import (
 func TestInstallAllDependenciesRestoresMissingLockedCache(t *testing.T) {
 	root := t.TempDir()
 	mockRoot := filepath.Join(root, "mock")
-	versionedModule := filepath.Join(root, ".ember", "modules", "github.com", "itsfuad", "ember_test_lib@v0.0.1")
-	staleModule := filepath.Join(root, ".ember", "modules", "github.com", "itsfuad", "ember_test_lib@latest")
+	cachePath := manifest.CacheModulesDir(root)
+	versionedModule := filepath.Join(cachePath, "github.com", "itsfuad", "ember_test_lib@v0.0.1")
+	staleModule := filepath.Join(cachePath, "github.com", "itsfuad", "ember_test_lib@latest")
 
 	mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `[package]
 name = "app"

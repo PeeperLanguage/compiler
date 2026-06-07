@@ -1,6 +1,8 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+)
 
 func printHeader(text string) {
 	fmt.Printf("\n== %s ==\n", text)
