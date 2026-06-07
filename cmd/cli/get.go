@@ -34,7 +34,7 @@ func GetCommand(args []string) error {
 }
 
 func prepareInstallContext() (*installContext, error) {
-	manifestPath, err := manifest.Find(".")
+	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return nil, err
 	}

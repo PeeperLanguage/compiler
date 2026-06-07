@@ -28,7 +28,7 @@ func buildCompilerConfig(path, backendName string, debugBuild bool) project.Conf
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
 	}
-	if manifestPath, err := manifest.Find(rootDir); err == nil {
+	if manifestPath, err := manifest.FindManifestPath(rootDir); err == nil {
 		rootDir = filepath.Dir(manifestPath)
 	}
 	return project.Config{

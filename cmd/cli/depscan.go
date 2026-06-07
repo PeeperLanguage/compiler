@@ -34,7 +34,7 @@ type updateScanContext struct {
 }
 
 func prepareUpdateScanContext(args []string) (*updateScanContext, error) {
-	manifestPath, err := manifest.Find(".")
+	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return nil, err
 	}

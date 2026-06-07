@@ -12,12 +12,15 @@ import (
 	"compiler/pkg/toml"
 )
 
-const FileName = "ember"
+const (
+	FileName           = "ember"
+	cacheDirName       = ".ember"
+	cacheModulesSubdir = "modules"
+	reservedStdAlias   = "core"
+)
 
-// CacheModulesDir returns the canonical cache path for a project root.
-// All CLI commands must use this instead of constructing the path inline.
 func CacheModulesDir(projectRoot string) string {
-	return filepath.Join(projectRoot, ".ember", "modules")
+	return filepath.Join(projectRoot, cacheDirName, cacheModulesSubdir)
 }
 
 type DependencyType int
@@ -58,7 +61,7 @@ var (
 	constraintPattern = regexp.MustCompile(`^[A-Za-z0-9._+\-~^<>=*]+$`)
 )
 
-func Find(startDir string) (string, error) {
+func FindManifestPath(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		return "", err
@@ -91,10 +94,7 @@ func Load(path string) (*File, error) {
 	}
 	name, ok, err := toml.LookupKey[string](pkg, "name")
 	if err != nil {
-		return nil, fmt.Errorf("package.name: %w", err)
-	}
-	if !ok || name == "" {
-		return nil, fmt.Errorf("package.name is required")
+		return nil, err
 	}
 	if !identifierPattern.MatchString(name) {
 		return nil, fmt.Errorf("invalid package.name %q", name)
@@ -124,7 +124,7 @@ func Load(path string) (*File, error) {
 			if !identifierPattern.MatchString(alias) {
 				return nil, fmt.Errorf("invalid dependency alias %q", alias)
 			}
-			if alias == "std" {
+			if alias == reservedStdAlias {
 				return nil, fmt.Errorf("dependency alias %q is reserved", alias)
 			}
 			dep, err := ParseDependency(raw)
@@ -166,24 +166,23 @@ func ParseDependency(raw toml.Value) (Dependency, error) {
 
 func parseDependencyString(value string) (Dependency, error) {
 	value = strings.TrimSpace(value)
-	switch {
-	case strings.HasPrefix(value, "../") || strings.HasPrefix(value, "./"):
+	if strings.HasPrefix(value, "../") || strings.HasPrefix(value, "./") {
 		return Dependency{Type: DependencyNeighbor, Path: filepath.Clean(value)}, nil
-	case isRemoteRepo(value):
-		dep := Dependency{Type: DependencyRemote, Path: value, Version: "latest"}
-		if idx := strings.LastIndex(value, "@"); idx >= 0 {
-			before := strings.TrimSpace(value[:idx])
-			after := strings.TrimSpace(value[idx+1:])
-			if before == "" || after == "" {
-				return Dependency{}, fmt.Errorf("missing version after '@'")
-			}
-			dep.Path = before
-			dep.Version = after
-		}
-		return dep, nil
-	default:
+	}
+	if !isRemoteRepo(value) {
 		return Dependency{}, fmt.Errorf("dependency must be a relative neighbor path or remote repo path")
 	}
+	dep := Dependency{Type: DependencyRemote, Path: value, Version: "latest"}
+	if idx := strings.LastIndex(value, "@"); idx >= 0 {
+		before := strings.TrimSpace(value[:idx])
+		after := strings.TrimSpace(value[idx+1:])
+		if before == "" || after == "" {
+			return Dependency{}, fmt.Errorf("missing version after '@'")
+		}
+		dep.Path = before
+		dep.Version = after
+	}
+	return dep, nil
 }
 
 func parseDependencyTable(table toml.Table) (Dependency, error) {
@@ -222,10 +221,10 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 		if repo == "" {
 			repo = path
 		}
-		switch {
-		case repo == "":
+		if repo == "" {
 			return Dependency{}, fmt.Errorf("remote dependency requires repo")
-		case !isRemoteRepo(repo):
+		}
+		if !isRemoteRepo(repo) {
 			return Dependency{}, fmt.Errorf("remote dependency repo %q is invalid", repo)
 		}
 		if version == "" {
@@ -247,43 +246,51 @@ func Save(path string, file *File) error {
 	}
 
 	var builder strings.Builder
-	builder.WriteString("[package]\n")
-	fmt.Fprintf(&builder, "name = %s\n", strconv.Quote(file.Package.Name))
-	if file.Package.Version != "" {
-		fmt.Fprintf(&builder, "version = %s\n", strconv.Quote(file.Package.Version))
-	}
-	if file.Package.CompilerVersion != "" {
-		fmt.Fprintf(&builder, "compiler = %s\n", strconv.Quote(file.Package.CompilerVersion))
-	}
-	if file.Package.Entry != "" {
-		fmt.Fprintf(&builder, "entry = %s\n", strconv.Quote(file.Package.Entry))
-	}
-
+	renderPackageSection(&builder, &file.Package)
 	if len(file.Dependencies) > 0 {
-		builder.WriteString("\n[dependencies]\n")
-		aliases := make([]string, 0, len(file.Dependencies))
-		for alias := range file.Dependencies {
-			aliases = append(aliases, alias)
-		}
-		sort.Strings(aliases)
-		for _, alias := range aliases {
-			dep := file.Dependencies[alias]
-			fmt.Fprintf(&builder, "%s = %s\n", alias, strconv.Quote(renderDependency(dep)))
-		}
+		renderDependenciesSection(&builder, file.Dependencies)
 	}
-
 	if file.Dev.MockRemote || file.Dev.MockPath != "" {
-		builder.WriteString("\n[dev]\n")
-		fmt.Fprintf(&builder, "mock_remote = %t\n", file.Dev.MockRemote)
-		if file.Dev.MockPath != "" {
-			fmt.Fprintf(&builder, "mock_path = %s\n", strconv.Quote(file.Dev.MockPath))
-		}
+		renderDevSection(&builder, &file.Dev)
 	}
-
 	if !strings.HasSuffix(builder.String(), "\n") {
 		builder.WriteString("\n")
 	}
 	return os.WriteFile(path, []byte(builder.String()), 0o644)
+}
+
+func renderPackageSection(builder *strings.Builder, pkg *PackageInfo) {
+	builder.WriteString("[package]\n")
+	fmt.Fprintf(builder, "name = %s\n", strconv.Quote(pkg.Name))
+	if pkg.Version != "" {
+		fmt.Fprintf(builder, "version = %s\n", strconv.Quote(pkg.Version))
+	}
+	if pkg.CompilerVersion != "" {
+		fmt.Fprintf(builder, "compiler = %s\n", strconv.Quote(pkg.CompilerVersion))
+	}
+	if pkg.Entry != "" {
+		fmt.Fprintf(builder, "entry = %s\n", strconv.Quote(pkg.Entry))
+	}
+}
+
+func renderDependenciesSection(builder *strings.Builder, deps map[string]Dependency) {
+	builder.WriteString("\n[dependencies]\n")
+	aliases := make([]string, 0, len(deps))
+	for alias := range deps {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		fmt.Fprintf(builder, "%s = %s\n", alias, strconv.Quote(renderDependency(deps[alias])))
+	}
+}
+
+func renderDevSection(builder *strings.Builder, dev *DevConfig) {
+	builder.WriteString("\n[dev]\n")
+	fmt.Fprintf(builder, "mock_remote = %t\n", dev.MockRemote)
+	if dev.MockPath != "" {
+		fmt.Fprintf(builder, "mock_path = %s\n", strconv.Quote(dev.MockPath))
+	}
 }
 
 func RemoveDependency(path, alias string) error {
