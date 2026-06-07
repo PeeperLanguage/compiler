@@ -1,4 +1,5 @@
 package registry
+
 import (
 	"fmt"
 	"os"

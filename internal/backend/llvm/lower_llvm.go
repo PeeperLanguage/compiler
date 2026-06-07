@@ -41,10 +41,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 		isStr := entry.Type == "cstr" || (strings.HasPrefix(entry.Type, "[") && strings.HasSuffix(entry.Type, " x i8]"))
 		if isStr {
 			escaped := llvmEscapeString(entry.Value)
-			b.WriteString(fmt.Sprintf("%s = private unnamed_addr constant %s c\"%s\", align %d\n", entry.Name, entry.Type, escaped, entry.Align))
+			fmt.Fprintf(&b, "%s = private unnamed_addr constant %s c\"%s\", align %d\n", entry.Name, entry.Type, escaped, entry.Align)
 		} else {
 			llvmType := emitter.llvmType(entry.Type)
-			b.WriteString(fmt.Sprintf("%s = constant %s %s, align %d\n", entry.Name, llvmType, entry.Value, entry.Align))
+			fmt.Fprintf(&b, "%s = constant %s %s, align %d\n", entry.Name, llvmType, entry.Value, entry.Align)
 		}
 	}
 	if len(mod.StaticData) > 0 {
@@ -79,7 +79,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 				hasItab = true
 
 				b.WriteString(itabSym)
-				b.WriteString(fmt.Sprintf(" = private constant [%d x i8*] [", len(makeVal.Slots)))
+				fmt.Fprintf(&b, " = private constant [%d x i8*] [", len(makeVal.Slots))
 				for i, slot := range makeVal.Slots {
 					if i > 0 {
 						b.WriteString(", ")
@@ -98,7 +98,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 					if slotName == "null" {
 						b.WriteString("i8* null")
 					} else {
-						b.WriteString(fmt.Sprintf("i8* bitcast (%s %s to i8*)", slotType, slotName))
+						fmt.Fprintf(&b, "i8* bitcast (%s %s to i8*)", slotType, slotName)
 					}
 				}
 				b.WriteString("], align 8\n")
@@ -197,7 +197,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 			if block == nil {
 				continue
 			}
-			b.WriteString(fmt.Sprintf("b%d:\n", block.ID))
+			fmt.Fprintf(&b, "b%d:\n", block.ID)
 			for _, instr := range block.Instrs {
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					val := emitValueExpr(lb, assign.Value)
@@ -246,7 +246,7 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 		b.WriteString("\n; external globals\n")
 		for name, typeText := range emitter.externalGlobals {
 			llvmType := emitter.llvmType(typeText)
-			b.WriteString(fmt.Sprintf("%s = external global %s\n", name, llvmType))
+			fmt.Fprintf(b, "%s = external global %s\n", name, llvmType)
 		}
 	}
 	return b.String()
@@ -1268,7 +1268,7 @@ func llvmEscapeString(s string) string {
 		} else if b >= 32 && b <= 126 {
 			sb.WriteByte(b)
 		} else {
-			sb.WriteString(fmt.Sprintf("\\%02X", b))
+			fmt.Fprintf(&sb, "\\%02X", b)
 		}
 	}
 	sb.WriteString(`\00`)

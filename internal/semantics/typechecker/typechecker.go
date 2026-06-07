@@ -862,7 +862,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 
 func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
 	if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
-		return c.typeSelectorCall(scope, selector, node, expected)
+		return c.typeSelectorCall(scope, selector, node)
 	}
 	calleeType := c.typeExpr(scope, node.Callee, expected)
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
@@ -897,7 +897,7 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	return &typeinfo.InvalidType{}
 }
 
-func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
 	baseType := c.typeExpr(scope, selector.Expr, nil)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}

@@ -786,7 +786,7 @@ func (m *Module) Text() string {
 	b.WriteString(m.Name)
 	b.WriteString("\n")
 	for _, data := range m.StaticData {
-		b.WriteString(fmt.Sprintf("%s = constant %s %q, align %d\n", data.Name, data.Type, data.Value, data.Align))
+		fmt.Fprintf(&b, "%s = constant %s %q, align %d\n", data.Name, data.Type, data.Value, data.Align)
 	}
 	if len(m.StaticData) > 0 {
 		b.WriteString("\n")
@@ -810,7 +810,7 @@ func (m *Module) Text() string {
 					continue
 				}
 				b.WriteString("  b")
-				b.WriteString(fmt.Sprintf("%d", block.ID))
+				fmt.Fprintf(&b, "%d", block.ID)
 				b.WriteString(":\n")
 				for _, instr := range block.Instrs {
 					b.WriteString("    ")
