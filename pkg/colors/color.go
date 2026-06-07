@@ -1,7 +1,5 @@
 package colors
 
-//import "fmt"
-
 // ANSI color escape codes
 type COLOR string
 
@@ -18,7 +16,6 @@ const (
 	CYAN   COLOR = "\033[36m"
 	WHITE  COLOR = "\033[37m"
 	GREY   COLOR = "\033[90m"
-	GRAY   COLOR = "\033[90m"
 
 	// Bright Colors
 	BRIGHT_RED    COLOR = "\033[91m"
