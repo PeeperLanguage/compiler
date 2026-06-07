@@ -13,7 +13,7 @@ func RemoveCommand(args []string) error {
 	}
 	packageName := args[0]
 
-	manifestPath, err := manifest.Find(".")
+	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return err
 	}

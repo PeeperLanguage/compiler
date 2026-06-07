@@ -9,7 +9,7 @@ import (
 )
 
 func OrphansCommand(args []string) error {
-	manifestPath, err := manifest.Find(".")
+	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return err
 	}

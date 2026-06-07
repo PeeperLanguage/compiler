@@ -52,14 +52,14 @@ These decisions are already part of the language design and should not drift acc
 
 - `::` is used for imported names, enum variants, and static members
 - imports are package-root-relative, never relative
-- `std/...` is reserved for the standard library
+- `core` is reserved for the standard library
 - dependency imports are resolved by manifest alias on the first path segment
 - a non-aliased import binds the last path segment in source, for example `import "util/build"` binds `build`
 - Zig-style literals are used: `.{ ... }`
 - methods are declared outside types using attached-method syntax with receivers.
 - `defer` and `panic` are part of the core control-flow model
 - builtin functions are declared in `_builtin_library/global.em`
-- stdlib source modules are declared in `_builtin_library/std/*.em`
+- stdlib source modules are declared in `_builtin_library/core/*.em`
 - external declarations use `#[extern(\"...\")]` and may omit a body. extern can contain the external linking function name as parameter or keep empty for default behavior.
 - error unions are explicit value-level control flow and are not exceptions
 

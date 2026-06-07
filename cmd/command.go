@@ -279,7 +279,7 @@ func resolveBuildTarget(commandName, path string) (resolvedPath string, info bui
 }
 
 func resolveManifestBuildTarget(commandName, startPath string) (buildTarget, error) {
-	manifestPath, err := manifest.Find(startPath)
+	manifestPath, err := manifest.FindManifestPath(startPath)
 	if err != nil {
 		return buildTarget{}, fmt.Errorf("%s requires an input file or %s with package.entry", commandName, manifest.FileName)
 	}

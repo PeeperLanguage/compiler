@@ -70,7 +70,7 @@ func TestLoadRejectsReservedDependencyAlias(t *testing.T) {
 name = "app"
 
 [dependencies]
-std = "./deps/std"
+core = "./deps/core"
 `
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
