@@ -12,7 +12,11 @@ import (
 	"time"
 )
 
-const LockfileName = "ember.lock"
+const (
+	LockfileName       = "ember.lock"
+	lockfileVersion   = "1.0"
+	lockfileCurrentVer = lockfileVersion
+)
 
 type LockfileEntry struct {
 	Version      string   `json:"version"`
@@ -35,7 +39,7 @@ type Lockfile struct {
 
 func NewLockfile() *Lockfile {
 	return &Lockfile{
-		Version:      "2.0",
+		Version:      lockfileCurrentVer,
 		DirectDeps:   map[string]string{},
 		Packages:     map[string]LockfileEntry{},
 		Dependencies: map[string]LockfileEntry{},
@@ -52,41 +56,69 @@ func LoadLockfile(projectRoot string) (*Lockfile, error) {
 		}
 		return nil, fmt.Errorf("read lockfile: %w", err)
 	}
-	type rawLockfile struct {
+
+	raw, err := parseRawLockfile(data)
+	if err != nil {
+		return nil, err
+	}
+
+	lock := &Lockfile{
+		Version:      raw.Version,
+		DirectDeps:   raw.DirectDeps,
+		Packages:     normalizePackageEntries(raw.Packages),
+		Dependencies: normalizePackageEntries(raw.Dependencies),
+		GeneratedAt:  raw.GeneratedAt,
+	}
+	normalizeLockfileShape(lock)
+	return lock, nil
+}
+
+// parseRawLockfile reads a lockfile from disk and decodes its raw structure.
+func parseRawLockfile(data []byte) (*rawLockfile, error) {
+	type rawLockfileJSON struct {
 		Version      string                   `json:"version"`
 		DirectDeps   json.RawMessage          `json:"direct_deps"`
 		Packages     map[string]LockfileEntry `json:"packages"`
 		Dependencies map[string]LockfileEntry `json:"dependencies"`
 		GeneratedAt  string                   `json:"generated_at,omitempty"`
 	}
-	var raw rawLockfile
+	var raw rawLockfileJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse lockfile: %w", err)
 	}
-
 	directDeps, err := decodeDirectDeps(raw.DirectDeps)
 	if err != nil {
 		return nil, fmt.Errorf("parse lockfile direct_deps: %w", err)
 	}
-
-	lock := &Lockfile{
+	return &rawLockfile{
 		Version:      raw.Version,
 		DirectDeps:   directDeps,
-		Packages:     normalizePackageEntries(raw.Packages),
-		Dependencies: normalizePackageEntries(raw.Dependencies),
+		Packages:     raw.Packages,
+		Dependencies: raw.Dependencies,
 		GeneratedAt:  raw.GeneratedAt,
-	}
-	if lock.Version == "" {
-		lock.Version = "2.0"
+	}, nil
+}
+
+// rawLockfile holds the decoded lockfile data before normalization.
+type rawLockfile struct {
+	Version      string
+	DirectDeps   map[string]string
+	Packages     map[string]LockfileEntry
+	Dependencies map[string]LockfileEntry
+	GeneratedAt  string
+}
+
+// normalizeLockfileShape applies version defaults, map-nil guards,
+// and the Packages/Dependencies sync rules used by both Load and Save.
+func normalizeLockfileShape(lock *Lockfile) {
+	if lock.Version == "" || lock.Version == lockfileVersion {
+		lock.Version = lockfileCurrentVer
 	}
 	if lock.Packages == nil {
 		lock.Packages = map[string]LockfileEntry{}
 	}
 	if lock.Dependencies == nil {
 		lock.Dependencies = map[string]LockfileEntry{}
-	}
-	if lock.Version == "" || lock.Version == "1.0" {
-		lock.Version = "2.0"
 	}
 	if len(lock.Packages) == 0 && len(lock.Dependencies) > 0 {
 		lock.Packages = copyEntries(lock.Dependencies)
@@ -99,55 +131,19 @@ func LoadLockfile(projectRoot string) (*Lockfile, error) {
 	if lock.DirectDeps == nil {
 		lock.DirectDeps = map[string]string{}
 	}
-	return lock, nil
 }
 
 func SaveLockfile(projectRoot string, lock *Lockfile) error {
 	if lock == nil {
 		return fmt.Errorf("nil lockfile")
 	}
-	if lock.DirectDeps == nil {
-		lock.DirectDeps = map[string]string{}
-	}
-	if lock.Packages == nil {
-		lock.Packages = map[string]LockfileEntry{}
-	}
-	if lock.Dependencies == nil {
-		lock.Dependencies = map[string]LockfileEntry{}
-	}
-	if len(lock.Packages) == 0 && len(lock.Dependencies) > 0 {
-		lock.Packages = copyEntries(lock.Dependencies)
-	}
-	if len(lock.Dependencies) == 0 && len(lock.Packages) > 0 {
-		lock.Dependencies = copyEntries(lock.Packages)
-	}
-	reconcileDirectFlags(lock)
+	normalizeLockfileShape(lock)
 	lock.GeneratedAt = time.Now().Format(time.RFC3339)
-
-	pkgKeys := make([]string, 0, len(lock.Packages))
-	for key := range lock.Packages {
-		pkgKeys = append(pkgKeys, key)
-	}
-	sort.Strings(pkgKeys)
-	sortedPackages := make(map[string]LockfileEntry, len(lock.Packages))
-	for _, key := range pkgKeys {
-		sortedPackages[key] = lock.Packages[key]
-	}
-
-	directKeys := make([]string, 0, len(lock.DirectDeps))
-	for key := range lock.DirectDeps {
-		directKeys = append(directKeys, key)
-	}
-	sort.Strings(directKeys)
-	sortedDirect := make(map[string]string, len(lock.DirectDeps))
-	for _, key := range directKeys {
-		sortedDirect[key] = lock.DirectDeps[key]
-	}
 
 	out := &Lockfile{
 		Version:     lock.Version,
-		DirectDeps:  sortedDirect,
-		Packages:    sortedPackages,
+		DirectDeps:  sortStringMap(lock.DirectDeps),
+		Packages:    sortEntriesByKey(lock.Packages),
 		GeneratedAt: lock.GeneratedAt,
 	}
 
@@ -159,16 +155,41 @@ func SaveLockfile(projectRoot string, lock *Lockfile) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// sortEntriesByKey returns a new map whose iteration order is alphabetical by key.
+// Used for deterministic JSON output.
+func sortEntriesByKey(entries map[string]LockfileEntry) map[string]LockfileEntry {
+	keys := sortedKeys(entries)
+	sorted := make(map[string]LockfileEntry, len(entries))
+	for _, key := range keys {
+		sorted[key] = entries[key]
+	}
+	return sorted
+}
+
+// sortStringMap returns a new map whose iteration order is alphabetical by key.
+func sortStringMap(m map[string]string) map[string]string {
+	keys := sortedKeys(m)
+	sorted := make(map[string]string, len(m))
+	for _, key := range keys {
+		sorted[key] = m[key]
+	}
+	return sorted
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (l *Lockfile) SetDependency(key string, entry LockfileEntry) {
 	if l == nil {
 		return
 	}
-	if l.Packages == nil {
-		l.Packages = make(map[string]LockfileEntry)
-	}
-	if l.Dependencies == nil {
-		l.Dependencies = make(map[string]LockfileEntry)
-	}
+	ensureEntryMaps(l)
 	l.Packages[key] = entry
 	l.Dependencies[key] = entry
 }
@@ -194,18 +215,15 @@ func (l *Lockfile) RemoveDependency(key string) {
 			l.RemoveUsedBy(child, key)
 		}
 	}
-	if l.Packages != nil {
-		delete(l.Packages, key)
-	}
-	if l.Dependencies == nil {
-		l.Dependencies = make(map[string]LockfileEntry)
-	}
+	ensureEntryMaps(l)
+	delete(l.Packages, key)
 	delete(l.Dependencies, key)
-	entries := l.Packages
-	if len(entries) == 0 {
-		entries = l.Dependencies
-	}
-	for depKey, depEntry := range entries {
+	l.unlinkKeyFromAllUsedBy(key)
+	l.unlinkKeyFromDirectDeps(key)
+}
+
+func (l *Lockfile) unlinkKeyFromAllUsedBy(key string) {
+	for depKey, depEntry := range l.Packages {
 		depChanged := false
 		depEntry.Dependencies = filterOut(depEntry.Dependencies, key, &depChanged)
 		depEntry.UsedBy = filterOut(depEntry.UsedBy, key, &depChanged)
@@ -213,6 +231,9 @@ func (l *Lockfile) RemoveDependency(key string) {
 			l.SetDependency(depKey, depEntry)
 		}
 	}
+}
+
+func (l *Lockfile) unlinkKeyFromDirectDeps(key string) {
 	if l.DirectDeps == nil {
 		return
 	}
@@ -236,26 +257,27 @@ func (l *Lockfile) RemoveDirectDependency(alias string) {
 	if !found {
 		return
 	}
-	stillDirect := false
+	if l.isStillDirect(packageID) {
+		return
+	}
+	entry.Direct = false
+	l.SetDependency(packageID, entry)
+}
+
+func (l *Lockfile) isStillDirect(packageID string) bool {
 	for _, depID := range l.DirectDeps {
 		if depID == packageID {
-			stillDirect = true
-			break
+			return true
 		}
 	}
-	if !stillDirect {
-		entry.Direct = false
-		l.SetDependency(packageID, entry)
-	}
+	return false
 }
 
 func (l *Lockfile) AddDirectDependency(key string) {
 	if l == nil {
 		return
 	}
-	if l.DirectDeps == nil {
-		l.DirectDeps = make(map[string]string)
-	}
+	ensureDirectDepsMap(l)
 	l.DirectDeps[key] = key
 }
 
@@ -263,9 +285,7 @@ func (l *Lockfile) SetDirectDependency(alias, packageID string) {
 	if l == nil || alias == "" || packageID == "" {
 		return
 	}
-	if l.DirectDeps == nil {
-		l.DirectDeps = make(map[string]string)
-	}
+	ensureDirectDepsMap(l)
 	if previous, ok := l.DirectDeps[alias]; ok && previous != packageID {
 		if entry, found := l.GetDependency(previous); found {
 			entry.Direct = false
@@ -293,24 +313,13 @@ func (l *Lockfile) FindPackageIDsByRepo(repo string) []string {
 	}
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
-	entries := l.Packages
-	if len(entries) == 0 {
-		entries = l.Dependencies
-	}
-	for key, entry := range entries {
-		entryRepo := entry.ResolvedURL
-		if entryRepo == "" {
-			entryRepo = repoFromPackageKey(key)
-		}
-		if entryRepo != repo {
+	for key, entry := range l.Packages {
+		if entryRepoOf(key, entry) != repo {
 			continue
 		}
-		packageID := key
-		if _, _, ok := SplitPackageID(packageID); !ok {
-			if entry.Version == "" {
-				continue
-			}
-			packageID = PackageID(entryRepo, entry.Version)
+		packageID := canonicalPackageID(key, entry)
+		if packageID == "" {
+			continue
 		}
 		if _, ok := seen[packageID]; ok {
 			continue
@@ -354,11 +363,7 @@ func (l *Lockfile) GetUnusedDependencies() []string {
 		return nil
 	}
 	unused := make([]string, 0)
-	entries := l.Dependencies
-	if len(l.Packages) > 0 {
-		entries = l.Packages
-	}
-	for key, entry := range entries {
+	for key, entry := range l.Packages {
 		if !entry.Direct && len(entry.UsedBy) == 0 {
 			unused = append(unused, key)
 		}
@@ -375,22 +380,16 @@ func (l *Lockfile) UpdateDependencyEdges(parentKey string, dependencies []string
 	if !found {
 		return
 	}
+	prev := stringSetFromSlice(parentEntry.Dependencies)
 	next := uniqueStrings(dependencies)
-	prevSet := make(map[string]struct{}, len(parentEntry.Dependencies))
-	for _, dep := range parentEntry.Dependencies {
-		prevSet[dep] = struct{}{}
-	}
-	nextSet := make(map[string]struct{}, len(next))
-	for _, dep := range next {
-		nextSet[dep] = struct{}{}
-	}
-	for dep := range prevSet {
+	nextSet := stringSetFromSlice(next)
+	for dep := range prev {
 		if _, keep := nextSet[dep]; !keep {
 			l.RemoveUsedBy(dep, parentKey)
 		}
 	}
 	for dep := range nextSet {
-		if _, had := prevSet[dep]; !had {
+		if _, had := prev[dep]; !had {
 			l.AddUsedBy(dep, parentKey)
 		}
 	}
@@ -538,19 +537,12 @@ func repoFromPackageKey(key string) string {
 func pickPackageIDForRepo(packages map[string]LockfileEntry, repo string) (string, bool) {
 	best := ""
 	for key, entry := range packages {
-		entryRepo := entry.ResolvedURL
-		if entryRepo == "" {
-			entryRepo = repoFromPackageKey(key)
-		}
-		if entryRepo != repo {
+		if entryRepoOf(key, entry) != repo {
 			continue
 		}
-		packageID := key
-		if _, _, ok := SplitPackageID(packageID); !ok {
-			if entry.Version == "" {
-				continue
-			}
-			packageID = PackageID(entryRepo, entry.Version)
+		packageID := canonicalPackageID(key, entry)
+		if packageID == "" {
+			continue
 		}
 		if packageID > best {
 			best = packageID
@@ -566,12 +558,7 @@ func reconcileDirectFlags(lock *Lockfile) {
 	if lock == nil {
 		return
 	}
-	if lock.Packages == nil {
-		lock.Packages = map[string]LockfileEntry{}
-	}
-	if lock.Dependencies == nil {
-		lock.Dependencies = map[string]LockfileEntry{}
-	}
+	ensureEntryMaps(lock)
 	for key, entry := range lock.Packages {
 		entry.Direct = false
 		lock.Packages[key] = entry
@@ -586,4 +573,50 @@ func reconcileDirectFlags(lock *Lockfile) {
 		lock.Packages[packageID] = entry
 		lock.Dependencies[packageID] = entry
 	}
+}
+
+// ensureEntryMap guarantees that the Packages/Dependencies maps are non-nil.
+func ensureEntryMaps(l *Lockfile) {
+	if l.Packages == nil {
+		l.Packages = make(map[string]LockfileEntry)
+	}
+	if l.Dependencies == nil {
+		l.Dependencies = make(map[string]LockfileEntry)
+	}
+}
+
+// ensureDirectDepsMap guarantees that the DirectDeps map is non-nil.
+func ensureDirectDepsMap(l *Lockfile) {
+	if l.DirectDeps == nil {
+		l.DirectDeps = make(map[string]string)
+	}
+}
+
+// entryRepoOf returns the canonical repo name for a lockfile entry,
+// preferring ResolvedURL and falling back to the parsed package key.
+func entryRepoOf(key string, entry LockfileEntry) string {
+	if entry.ResolvedURL != "" {
+		return entry.ResolvedURL
+	}
+	return repoFromPackageKey(key)
+}
+
+// canonicalPackageID returns a fully-qualified packageID for an entry,
+// or "" if the entry cannot be canonically identified.
+func canonicalPackageID(key string, entry LockfileEntry) string {
+	if _, _, ok := SplitPackageID(key); ok {
+		return key
+	}
+	if entry.Version == "" {
+		return ""
+	}
+	return PackageID(entryRepoOf(key, entry), entry.Version)
+}
+
+func stringSetFromSlice(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		set[v] = struct{}{}
+	}
+	return set
 }

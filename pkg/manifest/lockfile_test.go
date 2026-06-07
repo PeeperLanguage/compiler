@@ -240,3 +240,148 @@ func TestRemoveDependencyDetachesGraphReferences(t *testing.T) {
 		t.Fatalf("expected C used_by to drop B, got %#v", c.UsedBy)
 	}
 }
+
+func TestEntryRepoOfPrefersResolvedURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		entry LockfileEntry
+		want  string
+	}{
+		{
+			name:  "uses ResolvedURL when present",
+			key:   "github.com/acme/json@v1.2.3",
+			entry: LockfileEntry{ResolvedURL: "github.com/acme/json"},
+			want:  "github.com/acme/json",
+		},
+		{
+			name:  "falls back to key parse",
+			key:   "github.com/acme/json@v1.2.3",
+			entry: LockfileEntry{},
+			want:  "github.com/acme/json",
+		},
+		{
+			name:  "unparseable key returns key itself",
+			key:   "rawkey",
+			entry: LockfileEntry{},
+			want:  "rawkey",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := entryRepoOf(tt.key, tt.entry); got != tt.want {
+				t.Errorf("entryRepoOf() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalPackageID(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		entry LockfileEntry
+		want  string
+	}{
+		{
+			name:  "key already canonical",
+			key:   "github.com/acme/json@v1.2.3",
+			entry: LockfileEntry{},
+			want:  "github.com/acme/json@v1.2.3",
+		},
+		{
+			name:  "constructs from version and ResolvedURL",
+			key:   "github.com/acme/json",
+			entry: LockfileEntry{Version: "v1.2.3", ResolvedURL: "github.com/acme/json"},
+			want:  "github.com/acme/json@v1.2.3",
+		},
+		{
+			name:  "returns empty when no version",
+			key:   "github.com/acme/json",
+			entry: LockfileEntry{},
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := canonicalPackageID(tt.key, tt.entry); got != tt.want {
+				t.Errorf("canonicalPackageID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUniqueStrings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{"empty", nil, nil},
+		{"deduplicates and sorts", []string{"c", "a", "b", "a", ""}, []string{"a", "b", "c"}},
+		{"skips empty", []string{"", "", "x"}, []string{"x"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := uniqueStrings(tt.input)
+			if !stringSlicesEqual(got, tt.want) {
+				t.Errorf("uniqueStrings() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterOut(t *testing.T) {
+	changed := false
+	got := filterOut([]string{"a", "b", "c"}, "b", &changed)
+	if !stringSlicesEqual(got, []string{"a", "c"}) {
+		t.Errorf("filterOut() = %v, want [a c]", got)
+	}
+	if !changed {
+		t.Errorf("filterOut() did not flag changed")
+	}
+}
+
+func TestFilterOutNoMatch(t *testing.T) {
+	changed := false
+	got := filterOut([]string{"a", "b"}, "z", &changed)
+	if !stringSlicesEqual(got, []string{"a", "b"}) {
+		t.Errorf("filterOut() = %v, want [a b]", got)
+	}
+	if changed {
+		t.Errorf("filterOut() flagged changed when nothing was removed")
+	}
+}
+
+func TestSortedKeysDeterministicOrder(t *testing.T) {
+	m := map[string]int{"c": 3, "a": 1, "b": 2}
+	got := sortedKeys(m)
+	if !stringSlicesEqual(got, []string{"a", "b", "c"}) {
+		t.Errorf("sortedKeys() = %v, want [a b c]", got)
+	}
+}
+
+func TestStringSetFromSlice(t *testing.T) {
+	set := stringSetFromSlice([]string{"a", "b", "a"})
+	if _, ok := set["a"]; !ok {
+		t.Error("expected a in set")
+	}
+	if _, ok := set["b"]; !ok {
+		t.Error("expected b in set")
+	}
+	if _, ok := set["c"]; ok {
+		t.Error("did not expect c in set")
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
