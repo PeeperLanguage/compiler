@@ -1,10 +1,10 @@
 package compiler
 
 import (
-	"compiler/pkg/diagnostics"
-	"compiler/internal/context"
+	"compiler/internal/diagnostics"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"
+	"compiler/internal/project"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,16 +15,16 @@ const COMPILER_VERSION = "0.1.0"
 const SOURCE_EXT = ".em"
 
 // NewContext configures shared compiler state and loads the prelude.
-func NewContext(cfg context.Config, diag *diagnostics.DiagnosticBag) *context.CompilerContext {
-	ctx := context.NewWithConfig(cfg, diag)
+func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {
+	ctx := project.NewWithConfig(cfg, diag)
 	if err := prelude.Load(ctx); err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
 	}
 	return ctx
 }
 
-// ParseFile loads one entry file and runs the pipeline against the provided context.
-func ParseFile(ctx *context.CompilerContext, path string) *context.Module {
+// ParseFile loads one entry file and runs the pipeline against the provided project.
+func ParseFile(ctx *project.CompilerContext, path string) *project.Module {
 	if ctx == nil {
 		return nil
 	}
@@ -43,15 +43,15 @@ func ParseFile(ctx *context.CompilerContext, path string) *context.Module {
 		diag.Add(diagnostics.NewError("read input file: " + err.Error()))
 		return nil
 	}
-	module := &context.Module{
-		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, absPath),
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, absPath),
 		ImportPath: strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath)),
 		FilePath:   absPath,
 		IsEntry:    true,
-		Origin:     context.ModuleOriginLocal,
+		Origin:     project.ModuleOriginLocal,
 		Content:    string(content),
 	}
-	if importPath, err := ctx.ImportPathForFile(context.ModuleOriginLocal, absPath); err == nil {
+	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	if err := pipeline.New(ctx).Run(module); err != nil {

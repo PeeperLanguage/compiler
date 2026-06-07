@@ -1,33 +1,33 @@
 package pipeline
 
 import (
-	"compiler/pkg/diagnostics"
 	"compiler/internal/analysis/cfg"
-	"compiler/internal/analysis/semantics/collector"
-	"compiler/internal/analysis/semantics/resolver"
-	"compiler/internal/analysis/semantics/typechecker"
-	"compiler/internal/analysis/semantics/usage"
 	"compiler/internal/backend/llvm"
-	"compiler/internal/context"
+	"compiler/internal/diagnostics"
 	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
+	"compiler/internal/project"
+	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/usage"
 	"errors"
 	"strings"
 )
 
-// Ordered phase execution for one compiler context.
+// Ordered phase execution for one compiler project.
 type Pipeline struct {
-	ctx *context.CompilerContext
+	ctx *project.CompilerContext
 }
 
 // Bind a pipeline to shared compiler state.
-func New(ctx *context.CompilerContext) *Pipeline {
+func New(ctx *project.CompilerContext) *Pipeline {
 	return &Pipeline{ctx: ctx}
 }
 
 // Run the central lex -> parse -> analyze -> HIR -> MIR -> LLVM flow.
-func (p *Pipeline) Run(entry *context.Module) error {
+func (p *Pipeline) Run(entry *project.Module) error {
 	if p == nil || p.ctx == nil || entry == nil {
 		return errors.New("empty pipeline")
 	}
@@ -85,8 +85,7 @@ func (p *Pipeline) Run(entry *context.Module) error {
 	return nil
 }
 
-
-func (p *Pipeline) processModule(module *context.Module, diag *diagnostics.DiagnosticBag) {
+func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.DiagnosticBag) {
 	if p == nil || module == nil || module.AST == nil {
 		return
 	}

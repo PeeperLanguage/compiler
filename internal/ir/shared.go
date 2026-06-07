@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/tokens"
+	"compiler/internal/frontend/token"
 )
 
 type Param struct {
@@ -339,7 +339,7 @@ func IsFloatType(name string) bool {
 }
 
 func IsIntegerType(name string) bool {
-	_, _, ok := tokens.ParseIntegerBuiltin(name)
+	_, _, ok := token.ParseIntegerBuiltin(name)
 	return ok
 }
 

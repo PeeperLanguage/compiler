@@ -1,7 +1,7 @@
 package ast
 
 import (
-	"compiler/pkg/source"
+	"compiler/internal/source"
 )
 
 type Ident struct {

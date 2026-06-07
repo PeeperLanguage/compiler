@@ -1,9 +1,9 @@
 package parser
 
 import (
-	"compiler/pkg/diagnostics"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/tokens"
+	"compiler/internal/frontend/token"
 )
 
 const (
@@ -19,23 +19,23 @@ const (
 	precCall
 )
 
-var infixPrec = map[tokens.Kind]int{
-	tokens.OROR:     precOr,
-	tokens.ANDAND:   precAnd,
-	tokens.EQ:       precEquality,
-	tokens.NEQ:      precEquality,
-	tokens.LT:       precCompare,
-	tokens.GT:       precCompare,
-	tokens.LE:       precCompare,
-	tokens.GE:       precCompare,
-	tokens.PLUS:     precSum,
-	tokens.MINUS:    precSum,
-	tokens.ASTERISK: precProduct,
-	tokens.SLASH:    precProduct,
-	tokens.PERCENT:  precProduct,
-	tokens.AS:       precCast,
-	tokens.LPAREN:   precCall,
-	tokens.DOT:      precCall,
+var infixPrec = map[token.Kind]int{
+	token.OROR:     precOr,
+	token.ANDAND:   precAnd,
+	token.EQ:       precEquality,
+	token.NEQ:      precEquality,
+	token.LT:       precCompare,
+	token.GT:       precCompare,
+	token.LE:       precCompare,
+	token.GE:       precCompare,
+	token.PLUS:     precSum,
+	token.MINUS:    precSum,
+	token.ASTERISK: precProduct,
+	token.SLASH:    precProduct,
+	token.PERCENT:  precProduct,
+	token.AS:       precCast,
+	token.LPAREN:   precCall,
+	token.DOT:      precCall,
 }
 
 type ledFunc func(*Parser, ast.Expr, int) ast.Expr
@@ -45,7 +45,7 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	if left == nil {
 		return nil
 	}
-	for !p.at(tokens.SEMICOLON) && !p.at(tokens.COMMA) && !p.at(tokens.RPAREN) && !p.at(tokens.RBRACE) {
+	for !p.at(token.SEMICOLON) && !p.at(token.COMMA) && !p.at(token.RPAREN) && !p.at(token.RBRACE) {
 		nextPrec := p.peekPrecedence()
 		if nextPrec <= precedence {
 			break
@@ -63,16 +63,16 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	return left
 }
 
-func ledFor(kind tokens.Kind) (ledFunc, bool) {
+func ledFor(kind token.Kind) (ledFunc, bool) {
 	switch kind {
-	case tokens.OROR, tokens.ANDAND, tokens.EQ, tokens.NEQ, tokens.LT, tokens.GT, tokens.LE, tokens.GE,
-		tokens.PLUS, tokens.MINUS, tokens.ASTERISK, tokens.SLASH, tokens.PERCENT:
+	case token.OROR, token.ANDAND, token.EQ, token.NEQ, token.LT, token.GT, token.LE, token.GE,
+		token.PLUS, token.MINUS, token.ASTERISK, token.SLASH, token.PERCENT:
 		return parseInfixLed, true
-	case tokens.AS:
+	case token.AS:
 		return parseAsLed, true
-	case tokens.LPAREN:
+	case token.LPAREN:
 		return parseCallLed, true
-	case tokens.DOT:
+	case token.DOT:
 		return parseSelectorLed, true
 	default:
 		return nil, false
@@ -82,15 +82,15 @@ func ledFor(kind tokens.Kind) (ledFunc, bool) {
 func (p *Parser) parsePrefix() ast.Expr {
 	tok := p.peek()
 	switch tok.Kind {
-	case tokens.IDENT:
+	case token.IDENT:
 		return p.parseIdentExpr()
-	case tokens.NUMBER:
+	case token.NUMBER:
 		p.advance()
 		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: p.loc(tok, tok)})
-	case tokens.STRING:
+	case token.STRING:
 		p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, Location: p.loc(tok, tok)})
-	case tokens.PLUS, tokens.MINUS, tokens.BANG:
+	case token.PLUS, token.MINUS, token.BANG:
 		p.advance()
 		expr := p.parseExpr(precPrefix)
 		if expr == nil {
@@ -101,18 +101,18 @@ func (p *Parser) parsePrefix() ast.Expr {
 			Expr:     expr,
 			Location: p.loc(tok, tok),
 		})
-	case tokens.LPAREN:
+	case token.LPAREN:
 		p.advance()
 		expr := p.parseExpr(precLowest)
-		if p.consume(tokens.RPAREN, "expected ')'") == nil {
-			if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == tokens.COMMA || p.peek().Kind == tokens.RPAREN {
-				p.recoverMissingToken(tokens.RPAREN, "expected ')'", p.expectedInsertionPoint())
+		if p.consume(token.RPAREN, "expected ')'") == nil {
+			if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == token.COMMA || p.peek().Kind == token.RPAREN {
+				p.recoverMissingToken(token.RPAREN, "expected ')'", p.expectedInsertionPoint())
 				return expr
 			}
 			return nil
 		}
 		return expr
-	case tokens.DOT:
+	case token.DOT:
 		return p.parseStructLiteral()
 	default:
 		p.errorf(tok, diagnostics.ErrInvalidExpression, "expected expression")
@@ -154,26 +154,26 @@ func (p *Parser) parseInfix(left ast.Expr, precedence int) ast.Expr {
 }
 
 func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
-	start := p.consume(tokens.LPAREN, "expected '('")
+	start := p.consume(token.LPAREN, "expected '('")
 	args := make([]ast.Expr, 0)
-	if !p.at(tokens.RPAREN) {
+	if !p.at(token.RPAREN) {
 		for {
 			arg := p.parseExpr(precLowest)
 			if arg != nil {
 				args = append(args, arg)
 			}
-			if !p.match(tokens.COMMA) {
+			if !p.match(token.COMMA) {
 				break
 			}
 		}
 	}
-	end := p.consume(tokens.RPAREN, "expected ')' after arguments")
+	end := p.consume(token.RPAREN, "expected ')' after arguments")
 	if start == nil {
 		return nil
 	}
 	if end == nil {
-		if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == tokens.COMMA || p.peek().Kind == tokens.RPAREN {
-			end = p.recoverMissingToken(tokens.RPAREN, "expected ')' after arguments", p.expectedInsertionPoint())
+		if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == token.COMMA || p.peek().Kind == token.RPAREN {
+			end = p.recoverMissingToken(token.RPAREN, "expected ')' after arguments", p.expectedInsertionPoint())
 		} else {
 			return nil
 		}
@@ -193,7 +193,7 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 	if id == nil {
 		return nil
 	}
-	if p.match(tokens.DCOLON) {
+	if p.match(token.DCOLON) {
 		member := p.parseIdent()
 		if member == nil {
 			return nil
@@ -208,7 +208,7 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 }
 
 func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
-	dot := p.consume(tokens.DOT, "expected '.'")
+	dot := p.consume(token.DOT, "expected '.'")
 	if dot == nil {
 		return left
 	}
@@ -224,21 +224,21 @@ func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 }
 
 func (p *Parser) parseStructLiteral() ast.Expr {
-	start := p.consume(tokens.DOT, "expected '.'")
+	start := p.consume(token.DOT, "expected '.'")
 	if start == nil {
 		return nil
 	}
-	if p.consume(tokens.LBRACE, "expected '{' after '.'") == nil {
+	if p.consume(token.LBRACE, "expected '{' after '.'") == nil {
 		return nil
 	}
 	fields := make([]ast.StructLitField, 0)
-	if !p.at(tokens.RBRACE) {
+	if !p.at(token.RBRACE) {
 		for {
 			name := p.parseIdent()
 			if name == nil {
 				return nil
 			}
-			if p.consume(tokens.ASSIGN, "expected '=' after struct literal field name") == nil {
+			if p.consume(token.ASSIGN, "expected '=' after struct literal field name") == nil {
 				return nil
 			}
 			value := p.parseExpr(precLowest)
@@ -250,15 +250,15 @@ func (p *Parser) parseStructLiteral() ast.Expr {
 				Value:    value,
 				Location: p.locFromNode(name, value),
 			})
-			if !p.match(tokens.COMMA) {
+			if !p.match(token.COMMA) {
 				break
 			}
-			if p.at(tokens.RBRACE) {
+			if p.at(token.RBRACE) {
 				break
 			}
 		}
 	}
-	end := p.consume(tokens.RBRACE, "expected '}' after struct literal")
+	end := p.consume(token.RBRACE, "expected '}' after struct literal")
 	if end == nil {
 		return nil
 	}
@@ -270,7 +270,7 @@ func (p *Parser) parseStructLiteral() ast.Expr {
 
 func (p *Parser) parseIdent() *ast.Ident {
 	tok := p.peek()
-	if tok.Kind != tokens.IDENT {
+	if tok.Kind != token.IDENT {
 		p.errorf(tok, diagnostics.ErrMissingIdentifier, "expected identifier")
 		return nil
 	}
@@ -284,7 +284,7 @@ func (p *Parser) parseAsExpr(left ast.Expr) ast.Expr {
 		return nil
 	}
 	asTok := p.advance()
-	if asTok == nil || asTok.Kind != tokens.AS {
+	if asTok == nil || asTok.Kind != token.AS {
 		return left
 	}
 	// Parse the type expression after "as"

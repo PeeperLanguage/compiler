@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/context"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/pkg/diagnostics"
+	"compiler/internal/project"
 )
 
 func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
@@ -18,26 +18,26 @@ func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.D
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := context.New(".", ".em", diag)
+	ctx := project.New(".", ".em", diag)
 
 	// Register the prelude so the pipeline loader can find it.
-	prelude := &context.Module{
+	prelude := &project.Module{
 		Key:        "core:prelude/global",
 		ImportPath: "prelude/global",
 		FilePath:   preludePath,
-		Origin:     context.ModuleOriginStdlib,
+		Origin:     project.ModuleOriginStdlib,
 		AST:        parser.ParseModule(preludePath, lexer.Lex(preludePath, preludeSrc, diag), diag),
-		Imports:    make(map[string]context.ResolvedImport),
+		Imports:    make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(prelude)
 
-	entry := &context.Module{
-		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
 		ImportPath: strings.TrimSuffix(entryPath, ".em"),
 		FilePath:   entryPath,
-		Origin:     context.ModuleOriginLocal,
+		Origin:     project.ModuleOriginLocal,
 		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]context.ResolvedImport),
+		Imports:    make(map[string]project.ResolvedImport),
 	}
 
 	if err := New(ctx).Run(entry); err != nil {
@@ -362,15 +362,15 @@ fn main() -> i32 {
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := context.New(".", ".em", diag)
+	ctx := project.New(".", ".em", diag)
 
-	entry := &context.Module{
-		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
 		ImportPath: strings.TrimSuffix(entryPath, ".em"),
 		FilePath:   entryPath,
-		Origin:     context.ModuleOriginLocal,
+		Origin:     project.ModuleOriginLocal,
 		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]context.ResolvedImport),
+		Imports:    make(map[string]project.ResolvedImport),
 	}
 
 	if err := New(ctx).Run(entry); err != nil {
@@ -419,15 +419,15 @@ fn main() -> i32 {
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := context.New(".", ".em", diag)
+	ctx := project.New(".", ".em", diag)
 
-	entry := &context.Module{
-		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
 		ImportPath: strings.TrimSuffix(entryPath, ".em"),
 		FilePath:   entryPath,
-		Origin:     context.ModuleOriginLocal,
+		Origin:     project.ModuleOriginLocal,
 		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]context.ResolvedImport),
+		Imports:    make(map[string]project.ResolvedImport),
 	}
 
 	if err := New(ctx).Run(entry); err != nil {
@@ -577,15 +577,15 @@ fn main() -> i32 {
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := context.New(".", ".em", diag)
+	ctx := project.New(".", ".em", diag)
 
-	entry := &context.Module{
-		Key:        context.ModuleKeyFor(context.ModuleOriginLocal, entryPath),
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
 		ImportPath: strings.TrimSuffix(entryPath, ".em"),
 		FilePath:   entryPath,
-		Origin:     context.ModuleOriginLocal,
+		Origin:     project.ModuleOriginLocal,
 		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]context.ResolvedImport),
+		Imports:    make(map[string]project.ResolvedImport),
 	}
 
 	if err := New(ctx).Run(entry); err != nil {

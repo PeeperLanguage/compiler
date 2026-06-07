@@ -1,16 +1,12 @@
 package cfg
 
 import (
-	"compiler/pkg/source"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/source"
 )
 
-type Module struct {
-	Functions []*Function
-}
-
-type Function struct {
+type Graph struct {
 	Name       string
 	ReturnType string
 	Source     *hir.Function
@@ -35,32 +31,32 @@ type Terminator interface {
 	Successors() []*Block
 }
 
-type JumpTerm struct {
+type Jump struct {
 	Target *Block
 }
 
-type BranchTerm struct {
+type Branch struct {
 	Cond        ir.Expr
 	TrueTarget  *Block
 	FalseTarget *Block
 }
 
-type ReturnTerm struct {
+type Return struct {
 	Value ir.Expr
 }
 
-func (*JumpTerm) termNode()   {}
-func (*BranchTerm) termNode() {}
-func (*ReturnTerm) termNode() {}
+func (*Jump) termNode()   {}
+func (*Branch) termNode() {}
+func (*Return) termNode() {}
 
-func (t *JumpTerm) Successors() []*Block {
+func (t *Jump) Successors() []*Block {
 	if t == nil || t.Target == nil {
 		return nil
 	}
 	return []*Block{t.Target}
 }
 
-func (t *BranchTerm) Successors() []*Block {
+func (t *Branch) Successors() []*Block {
 	if t == nil {
 		return nil
 	}
@@ -74,4 +70,4 @@ func (t *BranchTerm) Successors() []*Block {
 	return out
 }
 
-func (*ReturnTerm) Successors() []*Block { return nil }
+func (*Return) Successors() []*Block { return nil }

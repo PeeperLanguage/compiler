@@ -1,6 +1,6 @@
 package ast
 
-import "compiler/pkg/source"
+import "compiler/internal/source"
 
 type CommentGroup struct {
 	Text     string

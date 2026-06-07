@@ -3,8 +3,8 @@ package lexer
 import (
 	"testing"
 
-	"compiler/pkg/diagnostics"
-	"compiler/internal/tokens"
+	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/token"
 )
 
 func TestLexSubsetProgram(t *testing.T) {
@@ -20,16 +20,16 @@ fn add(a: i32, b: i32): i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	kinds := []tokens.Kind{
-		tokens.IMPORT, tokens.STRING, tokens.AS, tokens.IDENT, tokens.SEMICOLON,
-		tokens.CONST, tokens.IDENT, tokens.COLON, tokens.IDENT, tokens.ASSIGN, tokens.NUMBER, tokens.PLUS, tokens.NUMBER, tokens.ASTERISK, tokens.NUMBER, tokens.SEMICOLON,
-		tokens.LET, tokens.MUT, tokens.IDENT, tokens.COLON, tokens.IDENT, tokens.ASSIGN, tokens.IDENT, tokens.SEMICOLON,
-		tokens.FN, tokens.IDENT, tokens.LPAREN, tokens.IDENT, tokens.COLON, tokens.IDENT, tokens.COMMA, tokens.IDENT, tokens.COLON, tokens.IDENT, tokens.RPAREN, tokens.COLON, tokens.IDENT,
-		tokens.LBRACE,
-		tokens.LET, tokens.IDENT, tokens.COLON, tokens.IDENT, tokens.ASSIGN, tokens.IDENT, tokens.PLUS, tokens.IDENT, tokens.SEMICOLON,
-		tokens.RETURN, tokens.IDENT, tokens.SEMICOLON,
-		tokens.RBRACE,
-		tokens.EOF,
+	kinds := []token.Kind{
+		token.IMPORT, token.STRING, token.AS, token.IDENT, token.SEMICOLON,
+		token.CONST, token.IDENT, token.COLON, token.IDENT, token.ASSIGN, token.NUMBER, token.PLUS, token.NUMBER, token.ASTERISK, token.NUMBER, token.SEMICOLON,
+		token.LET, token.MUT, token.IDENT, token.COLON, token.IDENT, token.ASSIGN, token.IDENT, token.SEMICOLON,
+		token.FN, token.IDENT, token.LPAREN, token.IDENT, token.COLON, token.IDENT, token.COMMA, token.IDENT, token.COLON, token.IDENT, token.RPAREN, token.COLON, token.IDENT,
+		token.LBRACE,
+		token.LET, token.IDENT, token.COLON, token.IDENT, token.ASSIGN, token.IDENT, token.PLUS, token.IDENT, token.SEMICOLON,
+		token.RETURN, token.IDENT, token.SEMICOLON,
+		token.RBRACE,
+		token.EOF,
 	}
 	if len(stream) != len(kinds) {
 		t.Fatalf("token length mismatch: got=%d want=%d", len(stream), len(kinds))

@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	
+
 	"compiler/internal/backend"
-	"compiler/internal/context"
+	"compiler/internal/project"
 )
 
 // Write -keep-gen artifacts for each module.
-func saveIRs(ctx *context.CompilerContext, backendName, dir string) error {
+func saveIRs(ctx *project.CompilerContext, backendName, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}

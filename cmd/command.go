@@ -10,10 +10,10 @@ import (
 	"runtime"
 	"strings"
 
-	"compiler/pkg/colors"
 	"compiler/internal/backend"
 	compiler "compiler/internal/driver"
-	"compiler/pkg/abi"
+	"compiler/internal/target"
+	"compiler/pkg/colors"
 	"compiler/pkg/manifest"
 )
 
@@ -36,9 +36,9 @@ func applyCommandCommonFlags(flags commandCommonFlags) error {
 		return err
 	}
 	if *flags.m32 {
-		return abi.SetSizeBits(abi.Bits32)
+		return target.SetSizeBits(target.Bits32)
 	}
-	return abi.SetSizeBits(0)
+	return target.SetSizeBits(0)
 }
 
 func parseCommandArgs(name string, args []string) ([]string, error) {

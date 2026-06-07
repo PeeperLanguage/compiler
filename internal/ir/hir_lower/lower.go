@@ -5,19 +5,19 @@ import (
 	"slices"
 	"strings"
 
-	"compiler/internal/analysis/semantics/symbols"
-	"compiler/internal/analysis/semantics/table"
-	"compiler/internal/analysis/semantics/typeinfo"
-	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/project"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
 )
 
 var currentModuleScope *table.Scope
 
-func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Module {
+func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Module {
 	if module == nil {
 		return nil
 	}
@@ -60,7 +60,7 @@ func GenerateHIR(ctx *context.CompilerContext, module *context.Module) *hir.Modu
 	return out
 }
 
-func lowerImplDecl(ctx *context.CompilerContext, module *context.Module, out *hir.Module, decl *ast.ImplDecl) {
+func lowerImplDecl(ctx *project.CompilerContext, module *project.Module, out *hir.Module, decl *ast.ImplDecl) {
 	if module == nil || out == nil || decl == nil || decl.Target == nil || module.Semantics == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func lowerExternSignature(params []ast.Param, fallbackReturnType ast.TypeExpr, r
 	return loweredParams, loweredTypeText(returnType)
 }
 
-func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
+func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
 	if sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
 		return nil
 	}
@@ -155,7 +155,7 @@ func lowerASTFunctionNamed(ctx *context.CompilerContext, module *context.Module,
 	return hirFn
 }
 
-func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Block, block *ast.BlockStmt, returnType typeinfo.Type, ctx *context.CompilerContext) {
+func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Block, block *ast.BlockStmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
 	if out == nil || block == nil {
 		return
 	}
@@ -171,7 +171,7 @@ func appendBlock(module *context.Module, parentScope *table.Scope, out *hir.Bloc
 	}
 }
 
-func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *context.CompilerContext) {
+func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
@@ -253,7 +253,7 @@ func appendStmt(module *context.Module, scope *table.Scope, out *hir.Block, stmt
 	}
 }
 
-func lowerAssignTargetExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr) ir.Expr {
+func lowerAssignTargetExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr) ir.Expr {
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil {
 		baseType := exprResolvedType(module, selector.Expr)
 		if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
@@ -281,7 +281,7 @@ func lowerAssignTargetExpr(ctx *context.CompilerContext, module *context.Module,
 	return lowerASTExpr(ctx, module, scope, expr, nil)
 }
 
-func isAddressableExpr(module *context.Module, scope *table.Scope, expr ast.Expr) bool {
+func isAddressableExpr(module *project.Module, scope *table.Scope, expr ast.Expr) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
@@ -298,7 +298,7 @@ func isAddressableExpr(module *context.Module, scope *table.Scope, expr ast.Expr
 	return false
 }
 
-func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *context.CompilerContext) hir.Stmt {
+func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
@@ -326,7 +326,7 @@ func lowerElse(module *context.Module, scope *table.Scope, stmt ast.Stmt, return
 
 // lowerASTExpr directly lowers an AST expression to an IR expression using
 // the module context's resolved expression types side-table.
-func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: "<invalid>"}
 	}
@@ -466,7 +466,7 @@ func lowerASTExpr(ctx *context.CompilerContext, module *context.Module, scope *t
 	}
 }
 
-func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {
+func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {
 	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
 		return &ir.InvalidExpr{Message: "invalid selector call", Type: "<invalid>"}
 	}
@@ -517,7 +517,7 @@ func lowerSelectorMethodCall(ctx *context.CompilerContext, module *context.Modul
 	}
 }
 
-func receiverNeedsAddress(module *context.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
+func receiverNeedsAddress(module *project.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) bool {
 	if scope == nil || fnType == nil || len(fnType.Params) == 0 || receiver == nil {
 		return false
 	}
@@ -531,7 +531,7 @@ func receiverNeedsAddress(module *context.Module, scope *table.Scope, fnType *ty
 	return isAddressableExpr(module, scope, receiver)
 }
 
-func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
+func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
 	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
 		return &ir.InvalidExpr{Message: "invalid selector", Type: "<invalid>"}
 	}
@@ -548,7 +548,7 @@ func lowerSelectorExpr(ctx *context.CompilerContext, module *context.Module, sco
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>"}
 }
 
-func lowerStructLiteralExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {
+func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {
 	if module == nil || node == nil {
 		return &ir.InvalidExpr{Message: "invalid struct literal", Type: "<invalid>"}
 	}
@@ -578,7 +578,7 @@ func lowerStructLiteralExpr(ctx *context.CompilerContext, module *context.Module
 	}
 }
 
-func maybeLowerInterfaceExpr(ctx *context.CompilerContext, module *context.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
 	if expectedType == nil {
 		return nil
 	}
@@ -619,7 +619,7 @@ func maybeLowerInterfaceExpr(ctx *context.CompilerContext, module *context.Modul
 	}
 }
 
-func lookupInterfaceImplementation(module *context.Module, concrete typeinfo.Type, name string) (*typeinfo.FuncType, *symbols.Symbol, string, bool) {
+func lookupInterfaceImplementation(module *project.Module, concrete typeinfo.Type, name string) (*typeinfo.FuncType, *symbols.Symbol, string, bool) {
 	owner := concrete
 	if ptr, ok := concrete.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		owner = ptr.Target
@@ -691,14 +691,14 @@ func lowerInterfaceSlotValueType(t typeinfo.Type) (string, bool) {
 	return text, true
 }
 
-func exprResolvedType(module *context.Module, expr ast.Expr) typeinfo.Type {
+func exprResolvedType(module *project.Module, expr ast.Expr) typeinfo.Type {
 	if module == nil || module.Semantics == nil || expr == nil {
 		return nil
 	}
 	return module.Semantics.ExprTypes[expr.ID()]
 }
 
-func lookupLoweredMethod(module *context.Module, baseType typeinfo.Type, name string) (string, *symbols.Symbol, *typeinfo.FuncType) {
+func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name string) (string, *symbols.Symbol, *typeinfo.FuncType) {
 	if module == nil || module.Semantics == nil || baseType == nil || name == "" {
 		return "", nil, nil
 	}
@@ -784,7 +784,7 @@ func methodSymbolRefName(targetText string, sym *symbols.Symbol) string {
 // 1. Find the imported module by alias in module.Imports.
 // 2. Look up the symbol in that module's scope.
 // Returns nil if resolution fails.
-func lookupScopeResolutionSymbol(ctx *context.CompilerContext, module *context.Module, _ *table.Scope, sr *ast.ScopeResolution) *symbols.Symbol {
+func lookupScopeResolutionSymbol(ctx *project.CompilerContext, module *project.Module, _ *table.Scope, sr *ast.ScopeResolution) *symbols.Symbol {
 	if ctx == nil || module == nil || sr == nil {
 		return nil
 	}
