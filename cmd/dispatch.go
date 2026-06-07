@@ -12,119 +12,149 @@ import (
 	"compiler/pkg/colors"
 )
 
+const (
+	exitCodeOK    = 0
+	exitCodeError = 1
+	exitCodeUsage = 2
+)
+
+// exitOnCommandError prints err to stderr in red (unless it is
+// errAlreadyReported, which the caller has already reported) and exits.
 func exitOnCommandError(err error) {
 	if err == nil {
 		return
 	}
 	if errors.Is(err, errAlreadyReported) {
-		os.Exit(1)
+		os.Exit(exitCodeError)
 	}
 	colors.RED.Fprintln(os.Stderr, err)
-	os.Exit(1)
+	os.Exit(exitCodeError)
 }
 
 func parseAndRunCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-
-	command := args[0]
-	commandArgs := args[1:]
-	commandName, commandBackend, err := parseCommandBackend(command)
+	commandName, commandBackend, err := parseCommandBackend(args[0])
 	if err != nil {
 		colors.RED.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		os.Exit(exitCodeUsage)
 	}
 
 	switch commandName {
 	case "build":
-		exitOnCommandError(buildCommand(commandArgs, commandBackend))
-		return true
+		exitOnCommandError(buildCommand(args[1:], commandBackend))
 	case "lsp":
-		colors.CYAN.Fprintln(os.Stderr, "starting Ember LSP server...")
-		if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
-			colors.RED.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return true
-	case "init":
-		exitOnCommandError(cli.InitCommand(commandArgs))
-		return true
-	case "get":
-		exitOnCommandError(cli.GetCommand(commandArgs))
-		return true
-	case "update":
-		exitOnCommandError(cli.UpdateCommand(commandArgs))
-		return true
-	case "sniff":
-		exitOnCommandError(cli.SniffCommand(commandArgs))
-		return true
-	case "remove", "rm":
-		exitOnCommandError(cli.RemoveCommand(commandArgs))
-		return true
-	case "list", "ls":
-		exitOnCommandError(cli.ListCommand(commandArgs))
-		return true
-	case "clean":
-		exitOnCommandError(cli.CleanupCommand(commandArgs))
-		return true
-	case "orphans":
-		exitOnCommandError(cli.OrphansCommand(commandArgs))
-		return true
+		startLSPServer()
 	case "run":
-		exitOnCommandError(runCommand(commandArgs, commandBackend))
-		return true
+		exitOnCommandError(runCommand(args[1:], commandBackend))
 	case "check", "lint":
-		exitOnCommandError(checkCommand(commandArgs))
-		return true
+		exitOnCommandError(checkCommand(args[1:]))
 	default:
+		return runCLISubcommand(commandName, args[1:])
+	}
+	return true
+}
+
+// runCLISubcommand dispatches to a cli.XxxCommand and converts its error into
+// a process exit. Returns true when the name matched a known CLI subcommand.
+func runCLISubcommand(name string, args []string) bool {
+	handler, ok := lookupCLISubcommand(name)
+	if !ok {
 		return false
+	}
+	exitOnCommandError(handler(args))
+	return true
+}
+
+// cliSubcommand maps a CLI subcommand name to its handler function.
+type cliSubcommand func([]string) error
+
+// lookupCLISubcommand returns the handler for a known CLI subcommand.
+// Add new entries here as new commands are introduced.
+func lookupCLISubcommand(name string) (cliSubcommand, bool) {
+	switch name {
+	case "init":
+		return cli.InitCommand, true
+	case "get":
+		return cli.GetCommand, true
+	case "update":
+		return cli.UpdateCommand, true
+	case "sniff":
+		return cli.SniffCommand, true
+	case "remove", "rm":
+		return cli.RemoveCommand, true
+	case "list", "ls":
+		return cli.ListCommand, true
+	case "clean":
+		return cli.CleanupCommand, true
+	case "orphans":
+		return cli.OrphansCommand, true
+	default:
+		return nil, false
+	}
+}
+
+func startLSPServer() {
+	colors.CYAN.Fprintln(os.Stderr, "starting Ember LSP server...")
+	if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
+		colors.RED.Fprintln(os.Stderr, err)
+		os.Exit(exitCodeError)
 	}
 }
 
 func printUsageAndExit(code int) {
-	flag.CommandLine.SetOutput(os.Stderr)
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	showVersion := flag.Bool("version", false, "show compiler version")
-	flag.BoolVar(showVersion, "v", false, "alias for -version")
-	showHelp := flag.Bool("help", false, "show help")
-	flag.BoolVar(showHelp, "h", false, "alias for -help")
-
-	flag.Usage = func() {
-		colors.BLUE.Fprintln(os.Stderr, "Ember compiler v"+compiler.COMPILER_VERSION)
-		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
-		colors.GREEN.Fprintf(os.Stderr, "  ember [command] [args]\n")
-		colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
-		fmt.Fprintln(os.Stderr, "  build[:llvm] [path]     build a program or use package.entry from ember")
-		fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
-		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.em only)")
-		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with ember")
-		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from ember or specific packages")
-		fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
-		fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that ember update would apply")
-		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from ember and lockfile")
-		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
-		fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
-		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-		fmt.Fprintln(os.Stderr, "  lsp                     start the Ember language server")
-		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-		colors.GREEN.Fprintf(os.Stderr, "  ember build\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ember build src/main.em\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ember build -o app\n")
-		colors.GREEN.Fprintf(os.Stderr, "  ember run main.em arg1 arg2\n")
-	}
+	showVersion := defineTopLevelFlags()
 
 	if len(os.Args) > 1 {
-		err := flag.CommandLine.Parse(os.Args[1:])
-		if err != nil {
+		if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			os.Exit(exitCodeError)
 		}
 	}
 	if *showVersion {
 		fmt.Printf("v%s\n", compiler.COMPILER_VERSION)
-		os.Exit(0)
+		os.Exit(exitCodeOK)
 	}
-	flag.Usage()
+	printTopLevelUsage()
 	os.Exit(code)
+}
+
+// defineTopLevelFlags registers the -version/-v and -help/-h flags on the
+// global flag set and returns a pointer to the parsed version flag.
+// The -help flag is registered only for side effect of being parseable;
+// the actual help banner is printed unconditionally in printTopLevelUsage.
+func defineTopLevelFlags() *bool {
+	flag.CommandLine.SetOutput(os.Stderr)
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	showVersion := flag.Bool("version", false, "show compiler version")
+	flag.BoolVar(showVersion, "v", false, "alias for -version")
+	flag.Bool("help", false, "show help")
+	flag.Bool("h", false, "alias for -help")
+	return showVersion
+}
+
+// printTopLevelUsage writes the program's usage banner to stderr.
+func printTopLevelUsage() {
+	colors.BLUE.Fprintln(os.Stderr, "Ember compiler v"+compiler.COMPILER_VERSION)
+	colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
+	colors.GREEN.Fprintf(os.Stderr, "  ember [command] [args]\n")
+	colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
+	fmt.Fprintln(os.Stderr, "  build[:llvm] [path]     build a program or use package.entry from ember")
+	fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
+	fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.em only)")
+	fmt.Fprintln(os.Stderr, "  init [name]             create a new project with ember")
+	fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from ember or specific packages")
+	fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
+	fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that ember update would apply")
+	fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from ember and lockfile")
+	fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
+	fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
+	fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
+	fmt.Fprintln(os.Stderr, "  lsp                     start the Ember language server")
+	colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
+	colors.GREEN.Fprintf(os.Stderr, "  ember build\n")
+	colors.GREEN.Fprintf(os.Stderr, "  ember build src/main.em\n")
+	colors.GREEN.Fprintf(os.Stderr, "  ember build -o app\n")
+	colors.GREEN.Fprintf(os.Stderr, "  ember run main.em arg1 arg2\n")
 }
