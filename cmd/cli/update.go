@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"compiler/pkg/manifest"
 )
@@ -18,7 +17,7 @@ func UpdateCommand(args []string) error {
 		return nil
 	}
 
-	cachePath := filepath.Join(ctx.projectRoot, ".ember", "modules")
+	cachePath := manifest.CacheModulesDir(ctx.projectRoot)
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
 		return err
 	}

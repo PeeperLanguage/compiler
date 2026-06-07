@@ -44,7 +44,7 @@ func prepareInstallContext() (*installContext, error) {
 	}
 
 	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ember", "modules")
+	cachePath := manifest.CacheModulesDir(projectRoot)
 	if err := os.MkdirAll(cachePath, 0o755); err != nil {
 		return nil, err
 	}
@@ -133,10 +133,8 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 		if err := registry.DownloadRemotePackage(cachePath, repoPath, version, devConfig); err != nil {
 			return fmt.Errorf("download %s@%s: %w", repoPath, version, err)
 		}
-		printCached()
-	} else {
-		printCached()
 	}
+	printCached()
 
 	modulePath := registry.GetModulePath(cachePath, repoPath, version)
 	packageManifest, err := manifest.Load(filepath.Join(modulePath, manifest.FileName))

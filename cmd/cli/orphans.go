@@ -14,7 +14,7 @@ func OrphansCommand(args []string) error {
 		return err
 	}
 	projectRoot := filepath.Dir(manifestPath)
-	cachePath := filepath.Join(projectRoot, ".ember", "modules")
+	cachePath := manifest.CacheModulesDir(projectRoot)
 	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
 		printInfo("No cache directory found")
 		return nil

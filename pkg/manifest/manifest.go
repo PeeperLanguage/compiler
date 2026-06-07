@@ -14,6 +14,12 @@ import (
 
 const FileName = "ember"
 
+// CacheModulesDir returns the canonical cache path for a project root.
+// All CLI commands must use this instead of constructing the path inline.
+func CacheModulesDir(projectRoot string) string {
+	return filepath.Join(projectRoot, ".ember", "modules")
+}
+
 type DependencyType int
 
 const (
