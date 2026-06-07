@@ -154,8 +154,5 @@ func formatHTMLText(text string, preserveLayout bool) string {
 }
 
 func htmlColorStyle(color COLOR) string {
-	if color == GRAY {
-		color = GREY
-	}
 	return htmlStyles[color]
 }
