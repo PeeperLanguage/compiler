@@ -44,10 +44,6 @@ const (
 	Secondary                   // Additional context (uses ---)
 )
 
-// Note represents additional information attached to a diagnostic
-type Note struct {
-	Message string
-}
 
 type DiagnosticExtraKind int
 
@@ -78,10 +74,6 @@ type Diagnostic struct {
 	FilePath  string // Source file for this diagnostic
 	Labels    []Label
 	Extras    []DiagnosticExtra
-	Texts     []DiagnosticText
-	Notes     []Note
-	Help      string // Suggestion for fixing the error
-	CodeHints []CodeHint
 }
 
 const internalCompilerErrorCode = "ICE0001"
@@ -116,41 +108,13 @@ type CodeHintLabel struct {
 	Style   LabelStyle
 }
 
-// NewError creates a new error diagnostic
-func NewError(message string) *Diagnostic {
-	return &Diagnostic{
-		Severity: Error,
-		Message:  message,
-		Labels:   make([]Label, 0),
-		Extras:   make([]DiagnosticExtra, 0),
-		Texts:    make([]DiagnosticText, 0),
-		Notes:    make([]Note, 0),
-	}
+func newDiagnostic(sev Severity, message string) *Diagnostic {
+	return &Diagnostic{Severity: sev, Message: message}
 }
 
-// NewWarning creates a new warning diagnostic
-func NewWarning(message string) *Diagnostic {
-	return &Diagnostic{
-		Severity: Warning,
-		Message:  message,
-		Labels:   make([]Label, 0),
-		Extras:   make([]DiagnosticExtra, 0),
-		Texts:    make([]DiagnosticText, 0),
-		Notes:    make([]Note, 0),
-	}
-}
-
-// NewInfo creates a new info diagnostic
-func NewInfo(message string) *Diagnostic {
-	return &Diagnostic{
-		Severity: Info,
-		Message:  message,
-		Labels:   make([]Label, 0),
-		Extras:   make([]DiagnosticExtra, 0),
-		Texts:    make([]DiagnosticText, 0),
-		Notes:    make([]Note, 0),
-	}
-}
+func NewError(message string) *Diagnostic   { return newDiagnostic(Error, message) }
+func NewWarning(message string) *Diagnostic { return newDiagnostic(Warning, message) }
+func NewInfo(message string) *Diagnostic    { return newDiagnostic(Info, message) }
 
 // WithCode sets the error code
 func (d *Diagnostic) WithCode(code string) *Diagnostic {
@@ -163,15 +127,20 @@ func (d *Diagnostic) WithLabel(loc *source.Location, message string, style Label
 	if loc == nil {
 		return d
 	}
-	if d.FilePath == "" && loc.Filename != nil {
-		d.FilePath = *loc.Filename
-	}
+	d.setFilePath(loc)
 	d.Labels = append(d.Labels, Label{
 		Location: loc,
 		Message:  message,
 		Style:    style,
 	})
 	return d
+}
+
+// setFilePath sets FilePath from loc if not already set.
+func (d *Diagnostic) setFilePath(loc *source.Location) {
+	if d.FilePath == "" && loc.Filename != nil {
+		d.FilePath = *loc.Filename
+	}
 }
 
 func (d *Diagnostic) At(loc *source.Location) *Diagnostic {
@@ -190,22 +159,13 @@ func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Dia
 	}
 	// Ensure primary label is always first
 	if len(d.Labels) > 0 {
-		// Check if we already have a primary
-		for _, label := range d.Labels {
-			if label.Style == Primary {
-				// Already have a primary, don't add another
-				return d
-			}
+		// Already have a primary — don't add another
+		if d.Labels[0].Style == Primary {
+			return d
 		}
-		// We have secondary labels but no primary - insert at beginning
-		d.Labels = append([]Label{{
-			Location: loc,
-			Message:  message,
-			Style:    Primary,
-		}}, d.Labels...)
-		if d.FilePath == "" && loc.Filename != nil {
-			d.FilePath = *loc.Filename
-		}
+		// Secondary labels exist but no primary — insert at beginning
+		d.Labels = append([]Label{{Location: loc, Message: message, Style: Primary}}, d.Labels...)
+		d.setFilePath(loc)
 		return d
 	}
 	return d.WithLabel(loc, message, Primary)
@@ -215,20 +175,11 @@ func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Dia
 // Can be called multiple times to add multiple context labels
 // Primary label must exist before adding secondary labels
 func (d *Diagnostic) WithSecondaryLabel(loc *source.Location, message string) *Diagnostic {
-	// Verify we have a primary label
-	hasPrimary := false
-	for _, label := range d.Labels {
-		if label.Style == Primary {
-			hasPrimary = true
-			break
-		}
-	}
-
-	if !hasPrimary {
+	// Primary is always at index 0 per the invariant enforced by WithPrimaryLabel
+	if len(d.Labels) == 0 || d.Labels[0].Style != Primary {
 		d.markInternalCompilerError("secondary label added without primary label; inserted fallback primary label")
 		d.WithPrimaryLabel(loc, "internal compiler error: missing primary label")
 	}
-
 	return d.WithLabel(loc, message, Secondary)
 }
 
@@ -251,18 +202,15 @@ func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...C
 	if loc == nil {
 		return d
 	}
-
 	d.WithPrimaryLabel(loc, "")
-	hint := CodeHint{
-		Code:        code,
-		Labels:      labels,
-		Location:    loc,
-		GutterColor: colors.GREEN,
-	}
-	d.CodeHints = append(d.CodeHints, hint)
 	d.Extras = append(d.Extras, DiagnosticExtra{
-		Kind:     ExtraCodeHint,
-		CodeHint: hint,
+		Kind: ExtraCodeHint,
+		CodeHint: CodeHint{
+			Code:        code,
+			Labels:      labels,
+			Location:    loc,
+			GutterColor: colors.GREEN,
+		},
 	})
 	return d
 }
@@ -272,18 +220,15 @@ func (d *Diagnostic) WithCodeHintLines(loc *source.Location, lines []CodeHintLin
 	if loc == nil {
 		return d
 	}
-
 	d.WithPrimaryLabel(loc, "")
-	hint := CodeHint{
-		Lines:       append([]CodeHintLine(nil), lines...),
-		Labels:      labels,
-		Location:    loc,
-		GutterColor: colors.GREEN,
-	}
-	d.CodeHints = append(d.CodeHints, hint)
 	d.Extras = append(d.Extras, DiagnosticExtra{
-		Kind:     ExtraCodeHint,
-		CodeHint: hint,
+		Kind: ExtraCodeHint,
+		CodeHint: CodeHint{
+			Lines:       append([]CodeHintLine(nil), lines...),
+			Labels:      labels,
+			Location:    loc,
+			GutterColor: colors.GREEN,
+		},
 	})
 	return d
 }
@@ -319,30 +264,19 @@ func (d *Diagnostic) WithText(kind, message string, color colors.COLOR) *Diagnos
 	if color == "" {
 		color = colors.WHITE
 	}
-	d.Texts = append(d.Texts, DiagnosticText{
-		Kind:    kind,
-		Message: message,
-		Color:   color,
-	})
 	d.Extras = append(d.Extras, DiagnosticExtra{
 		Kind: ExtraText,
-		Text: DiagnosticText{
-			Kind:    kind,
-			Message: message,
-			Color:   color,
-		},
+		Text: DiagnosticText{Kind: kind, Message: message, Color: color},
 	})
 	return d
 }
 
 // WithNote adds a note to the diagnostic
 func (d *Diagnostic) WithNote(message string) *Diagnostic {
-	d.Notes = append(d.Notes, Note{Message: message})
 	return d.WithText("note", message, colors.CYAN)
 }
 
-// WithHelp sets helpful suggestion for fixing the error
+// WithHelp adds a help suggestion to the diagnostic
 func (d *Diagnostic) WithHelp(help string) *Diagnostic {
-	d.Help = help
 	return d.WithText("help", help, colors.GREEN)
 }

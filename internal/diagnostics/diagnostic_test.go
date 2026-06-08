@@ -32,8 +32,8 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 	if d.Labels[1].Style != Secondary {
 		t.Fatalf("expected second label secondary, got %v", d.Labels[1].Style)
 	}
-	if len(d.Texts) == 0 || d.Texts[0].Kind != "internal" {
-		t.Fatalf("expected internal diagnostic text, got %#v", d.Texts)
+	if len(d.Extras) == 0 || d.Extras[0].Kind != ExtraText || d.Extras[0].Text.Kind != "internal" {
+		t.Fatalf("expected internal diagnostic text in Extras, got %#v", d.Extras)
 	}
 }
 
@@ -48,10 +48,7 @@ func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 	if d.Extras[0].Kind != ExtraCodeHint {
 		t.Fatalf("expected extra kind ExtraCodeHint, got %v", d.Extras[0].Kind)
 	}
-	if len(d.CodeHints) != 1 {
-		t.Fatalf("expected 1 code hint, got %d", len(d.CodeHints))
-	}
-	hint := d.CodeHints[0]
+	hint := d.Extras[0].CodeHint
 	if len(hint.Lines) != 2 {
 		t.Fatalf("expected 2 hint lines, got %d", len(hint.Lines))
 	}

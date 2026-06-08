@@ -398,50 +398,21 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 		}
 	}
 
-	if len(diag.Extras) > 0 {
-		// Preferred ordered rendering path.
-		suggestionHeaderPrinted := false
-		for _, extra := range diag.Extras {
-			switch extra.Kind {
-			case ExtraText:
-				e.printText(extra.Text)
-			case ExtraCodeHint:
-				hint := extra.CodeHint
-				if !e.hasRenderableCodeHint(&hint) {
-					continue
-				}
-				if !suggestionHeaderPrinted {
-					e.printSuggestionHeader()
-					suggestionHeaderPrinted = true
-				}
-				ctx := e.codeHintContext(diag, &hint, fallbackHintCtx)
-				e.printCodeHint(ctx)
-				e.printPipeOnly()
-			}
-		}
-	} else {
-		// Backward compatibility for diagnostics built without ordered extras.
-		if len(diag.Texts) > 0 {
-			for _, text := range diag.Texts {
-				e.printText(text)
-			}
-		} else {
-			for _, note := range diag.Notes {
-				e.printNote(note)
-			}
-			if diag.Help != "" {
-				e.printHelp(diag.Help)
-			}
-		}
-		if e.hasRenderableCodeHints(diag.CodeHints) {
-			e.printSuggestionHeader()
-		}
-		for i := range diag.CodeHints {
-			hint := &diag.CodeHints[i]
-			if !e.hasRenderableCodeHint(hint) {
+	suggestionHeaderPrinted := false
+	for _, extra := range diag.Extras {
+		switch extra.Kind {
+		case ExtraText:
+			e.printText(extra.Text)
+		case ExtraCodeHint:
+			hint := extra.CodeHint
+			if !e.hasRenderableCodeHint(&hint) {
 				continue
 			}
-			ctx := e.codeHintContext(diag, hint, fallbackHintCtx)
+			if !suggestionHeaderPrinted {
+				e.printSuggestionHeader()
+				suggestionHeaderPrinted = true
+			}
+			ctx := e.codeHintContext(diag, &hint, fallbackHintCtx)
 			e.printCodeHint(ctx)
 			e.printPipeOnly()
 		}
@@ -969,14 +940,6 @@ func (e *Emitter) hasRenderableCodeHint(hint *CodeHint) bool {
 	return len(e.codeHintRenderableLines(hint)) > 0
 }
 
-func (e *Emitter) hasRenderableCodeHints(hints []CodeHint) bool {
-	for i := range hints {
-		if e.hasRenderableCodeHint(&hints[i]) {
-			return true
-		}
-	}
-	return false
-}
 
 func (e *Emitter) codeHintRenderableLines(hint *CodeHint) []CodeHintLine {
 	if hint == nil {
@@ -1123,21 +1086,6 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 	e.printPipeOnly()
 }
 
-func (e *Emitter) printNote(note Note) {
-	e.printText(DiagnosticText{
-		Kind:    "note",
-		Message: note.Message,
-		Color:   colors.CYAN,
-	})
-}
-
-func (e *Emitter) printHelp(help string) {
-	e.printText(DiagnosticText{
-		Kind:    "help",
-		Message: help,
-		Color:   colors.GREEN,
-	})
-}
 
 func (e *Emitter) printText(text DiagnosticText) {
 	if text.Message == "" {
