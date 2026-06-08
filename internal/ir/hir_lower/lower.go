@@ -132,8 +132,8 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		Name:       emittedName,
 		Params:     make([]ir.Param, 0, len(fn.Params)),
 		ReturnType: retTypeStr,
-		Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: fn.Body.Loc()},
-		Location:   fn.Loc(),
+		Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(fn.Body)},
+		Location:   ast.LocOf(fn),
 	}
 	for _, param := range fn.Params {
 		name := ""
@@ -159,7 +159,7 @@ func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Bloc
 	if out == nil || block == nil {
 		return
 	}
-	out.Location = block.Loc()
+	out.Location = ast.LocOf(block)
 	scope := parentScope
 	if module.Semantics != nil {
 		if s, ok := module.Semantics.BlockScopes[block.ID()]; ok && s != nil {
@@ -174,41 +174,41 @@ func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Bloc
 func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
+		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(node)}
 		appendBlock(module, scope, block, node, returnType, ctx)
 		out.Stmts = append(out.Stmts, block)
 
 	case *ast.LetDecl:
 		if node.Name == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing name", Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing name", Location: ast.LocOf(node)})
 			return
 		}
 		sym, ok := scope.LookupLocal(node.Name.Name)
 		if !ok || sym == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, Location: ast.LocOf(node)})
 
 	case *ast.ConstDecl:
 		if node.Name == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing name", Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing name", Location: ast.LocOf(node)})
 			return
 		}
 		sym, ok := scope.LookupLocal(node.Name.Name)
 		if !ok || sym == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, Location: ast.LocOf(node)})
 
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: "<invalid>"})
@@ -217,8 +217,8 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		}
 		ifStmt := &hir.If{
 			Cond:     condExpr,
-			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
-			Location: node.Loc(),
+			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(node.Then)},
+			Location: ast.LocOf(node),
 		}
 		appendBlock(module, scope, ifStmt.Then, node.Then, returnType, ctx)
 		if node.Else != nil {
@@ -228,28 +228,28 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			out.Stmts = append(out.Stmts, &hir.Return{Value: &ir.InvalidExpr{Message: "missing return value", Type: "<invalid>"}, Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Return{Value: &ir.InvalidExpr{Message: "missing return value", Type: "<invalid>"}, Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, returnType)
-		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: ast.LocOf(node)})
 
 	case *ast.ExprStmt:
 		if node.Expr == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "expression statement missing expression", Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "expression statement missing expression", Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, nil)
-		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: ast.LocOf(node)})
 	case *ast.AssignStmt:
 		if node.Target == nil || node.Value == nil {
-			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "assignment missing target or value", Location: node.Loc()})
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "assignment missing target or value", Location: ast.LocOf(node)})
 			return
 		}
 		targetExpr := lowerAssignTargetExpr(ctx, module, scope, node.Target)
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
-		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, Location: node.Loc()})
+		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, Location: ast.LocOf(node)})
 	}
 }
 
@@ -301,7 +301,7 @@ func isAddressableExpr(module *project.Module, scope *table.Scope, expr ast.Expr
 func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Loc()}
+		block := &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(node)}
 		appendBlock(module, scope, block, node, returnType, ctx)
 		return block
 	case *ast.IfStmt:
@@ -311,8 +311,8 @@ func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, return
 		}
 		out := &hir.If{
 			Cond:     condExpr,
-			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: node.Then.Loc()},
-			Location: node.Loc(),
+			Then:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(node.Then)},
+			Location: ast.LocOf(node),
 		}
 		appendBlock(module, scope, out.Then, node.Then, returnType, ctx)
 		if node.Else != nil {
@@ -320,7 +320,7 @@ func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, return
 		}
 		return out
 	default:
-		return &hir.Invalid{Message: "unsupported else branch", Location: node.Loc()}
+		return &hir.Invalid{Message: "unsupported else branch", Location: ast.LocOf(node)}
 	}
 }
 

@@ -43,12 +43,12 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	funcScope := sym.Scope.(*table.Scope)
 	for _, param := range fn.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", fn.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
 			return
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
 		if err := funcScope.Declare(paramSym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), param.Name.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
 			return
 		}
 	}
@@ -62,12 +62,12 @@ func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
 	funcScope := sym.Scope.(*table.Scope)
 	for _, param := range fn.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", fn.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
 			return
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
 		if err := funcScope.Declare(paramSym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), param.Name.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
 			return
 		}
 	}
@@ -112,7 +112,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		sym.Initializing = true
 		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
 			return
 		}
 		if node.Value != nil {
@@ -123,7 +123,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		sym.Initializing = true
 		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
 			return
 		}
 		if node.Value != nil {
@@ -131,13 +131,13 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		}
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", node.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
 			return
 		}
 		r.resolveExpr(scope, node.Value)
 	case *ast.IfStmt:
 		if node.Cond == nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", node.Loc(), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", ast.LocOf(node), "")
 			return
 		}
 		r.resolveExpr(scope, node.Cond)
@@ -153,7 +153,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveExpr(scope, node.Target)
 		r.resolveExpr(scope, node.Value)
 	default:
-		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", node.Loc(), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
 	}
 }
 
@@ -168,7 +168,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		if ok && sym != nil {
 			sym.Used = true
 			if sym.Kind == symbols.SymbolImport {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", node.Loc(), "")
+				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", ast.LocOf(node), "")
 				return
 			}
 			if sym.Initializing {
@@ -176,7 +176,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 				r.ctx.Diagnostics.Add(
 					diagnostics.NewError(msg).
 						WithCode(diagnostics.ErrUseBeforeDecl).
-						WithPrimaryLabel(node.Loc(), msg).
+						WithPrimaryLabel(ast.LocOf(node), msg).
 						WithHelp("rename binding or use earlier value"),
 				)
 				return
@@ -207,7 +207,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.AsExpr:
 		r.resolveExpr(scope, node.Expr)
 	default:
-		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", node.Loc(), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", ast.LocOf(node), "")
 	}
 }
 
@@ -227,21 +227,21 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 	member := node.Name.Name
 	imp, ok := r.module.Imports[qualifier]
 	if !ok {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", node.Loc(), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(node), "")
 		return false
 	}
 	mod, ok := r.ctx.ModuleByKey(imp.Key)
 	if !ok || mod == nil || mod.ModuleScope == nil {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", node.Loc(), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(node), "")
 		return false
 	}
 	sym, ok := mod.ModuleScope.LookupLocal(member)
 	if !ok || sym == nil {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", node.Loc(), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(node), "")
 		return false
 	}
 	if !sym.IsPub {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", node.Loc(), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "")
 		return false
 	}
 	sym.Used = true

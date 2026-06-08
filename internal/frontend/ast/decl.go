@@ -12,7 +12,7 @@ type ImportDecl struct {
 }
 
 func (*ImportDecl) declNode()               {}
-func (d *ImportDecl) Loc() *source.Location { return d.Location }
+func (d *ImportDecl) loc() *source.Location { return d.Location }
 
 type NamedType struct {
 	NodeIDHolder
@@ -21,7 +21,7 @@ type NamedType struct {
 }
 
 func (*NamedType) typeNode()               {}
-func (t *NamedType) Loc() *source.Location { return t.Location }
+func (t *NamedType) loc() *source.Location { return t.Location }
 
 type RawPtrType struct {
 	NodeIDHolder
@@ -31,7 +31,7 @@ type RawPtrType struct {
 }
 
 func (*RawPtrType) typeNode()               {}
-func (t *RawPtrType) Loc() *source.Location { return t.Location }
+func (t *RawPtrType) loc() *source.Location { return t.Location }
 
 type FuncType struct {
 	NodeIDHolder
@@ -41,7 +41,7 @@ type FuncType struct {
 }
 
 func (*FuncType) typeNode()               {}
-func (t *FuncType) Loc() *source.Location { return t.Location }
+func (t *FuncType) loc() *source.Location { return t.Location }
 
 type StructType struct {
 	NodeIDHolder
@@ -50,7 +50,7 @@ type StructType struct {
 }
 
 func (*StructType) typeNode()               {}
-func (t *StructType) Loc() *source.Location { return t.Location }
+func (t *StructType) loc() *source.Location { return t.Location }
 
 type InterfaceType struct {
 	NodeIDHolder
@@ -59,7 +59,7 @@ type InterfaceType struct {
 }
 
 func (*InterfaceType) typeNode()               {}
-func (t *InterfaceType) Loc() *source.Location { return t.Location }
+func (t *InterfaceType) loc() *source.Location { return t.Location }
 
 type EnumType struct {
 	NodeIDHolder
@@ -68,7 +68,7 @@ type EnumType struct {
 }
 
 func (*EnumType) typeNode()               {}
-func (t *EnumType) Loc() *source.Location { return t.Location }
+func (t *EnumType) loc() *source.Location { return t.Location }
 
 type TypeField struct {
 	Name     *Ident
@@ -111,7 +111,7 @@ type LetDecl struct {
 }
 
 func (*LetDecl) declNode()               {}
-func (d *LetDecl) Loc() *source.Location { return d.Location }
+func (d *LetDecl) loc() *source.Location { return d.Location }
 func (*LetDecl) stmtNode()               {}
 
 type ConstDecl struct {
@@ -124,7 +124,7 @@ type ConstDecl struct {
 }
 
 func (*ConstDecl) declNode()               {}
-func (d *ConstDecl) Loc() *source.Location { return d.Location }
+func (d *ConstDecl) loc() *source.Location { return d.Location }
 func (*ConstDecl) stmtNode()               {}
 
 type FnDecl struct {
@@ -138,7 +138,7 @@ type FnDecl struct {
 }
 
 func (*FnDecl) declNode()               {}
-func (d *FnDecl) Loc() *source.Location { return d.Location }
+func (d *FnDecl) loc() *source.Location { return d.Location }
 
 type TypeAliasDecl struct {
 	NodeIDHolder
@@ -149,7 +149,7 @@ type TypeAliasDecl struct {
 }
 
 func (*TypeAliasDecl) declNode()               {}
-func (d *TypeAliasDecl) Loc() *source.Location { return d.Location }
+func (d *TypeAliasDecl) loc() *source.Location { return d.Location }
 
 type StructDecl struct {
 	NodeIDHolder
@@ -160,7 +160,7 @@ type StructDecl struct {
 }
 
 func (*StructDecl) declNode()               {}
-func (d *StructDecl) Loc() *source.Location { return d.Location }
+func (d *StructDecl) loc() *source.Location { return d.Location }
 
 type InterfaceDecl struct {
 	NodeIDHolder
@@ -171,7 +171,7 @@ type InterfaceDecl struct {
 }
 
 func (*InterfaceDecl) declNode()               {}
-func (d *InterfaceDecl) Loc() *source.Location { return d.Location }
+func (d *InterfaceDecl) loc() *source.Location { return d.Location }
 
 type EnumDecl struct {
 	NodeIDHolder
@@ -182,7 +182,7 @@ type EnumDecl struct {
 }
 
 func (*EnumDecl) declNode()               {}
-func (d *EnumDecl) Loc() *source.Location { return d.Location }
+func (d *EnumDecl) loc() *source.Location { return d.Location }
 
 type ImplDecl struct {
 	NodeIDHolder
@@ -192,4 +192,4 @@ type ImplDecl struct {
 }
 
 func (*ImplDecl) declNode()               {}
-func (d *ImplDecl) Loc() *source.Location { return d.Location }
+func (d *ImplDecl) loc() *source.Location { return d.Location }

@@ -11,7 +11,7 @@ type Ident struct {
 }
 
 func (*Ident) exprNode()               {}
-func (e *Ident) Loc() *source.Location { return e.Location }
+func (e *Ident) loc() *source.Location { return e.Location }
 
 type ScopeResolution struct {
 	NodeIDHolder
@@ -22,7 +22,7 @@ type ScopeResolution struct {
 
 func (*ScopeResolution) exprNode()               {}
 func (*ScopeResolution) typeNode()               {}
-func (e *ScopeResolution) Loc() *source.Location { return e.Location }
+func (e *ScopeResolution) loc() *source.Location { return e.Location }
 
 type SelectorExpr struct {
 	NodeIDHolder
@@ -32,7 +32,7 @@ type SelectorExpr struct {
 }
 
 func (*SelectorExpr) exprNode()               {}
-func (e *SelectorExpr) Loc() *source.Location { return e.Location }
+func (e *SelectorExpr) loc() *source.Location { return e.Location }
 
 type StructLitField struct {
 	Name     *Ident
@@ -47,7 +47,7 @@ type StructLit struct {
 }
 
 func (*StructLit) exprNode()               {}
-func (e *StructLit) Loc() *source.Location { return e.Location }
+func (e *StructLit) loc() *source.Location { return e.Location }
 
 type BadExpr struct {
 	NodeIDHolder
@@ -55,7 +55,7 @@ type BadExpr struct {
 }
 
 func (*BadExpr) exprNode()               {}
-func (e *BadExpr) Loc() *source.Location { return e.Location }
+func (e *BadExpr) loc() *source.Location { return e.Location }
 
 type NumberLit struct {
 	NodeIDHolder
@@ -64,7 +64,7 @@ type NumberLit struct {
 }
 
 func (*NumberLit) exprNode()               {}
-func (e *NumberLit) Loc() *source.Location { return e.Location }
+func (e *NumberLit) loc() *source.Location { return e.Location }
 
 type StringLit struct {
 	NodeIDHolder
@@ -73,7 +73,7 @@ type StringLit struct {
 }
 
 func (*StringLit) exprNode()               {}
-func (e *StringLit) Loc() *source.Location { return e.Location }
+func (e *StringLit) loc() *source.Location { return e.Location }
 
 type UnaryExpr struct {
 	NodeIDHolder
@@ -83,7 +83,7 @@ type UnaryExpr struct {
 }
 
 func (*UnaryExpr) exprNode()               {}
-func (e *UnaryExpr) Loc() *source.Location { return e.Location }
+func (e *UnaryExpr) loc() *source.Location { return e.Location }
 
 type BinaryExpr struct {
 	NodeIDHolder
@@ -94,7 +94,7 @@ type BinaryExpr struct {
 }
 
 func (*BinaryExpr) exprNode()               {}
-func (e *BinaryExpr) Loc() *source.Location { return e.Location }
+func (e *BinaryExpr) loc() *source.Location { return e.Location }
 
 type CallExpr struct {
 	NodeIDHolder
@@ -104,7 +104,7 @@ type CallExpr struct {
 }
 
 func (*CallExpr) exprNode()               {}
-func (e *CallExpr) Loc() *source.Location { return e.Location }
+func (e *CallExpr) loc() *source.Location { return e.Location }
 
 type AsExpr struct {
 	NodeIDHolder
@@ -114,4 +114,4 @@ type AsExpr struct {
 }
 
 func (*AsExpr) exprNode()               {}
-func (e *AsExpr) Loc() *source.Location { return e.Location }
+func (e *AsExpr) loc() *source.Location { return e.Location }

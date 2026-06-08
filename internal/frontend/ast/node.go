@@ -12,7 +12,7 @@ func (h *NodeIDHolder) ID() NodeID      { return h.NodeID }
 func (h *NodeIDHolder) SetID(id NodeID) { h.NodeID = id }
 
 type Node interface {
-	Loc() *source.Location
+	loc() *source.Location
 	ID() NodeID
 	SetID(NodeID)
 }
