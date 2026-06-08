@@ -14,7 +14,7 @@ import (
 
 const (
 	LockfileName       = "ember.lock"
-	lockfileVersion   = "1.0"
+	lockfileVersion    = "1.0"
 	lockfileCurrentVer = lockfileVersion
 )
 
