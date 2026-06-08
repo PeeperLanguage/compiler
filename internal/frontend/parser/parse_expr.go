@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	precLowest = iota
+	precLowest uint8 = iota
 	precOr
 	precAnd
 	precEquality
@@ -19,43 +19,114 @@ const (
 	precCall
 )
 
-var infixPrec = map[token.Kind]int{
-	token.OROR:     precOr,
-	token.ANDAND:   precAnd,
-	token.EQ:       precEquality,
-	token.NEQ:      precEquality,
-	token.LT:       precCompare,
-	token.GT:       precCompare,
-	token.LE:       precCompare,
-	token.GE:       precCompare,
-	token.PLUS:     precSum,
-	token.MINUS:    precSum,
-	token.ASTERISK: precProduct,
-	token.SLASH:    precProduct,
-	token.PERCENT:  precProduct,
-	token.AS:       precCast,
-	token.LPAREN:   precCall,
-	token.DOT:      precCall,
+// nudFunc parses a prefix (null-denotation) expression.
+type nudFunc func(p *Parser) ast.Expr
+
+// ledFunc parses an infix (left-denotation) expression.
+type ledFunc func(p *Parser, left ast.Expr, prec uint8) ast.Expr
+
+var (
+	nudLookup = map[token.Kind]nudFunc{}
+	ledLookup = map[token.Kind]ledFunc{}
+	precTable = map[token.Kind]uint8{}
+)
+
+func nud(kind token.Kind, handler nudFunc) {
+	nudLookup[kind] = handler
 }
 
-type ledFunc func(*Parser, ast.Expr, int) ast.Expr
+func led(kind token.Kind, prec uint8, handler ledFunc) {
+	precTable[kind] = prec
+	ledLookup[kind] = handler
+}
 
-func (p *Parser) parseExpr(precedence int) ast.Expr {
-	left := p.parsePrefix()
+func init() {
+	// literals & identifiers
+	nud(token.NUMBER, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: p.loc(*tok, *tok)})
+	})
+	nud(token.STRING, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.StringLit{Value: tok.Literal, Location: p.loc(*tok, *tok)})
+	})
+	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
+
+	// grouping
+	nud(token.LPAREN, func(p *Parser) ast.Expr {
+		p.advance()
+		inner := p.parseExpr(precLowest)
+		if p.consume(token.RPAREN, "expected ')'") == nil {
+			if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == token.COMMA || p.peek().Kind == token.RPAREN {
+				p.recoverMissingToken(token.RPAREN, "expected ')'", p.expectedInsertionPoint())
+				return inner
+			}
+			return nil
+		}
+		return inner
+	})
+
+	// prefix / unary
+	nud(token.PLUS,  func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+	nud(token.MINUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+	nud(token.BANG,  func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+
+	// struct literal
+	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseStructLiteral() })
+
+	// logical
+	led(token.OROR,  precOr,  parseBinaryExpr)
+	led(token.ANDAND, precAnd, parseBinaryExpr)
+
+	// equality
+	led(token.EQ,  precEquality, parseBinaryExpr)
+	led(token.NEQ, precEquality, parseBinaryExpr)
+
+	// relational
+	led(token.LT, precCompare, parseBinaryExpr)
+	led(token.GT, precCompare, parseBinaryExpr)
+	led(token.LE, precCompare, parseBinaryExpr)
+	led(token.GE, precCompare, parseBinaryExpr)
+
+	// additive
+	led(token.PLUS,  precSum, parseBinaryExpr)
+	led(token.MINUS, precSum, parseBinaryExpr)
+
+	// multiplicative
+	led(token.ASTERISK, precProduct, parseBinaryExpr)
+	led(token.SLASH,    precProduct, parseBinaryExpr)
+	led(token.PERCENT,  precProduct, parseBinaryExpr)
+
+	// cast
+	led(token.AS, precCast, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+		return p.parseAsExpr(left)
+	})
+
+	// call & member
+	led(token.LPAREN, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+		return p.parseCall(left)
+	})
+	led(token.DOT, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+		return p.parseSelector(left)
+	})
+}
+
+func (p *Parser) parseExpr(precedence uint8) ast.Expr {
+	nudHandler, ok := nudLookup[p.peek().Kind]
+	if !ok {
+		p.errorf(p.peek(), diagnostics.ErrInvalidExpression, "expected expression")
+		return nil
+	}
+	left := nudHandler(p)
 	if left == nil {
 		return nil
 	}
 	for !p.at(token.SEMICOLON) && !p.at(token.COMMA) && !p.at(token.RPAREN) && !p.at(token.RBRACE) {
-		nextPrec := p.peekPrecedence()
-		if nextPrec <= precedence {
+		prec, ok := precTable[p.peek().Kind]
+		if !ok || prec <= precedence {
 			break
 		}
-		led, ok := ledFor(p.peek().Kind)
-		if !ok {
-			p.errorf(p.peek(), diagnostics.ErrInvalidExpression, "expected expression operator")
-			return left
-		}
-		left = led(p, left, nextPrec)
+		left = ledLookup[p.peek().Kind](p, left, prec)
 		if left == nil {
 			return nil
 		}
@@ -63,85 +134,25 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	return left
 }
 
-func ledFor(kind token.Kind) (ledFunc, bool) {
-	switch kind {
-	case token.OROR, token.ANDAND, token.EQ, token.NEQ, token.LT, token.GT, token.LE, token.GE,
-		token.PLUS, token.MINUS, token.ASTERISK, token.SLASH, token.PERCENT:
-		return parseInfixLed, true
-	case token.AS:
-		return parseAsLed, true
-	case token.LPAREN:
-		return parseCallLed, true
-	case token.DOT:
-		return parseSelectorLed, true
-	default:
-		return nil, false
-	}
-}
-
-func (p *Parser) parsePrefix() ast.Expr {
-	tok := p.peek()
-	switch tok.Kind {
-	case token.IDENT:
-		return p.parseIdentExpr()
-	case token.NUMBER:
-		p.advance()
-		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: p.loc(tok, tok)})
-	case token.STRING:
-		p.advance()
-		return reg(p, &ast.StringLit{Value: tok.Literal, Location: p.loc(tok, tok)})
-	case token.PLUS, token.MINUS, token.BANG:
-		p.advance()
-		expr := p.parseExpr(precPrefix)
-		if expr == nil {
-			return nil
-		}
-		return reg(p, &ast.UnaryExpr{
-			Op:       tok.Literal,
-			Expr:     expr,
-			Location: p.loc(tok, tok),
-		})
-	case token.LPAREN:
-		p.advance()
-		expr := p.parseExpr(precLowest)
-		if p.consume(token.RPAREN, "expected ')'") == nil {
-			if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == token.COMMA || p.peek().Kind == token.RPAREN {
-				p.recoverMissingToken(token.RPAREN, "expected ')'", p.expectedInsertionPoint())
-				return expr
-			}
-			return nil
-		}
-		return expr
-	case token.DOT:
-		return p.parseStructLiteral()
-	default:
-		p.errorf(tok, diagnostics.ErrInvalidExpression, "expected expression")
+func (p *Parser) parseUnaryExpr() ast.Expr {
+	tok := p.advance()
+	expr := p.parseExpr(precPrefix)
+	if expr == nil {
 		return nil
 	}
+	return reg(p, &ast.UnaryExpr{
+		Op:       tok.Literal,
+		Expr:     expr,
+		Location: p.loc(*tok, *tok),
+	})
 }
 
-func parseInfixLed(p *Parser, left ast.Expr, precedence int) ast.Expr {
-	return p.parseInfix(left, precedence)
-}
-
-func parseCallLed(p *Parser, left ast.Expr, _ int) ast.Expr {
-	return p.parseCall(left)
-}
-
-func parseSelectorLed(p *Parser, left ast.Expr, _ int) ast.Expr {
-	return p.parseSelector(left)
-}
-
-func parseAsLed(p *Parser, left ast.Expr, _ int) ast.Expr {
-	return p.parseAsExpr(left)
-}
-
-func (p *Parser) parseInfix(left ast.Expr, precedence int) ast.Expr {
+func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
 	op := p.advance()
 	if op == nil {
 		return nil
 	}
-	right := p.parseExpr(precedence)
+	right := p.parseExpr(prec)
 	if right == nil {
 		return nil
 	}
@@ -155,7 +166,10 @@ func (p *Parser) parseInfix(left ast.Expr, precedence int) ast.Expr {
 
 func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	start := p.consume(token.LPAREN, "expected '('")
-	args := make([]ast.Expr, 0)
+	if start == nil {
+		return nil
+	}
+	var args []ast.Expr
 	if !p.at(token.RPAREN) {
 		for {
 			arg := p.parseExpr(precLowest)
@@ -168,18 +182,11 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 		}
 	}
 	end := p.consume(token.RPAREN, "expected ')' after arguments")
-	if start == nil {
-		return nil
-	}
 	if end == nil {
-		if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == token.COMMA || p.peek().Kind == token.RPAREN {
-			end = p.recoverMissingToken(token.RPAREN, "expected ')' after arguments", p.expectedInsertionPoint())
-		} else {
+		if !p.isStmtBoundary(p.peek().Kind) && p.peek().Kind != token.COMMA && p.peek().Kind != token.RPAREN {
 			return nil
 		}
-	}
-	if end == nil {
-		return nil
+		end = p.recoverMissingToken(token.RPAREN, "expected ')' after arguments", p.expectedInsertionPoint())
 	}
 	return reg(p, &ast.CallExpr{
 		Callee:   callee,
@@ -228,38 +235,26 @@ func (p *Parser) parseStructLiteral() ast.Expr {
 	if start == nil {
 		return nil
 	}
-	if p.consume(token.LBRACE, "expected '{' after '.'") == nil {
-		return nil
-	}
-	fields := make([]ast.StructLitField, 0)
-	if !p.at(token.RBRACE) {
-		for {
+	fields, end, ok := parseBracedItemList(p, "expected '{' after '.'", "expected '}' after struct literal",
+		func() (ast.StructLitField, bool) {
 			name := p.parseIdent()
 			if name == nil {
-				return nil
+				return ast.StructLitField{}, false
 			}
 			if p.consume(token.ASSIGN, "expected '=' after struct literal field name") == nil {
-				return nil
+				return ast.StructLitField{}, false
 			}
 			value := p.parseExpr(precLowest)
 			if value == nil {
-				return nil
+				return ast.StructLitField{}, false
 			}
-			fields = append(fields, ast.StructLitField{
+			return ast.StructLitField{
 				Name:     name,
 				Value:    value,
 				Location: p.locFromNode(name, value),
-			})
-			if !p.match(token.COMMA) {
-				break
-			}
-			if p.at(token.RBRACE) {
-				break
-			}
-		}
-	}
-	end := p.consume(token.RBRACE, "expected '}' after struct literal")
-	if end == nil {
+			}, true
+		})
+	if !ok {
 		return nil
 	}
 	return reg(p, &ast.StructLit{
@@ -278,16 +273,8 @@ func (p *Parser) parseIdent() *ast.Ident {
 	return reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
 }
 
-// parseAsExpr parses an "as" cast expression: expr as type
 func (p *Parser) parseAsExpr(left ast.Expr) ast.Expr {
-	if left == nil {
-		return nil
-	}
-	asTok := p.advance()
-	if asTok == nil || asTok.Kind != token.AS {
-		return left
-	}
-	// Parse the type expression after "as"
+	asTok := p.advance() // consume 'as'
 	typeExpr := p.parseTypeExpr()
 	if typeExpr == nil {
 		p.errorf(*asTok, diagnostics.ErrInvalidExpression, "expected type after 'as'")

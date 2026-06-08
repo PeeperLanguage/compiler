@@ -19,66 +19,13 @@ type Parser struct {
 	nodeID   ast.NodeID
 }
 
-type blockOwner string
-
 const (
-	blockOwnerFunction blockOwner = "function"
-	blockOwnerIf       blockOwner = "if"
-	blockOwnerElse     blockOwner = "else"
-
+	ownerFunction = "function"
+	ownerIf       = "if"
+	ownerElse     = "else"
 
 	voidTypeName = "void"
 )
-
-func (p *Parser) expectedInsertionPoint() source.Position {
-	tok := p.peek()
-	insert := tok.Start
-	if p.pos > 0 {
-		prev := p.stream[p.pos-1]
-		if prev.End.Index <= tok.Start.Index {
-			insert = prev.End
-		}
-	}
-	return insert
-}
-
-func (p *Parser) isDeclStart(kind token.Kind) bool {
-	switch kind {
-	case token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT, token.INTERFACE, token.ENUM, token.IMPL, token.TYPE, token.EOF:
-		return true
-	default:
-		return false
-	}
-}
-
-func (p *Parser) isStmtBoundary(kind token.Kind) bool {
-	switch kind {
-	case token.RBRACE, token.SEMICOLON, token.LET, token.CONST, token.IF, token.ELSE, token.RETURN, token.FN, token.IMPORT, token.STRUCT, token.INTERFACE, token.ENUM, token.IMPL, token.EOF:
-		return true
-	default:
-		return false
-	}
-}
-
-func (p *Parser) recoverMissingToken(expected token.Kind, msg string, fallback source.Position) *token.Token {
-	insert := p.expectedInsertionPoint()
-	if fallback.Line > 0 {
-		insert = fallback
-	}
-	loc := source.NewLocation(p.filePath, insert, insert)
-	p.diag.Add(
-		diagnostics.NewError(msg).
-			WithCode(diagnostics.ErrExpectedToken).
-			WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(expected))),
-	)
-	synth := token.Token{
-		Kind:    expected,
-		Literal: string(expected),
-		Start:   insert,
-		End:     insert,
-	}
-	return &synth
-}
 
 func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *Parser {
 	return &Parser{
@@ -88,108 +35,8 @@ func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag)
 	}
 }
 
-// recoverSemicolon attempts to recover from a missing ';' by synthesizing one.
-// It is called when the parser was expecting a semicolon but didn't find it.
-// If the next token is a statement or declaration boundary, a synthetic
-// semicolon is emitted at the appropriate insert point and returned.
-// Otherwise the function returns nil to signal unrecoverable failure.
-//
-// The location reported for the synthesized token is taken from fallback;
-// when fallback is the zero position, the parser's expected insertion point
-// is used instead.
-func (p *Parser) recoverSemicolon(context string, fallback source.Position) *token.Token {
-	insert := p.expectedInsertionPoint()
-	if !isZeroPosition(fallback) {
-		insert = fallback
-	}
-	if !p.isStmtBoundary(p.peek().Kind) && !p.isDeclStart(p.peek().Kind) {
-		return nil
-	}
-	return p.recoverMissingToken(token.SEMICOLON, "expected ';' "+context, insert)
-}
-
-// isZeroPosition reports whether the position is the zero value. Used as
-// a sentinel for "no override provided" in recover helpers.
-func isZeroPosition(pos source.Position) bool {
-	return pos == source.NewPosition()
-}
-
-// parseBracedItemList parses the body of a `{...}` block containing zero or
-// more items separated by commas. The opener message is used if the opening
-// brace is missing; the item message is used when the body is not terminated
-// by ',' or '}'. The callback is invoked once per item and must return false
-// to abort parsing (typically because the item sub-parser failed).
-//
-// The function returns the parsed item slice, the closing brace token, and
-// a success flag.
-func parseBracedItemList[T any](
-	p *Parser,
-	openerMsg string,
-	itemMsg string,
-	parseItem func() (T, bool),
-) ([]T, *token.Token, bool) {
-	if p.consume(token.LBRACE, openerMsg) == nil {
-		return nil, nil, false
-	}
-	items := make([]T, 0)
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		item, ok := parseItem()
-		if !ok {
-			return nil, nil, false
-		}
-		items = append(items, item)
-		if p.match(token.COMMA) {
-			if p.at(token.RBRACE) {
-				break
-			}
-			continue
-		}
-		if !p.at(token.RBRACE) {
-			p.errorf(p.peek(), diagnostics.ErrExpectedToken, itemMsg)
-			return nil, nil, false
-		}
-	}
-	end := p.consume(token.RBRACE, itemMsg)
-	if end == nil {
-		return nil, nil, false
-	}
-	return items, end, true
-}
-
-// endLocation returns the end position of the given node, or a zero position
-// if the node has no location. Used to build a sensible insert point when
-// recovering from missing tokens.
-func endLocation(n ast.Node) source.Position {
-	if n == nil {
-		return source.NewPosition()
-	}
-	loc := n.Loc()
-	if loc == nil || loc.End == nil {
-		return source.NewPosition()
-	}
-	return *loc.End
-}
-
-func (p *Parser) nextID() ast.NodeID {
-	p.nodeID++
-	return p.nodeID
-}
-
-func isNilNode(n ast.Node) bool {
-	if n == nil {
-		return true
-	}
-	v := reflect.ValueOf(n)
-	return v.Kind() == reflect.Pointer && v.IsNil()
-}
-
-// reg registers the given node with the parser, assigning it a unique ID if
-// it is not already nil. Used to ensure all AST nodes have a stable ID.
-func reg[T ast.Node](p *Parser, n T) T {
-	if !isNilNode(n) {
-		n.SetID(p.nextID())
-	}
-	return n
+func ParseModule(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *ast.Module {
+	return New(filePath, stream, diag).ParseModule()
 }
 
 func (p *Parser) ParseModule() *ast.Module {
@@ -200,20 +47,47 @@ func (p *Parser) ParseModule() *ast.Module {
 	}
 	for !p.at(token.EOF) {
 		if p.at(token.IMPORT) {
-			imp := p.parseImport()
-			if imp != nil {
+			if imp := p.parseImport(); imp != nil {
 				mod.Imports = append(mod.Imports, imp)
 			}
 			continue
 		}
-		decl := p.parseDecl()
-		if decl != nil {
+		if decl := p.parseDecl(); decl != nil {
 			mod.Decls = append(mod.Decls, decl)
 			continue
 		}
 		p.synchronizeDecl()
 	}
 	return mod
+}
+
+// --- Declarations ---
+
+func (p *Parser) parseDecl() ast.Decl {
+	if p.peek().Kind == token.HASH {
+		p.parseFnAttributes()
+	}
+	switch p.peek().Kind {
+	case token.FN:
+		return p.parseFnDecl()
+	case token.LET:
+		return p.parseLetDecl(true)
+	case token.CONST:
+		return p.parseConstDecl(true)
+	case token.STRUCT:
+		return p.parseStructDecl()
+	case token.INTERFACE:
+		return p.parseInterfaceDecl()
+	case token.ENUM:
+		return p.parseEnumDecl()
+	case token.IMPL:
+		return p.parseImplDecl()
+	case token.TYPE:
+		return p.parseTypeAliasDecl()
+	default:
+		p.errorf(p.peek(), diagnostics.ErrInvalidDeclaration, "expected declaration")
+		return nil
+	}
 }
 
 func (p *Parser) parseImport() *ast.ImportDecl {
@@ -253,56 +127,17 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 	})
 }
 
-func (p *Parser) parseDecl() ast.Decl {
-	if p.peek().Kind == token.HASH {
-		p.parseFnAttributes()
-	}
-	switch p.peek().Kind {
-	case token.FN:
-		return p.parseFnDecl()
-	case token.LET:
-		return p.parseLetDecl(true)
-	case token.CONST:
-		return p.parseConstDecl(true)
-	case token.STRUCT:
-		return p.parseStructDecl()
-	case token.INTERFACE:
-		return p.parseInterfaceDecl()
-	case token.ENUM:
-		return p.parseEnumDecl()
-	case token.IMPL:
-		return p.parseImplDecl()
-	default:
-		p.errorf(p.peek(), diagnostics.ErrInvalidDeclaration, "expected declaration")
-		return nil
-	}
-}
-
-func (p *Parser) parseFnAttributes() {
-	for p.peek().Kind == token.HASH {
-		p.advance()
-		if p.consume(token.LBRACK, "expected '[' after '#'") == nil {
-			return
-		}
-		if p.consume(token.IDENT, "expected attribute name") == nil {
-			return
-		}
-		if p.consume(token.RBRACK, "expected ']' after attribute") == nil {
-			return
-		}
-	}
-}
-
 func (p *Parser) parseFnDecl() ast.Decl {
 	start := p.consume(token.FN, "expected fn")
 	name, typeParams, params, returnType, ok := p.parseFnSignature(start)
 	if !ok {
 		return nil
 	}
-	body, _, ok := p.parseFnBody()
+	body, isExtern, ok := p.parseFnBody()
 	if !ok {
 		return nil
 	}
+	_ = isExtern // consumed by caller if needed
 	return reg(p, &ast.FnDecl{
 		Name:       name,
 		TypeParams: typeParams,
@@ -315,9 +150,12 @@ func (p *Parser) parseFnDecl() ast.Decl {
 
 // parseFnSignature parses the name, optional type parameters, parameter list,
 // and optional return type of a function. The default return type when no
-// arrow is present is "i32".
+// arrow is present is "void".
 func (p *Parser) parseFnSignature(start *token.Token) (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
-	returnType = ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: source.NewLocation(p.filePath, start.Start, start.End)}))
+	returnType = reg(p, &ast.NamedType{
+		Name:     voidTypeName,
+		Location: source.NewLocation(p.filePath, start.Start, start.End),
+	})
 	name = p.parseFunctionName()
 	if name == nil {
 		return nil, nil, nil, nil, false
@@ -363,146 +201,14 @@ func (p *Parser) parseFunctionName() *ast.Ident {
 	})
 }
 
-func (p *Parser) parseFnBody() (*ast.BlockStmt, bool, bool) {
+// parseFnBody parses a function body. A semicolon means an extern/forward
+// declaration (body=nil, isExtern=true). Otherwise a block is required.
+func (p *Parser) parseFnBody() (body *ast.BlockStmt, isExtern bool, ok bool) {
 	if p.match(token.SEMICOLON) {
 		return nil, true, true
 	}
-	body, ok := p.parseRequiredBlock(blockOwnerFunction)
-	if !ok {
-		return nil, false, false
-	}
-	return body, false, true
-}
-
-func (p *Parser) parseRequiredBlock(owner blockOwner) (*ast.BlockStmt, bool) {
-	if p.at(token.LBRACE) {
-		if body := p.parseBlock(); body != nil {
-			return body.(*ast.BlockStmt), true
-		}
-		return nil, false
-	}
-	if !p.isDeclStart(p.peek().Kind) && !p.isStmtBoundary(p.peek().Kind) {
-		return nil, false
-	}
-	insert := p.expectedInsertionPoint()
-	loc := source.NewLocation(p.filePath, insert, insert)
-	p.diag.Add(
-		diagnostics.NewError("missing "+string(owner)+" body").
-			WithCode(diagnostics.ErrExpectedToken).
-			WithPrimaryLabel(loc, "add missing `{}` here"),
-	)
-	empty := source.NewLocation(p.filePath, insert, insert)
-	return reg(p, &ast.BlockStmt{
-		Stmts:    make([]ast.Stmt, 0),
-		Location: empty,
-	}), true
-}
-
-func (p *Parser) parseOptionalTypeParams() []ast.TypeParam {
-	params := make([]ast.TypeParam, 0)
-	if !p.match(token.LBRACK) {
-		return params
-	}
-	for {
-		name := p.parseIdent()
-		if name == nil {
-			return params
-		}
-		params = append(params, ast.TypeParam{
-			Name:     name,
-			Location: name.Location,
-		})
-		if p.match(token.COMMA) {
-			continue
-		}
-		break
-	}
-	_ = p.consume(token.RBRACK, "expected ']' after type parameters")
-	return params
-}
-
-func (p *Parser) parseParams() []ast.Param {
-	params := make([]ast.Param, 0)
-	if p.at(token.RPAREN) {
-		return params
-	}
-	for {
-		param, ok := p.parseParam()
-		if !ok {
-			return params
-		}
-		params = append(params, param)
-		if !p.match(token.COMMA) {
-			break
-		}
-	}
-	return params
-}
-
-func (p *Parser) parseParam() (ast.Param, bool) {
-	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
-		name := p.parseIdent()
-		if name == nil {
-			return ast.Param{}, false
-		}
-		if p.consume(token.COLON, "expected ':' after parameter name") == nil {
-			return ast.Param{}, false
-		}
-		ty := p.parseTypeExpr()
-		if ty == nil {
-			return ast.Param{}, false
-		}
-		return ast.Param{
-			Name:     name,
-			Type:     ty,
-			Location: p.locFromNode(name, ty),
-		}, true
-	}
-	ty := p.parseTypeExpr()
-	if ty == nil {
-		return ast.Param{}, false
-	}
-	return ast.Param{
-		Type:     ty,
-		Location: ty.Loc(),
-	}, true
-}
-
-func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *token.Token, ok bool) {
-	name = p.parseIdent()
-	if name == nil {
-		return nil, nil, nil, nil, false
-	}
-	if p.match(token.COLON) {
-		ty = p.parseTypeExpr()
-		if ty == nil {
-			return nil, nil, nil, nil, false
-		}
-	}
-
-	if p.match(token.ASSIGN) {
-		value = p.parseExpr(0)
-	}
-
-	if p.peek().Kind != token.SEMICOLON {
-		insertPos := source.NewPosition()
-		switch {
-		case value != nil && value.Loc().End != nil:
-			insertPos = *value.Loc().End
-		case ty != nil && ty.Loc().End != nil:
-			insertPos = *ty.Loc().End
-		case name.Loc().End != nil:
-			insertPos = *name.Loc().End
-		}
-		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
-			end = p.recoverMissingToken(token.SEMICOLON, "expected ';' after statement", insertPos)
-			return name, ty, value, end, true
-		}
-		p.recoverMissingToken(token.SEMICOLON, "expected ';' after statement", insertPos)
-		return nil, nil, nil, nil, false
-	}
-	end = p.advance()
-	return name, ty, value, end, true
+	body, ok = p.parseRequiredBlock(ownerFunction)
+	return body, false, ok
 }
 
 func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
@@ -513,7 +219,6 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 	isMutable := p.match(token.MUT)
 	name, ty, value, end, ok := p.parseBindingFields()
 	if !ok {
-		// TODO: Add proper handling
 		return nil
 	}
 	return reg(p, &ast.LetDecl{
@@ -544,268 +249,37 @@ func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 	})
 }
 
-func (p *Parser) parseBlock() ast.Stmt {
-	start := p.consume(token.LBRACE, "expected '{'")
-	if start == nil {
-		return nil
+func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *token.Token, ok bool) {
+	name = p.parseIdent()
+	if name == nil {
+		return nil, nil, nil, nil, false
 	}
-	stmts := make([]ast.Stmt, 0)
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		stmt := p.parseStmt()
-		if stmt != nil {
-			stmts = append(stmts, stmt)
-		} else {
-			p.synchronizeStmt()
+	if p.match(token.COLON) {
+		ty = p.parseTypeExpr()
+		if ty == nil {
+			return nil, nil, nil, nil, false
 		}
-	}
-	end := p.consume(token.RBRACE, "expected '}'")
-	if end == nil {
-		return nil
-	}
-	return reg(p, &ast.BlockStmt{
-		Stmts:    stmts,
-		Location: p.loc(*start, *end),
-	})
-}
-
-func (p *Parser) parseStmt() ast.Stmt {
-	switch p.peek().Kind {
-	case token.LBRACE:
-		return p.parseBlock()
-	case token.LET:
-		if stmt, ok := p.parseLetDecl(false).(ast.Stmt); ok {
-			return stmt
-		}
-		return nil
-	case token.CONST:
-		if stmt, ok := p.parseConstDecl(false).(ast.Stmt); ok {
-			return stmt
-		}
-		return nil
-	case token.IF:
-		return p.parseIfStmt()
-	case token.RETURN:
-		return p.parseReturnStmt()
-	default:
-		return p.parseExprStmt()
-	}
-}
-
-func (p *Parser) parseIfStmt() ast.Stmt {
-	start := p.consume(token.IF, "expected if")
-	if start == nil {
-		return nil
-	}
-	cond := p.parseExpr(0)
-	if cond == nil {
-		return nil
-	}
-	thenBlock, ok := p.parseRequiredBlock(blockOwnerIf)
-	if !ok {
-		return nil
-	}
-	endTok := p.lastTokenOfStmt(thenBlock, p.lastNonNilToken(*start))
-	var elseStmt ast.Stmt
-	if p.match(token.ELSE) {
-		elseTok := p.lastNonNilToken(*start)
-		if p.at(token.IF) {
-			elseStmt = p.parseIfStmt()
-		} else {
-			elseBlock, ok := p.parseRequiredBlock(blockOwnerElse)
-			if !ok {
-				return nil
-			}
-			elseStmt = elseBlock
-		}
-		endTok = p.lastTokenOfStmt(elseStmt, elseTok)
-	}
-	return reg(p, &ast.IfStmt{
-		Cond:     cond,
-		Then:     thenBlock,
-		Else:     elseStmt,
-		Location: p.loc(*start, endTok),
-	})
-}
-
-func (p *Parser) parseReturnStmt() ast.Stmt {
-	start := p.consume(token.RETURN, "expected return")
-	if start == nil {
-		return nil
-	}
-	var value ast.Expr
-	if !p.at(token.SEMICOLON) {
-		value = p.parseExpr(0)
-	}
-	end := p.consume(token.SEMICOLON, "expected ';' after return")
-	if end == nil {
-		if end = p.recoverSemicolon("after return", endLocation(value)); end == nil {
-			return nil
-		}
-	}
-	return reg(p, &ast.ReturnStmt{
-		Value:    value,
-		Location: p.loc(*start, *end),
-	})
-}
-
-func (p *Parser) parseExprStmt() ast.Stmt {
-	expr := p.parseExpr(0)
-	if expr == nil {
-		return nil
 	}
 	if p.match(token.ASSIGN) {
-		value := p.parseExpr(0)
-		if value == nil {
-			return nil
-		}
-		end := p.consume(token.SEMICOLON, "expected ';' after assignment")
-		if end == nil {
-			if end = p.recoverSemicolon("after assignment", endLocation(value)); end == nil {
-				return nil
-			}
-		}
-		return reg(p, &ast.AssignStmt{
-			Target:   expr,
-			Value:    value,
-			Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
-		})
+		value = p.parseExpr(precLowest)
 	}
-	end := p.consume(token.SEMICOLON, "expected ';' after expression")
+	if p.at(token.SEMICOLON) {
+		end = p.advance()
+		return name, ty, value, end, true
+	}
+	// missing semicolon — attempt recovery
+	insertPos := endLocation(value)
+	if isZeroPosition(insertPos) {
+		insertPos = endLocation(ty)
+	}
+	if isZeroPosition(insertPos) {
+		insertPos = endLocation(name)
+	}
+	end = p.recoverSemicolon("after statement", insertPos)
 	if end == nil {
-		if end = p.recoverSemicolon("after expression", endLocation(expr)); end == nil {
-			return nil
-		}
+		return nil, nil, nil, nil, false
 	}
-	return reg(p, &ast.ExprStmt{
-		Expr:     expr,
-		Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
-	})
-}
-
-func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback token.Token) token.Token {
-	if stmt == nil {
-		return fallback
-	}
-	loc := stmt.Loc()
-	if loc.End == nil {
-		return fallback
-	}
-	for i := p.pos - 1; i >= 0; i-- {
-		tok := p.stream[i]
-		if tok.End.Index == loc.End.Index {
-			return tok
-		}
-	}
-	return fallback
-}
-
-func (p *Parser) parseTypeExpr() ast.TypeExpr {
-	tok := p.peek()
-	switch tok.Kind {
-	case token.CARET:
-		return p.parseCaretPtrTypeExpr()
-	case token.FN:
-		return p.parseFuncTypeExpr()
-	case token.STRUCT:
-		return p.parseStructTypeExpr()
-	case token.INTERFACE:
-		return p.parseInterfaceTypeExpr()
-	case token.ENUM:
-		return p.parseEnumTypeExpr()
-	case token.IDENT:
-		p.advance()
-		id := reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
-		if p.match(token.DCOLON) {
-			next := p.peek()
-			if next.Kind != token.IDENT {
-				p.errorf(next, diagnostics.ErrInvalidType, "expected type segment after '::'")
-				return nil
-			}
-			p.advance()
-			member := reg(p, &ast.Ident{Name: next.Literal, Location: p.loc(next, next)})
-			return reg(p, &ast.ScopeResolution{
-				Module:   id,
-				Name:     member,
-				Location: p.loc(tok, next),
-			})
-		}
-		return reg(p, &ast.NamedType{Name: id.Name, Location: id.Location})
-	default:
-		p.errorf(tok, diagnostics.ErrInvalidType, "expected type")
-		return nil
-	}
-}
-
-func (p *Parser) parseCaretPtrTypeExpr() ast.TypeExpr {
-	start := p.consume(token.CARET, "expected '^' in pointer type")
-	if start == nil {
-		return nil
-	}
-	target := p.parseTypeExpr()
-	if target == nil {
-		return nil
-	}
-	return reg(p, &ast.RawPtrType{
-		Mutable:  true,
-		Target:   target,
-		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
-	})
-}
-
-func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
-	start := p.consume(token.FN, "expected fn in function type")
-	if start == nil {
-		return nil
-	}
-	if p.consume(token.LPAREN, "expected '(' after fn in function type") == nil {
-		return nil
-	}
-	params := make([]ast.TypeExpr, 0)
-	if !p.at(token.RPAREN) {
-		for {
-			param := p.parseTypeExpr()
-			if param == nil {
-				return nil
-			}
-			params = append(params, param)
-			if !p.match(token.COMMA) {
-				break
-			}
-		}
-	}
-	if p.consume(token.RPAREN, "expected ')' after function type parameters") == nil {
-		return nil
-	}
-	ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: source.NewLocation(p.filePath, start.Start, start.End)}))
-	if p.match(token.COLON) {
-		ret = p.parseTypeExpr()
-		if ret == nil {
-			return nil
-		}
-	}
-	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: p.loc(*start, p.lastNonNilToken(*start))})
-}
-
-func (p *Parser) parseTypeAliasDecl() ast.Decl {
-	start := p.consume(token.TYPE, "expected type")
-	if start == nil {
-		return nil
-	}
-	name := p.parseIdent()
-	if name == nil {
-		return nil
-	}
-	typeParams := p.parseOptionalTypeParams()
-	_ = p.match(token.ASSIGN)
-	ty := p.parseTypeExpr()
-	if ty == nil {
-		return nil
-	}
-	end := p.consume(token.SEMICOLON, "expected ';' after type declaration")
-	if end == nil {
-		return nil
-	}
-	return reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: p.loc(*start, *end)})
+	return name, ty, value, end, true
 }
 
 func (p *Parser) parseStructDecl() ast.Decl {
@@ -874,7 +348,7 @@ func (p *Parser) parseImplDecl() ast.Decl {
 	if p.consume(token.LBRACE, "expected '{' after impl target") == nil {
 		return nil
 	}
-	methods := make([]*ast.FnDecl, 0)
+	var methods []*ast.FnDecl
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
 		if p.peek().Kind == token.HASH {
 			p.parseFnAttributes()
@@ -895,6 +369,264 @@ func (p *Parser) parseImplDecl() ast.Decl {
 	}
 	p.match(token.SEMICOLON)
 	return reg(p, &ast.ImplDecl{Target: target, Methods: methods, Location: p.loc(*start, *end)})
+}
+
+func (p *Parser) parseTypeAliasDecl() ast.Decl {
+	start := p.consume(token.TYPE, "expected type")
+	if start == nil {
+		return nil
+	}
+	name := p.parseIdent()
+	if name == nil {
+		return nil
+	}
+	typeParams := p.parseOptionalTypeParams()
+	_ = p.match(token.ASSIGN)
+	ty := p.parseTypeExpr()
+	if ty == nil {
+		return nil
+	}
+	end := p.consume(token.SEMICOLON, "expected ';' after type declaration")
+	if end == nil {
+		return nil
+	}
+	return reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: p.loc(*start, *end)})
+}
+
+func (p *Parser) parseFnAttributes() {
+	for p.peek().Kind == token.HASH {
+		p.advance()
+		if p.consume(token.LBRACK, "expected '[' after '#'") == nil {
+			return
+		}
+		if p.consume(token.IDENT, "expected attribute name") == nil {
+			return
+		}
+		if p.consume(token.RBRACK, "expected ']' after attribute") == nil {
+			return
+		}
+	}
+}
+
+// --- Statements ---
+
+func (p *Parser) parseStmt() ast.Stmt {
+	switch p.peek().Kind {
+	case token.LBRACE:
+		return p.parseBlock()
+	case token.LET:
+		stmt, _ := p.parseLetDecl(false).(ast.Stmt)
+		return stmt
+	case token.CONST:
+		stmt, _ := p.parseConstDecl(false).(ast.Stmt)
+		return stmt
+	case token.IF:
+		return p.parseIfStmt()
+	case token.RETURN:
+		return p.parseReturnStmt()
+	default:
+		return p.parseExprStmt()
+	}
+}
+
+func (p *Parser) parseBlock() ast.Stmt {
+	start := p.consume(token.LBRACE, "expected '{'")
+	if start == nil {
+		return nil
+	}
+	var stmts []ast.Stmt
+	for !p.at(token.RBRACE) && !p.at(token.EOF) {
+		if stmt := p.parseStmt(); stmt != nil {
+			stmts = append(stmts, stmt)
+		} else {
+			p.synchronizeStmt()
+		}
+	}
+	end := p.consume(token.RBRACE, "expected '}'")
+	if end == nil {
+		return nil
+	}
+	return reg(p, &ast.BlockStmt{Stmts: stmts, Location: p.loc(*start, *end)})
+}
+
+func (p *Parser) parseIfStmt() ast.Stmt {
+	start := p.consume(token.IF, "expected if")
+	if start == nil {
+		return nil
+	}
+	cond := p.parseExpr(precLowest)
+	if cond == nil {
+		return nil
+	}
+	thenBlock, ok := p.parseRequiredBlock(ownerIf)
+	if !ok {
+		return nil
+	}
+	endTok := p.lastTokenOfStmt(thenBlock, p.lastNonNilToken(*start))
+	var elseStmt ast.Stmt
+	if p.match(token.ELSE) {
+		elseTok := p.lastNonNilToken(*start)
+		if p.at(token.IF) {
+			elseStmt = p.parseIfStmt()
+		} else {
+			elseBlock, ok := p.parseRequiredBlock(ownerElse)
+			if !ok {
+				return nil
+			}
+			elseStmt = elseBlock
+		}
+		endTok = p.lastTokenOfStmt(elseStmt, elseTok)
+	}
+	return reg(p, &ast.IfStmt{
+		Cond:     cond,
+		Then:     thenBlock,
+		Else:     elseStmt,
+		Location: p.loc(*start, endTok),
+	})
+}
+
+func (p *Parser) parseReturnStmt() ast.Stmt {
+	start := p.consume(token.RETURN, "expected return")
+	if start == nil {
+		return nil
+	}
+	var value ast.Expr
+	if !p.at(token.SEMICOLON) {
+		value = p.parseExpr(precLowest)
+	}
+	end := p.consume(token.SEMICOLON, "expected ';' after return")
+	if end == nil {
+		if end = p.recoverSemicolon("after return", endLocation(value)); end == nil {
+			return nil
+		}
+	}
+	return reg(p, &ast.ReturnStmt{Value: value, Location: p.loc(*start, *end)})
+}
+
+func (p *Parser) parseExprStmt() ast.Stmt {
+	expr := p.parseExpr(precLowest)
+	if expr == nil {
+		return nil
+	}
+	if p.match(token.ASSIGN) {
+		value := p.parseExpr(precLowest)
+		if value == nil {
+			return nil
+		}
+		end := p.consume(token.SEMICOLON, "expected ';' after assignment")
+		if end == nil {
+			if end = p.recoverSemicolon("after assignment", endLocation(value)); end == nil {
+				return nil
+			}
+		}
+		return reg(p, &ast.AssignStmt{
+			Target:   expr,
+			Value:    value,
+			Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+		})
+	}
+	end := p.consume(token.SEMICOLON, "expected ';' after expression")
+	if end == nil {
+		if end = p.recoverSemicolon("after expression", endLocation(expr)); end == nil {
+			return nil
+		}
+	}
+	return reg(p, &ast.ExprStmt{
+		Expr:     expr,
+		Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+	})
+}
+
+// --- Types ---
+
+func (p *Parser) parseTypeExpr() ast.TypeExpr {
+	tok := p.peek()
+	switch tok.Kind {
+	case token.CARET:
+		return p.parseCaretPtrTypeExpr()
+	case token.FN:
+		return p.parseFuncTypeExpr()
+	case token.STRUCT:
+		return p.parseStructTypeExpr()
+	case token.INTERFACE:
+		return p.parseInterfaceTypeExpr()
+	case token.ENUM:
+		return p.parseEnumTypeExpr()
+	case token.IDENT:
+		p.advance()
+		id := reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
+		if p.match(token.DCOLON) {
+			next := p.peek()
+			if next.Kind != token.IDENT {
+				p.errorf(next, diagnostics.ErrInvalidType, "expected type segment after '::'")
+				return nil
+			}
+			p.advance()
+			member := reg(p, &ast.Ident{Name: next.Literal, Location: p.loc(next, next)})
+			return reg(p, &ast.ScopeResolution{
+				Module:   id,
+				Name:     member,
+				Location: p.loc(tok, next),
+			})
+		}
+		return reg(p, &ast.NamedType{Name: id.Name, Location: id.Location})
+	default:
+		p.errorf(tok, diagnostics.ErrInvalidType, "expected type")
+		return nil
+	}
+}
+
+func (p *Parser) parseCaretPtrTypeExpr() ast.TypeExpr {
+	start := p.consume(token.CARET, "expected '^' in pointer type")
+	if start == nil {
+		return nil
+	}
+	target := p.parseTypeExpr()
+	if target == nil {
+		return nil
+	}
+	return reg(p, &ast.RawPtrType{
+		Mutable:  true,
+		Target:   target,
+		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
+	})
+}
+
+func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
+	start := p.consume(token.FN, "expected fn in function type")
+	if start == nil {
+		return nil
+	}
+	if p.consume(token.LPAREN, "expected '(' after fn in function type") == nil {
+		return nil
+	}
+	var params []ast.TypeExpr
+	if !p.at(token.RPAREN) {
+		for {
+			param := p.parseTypeExpr()
+			if param == nil {
+				return nil
+			}
+			params = append(params, param)
+			if !p.match(token.COMMA) {
+				break
+			}
+		}
+	}
+	if p.consume(token.RPAREN, "expected ')' after function type parameters") == nil {
+		return nil
+	}
+	ret := ast.TypeExpr(reg(p, &ast.NamedType{
+		Name:     voidTypeName,
+		Location: source.NewLocation(p.filePath, start.Start, start.End),
+	}))
+	if p.match(token.COLON) {
+		ret = p.parseTypeExpr()
+		if ret == nil {
+			return nil
+		}
+	}
+	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: p.loc(*start, p.lastNonNilToken(*start))})
 }
 
 func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
@@ -933,36 +665,34 @@ func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
 	return reg(p, &ast.EnumType{Variants: variants, Location: p.loc(*start, *end)})
 }
 
+// --- Shared type body parsers ---
+
 func (p *Parser) parseStructFields() ([]ast.TypeField, *token.Token, bool) {
 	return parseBracedItemList(p, "expected '{' after struct", "expected '}' after struct fields",
 		func() (ast.TypeField, bool) {
-			fieldName := p.parseIdent()
-			if fieldName == nil {
+			name := p.parseIdent()
+			if name == nil {
 				return ast.TypeField{}, false
 			}
 			if p.consume(token.COLON, "expected ':' after field name") == nil {
 				return ast.TypeField{}, false
 			}
-			fieldType := p.parseTypeExpr()
-			if fieldType == nil {
+			ty := p.parseTypeExpr()
+			if ty == nil {
 				return ast.TypeField{}, false
 			}
-			return ast.TypeField{
-				Name:     fieldName,
-				Type:     fieldType,
-				Location: p.locFromNode(fieldName, fieldType),
-			}, true
+			return ast.TypeField{Name: name, Type: ty, Location: p.locFromNode(name, ty)}, true
 		})
 }
 
 func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) {
 	return parseBracedItemList(p, "expected '{' after interface", "expected '}' after interface methods",
 		func() (ast.TypeMethod, bool) {
-			methodName := p.parseIdent()
-			if methodName == nil {
+			name := p.parseIdent()
+			if name == nil {
 				return ast.TypeMethod{}, false
 			}
-			methodTypeParams := p.parseOptionalTypeParams()
+			typeParams := p.parseOptionalTypeParams()
 			if p.consume(token.LPAREN, "expected '(' after method name") == nil {
 				return ast.TypeMethod{}, false
 			}
@@ -970,7 +700,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 			if p.consume(token.RPAREN, "expected ')' after method parameters") == nil {
 				return ast.TypeMethod{}, false
 			}
-			ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: methodName.Location}))
+			ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: name.Location}))
 			if p.match(token.COLON) {
 				ret = p.parseTypeExpr()
 				if ret == nil {
@@ -978,11 +708,11 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 				}
 			}
 			return ast.TypeMethod{
-				Name:       methodName,
-				TypeParams: methodTypeParams,
+				Name:       name,
+				TypeParams: typeParams,
 				Params:     params,
 				ReturnType: ret,
-				Location:   p.locFromNode(methodName, ret),
+				Location:   p.locFromNode(name, ret),
 			}, true
 		})
 }
@@ -996,6 +726,233 @@ func (p *Parser) parseEnumVariants() ([]ast.EnumVariant, *token.Token, bool) {
 			}
 			return ast.EnumVariant{Name: v, Location: v.Location}, true
 		})
+}
+
+// --- Params ---
+
+func (p *Parser) parseOptionalTypeParams() []ast.TypeParam {
+	if !p.match(token.LBRACK) {
+		return nil
+	}
+	var params []ast.TypeParam
+	for {
+		name := p.parseIdent()
+		if name == nil {
+			break
+		}
+		params = append(params, ast.TypeParam{Name: name, Location: name.Location})
+		if !p.match(token.COMMA) {
+			break
+		}
+	}
+	_ = p.consume(token.RBRACK, "expected ']' after type parameters")
+	return params
+}
+
+func (p *Parser) parseParams() []ast.Param {
+	var params []ast.Param
+	if p.at(token.RPAREN) {
+		return params
+	}
+	for {
+		param, ok := p.parseParam()
+		if !ok {
+			break
+		}
+		params = append(params, param)
+		if !p.match(token.COMMA) {
+			break
+		}
+	}
+	return params
+}
+
+func (p *Parser) parseParam() (ast.Param, bool) {
+	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
+		name := p.parseIdent()
+		if name == nil {
+			return ast.Param{}, false
+		}
+		if p.consume(token.COLON, "expected ':' after parameter name") == nil {
+			return ast.Param{}, false
+		}
+		ty := p.parseTypeExpr()
+		if ty == nil {
+			return ast.Param{}, false
+		}
+		return ast.Param{Name: name, Type: ty, Location: p.locFromNode(name, ty)}, true
+	}
+	ty := p.parseTypeExpr()
+	if ty == nil {
+		return ast.Param{}, false
+	}
+	return ast.Param{Type: ty, Location: ty.Loc()}, true
+}
+
+// --- Helpers ---
+
+func (p *Parser) parseRequiredBlock(owner string) (*ast.BlockStmt, bool) {
+	if p.at(token.LBRACE) {
+		if body := p.parseBlock(); body != nil {
+			return body.(*ast.BlockStmt), true
+		}
+		return nil, false
+	}
+	if !p.isDeclStart(p.peek().Kind) && !p.isStmtBoundary(p.peek().Kind) {
+		return nil, false
+	}
+	insert := p.expectedInsertionPoint()
+	loc := source.NewLocation(p.filePath, insert, insert)
+	p.diag.Add(
+		diagnostics.NewError("missing "+owner+" body").
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(loc, "add missing `{}` here"),
+	)
+	return reg(p, &ast.BlockStmt{
+		Stmts:    nil,
+		Location: loc,
+	}), true
+}
+
+func parseBracedItemList[T any](
+	p *Parser,
+	openerMsg string,
+	itemMsg string,
+	parseItem func() (T, bool),
+) ([]T, *token.Token, bool) {
+	if p.consume(token.LBRACE, openerMsg) == nil {
+		return nil, nil, false
+	}
+	var items []T
+	for !p.at(token.RBRACE) && !p.at(token.EOF) {
+		item, ok := parseItem()
+		if !ok {
+			return nil, nil, false
+		}
+		items = append(items, item)
+		if p.match(token.COMMA) {
+			if p.at(token.RBRACE) {
+				break
+			}
+			continue
+		}
+		if !p.at(token.RBRACE) {
+			p.errorf(p.peek(), diagnostics.ErrExpectedToken, itemMsg)
+			return nil, nil, false
+		}
+	}
+	end := p.consume(token.RBRACE, itemMsg)
+	if end == nil {
+		return nil, nil, false
+	}
+	return items, end, true
+}
+
+func (p *Parser) expectedInsertionPoint() source.Position {
+	tok := p.peek()
+	insert := tok.Start
+	if p.pos > 0 {
+		prev := p.stream[p.pos-1]
+		if prev.End.Index <= tok.Start.Index {
+			insert = prev.End
+		}
+	}
+	return insert
+}
+
+func (p *Parser) recoverMissingToken(expected token.Kind, msg string, fallback source.Position) *token.Token {
+	insert := p.expectedInsertionPoint()
+	if fallback.Line > 0 {
+		insert = fallback
+	}
+	loc := source.NewLocation(p.filePath, insert, insert)
+	p.diag.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(expected))),
+	)
+	return &token.Token{
+		Kind:    expected,
+		Literal: string(expected),
+		Start:   insert,
+		End:     insert,
+	}
+}
+
+// recoverSemicolon synthesizes a missing ';' when at a statement/decl boundary.
+// Returns nil if recovery is not possible.
+func (p *Parser) recoverSemicolon(context string, fallback source.Position) *token.Token {
+	insert := p.expectedInsertionPoint()
+	if !isZeroPosition(fallback) {
+		insert = fallback
+	}
+	if !p.isStmtBoundary(p.peek().Kind) && !p.isDeclStart(p.peek().Kind) {
+		return nil
+	}
+	return p.recoverMissingToken(token.SEMICOLON, "expected ';' "+context, insert)
+}
+
+func (p *Parser) isDeclStart(kind token.Kind) bool {
+	switch kind {
+	case token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
+		token.INTERFACE, token.ENUM, token.IMPL, token.TYPE, token.EOF:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) isStmtBoundary(kind token.Kind) bool {
+	switch kind {
+	case token.RBRACE, token.SEMICOLON, token.LET, token.CONST, token.IF,
+		token.ELSE, token.RETURN, token.FN, token.IMPORT, token.STRUCT,
+		token.INTERFACE, token.ENUM, token.IMPL, token.EOF:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) synchronizeDecl() {
+	for !p.at(token.EOF) {
+		if p.match(token.SEMICOLON) {
+			return
+		}
+		switch p.peek().Kind {
+		case token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
+			token.INTERFACE, token.ENUM, token.IMPL, token.TYPE:
+			return
+		}
+		p.advance()
+	}
+}
+
+func (p *Parser) synchronizeStmt() {
+	for !p.at(token.EOF) && !p.at(token.RBRACE) {
+		if p.match(token.SEMICOLON) {
+			return
+		}
+		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
+			return
+		}
+		p.advance()
+	}
+}
+
+func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback token.Token) token.Token {
+	if stmt == nil {
+		return fallback
+	}
+	loc := stmt.Loc()
+	if loc.End == nil {
+		return fallback
+	}
+	for i := p.pos - 1; i >= 0; i-- {
+		if p.stream[i].End.Index == loc.End.Index {
+			return p.stream[i]
+		}
+	}
+	return fallback
 }
 
 func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
@@ -1034,43 +991,26 @@ func (p *Parser) advance() *token.Token {
 	return &tok
 }
 
-func (p *Parser) eat() {
-	if p.pos >= len(p.stream) {
-		return
-	}
-	p.pos++
+func (p *Parser) nextID() ast.NodeID {
+	p.nodeID++
+	return p.nodeID
 }
 
-func (p *Parser) peekPrecedence() int {
-	if p, ok := infixPrec[p.peek().Kind]; ok {
-		return p
+// isNilNode handles the Go interface nil trap: a non-nil interface holding a
+// nil pointer is not equal to nil, so a plain `n == nil` check is insufficient.
+func isNilNode(n ast.Node) bool {
+	if n == nil {
+		return true
 	}
-	return precLowest
+	v := reflect.ValueOf(n)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
-func (p *Parser) synchronizeDecl() {
-	for !p.at(token.EOF) {
-		if p.match(token.SEMICOLON) {
-			return
-		}
-		switch p.peek().Kind {
-		case token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT, token.INTERFACE, token.ENUM, token.IMPL, token.TYPE:
-			return
-		}
-		p.advance()
+func reg[T ast.Node](p *Parser, n T) T {
+	if !isNilNode(n) {
+		n.SetID(p.nextID())
 	}
-}
-
-func (p *Parser) synchronizeStmt() {
-	for !p.at(token.EOF) && !p.at(token.RBRACE) {
-		if p.match(token.SEMICOLON) {
-			return
-		}
-		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
-			return
-		}
-		p.advance()
-	}
+	return n
 }
 
 func (p *Parser) errorf(tok token.Token, code, msg string) {
@@ -1090,10 +1030,8 @@ func (p *Parser) loc(start, end token.Token) *source.Location {
 }
 
 func (p *Parser) locFromNode(left, right ast.Node) *source.Location {
-	l := left.Loc()
-	r := right.Loc()
-	start := source.NewPosition()
-	end := source.NewPosition()
+	l, r := left.Loc(), right.Loc()
+	start, end := source.NewPosition(), source.NewPosition()
 	if l.Start != nil {
 		start = *l.Start
 	}
@@ -1104,15 +1042,23 @@ func (p *Parser) locFromNode(left, right ast.Node) *source.Location {
 }
 
 func (p *Parser) lastNonNilToken(fallback token.Token) token.Token {
-	if p.pos == 0 {
-		return fallback
-	}
-	if p.pos-1 < len(p.stream) {
+	if p.pos > 0 && p.pos-1 < len(p.stream) {
 		return p.stream[p.pos-1]
 	}
 	return fallback
 }
 
-func ParseModule(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *ast.Module {
-	return New(filePath, stream, diag).ParseModule()
+func endLocation(n ast.Node) source.Position {
+	if n == nil {
+		return source.NewPosition()
+	}
+	loc := n.Loc()
+	if loc == nil || loc.End == nil {
+		return source.NewPosition()
+	}
+	return *loc.End
+}
+
+func isZeroPosition(pos source.Position) bool {
+	return pos == source.NewPosition()
 }
