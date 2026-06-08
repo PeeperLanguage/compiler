@@ -85,7 +85,7 @@ func (p *Parser) parseDecl() ast.Decl {
 	case token.TYPE:
 		return p.parseTypeAliasDecl()
 	default:
-		p.errorf(p.peek(), diagnostics.ErrInvalidDeclaration, "expected declaration")
+		p.diag.Add(diagnostics.NewError("expected declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
 		return nil
 	}
 }
@@ -101,12 +101,12 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 		tok := p.advance()
 		path = reg(p, &ast.StringLit{
 			Value:    tok.Literal,
-			Location: p.loc(*tok, *tok),
+			Location: source.NewLocation(p.filePath, tok.Start, tok.End),
 		})
 	case token.IDENT:
 		path = p.parseIdentExpr()
 	default:
-		p.errorf(p.peek(), diagnostics.ErrExpectedToken, "expected import path")
+		p.diag.Add(diagnostics.NewError("expected import path").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
 		return nil
 	}
 	var alias *ast.Ident
@@ -123,7 +123,7 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 	return reg(p, &ast.ImportDecl{
 		Path:     path,
 		Alias:    alias,
-		Location: p.loc(*start, *end),
+		Location: source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
 
@@ -144,7 +144,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		Params:     params,
 		ReturnType: returnType,
 		Body:       body,
-		Location:   p.loc(*start, p.lastNonNilToken(*start)),
+		Location:   source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
 	})
 }
 
@@ -197,7 +197,7 @@ func (p *Parser) parseFunctionName() *ast.Ident {
 	}
 	return reg(p, &ast.Ident{
 		Name:     strings.Join(parts, "::"),
-		Location: p.locFromNode(first, reg(p, &ast.BadExpr{Location: end})),
+		Location: source.NewLocation(p.filePath, ast.StartOf(first), ast.EndOf(reg(p, &ast.BadExpr{Location: end}))),
 	})
 }
 
@@ -227,7 +227,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 		Value:       value,
 		IsMutable:   isMutable,
 		IsModuleVar: isModuleVar,
-		Location:    p.loc(*start, *end),
+		Location:    source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
 
@@ -245,7 +245,7 @@ func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 		Type:        ty,
 		Value:       value,
 		IsModuleVar: isModuleVar,
-		Location:    p.loc(*start, *end),
+		Location:    source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
 
@@ -268,12 +268,12 @@ func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value a
 		return name, ty, value, end, true
 	}
 	// missing semicolon — attempt recovery
-	insertPos := endLocation(value)
+	insertPos := ast.EndOf(value)
 	if isZeroPosition(insertPos) {
-		insertPos = endLocation(ty)
+		insertPos = ast.EndOf(ty)
 	}
 	if isZeroPosition(insertPos) {
-		insertPos = endLocation(name)
+		insertPos = ast.EndOf(name)
 	}
 	end = p.recoverSemicolon("after statement", insertPos)
 	if end == nil {
@@ -297,7 +297,7 @@ func (p *Parser) parseStructDecl() ast.Decl {
 		return nil
 	}
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.StructDecl{Name: name, TypeParams: typeParams, Fields: fields, Location: p.loc(*start, *end)})
+	return reg(p, &ast.StructDecl{Name: name, TypeParams: typeParams, Fields: fields, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseInterfaceDecl() ast.Decl {
@@ -315,7 +315,7 @@ func (p *Parser) parseInterfaceDecl() ast.Decl {
 		return nil
 	}
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.InterfaceDecl{Name: name, TypeParams: typeParams, Methods: methods, Location: p.loc(*start, *end)})
+	return reg(p, &ast.InterfaceDecl{Name: name, TypeParams: typeParams, Methods: methods, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseEnumDecl() ast.Decl {
@@ -333,7 +333,7 @@ func (p *Parser) parseEnumDecl() ast.Decl {
 		return nil
 	}
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.EnumDecl{Name: name, TypeParams: typeParams, Variants: variants, Location: p.loc(*start, *end)})
+	return reg(p, &ast.EnumDecl{Name: name, TypeParams: typeParams, Variants: variants, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseImplDecl() ast.Decl {
@@ -354,7 +354,7 @@ func (p *Parser) parseImplDecl() ast.Decl {
 			p.parseFnAttributes()
 		}
 		if p.peek().Kind != token.FN {
-			p.errorf(p.peek(), diagnostics.ErrInvalidDeclaration, "expected method declaration")
+			p.diag.Add(diagnostics.NewError("expected method declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
 			return nil
 		}
 		decl, ok := p.parseFnDecl().(*ast.FnDecl)
@@ -368,7 +368,7 @@ func (p *Parser) parseImplDecl() ast.Decl {
 		return nil
 	}
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.ImplDecl{Target: target, Methods: methods, Location: p.loc(*start, *end)})
+	return reg(p, &ast.ImplDecl{Target: target, Methods: methods, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseTypeAliasDecl() ast.Decl {
@@ -390,7 +390,7 @@ func (p *Parser) parseTypeAliasDecl() ast.Decl {
 	if end == nil {
 		return nil
 	}
-	return reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: p.loc(*start, *end)})
+	return reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseFnAttributes() {
@@ -446,7 +446,7 @@ func (p *Parser) parseBlock() ast.Stmt {
 	if end == nil {
 		return nil
 	}
-	return reg(p, &ast.BlockStmt{Stmts: stmts, Location: p.loc(*start, *end)})
+	return reg(p, &ast.BlockStmt{Stmts: stmts, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseIfStmt() ast.Stmt {
@@ -481,7 +481,7 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		Cond:     cond,
 		Then:     thenBlock,
 		Else:     elseStmt,
-		Location: p.loc(*start, endTok),
+		Location: source.NewLocation(p.filePath, start.Start, endTok.End),
 	})
 }
 
@@ -496,11 +496,11 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after return")
 	if end == nil {
-		if end = p.recoverSemicolon("after return", endLocation(value)); end == nil {
+		if end = p.recoverSemicolon("after return", ast.EndOf(value)); end == nil {
 			return nil
 		}
 	}
-	return reg(p, &ast.ReturnStmt{Value: value, Location: p.loc(*start, *end)})
+	return reg(p, &ast.ReturnStmt{Value: value, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseExprStmt() ast.Stmt {
@@ -515,25 +515,25 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 		}
 		end := p.consume(token.SEMICOLON, "expected ';' after assignment")
 		if end == nil {
-			if end = p.recoverSemicolon("after assignment", endLocation(value)); end == nil {
+			if end = p.recoverSemicolon("after assignment", ast.EndOf(value)); end == nil {
 				return nil
 			}
 		}
 		return reg(p, &ast.AssignStmt{
 			Target:   expr,
 			Value:    value,
-			Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+			Location: source.NewLocation(p.filePath, ast.StartOf(expr), ast.EndOf(reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, end.Start, end.End)}))),
 		})
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after expression")
 	if end == nil {
-		if end = p.recoverSemicolon("after expression", endLocation(expr)); end == nil {
+		if end = p.recoverSemicolon("after expression", ast.EndOf(expr)); end == nil {
 			return nil
 		}
 	}
 	return reg(p, &ast.ExprStmt{
 		Expr:     expr,
-		Location: p.locFromNode(expr, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+		Location: source.NewLocation(p.filePath, ast.StartOf(expr), ast.EndOf(reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, end.Start, end.End)}))),
 	})
 }
 
@@ -554,24 +554,24 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		return p.parseEnumTypeExpr()
 	case token.IDENT:
 		p.advance()
-		id := reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
+		id := reg(p, &ast.Ident{Name: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 		if p.match(token.DCOLON) {
 			next := p.peek()
 			if next.Kind != token.IDENT {
-				p.errorf(next, diagnostics.ErrInvalidType, "expected type segment after '::'")
+				p.diag.Add(diagnostics.NewError("expected type segment after '::'").WithCode(diagnostics.ErrInvalidType).WithPrimaryLabel(source.NewLocation(p.filePath, next.Start, next.End), fmt.Sprintf("found %s", next.Kind)))
 				return nil
 			}
 			p.advance()
-			member := reg(p, &ast.Ident{Name: next.Literal, Location: p.loc(next, next)})
+			member := reg(p, &ast.Ident{Name: next.Literal, Location: source.NewLocation(p.filePath, next.Start, next.End)})
 			return reg(p, &ast.ScopeResolution{
 				Module:   id,
 				Name:     member,
-				Location: p.loc(tok, next),
+				Location: source.NewLocation(p.filePath, tok.Start, next.End),
 			})
 		}
 		return reg(p, &ast.NamedType{Name: id.Name, Location: id.Location})
 	default:
-		p.errorf(tok, diagnostics.ErrInvalidType, "expected type")
+		p.diag.Add(diagnostics.NewError("expected type").WithCode(diagnostics.ErrInvalidType).WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), fmt.Sprintf("found %s", tok.Kind)))
 		return nil
 	}
 }
@@ -588,7 +588,7 @@ func (p *Parser) parseCaretPtrTypeExpr() ast.TypeExpr {
 	return reg(p, &ast.RawPtrType{
 		Mutable:  true,
 		Target:   target,
-		Location: p.locFromNode(reg(p, &ast.BadExpr{Location: p.loc(*start, *start)}), target),
+		Location: source.NewLocation(p.filePath, ast.StartOf(reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})), ast.EndOf(target)),
 	})
 }
 
@@ -626,7 +626,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 			return nil
 		}
 	}
-	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: p.loc(*start, p.lastNonNilToken(*start))})
+	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End)})
 }
 
 func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
@@ -638,7 +638,7 @@ func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
 	if !ok {
 		return nil
 	}
-	return reg(p, &ast.StructType{Fields: fields, Location: p.loc(*start, *end)})
+	return reg(p, &ast.StructType{Fields: fields, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseInterfaceTypeExpr() ast.TypeExpr {
@@ -650,7 +650,7 @@ func (p *Parser) parseInterfaceTypeExpr() ast.TypeExpr {
 	if !ok {
 		return nil
 	}
-	return reg(p, &ast.InterfaceType{Methods: methods, Location: p.loc(*start, *end)})
+	return reg(p, &ast.InterfaceType{Methods: methods, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
@@ -662,7 +662,7 @@ func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
 	if !ok {
 		return nil
 	}
-	return reg(p, &ast.EnumType{Variants: variants, Location: p.loc(*start, *end)})
+	return reg(p, &ast.EnumType{Variants: variants, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
 // --- Shared type body parsers ---
@@ -681,7 +681,7 @@ func (p *Parser) parseStructFields() ([]ast.TypeField, *token.Token, bool) {
 			if ty == nil {
 				return ast.TypeField{}, false
 			}
-			return ast.TypeField{Name: name, Type: ty, Location: p.locFromNode(name, ty)}, true
+			return ast.TypeField{Name: name, Type: ty, Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(ty))}, true
 		})
 }
 
@@ -712,7 +712,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 				TypeParams: typeParams,
 				Params:     params,
 				ReturnType: ret,
-				Location:   p.locFromNode(name, ret),
+				Location:   source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(ret)),
 			}, true
 		})
 }
@@ -780,13 +780,13 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 		if ty == nil {
 			return ast.Param{}, false
 		}
-		return ast.Param{Name: name, Type: ty, Location: p.locFromNode(name, ty)}, true
+		return ast.Param{Name: name, Type: ty, Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(ty))}, true
 	}
 	ty := p.parseTypeExpr()
 	if ty == nil {
 		return ast.Param{}, false
 	}
-	return ast.Param{Type: ty, Location: ty.Loc()}, true
+	return ast.Param{Type: ty, Location: ast.LocOf(ty)}, true
 }
 
 // --- Helpers ---
@@ -837,7 +837,7 @@ func parseBracedItemList[T any](
 			continue
 		}
 		if !p.at(token.RBRACE) {
-			p.errorf(p.peek(), diagnostics.ErrExpectedToken, itemMsg)
+			p.diag.Add(diagnostics.NewError(itemMsg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
 			return nil, nil, false
 		}
 	}
@@ -943,7 +943,7 @@ func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback token.Token) token.Toke
 	if stmt == nil {
 		return fallback
 	}
-	loc := stmt.Loc()
+	loc := ast.LocOf(stmt)
 	if loc.End == nil {
 		return fallback
 	}
@@ -959,7 +959,7 @@ func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
 	if p.peek().Kind == kind {
 		return p.advance()
 	}
-	p.errorf(p.peek(), diagnostics.ErrExpectedToken, msg)
+	p.diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
 	return nil
 }
 
@@ -1013,33 +1013,11 @@ func reg[T ast.Node](p *Parser, n T) T {
 	return n
 }
 
-func (p *Parser) errorf(tok token.Token, code, msg string) {
-	if p.diag == nil {
-		return
-	}
-	loc := source.NewLocation(p.filePath, tok.Start, tok.End)
-	p.diag.Add(
-		diagnostics.NewError(msg).
-			WithCode(code).
-			WithPrimaryLabel(loc, fmt.Sprintf("found %s", tok.Kind)),
-	)
-}
 
-func (p *Parser) loc(start, end token.Token) *source.Location {
-	return source.NewLocation(p.filePath, start.Start, end.End)
-}
 
-func (p *Parser) locFromNode(left, right ast.Node) *source.Location {
-	l, r := left.Loc(), right.Loc()
-	start, end := source.NewPosition(), source.NewPosition()
-	if l.Start != nil {
-		start = *l.Start
-	}
-	if r.End != nil {
-		end = *r.End
-	}
-	return source.NewLocation(p.filePath, start, end)
-}
+
+
+
 
 func (p *Parser) lastNonNilToken(fallback token.Token) token.Token {
 	if p.pos > 0 && p.pos-1 < len(p.stream) {
@@ -1048,16 +1026,7 @@ func (p *Parser) lastNonNilToken(fallback token.Token) token.Token {
 	return fallback
 }
 
-func endLocation(n ast.Node) source.Position {
-	if n == nil {
-		return source.NewPosition()
-	}
-	loc := n.Loc()
-	if loc == nil || loc.End == nil {
-		return source.NewPosition()
-	}
-	return *loc.End
-}
+
 
 func isZeroPosition(pos source.Position) bool {
 	return pos == source.NewPosition()

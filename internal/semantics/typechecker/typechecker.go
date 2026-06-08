@@ -209,7 +209,7 @@ func (c *checker) typeFromSyntaxWithSelf(node ast.TypeExpr, selfType typeinfo.Ty
 				return &typeinfo.NamedType{Name: "Self"}
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-				"`Self` can only be used in interface methods and impl blocks", typ.Loc(), "")
+				"`Self` can only be used in interface methods and impl blocks", ast.LocOf(typ), "")
 			return &typeinfo.InvalidType{}
 		}
 		base := typeinfo.TypeFromSyntax(typ)
@@ -384,7 +384,7 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		}
 		paramSym, ok := funcScope.LookupLocal(param.Name.Name)
 		if !ok || paramSym == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", fn.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(fn), "")
 			return
 		}
 		paramSym.BindType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf))
@@ -420,7 +420,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		c.checkBinding(scope, node, true)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", node.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
 			return
 		}
 		retType := c.typeExpr(scope, node.Value, returnType)
@@ -430,16 +430,16 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		if !c.assignable(returnType, retType) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot return %s from function returning %s",
-					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)), node.Value.Loc(), "")
+					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)), ast.LocOf(node.Value), "")
 		}
 	case *ast.IfStmt:
 		if node.Cond == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", node.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", ast.LocOf(node), "")
 		} else {
 			condType := c.typeExpr(scope, node.Cond, nil)
 			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-					"if condition must be bool or scalar number", node.Cond.Loc(), "")
+					"if condition must be bool or scalar number", ast.LocOf(node.Cond), "")
 			}
 		}
 		c.checkBlock(scope, node.Then, returnType)
@@ -447,14 +447,14 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 	case *ast.ExprStmt:
 		if node.Expr == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
-				"expression statement requires an expression", node.Loc(), "")
+				"expression statement requires an expression", ast.LocOf(node), "")
 			return
 		}
 		c.typeExpr(scope, node.Expr, nil)
 	case *ast.AssignStmt:
 		c.checkAssign(scope, node)
 	default:
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
 	}
 }
 
@@ -473,7 +473,7 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 	if !c.assignable(targetType, valueType) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType)), node.Value.Loc(), "")
+				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType)), ast.LocOf(node.Value), "")
 		return
 	}
 	switch target := node.Target.(type) {
@@ -481,27 +481,27 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		sym, ok := scope.Lookup(target.Name)
 		if !ok || sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol,
-				"unknown assignment target `"+target.Name+"`", target.Loc(), "")
+				"unknown assignment target `"+target.Name+"`", ast.LocOf(target), "")
 			return
 		}
 		switch sym.Kind {
 		case symbols.SymbolConst:
 			c.ctx.Diagnostics.AddError(diagnostics.ErrConstantReassignment,
-				"cannot assign to const `"+target.Name+"`", target.Loc(), "")
+				"cannot assign to const `"+target.Name+"`", ast.LocOf(target), "")
 			return
 		case symbols.SymbolVar:
 			if !sym.IsMutable() {
 				c.ctx.Diagnostics.AddError(
 					diagnostics.ErrInvalidAssignment,
 					"modification to immutable symbol",
-					target.Loc(),
+					ast.LocOf(target),
 					"cannot assign to immutable binding `"+target.Name+"`",
 				).WithSecondaryLabel(sym.Location, "make this binding mutable")
 				return
 			}
 		default:
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-				"invalid assignment target `"+target.Name+"`", target.Loc(), "")
+				"invalid assignment target `"+target.Name+"`", ast.LocOf(target), "")
 			return
 		}
 	case *ast.SelectorExpr:
@@ -513,11 +513,11 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 			return
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"field assignment requires a mutable pointer or mutable local binding", target.Loc(), "")
+			"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
 		return
 	default:
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"invalid assignment target", node.Target.Loc(), "")
+			"invalid assignment target", ast.LocOf(node.Target), "")
 	}
 }
 
@@ -553,13 +553,13 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		if requireInitializer {
 			sym.BindType(&typeinfo.InvalidType{})
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-				"missing initializer for const declaration", node.Loc(), "")
+				"missing initializer for const declaration", ast.LocOf(node), "")
 			return
 		}
 		if declType == nil {
 			sym.BindType(&typeinfo.InvalidType{})
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingType,
-				"let declaration needs type or initializer", node.Loc(), "")
+				"let declaration needs type or initializer", ast.LocOf(node), "")
 			return
 		}
 		sym.BindType(declType)
@@ -573,7 +573,7 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	if declType != nil && !c.assignable(declType, valType) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valType), typeinfo.TypeText(declType)), value.Loc(), "")
+				typeinfo.TypeText(valType), typeinfo.TypeText(declType)), ast.LocOf(value), "")
 		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
@@ -594,7 +594,7 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 	}
 	if !c.isLowerableType(c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf)) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-			"function return type must be builtin integer, f32/f64, or function type in current compiler stage", decl.Loc(), "")
+			"function return type must be builtin integer, f32/f64, or function type in current compiler stage", ast.LocOf(decl), "")
 		return
 	}
 	for _, param := range decl.Params {
@@ -604,7 +604,7 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 				site = param.Name
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage", site.Loc(), "")
+				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage", ast.LocOf(site), "")
 			return
 		}
 	}
@@ -616,7 +616,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 	}
 	for _, method := range decl.Methods {
 		if method.Name == nil || method.Name.Name == "" {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", decl.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", ast.LocOf(decl), "")
 			continue
 		}
 		for _, param := range method.Params {
@@ -641,12 +641,12 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 		}
 		errmsg := "impl methods must declare a `Self` receiver as the first parameter"
 		if len(method.Params) == 0 {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, method.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "")
 			continue
 		}
 		firstParamType := c.typeFromSyntaxWithSelf(method.Params[0].Type, selfType, true)
 		if !isValidReceiverType(firstParamType, selfType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, method.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "")
 			continue
 		}
 
@@ -748,7 +748,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		sym, ok := scope.Lookup(node.Name)
 		if !ok || sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
-				fmt.Sprintf("unknown identifier `%s`\n", node.Name), node.Loc(), "")
+				fmt.Sprintf("unknown identifier `%s`\n", node.Name), ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
 		}
 		t, ok := symbols.GetSymbolType(sym)
@@ -779,7 +779,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return c.typeAsExpr(scope, node)
 
 	default:
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", ast.LocOf(node), "")
 		return nil
 	}
 }
@@ -787,7 +787,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expected typeinfo.Type) typeinfo.Type {
 	if node.Op != "+" && node.Op != "-" && node.Op != "!" {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported unary operator `"+node.Op+"`", node.Loc(), "")
+			"unsupported unary operator `"+node.Op+"`", ast.LocOf(node), "")
 		return nil
 	}
 
@@ -812,7 +812,7 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 	}
 	if !typeinfo.IsArithmetic(argType) && !typeinfo.SameType(argType, &typeinfo.BoolType{}) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported unary operand type", node.Loc(), "")
+			"unsupported unary operand type", ast.LocOf(node), "")
 		return nil
 	}
 	if node.Op == "!" {
@@ -824,7 +824,7 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
 	if !c.allowedOp(node.Op) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported binary operator `"+node.Op+"`", node.Loc(), "")
+			"unsupported binary operator `"+node.Op+"`", ast.LocOf(node), "")
 		return nil
 	}
 
@@ -839,7 +839,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	if commonType == nil && !c.assignable(left, right) && !c.assignable(right, left) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
-				typeinfo.TypeText(left), typeinfo.TypeText(right)), node.Loc(), "")
+				typeinfo.TypeText(left), typeinfo.TypeText(right)), ast.LocOf(node), "")
 		return nil
 	}
 
@@ -854,7 +854,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 
 	if !c.validBinaryTypes(node.Op, left) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported operand type for operator `"+node.Op+"`", node.Loc(), "")
+			"unsupported operand type for operator `"+node.Op+"`", ast.LocOf(node), "")
 		return nil
 	}
 	return exprType
@@ -893,7 +893,7 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 		return methodType
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-		fmt.Sprintf("unknown member `%s`", node.Name.Name), node.Name.Loc(), "")
+		fmt.Sprintf("unknown member `%s`", node.Name.Name), ast.LocOf(node.Name), "")
 	return &typeinfo.InvalidType{}
 }
 
@@ -919,11 +919,11 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	}
 	if _, fieldOK := c.lookupFieldType(baseType, selector.Name.Name); fieldOK {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable,
-			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), selector.Name.Loc(), "")
+			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "")
 		return &typeinfo.InvalidType{}
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrMethodNotFound,
-		fmt.Sprintf("unknown method `%s`", selector.Name.Name), selector.Name.Loc(), "")
+		fmt.Sprintf("unknown method `%s`", selector.Name.Name), ast.LocOf(selector.Name), "")
 	return &typeinfo.InvalidType{}
 }
 
@@ -959,7 +959,7 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 		}
 		if _, exists := fieldsByName[field.Name.Name]; exists {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
-				"duplicate struct literal field `"+field.Name.Name+"`", field.Name.Loc(), "")
+				"duplicate struct literal field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
 			continue
 		}
 		fieldsByName[field.Name.Name] = field
@@ -968,7 +968,7 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 		field, ok := fieldsByName[targetField.Name]
 		if !ok {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-				"missing struct literal field `"+targetField.Name+"`", node.Loc(), "")
+				"missing struct literal field `"+targetField.Name+"`", ast.LocOf(node), "")
 			continue
 		}
 		valueType := c.typeExpr(scope, field.Value, targetField.Type)
@@ -978,13 +978,13 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 		if !c.assignable(targetField.Type, valueType) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
-					typeinfo.TypeText(valueType), targetField.Name, typeinfo.TypeText(targetField.Type)), field.Value.Loc(), "")
+					typeinfo.TypeText(valueType), targetField.Name, typeinfo.TypeText(targetField.Type)), ast.LocOf(field.Value), "")
 		}
 		delete(fieldsByName, targetField.Name)
 	}
 	for name, field := range fieldsByName {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-			"unknown struct literal field `"+name+"`", field.Name.Loc(), "")
+			"unknown struct literal field `"+name+"`", ast.LocOf(field.Name), "")
 	}
 	return targetType
 }
@@ -998,7 +998,7 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 		}
 		if _, exists := seen[field.Name.Name]; exists {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
-				"duplicate struct literal field `"+field.Name.Name+"`", field.Name.Loc(), "")
+				"duplicate struct literal field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
 			continue
 		}
 		seen[field.Name.Name] = struct{}{}
@@ -1104,7 +1104,7 @@ func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) t
 				return fnType.Return
 			}
 			if call != nil && !typeinfo.IsInvalidOrUnknown(fnType.Return) {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "call has unknown return type", call.Loc(), "")
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "call has unknown return type", ast.LocOf(call), "")
 			}
 			return &typeinfo.InvalidType{}
 		}
@@ -1118,7 +1118,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	}
 	targetType := c.typeFromSyntax(node.TypeExpr)
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "invalid target type for cast", node.TypeExpr.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "invalid target type for cast", ast.LocOf(node.TypeExpr), "")
 		return &typeinfo.InvalidType{}
 	}
 	if node.Expr == nil {
@@ -1132,7 +1132,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	if compat == typeinfo.Incompatible {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCast,
 			fmt.Sprintf("cannot cast %s to %s",
-				typeinfo.TypeText(exprType), typeinfo.TypeText(targetType)), node.Loc(), "")
+				typeinfo.TypeText(exprType), typeinfo.TypeText(targetType)), ast.LocOf(node), "")
 		return &typeinfo.InvalidType{}
 	}
 	return targetType
@@ -1149,12 +1149,12 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 		naturalType := typeinfo.DefaultNumberType(node.Value)
 		if typeinfo.CheckNumericCompatibility(expected, naturalType) == typeinfo.Incompatible {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
-				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected)), node.Loc(), "")
+				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected)), ast.LocOf(node), "")
 			return nil
 		}
 		if !literalFitsType(node.Value, expected) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidNumber,
-				fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected)), node.Loc(), "")
+				fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected)), ast.LocOf(node), "")
 			return nil
 		}
 		return expected
@@ -1208,13 +1208,13 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
 		if !typeinfo.IsInvalidOrUnknown(calleeType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable, "call target is not a function", callExpr.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable, "call target is not a function", ast.LocOf(callExpr), "")
 		}
 		return
 	}
 	if len(args) != len(fnType.Params) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrWrongArgumentCount,
-			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnType.Params)), callExpr.Loc(), "")
+			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnType.Params)), ast.LocOf(callExpr), "")
 		return
 	}
 	for i, argType := range args {
@@ -1228,7 +1228,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 		if !c.assignable(paramType, argType) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)), callExpr.Args[i].Loc(), "")
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)), ast.LocOf(callExpr.Args[i]), "")
 		}
 	}
 }
@@ -1288,13 +1288,13 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
 		if !typeinfo.IsInvalidOrUnknown(calleeType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable, "call target is not a method", callExpr.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable, "call target is not a method", ast.LocOf(callExpr), "")
 		}
 		return
 	}
 	if len(args) != len(fnType.Params) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrWrongArgumentCount,
-			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args)-1, len(fnType.Params)-1), callExpr.Loc(), "")
+			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args)-1, len(fnType.Params)-1), ast.LocOf(callExpr), "")
 		return
 	}
 	for i, argType := range args {
@@ -1311,7 +1311,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 					continue
 				}
 				if site, msg, ok := c.mutableReceiverDiagnostic(scope, receiverExpr); ok {
-					c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, site.Loc(), "immutable binding defined here")
+					c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
 					continue
 				}
 			}
@@ -1323,7 +1323,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)), site.Loc(), "")
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)), ast.LocOf(site), "")
 		}
 	}
 }
@@ -1342,17 +1342,17 @@ func (c *checker) qualifiedScopeType(scope *table.Scope, node *ast.ScopeResoluti
 	member := node.Name.Name
 	imp, ok := c.module.Imports[alias]
 	if !ok {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+alias+"`", node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+alias+"`", ast.LocOf(node), "")
 		return &typeinfo.InvalidType{}
 	}
 	mod, ok := c.ctx.ModuleByKey(imp.Key)
 	if !ok || mod == nil || mod.ModuleScope == nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "module `"+alias+"` not loaded", node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "module `"+alias+"` not loaded", ast.LocOf(node), "")
 		return &typeinfo.InvalidType{}
 	}
 	sym, ok := mod.ModuleScope.LookupLocal(member)
 	if !ok || sym == nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+alias+"`", node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+alias+"`", ast.LocOf(node), "")
 		return &typeinfo.InvalidType{}
 	}
 	t, ok := symbols.GetSymbolType(sym)

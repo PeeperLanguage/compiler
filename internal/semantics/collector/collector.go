@@ -66,7 +66,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		return
 	}
 	if fn.Name == nil || fn.Name.Name == "" {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", fn.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", ast.LocOf(fn), "")
 		return
 	}
 	kind := symbols.SymbolFunc
@@ -78,7 +78,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		sym.Scope = table.New(c.module.ModuleScope)
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), fn.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(fn), "")
 		return
 	}
 }
@@ -92,7 +92,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		return
 	}
 	if name == nil || name.Name == "" {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "type name required", node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "type name required", ast.LocOf(node), "")
 		return
 	}
 	sym := symbols.New(name.Name, symbols.SymbolType, node)
@@ -104,7 +104,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		sym.Type = &typeinfo.InvalidType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
 		return
 	}
 }
@@ -119,7 +119,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 		sym.Type = &typeinfo.UnknownType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), node.Loc(), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
 	}
 }
 
@@ -130,7 +130,7 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target))
 	for _, method := range decl.Methods {
 		if method == nil || method.Name == nil || method.Name.Name == "" {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", decl.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", ast.LocOf(decl), "")
 			continue
 		}
 		existing := c.module.Semantics.MethodSets[targetKey]
@@ -142,7 +142,7 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 			}
 		}
 		if duplicate {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", method.Loc(), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", ast.LocOf(method), "")
 			continue
 		}
 		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method)

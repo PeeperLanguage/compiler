@@ -9,7 +9,7 @@ type BlockStmt struct {
 }
 
 func (*BlockStmt) stmtNode()               {}
-func (s *BlockStmt) Loc() *source.Location { return s.Location }
+func (s *BlockStmt) loc() *source.Location { return s.Location }
 
 type ExprStmt struct {
 	NodeIDHolder
@@ -18,7 +18,7 @@ type ExprStmt struct {
 }
 
 func (*ExprStmt) stmtNode()               {}
-func (s *ExprStmt) Loc() *source.Location { return s.Location }
+func (s *ExprStmt) loc() *source.Location { return s.Location }
 
 type AssignStmt struct {
 	NodeIDHolder
@@ -28,7 +28,7 @@ type AssignStmt struct {
 }
 
 func (*AssignStmt) stmtNode()               {}
-func (s *AssignStmt) Loc() *source.Location { return s.Location }
+func (s *AssignStmt) loc() *source.Location { return s.Location }
 
 type ReturnStmt struct {
 	NodeIDHolder
@@ -37,7 +37,7 @@ type ReturnStmt struct {
 }
 
 func (*ReturnStmt) stmtNode()               {}
-func (s *ReturnStmt) Loc() *source.Location { return s.Location }
+func (s *ReturnStmt) loc() *source.Location { return s.Location }
 
 type IfStmt struct {
 	NodeIDHolder
@@ -48,4 +48,4 @@ type IfStmt struct {
 }
 
 func (*IfStmt) stmtNode()               {}
-func (s *IfStmt) Loc() *source.Location { return s.Location }
+func (s *IfStmt) loc() *source.Location { return s.Location }

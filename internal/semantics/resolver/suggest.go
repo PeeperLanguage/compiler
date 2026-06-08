@@ -17,13 +17,13 @@ func reportUnresolved(module *project.Module, scope *table.Scope, node *ast.Iden
 		msg := "unknown identifier `" + node.Name + "`"
 		d := diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrUndefinedSymbol).
-			WithPrimaryLabel(node.Loc(), msg).
+			WithPrimaryLabel(ast.LocOf(node), msg).
 			WithHelp("did you mean `" + match + "`?")
 		diag.Add(d)
 		return false
 	}
 	msg := "unknown identifier `" + node.Name + "`"
-	diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrUndefinedSymbol).WithPrimaryLabel(node.Loc(), msg))
+	diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrUndefinedSymbol).WithPrimaryLabel(ast.LocOf(node), msg))
 	return false
 }
 

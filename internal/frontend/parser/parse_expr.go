@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"fmt"
+	"compiler/internal/source"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
@@ -44,11 +46,11 @@ func init() {
 	// literals & identifiers
 	nud(token.NUMBER, func(p *Parser) ast.Expr {
 		tok := p.advance()
-		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: p.loc(*tok, *tok)})
+		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
 	nud(token.STRING, func(p *Parser) ast.Expr {
 		tok := p.advance()
-		return reg(p, &ast.StringLit{Value: tok.Literal, Location: p.loc(*tok, *tok)})
+		return reg(p, &ast.StringLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
@@ -114,7 +116,7 @@ func init() {
 func (p *Parser) parseExpr(precedence uint8) ast.Expr {
 	nudHandler, ok := nudLookup[p.peek().Kind]
 	if !ok {
-		p.errorf(p.peek(), diagnostics.ErrInvalidExpression, "expected expression")
+		p.diag.Add(diagnostics.NewError("expected expression").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
 		return nil
 	}
 	left := nudHandler(p)
@@ -143,7 +145,7 @@ func (p *Parser) parseUnaryExpr() ast.Expr {
 	return reg(p, &ast.UnaryExpr{
 		Op:       tok.Literal,
 		Expr:     expr,
-		Location: p.loc(*tok, *tok),
+		Location: source.NewLocation(p.filePath, tok.Start, tok.End),
 	})
 }
 
@@ -160,7 +162,7 @@ func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
 		Left:     left,
 		Op:       op.Literal,
 		Right:    right,
-		Location: p.locFromNode(left, right),
+		Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(right)),
 	})
 }
 
@@ -191,7 +193,7 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	return reg(p, &ast.CallExpr{
 		Callee:   callee,
 		Args:     args,
-		Location: p.locFromNode(callee, reg(p, &ast.BadExpr{Location: p.loc(*end, *end)})),
+		Location: source.NewLocation(p.filePath, ast.StartOf(callee), ast.EndOf(reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, end.Start, end.End)}))),
 	})
 }
 
@@ -208,7 +210,7 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 		return reg(p, &ast.ScopeResolution{
 			Module:   id,
 			Name:     member,
-			Location: p.locFromNode(id, member),
+			Location: source.NewLocation(p.filePath, ast.StartOf(id), ast.EndOf(member)),
 		})
 	}
 	return id
@@ -226,7 +228,7 @@ func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 	return reg(p, &ast.SelectorExpr{
 		Expr:     left,
 		Name:     name,
-		Location: p.locFromNode(left, name),
+		Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(name)),
 	})
 }
 
@@ -251,7 +253,7 @@ func (p *Parser) parseStructLiteral() ast.Expr {
 			return ast.StructLitField{
 				Name:     name,
 				Value:    value,
-				Location: p.locFromNode(name, value),
+				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(value)),
 			}, true
 		})
 	if !ok {
@@ -259,30 +261,30 @@ func (p *Parser) parseStructLiteral() ast.Expr {
 	}
 	return reg(p, &ast.StructLit{
 		Fields:   fields,
-		Location: p.loc(*start, *end),
+		Location: source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
 
 func (p *Parser) parseIdent() *ast.Ident {
 	tok := p.peek()
 	if tok.Kind != token.IDENT {
-		p.errorf(tok, diagnostics.ErrMissingIdentifier, "expected identifier")
+		p.diag.Add(diagnostics.NewError("expected identifier").WithCode(diagnostics.ErrMissingIdentifier).WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), fmt.Sprintf("found %s", tok.Kind)))
 		return nil
 	}
 	p.advance()
-	return reg(p, &ast.Ident{Name: tok.Literal, Location: p.loc(tok, tok)})
+	return reg(p, &ast.Ident{Name: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 }
 
 func (p *Parser) parseAsExpr(left ast.Expr) ast.Expr {
 	asTok := p.advance() // consume 'as'
 	typeExpr := p.parseTypeExpr()
 	if typeExpr == nil {
-		p.errorf(*asTok, diagnostics.ErrInvalidExpression, "expected type after 'as'")
+		p.diag.Add(diagnostics.NewError("expected type after 'as'").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(source.NewLocation(p.filePath, asTok.Start, asTok.End), fmt.Sprintf("found %s", asTok.Kind)))
 		return left
 	}
 	return reg(p, &ast.AsExpr{
 		Expr:     left,
 		TypeExpr: typeExpr,
-		Location: p.locFromNode(left, typeExpr),
+		Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(typeExpr)),
 	})
 }

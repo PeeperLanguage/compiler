@@ -177,7 +177,7 @@ func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
 	}
 	d := diagnostics.NewError(msg).WithCode(code)
 	if imp != nil {
-		if loc := imp.Loc(); loc != nil {
+		if loc := ast.LocOf(imp); loc != nil {
 			d.WithPrimaryLabel(loc, msg)
 		}
 	}
