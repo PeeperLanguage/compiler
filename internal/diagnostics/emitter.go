@@ -940,7 +940,6 @@ func (e *Emitter) hasRenderableCodeHint(hint *CodeHint) bool {
 	return len(e.codeHintRenderableLines(hint)) > 0
 }
 
-
 func (e *Emitter) codeHintRenderableLines(hint *CodeHint) []CodeHintLine {
 	if hint == nil {
 		return nil
@@ -1085,7 +1084,6 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 	// Closing separator
 	e.printPipeOnly()
 }
-
 
 func (e *Emitter) printText(text DiagnosticText) {
 	if text.Message == "" {
