@@ -44,7 +44,6 @@ const (
 	Secondary                   // Additional context (uses ---)
 )
 
-
 type DiagnosticExtraKind int
 
 const (
@@ -68,12 +67,12 @@ type DiagnosticExtra struct {
 
 // Diagnostic represents a compiler diagnostic (error, warning, etc.)
 type Diagnostic struct {
-	Severity  Severity
-	Message   string
-	Code      string // Error code like "E0001"
-	FilePath  string // Source file for this diagnostic
-	Labels    []Label
-	Extras    []DiagnosticExtra
+	Severity Severity
+	Message  string
+	Code     string // Error code like "E0001"
+	FilePath string // Source file for this diagnostic
+	Labels   []Label
+	Extras   []DiagnosticExtra
 }
 
 const internalCompilerErrorCode = "ICE0001"

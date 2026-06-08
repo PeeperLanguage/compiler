@@ -148,7 +148,7 @@ func Run(in io.Reader, out io.Writer) error {
 }
 
 func uriToPath(uri string) string {
-	if after, ok :=strings.CutPrefix(uri, "file://"); ok  {
+	if after, ok := strings.CutPrefix(uri, "file://"); ok {
 		path := after
 		if len(path) > 2 && path[0] == '/' && path[2] == ':' {
 			path = path[1:]

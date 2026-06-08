@@ -47,7 +47,7 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 			break
 		}
 		const prefix = "Content-Length: "
-		if after, ok :=strings.CutPrefix(line, prefix); ok  {
+		if after, ok := strings.CutPrefix(line, prefix); ok {
 			val := after
 			cl, err := strconv.Atoi(val)
 			if err != nil {
