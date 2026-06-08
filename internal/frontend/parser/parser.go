@@ -1013,20 +1013,12 @@ func reg[T ast.Node](p *Parser, n T) T {
 	return n
 }
 
-
-
-
-
-
-
 func (p *Parser) lastNonNilToken(fallback token.Token) token.Token {
 	if p.pos > 0 && p.pos-1 < len(p.stream) {
 		return p.stream[p.pos-1]
 	}
 	return fallback
 }
-
-
 
 func isZeroPosition(pos source.Position) bool {
 	return pos == source.NewPosition()

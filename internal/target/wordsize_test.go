@@ -71,7 +71,6 @@ func TestDefaultSizeBitsForHost(t *testing.T) {
 
 func TestSetSizeBitsValid(t *testing.T) {
 	for _, bits := range []int{0, Bits32, Bits64} {
-		bits := bits
 		t.Run("", func(t *testing.T) {
 			withSizeBits(t, bits)
 			if bits == 0 {
@@ -87,7 +86,6 @@ func TestSetSizeBitsValid(t *testing.T) {
 
 func TestSetSizeBitsInvalid(t *testing.T) {
 	for _, bits := range []int{1, 8, 16, 24, 128, -1, 33, 65} {
-		bits := bits
 		t.Run("", func(t *testing.T) {
 			withSizeBits(t, Bits64)
 			err := SetSizeBits(bits)

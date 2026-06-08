@@ -1,11 +1,11 @@
 package parser
 
 import (
-	"fmt"
-	"compiler/internal/source"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
+	"compiler/internal/source"
+	"fmt"
 )
 
 const (
@@ -69,19 +69,19 @@ func init() {
 	})
 
 	// prefix / unary
-	nud(token.PLUS,  func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+	nud(token.PLUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 	nud(token.MINUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
-	nud(token.BANG,  func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+	nud(token.BANG, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 
 	// struct literal
 	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseStructLiteral() })
 
 	// logical
-	led(token.OROR,  precOr,  parseBinaryExpr)
+	led(token.OROR, precOr, parseBinaryExpr)
 	led(token.ANDAND, precAnd, parseBinaryExpr)
 
 	// equality
-	led(token.EQ,  precEquality, parseBinaryExpr)
+	led(token.EQ, precEquality, parseBinaryExpr)
 	led(token.NEQ, precEquality, parseBinaryExpr)
 
 	// relational
@@ -91,13 +91,13 @@ func init() {
 	led(token.GE, precCompare, parseBinaryExpr)
 
 	// additive
-	led(token.PLUS,  precSum, parseBinaryExpr)
+	led(token.PLUS, precSum, parseBinaryExpr)
 	led(token.MINUS, precSum, parseBinaryExpr)
 
 	// multiplicative
 	led(token.ASTERISK, precProduct, parseBinaryExpr)
-	led(token.SLASH,    precProduct, parseBinaryExpr)
-	led(token.PERCENT,  precProduct, parseBinaryExpr)
+	led(token.SLASH, precProduct, parseBinaryExpr)
+	led(token.PERCENT, precProduct, parseBinaryExpr)
 
 	// cast
 	led(token.AS, precCast, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
