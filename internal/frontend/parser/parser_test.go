@@ -679,7 +679,7 @@ func TestParsePointerTypes(t *testing.T) {
 }
 
 // TestParseFnDefaultReturnType verifies that a function with no declared
-// return type defaults to "i32" (the new defaultReturnType constant).
+// return type has no return value.
 func TestParseFnDefaultReturnType(t *testing.T) {
 	src := `fn noReturn() { }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -692,12 +692,8 @@ func TestParseFnDefaultReturnType(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected fn decl, got %T", mod.Decls[0])
 	}
-	named, ok := fn.ReturnType.(*ast.NamedType)
-	if !ok {
-		t.Fatalf("expected named return type, got %T", fn.ReturnType)
-	}
-	if named.Name != "void" {
-		t.Fatalf("default return type: got %q want %q", named.Name, "void")
+	if fn.ReturnType != nil {
+		t.Fatalf("expected nil default return type, got %T", fn.ReturnType)
 	}
 }
 
@@ -719,7 +715,7 @@ func TestParseFnExplicitReturnTypeOverridesDefault(t *testing.T) {
 }
 
 // TestParseInterfaceMethodDefaultReturnType verifies interface methods also
-// default to "void" rather than "i32".
+// default to no return value.
 func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 	src := `interface I { method() }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -732,13 +728,12 @@ func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 	if len(iface.Methods) != 1 {
 		t.Fatalf("methods: got %d want 1", len(iface.Methods))
 	}
-	named := iface.Methods[0].ReturnType.(*ast.NamedType)
-	if named.Name != "void" {
-		t.Fatalf("interface method default return: got %q want %q", named.Name, "void")
+	if iface.Methods[0].ReturnType != nil {
+		t.Fatalf("expected nil interface method return type, got %T", iface.Methods[0].ReturnType)
 	}
 }
 
-// TestParseFuncTypeDefaultReturnType verifies fn-types default to "void".
+// TestParseFuncTypeDefaultReturnType verifies fn-types default to no return value.
 func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 	src := `let cb: fn(i32) = 0;`
 	diag := diagnostics.NewDiagnosticBag("test.em")
@@ -752,9 +747,8 @@ func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected func type, got %T", letDecl.Type)
 	}
-	named := ft.Return.(*ast.NamedType)
-	if named.Name != "void" {
-		t.Fatalf("fn-type default return: got %q want %q", named.Name, "void")
+	if ft.Return != nil {
+		t.Fatalf("expected nil fn-type return, got %T", ft.Return)
 	}
 }
 

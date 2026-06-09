@@ -200,8 +200,11 @@ func (s *Invalid) appendInlineText(b *strings.Builder, indent int) {
 
 func (s *Return) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
-	b.WriteString("return ")
-	b.WriteString(s.Value.String())
+	b.WriteString("return")
+	if s != nil && s.Value != nil {
+		b.WriteString(" ")
+		b.WriteString(s.Value.String())
+	}
 	b.WriteString("\n")
 }
 

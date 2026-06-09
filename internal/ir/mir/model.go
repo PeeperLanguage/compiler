@@ -190,6 +190,9 @@ func (i *Branch) Text() string {
 }
 
 func (i *Ret) Text() string {
+	if i == nil || i.Value == nil {
+		return "ret"
+	}
 	return "ret " + i.Value.Text()
 }
 
@@ -342,6 +345,10 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 		fn.EntryID = l.current.ID
 		if !l.appendBlock(hirFn.Body) {
 			return nil
+		}
+		if l.current != nil && l.current.Term == nil && fn.ReturnType == "void" {
+			l.current.Term = &Ret{}
+			l.current = nil
 		}
 		markLocalInterfaceBoxing(fn)
 		out.Funcs = append(out.Funcs, fn)
@@ -528,8 +535,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
+		call := &Call{Callee: callee, Args: args, Type: e.TypeText()}
+		if call.Type == "" {
+			call.Type = "void"
+			*out = append(*out, call)
+			return nil
+		}
 		name := l.nextTemp()
-		*out = append(*out, &Assign{Name: name, Value: &Call{Callee: callee, Args: args, Type: e.TypeText()}})
+		*out = append(*out, &Assign{Name: name, Value: call})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.AddrOf:
 		base := l.lowerExpr(e.Expr, out)
@@ -576,8 +589,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText()}
+		if call.Type == "" {
+			call.Type = "void"
+			*out = append(*out, call)
+			return nil
+		}
 		name := l.nextTemp()
-		*out = append(*out, &Assign{Name: name, Value: &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText()}})
+		*out = append(*out, &Assign{Name: name, Value: call})
 		return &RefName{Name: name, Type: e.TypeText()}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)

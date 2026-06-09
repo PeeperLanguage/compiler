@@ -35,6 +35,9 @@ func TestBuiltinTypeAndStringer(t *testing.T) {
 	if !IsBuiltinType("byte") {
 		t.Fatalf("expected byte to be recognized as builtin type")
 	}
+	if IsBuiltinType("void") {
+		t.Fatalf("did not expect void to be recognized as builtin type")
+	}
 	if !IsBuiltinType("i128") || !IsBuiltinType("u1024") {
 		t.Fatalf("expected arbitrary-width builtin integers to be recognized")
 	}

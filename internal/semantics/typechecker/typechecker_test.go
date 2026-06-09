@@ -259,6 +259,46 @@ fn main() -> i32 {
 	}
 }
 
+func TestVoidLikeFunctionAllowsBareReturn(t *testing.T) {
+	src := `fn log() {
+	return;
+}
+
+fn main() -> i32 {
+	log();
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestVoidLikeFunctionRejectsReturnedValue(t *testing.T) {
+	src := `fn log() {
+	return 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
+		t.Fatalf("expected invalid return diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestVoidLikeCallCannotBeUsedAsValue(t *testing.T) {
+	src := `fn log() {
+	return;
+}
+
+fn main() -> i32 {
+	let x = log();
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected invalid expression diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestStructLiteralAssignsToNamedStruct(t *testing.T) {
 	src := `struct Point {
 	x: i32,

@@ -9,7 +9,7 @@ import (
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "char", "str", "usize", "isize", "f32", "f64", "void":
+	case "bool", "char", "str", "usize", "isize", "f32", "f64":
 		return true
 	default:
 		_, _, ok := ParseIntegerBuiltin(name)

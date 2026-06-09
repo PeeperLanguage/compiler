@@ -110,7 +110,7 @@ func lowerExternSignature(params []ast.Param, fallbackReturnType ast.TypeExpr, r
 	if resolvedFnType != nil && resolvedFnType.Return != nil {
 		returnType = resolvedFnType.Return
 	}
-	return loweredParams, loweredTypeText(returnType)
+	return loweredParams, loweredReturnTypeText(returnType)
 }
 
 func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module, sym *symbols.Symbol, fn *ast.FnDecl, emittedName string) *hir.Function {
@@ -127,7 +127,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 	if !ok || retType == nil {
 		retType = typeinfo.TypeFromSyntax(fn.ReturnType)
 	}
-	retTypeStr := loweredTypeText(retType)
+	retTypeStr := loweredReturnTypeText(retType)
 	hirFn := &hir.Function{
 		Name:       emittedName,
 		Params:     make([]ir.Param, 0, len(fn.Params)),
@@ -228,7 +228,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			out.Stmts = append(out.Stmts, &hir.Return{Value: &ir.InvalidExpr{Message: "missing return value", Type: "<invalid>"}, Location: ast.LocOf(node)})
+			out.Stmts = append(out.Stmts, &hir.Return{Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, returnType)
@@ -851,6 +851,13 @@ func loweredTypeText(t typeinfo.Type) string {
 		return ""
 	}
 	return typeinfo.TypeText(loweredRuntimeType(t))
+}
+
+func loweredReturnTypeText(t typeinfo.Type) string {
+	if t == nil {
+		return "void"
+	}
+	return loweredTypeText(t)
 }
 
 func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {

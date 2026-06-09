@@ -23,8 +23,6 @@ const (
 	ownerFunction = "function"
 	ownerIf       = "if"
 	ownerElse     = "else"
-
-	voidTypeName = "void"
 )
 
 func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *Parser {
@@ -149,13 +147,9 @@ func (p *Parser) parseFnDecl() ast.Decl {
 }
 
 // parseFnSignature parses the name, optional type parameters, parameter list,
-// and optional return type of a function. The default return type when no
-// arrow is present is "void".
+// and optional return type of a function. When no arrow is present the
+// function has no return value.
 func (p *Parser) parseFnSignature(start *token.Token) (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
-	returnType = reg(p, &ast.NamedType{
-		Name:     voidTypeName,
-		Location: source.NewLocation(p.filePath, start.Start, start.End),
-	})
 	name = p.parseFunctionName()
 	if name == nil {
 		return nil, nil, nil, nil, false
@@ -616,10 +610,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	if p.consume(token.RPAREN, "expected ')' after function type parameters") == nil {
 		return nil
 	}
-	ret := ast.TypeExpr(reg(p, &ast.NamedType{
-		Name:     voidTypeName,
-		Location: source.NewLocation(p.filePath, start.Start, start.End),
-	}))
+	var ret ast.TypeExpr
 	if p.match(token.COLON) {
 		ret = p.parseTypeExpr()
 		if ret == nil {
@@ -700,7 +691,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 			if p.consume(token.RPAREN, "expected ')' after method parameters") == nil {
 				return ast.TypeMethod{}, false
 			}
-			ret := ast.TypeExpr(reg(p, &ast.NamedType{Name: voidTypeName, Location: name.Location}))
+			var ret ast.TypeExpr
 			if p.match(token.COLON) {
 				ret = p.parseTypeExpr()
 				if ret == nil {
