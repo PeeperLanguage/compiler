@@ -130,11 +130,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			r.resolveExpr(scope, node.Value)
 		}
 	case *ast.ReturnStmt:
-		if node.Value == nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
-			return
+		if node.Value != nil {
+			r.resolveExpr(scope, node.Value)
 		}
-		r.resolveExpr(scope, node.Value)
 	case *ast.IfStmt:
 		if node.Cond == nil {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", ast.LocOf(node), "")

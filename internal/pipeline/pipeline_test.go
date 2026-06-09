@@ -102,6 +102,23 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	}
 }
 
+func TestPipelineLowersBareReturnInNoValueFunction(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn log() {
+	return;
+}
+
+fn main() -> i32 {
+	log();
+	return 0;
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersImplMethodCalls(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `impl i32 {

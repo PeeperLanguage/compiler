@@ -1,0 +1,7 @@
+import "EmberCompiler/x_test/external";
+
+fn main() -> i32 {
+   let myval : i32 = external::GetValue(); 
+   return myval;
+}
+

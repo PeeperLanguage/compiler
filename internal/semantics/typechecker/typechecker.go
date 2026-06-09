@@ -121,6 +121,16 @@ func (c *checker) underlying(t typeinfo.Type) typeinfo.Type {
 	return typeinfo.Underlying(c.resolveType(t))
 }
 
+func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context string) typeinfo.Type {
+	if typ != nil {
+		return typ
+	}
+	if c != nil && c.ctx != nil {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, context+" requires a value-producing expression", ast.LocOf(expr), "")
+	}
+	return &typeinfo.InvalidType{}
+}
+
 func (c *checker) isLowerableType(t typeinfo.Type) bool {
 	t = c.underlying(t)
 	switch typ := t.(type) {
@@ -154,7 +164,7 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 					return false
 				}
 			}
-			if typeinfo.ContainsAbstractSelf(method.Return) || !c.isLowerableType(method.Return) {
+			if method.Return != nil && (typeinfo.ContainsAbstractSelf(method.Return) || !c.isLowerableType(method.Return)) {
 				return false
 			}
 		}
@@ -171,7 +181,7 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 			return false
 		}
 	}
-	return c.isLowerableType(fn.Return)
+	return fn.Return == nil || c.isLowerableType(fn.Return)
 }
 
 func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
@@ -420,11 +430,17 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		c.checkBinding(scope, node, true)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
+			if returnType != nil {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
+			}
 			return
 		}
-		retType := c.typeExpr(scope, node.Value, returnType)
-		if retType == nil {
+		if returnType == nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "cannot return a value from function with no return type", ast.LocOf(node.Value), "")
+			return
+		}
+		retType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, returnType), "return")
+		if typeinfo.IsInvalidOrUnknown(retType) {
 			return
 		}
 		if !c.assignable(returnType, retType) {
@@ -467,7 +483,8 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		return
 	}
 	valueType := c.typeExpr(scope, node.Value, targetType)
-	if valueType == nil || typeinfo.IsInvalidOrUnknown(valueType) {
+	valueType = c.requireValueType(node.Value, valueType, "assignment")
+	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return
 	}
 	if !c.assignable(targetType, valueType) {
@@ -567,7 +584,9 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 
 	valType := c.typeExpr(scope, value, declType)
-	if valType == nil {
+	valType = c.requireValueType(value, valType, "initializer")
+	if typeinfo.IsInvalidOrUnknown(valType) {
+		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
 	if declType != nil && !c.assignable(declType, valType) {
@@ -592,9 +611,9 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 	if decl == nil {
 		return
 	}
-	if !c.isLowerableType(c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf)) {
+	if retType := c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf); retType != nil && !c.isLowerableType(retType) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-			"function return type must be builtin integer, f32/f64, or function type in current compiler stage", ast.LocOf(decl), "")
+			"function return type is not lowerable in current compiler stage", ast.LocOf(decl), "")
 		return
 	}
 	for _, param := range decl.Params {
@@ -604,7 +623,7 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 				site = param.Name
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-				"parameter type must be builtin integer, f32/f64, or function type in current compiler stage", ast.LocOf(site), "")
+				"parameter type is not lowerable in current compiler stage", ast.LocOf(site), "")
 			return
 		}
 	}
@@ -804,9 +823,7 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 	}
 
 	argType := c.typeExpr(scope, node.Expr, argExpected)
-	if argType == nil {
-		return &typeinfo.InvalidType{}
-	}
+	argType = c.requireValueType(node.Expr, argType, "unary operand")
 	if typeinfo.IsInvalidOrUnknown(argType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -830,8 +847,10 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 
 	left := c.typeExpr(scope, node.Left, expected)
 	right := c.typeExpr(scope, node.Right, expected)
+	left = c.requireValueType(node.Left, left, "left operand")
+	right = c.requireValueType(node.Right, right, "right operand")
 
-	if left == nil || right == nil || typeinfo.IsInvalidOrUnknown(left) || typeinfo.IsInvalidOrUnknown(right) {
+	if typeinfo.IsInvalidOrUnknown(left) || typeinfo.IsInvalidOrUnknown(right) {
 		return &typeinfo.InvalidType{}
 	}
 
@@ -972,7 +991,8 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 			continue
 		}
 		valueType := c.typeExpr(scope, field.Value, targetField.Type)
-		if valueType == nil {
+		valueType = c.requireValueType(field.Value, valueType, "struct field initializer")
+		if typeinfo.IsInvalidOrUnknown(valueType) {
 			continue
 		}
 		if !c.assignable(targetField.Type, valueType) {
@@ -1003,7 +1023,8 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 		}
 		seen[field.Name.Name] = struct{}{}
 		valueType := c.typeExpr(scope, field.Value, nil)
-		if valueType == nil {
+		valueType = c.requireValueType(field.Value, valueType, "struct field initializer")
+		if typeinfo.IsInvalidOrUnknown(valueType) {
 			valueType = &typeinfo.InvalidType{}
 		}
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
@@ -1100,10 +1121,13 @@ func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) t
 	}
 	if calleeType != nil {
 		if fnType, ok := calleeType.(*typeinfo.FuncType); ok && fnType != nil {
-			if fnType.Return != nil && !typeinfo.IsUnknown(fnType.Return) {
+			if fnType.Return == nil {
+				return nil
+			}
+			if !typeinfo.IsUnknown(fnType.Return) {
 				return fnType.Return
 			}
-			if call != nil && !typeinfo.IsInvalidOrUnknown(fnType.Return) {
+			if call != nil {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "call has unknown return type", ast.LocOf(call), "")
 			}
 			return &typeinfo.InvalidType{}
@@ -1125,7 +1149,8 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 		return &typeinfo.InvalidType{}
 	}
 	exprType := c.typeExpr(scope, node.Expr, nil)
-	if exprType == nil || typeinfo.IsInvalidOrUnknown(exprType) {
+	exprType = c.requireValueType(node.Expr, exprType, "cast")
+	if typeinfo.IsInvalidOrUnknown(exprType) {
 		return &typeinfo.InvalidType{}
 	}
 	compat := typeinfo.CheckNumericCompatibility(targetType, exprType)
@@ -1219,6 +1244,8 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	}
 	for i, argType := range args {
 		if argType == nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+				"argument requires a value-producing expression", ast.LocOf(callExpr.Args[i]), "")
 			continue
 		}
 		paramType := fnType.Params[i]
@@ -1299,6 +1326,10 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 	}
 	for i, argType := range args {
 		if argType == nil {
+			if i > 0 {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+					"argument requires a value-producing expression", ast.LocOf(callExpr.Args[i-1]), "")
+			}
 			continue
 		}
 		paramType := fnType.Params[i]
