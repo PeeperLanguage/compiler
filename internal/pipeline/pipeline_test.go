@@ -119,6 +119,29 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersUnusedCallBindingAsDiscardedCall(t *testing.T) {
+	preludeSrc := `let stdout: i32 = 1;
+
+#[extern]
+fn write(fd: i32, buf: cstr, n: i32) -> i32;
+`
+	entrySrc := `fn work() -> i32 {
+	let msg: cstr = "ping\n";
+	write(stdout, msg, 5);
+	return 7;
+}
+
+fn main() -> i32 {
+	let unused = work();
+	return 0;
+}`
+
+	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersImplMethodCalls(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `impl i32 {

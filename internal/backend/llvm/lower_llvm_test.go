@@ -40,3 +40,36 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 		t.Fatalf("expected implicit zero exit status, got:\n%s", irText)
 	}
 }
+
+func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{
+					{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Call{
+								Callee: &mir.RefName{Name: "Ping", Type: "fn() -> void"},
+								Type:   "void",
+							},
+						},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""))
+	if !strings.Contains(irText, "declare void @Ping()") {
+		t.Fatalf("expected declaration for discarded direct call, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "call void @Ping()") {
+		t.Fatalf("expected emitted discarded direct call, got:\n%s", irText)
+	}
+}

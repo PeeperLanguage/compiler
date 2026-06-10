@@ -970,30 +970,16 @@ func collectCallDecls(mod *mir.Module) []callDecl {
 				continue
 			}
 			for _, instr := range block.Instrs {
-				assign, ok := instr.(*mir.Assign)
-				if !ok || assign == nil {
-					continue
+				switch callInstr := instr.(type) {
+				case *mir.Assign:
+					call, ok := callInstr.Value.(*mir.Call)
+					if !ok || call == nil {
+						continue
+					}
+					recordCallDecl(decls, defined, call)
+				case *mir.Call:
+					recordCallDecl(decls, defined, callInstr)
 				}
-				call, ok := assign.Value.(*mir.Call)
-				if !ok || call == nil {
-					continue
-				}
-				nameRef, ok := call.Callee.(*mir.RefName)
-				if !ok || nameRef == nil {
-					continue
-				}
-				name := nameRef.Name
-				if idx := strings.IndexByte(name, '$'); idx >= 0 {
-					name = name[:idx]
-				}
-				if _, ok := defined[name]; ok {
-					continue
-				}
-				params := make([]string, 0, len(call.Args))
-				for _, arg := range call.Args {
-					params = append(params, mirRefType(arg))
-				}
-				decls[name] = callDecl{Name: name, ReturnType: call.Type, Params: params}
 			}
 		}
 	}
@@ -1002,4 +988,26 @@ func collectCallDecls(mod *mir.Module) []callDecl {
 		out = append(out, decl)
 	}
 	return out
+}
+
+func recordCallDecl(decls map[string]callDecl, defined map[string]struct{}, call *mir.Call) {
+	if call == nil {
+		return
+	}
+	nameRef, ok := call.Callee.(*mir.RefName)
+	if !ok || nameRef == nil {
+		return
+	}
+	name := nameRef.Name
+	if idx := strings.IndexByte(name, '$'); idx >= 0 {
+		name = name[:idx]
+	}
+	if _, ok := defined[name]; ok {
+		return
+	}
+	params := make([]string, 0, len(call.Args))
+	for _, arg := range call.Args {
+		params = append(params, mirRefType(arg))
+	}
+	decls[name] = callDecl{Name: name, ReturnType: call.Type, Params: params}
 }

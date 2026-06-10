@@ -192,6 +192,10 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
+		if shouldDiscardBindingValue(module, sym.ID) {
+			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: ast.LocOf(node)})
+			return
+		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, Location: ast.LocOf(node)})
 
 	case *ast.ConstDecl:
@@ -207,6 +211,10 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: "<invalid>"})
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
+		}
+		if shouldDiscardBindingValue(module, sym.ID) {
+			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: ast.LocOf(node)})
+			return
 		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, Location: ast.LocOf(node)})
 
@@ -836,6 +844,14 @@ func symbolName(sym *symbols.Symbol) string {
 		return ""
 	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
+}
+
+func shouldDiscardBindingValue(module *project.Module, symID symbols.SymbolID) bool {
+	if module == nil || module.Semantics == nil {
+		return false
+	}
+	_, ok := module.Semantics.DiscardBindingValue[symID]
+	return ok
 }
 
 func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {

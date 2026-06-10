@@ -224,18 +224,20 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 }
 
 type SemanticInfo struct {
-	BlockScopes  map[ast.NodeID]*table.Scope
-	ExprTypes    map[ast.NodeID]typeinfo.Type
-	MethodSets   map[string][]*symbols.Symbol
-	MethodSymbol map[ast.NodeID]*symbols.Symbol
+	BlockScopes         map[ast.NodeID]*table.Scope
+	ExprTypes           map[ast.NodeID]typeinfo.Type
+	MethodSets          map[string][]*symbols.Symbol
+	MethodSymbol        map[ast.NodeID]*symbols.Symbol
+	DiscardBindingValue map[symbols.SymbolID]struct{}
 }
 
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
-		BlockScopes:  make(map[ast.NodeID]*table.Scope),
-		ExprTypes:    make(map[ast.NodeID]typeinfo.Type),
-		MethodSets:   make(map[string][]*symbols.Symbol),
-		MethodSymbol: make(map[ast.NodeID]*symbols.Symbol),
+		BlockScopes:         make(map[ast.NodeID]*table.Scope),
+		ExprTypes:           make(map[ast.NodeID]typeinfo.Type),
+		MethodSets:          make(map[string][]*symbols.Symbol),
+		MethodSymbol:        make(map[ast.NodeID]*symbols.Symbol),
+		DiscardBindingValue: make(map[symbols.SymbolID]struct{}),
 	}
 }
 
