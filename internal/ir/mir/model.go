@@ -410,6 +410,9 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		if l.current == nil {
 			return true
 		}
+		if l.lowerDiscardedExpr(node.Value, &l.current.Instrs) {
+			return true
+		}
 		l.lowerExpr(node.Value, &l.current.Instrs)
 		return true
 	case *hir.Assign:
@@ -605,6 +608,40 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeText()}
 	default:
 		return &RefConst{Value: "0", Type: "i32"}
+	}
+}
+
+func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
+	if l == nil || out == nil || expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *ir.Call:
+		callee := l.lowerExpr(e.Callee, out)
+		args := make([]ValueRef, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, l.lowerExpr(arg, out))
+		}
+		call := &Call{Callee: callee, Args: args, Type: e.TypeText()}
+		if call.Type == "" {
+			call.Type = "void"
+		}
+		*out = append(*out, call)
+		return true
+	case *ir.InterfaceCall:
+		base := l.lowerExpr(e.Base, out)
+		args := make([]ValueRef, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, l.lowerExpr(arg, out))
+		}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText()}
+		if call.Type == "" {
+			call.Type = "void"
+		}
+		*out = append(*out, call)
+		return true
+	default:
+		return false
 	}
 }
 
