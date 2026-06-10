@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 )
@@ -63,6 +64,9 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			for _, sym := range scope.Symbols() {
+				if shouldDiscardBindingValue(sym) {
+					module.Semantics.DiscardBindingValue[sym.ID] = struct{}{}
+				}
 				if sym.Used || strings.HasPrefix(sym.Name, "_") {
 					continue
 				}
@@ -77,4 +81,23 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 			}
 		}
 	}
+}
+
+func shouldDiscardBindingValue(sym *symbols.Symbol) bool {
+	if sym == nil || sym.Used {
+		return false
+	}
+	switch node := sym.ASTNode.(type) {
+	case *ast.LetDecl:
+		return sym.Kind == symbols.SymbolVar && node != nil && isDiscardableBindingValue(node.Value)
+	case *ast.ConstDecl:
+		return sym.Kind == symbols.SymbolConst && node != nil && isDiscardableBindingValue(node.Value)
+	default:
+		return false
+	}
+}
+
+func isDiscardableBindingValue(expr ast.Expr) bool {
+	_, ok := expr.(*ast.CallExpr)
+	return ok
 }
