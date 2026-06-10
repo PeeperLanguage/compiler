@@ -140,7 +140,7 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 
 func (p *Parser) parseFnDecl() ast.Decl {
 	start := p.consume(token.FN, "expected fn")
-	name, typeParams, params, returnType, ok := p.parseFnSignature(start)
+	name, typeParams, params, returnType, ok := p.parseFnSignature()
 	if !ok {
 		return nil
 	}
@@ -162,7 +162,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 // parseFnSignature parses the name, optional type parameters, parameter list,
 // and optional return type of a function. When no arrow is present the
 // function has no return value.
-func (p *Parser) parseFnSignature(start *token.Token) (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
+func (p *Parser) parseFnSignature() (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
 	name = p.parseFunctionName()
 	if name == nil {
 		return nil, nil, nil, nil, false
