@@ -92,16 +92,29 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 	if err != nil {
 		return fmt.Errorf("clang not found in PATH; install LLVM clang to build LLVM IR")
 	}
-	args := make([]string, 0, len(llPaths)*3+2)
-	args = append(args, "-target", targetTriple)
-	for _, llPath := range llPaths {
-		args = append(args, "-x", "ir", llPath)
-	}
-	args = append(args, "-o", outputPath)
+	args := clangArgsForBuild(ctx.Config, targetTriple, llPaths, outputPath)
 	cmd := exec.Command(clangPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clang link failed: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func clangArgsForBuild(cfg project.Config, targetTriple string, llPaths []string, outputPath string) []string {
+	args := make([]string, 0, len(llPaths)*3+6)
+	args = append(args, "-target", targetTriple)
+	if cfg.BuildDebug {
+		args = append(args, "-O0")
+		if cfg.TargetOS == "windows" {
+			args = append(args, "-gcodeview")
+		} else {
+			args = append(args, "-g")
+		}
+	}
+	for _, llPath := range llPaths {
+		args = append(args, "-x", "ir", llPath)
+	}
+	args = append(args, "-o", outputPath)
+	return args
 }

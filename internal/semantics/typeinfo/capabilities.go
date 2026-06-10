@@ -47,9 +47,7 @@ func IsEquatable(t Type) bool {
 }
 
 func IsCondition(t Type) bool {
-	if IsArithmetic(t) {
-		return true
-	}
+	t = Underlying(t)
 	_, ok := t.(*BoolType)
 	return ok
 }
