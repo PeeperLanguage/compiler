@@ -24,6 +24,7 @@ var errAlreadyReported = errors.New("diagnostics already reported")
 const (
 	tempRunFilePrefix = "ember-run-"
 	genArtifactsDir   = "_gen"
+	debugBuildUsage   = "enable debug build mode (emits debug info and debug-friendly codegen)"
 )
 
 // emitAndCheckDiagnostics prints all pending diagnostics and returns errAlreadyReported
@@ -89,11 +90,16 @@ type commandOptions struct {
 	positional []string
 	targetOS   string
 	targetArch string
+	debugBuild bool
 }
 
-func parseCommandArgs(name string, args []string) (commandOptions, error) {
+func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptions, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	common := addCommandCommonFlags(fs)
+	debugBuild := false
+	if allowDebug {
+		fs.BoolVar(&debugBuild, "debug", false, debugBuildUsage)
+	}
 	if err := fs.Parse(args); err != nil {
 		return commandOptions{}, err
 	}
@@ -105,6 +111,7 @@ func parseCommandArgs(name string, args []string) (commandOptions, error) {
 		positional: fs.Args(),
 		targetOS:   targetOS,
 		targetArch: targetArch,
+		debugBuild: debugBuild,
 	}, nil
 }
 
@@ -190,7 +197,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	outputPath := fs.String("o", "", "compile and link to executable")
 	keepGen := fs.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
 	fs.BoolVar(keepGen, "k", false, "alias for -keep-gen")
-	debugBuild := fs.Bool("debug", false, "enable debug build mode (emits debug info and debug-friendly codegen)")
+	debugBuild := fs.Bool("debug", false, debugBuildUsage)
 	if err := fs.Parse(args); err != nil {
 		return buildFlags{}, nil, err
 	}
@@ -208,7 +215,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 }
 
 func runCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
-	opts, err := parseCommandArgs("run", args)
+	opts, err := parseCommandArgs("run", args, true)
 	if err != nil {
 		return err
 	}
@@ -231,7 +238,7 @@ func runCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
 	}
 
 	backendTarget = parseBackendType(backendTarget)
-	ctx, entry := compileEntry(resolvedPath, string(backendTarget), false, opts.targetOS, opts.targetArch)
+	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
@@ -375,7 +382,7 @@ func defaultOutputNameForEntry(entryPath string, targetOS string) string {
 }
 
 func checkCommand(args []string) error {
-	opts, err := parseCommandArgs("check", args)
+	opts, err := parseCommandArgs("check", args, false)
 	if err != nil {
 		return err
 	}

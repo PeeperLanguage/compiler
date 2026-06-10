@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+func TestParseCommandArgsRunDebug(t *testing.T) {
+	opts, err := parseCommandArgs("run", []string{"--debug", "demo.em"}, true)
+	if err != nil {
+		t.Fatalf("parse command args: %v", err)
+	}
+	if !opts.debugBuild {
+		t.Fatal("expected debug build flag")
+	}
+	if len(opts.positional) != 1 || opts.positional[0] != "demo.em" {
+		t.Fatalf("positional = %#v", opts.positional)
+	}
+}
+
 func TestResolveBuildTargetUsesManifestEntryAndPackageName(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, "ember")

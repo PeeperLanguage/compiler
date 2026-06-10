@@ -115,5 +115,5 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 		}
 		return
 	}
-	module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag, targetTriple)
+	module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag, targetTriple, p.ctx.Config.BuildDebug, p.ctx.Config.TargetOS)
 }

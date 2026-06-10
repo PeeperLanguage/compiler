@@ -26,9 +26,10 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		currentModuleScope = nil
 	}()
 	out := &hir.Module{
-		Name:    module.ImportPath,
-		Externs: make([]hir.Extern, 0),
-		Funcs:   make([]*hir.Function, 0),
+		Name:     module.ImportPath,
+		FilePath: module.FilePath,
+		Externs:  make([]hir.Extern, 0),
+		Funcs:    make([]*hir.Function, 0),
 	}
 	for _, decl := range module.AST.Decls {
 		switch node := decl.(type) {

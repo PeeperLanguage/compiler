@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/source"
 )
 
 type llvmEmitter struct {
@@ -18,6 +19,7 @@ type llvmEmitter struct {
 	badTypes        map[string]struct{}
 	invalid         bool
 	externalGlobals map[string]string
+	debug           *llvmDebugEmitter
 }
 
 func (e *llvmEmitter) llvmType(typeText string) string {
@@ -410,12 +412,15 @@ func pointedTypeText(typeText string) (string, bool) {
 // collectCallDecls deleted
 
 type llvmBuilder struct {
-	out        *strings.Builder
-	nextID     int
-	locals     map[string]string
-	localPtrs  map[string]string
-	localTypes map[string]string
-	types      *llvmEmitter
+	out             *strings.Builder
+	nextID          int
+	locals          map[string]string
+	localPtrs       map[string]string
+	localTypes      map[string]string
+	types           *llvmEmitter
+	debug           *llvmDebugEmitter
+	debugScopeID    int
+	debugLocationID int
 }
 
 func emitCast(b *llvmBuilder, cast *mir.Cast) string {
@@ -508,14 +513,21 @@ func mirParseIntegerTypeBits(typ string) int {
 	return 0
 }
 
-func newLLVMBuilder(out *strings.Builder, types *llvmEmitter) *llvmBuilder {
+func newLLVMBuilder(out *strings.Builder, types *llvmEmitter, debugScopeID int) *llvmBuilder {
+	debug := (*llvmDebugEmitter)(nil)
+	if types != nil {
+		debug = types.debug
+	}
 	return &llvmBuilder{
-		out:        out,
-		nextID:     1,
-		locals:     make(map[string]string),
-		localPtrs:  make(map[string]string),
-		localTypes: make(map[string]string),
-		types:      types,
+		out:             out,
+		nextID:          1,
+		locals:          make(map[string]string),
+		localPtrs:       make(map[string]string),
+		localTypes:      make(map[string]string),
+		types:           types,
+		debug:           debug,
+		debugScopeID:    debugScopeID,
+		debugLocationID: -1,
 	}
 }
 
@@ -528,11 +540,25 @@ func (b *llvmBuilder) nextReg() string {
 func (b *llvmBuilder) line(text string) {
 	b.out.WriteString("  ")
 	b.out.WriteString(text)
+	if b.debugLocationID >= 0 {
+		fmt.Fprintf(b.out, ", !dbg !%d", b.debugLocationID)
+	}
 	b.out.WriteString("\n")
 }
 
 func (b *llvmBuilder) label(id int) {
 	fmt.Fprintf(b.out, "b%d:\n", id)
+}
+
+func (b *llvmBuilder) setLocation(loc *source.Location) {
+	if b == nil {
+		return
+	}
+	if b.debug == nil {
+		b.debugLocationID = -1
+		return
+	}
+	b.debugLocationID = b.debug.locationID(loc, b.debugScopeID)
 }
 
 func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
