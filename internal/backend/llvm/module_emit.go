@@ -13,7 +13,7 @@ import (
 // It emits module text in LLVM order: static data, helper itabs, declarations,
 // thunks, then function bodies. It also keeps one emitter state object so type
 // lowering failures and deferred external globals are reported consistently.
-func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
+func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTriple string) string {
 	if mod == nil {
 		return ""
 	}
@@ -28,7 +28,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag) string {
 	b.WriteString("source_filename = \"")
 	b.WriteString(mod.Name)
 	b.WriteString("\"\n")
-	b.WriteString("target triple = \"x86_64-pc-linux-gnu\"\n\n")
+	b.WriteString("target triple = \"")
+	b.WriteString(targetTriple)
+	b.WriteString("\"\n\n")
 
 	for _, entry := range mod.StaticData {
 		isStr := entry.Type == "cstr" || (strings.HasPrefix(entry.Type, "[") && strings.HasSuffix(entry.Type, " x i8]"))

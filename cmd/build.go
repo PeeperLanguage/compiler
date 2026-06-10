@@ -9,21 +9,22 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/diagnostics"
-	compiler "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/project"
+	"compiler/internal/target"
 	"compiler/pkg/manifest"
 )
 
 // Compile one entry file with a fresh compiler project.
-func compileEntry(path, backendName string, debugBuild bool) (*project.CompilerContext, *project.Module) {
-	cfg := buildCompilerConfig(path, backendName, debugBuild)
+func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (*project.CompilerContext, *project.Module) {
+	cfg := buildCompilerConfig(path, backendName, debugBuild, targetOS, targetArch)
 	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag(path))
 	entry := compiler.ParseFile(ctx, path)
 	return ctx, entry
 }
 
 // Convert CLI inputs to compiler config.
-func buildCompilerConfig(path, backendName string, debugBuild bool) project.Config {
+func buildCompilerConfig(path, backendName string, debugBuild bool, targetOS, targetArch string) project.Config {
 	rootDir := path
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
@@ -34,21 +35,23 @@ func buildCompilerConfig(path, backendName string, debugBuild bool) project.Conf
 	return project.Config{
 		RootDir:       rootDir,
 		Extension:     compiler.SOURCE_EXT,
+		TargetOS:      targetOS,
+		TargetArch:    targetArch,
 		TargetBackend: backendName,
 		BuildDebug:    debugBuild,
 	}
 }
 
 // Build final output after successful compilation.
-func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string, target backend.BACKEND_TYPE) error {
+func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string, targetType backend.BACKEND_TYPE) error {
 	if ctx != nil && ctx.Diagnostics != nil && ctx.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
 	}
 	if entry == nil {
 		return fmt.Errorf("no entry module produced")
 	}
-	if target != backend.LLVM {
-		return fmt.Errorf("unsupported backend: %s", target)
+	if targetType != backend.LLVM {
+		return fmt.Errorf("unsupported backend: %s", targetType)
 	}
 
 	modules := ctx.Modules()
@@ -80,12 +83,17 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 	if len(llPaths) == 0 {
 		return fmt.Errorf("no LLVM IR emitted")
 	}
+	targetTriple, err := target.LLVMTriple(ctx.Config.TargetOS, ctx.Config.TargetArch)
+	if err != nil {
+		return fmt.Errorf("resolve llvm target triple: %w", err)
+	}
 
 	clangPath, err := exec.LookPath("clang")
 	if err != nil {
 		return fmt.Errorf("clang not found in PATH; install LLVM clang to build LLVM IR")
 	}
 	args := make([]string, 0, len(llPaths)*3+2)
+	args = append(args, "-target", targetTriple)
 	for _, llPath := range llPaths {
 		args = append(args, "-x", "ir", llPath)
 	}
