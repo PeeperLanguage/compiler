@@ -11,6 +11,10 @@ import (
 )
 
 func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
+	return buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+}
+
+func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const preludePath = "_builtin_library/global.em"
 	const entryPath = "entry.em"
@@ -18,7 +22,7 @@ func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.D
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".em", diag)
+	ctx := project.NewWithConfig(cfg, diag)
 
 	// Register the prelude so the pipeline loader can find it.
 	prelude := &project.Module{
@@ -74,6 +78,55 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 		if item.Code == diagnostics.ErrUndefinedSymbol && strings.Contains(item.Message, "stdout") {
 			t.Fatalf("unexpected undefined prelude symbol 'stdout': %s", diag.EmitAllToString())
 		}
+	}
+}
+
+func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	return 0;
+}`
+
+	cfg := project.Config{
+		RootDir:       ".",
+		Extension:     ".em",
+		TargetOS:      "linux",
+		TargetArch:    "amd64",
+		TargetBackend: "llvm",
+		BuildDebug:    true,
+	}
+	diag := diagnostics.NewDiagnosticBag("entry.em")
+	diag.AddSourceContent("_builtin_library/global.em", preludeSrc)
+	diag.AddSourceContent("entry.em", entrySrc)
+	ctx := project.NewWithConfig(cfg, diag)
+
+	prelude := &project.Module{
+		Key:        "core:prelude/global",
+		ImportPath: "prelude/global",
+		FilePath:   "_builtin_library/global.em",
+		Origin:     project.ModuleOriginStdlib,
+		AST:        parser.ParseModule("_builtin_library/global.em", lexer.Lex("_builtin_library/global.em", preludeSrc, diag), diag),
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+	ctx.AddModule(prelude)
+
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, "entry.em"),
+		ImportPath: "entry",
+		FilePath:   "entry.em",
+		Origin:     project.ModuleOriginLocal,
+		AST:        parser.ParseModule("entry.em", lexer.Lex("entry.em", entrySrc, diag), diag),
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(entry.LLVMIR, "!llvm.dbg.cu") {
+		t.Fatalf("expected debug metadata in LLVM IR, got:\n%s", entry.LLVMIR)
 	}
 }
 

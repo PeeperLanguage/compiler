@@ -13,7 +13,7 @@ import (
 // It emits module text in LLVM order: static data, helper itabs, declarations,
 // thunks, then function bodies. It also keeps one emitter state object so type
 // lowering failures and deferred external globals are reported consistently.
-func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTriple string) string {
+func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTriple string, debugBuild bool, targetOS string) string {
 	if mod == nil {
 		return ""
 	}
@@ -23,6 +23,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		diag:            diag,
 		badTypes:        make(map[string]struct{}),
 		externalGlobals: make(map[string]string),
+		debug:           newLLVMDebugEmitter(mod, targetOS, debugBuild),
 	}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
@@ -168,6 +169,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		if fn == nil || fn.Blocks == nil {
 			continue
 		}
+		debugScopeID := -1
+		if emitter.debug != nil {
+			debugScopeID = emitter.debug.functionID(fn)
+		}
 		b.WriteString("define ")
 		b.WriteString(emitter.llvmType(llvmFunctionReturnType(fn)))
 		b.WriteString(" @")
@@ -181,8 +186,12 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 			b.WriteString(" %")
 			b.WriteString(param.Name)
 		}
-		b.WriteString(") {\n")
-		lb := newLLVMBuilder(&b, emitter)
+		b.WriteString(")")
+		if debugScopeID >= 0 {
+			fmt.Fprintf(&b, " !dbg !%d", debugScopeID)
+		}
+		b.WriteString(" {\n")
+		lb := newLLVMBuilder(&b, emitter, debugScopeID)
 		for _, param := range fn.Params {
 			lb.locals[param.Name] = "%" + param.Name
 			lb.localTypes[param.Name] = param.Type
@@ -193,6 +202,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 			}
 			fmt.Fprintf(&b, "b%d:\n", block.ID)
 			for _, instr := range block.Instrs {
+				lb.setLocation(mirInstrLocation(instr))
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					val := emitValueExpr(lb, assign.Value)
 					valueType := mirValueType(assign.Value)
@@ -220,6 +230,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				}
 			}
 			if block.Term != nil {
+				lb.setLocation(mirTermLocation(block.Term))
 				switch term := block.Term.(type) {
 				case *mir.Jump:
 					lb.line(fmt.Sprintf("br label %%b%d", term.TargetID))
@@ -239,6 +250,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 					lb.line("ret " + emitter.llvmType(fn.ReturnType) + " " + val)
 				}
 			}
+			lb.setLocation(nil)
 		}
 		b.WriteString("}\n")
 	}
@@ -261,6 +273,9 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 			llvmType := emitter.llvmType(typeText)
 			fmt.Fprintf(b, "%s = external global %s\n", name, llvmType)
 		}
+	}
+	if emitter != nil && emitter.debug != nil {
+		emitter.debug.appendModuleMetadata(b)
 	}
 	return b.String()
 }

@@ -51,7 +51,7 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 		out.WriteString(strconv.Itoa(i))
 	}
 	out.WriteString(") {\n")
-	builder := newLLVMBuilder(out, emitter)
+	builder := newLLVMBuilder(out, emitter, -1)
 	if strings.HasSuffix(actualParams[0], "*") {
 		cast := builder.nextReg()
 		builder.line(fmt.Sprintf("%s = bitcast i8* %%p0 to %s", cast, actualParams[0]))

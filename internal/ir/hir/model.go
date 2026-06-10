@@ -8,9 +8,10 @@ import (
 )
 
 type Module struct {
-	Name    string
-	Externs []Extern
-	Funcs   []*Function
+	Name     string
+	FilePath string
+	Externs  []Extern
+	Funcs    []*Function
 }
 
 type Extern struct {
