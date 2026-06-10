@@ -959,6 +959,16 @@ func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expecte
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
+	if node.Type != nil {
+		targetType := c.typeFromSyntax(node.Type)
+		targetStruct, ok := c.underlying(targetType).(*typeinfo.StructType)
+		if !ok || targetStruct == nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+				"composite literal type must be struct", ast.LocOf(node.Type), "")
+			return &typeinfo.InvalidType{}
+		}
+		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)
+	}
 	targetStruct, targetType := c.expectedStructType(expected)
 	if targetStruct != nil {
 		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)

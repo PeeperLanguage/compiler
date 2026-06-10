@@ -657,6 +657,101 @@ func TestParseStructLiteral(t *testing.T) {
 	}
 }
 
+func TestParseTypedStructLiteral(t *testing.T) {
+	src := `fn main() -> i32 {
+	let p = .Point{ x = 1, y = 2, };
+	return p.x;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body")
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("stmt[0] expected let")
+	}
+	lit, ok := letDecl.Value.(*ast.StructLit)
+	if !ok {
+		t.Fatalf("stmt[0] expected struct literal, got %#v", letDecl.Value)
+	}
+	named, ok := lit.Type.(*ast.NamedType)
+	if !ok || named.Name != "Point" {
+		t.Fatalf("literal type mismatch: %#v", lit.Type)
+	}
+	if len(lit.Fields) != 2 {
+		t.Fatalf("literal fields: got %d want 2", len(lit.Fields))
+	}
+}
+
+func TestParseAttachesDocCommentsInFunctionBody(t *testing.T) {
+	src := `fn main() -> i32 {
+	// docs-like comment before local let
+	let x: i32 = 1;
+	return x;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls)
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok || letDecl.Doc == nil || letDecl.Doc.Text != "docs-like comment before local let" {
+		t.Fatalf("statement doc mismatch: %#v", fn.Body.Stmts[0])
+	}
+}
+
+func TestParseAttachesDocCommentsToIfStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+	// branch docs
+	if true {
+		return 0;
+	}
+	return 1;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body: %#v", mod.Decls)
+	}
+	ifStmt, ok := fn.Body.Stmts[0].(*ast.IfStmt)
+	if !ok || ifStmt.Doc == nil || ifStmt.Doc.Text != "branch docs" {
+		t.Fatalf("if doc mismatch: %#v", fn.Body.Stmts[0])
+	}
+}
+
+func TestParseAttachesDocCommentsToDecl(t *testing.T) {
+	src := `// fn docs
+fn main() -> i32 {
+	return 0;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := lexer.Lex("test.em", src, diag)
+	mod := ParseModule("test.em", stream, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	if !ok || fn.Doc == nil || fn.Doc.Text != "fn docs" {
+		t.Fatalf("decl doc mismatch: %#v", mod.Decls[0])
+	}
+}
+
 func TestParsePointerTypes(t *testing.T) {
 	src := `let ptr: ^i32;`
 	diag := diagnostics.NewDiagnosticBag("test.em")

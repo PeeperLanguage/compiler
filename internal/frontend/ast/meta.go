@@ -7,6 +7,22 @@ type CommentGroup struct {
 	Location *source.Location
 }
 
+type DocumentedNode interface {
+	Node
+	SetDocComment(*CommentGroup)
+}
+
+type Documented struct {
+	Doc *CommentGroup
+}
+
+func (d *Documented) SetDocComment(doc *CommentGroup) {
+	if d == nil {
+		return
+	}
+	d.Doc = doc
+}
+
 type Attribute struct {
 	Name     string
 	Args     []string
