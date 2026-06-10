@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
+	"compiler/internal/source"
 )
 
 type Param struct {
@@ -24,52 +25,61 @@ type Expr interface {
 }
 
 type InvalidExpr struct {
-	Message string
-	Type    string
+	Message  string
+	Type     string
+	Location *source.Location
 }
 
 type IntLit struct {
-	Value string
-	Type  string
+	Value    string
+	Type     string
+	Location *source.Location
 }
 
 type FloatLit struct {
-	Value string
-	Type  string
+	Value    string
+	Type     string
+	Location *source.Location
 }
 
 type StringLit struct {
-	Value string
-	Type  string
+	Value    string
+	Type     string
+	Location *source.Location
 }
 
 type Ident struct {
-	Name string
-	Type string
+	Name     string
+	Type     string
+	Location *source.Location
 }
 
 type Unary struct {
-	Op   string
-	Arg  Expr
-	Type string
+	Op       string
+	Arg      Expr
+	Type     string
+	Location *source.Location
 }
 
 type Binary struct {
-	Op    string
-	Left  Expr
-	Right Expr
-	Type  string
+	Op       string
+	Left     Expr
+	Right    Expr
+	Type     string
+	Location *source.Location
 }
 
 type Call struct {
-	Callee Expr
-	Args   []Expr
-	Type   string
+	Callee   Expr
+	Args     []Expr
+	Type     string
+	Location *source.Location
 }
 
 type AddrOf struct {
-	Expr Expr
-	Type string
+	Expr     Expr
+	Type     string
+	Location *source.Location
 }
 
 type InterfaceSlot struct {
@@ -83,16 +93,18 @@ type InterfaceSlot struct {
 }
 
 type InterfaceMake struct {
-	Value Expr
-	Slots []InterfaceSlot
-	Type  string
+	Value    Expr
+	Slots    []InterfaceSlot
+	Type     string
+	Location *source.Location
 }
 
 type InterfaceCall struct {
-	Base Expr
-	Slot int
-	Args []Expr
-	Type string
+	Base     Expr
+	Slot     int
+	Args     []Expr
+	Type     string
+	Location *source.Location
 }
 
 type Field struct {
@@ -100,16 +112,19 @@ type Field struct {
 	Index      int
 	ThroughPtr bool
 	Type       string
+	Location   *source.Location
 }
 
 type StructLit struct {
-	Fields []Expr
-	Type   string
+	Fields   []Expr
+	Type     string
+	Location *source.Location
 }
 
 type Cast struct {
-	Expr Expr
-	Type string
+	Expr     Expr
+	Type     string
+	Location *source.Location
 }
 
 func (*InvalidExpr) exprNode()   {}
@@ -126,6 +141,41 @@ func (*InterfaceCall) exprNode() {}
 func (*Field) exprNode()         {}
 func (*StructLit) exprNode()     {}
 func (*Cast) exprNode()          {}
+
+func ExprLocation(expr Expr) *source.Location {
+	switch node := expr.(type) {
+	case *InvalidExpr:
+		return node.Location
+	case *IntLit:
+		return node.Location
+	case *FloatLit:
+		return node.Location
+	case *StringLit:
+		return node.Location
+	case *Ident:
+		return node.Location
+	case *Unary:
+		return node.Location
+	case *Binary:
+		return node.Location
+	case *Call:
+		return node.Location
+	case *AddrOf:
+		return node.Location
+	case *InterfaceMake:
+		return node.Location
+	case *InterfaceCall:
+		return node.Location
+	case *Field:
+		return node.Location
+	case *StructLit:
+		return node.Location
+	case *Cast:
+		return node.Location
+	default:
+		return nil
+	}
+}
 
 func (e *InvalidExpr) String() string {
 	if e == nil || e.Message == "" {

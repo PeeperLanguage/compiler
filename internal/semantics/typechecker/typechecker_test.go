@@ -385,6 +385,61 @@ impl Counter {
 	}
 }
 
+func TestIfConditionRejectsNumericTruthiness(t *testing.T) {
+	src := `fn main() -> i32 {
+	if 1 {
+		return 1;
+	}
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid operation diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "use `as bool`") {
+		t.Fatalf("expected explicit cast guidance, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnaryNotRejectsNumericTruthiness(t *testing.T) {
+	src := `fn main() -> i32 {
+	if !1 {
+		return 1;
+	}
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid operation diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestLogicalAndRejectsNumericTruthiness(t *testing.T) {
+	src := `fn main() -> i32 {
+	if 1 && 2 {
+		return 1;
+	}
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid operation diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestExplicitNumericToBoolCastAllowed(t *testing.T) {
+	src := `fn main() -> i32 {
+	if (1 as bool) {
+		return 1;
+	}
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestMutableLocalFieldAssignmentResolves(t *testing.T) {
 	src := `struct Counter {
 	value: i32,

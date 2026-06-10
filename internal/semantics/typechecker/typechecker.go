@@ -126,7 +126,7 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 		return typ
 	}
 	if c != nil && c.ctx != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, context+" requires a value-producing expression", ast.LocOf(expr), "")
+		c.ctx.Diagnostics.Add(invalidExpressionError(expr, context+" requires a value-producing expression"))
 	}
 	return &typeinfo.InvalidType{}
 }
@@ -444,9 +444,9 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 			return
 		}
 		if !c.assignable(returnType, retType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+			c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 				fmt.Sprintf("cannot return %s from function returning %s",
-					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)), ast.LocOf(node.Value), "")
+					typeinfo.TypeText(retType), typeinfo.TypeText(returnType))))
 		}
 	case *ast.IfStmt:
 		if node.Cond == nil {
@@ -454,8 +454,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		} else {
 			condType := c.typeExpr(scope, node.Cond, nil)
 			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-					"if condition must be bool or scalar number", ast.LocOf(node.Cond), "")
+				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
 			}
 		}
 		c.checkBlock(scope, node.Then, returnType)
@@ -488,9 +487,9 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		return
 	}
 	if !c.assignable(targetType, valueType) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType)), ast.LocOf(node.Value), "")
+				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
 		return
 	}
 	switch target := node.Target.(type) {
@@ -590,9 +589,9 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		return
 	}
 	if declType != nil && !c.assignable(declType, valType) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+		c.ctx.Diagnostics.Add(typeMismatchError(value,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valType), typeinfo.TypeText(declType)), ast.LocOf(value), "")
+				typeinfo.TypeText(valType), typeinfo.TypeText(declType))))
 		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
@@ -622,8 +621,8 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 			if param.Name != nil {
 				site = param.Name
 			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-				"parameter type is not lowerable in current compiler stage", ast.LocOf(site), "")
+			c.ctx.Diagnostics.Add(invalidTypeError(site,
+				"parameter type is not lowerable in current compiler stage"))
 			return
 		}
 	}
@@ -798,15 +797,15 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return c.typeAsExpr(scope, node)
 
 	default:
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", ast.LocOf(node), "")
+		c.ctx.Diagnostics.Add(invalidExpressionError(node, "unsupported expression type"))
 		return nil
 	}
 }
 
 func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expected typeinfo.Type) typeinfo.Type {
 	if node.Op != "+" && node.Op != "-" && node.Op != "!" {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported unary operator `"+node.Op+"`", ast.LocOf(node), "")
+		c.ctx.Diagnostics.Add(invalidOperationError(node,
+			"unsupported unary operator `"+node.Op+"`"))
 		return nil
 	}
 
@@ -827,21 +826,25 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 	if typeinfo.IsInvalidOrUnknown(argType) {
 		return &typeinfo.InvalidType{}
 	}
-	if !typeinfo.IsArithmetic(argType) && !typeinfo.SameType(argType, &typeinfo.BoolType{}) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported unary operand type", ast.LocOf(node), "")
-		return nil
-	}
 	if node.Op == "!" {
+		if !typeinfo.SameType(argType, &typeinfo.BoolType{}) {
+			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Expr, "`!` operand must be bool"))
+			return nil
+		}
 		return &typeinfo.BoolType{}
+	}
+	if !typeinfo.IsArithmetic(argType) {
+		c.ctx.Diagnostics.Add(invalidOperationError(node,
+			"unsupported unary operand type"))
+		return nil
 	}
 	return argType
 }
 
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
 	if !c.allowedOp(node.Op) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported binary operator `"+node.Op+"`", ast.LocOf(node), "")
+		c.ctx.Diagnostics.Add(invalidOperationError(node,
+			"unsupported binary operator `"+node.Op+"`"))
 		return nil
 	}
 
@@ -856,9 +859,9 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 
 	commonType := typeinfo.CommonNumericType(left, right)
 	if commonType == nil && !c.assignable(left, right) && !c.assignable(right, left) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
-				typeinfo.TypeText(left), typeinfo.TypeText(right)), ast.LocOf(node), "")
+				typeinfo.TypeText(left), typeinfo.TypeText(right))))
 		return nil
 	}
 
@@ -867,13 +870,19 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		exprType = commonType
 	}
 	switch node.Op {
-	case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+	case "&&", "||":
+		if !typeinfo.SameType(left, &typeinfo.BoolType{}) || !typeinfo.SameType(right, &typeinfo.BoolType{}) {
+			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node, "logical operators require bool operands"))
+			return nil
+		}
+		return &typeinfo.BoolType{}
+	case "==", "!=", "<", "<=", ">", ">=":
 		return &typeinfo.BoolType{}
 	}
 
 	if !c.validBinaryTypes(node.Op, left) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
-			"unsupported operand type for operator `"+node.Op+"`", ast.LocOf(node), "")
+		c.ctx.Diagnostics.Add(invalidOperationError(node,
+			"unsupported operand type for operator `"+node.Op+"`"))
 		return nil
 	}
 	return exprType
@@ -1128,7 +1137,7 @@ func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) t
 				return fnType.Return
 			}
 			if call != nil {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "call has unknown return type", ast.LocOf(call), "")
+				c.ctx.Diagnostics.Add(invalidTypeError(call, "call has unknown return type"))
 			}
 			return &typeinfo.InvalidType{}
 		}
@@ -1142,7 +1151,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	}
 	targetType := c.typeFromSyntax(node.TypeExpr)
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "invalid target type for cast", ast.LocOf(node.TypeExpr), "")
+		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
 		return &typeinfo.InvalidType{}
 	}
 	if node.Expr == nil {
@@ -1152,6 +1161,9 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	exprType = c.requireValueType(node.Expr, exprType, "cast")
 	if typeinfo.IsInvalidOrUnknown(exprType) {
 		return &typeinfo.InvalidType{}
+	}
+	if _, ok := targetType.(*typeinfo.BoolType); ok && typeinfo.IsArithmetic(exprType) {
+		return targetType
 	}
 	compat := typeinfo.CheckNumericCompatibility(targetType, exprType)
 	if compat == typeinfo.Incompatible {
@@ -1173,8 +1185,8 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 	if expected != nil {
 		naturalType := typeinfo.DefaultNumberType(node.Value)
 		if typeinfo.CheckNumericCompatibility(expected, naturalType) == typeinfo.Incompatible {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
-				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected)), ast.LocOf(node), "")
+			c.ctx.Diagnostics.Add(typeMismatchError(node,
+				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected))))
 			return nil
 		}
 		if !literalFitsType(node.Value, expected) {
@@ -1233,19 +1245,18 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
 		if !typeinfo.IsInvalidOrUnknown(calleeType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable, "call target is not a function", ast.LocOf(callExpr), "")
+			c.ctx.Diagnostics.Add(notCallableError(callExpr, "call target is not a function"))
 		}
 		return
 	}
 	if len(args) != len(fnType.Params) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrWrongArgumentCount,
-			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args), len(fnType.Params)), ast.LocOf(callExpr), "")
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(callExpr, len(args), len(fnType.Params)))
 		return
 	}
 	for i, argType := range args {
 		if argType == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-				"argument requires a value-producing expression", ast.LocOf(callExpr.Args[i]), "")
+			c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i],
+				"argument requires a value-producing expression"))
 			continue
 		}
 		paramType := fnType.Params[i]
@@ -1253,9 +1264,9 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 			continue
 		}
 		if !c.assignable(paramType, argType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+			c.ctx.Diagnostics.Add(typeMismatchError(callExpr.Args[i],
 				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)), ast.LocOf(callExpr.Args[i]), "")
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType))))
 		}
 	}
 }
@@ -1315,20 +1326,19 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
 		if !typeinfo.IsInvalidOrUnknown(calleeType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable, "call target is not a method", ast.LocOf(callExpr), "")
+			c.ctx.Diagnostics.Add(notCallableError(callExpr, "call target is not a method"))
 		}
 		return
 	}
 	if len(args) != len(fnType.Params) {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrWrongArgumentCount,
-			fmt.Sprintf("wrong number of arguments: got %d, want %d", len(args)-1, len(fnType.Params)-1), ast.LocOf(callExpr), "")
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(callExpr, len(args)-1, len(fnType.Params)-1))
 		return
 	}
 	for i, argType := range args {
 		if argType == nil {
 			if i > 0 {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-					"argument requires a value-producing expression", ast.LocOf(callExpr.Args[i-1]), "")
+				c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i-1],
+					"argument requires a value-producing expression"))
 			}
 			continue
 		}
@@ -1352,9 +1362,9 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			if i > 0 && i-1 < len(callExpr.Args) {
 				site = callExpr.Args[i-1]
 			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+			c.ctx.Diagnostics.Add(typeMismatchError(site,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)), ast.LocOf(site), "")
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType))))
 		}
 	}
 }
