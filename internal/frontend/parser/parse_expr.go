@@ -73,8 +73,8 @@ func init() {
 	nud(token.MINUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 	nud(token.BANG, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 
-	// struct literal
-	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseStructLiteral() })
+	// composite literal
+	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseCompositeLiteral() })
 
 	// logical
 	led(token.OROR, precOr, parseBinaryExpr)
@@ -232,12 +232,18 @@ func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 	})
 }
 
-func (p *Parser) parseStructLiteral() ast.Expr {
+func (p *Parser) parseCompositeLiteral() ast.Expr {
 	start := p.consume(token.DOT, "expected '.'")
 	if start == nil {
 		return nil
 	}
-	fields, end, ok := parseBracedItemList(p, "expected '{' after '.'", "expected '}' after struct literal",
+	var typ ast.TypeExpr
+	openMsg := "expected '{' after '.'"
+	if p.peek().Kind == token.IDENT {
+		typ = p.parseTypeExpr()
+		openMsg = "expected '{' after composite literal type"
+	}
+	fields, end, ok := parseBracedItemList(p, openMsg, "expected '}' after composite literal",
 		func() (ast.StructLitField, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -260,6 +266,7 @@ func (p *Parser) parseStructLiteral() ast.Expr {
 		return nil
 	}
 	return reg(p, &ast.StructLit{
+		Type:     typ,
 		Fields:   fields,
 		Location: source.NewLocation(p.filePath, start.Start, end.End),
 	})
