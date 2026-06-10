@@ -25,7 +25,7 @@ entry = "src/main"
 		t.Fatal(err)
 	}
 
-	resolvedPath, info, err := resolveBuildTarget("build", root)
+	resolvedPath, info, err := resolveBuildTarget("build", root, "linux")
 	if err != nil {
 		t.Fatalf("resolve build target: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestResolveBuildTargetUsesFileStemWithoutManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvedPath, info, err := resolveBuildTarget("build", entryPath)
+	resolvedPath, info, err := resolveBuildTarget("build", entryPath, "linux")
 	if err != nil {
 		t.Fatalf("resolve build target: %v", err)
 	}
@@ -59,5 +59,21 @@ func TestResolveBuildTargetUsesFileStemWithoutManifest(t *testing.T) {
 	}
 	if info.DefaultOutputPath != "demo" {
 		t.Fatalf("default output = %q, want demo", info.DefaultOutputPath)
+	}
+}
+
+func TestResolveBuildTargetAppendsWindowsSuffix(t *testing.T) {
+	root := t.TempDir()
+	entryPath := filepath.Join(root, "demo.em")
+	if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, info, err := resolveBuildTarget("build", entryPath, "windows")
+	if err != nil {
+		t.Fatalf("resolve build target: %v", err)
+	}
+	if info.DefaultOutputPath != "demo.exe" {
+		t.Fatalf("default output = %q, want demo.exe", info.DefaultOutputPath)
 	}
 }
