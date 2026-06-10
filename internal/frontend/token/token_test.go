@@ -45,7 +45,7 @@ func TestBuiltinTypeAndStringer(t *testing.T) {
 		t.Fatalf("expected invalid builtin integer widths to be rejected")
 	}
 	s := (Token{Kind: IDENT, Literal: "x"}).String()
-	if !strings.Contains(s, "IDENT") || !strings.Contains(s, "\"x\"") {
+	if !strings.Contains(s, "identifier") || !strings.Contains(s, "\"x\"") {
 		t.Fatalf("unexpected token string: %q", s)
 	}
 }
