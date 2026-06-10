@@ -9,6 +9,7 @@ import (
 )
 
 func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name: "test",
 		Funcs: []*mir.Function{
@@ -32,7 +33,10 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""))
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple)
+	if !strings.Contains(irText, "target triple = \""+targetTriple+"\"") {
+		t.Fatalf("expected configured target triple, got:\n%s", irText)
+	}
 	if !strings.Contains(irText, "define i32 @main(") {
 		t.Fatalf("expected int main ABI, got:\n%s", irText)
 	}
@@ -42,6 +46,7 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 }
 
 func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
+	const targetTriple = "x86_64-pc-windows-msvc"
 	mod := &mir.Module{
 		Name: "test",
 		Funcs: []*mir.Function{
@@ -65,7 +70,10 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""))
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple)
+	if !strings.Contains(irText, "target triple = \""+targetTriple+"\"") {
+		t.Fatalf("expected configured target triple, got:\n%s", irText)
+	}
 	if !strings.Contains(irText, "declare void @Ping()") {
 		t.Fatalf("expected declaration for discarded direct call, got:\n%s", irText)
 	}

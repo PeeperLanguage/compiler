@@ -12,6 +12,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/usage"
+	"compiler/internal/target"
 	"errors"
 	"strings"
 )
@@ -107,5 +108,12 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 
 	modmir := mir.GenerateMIR(module.HIR, module.ModuleScope)
 	module.MIR = modmir
-	module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag)
+	targetTriple, err := target.LLVMTriple(p.ctx.Config.TargetOS, p.ctx.Config.TargetArch)
+	if err != nil {
+		if diag != nil {
+			diag.Add(diagnostics.NewError("resolve llvm target triple: " + err.Error()))
+		}
+		return
+	}
+	module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag, targetTriple)
 }

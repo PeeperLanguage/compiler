@@ -51,37 +51,61 @@ func parseBackendType(t backend.BACKEND_TYPE) backend.BACKEND_TYPE {
 }
 
 type commandCommonFlags struct {
-	logFormat *string
-	m32       *bool
+	logFormat  *string
+	m32        *bool
+	targetOS   *string
+	targetArch *string
 }
 
 func addCommandCommonFlags(fs *flag.FlagSet) commandCommonFlags {
 	return commandCommonFlags{
-		logFormat: fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
-		m32:       fs.Bool("m32", false, "target 32-bit ABI"),
+		logFormat:  fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
+		m32:        fs.Bool("m32", false, "target 32-bit ABI"),
+		targetOS:   fs.String("target-os", "", "target operating system (defaults to host GOOS)"),
+		targetArch: fs.String("target-arch", "", "target architecture (defaults to host GOARCH)"),
 	}
 }
 
-func applyCommandCommonFlags(flags commandCommonFlags) error {
+func applyCommandCommonFlags(flags commandCommonFlags) (string, string, error) {
 	if err := colors.SetLogFormatString(*flags.logFormat); err != nil {
-		return err
+		return "", "", err
 	}
+	targetOS := target.NormalizeOS(*flags.targetOS)
+	targetArch := target.NormalizeArch(*flags.targetArch)
+	if _, err := target.LLVMTriple(targetOS, targetArch); err != nil {
+		return "", "", err
+	}
+	sizeBits := target.DefaultSizeBitsForArch(targetArch)
 	if *flags.m32 {
-		return target.SetSizeBits(target.Bits32)
+		sizeBits = target.Bits32
 	}
-	return target.SetSizeBits(0)
+	if err := target.SetSizeBits(sizeBits); err != nil {
+		return "", "", err
+	}
+	return targetOS, targetArch, nil
 }
 
-func parseCommandArgs(name string, args []string) ([]string, error) {
+type commandOptions struct {
+	positional []string
+	targetOS   string
+	targetArch string
+}
+
+func parseCommandArgs(name string, args []string) (commandOptions, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	common := addCommandCommonFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return nil, err
+		return commandOptions{}, err
 	}
-	if err := applyCommandCommonFlags(common); err != nil {
-		return nil, err
+	targetOS, targetArch, err := applyCommandCommonFlags(common)
+	if err != nil {
+		return commandOptions{}, err
 	}
-	return fs.Args(), nil
+	return commandOptions{
+		positional: fs.Args(),
+		targetOS:   targetOS,
+		targetArch: targetArch,
+	}, nil
 }
 
 func parseCommandBackend(command string) (string, backend.BACKEND_TYPE, error) {
@@ -111,9 +135,11 @@ type buildFlags struct {
 	outputPath string
 	keepGen    bool
 	debugBuild bool
+	targetOS   string
+	targetArch string
 }
 
-func buildCommand(args []string, target backend.BACKEND_TYPE) error {
+func buildCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
 	opts, positional, err := parseBuildArgs("build", args)
 	if err != nil {
 		return err
@@ -126,7 +152,7 @@ func buildCommand(args []string, target backend.BACKEND_TYPE) error {
 	if len(positional) == 1 {
 		sourcePath = positional[0]
 	}
-	resolvedPath, buildInfo, err := resolveBuildTarget("build", sourcePath)
+	resolvedPath, buildInfo, err := resolveBuildTarget("build", sourcePath, opts.targetOS)
 	if err != nil {
 		return err
 	}
@@ -134,14 +160,14 @@ func buildCommand(args []string, target backend.BACKEND_TYPE) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 
-	target = parseBackendType(target)
-	ctx, entry := compileEntry(resolvedPath, string(target), opts.debugBuild)
+	backendTarget = parseBackendType(backendTarget)
+	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
 
 	if opts.keepGen {
-		if err := saveIRs(ctx, string(target), genArtifactsDir); err != nil {
+		if err := saveIRs(ctx, string(backendTarget), genArtifactsDir); err != nil {
 			return err
 		}
 		colors.GREEN.Fprintln(os.Stdout, "Generated artifacts in "+genArtifactsDir)
@@ -151,7 +177,7 @@ func buildCommand(args []string, target backend.BACKEND_TYPE) error {
 	if strings.TrimSpace(outputPath) == "" {
 		outputPath = buildInfo.DefaultOutputPath
 	}
-	if err := buildExecutable(ctx, entry, outputPath, target); err != nil {
+	if err := buildExecutable(ctx, entry, outputPath, backendTarget); err != nil {
 		return err
 	}
 	colors.GREEN.Fprintf(os.Stdout, "Built %s\n", outputPath)
@@ -168,45 +194,51 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	if err := fs.Parse(args); err != nil {
 		return buildFlags{}, nil, err
 	}
-	if err := applyCommandCommonFlags(common); err != nil {
+	targetOS, targetArch, err := applyCommandCommonFlags(common)
+	if err != nil {
 		return buildFlags{}, nil, err
 	}
 	return buildFlags{
 		outputPath: *outputPath,
 		keepGen:    *keepGen,
 		debugBuild: *debugBuild,
+		targetOS:   targetOS,
+		targetArch: targetArch,
 	}, fs.Args(), nil
 }
 
-func runCommand(args []string, target backend.BACKEND_TYPE) error {
-	parsedArgs, err := parseCommandArgs("run", args)
+func runCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
+	opts, err := parseCommandArgs("run", args)
 	if err != nil {
 		return err
 	}
 
 	sourcePath := ""
 	runtimeArgs := []string{}
-	if len(parsedArgs) > 0 {
-		sourcePath = parsedArgs[0]
-		runtimeArgs = parsedArgs[1:]
+	if len(opts.positional) > 0 {
+		sourcePath = opts.positional[0]
+		runtimeArgs = opts.positional[1:]
 	}
-	resolvedPath, buildInfo, err := resolveBuildTarget("run", sourcePath)
+	resolvedPath, buildInfo, err := resolveBuildTarget("run", sourcePath, opts.targetOS)
 	if err != nil {
 		return err
 	}
 	if buildInfo.SelectedByDiscovery {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
+	if !target.IsHostTarget(opts.targetOS, opts.targetArch) {
+		return fmt.Errorf("run target %s/%s does not match host %s/%s", opts.targetOS, opts.targetArch, runtime.GOOS, runtime.GOARCH)
+	}
 
-	target = parseBackendType(target)
-	ctx, entry := compileEntry(resolvedPath, string(target), false)
+	backendTarget = parseBackendType(backendTarget)
+	ctx, entry := compileEntry(resolvedPath, string(backendTarget), false, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
 
 	tempPattern := tempRunFilePrefix + "*"
-	if runtime.GOOS == "windows" {
-		tempPattern = tempRunFilePrefix + "*.exe"
+	if ext := target.ExecutableExt(opts.targetOS); ext != "" {
+		tempPattern = tempRunFilePrefix + "*" + ext
 	}
 	tempFile, err := os.CreateTemp("", tempPattern)
 	if err != nil {
@@ -218,14 +250,14 @@ func runCommand(args []string, target backend.BACKEND_TYPE) error {
 	}
 	_ = os.Remove(tempPath)
 
-	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tempPath), ".exe") {
-		tempPath += ".exe"
+	if ext := target.ExecutableExt(opts.targetOS); ext != "" && !strings.HasSuffix(strings.ToLower(tempPath), ext) {
+		tempPath += ext
 	}
 	defer func() {
 		_ = os.Remove(tempPath)
 	}()
 
-	if err := buildExecutable(ctx, entry, tempPath, target); err != nil {
+	if err := buildExecutable(ctx, entry, tempPath, backendTarget); err != nil {
 		return err
 	}
 
@@ -248,9 +280,9 @@ type buildTarget struct {
 	DefaultOutputPath   string
 }
 
-func resolveBuildTarget(commandName, path string) (resolvedPath string, info buildTarget, err error) {
+func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath string, info buildTarget, err error) {
 	if strings.TrimSpace(path) == "" {
-		info, err = resolveManifestBuildTarget(commandName, ".")
+		info, err = resolveManifestBuildTarget(commandName, ".", targetOS)
 		if err != nil {
 			return "", buildTarget{}, err
 		}
@@ -269,7 +301,7 @@ func resolveBuildTarget(commandName, path string) (resolvedPath string, info bui
 		return "", buildTarget{}, err
 	}
 	if fileInfo.IsDir() {
-		targetInfo, err := resolveManifestBuildTarget(commandName, resolvedPath)
+		targetInfo, err := resolveManifestBuildTarget(commandName, resolvedPath, targetOS)
 		if err != nil {
 			return "", buildTarget{}, err
 		}
@@ -277,11 +309,11 @@ func resolveBuildTarget(commandName, path string) (resolvedPath string, info bui
 	}
 	return resolvedPath, buildTarget{
 		EntryPath:         resolvedPath,
-		DefaultOutputPath: defaultOutputNameForEntry(resolvedPath),
+		DefaultOutputPath: defaultOutputNameForEntry(resolvedPath, targetOS),
 	}, nil
 }
 
-func resolveManifestBuildTarget(commandName, startPath string) (buildTarget, error) {
+func resolveManifestBuildTarget(commandName, startPath string, targetOS string) (buildTarget, error) {
 	manifestPath, err := manifest.FindManifestPath(startPath)
 	if err != nil {
 		return buildTarget{}, fmt.Errorf("%s requires an input file or %s with package.entry", commandName, manifest.FileName)
@@ -322,7 +354,9 @@ func resolveManifestBuildTarget(commandName, startPath string) (buildTarget, err
 	}
 	outputPath := strings.TrimSpace(file.Package.Name)
 	if outputPath == "" {
-		outputPath = defaultOutputNameForEntry(entryPath)
+		outputPath = defaultOutputNameForEntry(entryPath, targetOS)
+	} else if ext := target.ExecutableExt(targetOS); ext != "" && !strings.HasSuffix(strings.ToLower(outputPath), ext) {
+		outputPath += ext
 	}
 	return buildTarget{
 		EntryPath:           entryPath,
@@ -331,23 +365,27 @@ func resolveManifestBuildTarget(commandName, startPath string) (buildTarget, err
 	}, nil
 }
 
-func defaultOutputNameForEntry(entryPath string) string {
+func defaultOutputNameForEntry(entryPath string, targetOS string) string {
 	base := filepath.Base(entryPath)
-	return strings.TrimSuffix(base, filepath.Ext(base))
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	if ext := target.ExecutableExt(targetOS); ext != "" && !strings.HasSuffix(strings.ToLower(name), ext) {
+		return name + ext
+	}
+	return name
 }
 
 func checkCommand(args []string) error {
-	parsedArgs, err := parseCommandArgs("check", args)
+	opts, err := parseCommandArgs("check", args)
 	if err != nil {
 		return err
 	}
 
 	path := "."
-	if len(parsedArgs) > 0 {
-		path = parsedArgs[0]
+	if len(opts.positional) > 0 {
+		path = opts.positional[0]
 	}
 
-	ctx, _ := compileEntry(path, string(backend.LLVM), false)
+	ctx, _ := compileEntry(path, string(backend.LLVM), false, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
