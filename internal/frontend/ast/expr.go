@@ -42,6 +42,7 @@ type StructLitField struct {
 
 type StructLit struct {
 	NodeIDHolder
+	Type     TypeExpr
 	Fields   []StructLitField
 	Location *source.Location
 }
