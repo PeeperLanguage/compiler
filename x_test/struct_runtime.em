@@ -9,8 +9,10 @@ impl Point {
     }
 }
 
+
+// program entrypoint
 fn main() -> i32 {
-    let p: Point = .{ x = 10, y = 20 };
+    let p: Point = .Point{ x = 10, y = 20 }
     if p.sum() == 30 {
         let ok: cstr = "struct ok\n";
         write(stdout, ok, 10);

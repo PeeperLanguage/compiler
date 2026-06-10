@@ -118,7 +118,7 @@ func lineCommentHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	l.advanceBy(match)
-	if !l.isStandaloneComment(start.Index) || !l.isDocCandidateAhead(l.pos.Index) {
+	if !l.isStandaloneComment(start.Index) {
 		return
 	}
 	prefix := "//"
@@ -133,7 +133,7 @@ func blockCommentHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	l.advanceBy(match)
-	if !l.isStandaloneComment(start.Index) || !l.isDocCandidateAhead(l.pos.Index) {
+	if !l.isStandaloneComment(start.Index) {
 		return
 	}
 	content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(match, "/*"), "*/"))
@@ -260,44 +260,6 @@ func (l *Lexer) isStandaloneComment(index int) bool {
 		lineStart++
 	}
 	return strings.TrimSpace(l.input[lineStart:index]) == ""
-}
-
-func (l *Lexer) isDocCandidateAhead(index int) bool {
-	i := index
-	for i < len(l.input) {
-		switch l.input[i] {
-		case ' ', '\t', '\r', '\n':
-			i++
-			continue
-		case '#':
-			return true
-		case '/':
-			if i+1 < len(l.input) && (l.input[i+1] == '/' || l.input[i+1] == '*') {
-				return true
-			}
-			return false
-		}
-		break
-	}
-	if i >= len(l.input) {
-		return false
-	}
-	start := i
-	for i < len(l.input) {
-		ch := l.input[i]
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' {
-			i++
-			continue
-		}
-		break
-	}
-	word := l.input[start:i]
-	switch token.Kind(word) {
-	case token.FN, token.UNSAFE, token.TYPE, token.LET, token.CONST, token.IMPORT:
-		return true
-	default:
-		return false
-	}
 }
 
 func (l *Lexer) advanceBy(text string) {

@@ -40,3 +40,29 @@ fn add(a: i32, b: i32): i32 {
 		}
 	}
 }
+
+func TestLexKeepsStandaloneComments(t *testing.T) {
+	src := `// module docs
+// more docs
+fn main() -> i32 {
+	// not docs
+	if true {
+		return 0;
+	}
+	return 1;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.em")
+	stream := Lex("test.em", src, diag)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	var docCount int
+	for _, tok := range stream {
+		if tok.Kind == token.DOC_COMMENT {
+			docCount++
+		}
+	}
+	if docCount != 3 {
+		t.Fatalf("doc comment count: got %d want 3", docCount)
+	}
+}
