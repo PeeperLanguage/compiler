@@ -202,7 +202,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 			}
 			fmt.Fprintf(&b, "b%d:\n", block.ID)
 			for _, instr := range block.Instrs {
-				lb.setLocation(mirInstrLocation(instr))
+				lb.setLocation(mir.InstrLocation(instr))
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					val := emitValueExpr(lb, assign.Value)
 					valueType := mirValueType(assign.Value)
@@ -230,7 +230,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				}
 			}
 			if block.Term != nil {
-				lb.setLocation(mirTermLocation(block.Term))
+				lb.setLocation(mir.TerminatorLocation(block.Term))
 				switch term := block.Term.(type) {
 				case *mir.Jump:
 					lb.line(fmt.Sprintf("br label %%b%d", term.TargetID))

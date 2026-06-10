@@ -140,31 +140,3 @@ func locationLineCol(loc *source.Location) (int, int) {
 	}
 	return line, col
 }
-
-func mirInstrLocation(instr mir.Instr) *source.Location {
-	switch node := instr.(type) {
-	case *mir.Assign:
-		return node.Location
-	case *mir.StoreField:
-		return node.Location
-	case *mir.Call:
-		return node.Location
-	case *mir.InterfaceCall:
-		return node.Location
-	default:
-		return nil
-	}
-}
-
-func mirTermLocation(term mir.Terminator) *source.Location {
-	switch node := term.(type) {
-	case *mir.Ret:
-		return node.Location
-	case *mir.Branch:
-		return node.Location
-	case *mir.Jump:
-		return node.Location
-	default:
-		return nil
-	}
-}

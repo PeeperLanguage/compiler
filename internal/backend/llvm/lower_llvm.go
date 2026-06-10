@@ -436,6 +436,21 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		return argRef
 	}
 
+	if toType == "bool" {
+		out := b.nextReg()
+		if isMIRFloatType(fromType) {
+			fromLLVM := b.types.llvmType(fromType)
+			b.line(fmt.Sprintf("%s = fcmp one %s %s, 0.0", out, fromLLVM, argRef))
+			return out
+		}
+		if isMIRIntegerType(fromType) {
+			fromLLVM := b.types.llvmType(fromType)
+			b.line(fmt.Sprintf("%s = icmp ne %s %s, 0", out, fromLLVM, argRef))
+			return out
+		}
+		return argRef
+	}
+
 	if isMIRFloatType(fromType) && isMIRIntegerType(toType) {
 		out := b.nextReg()
 		fromLLVM := b.types.llvmType(fromType)
@@ -561,265 +576,280 @@ func (b *llvmBuilder) setLocation(loc *source.Location) {
 	b.debugLocationID = b.debug.locationID(loc, b.debugScopeID)
 }
 
-func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
-	switch e := expr.(type) {
-	case *mir.Move:
-		return emitRef(b, e.Src)
-	case *mir.Cast:
-		return emitCast(b, e)
-	case *mir.Unary:
-		arg := emitRef(b, e.Arg)
-		typ := b.types.llvmType(e.Type)
-		switch e.Op {
-		case "-":
-			out := b.nextReg()
-			if isLLVMFloatType(typ) {
-				b.line(fmt.Sprintf("%s = fsub %s 0.0, %s", out, typ, arg))
-			} else {
-				b.line(fmt.Sprintf("%s = sub %s 0, %s", out, typ, arg))
-			}
-			return out
-		case "!":
-			return emitLogicalNot(b, arg, e.Arg)
-		default:
-			return arg
-		}
-	case *mir.Binary:
-		left := emitRef(b, e.Left)
-		right := emitRef(b, e.Right)
-		out := b.nextReg()
-		leftType := b.types.llvmType(mirRefType(e.Left))
-		switch e.Op {
-		case "+":
-			if isLLVMFloatType(leftType) {
-				b.line(fmt.Sprintf("%s = fadd %s %s, %s", out, leftType, left, right))
-			} else {
-				b.line(fmt.Sprintf("%s = add %s %s, %s", out, leftType, left, right))
-			}
-		case "-":
-			if isLLVMFloatType(leftType) {
-				b.line(fmt.Sprintf("%s = fsub %s %s, %s", out, leftType, left, right))
-			} else {
-				b.line(fmt.Sprintf("%s = sub %s %s, %s", out, leftType, left, right))
-			}
-		case "*":
-			if isLLVMFloatType(leftType) {
-				b.line(fmt.Sprintf("%s = fmul %s %s, %s", out, leftType, left, right))
-			} else {
-				b.line(fmt.Sprintf("%s = mul %s %s, %s", out, leftType, left, right))
-			}
-		case "/":
-			if isLLVMFloatType(leftType) {
-				b.line(fmt.Sprintf("%s = fdiv %s %s, %s", out, leftType, left, right))
-			} else if isUnsignedMIRType(mirRefType(e.Left)) {
-				b.line(fmt.Sprintf("%s = udiv %s %s, %s", out, leftType, left, right))
-			} else {
-				b.line(fmt.Sprintf("%s = sdiv %s %s, %s", out, leftType, left, right))
-			}
-		case "%":
-			if isLLVMFloatType(leftType) {
-				b.line(fmt.Sprintf("%s = frem %s %s, %s", out, leftType, left, right))
-			} else if isUnsignedMIRType(mirRefType(e.Left)) {
-				b.line(fmt.Sprintf("%s = urem %s %s, %s", out, leftType, left, right))
-			} else {
-				b.line(fmt.Sprintf("%s = srem %s %s, %s", out, leftType, left, right))
-			}
-		case "==", "!=", "<", "<=", ">", ">=":
-			cmp := b.nextReg()
-			if isLLVMFloatType(leftType) {
-				pred := map[string]string{"==": "oeq", "!=": "one", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
-				b.line(fmt.Sprintf("%s = fcmp %s %s %s, %s", cmp, pred, leftType, left, right))
-			} else {
-				pred := integerComparePred(e.Op, mirRefType(e.Left))
-				b.line(fmt.Sprintf("%s = icmp %s %s %s, %s", cmp, pred, leftType, left, right))
-			}
-			return cmp
-		case "&&", "||":
-			lc := emitCondRef(b, e.Left)
-			rc := emitCondRef(b, e.Right)
-			merged := b.nextReg()
-			if e.Op == "&&" {
-				b.line(fmt.Sprintf("%s = and i1 %s, %s", merged, lc, rc))
-			} else {
-				b.line(fmt.Sprintf("%s = or i1 %s, %s", merged, lc, rc))
-			}
-			return merged
-		default:
-			return left
-		}
-		return out
-	case *mir.Call:
-		out := b.nextReg()
-		emitCall(b, out, b.types.llvmType(e.Type), emitRef(b, e.Callee), llvmCallArgs(b, e.Args))
-		return out
-	case *mir.AddrOf:
-		if ref, ok := e.Base.(*mir.RefName); ok && ref != nil {
-			if ptr := ensureLocalAddr(b, ref); ptr != "" {
-				return ptr
-			}
-		}
-		baseType := mirRefType(e.Base)
-		llvmBaseType := b.types.llvmType(baseType)
-		ptr := b.nextReg()
-		b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmBaseType))
-		value := emitRef(b, e.Base)
-		b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
-		return ptr
-	case *mir.Field:
-		base := emitRef(b, e.Base)
-		baseType := mirRefType(e.Base)
-		if e.ThroughPtr {
-			llvmPtrType, ok := llvmTypeName(baseType)
-			if !ok {
-				return "0"
-			}
-			structTypeText, ok := pointedTypeText(baseType)
-			if !ok {
-				return "0"
-			}
-			llvmStructType, ok := llvmTypeName(structTypeText)
-			if !ok {
-				return "0"
-			}
-			ptr := b.nextReg()
-			b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, e.Index))
-			out := b.nextReg()
-			llvmFieldType := b.types.llvmType(e.Type)
-			b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmFieldType, llvmFieldType, ptr))
-			return out
-		}
-		llvmBaseType, ok := llvmTypeName(baseType)
-		if !ok {
-			return "0"
-		}
-		out := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", out, llvmBaseType, base, e.Index))
-		return out
-	case *mir.StructLit:
-		llvmType := b.types.llvmType(e.Type)
-		current := "zeroinitializer"
-		for i, field := range e.Fields {
-			value := emitRef(b, field)
-			next := b.nextReg()
-			fieldType := b.types.llvmType(mirRefType(field))
-			b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, fieldType, value, i))
-			current = next
-		}
-		return current
-	case *mir.InterfaceMake:
-		llvmType := b.types.llvmType(e.Type)
-		dataPtr := "null"
-		if e.BoxValue {
-			dataPtr = emitInterfaceBoxedData(b, e.Value, e.DataType, e.StackBox)
-		} else {
-			value := emitRef(b, e.Value)
-			valueType := b.types.llvmType(mirRefType(e.Value))
-			cast := b.nextReg()
-			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, valueType, value))
-			dataPtr = cast
-		}
-		itabPtr := "null"
-		if len(e.Slots) > 0 {
-			itabSym := itabSymbolName(e.Type, e.DataType)
-			itabCast := b.nextReg()
-			b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabCast, len(e.Slots), itabSym))
-			itabPtr = itabCast
-		}
-		current := "zeroinitializer"
-		reg1 := b.nextReg()
-		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataPtr))
-		reg2 := b.nextReg()
-		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 1", reg2, llvmType, reg1, itabPtr))
-		return reg2
-	case *mir.InterfaceCall:
-		data, fn, ok := emitInterfaceCallTarget(b, e.Base, e.Slot)
-		if !ok {
-			return "0"
-		}
-		out := b.nextReg()
-		args := append([]string{"i8* " + data}, llvmCallArgs(b, e.Args)...)
-		emitCall(b, out, b.types.llvmType(e.Type), fn, args)
-		return out
-	default:
+func (b *llvmBuilder) withLocation(loc *source.Location, emit func() string) string {
+	if b == nil || emit == nil {
 		return "0"
 	}
+	prev := b.debugLocationID
+	b.setLocation(loc)
+	out := emit()
+	b.debugLocationID = prev
+	return out
+}
+
+func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
+	return b.withLocation(mir.ValueExprLocation(expr), func() string {
+		switch e := expr.(type) {
+		case *mir.Move:
+			return emitRef(b, e.Src)
+		case *mir.Cast:
+			return emitCast(b, e)
+		case *mir.Unary:
+			arg := emitRef(b, e.Arg)
+			typ := b.types.llvmType(e.Type)
+			switch e.Op {
+			case "-":
+				out := b.nextReg()
+				if isLLVMFloatType(typ) {
+					b.line(fmt.Sprintf("%s = fsub %s 0.0, %s", out, typ, arg))
+				} else {
+					b.line(fmt.Sprintf("%s = sub %s 0, %s", out, typ, arg))
+				}
+				return out
+			case "!":
+				return emitLogicalNot(b, arg, e.Arg)
+			default:
+				return arg
+			}
+		case *mir.Binary:
+			left := emitRef(b, e.Left)
+			right := emitRef(b, e.Right)
+			out := b.nextReg()
+			leftType := b.types.llvmType(mirRefType(e.Left))
+			switch e.Op {
+			case "+":
+				if isLLVMFloatType(leftType) {
+					b.line(fmt.Sprintf("%s = fadd %s %s, %s", out, leftType, left, right))
+				} else {
+					b.line(fmt.Sprintf("%s = add %s %s, %s", out, leftType, left, right))
+				}
+			case "-":
+				if isLLVMFloatType(leftType) {
+					b.line(fmt.Sprintf("%s = fsub %s %s, %s", out, leftType, left, right))
+				} else {
+					b.line(fmt.Sprintf("%s = sub %s %s, %s", out, leftType, left, right))
+				}
+			case "*":
+				if isLLVMFloatType(leftType) {
+					b.line(fmt.Sprintf("%s = fmul %s %s, %s", out, leftType, left, right))
+				} else {
+					b.line(fmt.Sprintf("%s = mul %s %s, %s", out, leftType, left, right))
+				}
+			case "/":
+				if isLLVMFloatType(leftType) {
+					b.line(fmt.Sprintf("%s = fdiv %s %s, %s", out, leftType, left, right))
+				} else if isUnsignedMIRType(mirRefType(e.Left)) {
+					b.line(fmt.Sprintf("%s = udiv %s %s, %s", out, leftType, left, right))
+				} else {
+					b.line(fmt.Sprintf("%s = sdiv %s %s, %s", out, leftType, left, right))
+				}
+			case "%":
+				if isLLVMFloatType(leftType) {
+					b.line(fmt.Sprintf("%s = frem %s %s, %s", out, leftType, left, right))
+				} else if isUnsignedMIRType(mirRefType(e.Left)) {
+					b.line(fmt.Sprintf("%s = urem %s %s, %s", out, leftType, left, right))
+				} else {
+					b.line(fmt.Sprintf("%s = srem %s %s, %s", out, leftType, left, right))
+				}
+			case "==", "!=", "<", "<=", ">", ">=":
+				cmp := b.nextReg()
+				if isLLVMFloatType(leftType) {
+					pred := map[string]string{"==": "oeq", "!=": "one", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
+					b.line(fmt.Sprintf("%s = fcmp %s %s %s, %s", cmp, pred, leftType, left, right))
+				} else {
+					pred := integerComparePred(e.Op, mirRefType(e.Left))
+					b.line(fmt.Sprintf("%s = icmp %s %s %s, %s", cmp, pred, leftType, left, right))
+				}
+				return cmp
+			case "&&", "||":
+				lc := emitCondRef(b, e.Left)
+				rc := emitCondRef(b, e.Right)
+				merged := b.nextReg()
+				if e.Op == "&&" {
+					b.line(fmt.Sprintf("%s = and i1 %s, %s", merged, lc, rc))
+				} else {
+					b.line(fmt.Sprintf("%s = or i1 %s, %s", merged, lc, rc))
+				}
+				return merged
+			default:
+				return left
+			}
+			return out
+		case *mir.Call:
+			out := b.nextReg()
+			emitCall(b, out, b.types.llvmType(e.Type), emitRef(b, e.Callee), llvmCallArgs(b, e.Args))
+			return out
+		case *mir.AddrOf:
+			if ref, ok := e.Base.(*mir.RefName); ok && ref != nil {
+				if ptr := ensureLocalAddr(b, ref); ptr != "" {
+					return ptr
+				}
+			}
+			baseType := mirRefType(e.Base)
+			llvmBaseType := b.types.llvmType(baseType)
+			ptr := b.nextReg()
+			b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmBaseType))
+			value := emitRef(b, e.Base)
+			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
+			return ptr
+		case *mir.Field:
+			base := emitRef(b, e.Base)
+			baseType := mirRefType(e.Base)
+			if e.ThroughPtr {
+				llvmPtrType, ok := llvmTypeName(baseType)
+				if !ok {
+					return "0"
+				}
+				structTypeText, ok := pointedTypeText(baseType)
+				if !ok {
+					return "0"
+				}
+				llvmStructType, ok := llvmTypeName(structTypeText)
+				if !ok {
+					return "0"
+				}
+				ptr := b.nextReg()
+				b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, e.Index))
+				out := b.nextReg()
+				llvmFieldType := b.types.llvmType(e.Type)
+				b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmFieldType, llvmFieldType, ptr))
+				return out
+			}
+			llvmBaseType, ok := llvmTypeName(baseType)
+			if !ok {
+				return "0"
+			}
+			out := b.nextReg()
+			b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", out, llvmBaseType, base, e.Index))
+			return out
+		case *mir.StructLit:
+			llvmType := b.types.llvmType(e.Type)
+			current := "zeroinitializer"
+			for i, field := range e.Fields {
+				value := emitRef(b, field)
+				next := b.nextReg()
+				fieldType := b.types.llvmType(mirRefType(field))
+				b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, fieldType, value, i))
+				current = next
+			}
+			return current
+		case *mir.InterfaceMake:
+			llvmType := b.types.llvmType(e.Type)
+			dataPtr := "null"
+			if e.BoxValue {
+				dataPtr = emitInterfaceBoxedData(b, e.Value, e.DataType, e.StackBox)
+			} else {
+				value := emitRef(b, e.Value)
+				valueType := b.types.llvmType(mirRefType(e.Value))
+				cast := b.nextReg()
+				b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, valueType, value))
+				dataPtr = cast
+			}
+			itabPtr := "null"
+			if len(e.Slots) > 0 {
+				itabSym := itabSymbolName(e.Type, e.DataType)
+				itabCast := b.nextReg()
+				b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabCast, len(e.Slots), itabSym))
+				itabPtr = itabCast
+			}
+			current := "zeroinitializer"
+			reg1 := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataPtr))
+			reg2 := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 1", reg2, llvmType, reg1, itabPtr))
+			return reg2
+		case *mir.InterfaceCall:
+			data, fn, ok := emitInterfaceCallTarget(b, e.Base, e.Slot)
+			if !ok {
+				return "0"
+			}
+			out := b.nextReg()
+			args := append([]string{"i8* " + data}, llvmCallArgs(b, e.Args)...)
+			emitCall(b, out, b.types.llvmType(e.Type), fn, args)
+			return out
+		default:
+			return "0"
+		}
+	})
 }
 
 func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
-	switch v := ref.(type) {
-	case *mir.RefConst:
-		if v.Type == "bool" {
-			if v.Value == "0" {
-				return "false"
+	return b.withLocation(mir.ValueRefLocation(ref), func() string {
+		switch v := ref.(type) {
+		case *mir.RefConst:
+			if v.Type == "bool" {
+				if v.Value == "0" {
+					return "false"
+				}
+				return "true"
 			}
-			return "true"
-		}
-		if v.Type == "f32" {
-			return llvmFloat32Const(v.Value)
-		}
-		if v.Type == "cstr" {
-			return "null"
-		}
-		return v.Value
-	case *mir.RefName:
-		isFunc := strings.HasPrefix(v.Type, "fn(") || strings.Contains(v.Type, "->")
-		if ptr, ok := b.localPtrs[v.Name]; ok && ptr != "" {
-			reg := b.nextReg()
-			llvmType := b.types.llvmType(b.localTypes[v.Name])
-			b.line(fmt.Sprintf("%s = load %s, %s* %s", reg, llvmType, llvmType, ptr))
-			return reg
-		}
-		if reg, ok := b.locals[v.Name]; ok {
-			return reg
-		}
-		if isFunc {
-			return "@" + ir.SanitizeSymbolName(ir.StripSymbolInstance(v.Name))
-		}
+			if v.Type == "f32" {
+				return llvmFloat32Const(v.Value)
+			}
+			if v.Type == "cstr" {
+				return "null"
+			}
+			return v.Value
+		case *mir.RefName:
+			isFunc := strings.HasPrefix(v.Type, "fn(") || strings.Contains(v.Type, "->")
+			if ptr, ok := b.localPtrs[v.Name]; ok && ptr != "" {
+				reg := b.nextReg()
+				llvmType := b.types.llvmType(b.localTypes[v.Name])
+				b.line(fmt.Sprintf("%s = load %s, %s* %s", reg, llvmType, llvmType, ptr))
+				return reg
+			}
+			if reg, ok := b.locals[v.Name]; ok {
+				return reg
+			}
+			if isFunc {
+				return "@" + ir.SanitizeSymbolName(ir.StripSymbolInstance(v.Name))
+			}
 
-		isLocalStatic := false
-		var localEntry *mir.StaticEntry
-		if b.types != nil && b.types.mod != nil {
-			for _, entry := range b.types.mod.StaticData {
-				eName := strings.TrimPrefix(entry.Name, "@")
-				vName := strings.TrimPrefix(v.Name, "@")
-				if eName == vName {
-					isLocalStatic = true
-					localEntry = entry
-					break
+			isLocalStatic := false
+			var localEntry *mir.StaticEntry
+			if b.types != nil && b.types.mod != nil {
+				for _, entry := range b.types.mod.StaticData {
+					eName := strings.TrimPrefix(entry.Name, "@")
+					vName := strings.TrimPrefix(v.Name, "@")
+					if eName == vName {
+						isLocalStatic = true
+						localEntry = entry
+						break
+					}
 				}
 			}
-		}
 
-		if isLocalStatic && localEntry != nil {
-			if strings.HasPrefix(localEntry.Type, "[") && strings.HasSuffix(localEntry.Type, " x i8]") {
-				return fmt.Sprintf("getelementptr inbounds (%s, %s* %s, i64 0, i64 0)", localEntry.Type, localEntry.Type, localEntry.Name)
+			if isLocalStatic && localEntry != nil {
+				if strings.HasPrefix(localEntry.Type, "[") && strings.HasSuffix(localEntry.Type, " x i8]") {
+					return fmt.Sprintf("getelementptr inbounds (%s, %s* %s, i64 0, i64 0)", localEntry.Type, localEntry.Type, localEntry.Name)
+				}
+				reg := b.nextReg()
+				llvmType := b.types.llvmType(localEntry.Type)
+				b.line(fmt.Sprintf("%s = load %s, %s* %s, align %d", reg, llvmType, llvmType, localEntry.Name, localEntry.Align))
+				return reg
 			}
-			reg := b.nextReg()
-			llvmType := b.types.llvmType(localEntry.Type)
-			b.line(fmt.Sprintf("%s = load %s, %s* %s, align %d", reg, llvmType, llvmType, localEntry.Name, localEntry.Align))
-			return reg
-		}
 
-		if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
-			name := "@" + v.Name
-			if b.types.externalGlobals == nil {
-				b.types.externalGlobals = make(map[string]string)
+			if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
+				name := "@" + v.Name
+				if b.types.externalGlobals == nil {
+					b.types.externalGlobals = make(map[string]string)
+				}
+				b.types.externalGlobals[name] = v.Type
+
+				reg := b.nextReg()
+				llvmType := b.types.llvmType(v.Type)
+				b.line(fmt.Sprintf("%s = load %s, %s* %s, align 4", reg, llvmType, llvmType, name))
+				return reg
 			}
-			b.types.externalGlobals[name] = v.Type
 
-			reg := b.nextReg()
-			llvmType := b.types.llvmType(v.Type)
-			b.line(fmt.Sprintf("%s = load %s, %s* %s, align 4", reg, llvmType, llvmType, name))
-			return reg
+			if strings.HasPrefix(v.Name, "@") {
+				return v.Name
+			}
+			return "0"
+		default:
+			return "0"
 		}
-
-		if strings.HasPrefix(v.Name, "@") {
-			return v.Name
-		}
-		return "0"
-	default:
-		return "0"
-	}
+	})
 }
 
 func ensureLocalAddr(b *llvmBuilder, ref *mir.RefName) string {
@@ -858,34 +888,17 @@ func llvmFloat32Const(value string) string {
 }
 
 func emitCondRef(b *llvmBuilder, ref mir.ValueRef) string {
-	val := emitRef(b, ref)
-	refType := mirRefType(ref)
-	if refType == "bool" {
-		return val
-	}
-	switch v := ref.(type) {
-	case *mir.RefConst:
-		if v.Type == "f32" || v.Type == "f64" {
-			if v.Value == "0" || v.Value == "0.0" {
-				return "false"
-			}
-			return "true"
+	return b.withLocation(mir.ValueRefLocation(ref), func() string {
+		val := emitRef(b, ref)
+		refType := mirRefType(ref)
+		if refType == "bool" {
+			return val
 		}
-		if v.Value == "0" {
-			return "false"
+		if b != nil && b.types != nil {
+			b.types.markInvalid("non-bool condition reached llvm lowering: " + refType)
 		}
-		return "true"
-	default:
-		out := b.nextReg()
-		llvmType := b.types.llvmType(refType)
-		if isLLVMFloatType(llvmType) {
-			zero := "0.0"
-			b.line(fmt.Sprintf("%s = fcmp one %s %s, %s", out, llvmType, val, zero))
-		} else {
-			b.line(fmt.Sprintf("%s = icmp ne %s %s, 0", out, llvmType, val))
-		}
-		return out
-	}
+		return "false"
+	})
 }
 
 func mirRefType(ref mir.ValueRef) string {
