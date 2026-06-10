@@ -17,6 +17,12 @@ fn main() -> i32 {
         return p.x;
     }
 
+    // if p.sum() {
+    //     let ok: cstr = "struct ok\n";
+    //     write(stdout, ok, 10);
+    //     return p.x;
+    // }
+
     let bad: cstr = "struct bad\n";
     write(stdout, bad, 11);
     return 1;
