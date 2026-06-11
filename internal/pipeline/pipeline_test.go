@@ -10,10 +10,6 @@ import (
 	"compiler/internal/project"
 )
 
-func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
-	return buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
-}
-
 func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const preludePath = "_builtin_library/global.em"
@@ -67,7 +63,7 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
@@ -144,7 +140,7 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
@@ -166,7 +162,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -189,7 +185,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -208,7 +204,7 @@ fn main() -> i32 {
 	return x.abs();
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -232,7 +228,7 @@ fn main() -> i32 {
 	return file.read("ok");
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -251,7 +247,7 @@ fn main() -> i32 {
 	return x.id();
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -278,7 +274,7 @@ fn main() -> i32 {
 	return c.bump();
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -296,7 +292,7 @@ fn main() -> i32 {
 	return c.value;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -314,7 +310,7 @@ fn main() -> i32 {
 	return p.x;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -327,7 +323,7 @@ func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	return p.x;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -348,7 +344,7 @@ fn main() -> i32 {
 	return p.x;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -380,7 +376,7 @@ fn main() -> i32 {
 	return total(p);
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -412,7 +408,7 @@ fn main() -> i32 {
 	return use(file);
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -547,7 +543,7 @@ fn main() -> i32 {
 	out.inner.value = 42;
 	return out.inner.value;
 }`
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -571,7 +567,7 @@ fn main() -> i32 {
 	let mut c: Container = .{ counter = .{ value = 10 } };
 	return c.counter.bump();
 }`
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -590,7 +586,7 @@ fn main() -> i32 {
 	out.inner.value = 42;
 	return out.inner.value;
 }`
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
 	if !diag.HasErrors() {
 		t.Fatalf("expected assignment to immutable binding error, but compiled successfully")
 	}

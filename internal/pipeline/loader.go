@@ -137,7 +137,9 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
-		module.Dependencies = appendUnique(module.Dependencies, resolved.Key)
+		if !slices.Contains(module.Dependencies, resolved.Key) {
+			module.Dependencies = append(module.Dependencies, resolved.Key)
+		}
 		l.ctx.AddDependency(module.Key, resolved.Key)
 
 		if existing, ok := l.ctx.ModuleByKey(resolved.Key); ok {
@@ -208,11 +210,4 @@ func importAlias(imp *ast.ImportDecl, importPath string) string {
 		return ""
 	}
 	return base
-}
-
-func appendUnique(list []string, value string) []string {
-	if slices.Contains(list, value) {
-		return list
-	}
-	return append(list, value)
 }
