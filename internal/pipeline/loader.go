@@ -21,13 +21,6 @@ type moduleLoader struct {
 	wg        sync.WaitGroup
 }
 
-func newModuleLoader(ctx *project.CompilerContext) *moduleLoader {
-	return &moduleLoader{
-		ctx:       ctx,
-		scheduled: make(map[string]struct{}),
-	}
-}
-
 func (l *moduleLoader) Load(entry *project.Module) error {
 	if l == nil || l.ctx == nil {
 		return errors.New("nil module loader")
