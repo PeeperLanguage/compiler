@@ -40,22 +40,10 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if !found || sym == nil || sym.Scope == nil {
 		return
 	}
-	funcScope := sym.Scope.(*table.Scope)
-	for _, param := range fn.Params {
-		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
-			return
-		}
-		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
-		if err := funcScope.Declare(paramSym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
-			return
-		}
-	}
-	r.resolveBlock(funcScope, fn.Body)
+	r.resolveFunctionBody(sym, fn)
 }
 
-func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
+func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if r == nil || r.module == nil || sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
 		return
 	}
@@ -86,7 +74,7 @@ func (r *resolver) resolveImpl(decl *ast.ImplDecl) {
 		if !ok || sym == nil {
 			continue
 		}
-		r.resolveMethod(sym, method)
+		r.resolveFunctionBody(sym, method)
 	}
 }
 
