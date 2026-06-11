@@ -80,7 +80,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 	origin := ModuleOriginLocal
 	var basePath string
 
-	if isStdlibImport(importPath) {
+	if strings.HasPrefix(importPath, "core:") {
 		origin = ModuleOriginStdlib
 		libPath := strings.TrimPrefix(importPath, "core:")
 		basePath = filepath.Join(ctx.Config.StdlibRoot, filepath.FromSlash(libPath))
@@ -178,8 +178,4 @@ func isRemoteImport(path string) bool {
 	return strings.HasPrefix(path, "github.com/") ||
 		strings.HasPrefix(path, "gitlab.com/") ||
 		strings.HasPrefix(path, "bitbucket.org/")
-}
-
-func isStdlibImport(path string) bool {
-	return strings.HasPrefix(path, "core:")
 }
