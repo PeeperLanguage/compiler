@@ -92,7 +92,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	if module.Content == "" && module.FilePath != "" {
 		content, err := os.ReadFile(module.FilePath)
 		if err != nil {
-			l.addModuleError(diagnostics.ErrModuleNotFound, "read module: "+err.Error())
+			l.addImportError(nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
 			return
 		}
 		module.Content = string(content)
@@ -181,14 +181,6 @@ func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
 			d.WithPrimaryLabel(loc, msg)
 		}
 	}
-	l.ctx.Diagnostics.Add(d)
-}
-
-func (l *moduleLoader) addModuleError(code, msg string) {
-	if l == nil || l.ctx == nil || l.ctx.Diagnostics == nil {
-		return
-	}
-	d := diagnostics.NewError(msg).WithCode(code)
 	l.ctx.Diagnostics.Add(d)
 }
 
