@@ -10,6 +10,16 @@ import (
 	"compiler/internal/project"
 )
 
+func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
+	return &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: strings.TrimSuffix(filePath, ".em"),
+		FilePath:   filePath,
+		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+}
+
 func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const preludePath = "_builtin_library/global.em"
@@ -21,24 +31,14 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	ctx := project.NewWithConfig(cfg, diag)
 
 	// Register the prelude so the pipeline loader can find it.
-	prelude := &project.Module{
-		Key:        "core:prelude/global",
-		ImportPath: "prelude/global",
-		FilePath:   preludePath,
-		Origin:     project.ModuleOriginStdlib,
-		AST:        parser.ParseModule(preludePath, lexer.Lex(preludePath, preludeSrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	prelude := parseModuleSource(preludePath, preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -96,24 +96,15 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	diag.AddSourceContent("entry.em", entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
 
-	prelude := &project.Module{
-		Key:        "core:prelude/global",
-		ImportPath: "prelude/global",
-		FilePath:   "_builtin_library/global.em",
-		Origin:     project.ModuleOriginStdlib,
-		AST:        parser.ParseModule("_builtin_library/global.em", lexer.Lex("_builtin_library/global.em", preludeSrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	prelude := parseModuleSource("_builtin_library/global.em", preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, "entry.em"),
-		ImportPath: "entry",
-		FilePath:   "entry.em",
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule("entry.em", lexer.Lex("entry.em", entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource("entry.em", entrySrc, diag)
+	entry.ImportPath = "entry"
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -453,14 +444,8 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.New(".", ".em", diag)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -510,14 +495,8 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.New(".", ".em", diag)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -668,14 +647,8 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.New(".", ".em", diag)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)

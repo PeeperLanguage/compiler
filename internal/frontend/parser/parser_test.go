@@ -9,6 +9,13 @@ import (
 	"compiler/internal/frontend/lexer"
 )
 
+func parseTestModule(src string) (*ast.Module, *diagnostics.DiagnosticBag) {
+	const filePath = "test.em"
+	diag := diagnostics.NewDiagnosticBag(filePath)
+	stream := lexer.New(filePath, src, diag).Tokenize()
+	return New(filePath, stream, diag).ParseModule(), diag
+}
+
 func TestParseModuleSubset(t *testing.T) {
 	src := `import "math" as m;
 const x: i32 = 1 + 2 * 3;
@@ -17,9 +24,7 @@ fn add(a: i32, b: i32) -> i32 {
 	let z: i32 = a + b;
 	return z;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics")
 	}
@@ -59,9 +64,7 @@ let y: f32 = 2;
 fn sum(a: i64, b: f32) -> f64 {
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected parser diagnostics: %s", diag.EmitAllToString())
 	}
@@ -72,9 +75,7 @@ fn sum(a: i64, b: f32) -> f64 {
 
 func TestParseLetWithoutExplicitType(t *testing.T) {
 	src := `let c = a + b;`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics")
 	}
@@ -94,9 +95,7 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	src := `fn add[T, U](a: i32) -> i32 {
 	return a;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics")
 	}
@@ -122,9 +121,7 @@ func TestParseFunctionReturnArrowSyntax(t *testing.T) {
 	src := `fn main() -> i32 {
 	return 10;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -146,9 +143,7 @@ func TestParseUnaryPlus(t *testing.T) {
 	let x: i32 = +(10 as i32);
 	return x;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -171,9 +166,7 @@ func TestParseCastBindsLooserThanUnary(t *testing.T) {
 	let x: i8 = -128 as i8;
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -199,9 +192,7 @@ func TestParseMalformedLocalLetDoesNotAppendTypedNilStmt(t *testing.T) {
 	let x: i32 = +;
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
@@ -230,9 +221,7 @@ let b: i32 = 23;
 fn main() -> i32 {
 	return b;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for missing semicolon")
 	}
@@ -253,9 +242,7 @@ func TestParseRecoversMissingParenInCallAndContinues(t *testing.T) {
 	foo(1, 2;
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for missing ')'")
 	}
@@ -280,9 +267,7 @@ func TestParseRecoversMissingFunctionBlockAndContinues(t *testing.T) {
 fn main() -> i32 {
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for missing function block")
 	}
@@ -305,9 +290,7 @@ fn main() {
 	let b : i32 = 23;
 	let c = a + b;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if len(mod.Decls) != 2 {
 		t.Fatalf("decls: got %d want 2", len(mod.Decls))
 	}
@@ -322,9 +305,7 @@ func TestParseAllowsExternalFunctionSemicolon(t *testing.T) {
 fn main() -> i32 {
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -346,9 +327,7 @@ fn ext();
 fn main() -> i32 {
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -361,9 +340,7 @@ func TestParseMethodStyleFunctionNamePath(t *testing.T) {
 	src := `fn User::Method(self: i32, other: i32) -> i32 {
 	return other;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -390,9 +367,7 @@ let c: enum {
 	One,
 	Two,
 } = value;`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -420,9 +395,7 @@ let a = 1;
 return a;
 }
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() || mod == nil {
 		t.Fatalf("parse failed: %s", diag.EmitAllToString())
 	}
@@ -443,9 +416,7 @@ if 1 < 2 {
 	return 20;
 }
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() || mod == nil {
 		t.Fatalf("parse failed: %s", diag.EmitAllToString())
 	}
@@ -476,9 +447,7 @@ if 1 {
 	return 3;
 }
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() || mod == nil {
 		t.Fatalf("parse failed: %s", diag.EmitAllToString())
 	}
@@ -512,9 +481,7 @@ enum Color {
 	Green,
 	Blue,
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -556,9 +523,7 @@ func TestParseImplDecl(t *testing.T) {
 		return self;
 	}
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -591,9 +556,7 @@ func TestParseSelectorAndMethodCall(t *testing.T) {
 	x.abs();
 	return x.value;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -628,9 +591,7 @@ func TestParseStructLiteral(t *testing.T) {
 	let p = .{ x = 1, y = 2, };
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -662,9 +623,7 @@ func TestParseTypedStructLiteral(t *testing.T) {
 	let p = .Point{ x = 1, y = 2, };
 	return p.x;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -695,9 +654,7 @@ func TestParseAttachesDocCommentsInFunctionBody(t *testing.T) {
 	let x: i32 = 1;
 	return x;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -719,9 +676,7 @@ func TestParseAttachesDocCommentsToIfStmt(t *testing.T) {
 	}
 	return 1;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -740,9 +695,7 @@ func TestParseAttachesDocCommentsToDecl(t *testing.T) {
 fn main() -> i32 {
 	return 0;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -754,9 +707,7 @@ fn main() -> i32 {
 
 func TestParsePointerTypes(t *testing.T) {
 	src := `let ptr: ^i32;`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -777,9 +728,7 @@ func TestParsePointerTypes(t *testing.T) {
 // return type has no return value.
 func TestParseFnDefaultReturnType(t *testing.T) {
 	src := `fn noReturn() { }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -796,9 +745,7 @@ func TestParseFnDefaultReturnType(t *testing.T) {
 // return type wins over the default.
 func TestParseFnExplicitReturnTypeOverridesDefault(t *testing.T) {
 	src := `fn returnsFloat() -> f64 { }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -813,9 +760,7 @@ func TestParseFnExplicitReturnTypeOverridesDefault(t *testing.T) {
 // default to no return value.
 func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 	src := `interface I { method() }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -831,9 +776,7 @@ func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 // TestParseFuncTypeDefaultReturnType verifies fn-types default to no return value.
 func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 	src := `let cb: fn(i32) = 0;`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -851,9 +794,7 @@ func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 // helper accepts a trailing comma (a feature of the extracted helper).
 func TestParseStructFieldsTrailingComma(t *testing.T) {
 	src := `struct S { a: i32, b: i32, }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -866,9 +807,7 @@ func TestParseStructFieldsTrailingComma(t *testing.T) {
 // TestParseEnumVariantsTrailingComma verifies the same for enum variants.
 func TestParseEnumVariantsTrailingComma(t *testing.T) {
 	src := `enum E { A, B, }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -881,9 +820,7 @@ func TestParseEnumVariantsTrailingComma(t *testing.T) {
 // TestParseInterfaceMethodsTrailingComma verifies the same for interface methods.
 func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 	src := `interface I { foo(), bar(), }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
@@ -898,9 +835,7 @@ func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 func TestParseMissingSemicolonRecoverable(t *testing.T) {
 	src := `let x: i32 = 1
 let y: i32 = 2`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected at least one diagnostic for missing semicolons")
 	}
@@ -913,9 +848,7 @@ let y: i32 = 2`
 // (returns nil) when the next token is not a boundary.
 func TestParseMissingSemicolonUnrecoverable(t *testing.T) {
 	src := `let x: i32 = 1 +`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	ParseModule("test.em", stream, diag)
+	_, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics for malformed expression")
 	}
@@ -927,9 +860,7 @@ func TestParseMissingSemicolonUnrecoverable(t *testing.T) {
 func TestParseBindingFieldsDroppedUnusedParam(t *testing.T) {
 	src := `let a: i32 = 1;
 const b: i32 = 2;`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := lexer.Lex("test.em", src, diag)
-	mod := ParseModule("test.em", stream, diag)
+	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}

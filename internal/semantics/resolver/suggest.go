@@ -7,6 +7,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/table"
+	"compiler/pkg/colors"
 )
 
 func reportUnresolved(module *project.Module, scope *table.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
@@ -18,7 +19,7 @@ func reportUnresolved(module *project.Module, scope *table.Scope, node *ast.Iden
 		d := diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrUndefinedSymbol).
 			WithPrimaryLabel(ast.LocOf(node), msg).
-			WithHelp("did you mean `" + match + "`?")
+			WithText("help", "did you mean `"+match+"`?", colors.GREEN)
 		diag.Add(d)
 		return false
 	}

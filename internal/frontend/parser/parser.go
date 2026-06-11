@@ -33,10 +33,6 @@ func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag)
 	}
 }
 
-func ParseModule(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *ast.Module {
-	return New(filePath, stream, diag).ParseModule()
-}
-
 func (p *Parser) ParseModule() *ast.Module {
 	mod := &ast.Module{
 		FilePath: p.filePath,

@@ -21,7 +21,7 @@ fn main() -> i32 {
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", ".em", diag)
-	modAST := parser.ParseModule(filePath, lexer.Lex(filePath, src, diag), diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	if len(modAST.Imports) != 1 || modAST.Imports[0] == nil {
 		t.Fatalf("expected one parsed import decl")
 	}

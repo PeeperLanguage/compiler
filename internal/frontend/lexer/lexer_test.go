@@ -11,12 +11,12 @@ func TestLexSubsetProgram(t *testing.T) {
 	src := `import "math" as m;
 const x: i32 = 1 + 2 * 3;
 let mut y: i32 = x;
-fn add(a: i32, b: i32): i32 {
+	fn add(a: i32, b: i32): i32 {
 	let z: i32 = a + b;
 	return z;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := Lex("test.em", src, diag)
+	stream := New("test.em", src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -52,7 +52,7 @@ fn main() -> i32 {
 	return 1;
 }`
 	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := Lex("test.em", src, diag)
+	stream := New("test.em", src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
