@@ -171,8 +171,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 			if structDecl != nil {
 				for _, f := range structDecl.Fields {
 					if f.Name != nil && f.Name.Name == ident.Name {
-						fieldSym := symbols.New(ident.Name, symbols.SymbolField, f.Name)
-						fieldSym.Location = ast.LocOf(f.Name)
+						fieldSym := symbols.New(ident.Name, symbols.SymbolField, f.Name, ast.LocOf(f.Name))
 						return fieldSym
 					}
 				}
@@ -213,7 +212,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	if sr, ok := parent.(*ast.ScopeResolution); ok && sr.Module == ident {
 		qualifier := ident.Name
 		if imp, ok := module.Imports[qualifier]; ok {
-			sym := symbols.New(ident.Name, symbols.SymbolImport, parent)
+			sym := symbols.New(ident.Name, symbols.SymbolImport, parent, ast.LocOf(ident))
 			sym.Location = &source.Location{
 				Filename: &imp.FilePath,
 			}

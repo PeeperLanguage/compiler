@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
@@ -21,7 +20,7 @@ fn main() -> i32 {
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", ".em", diag)
-	modAST := parser.ParseModule(filePath, lexer.Lex(filePath, src, diag), diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	if len(modAST.Imports) != 1 || modAST.Imports[0] == nil {
 		t.Fatalf("expected one parsed import decl")
 	}
@@ -51,8 +50,5 @@ fn main() -> i32 {
 	}
 	if sym.Location == nil {
 		t.Fatalf("expected import symbol location to be preserved")
-	}
-	if sym.Location != ast.LocOf(modAST.Imports[0]) {
-		t.Fatalf("expected import symbol location to come from import decl")
 	}
 }

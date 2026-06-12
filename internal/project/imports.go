@@ -35,7 +35,7 @@ func ModuleKeyFor(origin ModuleOrigin, filePath string) string {
 }
 
 // ImportPathForFile computes the import path for a file within the project roots.
-func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, filePath string) (string, error) {
+func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, namespace, filePath string) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("nil compiler context")
 	}
@@ -47,7 +47,11 @@ func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, filePath stri
 	case ModuleOriginLocal:
 		root = ctx.Config.RootDir
 	case ModuleOriginStdlib:
-		root = ctx.Config.StdlibRoot
+		libraryRoot, ok := ctx.LibraryRoot(namespace)
+		if !ok {
+			return "", fmt.Errorf("missing library root for namespace %q", namespace)
+		}
+		root = libraryRoot
 	}
 	if root == "" {
 		base := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
@@ -78,12 +82,20 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "empty import path"}
 	}
 	origin := ModuleOriginLocal
+	namespace := ""
 	var basePath string
 
-	if isStdlibImport(importPath) {
+	if importNamespace, logicalPath, ok := splitNamespacedImportPath(importPath); ok {
+		namespace = importNamespace
 		origin = ModuleOriginStdlib
-		libPath := strings.TrimPrefix(importPath, "core:")
-		basePath = filepath.Join(ctx.Config.StdlibRoot, filepath.FromSlash(libPath))
+		if err := validateImportPath(logicalPath); err != nil {
+			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
+		}
+		rootDir, found := ctx.LibraryRoot(namespace)
+		if !found {
+			return nil, &ImportError{Code: diagnostics.ErrModuleNotFound, Msg: fmt.Sprintf("invalid library prefix: %s", namespace)}
+		}
+		basePath = filepath.Join(rootDir, filepath.FromSlash(logicalPath))
 	} else {
 		if err := validateImportPath(importPath); err != nil {
 			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
@@ -114,29 +126,6 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 	}
 	absPath = filepath.Clean(absPath)
 
-	switch origin {
-	case ModuleOriginLocal:
-		if root := ctx.Config.RootDir; root != "" {
-			rel, err := filepath.Rel(root, absPath)
-			if err != nil {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
-			}
-			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the project root"}
-			}
-		}
-	case ModuleOriginStdlib:
-		if root := ctx.Config.StdlibRoot; root != "" {
-			rel, err := filepath.Rel(root, absPath)
-			if err != nil {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
-			}
-			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the stdlib root"}
-			}
-		}
-	}
-
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return nil, &ImportError{Code: diagnostics.ErrModuleNotFound, Msg: fmt.Sprintf("module not found: %s", absPath)}
@@ -145,7 +134,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path points to a directory"}
 	}
 
-	resolvedImportPath, err := ctx.ImportPathForFile(origin, absPath)
+	resolvedImportPath, err := ctx.ImportPathForFile(origin, namespace, absPath)
 	if err != nil {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
 	}
@@ -155,20 +144,37 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		ImportPath: resolvedImportPath,
 		FilePath:   absPath,
 		Origin:     origin,
+		Namespace:  namespace,
 	}, nil
+}
+
+func splitNamespacedImportPath(importPath string) (string, string, bool) {
+	namespace, logicalPath, ok := strings.Cut(importPath, ":")
+	if !ok {
+		return "", "", false
+	}
+	namespace = strings.TrimSpace(namespace)
+	logicalPath = strings.TrimSpace(logicalPath)
+	if namespace == "" || logicalPath == "" {
+		return "", "", false
+	}
+	if strings.Contains(namespace, "/") || strings.Contains(namespace, ".") {
+		return "", "", false
+	}
+	return namespace, logicalPath, true
 }
 
 func validateImportPath(importPath string) error {
 	if importPath == "." || importPath == ".." {
-		return fmt.Errorf("import path must be root-relative (go-style)")
+		return fmt.Errorf("import path must be root-relative")
 	}
 	if filepath.IsAbs(importPath) || strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
-		return fmt.Errorf("import path must be root-relative (go-style)")
+		return fmt.Errorf("import path must be root-relative")
 	}
 	parts := strings.SplitSeq(importPath, "/")
 	for part := range parts {
 		if part == "" || part == "." || part == ".." {
-			return fmt.Errorf("import path must be root-relative (go-style)")
+			return fmt.Errorf("import path must be root-relative")
 		}
 	}
 	return nil
@@ -178,8 +184,4 @@ func isRemoteImport(path string) bool {
 	return strings.HasPrefix(path, "github.com/") ||
 		strings.HasPrefix(path, "gitlab.com/") ||
 		strings.HasPrefix(path, "bitbucket.org/")
-}
-
-func isStdlibImport(path string) bool {
-	return strings.HasPrefix(path, "core:")
 }

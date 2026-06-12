@@ -36,7 +36,10 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	p.ctx.AddModule(entry)
 	diag := p.ctx.Diagnostics
 
-	loader := newModuleLoader(p.ctx)
+	loader := &moduleLoader{
+		ctx:       p.ctx,
+		scheduled: make(map[string]struct{}),
+	}
 	preludeKey := ""
 	if preludeMod, ok := p.ctx.ModuleByKey("core:prelude/global"); ok {
 		if err := loader.Load(preludeMod); err != nil {

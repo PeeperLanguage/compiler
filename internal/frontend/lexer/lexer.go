@@ -241,10 +241,6 @@ func (l *Lexer) Tokenize() []token.Token {
 	return append([]token.Token(nil), l.toks...)
 }
 
-func Lex(filename, sourceCode string, diag *diagnostics.DiagnosticBag) []token.Token {
-	return New(filename, sourceCode, diag).Tokenize()
-}
-
 func (l *Lexer) push(t token.Token) {
 	l.toks = append(l.toks, t)
 }

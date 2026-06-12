@@ -48,13 +48,13 @@ type Symbol struct {
 	Scope        any // Pointer to table.Scope (only if Kind == SymbolFunc)
 }
 
-func New(name string, kind Kind, node ast.Node) *Symbol {
+func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
 	return &Symbol{
 		ID:       SymbolID(nextSymbolID.Add(1)),
 		Name:     name,
 		Kind:     kind,
 		IsPub:    IsPubName(name),
-		Location: ast.LocOf(node),
+		Location: location,
 		ASTNode:  node,
 	}
 }
