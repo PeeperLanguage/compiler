@@ -161,6 +161,37 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineAllowsForwardFunctionCalls(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	return later();
+}
+
+fn later() -> i32 {
+	return 7;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsTopLevelInitializerUsingLaterBinding(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const first: i32 = second;
+const second: i32 = 2;
+
+fn main() -> i32 {
+	return second;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrUseBeforeDecl) {
+		t.Fatalf("expected use-before-declaration diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersUnusedCallBindingAsDiscardedCall(t *testing.T) {
 	preludeSrc := `let stdout: i32 = 1;
 

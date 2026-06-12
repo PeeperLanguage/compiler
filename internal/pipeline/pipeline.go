@@ -8,6 +8,7 @@ import (
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
+	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
@@ -94,6 +95,7 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 		return
 	}
 	collector.Collect(p.ctx, module)
+	binder.Bind(p.ctx, module)
 	resolver.Resolve(p.ctx, module)
 	typechecker.Check(p.ctx, module)
 	usage.Analyze(p.ctx, module)

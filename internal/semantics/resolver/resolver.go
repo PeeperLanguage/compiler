@@ -20,6 +20,15 @@ func (r *resolver) resolveModule() {
 	if r.module.Semantics == nil {
 		r.module.Semantics = project.NewSemanticInfo()
 	}
+	r.markPendingTopLevelBindings()
+	for _, decl := range r.module.AST.Decls {
+		switch node := decl.(type) {
+		case *ast.LetDecl:
+			r.resolveTopLevelBinding(node.Name, node.Value)
+		case *ast.ConstDecl:
+			r.resolveTopLevelBinding(node.Name, node.Value)
+		}
+	}
 	for _, decl := range r.module.AST.Decls {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
@@ -30,6 +39,35 @@ func (r *resolver) resolveModule() {
 			r.resolveImpl(node)
 		}
 	}
+}
+
+func (r *resolver) markPendingTopLevelBindings() {
+	if r == nil || r.module == nil || r.module.ModuleScope == nil {
+		return
+	}
+	for _, sym := range r.module.ModuleScope.Symbols() {
+		if sym == nil {
+			continue
+		}
+		switch sym.Kind {
+		case symbols.SymbolVar, symbols.SymbolConst:
+			sym.Initializing = true
+		}
+	}
+}
+
+func (r *resolver) resolveTopLevelBinding(name *ast.Ident, value ast.Expr) {
+	if r == nil || r.module == nil || r.module.ModuleScope == nil || name == nil || name.Name == "" {
+		return
+	}
+	sym, ok := r.module.ModuleScope.LookupLocal(name.Name)
+	if !ok || sym == nil {
+		return
+	}
+	if value != nil {
+		r.resolveExpr(r.module.ModuleScope, value)
+	}
+	sym.Initializing = false
 }
 
 func (r *resolver) resolveFunction(fn *ast.FnDecl) {

@@ -198,158 +198,29 @@ func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
 	return typeinfo.SameType(ptr.Target, selfType)
 }
 
-func (c *checker) typeFromSyntax(node ast.TypeExpr) typeinfo.Type {
-	return c.typeFromSyntaxWithSelf(node, nil, false)
-}
-
-func (c *checker) typeFromSyntaxWithSelf(node ast.TypeExpr, selfType typeinfo.Type, allowAbstractSelf bool) typeinfo.Type {
-	if node == nil {
-		return nil
-	}
-	switch typ := node.(type) {
-	case *ast.NamedType:
-		if typ == nil {
-			return nil
-		}
-		if typ.Name == "Self" {
-			if selfType != nil {
-				return selfType
-			}
-			if allowAbstractSelf {
-				return &typeinfo.NamedType{Name: "Self"}
-			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-				"`Self` can only be used in interface methods and impl blocks", ast.LocOf(typ), "")
-			return &typeinfo.InvalidType{}
-		}
-		base := typeinfo.TypeFromSyntax(typ)
-		if _, ok := base.(*typeinfo.NamedType); !ok || c == nil || c.module == nil || c.module.ModuleScope == nil {
-			return base
-		}
-		sym, found := c.module.ModuleScope.Lookup(typ.Name)
-		if !found || sym == nil || sym.Kind != symbols.SymbolType {
-			return base
-		}
-		sym.Used = true
-		resolved, ok := symbols.GetSymbolType(sym)
-		if !ok {
-			return base
-		}
-		return resolved
-	case *ast.ScopeResolution:
-		return c.resolveQualifiedType(typ)
-	case *ast.RawPtrType:
-		if typ == nil {
-			return nil
-		}
-		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: c.typeFromSyntaxWithSelf(typ.Target, selfType, allowAbstractSelf)}
-	case *ast.FuncType:
-		if typ == nil {
-			return nil
-		}
-		params := make([]typeinfo.Type, 0, len(typ.Params))
-		for _, param := range typ.Params {
-			params = append(params, c.typeFromSyntaxWithSelf(param, selfType, allowAbstractSelf))
-		}
-		return &typeinfo.FuncType{
-			Params: params,
-			Return: c.typeFromSyntaxWithSelf(typ.Return, selfType, allowAbstractSelf),
-		}
-	case *ast.StructType:
-		if typ == nil {
-			return nil
-		}
-		fields := make([]typeinfo.Field, 0, len(typ.Fields))
-		for _, field := range typ.Fields {
-			name := ""
-			if field.Name != nil {
-				name = field.Name.Name
-			}
-			fields = append(fields, typeinfo.Field{Name: name, Type: c.typeFromSyntaxWithSelf(field.Type, selfType, allowAbstractSelf)})
-		}
-		return &typeinfo.StructType{Fields: fields}
-	case *ast.InterfaceType:
-		if typ == nil {
-			return nil
-		}
-		methods := make([]typeinfo.Method, 0, len(typ.Methods))
-		for _, method := range typ.Methods {
-			params := make([]typeinfo.Field, 0, len(method.Params))
-			for _, param := range method.Params {
-				name := ""
-				if param.Name != nil {
-					name = param.Name.Name
-				}
-				params = append(params, typeinfo.Field{Name: name, Type: c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf)})
-			}
-			name := ""
-			if method.Name != nil {
-				name = method.Name.Name
-			}
-			methods = append(methods, typeinfo.Method{
-				Name:   name,
-				Params: params,
-				Return: c.typeFromSyntaxWithSelf(method.ReturnType, selfType, allowAbstractSelf),
-			})
-		}
-		return &typeinfo.InterfaceType{Methods: methods}
-	default:
-		return typeinfo.TypeFromSyntax(node)
-	}
-}
-
-func (c *checker) resolveQualifiedType(node *ast.ScopeResolution) typeinfo.Type {
-	if c == nil || c.module == nil || c.ctx == nil || node == nil || c.module.ModuleScope == nil {
-		return typeinfo.TypeFromSyntax(node)
-	}
-	qualifier := node.Module.Name
-	member := node.Name.Name
-	imp, ok := c.module.Imports[qualifier]
-	if !ok {
-		return typeinfo.TypeFromSyntax(node)
-	}
-	if impSym, ok := c.module.ModuleScope.LookupLocal(qualifier); ok && impSym != nil {
-		impSym.Used = true
-	}
-	mod, ok := c.ctx.ModuleByKey(imp.Key)
-	if !ok || mod == nil || mod.ModuleScope == nil {
-		return typeinfo.TypeFromSyntax(node)
-	}
-	sym, found := mod.ModuleScope.LookupLocal(member)
-	if !found || sym == nil || sym.Kind != symbols.SymbolType {
-		return typeinfo.TypeFromSyntax(node)
-	}
-	sym.Used = true
-	resolved, ok := symbols.GetSymbolType(sym)
-	if !ok {
-		return typeinfo.TypeFromSyntax(node)
-	}
-	return resolved
-}
-
-func (c *checker) fnTypeFromDecl(decl *ast.FnDecl) *typeinfo.FuncType {
-	return c.fnTypeFromDeclWithSelf(decl, nil, false)
-}
-
-func (c *checker) fnTypeFromDeclWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) *typeinfo.FuncType {
-	if decl == nil {
-		return nil
-	}
-	params := make([]typeinfo.Type, 0, len(decl.Params))
-	for _, param := range decl.Params {
-		params = append(params, c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf))
-	}
-	return &typeinfo.FuncType{
-		Params: params,
-		Return: c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf),
-	}
-}
-
 // -----------------------------------------------------------------------------
 
 func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
+	}
+	for _, decl := range c.module.AST.Decls {
+		switch node := decl.(type) {
+		case *ast.LetDecl:
+			if c.module.ModuleScope != nil {
+				c.checkBinding(c.module.ModuleScope, node, false)
+			}
+		case *ast.ConstDecl:
+			if c.module.ModuleScope != nil {
+				c.checkBinding(c.module.ModuleScope, node, true)
+			}
+		}
+	}
+	for _, decl := range c.module.AST.Decls {
+		switch node := decl.(type) {
+		case *ast.InterfaceDecl:
+			c.checkInterfaceDecl(node)
+		}
 	}
 	for _, decl := range c.module.AST.Decls {
 		switch node := decl.(type) {
@@ -361,13 +232,9 @@ func (c *checker) checkModule() {
 			if !found || sym == nil {
 				continue
 			}
-			if node.Body == nil {
-				sym.BindType(c.fnTypeFromDecl(node))
-			} else {
+			if node.Body != nil {
 				c.checkFunction(sym, node)
 			}
-		case *ast.InterfaceDecl:
-			c.checkInterfaceDecl(node)
 		case *ast.ImplDecl:
 			c.checkImplDecl(node)
 		}
@@ -383,7 +250,6 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		return
 	}
 	c.checkFunctionShapeWithSelf(fn, selfType, allowAbstractSelf)
-	sym.BindType(c.fnTypeFromDeclWithSelf(fn, selfType, allowAbstractSelf))
 	if sym.Scope == nil {
 		return
 	}
@@ -397,9 +263,9 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(fn), "")
 			return
 		}
-		paramSym.BindType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf))
+		paramSym.BindType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
 	}
-	c.checkBlock(funcScope, fn.Body, c.typeFromSyntaxWithSelf(fn.ReturnType, selfType, allowAbstractSelf))
+	c.checkBlock(funcScope, fn.Body, typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
 }
 
 func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -549,11 +415,11 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	switch bind := node.(type) {
 	case *ast.LetDecl:
 		nameNode = bind.Name
-		declType = c.typeFromSyntax(bind.Type)
+		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		value = bind.Value
 	case *ast.ConstDecl:
 		nameNode = bind.Name
-		declType = c.typeFromSyntax(bind.Type)
+		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		value = bind.Value
 	default:
 		return
@@ -610,13 +476,13 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 	if decl == nil {
 		return
 	}
-	if retType := c.typeFromSyntaxWithSelf(decl.ReturnType, selfType, allowAbstractSelf); retType != nil && !c.isLowerableType(retType) {
+	if retType := typeinfo.ASTTypeWithOptions(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)); retType != nil && !c.isLowerableType(retType) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 			"function return type is not lowerable in current compiler stage", ast.LocOf(decl), "")
 		return
 	}
 	for _, param := range decl.Params {
-		if !c.isLowerableType(c.typeFromSyntaxWithSelf(param.Type, selfType, allowAbstractSelf)) {
+		if !c.isLowerableType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))) {
 			site := ast.Node(decl)
 			if param.Name != nil {
 				site = param.Name
@@ -638,9 +504,9 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			continue
 		}
 		for _, param := range method.Params {
-			_ = c.typeFromSyntaxWithSelf(param.Type, nil, true)
+			_ = typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, true))
 		}
-		_ = c.typeFromSyntaxWithSelf(method.ReturnType, nil, true)
+		_ = typeinfo.ASTTypeWithOptions(method.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, true))
 	}
 }
 
@@ -648,7 +514,7 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
 		return
 	}
-	selfType := c.typeFromSyntax(decl.Target)
+	selfType := typeinfo.ASTTypeWithOptions(decl.Target, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	for _, method := range decl.Methods {
 		if method == nil {
 			continue
@@ -662,17 +528,15 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "")
 			continue
 		}
-		firstParamType := c.typeFromSyntaxWithSelf(method.Params[0].Type, selfType, true)
+		firstParamType := typeinfo.ASTTypeWithOptions(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
 		if !isValidReceiverType(firstParamType, selfType) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "")
 			continue
 		}
 
-		if method.Body == nil {
-			sym.BindType(c.fnTypeFromDeclWithSelf(method, selfType, false))
-			continue
+		if method.Body != nil {
+			c.checkFunctionWithSelf(sym, method, selfType, false)
 		}
-		c.checkFunctionWithSelf(sym, method, selfType, false)
 	}
 }
 
@@ -960,7 +824,7 @@ func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expecte
 		return &typeinfo.InvalidType{}
 	}
 	if node.Type != nil {
-		targetType := c.typeFromSyntax(node.Type)
+		targetType := typeinfo.ASTTypeWithOptions(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		targetStruct, ok := c.underlying(targetType).(*typeinfo.StructType)
 		if !ok || targetStruct == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -1159,7 +1023,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	if c == nil || node == nil {
 		return nil
 	}
-	targetType := c.typeFromSyntax(node.TypeExpr)
+	targetType := typeinfo.ASTTypeWithOptions(node.TypeExpr, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
 		return &typeinfo.InvalidType{}
