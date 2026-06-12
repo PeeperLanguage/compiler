@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
+	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 )
@@ -29,6 +30,7 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
 	return diag
@@ -109,6 +111,45 @@ fn main() -> i32 {
 	let x: i32 = 1;
 	return x.abs();
 }`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFunctionCallResolvesAcrossDeclarationOrder(t *testing.T) {
+	src := `fn main() -> i32 {
+	return later();
+}
+
+fn later() -> i32 {
+	return 7;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTopLevelConstInitializerRejectsLaterBinding(t *testing.T) {
+	src := `const first: i32 = second;
+const second: i32 = 2;
+
+fn main() -> i32 {
+	return second;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrUseBeforeDecl) {
+		t.Fatalf("expected use-before-declaration diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFunctionBodySeesLaterTopLevelBinding(t *testing.T) {
+	src := `fn main() -> i32 {
+	return answer;
+}
+
+const answer: i32 = 42;`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
