@@ -18,7 +18,7 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", ".em", diag)
-	modAST := parser.ParseModule(filePath, lexer.Lex(filePath, src, diag), diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
 		ImportPath: "typechecker_test",

@@ -25,7 +25,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 			continue
 		}
 		imp := c.module.Imports[alias]
-		impSym := symbols.New(alias, symbols.SymbolImport, imp.Decl)
+		impSym := symbols.New(alias, symbols.SymbolImport, imp.Decl, ast.LocOf(imp.Decl))
 		impSym.Type = &typeinfo.UnknownType{}
 		if err := c.module.ModuleScope.Declare(impSym); err != nil {
 			if c.ctx != nil && c.ctx.Diagnostics != nil {
@@ -73,7 +73,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	if fn.Body == nil {
 		kind = symbols.SymbolUnknown
 	}
-	sym := symbols.New(fn.Name.Name, kind, fn)
+	sym := symbols.New(fn.Name.Name, kind, fn, ast.LocOf(fn.Name))
 	if fn.Body != nil {
 		sym.Scope = table.New(c.module.ModuleScope)
 	}
@@ -95,7 +95,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "type name required", ast.LocOf(node), "")
 		return
 	}
-	sym := symbols.New(name.Name, symbols.SymbolType, node)
+	sym := symbols.New(name.Name, symbols.SymbolType, node, ast.LocOf(name))
 	sym.Type = &typeinfo.DefinedType{
 		Name:       name.Name,
 		Underlying: typeinfo.TypeFromSyntax(typ),
@@ -113,7 +113,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 	if c == nil || c.module == nil || name == nil || name.Name == "" {
 		return
 	}
-	sym := symbols.New(name.Name, kind, node)
+	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	sym.Type = typeinfo.TypeFromSyntax(typ)
 	if sym.Type == nil {
 		sym.Type = &typeinfo.UnknownType{}
@@ -145,7 +145,7 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", ast.LocOf(method), "")
 			continue
 		}
-		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method)
+		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method, ast.LocOf(method.Name))
 		sym.Scope = table.New(c.module.ModuleScope)
 		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
 		c.module.Semantics.MethodSymbol[method.ID()] = sym

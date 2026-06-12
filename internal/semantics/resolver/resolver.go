@@ -40,22 +40,10 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if !found || sym == nil || sym.Scope == nil {
 		return
 	}
-	funcScope := sym.Scope.(*table.Scope)
-	for _, param := range fn.Params {
-		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
-			return
-		}
-		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
-		if err := funcScope.Declare(paramSym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
-			return
-		}
-	}
-	r.resolveBlock(funcScope, fn.Body)
+	r.resolveFunctionBody(sym, fn)
 }
 
-func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
+func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if r == nil || r.module == nil || sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
 		return
 	}
@@ -65,7 +53,7 @@ func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
 			return
 		}
-		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
+		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		if err := funcScope.Declare(paramSym); err != nil {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
 			return
@@ -86,7 +74,7 @@ func (r *resolver) resolveImpl(decl *ast.ImplDecl) {
 		if !ok || sym == nil {
 			continue
 		}
-		r.resolveMethod(sym, method)
+		r.resolveFunctionBody(sym, method)
 	}
 }
 
@@ -108,7 +96,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.BlockStmt:
 		r.resolveBlock(table.New(scope), node)
 	case *ast.LetDecl:
-		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
+		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node, ast.LocOf(node.Name))
 		sym.Initializing = true
 		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
@@ -119,7 +107,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			r.resolveExpr(scope, node.Value)
 		}
 	case *ast.ConstDecl:
-		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
+		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node, ast.LocOf(node.Name))
 		sym.Initializing = true
 		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
@@ -242,7 +230,9 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 		return false
 	}
 	if !sym.IsPub {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "use of unexported symbol").
+			WithSecondaryLabel(sym.Location, "defined here").
+			WithNote("symbols with uppercase are exported otherwise private")
 		return false
 	}
 	sym.Used = true

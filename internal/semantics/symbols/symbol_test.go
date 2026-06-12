@@ -9,7 +9,7 @@ import (
 func TestNewHandlesTypedNilNode(t *testing.T) {
 	var importDecl *ast.ImportDecl
 
-	sym := New("external", SymbolImport, importDecl)
+	sym := New("external", SymbolImport, importDecl, ast.LocOf(importDecl))
 	if sym == nil {
 		t.Fatalf("expected symbol")
 	}
