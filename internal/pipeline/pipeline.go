@@ -4,6 +4,7 @@ import (
 	"compiler/internal/analysis/cfg"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
+	"compiler/internal/graph"
 	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
@@ -57,24 +58,51 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if preludeKey != "" {
 		for _, mod := range p.ctx.Modules() {
 			if mod != nil && mod.Key != preludeKey {
-				p.ctx.AddDependency(mod.Key, preludeKey)
+				if p.ctx.Graph != nil {
+					p.ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey), graph.EdgeImport)
+				}
 			}
 		}
 	}
 
-	ordered, cycles := topoSort(p.ctx.Modules(), p.ctx.DependenciesOf)
+	modules := p.ctx.Modules()
+	moduleIndex := make(map[graph.NodeID]*project.Module, len(modules))
+	moduleIDs := make([]graph.NodeID, 0, len(modules))
+	for _, mod := range modules {
+		if mod == nil || mod.Key == "" {
+			continue
+		}
+		id := graph.NodeID(mod.Key)
+		moduleIDs = append(moduleIDs, id)
+		moduleIndex[id] = mod
+	}
+
+	var (
+		orderedIDs []graph.NodeID
+		cycles     [][]graph.NodeID
+	)
+	if p.ctx.Graph != nil {
+		orderedIDs, cycles = p.ctx.Graph.TopoSort(moduleIDs, graph.EdgeImport)
+	}
 	if len(cycles) > 0 && diag != nil {
 		for _, cycle := range cycles {
 			msg := "cyclic import detected"
 			if len(cycle) > 0 {
-				msg = "cyclic import detected: " + strings.Join(cycle, " -> ")
+				parts := make([]string, 0, len(cycle))
+				for _, id := range cycle {
+					if id != "" {
+						parts = append(parts, string(id))
+					}
+				}
+				msg = "cyclic import detected: " + strings.Join(parts, " -> ")
 			}
 			diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrCyclicImport))
 		}
 		return nil
 	}
 
-	for _, module := range ordered {
+	for _, id := range orderedIDs {
+		module := moduleIndex[id]
 		if module == nil || module.Key == "" {
 			continue
 		}
