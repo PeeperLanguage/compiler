@@ -22,7 +22,7 @@ func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *p
 
 func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const preludePath = "_builtin_library/global.em"
+	const preludePath = "core/global.em"
 	const entryPath = "entry.em"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
@@ -34,6 +34,7 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	prelude := parseModuleSource(preludePath, preludeSrc, diag)
 	prelude.Key = "core:prelude/global"
 	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
 	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
@@ -92,13 +93,14 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 		BuildDebug:    true,
 	}
 	diag := diagnostics.NewDiagnosticBag("entry.em")
-	diag.AddSourceContent("_builtin_library/global.em", preludeSrc)
+	diag.AddSourceContent("core/global.em", preludeSrc)
 	diag.AddSourceContent("entry.em", entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
 
-	prelude := parseModuleSource("_builtin_library/global.em", preludeSrc, diag)
+	prelude := parseModuleSource("core/global.em", preludeSrc, diag)
 	prelude.Key = "core:prelude/global"
 	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
 	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
@@ -436,7 +438,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	const preludePath = "_builtin_library/global.em"
+	const preludePath = "core/global.em"
 	const entryPath = "entry.em"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
@@ -487,7 +489,7 @@ fn main() -> i32 {
 	return s.sum();
 }`
 
-	const preludePath = "_builtin_library/global.em"
+	const preludePath = "core/global.em"
 	const entryPath = "entry.em"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
@@ -639,7 +641,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	const preludePath = "_builtin_library/global.em"
+	const preludePath = "core/global.em"
 	const entryPath = "entry.em"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)

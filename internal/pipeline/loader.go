@@ -68,7 +68,7 @@ func (l *moduleLoader) ensureModuleIdentity(module *project.Module) {
 		module.Key = project.ModuleKeyFor(module.Origin, module.FilePath)
 	}
 	if module.ImportPath == "" && module.FilePath != "" {
-		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.FilePath); err == nil {
+		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.Namespace, module.FilePath); err == nil {
 			module.ImportPath = importPath
 		}
 	}
@@ -143,6 +143,7 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 			Key:        resolved.Key,
 			ImportPath: resolved.ImportPath,
 			FilePath:   resolved.FilePath,
+			Namespace:  resolved.Namespace,
 			Origin:     resolved.Origin,
 		})
 	}

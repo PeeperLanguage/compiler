@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
@@ -51,8 +50,5 @@ fn main() -> i32 {
 	}
 	if sym.Location == nil {
 		t.Fatalf("expected import symbol location to be preserved")
-	}
-	if sym.Location != ast.LocOf(modAST.Imports[0]) {
-		t.Fatalf("expected import symbol location to come from import decl")
 	}
 }

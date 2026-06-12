@@ -59,7 +59,7 @@ func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content str
 		Origin:     project.ModuleOriginLocal,
 		Content:    content,
 	}
-	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, absPath); err == nil {
+	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	if err := pipeline.New(ctx).Run(module); err != nil {
@@ -85,7 +85,7 @@ func AddOverlay(ctx *project.CompilerContext, path string, content string) {
 		Origin:     project.ModuleOriginLocal,
 		Content:    content,
 	}
-	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, absPath); err == nil {
+	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	ctx.AddModule(module)
