@@ -93,7 +93,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		}
 		rootDir, found := ctx.LibraryRoot(namespace)
 		if !found {
-			return nil, &ImportError{Code: diagnostics.ErrModuleNotFound, Msg: fmt.Sprintf("library namespace not found: %s", namespace)}
+			return nil, &ImportError{Code: diagnostics.ErrModuleNotFound, Msg: fmt.Sprintf("invalid library prefix: %s", namespace)}
 		}
 		basePath = filepath.Join(rootDir, filepath.FromSlash(logicalPath))
 	} else {
@@ -125,29 +125,6 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		absPath = resolved
 	}
 	absPath = filepath.Clean(absPath)
-
-	switch origin {
-	case ModuleOriginLocal:
-		if root := ctx.Config.RootDir; root != "" {
-			rel, err := filepath.Rel(root, absPath)
-			if err != nil {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
-			}
-			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the project root"}
-			}
-		}
-	case ModuleOriginStdlib:
-		if root, ok := ctx.LibraryRoot(namespace); ok && root != "" {
-			rel, err := filepath.Rel(root, absPath)
-			if err != nil {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
-			}
-			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path escapes the stdlib root"}
-			}
-		}
-	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -189,15 +166,15 @@ func splitNamespacedImportPath(importPath string) (string, string, bool) {
 
 func validateImportPath(importPath string) error {
 	if importPath == "." || importPath == ".." {
-		return fmt.Errorf("import path must be root-relative (go-style)")
+		return fmt.Errorf("import path must be root-relative")
 	}
 	if filepath.IsAbs(importPath) || strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
-		return fmt.Errorf("import path must be root-relative (go-style)")
+		return fmt.Errorf("import path must be root-relative")
 	}
 	parts := strings.SplitSeq(importPath, "/")
 	for part := range parts {
 		if part == "" || part == "." || part == ".." {
-			return fmt.Errorf("import path must be root-relative (go-style)")
+			return fmt.Errorf("import path must be root-relative")
 		}
 	}
 	return nil
