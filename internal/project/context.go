@@ -265,7 +265,7 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	if scope == nil || name == "" {
 		return
 	}
-	sym := symbols.New(name, symbols.SymbolConst, nil)
+	sym := symbols.New(name, symbols.SymbolConst, nil, ast.LocOf(nil))
 	switch name {
 	case "true", "false":
 		sym.Type = &typeinfo.BoolType{}
