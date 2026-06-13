@@ -351,3 +351,24 @@ When implementing new compiler work:
 4. implement the smallest structurally correct version
 5. add tests
 6. only then generalize if there is real pressure
+
+## Extras
+Migration to import syntax
+instead of
+```go
+import "core:io";
+import "github.com/raysan5/raylib/ui";
+```
+```rs
+import core::io; 
+import raylib::ui; // can alias inline with `as`
+```
+
+config file will contain dependencies
+```toml
+[dependencies]
+raylib = { url = "https://github.com/raysan5/raylib", version = "4.0.0" }
+local_project = { path = "../local_project" }
+```
+
+lockfile will contain the transitive dependencies and hashes of the dependencies
