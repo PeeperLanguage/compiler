@@ -41,7 +41,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 				continue
 			}
 			if fn.Body == nil {
-				fnType, _ := symbolType(sym)
+				fnType, _ := symbols.GetSymbolType(sym)
 				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 				params, returnType := lowerExternSignature(fn.Params, fn.ReturnType, resolvedFnType)
 				out.Externs = append(out.Externs, hir.Extern{
@@ -77,7 +77,7 @@ func lowerImplDecl(ctx *project.CompilerContext, module *project.Module, out *hi
 			continue
 		}
 		if method.Body == nil {
-			fnType, _ := symbolType(sym)
+			fnType, _ := symbols.GetSymbolType(sym)
 			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 			params, returnType := lowerExternSignature(method.Params, method.ReturnType, resolvedFnType)
 			out.Externs = append(out.Externs, hir.Extern{
@@ -120,7 +120,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		return nil
 	}
 	funcScope := sym.Scope.(*table.Scope)
-	retType, ok := symbolType(sym)
+	retType, ok := symbols.GetSymbolType(sym)
 	if ok {
 		if fnType, ok := retType.(*typeinfo.FuncType); ok && fnType != nil {
 			retType = fnType.Return
@@ -144,7 +144,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 			sym, ok := funcScope.LookupLocal(param.Name.Name)
 			if ok && sym != nil {
 				name = symbolName(sym)
-				if t, ok := symbolType(sym); ok {
+				if t, ok := symbols.GetSymbolType(sym); ok {
 					paramType = t
 				}
 			} else {
@@ -377,7 +377,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		}
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" || t == "<unknown>" {
-			if symType, ok := symbolType(sym); ok {
+			if symType, ok := symbols.GetSymbolType(sym); ok {
 				t = loweredTypeText(symType)
 			} else {
 				t = "<unknown>"
@@ -389,7 +389,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
 			t := resolvedTypeStr
 			if t == "" || t == "<invalid>" || t == "<unknown>" {
-				if symType, ok := symbolType(sym); ok {
+				if symType, ok := symbols.GetSymbolType(sym); ok {
 					t = loweredTypeText(symType)
 				} else {
 					t = "<unknown>"
@@ -728,7 +728,7 @@ func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name st
 			if method == nil || method.Name != name {
 				continue
 			}
-			typ, ok := symbolType(method)
+			typ, ok := symbols.GetSymbolType(method)
 			if !ok {
 				continue
 			}
@@ -867,14 +867,6 @@ func shouldDiscardBindingValue(module *project.Module, symID symbols.SymbolID) b
 	return ok
 }
 
-func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
-	if sym == nil || sym.Type == nil {
-		return nil, false
-	}
-	typ, ok := sym.Type.(typeinfo.Type)
-	return typ, ok && typ != nil
-}
-
 func loweredTypeText(t typeinfo.Type) string {
 	if t == nil {
 		return ""
@@ -964,7 +956,7 @@ func resolveTypeWithScope(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
 	if named, ok := t.(*typeinfo.NamedType); ok && named != nil {
 		sym, found := scope.Lookup(named.Name)
 		if found && sym != nil && sym.Kind == symbols.SymbolType {
-			if resolved, ok := symbolType(sym); ok && resolved != nil {
+			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
 				return resolved
 			}
 		}
