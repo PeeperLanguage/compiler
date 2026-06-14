@@ -258,6 +258,61 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineAllowsPointerRecursiveStruct(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Node {
+	next: ^Node,
+}
+
+#[extern]
+fn next_node() -> ^Node;
+
+fn main() -> i32 {
+	let node: Node = .{ next = next_node() };
+	let next: ^Node = node.next;
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsDirectStructCycle(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct A {
+	b: B,
+}
+
+struct B {
+	a: A,
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsRecursiveTypeAlias(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `type Loop = Loop;
+
+fn main() -> i32 {
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersAutoAddressedPointerReceiverOnValue(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `impl i32 {

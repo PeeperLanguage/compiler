@@ -34,3 +34,23 @@ func TestTopoSortReportsCycles(t *testing.T) {
 		t.Fatalf("expected cycle, got none")
 	}
 }
+
+func TestGraphDegreeAndPredecessorQueries(t *testing.T) {
+	g := New()
+	g.AddNode("a", Node{Kind: NodeModule})
+	g.AddNode("b", Node{Kind: NodeModule})
+	g.AddNode("c", Node{Kind: NodeModule})
+	g.AddEdge("a", "b", EdgeImport)
+	g.AddEdge("c", "b", EdgeImport)
+
+	if got := g.OutDegree("a", EdgeImport); got != 1 {
+		t.Fatalf("unexpected out degree: %d", got)
+	}
+	if got := g.InDegree("b", EdgeImport); got != 2 {
+		t.Fatalf("unexpected in degree: %d", got)
+	}
+	preds := g.Predecessors("b", EdgeImport)
+	if !slices.Contains(preds, NodeID("a")) || !slices.Contains(preds, NodeID("c")) {
+		t.Fatalf("unexpected predecessors: %v", preds)
+	}
+}

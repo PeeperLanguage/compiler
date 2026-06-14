@@ -29,25 +29,16 @@ func (c *checker) resolveType(t typeinfo.Type) typeinfo.Type {
 		if found && sym != nil && sym.Kind == symbols.SymbolType {
 			sym.Used = true
 			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
-				return c.resolveType(resolved)
+				return resolved
 			}
 		}
 		return t
 	}
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
-		if typ == nil {
-			return nil
-		}
-		typ.Underlying = c.resolveType(typ.Underlying)
+		return typ
 	case *typeinfo.RawPtrType:
-		if typ == nil {
-			return nil
-		}
-		resolvedTarget := c.resolveType(typ.Target)
-		if resolvedTarget != typ.Target {
-			return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: resolvedTarget}
-		}
+		return typ
 	case *typeinfo.FuncType:
 		if typ == nil {
 			return nil
@@ -137,7 +128,7 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
 		return true
 	case *typeinfo.RawPtrType:
-		return typ != nil && c.isLowerableType(typ.Target)
+		return typ != nil && typ.Target != nil
 	case *typeinfo.StructType:
 		if typ == nil {
 			return false
@@ -631,6 +622,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		if !ok || sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name), ast.LocOf(node), "")
+			return &typeinfo.InvalidType{}
+		}
+		if sym.Initializing || (!sym.Initialized && symbols.RequiresInitialization(sym.Kind)) {
 			return &typeinfo.InvalidType{}
 		}
 		t, ok := symbols.GetSymbolType(sym)
