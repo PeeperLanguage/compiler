@@ -21,3 +21,5 @@ playground
 installers/dist
 local_app
 graphify-out
+*_REVIEW.md
+*.patch

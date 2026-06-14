@@ -330,6 +330,9 @@ func IsI32(typ Type) bool {
 }
 
 func SameType(left, right Type) bool {
+	if left == right {
+		return true
+	}
 	left = Underlying(left)
 	right = Underlying(right)
 	switch l := left.(type) {

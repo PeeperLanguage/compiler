@@ -572,7 +572,7 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 		return &ir.InvalidExpr{Message: "invalid struct literal", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
 	resolved := exprResolvedType(module, node)
-	strct, ok := loweredRuntimeType(resolved).(*typeinfo.StructType)
+	strct, ok := loweredRuntimeType(resolved, nil).(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return &ir.InvalidExpr{Message: "struct literal type missing", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
@@ -602,7 +602,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	if expectedType == nil {
 		return nil
 	}
-	iface, ok := loweredRuntimeType(expectedType).(*typeinfo.InterfaceType)
+	iface, ok := loweredRuntimeType(expectedType, nil).(*typeinfo.InterfaceType)
 	if !ok || iface == nil {
 		return nil
 	}
@@ -610,7 +610,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	if resolved == nil {
 		return nil
 	}
-	if _, ok := loweredRuntimeType(resolved).(*typeinfo.InterfaceType); ok {
+	if _, ok := loweredRuntimeType(resolved, nil).(*typeinfo.InterfaceType); ok {
 		return nil
 	}
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
@@ -653,7 +653,7 @@ func lookupInterfaceImplementation(module *project.Module, concrete typeinfo.Typ
 }
 
 func lookupInterfaceMethod(baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
-	iface, ok := loweredRuntimeType(baseType).(*typeinfo.InterfaceType)
+	iface, ok := loweredRuntimeType(baseType, nil).(*typeinfo.InterfaceType)
 	if !ok || iface == nil {
 		return nil, -1, false
 	}
@@ -698,7 +698,7 @@ func lowerInterfaceSlotValueType(t typeinfo.Type) (string, bool) {
 	if t == nil {
 		return "", true
 	}
-	runtimeType := loweredRuntimeType(t)
+	runtimeType := loweredRuntimeType(t, nil)
 	if _, ok := runtimeType.(*typeinfo.InterfaceType); ok {
 		return loweredTypeText(runtimeType), true
 	}
@@ -745,7 +745,7 @@ func lookupStructField(baseType typeinfo.Type, name string) (typeinfo.Type, int,
 	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		baseType = ptr.Target
 	}
-	strct, ok := loweredRuntimeType(baseType).(*typeinfo.StructType)
+	strct, ok := loweredRuntimeType(baseType, nil).(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return nil, -1, false
 	}
@@ -879,7 +879,7 @@ func loweredTypeText(t typeinfo.Type) string {
 	if t == nil {
 		return ""
 	}
-	return typeinfo.TypeText(loweredRuntimeType(t))
+	return typeinfo.TypeText(loweredRuntimeType(t, nil))
 }
 
 func loweredReturnTypeText(t typeinfo.Type) string {
@@ -889,7 +889,10 @@ func loweredReturnTypeText(t typeinfo.Type) string {
 	return loweredTypeText(t)
 }
 
-func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
+func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}) typeinfo.Type {
+	if seen == nil {
+		seen = make(map[*typeinfo.DefinedType]struct{})
+	}
 	if t == nil {
 		return nil
 	}
@@ -899,19 +902,25 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 		if typ == nil {
 			return nil
 		}
-		return loweredRuntimeType(typ.Underlying)
+		if _, ok := seen[typ]; ok {
+			// Stop self-recursive expansion once shell already seen.
+			return &typeinfo.NamedType{Name: typ.Name}
+		}
+		seen[typ] = struct{}{}
+		defer delete(seen, typ)
+		return loweredRuntimeType(typ.Underlying, seen)
 	case *typeinfo.RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target)}
+		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target, seen)}
 	case *typeinfo.StructType:
 		if typ == nil {
 			return nil
 		}
 		fields := make([]typeinfo.Field, 0, len(typ.Fields))
 		for _, field := range typ.Fields {
-			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type)})
+			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type, seen)})
 		}
 		return &typeinfo.StructType{Fields: fields}
 	case *typeinfo.InterfaceType:
@@ -924,13 +933,13 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 			for _, param := range method.Params {
 				params = append(params, typeinfo.Field{
 					Name: param.Name,
-					Type: loweredRuntimeType(param.Type),
+					Type: loweredRuntimeType(param.Type, seen),
 				})
 			}
 			methods = append(methods, typeinfo.Method{
 				Name:   method.Name,
 				Params: params,
-				Return: loweredRuntimeType(method.Return),
+				Return: loweredRuntimeType(method.Return, seen),
 			})
 		}
 		return &typeinfo.InterfaceType{Methods: methods}
@@ -940,9 +949,9 @@ func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 		}
 		params := make([]typeinfo.Type, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, loweredRuntimeType(param))
+			params = append(params, loweredRuntimeType(param, seen))
 		}
-		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(typ.Return)}
+		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(typ.Return, seen)}
 	default:
 		return typeinfo.Underlying(t)
 	}
@@ -956,7 +965,7 @@ func resolveTypeWithScope(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
 		sym, found := scope.Lookup(named.Name)
 		if found && sym != nil && sym.Kind == symbols.SymbolType {
 			if resolved, ok := symbolType(sym); ok && resolved != nil {
-				return resolveTypeWithScope(scope, resolved)
+				return resolved
 			}
 		}
 	}

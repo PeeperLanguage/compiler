@@ -9,6 +9,7 @@ type NodeKind uint8
 const (
 	NodeUnknown NodeKind = iota
 	NodeModule
+	NodeTypeDecl
 )
 
 type EdgeKind uint8
@@ -16,6 +17,8 @@ type EdgeKind uint8
 const (
 	EdgeUnknown EdgeKind = iota
 	EdgeImport
+	EdgeTypeValueRef
+	EdgeTypeIndirectRef
 )
 
 type Node struct {
@@ -63,6 +66,33 @@ func (g *Graph) Successors(id NodeID, kinds ...EdgeKind) []NodeID {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return successorSnapshot(g.out[id], kindSet(kinds))
+}
+
+func (g *Graph) Predecessors(id NodeID, kinds ...EdgeKind) []NodeID {
+	if g == nil || id == "" {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return successorSnapshot(g.in[id], kindSet(kinds))
+}
+
+func (g *Graph) OutDegree(id NodeID, kinds ...EdgeKind) int {
+	if g == nil || id == "" {
+		return 0
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return degree(g.out[id], kindSet(kinds))
+}
+
+func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
+	if g == nil || id == "" {
+		return 0
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return degree(g.in[id], kindSet(kinds))
 }
 
 func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID) {
@@ -167,6 +197,22 @@ func successorSnapshot(edgesByKind map[EdgeKind]map[NodeID]struct{}, allowed map
 		}
 	}
 	return result
+}
+
+func degree(edgesByKind map[EdgeKind]map[NodeID]struct{}, allowed map[EdgeKind]struct{}) int {
+	if len(edgesByKind) == 0 {
+		return 0
+	}
+	total := 0
+	for kind, edges := range edgesByKind {
+		if len(allowed) > 0 {
+			if _, ok := allowed[kind]; !ok {
+				continue
+			}
+		}
+		total += len(edges)
+	}
+	return total
 }
 
 func extractCycle(stack []NodeID, target NodeID) []NodeID {

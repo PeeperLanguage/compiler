@@ -3,6 +3,7 @@ package binder
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/deps"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -37,8 +38,10 @@ func (b *binder) bindModule() {
 			b.bindImplDecl(node)
 		}
 	}
+	deps.ValidateTypeDeclCycles(b.ctx, b.module)
 }
 
+// Bind function and top-level declaration signatures into module scope.
 func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
@@ -47,6 +50,8 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 		typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
 }
 
+// Bind top-level value declarations. Explicit types win; otherwise keep
+// placeholder type until later phase fills it.
 func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 	if b == nil || b.module == nil || name == nil || name.Name == "" {
 		return
@@ -62,14 +67,29 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 		typeinfo.ASTTypeWithOptions(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
 }
 
+// Bind named type declarations using one stable shell per symbol.
+// Recursive self-references must see same DefinedType object.
 func (b *binder) bindTypeDecl(name *ast.Ident, typ ast.TypeExpr) {
 	if b == nil || b.module == nil || name == nil || name.Name == "" {
 		return
 	}
-	b.bindModuleScopeType(name.Name, &typeinfo.DefinedType{
+	sym := b.moduleScopeSymbol(name.Name)
+	if sym == nil {
+		return
+	}
+	underlying := typeinfo.ASTTypeWithOptions(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true))
+	if defined, ok := sym.Type.(*typeinfo.DefinedType); ok && defined != nil {
+		// Reuse same shell so self-references keep same type identity.
+		defined.Name = name.Name
+		defined.Underlying = underlying
+		deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
+		return
+	}
+	sym.BindType(&typeinfo.DefinedType{
 		Name:       name.Name,
-		Underlying: typeinfo.ASTTypeWithOptions(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true)),
+		Underlying: underlying,
 	})
+	deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
 }
 
 func (b *binder) bindImplDecl(decl *ast.ImplDecl) {
