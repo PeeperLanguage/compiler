@@ -23,3 +23,4 @@ local_app
 graphify-out
 *_REVIEW.md
 *.patch
+clean.md

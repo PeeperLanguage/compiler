@@ -32,6 +32,14 @@ type Stmt interface {
 	stmtNode()
 	appendText(*strings.Builder, int)
 	appendInlineText(*strings.Builder, int)
+	loc() *source.Location
+}
+
+func LocOf(node Stmt) *source.Location {
+	if node == nil {
+		return nil
+	}
+	return node.loc()
 }
 
 type Block struct {
@@ -81,6 +89,16 @@ func (*Assign) stmtNode()   {}
 func (*Invalid) stmtNode()  {}
 func (*Return) stmtNode()   {}
 func (*If) stmtNode()       {}
+
+// -- implement loc --
+
+func (b *Block) 		loc() *source.Location {return b.Location }
+func (b *Binding) 		loc() *source.Location {return b.Location }
+func (e *ExprStmt) 		loc() *source.Location {return e.Location }
+func (a *Assign) 		loc() *source.Location {return a.Location }
+func (i *Invalid) 		loc() *source.Location {return i.Location }
+func (r *Return) 		loc() *source.Location {return r.Location }
+func (f *If) 			loc() *source.Location {return f.Location }
 
 func (m *Module) Text() string {
 	if m == nil {
