@@ -224,7 +224,7 @@ func (c *checker) checkModule() {
 				continue
 			}
 			if node.Body != nil {
-				c.checkFunction(sym, node)
+				c.checkFunctionWithSelf(sym, node, nil, false)
 			}
 		case *ast.ImplDecl:
 			c.checkImplDecl(node)
@@ -232,9 +232,6 @@ func (c *checker) checkModule() {
 	}
 }
 
-func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
-	c.checkFunctionWithSelf(sym, fn, nil, false)
-}
 
 func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if c == nil || sym == nil || fn == nil || fn.Body == nil {
@@ -459,9 +456,6 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 }
 
-func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
-	c.checkFunctionShapeWithSelf(decl, nil, false)
-}
 
 func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if decl == nil {
