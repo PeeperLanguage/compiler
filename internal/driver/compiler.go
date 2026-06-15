@@ -12,7 +12,7 @@ import (
 
 const COMPILER_VERSION = "0.1.0"
 
-const SOURCE_EXT = ".em"
+const SOURCE_EXT = ".peep"
 
 // NewContext configures shared compiler state and loads the prelude.
 func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {

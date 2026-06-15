@@ -39,17 +39,15 @@ func (c *collector) collectModule(mod *ast.Module) {
 }
 
 func (c *collector) collectNode(node ast.Node) {
+	if decl, ok := node.(ast.Decl); ok {
+		if name, typ, ok := ast.DeclaredTypeExpr(decl); ok {
+			c.collectConcreteTypeDecl(name, typ, node)
+			return
+		}
+	}
 	switch n := node.(type) {
 	case *ast.FnDecl:
 		c.collectFnDecl(n)
-	case *ast.TypeAliasDecl:
-		c.collectTypeAliasDecl(n)
-	case *ast.StructDecl:
-		c.collectConcreteTypeDecl(n.Name, &ast.StructType{Fields: n.Fields, Location: n.Location}, n)
-	case *ast.InterfaceDecl:
-		c.collectConcreteTypeDecl(n.Name, &ast.InterfaceType{Methods: n.Methods, Location: n.Location}, n)
-	case *ast.EnumDecl:
-		c.collectConcreteTypeDecl(n.Name, &ast.EnumType{Variants: n.Variants, Location: n.Location}, n)
 	case *ast.ImplDecl:
 		c.collectImplDecl(n)
 	case *ast.LetDecl:
@@ -81,10 +79,6 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(fn), "")
 		return
 	}
-}
-
-func (c *collector) collectTypeAliasDecl(decl *ast.TypeAliasDecl) {
-	c.collectConcreteTypeDecl(decl.Name, decl.Type, decl)
 }
 
 func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, node ast.Node) {

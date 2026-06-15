@@ -2,11 +2,11 @@
   <img
     width="30"
     height="30"
-    alt="Ember logo"
+    alt="Peeper logo"
     src="https://github.com/user-attachments/assets/49923315-aac7-4930-b6b6-b4a033a808c6"
     align="center"
   />
-  <b>Ember Programming Language</b>
+  <b>Peeper Programming Language</b>
 </p>
 
 Supported release installers:

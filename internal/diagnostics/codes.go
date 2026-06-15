@@ -1,6 +1,6 @@
 package diagnostics
 
-// Error codes for Ember compiler.
+// Error codes for Peeper compiler.
 // Codes are grouped by prefix:
 //
 //	L – lexer errors
@@ -70,6 +70,7 @@ const (
 	ErrBorrowEscape            = "T0036"
 	ErrBorrowConflict          = "T0037"
 	ErrUnknownIdentifier       = "T0038"
+	ErrUninitializedVariable   = "T0039"
 
 	// Module/Import errors (M prefix)
 	ErrModuleNotFound    = "M0001"

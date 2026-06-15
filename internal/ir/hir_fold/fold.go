@@ -36,7 +36,7 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[
 			continue
 		}
 		if terminated {
-			addUnreachableWarning(diag, stmtLoc(stmt))
+			addUnreachableWarning(diag, hir.LocOf(stmt))
 			continue
 		}
 		folded := foldStmt(stmt, diag, env)
@@ -80,7 +80,7 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 			if len(foldedElse) == 1 {
 				elseStmt = foldedElse[0]
 			} else if len(foldedElse) > 1 {
-				elseStmt = &hir.Block{Stmts: foldedElse, Location: stmtLoc(node.Else)}
+				elseStmt = &hir.Block{Stmts: foldedElse, Location: hir.LocOf(node.Else)}
 			}
 		}
 		cond := ir.FoldExpr(node.Cond, env)
@@ -134,24 +134,6 @@ func stmtTerminates(stmt hir.Stmt) bool {
 	}
 }
 
-func stmtLoc(stmt hir.Stmt) *source.Location {
-	switch node := stmt.(type) {
-	case *hir.Block:
-		return node.Location
-	case *hir.Binding:
-		return node.Location
-	case *hir.Return:
-		return node.Location
-	case *hir.ExprStmt:
-		return node.Location
-	case *hir.Invalid:
-		return node.Location
-	case *hir.If:
-		return node.Location
-	default:
-		return &source.Location{}
-	}
-}
 
 func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc *source.Location, value bool) {
 	if diag == nil {

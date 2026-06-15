@@ -435,7 +435,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 			return nil
 		}
 		if l.current != nil && l.current.Term == nil && fn.ReturnType == "void" {
-			l.setTerm(&Ret{})
+			l.setBlockTerm(l.current, &Ret{})
 			l.current = nil
 		}
 		markLocalInterfaceBoxing(fn)
@@ -474,7 +474,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		return true
 	}
 	prevLoc := l.location
-	l.location = stmtLocation(stmt)
+	l.location = hir.LocOf(stmt)
 	defer func() {
 		l.location = prevLoc
 	}()
@@ -496,7 +496,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 			return true
 		}
 		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
-		l.setTerm(&Ret{Value: retRef})
+		l.setBlockTerm(l.current, &Ret{Value: retRef})
 		l.current = nil
 		return true
 	case *hir.ExprStmt:
@@ -574,26 +574,6 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 	return true
 }
 
-func stmtLocation(stmt hir.Stmt) *source.Location {
-	switch node := stmt.(type) {
-	case *hir.Block:
-		return node.Location
-	case *hir.Binding:
-		return node.Location
-	case *hir.ExprStmt:
-		return node.Location
-	case *hir.Assign:
-		return node.Location
-	case *hir.Invalid:
-		return node.Location
-	case *hir.Return:
-		return node.Location
-	case *hir.If:
-		return node.Location
-	default:
-		return nil
-	}
-}
 
 func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	if out == nil || instr == nil {
@@ -615,9 +595,6 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	*out = append(*out, instr)
 }
 
-func (l *lowerer) setTerm(term Terminator) {
-	l.setBlockTerm(l.current, term)
-}
 
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 	if block == nil || term == nil {

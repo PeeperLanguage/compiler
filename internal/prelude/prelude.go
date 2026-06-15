@@ -8,8 +8,8 @@ import (
 	"compiler/internal/project"
 )
 
-// Auto-loaded Ember prelude file within the stdlib root.
-const GlobalPreludeFile = "global.em"
+// Auto-loaded Peeper prelude file within the stdlib root.
+const GlobalPreludeFile = "global.peep"
 
 // Register global prelude source when it exists.
 func Load(ctx *project.CompilerContext) error {

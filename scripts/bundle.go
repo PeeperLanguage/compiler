@@ -10,7 +10,7 @@ import (
 
 const (
 	compilerSourcePkg = "./cmd"
-	bundledBinaryPath = "build/bin/ember"
+	bundledBinaryPath = "build/bin/peeper"
 	devLibrariesRoot  = "_builtin_library"
 	bundledLibsRoot   = "build/libs"
 )

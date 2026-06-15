@@ -1,6 +1,10 @@
 package project
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"compiler/internal/graph"
+)
 
 // Absolute slash-separated path for stable map keys.
 func canonicalPath(path string) string {
@@ -25,6 +29,9 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	ctx.modules[module.Key] = module
 	if module.FilePath != "" {
 		ctx.fileIndex[canonicalPath(module.FilePath)] = module.Key
+	}
+	if ctx.Graph != nil {
+		ctx.Graph.AddNode(graph.NodeID(module.Key), graph.Node{Kind: graph.NodeModule})
 	}
 }
 
@@ -66,37 +73,4 @@ func (ctx *CompilerContext) Modules() []*Module {
 		modules = append(modules, module)
 	}
 	return modules
-}
-
-// Record a module dependency edge.
-func (ctx *CompilerContext) AddDependency(fromKey, toKey string) {
-	if ctx == nil || fromKey == "" || toKey == "" {
-		return
-	}
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
-	edges, ok := ctx.dependencies[fromKey]
-	if !ok {
-		edges = make(map[string]struct{})
-		ctx.dependencies[fromKey] = edges
-	}
-	edges[toKey] = struct{}{}
-}
-
-// Outgoing dependency keys for a module.
-func (ctx *CompilerContext) DependenciesOf(moduleKey string) []string {
-	if ctx == nil || moduleKey == "" {
-		return nil
-	}
-	ctx.mu.RLock()
-	defer ctx.mu.RUnlock()
-	edges, ok := ctx.dependencies[moduleKey]
-	if !ok {
-		return nil
-	}
-	deps := make([]string, 0, len(edges))
-	for key := range edges {
-		deps = append(deps, key)
-	}
-	return deps
 }

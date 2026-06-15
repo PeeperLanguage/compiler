@@ -8,16 +8,17 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
+	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 )
 
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const filePath = "typechecker_test.em"
+	const filePath = "typechecker_test.peep"
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".em", diag)
+	ctx := project.New(".", ".peep", diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
@@ -29,6 +30,7 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
 	return diag
@@ -115,18 +117,159 @@ fn main() -> i32 {
 	}
 }
 
-func TestStructFieldAccessResolves(t *testing.T) {
-	src := `struct Point {
-	x: i32,
+func TestFunctionCallResolvesAcrossDeclarationOrder(t *testing.T) {
+	src := `fn main() -> i32 {
+	return later();
 }
 
-fn main() -> i32 {
-	let p: Point;
-	return p.x;
+fn later() -> i32 {
+	return 7;
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTopLevelConstInitializerRejectsLaterBinding(t *testing.T) {
+	src := `const first: i32 = second;
+const second: i32 = 2;
+
+fn main() -> i32 {
+	return second;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrUseBeforeDecl) {
+		t.Fatalf("expected use-before-declaration diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFunctionBodySeesLaterTopLevelBinding(t *testing.T) {
+	src := `fn main() -> i32 {
+	return answer;
+}
+
+const answer: i32 = 42;`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestStructFieldAccessResolves(t *testing.T) {
+	src := `struct Point {
+		x: i32,
+	}
+
+	fn main() -> i32 {
+		let p: Point;
+		return p.x;
+	}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized variable diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUninitializedLocalReadIsRejected(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32;
+	return x;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized variable diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestAssignmentInitializesLocal(t *testing.T) {
+	src := `fn main() -> i32 {
+	let mut x: i32;
+	x = 1;
+	return x;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIfSingleBranchAssignmentDoesNotDefinitelyInitialize(t *testing.T) {
+	src := `fn main(flag: bool) -> i32 {
+	let mut x: i32;
+	if flag {
+		x = 1;
+	}
+	return x;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized variable diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIfBothBranchesAssignmentDefinitelyInitializes(t *testing.T) {
+	src := `fn main(flag: bool) -> i32 {
+	let mut x: i32;
+	if flag {
+		x = 1;
+	} else {
+		x = 2;
+	}
+	return x;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointerRecursiveStructBindingResolves(t *testing.T) {
+	src := `struct Node {
+	next: ^Node,
+}
+
+#[extern]
+fn next_node() -> ^Node;
+
+fn main() -> i32 {
+	let node: Node = .{ next = next_node() };
+	let next: ^Node = node.next;
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDirectStructCycleIsRejected(t *testing.T) {
+	src := `struct A {
+	b: B,
+}
+
+struct B {
+	a: A,
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRecursiveTypeAliasIsRejected(t *testing.T) {
+	src := `type Loop = Loop;
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -167,7 +310,7 @@ impl File {
 }
 
 fn main() -> i32 {
-	let file: File;
+	let file: File = .{};
 	let reader: Reader = file;
 	return 0;
 }`
