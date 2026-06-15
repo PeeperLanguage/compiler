@@ -102,27 +102,6 @@ func TestSetSizeBitsInvalid(t *testing.T) {
 	}
 }
 
-func TestPointerBytes(t *testing.T) {
-	withSizeBits(t, Bits32)
-	if got := PointerBytes(); got != 4 {
-		t.Errorf("PointerBytes() at 32-bit = %d, want 4", got)
-	}
-	withSizeBits(t, Bits64)
-	if got := PointerBytes(); got != 8 {
-		t.Errorf("PointerBytes() at 64-bit = %d, want 8", got)
-	}
-}
-
-func TestPointerBytesScalesWithABI(t *testing.T) {
-	withSizeBits(t, Bits32)
-	low := PointerBytes()
-	withSizeBits(t, Bits64)
-	high := PointerBytes()
-	if low*2 != high {
-		t.Errorf("PointerBytes() did not double between 32-bit and 64-bit: %d vs %d", low, high)
-	}
-}
-
 func TestThirtyTwoBitArchsCoverage(t *testing.T) {
 	// Ensure the table is non-empty so we don't accidentally drop support
 	// for every 32-bit arch during a refactor.

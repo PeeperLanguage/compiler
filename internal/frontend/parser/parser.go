@@ -33,10 +33,6 @@ func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag)
 	}
 }
 
-func ParseModule(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *ast.Module {
-	return New(filePath, stream, diag).ParseModule()
-}
-
 func (p *Parser) ParseModule() *ast.Module {
 	mod := &ast.Module{
 		FilePath: p.filePath,
@@ -44,14 +40,27 @@ func (p *Parser) ParseModule() *ast.Module {
 		Decls:    make([]ast.Decl, 0),
 	}
 	for !p.at(token.EOF) {
+		startPos := p.pos
+		doc := p.consumeLeadingDoc()
+		if p.at(token.EOF) {
+			if len(mod.Imports) == 0 && len(mod.Decls) == 0 && mod.Doc == nil {
+				mod.Doc = doc
+			}
+			break
+		}
 		if p.at(token.IMPORT) {
 			if imp := p.parseImport(); imp != nil {
+				p.attachDoc(imp, doc)
 				mod.Imports = append(mod.Imports, imp)
 			}
 			continue
 		}
 		if decl := p.parseDecl(); decl != nil {
+			p.attachDoc(decl, doc)
 			mod.Decls = append(mod.Decls, decl)
+			continue
+		}
+		if p.pos != startPos {
 			continue
 		}
 		p.synchronizeDecl()
@@ -127,7 +136,7 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 
 func (p *Parser) parseFnDecl() ast.Decl {
 	start := p.consume(token.FN, "expected fn")
-	name, typeParams, params, returnType, ok := p.parseFnSignature(start)
+	name, typeParams, params, returnType, ok := p.parseFnSignature()
 	if !ok {
 		return nil
 	}
@@ -149,7 +158,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 // parseFnSignature parses the name, optional type parameters, parameter list,
 // and optional return type of a function. When no arrow is present the
 // function has no return value.
-func (p *Parser) parseFnSignature(start *token.Token) (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
+func (p *Parser) parseFnSignature() (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
 	name = p.parseFunctionName()
 	if name == nil {
 		return nil, nil, nil, nil, false
@@ -405,22 +414,31 @@ func (p *Parser) parseFnAttributes() {
 // --- Statements ---
 
 func (p *Parser) parseStmt() ast.Stmt {
+	startPos := p.pos
+	doc := p.consumeLeadingDoc()
+	var stmt ast.Stmt
 	switch p.peek().Kind {
 	case token.LBRACE:
-		return p.parseBlock()
+		stmt = p.parseBlock()
 	case token.LET:
-		stmt, _ := p.parseLetDecl(false).(ast.Stmt)
-		return stmt
+		stmt, _ = p.parseLetDecl(false).(ast.Stmt)
 	case token.CONST:
-		stmt, _ := p.parseConstDecl(false).(ast.Stmt)
-		return stmt
+		stmt, _ = p.parseConstDecl(false).(ast.Stmt)
 	case token.IF:
-		return p.parseIfStmt()
+		stmt = p.parseIfStmt()
 	case token.RETURN:
-		return p.parseReturnStmt()
+		stmt = p.parseReturnStmt()
 	default:
-		return p.parseExprStmt()
+		stmt = p.parseExprStmt()
 	}
+	if stmt == nil {
+		if p.pos != startPos {
+			return nil
+		}
+		return nil
+	}
+	p.attachDoc(stmt, doc)
+	return stmt
 }
 
 func (p *Parser) parseBlock() ast.Stmt {
@@ -980,6 +998,36 @@ func (p *Parser) advance() *token.Token {
 	tok := p.stream[p.pos]
 	p.pos++
 	return &tok
+}
+
+func (p *Parser) consumeLeadingDoc() *ast.CommentGroup {
+	if !p.at(token.DOC_COMMENT) {
+		return nil
+	}
+	start := p.peek()
+	end := start
+	texts := make([]string, 0, 2)
+	for p.at(token.DOC_COMMENT) {
+		tok := p.advance()
+		if tok == nil {
+			break
+		}
+		texts = append(texts, tok.Literal)
+		end = *tok
+	}
+	return &ast.CommentGroup{
+		Text:     strings.Join(texts, "\n"),
+		Location: source.NewLocation(p.filePath, start.Start, end.End),
+	}
+}
+
+func (p *Parser) attachDoc(node ast.Node, doc *ast.CommentGroup) {
+	if node == nil || ast.IsNilNode(node) || doc == nil {
+		return
+	}
+	if documented, ok := node.(ast.DocumentedNode); ok {
+		documented.SetDocComment(doc)
+	}
 }
 
 func (p *Parser) nextID() ast.NodeID {

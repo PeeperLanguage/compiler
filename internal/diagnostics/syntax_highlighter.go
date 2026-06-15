@@ -38,7 +38,7 @@ var colorMap = map[keytype]colors.COLOR{
 
 var highlightNumberPattern = regexp.MustCompile("^" + numeric.NumberTokenPattern)
 
-// SyntaxHighlighter provides syntax highlighting for Ember code snippets
+// SyntaxHighlighter provides syntax highlighting for Peeper code snippets
 type SyntaxHighlighter struct {
 	enabled bool
 }

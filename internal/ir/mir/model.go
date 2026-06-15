@@ -273,10 +273,6 @@ func (v *InterfaceCall) Text() string {
 	return b.String()
 }
 
-func irExprLocation(expr ir.Expr) *source.Location {
-	return ir.ExprLocation(expr)
-}
-
 func InstrLocation(instr Instr) *source.Location {
 	switch node := instr.(type) {
 	case *Assign:
@@ -439,7 +435,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 			return nil
 		}
 		if l.current != nil && l.current.Term == nil && fn.ReturnType == "void" {
-			l.setTerm(&Ret{})
+			l.setBlockTerm(l.current, &Ret{})
 			l.current = nil
 		}
 		markLocalInterfaceBoxing(fn)
@@ -478,7 +474,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		return true
 	}
 	prevLoc := l.location
-	l.location = stmtLocation(stmt)
+	l.location = hir.LocOf(stmt)
 	defer func() {
 		l.location = prevLoc
 	}()
@@ -500,7 +496,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 			return true
 		}
 		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
-		l.setTerm(&Ret{Value: retRef})
+		l.setBlockTerm(l.current, &Ret{Value: retRef})
 		l.current = nil
 		return true
 	case *hir.ExprStmt:
@@ -578,26 +574,6 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 	return true
 }
 
-func stmtLocation(stmt hir.Stmt) *source.Location {
-	switch node := stmt.(type) {
-	case *hir.Block:
-		return node.Location
-	case *hir.Binding:
-		return node.Location
-	case *hir.ExprStmt:
-		return node.Location
-	case *hir.Assign:
-		return node.Location
-	case *hir.Invalid:
-		return node.Location
-	case *hir.Return:
-		return node.Location
-	case *hir.If:
-		return node.Location
-	default:
-		return nil
-	}
-}
 
 func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	if out == nil || instr == nil {
@@ -619,9 +595,6 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	*out = append(*out, instr)
 }
 
-func (l *lowerer) setTerm(term Terminator) {
-	l.setBlockTerm(l.current, term)
-}
 
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 	if block == nil || term == nil {
@@ -665,9 +638,9 @@ func (c *Call) Text() string {
 func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
 	case *ir.IntLit:
-		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: irExprLocation(e)}
+		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.FloatLit:
-		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: irExprLocation(e)}
+		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.StringLit:
 		var name string
 		if l.module != nil {
@@ -676,27 +649,27 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		} else {
 			name = "@.str.unknown"
 		}
-		return &RefName{Name: name, Type: "cstr", Location: irExprLocation(e)}
+		return &RefName{Name: name, Type: "cstr", Location: ir.ExprLocation(e)}
 	case *ir.Ident:
-		return &RefName{Name: e.Name, Type: e.TypeText(), Location: irExprLocation(e)}
+		return &RefName{Name: e.Name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Unary:
 		arg := l.lowerExpr(e.Arg, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeText(), Location: irExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Binary:
 		left := l.lowerExpr(e.Left, out)
 		right := l.lowerExpr(e.Right, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeText(), Location: irExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Call:
 		callee := l.lowerExpr(e.Callee, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &Call{Callee: callee, Args: args, Type: e.TypeText(), Location: irExprLocation(e)}
+		call := &Call{Callee: callee, Args: args, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 		if call.Type == "" {
 			call.Type = "void"
 			l.appendInstr(out, call)
@@ -704,25 +677,25 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.AddrOf:
 		base := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText(), Location: irExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText(), Location: irExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
 		for _, field := range e.Fields {
 			fields = append(fields, l.lowerExpr(field, out))
 		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText(), Location: irExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
 		dataType, boxValue := interfaceStorageFor(e.Value.TypeText())
@@ -742,16 +715,16 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			BoxValue: boxValue,
 			Slots:    slots,
 			Type:     e.TypeText(),
-			Location: irExprLocation(e),
+			Location: ir.ExprLocation(e),
 		}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceCall:
 		base := l.lowerExpr(e.Base, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText(), Location: irExprLocation(e)}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 		if call.Type == "" {
 			call.Type = "void"
 			l.appendInstr(out, call)
@@ -759,12 +732,12 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeText(), Location: irExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: irExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	default:
 		return &RefConst{Value: "0", Type: "i32"}
 	}

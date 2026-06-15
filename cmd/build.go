@@ -17,14 +17,6 @@ import (
 
 // Compile one entry file with a fresh compiler project.
 func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (*project.CompilerContext, *project.Module) {
-	cfg := buildCompilerConfig(path, backendName, debugBuild, targetOS, targetArch)
-	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag(path))
-	entry := compiler.ParseFile(ctx, path)
-	return ctx, entry
-}
-
-// Convert CLI inputs to compiler config.
-func buildCompilerConfig(path, backendName string, debugBuild bool, targetOS, targetArch string) project.Config {
 	rootDir := path
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
@@ -32,7 +24,7 @@ func buildCompilerConfig(path, backendName string, debugBuild bool, targetOS, ta
 	if manifestPath, err := manifest.FindManifestPath(rootDir); err == nil {
 		rootDir = filepath.Dir(manifestPath)
 	}
-	return project.Config{
+	cfg := project.Config{
 		RootDir:       rootDir,
 		Extension:     compiler.SOURCE_EXT,
 		TargetOS:      targetOS,
@@ -40,6 +32,9 @@ func buildCompilerConfig(path, backendName string, debugBuild bool, targetOS, ta
 		TargetBackend: backendName,
 		BuildDebug:    debugBuild,
 	}
+	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag(path))
+	entry := compiler.ParseFile(ctx, path)
+	return ctx, entry
 }
 
 // Build final output after successful compilation.
@@ -59,7 +54,7 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 		return fmt.Errorf("no modules compiled")
 	}
 
-	llDir, err := os.MkdirTemp("", "ember-ll-")
+	llDir, err := os.MkdirTemp("", "peeper-ll-")
 	if err != nil {
 		return fmt.Errorf("create llvm temp dir: %w", err)
 	}

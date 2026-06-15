@@ -12,7 +12,7 @@ import (
 
 const COMPILER_VERSION = "0.1.0"
 
-const SOURCE_EXT = ".em"
+const SOURCE_EXT = ".peep"
 
 // NewContext configures shared compiler state and loads the prelude.
 func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {
@@ -59,7 +59,7 @@ func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content str
 		Origin:     project.ModuleOriginLocal,
 		Content:    content,
 	}
-	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, absPath); err == nil {
+	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	if err := pipeline.New(ctx).Run(module); err != nil {
@@ -85,7 +85,7 @@ func AddOverlay(ctx *project.CompilerContext, path string, content string) {
 		Origin:     project.ModuleOriginLocal,
 		Content:    content,
 	}
-	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, absPath); err == nil {
+	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	ctx.AddModule(module)

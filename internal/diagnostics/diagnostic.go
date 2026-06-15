@@ -107,13 +107,17 @@ type CodeHintLabel struct {
 	Style   LabelStyle
 }
 
-func newDiagnostic(sev Severity, message string) *Diagnostic {
-	return &Diagnostic{Severity: sev, Message: message}
+func NewError(message string) *Diagnostic {
+	return &Diagnostic{Severity: Error, Message: message}
 }
 
-func NewError(message string) *Diagnostic   { return newDiagnostic(Error, message) }
-func NewWarning(message string) *Diagnostic { return newDiagnostic(Warning, message) }
-func NewInfo(message string) *Diagnostic    { return newDiagnostic(Info, message) }
+func NewWarning(message string) *Diagnostic {
+	return &Diagnostic{Severity: Warning, Message: message}
+}
+
+func NewInfo(message string) *Diagnostic {
+	return &Diagnostic{Severity: Info, Message: message}
+}
 
 // WithCode sets the error code
 func (d *Diagnostic) WithCode(code string) *Diagnostic {

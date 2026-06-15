@@ -20,6 +20,15 @@ func (r *resolver) resolveModule() {
 	if r.module.Semantics == nil {
 		r.module.Semantics = project.NewSemanticInfo()
 	}
+	r.markPendingTopLevelBindings()
+	for _, decl := range r.module.AST.Decls {
+		switch node := decl.(type) {
+		case *ast.LetDecl:
+			r.resolveTopLevelBinding(node.Name, node.Value)
+		case *ast.ConstDecl:
+			r.resolveTopLevelBinding(node.Name, node.Value)
+		}
+	}
 	for _, decl := range r.module.AST.Decls {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
@@ -32,6 +41,36 @@ func (r *resolver) resolveModule() {
 	}
 }
 
+func (r *resolver) markPendingTopLevelBindings() {
+	if r == nil || r.module == nil || r.module.ModuleScope == nil {
+		return
+	}
+	for _, sym := range r.module.ModuleScope.Symbols() {
+		if sym == nil {
+			continue
+		}
+		switch sym.Kind {
+		case symbols.SymbolVar, symbols.SymbolConst:
+			sym.Initializing = true
+		}
+	}
+}
+
+func (r *resolver) resolveTopLevelBinding(name *ast.Ident, value ast.Expr) {
+	if r == nil || r.module == nil || r.module.ModuleScope == nil || name == nil || name.Name == "" {
+		return
+	}
+	sym, ok := r.module.ModuleScope.LookupLocal(name.Name)
+	if !ok || sym == nil {
+		return
+	}
+	if value != nil {
+		r.resolveExpr(r.module.ModuleScope, value)
+	}
+	sym.Initializing = false
+	sym.Initialized = value != nil
+}
+
 func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if r == nil || r.module == nil || fn == nil || fn.Body == nil {
 		return
@@ -40,22 +79,10 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if !found || sym == nil || sym.Scope == nil {
 		return
 	}
-	funcScope := sym.Scope.(*table.Scope)
-	for _, param := range fn.Params {
-		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
-			return
-		}
-		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
-		if err := funcScope.Declare(paramSym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
-			return
-		}
-	}
-	r.resolveBlock(funcScope, fn.Body)
+	r.resolveFunctionBody(sym, fn)
 }
 
-func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
+func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if r == nil || r.module == nil || sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
 		return
 	}
@@ -65,7 +92,8 @@ func (r *resolver) resolveMethod(sym *symbols.Symbol, fn *ast.FnDecl) {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
 			return
 		}
-		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name)
+		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
+		paramSym.Initialized = true
 		if err := funcScope.Declare(paramSym); err != nil {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
 			return
@@ -86,7 +114,7 @@ func (r *resolver) resolveImpl(decl *ast.ImplDecl) {
 		if !ok || sym == nil {
 			continue
 		}
-		r.resolveMethod(sym, method)
+		r.resolveFunctionBody(sym, method)
 	}
 }
 
@@ -108,27 +136,29 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.BlockStmt:
 		r.resolveBlock(table.New(scope), node)
 	case *ast.LetDecl:
-		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node)
+		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node, ast.LocOf(node.Name))
 		sym.Initializing = true
-		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
 			return
 		}
 		if node.Value != nil {
 			r.resolveExpr(scope, node.Value)
+			sym.Initialized = true
 		}
+		sym.Initializing = false
 	case *ast.ConstDecl:
-		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node)
+		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node, ast.LocOf(node.Name))
 		sym.Initializing = true
-		defer func() { sym.Initializing = false }()
 		if err := scope.Declare(sym); err != nil {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
 			return
 		}
 		if node.Value != nil {
 			r.resolveExpr(scope, node.Value)
+			sym.Initialized = true
 		}
+		sym.Initializing = false
 	case *ast.ReturnStmt:
 		if node.Value != nil {
 			r.resolveExpr(scope, node.Value)
@@ -139,17 +169,36 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			return
 		}
 		r.resolveExpr(scope, node.Cond)
+		// Snapshot definite-assignment state before branching.
+		before := snapshotInitialized(scope)
+		// Resolve `then` in a child scope so locals do not leak out.
 		r.resolveBlock(table.New(scope), node.Then)
+		// Record which names `then` definitely initialized.
+		thenState := snapshotInitialized(scope)
+		// Restore pre-branch state before checking `else`.
+		restoreInitialized(before)
 		if elseBlock, ok := node.Else.(*ast.BlockStmt); ok {
+			// Resolve `else` in a separate child scope.
 			r.resolveBlock(table.New(scope), elseBlock)
-		} else if node.Else != nil {
-			r.resolveStmt(scope, node.Else)
+			// Keep init only when both branches initialize same symbol.
+			mergeInitialized(before, thenState, snapshotInitialized(scope))
+			return
 		}
+		if node.Else != nil {
+			// Non-block `else` still counts as second branch.
+			r.resolveStmt(scope, node.Else)
+			// Same merge rule: both branches must initialize it.
+			mergeInitialized(before, thenState, snapshotInitialized(scope))
+			return
+		}
+		// No `else`: `then` alone cannot prove definite assignment.
+		restoreInitialized(before)
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:
-		r.resolveExpr(scope, node.Target)
+		r.resolveAssignTarget(scope, node.Target)
 		r.resolveExpr(scope, node.Value)
+		r.markAssigned(scope, node.Target)
 	default:
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
 	}
@@ -179,6 +228,16 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 				)
 				return
 			}
+			if !sym.Initialized && symbols.RequiresInitialization(sym.Kind) {
+				msg := "symbol `" + node.Name + "` used before it's initialized"
+				r.ctx.Diagnostics.Add(
+					diagnostics.NewError(msg).
+						WithCode(diagnostics.ErrUninitializedVariable).
+						WithPrimaryLabel(ast.LocOf(node), msg).
+						WithHelp("assign a value before reading this symbol"),
+				)
+				return
+			}
 			return
 		}
 		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
@@ -189,6 +248,9 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.SelectorExpr:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.StructLit:
+		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
+			r.resolveScopeResolution(scopedType)
+		}
 		for _, field := range node.Fields {
 			r.resolveExpr(scope, field.Value)
 		}
@@ -217,6 +279,63 @@ func Resolve(ctx *project.CompilerContext, module *project.Module) {
 	r.resolveModule()
 }
 
+func snapshotInitialized(scope *table.Scope) map[*symbols.Symbol]bool {
+	state := make(map[*symbols.Symbol]bool)
+	for curr := scope; curr != nil; curr = curr.Parent() {
+		for _, sym := range curr.Symbols() {
+			if sym != nil {
+				state[sym] = sym.Initialized
+			}
+		}
+	}
+	return state
+}
+
+func restoreInitialized(state map[*symbols.Symbol]bool) {
+	for sym, initialized := range state {
+		if sym != nil {
+			sym.Initialized = initialized
+		}
+	}
+}
+
+func mergeInitialized(before, thenState, elseState map[*symbols.Symbol]bool) {
+	for sym, wasInitialized := range before {
+		if sym == nil {
+			continue
+		}
+		sym.Initialized = wasInitialized || (thenState[sym] && elseState[sym])
+	}
+}
+
+func (r *resolver) resolveAssignTarget(scope *table.Scope, expr ast.Expr) {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		sym, ok := scope.Lookup(node.Name)
+		if ok && sym != nil {
+			sym.Used = true
+			return
+		}
+		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
+	case *ast.SelectorExpr:
+		r.resolveExpr(scope, node.Expr)
+	default:
+		r.resolveExpr(scope, expr)
+	}
+}
+
+func (r *resolver) markAssigned(scope *table.Scope, expr ast.Expr) {
+	ident, ok := expr.(*ast.Ident)
+	if !ok || ident == nil {
+		return
+	}
+	sym, ok := scope.Lookup(ident.Name)
+	if !ok || sym == nil {
+		return
+	}
+	sym.Initialized = true
+}
+
 func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 	if r == nil || r.module == nil || node == nil {
 		return false
@@ -239,7 +358,9 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 		return false
 	}
 	if !sym.IsPub {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "")
+		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "use of unexported symbol").
+			WithSecondaryLabel(sym.Location, "defined here").
+			WithNote("symbols with uppercase are exported otherwise private")
 		return false
 	}
 	sym.Used = true

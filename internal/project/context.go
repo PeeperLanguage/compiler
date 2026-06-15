@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/graph"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/symbols"
@@ -15,8 +17,8 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-// Development-time standard library directory.
-const STD_LIB_DEV = "_builtin_library"
+// Bundled libraries base directory relative to the installed compiler binary.
+const PACKAGED_LIBS_DIR = "../libs"
 
 // Where a module was loaded from.
 type ModuleOrigin string
@@ -24,7 +26,7 @@ type ModuleOrigin string
 const (
 	// Project source file.
 	ModuleOriginLocal ModuleOrigin = "local"
-	// Standard library source file.
+	// Packaged library source file loaded from a namespace root such as core/vendor.
 	ModuleOriginStdlib ModuleOrigin = "core"
 	// Package dependency source file.
 	ModuleOriginDependency ModuleOrigin = "dependency"
@@ -42,6 +44,8 @@ type ResolvedImport struct {
 	FilePath string
 	// Local, stdlib, or dependency.
 	Origin ModuleOrigin
+	// Optional namespace for packaged libraries such as core/vendor.
+	Namespace string
 	// Manifest alias for dependency imports.
 	DependencyAlias string
 }
@@ -54,6 +58,8 @@ type Module struct {
 	ImportPath string
 	// Absolute source path.
 	FilePath string
+	// Optional namespace for packaged libraries such as core/vendor.
+	Namespace string
 	// User-selected entry module.
 	IsEntry bool
 	// Local, stdlib, or dependency.
@@ -76,9 +82,6 @@ type Module struct {
 	Semantics *SemanticInfo
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
-
-	// Outgoing module graph keys.
-	Dependencies []string
 }
 
 // Shared state for one compilation.
@@ -94,10 +97,10 @@ type CompilerContext struct {
 	modules map[string]*Module
 	// Canonical file path -> module key.
 	fileIndex map[string]string
-	// Module graph edges.
-	dependencies map[string]map[string]struct{}
+	// Shared compiler dependency graph.
+	Graph *graph.Graph
 
-	// Guards module and dependency indexes.
+	// Guards module indexes.
 	mu sync.RWMutex
 }
 
@@ -116,8 +119,10 @@ type Config struct {
 	RootDir string
 	// Source file extension.
 	Extension string
-	// Standard library root.
-	StdlibRoot string
+	// Packaged libraries base directory. Namespace imports map to subdirectories here.
+	LibraryBaseDir string
+	// Optional explicit namespace -> root overrides.
+	LibraryRoots map[string]string
 	// Manifest alias -> dependency root.
 	DependencyRoots map[string]string
 	// Target operating system.
@@ -140,7 +145,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		diag = diagnostics.NewDiagnosticBag("")
 	}
 	if cfg.Extension == "" {
-		cfg.Extension = ".em"
+		cfg.Extension = ".peep"
 	}
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."
@@ -160,25 +165,39 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 			cfg.RootDir = abs
 		}
 	}
-	if cfg.StdlibRoot == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			candidate := filepath.Join(cwd, STD_LIB_DEV)
-			if _, err := os.Stat(candidate); err == nil {
-				cfg.StdlibRoot = candidate
+	if cfg.LibraryBaseDir == "" {
+		cfg.LibraryBaseDir, _ = libraryBaseDirFromExecutable()
+	}
+	cfg.LibraryBaseDir = filepath.Clean(cfg.LibraryBaseDir)
+	if cfg.LibraryBaseDir != "" && !filepath.IsAbs(cfg.LibraryBaseDir) {
+		if abs, err := filepath.Abs(cfg.LibraryBaseDir); err == nil {
+			cfg.LibraryBaseDir = abs
+		}
+	}
+	if cfg.LibraryRoots == nil {
+		cfg.LibraryRoots = make(map[string]string)
+	}
+	for namespace, root := range cfg.LibraryRoots {
+		root = filepath.Clean(root)
+		if root != "" && !filepath.IsAbs(root) {
+			if abs, err := filepath.Abs(root); err == nil {
+				root = abs
 			}
 		}
-		if cfg.StdlibRoot == "" {
-			cfg.StdlibRoot = filepath.Join(cfg.RootDir, STD_LIB_DEV)
+		cfg.LibraryRoots[namespace] = root
+	}
+	if cfg.LibraryBaseDir != "" {
+		if _, err := os.Stat(cfg.LibraryBaseDir); err != nil && !os.IsNotExist(err) {
+			diag.Add(diagnostics.NewWarning("failed to access packaged libraries root: " + err.Error()))
 		}
 	}
-	cfg.StdlibRoot = filepath.Clean(cfg.StdlibRoot)
-	if !filepath.IsAbs(cfg.StdlibRoot) {
-		if abs, err := filepath.Abs(cfg.StdlibRoot); err == nil {
-			cfg.StdlibRoot = abs
+	for namespace, root := range cfg.LibraryRoots {
+		if root == "" {
+			continue
 		}
-	}
-	if _, err := os.Stat(cfg.StdlibRoot); err != nil && !os.IsNotExist(err) {
-		diag.Add(diagnostics.NewWarning("failed to access stdlib root: " + err.Error()))
+		if _, err := os.Stat(root); err != nil && !os.IsNotExist(err) {
+			diag.Add(diagnostics.NewWarning("failed to access library root for " + namespace + ": " + err.Error()))
+		}
 	}
 	if cfg.DependencyRoots == nil {
 		cfg.DependencyRoots = make(map[string]string)
@@ -188,11 +207,46 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Config:      cfg,
 		Diagnostics: diag,
 		GlobalScope: globalScope,
+		Graph:       graph.New(),
 
-		modules:      make(map[string]*Module),
-		fileIndex:    make(map[string]string),
-		dependencies: make(map[string]map[string]struct{}),
+		modules:   make(map[string]*Module),
+		fileIndex: make(map[string]string),
 	}
+}
+
+func libraryBaseDirFromExecutable() (string, bool) {
+	exePath, err := os.Executable()
+	if err != nil || exePath == "" {
+		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil && resolved != "" {
+		exePath = resolved
+	}
+	return packagedLibraryBaseForExecutable(exePath), true
+}
+
+func packagedLibraryBaseForExecutable(exePath string) string {
+	if exePath == "" {
+		return ""
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(exePath), PACKAGED_LIBS_DIR))
+}
+
+func (ctx *CompilerContext) LibraryRoot(namespace string) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return "", false
+	}
+	if root, ok := ctx.Config.LibraryRoots[namespace]; ok && root != "" {
+		return root, true
+	}
+	if ctx.Config.LibraryBaseDir == "" {
+		return "", false
+	}
+	return filepath.Join(ctx.Config.LibraryBaseDir, filepath.FromSlash(namespace)), true
 }
 
 // Compiler-owned names available before prelude parsing.
@@ -209,7 +263,7 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	if scope == nil || name == "" {
 		return
 	}
-	sym := symbols.New(name, symbols.SymbolConst, nil)
+	sym := symbols.New(name, symbols.SymbolConst, nil, ast.LocOf(nil))
 	switch name {
 	case "true", "false":
 		sym.Type = &typeinfo.BoolType{}

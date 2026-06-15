@@ -17,10 +17,10 @@ import (
 
 func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const filePath = "usage_test.em"
+	const filePath = "usage_test.peep"
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".em", diag)
+	ctx := project.New(".", ".peep", diag)
 
 	if setupImports {
 		// Mock an external dependency module named "external"
@@ -28,11 +28,11 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 	value: i32,
 }
 fn GetValue() -> i32 { return 42; }`
-		extAST := parser.ParseModule("external.em", lexer.Lex("external.em", extSrc, diag), diag)
+		extAST := parser.New("external.peep", lexer.New("external.peep", extSrc, diag).Tokenize(), diag).ParseModule()
 		extMod := &project.Module{
-			Key:        "local:external.em",
+			Key:        "local:external.peep",
 			ImportPath: "external",
-			FilePath:   "external.em",
+			FilePath:   "external.peep",
 			Content:    extSrc,
 			AST:        extAST,
 			Imports:    make(map[string]project.ResolvedImport),
@@ -43,8 +43,8 @@ fn GetValue() -> i32 { return 42; }`
 		typechecker.Check(ctx, extMod)
 	}
 
-	stream := lexer.Lex(filePath, src, diag)
-	modAST := parser.ParseModule(filePath, stream, diag)
+	stream := lexer.New(filePath, src, diag).Tokenize()
+	modAST := parser.New(filePath, stream, diag).ParseModule()
 	module := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
 		ImportPath: "usage_test",
@@ -56,9 +56,9 @@ fn GetValue() -> i32 { return 42; }`
 
 	if setupImports {
 		module.Imports["external"] = project.ResolvedImport{
-			Key:        "local:external.em",
+			Key:        "local:external.peep",
 			ImportPath: "external",
-			FilePath:   "external.em",
+			FilePath:   "external.peep",
 			Origin:     project.ModuleOriginLocal,
 		}
 	}
@@ -215,7 +215,7 @@ fn main() -> i32 {
 }
 
 func TestUsageWarningsFixture(t *testing.T) {
-	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings_0.em")
+	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings_0.peep")
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

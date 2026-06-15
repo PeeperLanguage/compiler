@@ -20,9 +20,9 @@ import (
 
 var errAlreadyReported = errors.New("diagnostics already reported")
 
-// tempRunFilePrefix is the prefix for the temporary executable created by 'ember run'.
+// tempRunFilePrefix is the prefix for the temporary executable created by 'peeper run'.
 const (
-	tempRunFilePrefix = "ember-run-"
+	tempRunFilePrefix = "peeper-run-"
 	genArtifactsDir   = "_gen"
 	debugBuildUsage   = "enable debug build mode (emits debug info and debug-friendly codegen)"
 )
@@ -40,15 +40,6 @@ func emitAndCheckDiagnostics(ctx *project.CompilerContext) error {
 		return errAlreadyReported
 	}
 	return nil
-}
-
-// parseBackendType returns backend.LLVM when target is empty.
-// build and run default to LLVM when no explicit backend is specified.
-func parseBackendType(t backend.BACKEND_TYPE) backend.BACKEND_TYPE {
-	if t == "" {
-		return backend.LLVM
-	}
-	return t
 }
 
 type commandCommonFlags struct {
@@ -167,7 +158,9 @@ func buildCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 
-	backendTarget = parseBackendType(backendTarget)
+	if backendTarget == "" {
+		backendTarget = backend.LLVM
+	}
 	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
@@ -237,7 +230,9 @@ func runCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
 		return fmt.Errorf("run target %s/%s does not match host %s/%s", opts.targetOS, opts.targetArch, runtime.GOOS, runtime.GOARCH)
 	}
 
-	backendTarget = parseBackendType(backendTarget)
+	if backendTarget == "" {
+		backendTarget = backend.LLVM
+	}
 	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
@@ -331,7 +326,7 @@ func resolveManifestBuildTarget(commandName, startPath string, targetOS string) 
 	}
 	entry := strings.TrimSpace(file.Package.Entry)
 	if entry == "" {
-		return buildTarget{}, fmt.Errorf("%s: package.entry is required for `ember %s` without an explicit file", manifestPath, commandName)
+		return buildTarget{}, fmt.Errorf("%s: package.entry is required for `peeper %s` without an explicit file", manifestPath, commandName)
 	}
 
 	entry = strings.ReplaceAll(entry, "\\", "/")

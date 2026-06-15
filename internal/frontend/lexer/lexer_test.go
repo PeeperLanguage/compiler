@@ -11,12 +11,12 @@ func TestLexSubsetProgram(t *testing.T) {
 	src := `import "math" as m;
 const x: i32 = 1 + 2 * 3;
 let mut y: i32 = x;
-fn add(a: i32, b: i32): i32 {
+	fn add(a: i32, b: i32): i32 {
 	let z: i32 = a + b;
 	return z;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.em")
-	stream := Lex("test.em", src, diag)
+	diag := diagnostics.NewDiagnosticBag("test.peep")
+	stream := New("test.peep", src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -38,5 +38,31 @@ fn add(a: i32, b: i32): i32 {
 		if stream[i].Kind != k {
 			t.Fatalf("token[%d]: got %s want %s", i, stream[i].Kind, k)
 		}
+	}
+}
+
+func TestLexKeepsStandaloneComments(t *testing.T) {
+	src := `// module docs
+// more docs
+fn main() -> i32 {
+	// not docs
+	if true {
+		return 0;
+	}
+	return 1;
+}`
+	diag := diagnostics.NewDiagnosticBag("test.peep")
+	stream := New("test.peep", src, diag).Tokenize()
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	var docCount int
+	for _, tok := range stream {
+		if tok.Kind == token.DOC_COMMENT {
+			docCount++
+		}
+	}
+	if docCount != 3 {
+		t.Fatalf("doc comment count: got %d want 3", docCount)
 	}
 }
