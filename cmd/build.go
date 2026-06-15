@@ -54,7 +54,7 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 		return fmt.Errorf("no modules compiled")
 	}
 
-	llDir, err := os.MkdirTemp("", "ember-ll-")
+	llDir, err := os.MkdirTemp("", "peeper-ll-")
 	if err != nil {
 		return fmt.Errorf("create llvm temp dir: %w", err)
 	}

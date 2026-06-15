@@ -9,7 +9,7 @@ import (
 func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")
-	libraryFile := filepath.Join(libraryBase, "vendor", "json.em")
+	libraryFile := filepath.Join(libraryBase, "vendor", "json.peep")
 	if err := os.MkdirAll(filepath.Dir(libraryFile), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -19,7 +19,7 @@ func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 
 	ctx := NewWithConfig(Config{
 		RootDir:        root,
-		Extension:      ".em",
+		Extension:      ".peep",
 		LibraryBaseDir: libraryBase,
 	}, nil)
 

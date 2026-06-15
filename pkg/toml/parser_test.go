@@ -8,7 +8,7 @@ import (
 
 func TestParseFileSupportsInlineTablesAndArrays(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ember")
+	path := filepath.Join(dir, "peeper")
 	src := `
 [package]
 name = "app"
@@ -41,7 +41,7 @@ flags = [true, 1, "x"]
 
 func TestParseFileRejectsDuplicateKeys(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ember")
+	path := filepath.Join(dir, "peeper")
 	src := `
 [package]
 name = "app"
@@ -58,7 +58,7 @@ name = "other"
 
 func TestLookupAndDecodeProvideTypedAccess(t *testing.T) {
 	src := `
-title = "ember"
+title = "peeper"
 
 [package]
 name = "app"
@@ -78,7 +78,7 @@ json = { type = "remote", repo = "github.com/acme/json", version = "v1.2.0" }
 	if err != nil || !ok {
 		t.Fatalf("lookup title: ok=%v err=%v", ok, err)
 	}
-	if title != "ember" {
+	if title != "peeper" {
 		t.Fatalf("unexpected title: %q", title)
 	}
 
@@ -107,7 +107,7 @@ json = { type = "remote", repo = "github.com/acme/json", version = "v1.2.0" }
 
 func TestDataDecodeMapsSectionsIntoStruct(t *testing.T) {
 	src := `
-title = "ember"
+title = "peeper"
 
 [package]
 name = "app"
@@ -140,7 +140,7 @@ mock_path = "./local"
 	if err := data.Decode(&cfg); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if cfg.Default.Title != "ember" {
+	if cfg.Default.Title != "peeper" {
 		t.Fatalf("unexpected default section decode: %#v", cfg.Default)
 	}
 	if cfg.Package.Name != "app" || cfg.Package.Version != "1.2.3" {
