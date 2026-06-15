@@ -810,6 +810,27 @@ func loweredReturnTypeText(module *project.Module, t typeinfo.Type) string {
 	return loweredTypeText(module, t)
 }
 
+// resolveNamedType performs a single-hop scope lookup for a NamedType so the
+// lowerer can collapse source-level aliases before runtime layout work.
+// Called only from loweredRuntimeType; lives here to avoid importing table
+// from the leaf typeinfo package.
+func resolveNamedType(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
+	if scope == nil || t == nil {
+		return t
+	}
+	named, ok := t.(*typeinfo.NamedType)
+	if !ok || named == nil {
+		return t
+	}
+	sym, found := scope.Lookup(named.Name)
+	if found && sym != nil && sym.Kind == symbols.SymbolType {
+		if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
+			return resolved
+		}
+	}
+	return t
+}
+
 // loweredRuntimeType strips semantic-only named layers and preserves recursive
 // shells so MIR sees runtime layout, not source-level aliases.
 func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}) typeinfo.Type {
@@ -820,7 +841,7 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		return nil
 	}
 	if module != nil {
-		t = typeinfo.ResolveNamedTypeWithScope(module.ModuleScope, t)
+		t = resolveNamedType(module.ModuleScope, t)
 	}
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
