@@ -138,7 +138,6 @@ func (c *checker) checkModule() {
 	}
 }
 
-
 func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if c == nil || sym == nil || fn == nil || fn.Body == nil {
 		return
@@ -362,7 +361,6 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 }
 
-
 func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if decl == nil {
 		return
@@ -435,8 +433,6 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
-	// dst = c.resolveType(dst)
-	// src = c.resolveType(src)
 	if typeinfo.Assignable(dst, src) {
 		return true
 	}
@@ -672,8 +668,8 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	if fieldType, ok := c.lookupFieldType(baseType, node.Name.Name); ok {
-		return fieldType
+	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
+		return field.Type
 	}
 	if methodType, _, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
 		return methodType
@@ -703,7 +699,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes, methodSym)
 		return c.callReturnType(call, methodType)
 	}
-	if _, fieldOK := c.lookupFieldType(baseType, selector.Name.Name); fieldOK {
+	if _, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable,
 			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "")
 		return &typeinfo.InvalidType{}
@@ -807,23 +803,6 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
 	}
 	return &typeinfo.StructType{Fields: fields}
-}
-
-func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo.Type, bool) {
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		baseType = ptr.Target
-	}
-	underlying := typeinfo.Underlying(baseType)
-	strct, ok := underlying.(*typeinfo.StructType)
-	if !ok || strct == nil {
-		return nil, false
-	}
-	for _, field := range strct.Fields {
-		if field.Name == name {
-			return field.Type, true
-		}
-	}
-	return nil, false
 }
 
 func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {
@@ -1123,24 +1102,32 @@ func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
 // qualifiedScopeType resolves the type of a `module::symbol` expression using ScopeResolution.
 func (c *checker) qualifiedScopeType(scope *table.Scope, node *ast.ScopeResolution) typeinfo.Type {
 	_ = scope // the current scope is not used for two-step foreign lookup
+	if c == nil || node == nil {
+		return &typeinfo.InvalidType{}
+	}
 	alias := node.Module.Name
 	member := node.Name.Name
-	imp, ok := c.module.Imports[alias]
-	if !ok {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+alias+"`", ast.LocOf(node), "")
+	resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, alias, member)
+	if !ok || resolved.Symbol == nil {
+		if c.ctx != nil {
+			moduleHasAlias := false
+			if c.module != nil && c.module.Imports != nil {
+				_, moduleHasAlias = c.module.Imports[alias]
+			}
+			if !moduleHasAlias {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+alias+"`", ast.LocOf(node), "")
+			} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "module `"+alias+"` not loaded", ast.LocOf(node), "")
+			} else {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+alias+"`", ast.LocOf(node), "")
+			}
+		}
 		return &typeinfo.InvalidType{}
 	}
-	mod, ok := c.ctx.ModuleByKey(imp.Key)
-	if !ok || mod == nil || mod.ModuleScope == nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "module `"+alias+"` not loaded", ast.LocOf(node), "")
-		return &typeinfo.InvalidType{}
+	if resolved.Symbol.Kind != symbols.SymbolType {
+		return &typeinfo.UnknownType{}
 	}
-	sym, ok := mod.ModuleScope.LookupLocal(member)
-	if !ok || sym == nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+alias+"`", ast.LocOf(node), "")
-		return &typeinfo.InvalidType{}
-	}
-	t, ok := symbols.GetSymbolType(sym)
+	t, ok := symbols.GetSymbolType(resolved.Symbol)
 	if !ok || t == nil {
 		return &typeinfo.UnknownType{}
 	}
