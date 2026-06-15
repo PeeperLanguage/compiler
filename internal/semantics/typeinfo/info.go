@@ -4,7 +4,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"slices"
 	"strconv"
 	"strings"
@@ -649,25 +648,8 @@ func (e *As) Type() Type {
 	return e.ExprType
 }
 
-// ResolveNamedTypeWithScope lets lowerer collapse source-level aliases before
-// runtime layout work, while still stopping after one hop so recursive shells
-// can survive until dependency/cycle logic handles them.
-func ResolveNamedTypeWithScope(scope *table.Scope, t Type) Type {
-	if scope == nil || t == nil {
-		return t
-	}
-	if named, ok := t.(*NamedType); ok && named != nil {
-		sym, found := scope.Lookup(named.Name)
-		if found && sym != nil && sym.Kind == symbols.SymbolType {
-			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
-				return resolved
-			}
-		}
-	}
-	return t
-}
-
 func GetMethodLookupKeys(baseType Type) []string {
+
 	keys := make([]string, 0, 4)
 	appendKey := func(typ Type) {
 		if typ == nil {

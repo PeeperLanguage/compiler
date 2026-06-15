@@ -392,11 +392,26 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", ast.LocOf(decl), "")
 			continue
 		}
+		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
 		for _, param := range method.Params {
-			_ = typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, true))
+			paramType := typeinfo.ASTTypeWithOptions(param.Type, opts)
+			// Abstract Self is resolved at impl time; skip lowerability check.
+			if paramType != nil && !typeinfo.ContainsAbstractSelf(paramType) && !c.isLowerableType(paramType) {
+				site := ast.Node(decl)
+				if param.Name != nil {
+					site = param.Name
+				}
+				c.ctx.Diagnostics.Add(invalidTypeError(site,
+					"interface method parameter type is not lowerable in current compiler stage"))
+			}
 		}
-		_ = typeinfo.ASTTypeWithOptions(method.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, true))
+		if retType := typeinfo.ASTTypeWithOptions(method.ReturnType, opts); retType != nil &&
+			!typeinfo.ContainsAbstractSelf(retType) && !c.isLowerableType(retType) {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+				"interface method return type is not lowerable in current compiler stage", ast.LocOf(decl), "")
+		}
 	}
+
 }
 
 func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
@@ -1098,28 +1113,15 @@ func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
 	return typeinfo.SameType(target, arg) || c.assignable(target, arg) || c.assignable(arg, target)
 }
 
-// qualifiedScopeType resolves the type of a `module::symbol` expression using ScopeResolution.
+// qualifiedScopeType resolves the type of a `module::symbol` expression.
+// Resolver already emitted symbol-not-found diagnostics for this node;
+// checker returns InvalidType silently on lookup failure to avoid duplicates.
 func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 	if c == nil || node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	alias := node.Module.Name
-	member := node.Name.Name
-	resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, alias, member)
+	resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name)
 	if !ok || resolved.Symbol == nil {
-		if c.ctx != nil {
-			moduleHasAlias := false
-			if c.module != nil && c.module.Imports != nil {
-				_, moduleHasAlias = c.module.Imports[alias]
-			}
-			if !moduleHasAlias {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+alias+"`", ast.LocOf(node), "")
-			} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "module `"+alias+"` not loaded", ast.LocOf(node), "")
-			} else {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+alias+"`", ast.LocOf(node), "")
-			}
-		}
 		return &typeinfo.InvalidType{}
 	}
 	if resolved.Symbol.Kind != symbols.SymbolType {
