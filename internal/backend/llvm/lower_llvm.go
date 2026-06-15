@@ -63,8 +63,7 @@ func llvmTypeName(typeText string) (string, bool) {
 	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
 		target, ok := llvmTypeName(strings.TrimSpace(remainder))
 		if !ok {
-			// Unknown pointee still lowers as pointer-sized storage.
-			return "i8*", true
+			return "", false
 		}
 		return target + "*", true
 	}

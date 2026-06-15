@@ -12,14 +12,14 @@ func TestInstallAllDependenciesRestoresMissingLockedCache(t *testing.T) {
 	root := t.TempDir()
 	mockRoot := filepath.Join(root, "mock")
 	cachePath := manifest.CacheModulesDir(root)
-	versionedModule := filepath.Join(cachePath, "github.com", "itsfuad", "peeper_test_lib@v0.0.1")
-	staleModule := filepath.Join(cachePath, "github.com", "itsfuad", "peeper_test_lib@latest")
+	versionedModule := filepath.Join(cachePath, "github.com", "itsfuad", "ember_test_lib@v0.0.1")
+	staleModule := filepath.Join(cachePath, "github.com", "itsfuad", "ember_test_lib@latest")
 
 	mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `[package]
 name = "app"
 
 [dependencies]
-peeper_test_lib = "github.com/itsfuad/peeper_test_lib"
+ember_test_lib = "github.com/itsfuad/ember_test_lib"
 
 [dev]
 mock_remote = true
@@ -28,18 +28,18 @@ mock_path = "./mock"
 	mustWriteGetTest(t, filepath.Join(root, manifest.LockfileName), `{
   "version": "1.0",
   "direct_deps": [
-    "github.com/itsfuad/peeper_test_lib"
+    "github.com/itsfuad/ember_test_lib"
   ],
   "dependencies": {
-    "github.com/itsfuad/peeper_test_lib": {
+    "github.com/itsfuad/ember_test_lib": {
       "version": "v0.0.1",
-      "resolved_url": "github.com/itsfuad/peeper_test_lib",
+      "resolved_url": "github.com/itsfuad/ember_test_lib",
       "direct": true
     }
   }
 }`)
-	mustWriteGetTest(t, filepath.Join(mockRoot, "itsfuad", "peeper_test_lib-v0.0.1", manifest.FileName), `[package]
-name = "peeper_test_lib"
+	mustWriteGetTest(t, filepath.Join(mockRoot, "itsfuad", "ember_test_lib-v0.0.1", manifest.FileName), `[package]
+name = "ember_test_lib"
 `)
 	mustWriteGetTest(t, filepath.Join(staleModule, manifest.FileName), `[package]
 name = "stale"
@@ -68,7 +68,7 @@ name = "stale"
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	if got := loadedManifest.Dependencies["peeper_test_lib"].Version; got != "v0.0.1" {
+	if got := loadedManifest.Dependencies["ember_test_lib"].Version; got != "v0.0.1" {
 		t.Fatalf("expected dependency to be pinned to resolved version, got %q", got)
 	}
 }

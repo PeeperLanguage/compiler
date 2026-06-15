@@ -4,12 +4,10 @@ import (
 	"compiler/internal/analysis/cfg"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
-	"compiler/internal/graph"
 	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
-	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
@@ -58,51 +56,24 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if preludeKey != "" {
 		for _, mod := range p.ctx.Modules() {
 			if mod != nil && mod.Key != preludeKey {
-				if p.ctx.Graph != nil {
-					p.ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey), graph.EdgeImport)
-				}
+				p.ctx.AddDependency(mod.Key, preludeKey)
 			}
 		}
 	}
 
-	modules := p.ctx.Modules()
-	moduleIndex := make(map[graph.NodeID]*project.Module, len(modules))
-	moduleIDs := make([]graph.NodeID, 0, len(modules))
-	for _, mod := range modules {
-		if mod == nil || mod.Key == "" {
-			continue
-		}
-		id := graph.NodeID(mod.Key)
-		moduleIDs = append(moduleIDs, id)
-		moduleIndex[id] = mod
-	}
-
-	var (
-		orderedIDs []graph.NodeID
-		cycles     [][]graph.NodeID
-	)
-	if p.ctx.Graph != nil {
-		orderedIDs, cycles = p.ctx.Graph.TopoSort(moduleIDs, graph.EdgeImport)
-	}
+	ordered, cycles := topoSort(p.ctx.Modules(), p.ctx.DependenciesOf)
 	if len(cycles) > 0 && diag != nil {
 		for _, cycle := range cycles {
 			msg := "cyclic import detected"
 			if len(cycle) > 0 {
-				parts := make([]string, 0, len(cycle))
-				for _, id := range cycle {
-					if id != "" {
-						parts = append(parts, string(id))
-					}
-				}
-				msg = "cyclic import detected: " + strings.Join(parts, " -> ")
+				msg = "cyclic import detected: " + strings.Join(cycle, " -> ")
 			}
 			diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrCyclicImport))
 		}
 		return nil
 	}
 
-	for _, id := range orderedIDs {
-		module := moduleIndex[id]
+	for _, module := range ordered {
 		if module == nil || module.Key == "" {
 			continue
 		}
@@ -123,7 +94,6 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 		return
 	}
 	collector.Collect(p.ctx, module)
-	binder.Bind(p.ctx, module)
 	resolver.Resolve(p.ctx, module)
 	typechecker.Check(p.ctx, module)
 	usage.Analyze(p.ctx, module)

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	LockfileName       = "peeper.lock"
+	LockfileName       = "ember.lock"
 	lockfileVersion    = "1.0"
 	lockfileCurrentVer = lockfileVersion
 )

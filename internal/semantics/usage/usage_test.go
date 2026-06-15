@@ -17,10 +17,10 @@ import (
 
 func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const filePath = "usage_test.peep"
+	const filePath = "usage_test.em"
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", ".em", diag)
 
 	if setupImports {
 		// Mock an external dependency module named "external"
@@ -28,11 +28,11 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 	value: i32,
 }
 fn GetValue() -> i32 { return 42; }`
-		extAST := parser.New("external.peep", lexer.New("external.peep", extSrc, diag).Tokenize(), diag).ParseModule()
+		extAST := parser.New("external.em", lexer.New("external.em", extSrc, diag).Tokenize(), diag).ParseModule()
 		extMod := &project.Module{
-			Key:        "local:external.peep",
+			Key:        "local:external.em",
 			ImportPath: "external",
-			FilePath:   "external.peep",
+			FilePath:   "external.em",
 			Content:    extSrc,
 			AST:        extAST,
 			Imports:    make(map[string]project.ResolvedImport),
@@ -56,9 +56,9 @@ fn GetValue() -> i32 { return 42; }`
 
 	if setupImports {
 		module.Imports["external"] = project.ResolvedImport{
-			Key:        "local:external.peep",
+			Key:        "local:external.em",
 			ImportPath: "external",
-			FilePath:   "external.peep",
+			FilePath:   "external.em",
 			Origin:     project.ModuleOriginLocal,
 		}
 	}
@@ -215,7 +215,7 @@ fn main() -> i32 {
 }
 
 func TestUsageWarningsFixture(t *testing.T) {
-	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings_0.peep")
+	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings_0.em")
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

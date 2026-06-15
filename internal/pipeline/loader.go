@@ -4,13 +4,13 @@ import (
 	"errors"
 	"os"
 	"path"
+	"slices"
 	"sync"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/graph"
 	"compiler/internal/project"
 )
 
@@ -130,9 +130,10 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
-		if l.ctx.Graph != nil {
-			l.ctx.Graph.AddEdge(graph.NodeID(module.Key), graph.NodeID(resolved.Key), graph.EdgeImport)
+		if !slices.Contains(module.Dependencies, resolved.Key) {
+			module.Dependencies = append(module.Dependencies, resolved.Key)
 		}
+		l.ctx.AddDependency(module.Key, resolved.Key)
 
 		if existing, ok := l.ctx.ModuleByKey(resolved.Key); ok {
 			l.enqueue(existing)

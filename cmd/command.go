@@ -20,9 +20,9 @@ import (
 
 var errAlreadyReported = errors.New("diagnostics already reported")
 
-// tempRunFilePrefix is the prefix for the temporary executable created by 'peeper run'.
+// tempRunFilePrefix is the prefix for the temporary executable created by 'ember run'.
 const (
-	tempRunFilePrefix = "peeper-run-"
+	tempRunFilePrefix = "ember-run-"
 	genArtifactsDir   = "_gen"
 	debugBuildUsage   = "enable debug build mode (emits debug info and debug-friendly codegen)"
 )
@@ -326,7 +326,7 @@ func resolveManifestBuildTarget(commandName, startPath string, targetOS string) 
 	}
 	entry := strings.TrimSpace(file.Package.Entry)
 	if entry == "" {
-		return buildTarget{}, fmt.Errorf("%s: package.entry is required for `peeper %s` without an explicit file", manifestPath, commandName)
+		return buildTarget{}, fmt.Errorf("%s: package.entry is required for `ember %s` without an explicit file", manifestPath, commandName)
 	}
 
 	entry = strings.ReplaceAll(entry, "\\", "/")

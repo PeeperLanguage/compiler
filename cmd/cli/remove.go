@@ -9,7 +9,7 @@ import (
 
 func RemoveCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: peeper remove <package-name>")
+		return fmt.Errorf("usage: ember remove <package-name>")
 	}
 	packageName := args[0]
 

@@ -128,12 +128,12 @@ For behavior changes:
 - Add or update focused tests near the changed subsystem.
 - Add regression tests for bugs that previously failed.
 - Validate both relevant backends when backend behavior is affected.
-- Run `go run ./scripts/bundle.go` with no args to bundle the compiler and packaged libraries. A passing run exits with code `0`, copies `_builtin_library` into `build/libs/`, and produces `build/bin/peeper`.
+- Run `go run ./scripts/bundle.go` with no args to bundle the compiler and packaged libraries. A passing run exits with code `0`, copies `_builtin_library` into `build/libs/`, and produces `build/bin/ember`.
 
 Minimum validation before commit:
 - `gofmt` on all touched Go files.
 - `go test ./...` for touched packages — all tests must pass.
-- Targeted Peeper smoke/repro if language or runtime behavior changed.
+- Targeted Ember smoke/repro if language or runtime behavior changed.
 
 ---
 

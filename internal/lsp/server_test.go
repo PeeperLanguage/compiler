@@ -38,7 +38,7 @@ func TestJSONRPCFraming(t *testing.T) {
 
 func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "main.peep")
+	filePath := filepath.Join(tmpDir, "main.em")
 	fileURI := pathToURI(filePath)
 
 	content := `fn main() -> i32 {

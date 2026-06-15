@@ -72,9 +72,13 @@ fn main() {
             write(stdout, msg, 21);
         }
         
+    
+        //return 30;
     }
 
     let bad: cstr = "interface bad\n";
     write(stdout, bad, 14);
 
+
+    //return 1;
 }

@@ -13,13 +13,13 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
-		FilePath: "/tmp/test.peep",
+		FilePath: "/tmp/test.em",
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
 				ReturnType: "void",
 				EntryID:    0,
-				Location:   source.NewLocation("/tmp/test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
+				Location:   source.NewLocation("/tmp/test.em", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -27,9 +27,9 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 							&mir.Assign{Name: "t1", Value: &mir.Call{
 								Callee: &mir.RefName{Name: "write", Type: "fn() -> i32"},
 								Type:   "i32",
-							}, Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 12})},
+							}, Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 12})},
 						},
-						Term: &mir.Ret{Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 8})},
+						Term: &mir.Ret{Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 8})},
 					},
 				},
 			},
@@ -52,13 +52,13 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 	const targetTriple = "x86_64-pc-windows-msvc"
 	mod := &mir.Module{
 		Name:     "test",
-		FilePath: `C:\tmp\test.peep`,
+		FilePath: `C:\tmp\test.em`,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
 				ReturnType: "i32",
 				EntryID:    0,
-				Location:   source.NewLocation(`C:\tmp\test.peep`, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
+				Location:   source.NewLocation(`C:\tmp\test.em`, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -66,10 +66,10 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 							&mir.Call{
 								Callee:   &mir.RefName{Name: "Ping", Type: "fn() -> void"},
 								Type:     "void",
-								Location: source.NewLocation(`C:\tmp\test.peep`, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 8}),
+								Location: source.NewLocation(`C:\tmp\test.em`, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 8}),
 							},
 						},
-						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}, Location: source.NewLocation(`C:\tmp\test.peep`, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10})},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}, Location: source.NewLocation(`C:\tmp\test.em`, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10})},
 					},
 				},
 			},
@@ -92,13 +92,13 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
-		FilePath: "/tmp/test.peep",
+		FilePath: "/tmp/test.em",
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
 				ReturnType: "i32",
 				EntryID:    0,
-				Location:   source.NewLocation("/tmp/test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
+				Location:   source.NewLocation("/tmp/test.em", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -106,12 +106,12 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 							&mir.Call{
 								Callee:   &mir.RefName{Name: "Ping", Type: "fn() -> void"},
 								Type:     "void",
-								Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 8}),
+								Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 8}),
 							},
 						},
 						Term: &mir.Ret{
 							Value:    &mir.RefConst{Value: "0", Type: "i32"},
-							Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10}),
+							Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10}),
 						},
 					},
 				},
@@ -129,7 +129,7 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 	if !strings.Contains(irText, "call void @Ping(), !dbg !") {
 		t.Fatalf("expected instruction debug location, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, `!DIFile(filename: "test.peep", directory: "/tmp")`) {
+	if !strings.Contains(irText, `!DIFile(filename: "test.em", directory: "/tmp")`) {
 		t.Fatalf("expected source file metadata, got:\n%s", irText)
 	}
 }
@@ -138,13 +138,13 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
-		FilePath: "/tmp/test.peep",
+		FilePath: "/tmp/test.em",
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
 				ReturnType: "i32",
 				EntryID:    0,
-				Location:   source.NewLocation("/tmp/test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
+				Location:   source.NewLocation("/tmp/test.em", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -153,28 +153,28 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 								Name: "t1",
 								Value: &mir.Binary{
 									Op:       "+",
-									Left:     &mir.RefConst{Value: "1", Type: "i32", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
-									Right:    &mir.RefConst{Value: "2", Type: "i32", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
+									Left:     &mir.RefConst{Value: "1", Type: "i32", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
+									Right:    &mir.RefConst{Value: "2", Type: "i32", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
 									Type:     "i32",
-									Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
+									Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
 								},
-								Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
+								Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
 							},
 							&mir.Assign{
 								Name: "t2",
 								Value: &mir.Binary{
 									Op:       "*",
-									Left:     &mir.RefName{Name: "t1", Type: "i32", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7})},
-									Right:    &mir.RefConst{Value: "3", Type: "i32", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
+									Left:     &mir.RefName{Name: "t1", Type: "i32", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7})},
+									Right:    &mir.RefConst{Value: "3", Type: "i32", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
 									Type:     "i32",
-									Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
+									Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
 								},
-								Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
+								Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
 							},
 						},
 						Term: &mir.Ret{
-							Value:    &mir.RefName{Name: "t2", Type: "i32", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7})},
-							Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
+							Value:    &mir.RefName{Name: "t2", Type: "i32", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7})},
+							Location: source.NewLocation("/tmp/test.em", source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
 						},
 					},
 				},
@@ -195,13 +195,13 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
-		FilePath: "/tmp/test.peep",
+		FilePath: "/tmp/test.em",
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
 				ReturnType: "i32",
 				EntryID:    0,
-				Location:   source.NewLocation("/tmp/test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
+				Location:   source.NewLocation("/tmp/test.em", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -209,18 +209,18 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 							&mir.Assign{
 								Name: "cond",
 								Value: &mir.Cast{
-									Arg:      &mir.RefConst{Value: "1", Type: "i32", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
+									Arg:      &mir.RefConst{Value: "1", Type: "i32", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
 									Type:     "bool",
-									Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11}),
+									Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11}),
 								},
-								Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11}),
+								Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11}),
 							},
 						},
 						Term: &mir.Branch{
-							Cond:     &mir.RefName{Name: "cond", Type: "bool", Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11})},
+							Cond:     &mir.RefName{Name: "cond", Type: "bool", Location: source.NewLocation("/tmp/test.em", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11})},
 							ThenID:   1,
 							ElseID:   2,
-							Location: source.NewLocation("/tmp/test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 12}),
+							Location: source.NewLocation("/tmp/test.em", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 12}),
 						},
 					},
 					{

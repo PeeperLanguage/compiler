@@ -72,12 +72,12 @@ if rest, ok := strings.CutPrefix(s, "//"); ok {
 
 ```go
 // BAD
-if strings.HasSuffix(s, ".peep") {
-    s = strings.TrimSuffix(s, ".peep")
+if strings.HasSuffix(s, ".em") {
+    s = strings.TrimSuffix(s, ".em")
 }
 
 // GOOD
-if rest, ok := strings.CutSuffix(s, ".peep"); ok {
+if rest, ok := strings.CutSuffix(s, ".em"); ok {
     s = rest
 }
 ```

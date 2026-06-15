@@ -10,7 +10,7 @@ import (
 )
 
 func TestImportSymbolsKeepSourceLocation(t *testing.T) {
-	const filePath = "collector_import_test.peep"
+	const filePath = "collector_import_test.em"
 	src := `import "external";
 
 fn main() -> i32 {
@@ -19,7 +19,7 @@ fn main() -> i32 {
 
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", ".em", diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	if len(modAST.Imports) != 1 || modAST.Imports[0] == nil {
 		t.Fatalf("expected one parsed import decl")
@@ -33,9 +33,9 @@ fn main() -> i32 {
 		AST:        modAST,
 		Imports: map[string]project.ResolvedImport{
 			"external": {
-				Key:        "local:external.peep",
+				Key:        "local:external.em",
 				ImportPath: "external",
-				FilePath:   "external.peep",
+				FilePath:   "external.em",
 				Origin:     project.ModuleOriginLocal,
 				Decl:       modAST.Imports[0],
 			},

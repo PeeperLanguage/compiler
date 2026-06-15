@@ -71,7 +71,7 @@ func IsCopyType(t Type) bool {
 	case *EnumType:
 		return typ != nil
 	case *StructType:
-		// Conservative v1 rule: structs are move-only until Peeper grows an
+		// Conservative v1 rule: structs are move-only until Ember grows an
 		// explicit Copy story for user-defined aggregate types.
 		return false
 	default:

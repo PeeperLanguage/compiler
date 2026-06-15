@@ -9,13 +9,13 @@ import (
 func TestEmitterHandlesMultiplePrimaryLabelsWithoutPanic(t *testing.T) {
 	var out bytes.Buffer
 	emitter := NewEmitter(&out)
-	emitter.cache.AddSource("main.peep", "let a = 1\nlet b = 2\n")
+	emitter.cache.AddSource("main.em", "let a = 1\nlet b = 2\n")
 
-	loc1 := testLoc("main.peep", 1, 5)
-	loc2 := testLoc("main.peep", 2, 5)
+	loc1 := testLoc("main.em", 1, 5)
+	loc2 := testLoc("main.em", 2, 5)
 
 	diag := NewError("broken diagnostic shape")
-	diag.FilePath = "main.peep"
+	diag.FilePath = "main.em"
 	diag.Labels = []Label{
 		{Location: loc1, Message: "first", Style: Primary},
 		{Location: loc2, Message: "second", Style: Primary},

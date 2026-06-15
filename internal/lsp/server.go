@@ -52,7 +52,7 @@ func Run(in io.Reader, out io.Writer) error {
 					RenameProvider:     true,
 				},
 				ServerInfo: &ServerInfo{
-					Name:    "Peeper Language Server",
+					Name:    "Ember Language Server",
 					Version: LSP_VERSION,
 				},
 			}
@@ -230,7 +230,7 @@ func sendDiagnostics(w io.Writer, state *ServerState, prevSent map[DocumentURI]b
 			Range:    r,
 			Severity: severity,
 			Code:     diag.Code,
-			Source:   "Peeper",
+			Source:   "Ember",
 			Message:  message.String(),
 		})
 	}

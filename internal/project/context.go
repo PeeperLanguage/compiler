@@ -9,7 +9,6 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/graph"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/symbols"
@@ -82,6 +81,9 @@ type Module struct {
 	Semantics *SemanticInfo
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
+
+	// Outgoing module graph keys.
+	Dependencies []string
 }
 
 // Shared state for one compilation.
@@ -97,10 +99,10 @@ type CompilerContext struct {
 	modules map[string]*Module
 	// Canonical file path -> module key.
 	fileIndex map[string]string
-	// Shared compiler dependency graph.
-	Graph *graph.Graph
+	// Module graph edges.
+	dependencies map[string]map[string]struct{}
 
-	// Guards module indexes.
+	// Guards module and dependency indexes.
 	mu sync.RWMutex
 }
 
@@ -145,7 +147,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		diag = diagnostics.NewDiagnosticBag("")
 	}
 	if cfg.Extension == "" {
-		cfg.Extension = ".peep"
+		cfg.Extension = ".em"
 	}
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."
@@ -207,10 +209,10 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Config:      cfg,
 		Diagnostics: diag,
 		GlobalScope: globalScope,
-		Graph:       graph.New(),
 
-		modules:   make(map[string]*Module),
-		fileIndex: make(map[string]string),
+		modules:      make(map[string]*Module),
+		fileIndex:    make(map[string]string),
+		dependencies: make(map[string]map[string]struct{}),
 	}
 }
 

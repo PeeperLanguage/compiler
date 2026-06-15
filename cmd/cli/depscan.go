@@ -130,7 +130,7 @@ func updateConstraint(version string) string {
 		return "latest"
 	}
 	if isExactVersion(version) {
-		// Exact resolved tags in peeper should still allow "peeper update".
+		// Exact resolved tags in ember should still allow "ember update".
 		return "latest"
 	}
 	return version

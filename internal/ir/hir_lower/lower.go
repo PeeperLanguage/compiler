@@ -41,7 +41,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 				continue
 			}
 			if fn.Body == nil {
-				fnType, _ := symbols.GetSymbolType(sym)
+				fnType, _ := symbolType(sym)
 				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 				params, returnType := lowerExternSignature(fn.Params, fn.ReturnType, resolvedFnType)
 				out.Externs = append(out.Externs, hir.Extern{
@@ -77,7 +77,7 @@ func lowerImplDecl(ctx *project.CompilerContext, module *project.Module, out *hi
 			continue
 		}
 		if method.Body == nil {
-			fnType, _ := symbols.GetSymbolType(sym)
+			fnType, _ := symbolType(sym)
 			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 			params, returnType := lowerExternSignature(method.Params, method.ReturnType, resolvedFnType)
 			out.Externs = append(out.Externs, hir.Extern{
@@ -120,7 +120,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		return nil
 	}
 	funcScope := sym.Scope.(*table.Scope)
-	retType, ok := symbols.GetSymbolType(sym)
+	retType, ok := symbolType(sym)
 	if ok {
 		if fnType, ok := retType.(*typeinfo.FuncType); ok && fnType != nil {
 			retType = fnType.Return
@@ -144,7 +144,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 			sym, ok := funcScope.LookupLocal(param.Name.Name)
 			if ok && sym != nil {
 				name = symbolName(sym)
-				if t, ok := symbols.GetSymbolType(sym); ok {
+				if t, ok := symbolType(sym); ok {
 					paramType = t
 				}
 			} else {
@@ -377,7 +377,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		}
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" || t == "<unknown>" {
-			if symType, ok := symbols.GetSymbolType(sym); ok {
+			if symType, ok := symbolType(sym); ok {
 				t = loweredTypeText(symType)
 			} else {
 				t = "<unknown>"
@@ -389,7 +389,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
 			t := resolvedTypeStr
 			if t == "" || t == "<invalid>" || t == "<unknown>" {
-				if symType, ok := symbols.GetSymbolType(sym); ok {
+				if symType, ok := symbolType(sym); ok {
 					t = loweredTypeText(symType)
 				} else {
 					t = "<unknown>"
@@ -572,7 +572,7 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 		return &ir.InvalidExpr{Message: "invalid struct literal", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
 	resolved := exprResolvedType(module, node)
-	strct, ok := loweredRuntimeType(resolved, nil).(*typeinfo.StructType)
+	strct, ok := loweredRuntimeType(resolved).(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return &ir.InvalidExpr{Message: "struct literal type missing", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
@@ -602,7 +602,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	if expectedType == nil {
 		return nil
 	}
-	iface, ok := loweredRuntimeType(expectedType, nil).(*typeinfo.InterfaceType)
+	iface, ok := loweredRuntimeType(expectedType).(*typeinfo.InterfaceType)
 	if !ok || iface == nil {
 		return nil
 	}
@@ -610,7 +610,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	if resolved == nil {
 		return nil
 	}
-	if _, ok := loweredRuntimeType(resolved, nil).(*typeinfo.InterfaceType); ok {
+	if _, ok := loweredRuntimeType(resolved).(*typeinfo.InterfaceType); ok {
 		return nil
 	}
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
@@ -653,7 +653,7 @@ func lookupInterfaceImplementation(module *project.Module, concrete typeinfo.Typ
 }
 
 func lookupInterfaceMethod(baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
-	iface, ok := loweredRuntimeType(baseType, nil).(*typeinfo.InterfaceType)
+	iface, ok := loweredRuntimeType(baseType).(*typeinfo.InterfaceType)
 	if !ok || iface == nil {
 		return nil, -1, false
 	}
@@ -698,7 +698,7 @@ func lowerInterfaceSlotValueType(t typeinfo.Type) (string, bool) {
 	if t == nil {
 		return "", true
 	}
-	runtimeType := loweredRuntimeType(t, nil)
+	runtimeType := loweredRuntimeType(t)
 	if _, ok := runtimeType.(*typeinfo.InterfaceType); ok {
 		return loweredTypeText(runtimeType), true
 	}
@@ -728,7 +728,7 @@ func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name st
 			if method == nil || method.Name != name {
 				continue
 			}
-			typ, ok := symbols.GetSymbolType(method)
+			typ, ok := symbolType(method)
 			if !ok {
 				continue
 			}
@@ -745,7 +745,7 @@ func lookupStructField(baseType typeinfo.Type, name string) (typeinfo.Type, int,
 	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		baseType = ptr.Target
 	}
-	strct, ok := loweredRuntimeType(baseType, nil).(*typeinfo.StructType)
+	strct, ok := loweredRuntimeType(baseType).(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return nil, -1, false
 	}
@@ -867,11 +867,19 @@ func shouldDiscardBindingValue(module *project.Module, symID symbols.SymbolID) b
 	return ok
 }
 
+func symbolType(sym *symbols.Symbol) (typeinfo.Type, bool) {
+	if sym == nil || sym.Type == nil {
+		return nil, false
+	}
+	typ, ok := sym.Type.(typeinfo.Type)
+	return typ, ok && typ != nil
+}
+
 func loweredTypeText(t typeinfo.Type) string {
 	if t == nil {
 		return ""
 	}
-	return typeinfo.TypeText(loweredRuntimeType(t, nil))
+	return typeinfo.TypeText(loweredRuntimeType(t))
 }
 
 func loweredReturnTypeText(t typeinfo.Type) string {
@@ -881,38 +889,29 @@ func loweredReturnTypeText(t typeinfo.Type) string {
 	return loweredTypeText(t)
 }
 
-func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}) typeinfo.Type {
-	if seen == nil {
-		seen = make(map[*typeinfo.DefinedType]struct{})
-	}
+func loweredRuntimeType(t typeinfo.Type) typeinfo.Type {
 	if t == nil {
 		return nil
 	}
-	t = typeinfo.ResolveTypeWithScope(currentModuleScope, t)
+	t = resolveTypeWithScope(currentModuleScope, t)
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
 		if typ == nil {
 			return nil
 		}
-		if _, ok := seen[typ]; ok {
-			// Stop self-recursive expansion once shell already seen.
-			return &typeinfo.NamedType{Name: typ.Name}
-		}
-		seen[typ] = struct{}{}
-		defer delete(seen, typ)
-		return loweredRuntimeType(typ.Underlying, seen)
+		return loweredRuntimeType(typ.Underlying)
 	case *typeinfo.RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target, seen)}
+		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target)}
 	case *typeinfo.StructType:
 		if typ == nil {
 			return nil
 		}
 		fields := make([]typeinfo.Field, 0, len(typ.Fields))
 		for _, field := range typ.Fields {
-			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type, seen)})
+			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type)})
 		}
 		return &typeinfo.StructType{Fields: fields}
 	case *typeinfo.InterfaceType:
@@ -925,13 +924,13 @@ func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}
 			for _, param := range method.Params {
 				params = append(params, typeinfo.Field{
 					Name: param.Name,
-					Type: loweredRuntimeType(param.Type, seen),
+					Type: loweredRuntimeType(param.Type),
 				})
 			}
 			methods = append(methods, typeinfo.Method{
 				Name:   method.Name,
 				Params: params,
-				Return: loweredRuntimeType(method.Return, seen),
+				Return: loweredRuntimeType(method.Return),
 			})
 		}
 		return &typeinfo.InterfaceType{Methods: methods}
@@ -941,10 +940,25 @@ func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}
 		}
 		params := make([]typeinfo.Type, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, loweredRuntimeType(param, seen))
+			params = append(params, loweredRuntimeType(param))
 		}
-		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(typ.Return, seen)}
+		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(typ.Return)}
 	default:
 		return typeinfo.Underlying(t)
 	}
+}
+
+func resolveTypeWithScope(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
+	if scope == nil || t == nil {
+		return t
+	}
+	if named, ok := t.(*typeinfo.NamedType); ok && named != nil {
+		sym, found := scope.Lookup(named.Name)
+		if found && sym != nil && sym.Kind == symbols.SymbolType {
+			if resolved, ok := symbolType(sym); ok && resolved != nil {
+				return resolveTypeWithScope(scope, resolved)
+			}
+		}
+	}
+	return t
 }

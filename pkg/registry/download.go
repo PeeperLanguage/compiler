@@ -215,7 +215,7 @@ func stripProviderPrefix(repo string) string {
 }
 
 func downloadFile(url string) (string, error) {
-	tempFile, err := os.CreateTemp("", "peeper-download-*.tar.gz")
+	tempFile, err := os.CreateTemp("", "ember-download-*.tar.gz")
 	if err != nil {
 		return "", err
 	}

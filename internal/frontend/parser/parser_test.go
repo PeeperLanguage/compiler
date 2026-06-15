@@ -10,7 +10,7 @@ import (
 )
 
 func parseTestModule(src string) (*ast.Module, *diagnostics.DiagnosticBag) {
-	const filePath = "test.peep"
+	const filePath = "test.em"
 	diag := diagnostics.NewDiagnosticBag(filePath)
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	return New(filePath, stream, diag).ParseModule(), diag
@@ -295,7 +295,7 @@ fn main() {
 		t.Fatalf("decls: got %d want 2", len(mod.Decls))
 	}
 	out := diag.EmitAllToString()
-	if strings.Contains(out, " --> test.peep:5:1") && strings.Contains(out, "expected '{'") {
+	if strings.Contains(out, " --> test.em:5:1") && strings.Contains(out, "expected '{'") {
 		t.Fatalf("unexpected extra missing-block diagnostic on second function:\n%s", out)
 	}
 }

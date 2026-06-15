@@ -1,6 +1,0 @@
-
-
-fn loader() {
-    let msg: cstr = "Hello from Peeper runtime ABI!\n";
-    write(stdout, msg, 30);
-}

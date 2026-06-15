@@ -1,6 +1,6 @@
 # Compiler Guidelines
 
-This file exists to keep the compiler implementation coherent over time. Peeper shares some concepts with Rust. But it doesn't mean Peeper is a direct copy of Rust.
+This file exists to keep the compiler implementation coherent over time. Ember shares some concepts with Rust. But it doesn't mean Ember is a direct copy of Rust.
 
 The goal is not to copy Rust or any other compiler blindly. The goal is to build a compiler that is:
 
@@ -58,7 +58,7 @@ These decisions are already part of the language design and should not drift acc
 - Zig-style literals are used: `.{ ... }`
 - methods are declared outside types using attached-method syntax with receivers.
 - `defer` and `panic` are part of the core control-flow model
-- builtin functions are declared in `global.peep` within the core library source tree
+- builtin functions are declared in `global.em` within the core library source tree
 - stdlib source modules are declared within the core library source tree
 - external declarations use `#[extern(\"...\")]` and may omit a body. extern can contain the external linking function name as parameter or keep empty for default behavior.
 - error unions are explicit value-level control flow and are not exceptions
@@ -351,24 +351,3 @@ When implementing new compiler work:
 4. implement the smallest structurally correct version
 5. add tests
 6. only then generalize if there is real pressure
-
-## Extras
-Migration to import syntax
-instead of
-```go
-import "core:io";
-import "github.com/raysan5/raylib/ui";
-```
-```rs
-import core::io; 
-import raylib::ui; // can alias inline with `as`
-```
-
-config file will contain dependencies
-```toml
-[dependencies]
-raylib = { url = "https://github.com/raysan5/raylib", version = "4.0.0" }
-local_project = { path = "../local_project" }
-```
-
-lockfile will contain the transitive dependencies and hashes of the dependencies

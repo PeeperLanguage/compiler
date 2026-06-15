@@ -31,14 +31,7 @@ type Function struct {
 type Stmt interface {
 	stmtNode()
 	appendText(*strings.Builder, int)
-	loc() *source.Location
-}
-
-func LocOf(node Stmt) *source.Location {
-	if node == nil {
-		return nil
-	}
-	return node.loc()
+	appendInlineText(*strings.Builder, int)
 }
 
 type Block struct {
@@ -88,16 +81,6 @@ func (*Assign) stmtNode()   {}
 func (*Invalid) stmtNode()  {}
 func (*Return) stmtNode()   {}
 func (*If) stmtNode()       {}
-
-// -- implement loc --
-
-func (b *Block) 		loc() *source.Location {return b.Location }
-func (b *Binding) 		loc() *source.Location {return b.Location }
-func (e *ExprStmt) 		loc() *source.Location {return e.Location }
-func (a *Assign) 		loc() *source.Location {return a.Location }
-func (i *Invalid) 		loc() *source.Location {return i.Location }
-func (r *Return) 		loc() *source.Location {return r.Location }
-func (f *If) 			loc() *source.Location {return f.Location }
 
 func (m *Module) Text() string {
 	if m == nil {
@@ -156,6 +139,13 @@ func (s *Block) appendText(b *strings.Builder, indent int) {
 	b.WriteString("}\n")
 }
 
+func (s *Block) appendInlineText(b *strings.Builder, indent int) {
+	b.WriteString("{\n")
+	appendBlockText(b, s, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}\n")
+}
+
 func (s *Binding) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
 	if s.Constant {
@@ -169,10 +159,18 @@ func (s *Binding) appendText(b *strings.Builder, indent int) {
 	b.WriteString("\n")
 }
 
+func (s *Binding) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
 func (s *ExprStmt) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
 	b.WriteString(s.Value.String())
 	b.WriteString("\n")
+}
+
+func (s *ExprStmt) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
 }
 
 func (s *Assign) appendText(b *strings.Builder, indent int) {
@@ -181,6 +179,10 @@ func (s *Assign) appendText(b *strings.Builder, indent int) {
 	b.WriteString(" = ")
 	b.WriteString(s.Value.String())
 	b.WriteString("\n")
+}
+
+func (s *Assign) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
 }
 
 func (s *Invalid) appendText(b *strings.Builder, indent int) {
@@ -193,6 +195,10 @@ func (s *Invalid) appendText(b *strings.Builder, indent int) {
 	b.WriteString("\n")
 }
 
+func (s *Invalid) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
 func (s *Return) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
 	b.WriteString("return")
@@ -203,8 +209,16 @@ func (s *Return) appendText(b *strings.Builder, indent int) {
 	b.WriteString("\n")
 }
 
+func (s *Return) appendInlineText(b *strings.Builder, indent int) {
+	s.appendText(b, indent)
+}
+
 func (s *If) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
+	s.appendInlineText(b, indent)
+}
+
+func (s *If) appendInlineText(b *strings.Builder, indent int) {
 	b.WriteString("if ")
 	b.WriteString(s.Cond.String())
 	b.WriteString(" {\n")
@@ -216,5 +230,5 @@ func (s *If) appendText(b *strings.Builder, indent int) {
 		return
 	}
 	b.WriteString(" else ")
-	s.Else.appendText(b, indent)
+	s.Else.appendInlineText(b, indent)
 }
