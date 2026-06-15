@@ -145,7 +145,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		diag = diagnostics.NewDiagnosticBag("")
 	}
 	if cfg.Extension == "" {
-		cfg.Extension = ".em"
+		cfg.Extension = ".peep"
 	}
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."

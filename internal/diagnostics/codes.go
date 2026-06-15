@@ -1,6 +1,6 @@
 package diagnostics
 
-// Error codes for Ember compiler.
+// Error codes for Peeper compiler.
 // Codes are grouped by prefix:
 //
 //	L – lexer errors

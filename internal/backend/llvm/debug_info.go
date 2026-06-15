@@ -33,7 +33,7 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 		filePath = mod.FilePath
 	}
 	if strings.TrimSpace(filePath) == "" {
-		filePath = "unknown.em"
+		filePath = "unknown.peep"
 	}
 	fileName := filepath.Base(filePath)
 	dir := filepath.Dir(filePath)
@@ -46,7 +46,7 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 		locations:   make(map[string]int),
 	}
 	d.fileID = d.define(`!DIFile(filename: %q, directory: %q)`, fileName, dir)
-	d.compileUnitID = d.define(`distinct !DICompileUnit(language: DW_LANG_C, file: !%d, producer: %q, isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)`, d.fileID, "EmberCompiler")
+	d.compileUnitID = d.define(`distinct !DICompileUnit(language: DW_LANG_C, file: !%d, producer: %q, isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)`, d.fileID, "PeeperCompiler")
 	d.emptyTupleID = d.define("!{}")
 	d.subroutineID = d.define("!DISubroutineType(types: !%d)", d.emptyTupleID)
 	d.debugFlagID = d.define(`!{i32 2, !"Debug Info Version", i32 3}`)

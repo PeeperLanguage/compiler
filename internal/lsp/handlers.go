@@ -302,7 +302,7 @@ func (s *ServerState) HandleHover(params HoverParams) (*Hover, error) {
 	return &Hover{
 		Contents: MarkupContent{
 			Kind:  "markdown",
-			Value: fmt.Sprintf("```ember\n%s\n```", text),
+			Value: fmt.Sprintf("```peeper\n%s\n```", text),
 		},
 		Range: hoverRange,
 	}, nil

@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	FileName           = "ember"
-	cacheDirName       = ".ember"
+	FileName           = "peeper"
+	cacheDirName       = ".peeper"
 	cacheModulesSubdir = "modules"
 	reservedStdAlias   = "core"
 )
