@@ -6,10 +6,6 @@ import (
 	"strings"
 )
 
-// bitsPerByte is the number of bits in a byte. Used to convert
-// the configured ABI size in bits to its size in bytes.
-const bitsPerByte = 8
-
 // Pointer size constants (in bits) for the supported ABIs.
 const (
 	Bits32 = 32
@@ -64,10 +60,4 @@ func SetSizeBits(bits int) error {
 	}
 	sizeBits = bits
 	return nil
-}
-
-// PointerBytes returns the pointer size in bytes for the current
-// configuration. The result is always either 4 or 8.
-func PointerBytes() int64 {
-	return int64(SizeBits() / bitsPerByte)
 }

@@ -42,19 +42,20 @@ type Symbol struct {
 	Type         Type
 	IsPub        bool
 	Initializing bool
+	Initialized  bool
 	Used         bool
 	Location     *source.Location
 	ASTNode      ast.Node
 	Scope        any // Pointer to table.Scope (only if Kind == SymbolFunc)
 }
 
-func New(name string, kind Kind, node ast.Node) *Symbol {
+func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
 	return &Symbol{
 		ID:       SymbolID(nextSymbolID.Add(1)),
 		Name:     name,
 		Kind:     kind,
 		IsPub:    IsPubName(name),
-		Location: ast.LocOf(node),
+		Location: location,
 		ASTNode:  node,
 	}
 }
@@ -83,6 +84,15 @@ func (s *Symbol) IsMutable() bool {
 	}
 	decl, ok := s.ASTNode.(*ast.LetDecl)
 	return ok && decl != nil && decl.IsMutable
+}
+
+func RequiresInitialization(kind Kind) bool {
+	switch kind {
+	case SymbolVar, SymbolConst:
+		return true
+	default:
+		return false
+	}
 }
 
 func IsPubName(name string) bool {

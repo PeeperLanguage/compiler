@@ -1,8 +1,8 @@
 build/
 a.out
 *.ll
-main.em
-*.em.tmp
+main.peep
+*.peep.tmp
 .tmp/
 app
 *.hir
@@ -21,3 +21,6 @@ playground
 installers/dist
 local_app
 graphify-out
+*_REVIEW.md
+*.patch
+clean.md

@@ -15,7 +15,7 @@ fn UnusedPublicFunction() -> i32 {
 }
 
 fn main(unused_param: i32, _ignored_param: i32) -> i32 {
-    let msg: cstr = "Hello from Ember runtime ABI!\n";
+    let msg: cstr = "Hello from Peeper runtime ABI!\n";
     write(stdout, msg, 30);
     return 0;
 }

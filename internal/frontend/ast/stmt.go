@@ -4,6 +4,7 @@ import "compiler/internal/source"
 
 type BlockStmt struct {
 	NodeIDHolder
+	Documented
 	Stmts    []Stmt
 	Location *source.Location
 }
@@ -13,6 +14,7 @@ func (s *BlockStmt) loc() *source.Location { return s.Location }
 
 type ExprStmt struct {
 	NodeIDHolder
+	Documented
 	Expr     Expr
 	Location *source.Location
 }
@@ -22,6 +24,7 @@ func (s *ExprStmt) loc() *source.Location { return s.Location }
 
 type AssignStmt struct {
 	NodeIDHolder
+	Documented
 	Target   Expr
 	Value    Expr
 	Location *source.Location
@@ -32,6 +35,7 @@ func (s *AssignStmt) loc() *source.Location { return s.Location }
 
 type ReturnStmt struct {
 	NodeIDHolder
+	Documented
 	Value    Expr
 	Location *source.Location
 }
@@ -41,6 +45,7 @@ func (s *ReturnStmt) loc() *source.Location { return s.Location }
 
 type IfStmt struct {
 	NodeIDHolder
+	Documented
 	Cond     Expr
 	Then     *BlockStmt
 	Else     Stmt

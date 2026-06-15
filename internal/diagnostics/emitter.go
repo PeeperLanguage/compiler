@@ -571,11 +571,11 @@ func (e *Emitter) printSimpleArrowHeader(diag *Diagnostic) {
 // printFileLocationHeader prints the file location arrow for a group of labels
 // Example:
 //
-//	--> /path/to/file.em:5:21
+//	--> /path/to/file.peep:5:21
 //
 // or for secondary files:
 //
-//	--> file.em:3:1
+//	--> file.peep:3:1
 func (e *Emitter) printFileLocationHeader(filepath string, labels []Label) {
 	// Find the primary label in this group for positioning
 	var line, col int

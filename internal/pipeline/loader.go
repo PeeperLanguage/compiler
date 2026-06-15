@@ -4,13 +4,13 @@ import (
 	"errors"
 	"os"
 	"path"
-	"slices"
 	"sync"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/graph"
 	"compiler/internal/project"
 )
 
@@ -19,13 +19,6 @@ type moduleLoader struct {
 	mu        sync.Mutex
 	scheduled map[string]struct{}
 	wg        sync.WaitGroup
-}
-
-func newModuleLoader(ctx *project.CompilerContext) *moduleLoader {
-	return &moduleLoader{
-		ctx:       ctx,
-		scheduled: make(map[string]struct{}),
-	}
 }
 
 func (l *moduleLoader) Load(entry *project.Module) error {
@@ -75,7 +68,7 @@ func (l *moduleLoader) ensureModuleIdentity(module *project.Module) {
 		module.Key = project.ModuleKeyFor(module.Origin, module.FilePath)
 	}
 	if module.ImportPath == "" && module.FilePath != "" {
-		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.FilePath); err == nil {
+		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.Namespace, module.FilePath); err == nil {
 			module.ImportPath = importPath
 		}
 	}
@@ -92,7 +85,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	if module.Content == "" && module.FilePath != "" {
 		content, err := os.ReadFile(module.FilePath)
 		if err != nil {
-			l.addModuleError(diagnostics.ErrModuleNotFound, "read module: "+err.Error())
+			l.addImportError(nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
 			return
 		}
 		module.Content = string(content)
@@ -100,10 +93,10 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
-	toks := lexer.Lex(module.FilePath, module.Content, l.ctx.Diagnostics)
+	toks := lexer.New(module.FilePath, module.Content, l.ctx.Diagnostics).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
-	module.AST = parser.ParseModule(module.FilePath, toks, l.ctx.Diagnostics)
+	module.AST = parser.New(module.FilePath, toks, l.ctx.Diagnostics).ParseModule()
 	l.resolveImports(module)
 }
 
@@ -137,8 +130,9 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
-		module.Dependencies = appendUnique(module.Dependencies, resolved.Key)
-		l.ctx.AddDependency(module.Key, resolved.Key)
+		if l.ctx.Graph != nil {
+			l.ctx.Graph.AddEdge(graph.NodeID(module.Key), graph.NodeID(resolved.Key), graph.EdgeImport)
+		}
 
 		if existing, ok := l.ctx.ModuleByKey(resolved.Key); ok {
 			l.enqueue(existing)
@@ -148,6 +142,7 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 			Key:        resolved.Key,
 			ImportPath: resolved.ImportPath,
 			FilePath:   resolved.FilePath,
+			Namespace:  resolved.Namespace,
 			Origin:     resolved.Origin,
 		})
 	}
@@ -184,14 +179,6 @@ func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
 	l.ctx.Diagnostics.Add(d)
 }
 
-func (l *moduleLoader) addModuleError(code, msg string) {
-	if l == nil || l.ctx == nil || l.ctx.Diagnostics == nil {
-		return
-	}
-	d := diagnostics.NewError(msg).WithCode(code)
-	l.ctx.Diagnostics.Add(d)
-}
-
 func importPathFromDecl(imp *ast.ImportDecl) (string, bool) {
 	if imp == nil || imp.Path == nil {
 		return "", false
@@ -216,11 +203,4 @@ func importAlias(imp *ast.ImportDecl, importPath string) string {
 		return ""
 	}
 	return base
-}
-
-func appendUnique(list []string, value string) []string {
-	if slices.Contains(list, value) {
-		return list
-	}
-	return append(list, value)
 }

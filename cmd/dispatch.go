@@ -96,7 +96,7 @@ func lookupCLISubcommand(name string) (cliSubcommand, bool) {
 }
 
 func startLSPServer() {
-	colors.CYAN.Fprintln(os.Stderr, "starting Ember LSP server...")
+	colors.CYAN.Fprintln(os.Stderr, "starting Peeper LSP server...")
 	if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
 		colors.RED.Fprintln(os.Stderr, err)
 		os.Exit(exitCodeError)
@@ -136,25 +136,25 @@ func defineTopLevelFlags() *bool {
 
 // printTopLevelUsage writes the program's usage banner to stderr.
 func printTopLevelUsage() {
-	colors.BLUE.Fprintln(os.Stderr, "Ember compiler v"+compiler.COMPILER_VERSION)
+	colors.BLUE.Fprintln(os.Stderr, "Peeper compiler v"+compiler.COMPILER_VERSION)
 	colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
-	colors.GREEN.Fprintf(os.Stderr, "  ember [command] [args]\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper [command] [args]\n")
 	colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
-	fmt.Fprintln(os.Stderr, "  build[:llvm] [path]     build a program or use package.entry from ember")
+	fmt.Fprintln(os.Stderr, "  build[:llvm] [path]     build a program or use package.entry from peeper")
 	fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
-	fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.em only)")
-	fmt.Fprintln(os.Stderr, "  init [name]             create a new project with ember")
-	fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from ember or specific packages")
+	fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.peep only)")
+	fmt.Fprintln(os.Stderr, "  init [name]             create a new project with peeper")
+	fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from peeper or specific packages")
 	fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
-	fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that ember update would apply")
-	fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from ember and lockfile")
+	fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that peeper update would apply")
+	fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from peeper and lockfile")
 	fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 	fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
 	fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-	fmt.Fprintln(os.Stderr, "  lsp                     start the Ember language server")
+	fmt.Fprintln(os.Stderr, "  lsp                     start the Peeper language server")
 	colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-	colors.GREEN.Fprintf(os.Stderr, "  ember build\n")
-	colors.GREEN.Fprintf(os.Stderr, "  ember build src/main.em\n")
-	colors.GREEN.Fprintf(os.Stderr, "  ember build -o app\n")
-	colors.GREEN.Fprintf(os.Stderr, "  ember run main.em arg1 arg2\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper build\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper build src/main.peep\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper build -o app\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper run main.peep arg1 arg2\n")
 }

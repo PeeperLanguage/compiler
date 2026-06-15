@@ -10,14 +10,20 @@ import (
 	"compiler/internal/project"
 )
 
-func buildPipelineTest(t *testing.T, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
-	return buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".em"}, preludeSrc, entrySrc)
+func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
+	return &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: strings.TrimSuffix(filePath, ".peep"),
+		FilePath:   filePath,
+		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:    make(map[string]project.ResolvedImport),
+	}
 }
 
 func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const preludePath = "_builtin_library/global.em"
-	const entryPath = "entry.em"
+	const preludePath = "core/global.peep"
+	const entryPath = "entry.peep"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
@@ -25,24 +31,15 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	ctx := project.NewWithConfig(cfg, diag)
 
 	// Register the prelude so the pipeline loader can find it.
-	prelude := &project.Module{
-		Key:        "core:prelude/global",
-		ImportPath: "prelude/global",
-		FilePath:   preludePath,
-		Origin:     project.ModuleOriginStdlib,
-		AST:        parser.ParseModule(preludePath, lexer.Lex(preludePath, preludeSrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	prelude := parseModuleSource(preludePath, preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
+	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -62,12 +59,12 @@ let stderr: i32 = 2;
 fn write(fd: i32, buf: cstr, n: i32) -> i32;
 `
 	entrySrc := `fn main() -> i32 {
-	let msg: cstr = "Hello from Ember runtime ABI!\n";
+	let msg: cstr = "Hello from Peeper runtime ABI!\n";
 	let _ = write(stdout, msg, 30);
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
@@ -89,35 +86,27 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 
 	cfg := project.Config{
 		RootDir:       ".",
-		Extension:     ".em",
+		Extension:     ".peep",
 		TargetOS:      "linux",
 		TargetArch:    "amd64",
 		TargetBackend: "llvm",
 		BuildDebug:    true,
 	}
-	diag := diagnostics.NewDiagnosticBag("entry.em")
-	diag.AddSourceContent("_builtin_library/global.em", preludeSrc)
-	diag.AddSourceContent("entry.em", entrySrc)
+	diag := diagnostics.NewDiagnosticBag("entry.peep")
+	diag.AddSourceContent("core/global.peep", preludeSrc)
+	diag.AddSourceContent("entry.peep", entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
 
-	prelude := &project.Module{
-		Key:        "core:prelude/global",
-		ImportPath: "prelude/global",
-		FilePath:   "_builtin_library/global.em",
-		Origin:     project.ModuleOriginStdlib,
-		AST:        parser.ParseModule("_builtin_library/global.em", lexer.Lex("_builtin_library/global.em", preludeSrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	prelude := parseModuleSource("core/global.peep", preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
+	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, "entry.em"),
-		ImportPath: "entry",
-		FilePath:   "entry.em",
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule("entry.em", lexer.Lex("entry.em", entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource("entry.peep", entrySrc, diag)
+	entry.ImportPath = "entry"
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -139,12 +128,12 @@ func TestPipelineAllowsExpressionStatements(t *testing.T) {
 fn write(fd: i32, buf: cstr, n: i32) -> i32;
 `
 	entrySrc := `fn main() -> i32 {
-	let msg: cstr = "Hello from Ember runtime ABI!\n";
+	let msg: cstr = "Hello from Peeper runtime ABI!\n";
 	write(stdout, msg, 30);
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
@@ -166,9 +155,40 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineAllowsForwardFunctionCalls(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	return later();
+}
+
+fn later() -> i32 {
+	return 7;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsTopLevelInitializerUsingLaterBinding(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const first: i32 = second;
+const second: i32 = 2;
+
+fn main() -> i32 {
+	return second;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrUseBeforeDecl) {
+		t.Fatalf("expected use-before-declaration diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -189,7 +209,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -208,7 +228,7 @@ fn main() -> i32 {
 	return x.abs();
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -232,9 +252,64 @@ fn main() -> i32 {
 	return file.read("ok");
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineAllowsPointerRecursiveStruct(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Node {
+	next: ^Node,
+}
+
+#[extern]
+fn next_node() -> ^Node;
+
+fn main() -> i32 {
+	let node: Node = .{ next = next_node() };
+	let next: ^Node = node.next;
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsDirectStructCycle(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct A {
+	b: B,
+}
+
+struct B {
+	a: A,
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsRecursiveTypeAlias(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `type Loop = Loop;
+
+fn main() -> i32 {
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -251,7 +326,7 @@ fn main() -> i32 {
 	return x.id();
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -278,7 +353,7 @@ fn main() -> i32 {
 	return c.bump();
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -296,7 +371,7 @@ fn main() -> i32 {
 	return c.value;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -314,7 +389,7 @@ fn main() -> i32 {
 	return p.x;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -327,7 +402,7 @@ func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	return p.x;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -348,7 +423,7 @@ fn main() -> i32 {
 	return p.x;
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -380,7 +455,7 @@ fn main() -> i32 {
 	return total(p);
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -412,7 +487,7 @@ fn main() -> i32 {
 	return use(file);
 }`
 
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -449,22 +524,16 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	const preludePath = "_builtin_library/global.em"
-	const entryPath = "entry.em"
+	const preludePath = "core/global.peep"
+	const entryPath = "entry.peep"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".em", diag)
+	ctx := project.New(".", ".peep", diag)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -506,22 +575,16 @@ fn main() -> i32 {
 	return s.sum();
 }`
 
-	const preludePath = "_builtin_library/global.em"
-	const entryPath = "entry.em"
+	const preludePath = "core/global.peep"
+	const entryPath = "entry.peep"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".em", diag)
+	ctx := project.New(".", ".peep", diag)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -547,7 +610,7 @@ fn main() -> i32 {
 	out.inner.value = 42;
 	return out.inner.value;
 }`
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -571,7 +634,7 @@ fn main() -> i32 {
 	let mut c: Container = .{ counter = .{ value = 10 } };
 	return c.counter.bump();
 }`
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -590,7 +653,7 @@ fn main() -> i32 {
 	out.inner.value = 42;
 	return out.inner.value;
 }`
-	diag := buildPipelineTest(t, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
 	if !diag.HasErrors() {
 		t.Fatalf("expected assignment to immutable binding error, but compiled successfully")
 	}
@@ -664,22 +727,16 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	const preludePath = "_builtin_library/global.em"
-	const entryPath = "entry.em"
+	const preludePath = "core/global.peep"
+	const entryPath = "entry.peep"
 
 	diag := diagnostics.NewDiagnosticBag(entryPath)
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".em", diag)
+	ctx := project.New(".", ".peep", diag)
 
-	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: strings.TrimSuffix(entryPath, ".em"),
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
-		AST:        parser.ParseModule(entryPath, lexer.Lex(entryPath, entrySrc, diag), diag),
-		Imports:    make(map[string]project.ResolvedImport),
-	}
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
 
 	if err := New(ctx).Run(entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
