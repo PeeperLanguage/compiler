@@ -15,6 +15,9 @@ import (
 	"compiler/pkg/numeric"
 )
 
+// currentModuleScope lets runtime-type flattening resolve named aliases while
+// lowerer recurses through nested semantic types without passing module state
+// through every helper.
 var currentModuleScope *table.Scope
 
 func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Module {
@@ -265,13 +268,13 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 func lowerAssignTargetExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr) ir.Expr {
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil {
 		baseType := exprResolvedType(module, selector.Expr)
-		if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
+		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(baseType, nil), selector.Name.Name); ok {
 			if _, throughPtr := baseType.(*typeinfo.RawPtrType); throughPtr {
 				return &ir.Field{
 					Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 					Index:      fieldIndex,
 					ThroughPtr: true,
-					Type:       loweredTypeText(fieldType),
+					Type:       loweredTypeText(field.Type),
 					Location:   ast.LocOf(selector),
 				}
 			}
@@ -284,7 +287,7 @@ func lowerAssignTargetExpr(ctx *project.CompilerContext, module *project.Module,
 					},
 					Index:      fieldIndex,
 					ThroughPtr: true,
-					Type:       loweredTypeText(fieldType),
+					Type:       loweredTypeText(field.Type),
 					Location:   ast.LocOf(selector),
 				}
 			}
@@ -385,7 +388,8 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.Ident{Name: symbolName(sym), Type: t, Location: loc}
 
 	case *ast.ScopeResolution:
-		if sym := lookupScopeResolutionSymbol(ctx, module, scope, node); sym != nil {
+		if resolved, ok := project.LookupImportedSymbol(ctx, module, node.Module.Name, node.Name.Name); ok && resolved.Symbol != nil {
+			sym := resolved.Symbol
 			t := resolvedTypeStr
 			if t == "" || t == "<invalid>" || t == "<unknown>" {
 				if symType, ok := symbols.GetSymbolType(sym); ok {
@@ -448,8 +452,8 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 					sym = s
 				}
 			case *ast.ScopeResolution:
-				if s := lookupScopeResolutionSymbol(ctx, module, scope, callee); s != nil {
-					sym = s
+				if resolved, ok := project.LookupImportedSymbol(ctx, module, callee.Module.Name, callee.Name.Name); ok && resolved.Symbol != nil {
+					sym = resolved.Symbol
 				}
 			}
 			if sym != nil {
@@ -553,13 +557,13 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		return &ir.InvalidExpr{Message: "invalid selector", Type: "<invalid>"}
 	}
 	baseType := exprResolvedType(module, selector.Expr)
-	if fieldType, fieldIndex, ok := lookupStructField(baseType, selector.Name.Name); ok {
+	if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(baseType, nil), selector.Name.Name); ok {
 		_, throughPtr := baseType.(*typeinfo.RawPtrType)
 		return &ir.Field{
 			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Index:      fieldIndex,
 			ThroughPtr: throughPtr,
-			Type:       loweredTypeText(fieldType),
+			Type:       loweredTypeText(field.Type),
 			Location:   ast.LocOf(selector),
 		}
 	}
@@ -711,6 +715,8 @@ func lowerInterfaceSlotValueType(t typeinfo.Type) (string, bool) {
 	return text, true
 }
 
+// exprResolvedType reads typechecker output from semantic cache.
+// Lowering consumes that result; it should not re-infer expression types.
 func exprResolvedType(module *project.Module, expr ast.Expr) typeinfo.Type {
 	if module == nil || module.Semantics == nil || expr == nil {
 		return nil
@@ -718,6 +724,8 @@ func exprResolvedType(module *project.Module, expr ast.Expr) typeinfo.Type {
 	return module.Semantics.ExprTypes[expr.ID()]
 }
 
+// lookupLoweredMethod maps lowered receiver type back to semantic method-set
+// entries so call lowering can reuse checker-known symbols and signatures.
 func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name string) (string, *symbols.Symbol, *typeinfo.FuncType) {
 	if module == nil || module.Semantics == nil || baseType == nil || name == "" {
 		return "", nil, nil
@@ -740,22 +748,6 @@ func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name st
 	return "", nil, nil
 }
 
-func lookupStructField(baseType typeinfo.Type, name string) (typeinfo.Type, int, bool) {
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		baseType = ptr.Target
-	}
-	strct, ok := loweredRuntimeType(baseType, nil).(*typeinfo.StructType)
-	if !ok || strct == nil {
-		return nil, -1, false
-	}
-	for i, field := range strct.Fields {
-		if field.Name == name {
-			return field.Type, i, true
-		}
-	}
-	return nil, -1, false
-}
-
 func methodFunctionName(targetText, methodName string) string {
 	var b strings.Builder
 	b.WriteString("__impl__")
@@ -770,31 +762,6 @@ func methodSymbolRefName(targetText string, sym *symbols.Symbol) string {
 		return ""
 	}
 	return fmt.Sprintf("%s$%d", methodFunctionName(targetText, sym.Name), sym.ID)
-}
-
-// lookupScopeResolutionSymbol resolves a ScopeResolution node in two steps:
-// 1. Find the imported module by alias in module.Imports.
-// 2. Look up the symbol in that module's scope.
-// Returns nil if resolution fails.
-func lookupScopeResolutionSymbol(ctx *project.CompilerContext, module *project.Module, _ *table.Scope, sr *ast.ScopeResolution) *symbols.Symbol {
-	if ctx == nil || module == nil || sr == nil {
-		return nil
-	}
-	alias := sr.Module.Name
-	member := sr.Name.Name
-	imp, ok := module.Imports[alias]
-	if !ok {
-		return nil
-	}
-	mod, ok := ctx.ModuleByKey(imp.Key)
-	if !ok || mod == nil || mod.ModuleScope == nil {
-		return nil
-	}
-	sym, ok := mod.ModuleScope.LookupLocal(member)
-	if !ok || sym == nil {
-		return nil
-	}
-	return sym
 }
 
 // lowerNumberLit produces the correct IR literal from a raw number token and
@@ -852,6 +819,8 @@ func loweredReturnTypeText(t typeinfo.Type) string {
 	return loweredTypeText(t)
 }
 
+// loweredRuntimeType strips semantic-only named layers and preserves recursive
+// shells so MIR sees runtime layout, not source-level aliases.
 func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}) typeinfo.Type {
 	if seen == nil {
 		seen = make(map[*typeinfo.DefinedType]struct{})
@@ -859,7 +828,7 @@ func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}
 	if t == nil {
 		return nil
 	}
-	t = typeinfo.ResolveTypeWithScope(currentModuleScope, t)
+	t = typeinfo.ResolveNamedTypeWithScope(currentModuleScope, t)
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
 		if typ == nil {
