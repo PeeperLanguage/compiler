@@ -4,6 +4,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
 	"slices"
 	"strconv"
 	"strings"
@@ -646,4 +647,20 @@ func (e *As) Type() Type {
 		return nil
 	}
 	return e.ExprType
+}
+
+
+func ResolveTypeWithScope(scope *table.Scope, t Type) Type {
+	if scope == nil || t == nil {
+		return t
+	}
+	if named, ok := t.(*NamedType); ok && named != nil {
+		sym, found := scope.Lookup(named.Name)
+		if found && sym != nil && sym.Kind == symbols.SymbolType {
+			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
+				return resolved
+			}
+		}
+	}
+	return t
 }

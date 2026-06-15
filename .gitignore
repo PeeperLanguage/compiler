@@ -1,8 +1,8 @@
 build/
 a.out
 *.ll
-main.em
-*.em.tmp
+main.peep
+*.peep.tmp
 .tmp/
 app
 *.hir
