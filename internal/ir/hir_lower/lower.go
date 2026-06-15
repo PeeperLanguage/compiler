@@ -888,7 +888,7 @@ func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}
 	if t == nil {
 		return nil
 	}
-	t = resolveTypeWithScope(currentModuleScope, t)
+	t = typeinfo.ResolveTypeWithScope(currentModuleScope, t)
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
 		if typ == nil {
@@ -947,19 +947,4 @@ func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}
 	default:
 		return typeinfo.Underlying(t)
 	}
-}
-
-func resolveTypeWithScope(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
-	if scope == nil || t == nil {
-		return t
-	}
-	if named, ok := t.(*typeinfo.NamedType); ok && named != nil {
-		sym, found := scope.Lookup(named.Name)
-		if found && sym != nil && sym.Kind == symbols.SymbolType {
-			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
-				return resolved
-			}
-		}
-	}
-	return t
 }

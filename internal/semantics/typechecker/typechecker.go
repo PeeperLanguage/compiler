@@ -20,98 +20,6 @@ type checker struct {
 
 // --- helpers -----------------------------------------------------------------
 
-func (c *checker) resolveType(t typeinfo.Type) typeinfo.Type {
-	if c == nil || c.module == nil || c.module.ModuleScope == nil || t == nil {
-		return t
-	}
-	if named, ok := t.(*typeinfo.NamedType); ok && named != nil {
-		sym, found := c.module.ModuleScope.Lookup(named.Name)
-		if found && sym != nil && sym.Kind == symbols.SymbolType {
-			sym.Used = true
-			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
-				return resolved
-			}
-		}
-		return t
-	}
-	switch typ := t.(type) {
-	case *typeinfo.DefinedType:
-		return typ
-	case *typeinfo.RawPtrType:
-		return typ
-	case *typeinfo.FuncType:
-		if typ == nil {
-			return nil
-		}
-		paramsChanged := false
-		resolvedParams := make([]typeinfo.Type, len(typ.Params))
-		for i, param := range typ.Params {
-			resolvedParams[i] = c.resolveType(param)
-			if resolvedParams[i] != param {
-				paramsChanged = true
-			}
-		}
-		resolvedReturn := c.resolveType(typ.Return)
-		if paramsChanged || resolvedReturn != typ.Return {
-			return &typeinfo.FuncType{Params: resolvedParams, Return: resolvedReturn}
-		}
-	case *typeinfo.StructType:
-		if typ == nil {
-			return nil
-		}
-		fieldsChanged := false
-		resolvedFields := make([]typeinfo.Field, len(typ.Fields))
-		for i, field := range typ.Fields {
-			resolvedFields[i] = typeinfo.Field{
-				Name: field.Name,
-				Type: c.resolveType(field.Type),
-			}
-			if resolvedFields[i].Type != field.Type {
-				fieldsChanged = true
-			}
-		}
-		if fieldsChanged {
-			return &typeinfo.StructType{Fields: resolvedFields}
-		}
-	case *typeinfo.InterfaceType:
-		if typ == nil {
-			return nil
-		}
-		methodsChanged := false
-		resolvedMethods := make([]typeinfo.Method, len(typ.Methods))
-		for i, method := range typ.Methods {
-			paramsChanged := false
-			resolvedParams := make([]typeinfo.Field, len(method.Params))
-			for j, param := range method.Params {
-				resolvedParams[j] = typeinfo.Field{
-					Name: param.Name,
-					Type: c.resolveType(param.Type),
-				}
-				if resolvedParams[j].Type != param.Type {
-					paramsChanged = true
-				}
-			}
-			resolvedReturn := c.resolveType(method.Return)
-			resolvedMethods[i] = typeinfo.Method{
-				Name:   method.Name,
-				Params: resolvedParams,
-				Return: resolvedReturn,
-			}
-			if paramsChanged || resolvedReturn != method.Return {
-				methodsChanged = true
-			}
-		}
-		if methodsChanged {
-			return &typeinfo.InterfaceType{Methods: resolvedMethods}
-		}
-	}
-	return t
-}
-
-func (c *checker) underlying(t typeinfo.Type) typeinfo.Type {
-	return typeinfo.Underlying(c.resolveType(t))
-}
-
 func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context string) typeinfo.Type {
 	if typ != nil {
 		return typ
@@ -123,8 +31,7 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 }
 
 func (c *checker) isLowerableType(t typeinfo.Type) bool {
-	t = c.underlying(t)
-	switch typ := t.(type) {
+	switch typ := typeinfo.Underlying(t).(type) {
 	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
 		return true
 	case *typeinfo.RawPtrType:
@@ -529,12 +436,12 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
-	dst = c.resolveType(dst)
-	src = c.resolveType(src)
+	// dst = c.resolveType(dst)
+	// src = c.resolveType(src)
 	if typeinfo.Assignable(dst, src) {
 		return true
 	}
-	if iface, ok := c.underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
+	if iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
 		return c.satisfiesInterface(iface, src)
 	}
 	return false
@@ -598,7 +505,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	}
 	defer func() {
 		if resolved != nil {
-			resolved = c.resolveType(resolved)
+			//resolved = c.resolveType(resolved)
 			if c.module != nil && c.module.Semantics != nil {
 				c.module.Semantics.ExprTypes[expr.ID()] = resolved
 			}
@@ -813,7 +720,7 @@ func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expecte
 	}
 	if node.Type != nil {
 		targetType := typeinfo.ASTTypeWithOptions(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-		targetStruct, ok := c.underlying(targetType).(*typeinfo.StructType)
+		targetStruct, ok := typeinfo.Underlying(targetType).(*typeinfo.StructType)
 		if !ok || targetStruct == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"composite literal type must be struct", ast.LocOf(node.Type), "")
@@ -832,7 +739,7 @@ func (c *checker) expectedStructType(expected typeinfo.Type) (*typeinfo.StructTy
 	if expected == nil {
 		return nil, nil
 	}
-	if strct, ok := c.underlying(expected).(*typeinfo.StructType); ok && strct != nil {
+	if strct, ok := typeinfo.Underlying(expected).(*typeinfo.StructType); ok && strct != nil {
 		return strct, expected
 	}
 	return nil, nil
@@ -907,7 +814,7 @@ func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo
 	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		baseType = ptr.Target
 	}
-	underlying := c.underlying(baseType)
+	underlying := typeinfo.Underlying(baseType)
 	strct, ok := underlying.(*typeinfo.StructType)
 	if !ok || strct == nil {
 		return nil, false
@@ -924,7 +831,7 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 	if c == nil || c.module == nil || c.module.Semantics == nil {
 		return nil, nil, false
 	}
-	if iface, ok := c.underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
+	if iface, ok := typeinfo.Underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
 		for _, method := range iface.Methods {
 			if method.Name != name {
 				continue
@@ -947,12 +854,12 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 		keys = append(keys, key)
 	}
 	appendKey(baseType)
-	if underlying := c.underlying(baseType); underlying != baseType {
+	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
 		appendKey(underlying)
 	}
 	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
 		appendKey(ptr.Target)
-		if underlying := c.underlying(ptr.Target); underlying != ptr.Target {
+		if underlying := typeinfo.Underlying(ptr.Target); underlying != ptr.Target {
 			appendKey(underlying)
 		}
 	}
