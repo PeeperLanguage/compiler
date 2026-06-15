@@ -500,7 +500,6 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	}
 	defer func() {
 		if resolved != nil {
-			//resolved = c.resolveType(resolved)
 			if c.module != nil && c.module.Semantics != nil {
 				c.module.Semantics.ExprTypes[expr.ID()] = resolved
 			}
@@ -530,7 +529,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return t
 
 	case *ast.ScopeResolution:
-		return c.qualifiedScopeType(scope, node)
+		return c.qualifiedScopeType(node)
 
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
@@ -1100,8 +1099,7 @@ func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
 }
 
 // qualifiedScopeType resolves the type of a `module::symbol` expression using ScopeResolution.
-func (c *checker) qualifiedScopeType(scope *table.Scope, node *ast.ScopeResolution) typeinfo.Type {
-	_ = scope // the current scope is not used for two-step foreign lookup
+func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 	if c == nil || node == nil {
 		return &typeinfo.InvalidType{}
 	}
