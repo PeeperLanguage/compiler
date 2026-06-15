@@ -2,7 +2,6 @@ package hir_lower
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"compiler/internal/frontend/ast"
@@ -723,7 +722,7 @@ func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name st
 	if module == nil || module.Semantics == nil || baseType == nil || name == "" {
 		return "", nil, nil
 	}
-	for _, key := range loweredMethodLookupKeys(baseType) {
+	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		for _, method := range module.Semantics.MethodSets[key] {
 			if method == nil || method.Name != name {
 				continue
@@ -755,34 +754,6 @@ func lookupStructField(baseType typeinfo.Type, name string) (typeinfo.Type, int,
 		}
 	}
 	return nil, -1, false
-}
-
-func loweredMethodLookupKeys(baseType typeinfo.Type) []string {
-	keys := make([]string, 0, 4)
-	appendKey := func(typ typeinfo.Type) {
-		if typ == nil {
-			return
-		}
-		key := typeinfo.TypeText(typ)
-		if key == "" {
-			return
-		}
-		if slices.Contains(keys, key) {
-			return
-		}
-		keys = append(keys, key)
-	}
-	appendKey(baseType)
-	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
-		appendKey(underlying)
-	}
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		appendKey(ptr.Target)
-		if underlying := typeinfo.Underlying(ptr.Target); underlying != ptr.Target {
-			appendKey(underlying)
-		}
-	}
-	return keys
 }
 
 func methodFunctionName(targetText, methodName string) string {
