@@ -2,7 +2,6 @@ package typechecker
 
 import (
 	"fmt"
-	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -839,31 +838,7 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 			return c.boundInterfaceMethodType(method, baseType), nil, true
 		}
 	}
-	keys := make([]string, 0, 4)
-	appendKey := func(typ typeinfo.Type) {
-		if typ == nil {
-			return
-		}
-		key := typeinfo.TypeText(typ)
-		if key == "" {
-			return
-		}
-		if slices.Contains(keys, key) {
-			return
-		}
-		keys = append(keys, key)
-	}
-	appendKey(baseType)
-	if underlying := typeinfo.Underlying(baseType); underlying != baseType {
-		appendKey(underlying)
-	}
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		appendKey(ptr.Target)
-		if underlying := typeinfo.Underlying(ptr.Target); underlying != ptr.Target {
-			appendKey(underlying)
-		}
-	}
-	for _, key := range keys {
+	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		methods := c.module.Semantics.MethodSets[key]
 		for _, method := range methods {
 			if method == nil || method.Name != name {

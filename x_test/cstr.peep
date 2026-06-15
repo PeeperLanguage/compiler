@@ -6,7 +6,7 @@ fn sayhi() {
 
 fn main() -> i32 {
     let msg: cstr = "Hello from Peeper runtime ABI!\n";
-    write(stdout, msg, 30);
-    sayhi();
+    write(stdout, msg, 31);
+    sayhi()
     return 0;
 }

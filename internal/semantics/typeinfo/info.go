@@ -664,3 +664,32 @@ func ResolveTypeWithScope(scope *table.Scope, t Type) Type {
 	}
 	return t
 }
+
+
+func GetMethodLookupKeys(baseType Type) []string {
+	keys := make([]string, 0, 4)
+	appendKey := func(typ Type) {
+		if typ == nil {
+			return
+		}
+		key := TypeText(typ)
+		if key == "" {
+			return
+		}
+		if slices.Contains(keys, key) {
+			return
+		}
+		keys = append(keys, key)
+	}
+	appendKey(baseType)
+	if underlying := Underlying(baseType); underlying != baseType {
+		appendKey(underlying)
+	}
+	if ptr, ok := baseType.(*RawPtrType); ok && ptr != nil && ptr.Target != nil {
+		appendKey(ptr.Target)
+		if underlying := Underlying(ptr.Target); underlying != ptr.Target {
+			appendKey(underlying)
+		}
+	}
+	return keys
+}
