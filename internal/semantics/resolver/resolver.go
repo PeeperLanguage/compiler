@@ -21,7 +21,11 @@ func (r *resolver) resolveModule() {
 		r.module.Semantics = project.NewSemanticInfo()
 	}
 	r.markPendingTopLevelBindings()
-	for _, decl := range r.module.AST.Decls {
+	for _, stmt := range r.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.LetDecl:
 			r.resolveTopLevelBinding(node.Name, node.Value)
@@ -29,7 +33,11 @@ func (r *resolver) resolveModule() {
 			r.resolveTopLevelBinding(node.Name, node.Value)
 		}
 	}
-	for _, decl := range r.module.AST.Decls {
+	for _, stmt := range r.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl)
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			if node != nil && node.Body != nil {
@@ -342,30 +350,24 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 	}
 	qualifier := node.Module.Name
 	member := node.Name.Name
-	imp, ok := r.module.Imports[qualifier]
-	if !ok {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(node), "")
+	resolved, ok := project.LookupImportedSymbol(r.ctx, r.module, qualifier, member)
+	if !ok || resolved.Symbol == nil {
+		if r.ctx != nil {
+			if _, exists := r.module.Imports[qualifier]; !exists {
+				r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(node), "")
+			} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
+				r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(node), "")
+			} else {
+				r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(node), "")
+			}
+		}
 		return false
 	}
-	mod, ok := r.ctx.ModuleByKey(imp.Key)
-	if !ok || mod == nil || mod.ModuleScope == nil {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(node), "")
-		return false
-	}
-	sym, ok := mod.ModuleScope.LookupLocal(member)
-	if !ok || sym == nil {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(node), "")
-		return false
-	}
-	if !sym.IsPub {
+	if !resolved.Symbol.IsPub {
 		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "use of unexported symbol").
-			WithSecondaryLabel(sym.Location, "defined here").
+			WithSecondaryLabel(resolved.Symbol.Location, "defined here").
 			WithNote("symbols with uppercase are exported otherwise private")
 		return false
-	}
-	sym.Used = true
-	if impSym, ok := r.module.ModuleScope.LookupLocal(qualifier); ok && impSym != nil {
-		impSym.Used = true
 	}
 	return true
 }

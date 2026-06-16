@@ -56,13 +56,17 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	var docCount int
+	var docs []string
 	for _, tok := range stream {
 		if tok.Kind == token.DOC_COMMENT {
-			docCount++
+			docs = append(docs, tok.Literal)
 		}
 	}
-	if docCount != 3 {
-		t.Fatalf("doc comment count: got %d want 3", docCount)
+	if len(docs) != 2 {
+		t.Fatalf("doc comment count: got %d want 2", len(docs))
+	}
+	expectedFirst := "module docs\nmore docs"
+	if docs[0] != expectedFirst {
+		t.Fatalf("first doc group: got %q want %q", docs[0], expectedFirst)
 	}
 }

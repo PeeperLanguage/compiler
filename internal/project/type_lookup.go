@@ -2,42 +2,42 @@ package project
 
 import (
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 )
 
-func LookupTypeInCurrentModule(module *Module, symbolName string) (foundType typeinfo.Type, hasFound bool) {
-	if module == nil || module.ModuleScope == nil || symbolName == "" {
-		return nil, false
-	}
-	sym, found := module.ModuleScope.Lookup(symbolName)
-	if !found || sym == nil || sym.Kind != symbols.SymbolType {
-		return nil, false
-	}
-	sym.Used = true
-	resolved, ok := symbols.GetSymbolType(sym)
-	return resolved, ok
+// ImportedSymbolLookup bundles import/module/symbol so one foreign lookup can
+// serve resolver, checker, and lowerer without repeating import traversal.
+type ImportedSymbolLookup struct {
+	Import ResolvedImport
+	Module *Module
+	Symbol *symbols.Symbol
 }
 
-func LookupTypeInImportedModule(ctx *CompilerContext, currentModule *Module, importedModule, symbolName string) (foundType typeinfo.Type, hasFound bool) {
+// LookupImportedSymbol walks alias -> import -> module -> symbol once.
+// Resolver uses the symbol for export checks, checker uses it for type lookup,
+// and lowerer uses it for stable IR naming. One kernel keeps those phases in sync.
+func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedModule, symbolName string) (ImportedSymbolLookup, bool) {
+	out := ImportedSymbolLookup{}
 	if ctx == nil || currentModule == nil || currentModule.ModuleScope == nil || importedModule == "" || symbolName == "" {
-		return nil, false
+		return out, false
 	}
 	imp, ok := currentModule.Imports[importedModule]
 	if !ok {
-		return nil, false
+		return out, false
 	}
+	out.Import = imp
 	if impSym, ok := currentModule.ModuleScope.LookupLocal(importedModule); ok && impSym != nil {
 		impSym.Used = true
 	}
 	imported, ok := ctx.ModuleByKey(imp.Key)
 	if !ok || imported == nil || imported.ModuleScope == nil {
-		return nil, false
+		return out, false
 	}
+	out.Module = imported
 	sym, found := imported.ModuleScope.LookupLocal(symbolName)
-	if !found || sym == nil || sym.Kind != symbols.SymbolType {
-		return nil, false
+	if !found || sym == nil {
+		return out, false
 	}
 	sym.Used = true
-	resolved, ok := symbols.GetSymbolType(sym)
-	return resolved, ok
+	out.Symbol = sym
+	return out, true
 }

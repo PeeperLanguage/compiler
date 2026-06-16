@@ -432,7 +432,7 @@ fn main() -> i32 {
 func TestPipelineLowersInterfaceDispatchForValueReceiver(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Summer {
-	sum(Self): i32,
+	sum(Self) -> i32,
 }
 
 struct Point {
@@ -464,7 +464,7 @@ fn main() -> i32 {
 func TestPipelineLowersInterfaceDispatchForPointerReceiver(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Reader {
-	read(^Self, buf: cstr): i32,
+	read(^Self, buf: cstr) -> i32,
 }
 
 struct File {}
@@ -496,7 +496,7 @@ fn main() -> i32 {
 func TestPipelineInterfaceDuplicateWrappers(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Summer {
-	sum(Self): i32,
+	sum(Self) -> i32,
 }
 
 struct Point {
@@ -555,7 +555,7 @@ fn main() -> i32 {
 func TestPipelineUsesStackBoxForNonEscapingInterfaceValue(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Summer {
-	sum(Self): i32,
+	sum(Self) -> i32,
 }
 
 struct Point {
@@ -672,7 +672,7 @@ fn main() -> i32 {
 func TestPipelineInterfaceEscapesViaStoreFieldAndInterfaceCall(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Summer {
-	sum(Self): i32,
+	sum(Self) -> i32,
 }
 
 struct Point {
@@ -697,7 +697,7 @@ fn consume_holder(h: SummerHolder);
 fn consume_summer(s: Summer);
 
 interface SummerConsumer {
-	consume(Self, val: Summer): i32,
+	consume(Self, val: Summer) -> i32,
 }
 
 #[extern]

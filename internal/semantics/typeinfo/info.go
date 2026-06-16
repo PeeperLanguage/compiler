@@ -4,7 +4,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"slices"
 	"strconv"
 	"strings"
@@ -649,24 +648,8 @@ func (e *As) Type() Type {
 	return e.ExprType
 }
 
-
-func ResolveTypeWithScope(scope *table.Scope, t Type) Type {
-	if scope == nil || t == nil {
-		return t
-	}
-	if named, ok := t.(*NamedType); ok && named != nil {
-		sym, found := scope.Lookup(named.Name)
-		if found && sym != nil && sym.Kind == symbols.SymbolType {
-			if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
-				return resolved
-			}
-		}
-	}
-	return t
-}
-
-
 func GetMethodLookupKeys(baseType Type) []string {
+
 	keys := make([]string, 0, 4)
 	appendKey := func(typ Type) {
 		if typ == nil {
@@ -692,4 +675,26 @@ func GetMethodLookupKeys(baseType Type) []string {
 		}
 	}
 	return keys
+}
+
+// LookupStructField centralizes field search so checker and lowerer agree on
+// struct layout. Checker needs the field type for validation; lowerer needs
+// the same field index to emit field access.
+func LookupStructField(baseType Type, name string) (field Field, index int, ok bool) {
+	if baseType == nil || name == "" {
+		return Field{}, -1, false
+	}
+	if ptr, ptrOK := baseType.(*RawPtrType); ptrOK && ptr != nil && ptr.Target != nil {
+		baseType = ptr.Target
+	}
+	strct, ok := Underlying(baseType).(*StructType)
+	if !ok || strct == nil {
+		return Field{}, -1, false
+	}
+	for i, candidate := range strct.Fields {
+		if candidate.Name == name {
+			return candidate, i, true
+		}
+	}
+	return Field{}, -1, false
 }

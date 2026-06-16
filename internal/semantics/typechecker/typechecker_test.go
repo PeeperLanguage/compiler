@@ -74,7 +74,7 @@ func TestImplMethodAllowsNonSelfReceiverName(t *testing.T) {
 
 func TestInterfaceAndImplAllowSelf(t *testing.T) {
 	src := `interface Reader {
-	read(^Self, buf: cstr): i32,
+	read(^Self, buf: cstr) -> i32,
 }
 
 struct File {}
@@ -275,7 +275,7 @@ fn main() -> i32 {
 
 func TestPointerSelfInterfaceAssignmentRequiresPointerValue(t *testing.T) {
 	src := `interface Reader {
-	read(^Self, buf: cstr): i32,
+	read(^Self, buf: cstr) -> i32,
 }
 
 struct File {}
@@ -298,7 +298,7 @@ fn main(file: ^File) -> i32 {
 
 func TestPointerSelfInterfaceAssignmentRejectsValue(t *testing.T) {
 	src := `interface Reader {
-	read(^Self, buf: cstr): i32,
+	read(^Self, buf: cstr) -> i32,
 }
 
 struct File {}

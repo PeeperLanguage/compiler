@@ -101,7 +101,11 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
-	for _, decl := range c.module.AST.Decls {
+	for _, stmt := range c.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.LetDecl:
 			if c.module.ModuleScope != nil {
@@ -113,13 +117,21 @@ func (c *checker) checkModule() {
 			}
 		}
 	}
-	for _, decl := range c.module.AST.Decls {
+	for _, stmt := range c.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.InterfaceDecl:
 			c.checkInterfaceDecl(node)
 		}
 	}
-	for _, decl := range c.module.AST.Decls {
+	for _, stmt := range c.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl)
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			if node == nil {
@@ -137,7 +149,6 @@ func (c *checker) checkModule() {
 		}
 	}
 }
-
 
 func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if c == nil || sym == nil || fn == nil || fn.Body == nil {
@@ -362,7 +373,6 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 }
 
-
 func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if decl == nil {
 		return
@@ -394,11 +404,26 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", ast.LocOf(decl), "")
 			continue
 		}
+		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
 		for _, param := range method.Params {
-			_ = typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, true))
+			paramType := typeinfo.ASTTypeWithOptions(param.Type, opts)
+			// Abstract Self is resolved at impl time; skip lowerability check.
+			if paramType != nil && !typeinfo.ContainsAbstractSelf(paramType) && !c.isLowerableType(paramType) {
+				site := ast.Node(decl)
+				if param.Name != nil {
+					site = param.Name
+				}
+				c.ctx.Diagnostics.Add(invalidTypeError(site,
+					"interface method parameter type is not lowerable in current compiler stage"))
+			}
 		}
-		_ = typeinfo.ASTTypeWithOptions(method.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, true))
+		if retType := typeinfo.ASTTypeWithOptions(method.ReturnType, opts); retType != nil &&
+			!typeinfo.ContainsAbstractSelf(retType) && !c.isLowerableType(retType) {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+				"interface method return type is not lowerable in current compiler stage", ast.LocOf(decl), "")
+		}
 	}
+
 }
 
 func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
@@ -435,8 +460,6 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
-	// dst = c.resolveType(dst)
-	// src = c.resolveType(src)
 	if typeinfo.Assignable(dst, src) {
 		return true
 	}
@@ -504,7 +527,6 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	}
 	defer func() {
 		if resolved != nil {
-			//resolved = c.resolveType(resolved)
 			if c.module != nil && c.module.Semantics != nil {
 				c.module.Semantics.ExprTypes[expr.ID()] = resolved
 			}
@@ -534,7 +556,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return t
 
 	case *ast.ScopeResolution:
-		return c.qualifiedScopeType(scope, node)
+		return c.qualifiedScopeType(node)
 
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
@@ -672,8 +694,8 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	if fieldType, ok := c.lookupFieldType(baseType, node.Name.Name); ok {
-		return fieldType
+	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
+		return field.Type
 	}
 	if methodType, _, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
 		return methodType
@@ -703,7 +725,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes, methodSym)
 		return c.callReturnType(call, methodType)
 	}
-	if _, fieldOK := c.lookupFieldType(baseType, selector.Name.Name); fieldOK {
+	if _, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable,
 			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "")
 		return &typeinfo.InvalidType{}
@@ -807,23 +829,6 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
 	}
 	return &typeinfo.StructType{Fields: fields}
-}
-
-func (c *checker) lookupFieldType(baseType typeinfo.Type, name string) (typeinfo.Type, bool) {
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		baseType = ptr.Target
-	}
-	underlying := typeinfo.Underlying(baseType)
-	strct, ok := underlying.(*typeinfo.StructType)
-	if !ok || strct == nil {
-		return nil, false
-	}
-	for _, field := range strct.Fields {
-		if field.Name == name {
-			return field.Type, true
-		}
-	}
-	return nil, false
 }
 
 func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {
@@ -1120,27 +1125,21 @@ func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
 	return typeinfo.SameType(target, arg) || c.assignable(target, arg) || c.assignable(arg, target)
 }
 
-// qualifiedScopeType resolves the type of a `module::symbol` expression using ScopeResolution.
-func (c *checker) qualifiedScopeType(scope *table.Scope, node *ast.ScopeResolution) typeinfo.Type {
-	_ = scope // the current scope is not used for two-step foreign lookup
-	alias := node.Module.Name
-	member := node.Name.Name
-	imp, ok := c.module.Imports[alias]
-	if !ok {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+alias+"`", ast.LocOf(node), "")
+// qualifiedScopeType resolves the type of a `module::symbol` expression.
+// Resolver already emitted symbol-not-found diagnostics for this node;
+// checker returns InvalidType silently on lookup failure to avoid duplicates.
+func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
+	if c == nil || node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	mod, ok := c.ctx.ModuleByKey(imp.Key)
-	if !ok || mod == nil || mod.ModuleScope == nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "module `"+alias+"` not loaded", ast.LocOf(node), "")
+	resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name)
+	if !ok || resolved.Symbol == nil {
 		return &typeinfo.InvalidType{}
 	}
-	sym, ok := mod.ModuleScope.LookupLocal(member)
-	if !ok || sym == nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+alias+"`", ast.LocOf(node), "")
-		return &typeinfo.InvalidType{}
+	if resolved.Symbol.Kind != symbols.SymbolType {
+		return &typeinfo.UnknownType{}
 	}
-	t, ok := symbols.GetSymbolType(sym)
+	t, ok := symbols.GetSymbolType(resolved.Symbol)
 	if !ok || t == nil {
 		return &typeinfo.UnknownType{}
 	}
