@@ -37,64 +37,29 @@ func (p *Parser) ParseModule() *ast.Module {
 	mod := &ast.Module{
 		FilePath: p.filePath,
 		Imports:  make([]*ast.ImportDecl, 0),
-		Decls:    make([]ast.Decl, 0),
+		Stmts:    make([]ast.Stmt, 0),
 	}
+	
+
+
 	for !p.at(token.EOF) {
-		startPos := p.pos
-		doc := p.consumeLeadingDoc()
-		if p.at(token.EOF) {
-			if len(mod.Imports) == 0 && len(mod.Decls) == 0 && mod.Doc == nil {
-				mod.Doc = doc
-			}
-			break
-		}
 		if p.at(token.IMPORT) {
 			if imp := p.parseImport(); imp != nil {
-				p.attachDoc(imp, doc)
 				mod.Imports = append(mod.Imports, imp)
 			}
 			continue
 		}
-		if decl := p.parseDecl(); decl != nil {
-			p.attachDoc(decl, doc)
-			mod.Decls = append(mod.Decls, decl)
-			continue
+		
+		stmt := p.parseStmt(true)
+		if stmt != nil {
+			mod.Stmts = append(mod.Stmts, stmt)
+		} else {
+			// Prevent infinite loop if parser fails to consume a token
+			p.advance()
 		}
-		if p.pos != startPos {
-			continue
-		}
-		p.synchronizeDecl()
 	}
+	
 	return mod
-}
-
-// --- Declarations ---
-
-func (p *Parser) parseDecl() ast.Decl {
-	if p.peek().Kind == token.HASH {
-		p.parseFnAttributes()
-	}
-	switch p.peek().Kind {
-	case token.FN:
-		return p.parseFnDecl()
-	case token.LET:
-		return p.parseLetDecl(true)
-	case token.CONST:
-		return p.parseConstDecl(true)
-	case token.STRUCT:
-		return p.parseStructDecl()
-	case token.INTERFACE:
-		return p.parseInterfaceDecl()
-	case token.ENUM:
-		return p.parseEnumDecl()
-	case token.IMPL:
-		return p.parseImplDecl()
-	case token.TYPE:
-		return p.parseTypeAliasDecl()
-	default:
-		p.diag.Add(diagnostics.NewError("expected declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
-		return nil
-	}
 }
 
 func (p *Parser) parseImport() *ast.ImportDecl {
@@ -102,34 +67,38 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 	if start == nil {
 		return nil
 	}
-	var path ast.Expr
-	switch p.peek().Kind {
-	case token.STRING:
-		tok := p.advance()
-		path = reg(p, &ast.StringLit{
-			Value:    tok.Literal,
-			Location: source.NewLocation(p.filePath, tok.Start, tok.End),
-		})
-	case token.IDENT:
-		path = p.parseIdentExpr()
-	default:
-		p.diag.Add(diagnostics.NewError("expected import path").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
+
+	pathToken := p.consume(token.STRING, "expected import path")
+	if pathToken == nil {
+		p.syncToSemicolon()
 		return nil
 	}
-	var alias *ast.Ident
-	if p.match(token.AS) {
-		alias = p.parseIdent()
-		if alias == nil {
-			return nil
+
+	path := ast.StringLit{
+		Value: pathToken.Literal,
+		Location: source.NewLocation(p.filePath, pathToken.Start, pathToken.End),
+	}
+
+	var alias ast.Ident
+	if p.peek().Kind != token.SEMICOLON {
+		if p.consume(token.AS, "expected ; or alias") != nil {
+			if tok := p.consume(token.IDENT, "expected alias name"); tok != nil {
+				alias = ast.Ident{
+					Name: tok.Literal,
+					Location: source.NewLocation(p.filePath, tok.Start, tok.End),
+				}
+			}
 		}
 	}
-	end := p.consume(token.SEMICOLON, "expected ';' after import")
+
+	end := p.consume(token.SEMICOLON, "expected ;")
 	if end == nil {
 		return nil
 	}
+	
 	return reg(p, &ast.ImportDecl{
-		Path:     path,
-		Alias:    alias,
+		Path:     &path,
+		Alias:    &alias,
 		Location: source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
@@ -210,8 +179,16 @@ func (p *Parser) parseFnBody() (body *ast.BlockStmt, isExtern bool, ok bool) {
 	if p.match(token.SEMICOLON) {
 		return nil, true, true
 	}
-	body, ok = p.parseRequiredBlock(ownerFunction)
-	return body, false, ok
+	if p.at(token.LBRACE) {
+		if b := p.parseBlock(); b != nil {
+			return b, false, true
+		}
+	}
+	
+	prev := p.stream[p.pos-1]
+	loc := source.NewLocation(p.filePath, prev.End, prev.End)
+	p.diag.Add(diagnostics.NewError("missing function body").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(loc, "expected '{' here"))
+	return nil, false, true
 }
 
 func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
@@ -266,21 +243,16 @@ func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value a
 	if p.match(token.ASSIGN) {
 		value = p.parseExpr(precLowest)
 	}
-	if p.at(token.SEMICOLON) {
-		end = p.advance()
-		return name, ty, value, end, true
-	}
-	// missing semicolon — attempt recovery
-	insertPos := ast.EndOf(value)
-	if isZeroPosition(insertPos) {
-		insertPos = ast.EndOf(ty)
-	}
-	if isZeroPosition(insertPos) {
-		insertPos = ast.EndOf(name)
-	}
-	end = p.recoverSemicolon("after statement", insertPos)
+	end = p.consume(token.SEMICOLON, "expected ';' after statement")
 	if end == nil {
-		return nil, nil, nil, nil, false
+		insertPos := ast.EndOf(value)
+		if insertPos.IsZero() {
+			insertPos = ast.EndOf(ty)
+		}
+		if insertPos.IsZero() {
+			insertPos = ast.EndOf(name)
+		}
+		end = &token.Token{End: insertPos}
 	}
 	return name, ty, value, end, true
 }
@@ -292,6 +264,7 @@ func (p *Parser) parseStructDecl() ast.Decl {
 	}
 	name := p.parseIdent()
 	if name == nil {
+		p.syncToRBrace()
 		return nil
 	}
 	typeParams := p.parseOptionalTypeParams()
@@ -357,7 +330,7 @@ func (p *Parser) parseImplDecl() ast.Decl {
 			p.parseFnAttributes()
 		}
 		if p.peek().Kind != token.FN {
-			p.diag.Add(diagnostics.NewError("expected method declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
+			p.diag.Add(diagnostics.NewError("expected method declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.stream[p.pos-1].Start, p.stream[p.pos-1].End), fmt.Sprintf("found %s", p.peek().Kind)))
 			return nil
 		}
 		decl, ok := p.parseFnDecl().(*ast.FnDecl)
@@ -413,17 +386,48 @@ func (p *Parser) parseFnAttributes() {
 
 // --- Statements ---
 
-func (p *Parser) parseStmt() ast.Stmt {
-	startPos := p.pos
-	doc := p.consumeLeadingDoc()
+func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
+	if p.at(token.RBRACE) || p.at(token.EOF) {
+		return nil
+	}
+	
+	var doc *ast.CommentGroup
+	if p.at(token.DOC_COMMENT) {
+		tok := p.advance()
+		doc = &ast.CommentGroup{
+			Text:     tok.Literal,
+			Location: source.NewLocation(p.filePath, tok.Start, tok.End),
+		}
+	}
+	
+	if p.peek().Kind == token.HASH {
+		p.parseFnAttributes()
+	}
+	
+	if p.at(token.RBRACE) || p.at(token.EOF) {
+		return nil
+	}
+	
 	var stmt ast.Stmt
 	switch p.peek().Kind {
+	case token.FN:
+		stmt, _ = p.parseFnDecl().(ast.Stmt)
+	case token.LET:
+		stmt, _ = p.parseLetDecl(isModuleLevel).(ast.Stmt)
+	case token.CONST:
+		stmt, _ = p.parseConstDecl(isModuleLevel).(ast.Stmt)
+	case token.STRUCT:
+		stmt, _ = p.parseStructDecl().(ast.Stmt)
+	case token.INTERFACE:
+		stmt, _ = p.parseInterfaceDecl().(ast.Stmt)
+	case token.ENUM:
+		stmt, _ = p.parseEnumDecl().(ast.Stmt)
+	case token.IMPL:
+		stmt, _ = p.parseImplDecl().(ast.Stmt)
+	case token.TYPE:
+		stmt, _ = p.parseTypeAliasDecl().(ast.Stmt)
 	case token.LBRACE:
 		stmt = p.parseBlock()
-	case token.LET:
-		stmt, _ = p.parseLetDecl(false).(ast.Stmt)
-	case token.CONST:
-		stmt, _ = p.parseConstDecl(false).(ast.Stmt)
 	case token.IF:
 		stmt = p.parseIfStmt()
 	case token.RETURN:
@@ -431,30 +435,31 @@ func (p *Parser) parseStmt() ast.Stmt {
 	default:
 		stmt = p.parseExprStmt()
 	}
-	if stmt == nil {
-		if p.pos != startPos {
-			return nil
+	
+	if stmt != nil && doc != nil {
+		if documented, ok := stmt.(ast.DocumentedNode); ok {
+			documented.SetDocComment(doc)
 		}
-		return nil
 	}
-	p.attachDoc(stmt, doc)
 	return stmt
 }
 
-func (p *Parser) parseBlock() ast.Stmt {
+func (p *Parser) parseBlock() *ast.BlockStmt {
 	start := p.consume(token.LBRACE, "expected '{'")
 	if start == nil {
 		return nil
 	}
 	var stmts []ast.Stmt
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		if stmt := p.parseStmt(); stmt != nil {
+		if stmt := p.parseStmt(false); stmt != nil {
 			stmts = append(stmts, stmt)
 		} else {
-			p.synchronizeStmt()
+			if !p.at(token.RBRACE) && !p.at(token.EOF) {
+				p.advance()
+			}
 		}
 	}
-	end := p.consume(token.RBRACE, "expected '}'")
+	end := p.consume(token.RBRACE, "expected '}' after block")
 	if end == nil {
 		return nil
 	}
@@ -470,24 +475,40 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	if cond == nil {
 		return nil
 	}
-	thenBlock, ok := p.parseRequiredBlock(ownerIf)
-	if !ok {
+	var thenBlock *ast.BlockStmt
+	if p.at(token.LBRACE) {
+		thenBlock = p.parseBlock()
+	}
+	if thenBlock == nil {
+		prev := p.stream[p.pos-1]
+		p.diag.Add(diagnostics.NewError("missing if body").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "expected '{' here"))
 		return nil
 	}
-	endTok := p.lastTokenOfStmt(thenBlock, p.lastNonNilToken(*start))
+	endTok := p.lastNonNilToken(*start)
+	if ast.LocOf(thenBlock) != nil && ast.LocOf(thenBlock).End != nil {
+		endTok.End = *ast.LocOf(thenBlock).End
+	}
 	var elseStmt ast.Stmt
 	if p.match(token.ELSE) {
 		elseTok := p.lastNonNilToken(*start)
 		if p.at(token.IF) {
 			elseStmt = p.parseIfStmt()
 		} else {
-			elseBlock, ok := p.parseRequiredBlock(ownerElse)
-			if !ok {
+			var elseBlock *ast.BlockStmt
+			if p.at(token.LBRACE) {
+				elseBlock = p.parseBlock()
+			}
+			if elseBlock == nil {
+				prev := p.stream[p.pos-1]
+				p.diag.Add(diagnostics.NewError("missing else body").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "expected '{' here"))
 				return nil
 			}
 			elseStmt = elseBlock
 		}
-		endTok = p.lastTokenOfStmt(elseStmt, elseTok)
+		endTok = p.lastNonNilToken(elseTok)
+		if elseStmt != nil && ast.LocOf(elseStmt) != nil && ast.LocOf(elseStmt).End != nil {
+			endTok.End = *ast.LocOf(elseStmt).End
+		}
 	}
 	return reg(p, &ast.IfStmt{
 		Cond:     cond,
@@ -508,9 +529,11 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after return")
 	if end == nil {
-		if end = p.recoverSemicolon("after return", ast.EndOf(value)); end == nil {
-			return nil
+		fallbackPos := ast.EndOf(value)
+		if fallbackPos.IsZero() {
+			fallbackPos = start.End
 		}
+		end = &token.Token{End: fallbackPos}
 	}
 	return reg(p, &ast.ReturnStmt{Value: value, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
@@ -527,9 +550,11 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 		}
 		end := p.consume(token.SEMICOLON, "expected ';' after assignment")
 		if end == nil {
-			if end = p.recoverSemicolon("after assignment", ast.EndOf(value)); end == nil {
-				return nil
+			fallbackPos := ast.EndOf(value)
+			if fallbackPos.IsZero() {
+				fallbackPos = ast.EndOf(expr)
 			}
+			end = &token.Token{Start: fallbackPos, End: fallbackPos}
 		}
 		return reg(p, &ast.AssignStmt{
 			Target:   expr,
@@ -539,9 +564,8 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after expression")
 	if end == nil {
-		if end = p.recoverSemicolon("after expression", ast.EndOf(expr)); end == nil {
-			return nil
-		}
+		fallbackPos := ast.EndOf(expr)
+		end = &token.Token{Start: fallbackPos, End: fallbackPos}
 	}
 	return reg(p, &ast.ExprStmt{
 		Expr:     expr,
@@ -629,7 +653,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 		return nil
 	}
 	var ret ast.TypeExpr
-	if p.match(token.COLON) {
+	if p.match(token.ARROW) {
 		ret = p.parseTypeExpr()
 		if ret == nil {
 			return nil
@@ -710,7 +734,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 				return ast.TypeMethod{}, false
 			}
 			var ret ast.TypeExpr
-			if p.match(token.COLON) {
+			if p.match(token.ARROW) {
 				ret = p.parseTypeExpr()
 				if ret == nil {
 					return ast.TypeMethod{}, false
@@ -800,27 +824,22 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 
 // --- Helpers ---
 
-func (p *Parser) parseRequiredBlock(owner string) (*ast.BlockStmt, bool) {
-	if p.at(token.LBRACE) {
-		if body := p.parseBlock(); body != nil {
-			return body.(*ast.BlockStmt), true
-		}
-		return nil, false
+func (p *Parser) syncToSemicolon() {
+	for !p.at(token.SEMICOLON) && !p.at(token.EOF) {
+		p.advance()
 	}
-	if !p.isDeclStart(p.peek().Kind) && !p.isStmtBoundary(p.peek().Kind) {
-		return nil, false
+	if p.at(token.SEMICOLON) {
+		p.advance()
 	}
-	insert := p.expectedInsertionPoint()
-	loc := source.NewLocation(p.filePath, insert, insert)
-	p.diag.Add(
-		diagnostics.NewError("missing "+owner+" body").
-			WithCode(diagnostics.ErrExpectedToken).
-			WithPrimaryLabel(loc, "add missing `{}` here"),
-	)
-	return reg(p, &ast.BlockStmt{
-		Stmts:    nil,
-		Location: loc,
-	}), true
+}
+
+func (p *Parser) syncToRBrace() {
+	for !p.at(token.RBRACE) && !p.at(token.EOF) {
+		p.advance()
+	}
+	if p.at(token.RBRACE) {
+		p.advance()
+	}
 }
 
 func parseBracedItemList[T any](
@@ -834,20 +853,26 @@ func parseBracedItemList[T any](
 	}
 	var items []T
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		item, ok := parseItem()
-		if !ok {
-			return nil, nil, false
+		for p.at(token.DOC_COMMENT) {
+			p.advance()
 		}
-		items = append(items, item)
+		if p.at(token.RBRACE) {
+			break
+		}
+		item, ok := parseItem()
+		if ok {
+			items = append(items, item)
+		} else {
+			p.advance()
+		}
 		if p.match(token.COMMA) {
-			if p.at(token.RBRACE) {
-				break
-			}
 			continue
 		}
 		if !p.at(token.RBRACE) {
-			p.diag.Add(diagnostics.NewError(itemMsg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
-			return nil, nil, false
+			prev := p.stream[p.pos-1]
+			p.diag.Add(diagnostics.NewError(itemMsg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "add missing `,` here"))
+			// Recover by pretending there was a comma and continuing
+			continue
 		}
 	}
 	end := p.consume(token.RBRACE, itemMsg)
@@ -857,118 +882,17 @@ func parseBracedItemList[T any](
 	return items, end, true
 }
 
-func (p *Parser) expectedInsertionPoint() source.Position {
-	tok := p.peek()
-	insert := tok.Start
-	if p.pos > 0 {
-		prev := p.stream[p.pos-1]
-		if prev.End.Index <= tok.Start.Index {
-			insert = prev.End
-		}
-	}
-	return insert
-}
 
-func (p *Parser) recoverMissingToken(expected token.Kind, msg string, fallback source.Position) *token.Token {
-	insert := p.expectedInsertionPoint()
-	if fallback.Line > 0 {
-		insert = fallback
-	}
-	loc := source.NewLocation(p.filePath, insert, insert)
-	p.diag.Add(
-		diagnostics.NewError(msg).
-			WithCode(diagnostics.ErrExpectedToken).
-			WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(expected))),
-	)
-	return &token.Token{
-		Kind:    expected,
-		Literal: string(expected),
-		Start:   insert,
-		End:     insert,
-	}
-}
-
-// recoverSemicolon synthesizes a missing ';' when at a statement/decl boundary.
-// Returns nil if recovery is not possible.
-func (p *Parser) recoverSemicolon(context string, fallback source.Position) *token.Token {
-	insert := p.expectedInsertionPoint()
-	if !isZeroPosition(fallback) {
-		insert = fallback
-	}
-	if !p.isStmtBoundary(p.peek().Kind) && !p.isDeclStart(p.peek().Kind) {
-		return nil
-	}
-	return p.recoverMissingToken(token.SEMICOLON, "expected ';' "+context, insert)
-}
-
-func (p *Parser) isDeclStart(kind token.Kind) bool {
-	switch kind {
-	case token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
-		token.INTERFACE, token.ENUM, token.IMPL, token.TYPE, token.EOF:
-		return true
-	default:
-		return false
-	}
-}
-
-func (p *Parser) isStmtBoundary(kind token.Kind) bool {
-	switch kind {
-	case token.RBRACE, token.SEMICOLON, token.LET, token.CONST, token.IF,
-		token.ELSE, token.RETURN, token.FN, token.IMPORT, token.STRUCT,
-		token.INTERFACE, token.ENUM, token.IMPL, token.EOF:
-		return true
-	default:
-		return false
-	}
-}
-
-func (p *Parser) synchronizeDecl() {
-	for !p.at(token.EOF) {
-		if p.match(token.SEMICOLON) {
-			return
-		}
-		switch p.peek().Kind {
-		case token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
-			token.INTERFACE, token.ENUM, token.IMPL, token.TYPE:
-			return
-		}
-		p.advance()
-	}
-}
-
-func (p *Parser) synchronizeStmt() {
-	for !p.at(token.EOF) && !p.at(token.RBRACE) {
-		if p.match(token.SEMICOLON) {
-			return
-		}
-		if p.isStmtBoundary(p.peek().Kind) || p.isDeclStart(p.peek().Kind) {
-			return
-		}
-		p.advance()
-	}
-}
-
-func (p *Parser) lastTokenOfStmt(stmt ast.Stmt, fallback token.Token) token.Token {
-	if stmt == nil {
-		return fallback
-	}
-	loc := ast.LocOf(stmt)
-	if loc.End == nil {
-		return fallback
-	}
-	for i := p.pos - 1; i >= 0; i-- {
-		if p.stream[i].End.Index == loc.End.Index {
-			return p.stream[i]
-		}
-	}
-	return fallback
-}
 
 func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
 	if p.peek().Kind == kind {
 		return p.advance()
 	}
-	p.diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
+	prev := p.stream[p.pos-1]
+	loc := source.NewLocation(p.filePath, prev.End, prev.End)
+	p.diag.Add(diagnostics.NewError(msg).
+		WithCode(diagnostics.ErrExpectedToken).
+		WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind))))
 	return nil
 }
 
@@ -1000,36 +924,6 @@ func (p *Parser) advance() *token.Token {
 	return &tok
 }
 
-func (p *Parser) consumeLeadingDoc() *ast.CommentGroup {
-	if !p.at(token.DOC_COMMENT) {
-		return nil
-	}
-	start := p.peek()
-	end := start
-	texts := make([]string, 0, 2)
-	for p.at(token.DOC_COMMENT) {
-		tok := p.advance()
-		if tok == nil {
-			break
-		}
-		texts = append(texts, tok.Literal)
-		end = *tok
-	}
-	return &ast.CommentGroup{
-		Text:     strings.Join(texts, "\n"),
-		Location: source.NewLocation(p.filePath, start.Start, end.End),
-	}
-}
-
-func (p *Parser) attachDoc(node ast.Node, doc *ast.CommentGroup) {
-	if node == nil || ast.IsNilNode(node) || doc == nil {
-		return
-	}
-	if documented, ok := node.(ast.DocumentedNode); ok {
-		documented.SetDocComment(doc)
-	}
-}
-
 func (p *Parser) nextID() ast.NodeID {
 	p.nodeID++
 	return p.nodeID
@@ -1057,8 +951,4 @@ func (p *Parser) lastNonNilToken(fallback token.Token) token.Token {
 		return p.stream[p.pos-1]
 	}
 	return fallback
-}
-
-func isZeroPosition(pos source.Position) bool {
-	return pos == source.NewPosition()
 }

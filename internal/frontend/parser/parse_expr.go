@@ -59,11 +59,7 @@ func init() {
 		p.advance()
 		inner := p.parseExpr(precLowest)
 		if p.consume(token.RPAREN, "expected ')'") == nil {
-			if p.isStmtBoundary(p.peek().Kind) || p.peek().Kind == token.COMMA || p.peek().Kind == token.RPAREN {
-				p.recoverMissingToken(token.RPAREN, "expected ')'", p.expectedInsertionPoint())
-				return inner
-			}
-			return nil
+			return inner
 		}
 		return inner
 	})
@@ -184,16 +180,20 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 		}
 	}
 	end := p.consume(token.RPAREN, "expected ')' after arguments")
+	var fallbackEnd source.Position
 	if end == nil {
-		if !p.isStmtBoundary(p.peek().Kind) && p.peek().Kind != token.COMMA && p.peek().Kind != token.RPAREN {
-			return nil
+		if len(args) > 0 {
+			fallbackEnd = ast.EndOf(args[len(args)-1])
+		} else {
+			fallbackEnd = ast.EndOf(callee)
 		}
-		end = p.recoverMissingToken(token.RPAREN, "expected ')' after arguments", p.expectedInsertionPoint())
+	} else {
+		fallbackEnd = end.End
 	}
 	return reg(p, &ast.CallExpr{
 		Callee:   callee,
 		Args:     args,
-		Location: source.NewLocation(p.filePath, ast.StartOf(callee), ast.EndOf(reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, end.Start, end.End)}))),
+		Location: source.NewLocation(p.filePath, ast.StartOf(callee), fallbackEnd),
 	})
 }
 

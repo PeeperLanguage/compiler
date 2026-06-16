@@ -75,8 +75,8 @@ func findNodeAt(module *project.Module, line, col int) ast.Node {
 	for _, imp := range module.AST.Imports {
 		ast.Inspect(imp, inspect)
 	}
-	for _, decl := range module.AST.Decls {
-		ast.Inspect(decl, inspect)
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, inspect)
 	}
 	return deepest
 }
@@ -100,8 +100,8 @@ func buildParentMap(module *project.Module) map[ast.NodeID]ast.Node {
 	for _, imp := range module.AST.Imports {
 		ast.Inspect(imp, inspect)
 	}
-	for _, decl := range module.AST.Decls {
-		ast.Inspect(decl, inspect)
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, inspect)
 	}
 	return parents
 }
@@ -158,7 +158,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 				if m.AST == nil {
 					continue
 				}
-				for _, d := range m.AST.Decls {
+				for _, d := range m.AST.Stmts {
 					if sd, ok := d.(*ast.StructDecl); ok && sd != nil && sd.Name != nil && sd.Name.Name == baseTypeName {
 						structDecl = sd
 						break
@@ -371,8 +371,8 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 		for _, imp := range mod.AST.Imports {
 			ast.Inspect(imp, inspect)
 		}
-		for _, decl := range mod.AST.Decls {
-			ast.Inspect(decl, inspect)
+		for _, stmt := range mod.AST.Stmts {
+			ast.Inspect(stmt, inspect)
 		}
 	}
 
