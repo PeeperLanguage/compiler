@@ -20,12 +20,15 @@ type regexPattern struct {
 }
 
 type Lexer struct {
-	file     string
-	input    string
-	pos      source.Position
-	diag     *diagnostics.DiagnosticBag
-	patterns []regexPattern
-	toks     []token.Token
+	file            string
+	input           string
+	pos             source.Position
+	diag            *diagnostics.DiagnosticBag
+	patterns        []regexPattern
+	toks            []token.Token
+	pendingComments []string
+	pendingStart    source.Position
+	pendingEnd      source.Position
 }
 
 func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
@@ -111,6 +114,9 @@ func defaultHandler(kind token.Kind) regexHandler {
 
 func skipHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
+	if strings.Count(match, "\n") > 1 {
+		l.pendingComments = nil
+	}
 	l.advanceBy(match)
 }
 
@@ -123,7 +129,11 @@ func lineCommentHandler(l *Lexer, re *regexp.Regexp) {
 		prefix = "///"
 	}
 	text := strings.TrimSpace(strings.TrimPrefix(match, prefix))
-	l.push(token.Token{Kind: token.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
+	if len(l.pendingComments) == 0 {
+		l.pendingStart = start
+	}
+	l.pendingComments = append(l.pendingComments, text)
+	l.pendingEnd = l.pos
 }
 
 func blockCommentHandler(l *Lexer, re *regexp.Regexp) {
@@ -138,7 +148,11 @@ func blockCommentHandler(l *Lexer, re *regexp.Regexp) {
 		lines[i] = strings.TrimSpace(line)
 	}
 	text := strings.Join(lines, "\n")
-	l.push(token.Token{Kind: token.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
+	if len(l.pendingComments) == 0 {
+		l.pendingStart = start
+	}
+	l.pendingComments = append(l.pendingComments, text)
+	l.pendingEnd = l.pos
 }
 
 func identifierHandler(l *Lexer, re *regexp.Regexp) {
@@ -176,7 +190,6 @@ func charHandler(l *Lexer, re *regexp.Regexp) {
 				WithCode(diagnostics.ErrUnexpectedCharacter).
 				WithPrimaryLabel(loc, "use exactly one character between single quotes"),
 		)
-		l.push(token.Token{Kind: token.ILLEGAL, Literal: match, Start: start, End: l.pos})
 		return
 	}
 	l.push(token.Token{Kind: token.CHAR, Literal: value, Start: start, End: l.pos})
@@ -195,7 +208,6 @@ func byteCharHandler(l *Lexer, re *regexp.Regexp) {
 				WithCode(diagnostics.ErrUnexpectedCharacter).
 				WithPrimaryLabel(loc, "use exactly one byte after the b'...' prefix"),
 		)
-		l.push(token.Token{Kind: token.ILLEGAL, Literal: match, Start: start, End: l.pos})
 		return
 	}
 	l.push(token.Token{Kind: token.BYTE_CHAR, Literal: value, Start: start, End: l.pos})
@@ -229,13 +241,22 @@ func (l *Lexer) Tokenize() []token.Token {
 				WithCode(diagnostics.ErrUnexpectedCharacter).
 				WithPrimaryLabel(loc, "remove or replace this character"),
 		)
-		l.push(token.Token{Kind: token.ILLEGAL, Literal: bad, Start: start, End: l.pos})
 	}
 	l.push(token.Token{Kind: token.EOF, Start: l.pos, End: l.pos})
 	return append([]token.Token(nil), l.toks...)
 }
 
 func (l *Lexer) push(t token.Token) {
+	if len(l.pendingComments) > 0 {
+		docTok := token.Token{
+			Kind:    token.DOC_COMMENT,
+			Literal: strings.Join(l.pendingComments, "\n"),
+			Start:   l.pendingStart,
+			End:     l.pendingEnd,
+		}
+		l.toks = append(l.toks, docTok)
+		l.pendingComments = nil
+	}
 	l.toks = append(l.toks, t)
 }
 

@@ -21,7 +21,11 @@ func (r *resolver) resolveModule() {
 		r.module.Semantics = project.NewSemanticInfo()
 	}
 	r.markPendingTopLevelBindings()
-	for _, decl := range r.module.AST.Decls {
+	for _, stmt := range r.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.LetDecl:
 			r.resolveTopLevelBinding(node.Name, node.Value)
@@ -29,7 +33,11 @@ func (r *resolver) resolveModule() {
 			r.resolveTopLevelBinding(node.Name, node.Value)
 		}
 	}
-	for _, decl := range r.module.AST.Decls {
+	for _, stmt := range r.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl)
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			if node != nil && node.Body != nil {

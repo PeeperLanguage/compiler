@@ -101,7 +101,11 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
-	for _, decl := range c.module.AST.Decls {
+	for _, stmt := range c.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.LetDecl:
 			if c.module.ModuleScope != nil {
@@ -113,13 +117,21 @@ func (c *checker) checkModule() {
 			}
 		}
 	}
-	for _, decl := range c.module.AST.Decls {
+	for _, stmt := range c.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.InterfaceDecl:
 			c.checkInterfaceDecl(node)
 		}
 	}
-	for _, decl := range c.module.AST.Decls {
+	for _, stmt := range c.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl)
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			if node == nil {

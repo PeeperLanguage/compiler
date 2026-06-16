@@ -33,8 +33,8 @@ func (c *collector) collectModule(mod *ast.Module) {
 			}
 		}
 	}
-	for _, decl := range mod.Decls {
-		c.collectNode(decl)
+	for _, stmt := range mod.Stmts {
+		c.collectNode(stmt)
 	}
 }
 
