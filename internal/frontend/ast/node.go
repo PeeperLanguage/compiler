@@ -17,6 +17,11 @@ type Node interface {
 	SetID(NodeID)
 }
 
+type DocumentedNode interface {
+	SetDocComment(*CommentGroup)
+	GetDocComment() *CommentGroup
+}
+
 type Decl interface {
 	Node
 	declNode()
@@ -43,5 +48,5 @@ type Module struct {
 	FilePath string
 	Doc      *CommentGroup
 	Imports  []*ImportDecl
-	Decls    []Decl
+	Stmts    []Stmt
 }

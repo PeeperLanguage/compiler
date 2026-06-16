@@ -25,7 +25,11 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		Externs:  make([]hir.Extern, 0),
 		Funcs:    make([]*hir.Function, 0),
 	}
-	for _, decl := range module.AST.Decls {
+	for _, stmt := range module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			fn := node

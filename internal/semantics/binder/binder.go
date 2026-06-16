@@ -22,7 +22,11 @@ func Bind(ctx *project.CompilerContext, module *project.Module) {
 }
 
 func (b *binder) bindModule() {
-	for _, decl := range b.module.AST.Decls {
+	for _, stmt := range b.module.AST.Stmts {
+		decl, ok := stmt.(ast.Decl) // ? Why even needed?
+		if !ok {
+			continue
+		}
 		if name, typ, ok := ast.DeclaredTypeExpr(decl); ok {
 			b.bindTypeDecl(name, typ)
 			continue

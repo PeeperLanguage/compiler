@@ -7,11 +7,6 @@ type CommentGroup struct {
 	Location *source.Location
 }
 
-type DocumentedNode interface {
-	Node
-	SetDocComment(*CommentGroup)
-}
-
 type Documented struct {
 	Doc *CommentGroup
 }

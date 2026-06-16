@@ -13,6 +13,7 @@ type ImportDecl struct {
 }
 
 func (*ImportDecl) declNode()               {}
+func (*ImportDecl) stmtNode()               {}
 func (d *ImportDecl) loc() *source.Location { return d.Location }
 
 type NamedType struct {
@@ -142,6 +143,7 @@ type FnDecl struct {
 }
 
 func (*FnDecl) declNode()               {}
+func (*FnDecl) stmtNode()               {}
 func (d *FnDecl) loc() *source.Location { return d.Location }
 
 type TypeAliasDecl struct {
@@ -154,6 +156,7 @@ type TypeAliasDecl struct {
 }
 
 func (*TypeAliasDecl) declNode()               {}
+func (*TypeAliasDecl) stmtNode()               {}
 func (d *TypeAliasDecl) loc() *source.Location { return d.Location }
 
 type StructDecl struct {
@@ -166,6 +169,7 @@ type StructDecl struct {
 }
 
 func (*StructDecl) declNode()               {}
+func (*StructDecl) stmtNode()               {}
 func (d *StructDecl) loc() *source.Location { return d.Location }
 
 type InterfaceDecl struct {
@@ -178,6 +182,7 @@ type InterfaceDecl struct {
 }
 
 func (*InterfaceDecl) declNode()               {}
+func (*InterfaceDecl) stmtNode()               {}
 func (d *InterfaceDecl) loc() *source.Location { return d.Location }
 
 type EnumDecl struct {
@@ -190,6 +195,7 @@ type EnumDecl struct {
 }
 
 func (*EnumDecl) declNode()               {}
+func (*EnumDecl) stmtNode()               {}
 func (d *EnumDecl) loc() *source.Location { return d.Location }
 
 type ImplDecl struct {
@@ -201,6 +207,7 @@ type ImplDecl struct {
 }
 
 func (*ImplDecl) declNode()               {}
+func (*ImplDecl) stmtNode()               {}
 func (d *ImplDecl) loc() *source.Location { return d.Location }
 
 
