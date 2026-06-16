@@ -1,7 +1,11 @@
-
 fn sayhi() {
     let hi: cstr = "Hello, world!\n";
     write(stdout, hi, 14);
+}
+
+struct Point {
+    x: i32,
+    y: i32
 }
 
 fn main() -> i32 {
