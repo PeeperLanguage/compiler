@@ -23,6 +23,13 @@ func (d *Documented) SetDocComment(doc *CommentGroup) {
 	d.Doc = doc
 }
 
+func (d *Documented) GetDocComment() *CommentGroup {
+	if d == nil {
+		return nil
+	}
+	return d.Doc
+}
+
 type Attribute struct {
 	Name     string
 	Args     []string

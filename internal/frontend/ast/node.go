@@ -20,6 +20,8 @@ type Node interface {
 type Decl interface {
 	Node
 	declNode()
+	SetDocComment(*CommentGroup)
+    GetDocComment() *CommentGroup
 }
 
 type Stmt interface {

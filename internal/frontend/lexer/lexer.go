@@ -118,9 +118,6 @@ func lineCommentHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	l.advanceBy(match)
-	if !l.isStandaloneComment(start.Index) {
-		return
-	}
 	prefix := "//"
 	if strings.HasPrefix(match, "///") {
 		prefix = "///"
@@ -133,9 +130,6 @@ func blockCommentHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	l.advanceBy(match)
-	if !l.isStandaloneComment(start.Index) {
-		return
-	}
 	content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(match, "/*"), "*/"))
 	lines := strings.Split(content, "\n")
 	for i := range lines {
@@ -243,19 +237,6 @@ func (l *Lexer) Tokenize() []token.Token {
 
 func (l *Lexer) push(t token.Token) {
 	l.toks = append(l.toks, t)
-}
-
-func (l *Lexer) isStandaloneComment(index int) bool {
-	if index <= 0 || index > len(l.input) {
-		return true
-	}
-	lineStart := strings.LastIndexByte(l.input[:index], '\n')
-	if lineStart < 0 {
-		lineStart = 0
-	} else {
-		lineStart++
-	}
-	return strings.TrimSpace(l.input[lineStart:index]) == ""
 }
 
 func (l *Lexer) advanceBy(text string) {
