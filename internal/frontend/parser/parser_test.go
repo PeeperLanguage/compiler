@@ -361,7 +361,7 @@ func TestParseAnonymousTypesInBindings(t *testing.T) {
 	x: i32,
 } = value;
 let b: interface {
-	call(x: i32): i32,
+	call(x: i32) -> i32,
 } = value;
 let c: enum {
 	One,
@@ -474,7 +474,7 @@ func TestParseTypeDeclarations(t *testing.T) {
 	y: f32,
 }
 interface Adder {
-	add(i32, i32): i32,
+	add(i32, i32) -> i32,
 }
 enum Color {
 	Red,
@@ -871,3 +871,88 @@ const b: i32 = 2;`
 		t.Fatalf("decl[1] expected const, got %T", mod.Decls[1])
 	}
 }
+
+// TestParseSemicolonRecoveryNewline verifies that missing semicolon before a newline-started statement
+// is recovered correctly with exactly 1 diagnostic and the statements are parsed successfully.
+func TestParseSemicolonRecoveryNewline(t *testing.T) {
+	src := `fn main() -> i32 {
+	sayhi()
+	return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics for missing semicolon")
+	}
+	errors := diag.Diagnostics()
+	if len(errors) != 1 {
+		t.Fatalf("expected exactly 1 error, got %d:\n%s", len(errors), diag.EmitAllToString())
+	}
+	fn := mod.Decls[0].(*ast.FnDecl)
+	if len(fn.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 statements inside function body, got %d", len(fn.Body.Stmts))
+	}
+}
+
+// TestParseSemicolonRecoveryNonSilent verifies that a missing semicolon when recovery is impossible
+// still emits a diagnostic rather than failing silently.
+func TestParseSemicolonRecoveryNonSilent(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: i32 = 1 write(stdout, x, 31);
+}`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic when recovery fails")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "expected ';' after statement") {
+		t.Fatalf("expected missing semicolon error, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+// TestParseCommentsInsideBraces verifies comments inside braces (like struct or block)
+// do not break structural checks.
+func TestParseCommentsInsideBraces(t *testing.T) {
+	src := `struct S {
+	// struct comment
+	x: i32,
+	// trailing struct comment
+}
+interface I {
+	// method comment
+	foo() -> i32,
+}
+fn main() {
+	// stmt comment
+	let x = 1;
+	// block trailing comment
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Decls) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	}
+}
+
+// TestParseCommentDiscarding verifies comments followed by a blank line are discarded.
+func TestParseCommentDiscarding(t *testing.T) {
+	src := `// spaced comment
+
+fn main() {
+	// non-spaced comment
+	let x = 1;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Decls[0].(*ast.FnDecl)
+	if fn.Doc != nil {
+		t.Fatalf("expected spaced comment to be discarded, got: %q", fn.Doc.Text)
+	}
+	let := fn.Body.Stmts[0].(*ast.LetDecl)
+	if let.Doc == nil || let.Doc.Text != "non-spaced comment" {
+		t.Fatalf("expected non-spaced comment to be attached, got: %#v", let.Doc)
+	}
+}
+

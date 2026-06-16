@@ -12,6 +12,10 @@ func NewPosition() Position {
 	return Position{Line: 1, Column: 1}
 }
 
+func (p Position) IsZero() bool {
+	return p == Position{}
+}
+
 func (p Position) String() string {
 	return fmt.Sprintf("%d:%d", p.Line, p.Column)
 }
