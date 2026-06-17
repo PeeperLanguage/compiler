@@ -246,12 +246,11 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		}
 	case *ast.IfStmt:
 		if node.Cond == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "if condition required", ast.LocOf(node), "")
-		} else {
-			condType := c.typeExpr(scope, node.Cond, nil)
-			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
-				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
-			}
+			return // resolver already diagnosed missing condition
+		}
+		condType := c.typeExpr(scope, node.Cond, nil)
+		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
+			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
 		}
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
@@ -265,7 +264,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 	case *ast.AssignStmt:
 		c.checkAssign(scope, node)
 	default:
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
+		return // resolver already diagnosed unsupported statements
 	}
 }
 
@@ -651,8 +650,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return c.typeAsExpr(scope, node)
 
 	default:
-		c.ctx.Diagnostics.Add(invalidExpressionError(node, "unsupported expression type"))
-		return nil
+		return nil // resolver already diagnosed unsupported expressions
 	}
 }
 
@@ -875,7 +873,7 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 		if !ok {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
 				"missing struct literal field `"+targetField.Name+"`", ast.LocOf(node), "").
-				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(fieldNames(targetStruct), ", ")))
+				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(availableFields(targetType), ", ")))
 			continue
 		}
 		valueType := c.typeExpr(scope, field.Value, targetField.Type)
@@ -1097,13 +1095,7 @@ func integerRangeHint(t *typeinfo.IntegerType) string {
 	return fmt.Sprintf("%s range: 0 to 2^%d-1", typeinfo.TypeText(t), t.Bits)
 }
 
-func fieldNames(strct *typeinfo.StructType) []string {
-	names := make([]string, len(strct.Fields))
-	for i, f := range strct.Fields {
-		names[i] = f.Name
-	}
-	return names
-}
+
 
 func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {

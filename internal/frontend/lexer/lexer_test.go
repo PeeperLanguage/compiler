@@ -15,7 +15,7 @@ let mut y: i32 = x;
 	let z: i32 = a + b;
 	return z;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.peep")
+	diag := diagnostics.NewDiagnosticBag()
 	stream := New("test.peep", src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -51,7 +51,7 @@ fn main() -> i32 {
 	}
 	return 1;
 }`
-	diag := diagnostics.NewDiagnosticBag("test.peep")
+	diag := diagnostics.NewDiagnosticBag()
 	stream := New("test.peep", src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())

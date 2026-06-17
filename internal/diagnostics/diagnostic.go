@@ -134,8 +134,8 @@ func (d *Diagnostic) At(loc *source.Location) *Diagnostic {
 	return d
 }
 
-// WithPrimaryLabel is intentionally unexported. Primary labels should be 
-// attached via bag.AddError or bag.AddWarning, not chained arbitrarily.
+// WithPrimaryLabel attaches the primary source location to this diagnostic.
+// A diagnostic can have at most one primary label; subsequent calls overwrite.
 func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Diagnostic {
 	if loc == nil {
 		return d

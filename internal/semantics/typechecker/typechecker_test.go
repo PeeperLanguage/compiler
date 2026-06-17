@@ -16,7 +16,7 @@ import (
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const filePath = "typechecker_test.peep"
-	diag := diagnostics.NewDiagnosticBag(filePath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", ".peep", diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()

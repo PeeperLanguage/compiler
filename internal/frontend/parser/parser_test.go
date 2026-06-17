@@ -13,7 +13,7 @@ import (
 
 func parseTestModule(src string) (*ast.Module, *diagnostics.DiagnosticBag) {
 	const filePath = "test.peep"
-	diag := diagnostics.NewDiagnosticBag(filePath)
+	diag := diagnostics.NewDiagnosticBag()
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	return New(filePath, stream, diag).ParseModule(), diag
 }
@@ -1302,7 +1302,7 @@ func TestEmitterNewFormatNoSeverityPrefix(t *testing.T) {
 	diag := diagnostics.NewError("test error").
 		WithCode("E9999").
 		WithPrimaryLabel(loc, "test label")
-	bag := diagnostics.NewDiagnosticBag("test.peep")
+	bag := diagnostics.NewDiagnosticBag()
 	bag.Add(diag)
 	out := bag.EmitAllToString()
 	// Should NOT contain "error" prefix

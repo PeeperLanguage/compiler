@@ -26,7 +26,7 @@ func NewServerState() *ServerState {
 }
 
 func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *project.Module) {
-	diagBag := diagnostics.NewDiagnosticBag("")
+	diagBag := diagnostics.NewDiagnosticBag()
 	cfg := project.Config{
 		RootDir: s.RootDir,
 	}

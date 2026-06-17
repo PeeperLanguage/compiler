@@ -27,8 +27,8 @@ type DiagnosticBag struct {
 	sourceCache *SourceCache
 }
 
-// NewDiagnosticBag creates a new diagnostic bag for a file
-func NewDiagnosticBag(filepath string) *DiagnosticBag {
+// NewDiagnosticBag creates a new diagnostic bag.
+func NewDiagnosticBag() *DiagnosticBag {
 	return &DiagnosticBag{
 		diagnostics: make([]*Diagnostic, 0),
 		sourceCache: NewSourceCache(),

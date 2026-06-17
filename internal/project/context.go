@@ -142,7 +142,7 @@ type Config struct {
 // Normalize options and create shared compiler state.
 func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext {
 	if diag == nil {
-		diag = diagnostics.NewDiagnosticBag("")
+		diag = diagnostics.NewDiagnosticBag()
 	}
 	if cfg.Extension == "" {
 		cfg.Extension = ".peep"
