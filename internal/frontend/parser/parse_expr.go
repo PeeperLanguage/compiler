@@ -1,3 +1,5 @@
+// Using pratt parser for expressions
+
 package parser
 
 import (
@@ -5,6 +7,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
+	"compiler/pkg/colors"
 	"fmt"
 )
 
@@ -110,23 +113,25 @@ func init() {
 }
 
 func (p *Parser) parseExpr(precedence uint8) ast.Expr {
-	nudHandler, ok := nudLookup[p.peek().Kind]
+	nudHandler, ok := nudLookup[p.current().Kind]
 	if !ok {
-		p.diag.Add(diagnostics.NewError("expected expression").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(source.NewLocation(p.filePath, p.peek().Start, p.peek().End), fmt.Sprintf("found %s", p.peek().Kind)))
-		return nil
+		loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+		p.diag.Add(diagnostics.NewError("expected expression").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(loc, fmt.Sprintf("found %s", p.current().Kind)))
+		return reg(p, &ast.BadExpr{Location: loc})
 	}
 	left := nudHandler(p)
 	if left == nil {
-		return nil
+		loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+		return reg(p, &ast.BadExpr{Location: loc})
 	}
 	for !p.at(token.SEMICOLON) && !p.at(token.COMMA) && !p.at(token.RPAREN) && !p.at(token.RBRACE) {
-		prec, ok := precTable[p.peek().Kind]
+		prec, ok := precTable[p.current().Kind]
 		if !ok || prec <= precedence {
 			break
 		}
-		left = ledLookup[p.peek().Kind](p, left, prec)
+		left = ledLookup[p.current().Kind](p, left, prec)
 		if left == nil {
-			return nil
+			break
 		}
 	}
 	return left
@@ -136,23 +141,23 @@ func (p *Parser) parseUnaryExpr() ast.Expr {
 	tok := p.advance()
 	expr := p.parseExpr(precPrefix)
 	if expr == nil {
-		return nil
+		expr = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	}
 	return reg(p, &ast.UnaryExpr{
 		Op:       tok.Literal,
 		Expr:     expr,
-		Location: source.NewLocation(p.filePath, tok.Start, tok.End),
+		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
 	})
 }
 
 func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
 	op := p.advance()
 	if op == nil {
-		return nil
+		return left
 	}
 	right := p.parseExpr(prec)
 	if right == nil {
-		return nil
+		right = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, op.Start, op.End)})
 	}
 	return reg(p, &ast.BinaryExpr{
 		Left:     left,
@@ -179,7 +184,7 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 			}
 		}
 	}
-	end := p.consume(token.RPAREN, "expected ')' after arguments")
+	end := p.expectClose(start.Start, token.RPAREN, "(")
 	var fallbackEnd source.Position
 	if end == nil {
 		if len(args) > 0 {
@@ -239,11 +244,11 @@ func (p *Parser) parseCompositeLiteral() ast.Expr {
 	}
 	var typ ast.TypeExpr
 	openMsg := "expected '{' after '.'"
-	if p.peek().Kind == token.IDENT {
+	if p.current().Kind == token.IDENT {
 		typ = p.parseTypeExpr()
 		openMsg = "expected '{' after composite literal type"
 	}
-	fields, end, ok := parseBracedItemList(p, openMsg, "expected '}' after composite literal",
+	fields, end, _ := parseBracedItemList(p, openMsg, "expected '}' after composite literal",
 		func() (ast.StructLitField, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -262,9 +267,6 @@ func (p *Parser) parseCompositeLiteral() ast.Expr {
 				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(value)),
 			}, true
 		})
-	if !ok {
-		return nil
-	}
 	return reg(p, &ast.StructLit{
 		Type:     typ,
 		Fields:   fields,
@@ -273,9 +275,16 @@ func (p *Parser) parseCompositeLiteral() ast.Expr {
 }
 
 func (p *Parser) parseIdent() *ast.Ident {
-	tok := p.peek()
+	tok := p.current()
 	if tok.Kind != token.IDENT {
-		p.diag.Add(diagnostics.NewError("expected identifier").WithCode(diagnostics.ErrMissingIdentifier).WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), fmt.Sprintf("found %s", tok.Kind)))
+		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
+		d := diagnostics.NewError(fmt.Sprintf("expected identifier, found `%s`", tok.Literal)).
+			WithCode(diagnostics.ErrMissingIdentifier).
+			WithPrimaryLabel(loc, fmt.Sprintf("found %s", tok.Kind))
+		if token.IsKeyword(tok.Literal) {
+			d.WithText("help", "`"+tok.Literal+"` is a reserved keyword and cannot be used as a name", colors.GREEN)
+		}
+		p.diag.Add(d)
 		return nil
 	}
 	p.advance()

@@ -776,7 +776,7 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 			continue
 		}
 		if _, exists := fieldsByName[field.Name.Name]; exists {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
+			c.ctx.Diagnostics.AddError(diagnostics.ErrDuplicateField,
 				"duplicate struct literal field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
 			continue
 		}
@@ -816,7 +816,7 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 			continue
 		}
 		if _, exists := seen[field.Name.Name]; exists {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
+			c.ctx.Diagnostics.AddError(diagnostics.ErrDuplicateField,
 				"duplicate struct literal field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
 			continue
 		}

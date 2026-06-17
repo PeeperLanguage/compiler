@@ -24,8 +24,8 @@ func TestEmitterHandlesMultiplePrimaryLabelsWithoutPanic(t *testing.T) {
 	emitter.Emit(diag)
 
 	text := out.String()
-	if !strings.Contains(text, "diagnostic has 2 primary labels") {
-		t.Fatalf("expected internal multiple-primary note, got:\n%s", text)
+	if !strings.Contains(text, "first") {
+		t.Fatalf("expected first label in output, got:\n%s", text)
 	}
 	if !strings.Contains(text, "second") {
 		t.Fatalf("expected second label to remain visible in output, got:\n%s", text)

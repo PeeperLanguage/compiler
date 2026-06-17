@@ -4,6 +4,8 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+
+	semantic_errors "compiler/internal/semantics/errors"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -76,7 +78,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		sym.Scope = table.New(c.module.ModuleScope)
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(fn), "")
+		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return
 	}
 }
@@ -98,7 +100,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		sym.Type = &typeinfo.InvalidType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
+		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
 }
@@ -113,7 +115,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 		sym.Type = &typeinfo.UnknownType{}
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
+		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 	}
 }
 
@@ -136,7 +138,7 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 			}
 		}
 		if duplicate {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", ast.LocOf(method), "")
+			semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", method.Name.Name, method.Name.Location)
 			continue
 		}
 		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method, ast.LocOf(method.Name))

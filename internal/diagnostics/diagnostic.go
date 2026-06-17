@@ -5,7 +5,6 @@ import (
 	"compiler/pkg/colors"
 )
 
-// Severity represents the severity level of a diagnostic
 type Severity int
 
 const (
@@ -17,20 +16,14 @@ const (
 
 func (s Severity) String() string {
 	switch s {
-	case Error:
-		return "error"
-	case Warning:
-		return "warning"
-	case Info:
-		return "info"
-	case Hint:
-		return "hint"
-	default:
-		return "unknown"
+	case Error: return "error"
+	case Warning: return "warning"
+	case Info: return "info"
+	case Hint: return "hint"
+	default: return "unknown"
 	}
 }
 
-// Label represents a labeled section of code in a diagnostic
 type Label struct {
 	Location *source.Location
 	Message  string
@@ -40,8 +33,8 @@ type Label struct {
 type LabelStyle int
 
 const (
-	Primary   LabelStyle = iota // The main error location (uses ~~~)
-	Secondary                   // Additional context (uses ---)
+	Primary LabelStyle = iota
+	Secondary
 )
 
 type DiagnosticExtraKind int
@@ -51,44 +44,35 @@ const (
 	ExtraCodeHint
 )
 
-// DiagnosticText represents an ordered text entry (e.g. help/note) rendered with custom color.
 type DiagnosticText struct {
 	Kind    string
 	Message string
 	Color   colors.COLOR
 }
 
-// DiagnosticExtra preserves user-facing diagnostic output order across text and code hints.
 type DiagnosticExtra struct {
 	Kind     DiagnosticExtraKind
 	Text     DiagnosticText
 	CodeHint CodeHint
 }
 
-// Diagnostic represents a compiler diagnostic (error, warning, etc.)
 type Diagnostic struct {
 	Severity Severity
 	Message  string
-	Code     string // Error code like "E0001"
-	FilePath string // Source file for this diagnostic
+	Code     string 
+	FilePath string 
 	Labels   []Label
 	Extras   []DiagnosticExtra
 }
 
 const internalCompilerErrorCode = "ICE0001"
 
-// CodeHintLine represents one rendered hint line with an optional diff prefix.
-// Prefix supports:
-//   - "+" for inserted code
-//   - "-" for removed code
-//   - " " or "" for neutral/context lines
 type CodeHintLine struct {
 	Prefix    string
 	Code      string
 	BaseColor colors.COLOR
 }
 
-// CodeHint renders extra lines after the primary label.
 type CodeHint struct {
 	Code        string
 	Lines       []CodeHintLine
@@ -98,7 +82,6 @@ type CodeHint struct {
 	GutterColor colors.COLOR
 }
 
-// CodeHintLabel represents a label within a code hint snippet.
 type CodeHintLabel struct {
 	Line    int
 	Column  int
@@ -119,13 +102,11 @@ func NewInfo(message string) *Diagnostic {
 	return &Diagnostic{Severity: Info, Message: message}
 }
 
-// WithCode sets the error code
 func (d *Diagnostic) WithCode(code string) *Diagnostic {
 	d.Code = code
 	return d
 }
 
-// WithLabel adds a labeled location to the diagnostic
 func (d *Diagnostic) WithLabel(loc *source.Location, message string, style LabelStyle) *Diagnostic {
 	if loc == nil {
 		return d
@@ -139,7 +120,6 @@ func (d *Diagnostic) WithLabel(loc *source.Location, message string, style Label
 	return d
 }
 
-// setFilePath sets FilePath from loc if not already set.
 func (d *Diagnostic) setFilePath(loc *source.Location) {
 	if d.FilePath == "" && loc.Filename != nil {
 		d.FilePath = *loc.Filename
@@ -154,34 +134,29 @@ func (d *Diagnostic) At(loc *source.Location) *Diagnostic {
 	return d
 }
 
-// WithPrimaryLabel adds a primary labeled location
-// Must be called before any WithSecondaryLabel calls
+// WithPrimaryLabel is intentionally unexported. Primary labels should be 
+// attached via bag.AddError or bag.AddWarning, not chained arbitrarily.
 func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Diagnostic {
 	if loc == nil {
 		return d
 	}
-	// Ensure primary label is always first
-	if len(d.Labels) > 0 {
-		// Already have a primary — don't add another
-		if d.Labels[0].Style == Primary {
-			return d
-		}
-		// Secondary labels exist but no primary — insert at beginning
-		d.Labels = append([]Label{{Location: loc, Message: message, Style: Primary}}, d.Labels...)
+	// A diagnostic can only have ONE origin. If it exists, overwrite it safely.
+	if len(d.Labels) > 0 && d.Labels[0].Style == Primary {
+		d.Labels[0] = Label{Location: loc, Message: message, Style: Primary}
 		d.setFilePath(loc)
 		return d
 	}
-	return d.WithLabel(loc, message, Primary)
+	// Otherwise, prepend it
+	d.Labels = append([]Label{{Location: loc, Message: message, Style: Primary}}, d.Labels...)
+	d.setFilePath(loc)
+	return d
 }
 
-// WithSecondaryLabel adds a secondary labeled location
-// Can be called multiple times to add multiple context labels
-// Primary label must exist before adding secondary labels
+// WithSecondaryLabel attaches historical or contextual locations to the diagnostic.
 func (d *Diagnostic) WithSecondaryLabel(loc *source.Location, message string) *Diagnostic {
-	// Primary is always at index 0 per the invariant enforced by WithPrimaryLabel
 	if len(d.Labels) == 0 || d.Labels[0].Style != Primary {
-		d.markInternalCompilerError("secondary label added without primary label; inserted fallback primary label")
-		d.WithPrimaryLabel(loc, "internal compiler error: missing primary label")
+		d.markInternalCompilerError("secondary label added without primary label")
+		d.WithPrimaryLabel(loc, "missing primary label context")
 	}
 	return d.WithLabel(loc, message, Secondary)
 }
@@ -200,7 +175,6 @@ func (d *Diagnostic) markInternalCompilerError(message string) *Diagnostic {
 	return d
 }
 
-// WithCodeHint adds a primary label and attaches a code hint to display.
 func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
 	if loc == nil {
 		return d
@@ -218,7 +192,6 @@ func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...C
 	return d
 }
 
-// WithCodeHintLines adds a diff-style code hint snippet with explicit line prefixes.
 func (d *Diagnostic) WithCodeHintLines(loc *source.Location, lines []CodeHintLine, labels ...CodeHintLabel) *Diagnostic {
 	if loc == nil {
 		return d
@@ -236,21 +209,18 @@ func (d *Diagnostic) WithCodeHintLines(loc *source.Location, lines []CodeHintLin
 	return d
 }
 
-// WithCodeInsertion adds a one-line insertion hint (green '+' line).
 func (d *Diagnostic) WithCodeInsertion(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
 	return d.WithCodeHintLines(loc, []CodeHintLine{
 		{Prefix: "+", Code: code, BaseColor: colors.GREEN},
 	}, labels...)
 }
 
-// WithCodeRemoval adds a one-line removal hint (red '-' line).
 func (d *Diagnostic) WithCodeRemoval(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
 	return d.WithCodeHintLines(loc, []CodeHintLine{
 		{Prefix: "-", Code: code, BaseColor: colors.RED},
 	}, labels...)
 }
 
-// WithCodeReplacement adds a two-line replacement hint (red '-' then green '+').
 func (d *Diagnostic) WithCodeReplacement(loc *source.Location, oldCode, newCode string, labels ...CodeHintLabel) *Diagnostic {
 	return d.WithCodeHintLines(loc, []CodeHintLine{
 		{Prefix: "-", Code: oldCode, BaseColor: colors.RED},
@@ -258,8 +228,6 @@ func (d *Diagnostic) WithCodeReplacement(loc *source.Location, oldCode, newCode 
 	}, labels...)
 }
 
-// WithText appends an ordered diagnostic text entry.
-// kind controls the label after '=' (e.g. "help", "note", "suggestion").
 func (d *Diagnostic) WithText(kind, message string, color colors.COLOR) *Diagnostic {
 	if message == "" {
 		return d
@@ -274,12 +242,10 @@ func (d *Diagnostic) WithText(kind, message string, color colors.COLOR) *Diagnos
 	return d
 }
 
-// WithNote adds a note to the diagnostic
 func (d *Diagnostic) WithNote(message string) *Diagnostic {
 	return d.WithText("note", message, colors.CYAN)
 }
 
-// WithHelp adds a help suggestion to the diagnostic
 func (d *Diagnostic) WithHelp(help string) *Diagnostic {
 	return d.WithText("help", help, colors.GREEN)
 }

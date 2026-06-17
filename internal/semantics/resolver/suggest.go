@@ -98,7 +98,7 @@ func (s candidateScore) less(other candidateScore) bool {
 func rankCandidate(query string, candidate rankedCandidate) candidateScore {
 	lower := strings.ToLower(candidate.Name)
 	return candidateScore{
-		Distance:        levenshtein(query, lower),
+		Distance:        diagnostics.Levenshtein(query, lower),
 		SharedPrefixLen: sharedPrefixLen(query, lower),
 		LengthDiff:      abs(len(query) - len(lower)),
 		ScopeDepth:      candidate.ScopeDepth,
@@ -123,39 +123,4 @@ func abs(v int) int {
 		return -v
 	}
 	return v
-}
-
-func levenshtein(a, b string) int {
-	if a == b {
-		return 0
-	}
-	if len(a) == 0 {
-		return len(b)
-	}
-	if len(b) == 0 {
-		return len(a)
-	}
-	prev := make([]int, len(b)+1)
-	cur := make([]int, len(b)+1)
-	for j := 0; j <= len(b); j++ {
-		prev[j] = j
-	}
-	for i := 1; i <= len(a); i++ {
-		cur[0] = i
-		for j := 1; j <= len(b); j++ {
-			cost := 0
-			if a[i-1] != b[j-1] {
-				cost = 1
-			}
-			cur[j] = min(
-				min(
-					prev[j]+1,
-					cur[j-1]+1,
-				),
-				prev[j-1]+cost,
-			)
-		}
-		prev, cur = cur, prev
-	}
-	return prev[len(b)]
 }

@@ -30,6 +30,8 @@ const (
 	ErrMissingType        = "P0007"
 	ErrMissingInitializer = "P0008"
 	ErrMissingSemiCol     = "P0009"
+	ErrUnclosedDelimiter  = "P0010"
+	ErrInvalidTypeInParser = "P0011"
 
 	// Type checker errors (T prefix)
 	ErrTypeMismatch            = "T0001"
@@ -62,6 +64,7 @@ const (
 	ErrArrayIndexNotConst      = "T0028"
 	ErrMissingField            = "T0029"
 	ErrUnknownField            = "T0030"
+	ErrDuplicateField          = "T0040"
 	ErrInvalidDefer            = "T0031"
 	ErrExtraField              = "T0032"
 	ErrInvalidErrorPropagate   = "T0033"
@@ -82,6 +85,7 @@ const (
 	// Style/Info codes (S prefix)
 	InfoTrailingComma        = "S0001"
 	InfoUnnecessarySemicolon = "S0002"
+	InfoRedundantComma       = "S0003"
 
 	// Warnings (W prefix)
 	WarnUnreachableCode        = "W0001"

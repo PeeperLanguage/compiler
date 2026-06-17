@@ -45,10 +45,31 @@ func (db *DiagnosticBag) GetSourceCache() *SourceCache {
 	return db.sourceCache
 }
 
-// Add adds a diagnostic to the bag
+// Add adds a diagnostic to the bag. Error diagnostics at the same
+// (file, line, column) are deduplicated — only the first is kept.
 func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+
+	if diag.Severity == Error && len(diag.Labels) > 0 {
+		newLoc := diag.Labels[0].Location
+		if newLoc != nil && newLoc.Start != nil {
+			for _, existing := range db.diagnostics {
+				if existing.Severity != Error || len(existing.Labels) == 0 {
+					continue
+				}
+				exLoc := existing.Labels[0].Location
+				if exLoc == nil || exLoc.Start == nil {
+					continue
+				}
+				sameFile := (newLoc.Filename == nil && exLoc.Filename == nil) ||
+					(newLoc.Filename != nil && exLoc.Filename != nil && *newLoc.Filename == *exLoc.Filename)
+				if sameFile && newLoc.Start.Line == exLoc.Start.Line && newLoc.Start.Column == exLoc.Start.Column {
+					return
+				}
+			}
+		}
+	}
 
 	db.diagnostics = append(db.diagnostics, diag)
 
@@ -59,7 +80,6 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 		db.warnCount++
 	}
 }
-
 // AddError adds an error diagnostic to the bag and returns it for chaining/customization.
 func (db *DiagnosticBag) AddError(code, msg string, loc *source.Location, labelMsg string) *Diagnostic {
 	d := NewError(msg).WithCode(code)

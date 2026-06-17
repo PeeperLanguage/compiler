@@ -198,6 +198,16 @@ func (*EnumDecl) declNode()               {}
 func (*EnumDecl) stmtNode()               {}
 func (d *EnumDecl) loc() *source.Location { return d.Location }
 
+type BadDecl struct {
+	NodeIDHolder
+	Documented
+	Location *source.Location
+}
+
+func (*BadDecl) declNode()               {}
+func (*BadDecl) stmtNode()               {}
+func (d *BadDecl) loc() *source.Location { return d.Location }
+
 type ImplDecl struct {
 	NodeIDHolder
 	Documented
