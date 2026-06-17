@@ -4,6 +4,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	semantic_errors "compiler/internal/semantics/errors"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 )
@@ -103,7 +104,7 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		paramSym.Initialized = true
 		if err := funcScope.Declare(paramSym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(param.Name), "")
+			semantic_errors.RedeclarationError(r.ctx, funcScope, err.Error(), param.Name.Name, param.Name.Location)
 			return
 		}
 	}
@@ -147,7 +148,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node, ast.LocOf(node.Name))
 		sym.Initializing = true
 		if err := scope.Declare(sym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
+			semantic_errors.RedeclarationError(r.ctx, scope, err.Error(), node.Name.Name, node.Location)
 			return
 		}
 		if node.Value != nil {
@@ -159,7 +160,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node, ast.LocOf(node.Name))
 		sym.Initializing = true
 		if err := scope.Declare(sym); err != nil {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err.Error(), ast.LocOf(node), "")
+			semantic_errors.RedeclarationError(r.ctx, scope, err.Error(), node.Name.Name, node.Location)
 			return
 		}
 		if node.Value != nil {

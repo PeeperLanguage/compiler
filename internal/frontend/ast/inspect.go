@@ -148,6 +148,12 @@ func Inspect(node Node, f func(Node) bool) {
 		for _, v := range n.Variants {
 			Inspect(v.Name, f)
 		}
+	case *BadExpr:
+		// Leaf — no children
+	case *BadStmt:
+		// Leaf — no children
+	case *BadDecl:
+		// Leaf — no children
 	}
 
 	f(nil)

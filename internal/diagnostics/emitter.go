@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 	pathpkg "path/filepath"
-	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -74,9 +74,8 @@ func visualColumnToPosition(line string, column int) int {
 
 		if ch == '\t' {
 			spaces := TAB_WIDTH - (visualPos % TAB_WIDTH)
-			_ = spaces // suppress unused variable warning
 			visualPos += spaces
-			charCol++ // tab is one character
+			charCol++
 		} else {
 			visualPos++
 			charCol++
@@ -90,14 +89,13 @@ func visualColumnToPosition(line string, column int) int {
 // SourceCache caches source file contents for error reporting
 type SourceCache struct {
 	files map[string][]string
-	mu    sync.RWMutex // Protects files map during concurrent access
+	mu    sync.RWMutex
 }
 
 func NewSourceCache() *SourceCache {
 	return &SourceCache{files: make(map[string][]string)}
 }
 
-// AddSource adds source content to the cache for a virtual file path
 func (sc *SourceCache) AddSource(filepath, content string) {
 	lines := strings.Split(content, "\n")
 	sc.mu.Lock()
@@ -105,9 +103,6 @@ func (sc *SourceCache) AddSource(filepath, content string) {
 	sc.mu.Unlock()
 }
 
-// GetLinesRange retrieves a range of lines from the cache.
-// Returns the lines and true if found in cache, or nil and false if not cached.
-// Implements source.SourceCache interface.
 func (sc *SourceCache) GetLinesRange(filepath string, startLine, endLine int) ([]string, bool) {
 	sc.mu.RLock()
 	lines, ok := sc.files[filepath]
@@ -131,9 +126,6 @@ func (sc *SourceCache) GetLinesRange(filepath string, startLine, endLine int) ([
 	return lines[startLine-1 : endLine], true
 }
 
-// GetLine retrieves a specific line from a source file.
-// Uses source.GetSourceLinesRange for efficient reading when file is not cached.
-// For files with multiple errors, the entire file is cached after first access.
 func (sc *SourceCache) GetLine(filepath string, line int) (string, error) {
 	sc.mu.RLock()
 	lines, ok := sc.files[filepath]
@@ -163,15 +155,13 @@ func (sc *SourceCache) GetLine(filepath string, line int) (string, error) {
 	return "", fmt.Errorf("line %d out of range", line)
 }
 
-// Emitter handles the rendering and output of diagnostics
 type Emitter struct {
 	cache               *SourceCache
 	writer              io.Writer
-	currentLineNumWidth int // gutter width for current diagnostic
+	currentLineNumWidth int
 	highlighter         *SyntaxHighlighter
 }
 
-// labelContext groups parameters for printing labels
 type labelContext struct {
 	filepath     string
 	line         int
@@ -185,12 +175,11 @@ type labelContext struct {
 	severity     Severity
 }
 
-// NewEmitter creates an emitter that writes to a specific writer
 func NewEmitter(w io.Writer) *Emitter {
 	return &Emitter{
 		cache:       NewSourceCache(),
 		writer:      w,
-		highlighter: NewSyntaxHighlighter(true), // Enabled by default
+		highlighter: NewSyntaxHighlighter(true),
 	}
 }
 
@@ -220,22 +209,14 @@ func (e *Emitter) printGutter(line int) {
 	colors.GREY.Fprintf(e.writer, GUTTER_FMT, e.currentLineNumWidth, line)
 }
 
-// printCurrentGutter prints " <line> | " in white (for main/source lines).
 func (e *Emitter) printCurrentGutter(line int) {
-	// if your colors package uses BOLD_WHITE, swap it in here
 	colors.WHITE.Fprintf(e.writer, GUTTER_FMT, e.currentLineNumWidth, line)
 }
 
-// printBlankGutter prints "     | " with consistent width/color.
 func (e *Emitter) printBlankGutter() {
 	colors.GREY.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "")
 }
 
-func (e *Emitter) printBlankGutterWithColor(color colors.COLOR) {
-	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "")
-}
-
-// printAddedGutter prints a gutter with a green "+" to indicate added code.
 func (e *Emitter) printAddedGutter(color colors.COLOR) {
 	if color == "" {
 		color = colors.GREEN
@@ -243,7 +224,6 @@ func (e *Emitter) printAddedGutter(color colors.COLOR) {
 	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "+")
 }
 
-// printRemovedGutter prints a gutter with a red "-" to indicate removed code.
 func (e *Emitter) printRemovedGutter(color colors.COLOR) {
 	if color == "" {
 		color = colors.RED
@@ -251,13 +231,15 @@ func (e *Emitter) printRemovedGutter(color colors.COLOR) {
 	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "-")
 }
 
-// printPipeOnly prints a separator line aligned under the gutter.
 func (e *Emitter) printPipeOnly() {
-	e.printBlankGutter()
-	colors.GREY.Fprintln(e.writer)
+	fmt.Fprintln(e.writer)
 }
 
-// printPrevNonEmptyLine prints the previous non-empty line (if any) in grey.
+func (e *Emitter) printUnderlineIndent(extraPadding int) {
+	indent := e.currentLineNumWidth + 6 // "   N | " = width + 6 spaces/chars
+	fmt.Fprint(e.writer, strings.Repeat(" ", indent+extraPadding))
+}
+
 func (e *Emitter) printPrevNonEmptyLine(filepath string, line int) {
 	if line <= 1 {
 		return
@@ -270,30 +252,24 @@ func (e *Emitter) printPrevNonEmptyLine(filepath string, line int) {
 		return
 	}
 	e.printGutter(line - 1)
-	colors.GREY.Fprint(e.writer, "")
 	e.highlighter.HighlightWithColor(expandTabs(prevLine), e.writer)
 	fmt.Fprintln(e.writer)
 }
 
-// calculateLineNumWidthForDiagnostic calculates the gutter width needed for all lines displayed in this diagnostic
 func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
 	lineNumbers := make(map[int]bool)
-
 	for _, label := range diag.Labels {
 		if label.Location == nil || label.Location.Start == nil {
 			continue
 		}
-
 		start := label.Location.Start
 		end := label.Location.End
 		if end == nil {
 			end = start
 		}
-
 		for line := start.Line; line <= end.Line; line++ {
 			lineNumbers[line] = true
 		}
-
 		if start.Line > 1 {
 			lineNumbers[start.Line-1] = true
 		}
@@ -305,7 +281,6 @@ func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
 			maxLine = line
 		}
 	}
-
 	if maxLine == 0 {
 		return 1
 	}
@@ -316,15 +291,37 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 	e.currentLineNumWidth = e.calculateLineNumWidthForDiagnostic(diag)
 	fallbackHintCtx := e.fallbackCodeHintContext(diag)
 
-	// Print severity/message first (before file locations)
+	// Step 1: Print Main Diagnostic Header Block
 	e.printDiagnosticHeader(diag)
 
-	if len(diag.Labels) > 0 {
-		// Group labels by filepath
-		labelsByFile := make(map[string][]Label)
-		var files []string
+	var lastFile string
+	var lastLine int
 
-		for _, label := range diag.Labels {
+	// Step 2: Print Sequential Location Cards
+	if len(diag.Labels) > 0 {
+		// Clone and sort labels by line number so we read the file top-to-bottom
+		sortedLabels := make([]Label, len(diag.Labels))
+		copy(sortedLabels, diag.Labels)
+		sort.SliceStable(sortedLabels, func(i, j int) bool {
+			locI, locJ := sortedLabels[i].Location, sortedLabels[j].Location
+			if locI == nil || locJ == nil || locI.Start == nil || locJ.Start == nil {
+				return false
+			}
+			fileI, fileJ := "", ""
+			if locI.Filename != nil {
+				fileI = *locI.Filename
+			}
+			if locJ.Filename != nil {
+				fileJ = *locJ.Filename
+			}
+
+			if fileI != fileJ {
+				return fileI < fileJ
+			}
+			return locI.Start.Line < locJ.Start.Line
+		})
+
+		for _, label := range sortedLabels {
 			if label.Location == nil || label.Location.Filename == nil {
 				continue
 			}
@@ -333,71 +330,40 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 				filepath = diag.FilePath
 			}
 
-			if _, exists := labelsByFile[filepath]; !exists {
-				files = append(files, filepath)
-			}
-			labelsByFile[filepath] = append(labelsByFile[filepath], label)
-		}
+			line := label.Location.Start.Line
+			col := label.Location.Start.Column
 
-		// Emit labels grouped by file
-		for _, filepath := range files {
-			labels := labelsByFile[filepath]
-
-			// Count primary labels for this file
-			primaryCount := 0
-			var primaryLabel Label
-			secondaryLabels := []Label{}
-
-			for _, label := range labels {
-				if label.Style == Primary {
-					if primaryCount == 0 {
-						primaryLabel = label
-					} else {
-						label.Style = Secondary
-						secondaryLabels = append(secondaryLabels, label)
-					}
-					primaryCount++
-				} else {
-					secondaryLabels = append(secondaryLabels, label)
+			if filepath != lastFile {
+				// CASE 1: Different file -> Print full file path header
+				if lastFile != "" {
+					fmt.Fprintln(e.writer)
 				}
+				colors.BLUE.Fprintf(e.writer, LINE_POS, "  ", filepath, line, col)
+				e.printBlankGutter()
+				fmt.Fprintln(e.writer) // FIXED: Added missing newline here
+
+				lastFile = filepath
+			} else if line > lastLine+1 {
+				// CASE 2: Same file, skip in lines -> Print aligned '...' without the pipe
+				// This aligns the dots perfectly with where the line numbers sit
+				colors.GREY.Fprintf(e.writer, "%*s\n", e.currentLineNumWidth, "...")
 			}
 
-			// Print file location header
-			e.printFileLocationHeader(filepath, labels)
+			// Clean context code block with customizable tilde/caret markings
+			e.printPeeperSnippetBlock(filepath, label, diag.Severity)
 
-			if primaryCount == 0 {
-				for _, label := range labels {
-					e.printLabel(filepath, label, diag.Severity, nil)
-				}
-			} else {
-				if primaryCount > 1 {
-					diag.markInternalCompilerError(
-						fmt.Sprintf("diagnostic has %d primary labels in %s; using first primary and treating the rest as secondary labels", primaryCount, filepath),
-					)
-				}
-				if len(secondaryLabels) == 0 {
-					e.printLabel(filepath, primaryLabel, diag.Severity, nil)
-				} else if len(secondaryLabels) == 1 &&
-					primaryLabel.Location != nil &&
-					primaryLabel.Location.Start != nil &&
-					secondaryLabels[0].Location != nil &&
-					secondaryLabels[0].Location.Start != nil &&
-					primaryLabel.Location.Start.Line == secondaryLabels[0].Location.Start.Line {
-					e.printCompactDualLabel(filepath, primaryLabel, secondaryLabels[0], diag.Severity, nil)
-				} else {
-					e.printRoutedLabels(filepath, primaryLabel, secondaryLabels, diag.Severity, nil)
-				}
+			// Track the end line of this snippet to know where we left off
+			lastLine = line
+			if label.Location.End != nil {
+				lastLine = label.Location.End.Line
 			}
 		}
-	} else {
-		// No labels: only print arrow header when we have a concrete file path.
-		// Operational errors (e.g. missing files, invalid CLI args) should not
-		// render synthetic :1:1 source positions.
-		if strings.TrimSpace(diag.FilePath) != "" {
-			e.printSimpleArrowHeader(diag)
-		}
+		fmt.Fprintln(e.writer)
+	} else if strings.TrimSpace(diag.FilePath) != "" {
+		colors.BLUE.Fprintf(e.writer, LINE_POS, "  ", diag.FilePath, 1, 1)
 	}
 
+	// Step 3: Print Extras and Alternative Code Corrections
 	suggestionHeaderPrinted := false
 	for _, extra := range diag.Extras {
 		switch extra.Kind {
@@ -417,8 +383,64 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 			e.printPipeOnly()
 		}
 	}
+}
 
-	fmt.Fprintln(e.writer)
+func (e *Emitter) printPeeperSnippetBlock(filepath string, label Label, severity Severity) {
+	startLine := label.Location.Start.Line
+	endLine := startLine
+	if label.Location.End != nil {
+		endLine = label.Location.End.Line
+	}
+
+	e.printPrevNonEmptyLine(filepath, startLine)
+
+	for l := startLine; l <= endLine; l++ {
+		sourceLine, err := e.cache.GetLine(filepath, l)
+		if err != nil {
+			continue
+		}
+
+		e.printCurrentGutter(l)
+		e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
+		fmt.Fprintln(e.writer)
+
+		e.printBlankGutter()
+
+		startCol := 1
+		if l == startLine {
+			startCol = label.Location.Start.Column
+		}
+
+		endCol := len(sourceLine) + 1
+		if l == endLine && label.Location.End != nil {
+			endCol = label.Location.End.Column
+		}
+
+		padding := visualColumnToPosition(sourceLine, startCol)
+		length := visualColumnToPosition(sourceLine, endCol) - padding
+		if length <= 0 {
+			length = 1
+		}
+
+		var underlineColor colors.COLOR
+		var underlineChar string
+
+		if label.Style == Primary {
+			underlineColor = e.getSeverityColor(severity)
+			underlineChar = "^" // Sharp pointer for the main error
+		} else {
+			underlineColor = colors.BLUE
+			underlineChar = "-" // Soft line for secondary context
+		}
+
+		fmt.Fprint(e.writer, strings.Repeat(" ", padding))
+		underlineColor.Fprint(e.writer, strings.Repeat(underlineChar, length))
+
+		if l == endLine && label.Message != "" {
+			underlineColor.Fprintf(e.writer, " %s", label.Message)
+		}
+		fmt.Fprintln(e.writer)
+	}
 }
 
 func (e *Emitter) fallbackCodeHintContext(diag *Diagnostic) labelContext {
@@ -429,26 +451,6 @@ func (e *Emitter) fallbackCodeHintContext(diag *Diagnostic) labelContext {
 		endCol:   1,
 		severity: diag.Severity,
 	}
-
-	for _, label := range diag.Labels {
-		if label.Style != Primary || label.Location == nil || label.Location.Start == nil {
-			continue
-		}
-		start := label.Location.Start
-		end := label.Location.End
-		if end == nil {
-			end = start
-		}
-		ctx.filepath = diag.FilePath
-		if label.Location.Filename != nil && *label.Location.Filename != "" {
-			ctx.filepath = *label.Location.Filename
-		}
-		ctx.line = start.Line
-		ctx.startCol = start.Column
-		ctx.endCol = end.Column
-		return ctx
-	}
-
 	for _, label := range diag.Labels {
 		if label.Location == nil || label.Location.Start == nil {
 			continue
@@ -458,16 +460,16 @@ func (e *Emitter) fallbackCodeHintContext(diag *Diagnostic) labelContext {
 		if end == nil {
 			end = start
 		}
-		ctx.filepath = diag.FilePath
 		if label.Location.Filename != nil && *label.Location.Filename != "" {
 			ctx.filepath = *label.Location.Filename
 		}
 		ctx.line = start.Line
 		ctx.startCol = start.Column
 		ctx.endCol = end.Column
-		return ctx
+		if label.Style == Primary {
+			return ctx
+		}
 	}
-
 	return ctx
 }
 
@@ -493,244 +495,25 @@ func (e *Emitter) codeHintContext(diag *Diagnostic, hint *CodeHint, fallback lab
 	ctx.line = start.Line
 	ctx.startCol = start.Column
 	ctx.endCol = end.Column
-	if ctx.line <= 0 {
-		ctx.line = 1
-	}
-	if ctx.startCol <= 0 {
-		ctx.startCol = 1
-	}
-	if ctx.endCol < ctx.startCol {
-		ctx.endCol = ctx.startCol
-	}
-
 	return ctx
 }
 
-// headerPosition picks the best position to show in the header.
-func (e *Emitter) headerPosition(diag *Diagnostic) (line, col int) {
-	// Prefer primary label start
-	for _, l := range diag.Labels {
-		if l.Style == Primary && l.Location != nil && l.Location.Start != nil {
-			return l.Location.Start.Line, l.Location.Start.Column
-		}
-	}
-	// Otherwise use first label start
-	for _, l := range diag.Labels {
-		if l.Location != nil && l.Location.Start != nil {
-			return l.Location.Start.Line, l.Location.Start.Column
-		}
-	}
-	return 1, 1
-}
-
-// printDiagnosticHeader prints the severity and message first (before any file locations)
-// Example:
-//
-//	error[CODE]: message
 func (e *Emitter) printDiagnosticHeader(diag *Diagnostic) {
 	var color colors.COLOR
-	var severityStr string
-
 	switch diag.Severity {
 	case Error:
 		color = colors.BOLD_RED
-		severityStr = "error"
 	case Warning:
 		color = colors.BOLD_YELLOW
-		severityStr = "warning"
 	case Info:
 		color = colors.BOLD_CYAN
-		severityStr = "info"
 	case Hint:
 		color = colors.BOLD_PURPLE
-		severityStr = "hint"
 	}
 
-	color.Fprint(e.writer, severityStr)
-	if diag.Code != "" {
-		fmt.Fprintf(e.writer, "[%s]", diag.Code)
-	}
+	color.Fprintf(e.writer, "[%s]", diag.Code)
 	fmt.Fprint(e.writer, ": ")
 	color.Fprintln(e.writer, diag.Message)
-}
-
-// printSimpleArrowHeader prints arrow and file location for diagnostics without labels
-func (e *Emitter) printSimpleArrowHeader(diag *Diagnostic) {
-	line, col := e.headerPosition(diag)
-
-	colors.BLUE.Fprintf(
-		e.writer,
-		LINE_POS,
-		strings.Repeat(" ", e.currentLineNumWidth),
-		diag.FilePath,
-		line,
-		col,
-	)
-}
-
-// printFileLocationHeader prints the file location arrow for a group of labels
-// Example:
-//
-//	--> /path/to/file.peep:5:21
-//
-// or for secondary files:
-//
-//	--> file.peep:3:1
-func (e *Emitter) printFileLocationHeader(filepath string, labels []Label) {
-	// Find the primary label in this group for positioning
-	var line, col int
-	found := false
-
-	for _, label := range labels {
-		if label.Style == Primary && label.Location != nil && label.Location.Start != nil {
-			line = label.Location.Start.Line
-			col = label.Location.Start.Column
-			found = true
-			break
-		}
-	}
-
-	// If no primary, use first label
-	if !found {
-		for _, label := range labels {
-			if label.Location != nil && label.Location.Start != nil {
-				line = label.Location.Start.Line
-				col = label.Location.Start.Column
-				break
-			}
-		}
-	}
-
-	// Arrow position line aligned to gutter width
-	colors.BLUE.Fprintf(
-		e.writer,
-		LINE_POS,
-		strings.Repeat(" ", e.currentLineNumWidth),
-		filepath,
-		line,
-		col,
-	)
-}
-
-func (e *Emitter) printLabel(filepath string, label Label, severity Severity, codeHint *CodeHint) {
-	if label.Location == nil || label.Location.Start == nil {
-		return
-	}
-
-	start := label.Location.Start
-	end := label.Location.End
-	if end == nil {
-		end = start
-	}
-
-	ctx := labelContext{
-		filepath:     filepath,
-		startLine:    start.Line,
-		endLine:      end.Line,
-		startCol:     start.Column,
-		endCol:       end.Column,
-		label:        label,
-		codeHint:     codeHint,
-		lineNumWidth: e.currentLineNumWidth,
-		severity:     severity,
-	}
-
-	if start.Line == end.Line {
-		ctx.line = start.Line
-		e.printSingleLineLabel(ctx)
-	} else {
-		e.printMultiLineLabel(ctx)
-	}
-}
-
-func (e *Emitter) printSingleLineLabel(ctx labelContext) {
-	// One blank separator line under header
-	e.printPipeOnly()
-
-	// Previous non-empty line in grey (context)
-	e.printPrevNonEmptyLine(ctx.filepath, ctx.line)
-
-	sourceLine, err := e.cache.GetLine(ctx.filepath, ctx.line)
-	if err != nil {
-		// If we can't get the source line, still show code hint if present
-		if e.hasRenderableCodeHint(ctx.codeHint) {
-			e.printCodeHint(ctx)
-			e.printPipeOnly()
-			return
-		}
-
-		// Otherwise show the label message
-		if ctx.label.Message != "" {
-			e.printBlankGutter()
-			var color colors.COLOR
-			if ctx.label.Style == Primary {
-				color = e.getSeverityColor(ctx.severity)
-			} else {
-				color = colors.BLUE
-			}
-			color.Fprintf(e.writer, "^ %s", ctx.label.Message)
-			fmt.Fprintln(e.writer)
-		}
-		e.printPipeOnly()
-		return
-	}
-
-	e.printCurrentGutter(ctx.line)
-	e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
-	fmt.Fprintln(e.writer)
-
-	if e.hasRenderableCodeHint(ctx.codeHint) {
-		e.printCodeHint(ctx)
-		e.printPipeOnly()
-		return
-	}
-
-	// Underline leader
-	e.printBlankGutter()
-
-	// Calculate visual padding accounting for tabs in the source line
-	padding := visualColumnToPosition(sourceLine, ctx.startCol)
-	length := ctx.endCol - ctx.startCol
-	if length <= 0 {
-		length = 1
-	}
-
-	var underlineColor colors.COLOR
-	var underlineChar string
-
-	if ctx.label.Style == Primary {
-		switch ctx.severity {
-		case Error:
-			underlineColor = colors.RED
-		case Warning:
-			underlineColor = colors.YELLOW
-		case Info:
-			underlineColor = colors.BLUE
-		case Hint:
-			underlineColor = colors.PURPLE
-		default:
-			underlineColor = colors.RED
-		}
-		if length == 1 {
-			underlineChar = "^"
-		} else {
-			underlineChar = "~"
-		}
-	} else {
-		underlineColor = colors.BLUE
-		underlineChar = "-"
-	}
-
-	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-	underlineColor.Fprint(e.writer, strings.Repeat(underlineChar, length))
-
-	if ctx.label.Message != "" {
-		underlineColor.Fprintf(e.writer, " %s", ctx.label.Message)
-	}
-	fmt.Fprintln(e.writer)
-
-	// Closing separator
-	e.printPipeOnly()
 }
 
 func (e *Emitter) printCodeHint(ctx labelContext) {
@@ -738,7 +521,6 @@ func (e *Emitter) printCodeHint(ctx labelContext) {
 	if hint == nil {
 		return
 	}
-
 	if e.printInlineReplacementHint(ctx, hint) {
 		return
 	}
@@ -787,12 +569,6 @@ func (e *Emitter) printCodeHint(ctx labelContext) {
 	}
 }
 
-// printInlineReplacementHint renders a Rust-style inline replacement for simple
-// single-line replacements represented as:
-//   - old_fragment
-//   - new_fragment
-//
-// It returns true when such a hint was rendered.
 func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) bool {
 	if hint == nil {
 		return false
@@ -801,15 +577,12 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 	if len(lines) != 2 {
 		return false
 	}
-
 	if strings.TrimSpace(lines[0].Prefix) != "-" || strings.TrimSpace(lines[1].Prefix) != "+" {
 		return false
 	}
-
 	if strings.Contains(lines[0].Code, "\n") || strings.Contains(lines[1].Code, "\n") {
 		return false
 	}
-
 	if ctx.filepath == "" || ctx.line <= 0 || ctx.startCol <= 0 || ctx.endCol < ctx.startCol {
 		return false
 	}
@@ -821,15 +594,12 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 	expandedSourceLine := expandTabs(sourceLine)
 
 	oldFrag := lines[0].Code
-	// Convert character column to visual position in expanded line
 	start := visualColumnToPosition(sourceLine, ctx.startCol)
 	if start < 0 || start > len(expandedSourceLine) {
 		return false
 	}
 	end := visualColumnToPosition(sourceLine, ctx.endCol)
 
-	// Some AST locations can be token-only or otherwise too narrow for replacement.
-	// Prefer replacing the old fragment at/near the diagnostic column when possible.
 	if oldFrag != "" {
 		if start+len(oldFrag) <= len(expandedSourceLine) && expandedSourceLine[start:start+len(oldFrag)] == oldFrag {
 			end = start + len(oldFrag)
@@ -878,11 +648,8 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 }
 
 func diffHighlightSpans(baseStart int, oldFrag, newFrag string) (oldStart, oldLen, newStart, newLen int) {
-	oldStart = baseStart
-	newStart = baseStart
-
-	oldBytes := []byte(oldFrag)
-	newBytes := []byte(newFrag)
+	oldStart, newStart = baseStart, baseStart
+	oldBytes, newBytes := []byte(oldFrag), []byte(newFrag)
 
 	prefix := 0
 	for prefix < len(oldBytes) && prefix < len(newBytes) && oldBytes[prefix] == newBytes[prefix] {
@@ -904,15 +671,14 @@ func diffHighlightSpans(baseStart int, oldFrag, newFrag string) (oldStart, oldLe
 }
 
 func (e *Emitter) printLineWithColoredSpan(line string, start, length int, spanColor colors.COLOR) {
-	if spanColor == "" || length <= 0 {
+	if spanColor == "" || length <= 0 || start < 0 || start > len(line) {
 		e.highlighter.HighlightWithColor(line, e.writer)
 		return
 	}
-	if start < 0 || start > len(line) {
-		e.highlighter.HighlightWithColor(line, e.writer)
-		return
+	end := start + length
+	if end > len(line) {
+		end = len(line)
 	}
-	end := min(start+length, len(line))
 	if start >= end {
 		e.highlighter.HighlightWithColor(line, e.writer)
 		return
@@ -966,7 +732,6 @@ func (e *Emitter) printCodeHintLabelLine(label CodeHintLabel, severity Severity)
 	if label.Column <= 0 {
 		return
 	}
-
 	length := label.Length
 	if length <= 0 {
 		length = 1
@@ -977,112 +742,17 @@ func (e *Emitter) printCodeHintLabelLine(label CodeHintLabel, severity Severity)
 	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
 
 	var color colors.COLOR
-	var underlineChar string
-
 	if label.Style == Primary {
 		color = e.getSeverityColor(severity)
-		if length == 1 {
-			underlineChar = "^"
-		} else {
-			underlineChar = "~"
-		}
 	} else {
 		color = colors.BLUE
-		underlineChar = "-"
 	}
 
-	color.Fprint(e.writer, strings.Repeat(underlineChar, length))
+	color.Fprint(e.writer, strings.Repeat("~", length))
 	if label.Message != "" {
 		color.Fprintf(e.writer, " %s", label.Message)
 	}
-}
-
-func (e *Emitter) printMultiLineLabel(ctx labelContext) {
-	// One blank separator line under header
-	e.printPipeOnly()
-
-	// Previous non-empty line in grey (context)
-	e.printPrevNonEmptyLine(ctx.filepath, ctx.startLine)
-
-	startSourceLine, err := e.cache.GetLine(ctx.filepath, ctx.startLine)
-	if err != nil {
-		return
-	}
-
-	e.printCurrentGutter(ctx.startLine)
-	expandedStartLine := expandTabs(startSourceLine)
-	e.highlighter.HighlightWithColor(expandedStartLine, e.writer)
 	fmt.Fprintln(e.writer)
-
-	// Print underline for start
-	e.printBlankGutterWithColor(colors.WHITE)
-
-	var underlineColor colors.COLOR
-	if ctx.label.Style == Primary {
-		switch ctx.severity {
-		case Error:
-			underlineColor = colors.BOLD_RED
-		case Warning:
-			underlineColor = colors.BOLD_YELLOW
-		case Info:
-			underlineColor = colors.BOLD_CYAN
-		case Hint:
-			underlineColor = colors.BOLD_PURPLE
-		default:
-			underlineColor = colors.RED
-		}
-	} else {
-		underlineColor = colors.BLUE
-	}
-
-	// Calculate visual padding accounting for tabs in the source line
-	padding := visualColumnToPosition(startSourceLine, ctx.startCol)
-	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-	if ctx.startCol <= len(startSourceLine) {
-		underlineColor.Fprint(
-			e.writer,
-			strings.Repeat("~", len(expandedStartLine)-padding),
-		)
-	}
-	fmt.Fprintln(e.writer)
-
-	// Middle lines
-	if ctx.endLine-ctx.startLine > 5 {
-		colors.WHITE.Fprintln(e.writer, fmt.Sprintf("%*s...", e.currentLineNumWidth, ""))
-	} else {
-		for i := ctx.startLine + 1; i < ctx.endLine; i++ {
-			line, err := e.cache.GetLine(ctx.filepath, i)
-			if err != nil {
-				continue
-			}
-			e.printCurrentGutter(i)
-			e.highlighter.HighlightWithColor(expandTabs(line), e.writer)
-			fmt.Fprintln(e.writer)
-		}
-	}
-
-	// End line
-	endSourceLine, err := e.cache.GetLine(ctx.filepath, ctx.endLine)
-	if err == nil {
-		// End line should be white like other displayed source lines
-		e.printCurrentGutter(ctx.endLine)
-		expandedEndLine := expandTabs(endSourceLine)
-		e.highlighter.HighlightWithColor(expandedEndLine, e.writer)
-		fmt.Fprintln(e.writer)
-
-		e.printBlankGutter()
-		// Calculate visual padding accounting for tabs in the source line
-		endPadding := visualColumnToPosition(endSourceLine, ctx.endCol)
-		fmt.Fprint(e.writer, strings.Repeat(" ", endPadding))
-		underlineColor.Fprint(e.writer, "^")
-		if ctx.label.Message != "" {
-			underlineColor.Fprintf(e.writer, " %s", ctx.label.Message)
-		}
-		fmt.Fprintln(e.writer)
-	}
-
-	// Closing separator
-	e.printPipeOnly()
 }
 
 func (e *Emitter) printText(text DiagnosticText) {
@@ -1094,7 +764,7 @@ func (e *Emitter) printText(text DiagnosticText) {
 		color = colors.WHITE
 	}
 
-	padding := e.currentLineNumWidth + 1
+	padding := e.currentLineNumWidth + 4
 	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
 	if text.Kind != "" {
 		color.Fprintf(e.writer, "= %s: ", text.Kind)
@@ -1105,300 +775,12 @@ func (e *Emitter) printText(text DiagnosticText) {
 }
 
 func (e *Emitter) printSuggestionHeader() {
-	padding := e.currentLineNumWidth + 1
+	padding := e.currentLineNumWidth + 4
 	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
 	colors.GREEN.Fprint(e.writer, "= suggestion:")
 	fmt.Fprintln(e.writer)
 }
 
-// printCompactDualLabel prints two labels on same line (Rust-style)
-func (e *Emitter) printCompactDualLabel(filepath string, primary Label, secondary Label, severity Severity, codeHint *CodeHint) {
-	if primary.Location == nil || primary.Location.Start == nil {
-		return
-	}
-	if secondary.Location == nil || secondary.Location.Start == nil {
-		return
-	}
-
-	line := primary.Location.Start.Line
-
-	primaryStart := primary.Location.Start
-	primaryEnd := primary.Location.End
-	if primaryEnd == nil {
-		primaryEnd = primaryStart
-	}
-
-	secondaryStart := secondary.Location.Start
-	secondaryEnd := secondary.Location.End
-	if secondaryEnd == nil {
-		secondaryEnd = secondaryStart
-	}
-
-	var leftLabel, rightLabel Label
-	var leftStart, leftEnd, rightStart, rightEnd *source.Position
-
-	if primaryStart.Column < secondaryStart.Column {
-		leftLabel = primary
-		leftStart, leftEnd = primaryStart, primaryEnd
-		rightLabel = secondary
-		rightStart, rightEnd = secondaryStart, secondaryEnd
-	} else {
-		leftLabel = secondary
-		leftStart, leftEnd = secondaryStart, secondaryEnd
-		rightLabel = primary
-		rightStart, rightEnd = primaryStart, primaryEnd
-	}
-
-	// Header already printed by caller
-	e.printPipeOnly()
-
-	// Previous non-empty line in grey (context)
-	e.printPrevNonEmptyLine(filepath, line)
-
-	sourceLine, err := e.cache.GetLine(filepath, line)
-	if err != nil {
-		return
-	}
-	expandedSourceLine := expandTabs(sourceLine)
-	e.printCurrentGutter(line)
-	e.highlighter.HighlightWithColor(expandedSourceLine, e.writer)
-	fmt.Fprintln(e.writer)
-
-	// Calculate visual padding accounting for tabs in the source line
-	leftPadding := visualColumnToPosition(sourceLine, leftStart.Column)
-	// Calculate visual length by converting end column to position and subtracting
-	leftEndPos := visualColumnToPosition(sourceLine, leftEnd.Column)
-	leftLength := leftEndPos - leftPadding
-	if leftLength <= 0 {
-		leftLength = 1
-	}
-
-	rightPadding := visualColumnToPosition(sourceLine, rightStart.Column)
-	rightEndPos := visualColumnToPosition(sourceLine, rightEnd.Column)
-	rightLength := rightEndPos - rightPadding
-	if rightLength <= 0 {
-		rightLength = 1
-	}
-
-	leftColor := colors.BLUE
-	rightColor := colors.BLUE
-	if leftLabel.Style == Primary {
-		leftColor = e.getSeverityColor(severity)
-	}
-	if rightLabel.Style == Primary {
-		rightColor = e.getSeverityColor(severity)
-	}
-
-	leftChar := "-"
-	if leftLabel.Style == Primary {
-		if leftLength == 1 {
-			leftChar = "^"
-		} else {
-			leftChar = "~"
-		}
-	}
-
-	rightChar := "-"
-	if rightLabel.Style == Primary {
-		if rightLength == 1 {
-			rightChar = "^"
-		} else {
-			rightChar = "~"
-		}
-	}
-
-	// Line 1: both underlines, right label inline message
-	e.printBlankGutter()
-	fmt.Fprint(e.writer, strings.Repeat(" ", leftPadding))
-	leftColor.Fprint(e.writer, strings.Repeat(leftChar, leftLength))
-
-	spaceBetween := rightPadding - leftPadding - leftLength
-	if spaceBetween < 0 {
-		spaceBetween = 1
-	}
-	fmt.Fprint(e.writer, strings.Repeat(" ", spaceBetween))
-
-	rightColor.Fprint(e.writer, strings.Repeat(rightChar, rightLength))
-	if rightLabel.Message != "" {
-		rightColor.Fprintf(e.writer, " %s", rightLabel.Message)
-	}
-	fmt.Fprintln(e.writer)
-
-	// Line 2: vertical connector for left label
-	e.printBlankGutter()
-	fmt.Fprint(e.writer, strings.Repeat(" ", leftPadding))
-	leftColor.Fprintln(e.writer, "|")
-
-	// Line 3: left label message
-	e.printBlankGutter()
-	fmt.Fprint(e.writer, strings.Repeat(" ", leftPadding))
-	leftColor.Fprint(e.writer, "--")
-	if leftLabel.Message != "" {
-		leftColor.Fprintf(e.writer, " %s", leftLabel.Message)
-	}
-	fmt.Fprintln(e.writer)
-
-	if e.hasRenderableCodeHint(codeHint) {
-		e.printCodeHint(labelContext{
-			filepath: filepath,
-			line:     line,
-			startCol: primaryStart.Column,
-			endCol:   primaryEnd.Column,
-			codeHint: codeHint,
-			severity: severity,
-		})
-	}
-
-	e.printPipeOnly()
-}
-
-// printRoutedLabels prints primary + multiple secondaries with routing (Rust-style)
-func (e *Emitter) printRoutedLabels(filepath string, primary Label, secondaries []Label, severity Severity, codeHint *CodeHint) {
-	if primary.Location == nil || primary.Location.Start == nil {
-		return
-	}
-
-	primaryLine := primary.Location.Start.Line
-
-	lineNumbers := []int{primaryLine}
-	for _, sec := range secondaries {
-		if sec.Location != nil && sec.Location.Start != nil {
-			secLine := sec.Location.Start.Line
-			found := slices.Contains(lineNumbers, secLine)
-			if !found {
-				lineNumbers = append(lineNumbers, secLine)
-			}
-		}
-	}
-
-	for i := 0; i < len(lineNumbers); i++ {
-		for j := i + 1; j < len(lineNumbers); j++ {
-			if lineNumbers[i] > lineNumbers[j] {
-				lineNumbers[i], lineNumbers[j] = lineNumbers[j], lineNumbers[i]
-			}
-		}
-	}
-
-	// Header already printed by caller
-	e.printPipeOnly()
-
-	primaryColor := e.getSeverityColor(severity)
-	secondaryColor := colors.BLUE
-
-	for idx, lineNum := range lineNumbers {
-		if idx > 0 {
-			prevLine := lineNumbers[idx-1]
-			if lineNum-prevLine > 1 {
-				colors.GREY.Fprintln(e.writer, fmt.Sprintf("%*s...", e.currentLineNumWidth, ""))
-				e.printPipeOnly()
-			}
-		}
-
-		// Previous non-empty line in grey (context)
-		if lineNum > 1 {
-			isPrevShown := idx > 0 && lineNumbers[idx-1] == lineNum-1
-			if !isPrevShown {
-				e.printPrevNonEmptyLine(filepath, lineNum)
-			}
-		}
-
-		sourceLine, err := e.cache.GetLine(filepath, lineNum)
-		if err != nil {
-			continue
-		}
-
-		e.printCurrentGutter(lineNum)
-		e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
-		fmt.Fprintln(e.writer)
-
-		hasSecondary := false
-		for _, sec := range secondaries {
-			if sec.Location != nil && sec.Location.Start != nil && sec.Location.Start.Line == lineNum {
-				hasSecondary = true
-				break
-			}
-		}
-		hasPrimary := lineNum == primaryLine
-
-		if hasPrimary || hasSecondary {
-			e.printBlankGutter()
-
-			if hasPrimary {
-				primaryStart := primary.Location.Start
-				primaryEnd := primary.Location.End
-				if primaryEnd == nil {
-					primaryEnd = primaryStart
-				}
-
-				// Calculate visual padding accounting for tabs in the source line
-				padding := visualColumnToPosition(sourceLine, primaryStart.Column)
-				endPos := visualColumnToPosition(sourceLine, primaryEnd.Column)
-				length := endPos - padding
-				if length <= 0 {
-					length = 1
-				}
-
-				char := "^"
-				if length > 1 {
-					char = "~"
-				}
-
-				fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-				primaryColor.Fprint(e.writer, strings.Repeat(char, length))
-				if primary.Message != "" {
-					primaryColor.Fprintf(e.writer, " %s", primary.Message)
-				}
-				fmt.Fprintln(e.writer)
-			} else if hasSecondary {
-				for _, sec := range secondaries {
-					if sec.Location != nil && sec.Location.Start != nil && sec.Location.Start.Line == lineNum {
-						secStart := sec.Location.Start
-						secEnd := sec.Location.End
-						if secEnd == nil {
-							secEnd = secStart
-						}
-
-						// Calculate visual padding accounting for tabs in the source line
-						padding := visualColumnToPosition(sourceLine, secStart.Column)
-						endPos := visualColumnToPosition(sourceLine, secEnd.Column)
-						length := endPos - padding
-						if length <= 0 {
-							length = 1
-						}
-
-						fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-						secondaryColor.Fprint(e.writer, strings.Repeat("-", length))
-						if sec.Message != "" {
-							secondaryColor.Fprintf(e.writer, " %s", sec.Message)
-						}
-						fmt.Fprintln(e.writer)
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if e.hasRenderableCodeHint(codeHint) {
-		primaryStart := primary.Location.Start
-		primaryEnd := primary.Location.End
-		if primaryEnd == nil {
-			primaryEnd = primaryStart
-		}
-		e.printCodeHint(labelContext{
-			filepath: filepath,
-			line:     primaryLine,
-			startCol: primaryStart.Column,
-			endCol:   primaryEnd.Column,
-			codeHint: codeHint,
-			severity: severity,
-		})
-	}
-
-	e.printPipeOnly()
-}
-
-// getSeverityColor returns the color for a given severity
 func (e *Emitter) getSeverityColor(severity Severity) colors.COLOR {
 	switch severity {
 	case Error:
