@@ -6,7 +6,7 @@ import (
 )
 
 func TestEmitErrorsOmitsWarningsAndWarningSummary(t *testing.T) {
-	bag := NewDiagnosticBag("")
+	bag := NewDiagnosticBag()
 	bag.Add(NewWarning("unused local"))
 	bag.Add(NewError("broken"))
 
@@ -26,7 +26,7 @@ func TestEmitErrorsOmitsWarningsAndWarningSummary(t *testing.T) {
 }
 
 func TestEmitErrorsSkipsWarningsWhenNoErrors(t *testing.T) {
-	bag := NewDiagnosticBag("")
+	bag := NewDiagnosticBag()
 	bag.Add(NewWarning("unused local"))
 
 	out := captureEmitErrors(bag)
@@ -36,7 +36,7 @@ func TestEmitErrorsSkipsWarningsWhenNoErrors(t *testing.T) {
 }
 
 func TestEmitAllToHTMLRendersDirectHTML(t *testing.T) {
-	bag := NewDiagnosticBag("")
+	bag := NewDiagnosticBag()
 	bag.Add(NewError("<broken>"))
 
 	out := bag.EmitAllToHTML()

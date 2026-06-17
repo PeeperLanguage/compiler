@@ -32,7 +32,7 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 		TargetBackend: backendName,
 		BuildDebug:    debugBuild,
 	}
-	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag(path))
+	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
 	entry := compiler.ParseFile(ctx, path)
 	return ctx, entry
 }

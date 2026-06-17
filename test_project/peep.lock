@@ -1,0 +1,9 @@
+[package]
+name = "myapp"
+version = "0.0.1"
+description = "A new Peeper project"
+author = ""
+compiler = "<=0.1.0"
+	entry = "main.peep"
+
+[dependencies]

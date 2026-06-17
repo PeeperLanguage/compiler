@@ -163,6 +163,7 @@ Agents must:
 - Justify any new helper in commit rationale.
 - Avoid creating compatibility wrappers unless explicitly requested.
 - Follow all rules in this file and all idioms in `go-style.md`.
+- When adding a new field, function or global variable, always thing is this the only way? If no, what is the most efficient way which keeps codebase clean, maintainable and fits our target? Pick that.
 
 ---
 

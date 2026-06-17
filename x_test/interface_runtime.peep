@@ -1,5 +1,5 @@
 interface Summer {
-    sum(Self): i32,
+    sum(Self) -> i32,
 }
 
 struct Point {
@@ -14,7 +14,7 @@ impl Point {
 }
 
 fn total(v: Summer) -> i32 {
-    return v.sum();
+    return "v.sum()";
 }
 
 impl i32 {
@@ -73,6 +73,8 @@ fn main() {
         }
         
     }
+
+    //let p = 10;
 
     let bad: cstr = "interface bad\n";
     write(stdout, bad, 14);

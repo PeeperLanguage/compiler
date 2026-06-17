@@ -1,17 +1,19 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
+	"compiler/internal/source"
 )
 
 func parseTestModule(src string) (*ast.Module, *diagnostics.DiagnosticBag) {
 	const filePath = "test.peep"
-	diag := diagnostics.NewDiagnosticBag(filePath)
+	diag := diagnostics.NewDiagnosticBag()
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	return New(filePath, stream, diag).ParseModule(), diag
 }
@@ -31,16 +33,16 @@ fn add(a: i32, b: i32) -> i32 {
 	if len(mod.Imports) != 1 {
 		t.Fatalf("imports: got %d want 1", len(mod.Imports))
 	}
-	if len(mod.Decls) != 3 {
-		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	if len(mod.Stmts) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
-	if _, ok := mod.Decls[0].(*ast.ConstDecl); !ok {
+	if _, ok := mod.Stmts[0].(*ast.ConstDecl); !ok {
 		t.Fatalf("decl[0] expected const")
 	}
-	if _, ok := mod.Decls[1].(*ast.LetDecl); !ok {
+	if _, ok := mod.Stmts[1].(*ast.LetDecl); !ok {
 		t.Fatalf("decl[1] expected let")
 	}
-	fn, ok := mod.Decls[2].(*ast.FnDecl)
+	fn, ok := mod.Stmts[2].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[2] expected fn")
 	}
@@ -68,8 +70,8 @@ fn sum(a: i64, b: f32) -> f64 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected parser diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 3 {
-		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	if len(mod.Stmts) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
 }
 
@@ -79,10 +81,10 @@ func TestParseLetWithoutExplicitType(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics")
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	letDecl, ok := mod.Decls[0].(*ast.LetDecl)
+	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected let")
 	}
@@ -99,10 +101,10 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics")
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected fn")
 	}
@@ -125,10 +127,10 @@ func TestParseFunctionReturnArrowSyntax(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected fn")
 	}
@@ -147,9 +149,9 @@ func TestParseUnaryPlus(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
 	}
 	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
 	if !ok {
@@ -170,9 +172,9 @@ func TestParseCastBindsLooserThanUnary(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
 	}
 	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
 	if !ok {
@@ -196,9 +198,9 @@ func TestParseMalformedLocalLetDoesNotAppendTypedNilStmt(t *testing.T) {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil {
-		t.Fatalf("unexpected function decl: %#v", mod.Decls[0])
+		t.Fatalf("unexpected function decl: %#v", mod.Stmts[0])
 	}
 	if len(fn.Body.Stmts) != 2 {
 		t.Fatalf("stmts: got %d want 2", len(fn.Body.Stmts))
@@ -207,8 +209,14 @@ func TestParseMalformedLocalLetDoesNotAppendTypedNilStmt(t *testing.T) {
 	if !ok || letDecl == nil {
 		t.Fatalf("expected non-nil let stmt, got %#v", fn.Body.Stmts[0])
 	}
-	if letDecl.Value != nil {
-		t.Fatalf("expected nil malformed initializer, got %#v", letDecl.Value)
+	if letDecl.Value == nil {
+		t.Fatalf("expected partial initializer (not nil), got nil")
+	}
+	// Value should be a UnaryExpr containing a BadExpr (preserves partial tree)
+	if unary, ok := letDecl.Value.(*ast.UnaryExpr); !ok {
+		t.Fatalf("expected UnaryExpr, got %T", letDecl.Value)
+	} else if _, ok := unary.Expr.(*ast.BadExpr); !ok {
+		t.Fatalf("expected inner BadExpr, got %T", unary.Expr)
 	}
 	if _, ok := fn.Body.Stmts[1].(*ast.ReturnStmt); !ok {
 		t.Fatalf("expected return stmt after recovery, got %#v", fn.Body.Stmts[1])
@@ -225,10 +233,10 @@ fn main() -> i32 {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for missing semicolon")
 	}
-	if len(mod.Decls) != 3 {
-		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	if len(mod.Stmts) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
-	if _, ok := mod.Decls[2].(*ast.FnDecl); !ok {
+	if _, ok := mod.Stmts[2].(*ast.FnDecl); !ok {
 		t.Fatalf("decl[2] expected fn")
 	}
 	out := diag.EmitAllToString()
@@ -246,10 +254,10 @@ func TestParseRecoversMissingParenInCallAndContinues(t *testing.T) {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for missing ')'")
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected fn")
 	}
@@ -257,7 +265,7 @@ func TestParseRecoversMissingParenInCallAndContinues(t *testing.T) {
 		t.Fatalf("expected function body statements after recovery")
 	}
 	out := diag.EmitAllToString()
-	if !strings.Contains(out, "expected ')' after arguments") {
+	if !strings.Contains(out, "expected ')'") {
 		t.Fatalf("expected missing-paren diagnostic, got:\n%s", out)
 	}
 }
@@ -271,8 +279,8 @@ fn main() -> i32 {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for missing function block")
 	}
-	if len(mod.Decls) != 2 {
-		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
 	}
 	out := diag.EmitAllToString()
 	if !strings.Contains(out, "missing function body") {
@@ -291,11 +299,11 @@ fn main() {
 	let c = a + b;
 }`
 	mod, diag := parseTestModule(src)
-	if len(mod.Decls) != 2 {
-		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
 	}
 	out := diag.EmitAllToString()
-	if strings.Contains(out, " --> test.peep:5:1") && strings.Contains(out, "expected '{'") {
+	if strings.Contains(out, "test.peep:5:1") && strings.Contains(out, "expected '{'") {
 		t.Fatalf("unexpected extra missing-block diagnostic on second function:\n%s", out)
 	}
 }
@@ -309,10 +317,10 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 2 {
-		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected fn")
 	}
@@ -331,8 +339,8 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 2 {
-		t.Fatalf("decls: got %d want 2", len(mod.Decls))
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
 	}
 }
 
@@ -344,10 +352,10 @@ func TestParseMethodStyleFunctionNamePath(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected fn")
 	}
@@ -371,18 +379,18 @@ let c: enum {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 3 {
-		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	if len(mod.Stmts) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
-	l0 := mod.Decls[0].(*ast.LetDecl)
+	l0 := mod.Stmts[0].(*ast.LetDecl)
 	if _, ok := l0.Type.(*ast.StructType); !ok {
 		t.Fatalf("let a type expected struct")
 	}
-	l1 := mod.Decls[1].(*ast.LetDecl)
+	l1 := mod.Stmts[1].(*ast.LetDecl)
 	if _, ok := l1.Type.(*ast.InterfaceType); !ok {
 		t.Fatalf("let b type expected interface")
 	}
-	l2 := mod.Decls[2].(*ast.LetDecl)
+	l2 := mod.Stmts[2].(*ast.LetDecl)
 	if _, ok := l2.Type.(*ast.EnumType); !ok {
 		t.Fatalf("let c type expected enum")
 	}
@@ -399,9 +407,9 @@ return a;
 	if diag.HasErrors() || mod == nil {
 		t.Fatalf("parse failed: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
 	}
 	if _, ok := fn.Body.Stmts[0].(*ast.BlockStmt); !ok {
 		t.Fatalf("expected nested block stmt, got %#v", fn.Body.Stmts[0])
@@ -420,9 +428,9 @@ if 1 < 2 {
 	if diag.HasErrors() || mod == nil {
 		t.Fatalf("parse failed: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
 	}
 	ifs, ok := fn.Body.Stmts[0].(*ast.IfStmt)
 	if !ok {
@@ -451,9 +459,9 @@ if 1 {
 	if diag.HasErrors() || mod == nil {
 		t.Fatalf("parse failed: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls[0])
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
 	}
 	root, ok := fn.Body.Stmts[0].(*ast.IfStmt)
 	if !ok {
@@ -485,17 +493,17 @@ enum Color {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 3 {
-		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	if len(mod.Stmts) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
-	a0, ok := mod.Decls[0].(*ast.StructDecl)
+	a0, ok := mod.Stmts[0].(*ast.StructDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected struct decl")
 	}
 	if len(a0.Fields) != 2 {
 		t.Fatalf("struct fields: got %d want 2", len(a0.Fields))
 	}
-	a1, ok := mod.Decls[1].(*ast.InterfaceDecl)
+	a1, ok := mod.Stmts[1].(*ast.InterfaceDecl)
 	if !ok {
 		t.Fatalf("decl[1] expected interface decl")
 	}
@@ -508,7 +516,7 @@ enum Color {
 	if a1.Methods[0].Params[0].Name != nil {
 		t.Fatalf("first interface param should be unnamed")
 	}
-	a2, ok := mod.Decls[2].(*ast.EnumDecl)
+	a2, ok := mod.Stmts[2].(*ast.EnumDecl)
 	if !ok {
 		t.Fatalf("decl[2] expected enum decl")
 	}
@@ -527,10 +535,10 @@ func TestParseImplDecl(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	implDecl, ok := mod.Decls[0].(*ast.ImplDecl)
+	implDecl, ok := mod.Stmts[0].(*ast.ImplDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected impl decl")
 	}
@@ -560,7 +568,7 @@ func TestParseSelectorAndMethodCall(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 3 {
 		t.Fatalf("unexpected function body")
 	}
@@ -595,7 +603,7 @@ func TestParseStructLiteral(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
 		t.Fatalf("unexpected function body")
 	}
@@ -627,7 +635,7 @@ func TestParseTypedStructLiteral(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
 		t.Fatalf("unexpected function body")
 	}
@@ -658,9 +666,9 @@ func TestParseAttachesDocCommentsInFunctionBody(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls)
+		t.Fatalf("unexpected function body: %#v", mod.Stmts)
 	}
 	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
 	if !ok || letDecl.Doc == nil || letDecl.Doc.Text != "docs-like comment before local let" {
@@ -680,9 +688,9 @@ func TestParseAttachesDocCommentsToIfStmt(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
-		t.Fatalf("unexpected function body: %#v", mod.Decls)
+		t.Fatalf("unexpected function body: %#v", mod.Stmts)
 	}
 	ifStmt, ok := fn.Body.Stmts[0].(*ast.IfStmt)
 	if !ok || ifStmt.Doc == nil || ifStmt.Doc.Text != "branch docs" {
@@ -699,9 +707,9 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok || fn.Doc == nil || fn.Doc.Text != "fn docs" {
-		t.Fatalf("decl doc mismatch: %#v", mod.Decls[0])
+		t.Fatalf("decl doc mismatch: %#v", mod.Stmts[0])
 	}
 }
 
@@ -711,10 +719,10 @@ func TestParsePointerTypes(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Decls))
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	ptrDecl, ok := mod.Decls[0].(*ast.LetDecl)
+	ptrDecl, ok := mod.Stmts[0].(*ast.LetDecl)
 	if !ok {
 		t.Fatalf("decl[0] expected let")
 	}
@@ -732,9 +740,9 @@ func TestParseFnDefaultReturnType(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn, ok := mod.Decls[0].(*ast.FnDecl)
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
 	if !ok {
-		t.Fatalf("expected fn decl, got %T", mod.Decls[0])
+		t.Fatalf("expected fn decl, got %T", mod.Stmts[0])
 	}
 	if fn.ReturnType != nil {
 		t.Fatalf("expected nil default return type, got %T", fn.ReturnType)
@@ -749,7 +757,7 @@ func TestParseFnExplicitReturnTypeOverridesDefault(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn := mod.Decls[0].(*ast.FnDecl)
+	fn := mod.Stmts[0].(*ast.FnDecl)
 	named := fn.ReturnType.(*ast.NamedType)
 	if named.Name != "f64" {
 		t.Fatalf("explicit return type: got %q want %q", named.Name, "f64")
@@ -764,7 +772,7 @@ func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	iface := mod.Decls[0].(*ast.InterfaceDecl)
+	iface := mod.Stmts[0].(*ast.InterfaceDecl)
 	if len(iface.Methods) != 1 {
 		t.Fatalf("methods: got %d want 1", len(iface.Methods))
 	}
@@ -780,7 +788,7 @@ func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	letDecl := mod.Decls[0].(*ast.LetDecl)
+	letDecl := mod.Stmts[0].(*ast.LetDecl)
 	ft, ok := letDecl.Type.(*ast.FuncType)
 	if !ok {
 		t.Fatalf("expected func type, got %T", letDecl.Type)
@@ -798,7 +806,7 @@ func TestParseStructFieldsTrailingComma(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	st := mod.Decls[0].(*ast.StructDecl)
+	st := mod.Stmts[0].(*ast.StructDecl)
 	if len(st.Fields) != 2 {
 		t.Fatalf("fields: got %d want 2", len(st.Fields))
 	}
@@ -811,7 +819,7 @@ func TestParseEnumVariantsTrailingComma(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	en := mod.Decls[0].(*ast.EnumDecl)
+	en := mod.Stmts[0].(*ast.EnumDecl)
 	if len(en.Variants) != 2 {
 		t.Fatalf("variants: got %d want 2", len(en.Variants))
 	}
@@ -824,7 +832,7 @@ func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	iface := mod.Decls[0].(*ast.InterfaceDecl)
+	iface := mod.Stmts[0].(*ast.InterfaceDecl)
 	if len(iface.Methods) != 2 {
 		t.Fatalf("methods: got %d want 2", len(iface.Methods))
 	}
@@ -839,8 +847,8 @@ let y: i32 = 2`
 	if !diag.HasErrors() {
 		t.Fatalf("expected at least one diagnostic for missing semicolons")
 	}
-	if len(mod.Decls) != 2 {
-		t.Fatalf("decls: got %d want 2 (parser should have recovered)", len(mod.Decls))
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2 (parser should have recovered)", len(mod.Stmts))
 	}
 }
 
@@ -864,11 +872,11 @@ const b: i32 = 2;`
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if _, ok := mod.Decls[0].(*ast.LetDecl); !ok {
-		t.Fatalf("decl[0] expected let, got %T", mod.Decls[0])
+	if _, ok := mod.Stmts[0].(*ast.LetDecl); !ok {
+		t.Fatalf("decl[0] expected let, got %T", mod.Stmts[0])
 	}
-	if _, ok := mod.Decls[1].(*ast.ConstDecl); !ok {
-		t.Fatalf("decl[1] expected const, got %T", mod.Decls[1])
+	if _, ok := mod.Stmts[1].(*ast.ConstDecl); !ok {
+		t.Fatalf("decl[1] expected const, got %T", mod.Stmts[1])
 	}
 }
 
@@ -887,7 +895,7 @@ func TestParseSemicolonRecoveryNewline(t *testing.T) {
 	if len(errors) != 1 {
 		t.Fatalf("expected exactly 1 error, got %d:\n%s", len(errors), diag.EmitAllToString())
 	}
-	fn := mod.Decls[0].(*ast.FnDecl)
+	fn := mod.Stmts[0].(*ast.FnDecl)
 	if len(fn.Body.Stmts) != 2 {
 		t.Fatalf("expected 2 statements inside function body, got %d", len(fn.Body.Stmts))
 	}
@@ -929,8 +937,8 @@ fn main() {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Decls) != 3 {
-		t.Fatalf("decls: got %d want 3", len(mod.Decls))
+	if len(mod.Stmts) != 3 {
+		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
 }
 
@@ -946,13 +954,368 @@ fn main() {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	fn := mod.Decls[0].(*ast.FnDecl)
+	fn := mod.Stmts[0].(*ast.FnDecl)
 	if fn.Doc != nil {
 		t.Fatalf("expected spaced comment to be discarded, got: %q", fn.Doc.Text)
 	}
 	let := fn.Body.Stmts[0].(*ast.LetDecl)
 	if let.Doc == nil || let.Doc.Text != "non-spaced comment" {
 		t.Fatalf("expected non-spaced comment to be attached, got: %#v", let.Doc)
+	}
+}
+
+// --- Unclosed delimiter tests ---
+
+func TestParseUnclosedBraceAtEOF(t *testing.T) {
+	src := `fn main() -> i32 {`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for unclosed brace")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "P0010") {
+		t.Fatalf("expected unclosed delimiter code P0010, got:\n%s", out)
+	}
+	if !strings.Contains(out, "unclosed '{'") {
+		t.Fatalf("expected 'unclosed {' diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseUnclosedParenAtEOF(t *testing.T) {
+	src := `fn main(`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for unclosed paren")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "P0010") {
+		t.Fatalf("expected unclosed delimiter code P0010, got:\n%s", out)
+	}
+	if !strings.Contains(out, "unclosed '('") {
+		t.Fatalf("expected 'unclosed (' diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseUnclosedBraceInStruct(t *testing.T) {
+	src := `struct S { x: i32`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for unclosed struct brace")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "P0010") || !strings.Contains(out, "unclosed '{'") {
+		t.Fatalf("expected P0010 unclosed brace, got:\n%s", out)
+	}
+}
+
+func TestParseUnclosedBraceInImpl(t *testing.T) {
+	src := `impl i32 {`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for unclosed impl brace")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "P0010") || !strings.Contains(out, "unclosed '{'") {
+		t.Fatalf("expected P0010 unclosed brace, got:\n%s", out)
+	}
+}
+
+func TestParseUnclosedParenInFuncType(t *testing.T) {
+	src := `let cb: fn(i32`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for unclosed func type paren")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "P0010") || !strings.Contains(out, "unclosed '('") {
+		t.Fatalf("expected P0010 unclosed paren, got:\n%s", out)
+	}
+}
+
+func TestParseUnclosedBracketInTypeParams(t *testing.T) {
+	src := `fn foo[T`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for unclosed type param bracket")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "P0010") || !strings.Contains(out, "unclosed '['") {
+		t.Fatalf("expected P0010 unclosed bracket, got:\n%s", out)
+	}
+}
+
+// --- Redundant comma / semicolon tests ---
+
+func TestParseRedundantCommaInfo(t *testing.T) {
+	src := `struct S { a: i32,,, }`
+	_, diag := parseTestModule(src)
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "S0003") {
+		t.Fatalf("expected redundant comma info S0003, got:\n%s", out)
+	}
+}
+
+func TestParseRedundantSemicolonInfo(t *testing.T) {
+	src := `fn main() -> i32 {
+	let a = 1;;;
+	return 0;
+}`
+	_, diag := parseTestModule(src)
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "S0002") {
+		t.Fatalf("expected redundant semicolon info S0002, got:\n%s", out)
+	}
+}
+
+func TestParseTrailingCommaInfo(t *testing.T) {
+	src := `struct S { a: i32, }`
+	_, diag := parseTestModule(src)
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "S0001") {
+		t.Fatalf("expected trailing comma info S0001, got:\n%s", out)
+	}
+}
+
+// --- Import recovery tests ---
+
+func TestParseImportMissingAliasRecovers(t *testing.T) {
+	src := `import "math" alias;
+fn main() -> i32 { return 0; }`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for invalid alias syntax")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected 1 decl after recovery, got %d", len(mod.Stmts))
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "expected 'as' keyword for alias") {
+		t.Fatalf("expected alias error, got:\n%s", out)
+	}
+}
+
+func TestParseImportMissingSemicolonRecovers(t *testing.T) {
+	src := `import "math"
+fn main() -> i32 { return 0; }`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for missing semicolon")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected 1 decl after recovery, got %d", len(mod.Stmts))
+	}
+}
+
+// --- Type declaration semicolon recovery ---
+
+func TestParseTypeAliasMissingSemicolonRecovers(t *testing.T) {
+	src := `type Point = i32
+fn main() -> i32 { return 0; }`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for missing semicolon")
+	}
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("expected 2 decls after recovery, got %d", len(mod.Stmts))
+	}
+	if _, ok := mod.Stmts[0].(*ast.TypeAliasDecl); !ok {
+		t.Fatalf("expected type alias decl, got %T", mod.Stmts[0])
+	}
+}
+
+// --- synchronize recovery in function body ---
+
+func TestParseSynchronizeRecoversInBlock(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: = 1;
+	return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for malformed let")
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	// Malformed let is now preserved as partial AST (Type: nil, Value: 1)
+	if len(fn.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 stmts (partial let + return), got %d", len(fn.Body.Stmts))
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected LetDecl, got %T", fn.Body.Stmts[0])
+	}
+	if letDecl.Name == nil || letDecl.Name.Name != "x" {
+		t.Fatalf("expected name 'x', got %#v", letDecl.Name)
+	}
+	if letDecl.Type != nil {
+		t.Fatalf("expected nil type (bad type annotation), got %T", letDecl.Type)
+	}
+	if _, ok := fn.Body.Stmts[1].(*ast.ReturnStmt); !ok {
+		t.Fatalf("expected return stmt after recovery, got %T", fn.Body.Stmts[1])
+	}
+}
+
+func TestParseSynchronizeRecoversToNextStatement(t *testing.T) {
+	src := `fn main() -> i32 {
+	foo(;
+	let x = 1;
+	return x;
+}`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for malformed call")
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	if len(fn.Body.Stmts) < 2 {
+		t.Fatalf("expected at least 2 stmts after recovery, got %d", len(fn.Body.Stmts))
+	}
+	foundLet := false
+	for _, s := range fn.Body.Stmts {
+		if _, ok := s.(*ast.LetDecl); ok {
+			foundLet = true
+			break
+		}
+	}
+	if !foundLet {
+		t.Fatalf("expected let decl recovered after synchronize")
+	}
+}
+
+// --- Resilience regression tests ---
+
+func TestParseBinaryExprPreservesLeftOnBadRight(t *testing.T) {
+	src := `let x = 1 +;`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected errors")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt, got %d", len(mod.Stmts))
+	}
+	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected LetDecl, got %T", mod.Stmts[0])
+	}
+	bin, ok := letDecl.Value.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr, got %T", letDecl.Value)
+	}
+	if bin.Left == nil {
+		t.Fatalf("left operand should be preserved")
+	}
+	if _, ok := bin.Left.(*ast.NumberLit); !ok {
+		t.Fatalf("left should be NumberLit, got %T", bin.Left)
+	}
+	if _, ok := bin.Right.(*ast.BadExpr); !ok {
+		t.Fatalf("right should be BadExpr, got %T", bin.Right)
+	}
+}
+
+func TestParseBindingFieldWithBadTypeStillProducesLetDecl(t *testing.T) {
+	src := `let x: = 1;`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected type error")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt, got %d", len(mod.Stmts))
+	}
+	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected LetDecl, got %T", mod.Stmts[0])
+	}
+	if letDecl.Name == nil || letDecl.Name.Name != "x" {
+		t.Fatalf("name should be preserved, got %#v", letDecl.Name)
+	}
+	if letDecl.Value == nil {
+		t.Fatalf("value should be preserved")
+	}
+}
+
+func TestParseDeduplicationSamePosition(t *testing.T) {
+	src := `let x: = 1;`
+	_, diag := parseTestModule(src)
+	diags := diag.Diagnostics()
+	seen := map[string]int{}
+	for _, d := range diags {
+		if d.Severity != diagnostics.Error || len(d.Labels) == 0 {
+			continue
+		}
+		loc := d.Labels[0].Location
+		if loc == nil || loc.Start == nil {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", loc.Start.Line, loc.Start.Column)
+		seen[key]++
+	}
+	for pos, count := range seen {
+		if count > 1 {
+			t.Fatalf("position %s has %d errors (expected at most 1)", pos, count)
+		}
+	}
+}
+
+func TestParseDidYouMeanKeyword(t *testing.T) {
+	src := `fn main() {
+	let fn = 1;
+}`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected error for keyword used as identifier")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "reserved keyword") {
+		t.Fatalf("expected 'reserved keyword' suggestion, got:\n%s", out)
+	}
+}
+
+func TestParseContextInFunctionName(t *testing.T) {
+	src := `fn main(`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected error for unclosed paren")
+	}
+}
+
+func TestParseBadExprInGrouping(t *testing.T) {
+	src := `let x = (+);`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected errors")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected 1 stmt, got %d", len(mod.Stmts))
+	}
+	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected LetDecl, got %T", mod.Stmts[0])
+	}
+	// Value should be a UnaryExpr (not nil)
+	if letDecl.Value == nil {
+		t.Fatalf("expected partial value, got nil")
+	}
+}
+
+func TestEmitterNewFormatNoSeverityPrefix(t *testing.T) {
+	loc := source.NewLocation("test.peep",
+		source.Position{Line: 1, Column: 1},
+		source.Position{Line: 1, Column: 5})
+	diag := diagnostics.NewError("test error").
+		WithCode("E9999").
+		WithPrimaryLabel(loc, "test label")
+	bag := diagnostics.NewDiagnosticBag()
+	bag.Add(diag)
+	out := bag.EmitAllToString()
+	// Should NOT contain "error" prefix
+	if strings.Contains(out, "error[") {
+		t.Fatalf("expected no 'error[' prefix in output:\n%s", out)
+	}
+	// Should contain the code
+	if !strings.Contains(out, "[E9999]") {
+		t.Fatalf("expected [E9999] in output:\n%s", out)
+	}
+	// Should contain location marker
+	if !strings.Contains(out, "test.peep:1:1") {
+		t.Fatalf("expected location in output:\n%s", out)
 	}
 }
 

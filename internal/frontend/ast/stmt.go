@@ -43,6 +43,14 @@ type ReturnStmt struct {
 func (*ReturnStmt) stmtNode()               {}
 func (s *ReturnStmt) loc() *source.Location { return s.Location }
 
+type BadStmt struct {
+	NodeIDHolder
+	Location *source.Location
+}
+
+func (*BadStmt) stmtNode()               {}
+func (s *BadStmt) loc() *source.Location { return s.Location }
+
 type IfStmt struct {
 	NodeIDHolder
 	Documented

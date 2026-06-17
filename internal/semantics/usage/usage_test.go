@@ -18,7 +18,7 @@ import (
 func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const filePath = "usage_test.peep"
-	diag := diagnostics.NewDiagnosticBag(filePath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", ".peep", diag)
 
