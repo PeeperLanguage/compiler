@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -18,6 +19,24 @@ type checker struct {
 }
 
 // --- helpers -----------------------------------------------------------------
+
+// enclosingFnDecl walks up the scope chain and returns the FnDecl of the
+// enclosing function, or nil if not inside a function body.
+func (c *checker) enclosingFnDecl(scope *table.Scope) *ast.FnDecl {
+	if c == nil || c.module == nil || c.module.ModuleScope == nil {
+		return nil
+	}
+	for s := scope; s != nil && s != c.module.ModuleScope; s = s.Parent() {
+		for _, sym := range c.module.ModuleScope.Symbols() {
+			if (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) && sym.Scope == s {
+				if fn, ok := sym.ASTNode.(*ast.FnDecl); ok {
+					return fn
+				}
+			}
+		}
+	}
+	return nil
+}
 
 func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context string) typeinfo.Type {
 	if typ != nil {
@@ -215,9 +234,15 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 			return
 		}
 		if !c.assignable(returnType, retType) {
-			c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
+			d := typeMismatchError(node.Value,
 				fmt.Sprintf("cannot return %s from function returning %s",
-					typeinfo.TypeText(retType), typeinfo.TypeText(returnType))))
+					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)))
+			if fn := c.enclosingFnDecl(scope); fn != nil && fn.ReturnType != nil {
+				d.WithSecondaryLabel(ast.LocOf(fn.ReturnType),
+					fmt.Sprintf("expected %s because of this return type", typeinfo.TypeText(returnType)))
+			}
+			c.addInterfaceHint(d, returnType, retType)
+			c.ctx.Diagnostics.Add(d)
 		}
 	case *ast.IfStmt:
 		if node.Cond == nil {
@@ -274,7 +299,8 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		switch sym.Kind {
 		case symbols.SymbolConst:
 			c.ctx.Diagnostics.AddError(diagnostics.ErrConstantReassignment,
-				"cannot assign to const `"+target.Name+"`", ast.LocOf(target), "")
+				"cannot assign to const `"+target.Name+"`", ast.LocOf(target), "").
+				WithSecondaryLabel(sym.Location, "declared as const here")
 			return
 		case symbols.SymbolVar:
 			if !sym.IsMutable() {
@@ -315,16 +341,19 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	var (
 		nameNode *ast.Ident
 		declType typeinfo.Type
+		typeNode ast.TypeExpr // AST node for the type annotation (for diagnostics)
 		value    ast.Expr
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
 		nameNode = bind.Name
 		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		typeNode = bind.Type
 		value = bind.Value
 	case *ast.ConstDecl:
 		nameNode = bind.Name
 		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		typeNode = bind.Type
 		value = bind.Value
 	default:
 		return
@@ -360,9 +389,15 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		return
 	}
 	if declType != nil && !c.assignable(declType, valType) {
-		c.ctx.Diagnostics.Add(typeMismatchError(value,
+		d := typeMismatchError(value,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valType), typeinfo.TypeText(declType))))
+				typeinfo.TypeText(valType), typeinfo.TypeText(declType)))
+		if typeNode != nil {
+			d.WithSecondaryLabel(ast.LocOf(typeNode),
+				fmt.Sprintf("expected %s because of this type annotation", typeinfo.TypeText(declType)))
+		}
+		c.addInterfaceHint(d, declType, valType)
+		c.ctx.Diagnostics.Add(d)
 		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
@@ -441,12 +476,16 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 		}
 		errmsg := "impl methods must declare a `Self` receiver as the first parameter"
 		if len(method.Params) == 0 {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "").
+				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
+				WithHelp(fmt.Sprintf("first parameter should be 'self: %s' or 'self: ^%s'", typeinfo.TypeText(selfType), typeinfo.TypeText(selfType)))
 			continue
 		}
 		firstParamType := typeinfo.ASTTypeWithOptions(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
 		if !isValidReceiverType(firstParamType, selfType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "").
+				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
+				WithHelp(fmt.Sprintf("first parameter should be 'self: %s' or 'self: ^%s'", typeinfo.TypeText(selfType), typeinfo.TypeText(selfType)))
 			continue
 		}
 
@@ -495,6 +534,41 @@ func (c *checker) satisfiesInterface(iface *typeinfo.InterfaceType, src typeinfo
 		}
 	}
 	return true
+}
+
+// missingInterfaceMethods returns names of interface methods not satisfied by src.
+func (c *checker) missingInterfaceMethods(iface *typeinfo.InterfaceType, src typeinfo.Type) []string {
+	if c == nil || iface == nil || src == nil {
+		return nil
+	}
+	owner := c.interfaceImplementorType(src)
+	if owner == nil {
+		names := make([]string, len(iface.Methods))
+		for i, m := range iface.Methods {
+			names[i] = m.Name
+		}
+		return names
+	}
+	var missing []string
+	for _, required := range iface.Methods {
+		actualType, _, ok := c.lookupMethodType(owner, required.Name)
+		if !ok || actualType == nil {
+			missing = append(missing, required.Name)
+		}
+	}
+	return missing
+}
+
+// addInterfaceHint adds a help message showing missing interface methods when
+// the destination type is an interface and the source doesn't satisfy it.
+func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
+	iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType)
+	if !ok || iface == nil {
+		return
+	}
+	if missing := c.missingInterfaceMethods(iface, src); len(missing) > 0 {
+		d.WithHelp(fmt.Sprintf("missing methods: %s", strings.Join(missing, ", ")))
+	}
 }
 
 func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
@@ -700,8 +774,13 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	if methodType, _, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
 		return methodType
 	}
-	c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-		fmt.Sprintf("unknown member `%s`", node.Name.Name), ast.LocOf(node.Name), "")
+	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
+		WithCode(diagnostics.ErrFieldNotFound).
+		WithPrimaryLabel(ast.LocOf(node.Name), "")
+	if match, ok := diagnostics.NearestName(node.Name.Name, append(availableFields(baseType), c.availableMethods(baseType)...)); ok {
+		d.WithHelp("did you mean `" + match + "`?")
+	}
+	c.ctx.Diagnostics.Add(d)
 	return &typeinfo.InvalidType{}
 }
 
@@ -725,13 +804,22 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes, methodSym)
 		return c.callReturnType(call, methodType)
 	}
-	if _, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
+	if field, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable,
-			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "")
+			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "").
+			WithHelp(fmt.Sprintf("field `%s` has type %s — access it without `()`", selector.Name.Name, typeinfo.TypeText(field.Type)))
 		return &typeinfo.InvalidType{}
 	}
-	c.ctx.Diagnostics.AddError(diagnostics.ErrMethodNotFound,
-		fmt.Sprintf("unknown method `%s`", selector.Name.Name), ast.LocOf(selector.Name), "")
+	methods := c.availableMethods(baseType)
+	d := diagnostics.NewError(fmt.Sprintf("unknown method `%s`", selector.Name.Name)).
+		WithCode(diagnostics.ErrMethodNotFound).
+		WithPrimaryLabel(ast.LocOf(selector.Name), "")
+	if len(methods) > 0 {
+		d.WithHelp("available methods: " + strings.Join(methods, ", "))
+	} else if match, ok := diagnostics.NearestName(selector.Name.Name, availableFields(baseType)); ok {
+		d.WithHelp("did you mean field `" + match + "`?")
+	}
+	c.ctx.Diagnostics.Add(d)
 	return &typeinfo.InvalidType{}
 }
 
@@ -786,7 +874,8 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 		field, ok := fieldsByName[targetField.Name]
 		if !ok {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-				"missing struct literal field `"+targetField.Name+"`", ast.LocOf(node), "")
+				"missing struct literal field `"+targetField.Name+"`", ast.LocOf(node), "").
+				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(fieldNames(targetStruct), ", ")))
 			continue
 		}
 		valueType := c.typeExpr(scope, field.Value, targetField.Type)
@@ -856,6 +945,40 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 		}
 	}
 	return nil, nil, false
+}
+
+// availableMethods returns the names of all methods defined on baseType.
+func (c *checker) availableMethods(baseType typeinfo.Type) []string {
+	if c == nil || c.module == nil || c.module.Semantics == nil {
+		return nil
+	}
+	var names []string
+	if iface, ok := typeinfo.Underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
+		for _, m := range iface.Methods {
+			names = append(names, m.Name)
+		}
+	}
+	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
+		for _, method := range c.module.Semantics.MethodSets[key] {
+			if method != nil {
+				names = append(names, method.Name)
+			}
+		}
+	}
+	return names
+}
+
+// availableFields returns the names of all fields in a struct type.
+func availableFields(t typeinfo.Type) []string {
+	strct, ok := typeinfo.Underlying(t).(*typeinfo.StructType)
+	if !ok || strct == nil {
+		return nil
+	}
+	names := make([]string, len(strct.Fields))
+	for i, f := range strct.Fields {
+		names[i] = f.Name
+	}
+	return names
 }
 
 func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType typeinfo.Type) typeinfo.Type {
@@ -939,8 +1062,13 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 			return nil
 		}
 		if !literalFitsType(node.Value, expected) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidNumber,
-				fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected)), ast.LocOf(node), "")
+			d := diagnostics.NewError(fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected))).
+				WithCode(diagnostics.ErrInvalidNumber).
+				WithPrimaryLabel(ast.LocOf(node), "")
+			if intType, ok := expected.(*typeinfo.IntegerType); ok {
+				d.WithHelp(integerRangeHint(intType))
+			}
+			c.ctx.Diagnostics.Add(d)
 			return nil
 		}
 		return expected
@@ -959,6 +1087,22 @@ func literalFitsType(value string, typ typeinfo.Type) bool {
 		return numeric.FitsIntegerLiteralInFloat(value, t.Bits)
 	}
 	return false
+}
+
+func integerRangeHint(t *typeinfo.IntegerType) string {
+	if t.Signed {
+		bits := t.Bits - 1
+		return fmt.Sprintf("%s range: -2^%d to 2^%d-1", typeinfo.TypeText(t), bits, bits)
+	}
+	return fmt.Sprintf("%s range: 0 to 2^%d-1", typeinfo.TypeText(t), t.Bits)
+}
+
+func fieldNames(strct *typeinfo.StructType) []string {
+	names := make([]string, len(strct.Fields))
+	for i, f := range strct.Fields {
+		names[i] = f.Name
+	}
+	return names
 }
 
 func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
@@ -999,7 +1143,13 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 		return
 	}
 	if len(args) != len(fnType.Params) {
-		c.ctx.Diagnostics.Add(wrongArgumentCountError(callExpr, len(args), len(fnType.Params)))
+		d := wrongArgumentCountError(callExpr, len(args), len(fnType.Params))
+		paramDescs := make([]string, len(fnType.Params))
+		for i, p := range fnType.Params {
+			paramDescs[i] = typeinfo.TypeText(p)
+		}
+		d.WithHelp(fmt.Sprintf("expected parameters: (%s)", strings.Join(paramDescs, ", ")))
+		c.ctx.Diagnostics.Add(d)
 		return
 	}
 	for i, argType := range args {
@@ -1013,9 +1163,11 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 			continue
 		}
 		if !c.assignable(paramType, argType) {
-			c.ctx.Diagnostics.Add(typeMismatchError(callExpr.Args[i],
+			d := typeMismatchError(callExpr.Args[i],
 				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType))))
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
+			c.addInterfaceHint(d, paramType, argType)
+			c.ctx.Diagnostics.Add(d)
 		}
 	}
 }
