@@ -36,7 +36,7 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
 	if !strings.Contains(irText, "target triple = \""+targetTriple+"\"") {
 		t.Fatalf("expected configured target triple, got:\n%s", irText)
 	}
@@ -76,7 +76,7 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple, false, "windows")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "windows")
 	if !strings.Contains(irText, "target triple = \""+targetTriple+"\"") {
 		t.Fatalf("expected configured target triple, got:\n%s", irText)
 	}
@@ -119,7 +119,7 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple, true, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, true, "linux")
 	if !strings.Contains(irText, "!llvm.dbg.cu") {
 		t.Fatalf("expected debug compile unit metadata, got:\n%s", irText)
 	}
@@ -182,7 +182,7 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple, true, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, true, "linux")
 	if !strings.Contains(irText, "!DILocation(line: 2, column: 2") {
 		t.Fatalf("expected child expression debug location, got:\n%s", irText)
 	}
@@ -236,7 +236,7 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(""), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
 	if !strings.Contains(irText, "icmp ne i32 1, 0") {
 		t.Fatalf("expected explicit bool cast to lower as compare, got:\n%s", irText)
 	}

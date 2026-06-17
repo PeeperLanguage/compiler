@@ -93,11 +93,8 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 	}
 	sym := symbols.New(name.Name, symbols.SymbolType, node, ast.LocOf(name))
 	sym.Type = &typeinfo.DefinedType{
-		Name:       name.Name,
-		Underlying: typeinfo.TypeFromSyntax(typ),
-	}
-	if sym.Type == nil {
-		sym.Type = &typeinfo.InvalidType{}
+		Name: name.Name,
+		// Underlying is filled by binder.
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
@@ -110,10 +107,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 		return
 	}
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
-	sym.Type = typeinfo.TypeFromSyntax(typ)
-	if sym.Type == nil {
-		sym.Type = &typeinfo.UnknownType{}
-	}
+	sym.Type = &typeinfo.UnknownType{} // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 	}

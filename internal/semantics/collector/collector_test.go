@@ -17,7 +17,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := diagnostics.NewDiagnosticBag(filePath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", ".peep", diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()

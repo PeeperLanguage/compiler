@@ -12,7 +12,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
-	"compiler/pkg/colors"
 )
 
 type Parser struct {
@@ -647,12 +646,6 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		d := diagnostics.NewError("expected type").
 			WithCode(diagnostics.ErrInvalidTypeInParser).
 			WithPrimaryLabel(loc, fmt.Sprintf("found %s", tok.Kind))
-		if tok.Kind == token.IDENT {
-			builtinTypes := []string{"bool", "char", "str", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "byte"}
-			if match, ok := diagnostics.NearestName(tok.Literal, builtinTypes); ok {
-				d.WithText("help", "did you mean `"+match+"`?", colors.GREEN)
-			}
-		}
 		p.diag.Add(d)
 		return nil
 	}

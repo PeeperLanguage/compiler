@@ -35,7 +35,7 @@ func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content str
 	}
 	diag := ctx.Diagnostics
 	if diag == nil {
-		diag = diagnostics.NewDiagnosticBag(path)
+		diag = diagnostics.NewDiagnosticBag()
 		ctx.Diagnostics = diag
 	}
 	absPath, err := filepath.Abs(path)

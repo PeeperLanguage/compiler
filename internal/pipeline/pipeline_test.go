@@ -25,7 +25,7 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	const preludePath = "core/global.peep"
 	const entryPath = "entry.peep"
 
-	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
@@ -92,7 +92,7 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 		TargetBackend: "llvm",
 		BuildDebug:    true,
 	}
-	diag := diagnostics.NewDiagnosticBag("entry.peep")
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent("core/global.peep", preludeSrc)
 	diag.AddSourceContent("entry.peep", entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
@@ -527,7 +527,7 @@ fn main() -> i32 {
 	const preludePath = "core/global.peep"
 	const entryPath = "entry.peep"
 
-	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.New(".", ".peep", diag)
@@ -578,7 +578,7 @@ fn main() -> i32 {
 	const preludePath = "core/global.peep"
 	const entryPath = "entry.peep"
 
-	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.New(".", ".peep", diag)
@@ -730,7 +730,7 @@ fn main() -> i32 {
 	const preludePath = "core/global.peep"
 	const entryPath = "entry.peep"
 
-	diag := diagnostics.NewDiagnosticBag(entryPath)
+	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.New(".", ".peep", diag)

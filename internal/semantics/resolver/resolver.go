@@ -7,6 +7,7 @@ import (
 	semantic_errors "compiler/internal/semantics/errors"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/source"
 )
 
 type resolver struct {
@@ -145,29 +146,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.BlockStmt:
 		r.resolveBlock(table.New(scope), node)
 	case *ast.LetDecl:
-		sym := symbols.New(node.Name.Name, symbols.SymbolVar, node, ast.LocOf(node.Name))
-		sym.Initializing = true
-		if err := scope.Declare(sym); err != nil {
-			semantic_errors.RedeclarationError(r.ctx, scope, err.Error(), node.Name.Name, node.Location)
-			return
-		}
-		if node.Value != nil {
-			r.resolveExpr(scope, node.Value)
-			sym.Initialized = true
-		}
-		sym.Initializing = false
+		r.resolveLocalBinding(scope, node.Name, symbols.SymbolVar, node.Value, node, node.Location)
 	case *ast.ConstDecl:
-		sym := symbols.New(node.Name.Name, symbols.SymbolConst, node, ast.LocOf(node.Name))
-		sym.Initializing = true
-		if err := scope.Declare(sym); err != nil {
-			semantic_errors.RedeclarationError(r.ctx, scope, err.Error(), node.Name.Name, node.Location)
-			return
-		}
-		if node.Value != nil {
-			r.resolveExpr(scope, node.Value)
-			sym.Initialized = true
-		}
-		sym.Initializing = false
+		r.resolveLocalBinding(scope, node.Name, symbols.SymbolConst, node.Value, node, node.Location)
 	case *ast.ReturnStmt:
 		if node.Value != nil {
 			r.resolveExpr(scope, node.Value)
@@ -211,6 +192,20 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	default:
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
 	}
+}
+
+func (r *resolver) resolveLocalBinding(scope *table.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
+	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
+	sym.Initializing = true
+	if err := scope.Declare(sym); err != nil {
+		semantic_errors.RedeclarationError(r.ctx, scope, err.Error(), name.Name, loc)
+		return
+	}
+	if value != nil {
+		r.resolveExpr(scope, value)
+		sym.Initialized = true
+	}
+	sym.Initializing = false
 }
 
 func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
