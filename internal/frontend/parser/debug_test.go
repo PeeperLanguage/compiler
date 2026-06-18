@@ -1,9 +1,9 @@
 package parser
 
 import (
-	"testing"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
+	"testing"
 )
 
 func TestDebug(t *testing.T) {

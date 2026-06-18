@@ -134,7 +134,6 @@ func stmtTerminates(stmt hir.Stmt) bool {
 	}
 }
 
-
 func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc *source.Location, value bool) {
 	if diag == nil {
 		return

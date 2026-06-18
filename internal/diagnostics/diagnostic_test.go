@@ -1,9 +1,12 @@
 package diagnostics
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"compiler/internal/source"
+	"compiler/pkg/colors"
 )
 
 func testLoc(file string, line, col int) *source.Location {
@@ -70,5 +73,73 @@ func TestWithPrimaryLabelSetsFilePath(t *testing.T) {
 	}
 	if len(d.Labels) != 1 || d.Labels[0].Style != Primary {
 		t.Fatalf("expected one primary label, got %#v", d.Labels)
+	}
+}
+
+func TestEmitterAlignsHeaderAndHelpWithGutter(t *testing.T) {
+	prevFormat := colors.CurrentLogFormat()
+	colors.SetLogFormat(colors.LogFormatNormal)
+	defer colors.SetLogFormat(prevFormat)
+
+	var out bytes.Buffer
+	emitter := NewEmitter(&out)
+	emitter.cache.AddSource("sample.peep", strings.Join([]string{
+		"line 1",
+		"line 2",
+		"line 3",
+		"line 4",
+		"line 5",
+		"line 6",
+		"line 7",
+		"line 8",
+		"line 9",
+		"line 10",
+		"line 11",
+		"let value = 1;",
+	}, "\n"))
+
+	loc := source.NewLocation("sample.peep", source.Position{Line: 12, Column: 1}, source.Position{Line: 12, Column: 4})
+	diag := NewError("bad").
+		WithCode("P0005").
+		WithPrimaryLabel(loc, "bad").
+		WithHelp("use const instead")
+
+	emitter.Emit(diag)
+	text := out.String()
+
+	if !strings.Contains(text, "\n   --> sample.peep:12:1\n") {
+		t.Fatalf("expected aligned location header, got:\n%s", text)
+	}
+	if !strings.Contains(text, "\n   | \n11 | line 11\n12 | let value = 1;\n") {
+		t.Fatalf("expected aligned blank gutter and context line, got:\n%s", text)
+	}
+	if !strings.Contains(text, "\n   = help: use const instead\n") {
+		t.Fatalf("expected help aligned with gutter, got:\n%s", text)
+	}
+}
+
+func TestEmitterSuggestionHeaderUsesBlankGutter(t *testing.T) {
+	prevFormat := colors.CurrentLogFormat()
+	colors.SetLogFormat(colors.LogFormatNormal)
+	defer colors.SetLogFormat(prevFormat)
+
+	var out bytes.Buffer
+	emitter := NewEmitter(&out)
+	emitter.cache.AddSource("sample.peep", "value\n")
+
+	loc := source.NewLocation("sample.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 6})
+	diag := NewError("replace").
+		WithCode("P9999").
+		WithPrimaryLabel(loc, "replace").
+		WithCodeInsertion(loc, "const value = 1;")
+
+	emitter.Emit(diag)
+	text := out.String()
+
+	if !strings.Contains(text, "\n  = suggestion:\n") {
+		t.Fatalf("expected suggestion header aligned with gutter, got:\n%s", text)
+	}
+	if !strings.Contains(text, "\n  | \n") {
+		t.Fatalf("expected blank gutter spacer lines, got:\n%s", text)
 	}
 }

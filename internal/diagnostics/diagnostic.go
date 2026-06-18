@@ -16,11 +16,16 @@ const (
 
 func (s Severity) String() string {
 	switch s {
-	case Error: return "error"
-	case Warning: return "warning"
-	case Info: return "info"
-	case Hint: return "hint"
-	default: return "unknown"
+	case Error:
+		return "error"
+	case Warning:
+		return "warning"
+	case Info:
+		return "info"
+	case Hint:
+		return "hint"
+	default:
+		return "unknown"
 	}
 }
 
@@ -59,8 +64,8 @@ type DiagnosticExtra struct {
 type Diagnostic struct {
 	Severity Severity
 	Message  string
-	Code     string 
-	FilePath string 
+	Code     string
+	FilePath string
 	Labels   []Label
 	Extras   []DiagnosticExtra
 }

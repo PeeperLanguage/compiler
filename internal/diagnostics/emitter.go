@@ -18,7 +18,6 @@ const (
 	GUTTER_FMT   = "%*d | "
 	GUTTER_BLANK = "%*s | "
 
-	LINE_POS  = "%s--> %s:%d:%d\n"
 	TAB_WIDTH = 4
 )
 
@@ -232,6 +231,7 @@ func (e *Emitter) printRemovedGutter(color colors.COLOR) {
 }
 
 func (e *Emitter) printPipeOnly() {
+	e.printBlankGutter()
 	fmt.Fprintln(e.writer)
 }
 
@@ -254,6 +254,16 @@ func (e *Emitter) printPrevNonEmptyLine(filepath string, line int) {
 	e.printGutter(line - 1)
 	e.highlighter.HighlightWithColor(expandTabs(prevLine), e.writer)
 	fmt.Fprintln(e.writer)
+}
+
+func (e *Emitter) printLocationHeader(filepath string, line int, col int) {
+	indent := e.currentLineNumWidth + 1
+	colors.BLUE.Fprintf(e.writer, "%*s--> %s:%d:%d\n", indent, "", filepath, line, col)
+}
+
+func (e *Emitter) printSideNotePrefix() {
+	indent := e.currentLineNumWidth + 1
+	fmt.Fprint(e.writer, strings.Repeat(" ", indent))
 }
 
 func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
@@ -338,9 +348,9 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 				if lastFile != "" {
 					fmt.Fprintln(e.writer)
 				}
-				colors.BLUE.Fprintf(e.writer, LINE_POS, "  ", filepath, line, col)
+				e.printLocationHeader(filepath, line, col)
 				e.printBlankGutter()
-				fmt.Fprintln(e.writer) // FIXED: Added missing newline here
+				fmt.Fprintln(e.writer)
 
 				lastFile = filepath
 			} else if line > lastLine+1 {
@@ -360,7 +370,7 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 		}
 		fmt.Fprintln(e.writer)
 	} else if strings.TrimSpace(diag.FilePath) != "" {
-		colors.BLUE.Fprintf(e.writer, LINE_POS, "  ", diag.FilePath, 1, 1)
+		e.printLocationHeader(diag.FilePath, 1, 1)
 	}
 
 	// Step 3: Print Extras and Alternative Code Corrections
@@ -675,10 +685,7 @@ func (e *Emitter) printLineWithColoredSpan(line string, start, length int, spanC
 		e.highlighter.HighlightWithColor(line, e.writer)
 		return
 	}
-	end := start + length
-	if end > len(line) {
-		end = len(line)
-	}
+	end := min(start+length, len(line))
 	if start >= end {
 		e.highlighter.HighlightWithColor(line, e.writer)
 		return
@@ -764,8 +771,7 @@ func (e *Emitter) printText(text DiagnosticText) {
 		color = colors.WHITE
 	}
 
-	padding := e.currentLineNumWidth + 4
-	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
+	e.printSideNotePrefix()
 	if text.Kind != "" {
 		color.Fprintf(e.writer, "= %s: ", text.Kind)
 	} else {
@@ -775,8 +781,7 @@ func (e *Emitter) printText(text DiagnosticText) {
 }
 
 func (e *Emitter) printSuggestionHeader() {
-	padding := e.currentLineNumWidth + 4
-	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
+	e.printSideNotePrefix()
 	colors.GREEN.Fprint(e.writer, "= suggestion:")
 	fmt.Fprintln(e.writer)
 }

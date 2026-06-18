@@ -80,6 +80,7 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 		db.warnCount++
 	}
 }
+
 // AddError adds an error diagnostic to the bag and returns it for chaining/customization.
 func (db *DiagnosticBag) AddError(code, msg string, loc *source.Location, labelMsg string) *Diagnostic {
 	d := NewError(msg).WithCode(code)

@@ -21,16 +21,16 @@ const (
 	ErrUnterminatedExpr    = "L0007"
 
 	// Parser errors (P prefix)
-	ErrUnexpectedToken    = "P0001"
-	ErrExpectedToken      = "P0002"
-	ErrInvalidExpression  = "P0003"
-	ErrInvalidStatement   = "P0004"
-	ErrInvalidDeclaration = "P0005"
-	ErrMissingIdentifier  = "P0006"
-	ErrMissingType        = "P0007"
-	ErrMissingInitializer = "P0008"
-	ErrMissingSemiCol     = "P0009"
-	ErrUnclosedDelimiter  = "P0010"
+	ErrUnexpectedToken     = "P0001"
+	ErrExpectedToken       = "P0002"
+	ErrInvalidExpression   = "P0003"
+	ErrInvalidStatement    = "P0004"
+	ErrInvalidDeclaration  = "P0005"
+	ErrMissingIdentifier   = "P0006"
+	ErrMissingType         = "P0007"
+	ErrMissingInitializer  = "P0008"
+	ErrMissingSemiCol      = "P0009"
+	ErrUnclosedDelimiter   = "P0010"
 	ErrInvalidTypeInParser = "P0011"
 
 	// Type checker errors (T prefix)

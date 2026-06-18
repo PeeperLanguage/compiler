@@ -91,13 +91,13 @@ func (*If) stmtNode()       {}
 
 // -- implement loc --
 
-func (b *Block) 		loc() *source.Location {return b.Location }
-func (b *Binding) 		loc() *source.Location {return b.Location }
-func (e *ExprStmt) 		loc() *source.Location {return e.Location }
-func (a *Assign) 		loc() *source.Location {return a.Location }
-func (i *Invalid) 		loc() *source.Location {return i.Location }
-func (r *Return) 		loc() *source.Location {return r.Location }
-func (f *If) 			loc() *source.Location {return f.Location }
+func (b *Block) loc() *source.Location    { return b.Location }
+func (b *Binding) loc() *source.Location  { return b.Location }
+func (e *ExprStmt) loc() *source.Location { return e.Location }
+func (a *Assign) loc() *source.Location   { return a.Location }
+func (i *Invalid) loc() *source.Location  { return i.Location }
+func (r *Return) loc() *source.Location   { return r.Location }
+func (f *If) loc() *source.Location       { return f.Location }
 
 func (m *Module) Text() string {
 	if m == nil {

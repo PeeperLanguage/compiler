@@ -3,9 +3,9 @@
 package parser
 
 import (
-	"slices"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"compiler/internal/diagnostics"
@@ -43,8 +43,6 @@ func (p *Parser) ParseModule() *ast.Module {
 		Imports:  make([]*ast.ImportDecl, 0),
 		Stmts:    make([]ast.Stmt, 0),
 	}
-	
-
 
 	for !p.at(token.EOF) {
 		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "unnecessary semicolons", "remove these semicolons")
@@ -54,19 +52,45 @@ func (p *Parser) ParseModule() *ast.Module {
 			}
 			continue
 		}
-		
+
 		stmt := p.parseStmt(true)
-		if stmt != nil {
+		switch node := stmt.(type) {
+		case nil:
+			if !p.at(token.EOF) {
+				loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+				mod.Stmts = append(mod.Stmts, reg(p, &ast.BadStmt{Location: loc}))
+				p.synchronize(token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
+					token.INTERFACE, token.ENUM, token.IMPL, token.TYPE)
+			}
+		case ast.Decl:
+			if _, ok := node.(*ast.LetDecl); ok {
+				p.reportInvalidModuleStmt(ast.LocOf(node), "top-level `let` not allowed", "use `const` for module-scope values")
+				continue
+			}
 			mod.Stmts = append(mod.Stmts, stmt)
-		} else if !p.at(token.EOF) {
-			loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
-			mod.Stmts = append(mod.Stmts, reg(p, &ast.BadStmt{Location: loc}))
-			p.synchronize(token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
-				token.INTERFACE, token.ENUM, token.IMPL, token.TYPE)
+		case *ast.BadStmt:
+			// parseStmt already diagnosed and recovered enough to continue.
+			mod.Stmts = append(mod.Stmts, stmt)
+		default:
+			p.reportInvalidModuleStmt(ast.LocOf(node), "module scope expects declaration", "move this statement into a function")
 		}
 	}
-	
+
 	return mod
+}
+
+func (p *Parser) reportInvalidModuleStmt(loc *source.Location, msg, help string) {
+	if loc == nil {
+		tok := p.current()
+		loc = source.NewLocation(p.filePath, tok.Start, tok.End)
+	}
+	diag := diagnostics.NewError(msg).
+		WithCode(diagnostics.ErrInvalidDeclaration).
+		WithPrimaryLabel(loc, msg)
+	if help != "" {
+		diag = diag.WithHelp(help)
+	}
+	p.diag.Add(diag)
 }
 
 func (p *Parser) parseImport() *ast.ImportDecl {
@@ -82,7 +106,7 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 	}
 
 	path := ast.StringLit{
-		Value: pathToken.Literal,
+		Value:    pathToken.Literal,
 		Location: source.NewLocation(p.filePath, pathToken.Start, pathToken.End),
 	}
 
@@ -91,7 +115,7 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 		if p.consume(token.AS, "expected 'as' keyword for alias") != nil {
 			if tok := p.consume(token.IDENT, "expected alias name"); tok != nil {
 				alias = ast.Ident{
-					Name: tok.Literal,
+					Name:     tok.Literal,
 					Location: source.NewLocation(p.filePath, tok.Start, tok.End),
 				}
 			}
@@ -108,7 +132,7 @@ func (p *Parser) parseImport() *ast.ImportDecl {
 		}
 		end = &token.Token{Kind: token.SEMICOLON, End: endPos}
 	}
-	
+
 	return reg(p, &ast.ImportDecl{
 		Path:     &path,
 		Alias:    &alias,
@@ -205,7 +229,7 @@ func (p *Parser) parseFnBody() (body *ast.BlockStmt, isExtern bool) {
 			return b, false
 		}
 	}
-	
+
 	prev := p.stream[p.pos-1]
 	loc := source.NewLocation(p.filePath, prev.End, prev.End)
 	p.diag.Add(diagnostics.NewError("missing function body").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(loc, "expected '{' here"))
@@ -410,7 +434,7 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 	if p.at(token.RBRACE) || p.at(token.EOF) {
 		return nil
 	}
-	
+
 	var doc *ast.CommentGroup
 	if p.at(token.DOC_COMMENT) {
 		tok := p.advance()
@@ -419,15 +443,15 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 			Location: source.NewLocation(p.filePath, tok.Start, tok.End),
 		}
 	}
-	
+
 	if p.current().Kind == token.HASH {
 		p.parseFnAttributes()
 	}
-	
+
 	if p.at(token.RBRACE) || p.at(token.EOF) {
 		return nil
 	}
-	
+
 	var stmt ast.Stmt
 	switch p.current().Kind {
 	case token.FN:
@@ -455,7 +479,7 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 	default:
 		stmt = p.parseExprStmt()
 	}
-	
+
 	if stmt != nil && doc != nil {
 		if documented, ok := stmt.(ast.DocumentedNode); ok {
 			documented.SetDocComment(doc)
@@ -982,8 +1006,6 @@ func parseBracedItemList[T any](
 	}
 	return items, &token.Token{Kind: token.RBRACE, Start: endPos, End: endPos}, true
 }
-
-
 
 func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
 	if p.current().Kind == kind {

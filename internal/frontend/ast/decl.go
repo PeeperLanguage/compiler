@@ -220,7 +220,6 @@ func (*ImplDecl) declNode()               {}
 func (*ImplDecl) stmtNode()               {}
 func (d *ImplDecl) loc() *source.Location { return d.Location }
 
-
 // ----------------------------------------------------------------
 
 func DeclaredTypeExpr(decl Decl) (*Ident, TypeExpr, bool) {

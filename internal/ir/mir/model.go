@@ -574,7 +574,6 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 	return true
 }
 
-
 func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	if out == nil || instr == nil {
 		return
@@ -594,7 +593,6 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	}
 	*out = append(*out, instr)
 }
-
 
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 	if block == nil || term == nil {

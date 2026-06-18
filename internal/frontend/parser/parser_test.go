@@ -21,7 +21,7 @@ func parseTestModule(src string) (*ast.Module, *diagnostics.DiagnosticBag) {
 func TestParseModuleSubset(t *testing.T) {
 	src := `import "math" as m;
 const x: i32 = 1 + 2 * 3;
-let y: i32 = x;
+const y: i32 = x;
 fn add(a: i32, b: i32) -> i32 {
 	let z: i32 = a + b;
 	return z;
@@ -39,8 +39,8 @@ fn add(a: i32, b: i32) -> i32 {
 	if _, ok := mod.Stmts[0].(*ast.ConstDecl); !ok {
 		t.Fatalf("decl[0] expected const")
 	}
-	if _, ok := mod.Stmts[1].(*ast.LetDecl); !ok {
-		t.Fatalf("decl[1] expected let")
+	if _, ok := mod.Stmts[1].(*ast.ConstDecl); !ok {
+		t.Fatalf("decl[1] expected const")
 	}
 	fn, ok := mod.Stmts[2].(*ast.FnDecl)
 	if !ok {
@@ -61,8 +61,8 @@ fn add(a: i32, b: i32) -> i32 {
 }
 
 func TestParseAllowsBuiltinNumericTypes(t *testing.T) {
-	src := `let x: i64 = 1;
-let y: f32 = 2;
+	src := `const x: i64 = 1;
+const y: f32 = 2;
 fn sum(a: i64, b: f32) -> f64 {
 	return 0;
 }`
@@ -75,8 +75,46 @@ fn sum(a: i64, b: f32) -> f64 {
 	}
 }
 
-func TestParseLetWithoutExplicitType(t *testing.T) {
-	src := `let c = a + b;`
+func TestParseRejectsTopLevelLet(t *testing.T) {
+	src := `let x: i32 = 1;
+fn main() -> i32 { return 0; }`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for top-level let")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected only later decl to remain, got %d stmts", len(mod.Stmts))
+	}
+	if _, ok := mod.Stmts[0].(*ast.FnDecl); !ok {
+		t.Fatalf("expected fn decl after rejected let, got %T", mod.Stmts[0])
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "top-level `let` not allowed") {
+		t.Fatalf("expected top-level let diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseRejectsTopLevelExpressionStmt(t *testing.T) {
+	src := `foo();
+fn main() -> i32 { return 0; }`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for top-level expr stmt")
+	}
+	if len(mod.Stmts) != 1 {
+		t.Fatalf("expected only later decl to remain, got %d stmts", len(mod.Stmts))
+	}
+	if _, ok := mod.Stmts[0].(*ast.FnDecl); !ok {
+		t.Fatalf("expected fn decl after rejected expr stmt, got %T", mod.Stmts[0])
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "module scope expects declaration") {
+		t.Fatalf("expected module-scope declaration diagnostic, got:\n%s", out)
+	}
+}
+
+func TestParseConstWithoutExplicitType(t *testing.T) {
+	src := `const c = a + b;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics")
@@ -84,12 +122,12 @@ func TestParseLetWithoutExplicitType(t *testing.T) {
 	if len(mod.Stmts) != 1 {
 		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	constDecl, ok := mod.Stmts[0].(*ast.ConstDecl)
 	if !ok {
-		t.Fatalf("decl[0] expected let")
+		t.Fatalf("decl[0] expected const")
 	}
-	if letDecl.Type != nil {
-		t.Fatalf("let type should be nil when omitted")
+	if constDecl.Type != nil {
+		t.Fatalf("const type should be nil when omitted")
 	}
 }
 
@@ -224,8 +262,8 @@ func TestParseMalformedLocalLetDoesNotAppendTypedNilStmt(t *testing.T) {
 }
 
 func TestParseRecoversMissingSemicolonAndContinuesTopLevel(t *testing.T) {
-	src := `let a: i32 = 10
-let b: i32 = 23;
+	src := `const a: i32 = 10
+const b: i32 = 23;
 fn main() -> i32 {
 	return b;
 }`
@@ -365,13 +403,13 @@ func TestParseMethodStyleFunctionNamePath(t *testing.T) {
 }
 
 func TestParseAnonymousTypesInBindings(t *testing.T) {
-	src := `let a: struct {
+	src := `const a: struct {
 	x: i32,
 } = value;
-let b: interface {
+const b: interface {
 	call(x: i32) -> i32,
 } = value;
-let c: enum {
+const c: enum {
 	One,
 	Two,
 } = value;`
@@ -382,17 +420,17 @@ let c: enum {
 	if len(mod.Stmts) != 3 {
 		t.Fatalf("decls: got %d want 3", len(mod.Stmts))
 	}
-	l0 := mod.Stmts[0].(*ast.LetDecl)
+	l0 := mod.Stmts[0].(*ast.ConstDecl)
 	if _, ok := l0.Type.(*ast.StructType); !ok {
-		t.Fatalf("let a type expected struct")
+		t.Fatalf("const a type expected struct")
 	}
-	l1 := mod.Stmts[1].(*ast.LetDecl)
+	l1 := mod.Stmts[1].(*ast.ConstDecl)
 	if _, ok := l1.Type.(*ast.InterfaceType); !ok {
-		t.Fatalf("let b type expected interface")
+		t.Fatalf("const b type expected interface")
 	}
-	l2 := mod.Stmts[2].(*ast.LetDecl)
+	l2 := mod.Stmts[2].(*ast.ConstDecl)
 	if _, ok := l2.Type.(*ast.EnumType); !ok {
-		t.Fatalf("let c type expected enum")
+		t.Fatalf("const c type expected enum")
 	}
 }
 
@@ -714,7 +752,7 @@ fn main() -> i32 {
 }
 
 func TestParsePointerTypes(t *testing.T) {
-	src := `let ptr: ^i32;`
+	src := `const ptr: ^i32;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -722,9 +760,9 @@ func TestParsePointerTypes(t *testing.T) {
 	if len(mod.Stmts) != 1 {
 		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
 	}
-	ptrDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	ptrDecl, ok := mod.Stmts[0].(*ast.ConstDecl)
 	if !ok {
-		t.Fatalf("decl[0] expected let")
+		t.Fatalf("decl[0] expected const")
 	}
 	ptr, ok := ptrDecl.Type.(*ast.RawPtrType)
 	if !ok || !ptr.Mutable {
@@ -783,15 +821,15 @@ func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 
 // TestParseFuncTypeDefaultReturnType verifies fn-types default to no return value.
 func TestParseFuncTypeDefaultReturnType(t *testing.T) {
-	src := `let cb: fn(i32) = 0;`
+	src := `const cb: fn(i32) = 0;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	letDecl := mod.Stmts[0].(*ast.LetDecl)
-	ft, ok := letDecl.Type.(*ast.FuncType)
+	constDecl := mod.Stmts[0].(*ast.ConstDecl)
+	ft, ok := constDecl.Type.(*ast.FuncType)
 	if !ok {
-		t.Fatalf("expected func type, got %T", letDecl.Type)
+		t.Fatalf("expected func type, got %T", constDecl.Type)
 	}
 	if ft.Return != nil {
 		t.Fatalf("expected nil fn-type return, got %T", ft.Return)
@@ -841,8 +879,8 @@ func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 // TestParseMissingSemicolonRecoverable verifies the new recoverSemicolon
 // helper synthesizes a semicolon when the next token is a stmt boundary.
 func TestParseMissingSemicolonRecoverable(t *testing.T) {
-	src := `let x: i32 = 1
-let y: i32 = 2`
+	src := `const x: i32 = 1
+const y: i32 = 2`
 	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected at least one diagnostic for missing semicolons")
@@ -855,7 +893,7 @@ let y: i32 = 2`
 // TestParseMissingSemicolonUnrecoverable verifies that the helper gives up
 // (returns nil) when the next token is not a boundary.
 func TestParseMissingSemicolonUnrecoverable(t *testing.T) {
-	src := `let x: i32 = 1 +`
+	src := `const x: i32 = 1 +`
 	_, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics for malformed expression")
@@ -866,14 +904,20 @@ func TestParseMissingSemicolonUnrecoverable(t *testing.T) {
 // signature no longer carries the unused bindingKind parameter by ensuring
 // the function still parses both let and const correctly.
 func TestParseBindingFieldsDroppedUnusedParam(t *testing.T) {
-	src := `let a: i32 = 1;
+	src := `fn main() {
+	let a: i32 = 1;
+}
 const b: i32 = 2;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if _, ok := mod.Stmts[0].(*ast.LetDecl); !ok {
-		t.Fatalf("decl[0] expected let, got %T", mod.Stmts[0])
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("decl[0] expected function with let body, got %#v", mod.Stmts[0])
+	}
+	if _, ok := fn.Body.Stmts[0].(*ast.LetDecl); !ok {
+		t.Fatalf("stmt[0] expected let, got %T", fn.Body.Stmts[0])
 	}
 	if _, ok := mod.Stmts[1].(*ast.ConstDecl); !ok {
 		t.Fatalf("decl[1] expected const, got %T", mod.Stmts[1])
@@ -1021,7 +1065,7 @@ func TestParseUnclosedBraceInImpl(t *testing.T) {
 }
 
 func TestParseUnclosedParenInFuncType(t *testing.T) {
-	src := `let cb: fn(i32`
+	src := `const cb: fn(i32`
 	_, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for unclosed func type paren")
@@ -1183,7 +1227,7 @@ func TestParseSynchronizeRecoversToNextStatement(t *testing.T) {
 // --- Resilience regression tests ---
 
 func TestParseBinaryExprPreservesLeftOnBadRight(t *testing.T) {
-	src := `let x = 1 +;`
+	src := `const x = 1 +;`
 	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected errors")
@@ -1191,9 +1235,9 @@ func TestParseBinaryExprPreservesLeftOnBadRight(t *testing.T) {
 	if len(mod.Stmts) != 1 {
 		t.Fatalf("expected 1 stmt, got %d", len(mod.Stmts))
 	}
-	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	letDecl, ok := mod.Stmts[0].(*ast.ConstDecl)
 	if !ok {
-		t.Fatalf("expected LetDecl, got %T", mod.Stmts[0])
+		t.Fatalf("expected ConstDecl, got %T", mod.Stmts[0])
 	}
 	bin, ok := letDecl.Value.(*ast.BinaryExpr)
 	if !ok {
@@ -1210,8 +1254,8 @@ func TestParseBinaryExprPreservesLeftOnBadRight(t *testing.T) {
 	}
 }
 
-func TestParseBindingFieldWithBadTypeStillProducesLetDecl(t *testing.T) {
-	src := `let x: = 1;`
+func TestParseBindingFieldWithBadTypeStillProducesConstDecl(t *testing.T) {
+	src := `const x: = 1;`
 	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected type error")
@@ -1219,9 +1263,9 @@ func TestParseBindingFieldWithBadTypeStillProducesLetDecl(t *testing.T) {
 	if len(mod.Stmts) != 1 {
 		t.Fatalf("expected 1 stmt, got %d", len(mod.Stmts))
 	}
-	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	letDecl, ok := mod.Stmts[0].(*ast.ConstDecl)
 	if !ok {
-		t.Fatalf("expected LetDecl, got %T", mod.Stmts[0])
+		t.Fatalf("expected ConstDecl, got %T", mod.Stmts[0])
 	}
 	if letDecl.Name == nil || letDecl.Name.Name != "x" {
 		t.Fatalf("name should be preserved, got %#v", letDecl.Name)
@@ -1232,7 +1276,7 @@ func TestParseBindingFieldWithBadTypeStillProducesLetDecl(t *testing.T) {
 }
 
 func TestParseDeduplicationSamePosition(t *testing.T) {
-	src := `let x: = 1;`
+	src := `const x: = 1;`
 	_, diag := parseTestModule(src)
 	diags := diag.Diagnostics()
 	seen := map[string]int{}
@@ -1277,7 +1321,7 @@ func TestParseContextInFunctionName(t *testing.T) {
 }
 
 func TestParseBadExprInGrouping(t *testing.T) {
-	src := `let x = (+);`
+	src := `const x = (+);`
 	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected errors")
@@ -1285,9 +1329,9 @@ func TestParseBadExprInGrouping(t *testing.T) {
 	if len(mod.Stmts) != 1 {
 		t.Fatalf("expected 1 stmt, got %d", len(mod.Stmts))
 	}
-	letDecl, ok := mod.Stmts[0].(*ast.LetDecl)
+	letDecl, ok := mod.Stmts[0].(*ast.ConstDecl)
 	if !ok {
-		t.Fatalf("expected LetDecl, got %T", mod.Stmts[0])
+		t.Fatalf("expected ConstDecl, got %T", mod.Stmts[0])
 	}
 	// Value should be a UnaryExpr (not nil)
 	if letDecl.Value == nil {
@@ -1318,4 +1362,3 @@ func TestEmitterNewFormatNoSeverityPrefix(t *testing.T) {
 		t.Fatalf("expected location in output:\n%s", out)
 	}
 }
-

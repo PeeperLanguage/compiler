@@ -1095,8 +1095,6 @@ func integerRangeHint(t *typeinfo.IntegerType) string {
 	return fmt.Sprintf("%s range: 0 to 2^%d-1", typeinfo.TypeText(t), t.Bits)
 }
 
-
-
 func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {
 	case "+", "-", "*", "/":
