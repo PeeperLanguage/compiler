@@ -194,6 +194,42 @@ func TestServerStateRecompileReturnsRequestedWorkspaceModule(t *testing.T) {
 	}
 }
 
+func TestServerStateInvalidatesTransitiveDependentsWhenExportChanges(t *testing.T) {
+	root := t.TempDir()
+	fileMain := filepath.Join(root, "main.peep")
+	fileMid := filepath.Join(root, "mid.peep")
+	fileLeaf := filepath.Join(root, "leaf.peep")
+	writeWorkspaceFile(t, fileMain, "import \"mid\";\nfn main() { mid(); }\n")
+	writeWorkspaceFile(t, fileMid, "import \"leaf\";\nfn mid() { leaf(); }\n")
+	writeWorkspaceFile(t, fileLeaf, "fn leaf() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(fileMain); mod == nil {
+		t.Fatalf("initial compile returned nil module")
+	}
+
+	beforeMain := state.modules[project.CanonicalPath(fileMain)]
+	beforeMid := state.modules[project.CanonicalPath(fileMid)]
+	if beforeMain == nil || beforeMid == nil {
+		t.Fatalf("missing cached dependents")
+	}
+
+	state.Cache[fileLeaf] = "fn leaf(v: i32) {}\n"
+	if _, mod := state.recompile(fileLeaf); mod == nil {
+		t.Fatalf("recompile returned nil module")
+	}
+
+	afterMain := state.modules[project.CanonicalPath(fileMain)]
+	afterMid := state.modules[project.CanonicalPath(fileMid)]
+	if beforeMid == afterMid {
+		t.Fatalf("expected direct dependent invalidation")
+	}
+	if beforeMain == afterMain {
+		t.Fatalf("expected transitive dependent invalidation")
+	}
+}
+
 func writeWorkspaceFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

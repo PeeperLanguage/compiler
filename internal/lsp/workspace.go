@@ -22,7 +22,6 @@ type workspaceModule struct {
 	contentHash       string
 	importFingerprint string
 	exportFingerprint string
-	localDeps         []string
 }
 
 type workspaceComponent struct {
@@ -34,6 +33,7 @@ type workspaceIndex struct {
 	rootDir    string
 	modules    map[string]*workspaceModule
 	components []workspaceComponent
+	imports    *graph.Graph
 }
 
 func newWorkspaceIndex(rootDir string) *workspaceIndex {
@@ -100,14 +100,13 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 				continue
 			}
 			seen[target] = struct{}{}
-			module.localDeps = append(module.localDeps, target)
 			g.AddEdge(graph.NodeID(module.filePath), graph.NodeID(target), graph.EdgeImport)
 		}
-		sort.Strings(module.localDeps)
 	}
 
 	w.modules = modules
 	w.components = buildWorkspaceComponents(modules, g)
+	w.imports = g
 	return nil
 }
 
@@ -270,7 +269,7 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Grap
 
 func (w *workspaceIndex) reverseDependents(filePath string) map[string]struct{} {
 	out := make(map[string]struct{})
-	if w == nil {
+	if w == nil || w.imports == nil {
 		return out
 	}
 	filePath = project.CanonicalPath(filePath)
@@ -282,26 +281,14 @@ func (w *workspaceIndex) reverseDependents(filePath string) map[string]struct{} 
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		for _, module := range w.modules {
-			if module == nil {
+		for _, dependent := range w.imports.Predecessors(graph.NodeID(current), graph.EdgeImport) {
+			file := string(dependent)
+			if _, ok := seen[file]; ok {
 				continue
 			}
-			found := false
-			for _, dep := range module.localDeps {
-				if dep == current {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-			if _, ok := seen[module.filePath]; ok {
-				continue
-			}
-			seen[module.filePath] = struct{}{}
-			out[module.filePath] = struct{}{}
-			queue = append(queue, module.filePath)
+			seen[file] = struct{}{}
+			out[file] = struct{}{}
+			queue = append(queue, file)
 		}
 	}
 	return out

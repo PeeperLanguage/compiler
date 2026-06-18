@@ -76,8 +76,9 @@ If any link missing, status is `blocked` or `partial`, never `done`.
 2. Implement one approved step at a time.
 3. Stop after each step and wait for review.
 4. Commit only after explicit approval.
+5. The local plan is a full progress report, not a short scratch note. It must preserve completed work, current work, remaining work, and resume context in one place.
 
-Local plan format:
+Minimum local plan header:
 
 ```
 TASK: <short task title>
@@ -88,6 +89,30 @@ NOTES:
 - <short note>
 - <short note>
 ```
+
+Required full local plan body:
+
+- `DONE:` section
+  - completed steps
+  - important decisions already made
+  - validations already run
+  - branch/commit info once something is committed
+- `CURRENT STATE:` section
+  - what architecture/code state exists now
+  - what constraints or known issues still matter
+- `STEP N:` sections for all known remaining steps
+  - goal
+  - why
+  - how to do it
+  - what must be maintained
+  - how to validate
+  - exact stop condition for review
+- `KNOWN RISKS:` section
+  - pitfalls, invariants, or easy-to-break assumptions
+- `RESUME CHECKLIST:` section
+  - what to read/check before continuing later
+
+Do not rewrite the local plan to only current and next step. Keep whole workflow visible so later steps are not forgotten.
 
 ## Required Close-Out Note
 
