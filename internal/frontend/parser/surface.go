@@ -55,8 +55,12 @@ func structDeclSurface(decl *ast.StructDecl) string {
 	if decl == nil || decl.Name == nil {
 		return ""
 	}
-	fields := make([]string, 0, len(decl.Fields))
-	for _, field := range decl.Fields {
+	structType, ok := decl.Type.(*ast.StructType)
+	if !ok || structType == nil {
+		return ""
+	}
+	fields := make([]string, 0, len(structType.Fields))
+	for _, field := range structType.Fields {
 		if field.Name == nil {
 			continue
 		}
@@ -69,8 +73,12 @@ func interfaceDeclSurface(decl *ast.InterfaceDecl) string {
 	if decl == nil || decl.Name == nil {
 		return ""
 	}
-	methods := make([]string, 0, len(decl.Methods))
-	for _, method := range decl.Methods {
+	ifaceType, ok := decl.Type.(*ast.InterfaceType)
+	if !ok || ifaceType == nil {
+		return ""
+	}
+	methods := make([]string, 0, len(ifaceType.Methods))
+	for _, method := range ifaceType.Methods {
 		methods = append(methods, typeMethodSurface("method", method))
 	}
 	return "interface:" + decl.Name.Name + ":" + strings.Join(methods, ";")
@@ -80,8 +88,12 @@ func enumDeclSurface(decl *ast.EnumDecl) string {
 	if decl == nil || decl.Name == nil {
 		return ""
 	}
-	variants := make([]string, 0, len(decl.Variants))
-	for _, variant := range decl.Variants {
+	enumType, ok := decl.Type.(*ast.EnumType)
+	if !ok || enumType == nil {
+		return ""
+	}
+	variants := make([]string, 0, len(enumType.Variants))
+	for _, variant := range enumType.Variants {
 		if variant.Name == nil {
 			continue
 		}
