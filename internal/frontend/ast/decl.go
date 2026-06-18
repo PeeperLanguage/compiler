@@ -158,45 +158,68 @@ type TypeAliasDecl struct {
 func (*TypeAliasDecl) declNode()               {}
 func (*TypeAliasDecl) stmtNode()               {}
 func (d *TypeAliasDecl) loc() *source.Location { return d.Location }
+func (d *TypeAliasDecl) DeclName() *Ident      { return d.Name }
+func (d *TypeAliasDecl) UnderlyingType() TypeExpr {
+	return d.Type
+}
 
 type StructDecl struct {
 	NodeIDHolder
 	Documented
 	Name       *Ident
 	TypeParams []TypeParam
-	Fields     []TypeField
-	Location   *source.Location
+	// Type holds the canonical payload for the declaration.
+	// Parser must always populate this with *StructType so later phases can
+	// treat declaration syntax and anonymous struct syntax uniformly.
+	Type     TypeExpr
+	Location *source.Location
 }
 
 func (*StructDecl) declNode()               {}
 func (*StructDecl) stmtNode()               {}
 func (d *StructDecl) loc() *source.Location { return d.Location }
+func (d *StructDecl) DeclName() *Ident      { return d.Name }
+func (d *StructDecl) UnderlyingType() TypeExpr {
+	return d.Type
+}
 
 type InterfaceDecl struct {
 	NodeIDHolder
 	Documented
 	Name       *Ident
 	TypeParams []TypeParam
-	Methods    []TypeMethod
-	Location   *source.Location
+	// Type holds the canonical payload for the declaration.
+	// Parser must always populate this with *InterfaceType.
+	Type     TypeExpr
+	Location *source.Location
 }
 
 func (*InterfaceDecl) declNode()               {}
 func (*InterfaceDecl) stmtNode()               {}
 func (d *InterfaceDecl) loc() *source.Location { return d.Location }
+func (d *InterfaceDecl) DeclName() *Ident      { return d.Name }
+func (d *InterfaceDecl) UnderlyingType() TypeExpr {
+	return d.Type
+}
 
 type EnumDecl struct {
 	NodeIDHolder
 	Documented
 	Name       *Ident
 	TypeParams []TypeParam
-	Variants   []EnumVariant
-	Location   *source.Location
+	// Type holds the canonical payload for the declaration.
+	// Parser must always populate this with *EnumType.
+	Type     TypeExpr
+	Location *source.Location
 }
 
 func (*EnumDecl) declNode()               {}
 func (*EnumDecl) stmtNode()               {}
 func (d *EnumDecl) loc() *source.Location { return d.Location }
+func (d *EnumDecl) DeclName() *Ident      { return d.Name }
+func (d *EnumDecl) UnderlyingType() TypeExpr {
+	return d.Type
+}
 
 type BadDecl struct {
 	NodeIDHolder
@@ -219,20 +242,3 @@ type ImplDecl struct {
 func (*ImplDecl) declNode()               {}
 func (*ImplDecl) stmtNode()               {}
 func (d *ImplDecl) loc() *source.Location { return d.Location }
-
-// ----------------------------------------------------------------
-
-func DeclaredTypeExpr(decl Decl) (*Ident, TypeExpr, bool) {
-	switch node := decl.(type) {
-	case *TypeAliasDecl:
-		return node.Name, node.Type, true
-	case *StructDecl:
-		return node.Name, &StructType{Fields: node.Fields, Location: node.Location}, true
-	case *InterfaceDecl:
-		return node.Name, &InterfaceType{Methods: node.Methods, Location: node.Location}, true
-	case *EnumDecl:
-		return node.Name, &EnumType{Variants: node.Variants, Location: node.Location}, true
-	default:
-		return nil, nil, false
-	}
-}

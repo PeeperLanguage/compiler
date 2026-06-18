@@ -22,11 +22,25 @@ type DocumentedNode interface {
 	GetDocComment() *CommentGroup
 }
 
+// Decl is the common surface for module- or block-level declarations.
+// It intentionally stays minimal: most declarations do not describe a named
+// type, so type-specific behavior lives on the narrower TypeDecl interface.
 type Decl interface {
 	Node
 	declNode()
 	SetDocComment(*CommentGroup)
 	GetDocComment() *CommentGroup
+}
+
+// TypeDecl marks declarations that introduce a named type into module scope.
+// The declaration wrapper carries naming/doc/scope concerns, while the
+// canonical structure of the type lives in the returned TypeExpr payload.
+// Keeping these roles separate lets parser syntax change later without
+// rewriting the semantic phases that only care about "name + underlying type".
+type TypeDecl interface {
+	Decl
+	DeclName() *Ident
+	UnderlyingType() TypeExpr
 }
 
 type Stmt interface {

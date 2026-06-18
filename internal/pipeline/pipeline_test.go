@@ -51,9 +51,9 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 // (write, stdout, etc.) are resolved correctly in user entry modules even when
 // the entry module has no explicit import of the prelude.
 func TestPipelinePreludeSymbolsVisibleInEntry(t *testing.T) {
-	preludeSrc := `let stdin:  i32 = 0;
-let stdout: i32 = 1;
-let stderr: i32 = 2;
+	preludeSrc := `const stdin:  i32 = 0;
+const stdout: i32 = 1;
+const stderr: i32 = 2;
 
 #[extern]
 fn write(fd: i32, buf: cstr, n: i32) -> i32;
@@ -122,7 +122,7 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 // TestPipelineAllowsExpressionStatements verifies that call expressions used as
 // statements (discarding the return value) do not produce invalid-statement errors.
 func TestPipelineAllowsExpressionStatements(t *testing.T) {
-	preludeSrc := `let stdout: i32 = 1;
+	preludeSrc := `const stdout: i32 = 1;
 
 #[extern]
 fn write(fd: i32, buf: cstr, n: i32) -> i32;
@@ -193,7 +193,7 @@ fn main() -> i32 {
 }
 
 func TestPipelineLowersUnusedCallBindingAsDiscardedCall(t *testing.T) {
-	preludeSrc := `let stdout: i32 = 1;
+	preludeSrc := `const stdout: i32 = 1;
 
 #[extern]
 fn write(fd: i32, buf: cstr, n: i32) -> i32;

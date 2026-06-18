@@ -63,6 +63,8 @@ If multiple backends or phases share identical logic, move it to a common utilit
 - Keep functions short and single-purpose.
 - Prefer flat code over deeply nested code.
 - Prefer data-driven logic over repeated `if/switch` blocks copied across files.
+- Add detailed comments for critical logic and non-obvious invariants when they will help future maintainers understand intent, phase boundaries, or required assumptions.
+- Do not add narrating comments for obvious statements; comments should explain why the code exists or what contract must remain true.
 
 ---
 

@@ -45,34 +45,19 @@ func Inspect(node Node, f func(Node) bool) {
 		for _, tp := range n.TypeParams {
 			Inspect(tp.Name, f)
 		}
-		for _, field := range n.Fields {
-			Inspect(field.Name, f)
-			Inspect(field.Type, f)
-		}
+		Inspect(n.Type, f)
 	case *InterfaceDecl:
 		Inspect(n.Name, f)
 		for _, tp := range n.TypeParams {
 			Inspect(tp.Name, f)
 		}
-		for _, method := range n.Methods {
-			Inspect(method.Name, f)
-			for _, tp := range method.TypeParams {
-				Inspect(tp.Name, f)
-			}
-			for _, p := range method.Params {
-				Inspect(p.Name, f)
-				Inspect(p.Type, f)
-			}
-			Inspect(method.ReturnType, f)
-		}
+		Inspect(n.Type, f)
 	case *EnumDecl:
 		Inspect(n.Name, f)
 		for _, tp := range n.TypeParams {
 			Inspect(tp.Name, f)
 		}
-		for _, v := range n.Variants {
-			Inspect(v.Name, f)
-		}
+		Inspect(n.Type, f)
 	case *ImplDecl:
 		Inspect(n.Target, f)
 		for _, method := range n.Methods {
