@@ -13,6 +13,21 @@ Before editing code, answer these questions in your rationale:
 
 Do not start implementation until those questions are answered.
 
+## Mandatory Pre-Patch Gate
+
+Immediately before **every** code edit or `apply_patch`:
+
+1. Re-read [`RULES.md`](RULES.md) sections 1, 3, 7, and 10.
+2. Re-answer pre-change questions against current diff, not memory.
+3. Check each planned new or changed function against:
+   - pass-through wrapper ban
+   - duplicated logic ban
+   - existing shared logic reuse first
+   - helper allowance rules
+4. If any answer is unclear, weak, or based on assumption, stop and inspect code again before editing.
+
+Do not rely on earlier turn notes or earlier same-turn checks. Re-run this gate every patch.
+
 ## Hard Constraints
 
 - Do not add pass-through wrappers.
@@ -83,6 +98,19 @@ For each completed step, include a short `Rules check` note that states:
 - whether any helper was added and why it is allowed under `RULES.md`
 
 Do not overstate cleanup status in review notes. If duplication still exists in touched code, say so plainly.
+
+## Mandatory Post-Patch Gate
+
+Immediately after edits and before any stop, pause, or final response:
+
+1. Review every touched function, method, and new field in edited files.
+2. Remove any pass-through wrapper introduced during current step.
+3. Remove or centralize duplicated logic in touched areas when possible within current step scope.
+4. Re-check any new helper against exact allowance rule in [`RULES.md`](RULES.md).
+5. Run focused validation for touched packages.
+6. Report rule-audit result explicitly.
+
+Do not stop at "step done" until this audit passes for touched files.
 
 ## Agent conversation style:
 

@@ -93,10 +93,14 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
+	module.ContentHash = project.HashText(module.Content)
 	toks := lexer.New(module.FilePath, module.Content, l.ctx.Diagnostics).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
 	module.AST = parser.New(module.FilePath, toks, l.ctx.Diagnostics).ParseModule()
+	module.ImportFingerprint = module.AST.ImportFingerprint
+	module.ExportFingerprint = module.AST.ExportFingerprint
+	module.Phase = project.PhaseParsed
 	l.resolveImports(module)
 }
 
@@ -108,7 +112,7 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 		module.Imports = make(map[string]project.ResolvedImport)
 	}
 	for _, imp := range module.AST.Imports {
-		rawPath, ok := importPathFromDecl(imp)
+		rawPath, ok := project.ImportPathFromDecl(imp)
 		if !ok {
 			l.addImportError(imp, diagnostics.ErrInvalidImportPath, "invalid import path")
 			continue
@@ -177,20 +181,6 @@ func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
 		}
 	}
 	l.ctx.Diagnostics.Add(d)
-}
-
-func importPathFromDecl(imp *ast.ImportDecl) (string, bool) {
-	if imp == nil || imp.Path == nil {
-		return "", false
-	}
-	switch node := imp.Path.(type) {
-	case *ast.StringLit:
-		return node.Value, true
-	case *ast.Ident:
-		return node.Name, true
-	default:
-		return "", false
-	}
 }
 
 func importAlias(imp *ast.ImportDecl, importPath string) string {

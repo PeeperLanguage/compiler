@@ -11,17 +11,21 @@ import (
 	"compiler/internal/source"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type ServerState struct {
-	RootDir string
-	Cache   map[string]string
-	LastCtx *project.CompilerContext
+	RootDir   string
+	Cache     map[string]string
+	LastCtx   *project.CompilerContext
+	workspace *workspaceIndex
+	modules   map[string]*project.Module
 }
 
 func NewServerState() *ServerState {
 	return &ServerState{
-		Cache: make(map[string]string),
+		Cache:   make(map[string]string),
+		modules: make(map[string]*project.Module),
 	}
 }
 
@@ -31,6 +35,27 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 		RootDir: s.RootDir,
 	}
 	ctx := driver.NewContext(cfg, diagBag)
+
+	rootDir := project.CanonicalPath(s.RootDir)
+	if rootDir != "" {
+		s.workspace = newWorkspaceIndex(rootDir)
+		if err := s.workspace.rebuild(s.Cache); err == nil {
+			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
+			s.seedReusableModules(ctx, dirtyFiles)
+			for cachedPath, cachedContent := range s.Cache {
+				driver.AddOverlay(ctx, cachedPath, cachedContent)
+			}
+			if virtualPath, content, ok := s.workspace.syntheticEntry(); ok {
+				if driver.ParseFileWithOverlay(ctx, virtualPath, content) != nil {
+					s.LastCtx = ctx
+					s.captureModules(ctx)
+					if mod, ok := ctx.ModuleByFile(entryFile); ok {
+						return ctx, mod
+					}
+				}
+			}
+		}
+	}
 
 	absEntry, err := filepath.Abs(entryFile)
 	for cachedPath, cachedContent := range s.Cache {
@@ -44,7 +69,51 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 	content := s.Cache[entryFile]
 	mod := driver.ParseFileWithOverlay(ctx, entryFile, content)
 	s.LastCtx = ctx
+	s.captureModules(ctx)
 	return ctx, mod
+}
+
+func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFiles map[string]struct{}) {
+	if s == nil || ctx == nil || len(s.modules) == 0 {
+		return
+	}
+	for filePath, module := range s.modules {
+		if module == nil || module.FilePath == "" {
+			continue
+		}
+		if _, dirty := dirtyFiles[filePath]; dirty {
+			continue
+		}
+		if strings.Contains(filePath, "/.peeper-lsp/") {
+			continue
+		}
+		ctx.AddModule(module)
+	}
+}
+
+func (s *ServerState) captureModules(ctx *project.CompilerContext) {
+	if s == nil || ctx == nil {
+		return
+	}
+	if s.modules == nil {
+		s.modules = make(map[string]*project.Module)
+	}
+	for _, module := range ctx.Modules() {
+		if module == nil || module.FilePath == "" {
+			continue
+		}
+		if strings.Contains(module.FilePath, "/.peeper-lsp/") {
+			continue
+		}
+		if s.workspace != nil {
+			if current := s.workspace.modules[module.FilePath]; current != nil {
+				module.ContentHash = current.contentHash
+				module.ImportFingerprint = current.importFingerprint
+				module.ExportFingerprint = current.exportFingerprint
+			}
+		}
+		s.modules[module.FilePath] = module
+	}
 }
 
 func locContains(loc *source.Location, line, col int) bool {

@@ -122,11 +122,19 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 	if p == nil || module == nil || module.AST == nil {
 		return
 	}
+	if module.Phase >= project.PhaseBackend {
+		return
+	}
 	collector.Collect(p.ctx, module)
+	module.Phase = project.PhaseCollected
 	binder.Bind(p.ctx, module)
+	module.Phase = project.PhaseBound
 	resolver.Resolve(p.ctx, module)
+	module.Phase = project.PhaseResolved
 	typechecker.Check(p.ctx, module)
+	module.Phase = project.PhaseTypechecked
 	usage.Analyze(p.ctx, module)
+	module.Phase = project.PhaseUsage
 
 	modhir := hir_lower.GenerateHIR(p.ctx, module)
 	if modhir == nil {
@@ -134,6 +142,7 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 	}
 	modhir = hir_fold.ApplyConstantFolding(modhir, diag)
 	module.HIR = modhir
+	module.Phase = project.PhaseHIR
 	cfg.AnalyzeModule(modhir, diag)
 	if diag != nil && diag.HasErrors() {
 		return
@@ -141,6 +150,7 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 
 	modmir := mir.GenerateMIR(module.HIR, module.ModuleScope)
 	module.MIR = modmir
+	module.Phase = project.PhaseMIR
 	targetTriple, err := target.LLVMTriple(p.ctx.Config.TargetOS, p.ctx.Config.TargetArch)
 	if err != nil {
 		if diag != nil {
@@ -149,4 +159,5 @@ func (p *Pipeline) processModule(module *project.Module, diag *diagnostics.Diagn
 		return
 	}
 	module.LLVMIR = llvm.GenerateLLVMIR(modmir, diag, targetTriple, p.ctx.Config.BuildDebug, p.ctx.Config.TargetOS)
+	module.Phase = project.PhaseBackend
 }

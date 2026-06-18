@@ -30,6 +30,8 @@ type Decl interface {
 	declNode()
 	SetDocComment(*CommentGroup)
 	GetDocComment() *CommentGroup
+	SetDeclSurface(string)
+	GetDeclSurface() string
 }
 
 // TypeDecl marks declarations that introduce a named type into module scope.
@@ -59,8 +61,10 @@ type TypeExpr interface {
 }
 
 type Module struct {
-	FilePath string
-	Doc      *CommentGroup
-	Imports  []*ImportDecl
-	Stmts    []Stmt
+	FilePath          string
+	Doc               *CommentGroup
+	Imports           []*ImportDecl
+	Stmts             []Stmt
+	ImportFingerprint string
+	ExportFingerprint string
 }

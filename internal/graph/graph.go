@@ -154,6 +154,58 @@ func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID)
 	return order, cycles
 }
 
+func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]NodeID {
+	if g == nil || len(ids) == 0 {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	index := make(map[NodeID]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			index[id] = struct{}{}
+		}
+	}
+	if len(index) == 0 {
+		return nil
+	}
+
+	allowedKinds := kindSet(kinds)
+	visited := make(map[NodeID]struct{}, len(index))
+	components := make([][]NodeID, 0)
+	for _, start := range ids {
+		if start == "" {
+			continue
+		}
+		if _, ok := visited[start]; ok {
+			continue
+		}
+		queue := []NodeID{start}
+		visited[start] = struct{}{}
+		component := make([]NodeID, 0)
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+			component = append(component, current)
+			neighbors := successorSnapshot(g.out[current], allowedKinds)
+			neighbors = append(neighbors, successorSnapshot(g.in[current], allowedKinds)...)
+			for _, next := range neighbors {
+				if _, ok := index[next]; !ok {
+					continue
+				}
+				if _, ok := visited[next]; ok {
+					continue
+				}
+				visited[next] = struct{}{}
+				queue = append(queue, next)
+			}
+		}
+		components = append(components, component)
+	}
+	return components
+}
+
 func (g *Graph) addEdgeLocked(index map[NodeID]map[EdgeKind]map[NodeID]struct{}, from NodeID, kind EdgeKind, to NodeID) {
 	edgesByKind, ok := index[from]
 	if !ok {

@@ -8,7 +8,8 @@ type CommentGroup struct {
 }
 
 type Documented struct {
-	Doc *CommentGroup
+	Doc         *CommentGroup
+	DeclSurface string
 }
 
 func (d *Documented) SetDocComment(doc *CommentGroup) {
@@ -23,6 +24,20 @@ func (d *Documented) GetDocComment() *CommentGroup {
 		return nil
 	}
 	return d.Doc
+}
+
+func (d *Documented) SetDeclSurface(surface string) {
+	if d == nil {
+		return
+	}
+	d.DeclSurface = surface
+}
+
+func (d *Documented) GetDeclSurface() string {
+	if d == nil {
+		return ""
+	}
+	return d.DeclSurface
 }
 
 type Attribute struct {

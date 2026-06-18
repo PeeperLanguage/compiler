@@ -54,3 +54,22 @@ func TestGraphDegreeAndPredecessorQueries(t *testing.T) {
 		t.Fatalf("unexpected predecessors: %v", preds)
 	}
 }
+
+func TestWeaklyConnectedComponents(t *testing.T) {
+	g := New()
+	g.AddNode("a", Node{Kind: NodeModule})
+	g.AddNode("b", Node{Kind: NodeModule})
+	g.AddNode("c", Node{Kind: NodeModule})
+	g.AddNode("d", Node{Kind: NodeModule})
+	g.AddEdge("a", "b", EdgeImport)
+	g.AddEdge("c", "d", EdgeImport)
+
+	components := g.WeaklyConnectedComponents([]NodeID{"a", "b", "c", "d"}, EdgeImport)
+	if len(components) != 2 {
+		t.Fatalf("components = %d, want 2", len(components))
+	}
+	if !(slices.Contains(components[0], NodeID("a")) && slices.Contains(components[0], NodeID("b")) ||
+		slices.Contains(components[1], NodeID("a")) && slices.Contains(components[1], NodeID("b"))) {
+		t.Fatalf("missing {a,b} component: %v", components)
+	}
+}

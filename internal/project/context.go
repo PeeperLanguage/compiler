@@ -32,6 +32,21 @@ const (
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
 
+type ModulePhase uint8
+
+const (
+	PhaseNone ModulePhase = iota
+	PhaseParsed
+	PhaseCollected
+	PhaseBound
+	PhaseResolved
+	PhaseTypechecked
+	PhaseUsage
+	PhaseHIR
+	PhaseMIR
+	PhaseBackend
+)
+
 // Canonical file-backed import after resolver lookup.
 type ResolvedImport struct {
 	// Stable graph identity.
@@ -70,6 +85,12 @@ type Module struct {
 	Content string
 	// Reserved for incremental builds.
 	ContentHash string
+	// Stable syntax-derived import surface for invalidation.
+	ImportFingerprint string
+	// Stable syntax-derived export surface for invalidation.
+	ExportFingerprint string
+	// Last completed compiler phase for this module snapshot.
+	Phase ModulePhase
 	// Parsed syntax tree.
 	AST *ast.Module
 	// Canonical IR slots.

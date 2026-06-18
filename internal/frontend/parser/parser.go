@@ -11,6 +11,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
+	"compiler/internal/project"
 	"compiler/internal/source"
 )
 
@@ -43,12 +44,16 @@ func (p *Parser) ParseModule() *ast.Module {
 		Imports:  make([]*ast.ImportDecl, 0),
 		Stmts:    make([]ast.Stmt, 0),
 	}
+	surface := moduleSurface{}
 
 	for !p.at(token.EOF) {
 		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "unnecessary semicolons", "remove these semicolons")
 		if p.at(token.IMPORT) {
 			if imp := p.parseImport(); imp != nil {
 				mod.Imports = append(mod.Imports, imp)
+				if raw, ok := project.ImportPathFromDecl(imp); ok {
+					surface.addImport(raw)
+				}
 			}
 			continue
 		}
@@ -68,6 +73,7 @@ func (p *Parser) ParseModule() *ast.Module {
 				continue
 			}
 			mod.Stmts = append(mod.Stmts, stmt)
+			surface.addDecl(node)
 		case *ast.BadStmt:
 			// parseStmt already diagnosed and recovered enough to continue.
 			mod.Stmts = append(mod.Stmts, stmt)
@@ -76,6 +82,7 @@ func (p *Parser) ParseModule() *ast.Module {
 		}
 	}
 
+	surface.finish(mod)
 	return mod
 }
 
@@ -152,17 +159,18 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	}
 	if !ok {
 		// Return partial FnDecl with whatever was parsed
-		return reg(p, &ast.FnDecl{
+		decl := reg(p, &ast.FnDecl{
 			Name:       name,
 			TypeParams: typeParams,
 			Params:     params,
 			ReturnType: returnType,
 			Location:   source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
 		})
+		return setDeclSurface(decl, fnDeclSurface("fn", decl))
 	}
 	body, isExtern := p.parseFnBody()
 	_ = isExtern // consumed by caller if needed
-	return reg(p, &ast.FnDecl{
+	decl := reg(p, &ast.FnDecl{
 		Name:       name,
 		TypeParams: typeParams,
 		Params:     params,
@@ -170,6 +178,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		Body:       body,
 		Location:   source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
 	})
+	return setDeclSurface(decl, fnDeclSurface("fn", decl))
 }
 
 // parseFnSignature parses the name, optional type parameters, parameter list,
@@ -246,7 +255,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 	if !ok {
 		return nil
 	}
-	return reg(p, &ast.LetDecl{
+	decl := reg(p, &ast.LetDecl{
 		Name:        name,
 		Type:        ty,
 		Value:       value,
@@ -254,6 +263,7 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 		IsModuleVar: isModuleVar,
 		Location:    source.NewLocation(p.filePath, start.Start, end.End),
 	})
+	return setDeclSurface(decl, letDeclSurface(decl))
 }
 
 func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
@@ -265,13 +275,14 @@ func (p *Parser) parseConstDecl(isModuleVar bool) ast.Decl {
 	if !ok {
 		return nil
 	}
-	return reg(p, &ast.ConstDecl{
+	decl := reg(p, &ast.ConstDecl{
 		Name:        name,
 		Type:        ty,
 		Value:       value,
 		IsModuleVar: isModuleVar,
 		Location:    source.NewLocation(p.filePath, start.Start, end.End),
 	})
+	return setDeclSurface(decl, constDeclSurface(decl))
 }
 
 func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value ast.Expr, end *token.Token, ok bool) {
@@ -315,12 +326,13 @@ func (p *Parser) parseStructDecl() ast.Decl {
 	p.match(token.SEMICOLON)
 	// Named type declarations keep the same payload node shape as anonymous
 	// type syntax so later semantic phases only see one struct-type model.
-	return reg(p, &ast.StructDecl{
+	decl := reg(p, &ast.StructDecl{
 		Name:       name,
 		TypeParams: typeParams,
 		Type:       &ast.StructType{Fields: fields, Location: source.NewLocation(p.filePath, start.Start, end.End)},
 		Location:   source.NewLocation(p.filePath, start.Start, end.End),
 	})
+	return setDeclSurface(decl, structDeclSurface(decl))
 }
 
 func (p *Parser) parseInterfaceDecl() ast.Decl {
@@ -336,12 +348,13 @@ func (p *Parser) parseInterfaceDecl() ast.Decl {
 	typeParams := p.parseOptionalTypeParams()
 	methods, end, _ := p.parseInterfaceMethods()
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.InterfaceDecl{
+	decl := reg(p, &ast.InterfaceDecl{
 		Name:       name,
 		TypeParams: typeParams,
 		Type:       &ast.InterfaceType{Methods: methods, Location: source.NewLocation(p.filePath, start.Start, end.End)},
 		Location:   source.NewLocation(p.filePath, start.Start, end.End),
 	})
+	return setDeclSurface(decl, interfaceDeclSurface(decl))
 }
 
 func (p *Parser) parseEnumDecl() ast.Decl {
@@ -357,12 +370,13 @@ func (p *Parser) parseEnumDecl() ast.Decl {
 	typeParams := p.parseOptionalTypeParams()
 	variants, end, _ := p.parseEnumVariants()
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.EnumDecl{
+	decl := reg(p, &ast.EnumDecl{
 		Name:       name,
 		TypeParams: typeParams,
 		Type:       &ast.EnumType{Variants: variants, Location: source.NewLocation(p.filePath, start.Start, end.End)},
 		Location:   source.NewLocation(p.filePath, start.Start, end.End),
 	})
+	return setDeclSurface(decl, enumDeclSurface(decl))
 }
 
 func (p *Parser) parseImplDecl() ast.Decl {
@@ -405,7 +419,8 @@ func (p *Parser) parseImplDecl() ast.Decl {
 		endPos = lbracePos
 	}
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.ImplDecl{Target: target, Methods: methods, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	decl := reg(p, &ast.ImplDecl{Target: target, Methods: methods, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	return setDeclSurface(decl, implDeclSurface(decl))
 }
 
 func (p *Parser) parseTypeAliasDecl() ast.Decl {
@@ -428,7 +443,8 @@ func (p *Parser) parseTypeAliasDecl() ast.Decl {
 	if end == nil {
 		end = &token.Token{Kind: token.SEMICOLON, End: ast.EndOf(ty)}
 	}
-	return reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: source.NewLocation(p.filePath, start.Start, end.End)})
+	decl := reg(p, &ast.TypeAliasDecl{Name: name, TypeParams: typeParams, Type: ty, Location: source.NewLocation(p.filePath, start.Start, end.End)})
+	return setDeclSurface(decl, typeAliasDeclSurface(decl))
 }
 
 func (p *Parser) parseFnAttributes() {

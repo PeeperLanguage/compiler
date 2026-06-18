@@ -43,6 +43,7 @@ func Run(in io.Reader, out io.Writer) error {
 				} else if params.RootPath != nil {
 					state.RootDir = *params.RootPath
 				}
+				state.workspace = newWorkspaceIndex(state.RootDir)
 			}
 			result = InitializeResult{
 				Capabilities: ServerCapabilities{
@@ -87,6 +88,8 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.URI))
 				delete(state.Cache, path)
+				state.recompile(path)
+				sendDiagnostics(out, state, prevSent)
 			}
 			continue
 

@@ -2,12 +2,13 @@ package project
 
 import (
 	"path/filepath"
+	"strings"
 
 	"compiler/internal/graph"
 )
 
-// Absolute slash-separated path for stable map keys.
-func canonicalPath(path string) string {
+// CanonicalPath returns absolute slash-separated path for stable map keys.
+func CanonicalPath(path string) string {
 	if path == "" {
 		return ""
 	}
@@ -16,6 +17,18 @@ func canonicalPath(path string) string {
 		return filepath.ToSlash(abs)
 	}
 	return filepath.ToSlash(clean)
+}
+
+func PathWithinRoot(rootPath, path string) bool {
+	rootPath = CanonicalPath(rootPath)
+	path = CanonicalPath(path)
+	if rootPath == "" || path == "" {
+		return false
+	}
+	if rootPath == path {
+		return true
+	}
+	return strings.HasPrefix(path, rootPath+"/")
 }
 
 // Register a module in the shared graph.
@@ -28,7 +41,7 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 
 	ctx.modules[module.Key] = module
 	if module.FilePath != "" {
-		ctx.fileIndex[canonicalPath(module.FilePath)] = module.Key
+		ctx.fileIndex[CanonicalPath(module.FilePath)] = module.Key
 	}
 	if ctx.Graph != nil {
 		ctx.Graph.AddNode(graph.NodeID(module.Key), graph.Node{Kind: graph.NodeModule})
@@ -53,7 +66,7 @@ func (ctx *CompilerContext) ModuleByFile(filePath string) (*Module, bool) {
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	key, ok := ctx.fileIndex[canonicalPath(filePath)]
+	key, ok := ctx.fileIndex[CanonicalPath(filePath)]
 	if !ok {
 		return nil, false
 	}

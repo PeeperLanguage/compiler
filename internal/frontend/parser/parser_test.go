@@ -8,6 +8,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
+	"compiler/internal/project"
 	"compiler/internal/source"
 )
 
@@ -154,6 +155,37 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	}
 	if fn.TypeParams[1].Name == nil || fn.TypeParams[1].Name.Name != "U" {
 		t.Fatalf("second type param mismatch")
+	}
+}
+
+func TestParseModuleComputesStableSurfaceFingerprints(t *testing.T) {
+	first, firstDiag := parseTestModule(`import "util";
+const value = helper();
+fn helper() -> i32 { return 1; }`)
+	if firstDiag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", firstDiag.EmitAllToString())
+	}
+	second, secondDiag := parseTestModule(`import "util";
+const value = helper();
+fn helper() -> i32 { let x = 1; return x; }`)
+	if secondDiag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", secondDiag.EmitAllToString())
+	}
+	if first.ImportFingerprint != project.FingerprintParts([]string{"util"}) {
+		t.Fatalf("import fingerprint mismatch: %q", first.ImportFingerprint)
+	}
+	if first.ExportFingerprint == "" {
+		t.Fatalf("missing export fingerprint")
+	}
+	if first.ExportFingerprint != second.ExportFingerprint {
+		t.Fatalf("body-only function change should not alter export fingerprint")
+	}
+	decl, ok := first.Stmts[1].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("expected fn decl, got %T", first.Stmts[1])
+	}
+	if decl.GetDeclSurface() == "" {
+		t.Fatalf("missing decl surface")
 	}
 }
 
