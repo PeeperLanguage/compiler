@@ -3,6 +3,7 @@ package lsp
 import (
 	"compiler/internal/diagnostics"
 	driver "compiler/internal/driver"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
@@ -71,7 +72,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		if err != nil {
 			continue
 		}
-		module.contentHash = project.HashText(content)
+		module.contentHash = ast.HashText(content)
 		diag := diagnostics.NewDiagnosticBag()
 		parsed := parser.New(module.filePath, lexer.New(module.filePath, content, diag).Tokenize(), diag).ParseModule()
 		module.exportFingerprint = parsed.ExportFingerprint
@@ -83,7 +84,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		}
 		seen := make(map[string]struct{})
 		for _, imp := range parsed.Imports {
-			rawPath, ok := project.ImportPathFromDecl(imp)
+			rawPath, ok := ast.ImportPathFromDecl(imp)
 			if !ok {
 				continue
 			}

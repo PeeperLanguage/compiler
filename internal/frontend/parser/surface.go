@@ -6,7 +6,6 @@ import (
 
 	"compiler/internal/frontend/ast"
 	ir "compiler/internal/ir"
-	"compiler/internal/project"
 )
 
 type moduleSurface struct {
@@ -36,8 +35,8 @@ func (s *moduleSurface) finish(mod *ast.Module) {
 	if s == nil || mod == nil {
 		return
 	}
-	mod.ImportFingerprint = project.FingerprintParts(s.imports)
-	mod.ExportFingerprint = project.FingerprintParts(s.exports)
+	mod.ImportFingerprint = ast.FingerprintParts(s.imports)
+	mod.ExportFingerprint = ast.FingerprintParts(s.exports)
 }
 
 func setDeclSurface[T ast.Decl](decl T, surface string) T {

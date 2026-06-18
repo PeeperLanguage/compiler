@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 )
 
 // ImportError reports a resolved import failure with a diagnostic code.
@@ -33,20 +32,6 @@ func ModuleKeyFor(origin ModuleOrigin, filePath string) string {
 		prefix = string(ModuleOriginLocal)
 	}
 	return prefix + ":" + CanonicalPath(filePath)
-}
-
-func ImportPathFromDecl(imp *ast.ImportDecl) (string, bool) {
-	if imp == nil || imp.Path == nil {
-		return "", false
-	}
-	switch node := imp.Path.(type) {
-	case *ast.StringLit:
-		return node.Value, true
-	case *ast.Ident:
-		return node.Name, true
-	default:
-		return "", false
-	}
 }
 
 // ImportPathForFile computes the import path for a file within the project roots.

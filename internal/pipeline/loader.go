@@ -93,7 +93,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
-	module.ContentHash = project.HashText(module.Content)
+	module.ContentHash = ast.HashText(module.Content)
 	toks := lexer.New(module.FilePath, module.Content, l.ctx.Diagnostics).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
@@ -112,7 +112,7 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 		module.Imports = make(map[string]project.ResolvedImport)
 	}
 	for _, imp := range module.AST.Imports {
-		rawPath, ok := project.ImportPathFromDecl(imp)
+		rawPath, ok := ast.ImportPathFromDecl(imp)
 		if !ok {
 			l.addImportError(imp, diagnostics.ErrInvalidImportPath, "invalid import path")
 			continue

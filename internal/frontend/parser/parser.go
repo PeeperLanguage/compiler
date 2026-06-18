@@ -11,7 +11,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
-	"compiler/internal/project"
 	"compiler/internal/source"
 )
 
@@ -51,7 +50,7 @@ func (p *Parser) ParseModule() *ast.Module {
 		if p.at(token.IMPORT) {
 			if imp := p.parseImport(); imp != nil {
 				mod.Imports = append(mod.Imports, imp)
-				if raw, ok := project.ImportPathFromDecl(imp); ok {
+				if raw, ok := ast.ImportPathFromDecl(imp); ok {
 					surface.addImport(raw)
 				}
 			}
