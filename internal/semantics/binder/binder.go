@@ -27,7 +27,8 @@ func (b *binder) bindModule() {
 		if !ok {
 			continue
 		}
-		if name, typ, ok := ast.DeclaredTypeExpr(decl); ok {
+		if typeDecl, ok := decl.(ast.TypeDecl); ok {
+			name, typ := typeDecl.DeclName(), typeDecl.UnderlyingType()
 			b.bindTypeDecl(name, typ)
 			continue
 		}

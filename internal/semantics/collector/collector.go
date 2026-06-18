@@ -41,8 +41,9 @@ func (c *collector) collectModule(mod *ast.Module) {
 }
 
 func (c *collector) collectNode(node ast.Node) {
-	if decl, ok := node.(ast.Decl); ok {
-		if name, typ, ok := ast.DeclaredTypeExpr(decl); ok {
+	if decl, ok := node.(ast.TypeDecl); ok {
+		if name := decl.DeclName(); name != nil {
+			typ := decl.UnderlyingType()
 			c.collectConcreteTypeDecl(name, typ, node)
 			return
 		}

@@ -14,7 +14,7 @@ impl Point {
 }
 
 fn total(v: Summer) -> i32 {
-    return "v.sum()";
+    return v.sum();
 }
 
 impl i32 {

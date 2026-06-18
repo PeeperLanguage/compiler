@@ -169,7 +169,11 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 				}
 			}
 			if structDecl != nil {
-				for _, f := range structDecl.Fields {
+				structType, ok := structDecl.Type.(*ast.StructType)
+				if !ok || structType == nil {
+					return nil
+				}
+				for _, f := range structType.Fields {
 					if f.Name != nil && f.Name.Name == ident.Name {
 						fieldSym := symbols.New(ident.Name, symbols.SymbolField, f.Name, ast.LocOf(f.Name))
 						return fieldSym

@@ -313,7 +313,14 @@ func (p *Parser) parseStructDecl() ast.Decl {
 	typeParams := p.parseOptionalTypeParams()
 	fields, end, _ := p.parseStructFields()
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.StructDecl{Name: name, TypeParams: typeParams, Fields: fields, Location: source.NewLocation(p.filePath, start.Start, end.End)})
+	// Named type declarations keep the same payload node shape as anonymous
+	// type syntax so later semantic phases only see one struct-type model.
+	return reg(p, &ast.StructDecl{
+		Name:       name,
+		TypeParams: typeParams,
+		Type:       &ast.StructType{Fields: fields, Location: source.NewLocation(p.filePath, start.Start, end.End)},
+		Location:   source.NewLocation(p.filePath, start.Start, end.End),
+	})
 }
 
 func (p *Parser) parseInterfaceDecl() ast.Decl {
@@ -329,7 +336,12 @@ func (p *Parser) parseInterfaceDecl() ast.Decl {
 	typeParams := p.parseOptionalTypeParams()
 	methods, end, _ := p.parseInterfaceMethods()
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.InterfaceDecl{Name: name, TypeParams: typeParams, Methods: methods, Location: source.NewLocation(p.filePath, start.Start, end.End)})
+	return reg(p, &ast.InterfaceDecl{
+		Name:       name,
+		TypeParams: typeParams,
+		Type:       &ast.InterfaceType{Methods: methods, Location: source.NewLocation(p.filePath, start.Start, end.End)},
+		Location:   source.NewLocation(p.filePath, start.Start, end.End),
+	})
 }
 
 func (p *Parser) parseEnumDecl() ast.Decl {
@@ -345,7 +357,12 @@ func (p *Parser) parseEnumDecl() ast.Decl {
 	typeParams := p.parseOptionalTypeParams()
 	variants, end, _ := p.parseEnumVariants()
 	p.match(token.SEMICOLON)
-	return reg(p, &ast.EnumDecl{Name: name, TypeParams: typeParams, Variants: variants, Location: source.NewLocation(p.filePath, start.Start, end.End)})
+	return reg(p, &ast.EnumDecl{
+		Name:       name,
+		TypeParams: typeParams,
+		Type:       &ast.EnumType{Variants: variants, Location: source.NewLocation(p.filePath, start.Start, end.End)},
+		Location:   source.NewLocation(p.filePath, start.Start, end.End),
+	})
 }
 
 func (p *Parser) parseImplDecl() ast.Decl {

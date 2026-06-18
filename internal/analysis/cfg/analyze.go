@@ -134,7 +134,7 @@ func reportMissingReturnCFG(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	}
 
 	if fn.Source.Location != nil {
-		d.WithSecondaryLabel(fn.Source.Location, "expected `"+fn.ReturnType+"` because of this return type")
+		d.WithSecondaryLabel(fn.Source.Location, "expected `"+fn.ReturnType+"` here")
 	}
 
 	for _, branch := range branches {

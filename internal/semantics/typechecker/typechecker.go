@@ -239,7 +239,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)))
 			if fn := c.enclosingFnDecl(scope); fn != nil && fn.ReturnType != nil {
 				d.WithSecondaryLabel(ast.LocOf(fn.ReturnType),
-					fmt.Sprintf("expected %s because of this return type", typeinfo.TypeText(returnType)))
+					fmt.Sprintf("expected %s here", typeinfo.TypeText(returnType)))
 			}
 			c.addInterfaceHint(d, returnType, retType)
 			c.ctx.Diagnostics.Add(d)
@@ -433,7 +433,14 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 	if c == nil || decl == nil {
 		return
 	}
-	for _, method := range decl.Methods {
+	// Interface declarations store canonical payload in Type so anonymous and
+	// named interface syntax share one method shape through the pipeline.
+	iface, ok := decl.Type.(*ast.InterfaceType)
+	if !ok || iface == nil {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
+		return
+	}
+	for _, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", ast.LocOf(decl), "")
 			continue

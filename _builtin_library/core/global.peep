@@ -1,6 +1,6 @@
-let stdin:  i32 = 0;
-let stdout: i32 = 1;
-let stderr: i32 = 2;
+const stdin:  i32 = 0;
+const stdout: i32 = 1;
+const stderr: i32 = 2;
 
 #[extern]
 fn write(fd: i32, buf: cstr, n: i32) -> i32;

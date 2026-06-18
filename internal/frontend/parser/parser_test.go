@@ -538,28 +538,40 @@ enum Color {
 	if !ok {
 		t.Fatalf("decl[0] expected struct decl")
 	}
-	if len(a0.Fields) != 2 {
-		t.Fatalf("struct fields: got %d want 2", len(a0.Fields))
+	a0Type, ok := a0.Type.(*ast.StructType)
+	if !ok {
+		t.Fatalf("decl[0] expected struct payload, got %T", a0.Type)
+	}
+	if len(a0Type.Fields) != 2 {
+		t.Fatalf("struct fields: got %d want 2", len(a0Type.Fields))
 	}
 	a1, ok := mod.Stmts[1].(*ast.InterfaceDecl)
 	if !ok {
 		t.Fatalf("decl[1] expected interface decl")
 	}
-	if len(a1.Methods) != 1 {
-		t.Fatalf("interface methods: got %d want 1", len(a1.Methods))
+	a1Type, ok := a1.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("decl[1] expected interface payload, got %T", a1.Type)
 	}
-	if got := len(a1.Methods[0].Params); got != 2 {
+	if len(a1Type.Methods) != 1 {
+		t.Fatalf("interface methods: got %d want 1", len(a1Type.Methods))
+	}
+	if got := len(a1Type.Methods[0].Params); got != 2 {
 		t.Fatalf("interface params: got %d want 2", got)
 	}
-	if a1.Methods[0].Params[0].Name != nil {
+	if a1Type.Methods[0].Params[0].Name != nil {
 		t.Fatalf("first interface param should be unnamed")
 	}
 	a2, ok := mod.Stmts[2].(*ast.EnumDecl)
 	if !ok {
 		t.Fatalf("decl[2] expected enum decl")
 	}
-	if len(a2.Variants) != 3 {
-		t.Fatalf("enum variants: got %d want 3", len(a2.Variants))
+	a2Type, ok := a2.Type.(*ast.EnumType)
+	if !ok {
+		t.Fatalf("decl[2] expected enum payload, got %T", a2.Type)
+	}
+	if len(a2Type.Variants) != 3 {
+		t.Fatalf("enum variants: got %d want 3", len(a2Type.Variants))
 	}
 }
 
@@ -811,11 +823,15 @@ func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	iface := mod.Stmts[0].(*ast.InterfaceDecl)
-	if len(iface.Methods) != 1 {
-		t.Fatalf("methods: got %d want 1", len(iface.Methods))
+	ifaceType, ok := iface.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("expected interface payload, got %T", iface.Type)
 	}
-	if iface.Methods[0].ReturnType != nil {
-		t.Fatalf("expected nil interface method return type, got %T", iface.Methods[0].ReturnType)
+	if len(ifaceType.Methods) != 1 {
+		t.Fatalf("methods: got %d want 1", len(ifaceType.Methods))
+	}
+	if ifaceType.Methods[0].ReturnType != nil {
+		t.Fatalf("expected nil interface method return type, got %T", ifaceType.Methods[0].ReturnType)
 	}
 }
 
@@ -845,8 +861,12 @@ func TestParseStructFieldsTrailingComma(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	st := mod.Stmts[0].(*ast.StructDecl)
-	if len(st.Fields) != 2 {
-		t.Fatalf("fields: got %d want 2", len(st.Fields))
+	stType, ok := st.Type.(*ast.StructType)
+	if !ok {
+		t.Fatalf("expected struct payload, got %T", st.Type)
+	}
+	if len(stType.Fields) != 2 {
+		t.Fatalf("fields: got %d want 2", len(stType.Fields))
 	}
 }
 
@@ -858,8 +878,12 @@ func TestParseEnumVariantsTrailingComma(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	en := mod.Stmts[0].(*ast.EnumDecl)
-	if len(en.Variants) != 2 {
-		t.Fatalf("variants: got %d want 2", len(en.Variants))
+	enType, ok := en.Type.(*ast.EnumType)
+	if !ok {
+		t.Fatalf("expected enum payload, got %T", en.Type)
+	}
+	if len(enType.Variants) != 2 {
+		t.Fatalf("variants: got %d want 2", len(enType.Variants))
 	}
 }
 
@@ -871,8 +895,12 @@ func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	iface := mod.Stmts[0].(*ast.InterfaceDecl)
-	if len(iface.Methods) != 2 {
-		t.Fatalf("methods: got %d want 2", len(iface.Methods))
+	ifaceType, ok := iface.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("expected interface payload, got %T", iface.Type)
+	}
+	if len(ifaceType.Methods) != 2 {
+		t.Fatalf("methods: got %d want 2", len(ifaceType.Methods))
 	}
 }
 
