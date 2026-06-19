@@ -230,6 +230,36 @@ func TestServerStateInvalidatesTransitiveDependentsWhenExportChanges(t *testing.
 	}
 }
 
+func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
+	root := t.TempDir()
+	fileMain := filepath.Join(root, "main.peep")
+	fileUtil := filepath.Join(root, "util.peep")
+	writeWorkspaceFile(t, fileMain, "import \"util\";\nfn main() { helper(); }\n")
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(fileMain); mod == nil {
+		t.Fatalf("initial compile returned nil module")
+	}
+
+	state.Cache[fileUtil] = "fn helper(v: i32) {}\n"
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(state.Cache); err != nil {
+		t.Fatalf("rebuild workspace index: %v", err)
+	}
+
+	phases := index.reusePhases(fileUtil, state.modules)
+	mainPath := project.CanonicalPath(fileMain)
+	utilPath := project.CanonicalPath(fileUtil)
+	if _, ok := phases[utilPath]; ok {
+		t.Fatalf("changed source module should not be reused")
+	}
+	if got := phases[mainPath]; got != project.PhaseParsed {
+		t.Fatalf("dependent reuse phase = %v, want %v", got, project.PhaseParsed)
+	}
+}
+
 func writeWorkspaceFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -216,6 +216,72 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 	return dirty
 }
 
+func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project.Module) map[string]project.ModulePhase {
+	phases := make(map[string]project.ModulePhase)
+	if w == nil || len(cached) == 0 {
+		return phases
+	}
+
+	// This policy stays separate from seedReusableModules: workspace owns the
+	// "what is still reusable after this edit?" decision, while handlers only
+	// clone/reset and seed whichever phase this function authorizes.
+	component := w.componentFiles(filePath)
+	propagate := make([]string, 0)
+	for cachedPath, cachedModule := range cached {
+		if cachedModule == nil || cachedModule.FilePath == "" {
+			continue
+		}
+		current := w.modules[cachedPath]
+		if current == nil {
+			continue
+		}
+		if _, inComponent := component[cachedPath]; !inComponent {
+			phases[cachedPath] = cachedModule.Phase
+			continue
+		}
+		// Byte-identical files can keep whatever completed phase they already had.
+		if cachedModule.ContentHash == current.contentHash {
+			phases[cachedPath] = cachedModule.Phase
+			continue
+		}
+		// Import/export surface changes force dependents back to parse-only reuse.
+		// Body-only edits stay local to changed modules and do not downgrade
+		// importers inside same component.
+		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
+			propagate = append(propagate, cachedPath)
+		}
+	}
+
+	seen := make(map[string]struct{}, len(propagate))
+	for len(propagate) > 0 {
+		current := propagate[0]
+		propagate = propagate[1:]
+		if _, ok := seen[current]; ok {
+			continue
+		}
+		seen[current] = struct{}{}
+		for dependent := range w.reverseDependents(current) {
+			if _, ok := component[dependent]; !ok {
+				continue
+			}
+			cachedModule := cached[dependent]
+			currentModule := w.modules[dependent]
+			if cachedModule == nil || currentModule == nil {
+				continue
+			}
+			if cachedModule.ContentHash != currentModule.contentHash {
+				continue
+			}
+			// Dependents with unchanged text can skip reparsing, but they must
+			// rerun semantic/lowering phases because upstream module surface moved.
+			phases[dependent] = project.PhaseParsed
+			propagate = append(propagate, dependent)
+		}
+	}
+
+	return phases
+}
+
 func (w *workspaceIndex) hasDiskBackedFiles() bool {
 	if w == nil || len(w.modules) == 0 {
 		return false

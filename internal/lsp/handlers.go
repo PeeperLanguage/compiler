@@ -77,18 +77,43 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 	if s == nil || ctx == nil || len(s.modules) == 0 {
 		return
 	}
+	reusePhases := map[string]project.ModulePhase{}
+	if s.workspace != nil {
+		reusePhases = s.workspace.reusePhases(firstDirtyFile(dirtyFiles), s.modules)
+	}
 	for filePath, module := range s.modules {
 		if module == nil || module.FilePath == "" {
 			continue
 		}
-		if _, dirty := dirtyFiles[filePath]; dirty {
+		phase, ok := reusePhases[filePath]
+		if !ok {
 			continue
 		}
 		if strings.Contains(filePath, "/.peeper-lsp/") {
 			continue
 		}
-		ctx.AddModule(module)
+		if phase == module.Phase {
+			ctx.AddModule(module)
+			continue
+		}
+		cloned := *module
+		cloned.Phase = phase
+		if phase <= project.PhaseParsed {
+			cloned.ModuleScope = nil
+			cloned.Semantics = nil
+			cloned.HIR = nil
+			cloned.MIR = nil
+			cloned.LLVMIR = ""
+		}
+		ctx.AddModule(&cloned)
 	}
+}
+
+func firstDirtyFile(dirtyFiles map[string]struct{}) string {
+	for filePath := range dirtyFiles {
+		return filePath
+	}
+	return ""
 }
 
 func (s *ServerState) captureModules(ctx *project.CompilerContext) {
