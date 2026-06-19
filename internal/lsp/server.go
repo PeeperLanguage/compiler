@@ -67,8 +67,7 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.TextDocument.URI))
 				state.Cache[path] = params.TextDocument.Text
-				ctx, _ := state.recompile(path)
-				sendDiagnosticsForFiles(out, ctx, componentFilesForPublish(state, path))
+				publishComponentDiagnostics(out, state, path, nil)
 			}
 			continue
 
@@ -78,8 +77,7 @@ func Run(in io.Reader, out io.Writer) error {
 				path := uriToPath(string(params.TextDocument.URI))
 				// Under Full Sync, the first change has the entire file text
 				state.Cache[path] = params.ContentChanges[0].Text
-				ctx, _ := state.recompile(path)
-				sendDiagnosticsForFiles(out, ctx, componentFilesForPublish(state, path))
+				publishComponentDiagnostics(out, state, path, nil)
 			}
 			continue
 
@@ -88,8 +86,7 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.URI))
 				delete(state.Cache, path)
-				ctx, _ := state.recompile(path)
-				sendDiagnosticsForFiles(out, ctx, componentFilesForPublish(state, path))
+				publishComponentDiagnostics(out, state, path, nil)
 			}
 			continue
 
@@ -168,8 +165,7 @@ func publishWorkspaceDiagnostics(w io.Writer, state *ServerState) {
 		if len(component.roots) > 0 {
 			entry = component.roots[0]
 		}
-		ctx, _ := state.recompile(entry)
-		sendDiagnosticsForFiles(w, ctx, component.files)
+		publishComponentDiagnostics(w, state, entry, component.files)
 	}
 }
 
@@ -182,6 +178,17 @@ func componentFilesForPublish(state *ServerState, filePath string) []string {
 		return []string{filePath}
 	}
 	return append([]string(nil), component.files...)
+}
+
+func publishComponentDiagnostics(w io.Writer, state *ServerState, entryFile string, files []string) {
+	if state == nil {
+		return
+	}
+	ctx, _ := state.recompile(entryFile)
+	if len(files) == 0 {
+		files = componentFilesForPublish(state, entryFile)
+	}
+	sendDiagnosticsForFiles(w, ctx, files)
 }
 
 func uriToPath(uri string) string {

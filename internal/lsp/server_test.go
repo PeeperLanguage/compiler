@@ -10,6 +10,33 @@ import (
 	"testing"
 )
 
+func collectPublishedDiagnostics(t *testing.T, payload []byte) map[string][][]Diagnostic {
+	t.Helper()
+	reader := bufio.NewReader(bytes.NewReader(payload))
+	out := make(map[string][][]Diagnostic)
+	for {
+		msg, err := readMessage(reader)
+		if err != nil {
+			return out
+		}
+		var envelope struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(msg, &envelope); err != nil {
+			continue
+		}
+		if envelope.Method != "textDocument/publishDiagnostics" {
+			continue
+		}
+		var params PublishDiagnosticsParams
+		if err := json.Unmarshal(envelope.Params, &params); err != nil {
+			t.Fatalf("unmarshal diagnostics params: %v", err)
+		}
+		out[string(params.URI)] = append(out[string(params.URI)], params.Diagnostics)
+	}
+}
+
 func TestJSONRPCFraming(t *testing.T) {
 	inputMsg := `{"jsonrpc":"2.0","id":1,"method":"test","params":{}}`
 	formatted := "Content-Length: " + strconv.Itoa(len(inputMsg)) + "\r\n\r\n" + inputMsg
@@ -170,36 +197,77 @@ func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.
 		t.Fatalf("Run failed: %v", err)
 	}
 
-	reader := bufio.NewReader(bytes.NewReader(output.Bytes()))
-	var sawUtilDiag bool
-	for {
-		msg, err := readMessage(reader)
-		if err != nil {
-			break
-		}
-		var envelope struct {
-			Method string          `json:"method"`
-			Params json.RawMessage `json:"params"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil {
-			continue
-		}
-		if envelope.Method != "textDocument/publishDiagnostics" {
-			continue
-		}
-		var params PublishDiagnosticsParams
-		if err := json.Unmarshal(envelope.Params, &params); err != nil {
-			t.Fatalf("unmarshal diagnostics params: %v", err)
-		}
-		if string(params.URI) != pathToURI(utilPath) {
-			continue
-		}
-		if len(params.Diagnostics) == 0 {
-			t.Fatalf("expected unopened util file diagnostics to be published")
-		}
-		sawUtilDiag = true
-	}
-	if !sawUtilDiag {
+	published := collectPublishedDiagnostics(t, output.Bytes())
+	utilPublished := published[pathToURI(utilPath)]
+	if len(utilPublished) == 0 || len(utilPublished[0]) == 0 {
 		t.Fatalf("expected diagnostics publish for unopened workspace file %s", utilPath)
+	}
+}
+
+func TestLSPDidChangeClearsDiagnosticsForFixedComponentFile(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main.peep")
+	utilPath := filepath.Join(root, "util.peep")
+	mainSrc := "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n"
+	writeWorkspaceFile(t, mainPath, mainSrc)
+	writeWorkspaceFile(t, utilPath, "fn Helper() -> i32 { return missing; }\n")
+
+	rootURI := DocumentURI(pathToURI(root))
+	initParams, err := json.Marshal(InitializeParams{RootURI: &rootURI})
+	if err != nil {
+		t.Fatalf("marshal initialize params: %v", err)
+	}
+	openParams, err := json.Marshal(DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:  DocumentURI(pathToURI(mainPath)),
+			Text: mainSrc,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal open params: %v", err)
+	}
+	changeParams, err := json.Marshal(DidChangeTextDocumentParams{
+		TextDocument: VersionedTextDocumentIdentifier{URI: DocumentURI(pathToURI(utilPath)), Version: 2},
+		ContentChanges: []TextDocumentContentChangeEvent{
+			{Text: "fn Helper() -> i32 { return 1; }\n"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal change params: %v", err)
+	}
+	initID := json.RawMessage([]byte("1"))
+
+	var input bytes.Buffer
+	for _, req := range []Request{
+		{JSONRPC: "2.0", ID: &initID, Method: "initialize", Params: initParams},
+		{JSONRPC: "2.0", Method: "didOpen", Params: openParams},
+		{JSONRPC: "2.0", Method: "didChange", Params: changeParams},
+	} {
+		method := req.Method
+		if strings.HasPrefix(method, "did") {
+			method = "textDocument/" + strings.ToLower(method[:1]) + method[1:]
+			req.Method = method
+		}
+		if err := writeMessage(&input, req); err != nil {
+			t.Fatalf("write %s: %v", req.Method, err)
+		}
+	}
+
+	var output bytes.Buffer
+	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	published := collectPublishedDiagnostics(t, output.Bytes())
+	utilPublished := published[pathToURI(utilPath)]
+	if len(utilPublished) < 2 {
+		t.Fatalf("expected util diagnostics before and after fix, got %d publishes", len(utilPublished))
+	}
+	if len(utilPublished[0]) == 0 {
+		t.Fatalf("expected first util publish to carry diagnostics")
+	}
+	last := utilPublished[len(utilPublished)-1]
+	if len(last) != 0 {
+		t.Fatalf("expected final util publish to clear diagnostics, got %d entries", len(last))
 	}
 }
