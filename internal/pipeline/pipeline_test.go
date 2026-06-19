@@ -119,6 +119,46 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	}
 }
 
+func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry.peep"
+	entrySrc := `fn main() -> i32 {
+	return 0;
+}`
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: ".peep"}, diag)
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = project.PhaseParsed
+	ctx.AddModule(entry)
+
+	pipeline := New(ctx)
+	want := []project.ModulePhase{
+		project.PhaseCollected,
+		project.PhaseBound,
+		project.PhaseResolved,
+		project.PhaseTypechecked,
+		project.PhaseUsage,
+		project.PhaseHIR,
+		project.PhaseMIR,
+		project.PhaseBackend,
+	}
+	for _, phase := range want {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v, want %v", entry.Phase, phase)
+		}
+		if entry.Phase != phase {
+			t.Fatalf("phase = %v, want %v", entry.Phase, phase)
+		}
+	}
+	if pipeline.advanceModulePhase(entry, diag) {
+		t.Fatalf("advanceModulePhase() reported progress after backend phase")
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 // TestPipelineAllowsExpressionStatements verifies that call expressions used as
 // statements (discarding the return value) do not produce invalid-statement errors.
 func TestPipelineAllowsExpressionStatements(t *testing.T) {
