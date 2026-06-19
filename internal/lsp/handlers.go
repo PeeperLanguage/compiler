@@ -35,7 +35,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 	diagBag := diagnostics.NewDiagnosticBag()
 	rootDir := filepath.Dir(entryFile)
 	projectName := ""
-	if loadedProject, err := manifest.LoadProject(rootDir); err == nil {
+	if loadedProject, err := manifest.LoadProject(entryFile); err == nil {
 		rootDir = loadedProject.RootDir
 		projectName = loadedProject.File.Package.Name
 	}
@@ -45,6 +45,14 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 	}
 	ctx := driver.NewContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
+	if projectName != "" && !manifest.PathWithinSourceDir(rootDir, entryFile) {
+		ctx.Diagnostics.Add(diagnostics.NewError(
+			fmt.Sprintf("project source files must stay under %s", manifest.SourceDir(rootDir)),
+		))
+		s.LastCtx = ctx
+		s.LastMetrics = ctx.Metrics.Snapshot()
+		return ctx, nil
+	}
 
 	rootDir = project.CanonicalPath(s.RootDir)
 	if rootDir != "" {

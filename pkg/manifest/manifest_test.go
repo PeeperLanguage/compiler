@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"compiler/pkg/peeper"
 )
 
 func TestLoadSupportsDependencyTableSyntax(t *testing.T) {
@@ -145,5 +147,27 @@ func TestSaveWritesExplicitLatestRemoteDependency(t *testing.T) {
 	}
 	if got := string(data); got == "" || !strings.Contains(got, `json = "github.com/acme/json@latest"`) {
 		t.Fatalf("expected explicit @latest dependency, got:\n%s", got)
+	}
+}
+
+func TestLoadProjectAcceptsSourceFilePath(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src", "util"+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, FileName), []byte("name = \"app\"\nbuild = \"program\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("fn Helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := LoadProject(src)
+	if err != nil {
+		t.Fatalf("load project from file path: %v", err)
+	}
+	if project.RootDir != root {
+		t.Fatalf("project root = %q, want %q", project.RootDir, root)
 	}
 }

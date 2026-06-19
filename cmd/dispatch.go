@@ -142,7 +142,7 @@ func printTopLevelUsage() {
 	colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper [command] [args]\n")
 	colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
-	fmt.Fprintf(os.Stderr, "  build[:llvm] [path]     build a program or use src/main%s from %s\n", peeper.SourceExt, manifest.FileName)
+	fmt.Fprintf(os.Stderr, "  build[:llvm] [path]     build a program or use %s/%s from %s\n", peeper.SourceDirName, peeper.MainFileName, manifest.FileName)
 	fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
 	fmt.Fprintf(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (%s only)\n", peeper.SourceExt)
 	fmt.Fprintf(os.Stderr, "  init [name]             create a new project with %s\n", manifest.FileName)
@@ -156,7 +156,7 @@ func printTopLevelUsage() {
 	fmt.Fprintln(os.Stderr, "  lsp                     start the Peeper language server")
 	colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper build\n")
-	colors.GREEN.Fprintf(os.Stderr, "  peeper build src/main%s\n", peeper.SourceExt)
+	colors.GREEN.Fprintf(os.Stderr, "  peeper build %s/%s\n", peeper.SourceDirName, peeper.MainFileName)
 	colors.GREEN.Fprintf(os.Stderr, "  peeper build -o app\n")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper run main%s arg1 arg2\n", peeper.SourceExt)
 }

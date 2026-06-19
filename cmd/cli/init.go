@@ -51,10 +51,10 @@ build = "program"
 		return err
 	}
 
-	if err := os.MkdirAll("src", 0o755); err != nil {
+	if err := os.MkdirAll(peeper.SourceDirName, 0o755); err != nil {
 		return err
 	}
-	mainPath := filepath.Join("src", "main"+peeper.SourceExt)
+	mainPath := filepath.Join(peeper.SourceDirName, peeper.MainFileName)
 	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
 		mainContent := `
 fn main() {

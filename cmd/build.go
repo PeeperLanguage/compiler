@@ -23,7 +23,7 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
 	}
-	if loadedProject, err := manifest.LoadProject(rootDir); err == nil {
+	if loadedProject, err := manifest.LoadProject(path); err == nil {
 		rootDir = loadedProject.RootDir
 		projectName = loadedProject.File.Package.Name
 	}
@@ -37,6 +37,12 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 		BuildDebug:    debugBuild,
 	}
 	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
+	if projectName != "" && !manifest.PathWithinSourceDir(rootDir, path) {
+		ctx.Diagnostics.Add(diagnostics.NewError(
+			fmt.Sprintf("project source files must stay under %s", manifest.SourceDir(rootDir)),
+		))
+		return ctx, nil
+	}
 	entry := compiler.ParseFile(ctx, path)
 	return ctx, entry
 }

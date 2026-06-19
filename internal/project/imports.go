@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
+	"compiler/pkg/manifest"
 )
 
 // ImportError reports a resolved import failure with a diagnostic code.
@@ -46,12 +47,15 @@ func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, namespace, fi
 	switch origin {
 	case ModuleOriginLocal:
 		root = ctx.Config.RootDir
+		if ctx.Config.ProjectName != "" {
+			root = manifest.SourceDir(root)
+		}
 	case ModuleOriginStdlib:
 		libraryRoot, ok := ctx.LibraryRoot(namespace)
 		if !ok {
 			return "", fmt.Errorf("missing library root for namespace %q", namespace)
 		}
-		root = libraryRoot
+		root = manifest.SourceDir(libraryRoot)
 	}
 	if root == "" {
 		base := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
@@ -98,7 +102,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		if !found {
 			return nil, &ImportError{Code: diagnostics.ErrModuleNotFound, Msg: fmt.Sprintf("invalid library prefix: %s", namespace)}
 		}
-		basePath = filepath.Join(rootDir, filepath.FromSlash(logicalPath))
+		basePath = filepath.Join(manifest.SourceDir(rootDir), filepath.FromSlash(logicalPath))
 	} else {
 		if err := validateImportPath(importPath); err != nil {
 			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
@@ -109,7 +113,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		if ctx.Config.ProjectName == "" {
 			return nil, &ImportError{
 				Code: diagnostics.ErrInvalidImportPath,
-				Msg:  "local imports require peeper.toml; run `peeper init` to create project config",
+				Msg:  fmt.Sprintf("local imports require %s; run `peeper init` to create project config", manifest.FileName),
 			}
 		}
 		prefix := ctx.Config.ProjectName + "/"
@@ -119,8 +123,9 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 				Msg:  fmt.Sprintf("local import must start with %q", prefix),
 			}
 		}
-		// Local imports stay inside nearest project root. Prefix is package boundary, not path segment on disk.
-		basePath = filepath.Join(ctx.Config.RootDir, filepath.FromSlash(strings.TrimPrefix(importPath, prefix)))
+		// Local imports stay inside nearest project source root. Prefix is
+		// package boundary, not path segment on disk.
+		basePath = filepath.Join(manifest.SourceDir(ctx.Config.RootDir), filepath.FromSlash(strings.TrimPrefix(importPath, prefix)))
 	}
 
 	if basePath == "" {

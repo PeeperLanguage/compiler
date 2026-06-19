@@ -167,8 +167,8 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
-	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	utilPath := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
 	writeWorkspaceFile(t, mainPath, "import \"app/util\";\nfn main() -> i32 { return util::Helper(); }\n")
 	writeWorkspaceFile(t, utilPath, "fn Helper() -> i32 { return missing; }\n")
 
@@ -210,8 +210,8 @@ func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.
 func TestLSPDidChangeClearsDiagnosticsForFixedComponentFile(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
-	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	utilPath := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
 	mainSrc := "import \"app/util\";\nfn main() -> i32 { return util::Helper(); }\n"
 	writeWorkspaceFile(t, mainPath, mainSrc)
 	writeWorkspaceFile(t, utilPath, "fn Helper() -> i32 { return missing; }\n")

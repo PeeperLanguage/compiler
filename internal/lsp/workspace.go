@@ -63,7 +63,10 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 			filePath: filePath,
 			rootDir:  filepath.Dir(filePath),
 		}
-		if loadedProject, err := manifest.LoadProject(filepath.Dir(filePath)); err == nil {
+		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
+			if !manifest.PathWithinSourceDir(loadedProject.RootDir, filePath) {
+				continue
+			}
 			module.rootDir = loadedProject.RootDir
 			module.projectName = loadedProject.File.Package.Name
 		}

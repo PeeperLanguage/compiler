@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/project"
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
@@ -21,7 +22,7 @@ func Load(ctx *project.CompilerContext) error {
 	if !ok || coreRoot == "" {
 		return nil
 	}
-	preludePath := filepath.Join(coreRoot, GlobalPreludeFile)
+	preludePath := filepath.Join(manifest.SourceDir(coreRoot), GlobalPreludeFile)
 	content, err := os.ReadFile(preludePath)
 	if err != nil {
 		if os.IsNotExist(err) {

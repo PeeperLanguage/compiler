@@ -216,7 +216,7 @@ fn main() -> i32 {
 }
 
 func TestUsageWarningsFixture(t *testing.T) {
-	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings_0"+peeper.SourceExt)
+	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings", peeper.SourceDirName, peeper.MainFileName)
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

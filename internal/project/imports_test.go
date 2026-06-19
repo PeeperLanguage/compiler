@@ -5,13 +5,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
 func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")
-	libraryFile := filepath.Join(libraryBase, "vendor", "json"+peeper.SourceExt)
+	libraryFile := filepath.Join(libraryBase, "vendor", peeper.SourceDirName, "json"+peeper.SourceExt)
 	if err := os.MkdirAll(filepath.Dir(libraryFile), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -51,14 +52,17 @@ func TestResolveImportPathRequiresProjectConfigForLocalImports(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected local import error without project config")
 	}
-	if got := err.Error(); got != "local imports require peeper.toml; run `peeper init` to create project config" {
+	if got := err.Error(); got != "local imports require "+manifest.FileName+"; run `peeper init` to create project config" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }
 
 func TestResolveImportPathStripsProjectPrefix(t *testing.T) {
 	root := t.TempDir()
-	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
+	utilPath := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(utilPath), 0o755); err != nil {
+		t.Fatalf("mkdir util dir: %v", err)
+	}
 	if err := os.WriteFile(utilPath, []byte("fn Helper() -> i32 { return 0; }"), 0o644); err != nil {
 		t.Fatalf("write util: %v", err)
 	}

@@ -226,8 +226,8 @@ func TestPipelineRunResolvesImportedModuleWithScheduler(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
 
-	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
-	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	utilPath := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
 	utilSrc := `fn Helper() -> i32 { return 7; }`
 	mainSrc := `import "app/util";
 fn main() -> i32 {
@@ -235,6 +235,10 @@ fn main() -> i32 {
 }`
 	diag.AddSourceContent(utilPath, utilSrc)
 	diag.AddSourceContent(mainPath, mainSrc)
+
+	if err := os.MkdirAll(filepath.Dir(utilPath), 0o755); err != nil {
+		t.Fatalf("mkdir src dir: %v", err)
+	}
 
 	entry := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),

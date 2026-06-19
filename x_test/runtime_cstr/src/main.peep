@@ -12,6 +12,5 @@ fn main() -> i32 {
     let msg: cstr = "Hello from Peeper runtime ABI!\n";
     write(stdout, msg, 31);
     sayhi();
-    // return
     return 0;
 }

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"compiler/pkg/peeper"
 	"compiler/pkg/toml"
 )
 
@@ -79,6 +80,9 @@ func FindManifestPath(startDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if info, statErr := os.Stat(dir); statErr == nil && !info.IsDir() {
+		dir = filepath.Dir(dir)
+	}
 	for {
 		manifestPath := filepath.Join(dir, FileName)
 		if _, err := os.Stat(manifestPath); err == nil {
@@ -90,6 +94,31 @@ func FindManifestPath(startDir string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+func SourceDir(root string) string {
+	return filepath.Join(root, peeper.SourceDirName)
+}
+
+func ProgramEntryPath(root string) string {
+	return filepath.Join(SourceDir(root), peeper.MainFileName)
+}
+
+func PathWithinSourceDir(root, path string) bool {
+	root, err := filepath.Abs(SourceDir(root))
+	if err != nil {
+		return false
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if root == path {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 func LoadProject(startPath string) (*Project, error) {

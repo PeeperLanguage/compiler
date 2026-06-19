@@ -25,7 +25,7 @@ func TestParseCommandArgsRunDebug(t *testing.T) {
 func TestResolveBuildTargetUsesManifestEntryAndPackageName(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, manifest.FileName)
-	entryPath := filepath.Join(root, "src", "main"+peeper.SourceExt)
+	entryPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
 
 	if err := os.MkdirAll(filepath.Dir(entryPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -74,6 +74,24 @@ func TestResolveBuildTargetUsesFileStemWithoutManifest(t *testing.T) {
 	}
 	if info.DefaultOutputPath != "demo" {
 		t.Fatalf("default output = %q, want demo", info.DefaultOutputPath)
+	}
+}
+
+func TestResolveBuildTargetRejectsConfiguredFileOutsideSrc(t *testing.T) {
+	root := t.TempDir()
+	entryPath := filepath.Join(root, "demo"+peeper.SourceExt)
+	if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := `name = "sample_app"
+build = "program"
+`
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := resolveBuildTarget("build", entryPath, "linux"); err == nil {
+		t.Fatal("expected source-root error")
 	}
 }
 

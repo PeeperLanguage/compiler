@@ -309,6 +309,9 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 		}
 		return targetInfo.EntryPath, targetInfo, nil
 	}
+	if loadedProject, err := manifest.LoadProject(resolvedPath); err == nil && !manifest.PathWithinSourceDir(loadedProject.RootDir, resolvedPath) {
+		return "", buildTarget{}, fmt.Errorf("project source files must stay under %s", manifest.SourceDir(loadedProject.RootDir))
+	}
 	return resolvedPath, buildTarget{
 		EntryPath:         resolvedPath,
 		DefaultOutputPath: defaultOutputNameForEntry(resolvedPath, targetOS),
@@ -323,7 +326,7 @@ func resolveManifestBuildTarget(commandName, startPath string, targetOS string) 
 	if loadedProject.File.Package.Build != manifest.BuildProgram {
 		return buildTarget{}, fmt.Errorf("%s: `peeper %s` requires build = %q", loadedProject.ManifestPath, commandName, manifest.BuildProgram)
 	}
-	entryPath := filepath.Join(loadedProject.RootDir, "src", "main"+peeper.SourceExt)
+	entryPath := manifest.ProgramEntryPath(loadedProject.RootDir)
 
 	entryInfo, statErr := os.Stat(entryPath)
 	if statErr != nil {
