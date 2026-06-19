@@ -3,6 +3,7 @@ package lsp
 import (
 	"bufio"
 	"compiler/internal/diagnostics"
+	"compiler/internal/project"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,7 +16,6 @@ const LSP_VERSION = "0.0.1"
 func Run(in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	state := NewServerState()
-	prevSent := make(map[DocumentURI]bool)
 
 	for {
 		bytes, err := readMessage(reader)
@@ -59,7 +59,7 @@ func Run(in io.Reader, out io.Writer) error {
 			}
 
 		case "initialized":
-			// Notification, no response needed
+			publishWorkspaceDiagnostics(out, state)
 			continue
 
 		case "textDocument/didOpen":
@@ -67,8 +67,8 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.TextDocument.URI))
 				state.Cache[path] = params.TextDocument.Text
-				state.recompile(path)
-				sendDiagnostics(out, state, prevSent)
+				ctx, _ := state.recompile(path)
+				sendDiagnosticsForFiles(out, ctx, componentFilesForPublish(state, path))
 			}
 			continue
 
@@ -78,8 +78,8 @@ func Run(in io.Reader, out io.Writer) error {
 				path := uriToPath(string(params.TextDocument.URI))
 				// Under Full Sync, the first change has the entire file text
 				state.Cache[path] = params.ContentChanges[0].Text
-				state.recompile(path)
-				sendDiagnostics(out, state, prevSent)
+				ctx, _ := state.recompile(path)
+				sendDiagnosticsForFiles(out, ctx, componentFilesForPublish(state, path))
 			}
 			continue
 
@@ -88,8 +88,8 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.URI))
 				delete(state.Cache, path)
-				state.recompile(path)
-				sendDiagnostics(out, state, prevSent)
+				ctx, _ := state.recompile(path)
+				sendDiagnosticsForFiles(out, ctx, componentFilesForPublish(state, path))
 			}
 			continue
 
@@ -150,6 +150,40 @@ func Run(in io.Reader, out io.Writer) error {
 	}
 }
 
+func publishWorkspaceDiagnostics(w io.Writer, state *ServerState) {
+	if state == nil || state.RootDir == "" {
+		return
+	}
+	if state.workspace == nil {
+		state.workspace = newWorkspaceIndex(state.RootDir)
+	}
+	if err := state.workspace.rebuild(state.Cache); err != nil {
+		return
+	}
+	for _, component := range state.workspace.components {
+		if len(component.files) == 0 {
+			continue
+		}
+		entry := component.files[0]
+		if len(component.roots) > 0 {
+			entry = component.roots[0]
+		}
+		ctx, _ := state.recompile(entry)
+		sendDiagnosticsForFiles(w, ctx, component.files)
+	}
+}
+
+func componentFilesForPublish(state *ServerState, filePath string) []string {
+	if state == nil || state.workspace == nil {
+		return []string{filePath}
+	}
+	component, ok := state.workspace.componentForFile(filePath)
+	if !ok || len(component.files) == 0 {
+		return []string{filePath}
+	}
+	return append([]string(nil), component.files...)
+}
+
 func uriToPath(uri string) string {
 	if after, ok := strings.CutPrefix(uri, "file://"); ok {
 		path := after
@@ -169,18 +203,26 @@ func pathToURI(path string) string {
 	return "file://" + clean
 }
 
-func sendDiagnostics(w io.Writer, state *ServerState, prevSent map[DocumentURI]bool) {
-	if state.LastCtx == nil || state.LastCtx.Diagnostics == nil {
+func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []string) {
+	if ctx == nil || ctx.Diagnostics == nil {
 		return
 	}
 
-	grouped := make(map[DocumentURI][]Diagnostic)
-	for _, diag := range state.LastCtx.Diagnostics.Diagnostics() {
+	grouped := make(map[DocumentURI][]Diagnostic, len(files))
+	for _, filePath := range files {
+		uri := DocumentURI(pathToURI(filePath))
+		grouped[uri] = []Diagnostic{}
+	}
+
+	for _, diag := range ctx.Diagnostics.Diagnostics() {
 		filePath := diag.FilePath
 		if filePath == "" {
 			continue
 		}
 		uri := DocumentURI(pathToURI(filePath))
+		if _, ok := grouped[uri]; !ok {
+			continue
+		}
 
 		var r Range
 		hasRange := false
@@ -247,20 +289,5 @@ func sendDiagnostics(w io.Writer, state *ServerState, prevSent map[DocumentURI]b
 				Diagnostics: lspDiags,
 			},
 		})
-		prevSent[uri] = true
-	}
-
-	for uri := range prevSent {
-		if _, exists := grouped[uri]; !exists {
-			_ = writeMessage(w, Notification{
-				JSONRPC: "2.0",
-				Method:  "textDocument/publishDiagnostics",
-				Params: PublishDiagnosticsParams{
-					URI:         uri,
-					Diagnostics: []Diagnostic{},
-				},
-			})
-			delete(prevSent, uri)
-		}
 	}
 }

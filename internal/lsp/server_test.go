@@ -3,6 +3,7 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -131,5 +132,74 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	}
 	if edits[0].NewText != "new_var" || edits[1].NewText != "new_var" {
 		t.Errorf("unexpected rename text: %q and %q", edits[0].NewText, edits[1].NewText)
+	}
+}
+
+func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main.peep")
+	utilPath := filepath.Join(root, "util.peep")
+	writeWorkspaceFile(t, mainPath, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n")
+	writeWorkspaceFile(t, utilPath, "fn Helper() -> i32 { return missing; }\n")
+
+	rootURI := DocumentURI(pathToURI(root))
+	initParams, err := json.Marshal(InitializeParams{RootURI: &rootURI})
+	if err != nil {
+		t.Fatalf("marshal initialize params: %v", err)
+	}
+	initID := json.RawMessage([]byte("1"))
+
+	var input bytes.Buffer
+	if err := writeMessage(&input, Request{
+		JSONRPC: "2.0",
+		ID:      &initID,
+		Method:  "initialize",
+		Params:  initParams,
+	}); err != nil {
+		t.Fatalf("write initialize: %v", err)
+	}
+	if err := writeMessage(&input, Request{
+		JSONRPC: "2.0",
+		Method:  "initialized",
+	}); err != nil {
+		t.Fatalf("write initialized: %v", err)
+	}
+
+	var output bytes.Buffer
+	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	reader := bufio.NewReader(bytes.NewReader(output.Bytes()))
+	var sawUtilDiag bool
+	for {
+		msg, err := readMessage(reader)
+		if err != nil {
+			break
+		}
+		var envelope struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(msg, &envelope); err != nil {
+			continue
+		}
+		if envelope.Method != "textDocument/publishDiagnostics" {
+			continue
+		}
+		var params PublishDiagnosticsParams
+		if err := json.Unmarshal(envelope.Params, &params); err != nil {
+			t.Fatalf("unmarshal diagnostics params: %v", err)
+		}
+		if string(params.URI) != pathToURI(utilPath) {
+			continue
+		}
+		if len(params.Diagnostics) == 0 {
+			t.Fatalf("expected unopened util file diagnostics to be published")
+		}
+		sawUtilDiag = true
+	}
+	if !sawUtilDiag {
+		t.Fatalf("expected diagnostics publish for unopened workspace file %s", utilPath)
 	}
 }
