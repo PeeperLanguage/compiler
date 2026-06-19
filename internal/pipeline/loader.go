@@ -80,6 +80,15 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		return
 	}
 	if module.AST != nil {
+		if module.ImportFingerprint == "" {
+			module.ImportFingerprint = module.AST.ImportFingerprint
+		}
+		if module.ExportFingerprint == "" {
+			module.ExportFingerprint = module.AST.ExportFingerprint
+		}
+		if module.Phase < project.PhaseParsed {
+			module.Phase = project.PhaseParsed
+		}
 		return
 	}
 	if module.Content == "" && module.FilePath != "" {

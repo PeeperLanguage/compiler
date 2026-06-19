@@ -17,6 +17,7 @@ import (
 	"compiler/internal/target"
 	"errors"
 	"strings"
+	"sync"
 )
 
 // Ordered phase execution for one compiler project.
@@ -101,25 +102,134 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		return nil
 	}
 
+	orderedModules := make([]*project.Module, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		module := moduleIndex[id]
-		if module == nil || module.Key == "" {
-			continue
+		if module != nil && module.Key != "" {
+			orderedModules = append(orderedModules, module)
 		}
-		for module.Phase < project.PhaseBackend {
-			if !p.advanceModulePhase(module, diag) {
-				break
-			}
-		}
-		// Inject prelude symbols into GlobalScope immediately after prelude is
-		// compiled so subsequent modules can resolve them.
-		if module.Key == preludeKey && module.ModuleScope != nil {
-			for _, sym := range module.ModuleScope.Symbols() {
+	}
+	var prelude *project.Module
+	if preludeKey != "" {
+		prelude = moduleIndex[graph.NodeID(preludeKey)]
+	}
+	preludeInjected := prelude == nil
+	for {
+		if !preludeInjected && prelude != nil && prelude.ModuleScope != nil && prelude.Phase >= project.PhaseCollected {
+			// Inject prelude as soon as its module scope exists. Other modules can
+			// then resolve global prelude names while later binding updates the same
+			// symbol objects in place.
+			for _, sym := range prelude.ModuleScope.Symbols() {
 				_ = p.ctx.GlobalScope.Declare(sym)
 			}
+			preludeInjected = true
+		}
+
+		ready := make([]*project.Module, 0, len(orderedModules))
+		for _, module := range orderedModules {
+			if p.moduleReadyForNextPhase(module, prelude, preludeInjected) {
+				ready = append(ready, module)
+			}
+		}
+		if len(ready) == 0 {
+			break
+		}
+
+		var wg sync.WaitGroup
+		progress := make(chan bool, len(ready))
+		for _, module := range ready {
+			wg.Add(1)
+			go func(module *project.Module) {
+				defer wg.Done()
+				progress <- p.advanceModulePhase(module, diag)
+			}(module)
+		}
+		wg.Wait()
+		close(progress)
+
+		advanced := false
+		for ok := range progress {
+			advanced = advanced || ok
+		}
+		if !advanced {
+			break
 		}
 	}
 	return nil
+}
+
+func (p *Pipeline) moduleReadyForNextPhase(module, prelude *project.Module, preludeInjected bool) bool {
+	if p == nil || module == nil || module.AST == nil || module.Phase >= project.PhaseBackend {
+		return false
+	}
+	next := nextModulePhase(module.Phase)
+	if next == project.PhaseNone {
+		return false
+	}
+	if !preludeReadyForPhase(module, prelude, preludeInjected, next) {
+		return false
+	}
+	required := importPrerequisitePhase(next)
+	if required == project.PhaseNone {
+		return true
+	}
+	for _, imp := range module.Imports {
+		imported, ok := p.ctx.ModuleByKey(imp.Key)
+		if !ok || imported == nil || imported.Phase < required {
+			return false
+		}
+	}
+	return true
+}
+
+func preludeReadyForPhase(module, prelude *project.Module, preludeInjected bool, next project.ModulePhase) bool {
+	if module == nil || prelude == nil || module.Key == prelude.Key {
+		return true
+	}
+	switch next {
+	case project.PhaseCollected, project.PhaseBound:
+		return true
+	default:
+		return preludeInjected && prelude.Phase >= project.PhaseResolved
+	}
+}
+
+func nextModulePhase(current project.ModulePhase) project.ModulePhase {
+	switch current {
+	case project.PhaseParsed:
+		return project.PhaseCollected
+	case project.PhaseCollected:
+		return project.PhaseBound
+	case project.PhaseBound:
+		return project.PhaseResolved
+	case project.PhaseResolved:
+		return project.PhaseTypechecked
+	case project.PhaseTypechecked:
+		return project.PhaseUsage
+	case project.PhaseUsage:
+		return project.PhaseHIR
+	case project.PhaseHIR:
+		return project.PhaseMIR
+	case project.PhaseMIR:
+		return project.PhaseBackend
+	default:
+		return project.PhaseNone
+	}
+}
+
+func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
+	switch next {
+	case project.PhaseCollected:
+		return project.PhaseParsed
+	case project.PhaseBound, project.PhaseTypechecked:
+		return project.PhaseBound
+	case project.PhaseResolved, project.PhaseUsage:
+		return project.PhaseCollected
+	case project.PhaseHIR:
+		return project.PhaseTypechecked
+	default:
+		return project.PhaseNone
+	}
 }
 
 // advanceModulePhase moves one module exactly one phase forward. Serial Run uses

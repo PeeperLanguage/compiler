@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -156,6 +158,113 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)
+	pipeline := New(ctx)
+
+	imported := parseModuleSource("util.peep", "fn Helper() -> i32 { return 1; }", diag)
+	imported.Origin = project.ModuleOriginLocal
+	imported.Phase = project.PhaseParsed
+	ctx.AddModule(imported)
+
+	entry := parseModuleSource("main.peep", "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = project.PhaseParsed
+	entry.Imports = map[string]project.ResolvedImport{
+		"util": {
+			Key:        imported.Key,
+			ImportPath: "util",
+			FilePath:   imported.FilePath,
+			Origin:     project.ModuleOriginLocal,
+		},
+	}
+	ctx.AddModule(entry)
+
+	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("parsed importer should be ready for collector when import is parsed")
+	}
+
+	entry.Phase = project.PhaseCollected
+	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("collected importer should wait for bound import before binder")
+	}
+
+	imported.Phase = project.PhaseBound
+	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("collected importer should be ready for binder when import is bound")
+	}
+
+	entry.Phase = project.PhaseBound
+	imported.Phase = project.PhaseParsed
+	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("bound importer should wait for collected import before resolver")
+	}
+
+	imported.Phase = project.PhaseCollected
+	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("bound importer should be ready for resolver when import is collected")
+	}
+
+	entry.Phase = project.PhaseResolved
+	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("resolved importer should wait for bound import before typechecker")
+	}
+
+	imported.Phase = project.PhaseBound
+	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+		t.Fatalf("resolved importer should be ready for typechecker when import is bound")
+	}
+}
+
+func TestPipelineRunResolvesImportedModuleWithScheduler(t *testing.T) {
+	root := t.TempDir()
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{RootDir: root, Extension: ".peep"}, diag)
+
+	utilPath := filepath.Join(root, "util.peep")
+	mainPath := filepath.Join(root, "main.peep")
+	utilSrc := `fn Helper() -> i32 { return 7; }`
+	mainSrc := `import "util";
+fn main() -> i32 {
+	return util::Helper();
+}`
+	diag.AddSourceContent(utilPath, utilSrc)
+	diag.AddSourceContent(mainPath, mainSrc)
+
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
+		ImportPath: "main",
+		FilePath:   mainPath,
+		Origin:     project.ModuleOriginLocal,
+	}
+
+	if err := os.WriteFile(utilPath, []byte(utilSrc), 0o644); err != nil {
+		t.Fatalf("write util: %v", err)
+	}
+	if err := os.WriteFile(mainPath, []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write main: %v", err)
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+
+	util, ok := ctx.ModuleByFile(utilPath)
+	if !ok || util == nil {
+		t.Fatalf("expected imported module to be loaded")
+	}
+	if util.Phase != project.PhaseBackend {
+		t.Fatalf("imported module phase = %v, want %v", util.Phase, project.PhaseBackend)
+	}
+	if entry.Phase != project.PhaseBackend {
+		t.Fatalf("entry phase = %v, want %v", entry.Phase, project.PhaseBackend)
 	}
 }
 
