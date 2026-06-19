@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"slices"
 	"compiler/internal/diagnostics"
 	driver "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
@@ -110,15 +111,15 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 	return nil
 }
 
-func (w *workspaceIndex) syntheticEntry() (string, string, bool) {
+func (w *workspaceIndex) syntheticEntry(filePath string) (string, string, bool) {
 	if w == nil || len(w.components) == 0 || !w.hasDiskBackedFiles() {
 		return "", "", false
 	}
-
-	var roots []string
-	for _, component := range w.components {
-		roots = append(roots, component.roots...)
+	component, ok := w.componentForFile(filePath)
+	if !ok || len(component.roots) == 0 {
+		return "", "", false
 	}
+	roots := append([]string(nil), component.roots...)
 	if len(roots) == 0 {
 		return "", "", false
 	}
@@ -147,19 +148,31 @@ func (w *workspaceIndex) componentFiles(filePath string) map[string]struct{} {
 	if filePath == "" {
 		return out
 	}
-	for _, component := range w.components {
-		for _, candidate := range component.files {
-			if candidate != filePath {
-				continue
-			}
-			for _, member := range component.files {
-				out[member] = struct{}{}
-			}
-			return out
+	component, ok := w.componentForFile(filePath)
+	if ok {
+		for _, member := range component.files {
+			out[member] = struct{}{}
 		}
+		return out
 	}
 	out[filePath] = struct{}{}
 	return out
+}
+
+func (w *workspaceIndex) componentForFile(filePath string) (workspaceComponent, bool) {
+	if w == nil {
+		return workspaceComponent{}, false
+	}
+	filePath = project.CanonicalPath(filePath)
+	if filePath == "" {
+		return workspaceComponent{}, false
+	}
+	for _, component := range w.components {
+		if slices.Contains(component.files, filePath) {
+			return component, true
+		}
+	}
+	return workspaceComponent{}, false
 }
 
 func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.Module) map[string]struct{} {

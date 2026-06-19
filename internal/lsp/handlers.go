@@ -45,7 +45,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 			for cachedPath, cachedContent := range s.Cache {
 				driver.AddOverlay(ctx, cachedPath, cachedContent)
 			}
-			if virtualPath, content, ok := s.workspace.syntheticEntry(); ok {
+			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
 				if driver.ParseFileWithOverlay(ctx, virtualPath, content) != nil {
 					s.LastCtx = ctx
 					s.captureModules(ctx)

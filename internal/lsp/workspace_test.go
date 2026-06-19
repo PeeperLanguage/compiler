@@ -3,6 +3,7 @@ package lsp
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"compiler/internal/frontend/ast"
@@ -92,6 +93,9 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 	if _, mod := state.recompile(fileA); mod == nil {
 		t.Fatalf("initial compile returned nil module")
 	}
+	if _, mod := state.recompile(fileB); mod == nil {
+		t.Fatalf("independent component compile returned nil module")
+	}
 	before := state.modules[project.CanonicalPath(fileB)]
 	if before == nil {
 		t.Fatalf("missing cached unrelated module")
@@ -108,6 +112,56 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 	}
 	if before != after {
 		t.Fatalf("expected unrelated component module reuse")
+	}
+}
+
+func TestWorkspaceSyntheticEntryUsesRequestedComponentRoots(t *testing.T) {
+	root := t.TempDir()
+	fileA := filepath.Join(root, "a.peep")
+	fileB := filepath.Join(root, "b.peep")
+	writeWorkspaceFile(t, fileA, "fn main() {}\n")
+	writeWorkspaceFile(t, fileB, "fn main() {}\n")
+
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild workspace index: %v", err)
+	}
+
+	_, content, ok := index.syntheticEntry(fileA)
+	if !ok {
+		t.Fatalf("expected synthetic entry")
+	}
+	if got, want := strings.Count(content, "import "), 1; got != want {
+		t.Fatalf("synthetic import count = %d, want %d\ncontent:\n%s", got, want, content)
+	}
+	if !strings.Contains(content, "\"a\"") {
+		t.Fatalf("synthetic entry missing requested component root import: %s", content)
+	}
+	if strings.Contains(content, "\"b\"") {
+		t.Fatalf("synthetic entry leaked unrelated root import: %s", content)
+	}
+}
+
+func TestServerStateRecompileSkipsUnrelatedIndependentRoot(t *testing.T) {
+	root := t.TempDir()
+	fileA := filepath.Join(root, "a.peep")
+	fileB := filepath.Join(root, "b.peep")
+	writeWorkspaceFile(t, fileA, "fn main() {}\n")
+	writeWorkspaceFile(t, fileB, "fn main() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(fileA); mod == nil {
+		t.Fatalf("initial compile returned nil module")
+	}
+
+	aPath := project.CanonicalPath(fileA)
+	bPath := project.CanonicalPath(fileB)
+	if state.modules[aPath] == nil {
+		t.Fatalf("missing requested module")
+	}
+	if state.modules[bPath] != nil {
+		t.Fatalf("unrelated singleton root should not be compiled when requesting %s", aPath)
 	}
 }
 
