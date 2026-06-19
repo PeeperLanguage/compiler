@@ -10,6 +10,8 @@ import (
 	compiler "compiler/internal/driver"
 	"compiler/internal/lsp"
 	"compiler/pkg/colors"
+	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 const (
@@ -140,21 +142,21 @@ func printTopLevelUsage() {
 	colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper [command] [args]\n")
 	colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
-	fmt.Fprintln(os.Stderr, "  build[:llvm] [path]     build a program or use package.entry from peeper")
+	fmt.Fprintf(os.Stderr, "  build[:llvm] [path]     build a program or use src/main%s from %s\n", peeper.SourceExt, manifest.FileName)
 	fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
-	fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.peep only)")
-	fmt.Fprintln(os.Stderr, "  init [name]             create a new project with peeper")
-	fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from peeper or specific packages")
+	fmt.Fprintf(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (%s only)\n", peeper.SourceExt)
+	fmt.Fprintf(os.Stderr, "  init [name]             create a new project with %s\n", manifest.FileName)
+	fmt.Fprintf(os.Stderr, "  get [pkg ...]           install dependencies from %s or specific packages\n", manifest.FileName)
 	fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
 	fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that peeper update would apply")
-	fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from peeper and lockfile")
+	fmt.Fprintf(os.Stderr, "  remove|rm <alias>       remove dependency alias from %s and %s\n", manifest.FileName, manifest.LockfileName)
 	fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 	fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
 	fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
 	fmt.Fprintln(os.Stderr, "  lsp                     start the Peeper language server")
 	colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper build\n")
-	colors.GREEN.Fprintf(os.Stderr, "  peeper build src/main.peep\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper build src/main%s\n", peeper.SourceExt)
 	colors.GREEN.Fprintf(os.Stderr, "  peeper build -o app\n")
-	colors.GREEN.Fprintf(os.Stderr, "  peeper run main.peep arg1 arg2\n")
+	colors.GREEN.Fprintf(os.Stderr, "  peeper run main%s arg1 arg2\n", peeper.SourceExt)
 }

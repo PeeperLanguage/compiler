@@ -15,6 +15,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/pkg/peeper"
 )
 
 // Bundled libraries base directory relative to the installed compiler binary.
@@ -227,6 +228,8 @@ func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *CompilerCo
 type Config struct {
 	// Project/workspace root.
 	RootDir string
+	// Required local import prefix for config-backed projects.
+	ProjectName string
 	// Source file extension.
 	Extension string
 	// Packaged libraries base directory. Namespace imports map to subdirectories here.
@@ -255,7 +258,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		diag = diagnostics.NewDiagnosticBag()
 	}
 	if cfg.Extension == "" {
-		cfg.Extension = ".peep"
+		cfg.Extension = peeper.SourceExt
 	}
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"compiler/pkg/peeper"
 )
 
 func collectPublishedDiagnostics(t *testing.T, payload []byte) map[string][][]Diagnostic {
@@ -66,7 +68,7 @@ func TestJSONRPCFraming(t *testing.T) {
 
 func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "main.peep")
+	filePath := filepath.Join(tmpDir, "main"+peeper.SourceExt)
 	fileURI := pathToURI(filePath)
 
 	content := `fn main() -> i32 {
@@ -164,9 +166,10 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 
 func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.T) {
 	root := t.TempDir()
-	mainPath := filepath.Join(root, "main.peep")
-	utilPath := filepath.Join(root, "util.peep")
-	writeWorkspaceFile(t, mainPath, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, mainPath, "import \"app/util\";\nfn main() -> i32 { return util::Helper(); }\n")
 	writeWorkspaceFile(t, utilPath, "fn Helper() -> i32 { return missing; }\n")
 
 	rootURI := DocumentURI(pathToURI(root))
@@ -206,9 +209,10 @@ func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.
 
 func TestLSPDidChangeClearsDiagnosticsForFixedComponentFile(t *testing.T) {
 	root := t.TempDir()
-	mainPath := filepath.Join(root, "main.peep")
-	utilPath := filepath.Join(root, "util.peep")
-	mainSrc := "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n"
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
+	mainSrc := "import \"app/util\";\nfn main() -> i32 { return util::Helper(); }\n"
 	writeWorkspaceFile(t, mainPath, mainSrc)
 	writeWorkspaceFile(t, utilPath, "fn Helper() -> i32 { return missing; }\n")
 

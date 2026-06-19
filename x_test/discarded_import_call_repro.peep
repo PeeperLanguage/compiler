@@ -1,4 +1,4 @@
-import "external_void_repro";
+import "x_test/external_void_repro";
 
 fn main() -> i32 {
     let s = external_void_repro::Ping();

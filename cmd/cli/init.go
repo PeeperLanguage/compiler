@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"compiler/internal/driver"
+	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 func InitCommand(args []string) error {
-	if _, err := os.Stat("peeper"); err == nil {
-		return fmt.Errorf("peeper already exists in current directory")
+	if _, err := os.Stat(manifest.FileName); err == nil {
+		return fmt.Errorf("%s already exists in current directory", manifest.FileName)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -37,48 +39,38 @@ func InitCommand(args []string) error {
 
 	projectName = strings.ToLower(strings.ReplaceAll(projectName, " ", "-"))
 
-	fmt.Print("Description (optional): ")
-	description, _ := reader.ReadString('\n')
-	description = strings.TrimSpace(description)
-	if description == "" {
-		description = "A new Peeper project"
-	}
-
-	fmt.Print("Author (optional): ")
-	author, _ := reader.ReadString('\n')
-	author = strings.TrimSpace(author)
-
-	content := fmt.Sprintf(`[package]
-name = %q
+	content := fmt.Sprintf(`name = %q
 version = "0.0.1"
-description = %q
-author = %q
 compiler = "<=%s"
-	entry = "main.peep"
+build = "program"
 
 [dependencies]
-`, projectName, description, author, compiler.COMPILER_VERSION)
+`, projectName, compiler.COMPILER_VERSION)
 
-	if err := os.WriteFile("peeper", []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(manifest.FileName, []byte(content), 0o644); err != nil {
 		return err
 	}
 
-	if _, err := os.Stat("main.peep"); os.IsNotExist(err) {
+	if err := os.MkdirAll("src", 0o755); err != nil {
+		return err
+	}
+	mainPath := filepath.Join("src", "main"+peeper.SourceExt)
+	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
 		mainContent := `
 fn main() {
 	println("Hello from Peeper!")
 }
 `
-		if err := os.WriteFile("main.peep", []byte(mainContent), 0o644); err != nil {
+		if err := os.WriteFile(mainPath, []byte(mainContent), 0o644); err != nil {
 			return err
 		}
-		printSuccess("Created main.peep")
+		printSuccess("Created " + mainPath)
 	}
 
 	printSuccess(fmt.Sprintf("Initialized project: %s", projectName))
 	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Edit peeper to add dependencies")
+	fmt.Printf("  1. Edit %s to add dependencies\n", manifest.FileName)
 	fmt.Println("  2. Run: peeper get")
-	fmt.Println("  3. Run: peeper main.peep")
+	fmt.Println("  3. Run: peeper run")
 	return nil
 }

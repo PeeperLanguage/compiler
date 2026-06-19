@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 
 	"compiler/internal/project"
+	"compiler/pkg/peeper"
 )
 
 // Auto-loaded Peeper prelude file within the stdlib root.
-const GlobalPreludeFile = "global.peep"
+const GlobalPreludeFile = "global" + peeper.SourceExt
 
 // Register global prelude source when it exists.
 func Load(ctx *project.CompilerContext) error {

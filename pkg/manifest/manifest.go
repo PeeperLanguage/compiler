@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	FileName           = "peeper"
+	FileName           = "peeper.toml"
 	cacheDirName       = ".peeper"
 	cacheModulesSubdir = "modules"
 	reservedStdAlias   = "core"
@@ -34,8 +34,15 @@ type PackageInfo struct {
 	Name            string
 	Version         string
 	CompilerVersion string
-	Entry           string
+	Build           BuildType
 }
+
+type BuildType string
+
+const (
+	BuildProgram BuildType = "program"
+	BuildLib     BuildType = "lib"
+)
 
 type DevConfig struct {
 	MockRemote bool
@@ -53,6 +60,12 @@ type File struct {
 	Dependencies map[string]Dependency
 	Dev          DevConfig
 	FilePath     string
+}
+
+type Project struct {
+	RootDir      string
+	ManifestPath string
+	File         *File
 }
 
 var (
@@ -79,6 +92,22 @@ func FindManifestPath(startDir string) (string, error) {
 	}
 }
 
+func LoadProject(startPath string) (*Project, error) {
+	manifestPath, err := FindManifestPath(startPath)
+	if err != nil {
+		return nil, err
+	}
+	file, err := Load(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Project{
+		RootDir:      filepath.Dir(manifestPath),
+		ManifestPath: manifestPath,
+		File:         file,
+	}, nil
+}
+
 func Load(path string) (*File, error) {
 	data, err := toml.ParseFile(path)
 	if err != nil {
@@ -88,9 +117,9 @@ func Load(path string) (*File, error) {
 		Dependencies: make(map[string]Dependency),
 		FilePath:     path,
 	}
-	pkg, ok := data.Sections["package"]
+	pkg, ok := data.Sections["default"]
 	if !ok {
-		return nil, fmt.Errorf("missing [package] section")
+		return nil, fmt.Errorf("missing top-level package config")
 	}
 	name, ok, err := toml.LookupKey[string](pkg, "name")
 	if err != nil {
@@ -109,14 +138,19 @@ func Load(path string) (*File, error) {
 		manifest.Package.Version = version
 	}
 	if compilerVersion, ok, err := toml.LookupKey[string](pkg, "compiler"); err != nil {
-		return nil, fmt.Errorf("package.compiler: %w", err)
+		return nil, fmt.Errorf("compiler: %w", err)
 	} else if ok {
 		manifest.Package.CompilerVersion = compilerVersion
 	}
-	if entry, ok, err := toml.LookupKey[string](pkg, "entry"); err != nil {
-		return nil, fmt.Errorf("package.entry: %w", err)
-	} else if ok {
-		manifest.Package.Entry = strings.TrimSpace(entry)
+	build, ok, err := toml.LookupKey[string](pkg, "build")
+	if err != nil {
+		return nil, fmt.Errorf("build: %w", err)
+	}
+	switch BuildType(strings.TrimSpace(build)) {
+	case BuildProgram, BuildLib:
+		manifest.Package.Build = BuildType(strings.TrimSpace(build))
+	default:
+		return nil, fmt.Errorf("invalid build %q", build)
 	}
 
 	if deps, ok := data.Sections["dependencies"]; ok {
@@ -260,7 +294,6 @@ func Save(path string, file *File) error {
 }
 
 func renderPackageSection(builder *strings.Builder, pkg *PackageInfo) {
-	builder.WriteString("[package]\n")
 	fmt.Fprintf(builder, "name = %s\n", strconv.Quote(pkg.Name))
 	if pkg.Version != "" {
 		fmt.Fprintf(builder, "version = %s\n", strconv.Quote(pkg.Version))
@@ -268,9 +301,7 @@ func renderPackageSection(builder *strings.Builder, pkg *PackageInfo) {
 	if pkg.CompilerVersion != "" {
 		fmt.Fprintf(builder, "compiler = %s\n", strconv.Quote(pkg.CompilerVersion))
 	}
-	if pkg.Entry != "" {
-		fmt.Fprintf(builder, "entry = %s\n", strconv.Quote(pkg.Entry))
-	}
+	fmt.Fprintf(builder, "build = %s\n", strconv.Quote(string(pkg.Build)))
 }
 
 func renderDependenciesSection(builder *strings.Builder, deps map[string]Dependency) {

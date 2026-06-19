@@ -69,6 +69,9 @@ func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, namespace, fi
 	}
 	rel = filepath.ToSlash(rel)
 	rel = strings.TrimSuffix(rel, filepath.Ext(rel))
+	if origin == ModuleOriginLocal && ctx.Config.ProjectName != "" {
+		return ctx.Config.ProjectName + "/" + rel, nil
+	}
 	return rel, nil
 }
 
@@ -103,7 +106,21 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		if isRemoteImport(importPath) {
 			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "remote imports are not supported yet"}
 		}
-		basePath = filepath.Join(ctx.Config.RootDir, filepath.FromSlash(importPath))
+		if ctx.Config.ProjectName == "" {
+			return nil, &ImportError{
+				Code: diagnostics.ErrInvalidImportPath,
+				Msg:  "local imports require peeper.toml; run `peeper init` to create project config",
+			}
+		}
+		prefix := ctx.Config.ProjectName + "/"
+		if !strings.HasPrefix(importPath, prefix) {
+			return nil, &ImportError{
+				Code: diagnostics.ErrInvalidImportPath,
+				Msg:  fmt.Sprintf("local import must start with %q", prefix),
+			}
+		}
+		// Local imports stay inside nearest project root. Prefix is package boundary, not path segment on disk.
+		basePath = filepath.Join(ctx.Config.RootDir, filepath.FromSlash(strings.TrimPrefix(importPath, prefix)))
 	}
 
 	if basePath == "" {

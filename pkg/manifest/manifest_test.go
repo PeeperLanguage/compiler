@@ -11,9 +11,9 @@ func TestLoadSupportsDependencyTableSyntax(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
 	src := `
-[package]
 name = "app"
 version = "0.1.0"
+build = "lib"
 
 [dependencies]
 json = { type = "remote", repo = "github.com/acme/json", version = "v1.2.3" }
@@ -39,8 +39,8 @@ func TestLoadSupportsConstraintSyntaxForRemoteDependency(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
 	src := `
-[package]
 name = "app"
+build = "lib"
 
 [dependencies]
 json = "github.com/acme/json@^0.2.0"
@@ -66,8 +66,8 @@ func TestLoadRejectsReservedDependencyAlias(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
 	src := `
-[package]
 name = "app"
+build = "lib"
 
 [dependencies]
 core = "./deps/core"
@@ -81,13 +81,12 @@ core = "./deps/core"
 	}
 }
 
-func TestLoadParsesPackageEntry(t *testing.T) {
+func TestLoadParsesBuildType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
 	src := `
-[package]
 name = "app"
-entry = "cmd/main"
+build = "program"
 `
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -97,18 +96,18 @@ entry = "cmd/main"
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	if file.Package.Entry != "cmd/main" {
-		t.Fatalf("expected package.entry to be parsed, got %q", file.Package.Entry)
+	if file.Package.Build != BuildProgram {
+		t.Fatalf("expected build to be parsed, got %q", file.Package.Build)
 	}
 }
 
-func TestSaveWritesPackageEntry(t *testing.T) {
+func TestSaveWritesBuildType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
 	file := &File{
 		Package: PackageInfo{
 			Name:  "app",
-			Entry: "main.peep",
+			Build: BuildProgram,
 		},
 		Dependencies: map[string]Dependency{},
 	}
@@ -121,8 +120,8 @@ func TestSaveWritesPackageEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	if loaded.Package.Entry != "main.peep" {
-		t.Fatalf("expected package.entry to round-trip, got %q", loaded.Package.Entry)
+	if loaded.Package.Build != BuildProgram {
+		t.Fatalf("expected build to round-trip, got %q", loaded.Package.Build)
 	}
 }
 
@@ -130,7 +129,7 @@ func TestSaveWritesExplicitLatestRemoteDependency(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
 	file := &File{
-		Package: PackageInfo{Name: "app"},
+		Package: PackageInfo{Name: "app", Build: BuildLib},
 		Dependencies: map[string]Dependency{
 			"json": {Type: DependencyRemote, Path: "github.com/acme/json", Version: "latest"},
 		},

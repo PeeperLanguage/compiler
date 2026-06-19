@@ -8,12 +8,14 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 func TestWorkspaceIndexBuildsIndependentComponents(t *testing.T) {
 	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "a.peep"), "fn main() {}\n")
-	writeWorkspaceFile(t, filepath.Join(root, "b.peep"), "fn main() {}\n")
+	writeWorkspaceFile(t, filepath.Join(root, "a"+peeper.SourceExt), "fn main() {}\n")
+	writeWorkspaceFile(t, filepath.Join(root, "b"+peeper.SourceExt), "fn main() {}\n")
 
 	index := newWorkspaceIndex(root)
 	if err := index.rebuild(nil); err != nil {
@@ -35,9 +37,10 @@ func TestWorkspaceIndexBuildsIndependentComponents(t *testing.T) {
 
 func TestWorkspaceIndexGroupsImportedFiles(t *testing.T) {
 	root := t.TempDir()
-	writeWorkspaceFile(t, filepath.Join(root, "main.peep"), "import \"lib/util\";\nfn main() {}\n")
-	writeWorkspaceFile(t, filepath.Join(root, "lib", "util.peep"), "fn helper() {}\n")
-	writeWorkspaceFile(t, filepath.Join(root, "other.peep"), "fn main() {}\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	writeWorkspaceFile(t, filepath.Join(root, "main"+peeper.SourceExt), "import \"app/lib/util\";\nfn main() {}\n")
+	writeWorkspaceFile(t, filepath.Join(root, "lib", "util"+peeper.SourceExt), "fn helper() {}\n")
+	writeWorkspaceFile(t, filepath.Join(root, "other"+peeper.SourceExt), "fn main() {}\n")
 
 	index := newWorkspaceIndex(root)
 	if err := index.rebuild(nil); err != nil {
@@ -49,9 +52,9 @@ func TestWorkspaceIndexGroupsImportedFiles(t *testing.T) {
 	}
 
 	var foundGrouped, foundSingleton bool
-	mainFile := project.CanonicalPath(filepath.Join(root, "main.peep"))
-	utilFile := project.CanonicalPath(filepath.Join(root, "lib", "util.peep"))
-	otherFile := project.CanonicalPath(filepath.Join(root, "other.peep"))
+	mainFile := project.CanonicalPath(filepath.Join(root, "main"+peeper.SourceExt))
+	utilFile := project.CanonicalPath(filepath.Join(root, "lib", "util"+peeper.SourceExt))
+	otherFile := project.CanonicalPath(filepath.Join(root, "other"+peeper.SourceExt))
 	for _, component := range index.components {
 		switch len(component.files) {
 		case 2:
@@ -80,10 +83,11 @@ func TestWorkspaceIndexGroupsImportedFiles(t *testing.T) {
 
 func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 	root := t.TempDir()
-	fileA := filepath.Join(root, "a", "main.peep")
-	fileAUtil := filepath.Join(root, "a", "util.peep")
-	fileB := filepath.Join(root, "b.peep")
-	writeWorkspaceFile(t, fileA, "import \"a/util\";\nfn main() { helper(); }\n")
+	writeWorkspaceProjectConfig(t, root, "a")
+	fileA := filepath.Join(root, "a", "main"+peeper.SourceExt)
+	fileAUtil := filepath.Join(root, "a", "util"+peeper.SourceExt)
+	fileB := filepath.Join(root, "b"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileA, "import \"a/a/util\";\nfn main() { helper(); }\n")
 	writeWorkspaceFile(t, fileAUtil, "fn helper() {}\n")
 	writeWorkspaceFile(t, fileB, "fn main() {}\n")
 
@@ -117,8 +121,8 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 
 func TestWorkspaceSyntheticEntryUsesRequestedComponentRoots(t *testing.T) {
 	root := t.TempDir()
-	fileA := filepath.Join(root, "a.peep")
-	fileB := filepath.Join(root, "b.peep")
+	fileA := filepath.Join(root, "a"+peeper.SourceExt)
+	fileB := filepath.Join(root, "b"+peeper.SourceExt)
 	writeWorkspaceFile(t, fileA, "fn main() {}\n")
 	writeWorkspaceFile(t, fileB, "fn main() {}\n")
 
@@ -144,8 +148,8 @@ func TestWorkspaceSyntheticEntryUsesRequestedComponentRoots(t *testing.T) {
 
 func TestServerStateRecompileSkipsUnrelatedIndependentRoot(t *testing.T) {
 	root := t.TempDir()
-	fileA := filepath.Join(root, "a.peep")
-	fileB := filepath.Join(root, "b.peep")
+	fileA := filepath.Join(root, "a"+peeper.SourceExt)
+	fileB := filepath.Join(root, "b"+peeper.SourceExt)
 	writeWorkspaceFile(t, fileA, "fn main() {}\n")
 	writeWorkspaceFile(t, fileB, "fn main() {}\n")
 
@@ -167,9 +171,10 @@ func TestServerStateRecompileSkipsUnrelatedIndependentRoot(t *testing.T) {
 
 func TestServerStateReusesDependentWhenExportShapeUnchanged(t *testing.T) {
 	root := t.TempDir()
-	fileMain := filepath.Join(root, "main.peep")
-	fileUtil := filepath.Join(root, "util.peep")
-	writeWorkspaceFile(t, fileMain, "import \"util\";\nfn main() { helper(); }\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, "main"+peeper.SourceExt)
+	fileUtil := filepath.Join(root, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
 	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
 
 	state := NewServerState()
@@ -196,9 +201,10 @@ func TestServerStateReusesDependentWhenExportShapeUnchanged(t *testing.T) {
 
 func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 	root := t.TempDir()
-	fileMain := filepath.Join(root, "main.peep")
-	fileUtil := filepath.Join(root, "util.peep")
-	writeWorkspaceFile(t, fileMain, "import \"util\";\nfn main() { helper(); }\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, "main"+peeper.SourceExt)
+	fileUtil := filepath.Join(root, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
 	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
 
 	state := NewServerState()
@@ -225,9 +231,10 @@ func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 
 func TestServerStateRecompileReturnsRequestedWorkspaceModule(t *testing.T) {
 	root := t.TempDir()
-	fileMain := filepath.Join(root, "main.peep")
-	fileUtil := filepath.Join(root, "util.peep")
-	writeWorkspaceFile(t, fileMain, "import \"util\";\nfn main() { helper(); }\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, "main"+peeper.SourceExt)
+	fileUtil := filepath.Join(root, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
 	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
 
 	state := NewServerState()
@@ -250,11 +257,12 @@ func TestServerStateRecompileReturnsRequestedWorkspaceModule(t *testing.T) {
 
 func TestServerStateInvalidatesTransitiveDependentsWhenExportChanges(t *testing.T) {
 	root := t.TempDir()
-	fileMain := filepath.Join(root, "main.peep")
-	fileMid := filepath.Join(root, "mid.peep")
-	fileLeaf := filepath.Join(root, "leaf.peep")
-	writeWorkspaceFile(t, fileMain, "import \"mid\";\nfn main() { mid(); }\n")
-	writeWorkspaceFile(t, fileMid, "import \"leaf\";\nfn mid() { leaf(); }\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, "main"+peeper.SourceExt)
+	fileMid := filepath.Join(root, "mid"+peeper.SourceExt)
+	fileLeaf := filepath.Join(root, "leaf"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/mid\";\nfn main() { mid(); }\n")
+	writeWorkspaceFile(t, fileMid, "import \"app/leaf\";\nfn mid() { leaf(); }\n")
 	writeWorkspaceFile(t, fileLeaf, "fn leaf() {}\n")
 
 	state := NewServerState()
@@ -286,9 +294,10 @@ func TestServerStateInvalidatesTransitiveDependentsWhenExportChanges(t *testing.
 
 func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
 	root := t.TempDir()
-	fileMain := filepath.Join(root, "main.peep")
-	fileUtil := filepath.Join(root, "util.peep")
-	writeWorkspaceFile(t, fileMain, "import \"util\";\nfn main() { helper(); }\n")
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, "main"+peeper.SourceExt)
+	fileUtil := filepath.Join(root, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
 	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
 
 	state := NewServerState()
@@ -322,4 +331,9 @@ func writeWorkspaceFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeWorkspaceProjectConfig(t *testing.T, root string, name string) {
+	t.Helper()
+	writeWorkspaceFile(t, filepath.Join(root, manifest.FileName), "name = \""+name+"\"\nbuild = \"program\"\n")
 }

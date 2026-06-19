@@ -10,12 +10,13 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
+	"compiler/pkg/peeper"
 )
 
 func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
 	return &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: strings.TrimSuffix(filePath, ".peep"),
+		ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
 		FilePath:   filePath,
 		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
 		Imports:    make(map[string]project.ResolvedImport),
@@ -24,8 +25,8 @@ func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *p
 
 func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const preludePath = "core/global.peep"
-	const entryPath = "entry.peep"
+	const preludePath = "core/global" + peeper.SourceExt
+	const entryPath = "entry" + peeper.SourceExt
 
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
@@ -66,7 +67,7 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
@@ -88,25 +89,25 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 
 	cfg := project.Config{
 		RootDir:       ".",
-		Extension:     ".peep",
+		Extension:     peeper.SourceExt,
 		TargetOS:      "linux",
 		TargetArch:    "amd64",
 		TargetBackend: "llvm",
 		BuildDebug:    true,
 	}
 	diag := diagnostics.NewDiagnosticBag()
-	diag.AddSourceContent("core/global.peep", preludeSrc)
-	diag.AddSourceContent("entry.peep", entrySrc)
+	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
+	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
 
-	prelude := parseModuleSource("core/global.peep", preludeSrc, diag)
+	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
 	prelude.Key = "core:prelude/global"
 	prelude.ImportPath = "prelude/global"
 	prelude.Namespace = "core"
 	prelude.Origin = project.ModuleOriginStdlib
 	ctx.AddModule(prelude)
 
-	entry := parseModuleSource("entry.peep", entrySrc, diag)
+	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
 	entry.ImportPath = "entry"
 	entry.Origin = project.ModuleOriginLocal
 
@@ -123,12 +124,12 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 
 func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
-	const entryPath = "entry.peep"
+	const entryPath = "entry" + peeper.SourceExt
 	entrySrc := `fn main() -> i32 {
 	return 0;
 }`
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: ".peep"}, diag)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = project.PhaseParsed
@@ -166,12 +167,12 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)
 	pipeline := New(ctx)
 
-	imported := parseModuleSource("util.peep", "fn Helper() -> i32 { return 1; }", diag)
+	imported := parseModuleSource("util"+peeper.SourceExt, "fn Helper() -> i32 { return 1; }", diag)
 	imported.Origin = project.ModuleOriginLocal
 	imported.Phase = project.PhaseParsed
 	ctx.AddModule(imported)
 
-	entry := parseModuleSource("main.peep", "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
+	entry := parseModuleSource("main"+peeper.SourceExt, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
 	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = project.PhaseParsed
 	entry.Imports = map[string]project.ResolvedImport{
@@ -223,12 +224,12 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 func TestPipelineRunResolvesImportedModuleWithScheduler(t *testing.T) {
 	root := t.TempDir()
 	diag := diagnostics.NewDiagnosticBag()
-	ctx := project.NewWithConfig(project.Config{RootDir: root, Extension: ".peep"}, diag)
+	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
 
-	utilPath := filepath.Join(root, "util.peep")
-	mainPath := filepath.Join(root, "main.peep")
+	utilPath := filepath.Join(root, "util"+peeper.SourceExt)
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
 	utilSrc := `fn Helper() -> i32 { return 7; }`
-	mainSrc := `import "util";
+	mainSrc := `import "app/util";
 fn main() -> i32 {
 	return util::Helper();
 }`
@@ -237,7 +238,7 @@ fn main() -> i32 {
 
 	entry := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
-		ImportPath: "main",
+		ImportPath: "app/main",
 		FilePath:   mainPath,
 		Origin:     project.ModuleOriginLocal,
 	}
@@ -282,7 +283,7 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	for _, item := range diag.Diagnostics() {
 		if item == nil {
 			continue
@@ -304,7 +305,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -320,7 +321,7 @@ fn later() -> i32 {
 	return 7;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -335,7 +336,7 @@ fn main() -> i32 {
 	return second;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrUseBeforeDecl) {
 		t.Fatalf("expected use-before-declaration diagnostic, got:\n%s", diag.EmitAllToString())
 	}
@@ -358,7 +359,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -377,7 +378,7 @@ fn main() -> i32 {
 	return x.abs();
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -401,7 +402,7 @@ fn main() -> i32 {
 	return file.read("ok");
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -422,7 +423,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -442,7 +443,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrCircularDependency) {
 		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
 	}
@@ -456,7 +457,7 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if !strings.Contains(diag.EmitAllToString(), diagnostics.ErrCircularDependency) {
 		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
 	}
@@ -475,7 +476,7 @@ fn main() -> i32 {
 	return x.id();
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -502,7 +503,7 @@ fn main() -> i32 {
 	return c.bump();
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -520,7 +521,7 @@ fn main() -> i32 {
 	return c.value;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -538,7 +539,7 @@ fn main() -> i32 {
 	return p.x;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -551,7 +552,7 @@ func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	return p.x;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -572,7 +573,7 @@ fn main() -> i32 {
 	return p.x;
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -604,7 +605,7 @@ fn main() -> i32 {
 	return total(p);
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -636,7 +637,7 @@ fn main() -> i32 {
 	return use(file);
 }`
 
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -673,13 +674,13 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	const preludePath = "core/global.peep"
-	const entryPath = "entry.peep"
+	const preludePath = "core/global" + peeper.SourceExt
+	const entryPath = "entry" + peeper.SourceExt
 
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", peeper.SourceExt, diag)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
@@ -724,13 +725,13 @@ fn main() -> i32 {
 	return s.sum();
 }`
 
-	const preludePath = "core/global.peep"
-	const entryPath = "entry.peep"
+	const preludePath = "core/global" + peeper.SourceExt
+	const entryPath = "entry" + peeper.SourceExt
 
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", peeper.SourceExt, diag)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
@@ -759,7 +760,7 @@ fn main() -> i32 {
 	out.inner.value = 42;
 	return out.inner.value;
 }`
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -783,7 +784,7 @@ fn main() -> i32 {
 	let mut c: Container = .{ counter = .{ value = 10 } };
 	return c.counter.bump();
 }`
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -802,7 +803,7 @@ fn main() -> i32 {
 	out.inner.value = 42;
 	return out.inner.value;
 }`
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: ".peep"}, preludeSrc, entrySrc)
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if !diag.HasErrors() {
 		t.Fatalf("expected assignment to immutable binding error, but compiled successfully")
 	}
@@ -876,13 +877,13 @@ fn main() -> i32 {
 	return 0;
 }`
 
-	const preludePath = "core/global.peep"
-	const entryPath = "entry.peep"
+	const preludePath = "core/global" + peeper.SourceExt
+	const entryPath = "entry" + peeper.SourceExt
 
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(preludePath, preludeSrc)
 	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", peeper.SourceExt, diag)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal

@@ -13,20 +13,24 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 // Compile one entry file with a fresh compiler project.
 func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (*project.CompilerContext, *project.Module) {
 	rootDir := path
+	projectName := ""
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		rootDir = filepath.Dir(path)
 	}
-	if manifestPath, err := manifest.FindManifestPath(rootDir); err == nil {
-		rootDir = filepath.Dir(manifestPath)
+	if loadedProject, err := manifest.LoadProject(rootDir); err == nil {
+		rootDir = loadedProject.RootDir
+		projectName = loadedProject.File.Package.Name
 	}
 	cfg := project.Config{
 		RootDir:       rootDir,
-		Extension:     compiler.SOURCE_EXT,
+		ProjectName:   projectName,
+		Extension:     peeper.SourceExt,
 		TargetOS:      targetOS,
 		TargetArch:    targetArch,
 		TargetBackend: backendName,

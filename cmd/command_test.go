@@ -4,25 +4,28 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 func TestParseCommandArgsRunDebug(t *testing.T) {
-	opts, err := parseCommandArgs("run", []string{"--debug", "demo.peep"}, true)
+	opts, err := parseCommandArgs("run", []string{"--debug", "demo" + peeper.SourceExt}, true)
 	if err != nil {
 		t.Fatalf("parse command args: %v", err)
 	}
 	if !opts.debugBuild {
 		t.Fatal("expected debug build flag")
 	}
-	if len(opts.positional) != 1 || opts.positional[0] != "demo.peep" {
+	if len(opts.positional) != 1 || opts.positional[0] != "demo"+peeper.SourceExt {
 		t.Fatalf("positional = %#v", opts.positional)
 	}
 }
 
 func TestResolveBuildTargetUsesManifestEntryAndPackageName(t *testing.T) {
 	root := t.TempDir()
-	manifestPath := filepath.Join(root, "peeper")
-	entryPath := filepath.Join(root, "src", "main.peep")
+	manifestPath := filepath.Join(root, manifest.FileName)
+	entryPath := filepath.Join(root, "src", "main"+peeper.SourceExt)
 
 	if err := os.MkdirAll(filepath.Dir(entryPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -30,9 +33,8 @@ func TestResolveBuildTargetUsesManifestEntryAndPackageName(t *testing.T) {
 	if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	src := `[package]
-name = "sample_app"
-entry = "src/main"
+	src := `name = "sample_app"
+build = "program"
 `
 	if err := os.WriteFile(manifestPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -55,7 +57,7 @@ entry = "src/main"
 
 func TestResolveBuildTargetUsesFileStemWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	entryPath := filepath.Join(root, "demo.peep")
+	entryPath := filepath.Join(root, "demo"+peeper.SourceExt)
 	if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestResolveBuildTargetUsesFileStemWithoutManifest(t *testing.T) {
 
 func TestResolveBuildTargetAppendsWindowsSuffix(t *testing.T) {
 	root := t.TempDir()
-	entryPath := filepath.Join(root, "demo.peep")
+	entryPath := filepath.Join(root, "demo"+peeper.SourceExt)
 	if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
