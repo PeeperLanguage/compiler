@@ -15,11 +15,12 @@ import (
 )
 
 type ServerState struct {
-	RootDir   string
-	Cache     map[string]string
-	LastCtx   *project.CompilerContext
-	workspace *workspaceIndex
-	modules   map[string]*project.Module
+	RootDir     string
+	Cache       map[string]string
+	LastCtx     *project.CompilerContext
+	LastMetrics project.CompileMetrics
+	workspace   *workspaceIndex
+	modules     map[string]*project.Module
 }
 
 func NewServerState() *ServerState {
@@ -35,12 +36,14 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 		RootDir: s.RootDir,
 	}
 	ctx := driver.NewContext(cfg, diagBag)
+	ctx.Metrics = &project.CompileMetrics{}
 
 	rootDir := project.CanonicalPath(s.RootDir)
 	if rootDir != "" {
 		s.workspace = newWorkspaceIndex(rootDir)
 		if err := s.workspace.rebuild(s.Cache); err == nil {
 			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
+			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			s.seedReusableModules(ctx, dirtyFiles)
 			for cachedPath, cachedContent := range s.Cache {
 				driver.AddOverlay(ctx, cachedPath, cachedContent)
@@ -48,6 +51,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
 				if driver.ParseFileWithOverlay(ctx, virtualPath, content) != nil {
 					s.LastCtx = ctx
+					s.LastMetrics = ctx.Metrics.Snapshot()
 					s.captureModules(ctx)
 					if mod, ok := ctx.ModuleByFile(entryFile); ok {
 						return ctx, mod
@@ -69,6 +73,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 	content := s.Cache[entryFile]
 	mod := driver.ParseFileWithOverlay(ctx, entryFile, content)
 	s.LastCtx = ctx
+	s.LastMetrics = ctx.Metrics.Snapshot()
 	s.captureModules(ctx)
 	return ctx, mod
 }
@@ -93,11 +98,16 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 			continue
 		}
 		if phase == module.Phase {
+			ctx.Metrics.AddReusedModule()
 			ctx.AddModule(module)
 			continue
 		}
 		cloned := *module
 		cloned.Phase = phase
+		ctx.Metrics.AddReusedModule()
+		if phase < module.Phase {
+			ctx.Metrics.AddDowngradedModule()
+		}
 		if phase <= project.PhaseParsed {
 			cloned.ModuleScope = nil
 			cloned.Semantics = nil

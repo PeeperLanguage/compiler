@@ -107,6 +107,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
 	module.AST = parser.New(module.FilePath, toks, l.ctx.Diagnostics).ParseModule()
+	l.ctx.Metrics.AddParsedModule()
 	module.ImportFingerprint = module.AST.ImportFingerprint
 	module.ExportFingerprint = module.AST.ExportFingerprint
 	module.Phase = project.PhaseParsed

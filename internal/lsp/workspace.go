@@ -1,7 +1,6 @@
 package lsp
 
 import (
-	"slices"
 	"compiler/internal/diagnostics"
 	driver "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
@@ -13,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -108,6 +108,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 	w.modules = modules
 	w.components = buildWorkspaceComponents(modules, g)
 	w.imports = g
+	ctx.Metrics.AddWorkspaceSnapshot(len(files), len(modules), len(w.components))
 	return nil
 }
 

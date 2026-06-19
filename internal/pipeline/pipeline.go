@@ -245,26 +245,31 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase < project.PhaseCollected {
 		collector.Collect(p.ctx, module)
 		module.Phase = project.PhaseCollected
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < project.PhaseBound {
 		binder.Bind(p.ctx, module)
 		module.Phase = project.PhaseBound
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < project.PhaseResolved {
 		resolver.Resolve(p.ctx, module)
 		module.Phase = project.PhaseResolved
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < project.PhaseTypechecked {
 		typechecker.Check(p.ctx, module)
 		module.Phase = project.PhaseTypechecked
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < project.PhaseUsage {
 		usage.Analyze(p.ctx, module)
 		module.Phase = project.PhaseUsage
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 
@@ -276,6 +281,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		modhir = hir_fold.ApplyConstantFolding(modhir, diag)
 		module.HIR = modhir
 		module.Phase = project.PhaseHIR
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.HIR == nil {
@@ -288,6 +294,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		}
 		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope)
 		module.Phase = project.PhaseMIR
+		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.MIR == nil {
@@ -305,5 +312,6 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	}
 	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, diag, targetTriple, p.ctx.Config.BuildDebug, p.ctx.Config.TargetOS)
 	module.Phase = project.PhaseBackend
+	p.ctx.Metrics.AddPhaseAdvance()
 	return true
 }
