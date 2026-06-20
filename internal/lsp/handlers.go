@@ -154,10 +154,18 @@ func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerC
 		canonical := project.CanonicalPath(filePath)
 		if canonical != "" {
 			if mod, ok := s.LastCtx.ModuleByFile(canonical); ok && mod != nil {
-				// Read-only requests can keep using the last compiled snapshot while
-				// the debounced diagnostics pass catches up. That keeps hover and
-				// definition responsive during full-sync typing.
-				return s.LastCtx, mod
+				// Overlays for other open files register placeholder modules in the
+				// context before they are parsed. Hover/definition/rename must not
+				// reuse those stubs even if their content hash matches the buffer.
+				if mod.AST == nil || mod.Phase < project.PhaseParsed {
+					return s.recompileLocked(filePath)
+				}
+				// Reuse the last compiled snapshot only when the current buffer text
+				// still matches it. Otherwise hover/definition/rename would keep
+				// reading a frozen AST after edits until some later path recompiles.
+				if content, err := workspaceContent(canonical, s.Cache); err == nil && mod.ContentHash == ast.HashText(content) {
+					return s.LastCtx, mod
+				}
 			}
 		}
 	}
@@ -173,7 +181,7 @@ func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Dura
 	s.diagVersion[filePath]++
 	version := s.diagVersion[filePath]
 	s.mu.Unlock()
-	
+
 	s.diagWG.Go(func() {
 		// Full-sync edits arrive as whole-file snapshots. Delay diagnostics so a
 		// burst of keystrokes collapses into one recompile instead of one per edit.
@@ -251,7 +259,7 @@ func (s *ServerState) captureModules(ctx *project.CompilerContext) {
 		s.modules = make(map[string]*project.Module)
 	}
 	for _, module := range ctx.Modules() {
-		if module == nil || module.FilePath == "" {
+		if module == nil || module.FilePath == "" || module.AST == nil || module.Phase < project.PhaseParsed {
 			continue
 		}
 		if strings.Contains(module.FilePath, "/.peeper-lsp/") {
@@ -263,6 +271,11 @@ func (s *ServerState) captureModules(ctx *project.CompilerContext) {
 				module.ImportFingerprint = current.importFingerprint
 				module.ExportFingerprint = current.exportFingerprint
 			}
+		}
+		if existing := s.modules[module.FilePath]; existing != nil &&
+			existing.Origin == project.ModuleOriginStdlib &&
+			module.Origin == project.ModuleOriginLocal {
+			continue
 		}
 		s.modules[module.FilePath] = module
 	}
@@ -612,8 +625,27 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 		Node:          cc.node,
 		Range:         hoverRange(cc.node),
 		ResolvedType:  resolved,
-		MethodSymbols: lookupHoverMethodsByKey(cc.ctx, typeinfo.TypeText(resolved)),
+		MethodSymbols: lookupHoverMethodSet(cc.ctx, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
 	}
+}
+
+func hoverMethodKeysForTypeNode(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node, resolved typeinfo.Type) []string {
+	keys := []string{typeinfo.TypeText(resolved)}
+	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
+		decl, ok := curr.(ast.TypeDecl)
+		if !ok {
+			continue
+		}
+		name := decl.DeclName()
+		if name == nil || name.Name == "" {
+			break
+		}
+		if name.Name != keys[0] {
+			keys = append(keys, name.Name)
+		}
+		break
+	}
+	return keys
 }
 
 func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr, bool) {
@@ -872,7 +904,21 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]a
 }
 
 func lookupHoverMethodsByKey(ctx *project.CompilerContext, key string) []*symbols.Symbol {
-	if ctx == nil || key == "" {
+	return lookupHoverMethodSet(ctx, []string{key})
+}
+
+func lookupHoverMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Symbol {
+	if ctx == nil || len(keys) == 0 {
+		return nil
+	}
+	keySet := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		keySet[key] = struct{}{}
+	}
+	if len(keySet) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{})
@@ -881,22 +927,24 @@ func lookupHoverMethodsByKey(ctx *project.CompilerContext, key string) []*symbol
 		if module == nil || module.Semantics == nil {
 			continue
 		}
-		for _, sym := range module.Semantics.MethodSets[key] {
-			if sym == nil {
-				continue
+		for key := range keySet {
+			for _, sym := range module.Semantics.MethodSets[key] {
+				if sym == nil {
+					continue
+				}
+				signature := sym.Name
+				if typ, ok := symbols.GetSymbolType(sym); ok && typ != nil {
+					signature += "|" + formatHoverTypeInline(typ)
+				}
+				if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
+					signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
+				}
+				if _, ok := seen[signature]; ok {
+					continue
+				}
+				seen[signature] = struct{}{}
+				methods = append(methods, sym)
 			}
-			signature := sym.Name
-			if typ, ok := symbols.GetSymbolType(sym); ok && typ != nil {
-				signature += "|" + formatHoverTypeInline(typ)
-			}
-			if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
-				signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
-			}
-			if _, ok := seen[signature]; ok {
-				continue
-			}
-			seen[signature] = struct{}{}
-			methods = append(methods, sym)
 		}
 	}
 	return methods

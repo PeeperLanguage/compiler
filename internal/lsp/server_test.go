@@ -3,6 +3,7 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	driver "compiler/internal/driver"
 	"encoding/json"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"compiler/internal/project"
 	"compiler/pkg/peeper"
 )
 
@@ -203,6 +205,37 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	}
 }
 
+func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
+	root := t.TempDir()
+	libraryBase := filepath.Join(root, "libs")
+	globalPath := filepath.Join(libraryBase, "core", peeper.SourceDirName, "global"+peeper.SourceExt)
+	writeWorkspaceProjectConfig(t, root, "app")
+	writeWorkspaceFile(t, globalPath, "const stdout: i32 = 1;\n")
+
+	ctx := driver.NewContext(project.Config{
+		RootDir:        root,
+		ProjectName:    "app",
+		Extension:      peeper.SourceExt,
+		LibraryBaseDir: libraryBase,
+	}, nil)
+	mod := driver.ParseFileWithOverlay(ctx, globalPath, "const stdout: i32 = 1;\n")
+	if mod == nil {
+		t.Fatalf("expected compiled bundled library module")
+	}
+	if mod.Origin != project.ModuleOriginStdlib {
+		t.Fatalf("origin = %q, want %q", mod.Origin, project.ModuleOriginStdlib)
+	}
+	if mod.Namespace != "core" {
+		t.Fatalf("namespace = %q, want %q", mod.Namespace, "core")
+	}
+	if mod.Key != "core:prelude/global" {
+		t.Fatalf("key = %q, want %q", mod.Key, "core:prelude/global")
+	}
+	if mod.ImportPath != "prelude/global" {
+		t.Fatalf("import path = %q, want %q", mod.ImportPath, "prelude/global")
+	}
+}
+
 func TestHoverReusesFreshCompiledSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "main"+peeper.SourceExt)
@@ -234,6 +267,89 @@ func TestHoverReusesFreshCompiledSnapshot(t *testing.T) {
 	}
 	if state.LastCtx != before {
 		t.Fatalf("hover replaced fresh compiled snapshot")
+	}
+}
+
+func TestHoverRecompilesDirtySnapshot(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "main"+peeper.SourceExt)
+	initial := "fn main() -> i32 {\n\tlet x = 42;\n\treturn x;\n}\n"
+	updated := "fn main() -> i32 {\n\tlet renamed: i32 = 42;\n\treturn __CURSOR__renamed;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = tmpDir
+	state.Cache[filePath] = initial
+
+	if _, mod := state.recompile(filePath); mod == nil {
+		t.Fatalf("expected compiled module, got nil")
+	}
+	before := state.LastCtx
+	if before == nil {
+		t.Fatalf("expected cached compiler context")
+	}
+
+	clean, pos := markerPosition(t, updated)
+	state.Cache[filePath] = clean
+	hover, err := state.HandleHover(HoverParams{
+		TextDocumentPositionParams: TextDocumentPositionParams{
+			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+			Position:     pos,
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleHover failed: %v", err)
+	}
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "renamed") {
+		t.Fatalf("expected hover for renamed binding, got %q", hover.Contents.Value)
+	}
+	if state.LastCtx == before {
+		t.Fatalf("hover should recompile when buffer content changed")
+	}
+}
+
+func TestHoverRecompilesWhenLastSnapshotOnlyHasOverlayStub(t *testing.T) {
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
+	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
+	firstSrc := "fn main() -> i32 {\n\tlet value: i32 = 1;\n\treturn __CURSOR__value;\n}\n"
+	secondSrc := "fn main() -> i32 {\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+
+	cleanFirst, pos := markerPosition(t, firstSrc)
+	state.Cache[firstPath] = cleanFirst
+	if _, mod := state.recompile(firstPath); mod == nil {
+		t.Fatalf("expected compiled module for %s", firstPath)
+	}
+
+	state.Cache[secondPath] = secondSrc
+	if _, mod := state.recompile(secondPath); mod == nil {
+		t.Fatalf("expected compiled module for %s", secondPath)
+	}
+
+	// Recompiling second file leaves first file as an overlay stub in LastCtx.
+	if mod, ok := state.LastCtx.ModuleByFile(firstPath); !ok || mod == nil || mod.AST != nil {
+		t.Fatalf("expected last snapshot to hold first file as unparsed overlay stub")
+	}
+
+	hover, err := state.HandleHover(HoverParams{
+		TextDocumentPositionParams: TextDocumentPositionParams{
+			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(firstPath))},
+			Position:     pos,
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleHover failed: %v", err)
+	}
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "value") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }
 
@@ -481,6 +597,47 @@ func TestHoverShowsTypeMethodsOnNamedType(t *testing.T) {
 	}
 }
 
+func TestHoverShowsTypeMethodsInsideNamedStructSyntax(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "__CURSOR__struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "struct{\n  x: i32\n  y: i32\n}") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "// methods\n  sum: fn(Point) -> i32") {
+		t.Fatalf("expected method list in named struct syntax hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverDoesNotLeakMethodsFromUnrelatedComponents(t *testing.T) {
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
+	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
+	firstSrc := "struct Point {\n\tx: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x;\n\t}\n}\n"
+	secondSrc := "struct Point {\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.y;\n\t}\n}\n\nfn main() -> i32 {\n\tlet p: __CURSOR__Point;\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	state.Cache[firstPath] = firstSrc
+	if _, mod := state.recompile(firstPath); mod == nil {
+		t.Fatalf("expected compiled module for %s", firstPath)
+	}
+	hover := hoverAtSource(t, state, secondPath, secondSrc)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if strings.Count(hover.Contents.Value, "sum: fn(Point) -> i32") != 1 {
+		t.Fatalf("expected exactly one method in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverShowsBinaryExpressionType(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
@@ -651,5 +808,121 @@ func TestLSPDidChangeClearsDiagnosticsForFixedComponentFile(t *testing.T) {
 	last := utilPublished[len(utilPublished)-1]
 	if len(last) != 0 {
 		t.Fatalf("expected final util publish to clear diagnostics, got %d entries", len(last))
+	}
+}
+
+func TestLSPDidChangePublishesSyntaxErrorsAfterDebounce(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	initial := "fn main() -> i32 {\n\treturn 0;\n}\n"
+	invalid := "fn main() -> i32 {\n\tlet x = ;\n\treturn 0;\n}\n"
+
+	rootURI := DocumentURI(pathToURI(root))
+	initParams, err := json.Marshal(InitializeParams{RootURI: &rootURI})
+	if err != nil {
+		t.Fatalf("marshal initialize params: %v", err)
+	}
+	openParams, err := json.Marshal(DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:  DocumentURI(pathToURI(filePath)),
+			Text: initial,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal open params: %v", err)
+	}
+	changeParams, err := json.Marshal(DidChangeTextDocumentParams{
+		TextDocument: VersionedTextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath)), Version: 2},
+		ContentChanges: []TextDocumentContentChangeEvent{
+			{Text: invalid},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal change params: %v", err)
+	}
+	initID := json.RawMessage([]byte("1"))
+
+	var input bytes.Buffer
+	for _, req := range []Request{
+		{JSONRPC: "2.0", ID: &initID, Method: "initialize", Params: initParams},
+		{JSONRPC: "2.0", Method: "textDocument/didOpen", Params: openParams},
+		{JSONRPC: "2.0", Method: "textDocument/didChange", Params: changeParams},
+	} {
+		if err := writeMessage(&input, req); err != nil {
+			t.Fatalf("write %s: %v", req.Method, err)
+		}
+	}
+
+	var output bytes.Buffer
+	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	published := collectPublishedDiagnostics(t, output.Bytes())
+	filePublished := published[pathToURI(filePath)]
+	if len(filePublished) < 2 {
+		t.Fatalf("expected diagnostics before and after invalid edit, got %d publishes", len(filePublished))
+	}
+	last := filePublished[len(filePublished)-1]
+	if len(last) == 0 {
+		t.Fatalf("expected syntax diagnostics after invalid edit")
+	}
+}
+
+func TestLSPDidChangePublishesInterfaceSeparatorErrorsAfterDebounce(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	initial := "interface SummerConsumer {\n\tconsume(Self, val: i32) -> i32,\n}\n"
+	invalid := "interface SummerConsumer {\n\tconsume(Self, val: i32) -> i32;\n}\n"
+
+	rootURI := DocumentURI(pathToURI(root))
+	initParams, err := json.Marshal(InitializeParams{RootURI: &rootURI})
+	if err != nil {
+		t.Fatalf("marshal initialize params: %v", err)
+	}
+	openParams, err := json.Marshal(DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:  DocumentURI(pathToURI(filePath)),
+			Text: initial,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal open params: %v", err)
+	}
+	changeParams, err := json.Marshal(DidChangeTextDocumentParams{
+		TextDocument: VersionedTextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath)), Version: 2},
+		ContentChanges: []TextDocumentContentChangeEvent{
+			{Text: invalid},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal change params: %v", err)
+	}
+	initID := json.RawMessage([]byte("1"))
+
+	var input bytes.Buffer
+	for _, req := range []Request{
+		{JSONRPC: "2.0", ID: &initID, Method: "initialize", Params: initParams},
+		{JSONRPC: "2.0", Method: "textDocument/didOpen", Params: openParams},
+		{JSONRPC: "2.0", Method: "textDocument/didChange", Params: changeParams},
+	} {
+		if err := writeMessage(&input, req); err != nil {
+			t.Fatalf("write %s: %v", req.Method, err)
+		}
+	}
+
+	var output bytes.Buffer
+	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	published := collectPublishedDiagnostics(t, output.Bytes())
+	filePublished := published[pathToURI(filePath)]
+	if len(filePublished) < 2 {
+		t.Fatalf("expected diagnostics before and after invalid edit, got %d publishes", len(filePublished))
+	}
+	last := filePublished[len(filePublished)-1]
+	if len(last) == 0 {
+		t.Fatalf("expected syntax diagnostics after invalid interface edit")
 	}
 }

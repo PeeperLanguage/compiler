@@ -936,6 +936,26 @@ func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 	}
 }
 
+func TestParseInterfaceMethodsUnexpectedSemicolonRecovers(t *testing.T) {
+	src := `interface I { foo(); bar() }`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for semicolon separator")
+	}
+	iface := mod.Stmts[0].(*ast.InterfaceDecl)
+	ifaceType, ok := iface.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("expected interface payload, got %T", iface.Type)
+	}
+	if len(ifaceType.Methods) != 2 {
+		t.Fatalf("methods: got %d want 2", len(ifaceType.Methods))
+	}
+	if !strings.Contains(diag.EmitAllToString(), "expected '}' after interface methods") &&
+		!strings.Contains(diag.EmitAllToString(), "add missing `,` here") {
+		t.Fatalf("expected separator recovery diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 // TestParseMissingSemicolonRecoverable verifies the new recoverSemicolon
 // helper synthesizes a semicolon when the next token is a stmt boundary.
 func TestParseMissingSemicolonRecoverable(t *testing.T) {

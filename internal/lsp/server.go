@@ -64,9 +64,7 @@ func Run(in io.Reader, out io.Writer) error {
 			}
 
 		case "initialized":
-			outMu.Lock()
-			publishWorkspaceDiagnostics(out, state)
-			outMu.Unlock()
+			publishWorkspaceDiagnostics(out, &outMu, state)
 			continue
 
 		case "textDocument/didOpen":
@@ -76,9 +74,7 @@ func Run(in io.Reader, out io.Writer) error {
 				state.mu.Lock()
 				state.Cache[path] = params.TextDocument.Text
 				state.mu.Unlock()
-				outMu.Lock()
-				publishComponentDiagnostics(out, state, path, nil)
-				outMu.Unlock()
+				publishComponentDiagnostics(out, &outMu, state, path, nil)
 			}
 			continue
 
@@ -91,9 +87,7 @@ func Run(in io.Reader, out io.Writer) error {
 				state.Cache[path] = params.ContentChanges[0].Text
 				state.mu.Unlock()
 				state.scheduleDiagnosticRefresh(path, diagnosticsDebounceDelay, func() {
-					outMu.Lock()
-					defer outMu.Unlock()
-					publishComponentDiagnostics(out, state, path, nil)
+					publishComponentDiagnostics(out, &outMu, state, path, nil)
 				})
 			}
 			continue
@@ -105,9 +99,7 @@ func Run(in io.Reader, out io.Writer) error {
 				state.mu.Lock()
 				delete(state.Cache, path)
 				state.mu.Unlock()
-				outMu.Lock()
-				publishComponentDiagnostics(out, state, path, nil)
-				outMu.Unlock()
+				publishComponentDiagnostics(out, &outMu, state, path, nil)
 			}
 			continue
 
@@ -171,7 +163,7 @@ func Run(in io.Reader, out io.Writer) error {
 	}
 }
 
-func publishWorkspaceDiagnostics(w io.Writer, state *ServerState) {
+func publishWorkspaceDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState) {
 	if state == nil || state.RootDir == "" {
 		return
 	}
@@ -189,7 +181,7 @@ func publishWorkspaceDiagnostics(w io.Writer, state *ServerState) {
 		if len(component.roots) > 0 {
 			entry = component.roots[0]
 		}
-		publishComponentDiagnostics(w, state, entry, component.files)
+		publishComponentDiagnostics(w, writeMu, state, entry, component.files)
 	}
 }
 
@@ -204,7 +196,7 @@ func componentFilesForPublish(state *ServerState, filePath string) []string {
 	return append([]string(nil), component.files...)
 }
 
-func publishComponentDiagnostics(w io.Writer, state *ServerState, entryFile string, files []string) {
+func publishComponentDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState, entryFile string, files []string) {
 	if state == nil {
 		return
 	}
@@ -212,7 +204,7 @@ func publishComponentDiagnostics(w io.Writer, state *ServerState, entryFile stri
 	if len(files) == 0 {
 		files = componentFilesForPublish(state, entryFile)
 	}
-	sendDiagnosticsForFiles(w, ctx, files)
+	sendDiagnosticsForFiles(w, writeMu, ctx, files)
 }
 
 func uriToPath(uri string) string {
@@ -234,7 +226,7 @@ func pathToURI(path string) string {
 	return "file://" + clean
 }
 
-func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []string) {
+func sendDiagnosticsForFiles(w io.Writer, writeMu *sync.Mutex, ctx *project.CompilerContext, files []string) {
 	if ctx == nil || ctx.Diagnostics == nil {
 		return
 	}
@@ -312,6 +304,9 @@ func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []
 	}
 
 	for uri, lspDiags := range grouped {
+		if writeMu != nil {
+			writeMu.Lock()
+		}
 		_ = writeMessage(w, Notification{
 			JSONRPC: "2.0",
 			Method:  "textDocument/publishDiagnostics",
@@ -320,5 +315,8 @@ func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []
 				Diagnostics: lspDiags,
 			},
 		})
+		if writeMu != nil {
+			writeMu.Unlock()
+		}
 	}
 }

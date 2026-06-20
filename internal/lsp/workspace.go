@@ -269,7 +269,6 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project
 			continue
 		}
 		if _, inComponent := component[cachedPath]; !inComponent {
-			phases[cachedPath] = cachedModule.Phase
 			continue
 		}
 		// Byte-identical files can keep whatever completed phase they already had.
@@ -402,7 +401,7 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 			}
 			if d.IsDir() {
 				name := d.Name()
-				if name == ".git" || name == "build" || strings.HasPrefix(name, ".tmp") {
+				if name == ".git" || name == "build" || name == "_builtin_library" || strings.HasPrefix(name, ".tmp") {
 					return filepath.SkipDir
 				}
 				return nil

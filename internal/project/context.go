@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -15,6 +16,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
@@ -360,6 +362,47 @@ func (ctx *CompilerContext) LibraryRoot(namespace string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(ctx.Config.LibraryBaseDir, filepath.FromSlash(namespace)), true
+}
+
+// ModuleOriginForFile classifies a source path against configured library roots.
+// Bundled library files must keep stdlib identity even when opened directly,
+// otherwise LSP can create a second local identity for the same physical file.
+func (ctx *CompilerContext) ModuleOriginForFile(filePath string) (ModuleOrigin, string) {
+	if ctx == nil {
+		return ModuleOriginLocal, ""
+	}
+	canonical := CanonicalPath(filePath)
+	if canonical == "" {
+		return ModuleOriginLocal, ""
+	}
+	namespaces := make([]string, 0, len(ctx.Config.LibraryRoots))
+	for namespace := range ctx.Config.LibraryRoots {
+		namespaces = append(namespaces, namespace)
+	}
+	slices.Sort(namespaces)
+	for _, namespace := range namespaces {
+		root, ok := ctx.LibraryRoot(namespace)
+		if !ok {
+			continue
+		}
+		if PathWithinRoot(manifest.SourceDir(root), canonical) {
+			return ModuleOriginStdlib, namespace
+		}
+	}
+	if ctx.Config.LibraryBaseDir != "" {
+		rel, err := filepath.Rel(CanonicalPath(ctx.Config.LibraryBaseDir), canonical)
+		if err == nil {
+			rel = filepath.ToSlash(rel)
+			if rel == ".." || strings.HasPrefix(rel, "../") {
+				return ModuleOriginLocal, ""
+			}
+			namespace, rest, ok := strings.Cut(rel, "/")
+			if ok && namespace != "" && strings.HasPrefix(rest, peeper.SourceDirName+"/") {
+				return ModuleOriginStdlib, namespace
+			}
+		}
+	}
+	return ModuleOriginLocal, ""
 }
 
 // Compiler-owned names available before prelude parsing.
