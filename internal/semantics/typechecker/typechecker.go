@@ -384,7 +384,11 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	valType := c.typeExpr(scope, value, declType)
 	valType = c.requireValueType(value, valType, "initializer")
 	if typeinfo.IsInvalidOrUnknown(valType) {
-		sym.BindType(&typeinfo.InvalidType{})
+		if declType != nil && !typeinfo.IsInvalidOrUnknown(declType) {
+			sym.BindType(declType)
+		} else {
+			sym.BindType(&typeinfo.InvalidType{})
+		}
 		return
 	}
 	if declType != nil && !c.assignable(declType, valType) {
@@ -397,7 +401,11 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		}
 		c.addInterfaceHint(d, declType, valType)
 		c.ctx.Diagnostics.Add(d)
-		sym.BindType(&typeinfo.InvalidType{})
+		if !typeinfo.IsInvalidOrUnknown(declType) {
+			sym.BindType(declType)
+		} else {
+			sym.BindType(&typeinfo.InvalidType{})
+		}
 		return
 	}
 	if declType != nil {
@@ -1274,9 +1282,10 @@ func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
 	return typeinfo.SameType(target, arg) || c.assignable(target, arg) || c.assignable(arg, target)
 }
 
-// qualifiedScopeType resolves the type of a `module::symbol` expression.
-// Resolver already emitted symbol-not-found diagnostics for this node;
-// checker returns InvalidType silently on lookup failure to avoid duplicates.
+// qualifiedScopeType resolves the semantic type of a `module::symbol`
+// expression. Imported values such as functions must keep their bound type so
+// call analysis can derive argument and return types from the same canonical
+// symbol state used elsewhere in the pipeline.
 func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 	if c == nil || node == nil {
 		return &typeinfo.InvalidType{}
@@ -1284,9 +1293,6 @@ func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 	resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name)
 	if !ok || resolved.Symbol == nil {
 		return &typeinfo.InvalidType{}
-	}
-	if resolved.Symbol.Kind != symbols.SymbolType {
-		return &typeinfo.UnknownType{}
 	}
 	t, ok := symbols.GetSymbolType(resolved.Symbol)
 	if !ok || t == nil {

@@ -164,6 +164,40 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	}
 }
 
+func TestHoverShowsExplicitTypeForImportedCallBinding(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, "fn GetValue() -> i32 { return 69; }\n")
+	writeWorkspaceFile(t, mainPath, "import \"app/external\";\nfn main() -> i32 {\n\tlet myval: i32 = external::GetValue();\n\treturn myval;\n}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(mainPath); mod == nil {
+		t.Fatalf("expected compiled module, got nil")
+	}
+
+	hover, err := state.HandleHover(HoverParams{
+		TextDocumentPositionParams: TextDocumentPositionParams{
+			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(mainPath))},
+			Position:     Position{Line: 2, Character: 6},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleHover failed: %v", err)
+	}
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "myval") || !strings.Contains(hover.Contents.Value, "i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "<invalid>") {
+		t.Fatalf("hover should keep explicit type, got %q", hover.Contents.Value)
+	}
+}
+
 func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
