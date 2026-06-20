@@ -1,4 +1,4 @@
-import "external";
+import "usage_warnings/external";
 
 struct unused_private_type {
     value: i32,

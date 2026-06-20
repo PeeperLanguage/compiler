@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"compiler/pkg/peeper"
 )
 
 type benchFixture struct {
@@ -102,14 +104,14 @@ func createBenchFixture(tb testing.TB, size string) benchFixture {
 		tb.Fatalf("unknown fixture size %q", size)
 	}
 
-	writeBenchWorkspaceFile(tb, filepath.Join(root, "extra.peep"), "fn Extra() -> i32 { return 9; }\n")
-	unrelated := filepath.Join(root, "other.peep")
+	writeBenchWorkspaceFile(tb, filepath.Join(root, "extra"+peeper.SourceExt), "fn Extra() -> i32 { return 9; }\n")
+	unrelated := filepath.Join(root, "other"+peeper.SourceExt)
 	writeBenchWorkspaceFile(tb, unrelated, "fn main() -> i32 { return 1; }\n")
 
-	leaf := filepath.Join(root, fmt.Sprintf("chain_%02d.peep", depth-1))
+	leaf := filepath.Join(root, fmt.Sprintf("chain_%02d%s", depth-1, peeper.SourceExt))
 	writeBenchWorkspaceFile(tb, leaf, "fn LeafValue() -> i32 { return 1; }\n")
 	for i := depth - 2; i >= 0; i-- {
-		path := filepath.Join(root, fmt.Sprintf("chain_%02d.peep", i))
+		path := filepath.Join(root, fmt.Sprintf("chain_%02d%s", i, peeper.SourceExt))
 		nextImport := fmt.Sprintf("chain_%02d", i+1)
 		nextCall := "LeafValue"
 		if i+1 < depth-1 {
@@ -118,7 +120,7 @@ func createBenchFixture(tb testing.TB, size string) benchFixture {
 		writeBenchWorkspaceFile(tb, path, fmt.Sprintf("import %q;\nfn Chain%02d() -> i32 { return %s::%s(); }\n", nextImport, i, nextImport, nextCall))
 	}
 
-	entry := filepath.Join(root, "main.peep")
+	entry := filepath.Join(root, "main"+peeper.SourceExt)
 	entryImport := "import \"chain_00\";\n"
 	entryBody := "fn main() -> i32 {\n\treturn chain_00::Chain00();\n}\n"
 	writeBenchWorkspaceFile(tb, entry, entryImport+entryBody)

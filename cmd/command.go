@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"compiler/internal/backend"
-	compiler "compiler/internal/driver"
 	"compiler/internal/project"
 	"compiler/internal/target"
 	"compiler/pkg/colors"
 	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 var errAlreadyReported = errors.New("diagnostics already reported")
@@ -295,8 +295,8 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 	if err != nil {
 		return "", buildTarget{}, err
 	}
-	if ext := filepath.Ext(resolvedPath); ext != "" && !strings.EqualFold(ext, compiler.SOURCE_EXT) {
-		return "", buildTarget{}, fmt.Errorf("unsupported source file extension %q (expected %s)", ext, compiler.SOURCE_EXT)
+	if ext := filepath.Ext(resolvedPath); ext != "" && !strings.EqualFold(ext, peeper.SourceExt) {
+		return "", buildTarget{}, fmt.Errorf("unsupported source file extension %q (expected %s)", ext, peeper.SourceExt)
 	}
 	fileInfo, err := os.Stat(resolvedPath)
 	if err != nil {
@@ -309,6 +309,9 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 		}
 		return targetInfo.EntryPath, targetInfo, nil
 	}
+	if loadedProject, err := manifest.LoadProject(resolvedPath); err == nil && !manifest.PathWithinSourceDir(loadedProject.RootDir, resolvedPath) {
+		return "", buildTarget{}, fmt.Errorf("project source files must stay under %s", manifest.SourceDir(loadedProject.RootDir))
+	}
 	return resolvedPath, buildTarget{
 		EntryPath:         resolvedPath,
 		DefaultOutputPath: defaultOutputNameForEntry(resolvedPath, targetOS),
@@ -316,36 +319,14 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 }
 
 func resolveManifestBuildTarget(commandName, startPath string, targetOS string) (buildTarget, error) {
-	manifestPath, err := manifest.FindManifestPath(startPath)
+	loadedProject, err := manifest.LoadProject(startPath)
 	if err != nil {
-		return buildTarget{}, fmt.Errorf("%s requires an input file or %s with package.entry", commandName, manifest.FileName)
+		return buildTarget{}, fmt.Errorf("%s requires an input file or %s", commandName, manifest.FileName)
 	}
-	file, err := manifest.Load(manifestPath)
-	if err != nil {
-		return buildTarget{}, err
+	if loadedProject.File.Package.Build != manifest.BuildProgram {
+		return buildTarget{}, fmt.Errorf("%s: `peeper %s` requires build = %q", loadedProject.ManifestPath, commandName, manifest.BuildProgram)
 	}
-	entry := strings.TrimSpace(file.Package.Entry)
-	if entry == "" {
-		return buildTarget{}, fmt.Errorf("%s: package.entry is required for `peeper %s` without an explicit file", manifestPath, commandName)
-	}
-
-	entry = strings.ReplaceAll(entry, "\\", "/")
-	if filepath.Ext(entry) == "" {
-		entry += compiler.SOURCE_EXT
-	}
-	if !strings.EqualFold(filepath.Ext(entry), compiler.SOURCE_EXT) {
-		return buildTarget{}, fmt.Errorf("%s: package.entry must point to a %s file", manifestPath, compiler.SOURCE_EXT)
-	}
-
-	manifestDir := filepath.Dir(manifestPath)
-	entryPath := filepath.Clean(filepath.Join(manifestDir, filepath.FromSlash(entry)))
-	rel, relErr := filepath.Rel(manifestDir, entryPath)
-	if relErr != nil {
-		return buildTarget{}, relErr
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return buildTarget{}, fmt.Errorf("%s: package.entry must stay inside the package root", manifestPath)
-	}
+	entryPath := manifest.ProgramEntryPath(loadedProject.RootDir)
 
 	entryInfo, statErr := os.Stat(entryPath)
 	if statErr != nil {
@@ -354,7 +335,7 @@ func resolveManifestBuildTarget(commandName, startPath string, targetOS string) 
 	if entryInfo.IsDir() {
 		return buildTarget{}, fmt.Errorf("entry path is a directory: %s", entryPath)
 	}
-	outputPath := strings.TrimSpace(file.Package.Name)
+	outputPath := strings.TrimSpace(loadedProject.File.Package.Name)
 	if outputPath == "" {
 		outputPath = defaultOutputNameForEntry(entryPath, targetOS)
 	} else if ext := target.ExecutableExt(targetOS); ext != "" && !strings.HasSuffix(strings.ToLower(outputPath), ext) {

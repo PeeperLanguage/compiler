@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/source"
 	"compiler/pkg/colors"
+	"compiler/pkg/peeper"
 )
 
 func testLoc(file string, line, col int) *source.Location {
@@ -17,7 +18,7 @@ func testLoc(file string, line, col int) *source.Location {
 
 func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 	d := NewError("boom")
-	loc := testLoc("a.peep", 1, 1)
+	loc := testLoc("a"+peeper.SourceExt, 1, 1)
 
 	d.WithSecondaryLabel(loc, "context")
 	if d.Severity != Error {
@@ -42,7 +43,7 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 
 func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 	d := NewError("immutable")
-	loc := testLoc("main.peep", 2, 5)
+	loc := testLoc("main"+peeper.SourceExt, 2, 5)
 	d.WithCodeReplacement(loc, "maybe", "mut maybe")
 
 	if len(d.Extras) != 1 {
@@ -65,11 +66,12 @@ func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 
 func TestWithPrimaryLabelSetsFilePath(t *testing.T) {
 	d := NewError("x")
-	loc := testLoc("sample.peep", 3, 2)
+	samplePath := "sample" + peeper.SourceExt
+	loc := testLoc(samplePath, 3, 2)
 	d.WithPrimaryLabel(loc, "here")
 
-	if d.FilePath != "sample.peep" {
-		t.Fatalf("expected filepath sample.peep, got %q", d.FilePath)
+	if d.FilePath != samplePath {
+		t.Fatalf("expected filepath %s, got %q", samplePath, d.FilePath)
 	}
 	if len(d.Labels) != 1 || d.Labels[0].Style != Primary {
 		t.Fatalf("expected one primary label, got %#v", d.Labels)
@@ -83,7 +85,8 @@ func TestEmitterAlignsHeaderAndHelpWithGutter(t *testing.T) {
 
 	var out bytes.Buffer
 	emitter := NewEmitter(&out)
-	emitter.cache.AddSource("sample.peep", strings.Join([]string{
+	samplePath := "sample" + peeper.SourceExt
+	emitter.cache.AddSource(samplePath, strings.Join([]string{
 		"line 1",
 		"line 2",
 		"line 3",
@@ -98,7 +101,7 @@ func TestEmitterAlignsHeaderAndHelpWithGutter(t *testing.T) {
 		"let value = 1;",
 	}, "\n"))
 
-	loc := source.NewLocation("sample.peep", source.Position{Line: 12, Column: 1}, source.Position{Line: 12, Column: 4})
+	loc := source.NewLocation(samplePath, source.Position{Line: 12, Column: 1}, source.Position{Line: 12, Column: 4})
 	diag := NewError("bad").
 		WithCode("P0005").
 		WithPrimaryLabel(loc, "bad").
@@ -107,7 +110,7 @@ func TestEmitterAlignsHeaderAndHelpWithGutter(t *testing.T) {
 	emitter.Emit(diag)
 	text := out.String()
 
-	if !strings.Contains(text, "\n   --> sample.peep:12:1\n") {
+	if !strings.Contains(text, "\n   --> "+samplePath+":12:1\n") {
 		t.Fatalf("expected aligned location header, got:\n%s", text)
 	}
 	if !strings.Contains(text, "\n   | \n11 | line 11\n12 | let value = 1;\n") {
@@ -125,9 +128,10 @@ func TestEmitterSuggestionHeaderUsesBlankGutter(t *testing.T) {
 
 	var out bytes.Buffer
 	emitter := NewEmitter(&out)
-	emitter.cache.AddSource("sample.peep", "value\n")
+	samplePath := "sample" + peeper.SourceExt
+	emitter.cache.AddSource(samplePath, "value\n")
 
-	loc := source.NewLocation("sample.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 6})
+	loc := source.NewLocation(samplePath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 6})
 	diag := NewError("replace").
 		WithCode("P9999").
 		WithPrimaryLabel(loc, "replace").

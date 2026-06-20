@@ -8,6 +8,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/source"
+	"compiler/pkg/peeper"
 )
 
 type llvmDebugEmitter struct {
@@ -33,7 +34,7 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 		filePath = mod.FilePath
 	}
 	if strings.TrimSpace(filePath) == "" {
-		filePath = "unknown.peep"
+		filePath = "unknown" + peeper.SourceExt
 	}
 	fileName := filepath.Base(filePath)
 	dir := filepath.Dir(filePath)

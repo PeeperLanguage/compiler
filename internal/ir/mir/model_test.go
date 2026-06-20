@@ -6,6 +6,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/source"
+	"compiler/pkg/peeper"
 )
 
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
@@ -80,6 +81,7 @@ func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 }
 
 func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
+	testPath := "test" + peeper.SourceExt
 	mod := &hir.Module{
 		Name: "test",
 		Funcs: []*hir.Function{
@@ -93,16 +95,16 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 								Op: "*",
 								Left: &ir.Binary{
 									Op:       "+",
-									Left:     &ir.IntLit{Value: "1", Type: "i32", Location: source.NewLocation("test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
-									Right:    &ir.IntLit{Value: "2", Type: "i32", Location: source.NewLocation("test.peep", source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
+									Left:     &ir.IntLit{Value: "1", Type: "i32", Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
+									Right:    &ir.IntLit{Value: "2", Type: "i32", Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
 									Type:     "i32",
-									Location: source.NewLocation("test.peep", source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
+									Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
 								},
-								Right:    &ir.IntLit{Value: "3", Type: "i32", Location: source.NewLocation("test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
+								Right:    &ir.IntLit{Value: "3", Type: "i32", Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
 								Type:     "i32",
-								Location: source.NewLocation("test.peep", source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
+								Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
 							},
-							Location: source.NewLocation("test.peep", source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
+							Location: source.NewLocation(testPath, source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
 						},
 					},
 				},

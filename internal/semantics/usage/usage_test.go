@@ -13,14 +13,15 @@ import (
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
+	"compiler/pkg/peeper"
 )
 
 func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const filePath = "usage_test.peep"
+	const filePath = "usage_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", peeper.SourceExt, diag)
 
 	if setupImports {
 		// Mock an external dependency module named "external"
@@ -28,11 +29,11 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 	value: i32,
 }
 fn GetValue() -> i32 { return 42; }`
-		extAST := parser.New("external.peep", lexer.New("external.peep", extSrc, diag).Tokenize(), diag).ParseModule()
+		extAST := parser.New("external"+peeper.SourceExt, lexer.New("external"+peeper.SourceExt, extSrc, diag).Tokenize(), diag).ParseModule()
 		extMod := &project.Module{
-			Key:        "local:external.peep",
+			Key:        "local:external" + peeper.SourceExt,
 			ImportPath: "external",
-			FilePath:   "external.peep",
+			FilePath:   "external" + peeper.SourceExt,
 			Content:    extSrc,
 			AST:        extAST,
 			Imports:    make(map[string]project.ResolvedImport),
@@ -56,9 +57,9 @@ fn GetValue() -> i32 { return 42; }`
 
 	if setupImports {
 		module.Imports["external"] = project.ResolvedImport{
-			Key:        "local:external.peep",
+			Key:        "local:external" + peeper.SourceExt,
 			ImportPath: "external",
-			FilePath:   "external.peep",
+			FilePath:   "external" + peeper.SourceExt,
 			Origin:     project.ModuleOriginLocal,
 		}
 	}
@@ -215,7 +216,7 @@ fn main() -> i32 {
 }
 
 func TestUsageWarningsFixture(t *testing.T) {
-	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings_0.peep")
+	srcPath := filepath.Join("..", "..", "..", "x_test", "usage_warnings", peeper.SourceDirName, peeper.MainFileName)
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

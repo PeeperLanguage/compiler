@@ -40,7 +40,6 @@ impl Counter {
     }
 }
 
-
 fn main() {
     let p: Point = .{ x = 10, y = 20 };
     if total(p) == 30 {
@@ -52,7 +51,7 @@ fn main() {
             let s: cstr = "float ok\n";
             write(stdout, s, 9);
         }
-    
+
         let s: cstr = i.to_str();
         write(stdout, s, 11);
 
@@ -71,12 +70,8 @@ fn main() {
             let msg: cstr = "value updated to 100\n";
             write(stdout, msg, 21);
         }
-        
     }
-
-    //let p = 10;
 
     let bad: cstr = "interface bad\n";
     write(stdout, bad, 14);
-
 }

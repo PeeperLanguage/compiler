@@ -9,10 +9,11 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/source"
+	"compiler/pkg/peeper"
 )
 
 func parseTestModule(src string) (*ast.Module, *diagnostics.DiagnosticBag) {
-	const filePath = "test.peep"
+	const filePath = "test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	return New(filePath, stream, diag).ParseModule(), diag
@@ -372,7 +373,7 @@ fn main() {
 		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
 	}
 	out := diag.EmitAllToString()
-	if strings.Contains(out, "test.peep:5:1") && strings.Contains(out, "expected '{'") {
+	if strings.Contains(out, "test"+peeper.SourceExt+":5:1") && strings.Contains(out, "expected '{'") {
 		t.Fatalf("unexpected extra missing-block diagnostic on second function:\n%s", out)
 	}
 }
@@ -1399,7 +1400,7 @@ func TestParseBadExprInGrouping(t *testing.T) {
 }
 
 func TestEmitterNewFormatNoSeverityPrefix(t *testing.T) {
-	loc := source.NewLocation("test.peep",
+	loc := source.NewLocation("test"+peeper.SourceExt,
 		source.Position{Line: 1, Column: 1},
 		source.Position{Line: 1, Column: 5})
 	diag := diagnostics.NewError("test error").
@@ -1417,7 +1418,7 @@ func TestEmitterNewFormatNoSeverityPrefix(t *testing.T) {
 		t.Fatalf("expected [E9999] in output:\n%s", out)
 	}
 	// Should contain location marker
-	if !strings.Contains(out, "test.peep:1:1") {
+	if !strings.Contains(out, "test"+peeper.SourceExt+":1:1") {
 		t.Fatalf("expected location in output:\n%s", out)
 	}
 }

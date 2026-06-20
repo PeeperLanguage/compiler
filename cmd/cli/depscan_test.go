@@ -46,11 +46,11 @@ func TestListOrphanCandidatesIncludesLockAndStaleCache(t *testing.T) {
 	})
 	lock.SetDirectDependency("used", "github.com/acme/used@v1.0.0")
 
-	mustWriteGetTest(t, filepath.Join(cachePath, "github.com", "acme", "unused@v1.0.0", manifest.FileName), `[package]
-name = "unused"
+	mustWriteGetTest(t, filepath.Join(cachePath, "github.com", "acme", "unused@v1.0.0", manifest.FileName), `name = "unused"
+build = "lib"
 `)
-	mustWriteGetTest(t, filepath.Join(cachePath, "github.com", "acme", "stale@v9.9.9", manifest.FileName), `[package]
-name = "stale"
+	mustWriteGetTest(t, filepath.Join(cachePath, "github.com", "acme", "stale@v9.9.9", manifest.FileName), `name = "stale"
+build = "lib"
 `)
 
 	candidates, err := listOrphanCandidates(cachePath, lock)

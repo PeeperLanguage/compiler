@@ -15,8 +15,8 @@ func TestInstallAllDependenciesRestoresMissingLockedCache(t *testing.T) {
 	versionedModule := filepath.Join(cachePath, "github.com", "itsfuad", "peeper_test_lib@v0.0.1")
 	staleModule := filepath.Join(cachePath, "github.com", "itsfuad", "peeper_test_lib@latest")
 
-	mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `[package]
-name = "app"
+	mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `name = "app"
+build = "program"
 
 [dependencies]
 peeper_test_lib = "github.com/itsfuad/peeper_test_lib"
@@ -38,11 +38,11 @@ mock_path = "./mock"
     }
   }
 }`)
-	mustWriteGetTest(t, filepath.Join(mockRoot, "itsfuad", "peeper_test_lib-v0.0.1", manifest.FileName), `[package]
-name = "peeper_test_lib"
+	mustWriteGetTest(t, filepath.Join(mockRoot, "itsfuad", "peeper_test_lib-v0.0.1", manifest.FileName), `name = "peeper_test_lib"
+build = "lib"
 `)
-	mustWriteGetTest(t, filepath.Join(staleModule, manifest.FileName), `[package]
-name = "stale"
+	mustWriteGetTest(t, filepath.Join(staleModule, manifest.FileName), `name = "stale"
+build = "lib"
 `)
 
 	wd, err := os.Getwd()

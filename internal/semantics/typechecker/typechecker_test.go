@@ -11,14 +11,17 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
+	"compiler/pkg/peeper"
 )
 
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	t.Helper()
-	const filePath = "typechecker_test.peep"
+	const filePath = "typechecker_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
@@ -34,6 +37,57 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
 	return diag
+}
+
+func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+	t.Helper()
+	const (
+		filePath     = "typechecker_test" + peeper.SourceExt
+		externalPath = "external" + peeper.SourceExt
+		externalSrc  = `fn GetValue() -> i32 { return 42; }`
+	)
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	diag.AddSourceContent(externalPath, externalSrc)
+	ctx := project.New(".", peeper.SourceExt, diag)
+
+	extAST := parser.New(externalPath, lexer.New(externalPath, externalSrc, diag).Tokenize(), diag).ParseModule()
+	extModule := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, externalPath),
+		ImportPath: "external",
+		FilePath:   externalPath,
+		Content:    externalSrc,
+		AST:        extAST,
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+	ctx.AddModule(extModule)
+	collector.Collect(ctx, extModule)
+	binder.Bind(ctx, extModule)
+	resolver.Resolve(ctx, extModule)
+	Check(ctx, extModule)
+
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: "typechecker_test",
+		FilePath:   filePath,
+		Content:    src,
+		AST:        modAST,
+		Imports: map[string]project.ResolvedImport{
+			"external": {
+				Key:        extModule.Key,
+				ImportPath: "external",
+				FilePath:   externalPath,
+				Origin:     project.ModuleOriginLocal,
+			},
+		},
+	}
+	ctx.AddModule(module)
+	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
+	resolver.Resolve(ctx, module)
+	Check(ctx, module)
+	return module, diag
 }
 
 func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
@@ -128,6 +182,64 @@ fn later() -> i32 {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestImportedFunctionCallKeepsExplicitBindingType(t *testing.T) {
+	src := `import "external";
+
+fn main() -> i32 {
+	let myval: i32 = external::GetValue();
+	return myval;
+}`
+	module, diag := checkTypeSourceWithExternalImport(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.Lookup("main")
+	if !ok || sym == nil || sym.Scope == nil {
+		t.Fatalf("expected main function scope")
+	}
+	funcScope := sym.Scope.(*table.Scope)
+	myval, ok := funcScope.LookupLocal("myval")
+	if !ok || myval == nil {
+		t.Fatalf("expected myval local symbol")
+	}
+	got, ok := symbols.GetSymbolType(myval)
+	if !ok || got == nil {
+		t.Fatalf("expected myval type")
+	}
+	if got.Text() != "i32" {
+		t.Fatalf("myval type = %q, want i32", got.Text())
+	}
+}
+
+func TestExplicitBindingTypeSurvivesImportedInitializerMismatch(t *testing.T) {
+	src := `import "external";
+
+fn main() -> i32 {
+	let myval: bool = external::GetValue();
+	return 0;
+}`
+	module, diag := checkTypeSourceWithExternalImport(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected type mismatch diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.Lookup("main")
+	if !ok || sym == nil || sym.Scope == nil {
+		t.Fatalf("expected main function scope")
+	}
+	funcScope := sym.Scope.(*table.Scope)
+	myval, ok := funcScope.LookupLocal("myval")
+	if !ok || myval == nil {
+		t.Fatalf("expected myval local symbol")
+	}
+	got, ok := symbols.GetSymbolType(myval)
+	if !ok || got == nil {
+		t.Fatalf("expected myval type")
+	}
+	if got.Text() != "bool" {
+		t.Fatalf("myval type = %q, want bool", got.Text())
 	}
 }
 

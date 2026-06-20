@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"compiler/pkg/peeper"
 )
 
 type fakeCache struct {
@@ -31,7 +33,7 @@ func TestPositionAdvance(t *testing.T) {
 
 func TestLocationGetTextAndRange(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.peep")
+	path := filepath.Join(dir, "main"+peeper.SourceExt)
 	content := "hello world\nsecond line\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)

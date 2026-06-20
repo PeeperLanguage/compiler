@@ -9,6 +9,7 @@ import (
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
+	"compiler/pkg/manifest"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -32,13 +33,28 @@ func NewServerState() *ServerState {
 
 func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *project.Module) {
 	diagBag := diagnostics.NewDiagnosticBag()
+	rootDir := filepath.Dir(entryFile)
+	projectName := ""
+	if loadedProject, err := manifest.LoadProject(entryFile); err == nil {
+		rootDir = loadedProject.RootDir
+		projectName = loadedProject.File.Package.Name
+	}
 	cfg := project.Config{
-		RootDir: s.RootDir,
+		RootDir:     rootDir,
+		ProjectName: projectName,
 	}
 	ctx := driver.NewContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
+	if projectName != "" && !manifest.PathWithinSourceDir(rootDir, entryFile) {
+		ctx.Diagnostics.Add(diagnostics.NewError(
+			fmt.Sprintf("project source files must stay under %s", manifest.SourceDir(rootDir)),
+		))
+		s.LastCtx = ctx
+		s.LastMetrics = ctx.Metrics.Snapshot()
+		return ctx, nil
+	}
 
-	rootDir := project.CanonicalPath(s.RootDir)
+	rootDir = project.CanonicalPath(s.RootDir)
 	if rootDir != "" {
 		s.workspace = newWorkspaceIndex(rootDir)
 		if err := s.workspace.rebuild(s.Cache); err == nil {

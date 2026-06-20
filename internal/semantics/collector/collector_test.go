@@ -7,10 +7,11 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
+	"compiler/pkg/peeper"
 )
 
 func TestImportSymbolsKeepSourceLocation(t *testing.T) {
-	const filePath = "collector_import_test.peep"
+	const filePath = "collector_import_test" + peeper.SourceExt
 	src := `import "external";
 
 fn main() -> i32 {
@@ -19,7 +20,7 @@ fn main() -> i32 {
 
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
-	ctx := project.New(".", ".peep", diag)
+	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	if len(modAST.Imports) != 1 || modAST.Imports[0] == nil {
 		t.Fatalf("expected one parsed import decl")
@@ -33,9 +34,9 @@ fn main() -> i32 {
 		AST:        modAST,
 		Imports: map[string]project.ResolvedImport{
 			"external": {
-				Key:        "local:external.peep",
+				Key:        "local:external" + peeper.SourceExt,
 				ImportPath: "external",
-				FilePath:   "external.peep",
+				FilePath:   "external" + peeper.SourceExt,
 				Origin:     project.ModuleOriginLocal,
 				Decl:       modAST.Imports[0],
 			},

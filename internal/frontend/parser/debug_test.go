@@ -3,6 +3,7 @@ package parser
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
+	"compiler/pkg/peeper"
 	"testing"
 )
 
@@ -12,7 +13,7 @@ fn main() -> i32 {
 	return 0;
 }`
 	diag := diagnostics.NewDiagnosticBag()
-	stream := lexer.New("test.peep", src, diag).Tokenize()
+	stream := lexer.New("test"+peeper.SourceExt, src, diag).Tokenize()
 	for _, tok := range stream {
 		t.Logf("Token: %v", tok.Kind)
 	}

@@ -2,12 +2,13 @@ package lsp
 
 import (
 	"compiler/internal/diagnostics"
-	driver "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
 	"compiler/internal/project"
+	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,6 +21,8 @@ import (
 type workspaceModule struct {
 	filePath          string
 	importPath        string
+	projectName       string
+	rootDir           string
 	contentHash       string
 	importFingerprint string
 	exportFingerprint string
@@ -46,7 +49,6 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		return nil
 	}
 
-	ctx := project.New(w.rootDir, driver.SOURCE_EXT, diagnostics.NewDiagnosticBag())
 	files, err := workspaceFiles(w.rootDir, cache)
 	if err != nil {
 		return err
@@ -57,14 +59,27 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 	g := graph.New()
 	for _, filePath := range files {
 		fileSet[filePath] = struct{}{}
+		module := &workspaceModule{
+			filePath: filePath,
+			rootDir:  filepath.Dir(filePath),
+		}
+		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
+			if !manifest.PathWithinSourceDir(loadedProject.RootDir, filePath) {
+				continue
+			}
+			module.rootDir = loadedProject.RootDir
+			module.projectName = loadedProject.File.Package.Name
+		}
+		ctx := project.NewWithConfig(project.Config{
+			RootDir:     module.rootDir,
+			ProjectName: module.projectName,
+			Extension:   peeper.SourceExt,
+		}, diagnostics.NewDiagnosticBag())
 		importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath)
-		if err != nil {
-			continue
+		if err == nil {
+			module.importPath = importPath
 		}
-		modules[filePath] = &workspaceModule{
-			filePath:   filePath,
-			importPath: importPath,
-		}
+		modules[filePath] = module
 		g.AddNode(graph.NodeID(filePath), graph.Node{Kind: graph.NodeModule})
 	}
 
@@ -78,6 +93,11 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		parsed := parser.New(module.filePath, lexer.New(module.filePath, content, diag).Tokenize(), diag).ParseModule()
 		module.exportFingerprint = parsed.ExportFingerprint
 		module.importFingerprint = parsed.ImportFingerprint
+		ctx := project.NewWithConfig(project.Config{
+			RootDir:     module.rootDir,
+			ProjectName: module.projectName,
+			Extension:   peeper.SourceExt,
+		}, diagnostics.NewDiagnosticBag())
 		from := &project.Module{
 			FilePath:   module.filePath,
 			ImportPath: module.importPath,
@@ -108,7 +128,6 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 	w.modules = modules
 	w.components = buildWorkspaceComponents(modules, g)
 	w.imports = g
-	ctx.Metrics.AddWorkspaceSnapshot(len(files), len(modules), len(w.components))
 	return nil
 }
 
@@ -136,7 +155,7 @@ func (w *workspaceIndex) syntheticEntry(filePath string) (string, string, bool) 
 	}
 	builder.WriteString("fn WorkspaceEntry() {}\n")
 
-	virtualPath := filepath.Join(w.rootDir, ".peeper-lsp", "__workspace__.peep")
+	virtualPath := filepath.Join(w.rootDir, ".peeper-lsp", "__workspace__"+peeper.SourceExt)
 	return virtualPath, builder.String(), true
 }
 
@@ -388,7 +407,7 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 				}
 				return nil
 			}
-			if filepath.Ext(path) != driver.SOURCE_EXT {
+			if filepath.Ext(path) != peeper.SourceExt {
 				return nil
 			}
 			fileSet[project.CanonicalPath(path)] = struct{}{}
@@ -399,7 +418,7 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 		}
 	}
 	for path := range cache {
-		if filepath.Ext(path) != driver.SOURCE_EXT {
+		if filepath.Ext(path) != peeper.SourceExt {
 			continue
 		}
 		canonical := project.CanonicalPath(path)

@@ -4,12 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"compiler/pkg/manifest"
+	"compiler/pkg/peeper"
 )
 
 func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")
-	libraryFile := filepath.Join(libraryBase, "vendor", "json.peep")
+	libraryFile := filepath.Join(libraryBase, "vendor", peeper.SourceDirName, "json"+peeper.SourceExt)
 	if err := os.MkdirAll(filepath.Dir(libraryFile), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -19,7 +22,7 @@ func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 
 	ctx := NewWithConfig(Config{
 		RootDir:        root,
-		Extension:      ".peep",
+		Extension:      peeper.SourceExt,
 		LibraryBaseDir: libraryBase,
 	}, nil)
 
@@ -35,5 +38,49 @@ func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	}
 	if resolved.ImportPath != "json" {
 		t.Fatalf("resolved import path = %q, want %q", resolved.ImportPath, "json")
+	}
+}
+
+func TestResolveImportPathRequiresProjectConfigForLocalImports(t *testing.T) {
+	root := t.TempDir()
+	ctx := NewWithConfig(Config{
+		RootDir:   root,
+		Extension: peeper.SourceExt,
+	}, nil)
+
+	_, err := ctx.ResolveImportPath(nil, "app/util")
+	if err == nil {
+		t.Fatal("expected local import error without project config")
+	}
+	if got := err.Error(); got != "local imports require "+manifest.FileName+"; run `peeper init` to create project config" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestResolveImportPathStripsProjectPrefix(t *testing.T) {
+	root := t.TempDir()
+	utilPath := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(utilPath), 0o755); err != nil {
+		t.Fatalf("mkdir util dir: %v", err)
+	}
+	if err := os.WriteFile(utilPath, []byte("fn Helper() -> i32 { return 0; }"), 0o644); err != nil {
+		t.Fatalf("write util: %v", err)
+	}
+
+	ctx := NewWithConfig(Config{
+		RootDir:     root,
+		ProjectName: "app",
+		Extension:   peeper.SourceExt,
+	}, nil)
+
+	resolved, err := ctx.ResolveImportPath(nil, "app/util")
+	if err != nil {
+		t.Fatalf("ResolveImportPath() error = %v", err)
+	}
+	if resolved.FilePath != utilPath {
+		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, utilPath)
+	}
+	if resolved.ImportPath != "app/util" {
+		t.Fatalf("resolved import path = %q, want %q", resolved.ImportPath, "app/util")
 	}
 }

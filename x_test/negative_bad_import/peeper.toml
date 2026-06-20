@@ -1,0 +1,2 @@
+name = "negative_bad_import"
+build = "lib"

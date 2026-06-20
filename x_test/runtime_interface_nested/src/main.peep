@@ -1,5 +1,5 @@
 interface Summer {
-    sum(Self): i32,
+    sum(Self) -> i32,
 }
 
 struct Point {
@@ -18,7 +18,7 @@ struct SummerHolder {
 }
 
 interface SummerConsumer {
-    consume(Self, val: Summer): i32,
+    consume(Self, val: Summer) -> i32,
 }
 
 struct ConsumerImpl {}

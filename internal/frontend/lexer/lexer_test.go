@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/token"
+	"compiler/pkg/peeper"
 )
 
 func TestLexSubsetProgram(t *testing.T) {
@@ -16,7 +17,7 @@ let mut y: i32 = x;
 	return z;
 }`
 	diag := diagnostics.NewDiagnosticBag()
-	stream := New("test.peep", src, diag).Tokenize()
+	stream := New("test"+peeper.SourceExt, src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -52,7 +53,7 @@ fn main() -> i32 {
 	return 1;
 }`
 	diag := diagnostics.NewDiagnosticBag()
-	stream := New("test.peep", src, diag).Tokenize()
+	stream := New("test"+peeper.SourceExt, src, diag).Tokenize()
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}

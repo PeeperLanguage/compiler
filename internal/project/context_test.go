@@ -3,6 +3,8 @@ package project
 import (
 	"path/filepath"
 	"testing"
+
+	"compiler/pkg/peeper"
 )
 
 func TestPackagedLibraryBaseForExecutableUsesSiblingLibsDir(t *testing.T) {
@@ -17,7 +19,7 @@ func TestPackagedLibraryBaseForExecutableUsesSiblingLibsDir(t *testing.T) {
 func TestLibraryRootUsesNamespaceSubdirectory(t *testing.T) {
 	ctx := NewWithConfig(Config{
 		RootDir:        t.TempDir(),
-		Extension:      ".peep",
+		Extension:      peeper.SourceExt,
 		LibraryBaseDir: filepath.Join("/tmp", "peeper", "build", "libs"),
 	}, nil)
 
