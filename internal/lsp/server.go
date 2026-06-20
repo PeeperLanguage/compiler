@@ -9,18 +9,23 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 const LSP_VERSION = "0.0.1"
+const diagnosticsDebounceDelay = 150 * time.Millisecond
 
 func Run(in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	state := NewServerState()
+	var outMu sync.Mutex
 
 	for {
 		bytes, err := readMessage(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				state.waitForScheduledDiagnostics()
 				return nil
 			}
 			return err
@@ -59,15 +64,21 @@ func Run(in io.Reader, out io.Writer) error {
 			}
 
 		case "initialized":
+			outMu.Lock()
 			publishWorkspaceDiagnostics(out, state)
+			outMu.Unlock()
 			continue
 
 		case "textDocument/didOpen":
 			var params DidOpenTextDocumentParams
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.TextDocument.URI))
+				state.mu.Lock()
 				state.Cache[path] = params.TextDocument.Text
+				state.mu.Unlock()
+				outMu.Lock()
 				publishComponentDiagnostics(out, state, path, nil)
+				outMu.Unlock()
 			}
 			continue
 
@@ -76,8 +87,14 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil && len(params.ContentChanges) > 0 {
 				path := uriToPath(string(params.TextDocument.URI))
 				// Under Full Sync, the first change has the entire file text
+				state.mu.Lock()
 				state.Cache[path] = params.ContentChanges[0].Text
-				publishComponentDiagnostics(out, state, path, nil)
+				state.mu.Unlock()
+				state.scheduleDiagnosticRefresh(path, diagnosticsDebounceDelay, func() {
+					outMu.Lock()
+					defer outMu.Unlock()
+					publishComponentDiagnostics(out, state, path, nil)
+				})
 			}
 			continue
 
@@ -85,8 +102,12 @@ func Run(in io.Reader, out io.Writer) error {
 			var params TextDocumentIdentifier
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.URI))
+				state.mu.Lock()
 				delete(state.Cache, path)
+				state.mu.Unlock()
+				outMu.Lock()
 				publishComponentDiagnostics(out, state, path, nil)
+				outMu.Unlock()
 			}
 			continue
 
@@ -127,6 +148,7 @@ func Run(in io.Reader, out io.Writer) error {
 			result = nil
 
 		case "exit":
+			state.waitForScheduledDiagnostics()
 			return nil
 
 		default:
@@ -142,7 +164,9 @@ func Run(in io.Reader, out io.Writer) error {
 				Result:  result,
 				Error:   respErr,
 			}
+			outMu.Lock()
 			_ = writeMessage(out, resp)
+			outMu.Unlock()
 		}
 	}
 }

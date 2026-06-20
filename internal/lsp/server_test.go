@@ -7,10 +7,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"compiler/pkg/peeper"
 )
+
+const hoverMarker = "__CURSOR__"
 
 func collectPublishedDiagnostics(t *testing.T, payload []byte) map[string][][]Diagnostic {
 	t.Helper()
@@ -37,6 +41,41 @@ func collectPublishedDiagnostics(t *testing.T, payload []byte) map[string][][]Di
 		}
 		out[string(params.URI)] = append(out[string(params.URI)], params.Diagnostics)
 	}
+}
+
+func markerPosition(t *testing.T, src string) (string, Position) {
+	t.Helper()
+	index := strings.Index(src, hoverMarker)
+	if index < 0 {
+		t.Fatalf("missing hover marker %q", hoverMarker)
+	}
+	clean := strings.Replace(src, hoverMarker, "", 1)
+	line := strings.Count(src[:index], "\n")
+	lastNewline := strings.LastIndex(src[:index], "\n")
+	column := index
+	if lastNewline >= 0 {
+		column = index - lastNewline - 1
+	}
+	return clean, Position{Line: line, Character: column}
+}
+
+func hoverAtSource(t *testing.T, state *ServerState, filePath, src string) *Hover {
+	t.Helper()
+	clean, pos := markerPosition(t, src)
+	state.Cache[filePath] = clean
+	if _, mod := state.recompile(filePath); mod == nil {
+		t.Fatalf("expected compiled module for %s", filePath)
+	}
+	hover, err := state.HandleHover(HoverParams{
+		TextDocumentPositionParams: TextDocumentPositionParams{
+			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+			Position:     pos,
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleHover failed: %v", err)
+	}
+	return hover
 }
 
 func TestJSONRPCFraming(t *testing.T) {
@@ -164,6 +203,72 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	}
 }
 
+func TestHoverReusesFreshCompiledSnapshot(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "main"+peeper.SourceExt)
+	content := "fn main() -> i32 {\n\tlet x = 42;\n\treturn x;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = tmpDir
+	state.Cache[filePath] = content
+
+	if _, mod := state.recompile(filePath); mod == nil {
+		t.Fatalf("expected compiled module, got nil")
+	}
+	before := state.LastCtx
+	if before == nil {
+		t.Fatalf("expected cached compiler context")
+	}
+
+	hover, err := state.HandleHover(HoverParams{
+		TextDocumentPositionParams: TextDocumentPositionParams{
+			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+			Position:     Position{Line: 2, Character: 9},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleHover failed: %v", err)
+	}
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if state.LastCtx != before {
+		t.Fatalf("hover replaced fresh compiled snapshot")
+	}
+}
+
+func TestScheduleDiagnosticRefreshCoalescesRapidChanges(t *testing.T) {
+	state := NewServerState()
+	filePath := "/tmp/main.peep"
+
+	var mu sync.Mutex
+	calls := 0
+	done := make(chan struct{}, 2)
+	publish := func() {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		done <- struct{}{}
+	}
+
+	state.scheduleDiagnosticRefresh(filePath, 20*time.Millisecond, publish)
+	state.scheduleDiagnosticRefresh(filePath, 20*time.Millisecond, publish)
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("timed out waiting for debounced publish")
+	}
+	time.Sleep(40 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("debounced publish count = %d, want 1", got)
+	}
+}
+
 func TestHoverShowsExplicitTypeForImportedCallBinding(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
@@ -195,6 +300,245 @@ func TestHoverShowsExplicitTypeForImportedCallBinding(t *testing.T) {
 	}
 	if strings.Contains(hover.Contents.Value, "<invalid>") {
 		t.Fatalf("hover should keep explicit type, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsDocCommentOnDeclarationName(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "// main docs\nfn __CURSOR__main() -> i32 {\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "```\n\n---\n\nmain docs") {
+		t.Fatalf("expected doc comment in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsImportQualifier(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, "fn GetValue() -> i32 { return 69; }\n")
+	src := "import \"app/external\";\nfn main() -> i32 {\n\treturn __CURSOR__external::GetValue();\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(import) external -> app/external") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsQualifiedTypeMemberAsType(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, "struct MyType {}\n")
+	src := "import \"app/external\";\nfn main() -> i32 {\n\tlet value: external::__CURSOR__MyType;\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(type) MyType") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsSelectorMemberFieldType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Point {\n\tx: i32,\n}\n\nfn main() -> i32 {\n\tlet p: Point;\n\treturn p.__CURSOR__x;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(field) x: i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsSelectorMethodSignature(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "impl i32 {\n\tfn abs(self: Self) -> Self {\n\t\treturn self;\n\t}\n}\n\nfn main() -> i32 {\n\tlet x: i32 = 1;\n\treturn x.__CURSOR__abs();\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(method) abs: fn(i32) -> i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsImplMethodNameSignature(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn __CURSOR__sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(method) sum: fn(Point) -> i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsSelfTypeInsideImplMethodSignature(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: __CURSOR__Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if strings.Contains(hover.Contents.Value, "<invalid>") {
+		t.Fatalf("expected concrete Self hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "(type) Point") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsInterfaceMethodSignature(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "interface SummerConsumer {\n\t__CURSOR__consume(Self, val: Summer) -> i32,\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(method) consume: fn(Self, Summer) -> i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "val:") {
+		t.Fatalf("interface method hover should omit param names, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "__CURSOR__interface SummerConsumer {\n\tconsume(Self, val: Summer) -> i32,\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "interface{\n  consume(Self, Summer) -> i32\n}") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "val:") {
+		t.Fatalf("interface type hover should omit param names, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsTypeMethodsOnNamedType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n\nfn main() -> i32 {\n\tlet p: __CURSOR__Point;\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "struct{\n  x: i32\n  y: i32\n}") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "// methods\n  sum: fn(Point) -> i32") {
+		t.Fatalf("expected method list in type hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsBinaryExpressionType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn main() -> i32 {\n\tlet x: i32 = 1;\n\treturn x __CURSOR__+ 1;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(expr): i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsDeclarationNodeSignature(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "__CURSOR__fn main() -> i32 {\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(func) main: fn() -> i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsInvalidExpressionType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn main() -> i32 {\n\treturn 1 __CURSOR__+ true;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "<invalid>") {
+		t.Fatalf("expected invalid hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverReturnsNilOnBlankLine(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn main() -> i32 {\n__CURSOR__\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover != nil {
+		t.Fatalf("expected nil hover on blank line, got %q", hover.Contents.Value)
 	}
 }
 

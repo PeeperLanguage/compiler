@@ -70,11 +70,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", ast.LocOf(fn), "")
 		return
 	}
-	kind := symbols.SymbolFunc
-	if fn.Body == nil {
-		kind = symbols.SymbolUnknown
-	}
-	sym := symbols.New(fn.Name.Name, kind, fn, ast.LocOf(fn.Name))
+	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
 	if fn.Body != nil {
 		sym.Scope = table.New(c.module.ModuleScope)
 	}
