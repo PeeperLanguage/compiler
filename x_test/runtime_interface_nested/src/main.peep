@@ -17,6 +17,7 @@ struct SummerHolder {
     s: Summer,
 }
 
+// This is an example comment to see the lsp can capture it or not
 interface SummerConsumer {
     consume(Self, val: Summer) -> i32,
 }
@@ -29,9 +30,12 @@ impl ConsumerImpl {
     }
 }
 
+// program entry point
 fn main() -> i32 {
     let p: Point = .{ x = 15, y = 25 };
     let s: Summer = p;
+
+    //let myname = "fuad";
 
     // Test escaping interface via Struct Field (StoreField)
     let mut h: SummerHolder = .{ s = s };

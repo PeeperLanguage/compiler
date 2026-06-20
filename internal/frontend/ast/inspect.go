@@ -1,5 +1,7 @@
 package ast
 
+import "fmt"
+
 // Inspect traverses the AST in depth-first order: it starts by calling f(node);
 // if f returns true, Inspect invokes f recursively for each of the non-nil children of node,
 // followed by a call to f(nil).
@@ -139,6 +141,10 @@ func Inspect(node Node, f func(Node) bool) {
 		// Leaf — no children
 	case *BadDecl:
 		// Leaf — no children
+	case *NamedType, *NumberLit, *StringLit:
+		// Leaf — no children
+	default:
+		panic(fmt.Sprintf("unhandled node type %T in ast.Inspect", node))
 	}
 
 	f(nil)
