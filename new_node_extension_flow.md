@@ -71,8 +71,25 @@ These are where most “forgot to add it” bugs come from:
 - AST inspection recursion
 - LSP traversal
 - hover node classification
+- type-position detection helpers
+- hover type/body formatting switches
 - fingerprints / surfaces if relevant
 - test helper coverage
+
+Current concrete hotspot files/functions:
+
+- `internal/frontend/ast/inspect.go`
+- `internal/lsp/handlers.go:isTypeExprPosition`
+- `internal/lsp/handlers.go:formatHoverTypeBody`
+- `internal/lsp/handlers.go:formatHoverTypeInline`
+- `internal/lsp/handlers.go:walkModuleAST`
+- `internal/lsp/handlers.go:HandleRename`
+
+Important note:
+
+- `walkModuleAST` already centralizes one class of traversal
+- `HandleRename` still does its own manual `ast.Inspect` walk
+- so the repo currently has both improved and still-manual traversal styles
 
 ---
 
@@ -276,6 +293,11 @@ The risky part is:
 - LSP special handling is manual
 - there is no single “extension checklist” encoded in repo structure
 
+Most dangerous current omission point:
+
+- `internal/frontend/ast/inspect.go` has no fail-loud default branch
+- a new node can be silently skipped by every consumer using `ast.Inspect`
+
 So forgetting is mostly a **coordination problem**.
 
 ---
@@ -327,6 +349,15 @@ Must check:
 
 This does not reduce phases, but it reduces uncertainty.
 
+Recommended storage:
+
+- `docs/checklists/expr.md`
+- `docs/checklists/type_expr.md`
+- `docs/checklists/decl.md`
+- `docs/checklists/stmt.md`
+
+And reference them from `RULES.md`, otherwise they will drift into side-doc territory and stop helping.
+
 ---
 
 ## 6.2 Proposal B: Centralize traversal harder
@@ -347,11 +378,21 @@ Long-term best improvement:
 
 This reduces “forgot to descend into child node X”.
 
+Concrete existing debt:
+
+- `HandleRename` should migrate to shared traversal instead of doing its own import/stmt walk with `ast.Inspect`
+- any future cursor-driven feature should prefer shared traversal first
+
 ---
 
 ## 6.3 Proposal C: Make omission fail loudly
 
 Silent omission is worst outcome.
+
+This is directly aligned with `RULES.md §5`:
+
+- internal invariant violations should panic
+- silent skip on unknown internal node kinds is wrong behavior
 
 Preferred behavior:
 
@@ -364,6 +405,20 @@ If new node is not handled:
 - fail immediately
 - not silently degrade to nil or unknown
 
+Highest-priority concrete target:
+
+- `internal/frontend/ast/inspect.go`
+
+Reason:
+
+- it is shared by many consumers
+- it is currently easy to forget
+- silent skip there propagates into resolver/collector/LSP traversals indirectly
+
+So first concrete follow-up should be:
+
+- make `ast.Inspect` fail loudly on unhandled node types, or introduce another equally strict exhaustiveness mechanism
+
 ---
 
 ## 6.4 Proposal D: Introduce phase-facing extension tables only where mechanical
@@ -373,6 +428,8 @@ Good use of central tables:
 - node category registration
 - hover/declaration classification
 - mechanical child traversal metadata
+- type-position slot metadata
+- render-shape metadata for hover formatting
 
 Bad use:
 
@@ -385,6 +442,12 @@ Reason:
 - it becomes one hidden second architecture
 
 So centralize **mechanical metadata**, not **semantic meaning**.
+
+Where it should live:
+
+- AST-owned traversal/child metadata should live with `ast`
+- LSP-owned hover/render classification should live with `lsp`
+- avoid a separate generic registry package that becomes hidden architecture
 
 ---
 
@@ -514,10 +577,11 @@ I would recommend:
 
 1. Keep explicit phase chain exactly as architecture intends.
 2. Add repo-level extension checklists for `Expr`, `TypeExpr`, `Decl`, `Stmt`.
-3. Centralize more mechanical traversal/metadata.
-4. Normalize syntax sugar early in HIR lowering where possible.
-5. Make unhandled-node omissions fail loudly.
-6. Add full-pipeline tests for every new construct.
+3. Make `ast.Inspect` omission impossible or loudly failing.
+4. Migrate remaining manual traversals like `HandleRename` toward shared traversal.
+5. Centralize more mechanical traversal/metadata.
+6. Normalize syntax sugar early in HIR lowering where possible.
+7. Add full-pipeline tests for every new construct.
 
 ---
 
