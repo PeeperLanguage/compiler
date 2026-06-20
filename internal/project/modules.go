@@ -31,26 +31,6 @@ func PathWithinRoot(rootPath, path string) bool {
 	return strings.HasPrefix(path, rootPath+"/")
 }
 
-// NewModuleForFile builds one file-backed module with canonical origin,
-// namespace, key, and import path derived from compiler config.
-func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
-	if ctx == nil || filePath == "" {
-		return nil
-	}
-	origin, namespace := ctx.ModuleOriginForFile(filePath)
-	module := &Module{
-		Key:       ModuleKeyFor(origin, filePath),
-		FilePath:  filePath,
-		Namespace: namespace,
-		Origin:    origin,
-		Content:   content,
-	}
-	if importPath, err := ctx.ImportPathForFile(origin, namespace, filePath); err == nil {
-		module.ImportPath = importPath
-	}
-	return module
-}
-
 // Register a module in the shared graph.
 func (ctx *CompilerContext) AddModule(module *Module) {
 	if ctx == nil || module == nil || module.Key == "" {

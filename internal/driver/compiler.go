@@ -56,9 +56,17 @@ func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content str
 		}
 		return module
 	}
-	module := ctx.NewModuleForFile(absPath, content)
-	if module != nil {
-		module.IsEntry = true
+	origin, namespace := ctx.ModuleOriginForFile(absPath)
+	module := &project.Module{
+		Key:       project.ModuleKeyFor(origin, absPath),
+		FilePath:  absPath,
+		IsEntry:   true,
+		Namespace: namespace,
+		Origin:    origin,
+		Content:   content,
+	}
+	if importPath, err := ctx.ImportPathForFile(origin, namespace, absPath); err == nil {
+		module.ImportPath = importPath
 	}
 	if err := pipeline.New(ctx).Run(module); err != nil {
 		diag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
@@ -80,5 +88,16 @@ func AddOverlay(ctx *project.CompilerContext, path string, content string) {
 		ctx.AddModule(module)
 		return
 	}
-	ctx.AddModule(ctx.NewModuleForFile(absPath, content))
+	origin, namespace := ctx.ModuleOriginForFile(absPath)
+	module := &project.Module{
+		Key:       project.ModuleKeyFor(origin, absPath),
+		FilePath:  absPath,
+		Namespace: namespace,
+		Origin:    origin,
+		Content:   content,
+	}
+	if importPath, err := ctx.ImportPathForFile(origin, namespace, absPath); err == nil {
+		module.ImportPath = importPath
+	}
+	ctx.AddModule(module)
 }
