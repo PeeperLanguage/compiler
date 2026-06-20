@@ -79,7 +79,7 @@ func runBenchCase(b *testing.B, name string, fixture benchFixture, prepare func(
 			b.StartTimer()
 			_, _ = state.recompile(target)
 			b.StopTimer()
-			metrics := state.LastMetrics
+			metrics := &state.LastMetrics
 			totalParsed += float64(metrics.ModulesParsed)
 			totalReused += float64(metrics.ModulesReused)
 			totalDowngraded += float64(metrics.ModulesDowngraded)

@@ -35,6 +35,31 @@ func TestWorkspaceIndexBuildsIndependentComponents(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFilesSkipsBuiltinLibraryDirectory(t *testing.T) {
+	root := t.TempDir()
+	localFile := filepath.Join(root, "main"+peeper.SourceExt)
+	builtinFile := filepath.Join(root, "_builtin_library", "core", peeper.SourceDirName, "global"+peeper.SourceExt)
+	writeWorkspaceFile(t, localFile, "fn main() {}\n")
+	writeWorkspaceFile(t, builtinFile, "const stdout: i32 = 1;\n")
+
+	files, err := workspaceFiles(root, nil)
+	if err != nil {
+		t.Fatalf("workspaceFiles: %v", err)
+	}
+	gotLocal := false
+	for _, file := range files {
+		if file == project.CanonicalPath(builtinFile) {
+			t.Fatalf("builtin library file leaked into workspace index: %s", file)
+		}
+		if file == project.CanonicalPath(localFile) {
+			gotLocal = true
+		}
+	}
+	if !gotLocal {
+		t.Fatalf("workspace files missing local source %s", localFile)
+	}
+}
+
 func TestWorkspaceIndexGroupsImportedFiles(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")

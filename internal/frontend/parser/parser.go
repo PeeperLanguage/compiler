@@ -1020,6 +1020,13 @@ func parseBracedItemList[T any](
 		if !p.at(token.RBRACE) {
 			prev := p.stream[p.pos-1]
 			p.diag.Add(diagnostics.NewError(itemMsg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "add missing `,` here"))
+			// Recovery must always consume or skip the unexpected separator token.
+			// Without this, inputs like `foo();` inside a braced item list keep
+			// reporting the same missing-comma diagnostic forever.
+			p.synchronize(token.COMMA, token.RBRACE)
+			if !p.at(token.COMMA) && !p.at(token.RBRACE) && !p.at(token.EOF) {
+				p.advance()
+			}
 			continue
 		}
 	}

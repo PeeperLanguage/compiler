@@ -7,7 +7,6 @@ import (
 	"compiler/internal/project"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const COMPILER_VERSION = "0.1.0"
@@ -49,15 +48,24 @@ func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content str
 		}
 		content = string(data)
 	}
-	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, absPath),
-		ImportPath: strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath)),
-		FilePath:   absPath,
-		IsEntry:    true,
-		Origin:     project.ModuleOriginLocal,
-		Content:    content,
+	if module, ok := prelude.ModuleForFile(ctx, absPath, content); ok {
+		module.IsEntry = true
+		if err := pipeline.New(ctx).Run(module); err != nil {
+			diag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
+			return nil
+		}
+		return module
 	}
-	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", absPath); err == nil {
+	origin, namespace := ctx.ModuleOriginForFile(absPath)
+	module := &project.Module{
+		Key:       project.ModuleKeyFor(origin, absPath),
+		FilePath:  absPath,
+		IsEntry:   true,
+		Namespace: namespace,
+		Origin:    origin,
+		Content:   content,
+	}
+	if importPath, err := ctx.ImportPathForFile(origin, namespace, absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	if err := pipeline.New(ctx).Run(module); err != nil {
@@ -76,14 +84,19 @@ func AddOverlay(ctx *project.CompilerContext, path string, content string) {
 	if err != nil {
 		return
 	}
-	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, absPath),
-		ImportPath: strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath)),
-		FilePath:   absPath,
-		Origin:     project.ModuleOriginLocal,
-		Content:    content,
+	if module, ok := prelude.ModuleForFile(ctx, absPath, content); ok {
+		ctx.AddModule(module)
+		return
 	}
-	if importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", absPath); err == nil {
+	origin, namespace := ctx.ModuleOriginForFile(absPath)
+	module := &project.Module{
+		Key:       project.ModuleKeyFor(origin, absPath),
+		FilePath:  absPath,
+		Namespace: namespace,
+		Origin:    origin,
+		Content:   content,
+	}
+	if importPath, err := ctx.ImportPathForFile(origin, namespace, absPath); err == nil {
 		module.ImportPath = importPath
 	}
 	ctx.AddModule(module)

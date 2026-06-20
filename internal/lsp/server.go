@@ -9,18 +9,23 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 const LSP_VERSION = "0.0.1"
+const diagnosticsDebounceDelay = 150 * time.Millisecond
 
 func Run(in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	state := NewServerState()
+	var outMu sync.Mutex
 
 	for {
 		bytes, err := readMessage(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				state.waitForScheduledDiagnostics()
 				return nil
 			}
 			return err
@@ -59,15 +64,17 @@ func Run(in io.Reader, out io.Writer) error {
 			}
 
 		case "initialized":
-			publishWorkspaceDiagnostics(out, state)
+			publishWorkspaceDiagnostics(out, &outMu, state)
 			continue
 
 		case "textDocument/didOpen":
 			var params DidOpenTextDocumentParams
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.TextDocument.URI))
+				state.mu.Lock()
 				state.Cache[path] = params.TextDocument.Text
-				publishComponentDiagnostics(out, state, path, nil)
+				state.mu.Unlock()
+				publishComponentDiagnostics(out, &outMu, state, path, nil)
 			}
 			continue
 
@@ -76,8 +83,12 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil && len(params.ContentChanges) > 0 {
 				path := uriToPath(string(params.TextDocument.URI))
 				// Under Full Sync, the first change has the entire file text
+				state.mu.Lock()
 				state.Cache[path] = params.ContentChanges[0].Text
-				publishComponentDiagnostics(out, state, path, nil)
+				state.mu.Unlock()
+				state.scheduleDiagnosticRefresh(path, diagnosticsDebounceDelay, func() {
+					publishComponentDiagnostics(out, &outMu, state, path, nil)
+				})
 			}
 			continue
 
@@ -85,8 +96,10 @@ func Run(in io.Reader, out io.Writer) error {
 			var params TextDocumentIdentifier
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.URI))
+				state.mu.Lock()
 				delete(state.Cache, path)
-				publishComponentDiagnostics(out, state, path, nil)
+				state.mu.Unlock()
+				publishComponentDiagnostics(out, &outMu, state, path, nil)
 			}
 			continue
 
@@ -127,6 +140,7 @@ func Run(in io.Reader, out io.Writer) error {
 			result = nil
 
 		case "exit":
+			state.waitForScheduledDiagnostics()
 			return nil
 
 		default:
@@ -142,12 +156,14 @@ func Run(in io.Reader, out io.Writer) error {
 				Result:  result,
 				Error:   respErr,
 			}
+			outMu.Lock()
 			_ = writeMessage(out, resp)
+			outMu.Unlock()
 		}
 	}
 }
 
-func publishWorkspaceDiagnostics(w io.Writer, state *ServerState) {
+func publishWorkspaceDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState) {
 	if state == nil || state.RootDir == "" {
 		return
 	}
@@ -165,7 +181,7 @@ func publishWorkspaceDiagnostics(w io.Writer, state *ServerState) {
 		if len(component.roots) > 0 {
 			entry = component.roots[0]
 		}
-		publishComponentDiagnostics(w, state, entry, component.files)
+		publishComponentDiagnostics(w, writeMu, state, entry, component.files)
 	}
 }
 
@@ -180,7 +196,7 @@ func componentFilesForPublish(state *ServerState, filePath string) []string {
 	return append([]string(nil), component.files...)
 }
 
-func publishComponentDiagnostics(w io.Writer, state *ServerState, entryFile string, files []string) {
+func publishComponentDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState, entryFile string, files []string) {
 	if state == nil {
 		return
 	}
@@ -188,7 +204,7 @@ func publishComponentDiagnostics(w io.Writer, state *ServerState, entryFile stri
 	if len(files) == 0 {
 		files = componentFilesForPublish(state, entryFile)
 	}
-	sendDiagnosticsForFiles(w, ctx, files)
+	sendDiagnosticsForFiles(w, writeMu, ctx, files)
 }
 
 func uriToPath(uri string) string {
@@ -210,7 +226,7 @@ func pathToURI(path string) string {
 	return "file://" + clean
 }
 
-func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []string) {
+func sendDiagnosticsForFiles(w io.Writer, writeMu *sync.Mutex, ctx *project.CompilerContext, files []string) {
 	if ctx == nil || ctx.Diagnostics == nil {
 		return
 	}
@@ -288,6 +304,9 @@ func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []
 	}
 
 	for uri, lspDiags := range grouped {
+		if writeMu != nil {
+			writeMu.Lock()
+		}
 		_ = writeMessage(w, Notification{
 			JSONRPC: "2.0",
 			Method:  "textDocument/publishDiagnostics",
@@ -296,5 +315,8 @@ func sendDiagnosticsForFiles(w io.Writer, ctx *project.CompilerContext, files []
 				Diagnostics: lspDiags,
 			},
 		})
+		if writeMu != nil {
+			writeMu.Unlock()
+		}
 	}
 }
