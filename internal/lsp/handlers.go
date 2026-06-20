@@ -636,11 +636,7 @@ func hoverMethodKeysForTypeNode(typeNode ast.TypeExpr, parents map[ast.NodeID]as
 		if !ok {
 			continue
 		}
-		name := decl.DeclName()
-		if name == nil || name.Name == "" {
-			break
-		}
-		if name.Name != keys[0] {
+		if name := decl.DeclName(); name != nil && name.Name != "" && name.Name != keys[0] {
 			keys = append(keys, name.Name)
 		}
 		break
@@ -787,7 +783,7 @@ func declHoverSubject(cc *cursorContext, decl ast.Node, name *ast.Ident) *hoverS
 	if name != nil {
 		subject.Symbol = resolveIdentSymbol(name, cc.parents, cc.module, cc.ctx)
 		if subject.Symbol != nil && subject.Symbol.Kind == symbols.SymbolType {
-			subject.MethodSymbols = lookupHoverMethodsByKey(cc.ctx, subject.Symbol.Name)
+			subject.MethodSymbols = lookupHoverMethodSet(cc.ctx, []string{subject.Symbol.Name})
 		}
 	}
 	return subject
@@ -846,7 +842,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 		Symbol: sym,
 	}
 	if sym.Kind == symbols.SymbolType {
-		subject.MethodSymbols = lookupHoverMethodsByKey(cc.ctx, sym.Name)
+		subject.MethodSymbols = lookupHoverMethodSet(cc.ctx, []string{sym.Name})
 	}
 	return subject
 }
@@ -901,10 +897,6 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]a
 		return sym
 	}
 	return nil
-}
-
-func lookupHoverMethodsByKey(ctx *project.CompilerContext, key string) []*symbols.Symbol {
-	return lookupHoverMethodSet(ctx, []string{key})
 }
 
 func lookupHoverMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Symbol {
