@@ -546,6 +546,56 @@ if 1 {
 	}
 }
 
+func TestParseForConditionStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+for 1 < 2 {
+	return 1;
+}
+return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() || mod == nil {
+		t.Fatalf("parse failed: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	loop, ok := fn.Body.Stmts[0].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("expected for stmt, got %#v", fn.Body.Stmts[0])
+	}
+	if loop.Cond == nil {
+		t.Fatalf("expected loop condition")
+	}
+	if loop.Body == nil || len(loop.Body.Stmts) != 1 {
+		t.Fatalf("expected loop body, got %#v", loop.Body)
+	}
+}
+
+func TestParseInfiniteForStmt(t *testing.T) {
+	src := `fn main() -> i32 {
+for {
+	return 1;
+}
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() || mod == nil {
+		t.Fatalf("parse failed: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	loop, ok := fn.Body.Stmts[0].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("expected for stmt, got %#v", fn.Body.Stmts[0])
+	}
+	if loop.Cond != nil {
+		t.Fatalf("expected nil condition for infinite loop, got %#v", loop.Cond)
+	}
+}
+
 func TestParseTypeDeclarations(t *testing.T) {
 	src := `struct Vec2 {
 	x: f32,

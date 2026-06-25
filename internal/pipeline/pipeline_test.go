@@ -562,6 +562,21 @@ func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	}
 }
 
+func TestPipelineLowersForLoop(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	for 1 < 2 {
+		return 1;
+	}
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersPointerFieldAccess(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Point {

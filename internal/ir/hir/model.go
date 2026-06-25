@@ -81,6 +81,12 @@ type If struct {
 	Location *source.Location
 }
 
+type For struct {
+	Cond     ir.Expr
+	Body     *Block
+	Location *source.Location
+}
+
 func (*Block) stmtNode()    {}
 func (*Binding) stmtNode()  {}
 func (*ExprStmt) stmtNode() {}
@@ -88,6 +94,7 @@ func (*Assign) stmtNode()   {}
 func (*Invalid) stmtNode()  {}
 func (*Return) stmtNode()   {}
 func (*If) stmtNode()       {}
+func (*For) stmtNode()      {}
 
 // -- implement loc --
 
@@ -98,6 +105,7 @@ func (a *Assign) loc() *source.Location   { return a.Location }
 func (i *Invalid) loc() *source.Location  { return i.Location }
 func (r *Return) loc() *source.Location   { return r.Location }
 func (f *If) loc() *source.Location       { return f.Location }
+func (f *For) loc() *source.Location      { return f.Location }
 
 func (m *Module) Text() string {
 	if m == nil {
@@ -217,4 +225,17 @@ func (s *If) appendText(b *strings.Builder, indent int) {
 	}
 	b.WriteString(" else ")
 	s.Else.appendText(b, indent)
+}
+
+func (s *For) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString("for")
+	if s != nil && s.Cond != nil {
+		b.WriteString(" ")
+		b.WriteString(s.Cond.String())
+	}
+	b.WriteString(" {\n")
+	appendBlockText(b, s.Body, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}\n")
 }

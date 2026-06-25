@@ -254,6 +254,14 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		}
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
+	case *ast.ForStmt:
+		if node.Cond != nil {
+			condType := c.typeExpr(scope, node.Cond, nil)
+			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
+				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool"))
+			}
+		}
+		c.checkBlock(scope, node.Body, returnType)
 	case *ast.ExprStmt:
 		if node.Expr == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,

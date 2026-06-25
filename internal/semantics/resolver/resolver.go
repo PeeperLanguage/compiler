@@ -183,6 +183,13 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		}
 		// No `else`: `then` alone cannot prove definite assignment.
 		restoreInitialized(before)
+	case *ast.ForStmt:
+		if node.Cond != nil {
+			r.resolveExpr(scope, node.Cond)
+		}
+		before := snapshotInitialized(scope)
+		r.resolveBlock(table.New(scope), node.Body)
+		restoreInitialized(before)
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:

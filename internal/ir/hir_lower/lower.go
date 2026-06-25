@@ -232,6 +232,18 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			ifStmt.Else = lowerElse(module, scope, node.Else, returnType, ctx)
 		}
 		out.Stmts = append(out.Stmts, ifStmt)
+	case *ast.ForStmt:
+		var condExpr ir.Expr
+		if node.Cond != nil {
+			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, &typeinfo.BoolType{})
+		}
+		loop := &hir.For{
+			Cond:     condExpr,
+			Body:     &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(node.Body)},
+			Location: ast.LocOf(node),
+		}
+		appendBlock(module, scope, loop.Body, node.Body, returnType, ctx)
+		out.Stmts = append(out.Stmts, loop)
 
 	case *ast.ReturnStmt:
 		if node.Value == nil {

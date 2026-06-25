@@ -75,6 +75,9 @@ func Inspect(node Node, f func(Node) bool) {
 		Inspect(n.Cond, f)
 		Inspect(n.Then, f)
 		Inspect(n.Else, f)
+	case *ForStmt:
+		Inspect(n.Cond, f)
+		Inspect(n.Body, f)
 	case *ExprStmt:
 		Inspect(n.Expr, f)
 	case *AssignStmt:

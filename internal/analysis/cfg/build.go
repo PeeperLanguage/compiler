@@ -118,6 +118,32 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 			return nil
 		}
 		return join
+	case *hir.For:
+		if s.Cond == nil {
+			bodyBlock := b.newBlock()
+			bodyBlock.Location = s.Location
+			bodyBlock.BranchKind = "for"
+			current.Terminator = &Jump{Target: bodyBlock}
+			bodyEnd := b.buildBlock(s.Body, bodyBlock)
+			if bodyEnd != nil && bodyEnd.Terminator == nil {
+				bodyEnd.Terminator = &Jump{Target: bodyBlock}
+			}
+			return nil
+		}
+		header := b.newBlock()
+		header.Location = s.Location
+		header.BranchKind = "for"
+		bodyBlock := b.newBlock()
+		bodyBlock.Location = s.Location
+		bodyBlock.BranchKind = "for-body"
+		exit := b.newBlock()
+		current.Terminator = &Jump{Target: header}
+		header.Terminator = &Branch{Cond: s.Cond, TrueTarget: bodyBlock, FalseTarget: exit}
+		bodyEnd := b.buildBlock(s.Body, bodyBlock)
+		if bodyEnd != nil && bodyEnd.Terminator == nil {
+			bodyEnd.Terminator = &Jump{Target: header}
+		}
+		return exit
 	default:
 		current.Stmts = append(current.Stmts, stmt)
 		return current

@@ -529,6 +529,8 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		}
 	case *hir.If:
 		return l.appendIf(node)
+	case *hir.For:
+		return l.appendFor(node)
 	default:
 		return false
 	}
@@ -571,6 +573,43 @@ func (l *lowerer) appendIf(node *hir.If) bool {
 		l.setBlockTerm(elseFall, &Jump{TargetID: join.ID})
 	}
 	l.current = join
+	return true
+}
+
+func (l *lowerer) appendFor(node *hir.For) bool {
+	if l.current == nil || node == nil || node.Body == nil {
+		return true
+	}
+	if node.Cond == nil {
+		bodyBlock := l.newBlock()
+		l.setBlockTerm(l.current, &Jump{TargetID: bodyBlock.ID})
+		l.current = bodyBlock
+		if !l.appendBlock(node.Body) {
+			return false
+		}
+		if l.current != nil && l.current.Term == nil {
+			l.setBlockTerm(l.current, &Jump{TargetID: bodyBlock.ID})
+		}
+		l.current = nil
+		return true
+	}
+	headerBlock := l.newBlock()
+	bodyBlock := l.newBlock()
+	exitBlock := l.newBlock()
+	l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
+
+	l.current = headerBlock
+	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
+	l.setBlockTerm(headerBlock, &Branch{Cond: condRef, ThenID: bodyBlock.ID, ElseID: exitBlock.ID})
+
+	l.current = bodyBlock
+	if !l.appendBlock(node.Body) {
+		return false
+	}
+	if l.current != nil && l.current.Term == nil {
+		l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
+	}
+	l.current = exitBlock
 	return true
 }
 

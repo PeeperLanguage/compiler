@@ -506,6 +506,8 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 		stmt = p.parseBlock()
 	case token.IF:
 		stmt = p.parseIfStmt()
+	case token.FOR:
+		stmt = p.parseForStmt()
 	case token.RETURN:
 		stmt = p.parseReturnStmt()
 	default:
@@ -605,6 +607,41 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		Cond:     cond,
 		Then:     thenBlock,
 		Else:     elseStmt,
+		Location: source.NewLocation(p.filePath, start.Start, endTok.End),
+	})
+}
+
+func (p *Parser) parseForStmt() ast.Stmt {
+	start := p.consume(token.FOR, "expected for")
+	if start == nil {
+		return nil
+	}
+	var cond ast.Expr
+	if !p.at(token.LBRACE) {
+		cond = p.parseExpr(precLowest)
+	}
+	var body *ast.BlockStmt
+	if p.at(token.LBRACE) {
+		body = p.parseBlock()
+	}
+	if body == nil {
+		prev := p.lastNonNilToken(*start)
+		if cond != nil {
+			prev.End = ast.EndOf(cond)
+		}
+		p.diag.Add(diagnostics.NewError("missing for body").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "expected '{' here"))
+		return reg(p, &ast.ForStmt{
+			Cond:     cond,
+			Location: source.NewLocation(p.filePath, start.Start, prev.End),
+		})
+	}
+	endTok := p.lastNonNilToken(*start)
+	if ast.LocOf(body) != nil && ast.LocOf(body).End != nil {
+		endTok.End = *ast.LocOf(body).End
+	}
+	return reg(p, &ast.ForStmt{
+		Cond:     cond,
+		Body:     body,
 		Location: source.NewLocation(p.filePath, start.Start, endTok.End),
 	})
 }
