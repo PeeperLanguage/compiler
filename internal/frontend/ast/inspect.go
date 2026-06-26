@@ -97,6 +97,8 @@ func Inspect(node Node, f func(Node) bool) {
 			Inspect(field.Name, f)
 			Inspect(field.Value, f)
 		}
+	case *MoveExpr:
+		Inspect(n.Expr, f)
 	case *UnaryExpr:
 		Inspect(n.Expr, f)
 	case *BinaryExpr:

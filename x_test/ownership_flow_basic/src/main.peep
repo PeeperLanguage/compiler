@@ -1,0 +1,17 @@
+#[no_copy]
+struct Buffer {
+    ptr: ^u8
+}
+
+fn get_buffer() -> Buffer;
+
+fn destroy(move data: Buffer) {}
+
+fn main() -> i32 {
+    let current: Buffer = get_buffer();
+    let next = move current;
+
+    destroy(next);
+
+    return 0;
+}

@@ -96,4 +96,5 @@ const (
 	NONE      Kind = "none"
 	UNSAFE    Kind = "unsafe"
 	IMPL      Kind = "impl"
+	MOVE      Kind = "move"
 )

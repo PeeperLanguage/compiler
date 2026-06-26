@@ -158,6 +158,27 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	}
 }
 
+func TestParseMoveParam(t *testing.T) {
+	src := `fn destroy(move data: Buffer) {}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	if len(fn.Params) != 1 {
+		t.Fatalf("params: got %d want 1", len(fn.Params))
+	}
+	if !fn.Params[0].Consumes {
+		t.Fatalf("expected move param")
+	}
+	if got := fn.GetDeclSurface(); !strings.Contains(got, "move data:Buffer") {
+		t.Fatalf("surface missing move marker: %q", got)
+	}
+}
+
 func TestParseRejectsBracketTypeParams(t *testing.T) {
 	src := `fn add[T](a: i32) -> i32 {
 	return a;
@@ -243,6 +264,31 @@ func TestParseUnaryPlus(t *testing.T) {
 	unary, ok := letDecl.Value.(*ast.UnaryExpr)
 	if !ok || unary.Op != "+" {
 		t.Fatalf("expected unary plus, got %#v", letDecl.Value)
+	}
+}
+
+func TestParseMoveExpr(t *testing.T) {
+	src := `fn main() {
+	let next = move current;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[0])
+	}
+	moveExpr, ok := letDecl.Value.(*ast.MoveExpr)
+	if !ok {
+		t.Fatalf("expected move expr, got %#v", letDecl.Value)
+	}
+	if ident, ok := moveExpr.Expr.(*ast.Ident); !ok || ident.Name != "current" {
+		t.Fatalf("unexpected move operand: %#v", moveExpr.Expr)
 	}
 }
 

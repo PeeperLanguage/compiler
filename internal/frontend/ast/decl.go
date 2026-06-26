@@ -120,6 +120,7 @@ type EnumVariant struct {
 }
 
 type Param struct {
+	Consumes bool
 	Name     *Ident
 	Type     TypeExpr
 	Location *source.Location

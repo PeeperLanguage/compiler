@@ -84,6 +84,15 @@ type NoneLit struct {
 func (*NoneLit) exprNode()               {}
 func (e *NoneLit) loc() *source.Location { return e.Location }
 
+type MoveExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Location *source.Location
+}
+
+func (*MoveExpr) exprNode()               {}
+func (e *MoveExpr) loc() *source.Location { return e.Location }
+
 type UnaryExpr struct {
 	NodeIDHolder
 	Op       string

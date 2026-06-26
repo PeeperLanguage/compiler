@@ -167,7 +167,11 @@ func paramSurface(params []ast.Param) []string {
 		if param.Name != nil {
 			name = param.Name.Name
 		}
-		out = append(out, name+":"+ir.TypeText(param.Type))
+		prefix := ""
+		if param.Consumes {
+			prefix = "move "
+		}
+		out = append(out, prefix+name+":"+ir.TypeText(param.Type))
 	}
 	return out
 }

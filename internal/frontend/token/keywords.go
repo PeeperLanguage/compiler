@@ -33,6 +33,7 @@ var keywords = map[string]Kind{
 	"none":      NONE,
 	"unsafe":    UNSAFE,
 	"impl":      IMPL,
+	"move":      MOVE,
 }
 
 var keywordDocs = map[Kind]string{
@@ -68,6 +69,7 @@ var keywordDocs = map[Kind]string{
 	NONE:      "Optional-value sentinel representing no value.",
 	UNSAFE:    "Enter an unsafe context for unchecked operations.",
 	IMPL:      "Attach methods to a target type.",
+	MOVE:      "Transfer a move-only value instead of copying it.",
 }
 
 func LookupIdent(ident string) Kind {

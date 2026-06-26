@@ -1038,6 +1038,15 @@ func (p *Parser) parseParams() []ast.Param {
 }
 
 func (p *Parser) parseParam() (ast.Param, bool) {
+	var (
+		consumes  bool
+		moveStart source.Position
+	)
+	if p.at(token.MOVE) {
+		tok := p.advance()
+		consumes = true
+		moveStart = tok.Start
+	}
 	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
 		name := p.parseIdent()
 		if name == nil {
@@ -1052,10 +1061,20 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 		if ty != nil {
 			endPos = ast.EndOf(ty)
 		}
-		return ast.Param{Name: name, Type: ty, Location: source.NewLocation(p.filePath, ast.StartOf(name), endPos)}, true
+		startPos := ast.StartOf(name)
+		if consumes {
+			startPos = moveStart
+		}
+		return ast.Param{Consumes: consumes, Name: name, Type: ty, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
 	}
 	ty := p.parseTypeExpr()
 	if ty == nil {
+		return ast.Param{}, false
+	}
+	if consumes {
+		p.diag.Add(diagnostics.NewError("move parameter requires a named binding").
+			WithCode(diagnostics.ErrInvalidDeclaration).
+			WithPrimaryLabel(source.NewLocation(p.filePath, p.prev().Start, p.prev().End), "add a parameter name after `move`"))
 		return ast.Param{}, false
 	}
 	return ast.Param{Type: ty, Location: ast.LocOf(ty)}, true
