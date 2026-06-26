@@ -221,6 +221,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		return
 	case *ast.StringLit:
 		return
+	case *ast.NoneLit:
+		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {

@@ -44,7 +44,13 @@ func CheckCompatibility(dst, src Type) Compatibility {
 	if compat := checkPointerCompatibility(dst, src); compat != Incompatible {
 		return compat
 	}
+	if compat := checkOptionalCompatibility(dst, src); compat != Incompatible {
+		return compat
+	}
 	if compat := checkFuncCompatibility(dst, src); compat != Incompatible {
+		return compat
+	}
+	if compat := checkArrayCompatibility(dst, src); compat != Incompatible {
 		return compat
 	}
 	if compat := checkStructCompatibility(dst, src); compat != Incompatible {
@@ -139,6 +145,27 @@ func checkPointerCompatibility(dst, src Type) Compatibility {
 	return Incompatible
 }
 
+func checkOptionalCompatibility(dst, src Type) Compatibility {
+	left, ok := Underlying(dst).(*OptionalType)
+	if !ok || left == nil {
+		return Incompatible
+	}
+	if _, ok := Underlying(src).(*NoneType); ok {
+		return Compatible
+	}
+	right, ok := Underlying(src).(*OptionalType)
+	if ok && right != nil {
+		if SameType(left.Inner, right.Inner) {
+			return Compatible
+		}
+		return Incompatible
+	}
+	if SameType(left.Inner, src) {
+		return Compatible
+	}
+	return Incompatible
+}
+
 func checkFuncCompatibility(dst, src Type) Compatibility {
 	left, ok := Underlying(dst).(*FuncType)
 	if !ok || left == nil {
@@ -157,6 +184,28 @@ func checkFuncCompatibility(dst, src Type) Compatibility {
 		return Incompatible
 	}
 	return Compatible
+}
+
+func checkArrayCompatibility(dst, src Type) Compatibility {
+	switch left := Underlying(dst).(type) {
+	case *ArrayType:
+		right, ok := Underlying(src).(*ArrayType)
+		if !ok || right == nil {
+			return Incompatible
+		}
+		if left.Len == right.Len && SameType(left.Elem, right.Elem) {
+			return Compatible
+		}
+	case *SliceType:
+		right, ok := Underlying(src).(*SliceType)
+		if !ok || right == nil {
+			return Incompatible
+		}
+		if SameType(left.Elem, right.Elem) {
+			return Compatible
+		}
+	}
+	return Incompatible
 }
 
 func checkStructCompatibility(dst, src Type) Compatibility {

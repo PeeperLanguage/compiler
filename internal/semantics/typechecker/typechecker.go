@@ -121,6 +121,36 @@ func (c *checker) checkModule() {
 		return
 	}
 	for _, stmt := range c.module.AST.Stmts {
+		typeDecl, ok := stmt.(ast.TypeDecl)
+		if !ok {
+			continue
+		}
+		seen := make(map[typeinfo.CopyMode]ast.Attribute, len(typeDecl.GetAttributes()))
+		for _, attr := range typeDecl.GetAttributes() {
+			mode, ok := typeinfo.NamedTypeCopyMode(attr.Name)
+			if !ok {
+				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
+					fmt.Sprintf("unknown type attribute `#[%s]`", attr.Name)))
+				continue
+			}
+			if prev, ok := seen[mode]; ok {
+				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
+					fmt.Sprintf("duplicate type attribute `#[%s]`", prev.Name)))
+				continue
+			}
+			seen[mode] = attr
+		}
+		if _, ok := seen[typeinfo.CopyDeny]; ok {
+			if _, ok := seen[typeinfo.CopyAllow]; ok {
+				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
+					"conflicting type attributes `#[no_copy]` and `#[allow_copy]`"))
+			}
+		}
+		if iface, ok := typeDecl.(*ast.InterfaceDecl); ok {
+			c.checkInterfaceDecl(iface)
+		}
+	}
+	for _, stmt := range c.module.AST.Stmts {
 		decl, ok := stmt.(ast.Decl) // ? Why even needed?
 		if !ok {
 			continue
@@ -134,16 +164,6 @@ func (c *checker) checkModule() {
 			if c.module.ModuleScope != nil {
 				c.checkBinding(c.module.ModuleScope, node, true)
 			}
-		}
-	}
-	for _, stmt := range c.module.AST.Stmts {
-		decl, ok := stmt.(ast.Decl) // ? Why even needed?
-		if !ok {
-			continue
-		}
-		switch node := decl.(type) {
-		case *ast.InterfaceDecl:
-			c.checkInterfaceDecl(node)
 		}
 	}
 	for _, stmt := range c.module.AST.Stmts {
@@ -634,6 +654,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 
 	case *ast.StringLit:
 		return &typeinfo.CStrType{}
+
+	case *ast.NoneLit:
+		return &typeinfo.NoneType{}
 
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)

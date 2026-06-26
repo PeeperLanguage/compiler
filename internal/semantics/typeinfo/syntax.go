@@ -53,6 +53,25 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			Mutable: typ.Mutable,
 			Target:  ASTTypeWithOptions(typ.Target, opts),
 		}
+	case *ast.OptionalType:
+		if typ == nil {
+			return nil
+		}
+		return &OptionalType{Inner: ASTTypeWithOptions(typ.Inner, opts)}
+	case *ast.ArrayType:
+		if typ == nil {
+			return nil
+		}
+		length := ""
+		if typ.Len != nil {
+			length = typ.Len.Value
+		}
+		return &ArrayType{Len: length, Elem: ASTTypeWithOptions(typ.Elem, opts)}
+	case *ast.SliceType:
+		if typ == nil {
+			return nil
+		}
+		return &SliceType{Elem: ASTTypeWithOptions(typ.Elem, opts)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil

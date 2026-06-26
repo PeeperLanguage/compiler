@@ -404,7 +404,20 @@ func TypeText(typ ast.TypeExpr) string {
 	case *ast.NamedType:
 		return node.Name
 	case *ast.RawPtrType:
+		if !node.Mutable {
+			return "^const " + TypeText(node.Target)
+		}
 		return "^" + TypeText(node.Target)
+	case *ast.OptionalType:
+		return "?" + TypeText(node.Inner)
+	case *ast.ArrayType:
+		length := ""
+		if node.Len != nil {
+			length = node.Len.Value
+		}
+		return "[" + length + "]" + TypeText(node.Elem)
+	case *ast.SliceType:
+		return "[]" + TypeText(node.Elem)
 	case *ast.FuncType:
 		var b strings.Builder
 		b.WriteString("fn(")

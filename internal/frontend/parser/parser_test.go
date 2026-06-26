@@ -133,7 +133,7 @@ func TestParseConstWithoutExplicitType(t *testing.T) {
 }
 
 func TestParseFunctionWithTypeParams(t *testing.T) {
-	src := `fn add[T, U](a: i32) -> i32 {
+	src := `fn add<T, U>(a: i32) -> i32 {
 	return a;
 }`
 	mod, diag := parseTestModule(src)
@@ -155,6 +155,19 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	}
 	if fn.TypeParams[1].Name == nil || fn.TypeParams[1].Name.Name != "U" {
 		t.Fatalf("second type param mismatch")
+	}
+}
+
+func TestParseRejectsBracketTypeParams(t *testing.T) {
+	src := `fn add[T](a: i32) -> i32 {
+	return a;
+}`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected parser diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "expected '<' to start type parameter list") {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 }
 
@@ -463,6 +476,78 @@ const c: enum {
 	l2 := mod.Stmts[2].(*ast.ConstDecl)
 	if _, ok := l2.Type.(*ast.EnumType); !ok {
 		t.Fatalf("const c type expected enum")
+	}
+}
+
+func TestParseOptionalPointerArrayAndSliceTypes(t *testing.T) {
+	src := `const a: ?i32 = none;
+const b: ^const Foo = value;
+const c: [4]i32 = value;
+const d: []string = value;`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Stmts) != 4 {
+		t.Fatalf("decls: got %d want 4", len(mod.Stmts))
+	}
+	optDecl := mod.Stmts[0].(*ast.ConstDecl)
+	if _, ok := optDecl.Type.(*ast.OptionalType); !ok {
+		t.Fatalf("expected optional type, got %T", optDecl.Type)
+	}
+	ptrDecl := mod.Stmts[1].(*ast.ConstDecl)
+	ptr, ok := ptrDecl.Type.(*ast.RawPtrType)
+	if !ok {
+		t.Fatalf("expected raw ptr type, got %T", ptrDecl.Type)
+	}
+	if ptr.Mutable {
+		t.Fatalf("expected const pointer type")
+	}
+	arrDecl := mod.Stmts[2].(*ast.ConstDecl)
+	arr, ok := arrDecl.Type.(*ast.ArrayType)
+	if !ok {
+		t.Fatalf("expected array type, got %T", arrDecl.Type)
+	}
+	if arr.Len == nil || arr.Len.Value != "4" {
+		t.Fatalf("array len mismatch: %#v", arr.Len)
+	}
+	sliceDecl := mod.Stmts[3].(*ast.ConstDecl)
+	if _, ok := sliceDecl.Type.(*ast.SliceType); !ok {
+		t.Fatalf("expected slice type, got %T", sliceDecl.Type)
+	}
+}
+
+func TestParseTypeDeclAttributes(t *testing.T) {
+	src := `#[no_copy]
+struct Buffer<T> {
+	ptr: ^u8,
+}
+
+#[allow_copy]
+type Cursor = ^u8;`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
+	}
+	strct, ok := mod.Stmts[0].(*ast.StructDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected struct")
+	}
+	if len(strct.Attributes) != 1 || strct.Attributes[0].Name != "no_copy" {
+		t.Fatalf("struct attrs mismatch: %#v", strct.Attributes)
+	}
+	if len(strct.TypeParams) != 1 || strct.TypeParams[0].Name == nil || strct.TypeParams[0].Name.Name != "T" {
+		t.Fatalf("struct type params mismatch: %#v", strct.TypeParams)
+	}
+	alias, ok := mod.Stmts[1].(*ast.TypeAliasDecl)
+	if !ok {
+		t.Fatalf("decl[1] expected type alias")
+	}
+	if len(alias.Attributes) != 1 || alias.Attributes[0].Name != "allow_copy" {
+		t.Fatalf("alias attrs mismatch: %#v", alias.Attributes)
 	}
 }
 

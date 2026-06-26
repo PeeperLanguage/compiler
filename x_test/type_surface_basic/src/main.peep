@@ -1,0 +1,18 @@
+#[no_copy]
+struct Buffer {
+    ptr: ^u8
+}
+
+#[allow_copy]
+struct Cursor {
+    ptr: ^u8
+}
+
+struct View {
+    ptr: ^const u8
+}
+
+type MaybeInt = ?i32;
+type Name = string;
+
+const Fallback: ?i32 = none;

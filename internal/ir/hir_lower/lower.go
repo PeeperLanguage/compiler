@@ -876,6 +876,21 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 			return nil
 		}
 		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(module, typ.Target, seen)}
+	case *typeinfo.OptionalType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.OptionalType{Inner: loweredRuntimeType(module, typ.Inner, seen)}
+	case *typeinfo.ArrayType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.ArrayType{Len: typ.Len, Elem: loweredRuntimeType(module, typ.Elem, seen)}
+	case *typeinfo.SliceType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.SliceType{Elem: loweredRuntimeType(module, typ.Elem, seen)}
 	case *typeinfo.StructType:
 		if typ == nil {
 			return nil

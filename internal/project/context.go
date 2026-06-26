@@ -423,6 +423,8 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	switch name {
 	case "true", "false":
 		sym.Type = &typeinfo.BoolType{}
+	case "none":
+		sym.Type = &typeinfo.NoneType{}
 	default:
 		sym.Type = &typeinfo.UnknownType{}
 	}

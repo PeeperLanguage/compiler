@@ -55,6 +55,10 @@ func init() {
 		tok := p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
+	nud(token.NONE, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.NoneLit{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
 	// grouping

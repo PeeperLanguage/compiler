@@ -76,6 +76,14 @@ type StringLit struct {
 func (*StringLit) exprNode()               {}
 func (e *StringLit) loc() *source.Location { return e.Location }
 
+type NoneLit struct {
+	NodeIDHolder
+	Location *source.Location
+}
+
+func (*NoneLit) exprNode()               {}
+func (e *NoneLit) loc() *source.Location { return e.Location }
+
 type UnaryExpr struct {
 	NodeIDHolder
 	Op       string

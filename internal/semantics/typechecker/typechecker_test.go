@@ -13,6 +13,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -90,6 +91,29 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	return module, diag
 }
 
+func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+	t.Helper()
+	const filePath = "typechecker_test" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: "typechecker_test",
+		FilePath:   filePath,
+		Content:    src,
+		AST:        modAST,
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+	ctx.AddModule(module)
+	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
+	resolver.Resolve(ctx, module)
+	Check(ctx, module)
+	return module, diag
+}
+
 func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	if diag == nil {
 		return false
@@ -111,6 +135,129 @@ func TestImplMethodAllowsSelfForBuiltinTarget(t *testing.T) {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoneAssignsToOptional(t *testing.T) {
+	src := `fn main() {
+	let x: ?i32 = none;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoneRejectedForNonOptional(t *testing.T) {
+	src := `fn main() {
+	let x: i32 = none;
+}`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "cannot assign none to i32") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestStringBuiltinAcceptedInTypedBinding(t *testing.T) {
+	src := `fn main() {
+	let name: string;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnknownTypeAttributeRejected(t *testing.T) {
+	src := `#[weird]
+struct Buffer {
+	ptr: ^u8,
+}`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "unknown type attribute") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestConflictingTypeAttributesRejected(t *testing.T) {
+	src := `#[no_copy]
+#[allow_copy]
+struct Buffer {
+	ptr: ^u8,
+}`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "conflicting type attributes") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Buffer {
+	ptr: ^u8,
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("Buffer")
+	if !ok || sym == nil {
+		t.Fatalf("missing Buffer symbol")
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		t.Fatalf("missing Buffer type")
+	}
+	if typeinfo.IsCopyType(typ) {
+		t.Fatalf("Buffer should default to no-copy")
+	}
+}
+
+func TestConstPointerFieldStaysCopyable(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct View {
+	ptr: ^const u8,
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("View")
+	if !ok || sym == nil {
+		t.Fatalf("missing View symbol")
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		t.Fatalf("missing View type")
+	}
+	if !typeinfo.IsCopyType(typ) {
+		t.Fatalf("View should stay copyable")
+	}
+}
+
+func TestAllowCopyOverridesMutablePointerDefault(t *testing.T) {
+	module, diag := checkTypeModule(t, `#[allow_copy]
+struct Cursor {
+	ptr: ^u8,
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("Cursor")
+	if !ok || sym == nil {
+		t.Fatalf("missing Cursor symbol")
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		t.Fatalf("missing Cursor type")
+	}
+	if !typeinfo.IsCopyType(typ) {
+		t.Fatalf("allow_copy should override default no-copy")
 	}
 }
 

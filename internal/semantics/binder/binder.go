@@ -28,8 +28,7 @@ func (b *binder) bindModule() {
 			continue
 		}
 		if typeDecl, ok := decl.(ast.TypeDecl); ok {
-			name, typ := typeDecl.DeclName(), typeDecl.UnderlyingType()
-			b.bindTypeDecl(name, typ)
+			b.bindTypeDecl(typeDecl)
 			continue
 		}
 		switch node := decl.(type) {
@@ -74,8 +73,13 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 
 // Bind named type declarations using one stable shell per symbol.
 // Recursive self-references must see same DefinedType object.
-func (b *binder) bindTypeDecl(name *ast.Ident, typ ast.TypeExpr) {
-	if b == nil || b.module == nil || name == nil || name.Name == "" {
+func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
+	if b == nil || b.module == nil || decl == nil {
+		return
+	}
+	name := decl.DeclName()
+	typ := decl.UnderlyingType()
+	if name == nil || name.Name == "" {
 		return
 	}
 	sym := b.moduleScopeSymbol(name.Name)
@@ -83,16 +87,24 @@ func (b *binder) bindTypeDecl(name *ast.Ident, typ ast.TypeExpr) {
 		return
 	}
 	underlying := typeinfo.ASTTypeWithOptions(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true))
+	copyMode := typeinfo.CopyInfer
+	for _, attr := range decl.GetAttributes() {
+		if mode, ok := typeinfo.NamedTypeCopyMode(attr.Name); ok {
+			copyMode = mode
+		}
+	}
 	if defined, ok := sym.Type.(*typeinfo.DefinedType); ok && defined != nil {
 		// Reuse same shell so self-references keep same type identity.
 		defined.Name = name.Name
 		defined.Underlying = underlying
+		defined.CopyMode = copyMode
 		deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
 		return
 	}
 	sym.BindType(&typeinfo.DefinedType{
 		Name:       name.Name,
 		Underlying: underlying,
+		CopyMode:   copyMode,
 	})
 	deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
 }

@@ -1,0 +1,6 @@
+struct Pair<T> {
+    left: T,
+    right: T
+}
+
+type Wrap<T> = T;

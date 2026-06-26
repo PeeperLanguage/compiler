@@ -35,6 +35,34 @@ type RawPtrType struct {
 func (*RawPtrType) typeNode()               {}
 func (t *RawPtrType) loc() *source.Location { return t.Location }
 
+type OptionalType struct {
+	NodeIDHolder
+	Inner    TypeExpr
+	Location *source.Location
+}
+
+func (*OptionalType) typeNode()               {}
+func (t *OptionalType) loc() *source.Location { return t.Location }
+
+type ArrayType struct {
+	NodeIDHolder
+	Len      *NumberLit
+	Elem     TypeExpr
+	Location *source.Location
+}
+
+func (*ArrayType) typeNode()               {}
+func (t *ArrayType) loc() *source.Location { return t.Location }
+
+type SliceType struct {
+	NodeIDHolder
+	Elem     TypeExpr
+	Location *source.Location
+}
+
+func (*SliceType) typeNode()               {}
+func (t *SliceType) loc() *source.Location { return t.Location }
+
 type FuncType struct {
 	NodeIDHolder
 	Params   []TypeExpr
@@ -134,6 +162,7 @@ func (*ConstDecl) stmtNode()               {}
 type FnDecl struct {
 	NodeIDHolder
 	Documented
+	Attributed
 	Name       *Ident
 	TypeParams []TypeParam
 	Params     []Param
@@ -149,6 +178,7 @@ func (d *FnDecl) loc() *source.Location { return d.Location }
 type TypeAliasDecl struct {
 	NodeIDHolder
 	Documented
+	Attributed
 	Name       *Ident
 	TypeParams []TypeParam
 	Type       TypeExpr
@@ -166,6 +196,7 @@ func (d *TypeAliasDecl) UnderlyingType() TypeExpr {
 type StructDecl struct {
 	NodeIDHolder
 	Documented
+	Attributed
 	Name       *Ident
 	TypeParams []TypeParam
 	// Type holds the canonical payload for the declaration.
@@ -186,6 +217,7 @@ func (d *StructDecl) UnderlyingType() TypeExpr {
 type InterfaceDecl struct {
 	NodeIDHolder
 	Documented
+	Attributed
 	Name       *Ident
 	TypeParams []TypeParam
 	// Type holds the canonical payload for the declaration.
@@ -205,6 +237,7 @@ func (d *InterfaceDecl) UnderlyingType() TypeExpr {
 type EnumDecl struct {
 	NodeIDHolder
 	Documented
+	Attributed
 	Name       *Ident
 	TypeParams []TypeParam
 	// Type holds the canonical payload for the declaration.

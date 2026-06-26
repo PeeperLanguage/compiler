@@ -101,6 +101,12 @@ func addTypeDeclEdges(ctx *project.CompilerContext, module *project.Module, owne
 	case *ast.RawPtrType:
 		// Pointer target is not a layout dependency.
 		addTypeDeclEdges(ctx, module, owner, node.Target, true)
+	case *ast.OptionalType:
+		addTypeDeclEdges(ctx, module, owner, node.Inner, indirect)
+	case *ast.ArrayType:
+		addTypeDeclEdges(ctx, module, owner, node.Elem, indirect)
+	case *ast.SliceType:
+		addTypeDeclEdges(ctx, module, owner, node.Elem, indirect)
 	case *ast.StructType:
 		for _, field := range node.Fields {
 			addTypeDeclEdges(ctx, module, owner, field.Type, indirect)
