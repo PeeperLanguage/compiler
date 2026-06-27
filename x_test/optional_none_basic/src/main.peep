@@ -1,0 +1,13 @@
+fn maybe(cond: bool) -> ?i32 {
+    if cond {
+        return 7;
+    }
+    return none;
+}
+
+
+fn main() -> i32 {
+    let _: ?i32 = maybe(true);
+    let _: ?i32 = maybe(false);
+    return 0;
+}

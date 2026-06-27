@@ -47,10 +47,7 @@ func (v *FloatConst) ToExpr() Expr {
 }
 
 func (v *BoolConst) ToExpr() Expr {
-	if v != nil && v.Value {
-		return &IntLit{Value: "1", Type: "bool"}
-	}
-	return &IntLit{Value: "0", Type: "bool"}
+	return &BoolLit{Value: v != nil && v.Value}
 }
 
 func (v *IntConst) Truthy() (bool, bool) {
@@ -100,7 +97,7 @@ func (v *BoolConst) TypeText() string { return "bool" }
 
 func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 	switch node := expr.(type) {
-	case *IntLit, *FloatLit:
+	case *IntLit, *FloatLit, *BoolLit:
 		return expr
 	case *Ident:
 		if env != nil {
@@ -142,6 +139,8 @@ func ConstValueOf(expr Expr) (ConstValue, bool) {
 		return &IntConst{Value: node.Value, TypeID: node.TypeText()}, true
 	case *FloatLit:
 		return &FloatConst{Value: node.Value, TypeID: node.TypeText()}, true
+	case *BoolLit:
+		return &BoolConst{Value: node.Value}, true
 	default:
 		return nil, false
 	}

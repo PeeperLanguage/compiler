@@ -221,6 +221,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		return
 	case *ast.StringLit:
 		return
+	case *ast.BoolLit:
+		return
 	case *ast.NoneLit:
 		return
 	case *ast.Ident:

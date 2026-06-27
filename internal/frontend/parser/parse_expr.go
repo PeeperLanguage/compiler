@@ -59,6 +59,14 @@ func init() {
 		tok := p.advance()
 		return reg(p, &ast.NoneLit{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
+	nud(token.TRUE, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.BoolLit{Value: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.FALSE, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.BoolLit{Value: false, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
 	nud(token.MOVE, func(p *Parser) ast.Expr { return p.parseMoveExpr() })
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 

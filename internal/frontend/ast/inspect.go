@@ -153,7 +153,7 @@ func Inspect(node Node, f func(Node) bool) {
 		// Leaf — no children
 	case *BadDecl:
 		// Leaf — no children
-	case *NamedType, *NumberLit, *StringLit, *NoneLit:
+	case *NamedType, *NumberLit, *StringLit, *BoolLit, *NoneLit:
 		// Leaf — no children
 	default:
 		panic(fmt.Sprintf("unhandled node type %T in ast.Inspect", node))

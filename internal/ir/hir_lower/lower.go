@@ -138,7 +138,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		name := ""
 		paramType := typeinfo.TypeFromSyntax(param.Type)
 		if param.Name != nil {
-			sym, ok := funcScope.LookupLocal(param.Name.Name)
+			sym, ok := funcScope.LookupNode(param.Name)
 			if ok && sym != nil {
 				name = symbolName(sym)
 				if t, ok := symbols.GetSymbolType(sym); ok {
@@ -182,7 +182,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing name", Location: ast.LocOf(node)})
 			return
 		}
-		sym, ok := scope.LookupLocal(node.Name.Name)
+		sym, ok := scope.LookupNode(node)
 		if !ok || sym == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, Location: ast.LocOf(node)})
 			return
@@ -202,7 +202,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing name", Location: ast.LocOf(node)})
 			return
 		}
-		sym, ok := scope.LookupLocal(node.Name.Name)
+		sym, ok := scope.LookupNode(node)
 		if !ok || sym == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, Location: ast.LocOf(node)})
 			return
@@ -355,9 +355,17 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	loc := ast.LocOf(expr)
 
 	// Fetch canonical type from the typechecker side-table when available.
+	resolvedType := exprResolvedType(module, expr)
 	resolvedTypeStr := ""
-	if t := exprResolvedType(module, expr); t != nil {
-		resolvedTypeStr = loweredTypeText(module, t)
+	if resolvedType != nil {
+		resolvedTypeStr = loweredTypeText(module, resolvedType)
+	}
+	if innerExpected := optionalSomeInnerType(module, expectedType, resolvedType, expr); innerExpected != nil {
+		return &ir.OptionalSome{
+			Value:    lowerASTExpr(ctx, module, scope, expr, innerExpected),
+			Type:     loweredTypeText(module, expectedType),
+			Location: loc,
+		}
 	}
 	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
 		return ifaceExpr
@@ -378,6 +386,15 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 			t = "cstr"
 		}
 		return &ir.StringLit{Value: node.Value, Type: t, Location: loc}
+
+	case *ast.BoolLit:
+		return &ir.BoolLit{Value: node.Value, Location: loc}
+
+	case *ast.NoneLit:
+		if strings.HasPrefix(expectedTypeStr, "?") {
+			return &ir.ZeroValue{Type: expectedTypeStr, Location: loc}
+		}
+		return &ir.InvalidExpr{Message: "`none` requires optional context", Type: "<invalid>", Location: loc}
 
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
@@ -490,6 +507,28 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>", Location: loc}
+	}
+}
+
+func optionalSomeInnerType(module *project.Module, expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
+	if expectedType == nil || resolvedType == nil || expr == nil {
+		return nil
+	}
+	if _, ok := expr.(*ast.NoneLit); ok {
+		return nil
+	}
+	expected, ok := loweredRuntimeType(module, expectedType, nil).(*typeinfo.OptionalType)
+	if !ok || expected == nil || expected.Inner == nil {
+		return nil
+	}
+	// Typechecker accepts T in ?T contexts. HIR must keep the source expr at
+	// type T and add the optional container explicitly so MIR/LLVM can choose
+	// tagged or niche ABI later.
+	switch loweredRuntimeType(module, resolvedType, nil).(type) {
+	case *typeinfo.OptionalType, *typeinfo.NoneType:
+		return nil
+	default:
+		return expected.Inner
 	}
 }
 

@@ -148,6 +148,16 @@ func TestNoneAssignsToOptional(t *testing.T) {
 	}
 }
 
+func TestNumberAssignsToOptional(t *testing.T) {
+	src := `fn main() {
+	let x: ?i32 = 7;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestNoneRejectedForNonOptional(t *testing.T) {
 	src := `fn main() {
 	let x: i32 = none;

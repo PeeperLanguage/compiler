@@ -40,7 +40,7 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 		a.checkExpr(scope, e.Right, st, useRead)
 	case *ast.AsExpr:
 		a.checkExpr(scope, e.Expr, st, useCopy)
-	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.NoneLit, *ast.BadExpr:
+	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
 		return

@@ -2,7 +2,6 @@ package usage
 
 import (
 	"fmt"
-	"strings"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -35,8 +34,8 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 			if sym.Name == "main" {
 				continue
 			}
-			// Only check private symbols (which are not exported and don't start with "_")
-			if !symbols.IsPubName(sym.Name) && !sym.Used && !strings.HasPrefix(sym.Name, "_") {
+			// Only the exact discard binding `_` suppresses unused warnings.
+			if !symbols.IsPubName(sym.Name) && !sym.Used && sym.Name != "_" {
 				var code string
 				var msg string
 				switch sym.Kind {
@@ -67,16 +66,16 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				if shouldDiscardBindingValue(sym) {
 					module.Semantics.DiscardBindingValue[sym.ID] = struct{}{}
 				}
-				if sym.Used || strings.HasPrefix(sym.Name, "_") {
+				if sym.Used || sym.Name == "_" {
 					continue
 				}
 				switch sym.Kind {
 				case symbols.SymbolParam:
 					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
-						fmt.Sprintf("unused parameter `%s`", sym.Name), sym.Location, "use it or add `_` prefix to suppress warning")
+						fmt.Sprintf("unused parameter `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 				case symbols.SymbolVar, symbols.SymbolConst:
 					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
-						fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or add `_` prefix to suppress warning")
+						fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 				}
 			}
 		}

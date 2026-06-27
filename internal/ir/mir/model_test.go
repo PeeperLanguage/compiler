@@ -80,6 +80,74 @@ func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersZeroValue(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "maybe",
+				ReturnType: "?i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Return{Value: &ir.ZeroValue{Type: "?i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	block := out.Funcs[0].Blocks[0]
+	if len(block.Instrs) != 1 {
+		t.Fatalf("expected zero value assign, got %#v", block.Instrs)
+	}
+	assign, ok := block.Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assign, got %#v", block.Instrs[0])
+	}
+	zero, ok := assign.Value.(*ZeroValue)
+	if !ok || zero.Type != "?i32" {
+		t.Fatalf("expected ?i32 zero value, got %#v", assign.Value)
+	}
+}
+
+func TestGenerateMIRLowersOptionalSome(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "maybe",
+				ReturnType: "?i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Return{Value: &ir.OptionalSome{Value: &ir.IntLit{Value: "7", Type: "i32"}, Type: "?i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	block := out.Funcs[0].Blocks[0]
+	if len(block.Instrs) != 1 {
+		t.Fatalf("expected optional some assign, got %#v", block.Instrs)
+	}
+	assign, ok := block.Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assign, got %#v", block.Instrs[0])
+	}
+	some, ok := assign.Value.(*OptionalSome)
+	if !ok || some.Type != "?i32" {
+		t.Fatalf("expected ?i32 optional some, got %#v", assign.Value)
+	}
+}
+
 func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 	testPath := "test" + peeper.SourceExt
 	mod := &hir.Module{

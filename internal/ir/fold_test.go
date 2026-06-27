@@ -29,9 +29,9 @@ func TestFoldExprConstantCondition(t *testing.T) {
 		Type:  "bool",
 	}
 	folded := FoldExpr(expr, nil)
-	lit, ok := folded.(*IntLit)
-	if !ok || lit.Value != "1" || lit.Type != "bool" {
-		t.Fatalf("expected true as 1, got %#v", folded)
+	lit, ok := folded.(*BoolLit)
+	if !ok || !lit.Value {
+		t.Fatalf("expected true bool literal, got %#v", folded)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/source"
 	"compiler/pkg/peeper"
@@ -19,6 +20,9 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 	cases := map[string]string{
 		"string":           "{ i8*, i64 }",
 		"?i32":             "{ i1, i32 }",
+		"?string":          "{ i1, { i8*, i64 } }",
+		"?^i32":            "i32*",
+		"?^const i32":      "i32*",
 		"[4]i32":           "[4 x i32]",
 		"[]i32":            "{ i32*, i64 }",
 		"^const string":    "{ i8*, i64 }*",
@@ -33,6 +37,116 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		if got != want {
 			t.Fatalf("llvmTypeName(%q) = %q, want %q", typeText, got, want)
 		}
+	}
+}
+
+func TestOptionalNicheLayout(t *testing.T) {
+	niche, ok := optionalNicheLayout("^const i32")
+	if !ok {
+		t.Fatalf("expected optional pointer niche")
+	}
+	if niche.llvmType != "i32*" || niche.none != "zeroinitializer" {
+		t.Fatalf("unexpected niche layout: %#v", niche)
+	}
+	if _, ok := optionalNicheLayout("i32"); ok {
+		t.Fatalf("plain integer must not use niche layout without invalid value rule")
+	}
+}
+
+func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{
+			{
+				Name:       "tagged",
+				ReturnType: "?i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Assign{Name: "x", Value: &mir.ZeroValue{Type: "?i32"}},
+					},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?i32"}},
+				}},
+			},
+			{
+				Name:       "niche",
+				ReturnType: "?^i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Assign{Name: "p", Value: &mir.ZeroValue{Type: "?^i32"}},
+					},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: "?^i32"}},
+				}},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "define { i1, i32 } @tagged(") {
+		t.Fatalf("expected tagged optional return type, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "ret { i1, i32 } zeroinitializer") {
+		t.Fatalf("expected tagged optional none as zeroinitializer, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "define i32* @niche(") {
+		t.Fatalf("expected niche optional pointer return type, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "ret i32* zeroinitializer") {
+		t.Fatalf("expected niche optional none as pointer zero, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{
+			{
+				Name:       "tagged",
+				ReturnType: "?i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: "i32"}, Type: "?i32"}},
+					},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?i32"}},
+				}},
+			},
+			{
+				Name:       "niche",
+				Params:     []ir.Param{{Name: "p", Type: "^i32"}},
+				ReturnType: "?^i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefName{Name: "p", Type: "^i32"}, Type: "?^i32"}},
+					},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?^i32"}},
+				}},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "insertvalue { i1, i32 } zeroinitializer, i1 true, 0") {
+		t.Fatalf("expected tagged optional some discriminant, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "insertvalue { i1, i32 } %") || !strings.Contains(irText, "i32 7, 1") {
+		t.Fatalf("expected tagged optional payload, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "define i32* @niche(i32* %p)") {
+		t.Fatalf("expected niche optional pointer ABI, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "ret i32* %p") {
+		t.Fatalf("expected niche optional some as raw pointer value, got:\n%s", irText)
 	}
 }
 

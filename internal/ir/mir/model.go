@@ -174,6 +174,17 @@ type StructLit struct {
 	Location *source.Location
 }
 
+type ZeroValue struct {
+	Type     string
+	Location *source.Location
+}
+
+type OptionalSome struct {
+	Value    ValueRef
+	Type     string
+	Location *source.Location
+}
+
 type InterfaceMake struct {
 	Value    ValueRef
 	DataType string
@@ -222,6 +233,8 @@ func (*Cast) valueExprNode()          {}
 func (*AddrOf) valueExprNode()        {}
 func (*Field) valueExprNode()         {}
 func (*StructLit) valueExprNode()     {}
+func (*ZeroValue) valueExprNode()     {}
+func (*OptionalSome) valueExprNode()  {}
 func (*InterfaceMake) valueExprNode() {}
 func (*InterfaceCall) valueExprNode() {}
 func (*RefConst) valueRefNode()       {}
@@ -246,6 +259,18 @@ func (v *StructLit) Text() string {
 	}
 	b.WriteString(")")
 	return b.String()
+}
+func (v *ZeroValue) Text() string {
+	if v == nil || v.Type == "" {
+		return "zero"
+	}
+	return "zero(" + v.Type + ")"
+}
+func (v *OptionalSome) Text() string {
+	if v == nil || v.Value == nil {
+		return "some(<nil>)"
+	}
+	return "some(" + v.Value.Text() + ")"
 }
 
 func (v *InterfaceMake) Text() string {
@@ -316,6 +341,10 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *Field:
 		return node.Location
 	case *StructLit:
+		return node.Location
+	case *ZeroValue:
+		return node.Location
+	case *OptionalSome:
 		return node.Location
 	case *InterfaceMake:
 		return node.Location
@@ -678,6 +707,8 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.FloatLit:
 		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.BoolLit:
+		return &RefConst{Value: e.String(), Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.StringLit:
 		var name string
 		if l.module != nil {
@@ -687,6 +718,15 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			name = "@.str.unknown"
 		}
 		return &RefName{Name: name, Type: "cstr", Location: ir.ExprLocation(e)}
+	case *ir.ZeroValue:
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.OptionalSome:
+		value := l.lowerExpr(e.Value, out)
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Ident:
 		return &RefName{Name: e.Name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Unary:
@@ -947,6 +987,10 @@ func valueRefsOf(expr ValueExpr) []ValueRef {
 		return []ValueRef{node.Base}
 	case *StructLit:
 		return append([]ValueRef(nil), node.Fields...)
+	case *ZeroValue:
+		return nil
+	case *OptionalSome:
+		return []ValueRef{node.Value}
 	case *InterfaceMake:
 		refs := make([]ValueRef, 0, len(node.Slots)+1)
 		refs = append(refs, node.Value)

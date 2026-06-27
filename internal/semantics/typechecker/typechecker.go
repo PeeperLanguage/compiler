@@ -51,10 +51,16 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 
 func (c *checker) isLowerableType(t typeinfo.Type) bool {
 	switch typ := typeinfo.Underlying(t).(type) {
-	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
+	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
 		return true
 	case *typeinfo.RawPtrType:
 		return typ != nil && typ.Target != nil
+	case *typeinfo.OptionalType:
+		return typ != nil && typ.Inner != nil && c.isLowerableType(typ.Inner)
+	case *typeinfo.ArrayType:
+		return typ != nil && typ.Len != "" && typ.Elem != nil && c.isLowerableType(typ.Elem)
+	case *typeinfo.SliceType:
+		return typ != nil && typ.Elem != nil && c.isLowerableType(typ.Elem)
 	case *typeinfo.StructType:
 		if typ == nil {
 			return false
@@ -203,7 +209,7 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		if param.Name == nil {
 			continue
 		}
-		paramSym, ok := funcScope.LookupLocal(param.Name.Name)
+		paramSym, ok := funcScope.LookupNode(param.Name)
 		if !ok || paramSym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(fn), "")
 			return
@@ -369,19 +375,16 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		return
 	}
 	var (
-		nameNode *ast.Ident
 		declType typeinfo.Type
 		typeNode ast.TypeExpr // AST node for the type annotation (for diagnostics)
 		value    ast.Expr
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
-		nameNode = bind.Name
 		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
 		value = bind.Value
 	case *ast.ConstDecl:
-		nameNode = bind.Name
 		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
 		value = bind.Value
@@ -390,7 +393,7 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 
 	// Look up the symbol declared in this exact scope by the resolver.
-	sym, found := scope.LookupLocal(nameNode.Name)
+	sym, found := scope.LookupNode(node)
 	if !found || sym == nil {
 		return
 	}
@@ -665,6 +668,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 
 	case *ast.StringLit:
 		return &typeinfo.CStrType{}
+
+	case *ast.BoolLit:
+		return &typeinfo.BoolType{}
 
 	case *ast.NoneLit:
 		return &typeinfo.NoneType{}
@@ -1123,23 +1129,27 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 		expected = nil
 	}
 	if expected != nil {
+		numberTarget := expected
+		if optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType); ok && optional != nil && optional.Inner != nil {
+			numberTarget = optional.Inner
+		}
 		naturalType := typeinfo.DefaultNumberType(node.Value)
-		if typeinfo.CheckNumericCompatibility(expected, naturalType) == typeinfo.Incompatible {
+		if typeinfo.CheckNumericCompatibility(numberTarget, naturalType) == typeinfo.Incompatible {
 			c.ctx.Diagnostics.Add(typeMismatchError(node,
 				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected))))
 			return nil
 		}
-		if !literalFitsType(node.Value, expected) {
-			d := diagnostics.NewError(fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected))).
+		if !literalFitsType(node.Value, numberTarget) {
+			d := diagnostics.NewError(fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(numberTarget))).
 				WithCode(diagnostics.ErrInvalidNumber).
 				WithPrimaryLabel(ast.LocOf(node), "")
-			if intType, ok := expected.(*typeinfo.IntegerType); ok {
+			if intType, ok := numberTarget.(*typeinfo.IntegerType); ok {
 				d.WithHelp(integerRangeHint(intType))
 			}
 			c.ctx.Diagnostics.Add(d)
 			return nil
 		}
-		return expected
+		return numberTarget
 	}
 	return typeinfo.DefaultNumberType(node.Value)
 }

@@ -338,6 +338,58 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersNoneForOptional(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn maybe() -> ?i32 {
+	return none;
+}
+
+fn main() -> i32 {
+	let _: ?i32 = maybe();
+	return 0;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersValueForOptional(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn maybe() -> ?i32 {
+	return 7;
+}
+
+fn main() -> i32 {
+	let _: ?i32 = maybe();
+	return 0;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersBoolLiterals(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn maybe(cond: bool) -> ?i32 {
+	if cond {
+		return 7;
+	}
+	return none;
+}
+
+fn main() -> i32 {
+	let _: ?i32 = maybe(true);
+	let _: ?i32 = maybe(false);
+	return 0;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineAllowsForwardFunctionCalls(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {
