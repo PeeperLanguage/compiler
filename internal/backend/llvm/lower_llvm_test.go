@@ -15,6 +15,27 @@ const (
 	windowsTestPath = `C:\tmp\test` + peeper.SourceExt
 )
 
+func TestLLVMTypeNameModelTypes(t *testing.T) {
+	cases := map[string]string{
+		"string":           "{ i8*, i64 }",
+		"?i32":             "{ i1, i32 }",
+		"[4]i32":           "[4 x i32]",
+		"[]i32":            "{ i32*, i64 }",
+		"^const string":    "{ i8*, i64 }*",
+		"[]?string":        "{ { i1, { i8*, i64 } }*, i64 }",
+		"struct{x: [2]u8}": "{ [2 x i8] }",
+	}
+	for typeText, want := range cases {
+		got, ok := llvmTypeName(typeText)
+		if !ok {
+			t.Fatalf("llvmTypeName(%q) was rejected", typeText)
+		}
+		if got != want {
+			t.Fatalf("llvmTypeName(%q) = %q, want %q", typeText, got, want)
+		}
+	}
+}
+
 func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{

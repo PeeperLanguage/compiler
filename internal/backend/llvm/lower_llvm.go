@@ -61,12 +61,42 @@ func llvmTypeName(typeText string) (string, bool) {
 		return llvmFunctionPtrType(typeText)
 	}
 	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
-		target, ok := llvmTypeName(strings.TrimSpace(remainder))
+		remainder = strings.TrimSpace(remainder)
+		if constTarget, ok := strings.CutPrefix(remainder, "const "); ok {
+			remainder = strings.TrimSpace(constTarget)
+		}
+		target, ok := llvmTypeName(remainder)
 		if !ok {
 			// Unknown pointee still lowers as pointer-sized storage.
 			return "i8*", true
 		}
 		return target + "*", true
+	}
+	if remainder, ok := strings.CutPrefix(typeText, "?"); ok {
+		inner, ok := llvmTypeName(strings.TrimSpace(remainder))
+		if !ok {
+			return "", false
+		}
+		return "{ i1, " + inner + " }", true
+	}
+	if remainder, ok := strings.CutPrefix(typeText, "[]"); ok {
+		elem, ok := llvmTypeName(strings.TrimSpace(remainder))
+		if !ok {
+			return "", false
+		}
+		return "{ " + elem + "*, i64 }", true
+	}
+	if strings.HasPrefix(typeText, "[") {
+		close := strings.IndexByte(typeText, ']')
+		if close <= 1 || close == len(typeText)-1 {
+			return "", false
+		}
+		length := strings.TrimSpace(typeText[1:close])
+		elem, ok := llvmTypeName(strings.TrimSpace(typeText[close+1:]))
+		if !ok {
+			return "", false
+		}
+		return "[" + length + " x " + elem + "]", true
 	}
 	if strings.HasPrefix(typeText, "interface{") && strings.HasSuffix(typeText, "}") {
 		return "{ i8*, i8* }", true
@@ -106,6 +136,8 @@ func llvmTypeName(typeText string) (string, bool) {
 		return "void", true
 	case "cstr":
 		return "i8*", true
+	case "string":
+		return "{ i8*, i64 }", true
 	default:
 		return "", false
 	}
