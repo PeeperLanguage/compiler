@@ -2,5 +2,5 @@ import "import_void_call/external_void_repro";
 
 fn main() -> i32 {
     let s = external_void_repro::Ping();
-    return 0;
+    return s;
 }

@@ -1,6 +1,9 @@
 package typeinfo
 
-import "testing"
+import (
+	"compiler/internal/frontend/ast"
+	"testing"
+)
 
 func TestPointerTypeTextAndEquality(t *testing.T) {
 	ptrA := &RawPtrType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}
@@ -56,5 +59,31 @@ func TestFuncTypeTextIncludesMoveParams(t *testing.T) {
 	}
 	if got := fn.Text(); got != "fn(move Buffer)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(move Buffer)")
+	}
+}
+
+func TestTypeFromSyntaxPreservesFuncTypeConsumes(t *testing.T) {
+	fn := TypeFromSyntax(&ast.FuncType{
+		Params:   []ast.TypeExpr{&ast.NamedType{Name: "Buffer"}},
+		Consumes: []bool{true},
+	}).(*FuncType)
+	if len(fn.Consumes) != 1 || !fn.Consumes[0] {
+		t.Fatalf("expected consuming first param, got %#v", fn.Consumes)
+	}
+	if got := fn.Text(); got != "fn(move Buffer)" {
+		t.Fatalf("func text: got %q want %q", got, "fn(move Buffer)")
+	}
+}
+
+func TestASTTypeWithOptionsPreservesFuncTypeConsumes(t *testing.T) {
+	fn := ASTTypeWithOptions(&ast.FuncType{
+		Params:   []ast.TypeExpr{&ast.NamedType{Name: "Self"}},
+		Consumes: []bool{true},
+	}, SyntaxOptions{AllowAbstractSelf: true}).(*FuncType)
+	if len(fn.Consumes) != 1 || !fn.Consumes[0] {
+		t.Fatalf("expected consuming first param, got %#v", fn.Consumes)
+	}
+	if got := fn.Text(); got != "fn(move Self)" {
+		t.Fatalf("func text: got %q want %q", got, "fn(move Self)")
 	}
 }

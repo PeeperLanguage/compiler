@@ -368,9 +368,11 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 		for _, param := range typ.Params {
 			params = append(params, TypeFromSyntax(param))
 		}
+		consumes := append([]bool(nil), typ.Consumes...)
 		return &FuncType{
-			Params: params,
-			Return: TypeFromSyntax(typ.Return),
+			Params:   params,
+			Consumes: consumes,
+			Return:   TypeFromSyntax(typ.Return),
 		}
 	case *ast.StructType:
 		if typ == nil {

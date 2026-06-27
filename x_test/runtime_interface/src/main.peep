@@ -24,7 +24,7 @@ impl i32 {
 }
 
 impl i32 {
-    fn to_str(_self: ^Self) -> cstr {
+    fn to_str(_: ^Self) -> cstr {
         return "converted\n";
     }
 }

@@ -862,13 +862,20 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	}
 	lparenPos := p.stream[p.pos-1].Start
 	var params []ast.TypeExpr
+	var consumes []bool
 	if !p.at(token.RPAREN) {
 		for {
+			consume := p.match(token.MOVE)
+			if p.at(token.IDENT) && p.next().Kind == token.COLON {
+				p.advance()
+				p.advance()
+			}
 			param := p.parseTypeExpr()
 			if param == nil {
 				return nil
 			}
 			params = append(params, param)
+			consumes = append(consumes, consume)
 			if !p.match(token.COMMA) {
 				break
 			}
@@ -890,7 +897,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	} else {
 		endPos = start.End
 	}
-	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	return reg(p, &ast.FuncType{Params: params, Consumes: consumes, Return: ret, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
 func (p *Parser) parseStructTypeExpr() ast.TypeExpr {

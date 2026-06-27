@@ -3,11 +3,12 @@ struct Buffer {
     value: i32
 }
 
-fn destroy(move _data: Buffer) {}
+fn destroy(move _: Buffer) {}
 
 fn main() -> i32 {
     let current: Buffer = .{ value = 1 };
     let next = move current;
+    //let another = current;
 
     destroy(next);
 

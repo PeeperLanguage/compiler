@@ -787,7 +787,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
 				typeinfo.TypeText(left), typeinfo.TypeText(right))))
-		return nil
+		return &typeinfo.InvalidType{}
 	}
 
 	exprType := left

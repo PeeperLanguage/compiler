@@ -80,9 +80,11 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 		for _, param := range typ.Params {
 			params = append(params, ASTTypeWithOptions(param, opts))
 		}
+		consumes := append([]bool(nil), typ.Consumes...)
 		return &FuncType{
-			Params: params,
-			Return: ASTTypeWithOptions(typ.Return, opts),
+			Params:   params,
+			Consumes: consumes,
+			Return:   ASTTypeWithOptions(typ.Return, opts),
 		}
 	case *ast.StructType:
 		if typ == nil {

@@ -1065,6 +1065,28 @@ func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 	}
 }
 
+func TestParseFuncTypeMoveParam(t *testing.T) {
+	src := `const cb: fn(move x: Buffer) = 0;`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	constDecl := mod.Stmts[0].(*ast.ConstDecl)
+	ft, ok := constDecl.Type.(*ast.FuncType)
+	if !ok {
+		t.Fatalf("expected func type, got %T", constDecl.Type)
+	}
+	if len(ft.Params) != 1 {
+		t.Fatalf("params: got %d want 1", len(ft.Params))
+	}
+	if len(ft.Consumes) != 1 || !ft.Consumes[0] {
+		t.Fatalf("expected consuming first param, got %#v", ft.Consumes)
+	}
+	if named, ok := ft.Params[0].(*ast.NamedType); !ok || named.Name != "Buffer" {
+		t.Fatalf("param type: got %T %#v want Buffer", ft.Params[0], ft.Params[0])
+	}
+}
+
 // TestParseStructFieldsTrailingComma verifies the new parseBracedItemList
 // helper accepts a trailing comma (a feature of the extracted helper).
 func TestParseStructFieldsTrailingComma(t *testing.T) {

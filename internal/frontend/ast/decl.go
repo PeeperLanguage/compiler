@@ -66,6 +66,7 @@ func (t *SliceType) loc() *source.Location { return t.Location }
 type FuncType struct {
 	NodeIDHolder
 	Params   []TypeExpr
+	Consumes []bool
 	Return   TypeExpr
 	Location *source.Location
 }
