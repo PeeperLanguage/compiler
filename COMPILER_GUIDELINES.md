@@ -2,6 +2,8 @@
 
 This file exists to keep the compiler implementation coherent over time. Peeper shares some concepts with Rust. But it doesn't mean Peeper is a direct copy of Rust.
 
+Current ownership, pointer, copy, and optional design lives in [docs/ownership-pointer-model.md](docs/ownership-pointer-model.md).
+
 The goal is not to copy Rust or any other compiler blindly. The goal is to build a compiler that is:
 
 - correct
@@ -184,7 +186,7 @@ Phase ownership must stay explicit.
   - do not own type layout or backend-specific liveness decisions
 - `ownership analysis`
   - run after MIR generation on typed, normalized IR
-  - validate moves, borrow freezing, and borrow escape rules
+  - validate moves, raw-pointer alias conflicts, and raw-pointer escape rules
   - own use-after-move diagnostics and ownership-state transitions
   - consume CFG liveness once CFG exists instead of recursing purely over syntax
   - use MIR temp/place provenance instead of re-reading frontend syntax
@@ -222,7 +224,7 @@ Reason:
 - nested loops and branching make AST-local reasoning brittle
 - CFG gives one place to handle `if`, `switch`, loops, `break`, `continue`, and labels coherently
 
-Ownership and borrow checking should not be treated as part of the basic typechecker contract.
+Ownership and raw-pointer safety checking should not be treated as part of the basic typechecker contract.
 
 Reason:
 
