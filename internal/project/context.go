@@ -322,7 +322,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Config:      cfg,
 		Diagnostics: diag,
 		GlobalScope: globalScope,
-		Graph:       graph.New(),
+		Graph:       graph.New(GraphNodeModule, GraphEdgeImport),
 
 		modules:   make(map[string]*Module),
 		fileIndex: make(map[string]string),

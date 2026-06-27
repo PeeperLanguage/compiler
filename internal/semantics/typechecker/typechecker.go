@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -209,7 +210,9 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		}
 		paramSym.BindType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
 	}
-	c.checkBlock(funcScope, fn.Body, typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
+	returnType := typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	c.checkBlock(funcScope, fn.Body, returnType)
+	ownership.CheckFunction(c.ctx, c.module, fn, funcScope, returnType)
 }
 
 func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -483,6 +486,14 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		}
 		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
 		for _, param := range method.Params {
+			if param.Consumes {
+				site := ast.Node(decl)
+				if param.Name != nil {
+					site = param.Name
+				}
+				c.ctx.Diagnostics.Add(invalidTypeError(site,
+					"interface methods cannot use `move` parameters in current compiler stage"))
+			}
 			paramType := typeinfo.ASTTypeWithOptions(param.Type, opts)
 			// Abstract Self is resolved at impl time; skip lowerability check.
 			if paramType != nil && !typeinfo.ContainsAbstractSelf(paramType) && !c.isLowerableType(paramType) {
@@ -657,6 +668,16 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 
 	case *ast.NoneLit:
 		return &typeinfo.NoneType{}
+
+	case *ast.MoveExpr:
+		if node.Expr == nil {
+			return &typeinfo.InvalidType{}
+		}
+		valueType := c.typeExpr(scope, node.Expr, expected)
+		if typeinfo.IsInvalidOrUnknown(valueType) {
+			return valueType
+		}
+		return valueType
 
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
@@ -835,6 +856,9 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	}
 	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
 	if ok {
+		if c.module != nil && c.module.Semantics != nil {
+			c.module.Semantics.ExprTypes[selector.ID()] = methodType
+		}
 		argTypes := make([]typeinfo.Type, 0, len(call.Args)+1)
 		argTypes = append(argTypes, baseType)
 		fnType, _ := methodType.(*typeinfo.FuncType)
@@ -1204,6 +1228,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
 			c.addInterfaceHint(d, paramType, argType)
 			c.ctx.Diagnostics.Add(d)
+			continue
 		}
 	}
 }
@@ -1302,6 +1327,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			c.ctx.Diagnostics.Add(typeMismatchError(site,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType))))
+			continue
 		}
 	}
 }

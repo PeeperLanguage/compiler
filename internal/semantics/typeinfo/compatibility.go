@@ -176,6 +176,9 @@ func checkFuncCompatibility(dst, src Type) Compatibility {
 		return Incompatible
 	}
 	for i := range left.Params {
+		if funcParamConsumes(left, i) != funcParamConsumes(right, i) {
+			return Incompatible
+		}
 		if !SameType(left.Params[i], right.Params[i]) {
 			return Incompatible
 		}

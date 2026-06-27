@@ -48,3 +48,13 @@ func TestIsCopyTypeRespectsPointerOwnershipModel(t *testing.T) {
 		t.Fatalf("allow_copy should override default no-copy")
 	}
 }
+
+func TestFuncTypeTextIncludesMoveParams(t *testing.T) {
+	fn := &FuncType{
+		Params:   []Type{&NamedType{Name: "Buffer"}},
+		Consumes: []bool{true},
+	}
+	if got := fn.Text(); got != "fn(move Buffer)" {
+		t.Fatalf("func text: got %q want %q", got, "fn(move Buffer)")
+	}
+}

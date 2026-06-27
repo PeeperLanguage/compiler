@@ -82,8 +82,9 @@ type SliceType struct {
 }
 
 type FuncType struct {
-	Params []Type
-	Return Type
+	Params   []Type
+	Consumes []bool
+	Return   Type
 }
 
 type Field struct {
@@ -221,6 +222,9 @@ func (t *FuncType) Text() string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
+		if funcParamConsumes(t, i) {
+			b.WriteString("move ")
+		}
 		b.WriteString(TypeText(param))
 	}
 	b.WriteString(")")
@@ -293,6 +297,13 @@ func TypeText(typ Type) string {
 		return ""
 	}
 	return typ.Text()
+}
+
+func funcParamConsumes(fn *FuncType, i int) bool {
+	if fn == nil || i < 0 || i >= len(fn.Consumes) {
+		return false
+	}
+	return fn.Consumes[i]
 }
 
 func TypeFromSyntax(node ast.TypeExpr) Type {
@@ -635,7 +646,8 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		for _, param := range typ.Params {
 			params = append(params, ReplaceAbstractSelf(param, ownerType))
 		}
-		return &FuncType{Params: params, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
+		consumes := append([]bool(nil), typ.Consumes...)
+		return &FuncType{Params: params, Consumes: consumes, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
 	case *StructType:
 		if typ == nil {
 			return nil

@@ -162,6 +162,29 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
+func TestPipelineAcceptsMoveExprSurface(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main() -> i32 {
+	let current: Buffer = get_buffer();
+	let next = move current;
+	destroy(next);
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)

@@ -1,380 +1,421 @@
-# Ownership And Borrow Model
+# Peeper Memory Model
 
 ## Goal
 
-Keep user model small.
+Keep language:
 
-Do not split concepts into many pointer kinds.
+- simple
+- explicit
+- less painful than Rust
+- safer than raw C
 
-Use:
+Do not mix:
 
-- `T`
-- `^T`
-- `^const T`
-- `move`
+- ownership
+- borrowing
+- raw pointer semantics
 
-Ownership is tracked by compiler flow analysis, not by a separate owner type.
+Each surface form should have one job.
 
 ## Core Types
 
 ### `T`
 
-Plain value.
-
-- May live on stack or inside aggregate
-- May be copyable or non-copyable
-- Can be borrowed
-
-### `^T`
-
-Exclusive handle.
-
-This is single unified concept for:
-
-- exclusive mutable access
-- ownership-capable handle
-
-Important:
-
-- `^T` does **not** always mean owner
-- some `^T` values are ownership roots
-- some `^T` values are temporary borrows
-- compiler tracks which by provenance and flow
-
-### `^const T`
-
-Shared read-only borrow.
-
-- never owner
-- any number may coexist
-- cannot coexist with live `^T` to same storage
-
-## Ownership Sources
-
-There are two main ways to get `^T`.
-
-### Fresh owning `^T`
-
-Example:
-
-```peep
-let buff = Allocator::Allocate<Buffer>(100);
-```
-
-`Allocate` returns `^Buffer`.
-
-That returned handle is a fresh ownership root.
-
-Binding receives it in move context, so `buff` becomes owning `^Buffer`.
-
-This is equivalent in meaning to:
-
-```peep
-let buff: ^Buffer = move Allocator::Allocate<Buffer>(100);
-```
-
-even if `move` is implicit for fresh return values.
-
-### Borrowed `^T`
-
-Example:
-
-```peep
-let a = 10;
-let p = &a;
-```
-
-`p` is also `^i32`, but this one is **not** owner.
-
-It is a temporary exclusive borrow rooted in `a`.
-
-So type alone is not enough to tell ownership. Provenance matters.
-
-## Core Rule
-
-`^T` is linear.
-
-Compiler must enforce:
-
-- cannot duplicate owning `^T`
-- cannot use after move
-- cannot keep multiple live `^T` to same storage
-- cannot mix any live `^T` with any live `^const T` to same storage
-
-This is required for allocator-returned `^T` to be sound.
-
-## Borrow Rules
-
-For same storage:
-
-- many `^const T` allowed together
-- exactly one `^T` allowed
-- `^T` and `^const T` may not coexist
-
-This applies whether handle came from:
-
-- allocator
-- local borrow
-- field borrow
-- parameter reborrow
-
-## Call Semantics
-
-This part must be explicit.
-
-### Borrowed exclusive parameter
-
-```peep
-fn update(x: ^Buffer)
-```
-
-Call:
-
-```peep
-update(buff);
-use(buff);
-```
-
-Meaning:
-
-- `update` gets temporary exclusive borrow
-- caller keeps ownership if caller had ownership
-- `buff` remains valid after call
-
-So passing `^T` to plain `^T` parameter is **borrow**, not transfer.
-
-### Shared parameter
-
-```peep
-fn inspect(x: ^const Buffer)
-```
-
-Call gives temporary shared borrow.
-
-### Ownership-taking parameter
-
-```peep
-fn destroy(move x: ^Buffer)
-```
-
-Call:
-
-```peep
-destroy(move buff);
-```
-
-Meaning:
-
-- ownership transfers into callee
-- caller may not use `buff` after move
-
-## Why This Choice
-
-Do **not** make plain call of `^T` an implicit move.
-
-That would make ordinary calls silently kill variables.
-
-Do **not** require `move` for every use of `^T` parameter either.
-
-That would make temporary exclusive access awkward and noisy.
-
-So chosen rule is:
-
-- plain `^T` parameter means borrow
-- `move ^T` parameter means ownership transfer
-
-## Return Semantics
-
-Function may return fresh owning `^T`.
-
-Example:
-
-```peep
-fn alloc_buffer() -> ^Buffer
-```
-
-Returned `^Buffer` is treated as movable into binding/result position.
-
-This is ownership-producing return, not shared borrow return.
-
-Returning a borrowed handle to dead local storage is invalid.
-
-Compiler must reject escapes of non-owning borrow when source lifetime ends.
-
-## `move`
-
-`move` is explicit ownership transfer.
+Owned value.
+
+- normal user-facing type
+- may be stack-backed or heap-backed internally
+- user does not need to care where storage lives
+- compiler/runtime may choose storage strategy
 
 Examples:
 
 ```peep
-let b = move a;
-consume(move buff);
-return move buff;
+let n: i32 = 10
+let s: string = "fuad"
+let xs: DynArray[i32] = make_array()
+```
+
+### `^T`
+
+Mutable raw pointer.
+
+- points to some `T`
+- does not own
+- mutable access
+- low-level / unsafe tool
+
+### `^const T`
+
+Read-only raw pointer.
+
+- points to some `T`
+- does not own
+- copyable view-style pointer
+- low-level / unsafe tool
+
+### `?T`
+
+Optional.
+
+- either value of `T`
+- or `none`
+
+Examples:
+
+- `?i32`
+- `?string`
+- `?^Node`
+
+## Ownership Rule
+
+Ownership belongs to `T`, not pointers.
+
+So:
+
+- `T` owns
+- `^T` points
+- `^const T` points
+
+Pointer types never imply ownership by themselves.
+
+## Storage Rule
+
+Heap vs stack is not encoded in type spelling.
+
+This is valid:
+
+```peep
+let myname: string = "Fuad"
+```
+
+even if runtime stores string data outside stack object.
+
+This avoids ugly APIs like:
+
+```peep
+let myname: ^string = "Fuad"
+```
+
+User should see ownership and value kind, not storage placement details.
+
+## Strings
+
+`string` is a non-owning immutable view type.
+
+Like Odin-style string:
+
+- cheap to copy
+- cheap to pass
+- no in-place mutation
+- usually represented internally as pointer plus length
+
+Because `string` is immutable and non-owning:
+
+- shallow copy is fine
+- pass-by-value does not create mutation confusion
+
+If language later needs owned mutable text, that should be a different type.
+
+Examples:
+
+- `StringBuf`
+- `DynString`
+- `OwnedString`
+
+## Copy And Move
+
+### Copyable types
+
+Normal value types are copyable unless marked otherwise.
+
+### `#[no_copy]`
+
+Marks type as move-only.
+
+Passing by value moves it.
+
+Assigning to another binding moves it.
+
+### Default rule for pointer-containing types
+
+If a type contains `^T`, it is `#[no_copy]` by default.
+
+Reason:
+
+- shallow-copying mutable raw pointers is easy to misunderstand
+- accidental aliasing and shared mutation become likely
+- move-only is safer default
+
+This rule does **not** apply to `^const T`.
+
+So:
+
+- contains `^T` => default `#[no_copy]`
+- contains only `^const T` => may still be copyable
+
+### `#[allow_copy]`
+
+User may explicitly opt in to shallow copy for a `^T`-containing type.
+
+Meaning:
+
+- pointer value is duplicated
+- pointee is not cloned
+- aliasing consequences are user responsibility
+
+Example:
+
+```peep
+#[allow_copy]
+struct Cursor {
+    ptr: ^u8,
+}
+```
+
+This should be treated as an explicit expert override, not compiler-proven safety.
+
+## Function Passing
+
+### Passing `T`
+
+Passing `T` means value passing.
+
+Behavior:
+
+- copy if type is copyable
+- move if type is `#[no_copy]`
+
+For `string`, this is cheap because `string` is immutable non-owning view.
+
+For `#[no_copy]` container types, this transfers ownership.
+
+### Passing `^T`
+
+Passing `^T` means raw pointer passing.
+
+- no ownership transfer implied by type
+- mutation through same pointed object/storage possible
+- should be treated as low-level / unsafe capability
+
+### Passing `^const T`
+
+Passing `^const T` means read-only raw pointer passing.
+
+## Mutation Rule
+
+If user wants callee to mutate same underlying object, pass pointer.
+
+Example:
+
+```peep
+fn set_first(xs: ^DynArray[i32]) {
+    unsafe {
+        (*xs)[0] = 10
+    }
+}
+```
+
+Do not allow confusing mutation-through-shallow-copy semantics for owned mutable values.
+
+If same data should be mutated, pointer passing must be explicit.
+
+## Allocation
+
+Allocator returns `T`, not `^T`.
+
+Example:
+
+```peep
+let x: Buffer = allocator.alloc(Buffer)
+let y: Buffer = Buffer{}
+```
+
+Both are owned `T`.
+
+Difference in storage origin is compiler/runtime knowledge, not surface type distinction.
+
+### Free
+
+Free consumes owned value allocated by allocator.
+
+Example:
+
+```peep
+defer allocator.free(x)
+```
+
+Calling `free` on non-allocator-owned stack-only value is compile error.
+
+Compiler should track allocation provenance as best as possible.
+
+## Move
+
+`move` transfers ownership of `T`.
+
+Example:
+
+```peep
+let a: Buffer = allocator.alloc(Buffer)
+let b: Buffer = move a
 ```
 
 After move:
 
-- source binding is invalid
-- any borrow derived from source must already be dead
+- `a` is dead
+- `b` is owner
 
-## `take`
-
-If language keeps both `take` and `move`, they should not overlap loosely.
-
-Recommended split:
-
-- `move`: transfer ownership of handle/value to new owner
-- `take`: extract value/resource from container/field/location that remains structurally valid after extraction
-
-If that distinction is not needed yet, keep only `move` first.
-
-## Copy Rules
-
-`#[no_copy]` marks type as non-copyable.
-
-Recommended rules:
-
-- primitive scalars may be copyable
-- `^const T` is copyable as shared borrow handle
-- `^T` is not copyable
-- types with `#[no_copy]` are not copyable
-- structs are copyable only if all fields are copyable and type is not marked `#[no_copy]`
-
-Owning `^T` must never be implicitly copied.
-
-## Lifetime / Provenance Model
-
-Compiler should track each `^T` by provenance tag.
-
-Each handle knows whether it came from:
-
-- fresh owning source
-- exclusive borrow of some root
-- reborrow from another handle
-
-Flow analysis then tracks:
-
-- live
-- moved
-- exclusively borrowed
-- shared borrowed
-
-This is enough to model ownership without exposing more user-facing pointer types.
-
-## Valid Examples
-
-### Fresh owner from allocator
+Implicit move on return is allowed:
 
 ```peep
-let buff = Allocator::Allocate<Buffer>(100);
-process(buff);        // borrow
-destroy(move buff);   // transfer ownership
-```
-
-### Exclusive borrow from local
-
-```peep
-let value = 10;
-let p = &value;
-mutate(p);
-```
-
-Here `p: ^i32` but owner is still `value`.
-
-### Shared borrows
-
-```peep
-let view1 = &const value;
-let view2 = &const value;
-inspect(view1);
-inspect(view2);
-```
-
-## Invalid Examples
-
-### Use after move
-
-```peep
-let buff = Allocator::Allocate<Buffer>(100);
-destroy(move buff);
-use(buff); // invalid
-```
-
-### Two live exclusive handles
-
-```peep
-let p1 = &value;
-let p2 = &value; // invalid if both are ^T
-```
-
-### Shared and exclusive at same time
-
-```peep
-let s = &const value;
-let m = &value; // invalid while s alive
-```
-
-## Relationship To Rust
-
-Very close in enforcement spirit:
-
-- `^T` behaves like exclusive mutable reference plus linear capability
-- `^const T` behaves like shared borrow
-
-But syntax and exposed model stay simpler:
-
-- no separate surface owner pointer type
-- ownership provenance is compiler-tracked internal state
-
-## Dependency Order For Language Work
-
-Recommended order:
-
-1. arrays
-2. optionals
-3. pointer / borrow semantics
-4. move / ownership transfer rules
-5. non-copy and escape checks
-6. proper `for` built on real containers and optionals
-
-## For Loop Direction
-
-Current temporary iterator protocol should not be final.
-
-Once arrays and optionals exist, better iterator shape is:
-
-```peep
-interface Iterator[T] {
-    next(self: ^Self) -> ?T
+fn make(a: Allocator) -> Buffer {
+    let buf: Buffer = a.alloc(Buffer)
+    return buf
 }
 ```
 
-Reason:
+## Raw Pointer Safety
 
-- one method only
-- yielded item type explicit
-- end-of-iteration encoded naturally as `none`
+Raw pointers are unsafe.
 
-But this depends on:
+There is no ownership rule for pointers themselves.
 
-- array/container work
-- optional `?T`
-- generic item type
+So:
 
-So iterator redesign should happen after those foundations.
+- `^T` does not auto-free pointee
+- `^T` may alias
+- `^T` may dangle if user violates lifetime discipline
 
-## Final Decision
+But compiler should still check best-effort safety when provenance is known.
 
-Lock these semantics:
+## Best-Effort Compile-Time Checks
 
-- `^T` is exclusive handle
-- `^T` may be owning root or non-owning borrow
-- compiler tracks which by provenance
-- plain call to `^T` param is borrow
-- `move` param transfers ownership
-- allocator returns fresh owning `^T`
-- `^const T` is shared non-owning borrow
-- no simultaneous `^T` with any `^const T` to same storage
+Peeper should not be fully C-like footgun.
 
-This keeps user model small while still supporting ownership tracking.
+Compiler should check what it reasonably can:
+
+- no `free` on non-heap / non-allocator value
+- no obvious double free
+- no obvious use after free
+- no return of pointer to dead local
+- no storing pointer to shorter-lived local into longer-lived object when provable
+- no obvious mutable/const alias conflict when same root is known
+
+Once provenance is lost through casts, pointer arithmetic, FFI, or opaque escapes, compiler may require `unsafe` and weaken guarantees.
+
+## Lifetime Rule For Views
+
+`^const T` and `string` views can still dangle if built from dead storage.
+
+So even though `^const T`-only types may be copyable, compiler should still reject obvious dangling escapes.
+
+Example bad case:
+
+```peep
+fn bad() -> string {
+    let tmp = make_temp_string()
+    return tmp.view()
+}
+```
+
+If returned view points to dead storage, compiler should reject it when possible.
+
+## Linked Structures
+
+Unsafe linked structures can use raw pointers directly.
+
+Example:
+
+```peep
+struct Node {
+    val: i32,
+    next: ?^Node,
+}
+```
+
+This is valid because:
+
+- `^Node` has fixed size
+- `next` is non-owning raw pointer
+
+But this is not automatically safe ownership.
+
+Meaning:
+
+- list correctness is manual / unsafe responsibility
+- compiler should not pretend `next` owns pointee
+
+If user wants safe owned linked/container structures later, language/runtime may provide other abstractions. Core raw-pointer model does not imply that.
+
+## Example Types
+
+### Copyable view
+
+```peep
+struct string {
+    data: ^const u8,
+    len: int,
+}
+```
+
+### Move-only mutable container
+
+```peep
+struct DynArray[T] {
+    data: ^T,
+    len: int,
+    cap: int,
+}
+```
+
+Because it contains `^T`, it is `#[no_copy]` by default.
+
+### Explicit shallow-copy pointer wrapper
+
+```peep
+#[allow_copy]
+struct Cursor {
+    ptr: ^u8,
+}
+```
+
+## Generic Caveats
+
+Generic types/functions may become non-copyable depending on instantiated fields.
+
+Example:
+
+```peep
+struct Pair[T] {
+    a: T,
+    b: T,
+}
+```
+
+`Pair[i32]` may be copyable.
+
+`Pair[DynArray[i32]]` may be move-only.
+
+This is acceptable and should be handled by generic constraints or instantiation errors.
+
+## Final Locked Rules
+
+- `T` owns
+- `^T` is mutable raw pointer only
+- `^const T` is read-only raw pointer only
+- `?T` is optional
+- `string` is immutable non-owning view
+- allocator returns owned `T`
+- `free` consumes allocator-owned `T`
+- type containing `^T` is `#[no_copy]` by default
+- `^const T` alone does not imply `#[no_copy]`
+- `#[allow_copy]` permits explicit shallow copy of `^T`-containing type
+- mutation of same underlying object/data should use pointer explicitly
+- compiler performs best-effort pointer safety checks where provenance is known
+
+This keeps Peeper:
+
+- explicit
+- simple
+- safer than C
+- much less painful than Rust

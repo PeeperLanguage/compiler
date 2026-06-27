@@ -420,6 +420,9 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		}
 		return &ir.Unary{Op: node.Op, Arg: arg, Type: t, Location: loc}
 
+	case *ast.MoveExpr:
+		return lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
+
 	case *ast.BinaryExpr:
 		left := lowerASTExpr(ctx, module, scope, node.Left, expectedType)
 		right := lowerASTExpr(ctx, module, scope, node.Right, expectedType)
@@ -928,7 +931,9 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		for _, param := range typ.Params {
 			params = append(params, loweredRuntimeType(module, param, seen))
 		}
-		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(module, typ.Return, seen)}
+		// defensive slice copy to prevent sharing original backing array
+		consumes := append([]bool(nil), typ.Consumes...)
+		return &typeinfo.FuncType{Params: params, Consumes: consumes, Return: loweredRuntimeType(module, typ.Return, seen)}
 	default:
 		return typeinfo.Underlying(t)
 	}

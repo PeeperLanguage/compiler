@@ -140,11 +140,14 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 		return nil
 	}
 	params := make([]Type, 0, len(decl.Params))
+	consumes := make([]bool, 0, len(decl.Params))
 	for _, param := range decl.Params {
 		params = append(params, ASTTypeWithOptions(param.Type, opts))
+		consumes = append(consumes, param.Consumes)
 	}
 	return &FuncType{
-		Params: params,
-		Return: ASTTypeWithOptions(decl.ReturnType, opts),
+		Params:   params,
+		Consumes: consumes,
+		Return:   ASTTypeWithOptions(decl.ReturnType, opts),
 	}
 }

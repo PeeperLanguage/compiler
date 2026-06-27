@@ -90,6 +90,8 @@ func IsCopyType(t Type) bool {
 			return false
 		}
 		return true
+	case *InterfaceType:
+		return typ != nil
 	case *EnumType:
 		return typ != nil
 	case *StructType:
