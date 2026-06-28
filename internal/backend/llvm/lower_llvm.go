@@ -366,14 +366,11 @@ func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (str
 	return llvmTypeName(slotTypeText)
 }
 
-func emitStoreField(b *llvmBuilder, store *mir.StoreField) {
-	if b == nil || store == nil || store.Base == nil || store.Value == nil {
+func emitStore(b *llvmBuilder, store *mir.Store) {
+	if b == nil || store == nil || store.Ptr == nil || store.Value == nil {
 		return
 	}
-	ptr := emitFieldPtr(b, store.Base, store.Index)
-	if ptr == "" {
-		return
-	}
+	ptr := emitRef(b, store.Ptr)
 	value := emitRef(b, store.Value)
 	valueType := b.types.llvmType(mirRefType(store.Value))
 	b.line(fmt.Sprintf("store %s %s, %s* %s", valueType, value, valueType, ptr))
@@ -414,9 +411,11 @@ func mirValueType(expr mir.ValueExpr) string {
 		return v.Type
 	case *mir.AddrOf:
 		return v.Type
-	case *mir.Field:
+	case *mir.Load:
 		return v.Type
-	case *mir.FieldAddr:
+	case *mir.ProjectField:
+		return v.Type
+	case *mir.Field:
 		return v.Type
 	case *mir.StructLit:
 		return v.Type
@@ -783,6 +782,17 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			value := emitRef(b, e.Base)
 			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
 			return ptr
+		case *mir.Load:
+			ptr := emitRef(b, e.Ptr)
+			llvmType := b.types.llvmType(e.Type)
+			out := b.nextReg()
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmType, llvmType, ptr))
+			return out
+		case *mir.ProjectField:
+			if ptr := emitFieldPtr(b, e.Base, e.Index); ptr != "" {
+				return ptr
+			}
+			return "0"
 		case *mir.Field:
 			if e.ThroughPtr {
 				ptr := emitFieldPtr(b, e.Base, e.Index)
@@ -803,11 +813,6 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			out := b.nextReg()
 			b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", out, llvmBaseType, base, e.Index))
 			return out
-		case *mir.FieldAddr:
-			if ptr := emitFieldPtr(b, e.Base, e.Index); ptr != "" {
-				return ptr
-			}
-			return "0"
 		case *mir.StructLit:
 			llvmType := b.types.llvmType(e.Type)
 			current := "zeroinitializer"

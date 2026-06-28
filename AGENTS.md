@@ -124,6 +124,49 @@ For each completed step, include a short `Rules check` note that states:
 
 Do not overstate cleanup status in review notes. If duplication still exists in touched code, say so plainly.
 
+## GitHub Tracking Automation
+
+When work changes roadmap state, use `gh` to keep GitHub tracking current before moving to the next task.
+
+Required checks:
+
+1. Check open PRs:
+   - `gh pr list --state open --json number,title,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision,url`
+   - If an older clean PR is already contained in the current branch and user approves merge, merge it before opening/stacking more PRs.
+2. Check relevant issues:
+   - `gh issue list --state open --json number,title,milestone,projectItems,url --limit 20`
+   - Update issue bodies when scope changes during implementation.
+   - Add follow-up issues for explicit future work, especially when current implementation is intentionally tactical.
+3. Check milestone:
+   - Use milestone `0.2 Language Foundations` for language-model foundation work unless user says otherwise.
+   - Add new follow-up issues to that milestone when they block arrays, slices, optionals, strings, ownership, allocator provenance, or IR architecture.
+4. Check project:
+   - Use org project `Peeper Roadmap` (`PeeperLanguage` project #2).
+   - Add relevant issues/PRs to the project.
+   - Move active work to `In Progress`.
+   - Move merged PR items to `Done`.
+5. PR body requirements:
+   - Include summary, validation commands, and follow-up issue links.
+   - If current work uses a tactical bridge, state hard-line future constraints in the PR body.
+
+Known project fields for `Peeper Roadmap`:
+
+- Project id: `PVT_kwDOET_G284BbrYm`
+- Status field id: `PVTSSF_lADOET_G284BbrYmzhWaQYk`
+- Status options:
+  - `Todo`: `f75ad846`
+  - `In Progress`: `47fc9ee4`
+  - `Done`: `98236657`
+
+Useful commands:
+
+```bash
+gh project list --owner PeeperLanguage --format json
+gh project field-list 2 --owner PeeperLanguage --format json
+gh project item-list 2 --owner PeeperLanguage --format json --limit 100
+gh project item-edit --project-id PVT_kwDOET_G284BbrYm --id <item-id> --field-id PVTSSF_lADOET_G284BbrYmzhWaQYk --single-select-option-id <status-option-id>
+```
+
 ## Mandatory Post-Patch Gate
 
 Immediately after edits and before any stop, pause, or final response:

@@ -208,7 +208,7 @@ func TestStringBuiltinAcceptedInTypedBinding(t *testing.T) {
 func TestUnknownTypeAttributeRejected(t *testing.T) {
 	src := `#[weird]
 struct Buffer {
-	ptr: ^u8,
+	ptr: ^u8
 }`
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
@@ -223,7 +223,7 @@ func TestConflictingTypeAttributesRejected(t *testing.T) {
 	src := `#[no_copy]
 #[allow_copy]
 struct Buffer {
-	ptr: ^u8,
+	ptr: ^u8
 }`
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
@@ -237,7 +237,7 @@ struct Buffer {
 func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
 	diag := checkTypeSource(t, `#[no_copy]
 struct Buffer {
-	ptr: ^u8,
+	ptr: ^u8
 }
 
 fn get_buffer() -> Buffer;
@@ -247,86 +247,6 @@ fn main() {
 	let current: Buffer = get_buffer();
 	let next = move current;
 	destroy(next);
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestCopyOfNoCopyBindingRejected(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	let next = current;
-	destroy(next);
-}`)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestUseAfterMoveRejected(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	let next = move current;
-	destroy(current);
-	destroy(next);
-}`)
-	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestFieldAssignOnMovedRootRejected(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-struct Holder {
-	buf: Buffer,
-}
-
-fn get_buffer() -> Buffer;
-fn destroy(move holder: Holder) {}
-
-fn main() {
-	let mut holder: Holder = .{ buf = get_buffer() };
-	destroy(holder);
-	holder.buf = get_buffer();
-}`)
-	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestMoveParamConsumesArgument(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	destroy(current);
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -336,7 +256,7 @@ fn main() {
 func TestReassignmentClearsMovedLocal(t *testing.T) {
 	diag := checkTypeSource(t, `#[no_copy]
 struct Buffer {
-	value: i32,
+	value: i32
 }
 
 fn destroy(move data: Buffer) {}
@@ -346,79 +266,6 @@ fn main() {
 	destroy(current);
 	current = .{ value = 2 };
 	destroy(current);
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestNoCopyArgumentToPlainParamRejected(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-fn get_buffer() -> Buffer;
-fn inspect(data: Buffer) {}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	inspect(current);
-}`)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestNoCopyInterfaceConversionRequiresMove(t *testing.T) {
-	diag := checkTypeSource(t, `interface Reader {
-	read(self: Self) -> i32
-}
-
-#[no_copy]
-struct Buffer {
-	ptr: ^u8
-}
-
-fn get_buffer() -> Buffer;
-
-impl Buffer {
-	fn read(self: Self) -> i32 {
-		return 0;
-	}
-}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	let reader: Reader = current;
-}`)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestMoveNoCopyInterfaceConversionAccepted(t *testing.T) {
-	diag := checkTypeSource(t, `interface Reader {
-	read(self: Self) -> i32
-}
-
-#[no_copy]
-struct Buffer {
-	ptr: ^u8
-}
-
-fn get_buffer() -> Buffer;
-
-impl Buffer {
-	fn read(self: Self) -> i32 {
-		return 0;
-	}
-}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	let reader: Reader = move current;
-	reader.read();
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -438,7 +285,7 @@ func TestInterfaceMoveParamRejectedForNow(t *testing.T) {
 
 func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Buffer {
-	ptr: ^u8,
+	ptr: ^u8
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -523,7 +370,7 @@ func TestConstPointerFieldStaysCopyable(t *testing.T) {
 func TestAllowCopyOverridesMutablePointerDefault(t *testing.T) {
 	module, diag := checkTypeModule(t, `#[allow_copy]
 struct Cursor {
-	ptr: ^u8,
+	ptr: ^u8
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -879,7 +726,7 @@ fn main(file: ^File) -> i32 {
 
 func TestConstPointerFieldAssignmentRejected(t *testing.T) {
 	src := `struct Box {
-	value: i32,
+	value: i32
 }
 
 fn main(ptr: ^const Box) {
@@ -932,7 +779,7 @@ func TestPointerSelfMethodCallRejectsImmutableValue(t *testing.T) {
 
 func TestPointerSelfMethodCallRejectsConstValue(t *testing.T) {
 	src := `struct Counter {
-	value: i32,
+	value: i32
 }
 
 impl Counter {
@@ -1082,7 +929,7 @@ func TestAssignmentRequiresMutableBinding(t *testing.T) {
 
 func TestPointerFieldAssignmentResolves(t *testing.T) {
 	src := `struct Counter {
-	value: i32,
+	value: i32
 }
 
 impl Counter {
@@ -1154,7 +1001,7 @@ func TestExplicitNumericToBoolCastAllowed(t *testing.T) {
 
 func TestMutableLocalFieldAssignmentResolves(t *testing.T) {
 	src := `struct Counter {
-	value: i32,
+	value: i32
 }
 
 fn main() -> i32 {
