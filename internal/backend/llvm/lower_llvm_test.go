@@ -484,7 +484,7 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRLowersFieldAddrWithoutTempAlloca(t *testing.T) {
+func TestGenerateLLVMIRLowersProjectFieldWithoutTempAlloca(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
@@ -501,7 +501,7 @@ func TestGenerateLLVMIRLowersFieldAddrWithoutTempAlloca(t *testing.T) {
 						Instrs: []mir.Instr{
 							&mir.Assign{
 								Name: "fieldptr",
-								Value: &mir.FieldAddr{
+								Value: &mir.ProjectField{
 									Base:  &mir.RefName{Name: "box", Type: "^struct{value: i32}"},
 									Index: 0,
 									Type:  "^i32",

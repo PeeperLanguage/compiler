@@ -81,13 +81,6 @@ type Assign struct {
 	Location *source.Location
 }
 
-type StoreField struct {
-	Base     ValueRef
-	Index    int
-	Value    ValueRef
-	Location *source.Location
-}
-
 type Jump struct {
 	TargetID int
 	Location *source.Location
@@ -101,6 +94,12 @@ type Branch struct {
 }
 
 type Ret struct {
+	Value    ValueRef
+	Location *source.Location
+}
+
+type Store struct {
+	Ptr      ValueRef
 	Value    ValueRef
 	Location *source.Location
 }
@@ -160,19 +159,25 @@ type AddrOf struct {
 	Location *source.Location
 }
 
+type Load struct {
+	Ptr      ValueRef
+	Type     string
+	Location *source.Location
+}
+
+type ProjectField struct {
+	Base     ValueRef
+	Index    int
+	Type     string
+	Location *source.Location
+}
+
 type Field struct {
 	Base       ValueRef
 	Index      int
 	ThroughPtr bool
 	Type       string
 	Location   *source.Location
-}
-
-type FieldAddr struct {
-	Base     ValueRef
-	Index    int
-	Type     string
-	Location *source.Location
 }
 
 type StructLit struct {
@@ -214,8 +219,8 @@ func (i *Assign) Text() string {
 	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
 }
 
-func (i *StoreField) Text() string {
-	return fmt.Sprintf("storefield %s, %d, %s", i.Base.Text(), i.Index, i.Value.Text())
+func (i *Store) Text() string {
+	return fmt.Sprintf("store %s, %s", i.Ptr.Text(), i.Value.Text())
 }
 
 func (i *Jump) Text() string {
@@ -238,8 +243,9 @@ func (*Binary) valueExprNode()        {}
 func (*Move) valueExprNode()          {}
 func (*Cast) valueExprNode()          {}
 func (*AddrOf) valueExprNode()        {}
+func (*Load) valueExprNode()          {}
+func (*ProjectField) valueExprNode()  {}
 func (*Field) valueExprNode()         {}
-func (*FieldAddr) valueExprNode()     {}
 func (*StructLit) valueExprNode()     {}
 func (*ZeroValue) valueExprNode()     {}
 func (*OptionalSome) valueExprNode()  {}
@@ -255,10 +261,12 @@ func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text(
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
 func (v *AddrOf) Text() string   { return fmt.Sprintf("addr %s", v.Base.Text()) }
-func (v *Field) Text() string    { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
-func (v *FieldAddr) Text() string {
-	return fmt.Sprintf("fieldaddr %s, %d", v.Base.Text(), v.Index)
+func (v *Load) Text() string     { return fmt.Sprintf("load %s", v.Ptr.Text()) }
+func (v *ProjectField) Text() string {
+	return fmt.Sprintf("projectfield %s, %d", v.Base.Text(), v.Index)
 }
+func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
+
 func (v *StructLit) Text() string {
 	var b strings.Builder
 	b.WriteString("struct(")
@@ -313,7 +321,7 @@ func InstrLocation(instr Instr) *source.Location {
 	switch node := instr.(type) {
 	case *Assign:
 		return node.Location
-	case *StoreField:
+	case *Store:
 		return node.Location
 	case *Call:
 		return node.Location
@@ -349,9 +357,11 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 		return node.Location
 	case *AddrOf:
 		return node.Location
-	case *Field:
+	case *Load:
 		return node.Location
-	case *FieldAddr:
+	case *ProjectField:
+		return node.Location
+	case *Field:
 		return node.Location
 	case *StructLit:
 		return node.Location
@@ -564,7 +574,8 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 				return false
 			}
 			base := l.lowerExpr(target.Base, &l.current.Instrs)
-			l.appendInstr(&l.current.Instrs, &StoreField{Base: base, Index: target.Index, Value: value})
+			ptr := l.projectField(&l.current.Instrs, base, target.Index, "^"+target.TypeText(), ir.ExprLocation(target))
+			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
 			return true
 		default:
 			return false
@@ -665,7 +676,7 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 		if exprLoc := ValueExprLocation(node.Value); exprLoc != nil {
 			node.Location = exprLoc
 		}
-	case *StoreField:
+	case *Store:
 		node.Location = l.location
 	case *Call:
 		node.Location = l.location
@@ -673,6 +684,12 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 		node.Location = l.location
 	}
 	*out = append(*out, instr)
+}
+
+func (l *lowerer) projectField(out *[]Instr, base ValueRef, index int, pointerType string, loc *source.Location) ValueRef {
+	name := l.nextTemp()
+	l.appendInstr(out, &Assign{Name: name, Value: &ProjectField{Base: base, Index: index, Type: pointerType, Location: loc}})
+	return &RefName{Name: name, Type: pointerType, Location: loc}
 }
 
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
@@ -771,9 +788,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.AddrOf:
 		if field, ok := e.Expr.(*ir.Field); ok && field != nil && field.ThroughPtr {
 			base := l.lowerExpr(field.Base, out)
-			name := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: name, Value: &FieldAddr{Base: base, Index: field.Index, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-			return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+			return l.projectField(out, base, field.Index, e.TypeText(), ir.ExprLocation(e))
 		}
 		base := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
@@ -781,6 +796,12 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
+		if e.ThroughPtr {
+			ptr := l.projectField(out, base, e.Index, "^"+e.TypeText(), ir.ExprLocation(e))
+			name := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+			return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
@@ -958,7 +979,7 @@ func markLocalInterfaceBoxing(fn *Function) {
 						markEscape(ref)
 					}
 				}
-			} else if store, ok := instr.(*StoreField); ok && store != nil {
+			} else if store, ok := instr.(*Store); ok && store != nil {
 				// Interface values stored in struct fields escape
 				markEscape(store.Value)
 			}
@@ -1002,9 +1023,11 @@ func valueRefsOf(expr ValueExpr) []ValueRef {
 		return []ValueRef{node.Arg}
 	case *AddrOf:
 		return []ValueRef{node.Base}
-	case *Field:
+	case *Load:
+		return []ValueRef{node.Ptr}
+	case *ProjectField:
 		return []ValueRef{node.Base}
-	case *FieldAddr:
+	case *Field:
 		return []ValueRef{node.Base}
 	case *StructLit:
 		return append([]ValueRef(nil), node.Fields...)
