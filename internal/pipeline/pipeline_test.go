@@ -233,8 +233,8 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(entry.MIR.Text(), "fieldaddr") {
-		t.Fatalf("expected address-of field to lower as fieldaddr, MIR:\n%s", entry.MIR.Text())
+	if !strings.Contains(entry.MIR.Text(), "projectfield") {
+		t.Fatalf("expected address-of field to lower as projectfield, MIR:\n%s", entry.MIR.Text())
 	}
 	if strings.Contains(entry.LLVMIR, "alloca i32") {
 		t.Fatalf("unexpected temp alloca for address-of field, LLVM IR:\n%s", entry.LLVMIR)
@@ -984,7 +984,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineInterfaceEscapesViaStoreFieldAndInterfaceCall(t *testing.T) {
+func TestPipelineInterfaceEscapesViaStoreAndInterfaceCall(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Summer {
 	sum(Self) -> i32,

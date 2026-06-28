@@ -221,8 +221,8 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 					}
 					continue
 				}
-				if store, ok := instr.(*mir.StoreField); ok && store != nil {
-					emitStoreField(lb, store)
+				if store, ok := instr.(*mir.Store); ok && store != nil {
+					emitStore(lb, store)
 					continue
 				}
 				if call, ok := instr.(*mir.Call); ok && call != nil {

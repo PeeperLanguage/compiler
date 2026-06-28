@@ -148,7 +148,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersAddressOfPointerFieldAsFieldAddr(t *testing.T) {
+func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",
 		Funcs: []*hir.Function{
@@ -184,8 +184,8 @@ func TestGenerateMIRLowersAddressOfPointerFieldAsFieldAddr(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
 	}
-	if _, ok := assign.Value.(*FieldAddr); !ok {
-		t.Fatalf("expected address-of field to lower as FieldAddr, got %#v", assign.Value)
+	if _, ok := assign.Value.(*ProjectField); !ok {
+		t.Fatalf("expected address-of field to lower as ProjectField, got %#v", assign.Value)
 	}
 }
 
