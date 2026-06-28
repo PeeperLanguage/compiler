@@ -70,8 +70,7 @@ const (
 	ErrInvalidErrorPropagate   = "T0033"
 	ErrUseAfterMove            = "T0034"
 	ErrInvalidCopy             = "T0035"
-	ErrBorrowEscape            = "T0036"
-	ErrBorrowConflict          = "T0037"
+	ErrPointerEscape           = "T0036"
 	ErrUnknownIdentifier       = "T0038"
 	ErrUninitializedVariable   = "T0039"
 

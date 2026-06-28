@@ -370,25 +370,36 @@ func emitStoreField(b *llvmBuilder, store *mir.StoreField) {
 	if b == nil || store == nil || store.Base == nil || store.Value == nil {
 		return
 	}
-	base := emitRef(b, store.Base)
-	baseType := mirRefType(store.Base)
-	llvmPtrType, ok := llvmTypeName(baseType)
-	if !ok {
+	ptr := emitFieldPtr(b, store.Base, store.Index)
+	if ptr == "" {
 		return
 	}
-	structTypeText, ok := pointedTypeText(baseType)
-	if !ok {
-		return
-	}
-	llvmStructType, ok := llvmTypeName(structTypeText)
-	if !ok {
-		return
-	}
-	ptr := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, store.Index))
 	value := emitRef(b, store.Value)
 	valueType := b.types.llvmType(mirRefType(store.Value))
 	b.line(fmt.Sprintf("store %s %s, %s* %s", valueType, value, valueType, ptr))
+}
+
+func emitFieldPtr(b *llvmBuilder, baseRef mir.ValueRef, index int) string {
+	if b == nil || baseRef == nil {
+		return ""
+	}
+	base := emitRef(b, baseRef)
+	baseType := mirRefType(baseRef)
+	llvmPtrType, ok := llvmTypeName(baseType)
+	if !ok {
+		return ""
+	}
+	structTypeText, ok := pointedTypeText(baseType)
+	if !ok {
+		return ""
+	}
+	llvmStructType, ok := llvmTypeName(structTypeText)
+	if !ok {
+		return ""
+	}
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, index))
+	return ptr
 }
 
 func mirValueType(expr mir.ValueExpr) string {
@@ -404,6 +415,8 @@ func mirValueType(expr mir.ValueExpr) string {
 	case *mir.AddrOf:
 		return v.Type
 	case *mir.Field:
+		return v.Type
+	case *mir.FieldAddr:
 		return v.Type
 	case *mir.StructLit:
 		return v.Type
@@ -475,7 +488,11 @@ func emitInterfaceBoxedData(b *llvmBuilder, value mir.ValueRef, dataType string,
 func pointedTypeText(typeText string) (string, bool) {
 	typeText = strings.TrimSpace(typeText)
 	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
-		return strings.TrimSpace(remainder), true
+		remainder = strings.TrimSpace(remainder)
+		if constTarget, ok := strings.CutPrefix(remainder, "const "); ok {
+			remainder = strings.TrimSpace(constTarget)
+		}
+		return remainder, true
 	}
 	return "", false
 }
@@ -767,28 +784,18 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
 			return ptr
 		case *mir.Field:
-			base := emitRef(b, e.Base)
-			baseType := mirRefType(e.Base)
 			if e.ThroughPtr {
-				llvmPtrType, ok := llvmTypeName(baseType)
-				if !ok {
+				ptr := emitFieldPtr(b, e.Base, e.Index)
+				if ptr == "" {
 					return "0"
 				}
-				structTypeText, ok := pointedTypeText(baseType)
-				if !ok {
-					return "0"
-				}
-				llvmStructType, ok := llvmTypeName(structTypeText)
-				if !ok {
-					return "0"
-				}
-				ptr := b.nextReg()
-				b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, e.Index))
 				out := b.nextReg()
 				llvmFieldType := b.types.llvmType(e.Type)
 				b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmFieldType, llvmFieldType, ptr))
 				return out
 			}
+			base := emitRef(b, e.Base)
+			baseType := mirRefType(e.Base)
 			llvmBaseType, ok := llvmTypeName(baseType)
 			if !ok {
 				return "0"
@@ -796,6 +803,11 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			out := b.nextReg()
 			b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", out, llvmBaseType, base, e.Index))
 			return out
+		case *mir.FieldAddr:
+			if ptr := emitFieldPtr(b, e.Base, e.Index); ptr != "" {
+				return ptr
+			}
+			return "0"
 		case *mir.StructLit:
 			llvmType := b.types.llvmType(e.Type)
 			current := "zeroinitializer"

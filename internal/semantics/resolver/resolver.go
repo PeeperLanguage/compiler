@@ -273,6 +273,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		r.resolveExpr(scope, node.Expr)
 	case *ast.MoveExpr:
 		r.resolveExpr(scope, node.Expr)
+	case *ast.AddressExpr:
+		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
 		r.resolveExpr(scope, node.Right)

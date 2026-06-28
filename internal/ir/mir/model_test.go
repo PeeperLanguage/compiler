@@ -148,6 +148,47 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersAddressOfPointerFieldAsFieldAddr(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Binding{
+							Name: "ptr",
+							Value: &ir.AddrOf{
+								Expr: &ir.Field{
+									Base:       &ir.Ident{Name: "boxptr", Type: "^struct{value: i32}"},
+									Index:      0,
+									ThroughPtr: true,
+									Type:       "i32",
+								},
+								Type: "^i32",
+							},
+						},
+						&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil)
+	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected first instruction assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
+	}
+	if _, ok := assign.Value.(*FieldAddr); !ok {
+		t.Fatalf("expected address-of field to lower as FieldAddr, got %#v", assign.Value)
+	}
+}
+
 func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 	testPath := "test" + peeper.SourceExt
 	mod := &hir.Module{

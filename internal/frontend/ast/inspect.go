@@ -99,6 +99,8 @@ func Inspect(node Node, f func(Node) bool) {
 		}
 	case *MoveExpr:
 		Inspect(n.Expr, f)
+	case *AddressExpr:
+		Inspect(n.Expr, f)
 	case *UnaryExpr:
 		Inspect(n.Expr, f)
 	case *BinaryExpr:

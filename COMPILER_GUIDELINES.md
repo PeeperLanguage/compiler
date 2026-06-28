@@ -185,11 +185,11 @@ Phase ownership must stay explicit.
   - treat public API surface differently from private/internal declarations
   - do not own type layout or backend-specific liveness decisions
 - `ownership analysis`
-  - run after MIR generation on typed, normalized IR
-  - validate moves, raw-pointer alias conflicts, and raw-pointer escape rules
+  - run after typechecking once expression types and scopes are populated
+  - validate moves and raw-pointer escape rules
   - own use-after-move diagnostics and ownership-state transitions
-  - consume CFG liveness once CFG exists instead of recursing purely over syntax
-  - use MIR temp/place provenance instead of re-reading frontend syntax
+  - consume CFG liveness once CFG exists instead of ad hoc recursion
+  - use typed place provenance from the current semantic model
   - handle path-sensitive and flow-sensitive reasoning
   - stay separate from the basic typechecker
 - `HIR`

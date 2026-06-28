@@ -102,6 +102,15 @@ type MoveExpr struct {
 func (*MoveExpr) exprNode()               {}
 func (e *MoveExpr) loc() *source.Location { return e.Location }
 
+type AddressExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Location *source.Location
+}
+
+func (*AddressExpr) exprNode()               {}
+func (e *AddressExpr) loc() *source.Location { return e.Location }
+
 type UnaryExpr struct {
 	NodeIDHolder
 	Op       string

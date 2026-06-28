@@ -49,7 +49,7 @@ Ownership belongs to the `T` binding, not to raw pointers that point at it.
 - points to storage owned somewhere else
 - does not own or free that storage
 - permits mutation through pointer operations
-- low-level tool with unsafe failure modes
+- low-level tool with explicit escape limits
 
 ### `^const T`
 
@@ -158,9 +158,7 @@ If callee must mutate caller-owned data, pass `^T` explicitly.
 
 ```peep
 fn set_first(xs: ^DynArray[i32]) {
-    unsafe {
-        (*xs)[0] = 10
-    }
+    xs.set(0, 10)
 }
 ```
 
@@ -190,25 +188,39 @@ Implementation status:
 - allocator provenance tracking is not complete
 - `free` ownership validation is future work
 
-## Raw Pointer Safety
+## Raw Pointer Escape Analysis
 
-Raw pointers are unsafe, but compiler should still check provable cases.
+Raw pointers are non-owning. Compiler escape analysis rejects provable attempts
+to return pointers to local stack storage.
+
+Use `@expr` to produce a raw pointer to addressable storage:
+
+```peep
+fn bad() -> ^const i32 {
+    let x: i32 = 1
+    return @x // error: pointer to local storage escapes
+}
+```
+
+Allocator-backed values are the explicit way to make returned storage outlive
+the current function once allocator APIs exist.
 
 Target checks:
 
 - reject return of pointer to dead local
 - reject storing pointer to shorter-lived local into longer-lived object when provable
-- reject obvious mutable/read-only alias conflicts for same known root
 - reject obvious use after free once allocator provenance exists
 - reject obvious double free once allocator provenance exists
 
 When provenance is lost through casts, pointer arithmetic, FFI, or opaque calls,
-compiler may require `unsafe` and weaken guarantees.
+the compiler treats the pointer as opaque for this analysis.
 
 Implementation status:
 
 - move/no-copy checks for owned `T` exist
-- full raw-pointer alias/lifetime checking is future work
+- explicit `@` address expressions exist
+- returning pointers to known local storage is rejected
+- allocator provenance tracking is future work
 
 ## Linked Structures
 
@@ -232,6 +244,7 @@ alive longer than all raw pointers that reference them.
 - `^T` is mutable raw pointer only.
 - `^const T` is read-only raw pointer only.
 - `^T` and `^const T` never own.
+- `@expr` produces a non-owning raw pointer to addressable storage.
 - `?T` is optional.
 - `string` is immutable non-owning view.
 - allocator returns owned `T`.
@@ -240,4 +253,4 @@ alive longer than all raw pointers that reference them.
 - `^const T` alone does not imply `#[no_copy]`.
 - `#[allow_copy]` permits explicit shallow copy of a `^T`-containing type.
 - mutation of same underlying object uses `^T` explicitly.
-- compiler performs best-effort raw-pointer safety checks where provenance is known.
+- compiler rejects returned raw pointers when they are known to point at local storage.
