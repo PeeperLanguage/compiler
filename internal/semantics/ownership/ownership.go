@@ -231,6 +231,9 @@ func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	case *ast.ConstDecl:
 		a.checkExpr(scope, s.Value, st, useCopy)
 	case *ast.AssignStmt:
+		if _, ok := s.Target.(*ast.Ident); !ok {
+			a.checkExpr(scope, s.Target, st, useRead)
+		}
 		a.checkExpr(scope, s.Value, st, useCopy)
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
 			if sym, found := scope.Lookup(target.Name); found && ownershipTrackedSymbol(sym) {

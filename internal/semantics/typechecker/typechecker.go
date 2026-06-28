@@ -355,7 +355,12 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		}
 	case *ast.SelectorExpr:
 		baseType := c.typeExpr(scope, target.Expr, nil)
-		if ptrType, ok := baseType.(*typeinfo.RawPtrType); ok && ptrType != nil {
+		if ptrType, ok := typeinfo.Underlying(baseType).(*typeinfo.RawPtrType); ok && ptrType != nil {
+			if ptrType.Mutable {
+				return
+			}
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+				"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
 			return
 		}
 		if c.isMutableAddressableExpr(scope, target.Expr) {
@@ -673,7 +678,12 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return &typeinfo.BoolType{}
 
 	case *ast.NoneLit:
-		return &typeinfo.NoneType{}
+		if optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType); ok && optional != nil {
+			return expected
+		}
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+			"`none` requires optional context", ast.LocOf(node), "")
+		return &typeinfo.InvalidType{}
 
 	case *ast.MoveExpr:
 		if node.Expr == nil {
@@ -773,12 +783,33 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		return nil
 	}
 
-	left := c.typeExpr(scope, node.Left, expected)
-	right := c.typeExpr(scope, node.Right, expected)
+	operandExpected := expected
+	if binaryResultIsBool(node.Op) {
+		operandExpected = nil
+	}
+
+	var left, right typeinfo.Type
+	if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
+		right = c.typeExpr(scope, node.Right, operandExpected)
+		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
+	} else {
+		left = c.typeExpr(scope, node.Left, operandExpected)
+		rightExpected := operandExpected
+		if isNoneExpr(node.Right) {
+			rightExpected = optionalOperandExpected(left)
+		}
+		right = c.typeExpr(scope, node.Right, rightExpected)
+	}
 	left = c.requireValueType(node.Left, left, "left operand")
 	right = c.requireValueType(node.Right, right, "right operand")
 
 	if typeinfo.IsInvalidOrUnknown(left) || typeinfo.IsInvalidOrUnknown(right) {
+		return &typeinfo.InvalidType{}
+	}
+	if (node.Op == "==" || node.Op == "!=") && (isOptionalType(left) || isOptionalType(right)) &&
+		!isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
+		c.ctx.Diagnostics.Add(invalidOperationError(node,
+			"optional equality currently requires `none` on one side"))
 		return &typeinfo.InvalidType{}
 	}
 
@@ -811,6 +842,32 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		return nil
 	}
 	return exprType
+}
+
+func binaryResultIsBool(op string) bool {
+	switch op {
+	case "&&", "||", "==", "!=", "<", "<=", ">", ">=":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNoneExpr(expr ast.Expr) bool {
+	_, ok := expr.(*ast.NoneLit)
+	return ok
+}
+
+func optionalOperandExpected(typ typeinfo.Type) typeinfo.Type {
+	if optional, ok := typeinfo.Underlying(typ).(*typeinfo.OptionalType); ok && optional != nil {
+		return typ
+	}
+	return nil
+}
+
+func isOptionalType(typ typeinfo.Type) bool {
+	_, ok := typeinfo.Underlying(typ).(*typeinfo.OptionalType)
+	return ok
 }
 
 func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {

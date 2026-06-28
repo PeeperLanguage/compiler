@@ -723,6 +723,9 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 					b.line(fmt.Sprintf("%s = srem %s %s, %s", out, leftType, left, right))
 				}
 			case "==", "!=", "<", "<=", ">", ">=":
+				if result, ok := emitOptionalNoneCompare(b, e.Op, e.Left, e.Right, left, right); ok {
+					return result
+				}
 				cmp := b.nextReg()
 				if isLLVMFloatType(leftType) {
 					pred := map[string]string{"==": "oeq", "!=": "one", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
@@ -865,6 +868,59 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			return "0"
 		}
 	})
+}
+
+func emitOptionalNoneCompare(b *llvmBuilder, op string, leftRef, rightRef mir.ValueRef, leftValue, rightValue string) (string, bool) {
+	if op != "==" && op != "!=" {
+		return "", false
+	}
+	leftInner, leftOptional := optionalInnerTypeText(mirRefType(leftRef))
+	rightInner, rightOptional := optionalInnerTypeText(mirRefType(rightRef))
+	if !leftOptional && !rightOptional {
+		return "", false
+	}
+	if leftOptional {
+		if _, niche := optionalNicheLayout(leftInner); niche {
+			return "", false
+		}
+	}
+	if rightOptional {
+		if _, niche := optionalNicheLayout(rightInner); niche {
+			return "", false
+		}
+	}
+	leftNone := leftValue == "zeroinitializer"
+	rightNone := rightValue == "zeroinitializer"
+	if leftNone && rightNone {
+		if op == "==" {
+			return "true", true
+		}
+		return "false", true
+	}
+	var valueRef mir.ValueRef
+	var value string
+	if leftNone {
+		valueRef = rightRef
+		value = rightValue
+	} else if rightNone {
+		valueRef = leftRef
+		value = leftValue
+	} else {
+		if b != nil && b.types != nil {
+			b.types.markInvalid("optional equality currently requires `none` on one side")
+		}
+		return "false", true
+	}
+	llvmType := b.types.llvmType(mirRefType(valueRef))
+	tag := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", tag, llvmType, value))
+	cmp := b.nextReg()
+	pred := "eq"
+	if op == "!=" {
+		pred = "ne"
+	}
+	b.line(fmt.Sprintf("%s = icmp %s i1 %s, false", cmp, pred, tag))
+	return cmp, true
 }
 
 func emitRef(b *llvmBuilder, ref mir.ValueRef) string {

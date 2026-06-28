@@ -441,8 +441,21 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
 
 	case *ast.BinaryExpr:
-		left := lowerASTExpr(ctx, module, scope, node.Left, expectedType)
-		right := lowerASTExpr(ctx, module, scope, node.Right, expectedType)
+		leftExpected := expectedType
+		rightExpected := expectedType
+		switch node.Op {
+		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+			leftExpected = exprResolvedType(module, node.Left)
+			rightExpected = exprResolvedType(module, node.Right)
+			if _, ok := node.Left.(*ast.NoneLit); ok && rightExpected != nil {
+				leftExpected = rightExpected
+			}
+			if _, ok := node.Right.(*ast.NoneLit); ok && leftExpected != nil {
+				rightExpected = leftExpected
+			}
+		}
+		left := lowerASTExpr(ctx, module, scope, node.Left, leftExpected)
+		right := lowerASTExpr(ctx, module, scope, node.Right, rightExpected)
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
 			t = left.TypeText()

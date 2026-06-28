@@ -390,6 +390,21 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineComparesOptionalWithNone(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	let x: ?i32 = none;
+	if x == none {
+		return 0;
+	}
+	return 1;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineAllowsForwardFunctionCalls(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {

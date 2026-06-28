@@ -192,6 +192,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		}
 		b.WriteString(" {\n")
 		lb := newLLVMBuilder(&b, emitter, debugScopeID)
+		stackSlots := stackLocalSlots(fn)
 		for _, param := range fn.Params {
 			lb.locals[param.Name] = "%" + param.Name
 			lb.localTypes[param.Name] = param.Type
@@ -201,6 +202,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				continue
 			}
 			fmt.Fprintf(&b, "b%d:\n", block.ID)
+			if block.ID == fn.EntryID {
+				emitStackLocalSlots(lb, stackSlots)
+			}
 			for _, instr := range block.Instrs {
 				lb.setLocation(mir.InstrLocation(instr))
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
@@ -292,4 +296,72 @@ func llvmFunctionReturnType(fn *mir.Function) string {
 		return "i32"
 	}
 	return fn.ReturnType
+}
+
+type stackLocalSlot struct {
+	Name string
+	Type string
+}
+
+func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
+	if fn == nil {
+		return nil
+	}
+	paramTypes := make(map[string]string, len(fn.Params))
+	for _, param := range fn.Params {
+		paramTypes[param.Name] = param.Type
+	}
+	counts := make(map[string]int)
+	types := make(map[string]string)
+	order := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instrs {
+			assign, ok := instr.(*mir.Assign)
+			if !ok || assign == nil || assign.Name == "" {
+				continue
+			}
+			if !seen[assign.Name] {
+				seen[assign.Name] = true
+				order = append(order, assign.Name)
+			}
+			counts[assign.Name]++
+			if typ := mirValueType(assign.Value); typ != "" {
+				types[assign.Name] = typ
+			}
+		}
+	}
+	slots := make([]stackLocalSlot, 0)
+	for _, name := range order {
+		typ := types[name]
+		if typ == "" {
+			typ = paramTypes[name]
+		}
+		if typ == "" {
+			continue
+		}
+		if counts[name] > 1 || paramTypes[name] != "" {
+			slots = append(slots, stackLocalSlot{Name: name, Type: typ})
+		}
+	}
+	return slots
+}
+
+func emitStackLocalSlots(b *llvmBuilder, slots []stackLocalSlot) {
+	if b == nil {
+		return
+	}
+	for _, slot := range slots {
+		llvmType := b.types.llvmType(slot.Type)
+		ptr := b.nextReg()
+		b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmType))
+		if paramValue, ok := b.locals[slot.Name]; ok && paramValue != "" {
+			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, paramValue, llvmType, ptr))
+		}
+		b.localPtrs[slot.Name] = ptr
+		b.localTypes[slot.Name] = slot.Type
+	}
 }
