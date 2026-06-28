@@ -11,6 +11,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/usage"
@@ -205,6 +206,8 @@ func nextModulePhase(current project.ModulePhase) project.ModulePhase {
 	case project.PhaseResolved:
 		return project.PhaseTypechecked
 	case project.PhaseTypechecked:
+		return project.PhaseOwnership
+	case project.PhaseOwnership:
 		return project.PhaseUsage
 	case project.PhaseUsage:
 		return project.PhaseHIR
@@ -223,10 +226,10 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 		return project.PhaseParsed
 	case project.PhaseBound, project.PhaseTypechecked:
 		return project.PhaseBound
-	case project.PhaseResolved, project.PhaseUsage:
+	case project.PhaseResolved, project.PhaseOwnership, project.PhaseUsage:
 		return project.PhaseCollected
 	case project.PhaseHIR:
-		return project.PhaseTypechecked
+		return project.PhaseOwnership
 	default:
 		return project.PhaseNone
 	}
@@ -263,6 +266,12 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase < project.PhaseTypechecked {
 		typechecker.Check(p.ctx, module)
 		module.Phase = project.PhaseTypechecked
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < project.PhaseOwnership {
+		ownership.Check(p.ctx, module)
+		module.Phase = project.PhaseOwnership
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}

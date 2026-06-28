@@ -44,6 +44,7 @@ const (
 	PhaseBound
 	PhaseResolved
 	PhaseTypechecked
+	PhaseOwnership
 	PhaseUsage
 	PhaseHIR
 	PhaseMIR

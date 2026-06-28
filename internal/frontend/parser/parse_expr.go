@@ -68,6 +68,7 @@ func init() {
 		return reg(p, &ast.BoolLit{Value: false, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
 	nud(token.MOVE, func(p *Parser) ast.Expr { return p.parseMoveExpr() })
+	nud(token.AT, func(p *Parser) ast.Expr { return p.parseAddressExpr() })
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
 	// grouping
@@ -171,6 +172,19 @@ func (p *Parser) parseMoveExpr() ast.Expr {
 		return reg(p, &ast.BadExpr{Location: loc})
 	}
 	return reg(p, &ast.MoveExpr{
+		Expr:     expr,
+		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
+	})
+}
+
+func (p *Parser) parseAddressExpr() ast.Expr {
+	tok := p.advance()
+	expr := p.parseExpr(precPrefix)
+	if expr == nil {
+		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
+		return reg(p, &ast.BadExpr{Location: loc})
+	}
+	return reg(p, &ast.AddressExpr{
 		Expr:     expr,
 		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
 	})

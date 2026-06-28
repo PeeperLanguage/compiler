@@ -141,6 +141,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseBound,
 		project.PhaseResolved,
 		project.PhaseTypechecked,
+		project.PhaseOwnership,
 		project.PhaseUsage,
 		project.PhaseHIR,
 		project.PhaseMIR,
@@ -182,6 +183,61 @@ fn main() -> i32 {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersAddressExprSurface(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	let mut value: i32 = 1;
+	let ptr: ^i32 = @value;
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersAddressOfFieldStorage(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Box {
+	value: i32,
+}
+
+#[extern]
+fn use_ptr(ptr: ^i32);
+
+fn main() -> i32 {
+	let mut box: Box = .{ value = 1 };
+	let ptr: ^i32 = @box.value;
+	use_ptr(ptr);
+	return 0;
+}`
+
+	const preludePath = "core/global" + peeper.SourceExt
+	const entryPath = "entry" + peeper.SourceExt
+
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(preludePath, preludeSrc)
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(entry.MIR.Text(), "fieldaddr") {
+		t.Fatalf("expected address-of field to lower as fieldaddr, MIR:\n%s", entry.MIR.Text())
+	}
+	if strings.Contains(entry.LLVMIR, "alloca i32") {
+		t.Fatalf("unexpected temp alloca for address-of field, LLVM IR:\n%s", entry.LLVMIR)
 	}
 }
 

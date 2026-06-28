@@ -2,13 +2,13 @@ package ownership
 
 import (
 	"fmt"
+	"maps"
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
-	"compiler/internal/semantics/typeinfo"
 )
 
 type nodeKind uint8
@@ -51,12 +51,46 @@ type analyzer struct {
 	flow   *flow
 }
 
-type state map[*symbols.Symbol]ast.Node
+type pointerOrigin struct {
+	root *symbols.Symbol
+	site ast.Node
+}
 
-// CheckFunction runs ownership flow after ordinary typechecking has populated
-// expression types and scopes. It keeps move state local to this pass so the
-// typechecker remains a type phase, not a data-flow engine.
-func CheckFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope, returnType typeinfo.Type) {
+type state struct {
+	moved    map[*symbols.Symbol]ast.Node
+	pointers map[*symbols.Symbol]pointerOrigin
+}
+
+// Check runs flow-sensitive ownership checks after typechecking has populated
+// expression types and scopes. Keeping this phase outside the checker prevents
+// value-flow rules from becoming ad hoc type rules.
+func Check(ctx *project.CompilerContext, module *project.Module) {
+	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil {
+		return
+	}
+	for _, stmt := range module.AST.Stmts {
+		switch node := stmt.(type) {
+		case *ast.FnDecl:
+			sym, found := module.ModuleScope.Lookup(node.Name.Name)
+			if !found || sym == nil {
+				continue
+			}
+			scope, _ := sym.Scope.(*table.Scope)
+			checkFunction(ctx, module, node, scope)
+		case *ast.ImplDecl:
+			for _, method := range node.Methods {
+				sym := module.Semantics.MethodSymbol[method.ID()]
+				if sym == nil {
+					continue
+				}
+				scope, _ := sym.Scope.(*table.Scope)
+				checkFunction(ctx, module, method, scope)
+			}
+		}
+	}
+}
+
+func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope) {
 	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil {
 		return
 	}
@@ -172,7 +206,7 @@ func (a *analyzer) run() {
 	if a == nil || a.flow == nil || a.flow.graph == nil || a.flow.entry == "" {
 		return
 	}
-	in := map[graph.NodeID]state{a.flow.entry: make(state)}
+	in := map[graph.NodeID]state{a.flow.entry: newState()}
 	queue := []graph.NodeID{a.flow.entry}
 	queued := map[graph.NodeID]bool{a.flow.entry: true}
 	for len(queue) > 0 {
@@ -199,48 +233,64 @@ func (a *analyzer) run() {
 }
 
 func copyState(src state) state {
-	dst := make(state, len(src))
-	for sym, site := range src {
-		dst[sym] = site
-	}
+	dst := newState()
+	maps.Copy(dst.moved, src.moved)
+	maps.Copy(dst.pointers, src.pointers)
 	return dst
 }
 
 func mergeState(dst, src state) (state, bool) {
-	if dst == nil {
-		if len(src) == 0 {
-			return make(state), true
-		}
+	if dst.moved == nil || dst.pointers == nil {
 		return copyState(src), true
 	}
 	changed := false
-	for sym, site := range src {
-		if _, ok := dst[sym]; ok {
+	for sym, site := range src.moved {
+		if _, ok := dst.moved[sym]; ok {
 			continue
 		}
-		dst[sym] = site
+		dst.moved[sym] = site
+		changed = true
+	}
+	for sym, origin := range src.pointers {
+		if _, ok := dst.pointers[sym]; ok {
+			continue
+		}
+		dst.pointers[sym] = origin
 		changed = true
 	}
 	return dst, changed
+}
+
+func newState() state {
+	return state{
+		moved:    make(map[*symbols.Symbol]ast.Node),
+		pointers: make(map[*symbols.Symbol]pointerOrigin),
+	}
 }
 
 func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	switch s := stmt.(type) {
 	case *ast.LetDecl:
 		a.checkExpr(scope, s.Value, st, useCopy)
+		a.updatePointerBinding(scope, s, s.Value, st)
 	case *ast.ConstDecl:
 		a.checkExpr(scope, s.Value, st, useCopy)
+		a.updatePointerBinding(scope, s, s.Value, st)
 	case *ast.AssignStmt:
 		if _, ok := s.Target.(*ast.Ident); !ok {
 			a.checkExpr(scope, s.Target, st, useRead)
 		}
 		a.checkExpr(scope, s.Value, st, useCopy)
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
-			if sym, found := scope.Lookup(target.Name); found && ownershipTrackedSymbol(sym) {
-				delete(st, sym)
+			if sym, found := scope.Lookup(target.Name); found {
+				if ownershipTrackedSymbol(sym) {
+					delete(st.moved, sym)
+				}
+				a.updatePointerSymbol(sym, scope, s.Value, st)
 			}
 		}
 	case *ast.ReturnStmt:
+		a.checkPointerEscape(scope, s.Value, st)
 		a.checkExpr(scope, s.Value, st, useConsume)
 	case *ast.ExprStmt:
 		a.checkExpr(scope, s.Expr, st, useRead)

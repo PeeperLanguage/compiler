@@ -8,6 +8,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -265,18 +266,21 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "assignment missing target or value", Location: ast.LocOf(node)})
 			return
 		}
-		targetExpr := lowerAssignTargetExpr(ctx, module, scope, node.Target)
+		targetExpr := lowerPlaceExpr(ctx, module, scope, node.Target, true)
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
 		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, Location: ast.LocOf(node)})
 	}
 }
 
-func lowerAssignTargetExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr) ir.Expr {
+func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, requireMutable bool) ir.Expr {
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil {
+		exprType := func(e ast.Expr) typeinfo.Type {
+			return exprResolvedType(module, e)
+		}
 		baseType := exprResolvedType(module, selector.Expr)
 		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
-			if _, throughPtr := baseType.(*typeinfo.RawPtrType); throughPtr {
+			if _, throughPtr := typeinfo.Underlying(baseType).(*typeinfo.RawPtrType); throughPtr {
 				return &ir.Field{
 					Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 					Index:      fieldIndex,
@@ -285,11 +289,19 @@ func lowerAssignTargetExpr(ctx *project.CompilerContext, module *project.Module,
 					Location:   ast.LocOf(selector),
 				}
 			}
-			if isAddressableExpr(module, scope, selector.Expr) {
+			addressable := place.Addressable(scope, selector.Expr, exprType)
+			if requireMutable {
+				addressable = place.MutableAddressable(scope, selector.Expr, exprType)
+			}
+			if addressable {
+				basePointerType := "^" + loweredTypeText(module, baseType)
+				if !place.MutableAddressable(scope, selector.Expr, exprType) {
+					basePointerType = "^const " + loweredTypeText(module, baseType)
+				}
 				return &ir.Field{
 					Base: &ir.AddrOf{
-						Expr:     lowerAssignTargetExpr(ctx, module, scope, selector.Expr),
-						Type:     "^" + loweredTypeText(module, baseType),
+						Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, requireMutable),
+						Type:     basePointerType,
 						Location: ast.LocOf(selector.Expr),
 					},
 					Index:      fieldIndex,
@@ -301,23 +313,6 @@ func lowerAssignTargetExpr(ctx *project.CompilerContext, module *project.Module,
 		}
 	}
 	return lowerASTExpr(ctx, module, scope, expr, nil)
-}
-
-func isAddressableExpr(module *project.Module, scope *table.Scope, expr ast.Expr) bool {
-	if scope == nil || expr == nil {
-		return false
-	}
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return scope.IsMutableVar(e.Name)
-	case *ast.SelectorExpr:
-		baseType := exprResolvedType(module, e.Expr)
-		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
-			return true
-		}
-		return isAddressableExpr(module, scope, e.Expr)
-	}
-	return false
 }
 
 func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
@@ -439,6 +434,14 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 
 	case *ast.MoveExpr:
 		return lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
+
+	case *ast.AddressExpr:
+		valueExpr := lowerPlaceExpr(ctx, module, scope, node.Expr, false)
+		t := resolvedTypeStr
+		if t == "" || t == "<invalid>" {
+			t = "^" + valueExpr.TypeText()
+		}
+		return &ir.AddrOf{Expr: valueExpr, Type: t, Location: loc}
 
 	case *ast.BinaryExpr:
 		leftExpected := expectedType
@@ -611,7 +614,9 @@ func receiverNeedsAddress(module *project.Module, scope *table.Scope, fnType *ty
 	if !typeinfo.SameType(ptrType.Target, baseType) {
 		return false
 	}
-	return isAddressableExpr(module, scope, receiver)
+	return place.MutableAddressable(scope, receiver, func(e ast.Expr) typeinfo.Type {
+		return exprResolvedType(module, e)
+	})
 }
 
 func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {

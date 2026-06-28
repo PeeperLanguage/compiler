@@ -483,3 +483,46 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 		t.Fatalf("unexpected float truthiness compare in integer bool cast, got:\n%s", irText)
 	}
 }
+
+func TestGenerateLLVMIRLowersFieldAddrWithoutTempAlloca(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{
+			{
+				Name:       "main",
+				Params:     []ir.Param{{Name: "box", Type: "^struct{value: i32}"}},
+				ReturnType: "i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{
+					{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Assign{
+								Name: "fieldptr",
+								Value: &mir.FieldAddr{
+									Base:  &mir.RefName{Name: "box", Type: "^struct{value: i32}"},
+									Index: 0,
+									Type:  "^i32",
+								},
+							},
+						},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") {
+		t.Fatalf("expected field address to lower as GEP, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "alloca i32") {
+		t.Fatalf("unexpected temp alloca for field address, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "load i32") {
+		t.Fatalf("unexpected field load for field address, got:\n%s", irText)
+	}
+}

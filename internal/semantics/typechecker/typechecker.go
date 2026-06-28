@@ -7,7 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
-	"compiler/internal/semantics/ownership"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -218,7 +218,6 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 	}
 	returnType := typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
 	c.checkBlock(funcScope, fn.Body, returnType)
-	ownership.CheckFunction(c.ctx, c.module, fn, funcScope, returnType)
 }
 
 func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -695,6 +694,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		}
 		return valueType
 
+	case *ast.AddressExpr:
+		return c.typeAddressExpr(scope, node, expected)
+
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok || sym == nil {
@@ -774,6 +776,31 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 		return nil
 	}
 	return argType
+}
+
+func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, expected typeinfo.Type) typeinfo.Type {
+	if node == nil || node.Expr == nil {
+		return &typeinfo.InvalidType{}
+	}
+	valueType := c.typeExpr(scope, node.Expr, nil)
+	valueType = c.requireValueType(node.Expr, valueType, "address operand")
+	if typeinfo.IsInvalidOrUnknown(valueType) {
+		return &typeinfo.InvalidType{}
+	}
+	if !place.Addressable(scope, node.Expr, func(expr ast.Expr) typeinfo.Type {
+		return c.typeExpr(scope, expr, nil)
+	}) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+			"address operator requires addressable storage", ast.LocOf(node.Expr), "")
+		return &typeinfo.InvalidType{}
+	}
+	mutable := place.MutableAddressable(scope, node.Expr, func(expr ast.Expr) typeinfo.Type {
+		return c.typeExpr(scope, expr, nil)
+	})
+	if expectedPtr, ok := typeinfo.Underlying(expected).(*typeinfo.RawPtrType); ok && expectedPtr != nil {
+		mutable = expectedPtr.Mutable && mutable
+	}
+	return &typeinfo.RawPtrType{Mutable: mutable, Target: valueType}
 }
 
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
@@ -1301,20 +1328,9 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 }
 
 func (c *checker) isMutableAddressableExpr(scope *table.Scope, expr ast.Expr) bool {
-	if c == nil || scope == nil || expr == nil {
-		return false
-	}
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return scope.IsMutableVar(e.Name)
-	case *ast.SelectorExpr:
-		baseType := c.typeExpr(scope, e.Expr, nil)
-		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
-			return true
-		}
-		return c.isMutableAddressableExpr(scope, e.Expr)
-	}
-	return false
+	return c != nil && place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
+		return c.typeExpr(scope, e, nil)
+	})
 }
 
 func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {

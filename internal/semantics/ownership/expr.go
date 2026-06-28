@@ -3,6 +3,7 @@ package ownership
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -25,6 +26,8 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 		a.checkIdent(scope, e, st, use)
 	case *ast.MoveExpr:
 		a.checkMove(scope, e, st, use)
+	case *ast.AddressExpr:
+		a.checkExpr(scope, e.Expr, st, useRead)
 	case *ast.SelectorExpr:
 		a.checkSelector(scope, e, st, use)
 	case *ast.StructLit:
@@ -55,7 +58,7 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 	if !ok || sym == nil {
 		return
 	}
-	if site, moved := st[sym]; moved {
+	if site, moved := st.moved[sym]; moved {
 		diag := a.ctx.Diagnostics.AddError(diagnostics.ErrUseAfterMove,
 			"value used after move", ast.LocOf(ident), "")
 		if site != nil {
@@ -71,7 +74,7 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires `move` or consuming context", ast.LocOf(ident), "")
 	case useConsume:
-		st[sym] = ident
+		st.moved[sym] = ident
 	}
 }
 
@@ -94,7 +97,7 @@ func (a *analyzer) checkMove(scope *table.Scope, move *ast.MoveExpr, st state, u
 	if !found || sym == nil {
 		return
 	}
-	if site, moved := st[sym]; moved {
+	if site, moved := st.moved[sym]; moved {
 		diag := a.ctx.Diagnostics.AddError(diagnostics.ErrUseAfterMove,
 			"value used after move", ast.LocOf(ident), "")
 		if site != nil {
@@ -103,7 +106,7 @@ func (a *analyzer) checkMove(scope *table.Scope, move *ast.MoveExpr, st state, u
 		return
 	}
 	if ownershipTrackedSymbol(sym) {
-		st[sym] = move
+		st.moved[sym] = move
 	}
 }
 
@@ -177,6 +180,92 @@ func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
 		return nil
 	}
 	return a.module.Semantics.ExprTypes[expr.ID()]
+}
+
+func (a *analyzer) updatePointerBinding(scope *table.Scope, node ast.Stmt, value ast.Expr, st state) {
+	if scope == nil || node == nil {
+		return
+	}
+	sym, found := scope.LookupNode(node)
+	if !found {
+		return
+	}
+	a.updatePointerSymbol(sym, scope, value, st)
+}
+
+func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *table.Scope, value ast.Expr, st state) {
+	if sym == nil || st.pointers == nil {
+		return
+	}
+	typ, hasType := symbols.GetSymbolType(sym)
+	if !hasType {
+		delete(st.pointers, sym)
+		return
+	}
+	if _, ok := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); !ok {
+		delete(st.pointers, sym)
+		return
+	}
+	if origin, ok := a.pointerOrigin(scope, value, st); ok {
+		st.pointers[sym] = origin
+		return
+	}
+	delete(st.pointers, sym)
+}
+
+func (a *analyzer) checkPointerEscape(scope *table.Scope, expr ast.Expr, st state) {
+	if expr == nil {
+		return
+	}
+	if origin, ok := a.pointerOrigin(scope, expr, st); ok {
+		a.reportPointerEscape(expr, origin)
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.StructLit:
+		for _, field := range e.Fields {
+			a.checkPointerEscape(scope, field.Value, st)
+		}
+	case *ast.MoveExpr:
+		a.checkPointerEscape(scope, e.Expr, st)
+	}
+}
+
+func (a *analyzer) pointerOrigin(scope *table.Scope, expr ast.Expr, st state) (pointerOrigin, bool) {
+	switch e := expr.(type) {
+	case *ast.AddressExpr:
+		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType)
+		if !ok || root == nil {
+			return pointerOrigin{}, false
+		}
+		return pointerOrigin{root: root, site: e}, true
+	case *ast.Ident:
+		if scope == nil {
+			return pointerOrigin{}, false
+		}
+		sym, found := scope.Lookup(e.Name)
+		if !found || sym == nil {
+			return pointerOrigin{}, false
+		}
+		origin, ok := st.pointers[sym]
+		return origin, ok
+	case *ast.MoveExpr:
+		return a.pointerOrigin(scope, e.Expr, st)
+	default:
+		return pointerOrigin{}, false
+	}
+}
+
+func (a *analyzer) reportPointerEscape(expr ast.Expr, origin pointerOrigin) {
+	if a == nil || a.ctx == nil || a.ctx.Diagnostics == nil || origin.root == nil {
+		return
+	}
+	diag := a.ctx.Diagnostics.AddError(diagnostics.ErrPointerEscape,
+		"cannot return pointer to local storage", ast.LocOf(expr), "")
+	if origin.root.Location != nil {
+		diag.WithSecondaryLabel(origin.root.Location, "local storage declared here")
+	}
+	diag.WithHelp("allocate the value with an explicit allocator before returning a pointer to it")
 }
 
 func ownershipTrackedSymbol(sym *symbols.Symbol) bool {

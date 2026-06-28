@@ -292,6 +292,31 @@ func TestParseMoveExpr(t *testing.T) {
 	}
 }
 
+func TestParseAddressExpr(t *testing.T) {
+	src := `fn main() {
+	let ptr = @current;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[0])
+	}
+	addr, ok := letDecl.Value.(*ast.AddressExpr)
+	if !ok {
+		t.Fatalf("expected address expr, got %#v", letDecl.Value)
+	}
+	if ident, ok := addr.Expr.(*ast.Ident); !ok || ident.Name != "current" {
+		t.Fatalf("unexpected address operand: %#v", addr.Expr)
+	}
+}
+
 func TestParseCastBindsLooserThanUnary(t *testing.T) {
 	src := `fn main() -> i32 {
 	let x: i8 = -128 as i8;

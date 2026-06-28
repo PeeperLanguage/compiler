@@ -168,6 +168,13 @@ type Field struct {
 	Location   *source.Location
 }
 
+type FieldAddr struct {
+	Base     ValueRef
+	Index    int
+	Type     string
+	Location *source.Location
+}
+
 type StructLit struct {
 	Fields   []ValueRef
 	Type     string
@@ -232,6 +239,7 @@ func (*Move) valueExprNode()          {}
 func (*Cast) valueExprNode()          {}
 func (*AddrOf) valueExprNode()        {}
 func (*Field) valueExprNode()         {}
+func (*FieldAddr) valueExprNode()     {}
 func (*StructLit) valueExprNode()     {}
 func (*ZeroValue) valueExprNode()     {}
 func (*OptionalSome) valueExprNode()  {}
@@ -248,6 +256,9 @@ func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
 func (v *AddrOf) Text() string   { return fmt.Sprintf("addr %s", v.Base.Text()) }
 func (v *Field) Text() string    { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
+func (v *FieldAddr) Text() string {
+	return fmt.Sprintf("fieldaddr %s, %d", v.Base.Text(), v.Index)
+}
 func (v *StructLit) Text() string {
 	var b strings.Builder
 	b.WriteString("struct(")
@@ -339,6 +350,8 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *AddrOf:
 		return node.Location
 	case *Field:
+		return node.Location
+	case *FieldAddr:
 		return node.Location
 	case *StructLit:
 		return node.Location
@@ -756,6 +769,12 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: call})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.AddrOf:
+		if field, ok := e.Expr.(*ir.Field); ok && field != nil && field.ThroughPtr {
+			base := l.lowerExpr(field.Base, out)
+			name := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: name, Value: &FieldAddr{Base: base, Index: field.Index, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+			return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		}
 		base := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
@@ -984,6 +1003,8 @@ func valueRefsOf(expr ValueExpr) []ValueRef {
 	case *AddrOf:
 		return []ValueRef{node.Base}
 	case *Field:
+		return []ValueRef{node.Base}
+	case *FieldAddr:
 		return []ValueRef{node.Base}
 	case *StructLit:
 		return append([]ValueRef(nil), node.Fields...)
