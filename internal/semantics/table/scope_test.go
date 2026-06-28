@@ -44,3 +44,27 @@ func TestScopeSymbolsOrder(t *testing.T) {
 		t.Fatalf("unexpected symbol order: %#v", got)
 	}
 }
+
+func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
+	s := New(nil)
+	firstNode := &ast.LetDecl{}
+	secondNode := &ast.LetDecl{}
+	first := symbols.New("_", symbols.SymbolVar, firstNode, ast.LocOf(nil))
+	second := symbols.New("_", symbols.SymbolVar, secondNode, ast.LocOf(nil))
+	if err := s.Declare(first); err != nil {
+		t.Fatalf("declare first discard failed: %v", err)
+	}
+	if err := s.Declare(second); err != nil {
+		t.Fatalf("declare second discard failed: %v", err)
+	}
+	if _, ok := s.LookupLocal("_"); ok {
+		t.Fatalf("discard binding must not be name-addressable")
+	}
+	got := s.Symbols()
+	if len(got) != 2 || got[0] != first || got[1] != second {
+		t.Fatalf("unexpected discard symbol order: %#v", got)
+	}
+	if sym, ok := s.LookupNode(secondNode); !ok || sym != second {
+		t.Fatalf("lookup by AST node failed: %#v", sym)
+	}
+}

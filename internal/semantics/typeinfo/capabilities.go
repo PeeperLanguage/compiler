@@ -39,7 +39,9 @@ func IsArithmetic(t Type) bool {
 func IsEquatable(t Type) bool {
 	t = Underlying(t)
 	switch t.(type) {
-	case *IntegerType, *FloatType, *BoolType:
+	case *IntegerType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
+		return true
+	case *OptionalType:
 		return true
 	default:
 		return false
@@ -53,27 +55,55 @@ func IsCondition(t Type) bool {
 }
 
 func IsCopyType(t Type) bool {
+	switch typ := t.(type) {
+	case *DefinedType:
+		if typ == nil {
+			return false
+		}
+		switch typ.CopyMode {
+		case CopyAllow:
+			return true
+		case CopyDeny:
+			return false
+		default:
+			return IsCopyType(typ.Underlying)
+		}
+	}
 	t = Underlying(t)
 	switch typ := t.(type) {
 	case nil:
 		return false
 	case *InvalidType, *UnknownType:
 		return false
-	case *IntegerType, *FloatType, *BoolType, *CStrType:
+	case *IntegerType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
 		return true
 	case *RawPtrType:
-		return true
+		return typ != nil && !typ.Mutable
+	case *OptionalType:
+		return typ != nil && IsCopyType(typ.Inner)
+	case *ArrayType:
+		return typ != nil && IsCopyType(typ.Elem)
+	case *SliceType:
+		return false
 	case *FuncType:
 		if typ == nil {
 			return false
 		}
 		return true
+	case *InterfaceType:
+		return typ != nil
 	case *EnumType:
 		return typ != nil
 	case *StructType:
-		// Conservative v1 rule: structs are move-only until Peeper grows an
-		// explicit Copy story for user-defined aggregate types.
-		return false
+		if typ == nil {
+			return false
+		}
+		for _, field := range typ.Fields {
+			if !IsCopyType(field.Type) {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}

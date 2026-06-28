@@ -62,3 +62,14 @@ type IfStmt struct {
 
 func (*IfStmt) stmtNode()               {}
 func (s *IfStmt) loc() *source.Location { return s.Location }
+
+type ForStmt struct {
+	NodeIDHolder
+	Documented
+	Cond     Expr
+	Body     *BlockStmt
+	Location *source.Location
+}
+
+func (*ForStmt) stmtNode()               {}
+func (s *ForStmt) loc() *source.Location { return s.Location }

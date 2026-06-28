@@ -55,6 +55,19 @@ func init() {
 		tok := p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
+	nud(token.NONE, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.NoneLit{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.TRUE, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.BoolLit{Value: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.FALSE, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.BoolLit{Value: false, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.MOVE, func(p *Parser) ast.Expr { return p.parseMoveExpr() })
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
 	// grouping
@@ -145,6 +158,19 @@ func (p *Parser) parseUnaryExpr() ast.Expr {
 	}
 	return reg(p, &ast.UnaryExpr{
 		Op:       tok.Literal,
+		Expr:     expr,
+		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
+	})
+}
+
+func (p *Parser) parseMoveExpr() ast.Expr {
+	tok := p.advance()
+	expr := p.parseExpr(precPrefix)
+	if expr == nil {
+		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
+		return reg(p, &ast.BadExpr{Location: loc})
+	}
+	return reg(p, &ast.MoveExpr{
 		Expr:     expr,
 		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
 	})

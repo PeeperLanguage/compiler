@@ -31,13 +31,36 @@ type BoolType struct{}
 
 type CStrType struct{}
 
+type StringType struct{}
+
+type NoneType struct{}
+
 type NamedType struct {
 	Name string
+}
+
+type CopyMode uint8
+
+const (
+	CopyInfer CopyMode = iota
+	CopyAllow
+	CopyDeny
+)
+
+var namedTypeCopyModes = map[string]CopyMode{
+	"allow_copy": CopyAllow,
+	"no_copy":    CopyDeny,
+}
+
+func NamedTypeCopyMode(name string) (CopyMode, bool) {
+	mode, ok := namedTypeCopyModes[name]
+	return mode, ok
 }
 
 type DefinedType struct {
 	Name       string
 	Underlying Type
+	CopyMode   CopyMode
 }
 
 type RawPtrType struct {
@@ -45,9 +68,23 @@ type RawPtrType struct {
 	Target  Type
 }
 
+type OptionalType struct {
+	Inner Type
+}
+
+type ArrayType struct {
+	Len  string
+	Elem Type
+}
+
+type SliceType struct {
+	Elem Type
+}
+
 type FuncType struct {
-	Params []Type
-	Return Type
+	Params   []Type
+	Consumes []bool
+	Return   Type
 }
 
 type Field struct {
@@ -79,9 +116,14 @@ func (*IntegerType) TypeNode()   {}
 func (*FloatType) TypeNode()     {}
 func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
+func (*StringType) TypeNode()    {}
+func (*NoneType) TypeNode()      {}
 func (*NamedType) TypeNode()     {}
 func (*DefinedType) TypeNode()   {}
 func (*RawPtrType) TypeNode()    {}
+func (*OptionalType) TypeNode()  {}
+func (*ArrayType) TypeNode()     {}
+func (*SliceType) TypeNode()     {}
 func (*FuncType) TypeNode()      {}
 func (*StructType) TypeNode()    {}
 func (*InterfaceType) TypeNode() {}
@@ -111,6 +153,10 @@ func (*BoolType) Text() string { return "bool" }
 
 func (*CStrType) Text() string { return "cstr" }
 
+func (*StringType) Text() string { return "string" }
+
+func (*NoneType) Text() string { return "none" }
+
 func (t *NamedType) Text() string {
 	if t == nil {
 		return ""
@@ -139,7 +185,31 @@ func (t *RawPtrType) Text() string {
 	if t == nil {
 		return ""
 	}
+	if !t.Mutable {
+		return "^const " + TypeText(t.Target)
+	}
 	return "^" + TypeText(t.Target)
+}
+
+func (t *OptionalType) Text() string {
+	if t == nil {
+		return ""
+	}
+	return "?" + TypeText(t.Inner)
+}
+
+func (t *ArrayType) Text() string {
+	if t == nil {
+		return ""
+	}
+	return "[" + t.Len + "]" + TypeText(t.Elem)
+}
+
+func (t *SliceType) Text() string {
+	if t == nil {
+		return ""
+	}
+	return "[]" + TypeText(t.Elem)
 }
 
 func (t *FuncType) Text() string {
@@ -151,6 +221,9 @@ func (t *FuncType) Text() string {
 	for i, param := range t.Params {
 		if i > 0 {
 			b.WriteString(", ")
+		}
+		if funcParamConsumes(t, i) {
+			b.WriteString("move ")
 		}
 		b.WriteString(TypeText(param))
 	}
@@ -226,6 +299,13 @@ func TypeText(typ Type) string {
 	return typ.Text()
 }
 
+func funcParamConsumes(fn *FuncType, i int) bool {
+	if fn == nil || i < 0 || i >= len(fn.Consumes) {
+		return false
+	}
+	return fn.Consumes[i]
+}
+
 func TypeFromSyntax(node ast.TypeExpr) Type {
 	switch typ := node.(type) {
 	case *ast.ScopeResolution:
@@ -243,6 +323,9 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 		if typ.Name == "cstr" {
 			return &CStrType{}
 		}
+		if typ.Name == "string" {
+			return &StringType{}
+		}
 		if typ.Name == "f32" {
 			return &FloatType{Bits: 32}
 		}
@@ -258,6 +341,25 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 			return nil
 		}
 		return &RawPtrType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
+	case *ast.OptionalType:
+		if typ == nil {
+			return nil
+		}
+		return &OptionalType{Inner: TypeFromSyntax(typ.Inner)}
+	case *ast.ArrayType:
+		if typ == nil {
+			return nil
+		}
+		length := ""
+		if typ.Len != nil {
+			length = typ.Len.Value
+		}
+		return &ArrayType{Len: length, Elem: TypeFromSyntax(typ.Elem)}
+	case *ast.SliceType:
+		if typ == nil {
+			return nil
+		}
+		return &SliceType{Elem: TypeFromSyntax(typ.Elem)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
@@ -266,9 +368,11 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 		for _, param := range typ.Params {
 			params = append(params, TypeFromSyntax(param))
 		}
+		consumes := append([]bool(nil), typ.Consumes...)
 		return &FuncType{
-			Params: params,
-			Return: TypeFromSyntax(typ.Return),
+			Params:   params,
+			Consumes: consumes,
+			Return:   TypeFromSyntax(typ.Return),
 		}
 	case *ast.StructType:
 		if typ == nil {
@@ -351,6 +455,12 @@ func SameType(left, right Type) bool {
 	case *CStrType:
 		_, ok := right.(*CStrType)
 		return ok
+	case *StringType:
+		_, ok := right.(*StringType)
+		return ok
+	case *NoneType:
+		_, ok := right.(*NoneType)
+		return ok
 	case *FloatType:
 		r, ok := right.(*FloatType)
 		return ok && r != nil && l.Bits == r.Bits
@@ -359,6 +469,15 @@ func SameType(left, right Type) bool {
 		return ok && r != nil && l.Name == r.Name
 	case *RawPtrType:
 		return checkPointerCompatibility(l, right) == Compatible
+	case *OptionalType:
+		r, ok := right.(*OptionalType)
+		return ok && r != nil && SameType(l.Inner, r.Inner)
+	case *ArrayType:
+		r, ok := right.(*ArrayType)
+		return ok && r != nil && l.Len == r.Len && SameType(l.Elem, r.Elem)
+	case *SliceType:
+		r, ok := right.(*SliceType)
+		return ok && r != nil && SameType(l.Elem, r.Elem)
 	case *FuncType:
 		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
@@ -450,6 +569,12 @@ func ContainsAbstractSelf(t Type) bool {
 		return typ != nil && typ.Name == "Self"
 	case *RawPtrType:
 		return typ != nil && ContainsAbstractSelf(typ.Target)
+	case *OptionalType:
+		return typ != nil && ContainsAbstractSelf(typ.Inner)
+	case *ArrayType:
+		return typ != nil && ContainsAbstractSelf(typ.Elem)
+	case *SliceType:
+		return typ != nil && ContainsAbstractSelf(typ.Elem)
 	case *FuncType:
 		if typ == nil {
 			return false
@@ -500,6 +625,21 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 			return nil
 		}
 		return &RawPtrType{Mutable: typ.Mutable, Target: ReplaceAbstractSelf(typ.Target, ownerType)}
+	case *OptionalType:
+		if typ == nil {
+			return nil
+		}
+		return &OptionalType{Inner: ReplaceAbstractSelf(typ.Inner, ownerType)}
+	case *ArrayType:
+		if typ == nil {
+			return nil
+		}
+		return &ArrayType{Len: typ.Len, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
+	case *SliceType:
+		if typ == nil {
+			return nil
+		}
+		return &SliceType{Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
 	case *FuncType:
 		if typ == nil {
 			return nil
@@ -508,7 +648,8 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		for _, param := range typ.Params {
 			params = append(params, ReplaceAbstractSelf(param, ownerType))
 		}
-		return &FuncType{Params: params, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
+		consumes := append([]bool(nil), typ.Consumes...)
+		return &FuncType{Params: params, Consumes: consumes, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
 	case *StructType:
 		if typ == nil {
 			return nil

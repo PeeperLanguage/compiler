@@ -95,14 +95,37 @@ func TestUnusedLocal(t *testing.T) {
 	}
 }
 
-func TestUnusedLocalIgnoredWithUnderscore(t *testing.T) {
+func TestUnusedLocalIgnoredOnlyWithUnderscore(t *testing.T) {
+	src := `fn main() -> i32 {
+	let _: i32 = 0;
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if hasCode(diag, diagnostics.WarnUnusedLocal) {
+		t.Fatalf("did not expect unused local warning for discard binding, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMultipleDiscardLocalsAllowed(t *testing.T) {
+	src := `fn main() -> i32 {
+	let _: i32 = 0;
+	let _: i32 = 1;
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if diag.HasErrors() || hasCode(diag, diagnostics.WarnUnusedLocal) {
+		t.Fatalf("expected multiple discard locals without errors or unused warnings, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnusedLocalWarnsWithUnderscorePrefix(t *testing.T) {
 	src := `fn main() -> i32 {
 	let _x: i32 = 0;
 	return 0;
 }`
 	diag := checkUsageSource(t, src, false)
-	if hasCode(diag, diagnostics.WarnUnusedLocal) {
-		t.Fatalf("did not expect unused local warning with underscore, got:\n%s", diag.EmitAllToString())
+	if !hasCode(diag, diagnostics.WarnUnusedLocal) {
+		t.Fatalf("expected unused local warning for underscore-prefixed binding, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -116,13 +139,33 @@ func TestUnusedParameter(t *testing.T) {
 	}
 }
 
-func TestUnusedParameterIgnoredWithUnderscore(t *testing.T) {
-	src := `fn main(_x: i32) -> i32 {
+func TestUnusedParameterIgnoredOnlyWithUnderscore(t *testing.T) {
+	src := `fn main(_: i32) -> i32 {
 	return 0;
 }`
 	diag := checkUsageSource(t, src, false)
 	if hasCode(diag, diagnostics.WarnUnusedParameter) {
-		t.Fatalf("did not expect unused parameter warning with underscore, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("did not expect unused parameter warning for discard binding, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMultipleDiscardParametersAllowed(t *testing.T) {
+	src := `fn main(_: i32, _: i32) -> i32 {
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if diag.HasErrors() || hasCode(diag, diagnostics.WarnUnusedParameter) {
+		t.Fatalf("expected multiple discard params without errors or unused warnings, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnusedParameterWarnsWithUnderscorePrefix(t *testing.T) {
+	src := `fn main(_x: i32) -> i32 {
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if !hasCode(diag, diagnostics.WarnUnusedParameter) {
+		t.Fatalf("expected unused parameter warning for underscore-prefixed binding, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -237,16 +280,17 @@ func TestUsageWarningsFixture(t *testing.T) {
 		}
 	}
 
-	// Assert that ignored / public / main symbols do not trigger warnings:
+	foundIgnoredLocal := false
+	foundIgnoredParam := false
 	for _, d := range diag.Diagnostics() {
 		if d == nil {
 			continue
 		}
 		if strings.Contains(d.Message, "_ignored_local") {
-			t.Errorf("did not expect warning on _ignored_local, got: %s", d.Message)
+			foundIgnoredLocal = true
 		}
 		if strings.Contains(d.Message, "_ignored_param") {
-			t.Errorf("did not expect warning on _ignored_param, got: %s", d.Message)
+			foundIgnoredParam = true
 		}
 		if strings.Contains(d.Message, "UnusedPublicFunction") {
 			t.Errorf("did not expect warning on UnusedPublicFunction, got: %s", d.Message)
@@ -254,6 +298,12 @@ func TestUsageWarningsFixture(t *testing.T) {
 		if strings.Contains(d.Message, "main") {
 			t.Errorf("did not expect warning on main, got: %s", d.Message)
 		}
+	}
+	if !foundIgnoredLocal {
+		t.Errorf("expected warning on underscore-prefixed local")
+	}
+	if !foundIgnoredParam {
+		t.Errorf("expected warning on underscore-prefixed parameter")
 	}
 }
 

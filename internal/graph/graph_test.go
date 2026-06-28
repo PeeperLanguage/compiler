@@ -5,15 +5,20 @@ import (
 	"testing"
 )
 
-func TestTopoSortOrdersImportDependencies(t *testing.T) {
-	g := New()
-	g.AddNode("a", Node{Kind: NodeModule})
-	g.AddNode("b", Node{Kind: NodeModule})
-	g.AddNode("c", Node{Kind: NodeModule})
-	g.AddEdge("a", "b", EdgeImport)
-	g.AddEdge("b", "c", EdgeImport)
+const (
+	testNodeModule NodeKind = "module"
+	testEdgeImport EdgeKind = "import"
+)
 
-	order, cycles := g.TopoSort([]NodeID{"a", "b", "c"}, EdgeImport)
+func TestTopoSortOrdersImportDependencies(t *testing.T) {
+	g := New(testNodeModule, testEdgeImport)
+	g.AddNode("a")
+	g.AddNode("b")
+	g.AddNode("c")
+	g.AddEdge("a", "b")
+	g.AddEdge("b", "c")
+
+	order, cycles := g.TopoSort([]NodeID{"a", "b", "c"})
 	if len(cycles) != 0 {
 		t.Fatalf("unexpected cycles: %v", cycles)
 	}
@@ -23,48 +28,48 @@ func TestTopoSortOrdersImportDependencies(t *testing.T) {
 }
 
 func TestTopoSortReportsCycles(t *testing.T) {
-	g := New()
-	g.AddNode("a", Node{Kind: NodeModule})
-	g.AddNode("b", Node{Kind: NodeModule})
-	g.AddEdge("a", "b", EdgeImport)
-	g.AddEdge("b", "a", EdgeImport)
+	g := New(testNodeModule, testEdgeImport)
+	g.AddNode("a")
+	g.AddNode("b")
+	g.AddEdge("a", "b")
+	g.AddEdge("b", "a")
 
-	_, cycles := g.TopoSort([]NodeID{"a", "b"}, EdgeImport)
+	_, cycles := g.TopoSort([]NodeID{"a", "b"})
 	if len(cycles) == 0 {
 		t.Fatalf("expected cycle, got none")
 	}
 }
 
 func TestGraphDegreeAndPredecessorQueries(t *testing.T) {
-	g := New()
-	g.AddNode("a", Node{Kind: NodeModule})
-	g.AddNode("b", Node{Kind: NodeModule})
-	g.AddNode("c", Node{Kind: NodeModule})
-	g.AddEdge("a", "b", EdgeImport)
-	g.AddEdge("c", "b", EdgeImport)
+	g := New(testNodeModule, testEdgeImport)
+	g.AddNode("a")
+	g.AddNode("b")
+	g.AddNode("c")
+	g.AddEdge("a", "b")
+	g.AddEdge("c", "b")
 
-	if got := g.OutDegree("a", EdgeImport); got != 1 {
+	if got := g.OutDegree("a"); got != 1 {
 		t.Fatalf("unexpected out degree: %d", got)
 	}
-	if got := g.InDegree("b", EdgeImport); got != 2 {
+	if got := g.InDegree("b"); got != 2 {
 		t.Fatalf("unexpected in degree: %d", got)
 	}
-	preds := g.Predecessors("b", EdgeImport)
+	preds := g.Predecessors("b")
 	if !slices.Contains(preds, NodeID("a")) || !slices.Contains(preds, NodeID("c")) {
 		t.Fatalf("unexpected predecessors: %v", preds)
 	}
 }
 
 func TestWeaklyConnectedComponents(t *testing.T) {
-	g := New()
-	g.AddNode("a", Node{Kind: NodeModule})
-	g.AddNode("b", Node{Kind: NodeModule})
-	g.AddNode("c", Node{Kind: NodeModule})
-	g.AddNode("d", Node{Kind: NodeModule})
-	g.AddEdge("a", "b", EdgeImport)
-	g.AddEdge("c", "d", EdgeImport)
+	g := New(testNodeModule, testEdgeImport)
+	g.AddNode("a")
+	g.AddNode("b")
+	g.AddNode("c")
+	g.AddNode("d")
+	g.AddEdge("a", "b")
+	g.AddEdge("c", "d")
 
-	components := g.WeaklyConnectedComponents([]NodeID{"a", "b", "c", "d"}, EdgeImport)
+	components := g.WeaklyConnectedComponents([]NodeID{"a", "b", "c", "d"})
 	if len(components) != 2 {
 		t.Fatalf("components = %d, want 2", len(components))
 	}

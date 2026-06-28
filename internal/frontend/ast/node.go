@@ -22,6 +22,11 @@ type DocumentedNode interface {
 	GetDocComment() *CommentGroup
 }
 
+type AttributedNode interface {
+	SetAttributes([]Attribute)
+	GetAttributes() []Attribute
+}
+
 // Decl is the common surface for module- or block-level declarations.
 // It intentionally stays minimal: most declarations do not describe a named
 // type, so type-specific behavior lives on the narrower TypeDecl interface.
@@ -41,6 +46,7 @@ type Decl interface {
 // rewriting the semantic phases that only care about "name + underlying type".
 type TypeDecl interface {
 	Decl
+	AttributedNode
 	DeclName() *Ident
 	UnderlyingType() TypeExpr
 }

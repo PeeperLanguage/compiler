@@ -48,6 +48,22 @@ type StringLit struct {
 	Location *source.Location
 }
 
+type BoolLit struct {
+	Value    bool
+	Location *source.Location
+}
+
+type ZeroValue struct {
+	Type     string
+	Location *source.Location
+}
+
+type OptionalSome struct {
+	Value    Expr
+	Type     string
+	Location *source.Location
+}
+
 type Ident struct {
 	Name     string
 	Type     string
@@ -131,6 +147,9 @@ func (*InvalidExpr) exprNode()   {}
 func (*IntLit) exprNode()        {}
 func (*FloatLit) exprNode()      {}
 func (*StringLit) exprNode()     {}
+func (*BoolLit) exprNode()       {}
+func (*ZeroValue) exprNode()     {}
+func (*OptionalSome) exprNode()  {}
 func (*Ident) exprNode()         {}
 func (*Unary) exprNode()         {}
 func (*Binary) exprNode()        {}
@@ -151,6 +170,12 @@ func ExprLocation(expr Expr) *source.Location {
 	case *FloatLit:
 		return node.Location
 	case *StringLit:
+		return node.Location
+	case *BoolLit:
+		return node.Location
+	case *ZeroValue:
+		return node.Location
+	case *OptionalSome:
 		return node.Location
 	case *Ident:
 		return node.Location
@@ -223,6 +248,37 @@ func (e *StringLit) String() string {
 func (e *StringLit) TypeText() string {
 	if e == nil || e.Type == "" {
 		return "cstr"
+	}
+	return e.Type
+}
+func (e *BoolLit) String() string {
+	if e != nil && e.Value {
+		return "true"
+	}
+	return "false"
+}
+func (e *BoolLit) TypeText() string { return "bool" }
+func (e *ZeroValue) String() string {
+	if e == nil || e.Type == "" {
+		return "zero"
+	}
+	return "zero(" + e.Type + ")"
+}
+func (e *ZeroValue) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+func (e *OptionalSome) String() string {
+	if e == nil || e.Value == nil {
+		return "some(<nil>)"
+	}
+	return "some(" + e.Value.String() + ")"
+}
+func (e *OptionalSome) TypeText() string {
+	if e == nil {
+		return ""
 	}
 	return e.Type
 }
@@ -404,7 +460,20 @@ func TypeText(typ ast.TypeExpr) string {
 	case *ast.NamedType:
 		return node.Name
 	case *ast.RawPtrType:
+		if !node.Mutable {
+			return "^const " + TypeText(node.Target)
+		}
 		return "^" + TypeText(node.Target)
+	case *ast.OptionalType:
+		return "?" + TypeText(node.Inner)
+	case *ast.ArrayType:
+		length := ""
+		if node.Len != nil {
+			length = node.Len.Value
+		}
+		return "[" + length + "]" + TypeText(node.Elem)
+	case *ast.SliceType:
+		return "[]" + TypeText(node.Elem)
 	case *ast.FuncType:
 		var b strings.Builder
 		b.WriteString("fn(")

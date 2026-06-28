@@ -718,6 +718,12 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 		return p.Type == typeNode
 	case *ast.RawPtrType:
 		return p.Target == typeNode
+	case *ast.OptionalType:
+		return p.Inner == typeNode
+	case *ast.ArrayType:
+		return p.Elem == typeNode
+	case *ast.SliceType:
+		return p.Elem == typeNode
 	case *ast.FuncType:
 		if p.Return == typeNode {
 			return true
@@ -1051,6 +1057,21 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 		}
 		b.WriteString("}")
 		return b.String()
+	case *typeinfo.OptionalType:
+		if t == nil {
+			return ""
+		}
+		return formatHoverTypeInline(t)
+	case *typeinfo.ArrayType:
+		if t == nil {
+			return ""
+		}
+		return formatHoverTypeInline(t)
+	case *typeinfo.SliceType:
+		if t == nil {
+			return ""
+		}
+		return formatHoverTypeInline(t)
 	case *typeinfo.InterfaceType:
 		if t == nil {
 			return ""
@@ -1142,6 +1163,21 @@ func formatHoverTypeInline(typ typeinfo.Type) string {
 			return ""
 		}
 		return t.Name
+	case *typeinfo.OptionalType:
+		if t == nil {
+			return ""
+		}
+		return "?" + formatHoverTypeInline(t.Inner)
+	case *typeinfo.ArrayType:
+		if t == nil {
+			return ""
+		}
+		return "[" + t.Len + "]" + formatHoverTypeInline(t.Elem)
+	case *typeinfo.SliceType:
+		if t == nil {
+			return ""
+		}
+		return "[]" + formatHoverTypeInline(t.Elem)
 	default:
 		return typ.Text()
 	}

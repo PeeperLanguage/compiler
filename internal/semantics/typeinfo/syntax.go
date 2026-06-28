@@ -53,6 +53,25 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			Mutable: typ.Mutable,
 			Target:  ASTTypeWithOptions(typ.Target, opts),
 		}
+	case *ast.OptionalType:
+		if typ == nil {
+			return nil
+		}
+		return &OptionalType{Inner: ASTTypeWithOptions(typ.Inner, opts)}
+	case *ast.ArrayType:
+		if typ == nil {
+			return nil
+		}
+		length := ""
+		if typ.Len != nil {
+			length = typ.Len.Value
+		}
+		return &ArrayType{Len: length, Elem: ASTTypeWithOptions(typ.Elem, opts)}
+	case *ast.SliceType:
+		if typ == nil {
+			return nil
+		}
+		return &SliceType{Elem: ASTTypeWithOptions(typ.Elem, opts)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
@@ -61,9 +80,11 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 		for _, param := range typ.Params {
 			params = append(params, ASTTypeWithOptions(param, opts))
 		}
+		consumes := append([]bool(nil), typ.Consumes...)
 		return &FuncType{
-			Params: params,
-			Return: ASTTypeWithOptions(typ.Return, opts),
+			Params:   params,
+			Consumes: consumes,
+			Return:   ASTTypeWithOptions(typ.Return, opts),
 		}
 	case *ast.StructType:
 		if typ == nil {
@@ -121,11 +142,14 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 		return nil
 	}
 	params := make([]Type, 0, len(decl.Params))
+	consumes := make([]bool, 0, len(decl.Params))
 	for _, param := range decl.Params {
 		params = append(params, ASTTypeWithOptions(param.Type, opts))
+		consumes = append(consumes, param.Consumes)
 	}
 	return &FuncType{
-		Params: params,
-		Return: ASTTypeWithOptions(decl.ReturnType, opts),
+		Params:   params,
+		Consumes: consumes,
+		Return:   ASTTypeWithOptions(decl.ReturnType, opts),
 	}
 }

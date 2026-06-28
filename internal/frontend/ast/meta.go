@@ -45,3 +45,21 @@ type Attribute struct {
 	Args     []string
 	Location *source.Location
 }
+
+type Attributed struct {
+	Attributes []Attribute
+}
+
+func (a *Attributed) SetAttributes(attrs []Attribute) {
+	if a == nil {
+		return
+	}
+	a.Attributes = attrs
+}
+
+func (a *Attributed) GetAttributes() []Attribute {
+	if a == nil {
+		return nil
+	}
+	return a.Attributes
+}

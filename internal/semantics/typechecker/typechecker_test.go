@@ -13,6 +13,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -90,6 +91,29 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	return module, diag
 }
 
+func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+	t.Helper()
+	const filePath = "typechecker_test" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: "typechecker_test",
+		FilePath:   filePath,
+		Content:    src,
+		AST:        modAST,
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+	ctx.AddModule(module)
+	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
+	resolver.Resolve(ctx, module)
+	Check(ctx, module)
+	return module, diag
+}
+
 func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	if diag == nil {
 		return false
@@ -111,6 +135,404 @@ func TestImplMethodAllowsSelfForBuiltinTarget(t *testing.T) {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoneAssignsToOptional(t *testing.T) {
+	src := `fn main() {
+	let x: ?i32 = none;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNumberAssignsToOptional(t *testing.T) {
+	src := `fn main() {
+	let x: ?i32 = 7;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoneRejectedForNonOptional(t *testing.T) {
+	src := `fn main() {
+	let x: i32 = none;
+}`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "cannot assign none to i32") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestStringBuiltinAcceptedInTypedBinding(t *testing.T) {
+	src := `fn main() {
+	let name: string;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnknownTypeAttributeRejected(t *testing.T) {
+	src := `#[weird]
+struct Buffer {
+	ptr: ^u8,
+}`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "unknown type attribute") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestConflictingTypeAttributesRejected(t *testing.T) {
+	src := `#[no_copy]
+#[allow_copy]
+struct Buffer {
+	ptr: ^u8,
+}`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "conflicting type attributes") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	let next = move current;
+	destroy(next);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestCopyOfNoCopyBindingRejected(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	let next = current;
+	destroy(next);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUseAfterMoveRejected(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	let next = move current;
+	destroy(current);
+	destroy(next);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveParamConsumesArgument(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	destroy(current);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReassignmentClearsMovedLocal(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	value: i32,
+}
+
+fn destroy(move data: Buffer) {}
+
+fn main() {
+	let mut current: Buffer = .{ value = 1 };
+	destroy(current);
+	current = .{ value = 2 };
+	destroy(current);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoCopyArgumentToPlainParamRejected(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn inspect(data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	inspect(current);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoCopyInterfaceConversionRequiresMove(t *testing.T) {
+	diag := checkTypeSource(t, `interface Reader {
+	read(self: Self) -> i32
+}
+
+#[no_copy]
+struct Buffer {
+	ptr: ^u8
+}
+
+fn get_buffer() -> Buffer;
+
+impl Buffer {
+	fn read(self: Self) -> i32 {
+		return 0;
+	}
+}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	let reader: Reader = current;
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveNoCopyInterfaceConversionAccepted(t *testing.T) {
+	diag := checkTypeSource(t, `interface Reader {
+	read(self: Self) -> i32
+}
+
+#[no_copy]
+struct Buffer {
+	ptr: ^u8
+}
+
+fn get_buffer() -> Buffer;
+
+impl Buffer {
+	fn read(self: Self) -> i32 {
+		return 0;
+	}
+}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	let reader: Reader = move current;
+	reader.read();
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestInterfaceMoveParamRejectedForNow(t *testing.T) {
+	diag := checkTypeSource(t, `interface Reader {
+	read(move self: Self);
+}`)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "interface methods cannot use `move` parameters") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveReceiverConsumesBinding(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+
+impl Buffer {
+	fn close(move self: Self) {}
+}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	current.close();
+	current.close();
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoCopyFieldSubexpressionRejected(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+struct Holder {
+	buf: Buffer,
+}
+
+fn get_buffer() -> Buffer;
+
+fn main() {
+	let holder: Holder = .{ buf = get_buffer() };
+	let next = holder.buf;
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveInBranchRejectsUseAfterJoin(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main(flag: bool) {
+	let current: Buffer = get_buffer();
+	if flag {
+		destroy(current);
+	}
+	destroy(current);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveInLoopRejectsLaterUse(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main(flag: bool) {
+	let current: Buffer = get_buffer();
+	for flag {
+		destroy(current);
+	}
+	destroy(current);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Buffer {
+	ptr: ^u8,
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("Buffer")
+	if !ok || sym == nil {
+		t.Fatalf("missing Buffer symbol")
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		t.Fatalf("missing Buffer type")
+	}
+	if typeinfo.IsCopyType(typ) {
+		t.Fatalf("Buffer should default to no-copy")
+	}
+}
+
+func TestConstPointerFieldStaysCopyable(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct View {
+	ptr: ^const u8,
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("View")
+	if !ok || sym == nil {
+		t.Fatalf("missing View symbol")
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		t.Fatalf("missing View type")
+	}
+	if !typeinfo.IsCopyType(typ) {
+		t.Fatalf("View should stay copyable")
+	}
+}
+
+func TestAllowCopyOverridesMutablePointerDefault(t *testing.T) {
+	module, diag := checkTypeModule(t, `#[allow_copy]
+struct Cursor {
+	ptr: ^u8,
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("Cursor")
+	if !ok || sym == nil {
+		t.Fatalf("missing Cursor symbol")
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok || typ == nil {
+		t.Fatalf("missing Cursor type")
+	}
+	if !typeinfo.IsCopyType(typ) {
+		t.Fatalf("allow_copy should override default no-copy")
 	}
 }
 

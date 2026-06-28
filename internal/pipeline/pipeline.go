@@ -60,7 +60,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		for _, mod := range p.ctx.Modules() {
 			if mod != nil && mod.Key != preludeKey {
 				if p.ctx.Graph != nil {
-					p.ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey), graph.EdgeImport)
+					p.ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey))
 				}
 			}
 		}
@@ -83,7 +83,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		cycles     [][]graph.NodeID
 	)
 	if p.ctx.Graph != nil {
-		orderedIDs, cycles = p.ctx.Graph.TopoSort(moduleIDs, graph.EdgeImport)
+		orderedIDs, cycles = p.ctx.Graph.TopoSort(moduleIDs)
 	}
 	if len(cycles) > 0 && diag != nil {
 		for _, cycle := range cycles {

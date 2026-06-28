@@ -56,7 +56,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 
 	fileSet := make(map[string]struct{}, len(files))
 	modules := make(map[string]*workspaceModule, len(files))
-	g := graph.New()
+	g := graph.New(project.GraphNodeModule, project.GraphEdgeImport)
 	for _, filePath := range files {
 		fileSet[filePath] = struct{}{}
 		module := &workspaceModule{
@@ -80,7 +80,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 			module.importPath = importPath
 		}
 		modules[filePath] = module
-		g.AddNode(graph.NodeID(filePath), graph.Node{Kind: graph.NodeModule})
+		g.AddNode(graph.NodeID(filePath))
 	}
 
 	for _, module := range modules {
@@ -121,7 +121,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 				continue
 			}
 			seen[target] = struct{}{}
-			g.AddEdge(graph.NodeID(module.filePath), graph.NodeID(target), graph.EdgeImport)
+			g.AddEdge(graph.NodeID(module.filePath), graph.NodeID(target))
 		}
 	}
 
@@ -342,7 +342,7 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Grap
 		nodeIDs = append(nodeIDs, graph.NodeID(filePath))
 	}
 
-	rawComponents := g.WeaklyConnectedComponents(nodeIDs, graph.EdgeImport)
+	rawComponents := g.WeaklyConnectedComponents(nodeIDs)
 	components := make([]workspaceComponent, 0, len(rawComponents))
 	for _, raw := range rawComponents {
 		component := workspaceComponent{}
@@ -351,7 +351,7 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Grap
 		}
 		sort.Strings(component.files)
 		for _, filePath := range component.files {
-			if g.InDegree(graph.NodeID(filePath), graph.EdgeImport) == 0 {
+			if g.InDegree(graph.NodeID(filePath)) == 0 {
 				component.roots = append(component.roots, filePath)
 			}
 		}
@@ -379,7 +379,7 @@ func (w *workspaceIndex) reverseDependents(filePath string) map[string]struct{} 
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		for _, dependent := range w.imports.Predecessors(graph.NodeID(current), graph.EdgeImport) {
+		for _, dependent := range w.imports.Predecessors(graph.NodeID(current)) {
 			file := string(dependent)
 			if _, ok := seen[file]; ok {
 				continue

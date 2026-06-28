@@ -31,8 +31,11 @@ var keywords = map[string]Kind{
 	"release":   RELEASE,
 	"catch":     CATCH,
 	"none":      NONE,
+	"true":      TRUE,
+	"false":     FALSE,
 	"unsafe":    UNSAFE,
 	"impl":      IMPL,
+	"move":      MOVE,
 }
 
 var keywordDocs = map[Kind]string{
@@ -66,8 +69,11 @@ var keywordDocs = map[Kind]string{
 	RELEASE:   "Release ownership-managed value(s).",
 	CATCH:     "Handle error-union fallback path.",
 	NONE:      "Optional-value sentinel representing no value.",
+	TRUE:      "Boolean true literal.",
+	FALSE:     "Boolean false literal.",
 	UNSAFE:    "Enter an unsafe context for unchecked operations.",
 	IMPL:      "Attach methods to a target type.",
+	MOVE:      "Transfer a move-only value instead of copying it.",
 }
 
 func LookupIdent(ident string) Kind {

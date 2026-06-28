@@ -11,12 +11,18 @@ import (
 	"compiler/internal/semantics/symbols"
 )
 
+const (
+	graphNodeTypeDecl     graph.NodeKind = "type_decl"
+	graphEdgeTypeValueRef graph.EdgeKind = "type_value_ref"
+	graphEdgeTypePtrRef   graph.EdgeKind = "type_ptr_ref"
+)
+
 func RegisterTypeDecl(ctx *project.CompilerContext, module *project.Module, name string, typ ast.TypeExpr) {
 	if ctx == nil || ctx.Graph == nil || module == nil || name == "" {
 		return
 	}
 	owner := typeDeclNodeID(module.Key, name)
-	ctx.Graph.AddNode(owner, graph.Node{Kind: graph.NodeTypeDecl})
+	ctx.Graph.AddNode(owner, graphNodeTypeDecl)
 	// Value edges mean "must know full layout". Pointer edges are recorded as
 	// indirect and do not force full expansion of target type.
 	addTypeDeclEdges(ctx, module, owner, typ, false)
@@ -37,7 +43,7 @@ func ValidateTypeDeclCycles(ctx *project.CompilerContext, module *project.Module
 		return
 	}
 	// Only value-layout edges participate in illegal cycle detection.
-	_, cycles := ctx.Graph.TopoSort(nodeIDs, graph.EdgeTypeValueRef)
+	_, cycles := ctx.Graph.TopoSort(nodeIDs, graphEdgeTypeValueRef)
 	for _, cycle := range cycles {
 		if len(cycle) == 0 {
 			continue
@@ -84,23 +90,29 @@ func addTypeDeclEdges(ctx *project.CompilerContext, module *project.Module, owne
 			return
 		}
 		if indirect {
-			ctx.Graph.AddEdge(owner, target, graph.EdgeTypeIndirectRef)
+			ctx.Graph.AddEdge(owner, target, graphEdgeTypePtrRef)
 			return
 		}
-		ctx.Graph.AddEdge(owner, target, graph.EdgeTypeValueRef)
+		ctx.Graph.AddEdge(owner, target, graphEdgeTypeValueRef)
 	case *ast.ScopeResolution:
 		target := lookupQualifiedTypeDeclNodeID(ctx, module, node)
 		if target == "" {
 			return
 		}
 		if indirect {
-			ctx.Graph.AddEdge(owner, target, graph.EdgeTypeIndirectRef)
+			ctx.Graph.AddEdge(owner, target, graphEdgeTypePtrRef)
 			return
 		}
-		ctx.Graph.AddEdge(owner, target, graph.EdgeTypeValueRef)
+		ctx.Graph.AddEdge(owner, target, graphEdgeTypeValueRef)
 	case *ast.RawPtrType:
 		// Pointer target is not a layout dependency.
 		addTypeDeclEdges(ctx, module, owner, node.Target, true)
+	case *ast.OptionalType:
+		addTypeDeclEdges(ctx, module, owner, node.Inner, indirect)
+	case *ast.ArrayType:
+		addTypeDeclEdges(ctx, module, owner, node.Elem, indirect)
+	case *ast.SliceType:
+		addTypeDeclEdges(ctx, module, owner, node.Elem, indirect)
 	case *ast.StructType:
 		for _, field := range node.Fields {
 			addTypeDeclEdges(ctx, module, owner, field.Type, indirect)

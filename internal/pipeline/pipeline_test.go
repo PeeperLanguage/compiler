@@ -162,6 +162,29 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
+func TestPipelineAcceptsMoveExprSurface(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move data: Buffer) {}
+
+fn main() -> i32 {
+	let current: Buffer = get_buffer();
+	let next = move current;
+	destroy(next);
+	return 0;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)
@@ -309,6 +332,58 @@ fn main() -> i32 {
 	return 0;
 }`
 
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersNoneForOptional(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn maybe() -> ?i32 {
+	return none;
+}
+
+fn main() -> i32 {
+	let _: ?i32 = maybe();
+	return 0;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersValueForOptional(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn maybe() -> ?i32 {
+	return 7;
+}
+
+fn main() -> i32 {
+	let _: ?i32 = maybe();
+	return 0;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersBoolLiterals(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn maybe(cond: bool) -> ?i32 {
+	if cond {
+		return 7;
+	}
+	return none;
+}
+
+fn main() -> i32 {
+	let _: ?i32 = maybe(true);
+	let _: ?i32 = maybe(false);
+	return 0;
+}`
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -554,6 +629,21 @@ func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	entrySrc := `fn main() -> i32 {
 	let p = .{ x = 1, y = 2 };
 	return p.x;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersForLoop(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn main() -> i32 {
+	for 1 < 2 {
+		return 1;
+	}
+	return 0;
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)

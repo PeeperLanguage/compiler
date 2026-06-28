@@ -183,6 +183,13 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		}
 		// No `else`: `then` alone cannot prove definite assignment.
 		restoreInitialized(before)
+	case *ast.ForStmt:
+		if node.Cond != nil {
+			r.resolveExpr(scope, node.Cond)
+		}
+		before := snapshotInitialized(scope)
+		r.resolveBlock(table.New(scope), node.Body)
+		restoreInitialized(before)
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:
@@ -213,6 +220,10 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.NumberLit:
 		return
 	case *ast.StringLit:
+		return
+	case *ast.BoolLit:
+		return
+	case *ast.NoneLit:
 		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
@@ -259,6 +270,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 			r.resolveExpr(scope, field.Value)
 		}
 	case *ast.UnaryExpr:
+		r.resolveExpr(scope, node.Expr)
+	case *ast.MoveExpr:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)

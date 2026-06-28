@@ -1,0 +1,10 @@
+type FourInts = [4]i32;
+type Names = []string;
+
+struct FixedBucket {
+    values: [8]i32
+}
+
+struct DynamicBucket {
+    names: []string
+}

@@ -101,6 +101,12 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 			}
 		}
 		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, Location: node.Location}}
+	case *hir.For:
+		var cond ir.Expr
+		if node.Cond != nil {
+			cond = ir.FoldExpr(node.Cond, env)
+		}
+		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(node.Body, diag, cloneConstEnv(env)), Location: node.Location}}
 	default:
 		return []hir.Stmt{stmt}
 	}
@@ -129,6 +135,8 @@ func stmtTerminates(stmt hir.Stmt) bool {
 			return false
 		}
 		return stmtTerminates(node.Then) && stmtTerminates(node.Else)
+	case *hir.For:
+		return false
 	default:
 		return false
 	}

@@ -145,7 +145,7 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
 		if l.ctx.Graph != nil {
-			l.ctx.Graph.AddEdge(graph.NodeID(module.Key), graph.NodeID(resolved.Key), graph.EdgeImport)
+			l.ctx.Graph.AddEdge(graph.NodeID(module.Key), graph.NodeID(resolved.Key))
 		}
 
 		if existing, ok := l.ctx.ModuleByKey(resolved.Key); ok {

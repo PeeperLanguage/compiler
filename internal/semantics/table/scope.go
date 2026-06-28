@@ -1,6 +1,7 @@
 package table
 
 import (
+	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
 	"errors"
 	"fmt"
@@ -33,10 +34,12 @@ func (s *Scope) Declare(sym *symbols.Symbol) error {
 	if s == nil || sym == nil {
 		return errors.New("invalid symbol or scope")
 	}
-	if _, exists := s.byName[sym.Name]; exists {
-		return fmt.Errorf("`%s` already exists in this scope", sym.Name)
+	if sym.Name != "_" {
+		if _, exists := s.byName[sym.Name]; exists {
+			return fmt.Errorf("`%s` already exists in this scope", sym.Name)
+		}
+		s.byName[sym.Name] = sym.ID
 	}
-	s.byName[sym.Name] = sym.ID
 	s.byID[sym.ID] = sym
 	s.order = append(s.order, sym.ID)
 	return nil
@@ -62,6 +65,19 @@ func (s *Scope) Lookup(name string) (*symbols.Symbol, bool) {
 				return sym, true
 			}
 			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func (s *Scope) LookupNode(node ast.Node) (*symbols.Symbol, bool) {
+	if s == nil || node == nil {
+		return nil, false
+	}
+	for _, id := range s.order {
+		sym := s.byID[id]
+		if sym != nil && sym.ASTNode == node {
+			return sym, true
 		}
 	}
 	return nil, false

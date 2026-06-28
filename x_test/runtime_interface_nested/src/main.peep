@@ -25,7 +25,7 @@ interface SummerConsumer {
 struct ConsumerImpl {}
 
 impl ConsumerImpl {
-    fn consume(_self: Self, val: Summer) -> i32 {
+    fn consume(_: Self, val: Summer) -> i32 {
         return val.sum();
     }
 }

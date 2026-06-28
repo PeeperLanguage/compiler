@@ -61,12 +61,45 @@ func llvmTypeName(typeText string) (string, bool) {
 		return llvmFunctionPtrType(typeText)
 	}
 	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
-		target, ok := llvmTypeName(strings.TrimSpace(remainder))
+		remainder = strings.TrimSpace(remainder)
+		if constTarget, ok := strings.CutPrefix(remainder, "const "); ok {
+			remainder = strings.TrimSpace(constTarget)
+		}
+		target, ok := llvmTypeName(remainder)
 		if !ok {
 			// Unknown pointee still lowers as pointer-sized storage.
 			return "i8*", true
 		}
 		return target + "*", true
+	}
+	if innerTypeText, ok := optionalInnerTypeText(typeText); ok {
+		if niche, ok := optionalNicheLayout(innerTypeText); ok {
+			return niche.llvmType, true
+		}
+		inner, ok := llvmTypeName(innerTypeText)
+		if !ok {
+			return "", false
+		}
+		return "{ i1, " + inner + " }", true
+	}
+	if remainder, ok := strings.CutPrefix(typeText, "[]"); ok {
+		elem, ok := llvmTypeName(strings.TrimSpace(remainder))
+		if !ok {
+			return "", false
+		}
+		return "{ " + elem + "*, i64 }", true
+	}
+	if strings.HasPrefix(typeText, "[") {
+		close := strings.IndexByte(typeText, ']')
+		if close <= 1 || close == len(typeText)-1 {
+			return "", false
+		}
+		length := strings.TrimSpace(typeText[1:close])
+		elem, ok := llvmTypeName(strings.TrimSpace(typeText[close+1:]))
+		if !ok {
+			return "", false
+		}
+		return "[" + length + " x " + elem + "]", true
 	}
 	if strings.HasPrefix(typeText, "interface{") && strings.HasSuffix(typeText, "}") {
 		return "{ i8*, i8* }", true
@@ -106,9 +139,42 @@ func llvmTypeName(typeText string) (string, bool) {
 		return "void", true
 	case "cstr":
 		return "i8*", true
+	case "string":
+		return "{ i8*, i64 }", true
 	default:
 		return "", false
 	}
+}
+
+func optionalInnerTypeText(typeText string) (string, bool) {
+	inner, ok := strings.CutPrefix(strings.TrimSpace(typeText), "?")
+	if !ok {
+		return "", false
+	}
+	inner = strings.TrimSpace(inner)
+	return inner, inner != ""
+}
+
+type optionalNiche struct {
+	llvmType string
+	none     string
+}
+
+func optionalNicheLayout(typeText string) (optionalNiche, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
+		// Raw pointers are non-null by language rule, so optional pointers can
+		// use null as the none sentinel instead of a tagged struct.
+		if strings.TrimSpace(remainder) == "" {
+			return optionalNiche{}, false
+		}
+		llvmType, ok := llvmTypeName(typeText)
+		if !ok {
+			return optionalNiche{}, false
+		}
+		return optionalNiche{llvmType: llvmType, none: "zeroinitializer"}, true
+	}
+	return optionalNiche{}, false
 }
 
 func llvmFunctionPtrType(typeText string) (string, bool) {
@@ -340,6 +406,10 @@ func mirValueType(expr mir.ValueExpr) string {
 	case *mir.Field:
 		return v.Type
 	case *mir.StructLit:
+		return v.Type
+	case *mir.ZeroValue:
+		return v.Type
+	case *mir.OptionalSome:
 		return v.Type
 	case *mir.InterfaceMake:
 		return v.Type
@@ -734,6 +804,29 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 				current = next
 			}
 			return current
+		case *mir.ZeroValue:
+			if innerTypeText, ok := optionalInnerTypeText(e.Type); ok {
+				if niche, ok := optionalNicheLayout(innerTypeText); ok {
+					return niche.none
+				}
+			}
+			return "zeroinitializer"
+		case *mir.OptionalSome:
+			innerTypeText, ok := optionalInnerTypeText(e.Type)
+			if !ok {
+				return "0"
+			}
+			value := emitRef(b, e.Value)
+			if _, ok := optionalNicheLayout(innerTypeText); ok {
+				return value
+			}
+			llvmType := b.types.llvmType(e.Type)
+			valueType := b.types.llvmType(mirRefType(e.Value))
+			withTag := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, i1 true, 0", withTag, llvmType))
+			withValue := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, 1", withValue, llvmType, withTag, valueType, value))
+			return withValue
 		case *mir.InterfaceMake:
 			llvmType := b.types.llvmType(e.Type)
 			dataPtr := "null"

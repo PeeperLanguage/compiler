@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -50,10 +51,16 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 
 func (c *checker) isLowerableType(t typeinfo.Type) bool {
 	switch typ := typeinfo.Underlying(t).(type) {
-	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType:
+	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
 		return true
 	case *typeinfo.RawPtrType:
 		return typ != nil && typ.Target != nil
+	case *typeinfo.OptionalType:
+		return typ != nil && typ.Inner != nil && c.isLowerableType(typ.Inner)
+	case *typeinfo.ArrayType:
+		return typ != nil && typ.Len != "" && typ.Elem != nil && c.isLowerableType(typ.Elem)
+	case *typeinfo.SliceType:
+		return typ != nil && typ.Elem != nil && c.isLowerableType(typ.Elem)
 	case *typeinfo.StructType:
 		if typ == nil {
 			return false
@@ -121,6 +128,36 @@ func (c *checker) checkModule() {
 		return
 	}
 	for _, stmt := range c.module.AST.Stmts {
+		typeDecl, ok := stmt.(ast.TypeDecl)
+		if !ok {
+			continue
+		}
+		seen := make(map[typeinfo.CopyMode]ast.Attribute, len(typeDecl.GetAttributes()))
+		for _, attr := range typeDecl.GetAttributes() {
+			mode, ok := typeinfo.NamedTypeCopyMode(attr.Name)
+			if !ok {
+				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
+					fmt.Sprintf("unknown type attribute `#[%s]`", attr.Name)))
+				continue
+			}
+			if prev, ok := seen[mode]; ok {
+				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
+					fmt.Sprintf("duplicate type attribute `#[%s]`", prev.Name)))
+				continue
+			}
+			seen[mode] = attr
+		}
+		if _, ok := seen[typeinfo.CopyDeny]; ok {
+			if _, ok := seen[typeinfo.CopyAllow]; ok {
+				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
+					"conflicting type attributes `#[no_copy]` and `#[allow_copy]`"))
+			}
+		}
+		if iface, ok := typeDecl.(*ast.InterfaceDecl); ok {
+			c.checkInterfaceDecl(iface)
+		}
+	}
+	for _, stmt := range c.module.AST.Stmts {
 		decl, ok := stmt.(ast.Decl) // ? Why even needed?
 		if !ok {
 			continue
@@ -134,16 +171,6 @@ func (c *checker) checkModule() {
 			if c.module.ModuleScope != nil {
 				c.checkBinding(c.module.ModuleScope, node, true)
 			}
-		}
-	}
-	for _, stmt := range c.module.AST.Stmts {
-		decl, ok := stmt.(ast.Decl) // ? Why even needed?
-		if !ok {
-			continue
-		}
-		switch node := decl.(type) {
-		case *ast.InterfaceDecl:
-			c.checkInterfaceDecl(node)
 		}
 	}
 	for _, stmt := range c.module.AST.Stmts {
@@ -182,14 +209,16 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		if param.Name == nil {
 			continue
 		}
-		paramSym, ok := funcScope.LookupLocal(param.Name.Name)
+		paramSym, ok := funcScope.LookupNode(param.Name)
 		if !ok || paramSym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(fn), "")
 			return
 		}
 		paramSym.BindType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
 	}
-	c.checkBlock(funcScope, fn.Body, typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
+	returnType := typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	c.checkBlock(funcScope, fn.Body, returnType)
+	ownership.CheckFunction(c.ctx, c.module, fn, funcScope, returnType)
 }
 
 func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -254,6 +283,14 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		}
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
+	case *ast.ForStmt:
+		if node.Cond != nil {
+			condType := c.typeExpr(scope, node.Cond, nil)
+			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
+				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool"))
+			}
+		}
+		c.checkBlock(scope, node.Body, returnType)
 	case *ast.ExprStmt:
 		if node.Expr == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
@@ -338,19 +375,16 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		return
 	}
 	var (
-		nameNode *ast.Ident
 		declType typeinfo.Type
 		typeNode ast.TypeExpr // AST node for the type annotation (for diagnostics)
 		value    ast.Expr
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
-		nameNode = bind.Name
 		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
 		value = bind.Value
 	case *ast.ConstDecl:
-		nameNode = bind.Name
 		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
 		value = bind.Value
@@ -359,7 +393,7 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 
 	// Look up the symbol declared in this exact scope by the resolver.
-	sym, found := scope.LookupLocal(nameNode.Name)
+	sym, found := scope.LookupNode(node)
 	if !found || sym == nil {
 		return
 	}
@@ -455,6 +489,14 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		}
 		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
 		for _, param := range method.Params {
+			if param.Consumes {
+				site := ast.Node(decl)
+				if param.Name != nil {
+					site = param.Name
+				}
+				c.ctx.Diagnostics.Add(invalidTypeError(site,
+					"interface methods cannot use `move` parameters in current compiler stage"))
+			}
 			paramType := typeinfo.ASTTypeWithOptions(param.Type, opts)
 			// Abstract Self is resolved at impl time; skip lowerability check.
 			if paramType != nil && !typeinfo.ContainsAbstractSelf(paramType) && !c.isLowerableType(paramType) {
@@ -627,6 +669,22 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.StringLit:
 		return &typeinfo.CStrType{}
 
+	case *ast.BoolLit:
+		return &typeinfo.BoolType{}
+
+	case *ast.NoneLit:
+		return &typeinfo.NoneType{}
+
+	case *ast.MoveExpr:
+		if node.Expr == nil {
+			return &typeinfo.InvalidType{}
+		}
+		valueType := c.typeExpr(scope, node.Expr, expected)
+		if typeinfo.IsInvalidOrUnknown(valueType) {
+			return valueType
+		}
+		return valueType
+
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if !ok || sym == nil {
@@ -729,7 +787,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
 				typeinfo.TypeText(left), typeinfo.TypeText(right))))
-		return nil
+		return &typeinfo.InvalidType{}
 	}
 
 	exprType := left
@@ -804,6 +862,9 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	}
 	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
 	if ok {
+		if c.module != nil && c.module.Semantics != nil {
+			c.module.Semantics.ExprTypes[selector.ID()] = methodType
+		}
 		argTypes := make([]typeinfo.Type, 0, len(call.Args)+1)
 		argTypes = append(argTypes, baseType)
 		fnType, _ := methodType.(*typeinfo.FuncType)
@@ -1068,23 +1129,27 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 		expected = nil
 	}
 	if expected != nil {
+		numberTarget := expected
+		if optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType); ok && optional != nil && optional.Inner != nil {
+			numberTarget = optional.Inner
+		}
 		naturalType := typeinfo.DefaultNumberType(node.Value)
-		if typeinfo.CheckNumericCompatibility(expected, naturalType) == typeinfo.Incompatible {
+		if typeinfo.CheckNumericCompatibility(numberTarget, naturalType) == typeinfo.Incompatible {
 			c.ctx.Diagnostics.Add(typeMismatchError(node,
 				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected))))
 			return nil
 		}
-		if !literalFitsType(node.Value, expected) {
-			d := diagnostics.NewError(fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(expected))).
+		if !literalFitsType(node.Value, numberTarget) {
+			d := diagnostics.NewError(fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(numberTarget))).
 				WithCode(diagnostics.ErrInvalidNumber).
 				WithPrimaryLabel(ast.LocOf(node), "")
-			if intType, ok := expected.(*typeinfo.IntegerType); ok {
+			if intType, ok := numberTarget.(*typeinfo.IntegerType); ok {
 				d.WithHelp(integerRangeHint(intType))
 			}
 			c.ctx.Diagnostics.Add(d)
 			return nil
 		}
-		return expected
+		return numberTarget
 	}
 	return typeinfo.DefaultNumberType(node.Value)
 }
@@ -1173,6 +1238,7 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
 			c.addInterfaceHint(d, paramType, argType)
 			c.ctx.Diagnostics.Add(d)
+			continue
 		}
 	}
 }
@@ -1271,6 +1337,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			c.ctx.Diagnostics.Add(typeMismatchError(site,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType))))
+			continue
 		}
 	}
 }

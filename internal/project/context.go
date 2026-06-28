@@ -322,7 +322,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Config:      cfg,
 		Diagnostics: diag,
 		GlobalScope: globalScope,
-		Graph:       graph.New(),
+		Graph:       graph.New(GraphNodeModule, GraphEdgeImport),
 
 		modules:   make(map[string]*Module),
 		fileIndex: make(map[string]string),
@@ -423,6 +423,8 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	switch name {
 	case "true", "false":
 		sym.Type = &typeinfo.BoolType{}
+	case "none":
+		sym.Type = &typeinfo.NoneType{}
 	default:
 		sym.Type = &typeinfo.UnknownType{}
 	}

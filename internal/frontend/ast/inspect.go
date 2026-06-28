@@ -75,6 +75,9 @@ func Inspect(node Node, f func(Node) bool) {
 		Inspect(n.Cond, f)
 		Inspect(n.Then, f)
 		Inspect(n.Else, f)
+	case *ForStmt:
+		Inspect(n.Cond, f)
+		Inspect(n.Body, f)
 	case *ExprStmt:
 		Inspect(n.Expr, f)
 	case *AssignStmt:
@@ -94,6 +97,8 @@ func Inspect(node Node, f func(Node) bool) {
 			Inspect(field.Name, f)
 			Inspect(field.Value, f)
 		}
+	case *MoveExpr:
+		Inspect(n.Expr, f)
 	case *UnaryExpr:
 		Inspect(n.Expr, f)
 	case *BinaryExpr:
@@ -109,6 +114,13 @@ func Inspect(node Node, f func(Node) bool) {
 		Inspect(n.TypeExpr, f)
 	case *RawPtrType:
 		Inspect(n.Target, f)
+	case *OptionalType:
+		Inspect(n.Inner, f)
+	case *ArrayType:
+		Inspect(n.Len, f)
+		Inspect(n.Elem, f)
+	case *SliceType:
+		Inspect(n.Elem, f)
 	case *FuncType:
 		for _, p := range n.Params {
 			Inspect(p, f)
@@ -141,7 +153,7 @@ func Inspect(node Node, f func(Node) bool) {
 		// Leaf — no children
 	case *BadDecl:
 		// Leaf — no children
-	case *NamedType, *NumberLit, *StringLit:
+	case *NamedType, *NumberLit, *StringLit, *BoolLit, *NoneLit:
 		// Leaf — no children
 	default:
 		panic(fmt.Sprintf("unhandled node type %T in ast.Inspect", node))

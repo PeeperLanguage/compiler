@@ -4,53 +4,54 @@ import "sync"
 
 type NodeID string
 
-type NodeKind uint8
-
-const (
-	NodeUnknown NodeKind = iota
-	NodeModule
-	NodeTypeDecl
-)
-
-type EdgeKind uint8
-
-const (
-	EdgeUnknown EdgeKind = iota
-	EdgeImport
-	EdgeTypeValueRef
-	EdgeTypeIndirectRef
-)
+type NodeKind string
+type EdgeKind string
 
 type Node struct {
 	Kind NodeKind
 }
 
 type Graph struct {
-	mu    sync.RWMutex
-	nodes map[NodeID]Node
-	out   map[NodeID]map[EdgeKind]map[NodeID]struct{}
-	in    map[NodeID]map[EdgeKind]map[NodeID]struct{}
+	mu       sync.RWMutex
+	nodeKind NodeKind
+	edgeKind EdgeKind
+	nodes    map[NodeID]Node
+	out      map[NodeID]map[EdgeKind]map[NodeID]struct{}
+	in       map[NodeID]map[EdgeKind]map[NodeID]struct{}
 }
 
-func New() *Graph {
+func New(nodeKind NodeKind, edgeKind EdgeKind) *Graph {
 	return &Graph{
-		nodes: make(map[NodeID]Node),
-		out:   make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
-		in:    make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
+		nodeKind: nodeKind,
+		edgeKind: edgeKind,
+		nodes:    make(map[NodeID]Node),
+		out:      make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
+		in:       make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
 	}
 }
 
-func (g *Graph) AddNode(id NodeID, node Node) {
+func (g *Graph) AddNode(id NodeID, kinds ...NodeKind) {
 	if g == nil || id == "" {
 		return
 	}
+	kind := g.nodeKind
+	if len(kinds) > 0 {
+		kind = kinds[0]
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.nodes[id] = node
+	g.nodes[id] = Node{Kind: kind}
 }
 
-func (g *Graph) AddEdge(from, to NodeID, kind EdgeKind) {
-	if g == nil || from == "" || to == "" || kind == EdgeUnknown {
+func (g *Graph) AddEdge(from, to NodeID, kinds ...EdgeKind) {
+	if g == nil || from == "" || to == "" {
+		return
+	}
+	kind := g.edgeKind
+	if len(kinds) > 0 {
+		kind = kinds[0]
+	}
+	if kind == "" {
 		return
 	}
 	g.mu.Lock()
@@ -65,7 +66,7 @@ func (g *Graph) Successors(id NodeID, kinds ...EdgeKind) []NodeID {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return successorSnapshot(g.out[id], kindSet(kinds))
+	return successorSnapshot(g.out[id], kindSet(kinds, g.edgeKind))
 }
 
 func (g *Graph) Predecessors(id NodeID, kinds ...EdgeKind) []NodeID {
@@ -74,7 +75,7 @@ func (g *Graph) Predecessors(id NodeID, kinds ...EdgeKind) []NodeID {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return successorSnapshot(g.in[id], kindSet(kinds))
+	return successorSnapshot(g.in[id], kindSet(kinds, g.edgeKind))
 }
 
 func (g *Graph) OutDegree(id NodeID, kinds ...EdgeKind) int {
@@ -83,7 +84,7 @@ func (g *Graph) OutDegree(id NodeID, kinds ...EdgeKind) int {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return degree(g.out[id], kindSet(kinds))
+	return degree(g.out[id], kindSet(kinds, g.edgeKind))
 }
 
 func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
@@ -92,7 +93,7 @@ func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return degree(g.in[id], kindSet(kinds))
+	return degree(g.in[id], kindSet(kinds, g.edgeKind))
 }
 
 func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID) {
@@ -122,7 +123,7 @@ func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID)
 	order := make([]NodeID, 0, len(index))
 	stack := make([]NodeID, 0, len(index))
 	cycles := make([][]NodeID, 0)
-	allowedKinds := kindSet(kinds)
+	allowedKinds := kindSet(kinds, g.edgeKind)
 
 	var visit func(NodeID)
 	visit = func(id NodeID) {
@@ -171,7 +172,7 @@ func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]N
 		return nil
 	}
 
-	allowedKinds := kindSet(kinds)
+	allowedKinds := kindSet(kinds, g.edgeKind)
 	visited := make(map[NodeID]struct{}, len(index))
 	components := make([][]NodeID, 0)
 	for _, start := range ids {
@@ -220,15 +221,21 @@ func (g *Graph) addEdgeLocked(index map[NodeID]map[EdgeKind]map[NodeID]struct{},
 	edges[to] = struct{}{}
 }
 
-func kindSet(kinds []EdgeKind) map[EdgeKind]struct{} {
+func kindSet(kinds []EdgeKind, defaultKind EdgeKind) map[EdgeKind]struct{} {
 	if len(kinds) == 0 {
-		return nil
+		if defaultKind == "" {
+			return nil
+		}
+		return map[EdgeKind]struct{}{defaultKind: {}}
 	}
 	allowed := make(map[EdgeKind]struct{}, len(kinds))
 	for _, kind := range kinds {
-		if kind != EdgeUnknown {
+		if kind != "" {
 			allowed[kind] = struct{}{}
 		}
+	}
+	if len(allowed) == 0 {
+		return nil
 	}
 	return allowed
 }

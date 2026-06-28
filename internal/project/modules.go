@@ -7,6 +7,11 @@ import (
 	"compiler/internal/graph"
 )
 
+const (
+	GraphNodeModule graph.NodeKind = "module"
+	GraphEdgeImport graph.EdgeKind = "import"
+)
+
 // CanonicalPath returns absolute slash-separated path for stable map keys.
 func CanonicalPath(path string) string {
 	if path == "" {
@@ -64,7 +69,7 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 		ctx.fileIndex[CanonicalPath(module.FilePath)] = module.Key
 	}
 	if ctx.Graph != nil {
-		ctx.Graph.AddNode(graph.NodeID(module.Key), graph.Node{Kind: graph.NodeModule})
+		ctx.Graph.AddNode(graph.NodeID(module.Key))
 	}
 }
 

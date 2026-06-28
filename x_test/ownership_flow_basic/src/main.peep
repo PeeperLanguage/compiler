@@ -1,0 +1,16 @@
+#[no_copy]
+struct Buffer {
+    value: i32
+}
+
+fn destroy(move _: Buffer) {}
+
+fn main() -> i32 {
+    let current: Buffer = .{ value = 1 };
+    let next = move current;
+    //let another = current;
+
+    destroy(next);
+
+    return 0;
+}

@@ -76,6 +76,32 @@ type StringLit struct {
 func (*StringLit) exprNode()               {}
 func (e *StringLit) loc() *source.Location { return e.Location }
 
+type BoolLit struct {
+	NodeIDHolder
+	Value    bool
+	Location *source.Location
+}
+
+func (*BoolLit) exprNode()               {}
+func (e *BoolLit) loc() *source.Location { return e.Location }
+
+type NoneLit struct {
+	NodeIDHolder
+	Location *source.Location
+}
+
+func (*NoneLit) exprNode()               {}
+func (e *NoneLit) loc() *source.Location { return e.Location }
+
+type MoveExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Location *source.Location
+}
+
+func (*MoveExpr) exprNode()               {}
+func (e *MoveExpr) loc() *source.Location { return e.Location }
+
 type UnaryExpr struct {
 	NodeIDHolder
 	Op       string

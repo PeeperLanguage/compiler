@@ -80,6 +80,74 @@ func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersZeroValue(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "maybe",
+				ReturnType: "?i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Return{Value: &ir.ZeroValue{Type: "?i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	block := out.Funcs[0].Blocks[0]
+	if len(block.Instrs) != 1 {
+		t.Fatalf("expected zero value assign, got %#v", block.Instrs)
+	}
+	assign, ok := block.Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assign, got %#v", block.Instrs[0])
+	}
+	zero, ok := assign.Value.(*ZeroValue)
+	if !ok || zero.Type != "?i32" {
+		t.Fatalf("expected ?i32 zero value, got %#v", assign.Value)
+	}
+}
+
+func TestGenerateMIRLowersOptionalSome(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "maybe",
+				ReturnType: "?i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Return{Value: &ir.OptionalSome{Value: &ir.IntLit{Value: "7", Type: "i32"}, Type: "?i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	block := out.Funcs[0].Blocks[0]
+	if len(block.Instrs) != 1 {
+		t.Fatalf("expected optional some assign, got %#v", block.Instrs)
+	}
+	assign, ok := block.Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assign, got %#v", block.Instrs[0])
+	}
+	some, ok := assign.Value.(*OptionalSome)
+	if !ok || some.Type != "?i32" {
+		t.Fatalf("expected ?i32 optional some, got %#v", assign.Value)
+	}
+}
+
 func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 	testPath := "test" + peeper.SourceExt
 	mod := &hir.Module{
@@ -127,5 +195,63 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 	second, ok := instrs[1].(*Assign)
 	if !ok || second.Location == nil || second.Location.Start == nil || second.Location.Start.Line != 3 {
 		t.Fatalf("expected parent expression location on second assign, got %#v", instrs[1])
+	}
+}
+
+func TestGenerateMIRLowersForLoop(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "main",
+				ReturnType: "void",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.For{
+							Cond: &ir.IntLit{Value: "1", Type: "bool"},
+							Body: &hir.Block{
+								Stmts: []hir.Stmt{
+									&hir.ExprStmt{
+										Value: &ir.Call{
+											Callee: &ir.Ident{Name: "Ping", Type: "fn() -> i32"},
+											Type:   "i32",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil)
+	if out == nil || len(out.Funcs) != 1 {
+		t.Fatalf("expected one MIR function, got %#v", out)
+	}
+	fn := out.Funcs[0]
+	if len(fn.Blocks) != 4 {
+		t.Fatalf("expected four blocks for loop, got %#v", fn.Blocks)
+	}
+	entry := fn.Blocks[0]
+	entryJump, ok := entry.Term.(*Jump)
+	if !ok {
+		t.Fatalf("expected entry jump terminator, got %#v", entry.Term)
+	}
+	header := fn.Blocks[1]
+	if entryJump.TargetID != header.ID {
+		t.Fatalf("expected jump to loop header, got %#v", entry.Term)
+	}
+	term, ok := header.Term.(*Branch)
+	if !ok {
+		t.Fatalf("expected header branch terminator, got %#v", header.Term)
+	}
+	if term.ThenID != fn.Blocks[2].ID || term.ElseID != fn.Blocks[3].ID {
+		t.Fatalf("unexpected loop targets: %#v", term)
+	}
+	bodyTerm, ok := fn.Blocks[2].Term.(*Jump)
+	if !ok || bodyTerm.TargetID != header.ID {
+		t.Fatalf("expected backedge to header block, got %#v", fn.Blocks[2].Term)
 	}
 }

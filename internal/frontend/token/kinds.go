@@ -94,6 +94,9 @@ const (
 	RELEASE   Kind = "release"
 	CATCH     Kind = "catch"
 	NONE      Kind = "none"
+	TRUE      Kind = "true"
+	FALSE     Kind = "false"
 	UNSAFE    Kind = "unsafe"
 	IMPL      Kind = "impl"
+	MOVE      Kind = "move"
 )
