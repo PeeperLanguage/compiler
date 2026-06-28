@@ -150,6 +150,104 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRComparesTaggedOptionalWithNone(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: "i32"}, Type: "?i32"}},
+						&mir.Assign{Name: "none", Value: &mir.ZeroValue{Type: "?i32"}},
+						&mir.Assign{Name: "isnone", Value: &mir.Binary{
+							Op:    "==",
+							Left:  &mir.RefName{Name: "x", Type: "?i32"},
+							Right: &mir.RefName{Name: "none", Type: "?i32"},
+							Type:  "bool",
+						}},
+					},
+					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				}},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "extractvalue { i1, i32 } %") {
+		t.Fatalf("expected optional tag extraction, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "icmp eq i1") {
+		t.Fatalf("expected tag compare against none, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{
+					{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefConst{Value: "0", Type: "i32"}, Type: "i32"}},
+						},
+						Term: &mir.Jump{TargetID: 1},
+					},
+					{
+						ID: 1,
+						Instrs: []mir.Instr{
+							&mir.Assign{Name: "cond", Value: &mir.Binary{
+								Op:    "<",
+								Left:  &mir.RefName{Name: "n", Type: "i32"},
+								Right: &mir.RefConst{Value: "3", Type: "i32"},
+								Type:  "bool",
+							}},
+						},
+						Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: "bool"}, ThenID: 2, ElseID: 3},
+					},
+					{
+						ID: 2,
+						Instrs: []mir.Instr{
+							&mir.Assign{Name: "next", Value: &mir.Binary{
+								Op:    "+",
+								Left:  &mir.RefName{Name: "n", Type: "i32"},
+								Right: &mir.RefConst{Value: "1", Type: "i32"},
+								Type:  "i32",
+							}},
+							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefName{Name: "next", Type: "i32"}, Type: "i32"}},
+						},
+						Term: &mir.Jump{TargetID: 1},
+					},
+					{
+						ID:   3,
+						Term: &mir.Ret{Value: &mir.RefName{Name: "n", Type: "i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "alloca i32") {
+		t.Fatalf("expected stack slot for loop-mutated local, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "ret i32 %next") {
+		t.Fatalf("expected return to load loop-mutated local, got:\n%s", irText)
+	}
+}
+
 func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{

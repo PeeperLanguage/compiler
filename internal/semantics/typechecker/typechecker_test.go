@@ -166,7 +166,31 @@ func TestNoneRejectedForNonOptional(t *testing.T) {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	if !strings.Contains(diag.EmitAllToString(), "cannot assign none to i32") {
+	if !strings.Contains(diag.EmitAllToString(), "`none` requires optional context") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNoneRejectedWithoutExpectedType(t *testing.T) {
+	src := `fn main() {
+	let x = none;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected none context diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestOptionalCompareWithNoneAccepted(t *testing.T) {
+	src := `fn main() -> i32 {
+	let x: ?i32 = none;
+	if x == none {
+		return 0;
+	}
+	return 1;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
@@ -262,6 +286,29 @@ fn main() {
 	let next = move current;
 	destroy(current);
 	destroy(next);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFieldAssignOnMovedRootRejected(t *testing.T) {
+	diag := checkTypeSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+struct Holder {
+	buf: Buffer,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(move holder: Holder) {}
+
+fn main() {
+	let mut holder: Holder = .{ buf = get_buffer() };
+	destroy(holder);
+	holder.buf = get_buffer();
 }`)
 	if !hasTypeCode(diag, diagnostics.ErrUseAfterMove) {
 		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
@@ -869,6 +916,20 @@ fn main(file: ^File) -> i32 {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestConstPointerFieldAssignmentRejected(t *testing.T) {
+	src := `struct Box {
+	value: i32,
+}
+
+fn main(ptr: ^const Box) {
+	ptr.value = 2;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
