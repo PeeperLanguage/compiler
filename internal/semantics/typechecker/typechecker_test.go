@@ -234,7 +234,6 @@ struct Buffer {
 	}
 }
 
-<<<<<<< HEAD
 func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
 	diag := checkTypeSource(t, `#[no_copy]
 struct Buffer {
@@ -425,7 +424,6 @@ fn main() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
-
 func TestInterfaceMoveParamRejectedForNow(t *testing.T) {
 	diag := checkTypeSource(t, `interface Reader {
 	read(move self: Self);
