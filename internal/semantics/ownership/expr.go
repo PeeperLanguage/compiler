@@ -93,6 +93,11 @@ func (a *analyzer) checkMove(scope *table.Scope, move *ast.MoveExpr, st state, u
 			"explicit `move` is not allowed in expression", ast.LocOf(move), "")
 		return
 	}
+	if use != useConsume {
+		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"explicit `move` requires a consuming parameter or move binding target", ast.LocOf(move), "")
+		return
+	}
 	sym, found := scope.Lookup(ident.Name)
 	if !found || sym == nil {
 		return

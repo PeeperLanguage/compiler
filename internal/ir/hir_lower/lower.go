@@ -43,7 +43,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 				params, returnType := lowerExternSignature(module, fn.Params, fn.ReturnType, resolvedFnType)
 				out.Externs = append(out.Externs, hir.Extern{
-					Name:       sym.Name,
+					Name:       symbolName(sym),
 					Params:     params,
 					ReturnType: returnType,
 				})
@@ -78,8 +78,12 @@ func lowerImplDecl(ctx *project.CompilerContext, module *project.Module, out *hi
 			fnType, _ := symbols.GetSymbolType(sym)
 			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 			params, returnType := lowerExternSignature(module, method.Params, method.ReturnType, resolvedFnType)
+			name := methodFunctionName(targetText, method.Name.Name)
+			if externName, ok := externSymbolName(sym, name); ok {
+				name = externName
+			}
 			out.Externs = append(out.Externs, hir.Extern{
-				Name:       methodFunctionName(targetText, method.Name.Name),
+				Name:       name,
 				Params:     params,
 				ReturnType: returnType,
 			})
@@ -861,7 +865,32 @@ func symbolName(sym *symbols.Symbol) string {
 	if sym == nil {
 		return ""
 	}
+	if name, ok := externSymbolName(sym, sym.Name); ok {
+		return name
+	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
+}
+
+func externSymbolName(sym *symbols.Symbol, defaultName string) (string, bool) {
+	if sym == nil {
+		return "", false
+	}
+	fn, ok := sym.ASTNode.(*ast.FnDecl)
+	if !ok || fn.Body != nil {
+		return "", false
+	}
+	attr, ok := fn.GetAttribute(ast.AttributeExtern)
+	if !ok {
+		return "", false
+	}
+	if len(attr.Args) == 0 {
+		return defaultName, true
+	}
+	name, ok := attr.Args[0].(*ast.StringLit)
+	if !ok || name == nil {
+		return "", false
+	}
+	return name.Value, true
 }
 
 func shouldDiscardBindingValue(module *project.Module, symID symbols.SymbolID) bool {

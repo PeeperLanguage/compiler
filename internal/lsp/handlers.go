@@ -25,6 +25,8 @@ type cursorContext struct {
 	ctx     *project.CompilerContext
 	module  *project.Module
 	node    ast.Node
+	line    int
+	col     int
 	parents map[ast.NodeID]ast.Node
 }
 
@@ -36,6 +38,7 @@ const (
 	hoverSubjectType
 	hoverSubjectDecl
 	hoverSubjectImport
+	hoverSubjectAttribute
 )
 
 // hoverSubject is the normalized cursor target after resolution. It hides how
@@ -49,6 +52,7 @@ type hoverSubject struct {
 	ResolvedType   typeinfo.Type
 	Decl           ast.Node
 	ResolvedImport *project.ResolvedImport
+	Attribute      *ast.Attribute
 	MethodSymbols  []*symbols.Symbol
 }
 
@@ -331,6 +335,8 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, li
 	cc := &cursorContext{
 		ctx:     ctx,
 		module:  module,
+		line:    line,
+		col:     col,
 		parents: make(map[ast.NodeID]ast.Node),
 	}
 	walkModuleAST(module, func(n ast.Node, parent ast.Node) bool {
@@ -343,9 +349,6 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, li
 		}
 		return false
 	})
-	if cc.node == nil {
-		return nil
-	}
 	return cc
 }
 
@@ -557,6 +560,10 @@ func selectorMethodKeys(baseType typeinfo.Type) []string {
 
 func hoverRange(node ast.Node) Range {
 	loc := ast.LocOf(node)
+	return locationRange(loc)
+}
+
+func locationRange(loc *source.Location) Range {
 	if loc == nil || loc.Start == nil || loc.End == nil {
 		return Range{}
 	}
@@ -574,6 +581,7 @@ func (s *ServerState) resolveHoverSubject(filePath string, line, col int) *hover
 	}
 	// Priority order: import > type > decl > selector > symbol > expr.
 	for _, resolve := range []func(*cursorContext) *hoverSubject{
+		resolveAttributeHoverSubject,
 		resolveImportHoverSubject,
 		resolveTypeHoverSubject,
 		resolveDeclHoverSubject,
@@ -583,6 +591,45 @@ func (s *ServerState) resolveHoverSubject(filePath string, line, col int) *hover
 	} {
 		if subject := resolve(cc); subject != nil {
 			return subject
+		}
+	}
+	return nil
+}
+
+func resolveAttributeHoverSubject(cc *cursorContext) *hoverSubject {
+	if cc == nil || cc.module == nil || cc.module.AST == nil {
+		return nil
+	}
+	for _, stmt := range cc.module.AST.Stmts {
+		if subject := attributeHoverSubject(stmt, cc); subject != nil {
+			return subject
+		}
+		if impl, ok := stmt.(*ast.ImplDecl); ok && impl != nil {
+			for _, method := range impl.Methods {
+				if subject := attributeHoverSubject(method, cc); subject != nil {
+					return subject
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func attributeHoverSubject(node ast.Node, cc *cursorContext) *hoverSubject {
+	attributed, ok := node.(ast.AttributedNode)
+	if !ok || attributed == nil {
+		return nil
+	}
+	for _, attr := range attributed.GetAttributes() {
+		if !locContains(attr.Location, cc.line, cc.col) {
+			continue
+		}
+		hoverAttr := attr
+		return &hoverSubject{
+			Kind:      hoverSubjectAttribute,
+			Node:      node,
+			Range:     locationRange(attr.Location),
+			Attribute: &hoverAttr,
 		}
 	}
 	return nil
@@ -1009,6 +1056,11 @@ func renderHoverSubject(subject *hoverSubject) string {
 			name = ident.Name
 		}
 		text = fmt.Sprintf("(import) %s -> %s", name, subject.ResolvedImport.ImportPath)
+	case hoverSubjectAttribute:
+		if subject.Attribute == nil {
+			return ""
+		}
+		text = "(attribute) #[" + subject.Attribute.Name + "]"
 	default:
 		return ""
 	}
@@ -1186,6 +1238,11 @@ func formatHoverTypeInline(typ typeinfo.Type) string {
 func hoverDocComment(subject *hoverSubject) string {
 	if subject == nil {
 		return ""
+	}
+	if subject.Attribute != nil {
+		if def, ok := ast.AttributeDefinitions[subject.Attribute.Name]; ok && def.Doc != "" {
+			return def.Doc
+		}
 	}
 	var symNode ast.Node
 	if subject.Symbol != nil {

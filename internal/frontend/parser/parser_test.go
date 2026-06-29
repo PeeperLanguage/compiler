@@ -484,7 +484,7 @@ fn main() -> i32 {
 }
 
 func TestParseAllowsFunctionAttributes(t *testing.T) {
-	src := `#[extern]
+	src := `#[extern("malloc"), no_mangle, max_calls(3)]
 fn ext();
 fn main() -> i32 {
 	return 0;
@@ -495,6 +495,19 @@ fn main() -> i32 {
 	}
 	if len(mod.Stmts) != 2 {
 		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	attrs := fn.GetAttributes()
+	externAttr, hasExtern := attrs["extern"]
+	maxCallsAttr, hasMaxCalls := attrs["max_calls"]
+	_, hasNoMangle := attrs["no_mangle"]
+	externName, externOK := externAttr.Args[0].(*ast.StringLit)
+	maxCalls, maxCallsOK := maxCallsAttr.Args[0].(*ast.NumberLit)
+	if len(attrs) != 3 || !hasExtern || !externOK || externName.Value != "malloc" || !hasNoMangle || !hasMaxCalls || !maxCallsOK || maxCalls.Value != "3" {
+		t.Fatalf("attrs mismatch: %#v", attrs)
 	}
 }
 
@@ -607,7 +620,7 @@ type Cursor = ^u8;`
 	if !ok {
 		t.Fatalf("decl[0] expected struct")
 	}
-	if len(strct.Attributes) != 1 || strct.Attributes[0].Name != "no_copy" {
+	if _, ok := strct.Attributes["no_copy"]; len(strct.Attributes) != 1 || !ok {
 		t.Fatalf("struct attrs mismatch: %#v", strct.Attributes)
 	}
 	if len(strct.TypeParams) != 1 || strct.TypeParams[0].Name == nil || strct.TypeParams[0].Name.Name != "T" {
@@ -617,7 +630,7 @@ type Cursor = ^u8;`
 	if !ok {
 		t.Fatalf("decl[1] expected type alias")
 	}
-	if len(alias.Attributes) != 1 || alias.Attributes[0].Name != "allow_copy" {
+	if _, ok := alias.Attributes["allow_copy"]; len(alias.Attributes) != 1 || !ok {
 		t.Fatalf("alias attrs mismatch: %#v", alias.Attributes)
 	}
 }

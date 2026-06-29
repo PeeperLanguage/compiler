@@ -1,6 +1,7 @@
 package ownership
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -122,6 +123,27 @@ fn main() {
 	destroy(current);
 }`)
 	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestExplicitMoveToPlainParamRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `#[no_copy]
+struct Buffer {
+	ptr: ^u8,
+}
+
+fn get_buffer() -> Buffer;
+fn inspect(data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	inspect(move current);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "explicit `move` requires a consuming parameter") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }

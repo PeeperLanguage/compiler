@@ -1,0 +1,5 @@
+#[extern("malloc")]
+fn Malloc(size: usize) -> ^u8;
+
+#[extern("free")]
+fn Free(ptr: ^u8);

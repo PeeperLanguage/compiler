@@ -686,6 +686,24 @@ func TestHoverShowsInvalidExpressionType(t *testing.T) {
 	}
 }
 
+func TestHoverShowsAttributeDoc(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `#[__CURSOR__extern("puts")]
+fn puts(msg: cstr) -> i32;
+`
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(attribute) #[extern]") || !strings.Contains(hover.Contents.Value, "Optional string argument overrides") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverReturnsNilOnBlankLine(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)

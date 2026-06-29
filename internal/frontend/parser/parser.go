@@ -455,19 +455,44 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 			return attrs
 		}
 		lbrackPos := p.stream[p.pos-1].Start
-		nameTok := p.consume(token.IDENT, "expected attribute name")
-		if nameTok == nil {
-			return attrs
+		attrStart := len(attrs)
+		for !p.at(token.RBRACK) && !p.at(token.EOF) {
+			nameTok := p.consume(token.IDENT, "expected attribute name")
+			if nameTok == nil {
+				return attrs
+			}
+			var args []ast.Expr
+			if p.match(token.LPAREN) {
+				for !p.at(token.RPAREN) && !p.at(token.EOF) {
+					arg := p.parseExpr(precLowest)
+					if arg != nil {
+						args = append(args, arg)
+					}
+					if !p.match(token.COMMA) {
+						break
+					}
+				}
+				p.consume(token.RPAREN, "expected ')' after attribute arguments")
+			}
+			attrs = append(attrs, ast.Attribute{
+				Name:     nameTok.Literal,
+				Args:     args,
+				Location: source.NewLocation(p.filePath, hash.Start, nameTok.End),
+			})
+			if !p.match(token.COMMA) {
+				break
+			}
 		}
 		end := p.expectClose(lbrackPos, token.RBRACK, "[")
 		endPos := lbrackPos
 		if end != nil {
 			endPos = end.End
 		}
-		attrs = append(attrs, ast.Attribute{
-			Name:     nameTok.Literal,
-			Location: source.NewLocation(p.filePath, hash.Start, endPos),
-		})
+		for i := attrStart; i < len(attrs); i++ {
+			if attrs[i].Location != nil {
+				attrs[i].Location.End = &endPos
+			}
+		}
 	}
 	return attrs
 }

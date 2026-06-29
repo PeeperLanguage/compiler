@@ -24,7 +24,8 @@ type DocumentedNode interface {
 
 type AttributedNode interface {
 	SetAttributes([]Attribute)
-	GetAttributes() []Attribute
+	GetAttributes() map[string]Attribute
+	GetAttribute(string) (Attribute, bool)
 }
 
 // Decl is the common surface for module- or block-level declarations.

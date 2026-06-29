@@ -271,16 +271,16 @@ func newState() state {
 func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	switch s := stmt.(type) {
 	case *ast.LetDecl:
-		a.checkExpr(scope, s.Value, st, useCopy)
+		a.checkExpr(scope, s.Value, st, bindingValueUse(s.Value))
 		a.updatePointerBinding(scope, s, s.Value, st)
 	case *ast.ConstDecl:
-		a.checkExpr(scope, s.Value, st, useCopy)
+		a.checkExpr(scope, s.Value, st, bindingValueUse(s.Value))
 		a.updatePointerBinding(scope, s, s.Value, st)
 	case *ast.AssignStmt:
 		if _, ok := s.Target.(*ast.Ident); !ok {
 			a.checkExpr(scope, s.Target, st, useRead)
 		}
-		a.checkExpr(scope, s.Value, st, useCopy)
+		a.checkExpr(scope, s.Value, st, bindingValueUse(s.Value))
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
 			if sym, found := scope.Lookup(target.Name); found {
 				if ownershipTrackedSymbol(sym) {
@@ -299,4 +299,11 @@ func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	case *ast.ForStmt:
 		a.checkExpr(scope, s.Cond, st, useRead)
 	}
+}
+
+func bindingValueUse(expr ast.Expr) useKind {
+	if _, ok := expr.(*ast.MoveExpr); ok {
+		return useConsume
+	}
+	return useCopy
 }

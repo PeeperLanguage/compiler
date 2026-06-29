@@ -214,7 +214,7 @@ struct Buffer {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	if !strings.Contains(diag.EmitAllToString(), "unknown type attribute") {
+	if !strings.Contains(diag.EmitAllToString(), "unknown attribute") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
@@ -230,6 +230,63 @@ struct Buffer {
 		t.Fatalf("expected diagnostics")
 	}
 	if !strings.Contains(diag.EmitAllToString(), "conflicting type attributes") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestInvalidAttributeShapeRejected(t *testing.T) {
+	src := `#[extern(123)]
+fn ext();
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "invalid arguments for attribute `#[extern]`") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestAttributeRejectsConstBindingArgument(t *testing.T) {
+	src := `const name: cstr = "puts";
+
+#[extern(name)]
+fn puts(msg: cstr) -> i32;
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "invalid arguments for attribute `#[extern]`") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestAttributeRejectsNonConstantBindingArgument(t *testing.T) {
+	src := `fn symbol_name() -> cstr { return "puts"; }
+const name: cstr = symbol_name();
+
+#[extern(name)]
+fn puts(msg: cstr) -> i32;
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "invalid arguments for attribute `#[extern]`") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestInvalidAttributeTargetRejected(t *testing.T) {
+	src := `#[no_copy]
+fn ext();
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "attribute `#[no_copy]` cannot be used on this declaration") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }

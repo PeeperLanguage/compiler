@@ -81,6 +81,105 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	}
 }
 
+func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
+	root := t.TempDir()
+	libraryBase := filepath.Join(root, "libs")
+	allocatorPath := filepath.Join(libraryBase, "core", peeper.SourceDirName, "allocator"+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(allocatorPath), 0o755); err != nil {
+		t.Fatalf("mkdir allocator: %v", err)
+	}
+	allocatorSrc := `#[extern("malloc")]
+fn Malloc(size: usize) -> ^u8;
+
+#[extern("free")]
+fn Free(ptr: ^u8);
+`
+	if err := os.WriteFile(allocatorPath, []byte(allocatorSrc), 0o644); err != nil {
+		t.Fatalf("write allocator: %v", err)
+	}
+
+	entryPath := filepath.Join(root, "entry"+peeper.SourceExt)
+	entrySrc := `import "core:allocator";
+
+fn main() -> i32 {
+	let ptr: ^u8 = allocator::Malloc(8);
+	allocator::Free(ptr);
+	return 0;
+}`
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:        root,
+		Extension:      peeper.SourceExt,
+		LibraryBaseDir: libraryBase,
+		TargetBackend:  "llvm",
+	}, diag)
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
+		ImportPath: "entry",
+		FilePath:   entryPath,
+		Content:    entrySrc,
+		Origin:     project.ModuleOriginLocal,
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(entry.LLVMIR, "declare i8* @malloc(i64)") {
+		t.Fatalf("expected malloc declaration, LLVM IR:\n%s", entry.LLVMIR)
+	}
+	if !strings.Contains(entry.LLVMIR, "declare void @free(i8*)") {
+		t.Fatalf("expected free declaration, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}
+
+func TestPipelineExternWithoutSymbolOverrideUsesDeclaredName(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `#[extern]
+fn ping() -> i32;
+
+fn main() -> i32 {
+	return ping();
+}`
+
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
+	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:       ".",
+		Extension:     peeper.SourceExt,
+		TargetBackend: "llvm",
+	}, diag)
+
+	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
+	prelude.Origin = project.ModuleOriginStdlib
+	ctx.AddModule(prelude)
+
+	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
+	entry.ImportPath = "entry"
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(entry.LLVMIR, "declare i32 @ping()") {
+		t.Fatalf("expected bare extern declaration, LLVM IR:\n%s", entry.LLVMIR)
+	}
+	if strings.Contains(entry.LLVMIR, "@ping$") {
+		t.Fatalf("bare extern should not be mangled, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}
+
 func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {
