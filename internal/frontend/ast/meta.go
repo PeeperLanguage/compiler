@@ -53,7 +53,6 @@ const (
 	AttributeMaxCalls  = "max_calls"
 	AttributeNoCopy    = "no_copy"
 	AttributeAllowCopy = "allow_copy"
-	AttributeNoMangle  = "no_mangle"
 )
 
 type AttributeDefinition struct {
@@ -95,7 +94,7 @@ var AttributeDefinitions = map[string]AttributeDefinition{
 	AttributeTargetOS: {
 		Args:    []AttributeArgSpec{{Type: &NamedType{Name: "cstr"}}},
 		Targets: AttributeTargetFunc | AttributeTargetType,
-		Doc:     "Restrict a declaration to a target operating system.",
+		Doc:     "Reserved for future target-specific declaration filtering; currently ignored with a warning.",
 	},
 	AttributeMaxCalls: {
 		Args:    []AttributeArgSpec{{Type: &NamedType{Name: "i32"}}},
@@ -111,10 +110,6 @@ var AttributeDefinitions = map[string]AttributeDefinition{
 		Targets:       AttributeTargetType,
 		ConflictGroup: AttributeConflictCopyMode,
 		Doc:           "Force a named type to remain copyable.",
-	},
-	AttributeNoMangle: {
-		Targets: AttributeTargetFunc,
-		Doc:     "Keep a function's emitted name unmangled.",
 	},
 }
 

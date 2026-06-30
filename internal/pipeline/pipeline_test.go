@@ -180,6 +180,68 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineExternDefinitionStaysLocalAfterError(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `#[extern("puts")]
+fn puts(msg: cstr) -> i32 {
+	return 0;
+}
+
+fn main() -> i32 {
+	return puts("hi");
+}`
+
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
+	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:       ".",
+		Extension:     peeper.SourceExt,
+		TargetBackend: "llvm",
+	}, diag)
+
+	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
+	prelude.Origin = project.ModuleOriginStdlib
+	ctx.AddModule(prelude)
+
+	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
+	entry.ImportPath = "entry"
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if !diag.HasErrors() {
+		t.Fatalf("expected extern definition diagnostic")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
+		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
+	}
+	if entry.Phase != project.PhaseHIR {
+		t.Fatalf("expected pipeline to continue through HIR and stop before MIR, got phase %v", entry.Phase)
+	}
+	if entry.HIR == nil {
+		t.Fatalf("expected HIR despite extern definition error")
+	}
+	if len(entry.HIR.Externs) != 0 {
+		t.Fatalf("extern definition should not lower as import, got externs %#v", entry.HIR.Externs)
+	}
+	foundPuts := false
+	for _, fn := range entry.HIR.Funcs {
+		if fn != nil && fn.Name == "puts" {
+			foundPuts = true
+			break
+		}
+	}
+	if !foundPuts {
+		t.Fatalf("expected local lowered function for puts, got funcs %#v", entry.HIR.Funcs)
+	}
+}
+
 func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {

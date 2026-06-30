@@ -724,7 +724,7 @@ func TestHoverShowsSecondAttributeDoc(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
 	src := `#[extern("puts")]
-#[__CURSOR__no_mangle]
+#[__CURSOR__target_os("linux")]
 fn puts(msg: cstr) -> i32;
 `
 
@@ -734,7 +734,7 @@ fn puts(msg: cstr) -> i32;
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "(attribute) #[no_mangle]") || !strings.Contains(hover.Contents.Value, "Keep a function's emitted name unmangled.") {
+	if !strings.Contains(hover.Contents.Value, "(attribute) #[target_os]") || !strings.Contains(hover.Contents.Value, "currently ignored with a warning") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }

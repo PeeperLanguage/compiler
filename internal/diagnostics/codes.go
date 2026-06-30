@@ -101,4 +101,5 @@ const (
 	WarnUnusedLocal            = "W0012"
 	WarnUnmodifiedMutable      = "W0013"
 	WarnNonSelfReceiverName    = "W0014"
+	WarnIgnoredTargetOS        = "W0015"
 )

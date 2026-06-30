@@ -122,14 +122,22 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 		}
 		existing := c.module.Semantics.MethodSets[targetKey]
 		duplicate := false
+		var previous *symbols.Symbol
 		for _, item := range existing {
 			if item != nil && item.Name == method.Name.Name {
 				duplicate = true
+				previous = item
 				break
 			}
 		}
 		if duplicate {
-			semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, "method `"+method.Name.Name+"` already declared for `"+targetKey+"`", method.Name.Name, method.Name.Location)
+			d := diagnostics.NewError("method `"+method.Name.Name+"` already declared for `"+targetKey+"`").
+				WithCode(diagnostics.ErrRedeclaredSymbol).
+				WithPrimaryLabel(method.Name.Location, "redeclared here")
+			if previous != nil && previous.Location != nil {
+				d.WithSecondaryLabel(previous.Location, "first declared here")
+			}
+			c.ctx.Diagnostics.Add(d)
 			continue
 		}
 		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method, ast.LocOf(method.Name))

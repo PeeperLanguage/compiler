@@ -485,7 +485,7 @@ fn main() -> i32 {
 
 func TestParseAllowsFunctionAttributes(t *testing.T) {
 	src := `#[extern("malloc")]
-#[no_mangle]
+#[target_os("linux")]
 #[max_calls(3)]
 fn ext();
 fn main() -> i32 {
@@ -504,11 +504,12 @@ fn main() -> i32 {
 	}
 	attrs := fn.GetAttributes()
 	externAttr, hasExtern := fn.GetAttribute("extern")
+	targetAttr, hasTargetOS := fn.GetAttribute("target_os")
 	maxCallsAttr, hasMaxCalls := fn.GetAttribute("max_calls")
-	_, hasNoMangle := fn.GetAttribute("no_mangle")
 	externName, externOK := externAttr.Args[0].(*ast.StringLit)
+	targetOS, targetOK := targetAttr.Args[0].(*ast.StringLit)
 	maxCalls, maxCallsOK := maxCallsAttr.Args[0].(*ast.NumberLit)
-	if len(attrs) != 3 || !hasExtern || !externOK || externName.Value != "malloc" || !hasNoMangle || !hasMaxCalls || !maxCallsOK || maxCalls.Value != "3" {
+	if len(attrs) != 3 || !hasExtern || !externOK || externName.Value != "malloc" || !hasTargetOS || !targetOK || targetOS.Value != "linux" || !hasMaxCalls || !maxCallsOK || maxCalls.Value != "3" {
 		t.Fatalf("attrs mismatch: %#v", attrs)
 	}
 }
@@ -1054,7 +1055,7 @@ struct Buffer {
 
 func TestParseAllowsCommentBeforeAttributeBeforeDecl(t *testing.T) {
 	src := `/// fn docs
-#[no_mangle]
+#[target_os("linux")]
 fn main() -> i32 {
 	return 0;
 }`
@@ -1069,8 +1070,8 @@ fn main() -> i32 {
 	if fn.Doc == nil || fn.Doc.Text != "fn docs" {
 		t.Fatalf("fn doc mismatch: %#v", fn.Doc)
 	}
-	if _, ok := fn.GetAttribute(ast.AttributeNoMangle); !ok {
-		t.Fatalf("expected no_mangle attribute on fn")
+	if _, ok := fn.GetAttribute(ast.AttributeTargetOS); !ok {
+		t.Fatalf("expected target_os attribute on fn")
 	}
 }
 

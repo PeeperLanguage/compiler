@@ -322,6 +322,140 @@ fn ext();
 	}
 }
 
+func TestUnknownNoMangleAttributeRejected(t *testing.T) {
+	src := `#[no_mangle]
+fn ext();
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "unknown attribute `#[no_mangle]`") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMalformedTargetOSStillReportsInvalidAttribute(t *testing.T) {
+	src := `#[target_os(123)]
+fn disabled() -> i32 {
+	return missing_name;
+}
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "invalid arguments for attribute `#[target_os]`") {
+		t.Fatalf("expected invalid target_os diagnostic, got:\n%s", out)
+	}
+	if hasTypeCode(diag, diagnostics.WarnIgnoredTargetOS) {
+		t.Fatalf("did not expect target_os warning for malformed attribute, got:\n%s", out)
+	}
+}
+
+func TestValidTargetOSWarnsAndDoesNotFilterSemantics(t *testing.T) {
+	src := `#[target_os("linux")]
+struct Buffer {
+	value: i32
+}
+
+#[target_os("darwin")]
+fn disabled() -> i32 {
+	return missing_name;
+}
+
+impl Buffer {
+	#[target_os("linux")]
+	fn disabled(self: Self) -> i32 {
+		return missing_method;
+	}
+}
+`
+	diag := checkTypeSource(t, src)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() {
+		t.Fatalf("expected unresolved names because target_os is ignored")
+	}
+	if !strings.Contains(out, "missing_name") || !strings.Contains(out, "missing_method") {
+		t.Fatalf("expected ignored target_os to keep bodies active, got:\n%s", out)
+	}
+	count := 0
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnIgnoredTargetOS {
+			count++
+		}
+	}
+	if count != 3 {
+		t.Fatalf("expected 3 target_os warnings, got %d:\n%s", count, out)
+	}
+}
+
+func TestImplMethodAttributesValidated(t *testing.T) {
+	src := `struct Buffer {
+	value: i32
+}
+
+impl Buffer {
+	#[target_oz("linux")]
+	fn bad(self: Self) {}
+}
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "unknown attribute `#[target_oz]`") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDuplicateImplMethodAttributesRejected(t *testing.T) {
+	src := `struct Buffer {
+	value: i32
+}
+
+impl Buffer {
+	#[target_os("linux")]
+	#[target_os("linux")]
+	fn bad(self: Self) {}
+}
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "duplicate attribute `#[target_os]`") || !strings.Contains(out, "previous attribute here") {
+		t.Fatalf("unexpected diagnostics:\n%s", out)
+	}
+	if hasTypeCode(diag, diagnostics.WarnIgnoredTargetOS) {
+		t.Fatalf("did not expect target_os warning for duplicate attributes, got:\n%s", out)
+	}
+}
+
+func TestExternDefinitionRejectedButBodyRemainsTyped(t *testing.T) {
+	src := `#[extern("puts")]
+fn puts(msg: cstr) -> i32 {
+	return missing_name;
+}
+`
+	diag := checkTypeSource(t, src)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
+		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
+	}
+	if !strings.Contains(out, "remove body to declare extern function") || !strings.Contains(out, "remove `#[extern]` to keep local definition") {
+		t.Fatalf("expected extern definition help text, got:\n%s", out)
+	}
+	if !strings.Contains(out, "missing_name") {
+		t.Fatalf("expected function body to keep typechecking, got:\n%s", out)
+	}
+}
+
 func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
 	diag := checkTypeSource(t, `#[no_copy]
 struct Buffer {

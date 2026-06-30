@@ -183,15 +183,21 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 	if !ok || attributed == nil {
 		return
 	}
+	fn, _ := decl.(*ast.FnDecl)
 	target := ast.AttributeTarget(0)
-	if _, ok := decl.(*ast.FnDecl); ok {
+	if fn != nil {
 		target = ast.AttributeTargetFunc
 	} else if _, ok := decl.(ast.TypeDecl); ok {
 		target = ast.AttributeTargetType
 	}
-	seenNames := make(map[string]ast.Attribute, len(attributed.GetAttributes()))
-	seenGroups := make(map[ast.AttributeConflictGroup]ast.Attribute, len(attributed.GetAttributes()))
-	for _, attr := range attributed.GetAttributes() {
+	attrs := attributed.GetAttributes()
+	nameCounts := make(map[string]int, len(attrs))
+	for _, attr := range attrs {
+		nameCounts[attr.Name]++
+	}
+	seenNames := make(map[string]ast.Attribute, len(attrs))
+	seenGroups := make(map[ast.AttributeConflictGroup]ast.Attribute, len(attrs))
+	for _, attr := range attrs {
 		def, ok := ast.AttributeDefinitions[attr.Name]
 		if !ok {
 			c.ctx.Diagnostics.Add(invalidAttributeError(attr,
@@ -256,6 +262,24 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 			continue
 		}
 		seenNames[attr.Name] = attr
+		switch attr.Name {
+		case ast.AttributeTargetOS:
+			if nameCounts[attr.Name] == 1 {
+				c.ctx.Diagnostics.AddWarning(
+					diagnostics.WarnIgnoredTargetOS,
+					"attribute `#[target_os]` is reserved for future target-specific declaration filtering and is currently ignored",
+					attr.Location,
+					"",
+				)
+			}
+		case ast.AttributeExtern:
+			if fn != nil && fn.Body != nil {
+				d := invalidAttributeError(attr, "attribute `#[extern]` requires a body-less function declaration")
+				d.WithHelp("remove body to declare extern function")
+				d.WithHelp("remove `#[extern]` to keep local definition")
+				c.ctx.Diagnostics.Add(d)
+			}
+		}
 		if def.ConflictGroup == ast.AttributeConflictNone {
 			continue
 		}
@@ -618,6 +642,7 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 		if method == nil {
 			continue
 		}
+		c.checkDeclAttributes(method)
 		sym, ok := c.module.Semantics.MethodSymbol[method.ID()]
 		if !ok || sym == nil {
 			continue
