@@ -392,9 +392,9 @@ func (p *Parser) parseImplDecl() ast.Decl {
 	lbracePos := p.stream[p.pos-1].Start
 	var methods []*ast.FnDecl
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		var attrs []ast.Attribute
-		if p.current().Kind == token.HASH {
-			attrs = p.parseAttributes()
+		doc, attrs := p.parseLeadingMetadata()
+		if p.at(token.RBRACE) || p.at(token.EOF) {
+			break
 		}
 		if p.current().Kind != token.FN {
 			p.diag.Add(diagnostics.NewError("expected method declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.stream[p.pos-1].Start, p.stream[p.pos-1].End), fmt.Sprintf("found %s", p.current().Kind)))
@@ -406,6 +406,7 @@ func (p *Parser) parseImplDecl() ast.Decl {
 			p.synchronize(token.FN, token.RBRACE)
 			continue
 		}
+		decl.SetDocComment(doc)
 		decl.SetAttributes(attrs)
 		methods = append(methods, decl)
 	}
@@ -455,21 +456,109 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 			return attrs
 		}
 		lbrackPos := p.stream[p.pos-1].Start
-		nameTok := p.consume(token.IDENT, "expected attribute name")
-		if nameTok == nil {
+		nameTok := p.current()
+		if nameTok.Kind != token.IDENT && !token.IsKeyword(nameTok.Literal) {
+			p.diag.Add(diagnostics.NewError("expected attribute name").
+				WithCode(diagnostics.ErrMissingIdentifier).
+				WithPrimaryLabel(source.NewLocation(p.filePath, nameTok.Start, nameTok.End), fmt.Sprintf("found %s", nameTok.Kind)))
+			p.synchronize(token.RBRACK)
+			p.expectClose(lbrackPos, token.RBRACK, "[")
 			return attrs
 		}
-		end := p.expectClose(lbrackPos, token.RBRACK, "[")
-		endPos := lbrackPos
-		if end != nil {
-			endPos = end.End
+		p.advance()
+		var (
+			args    []ast.Expr
+			attrEnd = nameTok.End
+		)
+		if p.match(token.LPAREN) {
+			for !p.at(token.RPAREN) && !p.at(token.EOF) {
+				arg := p.parseExpr(precLowest)
+				if arg != nil {
+					args = append(args, arg)
+				}
+				if !p.match(token.COMMA) {
+					break
+				}
+			}
+			if end := p.consume(token.RPAREN, "expected ')' after attribute arguments"); end != nil {
+				attrEnd = end.End
+			} else if len(args) > 0 {
+				attrEnd = ast.EndOf(args[len(args)-1])
+			}
 		}
 		attrs = append(attrs, ast.Attribute{
 			Name:     nameTok.Literal,
-			Location: source.NewLocation(p.filePath, hash.Start, endPos),
+			Args:     args,
+			Location: source.NewLocation(p.filePath, hash.Start, attrEnd),
 		})
+		if p.at(token.COMMA) {
+			tok := p.advance()
+			p.diag.Add(diagnostics.NewError("only one attribute is allowed per `#[...]` block").
+				WithCode(diagnostics.ErrExpectedToken).
+				WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), "split attributes into separate `#[...]` blocks"))
+			p.synchronize(token.RBRACK)
+		}
+		end := p.expectClose(lbrackPos, token.RBRACK, "[")
+		if end != nil && len(attrs) > 0 && attrs[len(attrs)-1].Location != nil {
+			attrs[len(attrs)-1].Location.End = &end.End
+		}
 	}
 	return attrs
+}
+
+// parseLeadingMetadata keeps comment attachment in parser instead of lexer so
+// node spans remain syntax-only. Leading `///` comments merge onto next
+// statement or declaration, even across blank lines or skipped normal comments.
+// Attributes are transparent. Same-line trailing comments never attach to the
+// following item.
+func (p *Parser) parseLeadingMetadata() (*ast.CommentGroup, []ast.Attribute) {
+	var (
+		doc   *ast.CommentGroup
+		attrs []ast.Attribute
+	)
+	mergeComment := func(tok *token.Token) {
+		if tok == nil {
+			return
+		}
+		next := &ast.CommentGroup{
+			Text:     tok.Literal,
+			Location: source.NewLocation(p.filePath, tok.Start, tok.End),
+		}
+		if doc == nil {
+			doc = next
+			return
+		}
+		doc.Text += "\n" + next.Text
+		if doc.Location == nil {
+			doc.Location = next.Location
+			return
+		}
+		if next.Location != nil && next.Location.End != nil {
+			doc.Location.End = next.Location.End
+		}
+	}
+	for {
+		switch p.current().Kind {
+		case token.DOC_COMMENT:
+			tok := p.advance()
+			if p.pos > 1 {
+				prev := p.stream[p.pos-2]
+				if prev.End.Line == tok.Start.Line && prev.Kind != token.DOC_COMMENT {
+					doc = nil
+					continue
+				}
+			}
+			mergeComment(tok)
+		case token.HASH:
+			prevCount := len(attrs)
+			attrs = append(attrs, p.parseAttributes()...)
+			if len(attrs) == prevCount {
+				continue
+			}
+		default:
+			return doc, attrs
+		}
+	}
 }
 
 // --- Statements ---
@@ -478,20 +567,7 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 	if p.at(token.RBRACE) || p.at(token.EOF) {
 		return nil
 	}
-
-	var doc *ast.CommentGroup
-	if p.at(token.DOC_COMMENT) {
-		tok := p.advance()
-		doc = &ast.CommentGroup{
-			Text:     tok.Literal,
-			Location: source.NewLocation(p.filePath, tok.Start, tok.End),
-		}
-	}
-
-	var attrs []ast.Attribute
-	if p.current().Kind == token.HASH {
-		attrs = p.parseAttributes()
-	}
+	doc, attrs := p.parseLeadingMetadata()
 
 	if p.at(token.RBRACE) || p.at(token.EOF) {
 		return nil

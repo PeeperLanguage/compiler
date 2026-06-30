@@ -422,7 +422,7 @@ func TestHoverShowsExplicitTypeForImportedCallBinding(t *testing.T) {
 func TestHoverShowsDocCommentOnDeclarationName(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "// main docs\nfn __CURSOR__main() -> i32 {\n\treturn 0;\n}\n"
+	src := "/// main docs\nfn __CURSOR__main() -> i32 {\n\treturn 0;\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -432,6 +432,22 @@ func TestHoverShowsDocCommentOnDeclarationName(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "```\n\n---\n\nmain docs") {
 		t.Fatalf("expected doc comment in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsDocCommentAcrossGapAndSkippedComment(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "/// first docs\n\n/// second docs\n// note\nfn __CURSOR__main() -> i32 {\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "first docs  \nsecond docs") {
+		t.Fatalf("expected merged doc comment in hover, got %q", hover.Contents.Value)
 	}
 }
 
@@ -683,6 +699,43 @@ func TestHoverShowsInvalidExpressionType(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "<invalid>") {
 		t.Fatalf("expected invalid hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsAttributeDoc(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `#[__CURSOR__extern("puts")]
+fn puts(msg: cstr) -> i32;
+`
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(attribute) #[extern]") || !strings.Contains(hover.Contents.Value, "Optional string argument overrides") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsSecondAttributeDoc(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `#[extern("puts")]
+#[__CURSOR__target_os("linux")]
+fn puts(msg: cstr) -> i32;
+`
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(attribute) #[target_os]") || !strings.Contains(hover.Contents.Value, "currently ignored with a warning") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }
 

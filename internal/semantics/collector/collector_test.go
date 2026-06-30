@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -51,5 +52,81 @@ fn main() -> i32 {
 	}
 	if sym.Location == nil {
 		t.Fatalf("expected import symbol location to be preserved")
+	}
+}
+
+func TestTargetOSDeclarationsStillCollide(t *testing.T) {
+	const filePath = "collector_target_test" + peeper.SourceExt
+	src := `#[target_os("linux")]
+fn Platform() -> i32 {
+	return 1;
+}
+
+#[target_os("darwin")]
+fn Platform() -> i32 {
+	return 2;
+}
+`
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux"}, diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: "collector_target_test",
+		FilePath:   filePath,
+		Content:    src,
+		AST:        modAST,
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+
+	Collect(ctx, module)
+
+	if !diag.HasErrors() {
+		t.Fatalf("expected redeclaration diagnostic")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "Platform") {
+		t.Fatalf("expected Platform redeclaration, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTargetOSImplMethodsStillCollide(t *testing.T) {
+	const filePath = "collector_method_target_test" + peeper.SourceExt
+	src := `struct Buffer {
+	value: i32
+}
+
+impl Buffer {
+	#[target_os("linux")]
+	fn Platform(self: Self) -> i32 {
+		return 1;
+	}
+
+	#[target_os("darwin")]
+	fn Platform(self: Self) -> i32 {
+		return 2;
+	}
+}
+`
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux"}, diag)
+	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: "collector_method_target_test",
+		FilePath:   filePath,
+		Content:    src,
+		AST:        modAST,
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+
+	Collect(ctx, module)
+
+	if !diag.HasErrors() {
+		t.Fatalf("expected redeclaration diagnostic")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "method `Platform` already declared") {
+		t.Fatalf("expected method redeclaration, got:\n%s", diag.EmitAllToString())
 	}
 }

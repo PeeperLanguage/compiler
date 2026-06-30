@@ -42,8 +42,8 @@ let mut y: i32 = x;
 	}
 }
 
-func TestLexKeepsStandaloneComments(t *testing.T) {
-	src := `// module docs
+func TestLexEmitsCommentTokens(t *testing.T) {
+	src := `/// module docs
 // more docs
 fn main() -> i32 {
 	// not docs
@@ -63,11 +63,7 @@ fn main() -> i32 {
 			docs = append(docs, tok.Literal)
 		}
 	}
-	if len(docs) != 2 {
-		t.Fatalf("doc comment count: got %d want 2", len(docs))
-	}
-	expectedFirst := "module docs\nmore docs"
-	if docs[0] != expectedFirst {
-		t.Fatalf("first doc group: got %q want %q", docs[0], expectedFirst)
+	if len(docs) != 1 || docs[0] != "module docs" {
+		t.Fatalf("doc tokens mismatch: %#v", docs)
 	}
 }

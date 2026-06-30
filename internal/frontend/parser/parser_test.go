@@ -484,7 +484,9 @@ fn main() -> i32 {
 }
 
 func TestParseAllowsFunctionAttributes(t *testing.T) {
-	src := `#[extern]
+	src := `#[extern("malloc")]
+#[target_os("linux")]
+#[max_calls(3)]
 fn ext();
 fn main() -> i32 {
 	return 0;
@@ -495,6 +497,33 @@ fn main() -> i32 {
 	}
 	if len(mod.Stmts) != 2 {
 		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn")
+	}
+	attrs := fn.GetAttributes()
+	externAttr, hasExtern := fn.GetAttribute("extern")
+	targetAttr, hasTargetOS := fn.GetAttribute("target_os")
+	maxCallsAttr, hasMaxCalls := fn.GetAttribute("max_calls")
+	externName, externOK := externAttr.Args[0].(*ast.StringLit)
+	targetOS, targetOK := targetAttr.Args[0].(*ast.StringLit)
+	maxCalls, maxCallsOK := maxCallsAttr.Args[0].(*ast.NumberLit)
+	if len(attrs) != 3 || !hasExtern || !externOK || externName.Value != "malloc" || !hasTargetOS || !targetOK || targetOS.Value != "linux" || !hasMaxCalls || !maxCallsOK || maxCalls.Value != "3" {
+		t.Fatalf("attrs mismatch: %#v", attrs)
+	}
+}
+
+func TestParseRejectsMultipleAttributesInOneBlock(t *testing.T) {
+	src := `#[extern("malloc"), no_mangle]
+fn ext();
+`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected parser diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "only one attribute is allowed per `#[...]` block") {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 }
 
@@ -946,7 +975,7 @@ func TestParseTypedStructLiteral(t *testing.T) {
 
 func TestParseAttachesDocCommentsInFunctionBody(t *testing.T) {
 	src := `fn main() -> i32 {
-	// docs-like comment before local let
+	/// docs-like comment before local let
 	let x: i32 = 1;
 	return x;
 }`
@@ -966,7 +995,7 @@ func TestParseAttachesDocCommentsInFunctionBody(t *testing.T) {
 
 func TestParseAttachesDocCommentsToIfStmt(t *testing.T) {
 	src := `fn main() -> i32 {
-	// branch docs
+	/// branch docs
 	if true {
 		return 0;
 	}
@@ -987,7 +1016,8 @@ func TestParseAttachesDocCommentsToIfStmt(t *testing.T) {
 }
 
 func TestParseAttachesDocCommentsToDecl(t *testing.T) {
-	src := `// fn docs
+	src := `/// fn docs
+/// more fn docs
 fn main() -> i32 {
 	return 0;
 }`
@@ -996,8 +1026,178 @@ fn main() -> i32 {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	fn, ok := mod.Stmts[0].(*ast.FnDecl)
-	if !ok || fn.Doc == nil || fn.Doc.Text != "fn docs" {
+	if !ok || fn.Doc == nil || fn.Doc.Text != "fn docs\nmore fn docs" {
 		t.Fatalf("decl doc mismatch: %#v", mod.Stmts[0])
+	}
+}
+
+func TestParseAllowsCommentAfterAttributeBeforeDecl(t *testing.T) {
+	src := `#[no_copy]
+/// buffer docs
+struct Buffer {
+	value: i32
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	decl, ok := mod.Stmts[0].(*ast.StructDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected struct, got %T", mod.Stmts[0])
+	}
+	if decl.Doc == nil || decl.Doc.Text != "buffer docs" {
+		t.Fatalf("struct doc mismatch: %#v", decl.Doc)
+	}
+	if _, ok := decl.GetAttribute(ast.AttributeNoCopy); !ok {
+		t.Fatalf("expected no_copy attribute on struct")
+	}
+}
+
+func TestParseAllowsCommentBeforeAttributeBeforeDecl(t *testing.T) {
+	src := `/// fn docs
+#[target_os("linux")]
+fn main() -> i32 {
+	return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn, got %T", mod.Stmts[0])
+	}
+	if fn.Doc == nil || fn.Doc.Text != "fn docs" {
+		t.Fatalf("fn doc mismatch: %#v", fn.Doc)
+	}
+	if _, ok := fn.GetAttribute(ast.AttributeTargetOS); !ok {
+		t.Fatalf("expected target_os attribute on fn")
+	}
+}
+
+func TestParseAttachesDocCommentsAcrossGapsBeforeDecl(t *testing.T) {
+	src := `/// first docs
+
+/// second docs
+fn main() -> i32 {
+	return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn, got %T", mod.Stmts[0])
+	}
+	if fn.Doc == nil || fn.Doc.Text != "first docs\nsecond docs" {
+		t.Fatalf("fn doc mismatch: %#v", fn.Doc)
+	}
+}
+
+func TestParseAttachesDocCommentsAcrossSkippedCommentBeforeDecl(t *testing.T) {
+	src := `/// fn docs
+// note
+fn main() -> i32 {
+	return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected fn, got %T", mod.Stmts[0])
+	}
+	if fn.Doc == nil || fn.Doc.Text != "fn docs" {
+		t.Fatalf("fn doc mismatch: %#v", fn.Doc)
+	}
+}
+
+func TestParseAllowsCommentAfterAttributeBeforeImplMethod(t *testing.T) {
+	src := `struct Buffer {
+	value: i32
+}
+
+impl Buffer {
+	#[test]
+	/// method docs
+	fn destroy(self: Self) {}
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	decl, ok := mod.Stmts[1].(*ast.ImplDecl)
+	if !ok || len(decl.Methods) != 1 {
+		t.Fatalf("impl methods mismatch: %#v", mod.Stmts[1])
+	}
+	method := decl.Methods[0]
+	if method.Doc == nil || method.Doc.Text != "method docs" {
+		t.Fatalf("method doc mismatch: %#v", method.Doc)
+	}
+	if _, ok := method.GetAttribute(ast.AttributeTest); !ok {
+		t.Fatalf("expected test attribute on method")
+	}
+}
+
+func TestParseAllowsTrailingCommentBeforeImplClose(t *testing.T) {
+	src := `struct Buffer {
+	value: i32
+}
+
+impl Buffer {
+	fn destroy(self: Self) {}
+	// trailer
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	decl, ok := mod.Stmts[1].(*ast.ImplDecl)
+	if !ok || len(decl.Methods) != 1 {
+		t.Fatalf("impl methods mismatch: %#v", mod.Stmts[1])
+	}
+}
+
+func TestParseSkipsNormalCommentInsideParams(t *testing.T) {
+	src := `fn f(
+	// note
+	x: i32
+) {}
+`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || len(fn.Params) != 1 || fn.Params[0].Name == nil || fn.Params[0].Name.Name != "x" {
+		t.Fatalf("param parse mismatch: %#v", mod.Stmts[0])
+	}
+}
+
+func TestParseSkipsNormalCommentInsideTypeParams(t *testing.T) {
+	src := `fn pair<T,
+	// note
+	U>() {}
+`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || len(fn.TypeParams) != 2 {
+		t.Fatalf("type params mismatch: %#v", mod.Stmts[0])
+	}
+}
+
+func TestParseMalformedAttributeDoesNotPanic(t *testing.T) {
+	src := `#[ ]
+fn main() {}
+`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics for malformed attribute")
 	}
 }
 
@@ -1294,12 +1494,11 @@ fn main() {
 	}
 }
 
-// TestParseCommentDiscarding verifies comments followed by a blank line are discarded.
-func TestParseCommentDiscarding(t *testing.T) {
-	src := `// spaced comment
+func TestParseDocCommentsPersistAcrossBlankLines(t *testing.T) {
+	src := `/// spaced comment
 
 fn main() {
-	// non-spaced comment
+	/// non-spaced comment
 	let x = 1;
 }`
 	mod, diag := parseTestModule(src)
@@ -1307,12 +1506,36 @@ fn main() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	fn := mod.Stmts[0].(*ast.FnDecl)
-	if fn.Doc != nil {
-		t.Fatalf("expected spaced comment to be discarded, got: %q", fn.Doc.Text)
+	if fn.Doc == nil || fn.Doc.Text != "spaced comment" {
+		t.Fatalf("expected spaced comment to attach, got: %#v", fn.Doc)
 	}
 	let := fn.Body.Stmts[0].(*ast.LetDecl)
 	if let.Doc == nil || let.Doc.Text != "non-spaced comment" {
 		t.Fatalf("expected non-spaced comment to be attached, got: %#v", let.Doc)
+	}
+}
+
+func TestParseTrailingCommentDoesNotAttachToNextStmt(t *testing.T) {
+	src := `fn main() {
+	let x = 1; // trailing
+	/// next docs
+	let y = 2;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	if len(fn.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(fn.Body.Stmts))
+	}
+	first := fn.Body.Stmts[0].(*ast.LetDecl)
+	if first.Doc != nil {
+		t.Fatalf("expected trailing comment to stay unattached, got %#v", first.Doc)
+	}
+	second := fn.Body.Stmts[1].(*ast.LetDecl)
+	if second.Doc == nil || second.Doc.Text != "next docs" {
+		t.Fatalf("expected next docs to attach to second let, got %#v", second.Doc)
 	}
 }
 
