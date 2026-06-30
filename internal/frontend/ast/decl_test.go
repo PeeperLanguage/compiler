@@ -71,3 +71,41 @@ func TestNonTypeDeclarationsDoNotImplementTypeDecl(t *testing.T) {
 		})
 	}
 }
+
+func TestForEachDeclSkipsNonDeclTopLevelStatements(t *testing.T) {
+	mod := &Module{
+		Stmts: []Stmt{
+			&BadStmt{},
+			&ImportDecl{Alias: &Ident{Name: "dep"}},
+			&ExprStmt{},
+			&FnDecl{Name: &Ident{Name: "main"}},
+			&BadStmt{},
+			&ConstDecl{Name: &Ident{Name: "answer"}},
+		},
+	}
+
+	var got []string
+	ForEachDecl(mod, func(decl Decl) bool {
+		switch node := decl.(type) {
+		case *ImportDecl:
+			got = append(got, "import")
+		case *FnDecl:
+			got = append(got, node.Name.Name)
+		case *ConstDecl:
+			got = append(got, node.Name.Name)
+		default:
+			t.Fatalf("unexpected decl type %T", decl)
+		}
+		return true
+	})
+
+	if want := []string{"import", "main", "answer"}; len(got) != len(want) {
+		t.Fatalf("decl count = %d, want %d (%v)", len(got), len(want), got)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("decl order = %v, want %v", got, want)
+			}
+		}
+	}
+}

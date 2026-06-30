@@ -74,7 +74,6 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		projectName := ""
 		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
 			if !manifest.PathWithinSourceDir(loadedProject.RootDir, filePath) {
-				delete(w.modules, filePath)
 				continue
 			}
 			rootDir = loadedProject.RootDir

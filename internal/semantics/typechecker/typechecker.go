@@ -127,23 +127,18 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
-	for _, stmt := range c.module.AST.Stmts {
-		if decl, ok := stmt.(ast.Decl); ok {
-			c.checkDeclAttributes(decl)
-		}
-		typeDecl, ok := stmt.(ast.TypeDecl)
+	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
+		c.checkDeclAttributes(decl)
+		typeDecl, ok := decl.(ast.TypeDecl)
 		if !ok {
-			continue
+			return true
 		}
 		if iface, ok := typeDecl.(*ast.InterfaceDecl); ok {
 			c.checkInterfaceDecl(iface)
 		}
-	}
-	for _, stmt := range c.module.AST.Stmts {
-		decl, ok := stmt.(ast.Decl) // ? Why even needed?
-		if !ok {
-			continue
-		}
+		return true
+	})
+	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.LetDecl:
 			if c.module.ModuleScope != nil {
@@ -154,20 +149,17 @@ func (c *checker) checkModule() {
 				c.checkBinding(c.module.ModuleScope, node, true)
 			}
 		}
-	}
-	for _, stmt := range c.module.AST.Stmts {
-		decl, ok := stmt.(ast.Decl)
-		if !ok {
-			continue
-		}
+		return true
+	})
+	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			if node == nil {
-				continue
+				return true
 			}
 			sym, found := c.module.ModuleScope.Lookup(node.Name.Name)
 			if !found || sym == nil {
-				continue
+				return true
 			}
 			if node.Body != nil {
 				c.checkFunctionWithSelf(sym, node, nil, false)
@@ -175,7 +167,8 @@ func (c *checker) checkModule() {
 		case *ast.ImplDecl:
 			c.checkImplDecl(node)
 		}
-	}
+		return true
+	})
 }
 
 func (c *checker) checkDeclAttributes(decl ast.Decl) {

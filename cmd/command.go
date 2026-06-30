@@ -309,8 +309,8 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 		}
 		return targetInfo.EntryPath, targetInfo, nil
 	}
-	if loadedProject, err := manifest.LoadProject(resolvedPath); err == nil && !manifest.PathWithinSourceDir(loadedProject.RootDir, resolvedPath) {
-		return "", buildTarget{}, fmt.Errorf("project source files must stay under %s", manifest.SourceDir(loadedProject.RootDir))
+	if _, err := manifest.ResolveSourceFileProject(resolvedPath); err != nil {
+		return "", buildTarget{}, err
 	}
 	return resolvedPath, buildTarget{
 		EntryPath:         resolvedPath,

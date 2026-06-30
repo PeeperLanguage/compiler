@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"compiler/pkg/peeper"
+	"compiler/pkg/remotes"
 	"compiler/pkg/toml"
 )
 
@@ -67,6 +68,11 @@ type Project struct {
 	RootDir      string
 	ManifestPath string
 	File         *File
+}
+
+type SourceFileProject struct {
+	RootDir     string
+	ProjectName string
 }
 
 var (
@@ -135,6 +141,25 @@ func LoadProject(startPath string) (*Project, error) {
 		ManifestPath: manifestPath,
 		File:         file,
 	}, nil
+}
+
+// ResolveSourceFileProject keeps file-to-project discovery and source-dir
+// validation in one place so CLI and LSP apply the same project layout rule.
+func ResolveSourceFileProject(path string) (SourceFileProject, error) {
+	ctx := SourceFileProject{RootDir: filepath.Dir(path)}
+
+	loadedProject, err := LoadProject(path)
+	if err != nil {
+		return ctx, nil
+	}
+
+	ctx.RootDir = loadedProject.RootDir
+	ctx.ProjectName = loadedProject.File.Package.Name
+	if !PathWithinSourceDir(ctx.RootDir, path) {
+		return ctx, fmt.Errorf("project source files must stay under %s", SourceDir(ctx.RootDir))
+	}
+
+	return ctx, nil
 }
 
 func Load(path string) (*File, error) {
@@ -232,7 +257,7 @@ func parseDependencyString(value string) (Dependency, error) {
 	if strings.HasPrefix(value, "../") || strings.HasPrefix(value, "./") {
 		return Dependency{Type: DependencyNeighbor, Path: filepath.Clean(value)}, nil
 	}
-	if !isRemoteRepo(value) {
+	if !remotes.IsRemotePath(value) {
 		return Dependency{}, fmt.Errorf("dependency must be a relative neighbor path or remote repo path")
 	}
 	dep := Dependency{Type: DependencyRemote, Path: value, Version: "latest"}
@@ -287,7 +312,7 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 		if repo == "" {
 			return Dependency{}, fmt.Errorf("remote dependency requires repo")
 		}
-		if !isRemoteRepo(repo) {
+		if !remotes.IsRemotePath(repo) {
 			return Dependency{}, fmt.Errorf("remote dependency repo %q is invalid", repo)
 		}
 		if version == "" {
@@ -297,10 +322,6 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 	default:
 		return Dependency{}, fmt.Errorf("unknown dependency type %q", typeName)
 	}
-}
-
-func isRemoteRepo(path string) bool {
-	return strings.HasPrefix(path, "github.com/") || strings.HasPrefix(path, "gitlab.com/") || strings.HasPrefix(path, "bitbucket.org/")
 }
 
 func Save(path string, file *File) error {

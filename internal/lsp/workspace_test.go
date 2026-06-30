@@ -426,6 +426,51 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenNewFileAppears(t *testin
 	}
 }
 
+func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	outsideUtil := filepath.Join(root, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+
+	mainPath := project.CanonicalPath(fileMain)
+	utilPath := project.CanonicalPath(fileUtil)
+	component, ok := index.componentForFile(mainPath)
+	if !ok || len(component.files) != 2 {
+		t.Fatalf("expected importer and util in same component, got %#v", component)
+	}
+	if got := index.modules[mainPath].importTargets; !slices.Equal(got, []string{utilPath}) {
+		t.Fatalf("initial import targets = %v, want [%s]", got, utilPath)
+	}
+
+	if err := os.Rename(fileUtil, outsideUtil); err != nil {
+		t.Fatalf("move util outside src: %v", err)
+	}
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after moving util: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("parsed files after util leaves src = %d, want 1", got)
+	}
+	if got := index.modules[mainPath].importTargets; len(got) != 0 {
+		t.Fatalf("main import targets after util leaves src = %v, want empty", got)
+	}
+	component, ok = index.componentForFile(mainPath)
+	if !ok || len(component.files) != 1 {
+		t.Fatalf("expected importer to become singleton after util leaves src, got %#v", component)
+	}
+	if _, ok := index.modules[utilPath]; ok {
+		t.Fatalf("util should be removed from workspace modules after leaving src")
+	}
+}
+
 func TestServerStateKeepsWorkspaceIndexAcrossRecompile(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")

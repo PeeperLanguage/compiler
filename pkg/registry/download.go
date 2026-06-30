@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"compiler/pkg/manifest"
+	"compiler/pkg/remotes"
 )
 
 func DownloadRemotePackage(cachePath, repoName, version string, devConfig *manifest.DevConfig) error {
@@ -53,20 +54,23 @@ func downloadFromGit(cachePath, repoName, version string) error {
 }
 
 func packageArchiveURL(repoName, version string) (string, error) {
-	if after, ok := strings.CutPrefix(repoName, "github.com/"); ok {
-		parts := after
-		return fmt.Sprintf("https://github.com/%s/archive/refs/tags/%s.tar.gz", parts, version), nil
+	provider, repoPath, ok := remotes.Parse(repoName)
+	if !ok {
+		return "", fmt.Errorf("unsupported remote host for %s", repoName)
 	}
-	if after, ok := strings.CutPrefix(repoName, "gitlab.com/"); ok {
-		parts := after
+
+	switch provider {
+	case remotes.ProviderGitHub:
+		return fmt.Sprintf("https://github.com/%s/archive/refs/tags/%s.tar.gz", repoPath, version), nil
+	case remotes.ProviderGitLab:
+		parts := repoPath
 		repoBase := filepath.Base(parts)
 		return fmt.Sprintf("https://gitlab.com/%s/-/archive/%s/%s-%s.tar.gz", parts, version, repoBase, version), nil
+	case remotes.ProviderBitbucket:
+		return fmt.Sprintf("https://bitbucket.org/%s/get/%s.tar.gz", repoPath, version), nil
+	default:
+		panic(fmt.Sprintf("unsupported remote provider %q", provider))
 	}
-	if after, ok := strings.CutPrefix(repoName, "bitbucket.org/"); ok {
-		parts := after
-		return fmt.Sprintf("https://bitbucket.org/%s/get/%s.tar.gz", parts, version), nil
-	}
-	return "", fmt.Errorf("unsupported remote host for %s", repoName)
 }
 
 func downloadFromMock(cachePath, repoName, version, mockBasePath string) error {
@@ -74,7 +78,7 @@ func downloadFromMock(cachePath, repoName, version, mockBasePath string) error {
 	if err != nil {
 		return fmt.Errorf("resolve mock path: %w", err)
 	}
-	repoPath := stripProviderPrefix(repoName)
+	repoPath := remotes.StripProviderPrefix(repoName)
 	packageName := filepath.Base(repoPath)
 	packageDir := filepath.Dir(repoPath)
 	versionedDir := packageName + "-" + version
@@ -106,7 +110,7 @@ func listMockVersions(repoName, mockBasePath string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve mock path: %w", err)
 	}
-	repoPath := stripProviderPrefix(repoName)
+	repoPath := remotes.StripProviderPrefix(repoName)
 	baseDir := filepath.Join(mockBasePath, filepath.Dir(repoPath))
 	packageName := filepath.Base(repoPath)
 
@@ -131,16 +135,21 @@ func listMockVersions(repoName, mockBasePath string) ([]string, error) {
 }
 
 func fetchAvailableVersions(repoName string) ([]string, error) {
-	if strings.HasPrefix(repoName, "github.com/") {
-		return fetchGitHubVersions(repoName)
+	provider, repoPath, ok := remotes.Parse(repoName)
+	if !ok {
+		return nil, fmt.Errorf("unsupported remote host for %s", repoName)
 	}
-	if strings.HasPrefix(repoName, "gitlab.com/") {
-		return fetchGitLabVersions(repoName)
+
+	switch provider {
+	case remotes.ProviderGitHub:
+		return fetchGitHubVersions(repoName, repoPath)
+	case remotes.ProviderGitLab:
+		return fetchGitLabVersions(repoName, repoPath)
+	case remotes.ProviderBitbucket:
+		return fetchBitbucketVersions(repoName, repoPath)
+	default:
+		panic(fmt.Sprintf("unsupported remote provider %q", provider))
 	}
-	if strings.HasPrefix(repoName, "bitbucket.org/") {
-		return fetchBitbucketVersions(repoName)
-	}
-	return nil, fmt.Errorf("unsupported remote host for %s", repoName)
 }
 
 type versionTag struct {
@@ -174,9 +183,8 @@ func collectVersionNames(repoName string, tags []versionTag) ([]string, error) {
 	return versions, nil
 }
 
-func fetchGitHubVersions(repoName string) ([]string, error) {
-	parts := strings.TrimPrefix(repoName, "github.com/")
-	url := fmt.Sprintf("https://api.github.com/repos/%s/tags", parts)
+func fetchGitHubVersions(repoName, repoPath string) ([]string, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/tags", repoPath)
 	var tags []versionTag
 	if err := fetchJSON(url, "github tags API", &tags); err != nil {
 		return nil, err
@@ -184,9 +192,8 @@ func fetchGitHubVersions(repoName string) ([]string, error) {
 	return collectVersionNames(repoName, tags)
 }
 
-func fetchGitLabVersions(repoName string) ([]string, error) {
-	parts := strings.TrimPrefix(repoName, "gitlab.com/")
-	encoded := strings.ReplaceAll(parts, "/", "%2F")
+func fetchGitLabVersions(repoName, repoPath string) ([]string, error) {
+	encoded := strings.ReplaceAll(repoPath, "/", "%2F")
 	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/repository/tags", encoded)
 	var tags []versionTag
 	if err := fetchJSON(url, "gitlab tags API", &tags); err != nil {
@@ -195,23 +202,13 @@ func fetchGitLabVersions(repoName string) ([]string, error) {
 	return collectVersionNames(repoName, tags)
 }
 
-func fetchBitbucketVersions(repoName string) ([]string, error) {
-	parts := strings.TrimPrefix(repoName, "bitbucket.org/")
-	url := fmt.Sprintf("https://api.bitbucket.org/2.0/repositories/%s/refs/tags", parts)
+func fetchBitbucketVersions(repoName, repoPath string) ([]string, error) {
+	url := fmt.Sprintf("https://api.bitbucket.org/2.0/repositories/%s/refs/tags", repoPath)
 	var payload bitbucketTagResponse
 	if err := fetchJSON(url, "bitbucket tags API", &payload); err != nil {
 		return nil, err
 	}
 	return collectVersionNames(repoName, payload.Values)
-}
-
-func stripProviderPrefix(repo string) string {
-	for _, prefix := range []string{"github.com/", "gitlab.com/", "bitbucket.org/"} {
-		if after, ok := strings.CutPrefix(repo, prefix); ok {
-			return after
-		}
-	}
-	return repo
 }
 
 func downloadFile(url string) (string, error) {

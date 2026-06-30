@@ -8,6 +8,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/pkg/manifest"
+	"compiler/pkg/remotes"
 )
 
 // ImportError reports a resolved import failure with a diagnostic code.
@@ -107,7 +108,7 @@ func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*Re
 		if err := validateImportPath(importPath); err != nil {
 			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
 		}
-		if isRemoteImport(importPath) {
+		if remotes.IsRemotePath(importPath) {
 			return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "remote imports are not supported yet"}
 		}
 		if ctx.Config.ProjectName == "" {
@@ -200,10 +201,4 @@ func validateImportPath(importPath string) error {
 		}
 	}
 	return nil
-}
-
-func isRemoteImport(path string) bool {
-	return strings.HasPrefix(path, "github.com/") ||
-		strings.HasPrefix(path, "gitlab.com/") ||
-		strings.HasPrefix(path, "bitbucket.org/")
 }
