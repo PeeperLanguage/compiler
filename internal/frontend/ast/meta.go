@@ -57,15 +57,23 @@ const (
 )
 
 type AttributeDefinition struct {
-	Args    []AttributeArgSpec
-	Targets AttributeTarget
-	Doc     string
+	Args          []AttributeArgSpec
+	Targets       AttributeTarget
+	ConflictGroup AttributeConflictGroup
+	Doc           string
 }
 
 type AttributeArgSpec struct {
 	Type     TypeExpr
 	Optional bool
 }
+
+type AttributeConflictGroup uint8
+
+const (
+	AttributeConflictNone AttributeConflictGroup = iota
+	AttributeConflictCopyMode
+)
 
 type AttributeTarget uint8
 
@@ -95,12 +103,14 @@ var AttributeDefinitions = map[string]AttributeDefinition{
 		Doc:     "Limit how many calls to a function are expected or permitted by later analysis.",
 	},
 	AttributeNoCopy: {
-		Targets: AttributeTargetType,
-		Doc:     "Mark a named type as move-only.",
+		Targets:       AttributeTargetType,
+		ConflictGroup: AttributeConflictCopyMode,
+		Doc:           "Mark a named type as move-only.",
 	},
 	AttributeAllowCopy: {
-		Targets: AttributeTargetType,
-		Doc:     "Force a named type to remain copyable.",
+		Targets:       AttributeTargetType,
+		ConflictGroup: AttributeConflictCopyMode,
+		Doc:           "Force a named type to remain copyable.",
 	},
 	AttributeNoMangle: {
 		Targets: AttributeTargetFunc,
@@ -109,20 +119,17 @@ var AttributeDefinitions = map[string]AttributeDefinition{
 }
 
 type Attributed struct {
-	Attributes map[string]Attribute
+	Attributes []Attribute
 }
 
 func (a *Attributed) SetAttributes(attrs []Attribute) {
 	if a == nil {
 		return
 	}
-	a.Attributes = make(map[string]Attribute, len(attrs))
-	for _, attr := range attrs {
-		a.Attributes[attr.Name] = attr
-	}
+	a.Attributes = append(a.Attributes[:0], attrs...)
 }
 
-func (a *Attributed) GetAttributes() map[string]Attribute {
+func (a *Attributed) GetAttributes() []Attribute {
 	if a == nil {
 		return nil
 	}
@@ -130,9 +137,13 @@ func (a *Attributed) GetAttributes() map[string]Attribute {
 }
 
 func (a *Attributed) GetAttribute(name string) (Attribute, bool) {
-	if a == nil || a.Attributes == nil {
+	if a == nil {
 		return Attribute{}, false
 	}
-	attr, ok := a.Attributes[name]
-	return attr, ok
+	for _, attr := range a.Attributes {
+		if attr.Name == name {
+			return attr, true
+		}
+	}
+	return Attribute{}, false
 }

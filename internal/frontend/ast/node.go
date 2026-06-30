@@ -24,7 +24,7 @@ type DocumentedNode interface {
 
 type AttributedNode interface {
 	SetAttributes([]Attribute)
-	GetAttributes() map[string]Attribute
+	GetAttributes() []Attribute
 	GetAttribute(string) (Attribute, bool)
 }
 

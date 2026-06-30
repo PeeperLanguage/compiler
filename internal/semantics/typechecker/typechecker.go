@@ -135,25 +135,6 @@ func (c *checker) checkModule() {
 		if !ok {
 			continue
 		}
-		seen := make(map[typeinfo.CopyMode]ast.Attribute, len(typeDecl.GetAttributes()))
-		for _, attr := range typeDecl.GetAttributes() {
-			mode, ok := typeinfo.NamedTypeCopyMode(attr.Name)
-			if !ok {
-				continue
-			}
-			if prev, ok := seen[mode]; ok {
-				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
-					fmt.Sprintf("duplicate type attribute `#[%s]`", prev.Name)))
-				continue
-			}
-			seen[mode] = attr
-		}
-		if _, ok := seen[typeinfo.CopyDeny]; ok {
-			if _, ok := seen[typeinfo.CopyAllow]; ok {
-				c.ctx.Diagnostics.Add(invalidTypeError(typeDecl,
-					"conflicting type attributes `#[no_copy]` and `#[allow_copy]`"))
-			}
-		}
 		if iface, ok := typeDecl.(*ast.InterfaceDecl); ok {
 			c.checkInterfaceDecl(iface)
 		}
@@ -208,15 +189,17 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 	} else if _, ok := decl.(ast.TypeDecl); ok {
 		target = ast.AttributeTargetType
 	}
+	seenNames := make(map[string]ast.Attribute, len(attributed.GetAttributes()))
+	seenGroups := make(map[ast.AttributeConflictGroup]ast.Attribute, len(attributed.GetAttributes()))
 	for _, attr := range attributed.GetAttributes() {
 		def, ok := ast.AttributeDefinitions[attr.Name]
 		if !ok {
-			c.ctx.Diagnostics.Add(invalidTypeError(decl,
+			c.ctx.Diagnostics.Add(invalidAttributeError(attr,
 				fmt.Sprintf("unknown attribute `#[%s]`", attr.Name)))
 			continue
 		}
 		if target == 0 || def.Targets&target == 0 {
-			c.ctx.Diagnostics.Add(invalidTypeError(decl,
+			c.ctx.Diagnostics.Add(invalidAttributeError(attr,
 				fmt.Sprintf("attribute `#[%s]` cannot be used on this declaration", attr.Name)))
 			continue
 		}
@@ -227,7 +210,7 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 			}
 		}
 		if len(attr.Args) < requiredArgs || len(attr.Args) > len(def.Args) {
-			c.ctx.Diagnostics.Add(invalidTypeError(decl,
+			c.ctx.Diagnostics.Add(invalidAttributeError(attr,
 				fmt.Sprintf("invalid arguments for attribute `#[%s]`", attr.Name)))
 			continue
 		}
@@ -261,9 +244,29 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 			}
 		}
 		if !validArgs {
-			c.ctx.Diagnostics.Add(invalidTypeError(decl,
+			c.ctx.Diagnostics.Add(invalidAttributeError(attr,
 				fmt.Sprintf("invalid arguments for attribute `#[%s]`", attr.Name)))
+			continue
 		}
+		if prev, ok := seenNames[attr.Name]; ok {
+			d := invalidAttributeError(attr,
+				fmt.Sprintf("duplicate attribute `#[%s]`", prev.Name))
+			d.WithSecondaryLabel(prev.Location, "previous attribute here")
+			c.ctx.Diagnostics.Add(d)
+			continue
+		}
+		seenNames[attr.Name] = attr
+		if def.ConflictGroup == ast.AttributeConflictNone {
+			continue
+		}
+		if prev, ok := seenGroups[def.ConflictGroup]; ok {
+			d := invalidAttributeError(attr,
+				fmt.Sprintf("conflicting attributes `#[%s]` and `#[%s]`", prev.Name, attr.Name))
+			d.WithSecondaryLabel(prev.Location, "conflicting attribute here")
+			c.ctx.Diagnostics.Add(d)
+			continue
+		}
+		seenGroups[def.ConflictGroup] = attr
 	}
 }
 
@@ -282,7 +285,7 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		}
 		paramSym, ok := funcScope.LookupNode(param.Name)
 		if !ok || paramSym == nil {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(fn), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
 		}
 		paramSym.BindType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
@@ -529,8 +532,15 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 		return
 	}
 	if retType := typeinfo.ASTTypeWithOptions(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)); retType != nil && !c.isLowerableType(retType) {
+		site := ast.LocOf(decl.ReturnType)
+		if site == nil && decl.Name != nil {
+			site = ast.LocOf(decl.Name)
+		}
+		if site == nil {
+			site = ast.LocOf(decl)
+		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-			"function return type is not lowerable in current compiler stage", ast.LocOf(decl), "")
+			"function return type is not lowerable in current compiler stage", site, "")
 		return
 	}
 	for _, param := range decl.Params {
@@ -559,7 +569,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 	}
 	for _, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", ast.LocOf(decl), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", method.Location, "")
 			continue
 		}
 		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
@@ -585,8 +595,15 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		}
 		if retType := typeinfo.ASTTypeWithOptions(method.ReturnType, opts); retType != nil &&
 			!typeinfo.ContainsAbstractSelf(retType) && !c.isLowerableType(retType) {
+			site := ast.LocOf(method.ReturnType)
+			if site == nil && method.Name != nil {
+				site = ast.LocOf(method.Name)
+			}
+			if site == nil {
+				site = ast.LocOf(decl)
+			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-				"interface method return type is not lowerable in current compiler stage", ast.LocOf(decl), "")
+				"interface method return type is not lowerable in current compiler stage", site, "")
 		}
 	}
 
@@ -607,14 +624,22 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 		}
 		errmsg := "impl methods must declare a `Self` receiver as the first parameter"
 		if len(method.Params) == 0 {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "").
+			site := ast.LocOf(method)
+			if method.Name != nil {
+				site = ast.LocOf(method.Name)
+			}
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, site, "").
 				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
 				WithHelp(fmt.Sprintf("first parameter should be 'self: %s' or 'self: ^%s'", typeinfo.TypeText(selfType), typeinfo.TypeText(selfType)))
 			continue
 		}
 		firstParamType := typeinfo.ASTTypeWithOptions(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
 		if !isValidReceiverType(firstParamType, selfType) {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, ast.LocOf(method), "").
+			site := method.Params[0].Location
+			if method.Params[0].Type != nil {
+				site = ast.LocOf(method.Params[0].Type)
+			}
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, site, "").
 				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
 				WithHelp(fmt.Sprintf("first parameter should be 'self: %s' or 'self: ^%s'", typeinfo.TypeText(selfType), typeinfo.TypeText(selfType)))
 			continue

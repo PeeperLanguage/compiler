@@ -34,6 +34,12 @@ func invalidTypeError(node ast.Node, message string) *diagnostics.Diagnostic {
 		WithCode(diagnostics.ErrInvalidType)
 }
 
+func invalidAttributeError(attr ast.Attribute, message string) *diagnostics.Diagnostic {
+	return diagnostics.NewError(message).
+		WithPrimaryLabel(attr.Location, "").
+		WithCode(diagnostics.ErrInvalidType)
+}
+
 func typeMismatchError(node ast.Node, message string) *diagnostics.Diagnostic {
 	return diagnostics.NewError(message).
 		WithPrimaryLabel(ast.LocOf(node), "").

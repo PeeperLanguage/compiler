@@ -99,7 +99,7 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 	funcScope := sym.Scope.(*table.Scope)
 	for _, param := range fn.Params {
 		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", ast.LocOf(fn), "")
+			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", param.Location, "")
 			return
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))

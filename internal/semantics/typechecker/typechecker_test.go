@@ -229,8 +229,39 @@ struct Buffer {
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	if !strings.Contains(diag.EmitAllToString(), "conflicting type attributes") {
+	if !strings.Contains(diag.EmitAllToString(), "conflicting attributes `#[no_copy]` and `#[allow_copy]`") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDuplicateAttributeRejected(t *testing.T) {
+	src := `#[extern("puts")]
+#[extern("printf")]
+fn puts(msg: cstr) -> i32;
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "duplicate attribute `#[extern]`") {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDuplicateAttributePointsAtRepeatedAttribute(t *testing.T) {
+	src := `#[no_copy]
+#[no_copy]
+struct Buffer {
+	value: i32
+}
+`
+	diag := checkTypeSource(t, src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "previous attribute here") || !strings.Contains(out, "2 | ") {
+		t.Fatalf("expected duplicate diagnostic on repeated attribute, got:\n%s", out)
 	}
 }
 
@@ -337,6 +368,35 @@ func TestInterfaceMoveParamRejectedForNow(t *testing.T) {
 	}
 	if !strings.Contains(diag.EmitAllToString(), "interface methods cannot use `move` parameters") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestImplReceiverDiagnosticUsesParameterSite(t *testing.T) {
+	diag := checkTypeSource(t, `struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn bump(value: i32) {}
+}`)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics")
+	}
+	var targetDiag *diagnostics.Diagnostic
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrInvalidMethodReceiver {
+			targetDiag = item
+			break
+		}
+	}
+	if targetDiag == nil || len(targetDiag.Labels) == 0 || targetDiag.Labels[0].Location == nil || targetDiag.Labels[0].Location.Start == nil || targetDiag.Labels[0].Location.End == nil {
+		t.Fatalf("missing receiver diagnostic location: %#v", targetDiag)
+	}
+	if targetDiag.Labels[0].Location.Start.Line != 6 || targetDiag.Labels[0].Location.Start.Column != 17 {
+		t.Fatalf("primary label start = %v, want line 6 col 17", *targetDiag.Labels[0].Location.Start)
+	}
+	if targetDiag.Labels[0].Location.End.Line != 6 || targetDiag.Labels[0].Location.End.Column != 20 {
+		t.Fatalf("primary label end = %v, want line 6 col 20", *targetDiag.Labels[0].Location.End)
 	}
 }
 

@@ -117,7 +117,7 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target))
 	for _, method := range decl.Methods {
 		if method == nil || method.Name == nil || method.Name.Name == "" {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", ast.LocOf(decl), "")
+			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", ast.LocOf(method), "")
 			continue
 		}
 		existing := c.module.Semantics.MethodSets[targetKey]
