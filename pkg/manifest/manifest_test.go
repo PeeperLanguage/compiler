@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,5 +170,43 @@ func TestLoadProjectAcceptsSourceFilePath(t *testing.T) {
 	}
 	if project.RootDir != root {
 		t.Fatalf("project root = %q, want %q", project.RootDir, root)
+	}
+}
+
+func TestResolveSourceFileProjectWithoutManifestUsesFileDir(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "util"+peeper.SourceExt)
+
+	project, err := ResolveSourceFileProject(src)
+	if err != nil {
+		t.Fatalf("resolve source file project: %v", err)
+	}
+	if project.RootDir != root {
+		t.Fatalf("project root = %q, want %q", project.RootDir, root)
+	}
+	if project.ProjectName != "" {
+		t.Fatalf("project name = %q, want empty", project.ProjectName)
+	}
+}
+
+func TestResolveSourceFileProjectRejectsFilesOutsideSourceDir(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "util"+peeper.SourceExt)
+	if err := os.WriteFile(filepath.Join(root, FileName), []byte("name = \"app\"\nbuild = \"program\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := ResolveSourceFileProject(src)
+	if err == nil {
+		t.Fatal("expected source-dir validation error")
+	}
+	if want := fmt.Sprintf("project source files must stay under %s", SourceDir(root)); err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+	if project.RootDir != root {
+		t.Fatalf("project root = %q, want %q", project.RootDir, root)
+	}
+	if project.ProjectName != "app" {
+		t.Fatalf("project name = %q, want %q", project.ProjectName, "app")
 	}
 }

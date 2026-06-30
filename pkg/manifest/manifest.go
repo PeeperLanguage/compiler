@@ -69,6 +69,11 @@ type Project struct {
 	File         *File
 }
 
+type SourceFileProject struct {
+	RootDir     string
+	ProjectName string
+}
+
 var (
 	identifierPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 	versionPattern    = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
@@ -135,6 +140,25 @@ func LoadProject(startPath string) (*Project, error) {
 		ManifestPath: manifestPath,
 		File:         file,
 	}, nil
+}
+
+// ResolveSourceFileProject keeps file-to-project discovery and source-dir
+// validation in one place so CLI and LSP apply the same project layout rule.
+func ResolveSourceFileProject(path string) (SourceFileProject, error) {
+	ctx := SourceFileProject{RootDir: filepath.Dir(path)}
+
+	loadedProject, err := LoadProject(path)
+	if err != nil {
+		return ctx, nil
+	}
+
+	ctx.RootDir = loadedProject.RootDir
+	ctx.ProjectName = loadedProject.File.Package.Name
+	if !PathWithinSourceDir(ctx.RootDir, path) {
+		return ctx, fmt.Errorf("project source files must stay under %s", SourceDir(ctx.RootDir))
+	}
+
+	return ctx, nil
 }
 
 func Load(path string) (*File, error) {

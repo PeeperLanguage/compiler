@@ -87,21 +87,18 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 
 func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContext, *project.Module) {
 	diagBag := diagnostics.NewDiagnosticBag()
-	rootDir := filepath.Dir(entryFile)
-	projectName := ""
-	if loadedProject, err := manifest.LoadProject(entryFile); err == nil {
-		rootDir = loadedProject.RootDir
-		projectName = loadedProject.File.Package.Name
-	}
+	sourceProject, err := manifest.ResolveSourceFileProject(entryFile)
+	rootDir := sourceProject.RootDir
+	projectName := sourceProject.ProjectName
 	cfg := project.Config{
 		RootDir:     rootDir,
 		ProjectName: projectName,
 	}
 	ctx := driver.NewContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
-	if projectName != "" && !manifest.PathWithinSourceDir(rootDir, entryFile) {
+	if err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(
-			fmt.Sprintf("project source files must stay under %s", manifest.SourceDir(rootDir)),
+			err.Error(),
 		))
 		s.LastCtx = ctx
 		s.LastMetrics = ctx.Metrics.Snapshot()

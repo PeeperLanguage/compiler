@@ -18,15 +18,9 @@ import (
 
 // Compile one entry file with a fresh compiler project.
 func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (*project.CompilerContext, *project.Module) {
-	rootDir := path
-	projectName := ""
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		rootDir = filepath.Dir(path)
-	}
-	if loadedProject, err := manifest.LoadProject(path); err == nil {
-		rootDir = loadedProject.RootDir
-		projectName = loadedProject.File.Package.Name
-	}
+	sourceProject, err := manifest.ResolveSourceFileProject(path)
+	rootDir := sourceProject.RootDir
+	projectName := sourceProject.ProjectName
 	cfg := project.Config{
 		RootDir:       rootDir,
 		ProjectName:   projectName,
@@ -37,9 +31,9 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 		BuildDebug:    debugBuild,
 	}
 	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
-	if projectName != "" && !manifest.PathWithinSourceDir(rootDir, path) {
+	if err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(
-			fmt.Sprintf("project source files must stay under %s", manifest.SourceDir(rootDir)),
+			err.Error(),
 		))
 		return ctx, nil
 	}
