@@ -808,6 +808,37 @@ func TestStructFieldAccessResolves(t *testing.T) {
 	}
 }
 
+func TestUnknownMemberSuggestsOnlyHighConfidenceMatch(t *testing.T) {
+	src := `struct Point {
+		length: i32
+	}
+
+	fn main(p: Point) -> i32 {
+		return p.lenght;
+	}`
+	diag := checkTypeSource(t, src)
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "did you mean `length`?") {
+		t.Fatalf("expected confident member suggestion, got:\n%s", out)
+	}
+}
+
+func TestUnknownMemberSuppressesAmbiguousSuggestion(t *testing.T) {
+	src := `struct Point {
+		cost: i32
+		count: i32
+	}
+
+	fn main(p: Point) -> i32 {
+		return p.cotn;
+	}`
+	diag := checkTypeSource(t, src)
+	out := diag.EmitAllToString()
+	if strings.Contains(out, "did you mean") {
+		t.Fatalf("expected ambiguous member suggestion to be suppressed, got:\n%s", out)
+	}
+}
+
 func TestUninitializedLocalReadIsRejected(t *testing.T) {
 	src := `fn main() -> i32 {
 	let x: i32;

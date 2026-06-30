@@ -1,8 +1,6 @@
 package resolver
 
 import (
-	"strings"
-
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
@@ -29,7 +27,7 @@ func reportUnresolved(module *project.Module, scope *table.Scope, node *ast.Iden
 }
 
 func nearestSymbolName(name string, scope *table.Scope) (string, bool) {
-	candidates := make([]rankedCandidate, 0)
+	candidates := make([]diagnostics.NameCandidate, 0)
 	seen := make(map[string]struct{})
 	scopeDepth := 0
 	for sc := scope; sc != nil; sc = sc.Parent() {
@@ -41,86 +39,12 @@ func nearestSymbolName(name string, scope *table.Scope) (string, bool) {
 				continue
 			}
 			seen[sym.Name] = struct{}{}
-			candidates = append(candidates, rankedCandidate{Name: sym.Name, ScopeDepth: scopeDepth})
+			candidates = append(candidates, diagnostics.NameCandidate{
+				Name:     sym.Name,
+				Priority: scopeDepth,
+			})
 		}
 		scopeDepth++
 	}
-	best := rankedCandidate{}
-	found := false
-	query := strings.ToLower(name)
-	for _, candidate := range candidates {
-		candidate.Score = rankCandidate(query, candidate)
-		if !found || candidate.Score.less(best.Score) {
-			best = candidate
-			found = true
-		}
-	}
-	if !found {
-		return "", false
-	}
-	limit := 3
-	if len(name) <= 2 {
-		limit = 1
-	}
-	return best.Name, best.Score.Distance <= limit
-}
-
-type rankedCandidate struct {
-	Name       string
-	ScopeDepth int
-	Score      candidateScore
-}
-
-type candidateScore struct {
-	Distance        int
-	SharedPrefixLen int
-	LengthDiff      int
-	ScopeDepth      int
-	Name            string
-}
-
-func (s candidateScore) less(other candidateScore) bool {
-	if s.Distance != other.Distance {
-		return s.Distance < other.Distance
-	}
-	if s.SharedPrefixLen != other.SharedPrefixLen {
-		return s.SharedPrefixLen > other.SharedPrefixLen
-	}
-	if s.LengthDiff != other.LengthDiff {
-		return s.LengthDiff < other.LengthDiff
-	}
-	if s.ScopeDepth != other.ScopeDepth {
-		return s.ScopeDepth < other.ScopeDepth
-	}
-	return s.Name < other.Name
-}
-
-func rankCandidate(query string, candidate rankedCandidate) candidateScore {
-	lower := strings.ToLower(candidate.Name)
-	return candidateScore{
-		Distance:        diagnostics.Levenshtein(query, lower),
-		SharedPrefixLen: sharedPrefixLen(query, lower),
-		LengthDiff:      abs(len(query) - len(lower)),
-		ScopeDepth:      candidate.ScopeDepth,
-		Name:            candidate.Name,
-	}
-}
-
-func sharedPrefixLen(a, b string) int {
-	limit := min(len(b), len(a))
-	n := 0
-	for i := range limit {
-		if a[i] != b[i] {
-			break
-		}
-		n++
-	}
-	return n
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
+	return diagnostics.NearestNameWithPriority(name, candidates)
 }

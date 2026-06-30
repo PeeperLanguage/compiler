@@ -2,31 +2,180 @@ package diagnostics
 
 import "strings"
 
-// NearestName finds the closest match to query among candidates using
-// Levenshtein distance. Returns the best match and true if the distance
-// is within an acceptable threshold (3 for names >2 chars, 1 otherwise).
+type NameCandidate struct {
+	Name     string
+	Priority int
+}
+
+type nameMatch struct {
+	Name            string
+	Distance        int
+	SharedPrefixLen int
+	LengthDiff      int
+	Priority        int
+	Order           int
+}
+
+// NearestName finds the closest match to query among candidates and only
+// suggests it when the typo signal is strong enough and not ambiguous.
 func NearestName(query string, candidates []string) (string, bool) {
+	ranked := make([]NameCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		ranked = append(ranked, NameCandidate{Name: candidate})
+	}
+	return NearestNameWithPriority(query, ranked)
+}
+
+// NearestNameWithPriority finds the closest match to query and uses Priority
+// as a stable semantic tie-break when candidates are otherwise equally close.
+func NearestNameWithPriority(query string, candidates []NameCandidate) (string, bool) {
 	if len(candidates) == 0 || query == "" {
 		return "", false
 	}
-	limit := 3
-	if len(query) <= 2 {
-		limit = 1
-	}
+
 	queryLower := strings.ToLower(query)
-	best := ""
-	bestDist := limit + 1
-	for _, c := range candidates {
-		dist := Levenshtein(queryLower, strings.ToLower(c))
-		if dist < bestDist {
-			bestDist = dist
-			best = c
-		}
-	}
-	if bestDist > limit {
+	best, second, found := rankNearestName(queryLower, candidates)
+	if !found || !acceptNearestName(queryLower, best, second) {
 		return "", false
 	}
-	return best, true
+
+	return best.Name, true
+}
+
+func rankNearestName(query string, candidates []NameCandidate) (nameMatch, nameMatch, bool) {
+	best := nameMatch{}
+	second := nameMatch{}
+	found := false
+	secondFound := false
+	for i, candidate := range candidates {
+		if strings.TrimSpace(candidate.Name) == "" {
+			continue
+		}
+		match := scoreNameMatch(query, candidate, i)
+		if !found || match.less(best) {
+			if found {
+				second = best
+				secondFound = true
+			}
+			best = match
+			found = true
+			continue
+		}
+		if !secondFound || match.less(second) {
+			second = match
+			secondFound = true
+		}
+	}
+	if !secondFound {
+		second = nameMatch{Distance: -1}
+	}
+	return best, second, found
+}
+
+func scoreNameMatch(query string, candidate NameCandidate, order int) nameMatch {
+	lower := strings.ToLower(candidate.Name)
+	return nameMatch{
+		Name:            candidate.Name,
+		Distance:        Levenshtein(query, lower),
+		SharedPrefixLen: sharedPrefixLen(query, lower),
+		LengthDiff:      abs(len(query) - len(lower)),
+		Priority:        candidate.Priority,
+		Order:           order,
+	}
+}
+
+func acceptNearestName(query string, best, second nameMatch) bool {
+	if best.Distance < 0 {
+		return false
+	}
+	queryLen := len(query)
+	if queryLen == 0 {
+		return false
+	}
+
+	switch {
+	case queryLen <= 2:
+		if best.Distance == 0 {
+			return true
+		}
+		if best.Distance != 1 || best.SharedPrefixLen == 0 {
+			return false
+		}
+	case queryLen <= 4:
+		if best.Distance > 1 {
+			return false
+		}
+	case queryLen <= 7:
+		if best.Distance > 2 || best.Distance*5 > max(queryLen, len(best.Name))*2 {
+			return false
+		}
+	default:
+		if best.Distance > 3 || best.Distance*3 > max(queryLen, len(best.Name)) {
+			return false
+		}
+	}
+
+	if second.Distance >= 0 && !best.clearlyBetterThan(second) {
+		return false
+	}
+	return true
+}
+
+func (m nameMatch) less(other nameMatch) bool {
+	if m.Distance != other.Distance {
+		return m.Distance < other.Distance
+	}
+	if m.SharedPrefixLen != other.SharedPrefixLen {
+		return m.SharedPrefixLen > other.SharedPrefixLen
+	}
+	if m.Priority != other.Priority {
+		return m.Priority < other.Priority
+	}
+	if m.LengthDiff != other.LengthDiff {
+		return m.LengthDiff < other.LengthDiff
+	}
+	return m.Order < other.Order
+}
+
+func (m nameMatch) clearlyBetterThan(other nameMatch) bool {
+	if other.Distance < 0 {
+		return true
+	}
+	if m.Distance+1 < other.Distance {
+		return true
+	}
+	if m.Distance == other.Distance {
+		if m.SharedPrefixLen >= other.SharedPrefixLen+2 {
+			return true
+		}
+		return m.Priority < other.Priority
+	}
+	if m.Distance+1 == other.Distance {
+		if m.SharedPrefixLen > other.SharedPrefixLen {
+			return true
+		}
+		return m.Priority < other.Priority && m.SharedPrefixLen >= other.SharedPrefixLen
+	}
+	return false
+}
+
+func sharedPrefixLen(a, b string) int {
+	limit := min(len(a), len(b))
+	n := 0
+	for i := range limit {
+		if a[i] != b[i] {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // Levenshtein computes the edit distance between two strings.
