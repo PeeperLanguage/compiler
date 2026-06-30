@@ -1,6 +1,14 @@
 package lsp
 
 import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
@@ -9,13 +17,6 @@ import (
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"slices"
-	"sort"
-	"strings"
 )
 
 type workspaceModule struct {
