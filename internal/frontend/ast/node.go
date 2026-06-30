@@ -75,3 +75,22 @@ type Module struct {
 	ImportFingerprint string
 	ExportFingerprint string
 }
+
+// ForEachDecl is the canonical top-level decl iterator for module phases.
+// Parser recovery can leave non-decl statements such as BadStmt in Module.Stmts,
+// so callers that operate on top-level declarations should use this helper
+// instead of repeating stmt.(Decl) filtering at each phase boundary.
+func ForEachDecl(mod *Module, visit func(Decl) bool) {
+	if mod == nil || visit == nil {
+		return
+	}
+	for _, stmt := range mod.Stmts {
+		decl, ok := stmt.(Decl)
+		if !ok {
+			continue
+		}
+		if !visit(decl) {
+			return
+		}
+	}
+}

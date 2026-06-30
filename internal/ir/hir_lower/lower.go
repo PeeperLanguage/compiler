@@ -26,17 +26,13 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		Externs:  make([]hir.Extern, 0),
 		Funcs:    make([]*hir.Function, 0),
 	}
-	for _, stmt := range module.AST.Stmts {
-		decl, ok := stmt.(ast.Decl) // ? Why even needed?
-		if !ok {
-			continue
-		}
+	ast.ForEachDecl(module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			fn := node
 			sym, found := module.ModuleScope.Lookup(fn.Name.Name)
 			if !found || sym == nil {
-				continue
+				return true
 			}
 			if fn.Body == nil {
 				fnType, _ := symbols.GetSymbolType(sym)
@@ -56,7 +52,8 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		case *ast.ImplDecl:
 			lowerImplDecl(ctx, module, out, node)
 		}
-	}
+		return true
+	})
 	return out
 }
 

@@ -22,14 +22,10 @@ func Bind(ctx *project.CompilerContext, module *project.Module) {
 }
 
 func (b *binder) bindModule() {
-	for _, stmt := range b.module.AST.Stmts {
-		decl, ok := stmt.(ast.Decl) // ? Why even needed?
-		if !ok {
-			continue
-		}
+	ast.ForEachDecl(b.module.AST, func(decl ast.Decl) bool {
 		if typeDecl, ok := decl.(ast.TypeDecl); ok {
 			b.bindTypeDecl(typeDecl)
-			continue
+			return true
 		}
 		switch node := decl.(type) {
 		case *ast.FnDecl:
@@ -41,7 +37,8 @@ func (b *binder) bindModule() {
 		case *ast.ImplDecl:
 			b.bindImplDecl(node)
 		}
-	}
+		return true
+	})
 	deps.ValidateTypeDeclCycles(b.ctx, b.module)
 }
 
