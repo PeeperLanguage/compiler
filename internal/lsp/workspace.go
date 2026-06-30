@@ -95,6 +95,15 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 			importPath:  importPath,
 		}
 	}
+	fileMembershipChanged := len(w.modules) != len(fileSet)
+	if !fileMembershipChanged {
+		for filePath := range w.modules {
+			if _, ok := fileSet[filePath]; !ok {
+				fileMembershipChanged = true
+				break
+			}
+		}
+	}
 
 	for _, filePath := range files {
 		fileCtx, ok := contexts[filePath]
@@ -116,7 +125,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		contextChanged := module.rootDir != fileCtx.rootDir ||
 			module.projectName != fileCtx.projectName ||
 			module.importPath != fileCtx.importPath
-		if !contextChanged && module.contentHash == contentHash {
+		if !fileMembershipChanged && !contextChanged && module.contentHash == contentHash {
 			continue
 		}
 

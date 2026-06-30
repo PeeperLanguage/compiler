@@ -387,6 +387,45 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenNewFileAppears(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
+
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("initial parsed files = %d, want 1", got)
+	}
+
+	mainPath := project.CanonicalPath(fileMain)
+	component, ok := index.componentForFile(mainPath)
+	if !ok || len(component.files) != 1 {
+		t.Fatalf("expected unresolved importer to start as singleton, got %#v", component)
+	}
+
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after adding util: %v", err)
+	}
+	if got := index.parsedFiles; got != 2 {
+		t.Fatalf("parsed files after file membership change = %d, want 2", got)
+	}
+
+	utilPath := project.CanonicalPath(fileUtil)
+	if got := index.modules[mainPath].importTargets; !slices.Equal(got, []string{utilPath}) {
+		t.Fatalf("main import targets = %v, want [%s]", got, utilPath)
+	}
+	component, ok = index.componentForFile(mainPath)
+	if !ok || len(component.files) != 2 {
+		t.Fatalf("expected importer and new target in same component, got %#v", component)
+	}
+}
+
 func TestServerStateKeepsWorkspaceIndexAcrossRecompile(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
