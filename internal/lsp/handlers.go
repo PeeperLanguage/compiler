@@ -1066,7 +1066,9 @@ func renderHoverSubject(subject *hoverSubject) string {
 	}
 	if doc := hoverDocComment(subject); doc != "" {
 		// Keep docs outside code fence so markdown renders them as normal prose
-		// with the separator bar users expect from other LSPs.
+		// with the separator bar users expect from other LSPs. Preserve source
+		// line breaks explicitly so markdown does not collapse adjacent doc lines.
+		doc = strings.ReplaceAll(doc, "\n", "  \n")
 		return fmt.Sprintf("```peeper\n%s\n```\n\n---\n\n%s", text, doc)
 	}
 	return fmt.Sprintf("```peeper\n%s\n```", text)

@@ -20,15 +20,12 @@ type regexPattern struct {
 }
 
 type Lexer struct {
-	file            string
-	input           string
-	pos             source.Position
-	diag            *diagnostics.DiagnosticBag
-	patterns        []regexPattern
-	toks            []token.Token
-	pendingComments []string
-	pendingStart    source.Position
-	pendingEnd      source.Position
+	file     string
+	input    string
+	pos      source.Position
+	diag     *diagnostics.DiagnosticBag
+	patterns []regexPattern
+	toks     []token.Token
 }
 
 func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
@@ -43,8 +40,9 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 	}
 	l.patterns = []regexPattern{
 		{regexp.MustCompile(`\s+`), skipHandler},
-		{regexp.MustCompile(`//[^\n\r]*`), lineCommentHandler},
-		{regexp.MustCompile(`(?s)/\*.*?\*/`), blockCommentHandler},
+		{regexp.MustCompile(`///[^\n\r]*`), docHandler},
+		{regexp.MustCompile(`//[^\n\r]*`), skipHandler},
+		{regexp.MustCompile(`(?s)/\*.*?\*/`), skipHandler},
 		{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
 		{regexp.MustCompile(`b'(?:\\.|[^'\\])*'`), byteCharHandler},
 		{regexp.MustCompile(`'(?:\\.|[^'\\])*'`), charHandler},
@@ -114,45 +112,7 @@ func defaultHandler(kind token.Kind) regexHandler {
 
 func skipHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
-	if strings.Count(match, "\n") > 1 {
-		l.pendingComments = nil
-	}
 	l.advanceBy(match)
-}
-
-func lineCommentHandler(l *Lexer, re *regexp.Regexp) {
-	match := re.FindString(l.remainder())
-	start := l.pos
-	l.advanceBy(match)
-	prefix := "//"
-	if strings.HasPrefix(match, "///") {
-		prefix = "///"
-	}
-	text := strings.TrimSpace(strings.TrimPrefix(match, prefix))
-	if len(l.pendingComments) == 0 {
-		l.pendingStart = start
-	}
-	l.pendingComments = append(l.pendingComments, text)
-	l.pendingEnd = l.pos
-}
-
-func blockCommentHandler(l *Lexer, re *regexp.Regexp) {
-	match := re.FindString(l.remainder())
-	start := l.pos
-	l.advanceBy(match)
-	content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(match, "/*"), "*/"))
-	lines := strings.Split(content, "\n")
-	for i := range lines {
-		line := strings.TrimSpace(lines[i])
-		line = strings.TrimPrefix(line, "*")
-		lines[i] = strings.TrimSpace(line)
-	}
-	text := strings.Join(lines, "\n")
-	if len(l.pendingComments) == 0 {
-		l.pendingStart = start
-	}
-	l.pendingComments = append(l.pendingComments, text)
-	l.pendingEnd = l.pos
 }
 
 func identifierHandler(l *Lexer, re *regexp.Regexp) {
@@ -160,6 +120,14 @@ func identifierHandler(l *Lexer, re *regexp.Regexp) {
 	start := l.pos
 	l.advanceBy(match)
 	l.push(token.Token{Kind: token.LookupIdent(match), Literal: match, Start: start, End: l.pos})
+}
+
+func docHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	text := strings.TrimSpace(strings.TrimPrefix(match, "///"))
+	l.advanceBy(match)
+	l.push(token.Token{Kind: token.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
 }
 
 func numberHandler(l *Lexer, re *regexp.Regexp) {
@@ -247,16 +215,6 @@ func (l *Lexer) Tokenize() []token.Token {
 }
 
 func (l *Lexer) push(t token.Token) {
-	if len(l.pendingComments) > 0 {
-		docTok := token.Token{
-			Kind:    token.DOC_COMMENT,
-			Literal: strings.Join(l.pendingComments, "\n"),
-			Start:   l.pendingStart,
-			End:     l.pendingEnd,
-		}
-		l.toks = append(l.toks, docTok)
-		l.pendingComments = nil
-	}
 	l.toks = append(l.toks, t)
 }
 
