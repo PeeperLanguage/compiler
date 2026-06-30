@@ -3,6 +3,7 @@ package lsp
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -345,6 +346,111 @@ func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
 	}
 	if got := phases[mainPath]; got != project.PhaseParsed {
 		t.Fatalf("dependent reuse phase = %v, want %v", got, project.PhaseParsed)
+	}
+}
+
+func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+	if got := index.parsedFiles; got != 2 {
+		t.Fatalf("initial parsed files = %d, want 2", got)
+	}
+
+	mainPath := project.CanonicalPath(fileMain)
+	utilPath := project.CanonicalPath(fileUtil)
+	beforeMain := index.modules[mainPath]
+	beforeUtilTargets := append([]string(nil), index.modules[utilPath].importTargets...)
+
+	cache := map[string]string{
+		fileUtil: "fn helper() { let body_only = 1; }\n",
+	}
+	if err := index.rebuild(cache); err != nil {
+		t.Fatalf("incremental rebuild: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("incremental parsed files = %d, want 1", got)
+	}
+	if afterMain := index.modules[mainPath]; afterMain != beforeMain {
+		t.Fatalf("unchanged importer should reuse cached workspace surface")
+	}
+	if got := index.modules[utilPath].importTargets; !slices.Equal(got, beforeUtilTargets) {
+		t.Fatalf("body-only edit changed import targets: got %v want %v", got, beforeUtilTargets)
+	}
+}
+
+func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenNewFileAppears(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
+
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("initial parsed files = %d, want 1", got)
+	}
+
+	mainPath := project.CanonicalPath(fileMain)
+	component, ok := index.componentForFile(mainPath)
+	if !ok || len(component.files) != 1 {
+		t.Fatalf("expected unresolved importer to start as singleton, got %#v", component)
+	}
+
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after adding util: %v", err)
+	}
+	if got := index.parsedFiles; got != 2 {
+		t.Fatalf("parsed files after file membership change = %d, want 2", got)
+	}
+
+	utilPath := project.CanonicalPath(fileUtil)
+	if got := index.modules[mainPath].importTargets; !slices.Equal(got, []string{utilPath}) {
+		t.Fatalf("main import targets = %v, want [%s]", got, utilPath)
+	}
+	component, ok = index.componentForFile(mainPath)
+	if !ok || len(component.files) != 2 {
+		t.Fatalf("expected importer and new target in same component, got %#v", component)
+	}
+}
+
+func TestServerStateKeepsWorkspaceIndexAcrossRecompile(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(fileMain); mod == nil {
+		t.Fatalf("initial compile returned nil module")
+	}
+
+	workspace := state.workspace
+	if workspace == nil {
+		t.Fatalf("expected workspace index")
+	}
+
+	state.Cache[fileUtil] = "fn helper() { let body_only = 1; }\n"
+	if _, mod := state.recompile(fileUtil); mod == nil {
+		t.Fatalf("incremental compile returned nil module")
+	}
+	if state.workspace != workspace {
+		t.Fatalf("expected long-lived workspace index reuse")
 	}
 }
 

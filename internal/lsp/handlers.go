@@ -110,7 +110,9 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 
 	rootDir = project.CanonicalPath(s.RootDir)
 	if rootDir != "" {
-		s.workspace = newWorkspaceIndex(rootDir)
+		if s.workspace == nil || s.workspace.rootDir != rootDir {
+			s.workspace = newWorkspaceIndex(rootDir)
+		}
 		if err := s.workspace.rebuild(s.Cache); err == nil {
 			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
@@ -350,17 +352,6 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, li
 		return false
 	})
 	return cc
-}
-
-func buildParentMap(module *project.Module) map[ast.NodeID]ast.Node {
-	parents := make(map[ast.NodeID]ast.Node)
-	walkModuleAST(module, func(n ast.Node, parent ast.Node) bool {
-		if parent != nil {
-			parents[n.ID()] = parent
-		}
-		return true
-	})
-	return parents
 }
 
 func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
@@ -1352,37 +1343,39 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 		if mod.AST == nil {
 			continue
 		}
-		parents := buildParentMap(mod)
-
-		inspect := func(n ast.Node) bool {
-			if n == nil {
+		parents := cc.parents
+		if mod != cc.module {
+			parents = make(map[ast.NodeID]ast.Node)
+		}
+		walkModuleAST(mod, func(n ast.Node, parent ast.Node) bool {
+			if parent != nil {
+				parents[n.ID()] = parent
+			}
+			ident, ok := n.(*ast.Ident)
+			if !ok || ident.Name != targetSym.Name {
 				return true
 			}
-			if ident, ok := n.(*ast.Ident); ok && ident.Name == targetSym.Name {
-				resolved := resolveIdentSymbol(ident, parents, mod, s.LastCtx)
-				if resolved != nil && symLocationsMatch(resolved.Location, targetSym.Location) {
-					uri := DocumentURI(pathToURI(mod.FilePath))
-					loc := ast.LocOf(ident)
-					if loc != nil && loc.Start != nil && loc.End != nil {
-						changes[uri] = append(changes[uri], TextEdit{
-							Range: Range{
-								Start: Position{Line: loc.Start.Line - 1, Character: loc.Start.Column - 1},
-								End:   Position{Line: loc.End.Line - 1, Character: loc.End.Column - 1},
-							},
-							NewText: params.NewName,
-						})
-					}
+			resolved := resolveIdentSymbol(ident, parents, mod, s.LastCtx)
+			loc := ast.LocOf(ident)
+			if resolved == nil {
+				if !symLocationsMatch(loc, targetSym.Location) {
+					return true
 				}
+			} else if !symLocationsMatch(resolved.Location, targetSym.Location) && !symLocationsMatch(loc, targetSym.Location) {
+				return true
+			}
+			uri := DocumentURI(pathToURI(mod.FilePath))
+			if loc != nil && loc.Start != nil && loc.End != nil {
+				changes[uri] = append(changes[uri], TextEdit{
+					Range: Range{
+						Start: Position{Line: loc.Start.Line - 1, Character: loc.Start.Column - 1},
+						End:   Position{Line: loc.End.Line - 1, Character: loc.End.Column - 1},
+					},
+					NewText: params.NewName,
+				})
 			}
 			return true
-		}
-
-		for _, imp := range mod.AST.Imports {
-			ast.Inspect(imp, inspect)
-		}
-		for _, stmt := range mod.AST.Stmts {
-			ast.Inspect(stmt, inspect)
-		}
+		})
 	}
 
 	return &WorkspaceEdit{Changes: changes}, nil

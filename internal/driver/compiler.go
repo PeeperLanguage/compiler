@@ -1,15 +1,16 @@
 package compiler
 
 import (
+	"os"
+	"path/filepath"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"
 	"compiler/internal/project"
-	"os"
-	"path/filepath"
 )
 
-const COMPILER_VERSION = "0.1.0"
+const COMPILER_VERSION = "0.0.1"
 
 // NewContext configures shared compiler state and loads the prelude.
 func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {

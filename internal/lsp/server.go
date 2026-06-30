@@ -2,8 +2,6 @@ package lsp
 
 import (
 	"bufio"
-	"compiler/internal/diagnostics"
-	"compiler/internal/project"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"compiler/internal/diagnostics"
+	"compiler/internal/project"
 )
 
 const LSP_VERSION = "0.0.1"

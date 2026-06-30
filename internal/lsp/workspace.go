@@ -1,6 +1,14 @@
 package lsp
 
 import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
@@ -9,13 +17,6 @@ import (
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"slices"
-	"sort"
-	"strings"
 )
 
 type workspaceModule struct {
@@ -26,6 +27,7 @@ type workspaceModule struct {
 	contentHash       string
 	importFingerprint string
 	exportFingerprint string
+	importTargets     []string
 }
 
 type workspaceComponent struct {
@@ -34,14 +36,18 @@ type workspaceComponent struct {
 }
 
 type workspaceIndex struct {
-	rootDir    string
-	modules    map[string]*workspaceModule
-	components []workspaceComponent
-	imports    *graph.Graph
+	rootDir     string
+	modules     map[string]*workspaceModule
+	components  []workspaceComponent
+	imports     *graph.Graph
+	parsedFiles int
 }
 
 func newWorkspaceIndex(rootDir string) *workspaceIndex {
-	return &workspaceIndex{rootDir: project.CanonicalPath(rootDir)}
+	return &workspaceIndex{
+		rootDir: project.CanonicalPath(rootDir),
+		modules: make(map[string]*workspaceModule),
+	}
 }
 
 func (w *workspaceIndex) rebuild(cache map[string]string) error {
@@ -54,52 +60,92 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		return err
 	}
 
+	type workspaceFileContext struct {
+		rootDir     string
+		projectName string
+		importPath  string
+	}
+
 	fileSet := make(map[string]struct{}, len(files))
-	modules := make(map[string]*workspaceModule, len(files))
-	g := graph.New(project.GraphNodeModule, project.GraphEdgeImport)
+	contexts := make(map[string]workspaceFileContext, len(files))
+	w.parsedFiles = 0
 	for _, filePath := range files {
-		fileSet[filePath] = struct{}{}
-		module := &workspaceModule{
-			filePath: filePath,
-			rootDir:  filepath.Dir(filePath),
-		}
+		rootDir := filepath.Dir(filePath)
+		projectName := ""
 		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
 			if !manifest.PathWithinSourceDir(loadedProject.RootDir, filePath) {
+				delete(w.modules, filePath)
 				continue
 			}
-			module.rootDir = loadedProject.RootDir
-			module.projectName = loadedProject.File.Package.Name
+			rootDir = loadedProject.RootDir
+			projectName = loadedProject.File.Package.Name
 		}
 		ctx := project.NewWithConfig(project.Config{
-			RootDir:     module.rootDir,
-			ProjectName: module.projectName,
+			RootDir:     rootDir,
+			ProjectName: projectName,
 			Extension:   peeper.SourceExt,
 		}, diagnostics.NewDiagnosticBag())
 		importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath)
-		if err == nil {
-			module.importPath = importPath
+		if err != nil {
+			importPath = ""
 		}
-		modules[filePath] = module
-		g.AddNode(graph.NodeID(filePath))
+		fileSet[filePath] = struct{}{}
+		contexts[filePath] = workspaceFileContext{
+			rootDir:     rootDir,
+			projectName: projectName,
+			importPath:  importPath,
+		}
+	}
+	fileMembershipChanged := len(w.modules) != len(fileSet)
+	if !fileMembershipChanged {
+		for filePath := range w.modules {
+			if _, ok := fileSet[filePath]; !ok {
+				fileMembershipChanged = true
+				break
+			}
+		}
 	}
 
-	for _, module := range modules {
-		content, err := workspaceContent(module.filePath, cache)
+	for _, filePath := range files {
+		fileCtx, ok := contexts[filePath]
+		if !ok {
+			continue
+		}
+		content, err := workspaceContent(filePath, cache)
 		if err != nil {
 			continue
 		}
-		module.contentHash = ast.HashText(content)
+		contentHash := ast.HashText(content)
+
+		module := w.modules[filePath]
+		if module == nil {
+			module = &workspaceModule{filePath: filePath}
+			w.modules[filePath] = module
+		}
+
+		contextChanged := module.rootDir != fileCtx.rootDir ||
+			module.projectName != fileCtx.projectName ||
+			module.importPath != fileCtx.importPath
+		if !fileMembershipChanged && !contextChanged && module.contentHash == contentHash {
+			continue
+		}
+
+		module.rootDir = fileCtx.rootDir
+		module.projectName = fileCtx.projectName
+		module.importPath = fileCtx.importPath
+		module.contentHash = contentHash
 		diag := diagnostics.NewDiagnosticBag()
-		parsed := parser.New(module.filePath, lexer.New(module.filePath, content, diag).Tokenize(), diag).ParseModule()
+		parsed := parser.New(filePath, lexer.New(filePath, content, diag).Tokenize(), diag).ParseModule()
 		module.exportFingerprint = parsed.ExportFingerprint
 		module.importFingerprint = parsed.ImportFingerprint
+		module.importTargets = module.importTargets[:0]
 		ctx := project.NewWithConfig(project.Config{
 			RootDir:     module.rootDir,
 			ProjectName: module.projectName,
 			Extension:   peeper.SourceExt,
 		}, diagnostics.NewDiagnosticBag())
 		from := &project.Module{
-			FilePath:   module.filePath,
+			FilePath:   filePath,
 			ImportPath: module.importPath,
 			Origin:     project.ModuleOriginLocal,
 		}
@@ -121,12 +167,32 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 				continue
 			}
 			seen[target] = struct{}{}
+			module.importTargets = append(module.importTargets, target)
+		}
+		w.parsedFiles++
+	}
+
+	for filePath := range w.modules {
+		if _, ok := fileSet[filePath]; ok {
+			continue
+		}
+		delete(w.modules, filePath)
+	}
+
+	g := graph.New(project.GraphNodeModule, project.GraphEdgeImport)
+	for filePath := range w.modules {
+		g.AddNode(graph.NodeID(filePath))
+	}
+	for _, module := range w.modules {
+		for _, target := range module.importTargets {
+			if _, ok := w.modules[target]; !ok {
+				continue
+			}
 			g.AddEdge(graph.NodeID(module.filePath), graph.NodeID(target))
 		}
 	}
 
-	w.modules = modules
-	w.components = buildWorkspaceComponents(modules, g)
+	w.components = buildWorkspaceComponents(w.modules, g)
 	w.imports = g
 	return nil
 }

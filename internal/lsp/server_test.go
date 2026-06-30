@@ -80,6 +80,24 @@ func hoverAtSource(t *testing.T, state *ServerState, filePath, src string) *Hove
 	return hover
 }
 
+func renameAtSource(t *testing.T, state *ServerState, filePath, src, newName string) *WorkspaceEdit {
+	t.Helper()
+	clean, pos := markerPosition(t, src)
+	state.Cache[filePath] = clean
+	if _, mod := state.recompile(filePath); mod == nil {
+		t.Fatalf("expected compiled module for %s", filePath)
+	}
+	edit, err := state.HandleRename(RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     pos,
+		NewName:      newName,
+	})
+	if err != nil {
+		t.Fatalf("HandleRename failed: %v", err)
+	}
+	return edit
+}
+
 func TestJSONRPCFraming(t *testing.T) {
 	inputMsg := `{"jsonrpc":"2.0","id":1,"method":"test","params":{}}`
 	formatted := "Content-Length: " + strconv.Itoa(len(inputMsg)) + "\r\n\r\n" + inputMsg
@@ -233,6 +251,106 @@ func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	}
 	if mod.ImportPath != "prelude/global" {
 		t.Fatalf("import path = %q, want %q", mod.ImportPath, "prelude/global")
+	}
+}
+
+func TestHandleRenameMatchesImportedQualifiedValue(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, "fn GetValue() -> i32 { return 69; }\n")
+	src := "import \"app/external\";\nfn main() -> i32 {\n\treturn external::__CURSOR__GetValue();\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "ReadValue")
+	if edit == nil || len(edit.Changes) != 2 {
+		t.Fatalf("expected cross-workspace rename edits, got %#v", edit)
+	}
+
+	mainEdits := edit.Changes[DocumentURI(pathToURI(mainPath))]
+	if len(mainEdits) != 1 || mainEdits[0].Range.Start.Line != 2 {
+		t.Fatalf("main edits = %#v, want one edit on line 2", mainEdits)
+	}
+	externalEdits := edit.Changes[DocumentURI(pathToURI(externalPath))]
+	if len(externalEdits) != 1 || externalEdits[0].Range.Start.Line != 0 {
+		t.Fatalf("external edits = %#v, want one edit on line 0", externalEdits)
+	}
+}
+
+func TestHandleRenameMatchesQualifiedTypeMember(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, "struct MyType {}\n")
+	src := "import \"app/external\";\nfn main() -> i32 {\n\tlet value: external::__CURSOR__MyType;\n\treturn 0;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "YourType")
+	if edit == nil || len(edit.Changes) != 2 {
+		t.Fatalf("expected cross-workspace type rename edits, got %#v", edit)
+	}
+
+	mainEdits := edit.Changes[DocumentURI(pathToURI(mainPath))]
+	if len(mainEdits) != 1 || mainEdits[0].Range.Start.Line != 2 {
+		t.Fatalf("main edits = %#v, want one edit on line 2", mainEdits)
+	}
+	externalEdits := edit.Changes[DocumentURI(pathToURI(externalPath))]
+	if len(externalEdits) != 1 || externalEdits[0].Range.Start.Line != 0 {
+		t.Fatalf("external edits = %#v, want one edit on line 0", externalEdits)
+	}
+}
+
+func TestHandleRenameMatchesSelectorField(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Point {\n\tx: i32,\n}\n\nfn main() -> i32 {\n\tlet p: Point;\n\treturn p.__CURSOR__x;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "coordX")
+	if edit == nil || len(edit.Changes) != 1 {
+		t.Fatalf("expected selector field rename edits, got %#v", edit)
+	}
+
+	edits := edit.Changes[DocumentURI(pathToURI(mainPath))]
+	if len(edits) != 2 {
+		t.Fatalf("expected 2 field rename edits, got %#v", edits)
+	}
+	lines := map[int]bool{}
+	for _, edit := range edits {
+		lines[edit.Range.Start.Line] = true
+	}
+	if !lines[1] || !lines[6] || len(lines) != 2 {
+		t.Fatalf("field rename touched unexpected lines: %v", lines)
+	}
+}
+
+func TestHandleRenameMatchesSelectorMethod(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n\nfn main() -> i32 {\n\tlet p: Point;\n\treturn p.__CURSOR__sum();\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "total")
+	if edit == nil || len(edit.Changes) != 1 {
+		t.Fatalf("expected selector method rename edits, got %#v", edit)
+	}
+
+	edits := edit.Changes[DocumentURI(pathToURI(mainPath))]
+	if len(edits) != 2 {
+		t.Fatalf("expected 2 method rename edits, got %#v", edits)
+	}
+	lines := map[int]bool{}
+	for _, edit := range edits {
+		lines[edit.Range.Start.Line] = true
+	}
+	if !lines[6] || !lines[13] || len(lines) != 2 {
+		t.Fatalf("method rename touched unexpected lines: %v", lines)
 	}
 }
 
