@@ -1356,11 +1356,15 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 				return true
 			}
 			resolved := resolveIdentSymbol(ident, parents, mod, s.LastCtx)
-			if resolved == nil || !symLocationsMatch(resolved.Location, targetSym.Location) {
+			loc := ast.LocOf(ident)
+			if resolved == nil {
+				if !symLocationsMatch(loc, targetSym.Location) {
+					return true
+				}
+			} else if !symLocationsMatch(resolved.Location, targetSym.Location) && !symLocationsMatch(loc, targetSym.Location) {
 				return true
 			}
 			uri := DocumentURI(pathToURI(mod.FilePath))
-			loc := ast.LocOf(ident)
 			if loc != nil && loc.Start != nil && loc.End != nil {
 				changes[uri] = append(changes[uri], TextEdit{
 					Range: Range{
