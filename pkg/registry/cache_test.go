@@ -2,7 +2,6 @@ package registry
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -39,8 +38,5 @@ func TestDownloadHelpers(t *testing.T) {
 	}
 	if _, err := packageArchiveURL("example.com/a/b", "v1.0.0"); err == nil {
 		t.Fatalf("expected unsupported host error")
-	}
-	if got := stripProviderPrefix("gitlab.com/group/repo"); got != filepath.ToSlash("group/repo") {
-		t.Fatalf("strip provider mismatch: %q", got)
 	}
 }

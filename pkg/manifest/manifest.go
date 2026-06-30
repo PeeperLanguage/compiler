@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"compiler/pkg/peeper"
+	"compiler/pkg/remotes"
 	"compiler/pkg/toml"
 )
 
@@ -256,7 +257,7 @@ func parseDependencyString(value string) (Dependency, error) {
 	if strings.HasPrefix(value, "../") || strings.HasPrefix(value, "./") {
 		return Dependency{Type: DependencyNeighbor, Path: filepath.Clean(value)}, nil
 	}
-	if !isRemoteRepo(value) {
+	if !remotes.IsRemotePath(value) {
 		return Dependency{}, fmt.Errorf("dependency must be a relative neighbor path or remote repo path")
 	}
 	dep := Dependency{Type: DependencyRemote, Path: value, Version: "latest"}
@@ -311,7 +312,7 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 		if repo == "" {
 			return Dependency{}, fmt.Errorf("remote dependency requires repo")
 		}
-		if !isRemoteRepo(repo) {
+		if !remotes.IsRemotePath(repo) {
 			return Dependency{}, fmt.Errorf("remote dependency repo %q is invalid", repo)
 		}
 		if version == "" {
@@ -321,10 +322,6 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 	default:
 		return Dependency{}, fmt.Errorf("unknown dependency type %q", typeName)
 	}
-}
-
-func isRemoteRepo(path string) bool {
-	return strings.HasPrefix(path, "github.com/") || strings.HasPrefix(path, "gitlab.com/") || strings.HasPrefix(path, "bitbucket.org/")
 }
 
 func Save(path string, file *File) error {

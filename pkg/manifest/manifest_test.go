@@ -210,3 +210,13 @@ func TestResolveSourceFileProjectRejectsFilesOutsideSourceDir(t *testing.T) {
 		t.Fatalf("project name = %q, want %q", project.ProjectName, "app")
 	}
 }
+
+func TestParseDependencyRejectsUnsupportedRemoteProvider(t *testing.T) {
+	_, err := ParseDependency("example.com/acme/json")
+	if err == nil {
+		t.Fatal("expected unsupported remote provider error")
+	}
+	if want := "dependency must be a relative neighbor path or remote repo path"; err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+}
