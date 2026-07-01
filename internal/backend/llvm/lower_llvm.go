@@ -421,8 +421,7 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 	if lengthErr != nil || indexErr != nil || indexValue < 0 || indexValue >= length {
 		b.types.invalid = true
 		if b.types.diag != nil {
-			b.types.diag.Add(diagnostics.NewError(fmt.Sprintf("array index out of bounds: index %s for length %s", indexConst.Value, lengthText)).
-				WithCode(diagnostics.ErrArrayOutOfBounds))
+			b.types.diag.Add(diagnostics.ArrayIndexOutOfBounds(indexConst.Value, lengthText, nil))
 		}
 		return ""
 	}

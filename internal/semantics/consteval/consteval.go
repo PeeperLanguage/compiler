@@ -6,6 +6,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -35,12 +36,33 @@ func Evaluate(ctx *project.CompilerContext, module *project.Module) {
 	}
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
-			e.evalConstSymbol(sym)
+			e.evalConstSymbol(sym, module.ModuleScope)
 		}
 	}
 }
 
-func (e *evaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Value, bool) {
+func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+	if ctx == nil || module == nil || expr == nil {
+		return nil, false
+	}
+	if scope == nil && module.ModuleScope == nil {
+		return nil, false
+	}
+	if module.Semantics == nil {
+		module.Semantics = project.NewSemanticInfo()
+	}
+	if module.Semantics.ConstValues == nil {
+		module.Semantics.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
+	}
+	e := &evaluator{
+		ctx:        ctx,
+		module:     module,
+		inProgress: make(map[symbols.SymbolID]struct{}),
+	}
+	return e.evalExpr(scope, expr, expected)
+}
+
+func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *table.Scope) (constvalue.Value, bool) {
 	if e == nil || e.module == nil || e.module.Semantics == nil || sym == nil {
 		return nil, false
 	}
@@ -61,11 +83,20 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Value, bool
 		return nil, false
 	}
 	e.inProgress[sym.ID] = struct{}{}
+	valueScope := scope
+	if e.module.ModuleScope != nil {
+		if found, ok := e.module.ModuleScope.LookupLocal(sym.Name); ok && found != nil && found.ID == sym.ID {
+			valueScope = e.module.ModuleScope
+		}
+	}
+	if valueScope == nil {
+		valueScope = e.module.ModuleScope
+	}
 	expected := typeinfo.Type(nil)
 	if sym.Type != nil && !typeinfo.IsInvalidOrUnknown(sym.Type) {
 		expected = sym.Type
 	}
-	value, ok := e.evalExpr(decl.Value, expected)
+	value, ok := e.evalExpr(valueScope, decl.Value, expected)
 	delete(e.inProgress, sym.ID)
 	if !ok {
 		return nil, false
@@ -74,8 +105,9 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Value, bool
 	return value, true
 }
 
-func (e *evaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
-	if expected != nil && !typeinfo.IsArithmetic(typeinfo.Underlying(expected)) {
+func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+	_, _, numericExpected := typeinfo.NumericInfo(expected)
+	if expected != nil && !numericExpected {
 		expected = nil
 	}
 	switch node := expr.(type) {
@@ -85,27 +117,47 @@ func (e *evaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (constvalue.
 			typ = expected
 		}
 		typText := typeinfo.TypeText(typ)
-		if _, ok := typeinfo.Underlying(typ).(*typeinfo.FloatType); ok {
+		family, _, _ := typeinfo.NumericInfo(typ)
+		if family == typeinfo.NumericFloat {
 			return &constvalue.FloatConst{Value: node.Value, TypeID: typText}, true
 		}
 		return &constvalue.IntConst{Value: node.Value, TypeID: typText}, true
 	case *ast.BoolLit:
 		return &constvalue.BoolConst{Value: node.Value}, true
 	case *ast.Ident:
-		sym, ok := e.module.ModuleScope.Lookup(node.Name)
+		lookup := scope
+		if lookup == nil {
+			lookup = e.module.ModuleScope
+		}
+		sym, ok := lookup.Lookup(node.Name)
 		if !ok || sym == nil || sym.Kind != symbols.SymbolConst {
 			return nil, false
 		}
-		return e.evalConstSymbol(sym)
+		return e.evalConstSymbol(sym, lookup)
 	case *ast.UnaryExpr:
-		value, ok := e.evalExpr(node.Expr, expected)
+		value, ok := e.evalExpr(scope, node.Expr, expected)
 		if !ok {
 			return nil, false
 		}
 		return constvalue.FoldUnary(node.Op, value)
 	case *ast.BinaryExpr:
-		left, lok := e.evalExpr(node.Left, expected)
-		right, rok := e.evalExpr(node.Right, expected)
+		left, lok := e.evalExpr(scope, node.Left, expected)
+		right, rok := e.evalExpr(scope, node.Right, expected)
+		if !lok || !rok {
+			return nil, false
+		}
+		if folded, ok := constvalue.FoldBinary(node.Op, left, right); ok {
+			return folded, true
+		}
+		if expected != nil {
+			return nil, false
+		}
+		commonType := typeinfo.CommonNumericType(&typeinfo.NamedType{Name: left.TypeText()}, &typeinfo.NamedType{Name: right.TypeText()})
+		if commonType == nil {
+			return nil, false
+		}
+		left, lok = e.evalExpr(scope, node.Left, commonType)
+		right, rok = e.evalExpr(scope, node.Right, commonType)
 		if !lok || !rok {
 			return nil, false
 		}

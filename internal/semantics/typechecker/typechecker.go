@@ -5,9 +5,11 @@ import (
 	"strconv"
 	"strings"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -1085,6 +1087,24 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 	switch base := typeinfo.Underlying(baseType).(type) {
 	case *typeinfo.ArrayType:
 		if base != nil && base.Elem != nil {
+			value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
+			if !ok {
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("fixed-array index must be constant until runtime bounds policy is implemented").
+						WithCode(diagnostics.ErrArrayIndexNotConst).
+						WithPrimaryLabel(ast.LocOf(node.Index), "index is not a compile-time constant"),
+				)
+				return base.Elem
+			}
+			indexConst, ok := value.(*constvalue.IntConst)
+			if !ok || indexConst == nil {
+				return base.Elem
+			}
+			length, lengthErr := strconv.Atoi(base.Len)
+			indexValue, indexErr := strconv.Atoi(indexConst.Value)
+			if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
+				c.ctx.Diagnostics.Add(diagnostics.ArrayIndexOutOfBounds(indexConst.Value, base.Len, ast.LocOf(node.Index)))
+			}
 			return base.Elem
 		}
 	case *typeinfo.SliceType:

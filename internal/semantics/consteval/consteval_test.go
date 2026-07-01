@@ -81,6 +81,28 @@ func TestEvaluateUsesDeclaredTypeForNumericExpression(t *testing.T) {
 	assertIntConst(t, module, "A", "3", "i64")
 }
 
+func TestEvaluateUsesConstOperandTypeForSmallLiteral(t *testing.T) {
+	module, diag := constevalModule(t, `const A: i64 = 1;
+const B = A + 1;
+const C = 1 + A;
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "B", "2", "i64")
+	assertIntConst(t, module, "C", "2", "i64")
+}
+
+func TestEvaluateUsesConstOperandTypeForNestedArithmetic(t *testing.T) {
+	module, diag := constevalModule(t, `const A: i64 = 1;
+const B = A + (1 + 2);
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "B", "4", "i64")
+}
+
 func assertIntConst(t *testing.T, module *project.Module, name, want, wantType string) {
 	t.Helper()
 	sym, ok := module.ModuleScope.LookupLocal(name)

@@ -914,6 +914,40 @@ func TestPipelineRejectsConstantArrayIndexOutOfBounds(t *testing.T) {
 	}
 }
 
+func TestPipelineRejectsTopLevelConstArrayIndexOutOfBounds(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const I: i32 = 4;
+
+fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[I];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || !strings.Contains(out, "array index out of bounds: index 4 for length 4") {
+		t.Fatalf("expected out-of-bounds diagnostic, got:\n%s", out)
+	}
+	if strings.Contains(out, "dynamic array index lowering requires bounds policy") {
+		t.Fatalf("unexpected backend dynamic-index diagnostic:\n%s", out)
+	}
+}
+
+func TestPipelineLowersTopLevelConstArrayIndex(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const I: i32 = 1;
+
+fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[I];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {

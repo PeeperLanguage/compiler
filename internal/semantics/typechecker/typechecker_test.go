@@ -922,6 +922,38 @@ func TestArrayIndexExprReturnsElementType(t *testing.T) {
 	}
 }
 
+func TestArrayIndexExprRejectsConstantOutOfBounds(t *testing.T) {
+	src := `fn first(xs: [4]i32) -> i32 {
+	return xs[4];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrArrayOutOfBounds) {
+		t.Fatalf("expected array out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexExprRejectsTopLevelConstOutOfBounds(t *testing.T) {
+	src := `const I: i32 = 4;
+
+fn first(xs: [4]i32) -> i32 {
+	return xs[I];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrArrayOutOfBounds) {
+		t.Fatalf("expected array out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexExprRejectsDynamicIndexUntilBoundsPolicy(t *testing.T) {
+	src := `fn first(xs: [4]i32, i: i32) -> i32 {
+	return xs[i];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
+		t.Fatalf("expected const-index diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestSliceIndexExprReturnsElementType(t *testing.T) {
 	src := `fn first(xs: []i32, i: usize) -> i32 {
 	return xs[i];

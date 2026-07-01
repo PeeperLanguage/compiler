@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
+	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -648,9 +650,15 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
 		return &ir.InvalidExpr{Message: "invalid index", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
+	index := lowerASTExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType())
+	if value, ok := consteval.EvaluateExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType()); ok {
+		if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
+			index = &ir.IntLit{Value: intConst.Value, Type: intConst.TypeText(), Location: ast.LocOf(node.Index)}
+		}
+	}
 	return &ir.Index{
 		Base:     lowerASTExpr(ctx, module, scope, node.Expr, nil),
-		Index:    lowerASTExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType()),
+		Index:    index,
 		Type:     loweredTypeText(module, exprResolvedType(module, node)),
 		Location: ast.LocOf(node),
 	}
