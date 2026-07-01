@@ -301,6 +301,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseCollected,
 		project.PhaseBound,
 		project.PhaseResolved,
+		project.PhaseConstEval,
 		project.PhaseTypechecked,
 		project.PhaseOwnership,
 		project.PhaseUsage,
@@ -452,12 +453,12 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry.Phase = project.PhaseResolved
 	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
-		t.Fatalf("resolved importer should wait for bound import before typechecker")
+		t.Fatalf("resolved importer should wait for const-evaluated import before consteval")
 	}
 
-	imported.Phase = project.PhaseBound
+	imported.Phase = project.PhaseConstEval
 	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
-		t.Fatalf("resolved importer should be ready for typechecker when import is bound")
+		t.Fatalf("resolved importer should be ready for consteval when import is const-evaluated")
 	}
 }
 
