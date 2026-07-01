@@ -88,6 +88,7 @@ func init() {
 
 	// composite literal
 	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseCompositeLiteral() })
+	nud(token.LBRACK, func(p *Parser) ast.Expr { return p.parseArrayLiteral() })
 
 	// logical
 	led(token.OROR, precOr, parseBinaryExpr)
@@ -266,6 +267,93 @@ func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
 		Index:    index,
 		Location: source.NewLocation(p.filePath, ast.StartOf(left), fallbackEnd),
 	})
+}
+
+func (p *Parser) parseArrayLiteral() ast.Expr {
+	start := p.consume(token.LBRACK, "expected '['")
+	if start == nil {
+		return nil
+	}
+	if p.match(token.RBRACK) {
+		return p.parseUnsupportedSliceLiteral(start)
+	}
+	inferred := false
+	var length *ast.NumberLit
+	if p.current().Kind == token.IDENT && p.current().Literal == "_" {
+		p.advance()
+		inferred = true
+	} else {
+		lenTok := p.consume(token.NUMBER, "expected array literal length")
+		if lenTok == nil {
+			p.synchronize(token.RBRACK, token.LBRACE, token.SEMICOLON)
+			return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+		}
+		length = reg(p, &ast.NumberLit{
+			Value:    lenTok.Literal,
+			Location: source.NewLocation(p.filePath, lenTok.Start, lenTok.End),
+		})
+	}
+	if p.consume(token.RBRACK, "expected ']' after array literal length") == nil {
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+	}
+	elem := p.parseTypeExpr()
+	if elem == nil {
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+	}
+	values, end, ok := parseBracedItemList(p, "expected '{' after array literal type", "expected '}' after array literal",
+		func() (ast.Expr, bool) {
+			value := p.parseExpr(precLowest)
+			return value, value != nil
+		})
+	if !ok {
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem))})
+	}
+	if inferred {
+		length = reg(p, &ast.NumberLit{
+			Value:    fmt.Sprintf("%d", len(values)),
+			Location: source.NewLocation(p.filePath, start.Start, start.End),
+		})
+	}
+	typ := reg(p, &ast.ArrayType{
+		Len:      length,
+		Elem:     elem,
+		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
+	})
+	return reg(p, &ast.ArrayLit{
+		Type:        typ,
+		Values:      values,
+		InferredLen: inferred,
+		Location:    source.NewLocation(p.filePath, start.Start, end.End),
+	})
+}
+
+func (p *Parser) parseUnsupportedSliceLiteral(start *token.Token) ast.Expr {
+	if start == nil {
+		return nil
+	}
+	elem := p.parseTypeExpr()
+	var values []ast.Expr
+	var end *token.Token
+	if elem != nil && p.at(token.LBRACE) {
+		values, end, _ = parseBracedItemList(p, "expected '{' after slice literal type", "expected '}' after slice literal",
+			func() (ast.Expr, bool) {
+				value := p.parseExpr(precLowest)
+				return value, value != nil
+			})
+	}
+	endPos := start.End
+	if end != nil {
+		endPos = end.End
+	} else if len(values) > 0 {
+		endPos = ast.EndOf(values[len(values)-1])
+	} else if elem != nil {
+		endPos = ast.EndOf(elem)
+	}
+	loc := source.NewLocation(p.filePath, start.Start, endPos)
+	p.diag.Add(diagnostics.NewError("slice literals are not supported yet").
+		WithCode(diagnostics.ErrInvalidExpression).
+		WithPrimaryLabel(loc, "use fixed array literal `[N]T{...}` or `[_]T{...}`"))
+	return reg(p, &ast.BadExpr{Location: loc})
 }
 
 func (p *Parser) parseIdentExpr() ast.Expr {

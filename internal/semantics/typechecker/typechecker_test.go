@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
@@ -961,6 +962,58 @@ func TestIndexAssignmentRejectedUntilProjectionSupport(t *testing.T) {
 	}
 	if !strings.Contains(diag.EmitAllToString(), "index assignment requires MIR projection support") {
 		t.Fatalf("expected projection boundary diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayLiteralTypechecksExplicitLength(t *testing.T) {
+	src := `fn main() {
+	let arr = [3]i32{1, 2, 3};
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	got := module.Semantics.ExprTypes[letDecl.Value.ID()]
+	if typeinfo.TypeText(got) != "[3]i32" {
+		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
+	}
+}
+
+func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
+	src := `fn main() {
+	let arr = [_]i32{1, 2, 3};
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	got := module.Semantics.ExprTypes[letDecl.Value.ID()]
+	if typeinfo.TypeText(got) != "[3]i32" {
+		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
+	}
+}
+
+func TestArrayLiteralRejectsWrongExplicitLength(t *testing.T) {
+	src := `fn main() {
+	let arr = [3]i32{1, 2};
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected explicit length mismatch, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayLiteralRejectsWrongElementType(t *testing.T) {
+	src := `fn main() {
+	let arr = [2]i32{1, true};
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected element type mismatch, got:\n%s", diag.EmitAllToString())
 	}
 }
 

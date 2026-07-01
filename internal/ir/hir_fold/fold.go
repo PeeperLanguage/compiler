@@ -1,6 +1,9 @@
 package hir_fold
 
 import (
+	"fmt"
+	"strconv"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
@@ -55,7 +58,7 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 	case *hir.Block:
 		return []hir.Stmt{foldBlock(node, diag, env)}
 	case *hir.Binding:
-		value := ir.FoldExpr(node.Value, env)
+		value := foldExpr(node.Value, diag, env)
 		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Value: value, Location: node.Location}
 		if node.Constant {
 			if folded, ok := ir.ConstValueOf(value); ok {
@@ -64,14 +67,14 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 		}
 		return []hir.Stmt{out}
 	case *hir.ExprStmt:
-		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
+		return []hir.Stmt{&hir.ExprStmt{Value: foldExpr(node.Value, diag, env), Location: node.Location}}
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:
 		if node.Value == nil {
 			return []hir.Stmt{&hir.Return{Location: node.Location}}
 		}
-		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
+		return []hir.Stmt{&hir.Return{Value: foldExpr(node.Value, diag, env), Location: node.Location}}
 	case *hir.If:
 		thenBlock := foldBlock(node.Then, diag, env)
 		var elseStmt hir.Stmt
@@ -83,7 +86,7 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 				elseStmt = &hir.Block{Stmts: foldedElse, Location: hir.LocOf(node.Else)}
 			}
 		}
-		cond := ir.FoldExpr(node.Cond, env)
+		cond := foldExpr(node.Cond, diag, env)
 		if value, ok := ir.ConstValueOf(cond); ok {
 			if truthy, ok := value.Truthy(); ok && truthy {
 				addConstantConditionWarning(diag, node.Location, true)
@@ -104,11 +107,86 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 	case *hir.For:
 		var cond ir.Expr
 		if node.Cond != nil {
-			cond = ir.FoldExpr(node.Cond, env)
+			cond = foldExpr(node.Cond, diag, env)
 		}
 		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(node.Body, diag, cloneConstEnv(env)), Location: node.Location}}
 	default:
 		return []hir.Stmt{stmt}
+	}
+}
+
+func foldExpr(expr ir.Expr, diag *diagnostics.DiagnosticBag, env map[string]ir.ConstValue) ir.Expr {
+	folded := ir.FoldExpr(expr, env)
+	checkConstantArrayIndex(folded, diag)
+	return folded
+}
+
+func checkConstantArrayIndex(expr ir.Expr, diag *diagnostics.DiagnosticBag) {
+	switch node := expr.(type) {
+	case *ir.Index:
+		if node.Base == nil || node.Index == nil {
+			return
+		}
+		checkConstantArrayIndex(node.Base, diag)
+		checkConstantArrayIndex(node.Index, diag)
+		lengthText, _, ok := ir.ArrayTypeParts(node.Base.TypeText())
+		if !ok {
+			return
+		}
+		value, ok := ir.ConstValueOf(node.Index)
+		if !ok {
+			return
+		}
+		indexConst, ok := value.(*ir.IntConst)
+		if !ok || indexConst == nil {
+			return
+		}
+		length, lengthErr := strconv.Atoi(lengthText)
+		indexValue, indexErr := strconv.Atoi(indexConst.Value)
+		if lengthErr != nil || indexErr != nil || indexValue < 0 || indexValue >= length {
+			if diag == nil {
+				return
+			}
+			msg := fmt.Sprintf("array index out of bounds: index %s for length %s", indexConst.Value, lengthText)
+			diag.Add(
+				diagnostics.NewError(msg).
+					WithCode(diagnostics.ErrArrayOutOfBounds).
+					WithPrimaryLabel(ir.ExprLocation(node.Index), msg),
+			)
+		}
+	case *ir.ArrayLit:
+		for _, value := range node.Values {
+			checkConstantArrayIndex(value, diag)
+		}
+	case *ir.Unary:
+		checkConstantArrayIndex(node.Arg, diag)
+	case *ir.Binary:
+		checkConstantArrayIndex(node.Left, diag)
+		checkConstantArrayIndex(node.Right, diag)
+	case *ir.Call:
+		checkConstantArrayIndex(node.Callee, diag)
+		for _, arg := range node.Args {
+			checkConstantArrayIndex(arg, diag)
+		}
+	case *ir.Field:
+		checkConstantArrayIndex(node.Base, diag)
+	case *ir.StructLit:
+		for _, field := range node.Fields {
+			checkConstantArrayIndex(field, diag)
+		}
+	case *ir.Cast:
+		checkConstantArrayIndex(node.Expr, diag)
+	case *ir.OptionalSome:
+		checkConstantArrayIndex(node.Value, diag)
+	case *ir.InterfaceMake:
+		checkConstantArrayIndex(node.Value, diag)
+	case *ir.InterfaceCall:
+		checkConstantArrayIndex(node.Base, diag)
+		for _, arg := range node.Args {
+			checkConstantArrayIndex(arg, diag)
+		}
+	case *ir.AddrOf:
+		checkConstantArrayIndex(node.Expr, diag)
 	}
 }
 

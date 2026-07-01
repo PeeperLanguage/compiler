@@ -100,6 +100,11 @@ func Inspect(node Node, f func(Node) bool) {
 			Inspect(field.Name, f)
 			Inspect(field.Value, f)
 		}
+	case *ArrayLit:
+		Inspect(n.Type, f)
+		for _, value := range n.Values {
+			Inspect(value, f)
+		}
 	case *MoveExpr:
 		Inspect(n.Expr, f)
 	case *AddressExpr:

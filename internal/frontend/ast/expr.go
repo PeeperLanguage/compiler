@@ -60,6 +60,17 @@ type StructLit struct {
 func (*StructLit) exprNode()               {}
 func (e *StructLit) loc() *source.Location { return e.Location }
 
+type ArrayLit struct {
+	NodeIDHolder
+	Type        TypeExpr
+	Values      []Expr
+	InferredLen bool
+	Location    *source.Location
+}
+
+func (*ArrayLit) exprNode()               {}
+func (e *ArrayLit) loc() *source.Location { return e.Location }
+
 type BadExpr struct {
 	NodeIDHolder
 	Location *source.Location

@@ -856,6 +856,63 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersArrayIndexRead(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first(xs: [4]i32) -> i32 {
+	return xs[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersCallResultArrayIndexRead(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `#[extern]
+fn make() -> [4]i32;
+
+fn first() -> i32 {
+	return make()[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersInferredArrayLiteralIndexRead(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3};
+	return arr[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsConstantArrayIndexOutOfBounds(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[4];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "array index out of bounds: index 4 for length 4") {
+		t.Fatalf("expected out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	items := diag.Diagnostics()
+	if len(items) == 0 || len(items[0].Labels) == 0 || items[0].Labels[0].Location == nil {
+		t.Fatalf("expected located out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {

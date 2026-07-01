@@ -519,8 +519,14 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	case *ast.SelectorExpr:
 		return lowerSelectorExpr(ctx, module, scope, node)
 
+	case *ast.IndexExpr:
+		return lowerIndexExpr(ctx, module, scope, node)
+
 	case *ast.StructLit:
 		return lowerStructLiteralExpr(ctx, module, scope, node)
+
+	case *ast.ArrayLit:
+		return lowerArrayLiteralExpr(ctx, module, scope, node)
 
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: "<invalid>", Location: loc}
@@ -638,6 +644,18 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>", Location: ast.LocOf(selector)}
 }
 
+func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.IndexExpr) ir.Expr {
+	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
+		return &ir.InvalidExpr{Message: "invalid index", Type: "<invalid>", Location: ast.LocOf(node)}
+	}
+	return &ir.Index{
+		Base:     lowerASTExpr(ctx, module, scope, node.Expr, nil),
+		Index:    lowerASTExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType()),
+		Type:     loweredTypeText(module, exprResolvedType(module, node)),
+		Location: ast.LocOf(node),
+	}
+}
+
 func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {
 	if module == nil || node == nil {
 		return &ir.InvalidExpr{Message: "invalid struct literal", Type: "<invalid>", Location: ast.LocOf(node)}
@@ -664,6 +682,26 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 	}
 	return &ir.StructLit{
 		Fields:   values,
+		Type:     loweredTypeText(module, resolved),
+		Location: ast.LocOf(node),
+	}
+}
+
+func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.ArrayLit) ir.Expr {
+	if module == nil || node == nil {
+		return &ir.InvalidExpr{Message: "invalid array literal", Type: "<invalid>", Location: ast.LocOf(node)}
+	}
+	resolved := exprResolvedType(module, node)
+	array, ok := loweredRuntimeType(module, resolved, nil).(*typeinfo.ArrayType)
+	if !ok || array == nil || array.Elem == nil {
+		return &ir.InvalidExpr{Message: "array literal type missing", Type: "<invalid>", Location: ast.LocOf(node)}
+	}
+	values := make([]ir.Expr, 0, len(node.Values))
+	for _, value := range node.Values {
+		values = append(values, lowerASTExpr(ctx, module, scope, value, array.Elem))
+	}
+	return &ir.ArrayLit{
+		Values:   values,
 		Type:     loweredTypeText(module, resolved),
 		Location: ast.LocOf(node),
 	}

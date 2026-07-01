@@ -1006,6 +1006,89 @@ func TestParseMalformedIndexExprReportsDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParseArrayLiteral(t *testing.T) {
+	src := `fn main() {
+	let x = [3]i32{1, 2, 3};
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	lit, ok := letDecl.Value.(*ast.ArrayLit)
+	if !ok {
+		t.Fatalf("expected array literal, got %#v", letDecl.Value)
+	}
+	arrayType, ok := lit.Type.(*ast.ArrayType)
+	if !ok || arrayType.Len == nil || arrayType.Len.Value != "3" {
+		t.Fatalf("unexpected array literal type: %#v", lit.Type)
+	}
+	if lit.InferredLen || len(lit.Values) != 3 {
+		t.Fatalf("unexpected array literal metadata: inferred=%v values=%d", lit.InferredLen, len(lit.Values))
+	}
+}
+
+func TestParseInferredArrayLiteral(t *testing.T) {
+	src := `fn main() {
+	let x = [_]i32{1, 2, 3};
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	lit, ok := letDecl.Value.(*ast.ArrayLit)
+	if !ok {
+		t.Fatalf("expected array literal, got %#v", letDecl.Value)
+	}
+	arrayType, ok := lit.Type.(*ast.ArrayType)
+	if !ok || arrayType.Len == nil || arrayType.Len.Value != "3" {
+		t.Fatalf("unexpected inferred array literal type: %#v", lit.Type)
+	}
+	if !lit.InferredLen || len(lit.Values) != 3 {
+		t.Fatalf("unexpected inferred literal metadata: inferred=%v values=%d", lit.InferredLen, len(lit.Values))
+	}
+}
+
+func TestParseArrayLiteralThenIndexWithoutHang(t *testing.T) {
+	src := `fn main() -> i32 {
+	let arr = [_]i32{1, 2, 3};
+	return arr[0];
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	if fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("unexpected body shape: %#v", fn.Body)
+	}
+	ret, ok := fn.Body.Stmts[1].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt[1] expected return, got %#v", fn.Body.Stmts[1])
+	}
+	if _, ok := ret.Value.(*ast.IndexExpr); !ok {
+		t.Fatalf("return value expected index expr, got %#v", ret.Value)
+	}
+}
+
+func TestParseSliceLiteralRejectedWithoutHang(t *testing.T) {
+	src := `fn main() -> i32 {
+	let arr = []i32{1, 2};
+	return 0;
+}`
+	mod, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected slice literal diagnostics")
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	if fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("parser did not preserve later statements: %#v", fn.Body)
+	}
+}
+
 func TestParseStructLiteral(t *testing.T) {
 	src := `fn main() -> i32 {
 	let p = .{ x = 1, y = 2, };

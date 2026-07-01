@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"compiler/internal/diagnostics"
@@ -843,6 +844,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.StructLit:
 		return c.typeStructLit(scope, node, expected)
 
+	case *ast.ArrayLit:
+		return c.typeArrayLit(scope, node)
+
 	case *ast.UnaryExpr:
 		return c.typeUnaryExpr(scope, node, expected)
 
@@ -1230,6 +1234,48 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
 	}
 	return &typeinfo.StructType{Fields: fields}
+}
+
+func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.Type {
+	if node == nil {
+		return &typeinfo.InvalidType{}
+	}
+	arrayType := typeinfo.ASTTypeWithOptions(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	array, ok := typeinfo.Underlying(arrayType).(*typeinfo.ArrayType)
+	if !ok || array == nil || array.Elem == nil || typeinfo.IsInvalidOrUnknown(array.Elem) {
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Type, "invalid array literal type"))
+		return &typeinfo.InvalidType{}
+	}
+	if !node.InferredLen {
+		if nodeLen, ok := arrayLiteralLength(node); ok {
+			if nodeLen != len(node.Values) {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+					fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
+			}
+		}
+	}
+	for _, value := range node.Values {
+		valueType := c.typeExpr(scope, value, array.Elem)
+		valueType = c.requireValueType(value, valueType, "array element initializer")
+		if typeinfo.IsInvalidOrUnknown(valueType) {
+			continue
+		}
+		if !c.assignable(array.Elem, valueType) {
+			c.ctx.Diagnostics.Add(typeMismatchError(value,
+				fmt.Sprintf("cannot assign %s to array element of type %s",
+					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))))
+		}
+	}
+	return arrayType
+}
+
+func arrayLiteralLength(node *ast.ArrayLit) (int, bool) {
+	array, ok := node.Type.(*ast.ArrayType)
+	if !ok || array == nil || array.Len == nil {
+		return 0, false
+	}
+	length, err := strconv.Atoi(array.Len.Value)
+	return length, err == nil
 }
 
 func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {

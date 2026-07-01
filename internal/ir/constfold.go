@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"strconv"
 
+	"compiler/internal/source"
 	"compiler/pkg/numeric"
 )
 
@@ -102,7 +103,7 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {
-				return value.ToExpr()
+				return constValueExprAt(value, ExprLocation(node))
 			}
 		}
 		return expr
@@ -110,7 +111,7 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 		arg := FoldExpr(node.Arg, env)
 		if value, ok := ConstValueOf(arg); ok {
 			if folded, ok := foldUnary(node.Op, value); ok {
-				return folded.ToExpr()
+				return constValueExprAt(folded, ExprLocation(node))
 			}
 		}
 		return &Unary{Op: node.Op, Arg: arg, Type: node.Type}
@@ -121,13 +122,39 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 		rv, rok := ConstValueOf(right)
 		if lok && rok {
 			if folded, ok := foldBinary(node.Op, lv, rv); ok {
-				return folded.ToExpr()
+				return constValueExprAt(folded, ExprLocation(node))
 			}
 		}
 		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type}
+	case *Index:
+		return &Index{
+			Base:     FoldExpr(node.Base, env),
+			Index:    FoldExpr(node.Index, env),
+			Type:     node.Type,
+			Location: node.Location,
+		}
+	case *ArrayLit:
+		values := make([]Expr, 0, len(node.Values))
+		for _, value := range node.Values {
+			values = append(values, FoldExpr(value, env))
+		}
+		return &ArrayLit{Values: values, Type: node.Type, Location: node.Location}
 	default:
 		return expr
 	}
+}
+
+func constValueExprAt(value ConstValue, loc *source.Location) Expr {
+	expr := value.ToExpr()
+	switch node := expr.(type) {
+	case *IntLit:
+		node.Location = loc
+	case *FloatLit:
+		node.Location = loc
+	case *BoolLit:
+		node.Location = loc
+	}
+	return expr
 }
 
 func ConstValueOf(expr Expr) (ConstValue, bool) {

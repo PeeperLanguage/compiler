@@ -131,8 +131,21 @@ type Field struct {
 	Location   *source.Location
 }
 
+type Index struct {
+	Base     Expr
+	Index    Expr
+	Type     string
+	Location *source.Location
+}
+
 type StructLit struct {
 	Fields   []Expr
+	Type     string
+	Location *source.Location
+}
+
+type ArrayLit struct {
+	Values   []Expr
 	Type     string
 	Location *source.Location
 }
@@ -158,7 +171,9 @@ func (*AddrOf) exprNode()        {}
 func (*InterfaceMake) exprNode() {}
 func (*InterfaceCall) exprNode() {}
 func (*Field) exprNode()         {}
+func (*Index) exprNode()         {}
 func (*StructLit) exprNode()     {}
+func (*ArrayLit) exprNode()      {}
 func (*Cast) exprNode()          {}
 
 func ExprLocation(expr Expr) *source.Location {
@@ -193,7 +208,11 @@ func ExprLocation(expr Expr) *source.Location {
 		return node.Location
 	case *Field:
 		return node.Location
+	case *Index:
+		return node.Location
 	case *StructLit:
+		return node.Location
+	case *ArrayLit:
 		return node.Location
 	case *Cast:
 		return node.Location
@@ -401,6 +420,20 @@ func (e *Field) TypeText() string {
 	return e.Type
 }
 
+func (e *Index) String() string {
+	if e == nil || e.Base == nil || e.Index == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s[%s]", e.Base.String(), e.Index.String())
+}
+
+func (e *Index) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
 func (e *StructLit) String() string {
 	if e == nil {
 		return ""
@@ -420,6 +453,31 @@ func (e *StructLit) String() string {
 }
 
 func (e *StructLit) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *ArrayLit) String() string {
+	if e == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[")
+	for i, value := range e.Values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if value != nil {
+			b.WriteString(value.String())
+		}
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+func (e *ArrayLit) TypeText() string {
 	if e == nil {
 		return ""
 	}
@@ -451,6 +509,18 @@ func IsIntegerType(name string) bool {
 
 func IsBoolType(name string) bool {
 	return name == "bool"
+}
+
+func ArrayTypeParts(typeText string) (string, string, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if !strings.HasPrefix(typeText, "[") {
+		return "", "", false
+	}
+	close := strings.IndexByte(typeText, ']')
+	if close <= 1 || close == len(typeText)-1 {
+		return "", "", false
+	}
+	return strings.TrimSpace(typeText[1:close]), strings.TrimSpace(typeText[close+1:]), true
 }
 
 func TypeText(typ ast.TypeExpr) string {
