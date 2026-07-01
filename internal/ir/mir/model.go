@@ -172,6 +172,13 @@ type ProjectField struct {
 	Location *source.Location
 }
 
+type ProjectIndex struct {
+	Base     ValueRef
+	Index    ValueRef
+	Type     string
+	Location *source.Location
+}
+
 type Field struct {
 	Base       ValueRef
 	Index      int
@@ -182,6 +189,12 @@ type Field struct {
 
 type StructLit struct {
 	Fields   []ValueRef
+	Type     string
+	Location *source.Location
+}
+
+type ArrayLit struct {
+	Values   []ValueRef
 	Type     string
 	Location *source.Location
 }
@@ -245,8 +258,10 @@ func (*Cast) valueExprNode()          {}
 func (*AddrOf) valueExprNode()        {}
 func (*Load) valueExprNode()          {}
 func (*ProjectField) valueExprNode()  {}
+func (*ProjectIndex) valueExprNode()  {}
 func (*Field) valueExprNode()         {}
 func (*StructLit) valueExprNode()     {}
+func (*ArrayLit) valueExprNode()      {}
 func (*ZeroValue) valueExprNode()     {}
 func (*OptionalSome) valueExprNode()  {}
 func (*InterfaceMake) valueExprNode() {}
@@ -265,6 +280,9 @@ func (v *Load) Text() string     { return fmt.Sprintf("load %s", v.Ptr.Text()) }
 func (v *ProjectField) Text() string {
 	return fmt.Sprintf("projectfield %s, %d", v.Base.Text(), v.Index)
 }
+func (v *ProjectIndex) Text() string {
+	return fmt.Sprintf("projectindex %s, %s", v.Base.Text(), v.Index.Text())
+}
 func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 
 func (v *StructLit) Text() string {
@@ -279,6 +297,20 @@ func (v *StructLit) Text() string {
 	b.WriteString(")")
 	return b.String()
 }
+
+func (v *ArrayLit) Text() string {
+	var b strings.Builder
+	b.WriteString("array(")
+	for i, value := range v.Values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(value.Text())
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
 func (v *ZeroValue) Text() string {
 	if v == nil || v.Type == "" {
 		return "zero"
@@ -361,9 +393,13 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 		return node.Location
 	case *ProjectField:
 		return node.Location
+	case *ProjectIndex:
+		return node.Location
 	case *Field:
 		return node.Location
 	case *StructLit:
+		return node.Location
+	case *ArrayLit:
 		return node.Location
 	case *ZeroValue:
 		return node.Location
@@ -692,6 +728,12 @@ func (l *lowerer) projectField(out *[]Instr, base ValueRef, index int, pointerTy
 	return &RefName{Name: name, Type: pointerType, Location: loc}
 }
 
+func (l *lowerer) projectIndex(out *[]Instr, base ValueRef, index ValueRef, pointerType string, loc *source.Location) ValueRef {
+	name := l.nextTemp()
+	l.appendInstr(out, &Assign{Name: name, Value: &ProjectIndex{Base: base, Index: index, Type: pointerType, Location: loc}})
+	return &RefName{Name: name, Type: pointerType, Location: loc}
+}
+
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 	if block == nil || term == nil {
 		return
@@ -805,6 +847,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.Index:
+		base := l.lowerExpr(e.Base, out)
+		index := l.lowerExpr(e.Index, out)
+		ptr := l.projectIndex(out, base, index, "^"+e.TypeText(), ir.ExprLocation(e))
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
 		for _, field := range e.Fields {
@@ -812,6 +861,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.ArrayLit:
+		values := make([]ValueRef, 0, len(e.Values))
+		for _, value := range e.Values {
+			values = append(values, l.lowerExpr(value, out))
+		}
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
@@ -1027,10 +1084,14 @@ func valueRefsOf(expr ValueExpr) []ValueRef {
 		return []ValueRef{node.Ptr}
 	case *ProjectField:
 		return []ValueRef{node.Base}
+	case *ProjectIndex:
+		return []ValueRef{node.Base, node.Index}
 	case *Field:
 		return []ValueRef{node.Base}
 	case *StructLit:
 		return append([]ValueRef(nil), node.Fields...)
+	case *ArrayLit:
+		return append([]ValueRef(nil), node.Values...)
 	case *ZeroValue:
 		return nil
 	case *OptionalSome:

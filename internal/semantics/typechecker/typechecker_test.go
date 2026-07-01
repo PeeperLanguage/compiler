@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
@@ -908,6 +909,143 @@ fn main() -> i32 {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexExprReturnsElementType(t *testing.T) {
+	src := `fn first(xs: [4]i32) -> i32 {
+	return xs[0];
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexExprRejectsConstantOutOfBounds(t *testing.T) {
+	src := `fn first(xs: [4]i32) -> i32 {
+	return xs[4];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrArrayOutOfBounds) {
+		t.Fatalf("expected array out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexExprRejectsTopLevelConstOutOfBounds(t *testing.T) {
+	src := `const I: i32 = 4;
+
+fn first(xs: [4]i32) -> i32 {
+	return xs[I];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrArrayOutOfBounds) {
+		t.Fatalf("expected array out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexExprRejectsDynamicIndexUntilBoundsPolicy(t *testing.T) {
+	src := `fn first(xs: [4]i32, i: i32) -> i32 {
+	return xs[i];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
+		t.Fatalf("expected const-index diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSliceIndexExprReturnsElementType(t *testing.T) {
+	src := `fn first(xs: []i32, i: usize) -> i32 {
+	return xs[i];
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIndexExprRejectsNonIntegerIndex(t *testing.T) {
+	src := `fn first(xs: [4]i32, flag: bool) -> i32 {
+	return xs[flag];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid index diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIndexExprRejectsNonIndexableBase(t *testing.T) {
+	src := `fn first(x: i32) -> i32 {
+	return x[0];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected invalid base diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIndexAssignmentRejectedUntilProjectionSupport(t *testing.T) {
+	src := `fn main(xs: [4]i32) {
+	xs[0] = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "index assignment requires MIR projection support") {
+		t.Fatalf("expected projection boundary diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayLiteralTypechecksExplicitLength(t *testing.T) {
+	src := `fn main() {
+	let arr = [3]i32{1, 2, 3};
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	got := module.Semantics.ExprTypes[letDecl.Value.ID()]
+	if typeinfo.TypeText(got) != "[3]i32" {
+		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
+	}
+}
+
+func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
+	src := `fn main() {
+	let arr = [_]i32{1, 2, 3};
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	got := module.Semantics.ExprTypes[letDecl.Value.ID()]
+	if typeinfo.TypeText(got) != "[3]i32" {
+		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
+	}
+}
+
+func TestArrayLiteralRejectsWrongExplicitLength(t *testing.T) {
+	src := `fn main() {
+	let arr = [3]i32{1, 2};
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected explicit length mismatch, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayLiteralRejectsWrongElementType(t *testing.T) {
+	src := `fn main() {
+	let arr = [2]i32{1, true};
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected element type mismatch, got:\n%s", diag.EmitAllToString())
 	}
 }
 

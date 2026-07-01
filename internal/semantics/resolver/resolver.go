@@ -256,12 +256,22 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 	case *ast.SelectorExpr:
 		r.resolveExpr(scope, node.Expr)
+	case *ast.IndexExpr:
+		r.resolveExpr(scope, node.Expr)
+		r.resolveExpr(scope, node.Index)
 	case *ast.StructLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
 			r.resolveScopeResolution(scopedType)
 		}
 		for _, field := range node.Fields {
 			r.resolveExpr(scope, field.Value)
+		}
+	case *ast.ArrayLit:
+		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
+			r.resolveScopeResolution(scopedType)
+		}
+		for _, value := range node.Values {
+			r.resolveExpr(scope, value)
 		}
 	case *ast.UnaryExpr:
 		r.resolveExpr(scope, node.Expr)

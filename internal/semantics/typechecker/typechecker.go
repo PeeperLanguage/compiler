@@ -2,11 +2,14 @@ package typechecker
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -459,6 +462,10 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
 		return
+	case *ast.IndexExpr:
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+			"index assignment requires MIR projection support", ast.LocOf(target), "")
+		return
 	default:
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"invalid assignment target", ast.LocOf(node.Target), "")
@@ -833,8 +840,14 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
 
+	case *ast.IndexExpr:
+		return c.typeIndexExpr(scope, node)
+
 	case *ast.StructLit:
 		return c.typeStructLit(scope, node, expected)
+
+	case *ast.ArrayLit:
+		return c.typeArrayLit(scope, node)
 
 	case *ast.UnaryExpr:
 		return c.typeUnaryExpr(scope, node, expected)
@@ -1053,6 +1066,57 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	return &typeinfo.InvalidType{}
 }
 
+func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinfo.Type {
+	if node == nil || node.Expr == nil || node.Index == nil {
+		return &typeinfo.InvalidType{}
+	}
+	baseType := c.typeExpr(scope, node.Expr, nil)
+	if typeinfo.IsInvalidOrUnknown(baseType) {
+		return &typeinfo.InvalidType{}
+	}
+	indexType := c.typeExpr(scope, node.Index, typeinfo.DefaultIntegerType())
+	indexType = c.requireValueType(node.Index, indexType, "index")
+	if typeinfo.IsInvalidOrUnknown(indexType) {
+		return &typeinfo.InvalidType{}
+	}
+	if !typeinfo.IsIntegral(indexType) {
+		c.ctx.Diagnostics.Add(invalidOperationError(node.Index,
+			"index expression must be an integer"))
+		return &typeinfo.InvalidType{}
+	}
+	switch base := typeinfo.Underlying(baseType).(type) {
+	case *typeinfo.ArrayType:
+		if base != nil && base.Elem != nil {
+			value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
+			if !ok {
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("fixed-array index must be constant until runtime bounds policy is implemented").
+						WithCode(diagnostics.ErrArrayIndexNotConst).
+						WithPrimaryLabel(ast.LocOf(node.Index), "index is not a compile-time constant"),
+				)
+				return base.Elem
+			}
+			indexConst, ok := value.(*constvalue.IntConst)
+			if !ok || indexConst == nil {
+				return base.Elem
+			}
+			length, lengthErr := strconv.Atoi(base.Len)
+			indexValue, indexErr := strconv.Atoi(indexConst.Value)
+			if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
+				c.ctx.Diagnostics.Add(diagnostics.ArrayIndexOutOfBounds(indexConst.Value, base.Len, ast.LocOf(node.Index)))
+			}
+			return base.Elem
+		}
+	case *typeinfo.SliceType:
+		if base != nil && base.Elem != nil {
+			return base.Elem
+		}
+	}
+	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+		"indexing requires array or slice value"))
+	return &typeinfo.InvalidType{}
+}
+
 func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
 	baseType := c.typeExpr(scope, selector.Expr, nil)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
@@ -1190,6 +1254,48 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
 	}
 	return &typeinfo.StructType{Fields: fields}
+}
+
+func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.Type {
+	if node == nil {
+		return &typeinfo.InvalidType{}
+	}
+	arrayType := typeinfo.ASTTypeWithOptions(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	array, ok := typeinfo.Underlying(arrayType).(*typeinfo.ArrayType)
+	if !ok || array == nil || array.Elem == nil || typeinfo.IsInvalidOrUnknown(array.Elem) {
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Type, "invalid array literal type"))
+		return &typeinfo.InvalidType{}
+	}
+	if !node.InferredLen {
+		if nodeLen, ok := arrayLiteralLength(node); ok {
+			if nodeLen != len(node.Values) {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+					fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
+			}
+		}
+	}
+	for _, value := range node.Values {
+		valueType := c.typeExpr(scope, value, array.Elem)
+		valueType = c.requireValueType(value, valueType, "array element initializer")
+		if typeinfo.IsInvalidOrUnknown(valueType) {
+			continue
+		}
+		if !c.assignable(array.Elem, valueType) {
+			c.ctx.Diagnostics.Add(typeMismatchError(value,
+				fmt.Sprintf("cannot assign %s to array element of type %s",
+					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))))
+		}
+	}
+	return arrayType
+}
+
+func arrayLiteralLength(node *ast.ArrayLit) (int, bool) {
+	array, ok := node.Type.(*ast.ArrayType)
+	if !ok || array == nil || array.Len == nil {
+		return 0, false
+	}
+	length, err := strconv.Atoi(array.Len.Value)
+	return length, err == nil
 }
 
 func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {

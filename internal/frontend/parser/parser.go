@@ -638,8 +638,15 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 	var stmts []ast.Stmt
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
 		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "unnecessary semicolons", "remove these semicolons")
+		before := p.pos
 		if stmt := p.parseStmt(false); stmt != nil {
 			stmts = append(stmts, stmt)
+			if p.pos == before && !p.at(token.RBRACE) && !p.at(token.EOF) {
+				p.synchronize(token.SEMICOLON, token.RBRACE)
+				if !p.at(token.RBRACE) && !p.at(token.EOF) {
+					p.advance()
+				}
+			}
 		} else if !p.at(token.RBRACE) && !p.at(token.EOF) {
 			loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
 			stmts = append(stmts, reg(p, &ast.BadStmt{Location: loc}))

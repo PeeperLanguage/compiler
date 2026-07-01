@@ -301,6 +301,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseCollected,
 		project.PhaseBound,
 		project.PhaseResolved,
+		project.PhaseConstEval,
 		project.PhaseTypechecked,
 		project.PhaseOwnership,
 		project.PhaseUsage,
@@ -452,12 +453,12 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry.Phase = project.PhaseResolved
 	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
-		t.Fatalf("resolved importer should wait for bound import before typechecker")
+		t.Fatalf("resolved importer should wait for const-evaluated import before consteval")
 	}
 
-	imported.Phase = project.PhaseBound
+	imported.Phase = project.PhaseConstEval
 	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
-		t.Fatalf("resolved importer should be ready for typechecker when import is bound")
+		t.Fatalf("resolved importer should be ready for consteval when import is const-evaluated")
 	}
 }
 
@@ -848,6 +849,97 @@ func TestPipelineLowersStructFieldAccess(t *testing.T) {
 fn main() -> i32 {
 	let p: Point = .{ x = 1, y = 2 };
 	return p.x;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersArrayIndexRead(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first(xs: [4]i32) -> i32 {
+	return xs[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersCallResultArrayIndexRead(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `#[extern]
+fn make() -> [4]i32;
+
+fn first() -> i32 {
+	return make()[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersInferredArrayLiteralIndexRead(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3};
+	return arr[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsConstantArrayIndexOutOfBounds(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[4];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "array index out of bounds: index 4 for length 4") {
+		t.Fatalf("expected out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	items := diag.Diagnostics()
+	if len(items) == 0 || len(items[0].Labels) == 0 || items[0].Labels[0].Location == nil {
+		t.Fatalf("expected located out-of-bounds diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsTopLevelConstArrayIndexOutOfBounds(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const I: i32 = 4;
+
+fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[I];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || !strings.Contains(out, "array index out of bounds: index 4 for length 4") {
+		t.Fatalf("expected out-of-bounds diagnostic, got:\n%s", out)
+	}
+	if strings.Contains(out, "dynamic array index lowering requires bounds policy") {
+		t.Fatalf("unexpected backend dynamic-index diagnostic:\n%s", out)
+	}
+}
+
+func TestPipelineLowersTopLevelConstArrayIndex(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const I: i32 = 1;
+
+fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[I];
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)

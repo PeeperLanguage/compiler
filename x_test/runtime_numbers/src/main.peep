@@ -43,5 +43,8 @@ fn main() -> i32 {
 
     let _unused = a + b + (c as i32) + d + e + (f as i32) + (g as i32) + (h as i32) + i + j + (k as i32);
     let _more = sum1 + (sum2 as i32) + (mixed as i32) + neg + pos + (large_i64 as i32) + (large_u64 as i32) + (large_f64 as i32) + (small_i8 as i32) + (small_f64 as i32) + zero_i32 + (zero_f64 as i32);
-    return 0;
+
+    let arr = [3]i32{1, 2, 3};
+
+    return arr[1];
 }
