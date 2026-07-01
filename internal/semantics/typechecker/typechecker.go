@@ -459,6 +459,10 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
 		return
+	case *ast.IndexExpr:
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+			"index assignment requires MIR projection support", ast.LocOf(target), "")
+		return
 	default:
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"invalid assignment target", ast.LocOf(node.Target), "")
@@ -833,6 +837,9 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
 
+	case *ast.IndexExpr:
+		return c.typeIndexExpr(scope, node)
+
 	case *ast.StructLit:
 		return c.typeStructLit(scope, node, expected)
 
@@ -1050,6 +1057,39 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 		d.WithHelp("did you mean `" + match + "`?")
 	}
 	c.ctx.Diagnostics.Add(d)
+	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinfo.Type {
+	if node == nil || node.Expr == nil || node.Index == nil {
+		return &typeinfo.InvalidType{}
+	}
+	baseType := c.typeExpr(scope, node.Expr, nil)
+	if typeinfo.IsInvalidOrUnknown(baseType) {
+		return &typeinfo.InvalidType{}
+	}
+	indexType := c.typeExpr(scope, node.Index, typeinfo.DefaultIntegerType())
+	indexType = c.requireValueType(node.Index, indexType, "index")
+	if typeinfo.IsInvalidOrUnknown(indexType) {
+		return &typeinfo.InvalidType{}
+	}
+	if !typeinfo.IsIntegral(indexType) {
+		c.ctx.Diagnostics.Add(invalidOperationError(node.Index,
+			"index expression must be an integer"))
+		return &typeinfo.InvalidType{}
+	}
+	switch base := typeinfo.Underlying(baseType).(type) {
+	case *typeinfo.ArrayType:
+		if base != nil && base.Elem != nil {
+			return base.Elem
+		}
+	case *typeinfo.SliceType:
+		if base != nil && base.Elem != nil {
+			return base.Elem
+		}
+	}
+	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+		"indexing requires array or slice value"))
 	return &typeinfo.InvalidType{}
 }
 

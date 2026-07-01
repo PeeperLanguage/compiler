@@ -121,6 +121,9 @@ func init() {
 	led(token.LPAREN, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 		return p.parseCall(left)
 	})
+	led(token.LBRACK, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+		return p.parseIndexExpr(left)
+	})
 	led(token.DOT, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 		return p.parseSelector(left)
 	})
@@ -239,6 +242,29 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 		Callee:   callee,
 		Args:     args,
 		Location: source.NewLocation(p.filePath, ast.StartOf(callee), fallbackEnd),
+	})
+}
+
+func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
+	start := p.consume(token.LBRACK, "expected '['")
+	if start == nil {
+		return left
+	}
+	index := p.parseExpr(precLowest)
+	end := p.expectClose(start.Start, token.RBRACK, "[")
+	var fallbackEnd source.Position
+	if end == nil {
+		fallbackEnd = ast.EndOf(index)
+		if fallbackEnd.IsZero() {
+			fallbackEnd = ast.EndOf(left)
+		}
+	} else {
+		fallbackEnd = end.End
+	}
+	return reg(p, &ast.IndexExpr{
+		Expr:     left,
+		Index:    index,
+		Location: source.NewLocation(p.filePath, ast.StartOf(left), fallbackEnd),
 	})
 }
 

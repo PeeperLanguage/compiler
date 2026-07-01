@@ -911,6 +911,59 @@ fn main() -> i32 {
 	}
 }
 
+func TestArrayIndexExprReturnsElementType(t *testing.T) {
+	src := `fn first(xs: [4]i32) -> i32 {
+	return xs[0];
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSliceIndexExprReturnsElementType(t *testing.T) {
+	src := `fn first(xs: []i32, i: usize) -> i32 {
+	return xs[i];
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIndexExprRejectsNonIntegerIndex(t *testing.T) {
+	src := `fn first(xs: [4]i32, flag: bool) -> i32 {
+	return xs[flag];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid index diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIndexExprRejectsNonIndexableBase(t *testing.T) {
+	src := `fn first(x: i32) -> i32 {
+	return x[0];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected invalid base diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIndexAssignmentRejectedUntilProjectionSupport(t *testing.T) {
+	src := `fn main(xs: [4]i32) {
+	xs[0] = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "index assignment requires MIR projection support") {
+		t.Fatalf("expected projection boundary diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestDirectStructCycleIsRejected(t *testing.T) {
 	src := `struct A {
 	b: B,

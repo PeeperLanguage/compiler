@@ -91,6 +91,9 @@ func Inspect(node Node, f func(Node) bool) {
 	case *SelectorExpr:
 		Inspect(n.Expr, f)
 		Inspect(n.Name, f)
+	case *IndexExpr:
+		Inspect(n.Expr, f)
+		Inspect(n.Index, f)
 	case *StructLit:
 		Inspect(n.Type, f)
 		for _, field := range n.Fields {

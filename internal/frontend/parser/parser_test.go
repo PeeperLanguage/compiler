@@ -911,6 +911,101 @@ func TestParseSelectorAndMethodCall(t *testing.T) {
 	}
 }
 
+func TestParseIndexExpr(t *testing.T) {
+	src := `fn main() {
+	let x = xs[0];
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !ok {
+		t.Fatalf("stmt[0] expected let")
+	}
+	index, ok := letDecl.Value.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected index expr, got %#v", letDecl.Value)
+	}
+	if base, ok := index.Expr.(*ast.Ident); !ok || base.Name != "xs" {
+		t.Fatalf("unexpected index base: %#v", index.Expr)
+	}
+	if idx, ok := index.Index.(*ast.NumberLit); !ok || idx.Value != "0" {
+		t.Fatalf("unexpected index value: %#v", index.Index)
+	}
+}
+
+func TestParseSelectorOverIndexExpr(t *testing.T) {
+	src := `fn main() -> i32 {
+	return xs[i].value;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	ret, ok := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt[0] expected return")
+	}
+	selector, ok := ret.Value.(*ast.SelectorExpr)
+	if !ok || selector.Name == nil || selector.Name.Name != "value" {
+		t.Fatalf("expected selector over index, got %#v", ret.Value)
+	}
+	index, ok := selector.Expr.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected selector base index expr, got %#v", selector.Expr)
+	}
+	if base, ok := index.Expr.(*ast.Ident); !ok || base.Name != "xs" {
+		t.Fatalf("unexpected index base: %#v", index.Expr)
+	}
+	if idx, ok := index.Index.(*ast.Ident); !ok || idx.Name != "i" {
+		t.Fatalf("unexpected index value: %#v", index.Index)
+	}
+}
+
+func TestParseIndexExprInsideCallArg(t *testing.T) {
+	src := `fn main() {
+	foo(xs[0]);
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+	}
+	exprStmt, ok := fn.Body.Stmts[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("stmt[0] expected expr stmt")
+	}
+	call, ok := exprStmt.Expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("expected single-arg call, got %#v", exprStmt.Expr)
+	}
+	if _, ok := call.Args[0].(*ast.IndexExpr); !ok {
+		t.Fatalf("expected index call arg, got %#v", call.Args[0])
+	}
+}
+
+func TestParseMalformedIndexExprReportsDiagnostics(t *testing.T) {
+	src := `fn main() {
+	let x = xs[;
+}`
+	_, diag := parseTestModule(src)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostics for malformed index expression")
+	}
+}
+
 func TestParseStructLiteral(t *testing.T) {
 	src := `fn main() -> i32 {
 	let p = .{ x = 1, y = 2, };

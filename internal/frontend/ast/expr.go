@@ -34,6 +34,16 @@ type SelectorExpr struct {
 func (*SelectorExpr) exprNode()               {}
 func (e *SelectorExpr) loc() *source.Location { return e.Location }
 
+type IndexExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Index    Expr
+	Location *source.Location
+}
+
+func (*IndexExpr) exprNode()               {}
+func (e *IndexExpr) loc() *source.Location { return e.Location }
+
 type StructLitField struct {
 	Name     *Ident
 	Value    Expr
