@@ -1,10 +1,15 @@
 package mir
 
 import (
+	"fmt"
 	"testing"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/peeper"
 )
@@ -25,7 +30,7 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -35,6 +40,48 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 	}
 	if _, ok := fn.Blocks[0].Term.(*Ret); !ok {
 		t.Fatalf("expected implicit ret terminator, got %#v", fn.Blocks[0].Term)
+	}
+}
+
+func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
+	mod := &hir.Module{Name: "test"}
+	scope := table.New(nil)
+	sym := symbols.New("Name", symbols.SymbolConst, nil, nil)
+	sym.BindType(&typeinfo.CStrType{})
+	if err := scope.Declare(sym); err != nil {
+		t.Fatalf("declare const: %v", err)
+	}
+
+	out := GenerateMIR(mod, scope, map[symbols.SymbolID]constvalue.Value{
+		sym.ID: &constvalue.StringConst{Value: "puts", TypeID: "cstr"},
+	})
+	if out == nil || len(out.StaticData) != 1 {
+		t.Fatalf("expected one static entry, got %#v", out)
+	}
+	entry := out.StaticData[0]
+	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != "cstr" || entry.Value != "puts" || entry.Align != 8 {
+		t.Fatalf("unexpected static entry: %#v", entry)
+	}
+}
+
+func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
+	mod := &hir.Module{Name: "test"}
+	scope := table.New(nil)
+	sym := symbols.New("X", symbols.SymbolConst, nil, nil)
+	sym.BindType(&typeinfo.FloatType{Bits: 64})
+	if err := scope.Declare(sym); err != nil {
+		t.Fatalf("declare const: %v", err)
+	}
+
+	out := GenerateMIR(mod, scope, map[symbols.SymbolID]constvalue.Value{
+		sym.ID: &constvalue.FloatConst{Value: "3", TypeID: "f64"},
+	})
+	if out == nil || len(out.StaticData) != 1 {
+		t.Fatalf("expected one static entry, got %#v", out)
+	}
+	entry := out.StaticData[0]
+	if entry.Type != "f64" || entry.Value != "3.0" {
+		t.Fatalf("unexpected float static entry: %#v", entry)
 	}
 }
 
@@ -60,7 +107,7 @@ func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -96,7 +143,7 @@ func TestGenerateMIRLowersZeroValue(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -130,7 +177,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -176,7 +223,7 @@ func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -186,6 +233,89 @@ func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
 	}
 	if _, ok := assign.Value.(*ProjectField); !ok {
 		t.Fatalf("expected address-of field to lower as ProjectField, got %#v", assign.Value)
+	}
+}
+
+func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "first",
+				Params:     []ir.Param{{Name: "xs", Type: "[4]i32"}},
+				ReturnType: "i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Return{Value: &ir.Index{
+							Base:  &ir.Ident{Name: "xs", Type: "[4]i32"},
+							Index: &ir.IntLit{Value: "0", Type: "i32"},
+							Type:  "i32",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("expected project index and load instructions, got %#v", instrs)
+	}
+	project, ok := instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected first instruction assignment, got %#v", instrs[0])
+	}
+	if _, ok := project.Value.(*ProjectIndex); !ok {
+		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
+	}
+	load, ok := instrs[1].(*Assign)
+	if !ok {
+		t.Fatalf("expected second instruction assignment, got %#v", instrs[1])
+	}
+	if _, ok := load.Value.(*Load); !ok {
+		t.Fatalf("expected Load after ProjectIndex, got %#v", load.Value)
+	}
+}
+
+func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "first",
+				ReturnType: "[3]i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Return{Value: &ir.ArrayLit{
+							Values: []ir.Expr{
+								&ir.IntLit{Value: "1", Type: "i32"},
+								&ir.IntLit{Value: "2", Type: "i32"},
+								&ir.IntLit{Value: "3", Type: "i32"},
+							},
+							Type: "[3]i32",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 1 {
+		t.Fatalf("expected array literal assign, got %#v", instrs)
+	}
+	assign, ok := instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assign, got %#v", instrs[0])
+	}
+	lit, ok := assign.Value.(*ArrayLit)
+	if !ok || lit.Type != "[3]i32" || len(lit.Values) != 3 {
+		t.Fatalf("expected MIR array literal, got %#v", assign.Value)
 	}
 }
 
@@ -221,7 +351,7 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -267,7 +397,7 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil)
+	out := GenerateMIR(mod, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}

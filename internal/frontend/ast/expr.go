@@ -23,6 +23,26 @@ type ScopeResolution struct {
 func (*ScopeResolution) exprNode()               {}
 func (*ScopeResolution) typeNode()               {}
 func (e *ScopeResolution) loc() *source.Location { return e.Location }
+func (e *ScopeResolution) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	module := ""
+	if e.Module != nil {
+		module = e.Module.Name
+	}
+	name := ""
+	if e.Name != nil {
+		name = e.Name.Name
+	}
+	if module == "" {
+		return name
+	}
+	if name == "" {
+		return module + "::"
+	}
+	return module + "::" + name
+}
 
 type SelectorExpr struct {
 	NodeIDHolder
@@ -33,6 +53,16 @@ type SelectorExpr struct {
 
 func (*SelectorExpr) exprNode()               {}
 func (e *SelectorExpr) loc() *source.Location { return e.Location }
+
+type IndexExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Index    Expr
+	Location *source.Location
+}
+
+func (*IndexExpr) exprNode()               {}
+func (e *IndexExpr) loc() *source.Location { return e.Location }
 
 type StructLitField struct {
 	Name     *Ident
@@ -49,6 +79,17 @@ type StructLit struct {
 
 func (*StructLit) exprNode()               {}
 func (e *StructLit) loc() *source.Location { return e.Location }
+
+type ArrayLit struct {
+	NodeIDHolder
+	Type        TypeExpr
+	Values      []Expr
+	InferredLen bool
+	Location    *source.Location
+}
+
+func (*ArrayLit) exprNode()               {}
+func (e *ArrayLit) loc() *source.Location { return e.Location }
 
 type BadExpr struct {
 	NodeIDHolder

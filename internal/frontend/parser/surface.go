@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
-	ir "compiler/internal/ir"
 )
 
 type moduleSurface struct {
@@ -48,7 +47,7 @@ func fnDeclSurface(prefix string, fn *ast.FnDecl) string {
 	if fn == nil || fn.Name == nil {
 		return prefix + ":"
 	}
-	return prefix + ":" + fn.Name.Name + ":" + strings.Join(typeParamNames(fn.TypeParams), ",") + ":" + strings.Join(paramSurface(fn.Params), ",") + ":" + ir.TypeText(fn.ReturnType)
+	return prefix + ":" + fn.Name.Name + ":" + strings.Join(typeParamNames(fn.TypeParams), ",") + ":" + strings.Join(paramSurface(fn.Params), ",") + ":" + ast.TypeText(fn.ReturnType)
 }
 
 func structDeclSurface(decl *ast.StructDecl) string {
@@ -64,7 +63,7 @@ func structDeclSurface(decl *ast.StructDecl) string {
 		if field.Name == nil {
 			continue
 		}
-		fields = append(fields, field.Name.Name+":"+ir.TypeText(field.Type))
+		fields = append(fields, field.Name.Name+":"+ast.TypeText(field.Type))
 	}
 	return "struct:" + decl.Name.Name + ":" + strings.Join(fields, ",")
 }
@@ -106,7 +105,7 @@ func typeAliasDeclSurface(decl *ast.TypeAliasDecl) string {
 	if decl == nil || decl.Name == nil {
 		return ""
 	}
-	return "type:" + decl.Name.Name + ":" + ir.TypeText(decl.Type)
+	return "type:" + decl.Name.Name + ":" + ast.TypeText(decl.Type)
 }
 
 func constDeclSurface(decl *ast.ConstDecl) string {
@@ -117,7 +116,7 @@ func constDeclSurface(decl *ast.ConstDecl) string {
 	if decl.Type == nil {
 		valueShape = fmt.Sprintf(":%T", decl.Value)
 	}
-	return "const:" + decl.Name.Name + ":" + ir.TypeText(decl.Type) + valueShape
+	return "const:" + decl.Name.Name + ":" + ast.TypeText(decl.Type) + valueShape
 }
 
 func letDeclSurface(decl *ast.LetDecl) string {
@@ -128,7 +127,7 @@ func letDeclSurface(decl *ast.LetDecl) string {
 	if decl.Type == nil {
 		valueShape = fmt.Sprintf(":%T", decl.Value)
 	}
-	return "let:" + decl.Name.Name + ":" + ir.TypeText(decl.Type) + valueShape
+	return "let:" + decl.Name.Name + ":" + ast.TypeText(decl.Type) + valueShape
 }
 
 func implDeclSurface(decl *ast.ImplDecl) string {
@@ -139,7 +138,7 @@ func implDeclSurface(decl *ast.ImplDecl) string {
 	for _, method := range decl.Methods {
 		methods = append(methods, fnDeclSurface("method", method))
 	}
-	return "impl:" + ir.TypeText(decl.Target) + ":" + strings.Join(methods, ";")
+	return "impl:" + ast.TypeText(decl.Target) + ":" + strings.Join(methods, ";")
 }
 
 func typeMethodSurface(prefix string, method ast.TypeMethod) string {
@@ -147,7 +146,7 @@ func typeMethodSurface(prefix string, method ast.TypeMethod) string {
 	if method.Name != nil {
 		name = method.Name.Name
 	}
-	return prefix + ":" + name + ":" + strings.Join(typeParamNames(method.TypeParams), ",") + ":" + strings.Join(paramSurface(method.Params), ",") + ":" + ir.TypeText(method.ReturnType)
+	return prefix + ":" + name + ":" + strings.Join(typeParamNames(method.TypeParams), ",") + ":" + strings.Join(paramSurface(method.Params), ",") + ":" + ast.TypeText(method.ReturnType)
 }
 
 func typeParamNames(typeParams []ast.TypeParam) []string {
@@ -171,7 +170,7 @@ func paramSurface(params []ast.Param) []string {
 		if param.Consumes {
 			prefix = "move "
 		}
-		out = append(out, prefix+name+":"+ir.TypeText(param.Type))
+		out = append(out, prefix+name+":"+ast.TypeText(param.Type))
 	}
 	return out
 }

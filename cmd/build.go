@@ -37,7 +37,7 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 		))
 		return ctx, nil
 	}
-	entry := compiler.ParseFile(ctx, path)
+	entry := compiler.ParseFileWithOverlay(ctx, path, "")
 	return ctx, entry
 }
 

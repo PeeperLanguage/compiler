@@ -72,6 +72,22 @@ func TestNonTypeDeclarationsDoNotImplementTypeDecl(t *testing.T) {
 	}
 }
 
+func TestTypeTextNamedAndFunction(t *testing.T) {
+	fnType := &FuncType{
+		Params: []TypeExpr{
+			&NamedType{Name: "i32"},
+			&NamedType{Name: "bool"},
+		},
+		Return: &NamedType{Name: "i32"},
+	}
+	if got := TypeText(&NamedType{Name: "u64"}); got != "u64" {
+		t.Fatalf("named type text mismatch: %q", got)
+	}
+	if got := TypeText(fnType); got != "fn(i32, bool) -> i32" {
+		t.Fatalf("func type text mismatch: %q", got)
+	}
+}
+
 func TestForEachDeclSkipsNonDeclTopLevelStatements(t *testing.T) {
 	mod := &Module{
 		Stmts: []Stmt{

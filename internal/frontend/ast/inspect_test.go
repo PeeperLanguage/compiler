@@ -30,3 +30,20 @@ func TestInspectPanicsOnUnhandledNodeType(t *testing.T) {
 
 	Inspect(&unknownNode{}, func(Node) bool { return true })
 }
+
+func TestInspectIndexExprVisitsBaseBeforeIndex(t *testing.T) {
+	index := &IndexExpr{
+		Expr:  &Ident{Name: "xs"},
+		Index: &Ident{Name: "i"},
+	}
+	var names []string
+	Inspect(index, func(n Node) bool {
+		if ident, ok := n.(*Ident); ok {
+			names = append(names, ident.Name)
+		}
+		return true
+	})
+	if got, want := strings.Join(names, ","), "xs,i"; got != want {
+		t.Fatalf("inspect order = %q, want %q", got, want)
+	}
+}

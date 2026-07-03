@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"compiler/internal/frontend/ast"
-	"compiler/internal/frontend/token"
 	"compiler/internal/source"
 )
 
@@ -131,8 +129,21 @@ type Field struct {
 	Location   *source.Location
 }
 
+type Index struct {
+	Base     Expr
+	Index    Expr
+	Type     string
+	Location *source.Location
+}
+
 type StructLit struct {
 	Fields   []Expr
+	Type     string
+	Location *source.Location
+}
+
+type ArrayLit struct {
+	Values   []Expr
 	Type     string
 	Location *source.Location
 }
@@ -158,7 +169,9 @@ func (*AddrOf) exprNode()        {}
 func (*InterfaceMake) exprNode() {}
 func (*InterfaceCall) exprNode() {}
 func (*Field) exprNode()         {}
+func (*Index) exprNode()         {}
 func (*StructLit) exprNode()     {}
+func (*ArrayLit) exprNode()      {}
 func (*Cast) exprNode()          {}
 
 func ExprLocation(expr Expr) *source.Location {
@@ -193,7 +206,11 @@ func ExprLocation(expr Expr) *source.Location {
 		return node.Location
 	case *Field:
 		return node.Location
+	case *Index:
+		return node.Location
 	case *StructLit:
+		return node.Location
+	case *ArrayLit:
 		return node.Location
 	case *Cast:
 		return node.Location
@@ -401,6 +418,20 @@ func (e *Field) TypeText() string {
 	return e.Type
 }
 
+func (e *Index) String() string {
+	if e == nil || e.Base == nil || e.Index == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s[%s]", e.Base.String(), e.Index.String())
+}
+
+func (e *Index) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
 func (e *StructLit) String() string {
 	if e == nil {
 		return ""
@@ -426,6 +457,31 @@ func (e *StructLit) TypeText() string {
 	return e.Type
 }
 
+func (e *ArrayLit) String() string {
+	if e == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[")
+	for i, value := range e.Values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if value != nil {
+			b.WriteString(value.String())
+		}
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+func (e *ArrayLit) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
 func (e *Cast) String() string {
 	if e == nil {
 		return ""
@@ -440,115 +496,16 @@ func (e *Cast) TypeText() string {
 	return e.Type
 }
 
-func IsFloatType(name string) bool {
-	return name == "f32" || name == "f64"
-}
-
-func IsIntegerType(name string) bool {
-	_, _, ok := token.ParseIntegerBuiltin(name)
-	return ok
-}
-
-func IsBoolType(name string) bool {
-	return name == "bool"
-}
-
-func TypeText(typ ast.TypeExpr) string {
-	switch node := typ.(type) {
-	case nil:
-		return ""
-	case *ast.NamedType:
-		return node.Name
-	case *ast.RawPtrType:
-		if !node.Mutable {
-			return "^const " + TypeText(node.Target)
-		}
-		return "^" + TypeText(node.Target)
-	case *ast.OptionalType:
-		return "?" + TypeText(node.Inner)
-	case *ast.ArrayType:
-		length := ""
-		if node.Len != nil {
-			length = node.Len.Value
-		}
-		return "[" + length + "]" + TypeText(node.Elem)
-	case *ast.SliceType:
-		return "[]" + TypeText(node.Elem)
-	case *ast.FuncType:
-		var b strings.Builder
-		b.WriteString("fn(")
-		for i, param := range node.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(TypeText(param))
-		}
-		b.WriteString(")")
-		if ret := TypeText(node.Return); ret != "" {
-			b.WriteString(" -> ")
-			b.WriteString(ret)
-		}
-		return b.String()
-	case *ast.StructType:
-		var b strings.Builder
-		b.WriteString("struct {")
-		for i, field := range node.Fields {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			if field.Name != nil {
-				b.WriteString(field.Name.Name)
-				b.WriteString(": ")
-			}
-			b.WriteString(TypeText(field.Type))
-		}
-		b.WriteString("}")
-		return b.String()
-	case *ast.InterfaceType:
-		var b strings.Builder
-		b.WriteString("interface {")
-		for i, method := range node.Methods {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			if method.Name != nil {
-				b.WriteString(method.Name.Name)
-			}
-			b.WriteString("(")
-			for j, param := range method.Params {
-				if j > 0 {
-					b.WriteString(", ")
-				}
-				if param.Name != nil {
-					b.WriteString(param.Name.Name)
-					b.WriteString(": ")
-				}
-				b.WriteString(TypeText(param.Type))
-			}
-			b.WriteString(")")
-			if ret := TypeText(method.ReturnType); ret != "" {
-				b.WriteString(" -> ")
-				b.WriteString(ret)
-			}
-		}
-		b.WriteString("}")
-		return b.String()
-	case *ast.EnumType:
-		var b strings.Builder
-		b.WriteString("enum {")
-		for i, variant := range node.Variants {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			if variant.Name != nil {
-				b.WriteString(variant.Name.Name)
-			}
-		}
-		b.WriteString("}")
-		return b.String()
-	default:
-		return ""
+func ArrayTypeParts(typeText string) (string, string, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if !strings.HasPrefix(typeText, "[") {
+		return "", "", false
 	}
+	close := strings.IndexByte(typeText, ']')
+	if close <= 1 || close == len(typeText)-1 {
+		return "", "", false
+	}
+	return strings.TrimSpace(typeText[1:close]), strings.TrimSpace(typeText[close+1:]), true
 }
 
 func SignatureText(params []Param, returnType string) string {

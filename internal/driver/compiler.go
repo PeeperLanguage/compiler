@@ -21,11 +21,6 @@ func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.Co
 	return ctx
 }
 
-// ParseFile loads one entry file and runs the pipeline against the provided project.
-func ParseFile(ctx *project.CompilerContext, path string) *project.Module {
-	return ParseFileWithOverlay(ctx, path, "")
-}
-
 // ParseFileWithOverlay compiles the entry file using in-memory content instead of reading from disk if content is provided.
 func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content string) *project.Module {
 	if ctx == nil {

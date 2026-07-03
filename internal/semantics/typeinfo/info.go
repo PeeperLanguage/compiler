@@ -428,11 +428,6 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 	}
 }
 
-func IsI32(typ Type) bool {
-	intType, ok := typ.(*IntegerType)
-	return ok && intType != nil && intType.Signed && intType.Bits == 32
-}
-
 func SameType(left, right Type) bool {
 	if left == right {
 		return true
@@ -549,7 +544,6 @@ func CommonNumericType(a, b Type) Type {
 	if SameType(a, b) {
 		return a
 	}
-	// Use the new compatibility system
 	if CheckNumericCompatibility(a, b) == Compatible {
 		return a
 	}

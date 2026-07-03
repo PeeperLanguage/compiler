@@ -65,6 +65,14 @@ type Expr interface {
 type TypeExpr interface {
 	Node
 	typeNode()
+	TypeText() string
+}
+
+func TypeText(typ TypeExpr) string {
+	if typ == nil {
+		return ""
+	}
+	return typ.TypeText()
 }
 
 type Module struct {

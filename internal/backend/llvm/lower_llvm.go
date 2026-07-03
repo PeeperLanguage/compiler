@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/problems"
 	"compiler/internal/source"
 )
 
@@ -89,13 +90,8 @@ func llvmTypeName(typeText string) (string, bool) {
 		}
 		return "{ " + elem + "*, i64 }", true
 	}
-	if strings.HasPrefix(typeText, "[") {
-		close := strings.IndexByte(typeText, ']')
-		if close <= 1 || close == len(typeText)-1 {
-			return "", false
-		}
-		length := strings.TrimSpace(typeText[1:close])
-		elem, ok := llvmTypeName(strings.TrimSpace(typeText[close+1:]))
+	if length, elemTypeText, ok := ir.ArrayTypeParts(typeText); ok {
+		elem, ok := llvmTypeName(elemTypeText)
 		if !ok {
 			return "", false
 		}
@@ -399,6 +395,60 @@ func emitFieldPtr(b *llvmBuilder, baseRef mir.ValueRef, index int) string {
 	return ptr
 }
 
+func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) string {
+	if b == nil || baseRef == nil || indexRef == nil {
+		return ""
+	}
+	baseType := mirRefType(baseRef)
+	targetType, pointed := pointedTypeText(baseType)
+	if !pointed {
+		targetType = baseType
+	}
+	if strings.HasPrefix(targetType, "[]") {
+		b.types.markInvalid("slice index lowering requires bounds policy")
+		return ""
+	}
+	if _, ok := indexRef.(*mir.RefConst); !ok {
+		b.types.markInvalid("dynamic array index lowering requires bounds policy")
+		return ""
+	}
+	lengthText, _, ok := ir.ArrayTypeParts(targetType)
+	if !ok {
+		return ""
+	}
+	length, lengthErr := strconv.Atoi(lengthText)
+	indexConst := indexRef.(*mir.RefConst)
+	indexValue, indexErr := strconv.Atoi(indexConst.Value)
+	if lengthErr != nil || indexErr != nil || indexValue < 0 || indexValue >= length {
+		b.types.invalid = true
+		if b.types.diag != nil {
+			b.types.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, lengthText, nil))
+		}
+		return ""
+	}
+	arrayType, ok := llvmTypeName(targetType)
+	if !ok {
+		return ""
+	}
+	basePtr := ""
+	if pointed {
+		basePtr = emitRef(b, baseRef)
+	} else if ref, ok := baseRef.(*mir.RefName); ok && ref != nil {
+		basePtr = ensureLocalAddr(b, ref)
+	}
+	if basePtr == "" {
+		baseValue := emitRef(b, baseRef)
+		basePtr = b.nextReg()
+		b.line(fmt.Sprintf("%s = alloca %s", basePtr, arrayType))
+		b.line(fmt.Sprintf("store %s %s, %s* %s", arrayType, baseValue, arrayType, basePtr))
+	}
+	index := emitRef(b, indexRef)
+	indexType := b.types.llvmType(mirRefType(indexRef))
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s* %s, i32 0, %s %s", ptr, arrayType, arrayType, basePtr, indexType, index))
+	return ptr
+}
+
 func mirValueType(expr mir.ValueExpr) string {
 	switch v := expr.(type) {
 	case *mir.Move:
@@ -415,9 +465,13 @@ func mirValueType(expr mir.ValueExpr) string {
 		return v.Type
 	case *mir.ProjectField:
 		return v.Type
+	case *mir.ProjectIndex:
+		return v.Type
 	case *mir.Field:
 		return v.Type
 	case *mir.StructLit:
+		return v.Type
+	case *mir.ArrayLit:
 		return v.Type
 	case *mir.ZeroValue:
 		return v.Type
@@ -530,7 +584,7 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			b.line(fmt.Sprintf("%s = fcmp one %s %s, 0.0", out, fromLLVM, argRef))
 			return out
 		}
-		if isMIRIntegerType(fromType) {
+		if _, _, ok := token.ParseIntegerBuiltin(fromType); ok {
 			fromLLVM := b.types.llvmType(fromType)
 			b.line(fmt.Sprintf("%s = icmp ne %s %s, 0", out, fromLLVM, argRef))
 			return out
@@ -538,21 +592,21 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		return argRef
 	}
 
-	if isMIRFloatType(fromType) && isMIRIntegerType(toType) {
+	if toSigned, _, ok := token.ParseIntegerBuiltin(toType); isMIRFloatType(fromType) && ok {
 		out := b.nextReg()
 		fromLLVM := b.types.llvmType(fromType)
 		toLLVM := b.types.llvmType(toType)
-		if isMIRSignedIntegerType(toType) {
+		if toSigned {
 			b.line(fmt.Sprintf("%s = fptosi %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		} else {
 			b.line(fmt.Sprintf("%s = fptoui %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		}
 		return out
-	} else if isMIRIntegerType(fromType) && isMIRFloatType(toType) {
+	} else if fromSigned, _, ok := token.ParseIntegerBuiltin(fromType); ok && isMIRFloatType(toType) {
 		out := b.nextReg()
 		fromLLVM := b.types.llvmType(fromType)
 		toLLVM := b.types.llvmType(toType)
-		if isMIRSignedIntegerType(fromType) {
+		if fromSigned {
 			b.line(fmt.Sprintf("%s = sitofp %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		} else {
 			b.line(fmt.Sprintf("%s = uitofp %s %s to %s", out, fromLLVM, argRef, toLLVM))
@@ -569,14 +623,16 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			return out
 		}
 		return argRef
-	} else if isMIRIntegerType(fromType) && isMIRIntegerType(toType) {
-		fromBits := mirParseIntegerTypeBits(fromType)
-		toBits := mirParseIntegerTypeBits(toType)
+	} else if fromSigned, fromBits, ok := token.ParseIntegerBuiltin(fromType); ok {
+		_, toBits, ok := token.ParseIntegerBuiltin(toType)
+		if !ok {
+			return argRef
+		}
 		fromLLVM := b.types.llvmType(fromType)
 		toLLVM := b.types.llvmType(toType)
 		if fromBits < toBits {
 			out := b.nextReg()
-			if isMIRSignedIntegerType(fromType) {
+			if fromSigned {
 				b.line(fmt.Sprintf("%s = sext %s %s to %s", out, fromLLVM, argRef, toLLVM))
 			} else {
 				b.line(fmt.Sprintf("%s = zext %s %s to %s", out, fromLLVM, argRef, toLLVM))
@@ -594,25 +650,6 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 
 func isMIRFloatType(typ string) bool {
 	return typ == "f32" || typ == "f64"
-}
-
-func isMIRIntegerType(typ string) bool {
-	return strings.HasPrefix(typ, "i") || strings.HasPrefix(typ, "u")
-}
-
-func isMIRSignedIntegerType(typ string) bool {
-	return strings.HasPrefix(typ, "i")
-}
-
-func mirParseIntegerTypeBits(typ string) int {
-	if isMIRIntegerType(typ) {
-		if len(typ) > 1 {
-			if bits, err := strconv.Atoi(typ[1:]); err == nil {
-				return bits
-			}
-		}
-	}
-	return 0
 }
 
 func newLLVMBuilder(out *strings.Builder, types *llvmEmitter, debugScopeID int) *llvmBuilder {
@@ -793,6 +830,11 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 				return ptr
 			}
 			return "0"
+		case *mir.ProjectIndex:
+			if ptr := emitIndexPtr(b, e.Base, e.Index); ptr != "" {
+				return ptr
+			}
+			return "0"
 		case *mir.Field:
 			if e.ThroughPtr {
 				ptr := emitFieldPtr(b, e.Base, e.Index)
@@ -821,6 +863,17 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 				next := b.nextReg()
 				fieldType := b.types.llvmType(mirRefType(field))
 				b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, fieldType, value, i))
+				current = next
+			}
+			return current
+		case *mir.ArrayLit:
+			llvmType := b.types.llvmType(e.Type)
+			current := "zeroinitializer"
+			for i, item := range e.Values {
+				value := emitRef(b, item)
+				next := b.nextReg()
+				itemType := b.types.llvmType(mirRefType(item))
+				b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, %d", next, llvmType, current, itemType, value, i))
 				current = next
 			}
 			return current

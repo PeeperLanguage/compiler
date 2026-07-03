@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"compiler/internal/analysis/cfg"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
 	"compiler/internal/graph"
@@ -10,7 +9,9 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
@@ -204,6 +205,8 @@ func nextModulePhase(current project.ModulePhase) project.ModulePhase {
 	case project.PhaseBound:
 		return project.PhaseResolved
 	case project.PhaseResolved:
+		return project.PhaseConstEval
+	case project.PhaseConstEval:
 		return project.PhaseTypechecked
 	case project.PhaseTypechecked:
 		return project.PhaseOwnership
@@ -224,8 +227,10 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 	switch next {
 	case project.PhaseCollected:
 		return project.PhaseParsed
-	case project.PhaseBound, project.PhaseTypechecked:
+	case project.PhaseBound:
 		return project.PhaseBound
+	case project.PhaseConstEval, project.PhaseTypechecked:
+		return project.PhaseConstEval
 	case project.PhaseResolved, project.PhaseOwnership, project.PhaseUsage:
 		return project.PhaseCollected
 	case project.PhaseHIR:
@@ -260,6 +265,12 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase < project.PhaseResolved {
 		resolver.Resolve(p.ctx, module)
 		module.Phase = project.PhaseResolved
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < project.PhaseConstEval {
+		consteval.Evaluate(p.ctx, module)
+		module.Phase = project.PhaseConstEval
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
@@ -301,7 +312,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope)
+		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope, module.Semantics.ConstValues)
 		module.Phase = project.PhaseMIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
