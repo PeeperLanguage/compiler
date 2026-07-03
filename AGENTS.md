@@ -1,130 +1,184 @@
 # Agent Workflow
 
-Follow [RULES.md](RULES.md) for every code change in this repository.
+This file defines how agents must work in this repository.
 
-## Required Pre-Change Check
+`RULES.md` defines what code is acceptable. Follow it for every code change. If this file conflicts with `RULES.md`, `RULES.md` wins for code quality, architecture, testing, branch, and commit rules.
+
+Human-facing project rules belong in `RULES.md`. Agent-only workflow, gates, local plans, GitHub automation, and response style belong here.
+
+---
+
+## 1) Required pre-change check
 
 Before editing code, answer these questions in your rationale:
 
 1. What existing function/module already implements part of this behavior?
 2. Can existing logic be reused directly instead of adding a wrapper?
 3. Would this change duplicate logic across files, phases, or backends?
-4. If a new helper is introduced, which rule in `RULES.md` allows it?
+4. If a function is being replaced, renamed, removed, or simplified, what behavior did it previously own?
+5. If a parameter becomes unused, why should it still exist?
+6. If a new helper is introduced, which rule in `RULES.md` allows it?
 
-Do not start implementation until those questions are answered.
+Do not start implementation until these questions are answered from inspected code, not memory.
 
-## Mandatory Pre-Patch Gate
+---
 
-Immediately before **every** code edit or `apply_patch`:
+## 2) Mandatory pre-patch gate
 
-1. Re-read [`RULES.md`](RULES.md) sections 1, 3, 7, and 10.
-2. Re-answer pre-change questions against current diff, not memory.
-3. Check each planned new or changed function against:
+Immediately before every code edit or `apply_patch`:
+
+1. Re-read the relevant `RULES.md` sections for:
+   - no pass-through wrappers
+   - no stale aliases
+   - no duplicated logic
+   - behavior preservation
+   - function replacement
+   - change scope
+   - compiler pipeline architecture, if relevant
+   - testing requirements
+2. Re-answer the pre-change questions against the current diff.
+3. Check every planned new or changed function against:
    - pass-through wrapper ban
+   - stale local alias ban
+   - ignored parameter ban
    - duplicated logic ban
-   - existing shared logic reuse first
+   - canonical implementation reuse first
    - helper allowance rules
+   - behavior preservation rule
 4. If any answer is unclear, weak, or based on assumption, stop and inspect code again before editing.
 
-Do not rely on earlier turn notes or earlier same-turn checks. Re-run this gate every patch.
+Do not rely on earlier turn notes or earlier same-turn checks. Re-run this gate before every patch.
 
-## Hard Constraints
+---
+
+## 3) Agent hard constraints
+
+These are workflow reminders. Full authority stays in `RULES.md`.
 
 - Do not add pass-through wrappers.
+- Do not keep old function names as wrappers around new canonical functions.
+- Do not keep old signatures while ignoring parameters.
 - Do not duplicate logic that can be centralized.
 - Prefer existing shared logic before introducing new helpers.
-- Always remove local repetition when it can be reduced without harming clarity.
-- Optimize for readability and maintainability first, not just correctness.
-- Do not leave touched code in a repetitive or obviously cleanup-needed state.
+- Remove local repetition when it can be reduced without harming clarity.
+- Optimize for readability and maintainability first, not only correctness.
+- Do not leave touched code in repetitive or obviously cleanup-needed state.
 - Keep diffs minimal and task-focused.
 - Do not mix unrelated refactors into the same change.
-- Do not satisfy compiler requests with temporary shortcut paths that bypass intended phase boundaries.
+- Do not satisfy compiler requests with shortcut paths that bypass intended phase boundaries.
 
-## Compiler Pipeline Mandate (Critical)
+---
 
-For any compiler-flow work (`parser`, `collector`, `resolver`, `typechecker`, `HIR`, `HIR lowering`, `MIR`, `codegen`):
-
-1. Keep real phase chain.  
-   Do not collapse multiple phases into one ad-hoc function.
-2. Keep phase outputs explicit data models.  
-   If phase exists in architecture, represent it in code and handoff.
-3. Do not fake artifacts.  
-   `.hir`, `.mir`, and backend IR must come from actual lowering of previous phase model.
-4. No hardcoded/manual output to satisfy sample case.  
-   Output must be generated from AST/semantic inputs.
-5. If scope intentionally limited, state exact boundary in code comments and close-out notes.
-6. If request implies future constructs (multi-function, calls, scopes, loops), design touched code to extend without rewrite.
-7. Missing phase work must be tracked as explicit TODO item in repo docs or local plan notes with impact statement.
-
-## Anti-Shortcut Review Gate
-
-Before marking compiler task done, confirm all:
-
-- parser output consumed by collector
-- collector output consumed by resolver
-- resolver output consumed by typechecker
-- typechecker output consumed by HIR lowering
-- HIR consumed by MIR lowering
-- MIR consumed by backend lowering
-- backend output used by real toolchain step (if toolchain stage in scope)
-
-If any link missing, status is `blocked` or `partial`, never `done`.
-
-## Stepwise Workflow
+## 4) Stepwise workflow
 
 1. Keep a persistent local tracking file with the `*.localplan.md` naming pattern. Do not commit it.
 2. Implement one approved step at a time.
-3. Stop after each step and wait for review.
+3. Stop after each step and wait for review, unless user explicitly asks for multiple steps in one pass.
 4. Commit only after explicit approval.
-5. The local plan is a full progress report, not a short scratch note. It must preserve completed work, current work, remaining work, and resume context in one place.
+5. Keep the local plan as a full progress report, not a short scratch note.
 
-Minimum local plan header:
+The local plan must preserve completed work, current work, remaining work, risks, validation, and resume context in one place.
 
-```
+### Minimum local plan header
+
+```text
 TASK: <short task title>
+
 STATUS: active|done|blocked
+
 STEP: <one-line current step>
+
 NEXT: <one-line next step>
+
 NOTES:
-- <short note>
-- <short note>
+ 1. [x] <completed task 1>
+ 2. [x] <completed task 2>
+ 3. [ ] <pending task 3>
+ 4. [ ] <pending task 4>
 ```
 
-Required full local plan body:
+### Required full local plan body
 
-- `DONE:` section
-  - completed steps
-  - important decisions already made
-  - validations already run
-  - branch/commit info once something is committed
-- `CURRENT STATE:` section
-  - what architecture/code state exists now
-  - what constraints or known issues still matter
-- `STEP N:` sections for all known remaining steps
-  - goal
-  - why
-  - how to do it
-  - what must be maintained
-  - how to validate
-  - exact stop condition for review
-- `KNOWN RISKS:` section
-  - pitfalls, invariants, or easy-to-break assumptions
-- `RESUME CHECKLIST:` section
-  - what to read/check before continuing later
+#### `DONE:`
 
-Do not rewrite the local plan to only current and next step. Keep whole workflow visible so later steps are not forgotten.
+Include:
 
-## Required Close-Out Note
+- completed steps
+- important decisions already made
+- validations already run
+- branch info
+- commit info once something is committed
 
-For each completed step, include a short `Rules check` note that states:
+#### `CURRENT STATE:`
+
+Include:
+
+- current architecture/code state
+- current active branch, if relevant
+- current files/modules being worked on, if relevant
+- constraints that still matter
+- known issues that still matter
+
+#### `STEP N:`
+
+Include one section for each known remaining step.
+
+Each step must include:
+
+- goal
+- why
+- how to do it
+- what must be maintained
+- how to validate
+- exact stop condition for review
+
+#### `KNOWN RISKS:`
+
+Include:
+
+- pitfalls
+- invariants
+- easy-to-break assumptions
+- files/areas that should not be modified carelessly
+- assumptions future developers must preserve
+
+#### `RESUME CHECKLIST:`
+
+Include:
+
+- what to read/check before continuing later
+- latest relevant files
+- latest validation command/results
+- next expected edit or decision
+
+### Progress checklist rule
+
+- `NOTES:` must show main task progress at a glance.
+- Use `[x]` for completed items.
+- Use `[ ]` for pending items.
+- Keep each checklist item short.
+- Update the checklist whenever a step is completed, blocked, or added.
+- Do not rewrite the local plan to only current and next step. Keep whole workflow visible.
+
+---
+
+## 5) Required close-out note
+
+For each completed step, include a short `Rules check` note stating:
 
 - whether any wrapper was added
-- whether any duplicated logic remains in touched areas
+- whether any stale alias remains
+- whether any parameter is now ignored
+- whether duplicated logic remains in touched areas
 - whether any helper was added and why it is allowed under `RULES.md`
+- whether diagnostics/validation/invariants were preserved or intentionally changed
+- what validation was run
 
-Do not overstate cleanup status in review notes. If duplication still exists in touched code, say so plainly.
+Do not overstate cleanup status. If duplication still exists in touched code, say so plainly.
 
-## GitHub Tracking Automation
+---
+
+## 6) GitHub tracking automation
 
 When work changes roadmap state, use `gh` to keep GitHub tracking current before moving to the next task.
 
@@ -167,26 +221,48 @@ gh project item-list 2 --owner PeeperLanguage --format json --limit 100
 gh project item-edit --project-id PVT_kwDOET_G284BbrYm --id <item-id> --field-id PVTSSF_lADOET_G284BbrYmzhWaQYk --single-select-option-id <status-option-id>
 ```
 
-## Mandatory Post-Patch Gate
+---
+
+## 7) Mandatory post-patch gate
 
 Immediately after edits and before any stop, pause, or final response:
 
 1. Review every touched function, method, and new field in edited files.
 2. Remove any pass-through wrapper introduced during current step.
-3. Remove or centralize duplicated logic in touched areas when possible within current step scope.
-4. Re-check any new helper against exact allowance rule in [`RULES.md`](RULES.md).
-5. Run focused validation for touched packages.
-6. Report rule-audit result explicitly.
+3. Remove any stale local alias introduced during current step.
+4. Remove any ignored parameter introduced during current step, unless a real interface/API boundary requires it.
+5. Remove or centralize duplicated logic in touched areas when possible within current step scope.
+6. Re-check any new helper against the exact allowance rule in `RULES.md`.
+7. Confirm diagnostics, validation, mutation, caching, logging, and invariant checks were preserved, moved, or intentionally removed.
+8. Run focused validation for touched packages.
+9. Report rule-audit result explicitly.
 
 Do not stop at "step done" until this audit passes for touched files.
 
-## Agent conversation style:
+---
 
-Respond terse like smart caveman. All technical substance stay. Only fluff die.
+## 8) Agent conversation style
+
+Respond terse like smart caveman. Technical substance stays. Fluff dies.
 
 Rules:
-  Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging
-  Fragments OK. Short synonyms. Technical terms exact. Code unchanged.
-  Pattern: [thing] [action] [reason]. [next step].
-  Not: "Sure! I'd be happy to help you with that."
-  Yes: "Bug in auth middleware. Fix:"
+
+- Drop articles when readable: `a`, `an`, `the`.
+- Drop filler: `just`, `really`, `basically`, `sure`, `happy to`.
+- Fragments OK.
+- Short synonyms preferred.
+- Technical terms exact.
+- Code unchanged.
+- Pattern: `[thing] [action] [reason]. [next step].`
+
+Bad:
+
+```text
+Sure! I'd be happy to help you with that.
+```
+
+Good:
+
+```text
+Bug in auth middleware. Fix:
+```
