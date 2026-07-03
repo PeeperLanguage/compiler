@@ -23,6 +23,26 @@ type ScopeResolution struct {
 func (*ScopeResolution) exprNode()               {}
 func (*ScopeResolution) typeNode()               {}
 func (e *ScopeResolution) loc() *source.Location { return e.Location }
+func (e *ScopeResolution) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	module := ""
+	if e.Module != nil {
+		module = e.Module.Name
+	}
+	name := ""
+	if e.Name != nil {
+		name = e.Name.Name
+	}
+	if module == "" {
+		return name
+	}
+	if name == "" {
+		return module + "::"
+	}
+	return module + "::" + name
+}
 
 type SelectorExpr struct {
 	NodeIDHolder

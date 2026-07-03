@@ -372,11 +372,11 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 
 	switch node := expr.(type) {
 	case *ast.NumberLit:
-		t := resolvedTypeStr
-		if t == "" {
-			t = expectedTypeStr
+		t := resolvedType
+		if t == nil {
+			t = expectedType
 		}
-		return lowerNumberLit(node, t, loc)
+		return lowerNumberLit(module, node, t, loc)
 
 	case *ast.StringLit:
 		t := resolvedTypeStr
@@ -878,20 +878,19 @@ func methodSymbolRefName(targetText string, sym *symbols.Symbol) string {
 	return fmt.Sprintf("%s$%d", methodFunctionName(targetText, sym.Name), sym.ID)
 }
 
-// lowerNumberLit produces the correct IR literal from a raw number token and
-// the expected type string (e.g. "i8", "f32") set by the typechecker via symbol.Type.
-func lowerNumberLit(node *ast.NumberLit, expectedType string, loc *source.Location) ir.Expr {
+func lowerNumberLit(module *project.Module, node *ast.NumberLit, expectedType typeinfo.Type, loc *source.Location) ir.Expr {
 	if node == nil {
 		return &ir.InvalidExpr{Message: "nil number literal", Type: "<invalid>"}
 	}
-	if expectedType == "" || expectedType == "<invalid>" || expectedType == "<unknown>" {
+	if expectedType == nil || typeinfo.IsInvalidOrUnknown(expectedType) {
 		// No expected type — use language default.
 		if numeric.IsFloat(node.Value) {
 			return &ir.FloatLit{Value: node.Value, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value)), Location: loc}
 		}
 		return &ir.IntLit{Value: node.Value, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value)), Location: loc}
 	}
-	if ir.IsFloatType(expectedType) {
+	family, _, numericType := typeinfo.NumericInfo(expectedType)
+	if numericType && family == typeinfo.NumericFloat {
 		v := node.Value
 		if !numeric.IsFloat(v) {
 			// Convert integer text to float text for LLVM IR.
@@ -899,9 +898,9 @@ func lowerNumberLit(node *ast.NumberLit, expectedType string, loc *source.Locati
 				v = iv.String() + ".0"
 			}
 		}
-		return &ir.FloatLit{Value: v, Type: expectedType, Location: loc}
+		return &ir.FloatLit{Value: v, Type: loweredTypeText(module, expectedType), Location: loc}
 	}
-	return &ir.IntLit{Value: node.Value, Type: expectedType, Location: loc}
+	return &ir.IntLit{Value: node.Value, Type: loweredTypeText(module, expectedType), Location: loc}
 }
 
 func symbolName(sym *symbols.Symbol) string {

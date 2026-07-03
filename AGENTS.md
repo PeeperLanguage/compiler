@@ -182,6 +182,11 @@ Do not overstate cleanup status. If duplication still exists in touched code, sa
 
 When work changes roadmap state, use `gh` to keep GitHub tracking current before moving to the next task.
 
+One-word trigger:
+
+- If the user says `ship`, treat it as approval to commit all current relevant work, push the branch, update or create the PR, wait for/verify checks, merge only if all required checks and review state are clean, and update related GitHub issues, milestones, and `Peeper Roadmap` project items.
+- `ship` does not authorize destructive git operations, bypassing checks, skipping tests, using `--no-gpg-sign`, or committing unrelated files.
+
 Required checks:
 
 1. Check open PRs:

@@ -1,6 +1,8 @@
 package ast
 
 import (
+	"strings"
+
 	"compiler/internal/source"
 )
 
@@ -24,6 +26,12 @@ type NamedType struct {
 
 func (*NamedType) typeNode()               {}
 func (t *NamedType) loc() *source.Location { return t.Location }
+func (t *NamedType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	return t.Name
+}
 
 type RawPtrType struct {
 	NodeIDHolder
@@ -34,6 +42,15 @@ type RawPtrType struct {
 
 func (*RawPtrType) typeNode()               {}
 func (t *RawPtrType) loc() *source.Location { return t.Location }
+func (t *RawPtrType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	if !t.Mutable {
+		return "^const " + TypeText(t.Target)
+	}
+	return "^" + TypeText(t.Target)
+}
 
 type OptionalType struct {
 	NodeIDHolder
@@ -43,6 +60,12 @@ type OptionalType struct {
 
 func (*OptionalType) typeNode()               {}
 func (t *OptionalType) loc() *source.Location { return t.Location }
+func (t *OptionalType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	return "?" + TypeText(t.Inner)
+}
 
 type ArrayType struct {
 	NodeIDHolder
@@ -53,6 +76,16 @@ type ArrayType struct {
 
 func (*ArrayType) typeNode()               {}
 func (t *ArrayType) loc() *source.Location { return t.Location }
+func (t *ArrayType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	length := ""
+	if t.Len != nil {
+		length = t.Len.Value
+	}
+	return "[" + length + "]" + TypeText(t.Elem)
+}
 
 type SliceType struct {
 	NodeIDHolder
@@ -62,6 +95,12 @@ type SliceType struct {
 
 func (*SliceType) typeNode()               {}
 func (t *SliceType) loc() *source.Location { return t.Location }
+func (t *SliceType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	return "[]" + TypeText(t.Elem)
+}
 
 type FuncType struct {
 	NodeIDHolder
@@ -73,6 +112,25 @@ type FuncType struct {
 
 func (*FuncType) typeNode()               {}
 func (t *FuncType) loc() *source.Location { return t.Location }
+func (t *FuncType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("fn(")
+	for i, param := range t.Params {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(TypeText(param))
+	}
+	b.WriteString(")")
+	if ret := TypeText(t.Return); ret != "" {
+		b.WriteString(" -> ")
+		b.WriteString(ret)
+	}
+	return b.String()
+}
 
 type StructType struct {
 	NodeIDHolder
@@ -82,6 +140,25 @@ type StructType struct {
 
 func (*StructType) typeNode()               {}
 func (t *StructType) loc() *source.Location { return t.Location }
+func (t *StructType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("struct {")
+	for i, field := range t.Fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if field.Name != nil {
+			b.WriteString(field.Name.Name)
+			b.WriteString(": ")
+		}
+		b.WriteString(TypeText(field.Type))
+	}
+	b.WriteString("}")
+	return b.String()
+}
 
 type InterfaceType struct {
 	NodeIDHolder
@@ -91,6 +168,39 @@ type InterfaceType struct {
 
 func (*InterfaceType) typeNode()               {}
 func (t *InterfaceType) loc() *source.Location { return t.Location }
+func (t *InterfaceType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("interface {")
+	for i, method := range t.Methods {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if method.Name != nil {
+			b.WriteString(method.Name.Name)
+		}
+		b.WriteString("(")
+		for j, param := range method.Params {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			if param.Name != nil {
+				b.WriteString(param.Name.Name)
+				b.WriteString(": ")
+			}
+			b.WriteString(TypeText(param.Type))
+		}
+		b.WriteString(")")
+		if ret := TypeText(method.ReturnType); ret != "" {
+			b.WriteString(" -> ")
+			b.WriteString(ret)
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
 
 type EnumType struct {
 	NodeIDHolder
@@ -100,6 +210,23 @@ type EnumType struct {
 
 func (*EnumType) typeNode()               {}
 func (t *EnumType) loc() *source.Location { return t.Location }
+func (t *EnumType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("enum {")
+	for i, variant := range t.Variants {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if variant.Name != nil {
+			b.WriteString(variant.Name.Name)
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
 
 type TypeField struct {
 	Name     *Ident

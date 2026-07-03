@@ -106,6 +106,14 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *table.Scope) (co
 }
 
 func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+	if node, ok := expr.(*ast.StringLit); ok {
+		typText := "cstr"
+		switch typeinfo.Underlying(expected).(type) {
+		case *typeinfo.CStrType, *typeinfo.StringType:
+			typText = typeinfo.TypeText(expected)
+		}
+		return &constvalue.StringConst{Value: node.Value, TypeID: typText}, true
+	}
 	_, _, numericExpected := typeinfo.NumericInfo(expected)
 	if expected != nil && !numericExpected {
 		expected = nil
@@ -133,7 +141,11 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 		if !ok || sym == nil || sym.Kind != symbols.SymbolConst {
 			return nil, false
 		}
-		return e.evalConstSymbol(sym, lookup)
+		value, ok := e.evalConstSymbol(sym, lookup)
+		if !ok {
+			return nil, false
+		}
+		return expectedNumericConstValue(value, expected)
 	case *ast.UnaryExpr:
 		value, ok := e.evalExpr(scope, node.Expr, expected)
 		if !ok {
@@ -164,5 +176,36 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 		return constvalue.FoldBinary(node.Op, left, right)
 	default:
 		return nil, false
+	}
+}
+
+func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (constvalue.Value, bool) {
+	if expected == nil {
+		return value, true
+	}
+	family, _, ok := typeinfo.NumericInfo(expected)
+	if !ok {
+		return value, true
+	}
+	typeText := typeinfo.TypeText(expected)
+	switch v := value.(type) {
+	case *constvalue.IntConst:
+		if v == nil {
+			return nil, false
+		}
+		if family == typeinfo.NumericFloat {
+			return &constvalue.FloatConst{Value: v.Value, TypeID: typeText}, true
+		}
+		return &constvalue.IntConst{Value: v.Value, TypeID: typeText}, true
+	case *constvalue.FloatConst:
+		if v == nil {
+			return nil, false
+		}
+		if family == typeinfo.NumericFloat {
+			return &constvalue.FloatConst{Value: v.Value, TypeID: typeText}, true
+		}
+		return nil, false
+	default:
+		return value, true
 	}
 }

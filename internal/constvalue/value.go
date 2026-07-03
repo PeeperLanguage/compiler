@@ -27,9 +27,15 @@ type BoolConst struct {
 	Value bool
 }
 
-func (*IntConst) constValueNode()   {}
-func (*FloatConst) constValueNode() {}
-func (*BoolConst) constValueNode()  {}
+type StringConst struct {
+	Value  string
+	TypeID string
+}
+
+func (*IntConst) constValueNode()    {}
+func (*FloatConst) constValueNode()  {}
+func (*BoolConst) constValueNode()   {}
+func (*StringConst) constValueNode() {}
 
 func (v *IntConst) Truthy() (bool, bool) {
 	if v == nil {
@@ -60,6 +66,13 @@ func (v *BoolConst) Truthy() (bool, bool) {
 	return v.Value, true
 }
 
+func (v *StringConst) Truthy() (bool, bool) {
+	if v == nil {
+		return false, false
+	}
+	return v.Value != "", true
+}
+
 func (v *IntConst) TypeText() string {
 	if v == nil || v.TypeID == "" {
 		return "i32"
@@ -75,6 +88,13 @@ func (v *FloatConst) TypeText() string {
 }
 
 func (v *BoolConst) TypeText() string { return "bool" }
+
+func (v *StringConst) TypeText() string {
+	if v == nil || v.TypeID == "" {
+		return "cstr"
+	}
+	return v.TypeID
+}
 
 func FoldUnary(op string, value Value) (Value, bool) {
 	switch v := value.(type) {

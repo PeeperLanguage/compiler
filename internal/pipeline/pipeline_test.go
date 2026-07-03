@@ -948,6 +948,23 @@ fn first() -> i32 {
 	}
 }
 
+func TestPipelineLowersMixedWidthConstArrayIndex(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `const A = 1;
+const W: i64 = 2;
+const B = A + W;
+
+fn first() -> i32 {
+	let arr = [_]i32{1, 2, 3, 4};
+	return arr[B];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersAnonymousStructLiteralFieldAccess(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {

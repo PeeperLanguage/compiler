@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"compiler/internal/frontend/ast"
+	"compiler/internal/constvalue"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/symbols"
@@ -436,20 +436,7 @@ type lowerer struct {
 	location    *source.Location
 }
 
-func evalASTLiteral(expr ast.Expr) (string, bool) {
-	if expr == nil {
-		return "", false
-	}
-	switch e := expr.(type) {
-	case *ast.NumberLit:
-		return e.Value, true
-	case *ast.StringLit:
-		return e.Value, true
-	}
-	return "", false
-}
-
-func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
+func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil {
 		return nil
 	}
@@ -466,31 +453,10 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 			if sym == nil {
 				continue
 			}
-			if sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolConst {
-				var valExpr ast.Expr
-				if letDecl, ok := sym.ASTNode.(*ast.LetDecl); ok && letDecl != nil {
-					valExpr = letDecl.Value
-				} else if constDecl, ok := sym.ASTNode.(*ast.ConstDecl); ok && constDecl != nil {
-					valExpr = constDecl.Value
-				}
-				if valStr, ok := evalASTLiteral(valExpr); ok {
-					var typText string
-					if sym.Type != nil {
-						typText = typeinfo.TypeText(typeinfo.Underlying(sym.Type))
-					} else {
-						typText = "i32"
-					}
-					align := 4
-					if typText == "cstr" {
-						align = 8
-					}
-					name := fmt.Sprintf("@%s$%d", sym.Name, sym.ID)
-					out.StaticData = append(out.StaticData, &StaticEntry{
-						Name:  name,
-						Type:  typText,
-						Value: valStr,
-						Align: align,
-					})
+			if sym.Kind == symbols.SymbolConst {
+				entry, ok := staticEntryForConst(sym, constValues[sym.ID])
+				if ok {
+					out.StaticData = append(out.StaticData, entry)
 				}
 			}
 		}
@@ -530,6 +496,67 @@ func GenerateMIR(in *hir.Module, scope *table.Scope) *Module {
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
+}
+
+func staticEntryForConst(sym *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {
+	if sym == nil || value == nil {
+		return nil, false
+	}
+	valueText, ok := constStaticValueText(value)
+	if !ok {
+		return nil, false
+	}
+	typeText := value.TypeText()
+	if sym.Type != nil {
+		typeText = typeinfo.TypeText(typeinfo.Underlying(sym.Type))
+	}
+	align := 4
+	if typeText == "cstr" {
+		align = 8
+	}
+	return &StaticEntry{
+		Name:  fmt.Sprintf("@%s$%d", sym.Name, sym.ID),
+		Type:  typeText,
+		Value: valueText,
+		Align: align,
+	}, true
+}
+
+func constStaticValueText(value constvalue.Value) (string, bool) {
+	switch v := value.(type) {
+	case *constvalue.IntConst:
+		if v == nil {
+			return "", false
+		}
+		return v.Value, true
+	case *constvalue.FloatConst:
+		if v == nil {
+			return "", false
+		}
+		return llvmFloatConstText(v.Value), true
+	case *constvalue.BoolConst:
+		if v == nil {
+			return "", false
+		}
+		if v.Value {
+			return "true", true
+		}
+		return "false", true
+	case *constvalue.StringConst:
+		if v == nil {
+			return "", false
+		}
+		return v.Value, true
+	default:
+		return "", false
+	}
+}
+
+func llvmFloatConstText(value string) string {
+	if strings.ContainsAny(value, ".eE") {
+		return value
+	}
+	return value + ".0"
 }
 
 func (l *lowerer) newBlock() *Block {

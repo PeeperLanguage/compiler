@@ -93,6 +93,18 @@ const C = 1 + A;
 	assertIntConst(t, module, "C", "2", "i64")
 }
 
+func TestEvaluateRetypesCachedConstIdentifierForCommonType(t *testing.T) {
+	module, diag := constevalModule(t, `const A = 1;
+const W: i64 = 2;
+const B = A + W;
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "A", "1", "i32")
+	assertIntConst(t, module, "B", "3", "i64")
+}
+
 func TestEvaluateUsesConstOperandTypeForNestedArithmetic(t *testing.T) {
 	module, diag := constevalModule(t, `const A: i64 = 1;
 const B = A + (1 + 2);
@@ -101,6 +113,22 @@ const B = A + (1 + 2);
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	assertIntConst(t, module, "B", "4", "i64")
+}
+
+func TestEvaluateStringConst(t *testing.T) {
+	module, diag := constevalModule(t, `const Name: cstr = "puts";
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	sym, ok := module.ModuleScope.LookupLocal("Name")
+	if !ok || sym == nil {
+		t.Fatalf("missing symbol Name")
+	}
+	got, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.StringConst)
+	if !ok || got == nil || got.Value != "puts" || got.TypeText() != "cstr" {
+		t.Fatalf("Name = %#v, want string puts cstr", module.Semantics.ConstValues[sym.ID])
+	}
 }
 
 func assertIntConst(t *testing.T, module *project.Module, name, want, wantType string) {

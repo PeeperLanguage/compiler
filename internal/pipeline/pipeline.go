@@ -312,7 +312,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope)
+		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope, module.Semantics.ConstValues)
 		module.Phase = project.PhaseMIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
