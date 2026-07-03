@@ -549,7 +549,6 @@ func CommonNumericType(a, b Type) Type {
 	if SameType(a, b) {
 		return a
 	}
-	// Use the new compatibility system
 	if CheckNumericCompatibility(a, b) == Compatible {
 		return a
 	}

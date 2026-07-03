@@ -245,11 +245,3 @@ func (sh *SyntaxHighlighter) HighlightWithBaseColor(line string, writer io.Write
 		color.Fprint(writer, token.Text)
 	}
 }
-
-// StripColors removes ANSI color codes from a string
-// Useful for testing or when colors are not desired
-var colorCodeRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-func StripColors(s string) string {
-	return colorCodeRegex.ReplaceAllString(s, "")
-}
