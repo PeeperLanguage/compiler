@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/frontend/token"
 	"compiler/internal/source"
 )
 
@@ -500,15 +499,6 @@ func (e *Cast) TypeText() string {
 
 func IsFloatType(name string) bool {
 	return name == "f32" || name == "f64"
-}
-
-func IsIntegerType(name string) bool {
-	_, _, ok := token.ParseIntegerBuiltin(name)
-	return ok
-}
-
-func IsBoolType(name string) bool {
-	return name == "bool"
 }
 
 func ArrayTypeParts(typeText string) (string, string, bool) {
