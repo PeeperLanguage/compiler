@@ -1122,7 +1122,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
+	methodType, _, ok := c.lookupMethodType(baseType, selector.Name.Name)
 	if ok {
 		if c.module != nil && c.module.Semantics != nil {
 			c.module.Semantics.ExprTypes[selector.ID()] = methodType
@@ -1137,7 +1137,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 			}
 			argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 		}
-		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes, methodSym)
+		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes)
 		return c.callReturnType(call, methodType)
 	}
 	if field, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
@@ -1584,7 +1584,7 @@ func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (
 	return nil, "", false
 }
 
-func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type, _ *symbols.Symbol) {
+func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
 	if c == nil || callExpr == nil || calleeType == nil {
 		return
 	}
