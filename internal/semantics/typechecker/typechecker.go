@@ -8,6 +8,7 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
@@ -1103,7 +1104,7 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 			length, lengthErr := strconv.Atoi(base.Len)
 			indexValue, indexErr := strconv.Atoi(indexConst.Value)
 			if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
-				c.ctx.Diagnostics.Add(diagnostics.ArrayIndexOutOfBounds(indexConst.Value, base.Len, ast.LocOf(node.Index)))
+				c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, base.Len, ast.LocOf(node.Index)))
 			}
 			return base.Elem
 		}

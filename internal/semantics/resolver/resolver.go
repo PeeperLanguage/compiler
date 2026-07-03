@@ -3,8 +3,8 @@ package resolver
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/problems"
 	"compiler/internal/project"
-	semantic_errors "compiler/internal/semantics/errors"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/source"
@@ -99,7 +99,7 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		paramSym.Initialized = true
 		if err := funcScope.Declare(paramSym); err != nil {
-			semantic_errors.RedeclarationError(r.ctx, funcScope, err.Error(), param.Name.Name, param.Name.Location)
+			problems.ReportRedeclaration(r.ctx, funcScope, err.Error(), param.Name.Name, param.Name.Location)
 			return
 		}
 	}
@@ -199,7 +199,7 @@ func (r *resolver) resolveLocalBinding(scope *table.Scope, name *ast.Ident, kind
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	sym.Initializing = true
 	if err := scope.Declare(sym); err != nil {
-		semantic_errors.RedeclarationError(r.ctx, scope, err.Error(), name.Name, loc)
+		problems.ReportRedeclaration(r.ctx, scope, err.Error(), name.Name, loc)
 		return
 	}
 	if value != nil {

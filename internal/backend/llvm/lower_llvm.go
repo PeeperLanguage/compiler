@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/problems"
 	"compiler/internal/source"
 )
 
@@ -421,7 +422,7 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 	if lengthErr != nil || indexErr != nil || indexValue < 0 || indexValue >= length {
 		b.types.invalid = true
 		if b.types.diag != nil {
-			b.types.diag.Add(diagnostics.ArrayIndexOutOfBounds(indexConst.Value, lengthText, nil))
+			b.types.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, lengthText, nil))
 		}
 		return ""
 	}

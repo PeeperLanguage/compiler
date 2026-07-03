@@ -3,9 +3,9 @@ package collector
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/problems"
 	"compiler/internal/project"
 
-	semantic_errors "compiler/internal/semantics/errors"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -75,7 +75,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		sym.Scope = table.New(c.module.ModuleScope)
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
+		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return
 	}
 }
@@ -94,7 +94,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		// Underlying is filled by binder.
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
+		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
 }
@@ -106,7 +106,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	sym.Type = &typeinfo.UnknownType{} // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		semantic_errors.RedeclarationError(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
+		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 	}
 }
 
