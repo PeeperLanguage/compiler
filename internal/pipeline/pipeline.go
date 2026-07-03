@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"compiler/internal/analysis/cfg"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
 	"compiler/internal/graph"
@@ -10,6 +9,7 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/ownership"
