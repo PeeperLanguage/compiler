@@ -584,7 +584,7 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			b.line(fmt.Sprintf("%s = fcmp one %s %s, 0.0", out, fromLLVM, argRef))
 			return out
 		}
-		if isMIRIntegerType(fromType) {
+		if _, _, ok := token.ParseIntegerBuiltin(fromType); ok {
 			fromLLVM := b.types.llvmType(fromType)
 			b.line(fmt.Sprintf("%s = icmp ne %s %s, 0", out, fromLLVM, argRef))
 			return out
@@ -592,21 +592,21 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		return argRef
 	}
 
-	if isMIRFloatType(fromType) && isMIRIntegerType(toType) {
+	if toSigned, _, ok := token.ParseIntegerBuiltin(toType); isMIRFloatType(fromType) && ok {
 		out := b.nextReg()
 		fromLLVM := b.types.llvmType(fromType)
 		toLLVM := b.types.llvmType(toType)
-		if isMIRSignedIntegerType(toType) {
+		if toSigned {
 			b.line(fmt.Sprintf("%s = fptosi %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		} else {
 			b.line(fmt.Sprintf("%s = fptoui %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		}
 		return out
-	} else if isMIRIntegerType(fromType) && isMIRFloatType(toType) {
+	} else if fromSigned, _, ok := token.ParseIntegerBuiltin(fromType); ok && isMIRFloatType(toType) {
 		out := b.nextReg()
 		fromLLVM := b.types.llvmType(fromType)
 		toLLVM := b.types.llvmType(toType)
-		if isMIRSignedIntegerType(fromType) {
+		if fromSigned {
 			b.line(fmt.Sprintf("%s = sitofp %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		} else {
 			b.line(fmt.Sprintf("%s = uitofp %s %s to %s", out, fromLLVM, argRef, toLLVM))
@@ -623,14 +623,16 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			return out
 		}
 		return argRef
-	} else if isMIRIntegerType(fromType) && isMIRIntegerType(toType) {
-		fromBits := mirParseIntegerTypeBits(fromType)
-		toBits := mirParseIntegerTypeBits(toType)
+	} else if fromSigned, fromBits, ok := token.ParseIntegerBuiltin(fromType); ok {
+		_, toBits, ok := token.ParseIntegerBuiltin(toType)
+		if !ok {
+			return argRef
+		}
 		fromLLVM := b.types.llvmType(fromType)
 		toLLVM := b.types.llvmType(toType)
 		if fromBits < toBits {
 			out := b.nextReg()
-			if isMIRSignedIntegerType(fromType) {
+			if fromSigned {
 				b.line(fmt.Sprintf("%s = sext %s %s to %s", out, fromLLVM, argRef, toLLVM))
 			} else {
 				b.line(fmt.Sprintf("%s = zext %s %s to %s", out, fromLLVM, argRef, toLLVM))
@@ -648,25 +650,6 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 
 func isMIRFloatType(typ string) bool {
 	return typ == "f32" || typ == "f64"
-}
-
-func isMIRIntegerType(typ string) bool {
-	return strings.HasPrefix(typ, "i") || strings.HasPrefix(typ, "u")
-}
-
-func isMIRSignedIntegerType(typ string) bool {
-	return strings.HasPrefix(typ, "i")
-}
-
-func mirParseIntegerTypeBits(typ string) int {
-	if isMIRIntegerType(typ) {
-		if len(typ) > 1 {
-			if bits, err := strconv.Atoi(typ[1:]); err == nil {
-				return bits
-			}
-		}
-	}
-	return 0
 }
 
 func newLLVMBuilder(out *strings.Builder, types *llvmEmitter, debugScopeID int) *llvmBuilder {
