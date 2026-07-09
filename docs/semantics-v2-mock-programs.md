@@ -172,9 +172,9 @@ fn from_c() -> move ^Buffer {
 }
 ```
 
-Effectiveness: good. `*T` makes C memory clearly unmanaged while `^T` remains Peeper-owned heap object.
+Effectiveness: good. `*T` makes C memory clearly unmanaged while `^T` remains Peeper heap-handle storage.
 
-Pressure: `Buffer.ptr: *u8` inside a Peeper-owned `^Buffer` is valid but unsafe responsibility remains inside Buffer APIs. That is acceptable for systems code, but docs should say `^Buffer` owns the Buffer object, not automatically all raw pointers inside it unless destructor/free policy says so.
+Pressure: `Buffer.ptr: *u8` inside a Peeper `^Buffer` is valid but unsafe responsibility remains inside Buffer APIs. That is acceptable for systems code, but docs should say `^Buffer` controls the Buffer object, not automatically all raw pointers inside it unless destructor/free policy says so.
 
 ## 7. Optional Pointers Stay Clear
 
@@ -224,9 +224,9 @@ fn main() {
 
 Effectiveness: very good. `&[T]` and `&mut [T]` are probably the biggest ergonomic win from reintroducing neutered borrows.
 
-Pressure: grammar must define whether `[T]` is slice type and `&[T]` is borrowed slice, or whether `[]T` remains slice syntax and borrowed slice is `&[]T`. Current Peeper uses `[]T`; switching to `[T]` for slice would be bigger than pointer migration.
+Pressure: grammar must define `[T]` as an unsized contiguous sequence target so `&[T]` and `&mut [T]` can be slice views while `[]T` remains available for dynamic array storage.
 
-Recommendation: keep current `[]T` if possible, so borrowed slices spell `&[]T` unless the language intentionally changes slice grammar.
+Recommendation: use `[]T` for dynamic arrays and reserve `&[T]` / `&mut [T]` for slice views.
 
 ## 9. Method Receiver Story Improves
 
@@ -236,7 +236,7 @@ struct File {
 }
 
 impl File {
-    fn read(self: &mut Self, out: &mut []u8) -> isize {
+    fn read(self: &mut Self, out: &mut [u8]) -> isize {
         return unsafe { read(self.fd, out.ptr, out.len) };
     }
 
@@ -289,13 +289,13 @@ The model is effective if three constraints stay hard:
 
 1. `^T`, `&T`, and `*T` must be separate AST/typeinfo concepts from day one.
 2. Borrow bans must be semantic and structural, not parser-only.
-3. Raw pointers must stay uncomfortable enough that normal Peeper APIs prefer values, owned heap handles, or borrows.
+3. Raw pointers must stay uncomfortable enough that normal Peeper APIs prefer values, heap handles, or borrows.
 
 Open decisions before implementation:
 
 - Does passing `^T` consume by default, or must calls write `move`?
 - Should `-> move T` be required for any owned return transfer, or only for move-only/owned-pointer returns?
 - What is borrow-from-owned-pointer syntax: `&*p`, `&p.value`, auto-borrow, or something else?
-- Should borrowed slice spell `&[]T` to preserve current slice syntax, or should slice syntax change to `[T]`?
+- Should slice views lower as a distinct internal `SliceViewType`, or as references to an unsized array target?
 - Does initial `&mut` enforce alias exclusivity inside one expression, or only storage/return escape bans?
 - Is `*T` mutable by default, or do we need `*const T` / `*mut T` later?

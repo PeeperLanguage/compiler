@@ -944,13 +944,14 @@ func TestParseRangeIndexExprForms(t *testing.T) {
 		endExclusive  bool
 		wantDiagError bool
 	}{
-		{name: "inclusive", src: `fn main() { let x = xs[1..5]; }`, hasStart: true, hasEnd: true},
-		{name: "exclusive", src: `fn main() { let x = xs[1..<5]; }`, hasStart: true, hasEnd: true, endExclusive: true},
-		{name: "open start inclusive", src: `fn main() { let x = xs[..5]; }`, hasEnd: true},
-		{name: "open start exclusive", src: `fn main() { let x = xs[..<5]; }`, hasEnd: true, endExclusive: true},
-		{name: "open end", src: `fn main() { let x = xs[1..]; }`, hasStart: true},
-		{name: "full", src: `fn main() { let x = xs[..]; }`},
-		{name: "exclusive open end rejected", src: `fn main() { let x = xs[1..<]; }`, hasStart: true, endExclusive: true, wantDiagError: true},
+		{name: "exclusive", src: `fn main() { let x = xs[1..5]; }`, hasStart: true, hasEnd: true, endExclusive: true},
+		{name: "inclusive", src: `fn main() { let x = xs[1..=5]; }`, hasStart: true, hasEnd: true},
+		{name: "open start exclusive", src: `fn main() { let x = xs[..5]; }`, hasEnd: true, endExclusive: true},
+		{name: "open start inclusive", src: `fn main() { let x = xs[..=5]; }`, hasEnd: true},
+		{name: "open end", src: `fn main() { let x = xs[1..]; }`, hasStart: true, endExclusive: true},
+		{name: "full", src: `fn main() { let x = xs[..]; }`, endExclusive: true},
+		{name: "inclusive open end rejected", src: `fn main() { let x = xs[1..=]; }`, hasStart: true, wantDiagError: true},
+		{name: "inclusive full range rejected", src: `fn main() { let x = xs[..=]; }`, wantDiagError: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

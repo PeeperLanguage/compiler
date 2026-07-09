@@ -966,7 +966,7 @@ func TestSliceIndexExprReturnsElementType(t *testing.T) {
 
 func TestArraySliceRangeExprRejectedUntilLoweringExists(t *testing.T) {
 	src := `fn first(xs: [4]i32) -> []i32 {
-	return xs[1..<3];
+	return xs[1..3];
 }`
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {

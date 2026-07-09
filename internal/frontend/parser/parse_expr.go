@@ -270,11 +270,11 @@ func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
 }
 
 func (p *Parser) parseIndexOperand() ast.Expr {
-	if p.at(token.DOTDOT) || p.at(token.DOTDOT_LT) {
+	if p.at(token.DOTDOT) || p.at(token.DOTDOT_EQ) {
 		return p.parseRangeExpr(nil)
 	}
 	start := p.parseExpr(precLowest)
-	if p.at(token.DOTDOT) || p.at(token.DOTDOT_LT) {
+	if p.at(token.DOTDOT) || p.at(token.DOTDOT_EQ) {
 		return p.parseRangeExpr(start)
 	}
 	return start
@@ -282,16 +282,16 @@ func (p *Parser) parseIndexOperand() ast.Expr {
 
 func (p *Parser) parseRangeExpr(start ast.Expr) ast.Expr {
 	tok := p.current()
-	exclusive := tok.Kind == token.DOTDOT_LT
+	exclusive := tok.Kind == token.DOTDOT
 	p.advance()
 	var end ast.Expr
 	if !p.at(token.RBRACK) {
 		end = p.parseExpr(precLowest)
-	} else if exclusive && start != nil {
+	} else if tok.Kind == token.DOTDOT_EQ {
 		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
-		p.diag.Add(diagnostics.NewError("exclusive open-end range is not supported").
+		p.diag.Add(diagnostics.NewError("inclusive range requires an end bound").
 			WithCode(diagnostics.ErrInvalidExpression).
-			WithPrimaryLabel(loc, "use `..` for open-end range"))
+			WithPrimaryLabel(loc, "add the inclusive end bound after `..=`"))
 	}
 	endPos := tok.End
 	if end != nil {

@@ -6,13 +6,16 @@ and optionals.
 Target model:
 
 - `T` owns values.
-- `^T` is a non-null owned heap handle.
+- `^T` is a non-null unique heap handle.
 - `*T` is a nullable raw pointer for FFI and unsafe interop.
 - `?T` is optional for non-raw values.
-- `?^T` is optional owned heap storage.
+- `?^T` is optional heap-handle storage.
 - `move` transfers ownership explicitly.
 - `copy` must be explicit when duplication is allowed.
 - Shallow copy of `^T` is never implicit.
+- `@expr` creates raw pointers; `&expr` creates safe references.
+- `[]T` is the target spelling for dynamic arrays, not slice views.
+- `&[T]` and `&mut [T]` are the target spellings for slice views.
 
 Rejected old model:
 
@@ -34,18 +37,18 @@ Examples:
 ```peep
 let n: i32 = 10
 let s: str = "fuad"
-let xs: DynArray[i32] = make_array()
+let xs: []i32 = make_array()
 ```
 
 Ownership belongs to the binding. A plain `T` may be copied when its type is
-copyable. A `T` containing owned heap handles is move-only unless the type
+copyable. A `T` containing heap handles is move-only unless the type
 defines an explicit deep copy.
 
-## Owned Heap Handles
+## Heap Handles
 
 ### `^T`
 
-`^T` is an owning handle to heap storage containing `T`.
+`^T` is a unique handle to heap storage containing `T`.
 
 - non-null by default
 - must be moved or freed explicitly
@@ -160,7 +163,7 @@ Passing `T` means value passing:
 - copy if type is copyable
 - move only when explicitly written and the callee consumes ownership
 
-Passing `^T` means owned heap handle passing. Passing it to a consuming
+Passing `^T` means heap-handle passing. Passing it to a consuming
 parameter requires `move`.
 
 Passing `*T` means raw pointer passing. No ownership transfer is implied.
@@ -173,7 +176,7 @@ fn destroy(move buf: ^Buffer) {
 
 ## Allocation
 
-Allocator APIs return owned heap handles.
+Allocator APIs return heap handles.
 
 ```peep
 let x: ^Buffer = allocator.alloc<Buffer>()
@@ -227,6 +230,39 @@ Implementation status:
 - returning pointers to known local storage is rejected
 - allocator provenance tracking is future work
 
+## References And Slice Views
+
+Safe reference syntax is separate from raw pointer syntax:
+
+```peep
+let r: &T = &value
+let m: &mut T = &mut value
+let p: *T = @value
+```
+
+References are temporary views. They cannot be stored inside structs, arrays,
+dynamic arrays, globals, or heap objects in the first implementation slice.
+
+Arrays and dynamic arrays own storage:
+
+```peep
+let fixed: [4]i32 = [4]i32{1, 2, 3, 4}
+let dynamic: []i32 = []i32{1, 2, 3}
+```
+
+Slice views borrow contiguous storage:
+
+```peep
+fn sum(xs: &[i32]) -> i32
+fn fill(xs: &mut [i32], value: i32)
+```
+
+Implementation status:
+
+- `&T`, `&mut T`, `&[T]`, and `&mut [T]` are specified but not implemented.
+- current branch still has old `[]T` slice-value internals.
+- dynamic-array and slice-view lowering is future work.
+
 ## Linked Structures
 
 Unsafe linked structures can use raw pointers directly.
@@ -255,14 +291,14 @@ struct Node {
 ## Final Rules
 
 - `T` owns.
-- `^T` is non-null owned heap handle.
+- `^T` is non-null unique heap handle.
 - `*T` is nullable raw pointer only.
 - `@expr` produces a non-owning raw pointer to addressable storage.
 - `?T` is optional for non-raw values.
-- `?^T` is nullable owned heap handle.
+- `?^T` is nullable heap-handle storage.
 - `str` is builtin `byte[]`.
-- allocator returns owned `^T`.
-- `free` consumes allocator-owned `^T`.
+- allocator returns `^T`.
+- `free` consumes allocator-created `^T`.
 - type containing `^T` is move-only unless explicit deep copy exists.
 - `*T` copy is shallow pointer-bit copy because it owns nothing.
 - compiler rejects returned raw pointers when they are known to point at local storage.
