@@ -824,7 +824,9 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	case token.QUESTION:
 		return p.parseOptionalTypeExpr()
 	case token.CARET:
-		return p.parseCaretPtrTypeExpr()
+		return p.parseOwnedPtrTypeExpr()
+	case token.ASTERISK:
+		return p.parseRawPtrTypeExpr()
 	case token.LBRACK:
 		return p.parseBracketTypeExpr()
 	case token.FN:
@@ -878,21 +880,31 @@ func (p *Parser) parseOptionalTypeExpr() ast.TypeExpr {
 	})
 }
 
-func (p *Parser) parseCaretPtrTypeExpr() ast.TypeExpr {
-	start := p.consume(token.CARET, "expected '^' in pointer type")
+func (p *Parser) parseOwnedPtrTypeExpr() ast.TypeExpr {
+	start := p.consume(token.CARET, "expected '^' in owned pointer type")
 	if start == nil {
 		return nil
 	}
-	mutable := true
-	if p.match(token.CONST) {
-		mutable = false
+	target := p.parseTypeExpr()
+	if target == nil {
+		return nil
+	}
+	return reg(p, &ast.OwnedPtrType{
+		Target:   target,
+		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
+	})
+}
+
+func (p *Parser) parseRawPtrTypeExpr() ast.TypeExpr {
+	start := p.consume(token.ASTERISK, "expected '*' in raw pointer type")
+	if start == nil {
+		return nil
 	}
 	target := p.parseTypeExpr()
 	if target == nil {
 		return nil
 	}
 	return reg(p, &ast.RawPtrType{
-		Mutable:  mutable,
 		Target:   target,
 		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
 	})

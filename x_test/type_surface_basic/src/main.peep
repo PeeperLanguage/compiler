@@ -9,7 +9,7 @@ struct Cursor {
 }
 
 struct View {
-    ptr: ^const u8
+    ptr: *u8
 }
 
 type MaybeInt = ?i32;

@@ -94,6 +94,9 @@ func Inspect(node Node, f func(Node) bool) {
 	case *IndexExpr:
 		Inspect(n.Expr, f)
 		Inspect(n.Index, f)
+	case *RangeExpr:
+		Inspect(n.Start, f)
+		Inspect(n.End, f)
 	case *StructLit:
 		Inspect(n.Type, f)
 		for _, field := range n.Fields {
@@ -122,6 +125,8 @@ func Inspect(node Node, f func(Node) bool) {
 	case *AsExpr:
 		Inspect(n.Expr, f)
 		Inspect(n.TypeExpr, f)
+	case *OwnedPtrType:
+		Inspect(n.Target, f)
 	case *RawPtrType:
 		Inspect(n.Target, f)
 	case *OptionalType:

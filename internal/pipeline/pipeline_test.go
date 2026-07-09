@@ -89,10 +89,10 @@ func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
 		t.Fatalf("mkdir allocator: %v", err)
 	}
 	allocatorSrc := `#[extern("malloc")]
-fn Malloc(size: usize) -> ^u8;
+fn Malloc(size: usize) -> *byte;
 
 #[extern("free")]
-fn Free(ptr: ^u8);
+fn Free(ptr: *byte);
 `
 	if err := os.WriteFile(allocatorPath, []byte(allocatorSrc), 0o644); err != nil {
 		t.Fatalf("write allocator: %v", err)
@@ -102,7 +102,7 @@ fn Free(ptr: ^u8);
 	entrySrc := `import "core:allocator";
 
 fn main() -> i32 {
-	let ptr: ^u8 = allocator::Malloc(8);
+	let ptr: *byte = allocator::Malloc(8);
 	allocator::Free(ptr);
 	return 0;
 }`
@@ -352,8 +352,8 @@ func TestPipelineLowersAddressExprSurface(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {
 	let mut value: i32 = 1;
-	let ptr: ^i32 = @value;
-	return 0;
+	let ptr: *i32 = @value;
+	return value;
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
@@ -365,15 +365,15 @@ func TestPipelineLowersAddressExprSurface(t *testing.T) {
 func TestPipelineLowersAddressOfFieldStorage(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Box {
-	value: i32,
+	value: i32
 }
 
 #[extern]
-fn use_ptr(ptr: ^i32);
+fn use_ptr(ptr: *i32);
 
 fn main() -> i32 {
 	let mut box: Box = .{ value = 1 };
-	let ptr: ^i32 = @box.value;
+	let ptr: *i32 = @box.value;
 	use_ptr(ptr);
 	return 0;
 }`
@@ -701,10 +701,10 @@ func TestPipelineLowersPointerReceiverOnNamedStruct(t *testing.T) {
 	entrySrc := `struct File {}
 
 #[extern]
-fn open_file() -> ^File;
+fn open_file() -> *File;
 
 impl File {
-	fn read(self: ^Self, buf: cstr) -> i32 {
+	fn read(self: *Self, buf: cstr) -> i32 {
 		return 0;
 	}
 }
@@ -723,15 +723,15 @@ fn main() -> i32 {
 func TestPipelineAllowsPointerRecursiveStruct(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Node {
-	next: ^Node,
+	next: *Node
 }
 
 #[extern]
-fn next_node() -> ^Node;
+fn next_node() -> *Node;
 
 fn main() -> i32 {
 	let node: Node = .{ next = next_node() };
-	let next: ^Node = node.next;
+	let next: *Node = node.next;
 	return 0;
 }`
 
@@ -778,7 +778,7 @@ fn main() -> i32 {
 func TestPipelineLowersAutoAddressedPointerReceiverOnValue(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `impl i32 {
-	fn id(self: ^Self) -> i32 {
+	fn id(self: *Self) -> i32 {
 		return 7;
 	}
 }
@@ -797,14 +797,14 @@ fn main() -> i32 {
 func TestPipelineLowersPointerFieldAssignment(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Counter {
-	value: i32,
+	value: i32
 }
 
 #[extern]
-fn open_counter() -> ^Counter;
+fn open_counter() -> *Counter;
 
 impl Counter {
-	fn bump(self: ^Self) -> i32 {
+	fn bump(self: *Self) -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
@@ -888,6 +888,20 @@ func TestPipelineLowersInferredArrayLiteralIndexRead(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn first() -> i32 {
 	let arr = [_]i32{1, 2, 3};
+	return arr[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersInferredArrayLiteralIndexAssignment(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn first() -> i32 {
+	let mut arr = [_]i32{1, 2, 3};
+	arr[0] = 9;
 	return arr[0];
 }`
 
@@ -1049,16 +1063,16 @@ fn main() -> i32 {
 func TestPipelineLowersInterfaceDispatchForPointerReceiver(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `interface Reader {
-	read(^Self, buf: cstr) -> i32,
+	read(*Self, buf: cstr) -> i32
 }
 
 struct File {}
 
 #[extern]
-fn open_file() -> ^File;
+fn open_file() -> *File;
 
 impl File {
-	fn read(self: ^Self, buf: cstr) -> i32 {
+	fn read(self: *Self, buf: cstr) -> i32 {
 		return 7;
 	}
 }
@@ -1204,16 +1218,16 @@ fn main() -> i32 {
 func TestPipelineLowersPointerReceiverOnNestedField(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Counter {
-	value: i32,
+	value: i32
 }
 impl Counter {
-	fn bump(self: ^Self) -> i32 {
+	fn bump(self: *Self) -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
 }
 struct Container {
-	counter: Counter,
+	counter: Counter
 }
 fn main() -> i32 {
 	let mut c: Container = .{ counter = .{ value = 10 } };

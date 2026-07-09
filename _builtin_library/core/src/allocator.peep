@@ -1,5 +1,5 @@
 #[extern("malloc")]
-fn Malloc(size: usize) -> ^u8;
+fn Malloc(size: usize) -> *byte;
 
 #[extern("free")]
-fn Free(ptr: ^u8);
+fn Free(ptr: *byte);

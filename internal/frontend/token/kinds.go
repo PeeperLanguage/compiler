@@ -52,6 +52,7 @@ const (
 	COMMA        Kind = ","
 	DOT          Kind = "."
 	DOTDOT       Kind = ".."
+	DOTDOT_LT    Kind = "..<"
 	DOTDOT_EQ    Kind = "..="
 	ELLIPSIS     Kind = "..."
 	HASH         Kind = "#"

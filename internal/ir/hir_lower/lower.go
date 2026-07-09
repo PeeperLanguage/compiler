@@ -283,7 +283,7 @@ func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope 
 		}
 		baseType := exprResolvedType(module, selector.Expr)
 		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
-			if _, throughPtr := typeinfo.Underlying(baseType).(*typeinfo.RawPtrType); throughPtr {
+			if _, throughPtr := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); throughPtr {
 				return &ir.Field{
 					Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 					Index:      fieldIndex,
@@ -297,14 +297,10 @@ func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope 
 				addressable = place.MutableAddressable(scope, selector.Expr, exprType)
 			}
 			if addressable {
-				basePointerType := "^" + loweredTypeText(module, baseType)
-				if !place.MutableAddressable(scope, selector.Expr, exprType) {
-					basePointerType = "^const " + loweredTypeText(module, baseType)
-				}
 				return &ir.Field{
 					Base: &ir.AddrOf{
 						Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, requireMutable),
-						Type:     basePointerType,
+						Type:     "*" + loweredTypeText(module, baseType),
 						Location: ast.LocOf(selector.Expr),
 					},
 					Index:      fieldIndex,
@@ -616,11 +612,11 @@ func receiverNeedsAddress(module *project.Module, scope *table.Scope, fnType *ty
 	if scope == nil || fnType == nil || len(fnType.Params) == 0 || receiver == nil {
 		return false
 	}
-	ptrType, ok := fnType.Params[0].(*typeinfo.RawPtrType)
-	if !ok || ptrType == nil || ptrType.Target == nil {
+	ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(fnType.Params[0]))
+	if !ok {
 		return false
 	}
-	if !typeinfo.SameType(ptrType.Target, baseType) {
+	if !typeinfo.SameType(ptrTarget, baseType) {
 		return false
 	}
 	return place.MutableAddressable(scope, receiver, func(e ast.Expr) typeinfo.Type {
@@ -634,7 +630,7 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 	}
 	baseType := exprResolvedType(module, selector.Expr)
 	if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
-		_, throughPtr := baseType.(*typeinfo.RawPtrType)
+		_, throughPtr := typeinfo.PointerTarget(baseType)
 		return &ir.Field{
 			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Index:      fieldIndex,
@@ -759,8 +755,8 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 
 func lookupInterfaceImplementation(module *project.Module, concrete typeinfo.Type, name string) (*typeinfo.FuncType, *symbols.Symbol, string, bool) {
 	owner := concrete
-	if ptr, ok := concrete.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		owner = ptr.Target
+	if target, ok := typeinfo.PointerTarget(concrete); ok {
+		owner = target
 	}
 	ownerKey, sym, fnType := lookupLoweredMethod(module, owner, name)
 	if sym == nil || fnType == nil {
@@ -784,7 +780,7 @@ func lookupInterfaceMethod(module *project.Module, baseType typeinfo.Type, name 
 
 func interfaceSlotTypeText(module *project.Module, method typeinfo.Method) string {
 	var b strings.Builder
-	b.WriteString("fn(^u8")
+	b.WriteString("fn(*byte")
 	for i, param := range method.Params {
 		if i == 0 {
 			continue
@@ -1002,11 +998,16 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		seen[typ] = struct{}{}
 		defer delete(seen, typ)
 		return loweredRuntimeType(module, typ.Underlying, seen)
+	case *typeinfo.OwnedPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &typeinfo.OwnedPtrType{Target: loweredRuntimeType(module, typ.Target, seen)}
 	case *typeinfo.RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.RawPtrType{Mutable: typ.Mutable, Target: loweredRuntimeType(module, typ.Target, seen)}
+		return &typeinfo.RawPtrType{Target: loweredRuntimeType(module, typ.Target, seen)}
 	case *typeinfo.OptionalType:
 		if typ == nil {
 			return nil

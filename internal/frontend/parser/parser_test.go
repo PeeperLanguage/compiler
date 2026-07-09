@@ -581,7 +581,7 @@ const c: enum {
 
 func TestParseOptionalPointerArrayAndSliceTypes(t *testing.T) {
 	src := `const a: ?i32 = none;
-const b: ^const Foo = value;
+const b: *Foo = value;
 const c: [4]i32 = value;
 const d: []string = value;`
 	mod, diag := parseTestModule(src)
@@ -596,12 +596,8 @@ const d: []string = value;`
 		t.Fatalf("expected optional type, got %T", optDecl.Type)
 	}
 	ptrDecl := mod.Stmts[1].(*ast.ConstDecl)
-	ptr, ok := ptrDecl.Type.(*ast.RawPtrType)
-	if !ok {
-		t.Fatalf("expected raw ptr type, got %T", ptrDecl.Type)
-	}
-	if ptr.Mutable {
-		t.Fatalf("expected const pointer type")
+	if _, ok := ptrDecl.Type.(*ast.RawPtrType); !ok {
+		t.Fatalf("expected raw pointer type, got %T", ptrDecl.Type)
 	}
 	arrDecl := mod.Stmts[2].(*ast.ConstDecl)
 	arr, ok := arrDecl.Type.(*ast.ArrayType)
@@ -936,6 +932,62 @@ func TestParseIndexExpr(t *testing.T) {
 	}
 	if idx, ok := index.Index.(*ast.NumberLit); !ok || idx.Value != "0" {
 		t.Fatalf("unexpected index value: %#v", index.Index)
+	}
+}
+
+func TestParseRangeIndexExprForms(t *testing.T) {
+	tests := []struct {
+		name          string
+		src           string
+		hasStart      bool
+		hasEnd        bool
+		endExclusive  bool
+		wantDiagError bool
+	}{
+		{name: "inclusive", src: `fn main() { let x = xs[1..5]; }`, hasStart: true, hasEnd: true},
+		{name: "exclusive", src: `fn main() { let x = xs[1..<5]; }`, hasStart: true, hasEnd: true, endExclusive: true},
+		{name: "open start inclusive", src: `fn main() { let x = xs[..5]; }`, hasEnd: true},
+		{name: "open start exclusive", src: `fn main() { let x = xs[..<5]; }`, hasEnd: true, endExclusive: true},
+		{name: "open end", src: `fn main() { let x = xs[1..]; }`, hasStart: true},
+		{name: "full", src: `fn main() { let x = xs[..]; }`},
+		{name: "exclusive open end rejected", src: `fn main() { let x = xs[1..<]; }`, hasStart: true, endExclusive: true, wantDiagError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mod, diag := parseTestModule(tt.src)
+			if tt.wantDiagError {
+				if !diag.HasErrors() {
+					t.Fatalf("expected diagnostics")
+				}
+			} else if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+			}
+			fn, ok := mod.Stmts[0].(*ast.FnDecl)
+			if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+				t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
+			}
+			letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
+			if !ok {
+				t.Fatalf("stmt[0] expected let")
+			}
+			index, ok := letDecl.Value.(*ast.IndexExpr)
+			if !ok {
+				t.Fatalf("expected index expr, got %#v", letDecl.Value)
+			}
+			rng, ok := index.Index.(*ast.RangeExpr)
+			if !ok {
+				t.Fatalf("expected range expr, got %#v", index.Index)
+			}
+			if (rng.Start != nil) != tt.hasStart {
+				t.Fatalf("start presence = %v, want %v", rng.Start != nil, tt.hasStart)
+			}
+			if (rng.End != nil) != tt.hasEnd {
+				t.Fatalf("end presence = %v, want %v", rng.End != nil, tt.hasEnd)
+			}
+			if rng.EndExclusive != tt.endExclusive {
+				t.Fatalf("exclusive = %v, want %v", rng.EndExclusive, tt.endExclusive)
+			}
+		})
 	}
 }
 
@@ -1380,7 +1432,7 @@ fn main() {}
 }
 
 func TestParsePointerTypes(t *testing.T) {
-	src := `const ptr: ^i32;`
+	src := `const ptr: *i32;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -1392,9 +1444,23 @@ func TestParsePointerTypes(t *testing.T) {
 	if !ok {
 		t.Fatalf("decl[0] expected const")
 	}
-	ptr, ok := ptrDecl.Type.(*ast.RawPtrType)
-	if !ok || !ptr.Mutable {
-		t.Fatalf("decl[0] expected pointer type, got %#v", ptrDecl.Type)
+	if _, ok := ptrDecl.Type.(*ast.RawPtrType); !ok {
+		t.Fatalf("decl[0] expected raw pointer type, got %#v", ptrDecl.Type)
+	}
+}
+
+func TestParseOwnedPointerTypes(t *testing.T) {
+	src := `const ptr: ^i32;`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	ptrDecl, ok := mod.Stmts[0].(*ast.ConstDecl)
+	if !ok {
+		t.Fatalf("decl[0] expected const")
+	}
+	if _, ok := ptrDecl.Type.(*ast.OwnedPtrType); !ok {
+		t.Fatalf("decl[0] expected owned pointer type, got %#v", ptrDecl.Type)
 	}
 }
 

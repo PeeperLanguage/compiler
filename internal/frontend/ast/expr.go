@@ -64,6 +64,17 @@ type IndexExpr struct {
 func (*IndexExpr) exprNode()               {}
 func (e *IndexExpr) loc() *source.Location { return e.Location }
 
+type RangeExpr struct {
+	NodeIDHolder
+	Start        Expr
+	End          Expr
+	EndExclusive bool
+	Location     *source.Location
+}
+
+func (*RangeExpr) exprNode()               {}
+func (e *RangeExpr) loc() *source.Location { return e.Location }
+
 type StructLitField struct {
 	Name     *Ident
 	Value    Expr

@@ -33,9 +33,23 @@ func (t *NamedType) TypeText() string {
 	return t.Name
 }
 
+type OwnedPtrType struct {
+	NodeIDHolder
+	Target   TypeExpr
+	Location *source.Location
+}
+
+func (*OwnedPtrType) typeNode()               {}
+func (t *OwnedPtrType) loc() *source.Location { return t.Location }
+func (t *OwnedPtrType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	return "^" + TypeText(t.Target)
+}
+
 type RawPtrType struct {
 	NodeIDHolder
-	Mutable  bool
 	Target   TypeExpr
 	Location *source.Location
 }
@@ -46,10 +60,7 @@ func (t *RawPtrType) TypeText() string {
 	if t == nil {
 		return ""
 	}
-	if !t.Mutable {
-		return "^const " + TypeText(t.Target)
-	}
-	return "^" + TypeText(t.Target)
+	return "*" + TypeText(t.Target)
 }
 
 type OptionalType struct {

@@ -210,6 +210,9 @@ func (r *resolver) resolveLocalBinding(scope *table.Scope, name *ast.Ident, kind
 }
 
 func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
+	if expr == nil {
+		return
+	}
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		return
@@ -259,6 +262,9 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.IndexExpr:
 		r.resolveExpr(scope, node.Expr)
 		r.resolveExpr(scope, node.Index)
+	case *ast.RangeExpr:
+		r.resolveExpr(scope, node.Start)
+		r.resolveExpr(scope, node.End)
 	case *ast.StructLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
 			r.resolveScopeResolution(scopedType)

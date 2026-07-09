@@ -104,6 +104,9 @@ func addTypeDeclEdges(ctx *project.CompilerContext, module *project.Module, owne
 			return
 		}
 		ctx.Graph.AddEdge(owner, target, graphEdgeTypeValueRef)
+	case *ast.OwnedPtrType:
+		// Pointer target is not a layout dependency.
+		addTypeDeclEdges(ctx, module, owner, node.Target, true)
 	case *ast.RawPtrType:
 		// Pointer target is not a layout dependency.
 		addTypeDeclEdges(ctx, module, owner, node.Target, true)

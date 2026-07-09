@@ -24,7 +24,7 @@ impl i32 {
 }
 
 impl i32 {
-    fn to_str(_: ^Self) -> cstr {
+    fn to_str(_: *Self) -> cstr {
         return "converted\n";
     }
 }
@@ -34,7 +34,7 @@ struct Counter {
 }
 
 impl Counter {
-    fn bump(self: ^Self) -> i32 {
+    fn bump(self: *Self) -> i32 {
         self.value = self.value + 1;
         return self.value;
     }

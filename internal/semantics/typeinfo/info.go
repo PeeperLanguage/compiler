@@ -63,9 +63,12 @@ type DefinedType struct {
 	CopyMode   CopyMode
 }
 
+type OwnedPtrType struct {
+	Target Type
+}
+
 type RawPtrType struct {
-	Mutable bool
-	Target  Type
+	Target Type
 }
 
 type OptionalType struct {
@@ -120,6 +123,7 @@ func (*StringType) TypeNode()    {}
 func (*NoneType) TypeNode()      {}
 func (*NamedType) TypeNode()     {}
 func (*DefinedType) TypeNode()   {}
+func (*OwnedPtrType) TypeNode()  {}
 func (*RawPtrType) TypeNode()    {}
 func (*OptionalType) TypeNode()  {}
 func (*ArrayType) TypeNode()     {}
@@ -181,14 +185,18 @@ func Underlying(t Type) Type {
 	}
 }
 
+func (t *OwnedPtrType) Text() string {
+	if t == nil {
+		return ""
+	}
+	return "^" + TypeText(t.Target)
+}
+
 func (t *RawPtrType) Text() string {
 	if t == nil {
 		return ""
 	}
-	if !t.Mutable {
-		return "^const " + TypeText(t.Target)
-	}
-	return "^" + TypeText(t.Target)
+	return "*" + TypeText(t.Target)
 }
 
 func (t *OptionalType) Text() string {
@@ -336,11 +344,16 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 			return &IntegerType{Signed: signed, Bits: bits}
 		}
 		return &NamedType{Name: typ.Name}
+	case *ast.OwnedPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &OwnedPtrType{Target: TypeFromSyntax(typ.Target)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &RawPtrType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
+		return &RawPtrType{Target: TypeFromSyntax(typ.Target)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil
@@ -462,6 +475,9 @@ func SameType(left, right Type) bool {
 	case *NamedType:
 		r, ok := right.(*NamedType)
 		return ok && r != nil && l.Name == r.Name
+	case *OwnedPtrType:
+		r, ok := right.(*OwnedPtrType)
+		return ok && r != nil && SameType(l.Target, r.Target)
 	case *RawPtrType:
 		return checkPointerCompatibility(l, right) == Compatible
 	case *OptionalType:
@@ -561,6 +577,8 @@ func ContainsAbstractSelf(t Type) bool {
 	switch typ := t.(type) {
 	case *NamedType:
 		return typ != nil && typ.Name == "Self"
+	case *OwnedPtrType:
+		return typ != nil && ContainsAbstractSelf(typ.Target)
 	case *RawPtrType:
 		return typ != nil && ContainsAbstractSelf(typ.Target)
 	case *OptionalType:
@@ -614,11 +632,16 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 			return ownerType
 		}
 		return t
+	case *OwnedPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &OwnedPtrType{Target: ReplaceAbstractSelf(typ.Target, ownerType)}
 	case *RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &RawPtrType{Mutable: typ.Mutable, Target: ReplaceAbstractSelf(typ.Target, ownerType)}
+		return &RawPtrType{Target: ReplaceAbstractSelf(typ.Target, ownerType)}
 	case *OptionalType:
 		if typ == nil {
 			return nil
@@ -803,13 +826,35 @@ func GetMethodLookupKeys(baseType Type) []string {
 	if underlying := Underlying(baseType); underlying != baseType {
 		appendKey(underlying)
 	}
-	if ptr, ok := baseType.(*RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		appendKey(ptr.Target)
-		if underlying := Underlying(ptr.Target); underlying != ptr.Target {
+	if target, ok := PointerTarget(baseType); ok {
+		appendKey(target)
+		if underlying := Underlying(target); underlying != target {
 			appendKey(underlying)
 		}
 	}
 	return keys
+}
+
+func PointerTarget(t Type) (Type, bool) {
+	switch ptr := t.(type) {
+	case *OwnedPtrType:
+		if ptr != nil && ptr.Target != nil {
+			return ptr.Target, true
+		}
+	case *RawPtrType:
+		if ptr != nil && ptr.Target != nil {
+			return ptr.Target, true
+		}
+	}
+	return nil, false
+}
+
+func RawPointerTarget(t Type) (Type, bool) {
+	ptr, ok := t.(*RawPtrType)
+	if !ok || ptr == nil || ptr.Target == nil {
+		return nil, false
+	}
+	return ptr.Target, true
 }
 
 // LookupStructField centralizes field search so checker and lowerer agree on
@@ -819,8 +864,8 @@ func LookupStructField(baseType Type, name string) (field Field, index int, ok b
 	if baseType == nil || name == "" {
 		return Field{}, -1, false
 	}
-	if ptr, ptrOK := baseType.(*RawPtrType); ptrOK && ptr != nil && ptr.Target != nil {
-		baseType = ptr.Target
+	if target, ptrOK := PointerTarget(baseType); ptrOK {
+		baseType = target
 	}
 	strct, ok := Underlying(baseType).(*StructType)
 	if !ok || strct == nil {

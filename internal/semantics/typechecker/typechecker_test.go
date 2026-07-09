@@ -558,7 +558,7 @@ func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 func TestAddressOfMutableLocalAssignsMutablePointer(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() -> i32 {
 	let mut value: i32 = 1;
-	let ptr: ^i32 = @value;
+	let ptr: *i32 = @value;
 	return 0;
 }`)
 	if diag.HasErrors() {
@@ -569,7 +569,7 @@ func TestAddressOfMutableLocalAssignsMutablePointer(t *testing.T) {
 func TestAddressOfImmutableLocalAssignsConstPointer(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() -> i32 {
 	let value: i32 = 1;
-	let ptr: ^const i32 = @value;
+	let ptr: *i32 = @value;
 	return 0;
 }`)
 	if diag.HasErrors() {
@@ -601,7 +601,7 @@ func TestAddressOperatorRequiresAddressableStorage(t *testing.T) {
 
 func TestConstPointerFieldStaysCopyable(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct View {
-	ptr: ^const u8,
+	ptr: *u8,
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -964,6 +964,39 @@ func TestSliceIndexExprReturnsElementType(t *testing.T) {
 	}
 }
 
+func TestArraySliceRangeExprRejectedUntilLoweringExists(t *testing.T) {
+	src := `fn first(xs: [4]i32) -> []i32 {
+	return xs[1..<3];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected slicing lowerability diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "slicing is not lowerable") {
+		t.Fatalf("expected slicing lowerability message, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFullRangeExprRejectedUntilLoweringExists(t *testing.T) {
+	src := `fn first(xs: []i32) -> []i32 {
+	return xs[..];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected slicing lowerability diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRangeExprRejectsNonIntegerBounds(t *testing.T) {
+	src := `fn first(xs: [4]i32, flag: bool) -> []i32 {
+	return xs[flag..3];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid range bound diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestIndexExprRejectsNonIntegerIndex(t *testing.T) {
 	src := `fn first(xs: [4]i32, flag: bool) -> i32 {
 	return xs[flag];
@@ -984,16 +1017,28 @@ func TestIndexExprRejectsNonIndexableBase(t *testing.T) {
 	}
 }
 
-func TestIndexAssignmentRejectedUntilProjectionSupport(t *testing.T) {
-	src := `fn main(xs: [4]i32) {
+func TestArrayIndexAssignmentRequiresMutableBinding(t *testing.T) {
+	src := `fn main() {
+	let xs = [_]i32{1, 2, 3, 4};
 	xs[0] = 1;
 }`
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
 		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(diag.EmitAllToString(), "index assignment requires MIR projection support") {
-		t.Fatalf("expected projection boundary diagnostic, got:\n%s", diag.EmitAllToString())
+	if !strings.Contains(diag.EmitAllToString(), "index assignment requires mutable array or slice binding") {
+		t.Fatalf("expected mutability diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayIndexAssignmentOnMutableBindingAccepted(t *testing.T) {
+	src := `fn main() {
+	let mut xs = [_]i32{1, 2, 3, 4};
+	xs[0] = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1064,6 +1109,38 @@ fn main() -> i32 {
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrCircularDependency) {
 		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSelfRecursiveStructValueIsRejected(t *testing.T) {
+	src := `struct Node {
+	next: Node
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrCircularDependency) {
+		t.Fatalf("expected circular dependency diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSelfRecursiveStructThroughPointersAccepted(t *testing.T) {
+	src := `struct OwnedNode {
+	next: ^OwnedNode
+}
+
+struct RawNode {
+	next: *RawNode
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1144,23 +1221,23 @@ fn main(file: ^File) -> i32 {
 	}
 }
 
-func TestConstPointerFieldAssignmentRejected(t *testing.T) {
+func TestOwnedPointerFieldAssignmentAccepted(t *testing.T) {
 	src := `struct Box {
 	value: i32
 }
 
-fn main(ptr: ^const Box) {
+fn main(ptr: ^Box) {
 	ptr.value = 2;
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
-		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestPointerSelfMethodCallResolvesOnAddressableValue(t *testing.T) {
+func TestRawPointerSelfMethodCallResolvesOnAddressableValue(t *testing.T) {
 	src := `impl i32 {
-	fn to_str(receiver: ^Self) -> cstr {
+	fn to_str(receiver: *Self) -> cstr {
 		return "ok";
 	}
 }
@@ -1176,24 +1253,21 @@ fn main() -> i32 {
 	}
 }
 
-func TestPointerSelfMethodCallRejectsImmutableValue(t *testing.T) {
+func TestOwnedPointerSelfMethodCallRejectsStackValue(t *testing.T) {
 	src := `impl i32 {
 	fn to_str(receiver: ^Self) -> cstr {
 		return "ok";
 	}
 }
 
-	fn main() -> i32 {
-	let i: i32 = 42;
+fn main() -> i32 {
+	let mut i: i32 = 42;
 	let s: cstr = i.to_str();
 	return 0;
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
-		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-	if !strings.Contains(diag.EmitAllToString(), "mutable binding") {
-		t.Fatalf("expected mutable binding diagnostic, got:\n%s", diag.EmitAllToString())
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected type mismatch diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1203,7 +1277,7 @@ func TestPointerSelfMethodCallRejectsConstValue(t *testing.T) {
 }
 
 impl Counter {
-	fn bump(self: ^Self) -> i32 {
+	fn bump(self: *Self) -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
@@ -1353,7 +1427,7 @@ func TestPointerFieldAssignmentResolves(t *testing.T) {
 }
 
 impl Counter {
-	fn bump(self: ^Self) -> i32 {
+	fn bump(self: *Self) -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
