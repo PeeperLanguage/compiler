@@ -51,6 +51,29 @@ func hasOwnershipCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	return false
 }
 
+func TestOwnedPointerCopyRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn make() -> ^byte;
+
+fn main() {
+	let ptr: ^byte = make();
+	let copy = ptr;
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRawPointerCopyAllowed(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn main() {
+	let value: i32 = 1;
+	let ptr: *i32 = @value;
+	let copy = ptr;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
 	diag := checkOwnershipSource(t, `#[no_copy]
 struct Buffer {
@@ -326,7 +349,7 @@ fn main(flag: bool) {
 }
 
 func TestReturnAddressOfLocalRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn bad() -> ^const i32 {
+	diag := checkOwnershipSource(t, `fn bad() -> *i32 {
 	let value: i32 = 1;
 	return @value;
 }`)
@@ -336,9 +359,9 @@ func TestReturnAddressOfLocalRejected(t *testing.T) {
 }
 
 func TestReturnLocalPointerBindingRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn bad() -> ^const i32 {
+	diag := checkOwnershipSource(t, `fn bad() -> *i32 {
 	let value: i32 = 1;
-	let ptr: ^const i32 = @value;
+	let ptr: *i32 = @value;
 	return ptr;
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
@@ -349,7 +372,7 @@ func TestReturnLocalPointerBindingRejected(t *testing.T) {
 func TestReturnAddressOfModuleGlobalAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `const global: i32 = 1;
 
-fn get() -> ^const i32 {
+fn get() -> *i32 {
 	return @global;
 }`)
 	if diag.HasErrors() {
@@ -360,8 +383,8 @@ fn get() -> ^const i32 {
 func TestReturnModuleGlobalPointerBindingAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `const global: i32 = 1;
 
-fn get() -> ^const i32 {
-	let ptr: ^const i32 = @global;
+fn get() -> *i32 {
+	let ptr: *i32 = @global;
 	return ptr;
 }`)
 	if diag.HasErrors() {
@@ -370,7 +393,7 @@ fn get() -> ^const i32 {
 }
 
 func TestReturnPointerParamAccepted(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn identity(ptr: ^i32) -> ^i32 {
+	diag := checkOwnershipSource(t, `fn identity(ptr: *i32) -> *i32 {
 	return ptr;
 }`)
 	if diag.HasErrors() {
@@ -380,9 +403,9 @@ func TestReturnPointerParamAccepted(t *testing.T) {
 
 func TestReturnExternPointerAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `#[extern]
-fn open_value() -> ^i32;
+fn open_value() -> *i32;
 
-fn get() -> ^i32 {
+fn get() -> *i32 {
 	return open_value();
 }`)
 	if diag.HasErrors() {

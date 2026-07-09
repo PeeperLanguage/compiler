@@ -45,14 +45,16 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 		}
 		return TypeFromSyntax(typ)
+	case *ast.OwnedPtrType:
+		if typ == nil {
+			return nil
+		}
+		return &OwnedPtrType{Target: ASTTypeWithOptions(typ.Target, opts)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &RawPtrType{
-			Mutable: typ.Mutable,
-			Target:  ASTTypeWithOptions(typ.Target, opts),
-		}
+		return &RawPtrType{Target: ASTTypeWithOptions(typ.Target, opts)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil

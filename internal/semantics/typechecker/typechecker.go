@@ -57,8 +57,9 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 	switch typ := typeinfo.Underlying(t).(type) {
 	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
 		return true
-	case *typeinfo.RawPtrType:
-		return typ != nil && typ.Target != nil
+	case *typeinfo.OwnedPtrType, *typeinfo.RawPtrType:
+		target, ok := typeinfo.PointerTarget(typ)
+		return ok && target != nil
 	case *typeinfo.OptionalType:
 		return typ != nil && typ.Inner != nil && c.isLowerableType(typ.Inner)
 	case *typeinfo.ArrayType:
@@ -118,11 +119,11 @@ func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
 	if typeinfo.SameType(paramType, selfType) {
 		return true
 	}
-	ptr, ok := paramType.(*typeinfo.RawPtrType)
-	if !ok || ptr == nil || ptr.Target == nil {
+	target, ok := typeinfo.PointerTarget(paramType)
+	if !ok {
 		return false
 	}
-	return typeinfo.SameType(ptr.Target, selfType)
+	return typeinfo.SameType(target, selfType)
 }
 
 // -----------------------------------------------------------------------------
@@ -449,12 +450,7 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		}
 	case *ast.SelectorExpr:
 		baseType := c.typeExpr(scope, target.Expr, nil)
-		if ptrType, ok := typeinfo.Underlying(baseType).(*typeinfo.RawPtrType); ok && ptrType != nil {
-			if ptrType.Mutable {
-				return
-			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-				"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
+		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
 			return
 		}
 		if c.isMutableAddressableExpr(scope, target.Expr) {
@@ -464,13 +460,40 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 			"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
 		return
 	case *ast.IndexExpr:
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"index assignment requires MIR projection support", ast.LocOf(target), "")
+		if c.checkIndexAssignmentTarget(scope, target, targetType) {
+			return
+		}
 		return
 	default:
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"invalid assignment target", ast.LocOf(node.Target), "")
 	}
+}
+
+func (c *checker) checkIndexAssignmentTarget(scope *table.Scope, target *ast.IndexExpr, targetType typeinfo.Type) bool {
+	if c == nil || target == nil || target.Expr == nil {
+		return false
+	}
+	if typeinfo.IsInvalidOrUnknown(targetType) {
+		return true
+	}
+	baseType := c.typeExpr(scope, target.Expr, nil)
+	if typeinfo.IsInvalidOrUnknown(baseType) {
+		return true
+	}
+	switch typeinfo.Underlying(baseType).(type) {
+	case *typeinfo.ArrayType, *typeinfo.SliceType:
+	default:
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+			"index assignment requires array or slice value", ast.LocOf(target), "")
+		return false
+	}
+	if c.isMutableAddressableExpr(scope, target.Expr) {
+		return true
+	}
+	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+		"index assignment requires mutable array or slice binding", ast.LocOf(target), "")
+	return false
 }
 
 func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitializer bool) {
@@ -757,8 +780,8 @@ func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
 	if src == nil {
 		return nil
 	}
-	if ptr, ok := src.(*typeinfo.RawPtrType); ok && ptr != nil && ptr.Target != nil {
-		return ptr.Target
+	if target, ok := typeinfo.PointerTarget(src); ok {
+		return target
 	}
 	return src
 }
@@ -844,6 +867,11 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.IndexExpr:
 		return c.typeIndexExpr(scope, node)
 
+	case *ast.RangeExpr:
+		c.ctx.Diagnostics.Add(invalidExpressionError(node,
+			"range expression is only valid inside an index expression"))
+		return &typeinfo.InvalidType{}
+
 	case *ast.StructLit:
 		return c.typeStructLit(scope, node, expected)
 
@@ -922,13 +950,7 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 			"address operator requires addressable storage", ast.LocOf(node.Expr), "")
 		return &typeinfo.InvalidType{}
 	}
-	mutable := place.MutableAddressable(scope, node.Expr, func(expr ast.Expr) typeinfo.Type {
-		return c.typeExpr(scope, expr, nil)
-	})
-	if expectedPtr, ok := typeinfo.Underlying(expected).(*typeinfo.RawPtrType); ok && expectedPtr != nil {
-		mutable = expectedPtr.Mutable && mutable
-	}
-	return &typeinfo.RawPtrType{Mutable: mutable, Target: valueType}
+	return &typeinfo.RawPtrType{Target: valueType}
 }
 
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
@@ -1075,6 +1097,9 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
+	if rangeIndex, ok := node.Index.(*ast.RangeExpr); ok {
+		return c.typeRangeIndexExpr(scope, node, rangeIndex, baseType)
+	}
 	indexType := c.typeExpr(scope, node.Index, typeinfo.DefaultIntegerType())
 	indexType = c.requireValueType(node.Index, indexType, "index")
 	if typeinfo.IsInvalidOrUnknown(indexType) {
@@ -1116,6 +1141,48 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 		"indexing requires array or slice value"))
 	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, rangeIndex *ast.RangeExpr, baseType typeinfo.Type) typeinfo.Type {
+	if c == nil || node == nil || rangeIndex == nil {
+		return &typeinfo.InvalidType{}
+	}
+	switch base := typeinfo.Underlying(baseType).(type) {
+	case *typeinfo.ArrayType:
+		if base != nil && base.Elem != nil {
+			c.checkRangeBound(scope, rangeIndex.Start)
+			c.checkRangeBound(scope, rangeIndex.End)
+			c.ctx.Diagnostics.Add(invalidExpressionError(node,
+				"slicing is not lowerable in current compiler stage"))
+			return &typeinfo.InvalidType{}
+		}
+	case *typeinfo.SliceType:
+		if base != nil && base.Elem != nil {
+			c.checkRangeBound(scope, rangeIndex.Start)
+			c.checkRangeBound(scope, rangeIndex.End)
+			c.ctx.Diagnostics.Add(invalidExpressionError(node,
+				"slicing is not lowerable in current compiler stage"))
+			return &typeinfo.InvalidType{}
+		}
+	}
+	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+		"slicing requires array or slice value"))
+	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) checkRangeBound(scope *table.Scope, expr ast.Expr) {
+	if c == nil || expr == nil {
+		return
+	}
+	boundType := c.typeExpr(scope, expr, typeinfo.DefaultIntegerType())
+	boundType = c.requireValueType(expr, boundType, "range bound")
+	if typeinfo.IsInvalidOrUnknown(boundType) {
+		return
+	}
+	if !typeinfo.IsIntegral(boundType) {
+		c.ctx.Diagnostics.Add(invalidOperationError(expr,
+			"range bound must be an integer"))
+	}
 }
 
 func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
@@ -1613,7 +1680,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			continue
 		}
 		if i == 0 {
-			if ptrType, ok := paramType.(*typeinfo.RawPtrType); ok && ptrType != nil && c.matchesPointerReceiverTarget(ptrType.Target, argType) {
+			if ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(paramType)); ok && c.matchesPointerReceiverTarget(ptrTarget, argType) {
 				if c.isMutableAddressableExpr(scope, receiverExpr) {
 					continue
 				}

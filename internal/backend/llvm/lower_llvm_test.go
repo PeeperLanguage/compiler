@@ -22,10 +22,10 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"?i32":             "{ i1, i32 }",
 		"?string":          "{ i1, { i8*, i64 } }",
 		"?^i32":            "i32*",
-		"?^const i32":      "i32*",
+		"*i32":             "i32*",
 		"[4]i32":           "[4 x i32]",
 		"[]i32":            "{ i32*, i64 }",
-		"^const string":    "{ i8*, i64 }*",
+		"*string":          "{ i8*, i64 }*",
 		"[]?string":        "{ { i1, { i8*, i64 } }*, i64 }",
 		"struct{x: [2]u8}": "{ [2 x i8] }",
 	}
@@ -41,7 +41,7 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 }
 
 func TestOptionalNicheLayout(t *testing.T) {
-	niche, ok := optionalNicheLayout("^const i32")
+	niche, ok := optionalNicheLayout("^i32")
 	if !ok {
 		t.Fatalf("expected optional pointer niche")
 	}
@@ -546,12 +546,12 @@ func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 								Value: &mir.ProjectIndex{
 									Base:  &mir.RefName{Name: "xs", Type: baseType},
 									Index: index,
-									Type:  "^i32",
+									Type:  "*i32",
 								},
 							},
 							&mir.Assign{
 								Name:  "item",
-								Value: &mir.Load{Ptr: &mir.RefName{Name: "idxptr", Type: "^i32"}, Type: "i32"},
+								Value: &mir.Load{Ptr: &mir.RefName{Name: "idxptr", Type: "*i32"}, Type: "i32"},
 							},
 						},
 						Term: &mir.Ret{Value: &mir.RefName{Name: "item", Type: "i32"}},
@@ -571,6 +571,52 @@ func TestGenerateLLVMIRLowersProjectIndexForArrayRead(t *testing.T) {
 	}
 	if !strings.Contains(irText, "load i32, i32*") {
 		t.Fatalf("expected array index read to load element, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{
+			{
+				Name: "set_first",
+				Params: []ir.Param{
+					{Name: "xs", Type: "[4]i32"},
+					{Name: "value", Type: "i32"},
+				},
+				ReturnType: "i32",
+				EntryID:    0,
+				Blocks: []*mir.Block{
+					{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Assign{
+								Name: "idxptr",
+								Value: &mir.ProjectIndex{
+									Base:  &mir.RefName{Name: "xs", Type: "[4]i32"},
+									Index: &mir.RefConst{Value: "0", Type: "i32"},
+									Type:  "*i32",
+								},
+							},
+							&mir.Store{
+								Ptr:   &mir.RefName{Name: "idxptr", Type: "*i32"},
+								Value: &mir.RefName{Name: "value", Type: "i32"},
+							},
+						},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+					},
+				},
+			},
+		},
+	}
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
+		t.Fatalf("expected array index write to lower as GEP, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "store i32 %value, i32*") {
+		t.Fatalf("expected array index write to store element, got:\n%s", irText)
 	}
 }
 

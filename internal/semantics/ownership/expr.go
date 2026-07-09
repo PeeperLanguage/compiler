@@ -282,6 +282,5 @@ func ownershipTrackedType(t typeinfo.Type) bool {
 	if t == nil || typeinfo.IsCopyType(t) {
 		return false
 	}
-	ptr, ok := typeinfo.Underlying(t).(*typeinfo.RawPtrType)
-	return !ok || ptr == nil
+	return true
 }

@@ -637,7 +637,13 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 				return false
 			}
 			base := l.lowerExpr(target.Base, &l.current.Instrs)
-			ptr := l.projectField(&l.current.Instrs, base, target.Index, "^"+target.TypeText(), ir.ExprLocation(target))
+			ptr := l.projectField(&l.current.Instrs, base, target.Index, "*"+target.TypeText(), ir.ExprLocation(target))
+			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
+			return true
+		case *ir.Index:
+			base := l.lowerExpr(target.Base, &l.current.Instrs)
+			index := l.lowerExpr(target.Index, &l.current.Instrs)
+			ptr := l.projectIndex(&l.current.Instrs, base, index, "*"+target.TypeText(), ir.ExprLocation(target))
 			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
 			return true
 		default:
@@ -866,7 +872,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		if e.ThroughPtr {
-			ptr := l.projectField(out, base, e.Index, "^"+e.TypeText(), ir.ExprLocation(e))
+			ptr := l.projectField(out, base, e.Index, "*"+e.TypeText(), ir.ExprLocation(e))
 			name := l.nextTemp()
 			l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 			return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
@@ -877,7 +883,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Index:
 		base := l.lowerExpr(e.Base, out)
 		index := l.lowerExpr(e.Index, out)
-		ptr := l.projectIndex(out, base, index, "^"+e.TypeText(), ir.ExprLocation(e))
+		ptr := l.projectIndex(out, base, index, "*"+e.TypeText(), ir.ExprLocation(e))
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
@@ -979,7 +985,7 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 }
 
 func interfaceStorageFor(typeText string) (string, bool) {
-	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
+	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
 		return remainder, false
 	}
 	return typeText, true

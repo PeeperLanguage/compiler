@@ -61,11 +61,7 @@ func llvmTypeName(typeText string) (string, bool) {
 	if strings.HasPrefix(typeText, "fn(") {
 		return llvmFunctionPtrType(typeText)
 	}
-	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
-		remainder = strings.TrimSpace(remainder)
-		if constTarget, ok := strings.CutPrefix(remainder, "const "); ok {
-			remainder = strings.TrimSpace(constTarget)
-		}
+	if remainder, ok := pointerTypeTextTarget(typeText); ok {
 		target, ok := llvmTypeName(remainder)
 		if !ok {
 			// Unknown pointee still lowers as pointer-sized storage.
@@ -159,8 +155,8 @@ type optionalNiche struct {
 func optionalNicheLayout(typeText string) (optionalNiche, bool) {
 	typeText = strings.TrimSpace(typeText)
 	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
-		// Raw pointers are non-null by language rule, so optional pointers can
-		// use null as the none sentinel instead of a tagged struct.
+		// Owned pointers are non-null by language rule, so optional owned
+		// pointers can use null as the none sentinel instead of a tagged struct.
 		if strings.TrimSpace(remainder) == "" {
 			return optionalNiche{}, false
 		}
@@ -222,7 +218,7 @@ func interfaceMethodSlotTypeText(methodText string) (string, bool) {
 		return "", false
 	}
 	paramsText := strings.TrimSpace(methodText[open+1 : close])
-	parts := []string{"^u8"}
+	parts := []string{"*byte"}
 	params := splitTopLevel(paramsText, ',')
 	for i, param := range params {
 		if i == 0 {
@@ -539,13 +535,16 @@ func emitInterfaceBoxedData(b *llvmBuilder, value mir.ValueRef, dataType string,
 }
 
 func pointedTypeText(typeText string) (string, bool) {
+	return pointerTypeTextTarget(typeText)
+}
+
+func pointerTypeTextTarget(typeText string) (string, bool) {
 	typeText = strings.TrimSpace(typeText)
-	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
-		remainder = strings.TrimSpace(remainder)
-		if constTarget, ok := strings.CutPrefix(remainder, "const "); ok {
-			remainder = strings.TrimSpace(constTarget)
+	for _, prefix := range []string{"^", "*"} {
+		if remainder, ok := strings.CutPrefix(typeText, prefix); ok {
+			remainder = strings.TrimSpace(remainder)
+			return remainder, remainder != ""
 		}
-		return remainder, true
 	}
 	return "", false
 }

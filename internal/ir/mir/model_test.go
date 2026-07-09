@@ -281,6 +281,52 @@ func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersIndexAssignmentAsProjectIndexStore(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name: "set_first",
+				Params: []ir.Param{
+					{Name: "xs", Type: "[4]i32"},
+					{Name: "value", Type: "i32"},
+				},
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Assign{
+							Target: &ir.Index{
+								Base:  &ir.Ident{Name: "xs", Type: "[4]i32"},
+								Index: &ir.IntLit{Value: "0", Type: "i32"},
+								Type:  "i32",
+							},
+							Value: &ir.Ident{Name: "value", Type: "i32"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("expected project index and store instructions, got %#v", instrs)
+	}
+	project, ok := instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected first instruction assignment, got %#v", instrs[0])
+	}
+	if _, ok := project.Value.(*ProjectIndex); !ok {
+		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
+	}
+	if _, ok := instrs[1].(*Store); !ok {
+		t.Fatalf("expected Store, got %#v", instrs[1])
+	}
+}
+
 func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",

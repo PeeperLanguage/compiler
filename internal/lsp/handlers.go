@@ -491,8 +491,8 @@ func normalizedSelectorBaseType(baseType typeinfo.Type) (typeinfo.Type, bool) {
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return nil, false
 	}
-	if ptr, ok := baseType.(*typeinfo.RawPtrType); ok && ptr.Target != nil {
-		baseType = ptr.Target
+	if target, ok := typeinfo.PointerTarget(baseType); ok {
+		baseType = target
 	}
 	return baseType, true
 }
@@ -751,6 +751,8 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 		return p.TypeExpr == typeNode
 	case *ast.StructLit:
 		return p.Type == typeNode
+	case *ast.OwnedPtrType:
+		return p.Target == typeNode
 	case *ast.RawPtrType:
 		return p.Target == typeNode
 	case *ast.OptionalType:

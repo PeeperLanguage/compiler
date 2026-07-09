@@ -3,24 +3,26 @@
 This document is the current design reference for ownership, pointers, copy rules,
 and optionals.
 
-Current model:
+Target model:
 
 - `T` owns values.
-- `^T` is a mutable raw pointer.
-- `^const T` is a read-only raw pointer.
-- `^T` and `^const T` do not own.
-- `?T` is optional.
-- `move` transfers ownership of `T`.
-- `#[no_copy]` makes `T` move-only.
-- `#[allow_copy]` explicitly permits shallow copy of a `^T`-containing type.
+- `^T` is a non-null unique heap handle.
+- `*T` is a nullable raw pointer for FFI and unsafe interop.
+- `?T` is optional for non-raw values.
+- `?^T` is optional heap-handle storage.
+- `move` transfers ownership explicitly.
+- `copy` must be explicit when duplication is allowed.
+- Shallow copy of `^T` is never implicit.
+- `@expr` creates raw pointers; `&expr` creates safe references.
+- `[]T` is the target spelling for dynamic arrays, not slice views.
+- `&[T]` and `&mut [T]` are the target spellings for slice views.
 
-Rejected model:
+Rejected old model:
 
-- no `&T`
-- no `&mut T`
-- no separate owned pointer type
-- no `Box`-style core ownership wrapper
-- no `^T` ownership token
+- `^T` as raw pointer
+- `^const T`
+- shallow-copy opt-in for owning pointer fields
+- allocator provenance hidden behind plain value `T`
 
 ## `T`
 
@@ -34,31 +36,61 @@ Examples:
 
 ```peep
 let n: i32 = 10
-let s: string = "fuad"
-let xs: DynArray[i32] = make_array()
+let s: str = "fuad"
+let xs: []i32 = make_array()
 ```
 
-Ownership belongs to the `T` binding, not to raw pointers that point at it.
+Ownership belongs to the binding. A plain `T` may be copied when its type is
+copyable. A `T` containing heap handles is move-only unless the type
+defines an explicit deep copy.
 
-## Raw Pointers
+## Heap Handles
 
 ### `^T`
 
-`^T` is a mutable raw pointer to `T`.
+`^T` is a unique handle to heap storage containing `T`.
+
+- non-null by default
+- must be moved or freed explicitly
+- cannot be implicitly copied
+- cannot be forged from raw pointer bits with `as`
+- may be nullable only when written as `?^T`
+
+Examples:
+
+```peep
+let node: ^Node = allocator.alloc<Node>()
+let next: ?^Node = none
+let moved: ^Node = move node
+```
+
+Raw memory returned from C is not automatically owned. Ownership adoption must
+go through an explicit allocator/provenance API.
+
+## Raw Pointers
+
+### `*T`
+
+`*T` is a nullable raw pointer to `T`.
 
 - points to storage owned somewhere else
 - does not own or free that storage
-- permits mutation through pointer operations
-- low-level tool with explicit escape limits
+- may be null
+- may dangle
+- may be copied because copying raw pointer bits does not copy ownership
+- dereference and raw-to-reference conversion require `unsafe`
 
-### `^const T`
+Examples:
 
-`^const T` is a read-only raw pointer to `T`.
+```peep
+#[extern("read")]
+fn read(fd: i32, buf: *byte, n: usize) -> isize;
 
-- points to storage owned somewhere else
-- does not own or free that storage
-- may be copied like other read-only view data unless contained type says otherwise
-- can still dangle if provenance/lifetime rules are violated
+let raw: *byte = malloc(16)
+if raw == none {
+    return
+}
+```
 
 ## Optionals
 
@@ -75,113 +107,89 @@ Implementation status:
 
 - `none` lowers in expected optional contexts.
 - `T` can lower to `?T` as `some(T)`.
-- `?^T` and `?^const T` use pointer niche layout.
+- `?^T` should use pointer niche layout.
 - other optionals currently use tagged layout.
+- raw `*T` is nullable by default, so `?*T` is not part of the target model.
 
 Future layout work may add niche detection for more types.
 
 ## Strings
 
-`string` is an immutable non-owning view type.
+`str` is a builtin alias for `byte[]`.
 
-It is cheap to copy and cheap to pass by value because mutation is not exposed
-through `string`. If Peeper needs owned mutable text, that should be a distinct
-type such as `StringBuf`, not a changed meaning for `string`.
+There is no special immutability mechanism for strings. The normal binding rule
+decides mutation: immutable bindings cannot mutate, mutable bindings may mutate
+when the operation itself is available. A decoded Unicode scalar is `char`, a
+4-byte value distinct from UTF-8 bytes.
 
 ## Copy And Move
 
 Normal `T` values copy by default.
 
-`#[no_copy]` marks a type as move-only:
+`^T` is move-only. Types containing `^T` are also move-only unless they define
+an explicit deep copy.
 
 ```peep
-#[no_copy]
 struct Buffer {
-    ptr: ^u8,
+    ptr: *byte,
     len: int,
 }
 ```
 
-Passing or assigning a `#[no_copy]` value without `move` is invalid when the
-operation would copy ownership.
+Passing or assigning an owned handle without `move` is invalid when the
+operation would transfer ownership.
 
 ```peep
-let a: Buffer = make_buffer()
-let b: Buffer = move a
+let a: ^Buffer = make_buffer()
+let b: ^Buffer = move a
 ```
 
 After `move a`, `a` is dead until reassigned.
 
-Return statements may move implicitly when returning an owned local:
+`copy` is explicit and must mean an ownership-safe duplication:
 
 ```peep
-fn make() -> Buffer {
-    let buf: Buffer = make_buffer()
-    return buf
-}
+let clone: ^Buffer = copy a
 ```
 
-## Pointer-Containing Types
-
-Types containing `^T` are `#[no_copy]` by default.
-
-Reason:
-
-- shallow-copying mutable raw pointers is easy to misunderstand
-- accidental aliasing and shared mutation become likely
-- move-only default prevents silent duplication of mutable pointer handles
-
-This default does not apply to `^const T`.
-
-If a type with `^T` must be shallow-copyable, user must opt in:
-
-```peep
-#[allow_copy]
-struct Cursor {
-    ptr: ^u8,
-}
-```
-
-`#[allow_copy]` means pointer value is copied; pointee is not cloned.
+The implementation may use memcpy only for trivially copyable payloads. If `T`
+contains owned fields, copy must recursively clone those fields or reject the
+operation until the type defines clone behavior.
 
 ## Function Passing
 
 Passing `T` means value passing:
 
 - copy if type is copyable
-- move if call consumes a `#[no_copy]` value
+- move only when explicitly written and the callee consumes ownership
 
-Passing `^T` or `^const T` means pointer passing. No ownership transfer is
-implied by pointer type alone.
+Passing `^T` means heap-handle passing. Passing it to a consuming
+parameter requires `move`.
 
-If callee must mutate caller-owned data, pass `^T` explicitly.
+Passing `*T` means raw pointer passing. No ownership transfer is implied.
 
 ```peep
-fn set_first(xs: ^DynArray[i32]) {
-    xs.set(0, 10)
+fn destroy(move buf: ^Buffer) {
+    allocator.free(move buf)
 }
 ```
 
 ## Allocation
 
-Allocator APIs should return owned `T`, not owned pointer types.
+Allocator APIs return heap handles.
 
 ```peep
-let x: Buffer = allocator.alloc(Buffer)
-let y: Buffer = Buffer{}
+let x: ^Buffer = allocator.alloc<Buffer>()
 ```
 
-Both bindings are owned `T`. Compiler/runtime tracks whether a value came from
-allocator-managed storage.
-
-Free consumes allocator-owned `T`:
+Free consumes allocator-owned `^T`:
 
 ```peep
-defer allocator.free(x)
+defer allocator.free(move x)
 ```
 
-Calling `free` on a non-allocator-owned stack-only value should be a compile
-error once allocator provenance checks exist.
+Calling `free` with a raw `*T` or a non-owned value should be a compile error
+once allocator provenance checks exist.
 
 Implementation status:
 
@@ -191,19 +199,19 @@ Implementation status:
 ## Raw Pointer Escape Analysis
 
 Raw pointers are non-owning. Compiler escape analysis rejects provable attempts
-to return pointers to local stack storage.
+to return raw pointers to local stack storage.
 
 Use `@expr` to produce a raw pointer to addressable storage:
 
 ```peep
-fn bad() -> ^const i32 {
+fn bad() -> *i32 {
     let x: i32 = 1
     return @x // error: pointer to local storage escapes
 }
 ```
 
-Allocator-backed values are the explicit way to make returned storage outlive
-the current function once allocator APIs exist.
+Owned heap allocation is the explicit way to make returned storage outlive the
+current function.
 
 Target checks:
 
@@ -222,9 +230,56 @@ Implementation status:
 - returning pointers to known local storage is rejected
 - allocator provenance tracking is future work
 
+## References And Slice Views
+
+Safe reference syntax is separate from raw pointer syntax:
+
+```peep
+let r: &T = &value
+let m: &mut T = &mut value
+let p: *T = @value
+```
+
+References are temporary views. They cannot be stored inside structs, arrays,
+dynamic arrays, globals, or heap objects in the first implementation slice.
+
+Arrays and dynamic arrays own storage:
+
+```peep
+let fixed: [4]i32 = [4]i32{1, 2, 3, 4}
+let dynamic: []i32 = []i32{1, 2, 3}
+```
+
+Slice views borrow contiguous storage:
+
+```peep
+fn sum(xs: &[i32]) -> i32
+fn fill(xs: &mut [i32], value: i32)
+```
+
+Implementation status:
+
+- `&T`, `&mut T`, `&[T]`, and `&mut [T]` are specified but not implemented.
+- current branch still has old `[]T` slice-value internals.
+- dynamic-array and slice-view lowering is future work.
+
 ## Linked Structures
 
 Unsafe linked structures can use raw pointers directly.
+
+```peep
+struct Node {
+    val: i32,
+    next: *Node,
+}
+```
+
+This is valid because `*Node` has fixed size and `next` is non-owning.
+
+This does not make the list ownership-safe. Whoever owns nodes must keep them
+alive longer than all raw pointers that reference them.
+
+Owned recursive structures use `?^Node` and transfer/free recursively by policy:
 
 ```peep
 struct Node {
@@ -233,24 +288,17 @@ struct Node {
 }
 ```
 
-This is valid because `^Node` has fixed size and `next` is non-owning.
-
-This does not make the list ownership-safe. Whoever owns nodes must keep them
-alive longer than all raw pointers that reference them.
-
 ## Final Rules
 
 - `T` owns.
-- `^T` is mutable raw pointer only.
-- `^const T` is read-only raw pointer only.
-- `^T` and `^const T` never own.
+- `^T` is non-null unique heap handle.
+- `*T` is nullable raw pointer only.
 - `@expr` produces a non-owning raw pointer to addressable storage.
-- `?T` is optional.
-- `string` is immutable non-owning view.
-- allocator returns owned `T`.
-- `free` consumes allocator-owned `T`.
-- type containing `^T` is `#[no_copy]` by default.
-- `^const T` alone does not imply `#[no_copy]`.
-- `#[allow_copy]` permits explicit shallow copy of a `^T`-containing type.
-- mutation of same underlying object uses `^T` explicitly.
+- `?T` is optional for non-raw values.
+- `?^T` is nullable heap-handle storage.
+- `str` is builtin `byte[]`.
+- allocator returns `^T`.
+- `free` consumes allocator-created `^T`.
+- type containing `^T` is move-only unless explicit deep copy exists.
+- `*T` copy is shallow pointer-bit copy because it owns nothing.
 - compiler rejects returned raw pointers when they are known to point at local storage.

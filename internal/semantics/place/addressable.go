@@ -19,7 +19,7 @@ func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool 
 		return found && addressableSymbol(sym)
 	case *ast.SelectorExpr:
 		if exprType != nil {
-			if _, ok := typeinfo.Underlying(exprType(e.Expr)).(*typeinfo.RawPtrType); ok {
+			if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(e.Expr))); ok {
 				return true
 			}
 		}
@@ -63,7 +63,7 @@ func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprType
 		return nil, false
 	case *ast.SelectorExpr:
 		if exprType != nil {
-			if _, ok := typeinfo.Underlying(exprType(e.Expr)).(*typeinfo.RawPtrType); ok {
+			if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(e.Expr))); ok {
 				return nil, false
 			}
 		}

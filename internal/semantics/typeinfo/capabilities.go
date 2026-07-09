@@ -77,8 +77,10 @@ func IsCopyType(t Type) bool {
 		return false
 	case *IntegerType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
 		return true
+	case *OwnedPtrType:
+		return false
 	case *RawPtrType:
-		return typ != nil && !typ.Mutable
+		return typ != nil
 	case *OptionalType:
 		return typ != nil && IsCopyType(typ.Inner)
 	case *ArrayType:

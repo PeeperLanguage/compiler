@@ -136,7 +136,7 @@ func checkPointerCompatibility(dst, src Type) Compatibility {
 		return Incompatible
 	}
 	right, ok := Underlying(src).(*RawPtrType)
-	if !ok || right == nil || left.Mutable != right.Mutable {
+	if !ok || right == nil {
 		return Incompatible
 	}
 	if SameType(left.Target, right.Target) {
