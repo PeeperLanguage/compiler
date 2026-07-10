@@ -821,6 +821,8 @@ func (p *Parser) parseExprStmt() ast.Stmt {
 func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	tok := p.current()
 	switch tok.Kind {
+	case token.AMP:
+		return p.parseRefTypeExpr()
 	case token.QUESTION:
 		return p.parseOptionalTypeExpr()
 	case token.CARET:
@@ -863,6 +865,23 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		p.diag.Add(d)
 		return nil
 	}
+}
+
+func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
+	start := p.consume(token.AMP, "expected '&' in reference type")
+	if start == nil {
+		return nil
+	}
+	mutable := p.match(token.MUT)
+	target := p.parseTypeExpr()
+	if target == nil {
+		return nil
+	}
+	return reg(p, &ast.RefType{
+		Mutable:  mutable,
+		Target:   target,
+		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
+	})
 }
 
 func (p *Parser) parseOptionalTypeExpr() ast.TypeExpr {
@@ -920,10 +939,22 @@ func (p *Parser) parseBracketTypeExpr() ast.TypeExpr {
 		if elem == nil {
 			return nil
 		}
-		return reg(p, &ast.SliceType{
+		return reg(p, &ast.ArrayType{
+			Dynamic:  true,
 			Elem:     elem,
 			Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
 		})
+	}
+	if p.current().Kind != token.NUMBER {
+		tok := p.current()
+		p.diag.Add(diagnostics.NewError("expected array length").
+			WithCode(diagnostics.ErrInvalidTypeInParser).
+			WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), "use `[N]T` for fixed arrays or `[]T` for dynamic arrays"))
+		p.synchronize(token.RBRACK)
+		if p.at(token.RBRACK) {
+			p.advance()
+		}
+		return nil
 	}
 	lenTok := p.consume(token.NUMBER, "expected array length")
 	if lenTok == nil {
@@ -1141,13 +1172,21 @@ func (p *Parser) parseParams() []ast.Param {
 
 func (p *Parser) parseParam() (ast.Param, bool) {
 	var (
-		consumes  bool
-		moveStart source.Position
+		consumes      bool
+		mutable       bool
+		modifierStart source.Position
 	)
 	if p.at(token.MOVE) {
 		tok := p.advance()
 		consumes = true
-		moveStart = tok.Start
+		modifierStart = tok.Start
+	}
+	if p.at(token.MUT) {
+		tok := p.advance()
+		mutable = true
+		if !consumes {
+			modifierStart = tok.Start
+		}
 	}
 	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
 		name := p.parseIdent()
@@ -1164,19 +1203,23 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 			endPos = ast.EndOf(ty)
 		}
 		startPos := ast.StartOf(name)
-		if consumes {
-			startPos = moveStart
+		if consumes || mutable {
+			startPos = modifierStart
 		}
-		return ast.Param{Consumes: consumes, Name: name, Type: ty, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
+		return ast.Param{Consumes: consumes, IsMutable: mutable, Name: name, Type: ty, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
 	}
 	ty := p.parseTypeExpr()
 	if ty == nil {
 		return ast.Param{}, false
 	}
-	if consumes {
-		p.diag.Add(diagnostics.NewError("move parameter requires a named binding").
+	if consumes || mutable {
+		modifier := "mutable"
+		if consumes {
+			modifier = "move"
+		}
+		p.diag.Add(diagnostics.NewError(modifier+" parameter requires a named binding").
 			WithCode(diagnostics.ErrInvalidDeclaration).
-			WithPrimaryLabel(source.NewLocation(p.filePath, p.prev().Start, p.prev().End), "add a parameter name after `move`"))
+			WithPrimaryLabel(source.NewLocation(p.filePath, modifierStart, p.prev().End), "add a parameter name after the modifier"))
 		return ast.Param{}, false
 	}
 	return ast.Param{Type: ty, Location: ast.LocOf(ty)}, true

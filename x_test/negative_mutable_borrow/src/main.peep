@@ -1,0 +1,4 @@
+fn BorrowImmutable() {
+    let value: i32 = 5;
+    let _ = &mut value;
+}

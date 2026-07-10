@@ -179,6 +179,27 @@ func TestParseMoveParam(t *testing.T) {
 	}
 }
 
+func TestParseMutableParam(t *testing.T) {
+	src := `fn update(mut data: Buffer, move mut owned: Buffer) {}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn, ok := mod.Stmts[0].(*ast.FnDecl)
+	if !ok || len(fn.Params) != 2 {
+		t.Fatalf("expected function with two params, got %#v", mod.Stmts[0])
+	}
+	if !fn.Params[0].IsMutable || fn.Params[0].Consumes {
+		t.Fatalf("first param should be mutable and non-consuming: %#v", fn.Params[0])
+	}
+	if !fn.Params[1].IsMutable || !fn.Params[1].Consumes {
+		t.Fatalf("second param should be mutable and consuming: %#v", fn.Params[1])
+	}
+	if got := fn.GetDeclSurface(); !strings.Contains(got, "mut data:Buffer") || !strings.Contains(got, "move mut owned:Buffer") {
+		t.Fatalf("surface missing parameter modifiers: %q", got)
+	}
+}
+
 func TestParseRejectsBracketTypeParams(t *testing.T) {
 	src := `fn add[T](a: i32) -> i32 {
 	return a;
@@ -295,25 +316,33 @@ func TestParseMoveExpr(t *testing.T) {
 func TestParseAddressExpr(t *testing.T) {
 	src := `fn main() {
 	let ptr = @current;
+	let shared = &current;
+	let mutable = &mut current;
 }`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	fn, ok := mod.Stmts[0].(*ast.FnDecl)
-	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 1 {
+	if !ok || fn.Body == nil || len(fn.Body.Stmts) != 3 {
 		t.Fatalf("unexpected function body: %#v", mod.Stmts[0])
 	}
-	letDecl, ok := fn.Body.Stmts[0].(*ast.LetDecl)
-	if !ok {
-		t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[0])
-	}
-	addr, ok := letDecl.Value.(*ast.AddressExpr)
-	if !ok {
-		t.Fatalf("expected address expr, got %#v", letDecl.Value)
-	}
-	if ident, ok := addr.Expr.(*ast.Ident); !ok || ident.Name != "current" {
-		t.Fatalf("unexpected address operand: %#v", addr.Expr)
+	wantModes := []ast.AddressMode{ast.AddressRaw, ast.AddressShared, ast.AddressMutable}
+	for i, wantMode := range wantModes {
+		letDecl, ok := fn.Body.Stmts[i].(*ast.LetDecl)
+		if !ok {
+			t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[i])
+		}
+		addr, ok := letDecl.Value.(*ast.AddressExpr)
+		if !ok {
+			t.Fatalf("expected address expr, got %#v", letDecl.Value)
+		}
+		if addr.Mode != wantMode {
+			t.Fatalf("address mode = %v, want %v", addr.Mode, wantMode)
+		}
+		if ident, ok := addr.Expr.(*ast.Ident); !ok || ident.Name != "current" {
+			t.Fatalf("unexpected address operand: %#v", addr.Expr)
+		}
 	}
 }
 
@@ -579,17 +608,19 @@ const c: enum {
 	}
 }
 
-func TestParseOptionalPointerArrayAndSliceTypes(t *testing.T) {
+func TestParseOptionalPointerArrayAndReferenceArrayTypes(t *testing.T) {
 	src := `const a: ?i32 = none;
 const b: *Foo = value;
 const c: [4]i32 = value;
-const d: []string = value;`
+const d: []string = value;
+const e: &[]string = value;
+const f: &mut []string = value;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Stmts) != 4 {
-		t.Fatalf("decls: got %d want 4", len(mod.Stmts))
+	if len(mod.Stmts) != 6 {
+		t.Fatalf("decls: got %d want 6", len(mod.Stmts))
 	}
 	optDecl := mod.Stmts[0].(*ast.ConstDecl)
 	if _, ok := optDecl.Type.(*ast.OptionalType); !ok {
@@ -607,9 +638,23 @@ const d: []string = value;`
 	if arr.Len == nil || arr.Len.Value != "4" {
 		t.Fatalf("array len mismatch: %#v", arr.Len)
 	}
-	sliceDecl := mod.Stmts[3].(*ast.ConstDecl)
-	if _, ok := sliceDecl.Type.(*ast.SliceType); !ok {
-		t.Fatalf("expected slice type, got %T", sliceDecl.Type)
+	dynDecl := mod.Stmts[3].(*ast.ConstDecl)
+	dyn, ok := dynDecl.Type.(*ast.ArrayType)
+	if !ok || !dyn.Dynamic {
+		t.Fatalf("expected dynamic array type, got %#v", dynDecl.Type)
+	}
+	sharedRefDecl := mod.Stmts[4].(*ast.ConstDecl)
+	sharedRef, ok := sharedRefDecl.Type.(*ast.RefType)
+	if !ok || sharedRef.Mutable {
+		t.Fatalf("expected shared reference type, got %#v", sharedRefDecl.Type)
+	}
+	if target, ok := sharedRef.Target.(*ast.ArrayType); !ok || !target.Dynamic {
+		t.Fatalf("expected dynamic array target, got %#v", sharedRef.Target)
+	}
+	mutRefDecl := mod.Stmts[5].(*ast.ConstDecl)
+	mutRef, ok := mutRefDecl.Type.(*ast.RefType)
+	if !ok || !mutRef.Mutable {
+		t.Fatalf("expected mutable reference type, got %#v", mutRefDecl.Type)
 	}
 }
 
@@ -1127,14 +1172,14 @@ func TestParseArrayLiteralThenIndexWithoutHang(t *testing.T) {
 	}
 }
 
-func TestParseSliceLiteralRejectedWithoutHang(t *testing.T) {
+func TestParseDynamicArrayLiteralRejectedWithoutHang(t *testing.T) {
 	src := `fn main() -> i32 {
 	let arr = []i32{1, 2};
 	return 0;
 }`
 	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
-		t.Fatalf("expected slice literal diagnostics")
+		t.Fatalf("expected dynamic array literal diagnostics")
 	}
 	fn := mod.Stmts[0].(*ast.FnDecl)
 	if fn.Body == nil || len(fn.Body.Stmts) != 2 {

@@ -44,6 +44,9 @@ func CheckCompatibility(dst, src Type) Compatibility {
 	if compat := checkPointerCompatibility(dst, src); compat != Incompatible {
 		return compat
 	}
+	if compat := checkRefCompatibility(dst, src); compat != Incompatible {
+		return compat
+	}
 	if compat := checkOptionalCompatibility(dst, src); compat != Incompatible {
 		return compat
 	}
@@ -145,6 +148,24 @@ func checkPointerCompatibility(dst, src Type) Compatibility {
 	return Incompatible
 }
 
+func checkRefCompatibility(dst, src Type) Compatibility {
+	left, ok := Underlying(dst).(*RefType)
+	if !ok || left == nil {
+		return Incompatible
+	}
+	right, ok := Underlying(src).(*RefType)
+	if !ok || right == nil {
+		return Incompatible
+	}
+	if !SameType(left.Target, right.Target) {
+		return Incompatible
+	}
+	if left.Mutable && !right.Mutable {
+		return Incompatible
+	}
+	return Compatible
+}
+
 func checkOptionalCompatibility(dst, src Type) Compatibility {
 	left, ok := Underlying(dst).(*OptionalType)
 	if !ok || left == nil {
@@ -196,15 +217,7 @@ func checkArrayCompatibility(dst, src Type) Compatibility {
 		if !ok || right == nil {
 			return Incompatible
 		}
-		if left.Len == right.Len && SameType(left.Elem, right.Elem) {
-			return Compatible
-		}
-	case *SliceType:
-		right, ok := Underlying(src).(*SliceType)
-		if !ok || right == nil {
-			return Incompatible
-		}
-		if SameType(left.Elem, right.Elem) {
+		if left.Len == right.Len && left.Dynamic == right.Dynamic && SameType(left.Elem, right.Elem) {
 			return Compatible
 		}
 	}

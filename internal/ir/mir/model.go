@@ -985,6 +985,12 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 }
 
 func interfaceStorageFor(typeText string) (string, bool) {
+	if remainder, ok := strings.CutPrefix(typeText, "&mut "); ok {
+		return remainder, false
+	}
+	if remainder, ok := strings.CutPrefix(typeText, "&"); ok {
+		return remainder, false
+	}
 	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
 		return remainder, false
 	}

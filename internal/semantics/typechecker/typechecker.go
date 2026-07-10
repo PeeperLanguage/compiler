@@ -54,62 +54,90 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 }
 
 func (c *checker) isLowerableType(t typeinfo.Type) bool {
-	switch typ := typeinfo.Underlying(t).(type) {
-	case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
-		return true
-	case *typeinfo.OwnedPtrType, *typeinfo.RawPtrType:
-		target, ok := typeinfo.PointerTarget(typ)
-		return ok && target != nil
-	case *typeinfo.OptionalType:
-		return typ != nil && typ.Inner != nil && c.isLowerableType(typ.Inner)
-	case *typeinfo.ArrayType:
-		return typ != nil && typ.Len != "" && typ.Elem != nil && c.isLowerableType(typ.Elem)
-	case *typeinfo.SliceType:
-		return typ != nil && typ.Elem != nil && c.isLowerableType(typ.Elem)
-	case *typeinfo.StructType:
-		if typ == nil {
+	// Semantic indirection may permit recursion, but LLVM type text cannot yet
+	// name recursive runtime shells. Re-entering an active type must reject here.
+	visiting := make(map[typeinfo.Type]struct{})
+	var check func(typeinfo.Type) bool
+	check = func(t typeinfo.Type) bool {
+		t = typeinfo.Underlying(t)
+		if t == nil {
 			return false
 		}
-		for _, field := range typ.Fields {
-			if !c.isLowerableType(field.Type) {
-				return false
-			}
-		}
-		return true
-	case *typeinfo.InterfaceType:
-		if typ == nil {
+		if _, found := visiting[t]; found {
 			return false
 		}
-		for _, method := range typ.Methods {
-			if len(method.Params) == 0 {
+		visiting[t] = struct{}{}
+		defer delete(visiting, t)
+
+		switch typ := t.(type) {
+		case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
+			return true
+		case *typeinfo.OwnedPtrType, *typeinfo.RawPtrType:
+			target, ok := typeinfo.PointerTarget(typ)
+			return ok && target != nil
+		case *typeinfo.RefType:
+			if typ == nil || typ.Target == nil {
 				return false
 			}
-			for i, param := range method.Params {
-				if i == 0 {
-					continue
-				}
-				if typeinfo.ContainsAbstractSelf(param.Type) || !c.isLowerableType(param.Type) {
+			if _, nested := typeinfo.Underlying(typ.Target).(*typeinfo.RefType); nested {
+				return false
+			}
+			if target, ok := typeinfo.Underlying(typ.Target).(*typeinfo.ArrayType); ok && target != nil && target.Len == "" && !target.Dynamic {
+				return target.Elem != nil && check(target.Elem)
+			}
+			return check(typ.Target)
+		case *typeinfo.OptionalType:
+			return typ != nil && typ.Inner != nil && check(typ.Inner)
+		case *typeinfo.ArrayType:
+			return typ != nil && (typ.Dynamic || typ.Len != "") && typ.Elem != nil && check(typ.Elem)
+		case *typeinfo.StructType:
+			if typ == nil {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if !check(field.Type) {
 					return false
 				}
 			}
-			if method.Return != nil && (typeinfo.ContainsAbstractSelf(method.Return) || !c.isLowerableType(method.Return)) {
+			return true
+		case *typeinfo.InterfaceType:
+			if typ == nil {
 				return false
 			}
-		}
-		return true
-	case *typeinfo.EnumType:
-		return typ != nil
-	}
-	fn, ok := t.(*typeinfo.FuncType)
-	if !ok || fn == nil {
-		return false
-	}
-	for _, param := range fn.Params {
-		if !c.isLowerableType(param) {
+			for _, method := range typ.Methods {
+				if len(method.Params) == 0 {
+					return false
+				}
+				for i, param := range method.Params {
+					if i == 0 {
+						continue
+					}
+					if typeinfo.ContainsAbstractSelf(param.Type) || !check(param.Type) {
+						return false
+					}
+				}
+				if method.Return != nil && (typeinfo.ContainsAbstractSelf(method.Return) || !check(method.Return)) {
+					return false
+				}
+			}
+			return true
+		case *typeinfo.FuncType:
+			if typ == nil {
+				return false
+			}
+			for _, param := range typ.Params {
+				if !check(param) {
+					return false
+				}
+			}
+			return typ.Return == nil || check(typ.Return)
+		case *typeinfo.EnumType:
+			return typ != nil
+		default:
 			return false
 		}
 	}
-	return fn.Return == nil || c.isLowerableType(fn.Return)
+	return check(t)
 }
 
 func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
@@ -120,10 +148,11 @@ func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
 		return true
 	}
 	target, ok := typeinfo.PointerTarget(paramType)
-	if !ok {
-		return false
+	if ok {
+		return typeinfo.SameType(target, selfType)
 	}
-	return typeinfo.SameType(target, selfType)
+	target, _, ok = typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
+	return ok && typeinfo.SameType(target, selfType)
 }
 
 // -----------------------------------------------------------------------------
@@ -141,6 +170,7 @@ func (c *checker) checkModule() {
 		if iface, ok := typeDecl.(*ast.InterfaceDecl); ok {
 			c.checkInterfaceDecl(iface)
 		}
+		c.checkTypeDeclReferenceStorage(typeDecl)
 		return true
 	})
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
@@ -166,9 +196,7 @@ func (c *checker) checkModule() {
 			if !found || sym == nil {
 				return true
 			}
-			if node.Body != nil {
-				c.checkFunctionWithSelf(sym, node, nil, false)
-			}
+			c.checkFunctionWithSelf(sym, node, nil, false)
 		case *ast.ImplDecl:
 			c.checkImplDecl(node)
 		}
@@ -293,10 +321,13 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 }
 
 func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
-	if c == nil || sym == nil || fn == nil || fn.Body == nil {
+	if c == nil || sym == nil || fn == nil {
 		return
 	}
 	c.checkFunctionShapeWithSelf(fn, selfType, allowAbstractSelf)
+	if fn.Body == nil {
+		return
+	}
 	if sym.Scope == nil {
 		return
 	}
@@ -433,7 +464,7 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 				"cannot assign to const `"+target.Name+"`", ast.LocOf(target), "").
 				WithSecondaryLabel(sym.Location, "declared as const here")
 			return
-		case symbols.SymbolVar:
+		case symbols.SymbolVar, symbols.SymbolParam:
 			if !sym.IsMutable() {
 				c.ctx.Diagnostics.AddError(
 					diagnostics.ErrInvalidAssignment,
@@ -453,11 +484,27 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
 			return
 		}
-		if c.isMutableAddressableExpr(scope, target.Expr) {
+		var sharedReference typeinfo.Type
+		if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); ok {
+			if mutable {
+				return
+			}
+			sharedReference = refTarget
+		} else {
+			var mutable bool
+			mutable, sharedReference = c.mutableAddressableExpr(scope, target.Expr)
+			if mutable {
+				return
+			}
+		}
+		if sharedReference != nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+				"cannot assign through immutable reference", ast.LocOf(target), "").
+				WithHelp(fmt.Sprintf("use `&mut %s` to modify referenced value", typeinfo.TypeText(sharedReference)))
 			return
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"field assignment requires a mutable pointer or mutable local binding", ast.LocOf(target), "")
+			"field assignment requires a mutable pointer, reference, or local binding", ast.LocOf(target), "")
 		return
 	case *ast.IndexExpr:
 		if c.checkIndexAssignmentTarget(scope, target, targetType) {
@@ -481,14 +528,21 @@ func (c *checker) checkIndexAssignmentTarget(scope *table.Scope, target *ast.Ind
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return true
 	}
-	switch typeinfo.Underlying(baseType).(type) {
-	case *typeinfo.ArrayType, *typeinfo.SliceType:
-	default:
+	_, shape, ok := indexableSequence(baseType)
+	if !ok {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"index assignment requires array or slice value", ast.LocOf(target), "")
 		return false
 	}
-	if c.isMutableAddressableExpr(scope, target.Expr) {
+	if shape == indexableSharedSliceView {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+			"index assignment requires mutable array or mutable slice view", ast.LocOf(target), "")
+		return false
+	}
+	if shape == indexableMutableSliceView {
+		return true
+	}
+	if mutable, _ := c.mutableAddressableExpr(scope, target.Expr); mutable {
 		return true
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
@@ -537,7 +591,15 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 				"let declaration needs type or initializer", ast.LocOf(node), "")
 			return
 		}
+		if c.rejectBindingReferenceStorage(scope, declType, typeNode) {
+			sym.BindType(&typeinfo.InvalidType{})
+			return
+		}
 		sym.BindType(declType)
+		return
+	}
+	if declType != nil && c.rejectBindingReferenceStorage(scope, declType, typeNode) {
+		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
 
@@ -549,6 +611,10 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		} else {
 			sym.BindType(&typeinfo.InvalidType{})
 		}
+		return
+	}
+	if declType == nil && c.rejectBindingReferenceStorage(scope, valType, node) {
+		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
 	if declType != nil && !c.assignable(declType, valType) {
@@ -575,24 +641,42 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 }
 
+func (c *checker) rejectBindingReferenceStorage(scope *table.Scope, typ typeinfo.Type, site ast.Node) bool {
+	moduleBinding := c != nil && c.module != nil && scope == c.module.ModuleScope
+	context := "array or heap-owned values"
+	if moduleBinding {
+		context = "module bindings"
+	}
+	return c.rejectReferenceStorage(typ, site, context, moduleBinding)
+}
+
+func (c *checker) rejectReferenceStorage(typ typeinfo.Type, site ast.Node, context string, includeDirectReference bool) bool {
+	rejected := typeinfo.ContainsStoredReference(typ)
+	if includeDirectReference {
+		rejected = typeinfo.ContainsReference(typ)
+	}
+	if !rejected {
+		return false
+	}
+	c.ctx.Diagnostics.Add(invalidTypeError(site,
+		fmt.Sprintf("references cannot be stored in %s in v1", context)))
+	return true
+}
+
 func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
 	if decl == nil {
 		return
 	}
-	if retType := typeinfo.ASTTypeWithOptions(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)); retType != nil && !c.isLowerableType(retType) {
-		site := ast.LocOf(decl.ReturnType)
-		if site == nil && decl.Name != nil {
-			site = ast.LocOf(decl.Name)
-		}
-		if site == nil {
-			site = ast.LocOf(decl)
-		}
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-			"function return type is not lowerable in current compiler stage", site, "")
+	retType := typeinfo.ASTTypeWithOptions(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	if !c.checkReturnType(decl.ReturnType, retType, decl, allowAbstractSelf) {
 		return
 	}
 	for _, param := range decl.Params {
-		if !c.isLowerableType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))) {
+		paramType := typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+		if c.rejectReferenceStorage(paramType, param.Type, "parameter aggregate types", false) {
+			return
+		}
+		if !c.isLowerableType(paramType) {
 			site := ast.Node(decl)
 			if param.Name != nil {
 				site = param.Name
@@ -601,6 +685,50 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 				"parameter type is not lowerable in current compiler stage"))
 			return
 		}
+	}
+}
+
+func (c *checker) checkReturnType(typeNode ast.TypeExpr, typ typeinfo.Type, fallback ast.Node, allowAbstractSelf bool) bool {
+	if typ == nil {
+		return true
+	}
+	site := ast.LocOf(typeNode)
+	if site == nil {
+		site = ast.LocOf(fallback)
+	}
+	if typeinfo.ContainsReference(typ) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+			"returning references requires origin tracking, which is not supported in current compiler stage", site, "")
+		return false
+	}
+	if allowAbstractSelf && typeinfo.ContainsAbstractSelf(typ) {
+		return true
+	}
+	if !c.isLowerableType(typ) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+			"function return type is not lowerable in current compiler stage", site, "")
+		return false
+	}
+	return true
+}
+
+func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
+	if decl == nil {
+		return
+	}
+	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+	switch node := decl.(type) {
+	case *ast.StructDecl:
+		strct, ok := node.Type.(*ast.StructType)
+		if !ok || strct == nil {
+			return
+		}
+		for _, field := range strct.Fields {
+			c.rejectReferenceStorage(typeinfo.ASTTypeWithOptions(field.Type, opts), field.Type, "struct fields", true)
+		}
+	case *ast.TypeAliasDecl:
+		typ := typeinfo.ASTTypeWithOptions(node.Type, opts)
+		c.rejectReferenceStorage(typ, node.Type, "array or heap-owned type aliases", false)
 	}
 }
 
@@ -631,6 +759,9 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 					"interface methods cannot use `move` parameters in current compiler stage"))
 			}
 			paramType := typeinfo.ASTTypeWithOptions(param.Type, opts)
+			if c.rejectReferenceStorage(paramType, param.Type, "interface parameter aggregate types", false) {
+				continue
+			}
 			// Abstract Self is resolved at impl time; skip lowerability check.
 			if paramType != nil && !typeinfo.ContainsAbstractSelf(paramType) && !c.isLowerableType(paramType) {
 				site := ast.Node(decl)
@@ -641,18 +772,8 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 					"interface method parameter type is not lowerable in current compiler stage"))
 			}
 		}
-		if retType := typeinfo.ASTTypeWithOptions(method.ReturnType, opts); retType != nil &&
-			!typeinfo.ContainsAbstractSelf(retType) && !c.isLowerableType(retType) {
-			site := ast.LocOf(method.ReturnType)
-			if site == nil && method.Name != nil {
-				site = ast.LocOf(method.Name)
-			}
-			if site == nil {
-				site = ast.LocOf(decl)
-			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-				"interface method return type is not lowerable in current compiler stage", site, "")
-		}
+		retType := typeinfo.ASTTypeWithOptions(method.ReturnType, opts)
+		c.checkReturnType(method.ReturnType, retType, decl, true)
 	}
 
 }
@@ -679,7 +800,7 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, site, "").
 				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
-				WithHelp(fmt.Sprintf("first parameter should be 'self: %s' or 'self: ^%s'", typeinfo.TypeText(selfType), typeinfo.TypeText(selfType)))
+				WithHelp(fmt.Sprintf("receiver target must match impl target %s", typeinfo.TypeText(selfType)))
 			continue
 		}
 		firstParamType := typeinfo.ASTTypeWithOptions(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
@@ -690,13 +811,11 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, site, "").
 				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
-				WithHelp(fmt.Sprintf("first parameter should be 'self: %s' or 'self: ^%s'", typeinfo.TypeText(selfType), typeinfo.TypeText(selfType)))
+				WithHelp(fmt.Sprintf("receiver target must match impl target %s", typeinfo.TypeText(selfType)))
 			continue
 		}
 
-		if method.Body != nil {
-			c.checkFunctionWithSelf(sym, method, selfType, false)
-		}
+		c.checkFunctionWithSelf(sym, method, selfType, false)
 	}
 }
 
@@ -707,7 +826,17 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 	if typeinfo.Assignable(dst, src) {
 		return true
 	}
+	if dstTarget, dstMutable, dstRef := typeinfo.ReferenceTarget(typeinfo.Underlying(dst)); dstRef {
+		srcTarget, srcMutable, srcRef := typeinfo.ReferenceTarget(typeinfo.Underlying(src))
+		iface, interfaceRef := typeinfo.InterfaceTypeOf(dstTarget)
+		if srcRef && interfaceRef && (!dstMutable || srcMutable) {
+			return c.satisfiesInterface(iface, srcTarget)
+		}
+	}
 	if iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
+		if _, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(src)); borrowed {
+			return false
+		}
 		return c.satisfiesInterface(iface, src)
 	}
 	return false
@@ -734,7 +863,12 @@ func (c *checker) satisfiesInterface(iface *typeinfo.InterfaceType, src typeinfo
 		if !ok || fnType == nil || len(fnType.Params) == 0 {
 			return false
 		}
-		if !typeinfo.Assignable(fnType.Params[0], src) {
+		receiver := fnType.Params[0]
+		if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(receiver)); referenceReceiver {
+			if !isValidReceiverType(receiver, src) {
+				return false
+			}
+		} else if !typeinfo.Assignable(receiver, src) {
 			return false
 		}
 	}
@@ -767,8 +901,8 @@ func (c *checker) missingInterfaceMethods(iface *typeinfo.InterfaceType, src typ
 // addInterfaceHint adds a help message showing missing interface methods when
 // the destination type is an interface and the source doesn't satisfy it.
 func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
-	iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType)
-	if !ok || iface == nil {
+	iface, ok := typeinfo.InterfaceTypeOf(dst)
+	if !ok {
 		return
 	}
 	if missing := c.missingInterfaceMethods(iface, src); len(missing) > 0 {
@@ -781,6 +915,9 @@ func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
 		return nil
 	}
 	if target, ok := typeinfo.PointerTarget(src); ok {
+		return target
+	}
+	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(src)); ok {
 		return target
 	}
 	return src
@@ -943,12 +1080,37 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
-	if !place.Addressable(scope, node.Expr, func(expr ast.Expr) typeinfo.Type {
+	exprType := func(expr ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, expr, nil)
-	}) {
+	}
+	if node.Mode == ast.AddressMutable {
+		if mutable, sharedReference := place.MutableAddressable(scope, node.Expr, exprType); !mutable {
+			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
+			if sharedReference != nil {
+				diagnostic.WithSecondaryLabel(ast.LocOf(node.Expr), "value is behind an immutable reference")
+			}
+			return &typeinfo.InvalidType{}
+		}
+		if _, _, nested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); nested {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
+			return &typeinfo.InvalidType{}
+		}
+		return &typeinfo.RefType{Mutable: true, Target: valueType}
+	}
+	if !place.Addressable(scope, node.Expr, exprType) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 			"address operator requires addressable storage", ast.LocOf(node.Expr), "")
 		return &typeinfo.InvalidType{}
+	}
+	if node.Mode == ast.AddressShared {
+		if _, _, nested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); nested {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
+			return &typeinfo.InvalidType{}
+		}
+		return &typeinfo.RefType{Target: valueType}
 	}
 	return &typeinfo.RawPtrType{Target: valueType}
 }
@@ -1010,6 +1172,15 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		}
 		return &typeinfo.BoolType{}
 	case "==", "!=", "<", "<=", ">", ">=":
+		_, leftShape, leftSequence := indexableSequence(left)
+		_, rightShape, rightSequence := indexableSequence(right)
+		leftSliceView := leftSequence && (leftShape == indexableSharedSliceView || leftShape == indexableMutableSliceView)
+		rightSliceView := rightSequence && (rightShape == indexableSharedSliceView || rightShape == indexableMutableSliceView)
+		if leftSliceView || rightSliceView {
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"slice-view comparison is not supported in current compiler stage"))
+			return &typeinfo.InvalidType{}
+		}
 		return &typeinfo.BoolType{}
 	}
 
@@ -1110,64 +1281,93 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 			"index expression must be an integer"))
 		return &typeinfo.InvalidType{}
 	}
-	switch base := typeinfo.Underlying(baseType).(type) {
-	case *typeinfo.ArrayType:
-		if base != nil && base.Elem != nil {
-			value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
-			if !ok {
-				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("fixed-array index must be constant until runtime bounds policy is implemented").
-						WithCode(diagnostics.ErrArrayIndexNotConst).
-						WithPrimaryLabel(ast.LocOf(node.Index), "index is not a compile-time constant"),
-				)
-				return base.Elem
-			}
-			indexConst, ok := value.(*constvalue.IntConst)
-			if !ok || indexConst == nil {
-				return base.Elem
-			}
-			length, lengthErr := strconv.Atoi(base.Len)
-			indexValue, indexErr := strconv.Atoi(indexConst.Value)
-			if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
-				c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, base.Len, ast.LocOf(node.Index)))
-			}
-			return base.Elem
-		}
-	case *typeinfo.SliceType:
-		if base != nil && base.Elem != nil {
-			return base.Elem
-		}
+	elem, shape, ok := indexableSequence(baseType)
+	if !ok {
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+			"indexing requires array or slice value"))
+		return &typeinfo.InvalidType{}
 	}
-	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
-		"indexing requires array or slice value"))
-	return &typeinfo.InvalidType{}
+	if shape == indexableSharedSliceView || shape == indexableMutableSliceView {
+		c.ctx.Diagnostics.Add(invalidExpressionError(node,
+			"slice-view indexing is not lowerable in current compiler stage"))
+		return &typeinfo.InvalidType{}
+	}
+	if shape != indexableFixedArray {
+		return elem
+	}
+	array := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
+	value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
+	if !ok {
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("fixed-array index must be constant until runtime bounds policy is implemented").
+				WithCode(diagnostics.ErrArrayIndexNotConst).
+				WithPrimaryLabel(ast.LocOf(node.Index), "index is not a compile-time constant"),
+		)
+		return elem
+	}
+	indexConst, ok := value.(*constvalue.IntConst)
+	if !ok || indexConst == nil {
+		return elem
+	}
+	length, lengthErr := strconv.Atoi(array.Len)
+	indexValue, indexErr := strconv.Atoi(indexConst.Value)
+	if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
+		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, array.Len, ast.LocOf(node.Index)))
+	}
+	return elem
 }
 
 func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, rangeIndex *ast.RangeExpr, baseType typeinfo.Type) typeinfo.Type {
 	if c == nil || node == nil || rangeIndex == nil {
 		return &typeinfo.InvalidType{}
 	}
-	switch base := typeinfo.Underlying(baseType).(type) {
-	case *typeinfo.ArrayType:
-		if base != nil && base.Elem != nil {
-			c.checkRangeBound(scope, rangeIndex.Start)
-			c.checkRangeBound(scope, rangeIndex.End)
-			c.ctx.Diagnostics.Add(invalidExpressionError(node,
-				"slicing is not lowerable in current compiler stage"))
-			return &typeinfo.InvalidType{}
-		}
-	case *typeinfo.SliceType:
-		if base != nil && base.Elem != nil {
-			c.checkRangeBound(scope, rangeIndex.Start)
-			c.checkRangeBound(scope, rangeIndex.End)
-			c.ctx.Diagnostics.Add(invalidExpressionError(node,
-				"slicing is not lowerable in current compiler stage"))
-			return &typeinfo.InvalidType{}
-		}
+	if _, _, ok := indexableSequence(baseType); ok {
+		c.checkRangeBound(scope, rangeIndex.Start)
+		c.checkRangeBound(scope, rangeIndex.End)
+		c.ctx.Diagnostics.Add(invalidExpressionError(node,
+			"slicing is not lowerable in current compiler stage"))
+		return &typeinfo.InvalidType{}
 	}
 	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 		"slicing requires array or slice value"))
 	return &typeinfo.InvalidType{}
+}
+
+type indexableSequenceShape uint8
+
+const (
+	indexableFixedArray indexableSequenceShape = iota
+	indexableDynamicArray
+	indexableSharedSliceView
+	indexableMutableSliceView
+)
+
+func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, bool) {
+	switch base := typeinfo.Underlying(t).(type) {
+	case *typeinfo.ArrayType:
+		if base == nil || base.Elem == nil {
+			return nil, 0, false
+		}
+		if base.Dynamic {
+			return base.Elem, indexableDynamicArray, true
+		}
+		if base.Len != "" {
+			return base.Elem, indexableFixedArray, true
+		}
+	case *typeinfo.RefType:
+		if base == nil || base.Target == nil {
+			return nil, 0, false
+		}
+		target, ok := typeinfo.Underlying(base.Target).(*typeinfo.ArrayType)
+		if !ok || target == nil || !target.Dynamic || target.Elem == nil {
+			return nil, 0, false
+		}
+		if base.Mutable {
+			return target.Elem, indexableMutableSliceView, true
+		}
+		return target.Elem, indexableSharedSliceView, true
+	}
+	return nil, 0, false
 }
 
 func (c *checker) checkRangeBound(scope *table.Scope, expr ast.Expr) {
@@ -1370,7 +1570,7 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 	if c == nil || c.module == nil || c.module.Semantics == nil {
 		return nil, nil, false
 	}
-	if iface, ok := typeinfo.Underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
+	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
 		for _, method := range iface.Methods {
 			if method.Name != name {
 				continue
@@ -1399,7 +1599,7 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 		return nil
 	}
 	var names []string
-	if iface, ok := typeinfo.Underlying(baseType).(*typeinfo.InterfaceType); ok && iface != nil {
+	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
 		for _, m := range iface.Methods {
 			names = append(names, m.Name)
 		}
@@ -1428,17 +1628,23 @@ func availableFields(t typeinfo.Type) []string {
 }
 
 func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType typeinfo.Type) typeinfo.Type {
+	selfType := receiverType
+	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); ok {
+		selfType = target
+	}
 	params := make([]typeinfo.Type, 0, len(method.Params))
 	for i, param := range method.Params {
-		t := typeinfo.ReplaceAbstractSelf(param.Type, receiverType)
+		resolved := typeinfo.ReplaceAbstractSelf(param.Type, selfType)
 		if i == 0 {
-			t = receiverType
+			if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(resolved)); !referenceReceiver {
+				resolved = receiverType
+			}
 		}
-		params = append(params, t)
+		params = append(params, resolved)
 	}
 	return &typeinfo.FuncType{
 		Params: params,
-		Return: typeinfo.ReplaceAbstractSelf(method.Return, receiverType),
+		Return: typeinfo.ReplaceAbstractSelf(method.Return, selfType),
 	}
 }
 
@@ -1615,8 +1821,11 @@ func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.
 	}
 }
 
-func (c *checker) isMutableAddressableExpr(scope *table.Scope, expr ast.Expr) bool {
-	return c != nil && place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
+func (c *checker) mutableAddressableExpr(scope *table.Scope, expr ast.Expr) (bool, typeinfo.Type) {
+	if c == nil {
+		return false, nil
+	}
+	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
 	})
 }
@@ -1643,10 +1852,10 @@ func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (
 	}
 	switch sym.Kind {
 	case symbols.SymbolConst:
-		return expr, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is const", true
-	case symbols.SymbolVar:
+		return expr, "mutable receiver method requires a mutable binding; `" + ident.Name + "` is const", true
+	case symbols.SymbolVar, symbols.SymbolParam:
 		if !sym.IsMutable() {
-			return expr, "pointer receiver method requires a mutable binding; `" + ident.Name + "` is immutable", true
+			return expr, "mutable receiver method requires a mutable binding; `" + ident.Name + "` is immutable", true
 		}
 	}
 	return nil, "", false
@@ -1680,8 +1889,25 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			continue
 		}
 		if i == 0 {
-			if ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(paramType)); ok && c.matchesPointerReceiverTarget(ptrTarget, argType) {
-				if c.isMutableAddressableExpr(scope, receiverExpr) {
+			if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType)); ok && c.matchesReceiverTarget(refTarget, argType) {
+				addressable := place.Addressable(scope, receiverExpr, func(e ast.Expr) typeinfo.Type {
+					return c.typeExpr(scope, e, nil)
+				})
+				if mutable {
+					addressable, _ = c.mutableAddressableExpr(scope, receiverExpr)
+				}
+				if addressable {
+					continue
+				}
+				if mutable {
+					if site, msg, ok := c.mutableReceiverDiagnostic(scope, receiverExpr); ok {
+						c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
+						continue
+					}
+				}
+			}
+			if ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(paramType)); ok && c.matchesReceiverTarget(ptrTarget, argType) {
+				if addressable, _ := c.mutableAddressableExpr(scope, receiverExpr); addressable {
 					continue
 				}
 				if site, msg, ok := c.mutableReceiverDiagnostic(scope, receiverExpr); ok {
@@ -1703,7 +1929,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 	}
 }
 
-func (c *checker) matchesPointerReceiverTarget(target, arg typeinfo.Type) bool {
+func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
 	if c == nil || target == nil || arg == nil {
 		return false
 	}

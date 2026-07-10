@@ -30,6 +30,13 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 		a.checkExpr(scope, e.Expr, st, useRead)
 	case *ast.SelectorExpr:
 		a.checkSelector(scope, e, st, use)
+	case *ast.IndexExpr:
+		a.checkExpr(scope, e.Expr, st, useRead)
+		a.checkExpr(scope, e.Index, st, useRead)
+		if use != useRead && ownershipTrackedType(a.exprType(e)) {
+			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+				"move-only indexed element cannot be copied or consumed until indexed moves are tracked", ast.LocOf(e), "")
+		}
 	case *ast.StructLit:
 		for _, field := range e.Fields {
 			a.checkExpr(scope, field.Value, st, useCopy)
@@ -71,6 +78,13 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 	}
 	switch use {
 	case useCopy:
+		if symType, ok := symbols.GetSymbolType(sym); ok {
+			if _, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && mutable {
+				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+					"mutable reference cannot be copied; use `move` to transfer it or pass it directly to reborrow", ast.LocOf(ident), "")
+				return
+			}
+		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires `move` or consuming context", ast.LocOf(ident), "")
 	case useConsume:
@@ -176,6 +190,11 @@ func (a *analyzer) checkMethodCall(scope *table.Scope, selector *ast.SelectorExp
 func paramUse(fn *typeinfo.FuncType, index int) useKind {
 	if fn != nil && index >= 0 && index < len(fn.Consumes) && fn.Consumes[index] {
 		return useConsume
+	}
+	if fn != nil && index >= 0 && index < len(fn.Params) {
+		if _, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fn.Params[index])); ok {
+			return useRead
+		}
 	}
 	return useCopy
 }

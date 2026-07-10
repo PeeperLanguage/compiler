@@ -954,7 +954,7 @@ func TestArrayIndexExprRejectsDynamicIndexUntilBoundsPolicy(t *testing.T) {
 	}
 }
 
-func TestSliceIndexExprReturnsElementType(t *testing.T) {
+func TestDynamicArrayIndexExprReturnsElementType(t *testing.T) {
 	src := `fn first(xs: []i32, i: usize) -> i32 {
 	return xs[i];
 }`
@@ -964,8 +964,95 @@ func TestSliceIndexExprReturnsElementType(t *testing.T) {
 	}
 }
 
+func TestRecursiveDynamicArrayParameterRejectedWithoutRecursingForever(t *testing.T) {
+	src := `struct Node {
+	children: []Node
+}
+
+fn count(node: Node) -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected recursive runtime type diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "parameter type is not lowerable") {
+		t.Fatalf("expected lowerability diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSliceViewComparisonsRejectedBeforeLowering(t *testing.T) {
+	for _, op := range []string{"==", "!=", "<", "<=", ">", ">="} {
+		t.Run(op, func(t *testing.T) {
+			src := "fn compare(left: &[]i32, right: &[]i32) -> bool { return left " + op + " right; }"
+			diag := checkTypeSource(t, src)
+			if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+				t.Fatalf("expected slice-view comparison diagnostic, got:\n%s", diag.EmitAllToString())
+			}
+			if !strings.Contains(diag.EmitAllToString(), "slice-view comparison is not supported") {
+				t.Fatalf("expected slice-view comparison limitation, got:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestNestedReferenceParameterRejected(t *testing.T) {
+	src := `fn direct(value: &mut &i32) -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected nested reference diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestAliasedNestedReferenceParameterRejected(t *testing.T) {
+	src := `type Shared = &i32;
+
+fn aliased(value: &mut Shared) -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected aliased nested reference diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSliceViewIndexExprRejectedUntilLoweringExists(t *testing.T) {
+	src := `fn first(xs: &[]i32, i: usize) -> i32 {
+	return xs[i];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected slice-view indexing diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "slice-view indexing is not lowerable") {
+		t.Fatalf("expected slice-view indexing message, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableSliceViewIndexAssignmentRejectedUntilLoweringExists(t *testing.T) {
+	src := `fn fill(xs: &mut []i32, i: usize) {
+	xs[i] = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected slice-view indexing diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSharedSliceViewRejectsIndexAssignment(t *testing.T) {
+	src := `fn fill(xs: &[]i32, i: usize) {
+	xs[i] = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected slice-view indexing diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestArraySliceRangeExprRejectedUntilLoweringExists(t *testing.T) {
-	src := `fn first(xs: [4]i32) -> []i32 {
+	src := `fn first(xs: [4]i32) -> &[]i32 {
 	return xs[1..3];
 }`
 	diag := checkTypeSource(t, src)
@@ -978,7 +1065,7 @@ func TestArraySliceRangeExprRejectedUntilLoweringExists(t *testing.T) {
 }
 
 func TestFullRangeExprRejectedUntilLoweringExists(t *testing.T) {
-	src := `fn first(xs: []i32) -> []i32 {
+	src := `fn first(xs: []i32) -> &[]i32 {
 	return xs[..];
 }`
 	diag := checkTypeSource(t, src)
@@ -988,12 +1075,22 @@ func TestFullRangeExprRejectedUntilLoweringExists(t *testing.T) {
 }
 
 func TestRangeExprRejectsNonIntegerBounds(t *testing.T) {
-	src := `fn first(xs: [4]i32, flag: bool) -> []i32 {
+	src := `fn first(xs: [4]i32, flag: bool) -> &[]i32 {
 	return xs[flag..3];
 }`
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
 		t.Fatalf("expected invalid range bound diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnsizedArrayTypeRequiresReference(t *testing.T) {
+	src := `fn first(xs: [i32]) -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidTypeInParser) {
+		t.Fatalf("expected parser diagnostic for unsupported [T], got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1203,6 +1300,156 @@ fn main() -> i32 {
 	}
 }
 
+func TestReferenceSelfInterfaceAssignmentAcceptsValue(t *testing.T) {
+	src := `interface Reader {
+	read(self: &Self) -> i32
+}
+
+struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn read(self: &Self) -> i32 {
+		return self.value;
+	}
+}
+
+fn main() -> i32 {
+	let counter: Counter = .{ value = 7 };
+	let reader: Reader = counter;
+	return reader.read();
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestBorrowedInterfaceArgumentsAcceptConcreteReferences(t *testing.T) {
+	src := `interface Reader {
+	read(self: &Self) -> i32
+}
+
+interface Writer {
+	write(self: &mut Self, value: i32)
+}
+
+struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn read(self: &Self) -> i32 {
+		return self.value;
+	}
+
+	fn write(self: &mut Self, value: i32) {
+		self.value = value;
+	}
+}
+
+fn read(reader: &Reader) -> i32 {
+	return reader.read();
+}
+
+fn write(writer: &mut Writer) {
+	writer.write(7);
+}
+
+fn main() -> i32 {
+	let mut counter: Counter = .{ value = 5 };
+	write(&mut counter);
+	return read(&counter);
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableReferenceExpressionRejectsImmutableStorage(t *testing.T) {
+	src := `fn main() -> i32 {
+	let value: i32 = 5;
+	let reference = &mut value;
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) ||
+		!strings.Contains(diag.EmitAllToString(), "mutable reference requires mutable addressable storage") {
+		t.Fatalf("expected mutable borrow diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestBareInterfaceRejectsBorrowedConcreteValue(t *testing.T) {
+	src := `interface Reader {
+	read(self: &Self) -> i32
+}
+
+struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn read(self: &Self) -> i32 {
+		return self.value;
+	}
+}
+
+fn main() -> i32 {
+	let counter: Counter = .{ value = 5 };
+	let reader: Reader = &counter;
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected bare interface to reject borrowed concrete value, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableInterfaceReceiverRequiresMutableOwnedParam(t *testing.T) {
+	src := `interface Writer {
+	write(self: &mut Self, value: i32)
+}
+
+fn write(writer: Writer) {
+	writer.write(7);
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(diag.EmitAllToString(), "mutable receiver method requires a mutable binding") {
+		t.Fatalf("expected immutable parameter receiver diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableOwnedParamSupportsReceiverCallAndReassignment(t *testing.T) {
+	src := `interface Writer {
+	write(self: &mut Self, value: i32)
+}
+
+fn write(mut writer: Writer, mut value: i32) -> i32 {
+	writer.write(value);
+	value = 9;
+	return value;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestImmutableParamReassignmentIsRejected(t *testing.T) {
+	src := `fn rewrite(value: i32) -> i32 {
+	value = 9;
+	return value;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(diag.EmitAllToString(), "cannot assign to immutable binding `value`") {
+		t.Fatalf("expected immutable parameter assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPointerSelfMethodCallResolvesOnPointerValue(t *testing.T) {
 	src := `struct File {}
 
@@ -1293,6 +1540,233 @@ fn main() -> i32 {
 	}
 	if !strings.Contains(diag.EmitAllToString(), "is const") {
 		t.Fatalf("expected const receiver diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReferenceSelfMethodsAcceptAddressableValue(t *testing.T) {
+	src := `struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn get(self: &Self) -> i32 {
+		return self.value;
+	}
+
+	fn twice(self: &Self) -> i32 {
+		return self.get() + self.get();
+	}
+
+	fn bump(self: &mut Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+
+	fn touch(self: &mut Self) -> i32 {
+		self.bump();
+		return self.get();
+	}
+}
+
+fn main() -> i32 {
+	let mut c: Counter = .{ value = 0 };
+	c.touch();
+	return c.twice();
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSharedReferenceSelfMethodRejectsFieldMutation(t *testing.T) {
+	src := `struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn bump(self: &Self) {
+		self.value = self.value + 1;
+	}
+}
+
+fn main() -> i32 {
+	let c: Counter = .{ value = 0 };
+	c.bump();
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSharedReferenceAliasRejectsFieldMutation(t *testing.T) {
+	src := `struct Counter {
+	value: i32
+}
+
+fn bad(shared: &Counter) {
+	let mut alias = shared;
+	alias.value = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected shared-reference mutation diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "cannot assign through immutable reference") ||
+		!strings.Contains(diag.EmitAllToString(), "use `&mut Counter`") {
+		t.Fatalf("expected immutable-reference mutation guidance, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNestedSharedReferenceAliasRejectsFieldMutation(t *testing.T) {
+	src := `struct Inner {
+	value: i32
+}
+
+struct Outer {
+	inner: Inner
+}
+
+fn bad(shared: &Outer) {
+	let mut alias = shared;
+	alias.inner.value = 1;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected nested shared-reference mutation diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReferenceReturnRejectedUntilOriginTrackingExists(t *testing.T) {
+	src := `struct Box {
+	value: i32
+}
+
+impl Box {
+	fn reference(self: &Self) -> &Self {
+		return self;
+	}
+}
+
+fn leak() -> &Box {
+	let box: Box = .{ value = 1 };
+	return box.reference();
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
+		t.Fatalf("expected unsupported reference-return diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "returning references requires origin tracking") {
+		t.Fatalf("expected reference-origin diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestBodylessReferenceReturnsRejected(t *testing.T) {
+	src := `struct Box {
+	value: i32
+}
+
+#[extern]
+fn ExternalLeak() -> &Box;
+
+impl Box {
+	#[extern]
+	fn ExternalReference(self: &Self) -> &Self;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
+		t.Fatalf("expected bodyless reference-return diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if strings.Count(diag.EmitAllToString(), "returning references requires origin tracking") != 2 {
+		t.Fatalf("expected top-level and method return diagnostics, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReferenceContainingStructFieldRejected(t *testing.T) {
+	src := `struct Box {
+	value: i32
+}
+
+type SharedBox = &Box;
+
+struct Holder {
+	references: [2]SharedBox
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected reference-storage diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "references cannot be stored in struct fields") {
+		t.Fatalf("expected reference-storage message, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReferenceStorageRejectedAcrossTypeAndBindingBoundaries(t *testing.T) {
+	src := `struct Box {
+	value: i32
+}
+
+type References = [2]&Box;
+
+const GlobalReference: &Box = none;
+
+fn StoreReferences(_: []&Box) {
+	let _: [2]&Box;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected reference-storage diagnostics, got:\n%s", diag.EmitAllToString())
+	}
+	if strings.Count(diag.EmitAllToString(), "references cannot be stored") < 4 {
+		t.Fatalf("expected alias, global, parameter, and local storage diagnostics, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestCallableReferenceMetadataAcceptedInStorageAndReturns(t *testing.T) {
+	src := `struct Counter {
+	value: i32
+}
+
+struct Handler {
+	callback: fn(&Counter) -> i32
+}
+
+#[extern]
+fn GetCallback() -> fn(&Counter) -> i32;
+
+fn UseCallback(_: fn(&Counter) -> i32) -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableReferenceSelfMethodRejectsImmutableValue(t *testing.T) {
+	src := `struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn bump(self: &mut Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+}
+
+fn main() -> i32 {
+	let c: Counter = .{ value = 0 };
+	return c.bump();
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected invalid assignment diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "is immutable") {
+		t.Fatalf("expected immutable receiver diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

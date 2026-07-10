@@ -129,12 +129,12 @@ func Inspect(node Node, f func(Node) bool) {
 		Inspect(n.Target, f)
 	case *RawPtrType:
 		Inspect(n.Target, f)
+	case *RefType:
+		Inspect(n.Target, f)
 	case *OptionalType:
 		Inspect(n.Inner, f)
 	case *ArrayType:
 		Inspect(n.Len, f)
-		Inspect(n.Elem, f)
-	case *SliceType:
 		Inspect(n.Elem, f)
 	case *FuncType:
 		for _, p := range n.Params {

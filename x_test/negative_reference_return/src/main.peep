@@ -1,0 +1,22 @@
+struct Box {
+    value: i32
+}
+
+impl Box {
+    fn Reference(self: &Self) -> &Self {
+        return self;
+    }
+}
+
+fn Leak() -> &Box {
+    let box: Box = .{ value = 1 };
+    return box.Reference();
+}
+
+#[extern]
+fn ExternalLeak() -> &Box;
+
+impl Box {
+    #[extern]
+    fn ExternalReference(self: &Self) -> &Self;
+}

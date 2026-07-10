@@ -202,7 +202,7 @@ Recommendation: document that graph relationships use IDs/handles or raw pointer
 ## 8. Slice Borrowing Looks Promising
 
 ```peep
-fn sum(xs: &[i32]) -> i32 {
+fn sum(xs: &[]i32) -> i32 {
     let mut total = 0;
     for x in xs {
         total = total + x;
@@ -210,7 +210,7 @@ fn sum(xs: &[i32]) -> i32 {
     return total;
 }
 
-fn fill(xs: &mut [i32], value: i32) {
+fn fill(xs: &mut []i32, value: i32) {
     for mut i in 0..xs.len {
         xs[i] = value;
     }
@@ -222,11 +222,11 @@ fn main() {
 }
 ```
 
-Effectiveness: very good. `&[T]` and `&mut [T]` are probably the biggest ergonomic win from reintroducing neutered borrows.
+Effectiveness: very good. `&[]T` and `&mut []T` are probably the biggest ergonomic win from reintroducing neutered borrows.
 
-Pressure: grammar must define `[T]` as an unsized contiguous sequence target so `&[T]` and `&mut [T]` can be slice views while `[]T` remains available for dynamic array storage.
+Pressure: grammar can keep slice views visually close to dynamic arrays by using `&[]T` and `&mut []T`.
 
-Recommendation: use `[]T` for dynamic arrays and reserve `&[T]` / `&mut [T]` for slice views.
+Recommendation: use `[]T` for dynamic arrays and `&[]T` / `&mut []T` for slice views.
 
 ## 9. Method Receiver Story Improves
 
@@ -236,7 +236,7 @@ struct File {
 }
 
 impl File {
-    fn read(self: &mut Self, out: &mut [u8]) -> isize {
+    fn read(self: &mut Self, out: &mut []u8) -> isize {
         return unsafe { read(self.fd, out.ptr, out.len) };
     }
 
@@ -296,6 +296,5 @@ Open decisions before implementation:
 - Does passing `^T` consume by default, or must calls write `move`?
 - Should `-> move T` be required for any owned return transfer, or only for move-only/owned-pointer returns?
 - What is borrow-from-owned-pointer syntax: `&*p`, `&p.value`, auto-borrow, or something else?
-- Should slice views lower as a distinct internal `SliceViewType`, or as references to an unsized array target?
 - Does initial `&mut` enforce alias exclusivity inside one expression, or only storage/return escape bans?
 - Is `*T` mutable by default, or do we need `*const T` / `*mut T` later?

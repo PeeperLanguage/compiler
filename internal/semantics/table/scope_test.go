@@ -68,3 +68,19 @@ func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 		t.Fatalf("lookup by AST node failed: %#v", sym)
 	}
 }
+
+func TestScopeMutableBindingIncludesParameters(t *testing.T) {
+	s := New(nil)
+	param := symbols.New("value", symbols.SymbolParam, nil, ast.LocOf(nil))
+	param.Mutable = true
+	if err := s.Declare(param); err != nil {
+		t.Fatalf("declare mutable param failed: %v", err)
+	}
+	if !s.IsMutableBinding("value") {
+		t.Fatalf("mutable parameter should be a mutable binding")
+	}
+	param.Mutable = false
+	if s.IsMutableBinding("value") {
+		t.Fatalf("immutable parameter should not be a mutable binding")
+	}
+}

@@ -1,0 +1,17 @@
+struct Counter {
+    value: i32
+}
+
+fn MutateShared(shared: &Counter) {
+    let mut alias = shared;
+    alias.value = 1;
+}
+
+struct Outer {
+    counter: Counter
+}
+
+fn MutateNestedShared(shared: &Outer) {
+    let mut alias = shared;
+    alias.counter.value = 1;
+}

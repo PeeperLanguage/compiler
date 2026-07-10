@@ -63,6 +63,26 @@ func (t *RawPtrType) TypeText() string {
 	return "*" + TypeText(t.Target)
 }
 
+type RefType struct {
+	NodeIDHolder
+	Mutable  bool
+	Target   TypeExpr
+	Location *source.Location
+}
+
+func (*RefType) typeNode()               {}
+func (t *RefType) loc() *source.Location { return t.Location }
+func (t *RefType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	prefix := "&"
+	if t.Mutable {
+		prefix = "&mut "
+	}
+	return prefix + TypeText(t.Target)
+}
+
 type OptionalType struct {
 	NodeIDHolder
 	Inner    TypeExpr
@@ -81,6 +101,7 @@ func (t *OptionalType) TypeText() string {
 type ArrayType struct {
 	NodeIDHolder
 	Len      *NumberLit
+	Dynamic  bool
 	Elem     TypeExpr
 	Location *source.Location
 }
@@ -91,26 +112,13 @@ func (t *ArrayType) TypeText() string {
 	if t == nil {
 		return ""
 	}
-	length := ""
-	if t.Len != nil {
-		length = t.Len.Value
+	if t.Dynamic {
+		return "[]" + TypeText(t.Elem)
 	}
-	return "[" + length + "]" + TypeText(t.Elem)
-}
-
-type SliceType struct {
-	NodeIDHolder
-	Elem     TypeExpr
-	Location *source.Location
-}
-
-func (*SliceType) typeNode()               {}
-func (t *SliceType) loc() *source.Location { return t.Location }
-func (t *SliceType) TypeText() string {
-	if t == nil {
-		return ""
+	if t.Len == nil {
+		return "[" + TypeText(t.Elem) + "]"
 	}
-	return "[]" + TypeText(t.Elem)
+	return "[" + t.Len.Value + "]" + TypeText(t.Elem)
 }
 
 type FuncType struct {
@@ -259,10 +267,11 @@ type EnumVariant struct {
 }
 
 type Param struct {
-	Consumes bool
-	Name     *Ident
-	Type     TypeExpr
-	Location *source.Location
+	Consumes  bool
+	IsMutable bool
+	Name      *Ident
+	Type      TypeExpr
+	Location  *source.Location
 }
 
 type TypeParam struct {

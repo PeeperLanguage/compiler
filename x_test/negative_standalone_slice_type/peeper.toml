@@ -1,0 +1,2 @@
+name = "negative_standalone_slice_type"
+build = "lib"

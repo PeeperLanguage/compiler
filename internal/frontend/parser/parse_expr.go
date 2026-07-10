@@ -68,7 +68,8 @@ func init() {
 		return reg(p, &ast.BoolLit{Value: false, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
 	nud(token.MOVE, func(p *Parser) ast.Expr { return p.parseMoveExpr() })
-	nud(token.AT, func(p *Parser) ast.Expr { return p.parseAddressExpr() })
+	nud(token.AT, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressRaw) })
+	nud(token.AMP, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressShared) })
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
 	// grouping
@@ -181,14 +182,18 @@ func (p *Parser) parseMoveExpr() ast.Expr {
 	})
 }
 
-func (p *Parser) parseAddressExpr() ast.Expr {
+func (p *Parser) parseAddressExpr(mode ast.AddressMode) ast.Expr {
 	tok := p.advance()
+	if mode == ast.AddressShared && p.match(token.MUT) {
+		mode = ast.AddressMutable
+	}
 	expr := p.parseExpr(precPrefix)
 	if expr == nil {
 		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
 		return reg(p, &ast.BadExpr{Location: loc})
 	}
 	return reg(p, &ast.AddressExpr{
+		Mode:     mode,
 		Expr:     expr,
 		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
 	})
@@ -315,7 +320,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 		return nil
 	}
 	if p.match(token.RBRACK) {
-		return p.parseUnsupportedSliceLiteral(start)
+		return p.parseUnsupportedDynamicArrayLiteral(start)
 	}
 	inferred := false
 	var length *ast.NumberLit
@@ -367,7 +372,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	})
 }
 
-func (p *Parser) parseUnsupportedSliceLiteral(start *token.Token) ast.Expr {
+func (p *Parser) parseUnsupportedDynamicArrayLiteral(start *token.Token) ast.Expr {
 	if start == nil {
 		return nil
 	}
@@ -375,7 +380,7 @@ func (p *Parser) parseUnsupportedSliceLiteral(start *token.Token) ast.Expr {
 	var values []ast.Expr
 	var end *token.Token
 	if elem != nil && p.at(token.LBRACE) {
-		values, end, _ = parseBracedItemList(p, "expected '{' after slice literal type", "expected '}' after slice literal",
+		values, end, _ = parseBracedItemList(p, "expected '{' after dynamic array literal type", "expected '}' after dynamic array literal",
 			func() (ast.Expr, bool) {
 				value := p.parseExpr(precLowest)
 				return value, value != nil
@@ -390,7 +395,7 @@ func (p *Parser) parseUnsupportedSliceLiteral(start *token.Token) ast.Expr {
 		endPos = ast.EndOf(elem)
 	}
 	loc := source.NewLocation(p.filePath, start.Start, endPos)
-	p.diag.Add(diagnostics.NewError("slice literals are not supported yet").
+	p.diag.Add(diagnostics.NewError("dynamic array literals are not supported yet").
 		WithCode(diagnostics.ErrInvalidExpression).
 		WithPrimaryLabel(loc, "use fixed array literal `[N]T{...}` or `[_]T{...}`"))
 	return reg(p, &ast.BadExpr{Location: loc})

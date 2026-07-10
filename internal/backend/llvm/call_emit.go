@@ -100,7 +100,7 @@ func emitThunkTargetCall(builder *llvmBuilder, returnType string, funcName strin
 func llvmCallArgs(b *llvmBuilder, args []mir.ValueRef) []string {
 	callArgs := make([]string, 0, len(args))
 	for _, arg := range args {
-		callArgs = append(callArgs, b.types.llvmType(mirRefType(arg))+" "+emitRef(b, arg))
+		callArgs = append(callArgs, b.emitter.llvmType(mirRefType(arg))+" "+emitRef(b, arg))
 	}
 	return callArgs
 }
@@ -129,7 +129,7 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (data 
 		return "", "", false
 	}
 	baseValue := emitRef(b, base)
-	baseType := b.types.llvmType(mirRefType(base))
+	baseType := b.emitter.llvmType(mirRefType(base))
 	data = b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, baseType, baseValue))
 	itab := b.nextReg()
@@ -156,7 +156,7 @@ func emitDiscardedCall(b *llvmBuilder, call *mir.Call) {
 	if b == nil || call == nil {
 		return
 	}
-	emitCall(b, "", b.types.llvmType(call.Type), emitRef(b, call.Callee), llvmCallArgs(b, call.Args))
+	emitCall(b, "", b.emitter.llvmType(call.Type), emitRef(b, call.Callee), llvmCallArgs(b, call.Args))
 }
 
 // emitDiscardedInterfaceCall handles statement-form interface calls such as
@@ -170,5 +170,5 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 		return
 	}
 	args := append([]string{"i8* " + data}, llvmCallArgs(b, call.Args)...)
-	emitCall(b, "", b.types.llvmType(call.Type), fn, args)
+	emitCall(b, "", b.emitter.llvmType(call.Type), fn, args)
 }

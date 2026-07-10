@@ -111,7 +111,7 @@ func TestCompatibilityString(t *testing.T) {
 	}
 }
 
-func TestOptionalArrayAndSliceCompatibility(t *testing.T) {
+func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
 	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &NoneType{}); got != Compatible {
 		t.Fatalf("optional none compat = %v, want compatible", got)
 	}
@@ -121,7 +121,21 @@ func TestOptionalArrayAndSliceCompatibility(t *testing.T) {
 	if got := CheckCompatibility(&ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}, &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}); got != Compatible {
 		t.Fatalf("array compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&SliceType{Elem: &StringType{}}, &SliceType{Elem: &StringType{}}); got != Compatible {
-		t.Fatalf("slice compat = %v, want compatible", got)
+	if got := CheckCompatibility(&ArrayType{Dynamic: true, Elem: &StringType{}}, &ArrayType{Dynamic: true, Elem: &StringType{}}); got != Compatible {
+		t.Fatalf("dynamic array compat = %v, want compatible", got)
+	}
+	if got := CheckCompatibility(
+		&RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}},
+		&RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}},
+	); got != Compatible {
+		t.Fatalf("slice-view ref compat = %v, want compatible", got)
+	}
+	shared := &RefType{Target: &IntegerType{Signed: true, Bits: 32}}
+	mutable := &RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}
+	if got := CheckCompatibility(shared, mutable); got != Compatible {
+		t.Fatalf("mutable-to-shared ref compat = %v, want compatible", got)
+	}
+	if got := CheckCompatibility(mutable, shared); got != Incompatible {
+		t.Fatalf("shared-to-mutable ref compat = %v, want incompatible", got)
 	}
 }

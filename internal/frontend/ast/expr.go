@@ -154,8 +154,17 @@ type MoveExpr struct {
 func (*MoveExpr) exprNode()               {}
 func (e *MoveExpr) loc() *source.Location { return e.Location }
 
+type AddressMode uint8
+
+const (
+	AddressRaw AddressMode = iota
+	AddressShared
+	AddressMutable
+)
+
 type AddressExpr struct {
 	NodeIDHolder
+	Mode     AddressMode
 	Expr     Expr
 	Location *source.Location
 }

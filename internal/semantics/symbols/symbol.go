@@ -41,6 +41,7 @@ type Symbol struct {
 	Kind         Kind
 	Type         Type
 	IsPub        bool
+	Mutable      bool
 	Initializing bool
 	Initialized  bool
 	Used         bool
@@ -81,6 +82,9 @@ func GetSymbolType(sym *Symbol) (Type, bool) {
 func (s *Symbol) IsMutable() bool {
 	if s == nil {
 		return false
+	}
+	if s.Kind == SymbolParam {
+		return s.Mutable
 	}
 	decl, ok := s.ASTNode.(*ast.LetDecl)
 	return ok && decl != nil && decl.IsMutable

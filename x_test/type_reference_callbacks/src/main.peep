@@ -1,0 +1,14 @@
+struct Counter {
+    value: i32
+}
+
+struct Handler {
+    callback: fn(&Counter) -> i32
+}
+
+#[extern]
+fn GetCallback() -> fn(&Counter) -> i32;
+
+fn UseCallback(_: fn(&Counter) -> i32) -> i32 {
+    return 0;
+}
