@@ -74,6 +74,96 @@ func TestRawPointerCopyAllowed(t *testing.T) {
 	}
 }
 
+func TestMoveOnlyIndexedElementCopyRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn first(values: []^i32, index: usize) -> ^i32 {
+	return values[index];
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected indexed move-only copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "indexed moves are tracked") {
+		t.Fatalf("expected indexed-move limitation, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyIndexedElementCannotBeConsumedRepeatedly(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn consume(move value: ^i32) {}
+
+fn duplicate(values: []^i32, index: usize) {
+	consume(values[index]);
+	consume(values[index]);
+}`)
+	out := diag.EmitAllToString()
+	if count := strings.Count(out, "move-only indexed element"); count != 2 {
+		t.Fatalf("expected two indexed move-only consume diagnostics, got %d:\n%s", count, out)
+	}
+}
+
+func TestCopyableIndexedElementReadAllowed(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn first(values: []i32, index: usize) -> i32 {
+	return values[index];
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReferenceReceiverDoesNotCopyMoveOnlyOwner(t *testing.T) {
+	diag := checkOwnershipSource(t, `#[no_copy]
+struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn get(self: &Self) -> i32 {
+		return self.value;
+	}
+}
+
+fn main() -> i32 {
+	let c: Counter = .{ value = 1 };
+	c.get();
+	return c.get();
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableReferenceArgumentIsReborrowed(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn sink(value: &mut i32) {}
+
+fn forward(value: &mut i32) {
+	sink(value);
+	sink(value);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableReferenceBindingRequiresExplicitTransfer(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn duplicate(reference: &mut i32) {
+	let alias = reference;
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected mutable-reference copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "mutable reference cannot be copied") ||
+		!strings.Contains(diag.EmitAllToString(), "use `move` to transfer") {
+		t.Fatalf("expected mutable-reference transfer guidance, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMutableReferenceBindingCanMove(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn transfer(reference: &mut i32) {
+	let alias = move reference;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
 	diag := checkOwnershipSource(t, `#[no_copy]
 struct Buffer {

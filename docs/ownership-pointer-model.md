@@ -14,8 +14,9 @@ Target model:
 - `copy` must be explicit when duplication is allowed.
 - Shallow copy of `^T` is never implicit.
 - `@expr` creates raw pointers; `&expr` creates safe references.
-- `[]T` is the target spelling for dynamic arrays, not slice views.
-- `&[T]` and `&mut [T]` are the target spellings for slice views.
+- `[]T` is the target spelling for dynamic arrays.
+- `&[]T` and `&mut []T` are the target spellings for slice views.
+- Slice views are reference forms, not a separate type family.
 
 Rejected old model:
 
@@ -253,15 +254,15 @@ let dynamic: []i32 = []i32{1, 2, 3}
 Slice views borrow contiguous storage:
 
 ```peep
-fn sum(xs: &[i32]) -> i32
-fn fill(xs: &mut [i32], value: i32)
+fn sum(xs: &[]i32) -> i32
+fn fill(xs: &mut []i32, value: i32)
 ```
 
 Implementation status:
 
-- `&T`, `&mut T`, `&[T]`, and `&mut [T]` are specified but not implemented.
-- current branch still has old `[]T` slice-value internals.
-- dynamic-array and slice-view lowering is future work.
+- `&T`, `&mut T`, `&expr`, and `&mut expr` are implemented for current v1 storage boundaries.
+- `[]T` is represented as dynamic-array storage, not a slice view.
+- dynamic-array receiver borrows, slice-view creation/indexing, reference-origin summaries, and borrow-conflict checks remain future work.
 
 ## Linked Structures
 

@@ -97,6 +97,7 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 			return
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
+		paramSym.Mutable = param.IsMutable
 		paramSym.Initialized = true
 		if err := funcScope.Declare(paramSym); err != nil {
 			problems.ReportRedeclaration(r.ctx, funcScope, err.Error(), param.Name.Name, param.Name.Location)

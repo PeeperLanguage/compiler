@@ -170,6 +170,9 @@ func paramSurface(params []ast.Param) []string {
 		if param.Consumes {
 			prefix = "move "
 		}
+		if param.IsMutable {
+			prefix += "mut "
+		}
 		out = append(out, prefix+name+":"+ast.TypeText(param.Type))
 	}
 	return out

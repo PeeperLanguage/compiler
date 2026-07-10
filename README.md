@@ -12,5 +12,5 @@ Supported release installers:
 - Windows: `amd64`, `arm64`
 
 # Todo
- - [ ] Add `as?`
- - [ ] Highlight `@`
+ - [ ] Add `as!`
+ - [x] Highlight `@`

@@ -55,6 +55,11 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			return nil
 		}
 		return &RawPtrType{Target: ASTTypeWithOptions(typ.Target, opts)}
+	case *ast.RefType:
+		if typ == nil {
+			return nil
+		}
+		return &RefType{Mutable: typ.Mutable, Target: ASTTypeWithOptions(typ.Target, opts)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil
@@ -68,12 +73,7 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ.Len != nil {
 			length = typ.Len.Value
 		}
-		return &ArrayType{Len: length, Elem: ASTTypeWithOptions(typ.Elem, opts)}
-	case *ast.SliceType:
-		if typ == nil {
-			return nil
-		}
-		return &SliceType{Elem: ASTTypeWithOptions(typ.Elem, opts)}
+		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: ASTTypeWithOptions(typ.Elem, opts)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil

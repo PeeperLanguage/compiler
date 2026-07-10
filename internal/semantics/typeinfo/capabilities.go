@@ -81,12 +81,12 @@ func IsCopyType(t Type) bool {
 		return false
 	case *RawPtrType:
 		return typ != nil
+	case *RefType:
+		return typ != nil && !typ.Mutable
 	case *OptionalType:
 		return typ != nil && IsCopyType(typ.Inner)
 	case *ArrayType:
-		return typ != nil && IsCopyType(typ.Elem)
-	case *SliceType:
-		return false
+		return typ != nil && !typ.Dynamic && typ.Len != "" && IsCopyType(typ.Elem)
 	case *FuncType:
 		if typ == nil {
 			return false

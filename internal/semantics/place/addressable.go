@@ -22,6 +22,9 @@ func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool 
 			if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(e.Expr))); ok {
 				return true
 			}
+			if _, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(e.Expr))); ok {
+				return true
+			}
 		}
 		return Addressable(scope, e.Expr, exprType)
 	default:
@@ -29,22 +32,28 @@ func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool 
 	}
 }
 
-func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool {
+func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) (mutable bool, sharedReference typeinfo.Type) {
 	if scope == nil || expr == nil {
-		return false
+		return false, nil
 	}
 	switch e := expr.(type) {
 	case *ast.Ident:
-		return scope.IsMutableVar(e.Name)
+		return scope.IsMutableBinding(e.Name), nil
 	case *ast.SelectorExpr:
 		if exprType != nil {
 			if _, ok := typeinfo.Underlying(exprType(e.Expr)).(*typeinfo.RawPtrType); ok {
-				return true
+				return true, nil
+			}
+			if target, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(e.Expr))); ok {
+				if mutable {
+					return true, nil
+				}
+				return false, target
 			}
 		}
 		return MutableAddressable(scope, e.Expr, exprType)
 	default:
-		return false
+		return false, nil
 	}
 }
 

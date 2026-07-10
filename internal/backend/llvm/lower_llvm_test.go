@@ -24,9 +24,13 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"?^i32":            "i32*",
 		"*i32":             "i32*",
 		"[4]i32":           "[4 x i32]",
-		"[]i32":            "{ i32*, i64 }",
+		"[]i32":            "{ i32*, i64, i64 }",
+		"&i32":             "i32*",
+		"&mut i32":         "i32*",
+		"&[]i32":           "{ i32*, i64 }",
+		"&mut []i32":       "{ i32*, i64 }",
 		"*string":          "{ i8*, i64 }*",
-		"[]?string":        "{ { i1, { i8*, i64 } }*, i64 }",
+		"[]?string":        "{ { i1, { i8*, i64 } }*, i64, i64 }",
 		"struct{x: [2]u8}": "{ [2 x i8] }",
 	}
 	for typeText, want := range cases {
@@ -484,57 +488,65 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRLowersProjectFieldWithoutTempAlloca(t *testing.T) {
+func TestGenerateLLVMIRLowersIndirectProjectFieldWithoutTempAlloca(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := &mir.Module{
-		Name:     "test",
-		FilePath: unixTestPath,
-		Funcs: []*mir.Function{
-			{
-				Name:       "main",
-				Params:     []ir.Param{{Name: "box", Type: "^struct{value: i32}"}},
-				ReturnType: "i32",
-				EntryID:    0,
-				Blocks: []*mir.Block{
+	for _, baseType := range []string{"^struct{value: i32}", "&struct{value: i32}", "&mut struct{value: i32}"} {
+		t.Run(baseType, func(t *testing.T) {
+			mod := &mir.Module{
+				Name:     "test",
+				FilePath: unixTestPath,
+				Funcs: []*mir.Function{
 					{
-						ID: 0,
-						Instrs: []mir.Instr{
-							&mir.Assign{
-								Name: "fieldptr",
-								Value: &mir.ProjectField{
-									Base:  &mir.RefName{Name: "box", Type: "^struct{value: i32}"},
-									Index: 0,
-									Type:  "^i32",
+						Name:       "main",
+						Params:     []ir.Param{{Name: "box", Type: baseType}},
+						ReturnType: "i32",
+						EntryID:    0,
+						Blocks: []*mir.Block{
+							{
+								ID: 0,
+								Instrs: []mir.Instr{
+									&mir.Assign{
+										Name: "fieldptr",
+										Value: &mir.ProjectField{
+											Base:  &mir.RefName{Name: "box", Type: baseType},
+											Index: 0,
+											Type:  "*i32",
+										},
+									},
 								},
+								Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
 							},
 						},
-						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
 					},
 				},
-			},
-		},
-	}
+			}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
-	if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") {
-		t.Fatalf("expected field address to lower as GEP, got:\n%s", irText)
-	}
-	if strings.Contains(irText, "alloca i32") {
-		t.Fatalf("unexpected temp alloca for field address, got:\n%s", irText)
-	}
-	if strings.Contains(irText, "load i32") {
-		t.Fatalf("unexpected field load for field address, got:\n%s", irText)
+			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+			if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") {
+				t.Fatalf("expected field address to lower as GEP, got:\n%s", irText)
+			}
+			if strings.Contains(irText, "alloca i32") {
+				t.Fatalf("unexpected temp alloca for field address, got:\n%s", irText)
+			}
+			if strings.Contains(irText, "load i32") {
+				t.Fatalf("unexpected field load for field address, got:\n%s", irText)
+			}
+		})
 	}
 }
 
 func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
+	params := []ir.Param{{Name: "xs", Type: baseType}}
+	if ref, ok := index.(*mir.RefName); ok {
+		params = append(params, ir.Param{Name: ref.Name, Type: ref.Type})
+	}
 	return &mir.Module{
 		Name:     "test",
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "first",
-				Params:     []ir.Param{{Name: "xs", Type: baseType}},
+				Params:     params,
 				ReturnType: "i32",
 				EntryID:    0,
 				Blocks: []*mir.Block{
@@ -562,28 +574,15 @@ func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 	}
 }
 
-func TestGenerateLLVMIRLowersProjectIndexForArrayRead(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := indexReadMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
-	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
-		t.Fatalf("expected array index to lower as GEP, got:\n%s", irText)
-	}
-	if !strings.Contains(irText, "load i32, i32*") {
-		t.Fatalf("expected array index read to load element, got:\n%s", irText)
-	}
-}
-
-func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := &mir.Module{
+func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
+	return &mir.Module{
 		Name:     "test",
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
-				Name: "set_first",
+				Name: "set_item",
 				Params: []ir.Param{
-					{Name: "xs", Type: "[4]i32"},
+					{Name: "xs", Type: baseType},
 					{Name: "value", Type: "i32"},
 				},
 				ReturnType: "i32",
@@ -595,8 +594,8 @@ func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
 							&mir.Assign{
 								Name: "idxptr",
 								Value: &mir.ProjectIndex{
-									Base:  &mir.RefName{Name: "xs", Type: "[4]i32"},
-									Index: &mir.RefConst{Value: "0", Type: "i32"},
+									Base:  &mir.RefName{Name: "xs", Type: baseType},
+									Index: index,
 									Type:  "*i32",
 								},
 							},
@@ -611,6 +610,23 @@ func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
 			},
 		},
 	}
+}
+
+func TestGenerateLLVMIRLowersProjectIndexForArrayRead(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := indexReadMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
+		t.Fatalf("expected array index to lower as GEP, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "load i32, i32*") {
+		t.Fatalf("expected array index read to load element, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := indexStoreMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
 	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
 		t.Fatalf("expected array index write to lower as GEP, got:\n%s", irText)
@@ -688,7 +704,7 @@ func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRRejectsDynamicArrayIndexUntilBoundsPolicy(t *testing.T) {
+func TestGenerateLLVMIRRejectsDynamicFixedArrayIndexUntilBoundsPolicy(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	diag := diagnostics.NewDiagnosticBag()
 	irText := GenerateLLVMIR(indexReadMIRModule("[4]i32", &mir.RefName{Name: "i", Type: "i32"}), diag, targetTriple, false, "linux")
@@ -700,14 +716,57 @@ func TestGenerateLLVMIRRejectsDynamicArrayIndexUntilBoundsPolicy(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRRejectsSliceIndexUntilBoundsPolicy(t *testing.T) {
+func TestGenerateLLVMIRLowersDynamicArrayIndexRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	diag := diagnostics.NewDiagnosticBag()
-	irText := GenerateLLVMIR(indexReadMIRModule("[]i32", &mir.RefConst{Value: "0", Type: "i32"}), diag, targetTriple, false, "linux")
-	if irText != "" {
-		t.Fatalf("expected invalid slice index lowering to suppress LLVM output, got:\n%s", irText)
+	irText := GenerateLLVMIR(indexReadMIRModule("[]i32", &mir.RefName{Name: "i", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 0") {
+		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
 	}
-	if !strings.Contains(diag.EmitAllToString(), "slice index lowering requires bounds policy") {
-		t.Fatalf("expected slice index diagnostic, got:\n%s", diag.EmitAllToString())
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 1") ||
+		!strings.Contains(irText, "sext i32 %i to i64") ||
+		!strings.Contains(irText, "icmp uge i64") ||
+		!strings.Contains(irText, "call void @llvm.trap()") {
+		t.Fatalf("expected dynamic array bounds guard, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "getelementptr i32, i32*") || !strings.Contains(irText, ", i64 %") {
+		t.Fatalf("expected dynamic array index to lower as element GEP, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "load i32, i32*") {
+		t.Fatalf("expected dynamic array index read to load element, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	irText := GenerateLLVMIR(indexReadMIRModule("[]i32", &mir.RefName{Name: "i", Type: "u8"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "zext i8 %i to i64") {
+		t.Fatalf("expected narrow unsigned index widening, got:\n%s", irText)
+	}
+	gep := ""
+	for _, line := range strings.Split(irText, "\n") {
+		if strings.Contains(line, "getelementptr i32") {
+			gep = line
+			break
+		}
+	}
+	if gep == "" || !strings.Contains(gep, "i64 %") || strings.Contains(gep, "i8 %i") {
+		t.Fatalf("expected GEP to use widened unsigned index, got %q:\n%s", gep, irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	irText := GenerateLLVMIR(indexStoreMIRModule("[]i32", &mir.RefConst{Value: "0", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 0") {
+		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "icmp uge i64") || !strings.Contains(irText, "call void @llvm.trap()") {
+		t.Fatalf("expected dynamic array store bounds guard, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "getelementptr i32, i32*") {
+		t.Fatalf("expected dynamic array index to lower as element GEP, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "store i32 %value, i32*") {
+		t.Fatalf("expected dynamic array index store to write element, got:\n%s", irText)
 	}
 }

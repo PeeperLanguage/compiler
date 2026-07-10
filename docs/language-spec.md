@@ -30,9 +30,8 @@ Core rules:
 | `&mut T` | Mutable exclusive reference to `T` | Not copyable |
 | `[N]T` | Fixed array value | Copyable when `T` is copyable |
 | `[]T` | Dynamic array value | Move-only |
-| `[T]` | Unsized contiguous sequence target | Not a standalone value type |
-| `&[T]` | Shared slice view | Copyable temporary view |
-| `&mut [T]` | Mutable exclusive slice view | Not copyable |
+| `&[]T` | Shared slice view | Copyable temporary view |
+| `&mut []T` | Mutable exclusive slice view | Not copyable |
 
 `str` is a builtin text type. It must not force a library-shaped type into user
 code. Exact `str` storage remains tied to the array/string design work.
@@ -100,6 +99,16 @@ let hp = &h.position
 
 `&mut T` is exclusive for the borrowed storage.
 
+Binding an existing mutable reference to another local requires `move` because
+the binding transfers the one exclusive access capability. Passing it to a
+non-consuming reference parameter creates a temporary reborrow instead:
+
+```peep
+let next = move current_mut_ref
+inspect(current_mut_ref) // invalid after transfer
+mutate(next)             // call temporarily reborrows next
+```
+
 The compiler must reject obvious alias conflicts:
 
 ```peep
@@ -112,6 +121,47 @@ For aggregate paths, the compiler may be conservative:
 ```peep
 foo(&mut xs[i], &mut xs[j]) // may be rejected when equality is unknown
 ```
+
+## Mutable Parameters
+
+Parameters are immutable bindings by default. `mut` makes owned parameter
+binding mutable:
+
+```peep
+fn update(mut writer: Writer, mut value: i32) {
+    writer.write(value)
+    value = 9
+}
+```
+
+Mutable binding permits reassignment, field mutation, mutable borrowing, and
+calls requiring a mutable receiver. It is independent from ownership transfer;
+`move mut value: T` is both consuming and mutable.
+
+A parameter whose type is already `&mut T` does not need a mutable binding to
+mutate referenced value. Its binding remains immutable and cannot be reassigned.
+Parameter mutability is therefore not part of function type compatibility.
+
+## Interface Values
+
+Bare interfaces follow ordinary value rules. Converting copyable `T` to an
+interface boxes a copy. Converting move-only `T` requires `move`, like any other
+value-consuming operation.
+
+Interface references provide borrowed runtime dispatch without copying concrete
+value:
+
+```peep
+fn read(reader: &Reader) -> i32
+fn write(writer: &mut Writer, value: i32)
+
+read(&counter)
+write(&mut counter, 7)
+```
+
+`&Interface` is a shared fat view of original concrete value. `&mut Interface`
+is an exclusive fat view, so mutations performed through interface methods
+update original value. Neither form owns or boxes a copy of concrete value.
 
 ## Returned References
 
@@ -148,22 +198,19 @@ fn bad() -> &i32 {
 `[N]T` is fixed-size inline storage. `[]T` is dynamic array storage with runtime
 length/capacity and heap-backed elements.
 
-`[T]` is the unsized contiguous sequence target. It is not a standalone local or
-field type. It appears behind references:
+Slice views use reference syntax over dynamic-array element spelling:
 
 ```peep
-fn sum(xs: &[i32]) -> i32
-fn fill(xs: &mut [i32], value: i32)
+fn sum(xs: &[]i32) -> i32
+fn fill(xs: &mut []i32, value: i32)
 ```
 
-`&[T]` can read elements but cannot mutate them. `&mut [T]` can mutate elements
+`&[]T` can read elements but cannot mutate them. `&mut []T` can mutate elements
 but cannot resize the dynamic array that supplied the view.
 
-To resize a dynamic array, pass a mutable reference to the dynamic array value:
-
-```peep
-fn push(xs: &mut []i32, value: i32)
-```
+These reference forms are the language's slice views. There is no separate
+slice type: borrowing dynamic-array elements produces `&[]T` or `&mut []T`,
+and neither form owns or resizes the source array.
 
 ## Ranges
 
@@ -191,10 +238,6 @@ data[i..=j]   // includes j
 Current branch already split `^T` from raw `*T` and tracks move-only heap handles.
 Remaining work:
 
-1. Replace old `[]T` slice-value assumptions with dynamic-array semantics.
-2. Add AST/typeinfo nodes for safe references.
-3. Add parser support for `&T`, `&mut T`, `&expr`, and `&mut expr`.
-4. Add structural reference storage bans.
-5. Add returned-reference origin summaries.
-6. Add borrow locks so heap handles cannot move while derived refs are live.
-7. Lower slice views as fat references once the ABI shape is settled.
+1. Add returned-reference origin summaries.
+2. Add borrow locks so heap handles cannot move while derived refs are live.
+3. Lower dynamic-array operations and slice-view creation once bounds and ABI policy are complete.

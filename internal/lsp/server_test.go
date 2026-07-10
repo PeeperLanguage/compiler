@@ -639,6 +639,22 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 	}
 }
 
+func TestHoverPreservesMutableInterfaceReceiver(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "interface Writer {\n\twrite(self: &mut Self, val: i32)\n}\n\nfn use(mut writer: Writer) {\n\twriter.__CURSOR__write(7);\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn(&mut Writer, i32)") {
+		t.Fatalf("expected mutable interface receiver, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverShowsImplMethodNameSignature(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)

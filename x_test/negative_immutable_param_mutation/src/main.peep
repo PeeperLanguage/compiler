@@ -1,0 +1,7 @@
+interface Writer {
+    write(self: &mut Self, val: i32)
+}
+
+fn WriteCopy(writer: Writer, val: i32) {
+    writer.write(val);
+}

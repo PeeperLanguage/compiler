@@ -794,6 +794,87 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersReferenceReceiversOnValue(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn get(self: &Self) -> i32 {
+		return self.value;
+	}
+
+	fn twice(self: &Self) -> i32 {
+		return self.get() + self.get();
+	}
+
+	fn bump(self: &mut Self) -> i32 {
+		self.value = self.value + 1;
+		return self.value;
+	}
+
+	fn touch(self: &mut Self) -> i32 {
+		self.bump();
+		return self.twice();
+	}
+}
+
+fn main() -> i32 {
+	let mut c: Counter = .{ value = 6 };
+	return c.touch();
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineBorrowsNestedReferenceReceiverFromFieldPlace(t *testing.T) {
+	entrySrc := `struct Inner {
+	value: i32
+}
+
+impl Inner {
+	fn bump(self: &mut Self) {
+		self.value = self.value + 1;
+	}
+}
+
+struct Outer {
+	inner: Inner
+}
+
+fn main() -> i32 {
+	let mut outer: Outer = .{ inner = .{ value = 1 } };
+	outer.inner.bump();
+	return outer.inner.value;
+}`
+	const entryPath = "entry" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if entry.MIR == nil {
+		t.Fatalf("expected nested receiver borrow MIR")
+	}
+	if !strings.Contains(entry.MIR.Text(), "projectfield") {
+		t.Fatalf("expected nested receiver borrow to project original field, MIR:\n%s", entry.MIR.Text())
+	}
+	if strings.Contains(entry.LLVMIR, "alloca { i32 }") {
+		t.Fatalf("nested receiver borrow must not allocate copied field, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}
+
 func TestPipelineLowersPointerFieldAssignment(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Counter {
@@ -1084,6 +1165,81 @@ fn use(reader: Reader) -> i32 {
 fn main() -> i32 {
 	let file = open_file();
 	return use(file);
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersInterfaceDispatchForReferenceReceiver(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Reader {
+	read(self: &Self) -> i32
+}
+
+struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn read(self: &Self) -> i32 {
+		return self.value;
+	}
+}
+
+fn use(reader: Reader) -> i32 {
+	return reader.read();
+}
+
+fn main() -> i32 {
+	let counter: Counter = .{ value = 7 };
+	return use(counter);
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersBorrowedInterfaceDispatch(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `interface Reader {
+	read(self: &Self) -> i32
+}
+
+interface Writer {
+	write(self: &mut Self, value: i32)
+}
+
+struct Counter {
+	value: i32
+}
+
+impl Counter {
+	fn read(self: &Self) -> i32 {
+		return self.value;
+	}
+
+	fn write(self: &mut Self, value: i32) {
+		self.value = value;
+	}
+}
+
+fn read(reader: &Reader) -> i32 {
+	return reader.read();
+}
+
+fn write(writer: &mut Writer) {
+	writer.write(7);
+}
+
+fn main() -> i32 {
+	let mut counter: Counter = .{ value = 5 };
+	write(&mut counter);
+	return read(&counter);
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)

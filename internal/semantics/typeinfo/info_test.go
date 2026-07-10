@@ -9,9 +9,10 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	ownedA := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	ownedB := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	rawPtr := &RawPtrType{Target: &NamedType{Name: "Foo"}}
+	ref := &RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}}
 	opt := &OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}
 	array := &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}
-	slice := &SliceType{Elem: &StringType{}}
+	dynArray := &ArrayType{Dynamic: true, Elem: &StringType{}}
 
 	if got := ownedA.Text(); got != "^i32" {
 		t.Fatalf("owned pointer text: got %q want %q", got, "^i32")
@@ -19,14 +20,17 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	if got := rawPtr.Text(); got != "*Foo" {
 		t.Fatalf("raw pointer text: got %q want %q", got, "*Foo")
 	}
+	if got := ref.Text(); got != "&[]string" {
+		t.Fatalf("reference text: got %q want %q", got, "&[]string")
+	}
 	if got := opt.Text(); got != "?i32" {
 		t.Fatalf("optional text: got %q want %q", got, "?i32")
 	}
 	if got := array.Text(); got != "[4]i32" {
 		t.Fatalf("array text: got %q want %q", got, "[4]i32")
 	}
-	if got := slice.Text(); got != "[]string" {
-		t.Fatalf("slice text: got %q want %q", got, "[]string")
+	if got := dynArray.Text(); got != "[]string" {
+		t.Fatalf("dynamic array text: got %q want %q", got, "[]string")
 	}
 	if !SameType(ownedA, ownedB) {
 		t.Fatalf("owned pointers with equal targets should match")
@@ -40,8 +44,14 @@ func TestIsCopyTypeRespectsPointerOwnershipModel(t *testing.T) {
 	if !IsCopyType(&RawPtrType{Target: &IntegerType{Signed: true, Bits: 32}}) {
 		t.Fatalf("*T should be copyable")
 	}
-	if IsCopyType(&SliceType{Elem: &IntegerType{Signed: true, Bits: 32}}) {
+	if IsCopyType(&ArrayType{Dynamic: true, Elem: &IntegerType{Signed: true, Bits: 32}}) {
 		t.Fatalf("[]T should be non-copy by default")
+	}
+	if !IsCopyType(&RefType{Target: &IntegerType{Signed: true, Bits: 32}}) {
+		t.Fatalf("&T should be copyable")
+	}
+	if IsCopyType(&RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}) {
+		t.Fatalf("&mut T should be non-copy")
 	}
 	if !IsCopyType(&DefinedType{
 		Name:       "Cursor",
@@ -49,6 +59,87 @@ func TestIsCopyTypeRespectsPointerOwnershipModel(t *testing.T) {
 		CopyMode:   CopyAllow,
 	}) {
 		t.Fatalf("allow_copy should override default no-copy")
+	}
+}
+
+func TestReferenceTargetPreservesMutability(t *testing.T) {
+	target := &IntegerType{Signed: true, Bits: 32}
+	got, mutable, ok := ReferenceTarget(&RefType{Mutable: true, Target: target})
+	if !ok || got != target || !mutable {
+		t.Fatalf("reference target = (%v, %v, %v), want (%v, true, true)", got, mutable, ok, target)
+	}
+	if _, _, ok := ReferenceTarget(&RawPtrType{Target: target}); ok {
+		t.Fatalf("raw pointer must not classify as reference")
+	}
+}
+
+func TestInterfaceTypeOfRecognizesReferencedInterface(t *testing.T) {
+	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
+	for _, typ := range []Type{iface, &RefType{Target: iface}, &RefType{Mutable: true, Target: iface}} {
+		got, ok := InterfaceTypeOf(typ)
+		if !ok || got != iface {
+			t.Fatalf("interface type = (%v, %v), want (%v, true)", got, ok, iface)
+		}
+	}
+	if _, ok := InterfaceTypeOf(&RefType{Target: &IntegerType{Signed: true, Bits: 32}}); ok {
+		t.Fatalf("reference to concrete type must not classify as interface")
+	}
+}
+
+func TestContainsReferenceTraversesAliasesAndStopsAtCycles(t *testing.T) {
+	referenceAlias := &DefinedType{
+		Name:       "Shared",
+		Underlying: &RefType{Target: &IntegerType{Signed: true, Bits: 32}},
+	}
+	if !ContainsReference(&ArrayType{Len: "2", Elem: referenceAlias}) {
+		t.Fatalf("reference hidden by alias and array should be found")
+	}
+
+	recursive := &DefinedType{Name: "Node"}
+	recursive.Underlying = &StructType{Fields: []Field{{
+		Name: "next",
+		Type: &OwnedPtrType{Target: recursive},
+	}}}
+	if ContainsReference(recursive) {
+		t.Fatalf("reference-free recursive type should not report a reference")
+	}
+}
+
+func TestReferenceStorageTraversalIgnoresCallableMetadata(t *testing.T) {
+	reference := &RefType{Target: &IntegerType{Signed: true, Bits: 32}}
+	callback := &FuncType{Params: []Type{reference}, Return: &IntegerType{Signed: true, Bits: 32}}
+	holder := &StructType{Fields: []Field{{Name: "callback", Type: callback}}}
+
+	if ContainsReference(callback) || ContainsReference(holder) {
+		t.Fatalf("callable signature metadata should not count as stored references")
+	}
+	if ContainsStoredReference(reference) {
+		t.Fatalf("direct reference should remain valid as a temporary local or parameter")
+	}
+	if ContainsStoredReference(&OptionalType{Inner: reference}) {
+		t.Fatalf("optional reference should remain valid outside a storage boundary")
+	}
+	if !ContainsStoredReference(&ArrayType{Len: "2", Elem: reference}) {
+		t.Fatalf("array elements should count as stored references")
+	}
+	if !ContainsStoredReference(&OwnedPtrType{Target: reference}) {
+		t.Fatalf("heap-owned reference target should count as stored")
+	}
+}
+
+func TestContainsAbstractSelfDoesNotExpandResolvedTypes(t *testing.T) {
+	resolved := &DefinedType{
+		Name: "Resolved",
+		Underlying: &InterfaceType{Methods: []Method{{
+			Name: "read",
+			Params: []Field{{
+				Name: "self",
+				Type: &NamedType{Name: "Self"},
+			}},
+		}}},
+	}
+	if ContainsAbstractSelf(resolved) {
+		t.Fatalf("resolved defined type should not be treated as an abstract Self occurrence")
 	}
 }
 

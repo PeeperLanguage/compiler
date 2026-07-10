@@ -1,0 +1,40 @@
+struct Counter {
+    value: i32
+}
+
+impl Counter {
+    fn read(self: &Self) -> i32 {
+        return self.value;
+    }
+
+    fn bump(self: &mut Self) {
+        self.value = self.value + 1;
+    }
+
+    fn touch(self: &mut Self) -> i32 {
+        self.bump();
+        return self.read();
+    }
+}
+
+struct Outer {
+    counter: Counter
+}
+
+fn Forward(counter: &mut Counter) -> i32 {
+    return counter.touch();
+}
+
+fn Transfer(counter: &mut Counter) -> i32 {
+    let alias = move counter;
+    return alias.read();
+}
+
+fn main() -> i32 {
+    let mut outer: Outer = .{ counter = .{ value = 1 } };
+    let result = outer.counter.touch();
+    if result == 2 && outer.counter.value == 2 {
+        return 0;
+    }
+    return 1;
+}

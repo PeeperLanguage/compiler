@@ -1,0 +1,15 @@
+struct Box {
+    value: i32
+}
+
+struct Holder {
+    reference: &Box
+}
+
+type References = [2]&Box;
+
+const GlobalReference: &Box = none;
+
+fn StoreReferences(_: []&Box) {
+    let _: [2]&Box;
+}

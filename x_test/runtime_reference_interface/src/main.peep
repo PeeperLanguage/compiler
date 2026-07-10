@@ -1,0 +1,53 @@
+interface Reader {
+    read(self: &Self) -> i32
+}
+
+interface Writer {
+    write(self: &mut Self, val: i32)
+}
+
+struct Counter {
+    value: i32
+}
+
+impl Counter {
+    fn read(self: &Self) -> i32 {
+        return self.value;
+    }
+    fn write(self: &mut Self, val: i32) {
+        self.value = val;
+    }
+}
+
+fn Read(reader: &Reader) -> i32 {
+    return reader.read();
+}
+
+fn Write(writer: &mut Writer, val: i32) {
+    writer.write(val);
+}
+
+fn WriteCopy(mut writer: Writer, val: i32) {
+    writer.write(val);
+}
+
+fn Rebind(mut value: i32) -> i32 {
+    value = 9;
+    return value;
+}
+
+fn main() -> i32 {
+    let mut counter: Counter = .{ value = 5 };
+    WriteCopy(counter, 6);
+    if counter.value != 5 {
+        return 1;
+    }
+    if Rebind(1) != 9 {
+        return 2;
+    }
+    Write(&mut counter, 7);
+    if Read(&counter) == 7 && counter.value == 7 {
+        return 0;
+    }
+    return counter.value;
+}

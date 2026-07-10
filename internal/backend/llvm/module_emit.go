@@ -211,7 +211,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 					val := emitValueExpr(lb, assign.Value)
 					valueType := mirValueType(assign.Value)
 					if ptr, ok := lb.localPtrs[assign.Name]; ok && ptr != "" {
-						llvmType := lb.types.llvmType(lb.localTypes[assign.Name])
+						llvmType := lb.emitter.llvmType(lb.localTypes[assign.Name])
 						lb.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, ptr))
 					} else {
 						lb.locals[assign.Name] = val
@@ -355,7 +355,7 @@ func emitStackLocalSlots(b *llvmBuilder, slots []stackLocalSlot) {
 		return
 	}
 	for _, slot := range slots {
-		llvmType := b.types.llvmType(slot.Type)
+		llvmType := b.emitter.llvmType(slot.Type)
 		ptr := b.nextReg()
 		b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmType))
 		if paramValue, ok := b.locals[slot.Name]; ok && paramValue != "" {

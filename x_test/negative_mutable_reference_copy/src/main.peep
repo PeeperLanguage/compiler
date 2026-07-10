@@ -1,0 +1,3 @@
+fn CopyMutableReference(reference: &mut i32) {
+    let alias = reference;
+}

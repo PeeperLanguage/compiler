@@ -71,17 +71,19 @@ type RawPtrType struct {
 	Target Type
 }
 
+type RefType struct {
+	Mutable bool
+	Target  Type
+}
+
 type OptionalType struct {
 	Inner Type
 }
 
 type ArrayType struct {
-	Len  string
-	Elem Type
-}
-
-type SliceType struct {
-	Elem Type
+	Len     string
+	Dynamic bool
+	Elem    Type
 }
 
 type FuncType struct {
@@ -125,9 +127,9 @@ func (*NamedType) TypeNode()     {}
 func (*DefinedType) TypeNode()   {}
 func (*OwnedPtrType) TypeNode()  {}
 func (*RawPtrType) TypeNode()    {}
+func (*RefType) TypeNode()       {}
 func (*OptionalType) TypeNode()  {}
 func (*ArrayType) TypeNode()     {}
-func (*SliceType) TypeNode()     {}
 func (*FuncType) TypeNode()      {}
 func (*StructType) TypeNode()    {}
 func (*InterfaceType) TypeNode() {}
@@ -199,6 +201,17 @@ func (t *RawPtrType) Text() string {
 	return "*" + TypeText(t.Target)
 }
 
+func (t *RefType) Text() string {
+	if t == nil {
+		return ""
+	}
+	prefix := "&"
+	if t.Mutable {
+		prefix = "&mut "
+	}
+	return prefix + TypeText(t.Target)
+}
+
 func (t *OptionalType) Text() string {
 	if t == nil {
 		return ""
@@ -210,14 +223,13 @@ func (t *ArrayType) Text() string {
 	if t == nil {
 		return ""
 	}
-	return "[" + t.Len + "]" + TypeText(t.Elem)
-}
-
-func (t *SliceType) Text() string {
-	if t == nil {
-		return ""
+	if t.Dynamic {
+		return "[]" + TypeText(t.Elem)
 	}
-	return "[]" + TypeText(t.Elem)
+	if t.Len == "" {
+		return "[" + TypeText(t.Elem) + "]"
+	}
+	return "[" + t.Len + "]" + TypeText(t.Elem)
 }
 
 func (t *FuncType) Text() string {
@@ -354,6 +366,11 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 			return nil
 		}
 		return &RawPtrType{Target: TypeFromSyntax(typ.Target)}
+	case *ast.RefType:
+		if typ == nil {
+			return nil
+		}
+		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil
@@ -367,12 +384,7 @@ func TypeFromSyntax(node ast.TypeExpr) Type {
 		if typ.Len != nil {
 			length = typ.Len.Value
 		}
-		return &ArrayType{Len: length, Elem: TypeFromSyntax(typ.Elem)}
-	case *ast.SliceType:
-		if typ == nil {
-			return nil
-		}
-		return &SliceType{Elem: TypeFromSyntax(typ.Elem)}
+		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: TypeFromSyntax(typ.Elem)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
@@ -480,15 +492,15 @@ func SameType(left, right Type) bool {
 		return ok && r != nil && SameType(l.Target, r.Target)
 	case *RawPtrType:
 		return checkPointerCompatibility(l, right) == Compatible
+	case *RefType:
+		r, ok := right.(*RefType)
+		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
 	case *OptionalType:
 		r, ok := right.(*OptionalType)
 		return ok && r != nil && SameType(l.Inner, r.Inner)
 	case *ArrayType:
 		r, ok := right.(*ArrayType)
-		return ok && r != nil && l.Len == r.Len && SameType(l.Elem, r.Elem)
-	case *SliceType:
-		r, ok := right.(*SliceType)
-		return ok && r != nil && SameType(l.Elem, r.Elem)
+		return ok && r != nil && l.Len == r.Len && l.Dynamic == r.Dynamic && SameType(l.Elem, r.Elem)
 	case *FuncType:
 		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
@@ -574,55 +586,102 @@ func Assignable(dst, src Type) bool {
 }
 
 func ContainsAbstractSelf(t Type) bool {
-	switch typ := t.(type) {
-	case *NamedType:
-		return typ != nil && typ.Name == "Self"
-	case *OwnedPtrType:
-		return typ != nil && ContainsAbstractSelf(typ.Target)
-	case *RawPtrType:
-		return typ != nil && ContainsAbstractSelf(typ.Target)
-	case *OptionalType:
-		return typ != nil && ContainsAbstractSelf(typ.Inner)
-	case *ArrayType:
-		return typ != nil && ContainsAbstractSelf(typ.Elem)
-	case *SliceType:
-		return typ != nil && ContainsAbstractSelf(typ.Elem)
-	case *FuncType:
-		if typ == nil {
+	return containsType(t, typeTraversal{followRawPointer: true, followCallable: true}, func(candidate Type, _ bool) bool {
+		named, ok := candidate.(*NamedType)
+		return ok && named != nil && named.Name == "Self"
+	})
+}
+
+func ContainsReference(t Type) bool {
+	return containsType(t, typeTraversal{followDefined: true}, func(candidate Type, _ bool) bool {
+		_, ok := candidate.(*RefType)
+		return ok
+	})
+}
+
+func ContainsStoredReference(t Type) bool {
+	return containsType(t, typeTraversal{followDefined: true}, func(candidate Type, stored bool) bool {
+		_, ok := candidate.(*RefType)
+		return stored && ok
+	})
+}
+
+type typeTraversal struct {
+	followDefined    bool
+	followRawPointer bool
+	followCallable   bool
+}
+
+func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool) bool {
+	type visitKey struct {
+		typeValue Type
+		stored    bool
+	}
+	seen := make(map[visitKey]struct{})
+	var visit func(Type, bool) bool
+	visit = func(current Type, stored bool) bool {
+		if current == nil {
 			return false
 		}
-		if slices.ContainsFunc(typ.Params, ContainsAbstractSelf) {
+		if matches(current, stored) {
 			return true
 		}
-		return ContainsAbstractSelf(typ.Return)
-	case *StructType:
-		if typ == nil {
+		key := visitKey{typeValue: current, stored: stored}
+		if _, found := seen[key]; found {
 			return false
 		}
-		for _, field := range typ.Fields {
-			if ContainsAbstractSelf(field.Type) {
-				return true
+		seen[key] = struct{}{}
+
+		switch typ := current.(type) {
+		case *DefinedType:
+			return traversal.followDefined && typ != nil && visit(typ.Underlying, stored)
+		case *OwnedPtrType:
+			return typ != nil && visit(typ.Target, true)
+		case *RawPtrType:
+			return traversal.followRawPointer && typ != nil && visit(typ.Target, stored)
+		case *RefType:
+			return typ != nil && visit(typ.Target, stored)
+		case *OptionalType:
+			return typ != nil && visit(typ.Inner, stored)
+		case *ArrayType:
+			return typ != nil && visit(typ.Elem, true)
+		case *FuncType:
+			if typ == nil || !traversal.followCallable {
+				return false
 			}
-		}
-		return false
-	case *InterfaceType:
-		if typ == nil {
-			return false
-		}
-		for _, method := range typ.Methods {
-			for _, param := range method.Params {
-				if ContainsAbstractSelf(param.Type) {
+			for _, param := range typ.Params {
+				if visit(param, false) {
 					return true
 				}
 			}
-			if ContainsAbstractSelf(method.Return) {
-				return true
+			return visit(typ.Return, false)
+		case *StructType:
+			if typ == nil {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if visit(field.Type, true) {
+					return true
+				}
+			}
+		case *InterfaceType:
+			if typ == nil || !traversal.followCallable {
+				return false
+			}
+			for _, method := range typ.Methods {
+				for _, param := range method.Params {
+					if visit(param.Type, false) {
+						return true
+					}
+				}
+				if visit(method.Return, false) {
+					return true
+				}
 			}
 		}
 		return false
-	default:
-		return false
 	}
+	return visit(t, false)
 }
 
 func ReplaceAbstractSelf(t Type, ownerType Type) Type {
@@ -642,6 +701,11 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 			return nil
 		}
 		return &RawPtrType{Target: ReplaceAbstractSelf(typ.Target, ownerType)}
+	case *RefType:
+		if typ == nil {
+			return nil
+		}
+		return &RefType{Mutable: typ.Mutable, Target: ReplaceAbstractSelf(typ.Target, ownerType)}
 	case *OptionalType:
 		if typ == nil {
 			return nil
@@ -651,12 +715,7 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		if typ == nil {
 			return nil
 		}
-		return &ArrayType{Len: typ.Len, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
-	case *SliceType:
-		if typ == nil {
-			return nil
-		}
-		return &SliceType{Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
+		return &ArrayType{Len: typ.Len, Dynamic: typ.Dynamic, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
 	case *FuncType:
 		if typ == nil {
 			return nil
@@ -822,15 +881,18 @@ func GetMethodLookupKeys(baseType Type) []string {
 		}
 		keys = append(keys, key)
 	}
-	appendKey(baseType)
-	if underlying := Underlying(baseType); underlying != baseType {
-		appendKey(underlying)
-	}
-	if target, ok := PointerTarget(baseType); ok {
-		appendKey(target)
-		if underlying := Underlying(target); underlying != target {
+	appendType := func(typ Type) {
+		appendKey(typ)
+		if underlying := Underlying(typ); underlying != typ {
 			appendKey(underlying)
 		}
+	}
+	appendType(baseType)
+	if target, ok := PointerTarget(baseType); ok {
+		appendType(target)
+	}
+	if target, _, ok := ReferenceTarget(Underlying(baseType)); ok {
+		appendType(target)
 	}
 	return keys
 }
@@ -857,6 +919,24 @@ func RawPointerTarget(t Type) (Type, bool) {
 	return ptr.Target, true
 }
 
+func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
+	ref, ok := t.(*RefType)
+	if !ok || ref == nil || ref.Target == nil {
+		return nil, false, false
+	}
+	return ref.Target, ref.Mutable, true
+}
+
+// InterfaceTypeOf recognizes both owned interface values and borrowed
+// interface views so semantic lookup and lowering share one type boundary.
+func InterfaceTypeOf(t Type) (*InterfaceType, bool) {
+	if target, _, ok := ReferenceTarget(Underlying(t)); ok {
+		t = target
+	}
+	iface, ok := Underlying(t).(*InterfaceType)
+	return iface, ok && iface != nil
+}
+
 // LookupStructField centralizes field search so checker and lowerer agree on
 // struct layout. Checker needs the field type for validation; lowerer needs
 // the same field index to emit field access.
@@ -865,6 +945,8 @@ func LookupStructField(baseType Type, name string) (field Field, index int, ok b
 		return Field{}, -1, false
 	}
 	if target, ptrOK := PointerTarget(baseType); ptrOK {
+		baseType = target
+	} else if target, _, refOK := ReferenceTarget(Underlying(baseType)); refOK {
 		baseType = target
 	}
 	strct, ok := Underlying(baseType).(*StructType)
