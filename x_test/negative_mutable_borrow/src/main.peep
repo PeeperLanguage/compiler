@@ -2,3 +2,20 @@ fn BorrowImmutable() {
     let value: i32 = 5;
     let _ = &mut value;
 }
+
+fn BorrowImmutableArray(xs: []i32) {
+    let _ = &mut xs;
+}
+
+fn Touch(_: &mut []i32) {
+}
+
+impl []i32 {
+    fn Write(self: &mut Self) {
+        Touch(self);
+    }
+}
+
+fn CallMutableArray(xs: []i32) {
+    xs.Write();
+}

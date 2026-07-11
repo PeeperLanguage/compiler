@@ -2,9 +2,45 @@ type Numbers = []i32;
 type SharedNumbers = &[]i32;
 type MutableNumbers = &mut []i32;
 
+struct Bucket {
+    items: []i32
+}
+
 fn Sum(_: &[]i32) -> i32 {
     return 0;
 }
 
 fn Fill(_: &mut []i32, _: i32) {
+}
+
+impl []i32 {
+    fn Read(self: &Self) -> i32 {
+        let _ = self;
+        return 0;
+    }
+
+    fn Write(self: &mut Self) {
+        let _ = self.Read();
+    }
+}
+
+fn Borrow(xs: []i32) {
+    let _ = &xs;
+}
+
+fn ReadOwner(xs: []i32) -> i32 {
+    return xs.Read();
+}
+
+fn WriteOwner(mut xs: []i32) {
+    let _ = &mut xs;
+    xs.Write();
+}
+
+fn WriteNested(mut bucket: Bucket) {
+    bucket.items.Write();
+}
+
+fn main() -> i32 {
+    return 0;
 }

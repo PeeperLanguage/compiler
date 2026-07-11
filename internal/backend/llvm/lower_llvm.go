@@ -535,6 +535,8 @@ func mirValueType(expr mir.ValueExpr) string {
 		return v.Type
 	case *mir.AddrOf:
 		return v.Type
+	case *mir.SliceView:
+		return v.Type
 	case *mir.Load:
 		return v.Type
 	case *mir.ProjectField:
@@ -903,6 +905,26 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			value := emitRef(b, e.Base)
 			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
 			return ptr
+		case *mir.SliceView:
+			sourceTypeText := mirRefType(e.Source)
+			elemTypeText, dynamicArray := strings.CutPrefix(sourceTypeText, "[]")
+			if !dynamicArray {
+				b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
+				return "0"
+			}
+			sourceType := b.emitter.llvmType(sourceTypeText)
+			viewType := b.emitter.llvmType(e.Type)
+			elemType := b.emitter.llvmType(strings.TrimSpace(elemTypeText))
+			source := emitRef(b, e.Source)
+			data := b.nextReg()
+			b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
+			length := b.nextReg()
+			b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
+			withData := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, %s* %s, 0", withData, viewType, elemType, data))
+			withLength := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, i64 %s, 1", withLength, viewType, withData, length))
+			return withLength
 		case *mir.Load:
 			ptr := emitRef(b, e.Ptr)
 			llvmType := b.emitter.llvmType(e.Type)

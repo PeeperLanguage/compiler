@@ -159,6 +159,12 @@ type AddrOf struct {
 	Location *source.Location
 }
 
+type SliceView struct {
+	Source   ValueRef
+	Type     string
+	Location *source.Location
+}
+
 type Load struct {
 	Ptr      ValueRef
 	Type     string
@@ -256,6 +262,7 @@ func (*Binary) valueExprNode()        {}
 func (*Move) valueExprNode()          {}
 func (*Cast) valueExprNode()          {}
 func (*AddrOf) valueExprNode()        {}
+func (*SliceView) valueExprNode()     {}
 func (*Load) valueExprNode()          {}
 func (*ProjectField) valueExprNode()  {}
 func (*ProjectIndex) valueExprNode()  {}
@@ -276,7 +283,10 @@ func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text(
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
 func (v *AddrOf) Text() string   { return fmt.Sprintf("addr %s", v.Base.Text()) }
-func (v *Load) Text() string     { return fmt.Sprintf("load %s", v.Ptr.Text()) }
+func (v *SliceView) Text() string {
+	return fmt.Sprintf("view %s", v.Source.Text())
+}
+func (v *Load) Text() string { return fmt.Sprintf("load %s", v.Ptr.Text()) }
 func (v *ProjectField) Text() string {
 	return fmt.Sprintf("projectfield %s, %d", v.Base.Text(), v.Index)
 }
@@ -388,6 +398,8 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *Cast:
 		return node.Location
 	case *AddrOf:
+		return node.Location
+	case *SliceView:
 		return node.Location
 	case *Load:
 		return node.Location
@@ -869,6 +881,11 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.SliceView:
+		source := l.lowerExpr(e.Source, out)
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &SliceView{Source: source, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		if e.ThroughPtr {
@@ -1119,6 +1136,8 @@ func valueRefsOf(expr ValueExpr) []ValueRef {
 		return []ValueRef{node.Arg}
 	case *AddrOf:
 		return []ValueRef{node.Base}
+	case *SliceView:
+		return []ValueRef{node.Source}
 	case *Load:
 		return []ValueRef{node.Ptr}
 	case *ProjectField:

@@ -236,6 +236,38 @@ func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersSliceView(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{{
+			Name:       "borrow",
+			Params:     []ir.Param{{Name: "xs", Type: "[]i32"}},
+			ReturnType: "i32",
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Binding{Name: "view", Value: &ir.SliceView{
+					Source: &ir.Ident{Name: "xs", Type: "[]i32"},
+					Type:   "&[]i32",
+				}},
+				&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("expected slice-view and binding assignments, got %#v", instrs)
+	}
+	assign, ok := instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assignment, got %#v", instrs[0])
+	}
+	view, ok := assign.Value.(*SliceView)
+	if !ok || view.Type != "&[]i32" || view.Source.Text() != "xs" {
+		t.Fatalf("expected MIR SliceView, got %#v", assign.Value)
+	}
+}
+
 func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",
