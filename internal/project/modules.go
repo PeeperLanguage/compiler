@@ -4,13 +4,116 @@ import (
 	"path/filepath"
 	"strings"
 
+	"compiler/internal/constvalue"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir/hir"
+	"compiler/internal/ir/mir"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
+)
+
+// Where a module was loaded from.
+type ModuleOrigin string
+
+const (
+	// Project source file.
+	ModuleOriginLocal ModuleOrigin = "local"
+	// Packaged library source file loaded from a namespace root such as core/vendor.
+	ModuleOriginStdlib ModuleOrigin = "core"
+	// Package dependency source file.
+	ModuleOriginDependency ModuleOrigin = "dependency"
+)
+
+type ModulePhase uint8
+
+const (
+	PhaseNone ModulePhase = iota
+	PhaseParsed
+	PhaseCollected
+	PhaseBound
+	PhaseResolved
+	PhaseConstEval
+	PhaseTypechecked
+	PhaseOwnership
+	PhaseUsage
+	PhaseHIR
+	PhaseMIR
+	PhaseBackend
 )
 
 const (
 	GraphNodeModule graph.NodeKind = "module"
 	GraphEdgeImport graph.EdgeKind = "import"
 )
+
+// Source unit shared by every compiler phase.
+type Module struct {
+	// Unique graph identity.
+	Key string
+	// Module path used by imports.
+	ImportPath string
+	// Absolute source path.
+	FilePath string
+	// Optional namespace for packaged libraries such as core/vendor.
+	Namespace string
+	// User-selected entry module.
+	IsEntry bool
+	// Local, stdlib, or dependency.
+	Origin ModuleOrigin
+	// Dependency alias, when any.
+	Dependency string
+	// Loaded source text.
+	Content string
+	// Reserved for incremental builds.
+	ContentHash string
+	// Stable syntax-derived import surface for invalidation.
+	ImportFingerprint string
+	// Stable syntax-derived export surface for invalidation.
+	ExportFingerprint string
+	// Last completed compiler phase for this module snapshot.
+	Phase ModulePhase
+	// Parsed syntax tree.
+	AST *ast.Module
+	// Canonical IR slots.
+	HIR    *hir.Module
+	MIR    *mir.Module
+	LLVMIR string
+	// Top-level names visible in module.
+	ModuleScope *table.Scope
+	// Grouped semantic analysis metadata.
+	Semantics *SemanticInfo
+	// Import alias -> resolved module import.
+	Imports map[string]ResolvedImport
+}
+
+type SemanticInfo struct {
+	BlockScopes         map[ast.NodeID]*table.Scope
+	ExprTypes           map[ast.NodeID]typeinfo.Type
+	ConstValues         map[symbols.SymbolID]constvalue.Value
+	MethodSets          map[string][]*symbols.Symbol
+	MethodSymbol        map[ast.NodeID]*symbols.Symbol
+	DiscardBindingValue map[symbols.SymbolID]struct{}
+}
+
+func NewSemanticInfo() *SemanticInfo {
+	return &SemanticInfo{
+		BlockScopes:         make(map[ast.NodeID]*table.Scope),
+		ExprTypes:           make(map[ast.NodeID]typeinfo.Type),
+		ConstValues:         make(map[symbols.SymbolID]constvalue.Value),
+		MethodSets:          make(map[string][]*symbols.Symbol),
+		MethodSymbol:        make(map[ast.NodeID]*symbols.Symbol),
+		DiscardBindingValue: make(map[symbols.SymbolID]struct{}),
+	}
+}
+
+func (m *Module) ResetSemanticData() {
+	if m == nil {
+		return
+	}
+	m.Semantics = NewSemanticInfo()
+}
 
 // CanonicalPath returns absolute slash-separated path for stable map keys.
 func CanonicalPath(path string) string {

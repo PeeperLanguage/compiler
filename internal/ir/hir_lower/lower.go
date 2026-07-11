@@ -63,7 +63,7 @@ func lowerImplDecl(ctx *project.CompilerContext, module *project.Module, out *hi
 	if module == nil || out == nil || decl == nil || decl.Target == nil || module.Semantics == nil {
 		return
 	}
-	targetType := typeinfo.TypeFromSyntax(decl.Target)
+	targetType := typeinfo.TypeFromSyntax(decl.Target, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 	targetText := typeinfo.TypeText(targetType)
 	for _, method := range decl.Methods {
 		if method == nil || method.Name == nil {
@@ -102,14 +102,14 @@ func lowerExternSignature(module *project.Module, params []ast.Param, fallbackRe
 		if param.Name != nil {
 			name = param.Name.Name
 		}
-		paramType := typeinfo.TypeFromSyntax(param.Type)
+		paramType := typeinfo.TypeFromSyntax(param.Type, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 		if resolvedFnType != nil && i < len(resolvedFnType.Params) && resolvedFnType.Params[i] != nil {
 			paramType = resolvedFnType.Params[i]
 		}
 		loweredParams = append(loweredParams, ir.Param{Name: name, Type: loweredTypeText(module, paramType)})
 	}
 
-	returnType := typeinfo.TypeFromSyntax(fallbackReturnType)
+	returnType := typeinfo.TypeFromSyntax(fallbackReturnType, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 	if resolvedFnType != nil && resolvedFnType.Return != nil {
 		returnType = resolvedFnType.Return
 	}
@@ -128,7 +128,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		}
 	}
 	if !ok || retType == nil {
-		retType = typeinfo.TypeFromSyntax(fn.ReturnType)
+		retType = typeinfo.TypeFromSyntax(fn.ReturnType, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 	}
 	retTypeStr := loweredReturnTypeText(module, retType)
 	hirFn := &hir.Function{
@@ -140,7 +140,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 	}
 	for _, param := range fn.Params {
 		name := ""
-		paramType := typeinfo.TypeFromSyntax(param.Type)
+		paramType := typeinfo.TypeFromSyntax(param.Type, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 		if param.Name != nil {
 			sym, ok := funcScope.LookupNode(param.Name)
 			if ok && sym != nil {
@@ -536,7 +536,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	case *ast.AsExpr:
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
-			t = loweredTypeText(module, typeinfo.TypeFromSyntax(node.TypeExpr))
+			t = loweredTypeText(module, typeinfo.TypeFromSyntax(node.TypeExpr, typeinfo.SyntaxOptions{AllowAbstractSelf: true}))
 		}
 		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
 		return &ir.Cast{Expr: subExpr, Type: t, Location: loc}

@@ -157,7 +157,7 @@ func TestTypeFromSyntaxPreservesFuncTypeConsumes(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
 		Params:   []ast.TypeExpr{&ast.NamedType{Name: "Buffer"}},
 		Consumes: []bool{true},
-	}).(*FuncType)
+	}, SyntaxOptions{}).(*FuncType)
 	if len(fn.Consumes) != 1 || !fn.Consumes[0] {
 		t.Fatalf("expected consuming first param, got %#v", fn.Consumes)
 	}
@@ -166,8 +166,8 @@ func TestTypeFromSyntaxPreservesFuncTypeConsumes(t *testing.T) {
 	}
 }
 
-func TestASTTypeWithOptionsPreservesFuncTypeConsumes(t *testing.T) {
-	fn := ASTTypeWithOptions(&ast.FuncType{
+func TestTypeFromSyntaxAllowsAbstractSelf(t *testing.T) {
+	fn := TypeFromSyntax(&ast.FuncType{
 		Params:   []ast.TypeExpr{&ast.NamedType{Name: "Self"}},
 		Consumes: []bool{true},
 	}, SyntaxOptions{AllowAbstractSelf: true}).(*FuncType)
@@ -176,5 +176,28 @@ func TestASTTypeWithOptionsPreservesFuncTypeConsumes(t *testing.T) {
 	}
 	if got := fn.Text(); got != "fn(move Self)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(move Self)")
+	}
+}
+
+func TestTypeFromSyntaxAppliesResolversRecursively(t *testing.T) {
+	resolved := &DefinedType{Name: "Resolved"}
+	typ := TypeFromSyntax(&ast.RefType{
+		Target: &ast.OptionalType{Inner: &ast.NamedType{Name: "Alias"}},
+	}, SyntaxOptions{
+		ResolveNamed: func(name string) (Type, bool) {
+			return resolved, name == "Alias"
+		},
+	})
+
+	ref, ok := typ.(*RefType)
+	if !ok {
+		t.Fatalf("expected reference type, got %T", typ)
+	}
+	optional, ok := ref.Target.(*OptionalType)
+	if !ok {
+		t.Fatalf("expected optional target, got %T", ref.Target)
+	}
+	if optional.Inner != resolved {
+		t.Fatalf("expected resolved nested type, got %T", optional.Inner)
 	}
 }

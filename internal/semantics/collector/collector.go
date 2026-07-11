@@ -114,7 +114,7 @@ func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
 	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
 		return
 	}
-	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target))
+	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target, typeinfo.SyntaxOptions{AllowAbstractSelf: true}))
 	for _, method := range decl.Methods {
 		if method == nil || method.Name == nil || method.Name.Name == "" {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", ast.LocOf(method), "")

@@ -1,6 +1,9 @@
 package typeinfo
 
-import "compiler/internal/frontend/ast"
+import (
+	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/token"
+)
 
 type SyntaxOptions struct {
 	SelfType          Type
@@ -10,7 +13,7 @@ type SyntaxOptions struct {
 	InvalidSelf       func(node *ast.NamedType) Type
 }
 
-func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
+func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 	if node == nil {
 		return nil
 	}
@@ -31,40 +34,57 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 			return &InvalidType{}
 		}
-		base := TypeFromSyntax(typ)
 		if opts.ResolveNamed != nil {
 			if resolved, ok := opts.ResolveNamed(typ.Name); ok && resolved != nil {
 				return resolved
 			}
 		}
-		return base
+		switch typ.Name {
+		case "bool":
+			return &BoolType{}
+		case "cstr":
+			return &CStrType{}
+		case "string":
+			return &StringType{}
+		case "f32":
+			return &FloatType{Bits: 32}
+		case "f64":
+			return &FloatType{Bits: 64}
+		}
+		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name); ok {
+			return &IntegerType{Signed: signed, Bits: bits}
+		}
+		return &NamedType{Name: typ.Name}
 	case *ast.ScopeResolution:
+		if typ == nil {
+			return nil
+		}
 		if opts.ResolveQualified != nil {
 			if resolved, ok := opts.ResolveQualified(typ.Module.Name, typ.Name.Name); ok && resolved != nil {
 				return resolved
 			}
 		}
-		return TypeFromSyntax(typ)
+		return &NamedType{Name: typ.Module.Name + "::" + typ.Name.Name}
 	case *ast.OwnedPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &OwnedPtrType{Target: ASTTypeWithOptions(typ.Target, opts)}
+		return &OwnedPtrType{Target: TypeFromSyntax(typ.Target, opts)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &RawPtrType{Target: ASTTypeWithOptions(typ.Target, opts)}
+		return &RawPtrType{Target: TypeFromSyntax(typ.Target, opts)}
 	case *ast.RefType:
 		if typ == nil {
 			return nil
 		}
-		return &RefType{Mutable: typ.Mutable, Target: ASTTypeWithOptions(typ.Target, opts)}
+		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target, opts)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil
 		}
-		return &OptionalType{Inner: ASTTypeWithOptions(typ.Inner, opts)}
+		return &OptionalType{Inner: TypeFromSyntax(typ.Inner, opts)}
 	case *ast.ArrayType:
 		if typ == nil {
 			return nil
@@ -73,20 +93,20 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ.Len != nil {
 			length = typ.Len.Value
 		}
-		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: ASTTypeWithOptions(typ.Elem, opts)}
+		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: TypeFromSyntax(typ.Elem, opts)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
 		}
 		params := make([]Type, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, ASTTypeWithOptions(param, opts))
+			params = append(params, TypeFromSyntax(param, opts))
 		}
 		consumes := append([]bool(nil), typ.Consumes...)
 		return &FuncType{
 			Params:   params,
 			Consumes: consumes,
-			Return:   ASTTypeWithOptions(typ.Return, opts),
+			Return:   TypeFromSyntax(typ.Return, opts),
 		}
 	case *ast.StructType:
 		if typ == nil {
@@ -100,7 +120,7 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 			fields = append(fields, Field{
 				Name: name,
-				Type: ASTTypeWithOptions(field.Type, opts),
+				Type: TypeFromSyntax(field.Type, opts),
 			})
 		}
 		return &StructType{Fields: fields}
@@ -120,7 +140,7 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 				}
 				params = append(params, Field{
 					Name: name,
-					Type: ASTTypeWithOptions(param.Type, methodOpts),
+					Type: TypeFromSyntax(param.Type, methodOpts),
 				})
 			}
 			name := ""
@@ -130,12 +150,23 @@ func ASTTypeWithOptions(node ast.TypeExpr, opts SyntaxOptions) Type {
 			methods = append(methods, Method{
 				Name:   name,
 				Params: params,
-				Return: ASTTypeWithOptions(method.ReturnType, methodOpts),
+				Return: TypeFromSyntax(method.ReturnType, methodOpts),
 			})
 		}
 		return &InterfaceType{Methods: methods}
+	case *ast.EnumType:
+		if typ == nil {
+			return nil
+		}
+		variants := make([]string, 0, len(typ.Variants))
+		for _, variant := range typ.Variants {
+			if variant.Name != nil {
+				variants = append(variants, variant.Name.Name)
+			}
+		}
+		return &EnumType{Variants: variants}
 	default:
-		return TypeFromSyntax(node)
+		return nil
 	}
 }
 
@@ -146,12 +177,12 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 	params := make([]Type, 0, len(decl.Params))
 	consumes := make([]bool, 0, len(decl.Params))
 	for _, param := range decl.Params {
-		params = append(params, ASTTypeWithOptions(param.Type, opts))
+		params = append(params, TypeFromSyntax(param.Type, opts))
 		consumes = append(consumes, param.Consumes)
 	}
 	return &FuncType{
 		Params:   params,
 		Consumes: consumes,
-		Return:   ASTTypeWithOptions(decl.ReturnType, opts),
+		Return:   TypeFromSyntax(decl.ReturnType, opts),
 	}
 }
