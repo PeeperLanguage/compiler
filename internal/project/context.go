@@ -8,12 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
-	"compiler/internal/ir/hir"
-	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -23,93 +20,6 @@ import (
 
 // Bundled libraries base directory relative to the installed compiler binary.
 const PACKAGED_LIBS_DIR = "../libs"
-
-// Where a module was loaded from.
-type ModuleOrigin string
-
-const (
-	// Project source file.
-	ModuleOriginLocal ModuleOrigin = "local"
-	// Packaged library source file loaded from a namespace root such as core/vendor.
-	ModuleOriginStdlib ModuleOrigin = "core"
-	// Package dependency source file.
-	ModuleOriginDependency ModuleOrigin = "dependency"
-)
-
-type ModulePhase uint8
-
-const (
-	PhaseNone ModulePhase = iota
-	PhaseParsed
-	PhaseCollected
-	PhaseBound
-	PhaseResolved
-	PhaseConstEval
-	PhaseTypechecked
-	PhaseOwnership
-	PhaseUsage
-	PhaseHIR
-	PhaseMIR
-	PhaseBackend
-)
-
-// Canonical file-backed import after resolver lookup.
-type ResolvedImport struct {
-	// Stable graph identity.
-	Key string
-	// Module path as written in source.
-	ImportPath string
-	// Source import declaration, when resolved from parsed syntax.
-	Decl *ast.ImportDecl
-	// Absolute source path.
-	FilePath string
-	// Local, stdlib, or dependency.
-	Origin ModuleOrigin
-	// Optional namespace for packaged libraries such as core/vendor.
-	Namespace string
-	// Manifest alias for dependency imports.
-	DependencyAlias string
-}
-
-// Source unit shared by every compiler phase.
-type Module struct {
-	// Unique graph identity.
-	Key string
-	// Module path used by imports.
-	ImportPath string
-	// Absolute source path.
-	FilePath string
-	// Optional namespace for packaged libraries such as core/vendor.
-	Namespace string
-	// User-selected entry module.
-	IsEntry bool
-	// Local, stdlib, or dependency.
-	Origin ModuleOrigin
-	// Dependency alias, when any.
-	Dependency string
-	// Loaded source text.
-	Content string
-	// Reserved for incremental builds.
-	ContentHash string
-	// Stable syntax-derived import surface for invalidation.
-	ImportFingerprint string
-	// Stable syntax-derived export surface for invalidation.
-	ExportFingerprint string
-	// Last completed compiler phase for this module snapshot.
-	Phase ModulePhase
-	// Parsed syntax tree.
-	AST *ast.Module
-	// Canonical IR slots.
-	HIR    *hir.Module
-	MIR    *mir.Module
-	LLVMIR string
-	// Top-level names visible in module.
-	ModuleScope *table.Scope
-	// Grouped semantic analysis metadata.
-	Semantics *SemanticInfo
-	// Import alias -> resolved module import.
-	Imports map[string]ResolvedImport
-}
 
 // Shared state for one compilation.
 type CompilerContext struct {
@@ -131,93 +41,6 @@ type CompilerContext struct {
 
 	// Guards module indexes.
 	mu sync.RWMutex
-}
-
-type CompileMetrics struct {
-	mu sync.Mutex
-
-	WorkspaceFiles      int
-	WorkspaceModules    int
-	WorkspaceComponents int
-	DirtyFiles          int
-	ModulesParsed       int
-	ModulesReused       int
-	ModulesDowngraded   int
-	PhaseAdvances       int
-}
-
-func (m *CompileMetrics) AddWorkspaceSnapshot(files, modules, components int) {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.WorkspaceFiles = files
-	m.WorkspaceModules = modules
-	m.WorkspaceComponents = components
-}
-
-func (m *CompileMetrics) AddDirtyFiles(count int) {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.DirtyFiles += count
-}
-
-func (m *CompileMetrics) AddParsedModule() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.ModulesParsed++
-}
-
-func (m *CompileMetrics) AddReusedModule() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.ModulesReused++
-}
-
-func (m *CompileMetrics) AddDowngradedModule() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.ModulesDowngraded++
-}
-
-func (m *CompileMetrics) AddPhaseAdvance() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.PhaseAdvances++
-}
-
-func (m *CompileMetrics) Snapshot() CompileMetrics {
-	if m == nil {
-		return CompileMetrics{}
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return CompileMetrics{
-		WorkspaceFiles:      m.WorkspaceFiles,
-		WorkspaceModules:    m.WorkspaceModules,
-		WorkspaceComponents: m.WorkspaceComponents,
-		DirtyFiles:          m.DirtyFiles,
-		ModulesParsed:       m.ModulesParsed,
-		ModulesReused:       m.ModulesReused,
-		ModulesDowngraded:   m.ModulesDowngraded,
-		PhaseAdvances:       m.PhaseAdvances,
-	}
 }
 
 // Context constructor for simple root/extension call sites.
@@ -436,31 +259,4 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 		// Predeclared constants should never fail to declare
 		panic(err)
 	}
-}
-
-type SemanticInfo struct {
-	BlockScopes         map[ast.NodeID]*table.Scope
-	ExprTypes           map[ast.NodeID]typeinfo.Type
-	ConstValues         map[symbols.SymbolID]constvalue.Value
-	MethodSets          map[string][]*symbols.Symbol
-	MethodSymbol        map[ast.NodeID]*symbols.Symbol
-	DiscardBindingValue map[symbols.SymbolID]struct{}
-}
-
-func NewSemanticInfo() *SemanticInfo {
-	return &SemanticInfo{
-		BlockScopes:         make(map[ast.NodeID]*table.Scope),
-		ExprTypes:           make(map[ast.NodeID]typeinfo.Type),
-		ConstValues:         make(map[symbols.SymbolID]constvalue.Value),
-		MethodSets:          make(map[string][]*symbols.Symbol),
-		MethodSymbol:        make(map[ast.NodeID]*symbols.Symbol),
-		DiscardBindingValue: make(map[symbols.SymbolID]struct{}),
-	}
-}
-
-func (m *Module) ResetSemanticData() {
-	if m == nil {
-		return
-	}
-	m.Semantics = NewSemanticInfo()
 }

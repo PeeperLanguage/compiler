@@ -7,9 +7,28 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/pkg/manifest"
 	"compiler/pkg/remotes"
 )
+
+// Canonical file-backed import after resolver lookup.
+type ResolvedImport struct {
+	// Stable graph identity.
+	Key string
+	// Module path as written in source.
+	ImportPath string
+	// Source import declaration, when resolved from parsed syntax.
+	Decl *ast.ImportDecl
+	// Absolute source path.
+	FilePath string
+	// Local, stdlib, or dependency.
+	Origin ModuleOrigin
+	// Optional namespace for packaged libraries such as core/vendor.
+	Namespace string
+	// Manifest alias for dependency imports.
+	DependencyAlias string
+}
 
 // ImportError reports a resolved import failure with a diagnostic code.
 type ImportError struct {
