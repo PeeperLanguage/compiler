@@ -639,6 +639,22 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 	}
 }
 
+func TestHoverShowsConsumingFunctionParameter(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn consume(move value: ^i32) {}\n\nfn main() {\n\tlet value: ^i32;\n\t__CURSOR__consume(move value);\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn(move ^i32)") {
+		t.Fatalf("expected consuming parameter, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverPreservesMutableInterfaceReceiver(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)

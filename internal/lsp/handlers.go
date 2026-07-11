@@ -969,7 +969,7 @@ func lookupHoverMethodSet(ctx *project.CompilerContext, keys []string) []*symbol
 				}
 				signature := sym.Name
 				if typ, ok := symbols.GetSymbolType(sym); ok && typ != nil {
-					signature += "|" + formatHoverTypeInline(typ)
+					signature += "|" + typeinfo.TypeText(typ)
 				}
 				if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
 					signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
@@ -1020,14 +1020,14 @@ func renderHoverSubject(subject *hoverSubject) string {
 			if subject.Symbol.Kind == symbols.SymbolType {
 				text += renderTypeDetails(typ, subject.MethodSymbols)
 			} else {
-				text += ": " + formatHoverTypeInline(typ)
+				text += ": " + typeinfo.TypeText(typ)
 			}
 		}
 	case hoverSubjectExpr:
 		if subject.ExprType == nil {
 			return ""
 		}
-		text = fmt.Sprintf("(expr): %s", formatHoverTypeInline(subject.ExprType))
+		text = fmt.Sprintf("(expr): %s", typeinfo.TypeText(subject.ExprType))
 	case hoverSubjectType:
 		if subject.ResolvedType == nil {
 			return ""
@@ -1096,7 +1096,7 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 			b.WriteString("  ")
 			b.WriteString(field.Name)
 			b.WriteString(": ")
-			b.WriteString(formatHoverTypeInline(field.Type))
+			b.WriteString(typeinfo.TypeText(field.Type))
 			b.WriteString("\n")
 		}
 		b.WriteString("}")
@@ -1105,17 +1105,17 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 		if t == nil {
 			return ""
 		}
-		return formatHoverTypeInline(t)
+		return typeinfo.TypeText(t)
 	case *typeinfo.ArrayType:
 		if t == nil {
 			return ""
 		}
-		return formatHoverTypeInline(t)
+		return typeinfo.TypeText(t)
 	case *typeinfo.RefType:
 		if t == nil {
 			return ""
 		}
-		return formatHoverTypeInline(t)
+		return typeinfo.TypeText(t)
 	case *typeinfo.InterfaceType:
 		if t == nil {
 			return ""
@@ -1130,10 +1130,10 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 				if i > 0 {
 					b.WriteString(", ")
 				}
-				b.WriteString(formatHoverTypeInline(param.Type))
+				b.WriteString(typeinfo.TypeText(param.Type))
 			}
 			b.WriteString(")")
-			if ret := formatHoverTypeInline(method.Return); ret != "" {
+			if ret := typeinfo.TypeText(method.Return); ret != "" {
 				b.WriteString(" -> ")
 				b.WriteString(ret)
 			}
@@ -1159,7 +1159,7 @@ func formatHoverMethods(methods []*symbols.Symbol) string {
 		b.WriteString(method.Name)
 		if typ, ok := symbols.GetSymbolType(method); ok && typ != nil {
 			b.WriteString(": ")
-			b.WriteString(formatHoverTypeInline(typ))
+			b.WriteString(typeinfo.TypeText(typ))
 		}
 		b.WriteString("\n")
 	}
@@ -1180,60 +1180,6 @@ func hoverTypeLabel(typ typeinfo.Type) (string, bool) {
 		return t.Name, true
 	default:
 		return "", false
-	}
-}
-
-func formatHoverTypeInline(typ typeinfo.Type) string {
-	switch t := typ.(type) {
-	case nil:
-		return ""
-	case *typeinfo.FuncType:
-		var b strings.Builder
-		b.WriteString("fn(")
-		for i, param := range t.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(formatHoverTypeInline(param))
-		}
-		b.WriteString(")")
-		if ret := formatHoverTypeInline(t.Return); ret != "" {
-			b.WriteString(" -> ")
-			b.WriteString(ret)
-		}
-		return b.String()
-	case *typeinfo.DefinedType:
-		if t == nil {
-			return ""
-		}
-		return t.Name
-	case *typeinfo.OptionalType:
-		if t == nil {
-			return ""
-		}
-		return "?" + formatHoverTypeInline(t.Inner)
-	case *typeinfo.RefType:
-		if t == nil {
-			return ""
-		}
-		prefix := "&"
-		if t.Mutable {
-			prefix = "&mut "
-		}
-		return prefix + formatHoverTypeInline(t.Target)
-	case *typeinfo.ArrayType:
-		if t == nil {
-			return ""
-		}
-		if t.Dynamic {
-			return "[]" + formatHoverTypeInline(t.Elem)
-		}
-		if t.Len == "" {
-			return "[" + formatHoverTypeInline(t.Elem) + "]"
-		}
-		return "[" + t.Len + "]" + formatHoverTypeInline(t.Elem)
-	default:
-		return typ.Text()
 	}
 }
 
