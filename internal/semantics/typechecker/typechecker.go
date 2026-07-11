@@ -262,7 +262,7 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 					break
 				}
 			}
-			expectedType := typeinfo.TypeFromSyntax(spec.Type)
+			expectedType := typeinfo.TypeFromSyntax(spec.Type, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 			argType := c.typeExpr(c.module.ModuleScope, arg, expectedType)
 			if typeinfo.IsInvalidOrUnknown(argType) {
 				validArgs = false
@@ -341,9 +341,9 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
 		}
-		paramSym.BindType(typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
+		paramSym.BindType(typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
 	}
-	returnType := typeinfo.ASTTypeWithOptions(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	returnType := typeinfo.TypeFromSyntax(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
 	c.checkBlock(funcScope, fn.Body, returnType)
 }
 
@@ -561,11 +561,11 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
-		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		declType = typeinfo.TypeFromSyntax(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
 		value = bind.Value
 	case *ast.ConstDecl:
-		declType = typeinfo.ASTTypeWithOptions(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		declType = typeinfo.TypeFromSyntax(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
 		value = bind.Value
 	default:
@@ -667,12 +667,12 @@ func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo
 	if decl == nil {
 		return
 	}
-	retType := typeinfo.ASTTypeWithOptions(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	retType := typeinfo.TypeFromSyntax(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
 	if !c.checkReturnType(decl.ReturnType, retType, decl, allowAbstractSelf) {
 		return
 	}
 	for _, param := range decl.Params {
-		paramType := typeinfo.ASTTypeWithOptions(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+		paramType := typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
 		if c.rejectReferenceStorage(paramType, param.Type, "parameter aggregate types", false) {
 			return
 		}
@@ -724,10 +724,10 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 			return
 		}
 		for _, field := range strct.Fields {
-			c.rejectReferenceStorage(typeinfo.ASTTypeWithOptions(field.Type, opts), field.Type, "struct fields", true)
+			c.rejectReferenceStorage(typeinfo.TypeFromSyntax(field.Type, opts), field.Type, "struct fields", true)
 		}
 	case *ast.TypeAliasDecl:
-		typ := typeinfo.ASTTypeWithOptions(node.Type, opts)
+		typ := typeinfo.TypeFromSyntax(node.Type, opts)
 		c.rejectReferenceStorage(typ, node.Type, "array or heap-owned type aliases", false)
 	}
 }
@@ -758,7 +758,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 				c.ctx.Diagnostics.Add(invalidTypeError(site,
 					"interface methods cannot use `move` parameters in current compiler stage"))
 			}
-			paramType := typeinfo.ASTTypeWithOptions(param.Type, opts)
+			paramType := typeinfo.TypeFromSyntax(param.Type, opts)
 			if c.rejectReferenceStorage(paramType, param.Type, "interface parameter aggregate types", false) {
 				continue
 			}
@@ -772,7 +772,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 					"interface method parameter type is not lowerable in current compiler stage"))
 			}
 		}
-		retType := typeinfo.ASTTypeWithOptions(method.ReturnType, opts)
+		retType := typeinfo.TypeFromSyntax(method.ReturnType, opts)
 		c.checkReturnType(method.ReturnType, retType, decl, true)
 	}
 
@@ -782,7 +782,7 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
 		return
 	}
-	selfType := typeinfo.ASTTypeWithOptions(decl.Target, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	selfType := typeinfo.TypeFromSyntax(decl.Target, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	for _, method := range decl.Methods {
 		if method == nil {
 			continue
@@ -803,7 +803,7 @@ func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
 				WithHelp(fmt.Sprintf("receiver target must match impl target %s", typeinfo.TypeText(selfType)))
 			continue
 		}
-		firstParamType := typeinfo.ASTTypeWithOptions(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
+		firstParamType := typeinfo.TypeFromSyntax(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
 		if !isValidReceiverType(firstParamType, selfType) {
 			site := method.Params[0].Location
 			if method.Params[0].Type != nil {
@@ -1432,7 +1432,7 @@ func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expecte
 		return &typeinfo.InvalidType{}
 	}
 	if node.Type != nil {
-		targetType := typeinfo.ASTTypeWithOptions(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		targetType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		targetStruct, ok := typeinfo.Underlying(targetType).(*typeinfo.StructType)
 		if !ok || targetStruct == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -1528,7 +1528,7 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	arrayType := typeinfo.ASTTypeWithOptions(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	arrayType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	array, ok := typeinfo.Underlying(arrayType).(*typeinfo.ArrayType)
 	if !ok || array == nil || array.Elem == nil || typeinfo.IsInvalidOrUnknown(array.Elem) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Type, "invalid array literal type"))
@@ -1673,7 +1673,7 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	if c == nil || node == nil {
 		return nil
 	}
-	targetType := typeinfo.ASTTypeWithOptions(node.TypeExpr, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	targetType := typeinfo.TypeFromSyntax(node.TypeExpr, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
 		return &typeinfo.InvalidType{}

@@ -8,7 +8,7 @@ import (
 )
 
 // TypeSyntaxOptions bridges project/module state into generic type parsing.
-// ASTTypeWithOptions stays reusable because this adapter injects the current
+// TypeFromSyntax stays reusable because this adapter injects the current
 // module's name lookup, import lookup, and `Self` rules without hard-wiring
 // project state into the typeinfo package.
 func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.Type, allowAbstractSelf bool) typeinfo.SyntaxOptions {

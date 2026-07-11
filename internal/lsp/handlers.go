@@ -651,7 +651,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 		return nil
 	}
 	selfType, allowAbstractSelf := hoverTypeSyntaxContext(typeNode, cc.parents, cc.ctx, cc.module)
-	resolved := typeinfo.ASTTypeWithOptions(typeNode, project.TypeSyntaxOptions(cc.ctx, cc.module, selfType, allowAbstractSelf))
+	resolved := typeinfo.TypeFromSyntax(typeNode, project.TypeSyntaxOptions(cc.ctx, cc.module, selfType, allowAbstractSelf))
 	if resolved == nil {
 		return nil
 	}
@@ -722,7 +722,7 @@ func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.No
 			if ctx == nil || module == nil || node.Target == nil {
 				return nil, false
 			}
-			return typeinfo.ASTTypeWithOptions(node.Target, project.TypeSyntaxOptions(ctx, module, nil, false)), false
+			return typeinfo.TypeFromSyntax(node.Target, project.TypeSyntaxOptions(ctx, module, nil, false)), false
 		}
 	}
 	return nil, false
@@ -930,12 +930,12 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]a
 		}
 		params := make([]typeinfo.Type, 0, len(method.Params))
 		for _, param := range method.Params {
-			params = append(params, typeinfo.ASTTypeWithOptions(param.Type, opts))
+			params = append(params, typeinfo.TypeFromSyntax(param.Type, opts))
 		}
 		sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
 		sym.Type = &typeinfo.FuncType{
 			Params: params,
-			Return: typeinfo.ASTTypeWithOptions(method.ReturnType, opts),
+			Return: typeinfo.TypeFromSyntax(method.ReturnType, opts),
 		}
 		return sym
 	}

@@ -65,7 +65,7 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 		return
 	}
 	b.bindModuleScopeType(name.Name,
-		typeinfo.ASTTypeWithOptions(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
+		typeinfo.TypeFromSyntax(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
 }
 
 // Bind named type declarations using one stable shell per symbol.
@@ -83,7 +83,7 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
 	if sym == nil {
 		return
 	}
-	underlying := typeinfo.ASTTypeWithOptions(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true))
+	underlying := typeinfo.TypeFromSyntax(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true))
 	copyMode := typeinfo.CopyInfer
 	for _, attr := range decl.GetAttributes() {
 		if mode, ok := typeinfo.NamedTypeCopyMode(attr.Name); ok {
@@ -110,7 +110,7 @@ func (b *binder) bindImplDecl(decl *ast.ImplDecl) {
 	if b == nil || b.module == nil || b.module.Semantics == nil || decl == nil || decl.Target == nil {
 		return
 	}
-	selfType := typeinfo.ASTTypeWithOptions(decl.Target, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
+	selfType := typeinfo.TypeFromSyntax(decl.Target, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
 	for _, method := range decl.Methods {
 		if method == nil {
 			continue
