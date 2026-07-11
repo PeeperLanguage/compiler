@@ -7,7 +7,8 @@ interface Writer {
 }
 
 struct Counter {
-    value: i32
+    value: i32,
+    anotherField: f32
 }
 
 impl Counter {
@@ -37,7 +38,10 @@ fn Rebind(mut value: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    let mut counter: Counter = .{ value = 5 };
+    let mut counter: Counter = .{ 
+        value = 5,
+        anotherField = 2.4
+    };
     WriteCopy(counter, 6);
     if counter.value != 5 {
         return 1;
