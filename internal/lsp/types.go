@@ -66,10 +66,15 @@ type ServerInfo struct {
 }
 
 type ServerCapabilities struct {
-	TextDocumentSync   int  `json:"textDocumentSync"` // 1 for Full
-	HoverProvider      bool `json:"hoverProvider"`
-	DefinitionProvider bool `json:"definitionProvider"`
-	RenameProvider     bool `json:"renameProvider"`
+	TextDocumentSync   int                `json:"textDocumentSync"` // 1 for Full
+	HoverProvider      bool               `json:"hoverProvider"`
+	DefinitionProvider bool               `json:"definitionProvider"`
+	RenameProvider     bool               `json:"renameProvider"`
+	CompletionProvider *CompletionOptions `json:"completionProvider,omitempty"`
+}
+
+type CompletionOptions struct {
+	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
 }
 
 type DidOpenTextDocumentParams struct {
@@ -107,6 +112,24 @@ type Hover struct {
 
 type DefinitionParams struct {
 	TextDocumentPositionParams
+}
+
+type CompletionParams struct {
+	TextDocumentPositionParams
+	Context *CompletionContext `json:"context,omitempty"`
+}
+
+type CompletionContext struct {
+	TriggerKind      int    `json:"triggerKind"`
+	TriggerCharacter string `json:"triggerCharacter,omitempty"`
+}
+
+type CompletionItem struct {
+	Label    string   `json:"label"`
+	Kind     int      `json:"kind,omitempty"`
+	Detail   string   `json:"detail,omitempty"`
+	SortText string   `json:"sortText,omitempty"`
+	TextEdit TextEdit `json:"textEdit"`
 }
 
 type RenameParams struct {

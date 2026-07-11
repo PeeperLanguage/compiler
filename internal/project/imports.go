@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"compiler/internal/diagnostics"
@@ -30,6 +31,14 @@ type ResolvedImport struct {
 	DependencyAlias string
 }
 
+// ImportCandidate is one source-level import path visible from a compiler
+// context. Continuing candidates are directories or roots which need more path.
+type ImportCandidate struct {
+	ImportPath string
+	FilePath   string
+	Continuing bool
+}
+
 // ImportError reports a resolved import failure with a diagnostic code.
 type ImportError struct {
 	Code string
@@ -53,6 +62,149 @@ func ModuleKeyFor(origin ModuleOrigin, filePath string) string {
 		prefix = string(ModuleOriginLocal)
 	}
 	return prefix + ":" + CanonicalPath(filePath)
+}
+
+// ImportCandidates returns immediate import paths matching prefix. Import root
+// selection stays beside resolution so editor features cannot invent different
+// project, namespace, source-directory, or extension rules.
+func (ctx *CompilerContext) ImportCandidates(prefix, currentFile string) []ImportCandidate {
+	if ctx == nil {
+		return nil
+	}
+	prefix = strings.TrimSpace(prefix)
+	root, sourcePrefix, relativePrefix, ok := ctx.importCandidateRoot(prefix)
+	if !ok {
+		return ctx.importRootCandidates(prefix)
+	}
+	return ctx.enumerateImportDirectory(root, sourcePrefix, relativePrefix, currentFile)
+}
+
+func (ctx *CompilerContext) importRootCandidates(prefix string) []ImportCandidate {
+	var candidates []ImportCandidate
+	if ctx.Config.ProjectName != "" {
+		root := manifest.SourceDir(ctx.Config.RootDir)
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			candidates = append(candidates, ImportCandidate{ImportPath: ctx.Config.ProjectName + "/", Continuing: true})
+		}
+	}
+
+	namespaces := make(map[string]struct{}, len(ctx.Config.LibraryRoots))
+	for namespace := range ctx.Config.LibraryRoots {
+		namespaces[namespace] = struct{}{}
+	}
+	if entries, err := os.ReadDir(ctx.Config.LibraryBaseDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+				namespaces[entry.Name()] = struct{}{}
+			}
+		}
+	}
+	for namespace := range namespaces {
+		root, found := ctx.LibraryRoot(namespace)
+		if !found {
+			continue
+		}
+		if info, err := os.Stat(manifest.SourceDir(root)); err != nil || !info.IsDir() {
+			continue
+		}
+		candidates = append(candidates, ImportCandidate{ImportPath: namespace + ":", Continuing: true})
+	}
+
+	slices.SortFunc(candidates, func(a, b ImportCandidate) int {
+		return strings.Compare(a.ImportPath, b.ImportPath)
+	})
+	filtered := candidates[:0]
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate.ImportPath, prefix) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
+func (ctx *CompilerContext) importCandidateRoot(prefix string) (root, sourcePrefix, relativePrefix string, ok bool) {
+	if ctx.Config.ProjectName != "" {
+		localPrefix := ctx.Config.ProjectName + "/"
+		if strings.HasPrefix(prefix, localPrefix) {
+			relative := strings.TrimPrefix(prefix, localPrefix)
+			if hasHiddenImportSegment(relative) {
+				return "", "", "", false
+			}
+			return manifest.SourceDir(ctx.Config.RootDir), localPrefix, relative, true
+		}
+	}
+	namespace, relative, found := strings.Cut(prefix, ":")
+	if !found || namespace == "" || strings.ContainsAny(namespace, "/.") || hasHiddenImportSegment(relative) {
+		return "", "", "", false
+	}
+	libraryRoot, found := ctx.LibraryRoot(namespace)
+	if !found {
+		return "", "", "", false
+	}
+	root = manifest.SourceDir(libraryRoot)
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return "", "", "", false
+	}
+	return root, namespace + ":", relative, true
+}
+
+func hasHiddenImportSegment(path string) bool {
+	for segment := range strings.SplitSeq(path, "/") {
+		if strings.HasPrefix(segment, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+func (ctx *CompilerContext) enumerateImportDirectory(root, sourcePrefix, relativePrefix, currentFile string) []ImportCandidate {
+	directoryPart, namePrefix := filepath.ToSlash(filepath.Dir(relativePrefix)), filepath.Base(relativePrefix)
+	if strings.HasSuffix(relativePrefix, "/") || relativePrefix == "" {
+		directoryPart = strings.TrimSuffix(relativePrefix, "/")
+		namePrefix = ""
+	}
+	if directoryPart == "." {
+		directoryPart = ""
+	}
+	directory := filepath.Join(root, filepath.FromSlash(directoryPart))
+	if !PathWithinRoot(root, directory) {
+		return nil
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil
+	}
+
+	currentFile = CanonicalPath(currentFile)
+	var directories, modules []ImportCandidate
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || !strings.HasPrefix(name, namePrefix) {
+			continue
+		}
+		relative := name
+		if directoryPart != "" {
+			relative = directoryPart + "/" + name
+		}
+		if entry.IsDir() {
+			directories = append(directories, ImportCandidate{ImportPath: sourcePrefix + relative + "/", Continuing: true})
+			continue
+		}
+		if !strings.EqualFold(filepath.Ext(name), ctx.Config.Extension) {
+			continue
+		}
+		target := CanonicalPath(filepath.Join(directory, name))
+		if target == currentFile {
+			continue
+		}
+		modules = append(modules, ImportCandidate{
+			ImportPath: sourcePrefix + strings.TrimSuffix(relative, filepath.Ext(relative)),
+			FilePath:   target,
+		})
+	}
+	slices.SortFunc(directories, func(a, b ImportCandidate) int { return strings.Compare(a.ImportPath, b.ImportPath) })
+	slices.SortFunc(modules, func(a, b ImportCandidate) int { return strings.Compare(a.ImportPath, b.ImportPath) })
+	return append(directories, modules...)
 }
 
 // ImportPathForFile computes the import path for a file within the project roots.

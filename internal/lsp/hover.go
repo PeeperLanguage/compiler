@@ -152,7 +152,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 		Node:          cc.node,
 		Range:         hoverRange(cc.node),
 		ResolvedType:  resolved,
-		MethodSymbols: lookupHoverMethodSet(cc.ctx, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
+		MethodSymbols: lookupMethodSet(cc.ctx, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
 	}
 }
 
@@ -318,7 +318,7 @@ func declHoverSubject(cc *cursorContext, decl ast.Node, name *ast.Ident) *hoverS
 	if name != nil {
 		subject.Symbol = resolveIdentSymbol(name, cc.parents, cc.module, cc.ctx)
 		if subject.Symbol != nil && subject.Symbol.Kind == symbols.SymbolType {
-			subject.MethodSymbols = lookupHoverMethodSet(cc.ctx, []string{subject.Symbol.Name})
+			subject.MethodSymbols = lookupMethodSet(cc.ctx, []string{subject.Symbol.Name})
 		}
 	}
 	return subject
@@ -377,7 +377,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 		Symbol: sym,
 	}
 	if sym.Kind == symbols.SymbolType {
-		subject.MethodSymbols = lookupHoverMethodSet(cc.ctx, []string{sym.Name})
+		subject.MethodSymbols = lookupMethodSet(cc.ctx, []string{sym.Name})
 	}
 	return subject
 }
@@ -434,7 +434,7 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]a
 	return nil
 }
 
-func lookupHoverMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Symbol {
+func lookupMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Symbol {
 	if ctx == nil || len(keys) == 0 {
 		return nil
 	}
