@@ -96,6 +96,13 @@ type AddrOf struct {
 	Location *source.Location
 }
 
+// SliceView shapes array storage into a non-owning reference value.
+type SliceView struct {
+	Source   Expr
+	Type     string
+	Location *source.Location
+}
+
 type InterfaceSlot struct {
 	InterfaceType string
 	MethodName    string
@@ -166,6 +173,7 @@ func (*Unary) exprNode()         {}
 func (*Binary) exprNode()        {}
 func (*Call) exprNode()          {}
 func (*AddrOf) exprNode()        {}
+func (*SliceView) exprNode()     {}
 func (*InterfaceMake) exprNode() {}
 func (*InterfaceCall) exprNode() {}
 func (*Field) exprNode()         {}
@@ -199,6 +207,8 @@ func ExprLocation(expr Expr) *source.Location {
 	case *Call:
 		return node.Location
 	case *AddrOf:
+		return node.Location
+	case *SliceView:
 		return node.Location
 	case *InterfaceMake:
 		return node.Location
@@ -360,6 +370,20 @@ func (e *AddrOf) String() string {
 }
 
 func (e *AddrOf) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *SliceView) String() string {
+	if e == nil || e.Source == nil {
+		return ""
+	}
+	return "view(" + e.Source.String() + ")"
+}
+
+func (e *SliceView) TypeText() string {
 	if e == nil {
 		return ""
 	}

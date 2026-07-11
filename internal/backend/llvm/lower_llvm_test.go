@@ -44,6 +44,50 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{{
+			Name:       "borrow",
+			Params:     []ir.Param{{Name: "xs", Type: "[]i32"}},
+			ReturnType: "i32",
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
+					Source: &mir.RefName{Name: "xs", Type: "[]i32"},
+					Type:   "&[]i32",
+				}}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+	targets := []struct {
+		name     string
+		triple   string
+		targetOS string
+	}{
+		{name: "linux", triple: "x86_64-unknown-linux-gnu", targetOS: "linux"},
+		{name: "darwin", triple: "aarch64-apple-darwin", targetOS: "darwin"},
+		{name: "windows", triple: "x86_64-pc-windows-msvc", targetOS: "windows"},
+	}
+	for _, target := range targets {
+		t.Run(target.name, func(t *testing.T) {
+			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), target.triple, false, target.targetOS)
+			if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 0") ||
+				!strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 1") {
+				t.Fatalf("expected view to extract owner data and length, got:\n%s", irText)
+			}
+			if !strings.Contains(irText, "insertvalue { i32*, i64 } zeroinitializer, i32*") ||
+				!strings.Contains(irText, "insertvalue { i32*, i64 }") ||
+				!strings.Contains(irText, ", i64 %") {
+				t.Fatalf("expected {ptr,len} slice view construction, got:\n%s", irText)
+			}
+		})
+	}
+}
+
 func TestOptionalNicheLayout(t *testing.T) {
 	niche, ok := optionalNicheLayout("^i32")
 	if !ok {

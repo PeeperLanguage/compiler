@@ -318,6 +318,19 @@ func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope 
 	return lowerASTExpr(ctx, module, scope, expr, nil)
 }
 
+func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, resultType typeinfo.Type, typeText string) ir.Expr {
+	target, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
+	if !reference {
+		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: "<invalid>", Location: ast.LocOf(expr)}
+	}
+	value := lowerPlaceExpr(ctx, module, scope, expr, mutable)
+	array, isDynamicArray := loweredRuntimeType(module, target, nil).(*typeinfo.ArrayType)
+	if isDynamicArray && array != nil && array.Dynamic {
+		return &ir.SliceView{Source: value, Type: typeText, Location: ast.LocOf(expr)}
+	}
+	return &ir.AddrOf{Expr: value, Type: typeText, Location: ast.LocOf(expr)}
+}
+
 func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
@@ -439,19 +452,22 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
 
 	case *ast.AddressExpr:
-		valueExpr := lowerPlaceExpr(ctx, module, scope, node.Expr, false)
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
+			valueType := loweredTypeText(module, exprResolvedType(module, node.Expr))
 			switch node.Mode {
 			case ast.AddressShared:
-				t = "&" + valueExpr.TypeText()
+				t = "&" + valueType
 			case ast.AddressMutable:
-				t = "&mut " + valueExpr.TypeText()
+				t = "&mut " + valueType
 			default:
-				t = "*" + valueExpr.TypeText()
+				t = "*" + valueType
 			}
 		}
-		return &ir.AddrOf{Expr: valueExpr, Type: t, Location: loc}
+		if node.Mode == ast.AddressShared || node.Mode == ast.AddressMutable {
+			return lowerReferenceValue(ctx, module, scope, node.Expr, resolvedType, t)
+		}
+		return &ir.AddrOf{Expr: lowerPlaceExpr(ctx, module, scope, node.Expr, false), Type: t, Location: loc}
 
 	case *ast.BinaryExpr:
 		leftExpected := expectedType
@@ -591,13 +607,16 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: "<invalid>"}
 	}
 	var baseExpr ir.Expr
-	if needsAddress, requireMutable := receiverAddressRequirement(module, scope, fnType, baseType, selector.Expr); needsAddress {
+	switch receiverAddressKindFor(module, scope, fnType, baseType, selector.Expr) {
+	case receiverAddressReference:
+		baseExpr = lowerReferenceValue(ctx, module, scope, selector.Expr, fnType.Params[0], loweredTypeText(module, fnType.Params[0]))
+	case receiverAddressRawPointer:
 		baseExpr = &ir.AddrOf{
-			Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, requireMutable),
+			Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, true),
 			Type:     loweredTypeText(module, fnType.Params[0]),
 			Location: ast.LocOf(selector.Expr),
 		}
-	} else {
+	default:
 		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, nil)
 	}
 	args := make([]ir.Expr, 0, len(call.Args)+1)
@@ -621,9 +640,17 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	}
 }
 
-func receiverAddressRequirement(module *project.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) (needsAddress, requireMutable bool) {
+type receiverAddressKind uint8
+
+const (
+	receiverAddressNone receiverAddressKind = iota
+	receiverAddressReference
+	receiverAddressRawPointer
+)
+
+func receiverAddressKindFor(module *project.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) receiverAddressKind {
 	if scope == nil || fnType == nil || len(fnType.Params) == 0 || receiver == nil {
-		return false, false
+		return receiverAddressNone
 	}
 	exprType := func(e ast.Expr) typeinfo.Type {
 		return exprResolvedType(module, e)
@@ -631,20 +658,29 @@ func receiverAddressRequirement(module *project.Module, scope *table.Scope, fnTy
 	ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(fnType.Params[0]))
 	if ok {
 		if !typeinfo.SameType(ptrTarget, baseType) {
-			return false, false
+			return receiverAddressNone
 		}
 		addressable, _ := place.MutableAddressable(scope, receiver, exprType)
-		return addressable, true
+		if addressable {
+			return receiverAddressRawPointer
+		}
+		return receiverAddressNone
 	}
 	refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0]))
 	if !ok || !typeinfo.SameType(refTarget, baseType) {
-		return false, false
+		return receiverAddressNone
 	}
 	if mutable {
 		addressable, _ := place.MutableAddressable(scope, receiver, exprType)
-		return addressable, true
+		if addressable {
+			return receiverAddressReference
+		}
+		return receiverAddressNone
 	}
-	return place.Addressable(scope, receiver, exprType), false
+	if place.Addressable(scope, receiver, exprType) {
+		return receiverAddressReference
+	}
+	return receiverAddressNone
 }
 
 func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
