@@ -17,7 +17,7 @@ import (
 )
 
 // Compile one entry file with a fresh compiler project.
-func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (*project.CompilerContext, *project.Module) {
+func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *project.Module) {
 	sourceProject, err := manifest.ResolveSourceFileProject(path)
 	rootDir := sourceProject.RootDir
 	projectName := sourceProject.ProjectName
@@ -30,15 +30,15 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 		TargetBackend: backendName,
 		BuildDebug:    debugBuild,
 	}
-	ctx := compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
+	compilerContext = compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
 	if err != nil {
-		ctx.Diagnostics.Add(diagnostics.NewError(
+		compilerContext.Diagnostics.Add(diagnostics.NewError(
 			err.Error(),
 		))
-		return ctx, nil
+		return compilerContext, nil
 	}
-	entry := compiler.ParseFileWithOverlay(ctx, path, "")
-	return ctx, entry
+	program = compiler.ParseFileWithOverlay(compilerContext, path, "")
+	return compilerContext, program
 }
 
 // Build final output after successful compilation.
