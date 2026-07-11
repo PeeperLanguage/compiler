@@ -57,6 +57,9 @@ func Run(in io.Reader, out io.Writer) error {
 					HoverProvider:      true,
 					DefinitionProvider: true,
 					RenameProvider:     true,
+					CompletionProvider: &CompletionOptions{
+						TriggerCharacters: []string{".", ":", "/", "\""},
+					},
 				},
 				ServerInfo: &ServerInfo{
 					Name:    "Peeper Language Server",
@@ -119,6 +122,17 @@ func Run(in io.Reader, out io.Writer) error {
 			var params DefinitionParams
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				result, err = state.HandleDefinition(params)
+				if err != nil {
+					respErr = &ResponseError{Code: -32603, Message: err.Error()}
+				}
+			} else {
+				respErr = &ResponseError{Code: -32602, Message: "Invalid params"}
+			}
+
+		case "textDocument/completion":
+			var params CompletionParams
+			if err := json.Unmarshal(req.Params, &params); err == nil {
+				result, err = state.HandleCompletion(params)
 				if err != nil {
 					respErr = &ResponseError{Code: -32603, Message: err.Error()}
 				}

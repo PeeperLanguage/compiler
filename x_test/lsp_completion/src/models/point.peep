@@ -1,0 +1,18 @@
+struct Point {
+    X: i32,
+    Y: i32
+}
+
+impl Point {
+    fn Sum(self: &Self) -> i32 {
+        return self.X + self.Y;
+    }
+}
+
+fn NewPoint() -> Point {
+    return .Point{ X = 0, Y = 0 };
+}
+
+fn PointSum(point: &Point) -> i32 {
+    return point.Sum();
+}

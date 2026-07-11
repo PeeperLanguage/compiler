@@ -1,0 +1,10 @@
+import "lsp_completion/models/point";
+
+fn main() -> i32 {
+    let origin = point::NewPoint();
+    let outer = point::PointSum(&origin);
+    {
+        let inner = outer + 1;
+        return inner;
+    }
+}

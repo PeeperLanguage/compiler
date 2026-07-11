@@ -52,13 +52,7 @@ func markerPosition(t *testing.T, src string) (string, Position) {
 		t.Fatalf("missing hover marker %q", hoverMarker)
 	}
 	clean := strings.Replace(src, hoverMarker, "", 1)
-	line := strings.Count(src[:index], "\n")
-	lastNewline := strings.LastIndex(src[:index], "\n")
-	column := index
-	if lastNewline >= 0 {
-		column = index - lastNewline - 1
-	}
-	return clean, Position{Line: line, Character: column}
+	return clean, positionAtOffset(clean, index)
 }
 
 func hoverAtSource(t *testing.T, state *ServerState, filePath, src string) *Hover {

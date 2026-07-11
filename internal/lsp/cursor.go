@@ -186,7 +186,7 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	if fieldSym := lookupStructFieldSymbol(baseType, ident.Name, ctx); fieldSym != nil {
 		return fieldSym
 	}
-	for _, key := range selectorMethodKeys(baseType) {
+	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		if methods, ok := module.Semantics.MethodSets[key]; ok {
 			for _, method := range methods {
 				if method != nil && method.Name == ident.Name {
@@ -270,15 +270,4 @@ func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *proj
 	fieldSym := symbols.New(fieldName, symbols.SymbolField, fieldNode, location)
 	fieldSym.Type = field.Type
 	return fieldSym
-}
-
-func selectorMethodKeys(baseType typeinfo.Type) []string {
-	if baseType == nil {
-		return nil
-	}
-	keys := []string{typeinfo.TypeText(baseType)}
-	if defined, ok := baseType.(*typeinfo.DefinedType); ok && defined.Underlying != nil {
-		keys = append(keys, typeinfo.TypeText(defined.Underlying))
-	}
-	return keys
 }
