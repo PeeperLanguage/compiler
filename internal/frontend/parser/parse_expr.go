@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
 	"compiler/pkg/colors"
+	"compiler/pkg/numeric"
 	"fmt"
 )
 
@@ -48,8 +49,7 @@ func led(kind token.Kind, prec uint8, handler ledFunc) {
 func init() {
 	// literals & identifiers
 	nud(token.NUMBER, func(p *Parser) ast.Expr {
-		tok := p.advance()
-		return reg(p, &ast.NumberLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+		return p.parseNumberLit("")
 	})
 	nud(token.STRING, func(p *Parser) ast.Expr {
 		tok := p.advance()
@@ -158,6 +158,11 @@ func (p *Parser) parseExpr(precedence uint8) ast.Expr {
 
 func (p *Parser) parseUnaryExpr() ast.Expr {
 	tok := p.advance()
+	if (tok.Kind == token.PLUS || tok.Kind == token.MINUS) && p.at(token.NUMBER) {
+		if literal, err := numeric.ParseLiteral(p.current().Literal); err == nil && literal.ExplicitType != "" {
+			return p.parseNumberLit(tok.Literal)
+		}
+	}
 	expr := p.parseExpr(precPrefix)
 	if expr == nil {
 		expr = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
@@ -167,6 +172,24 @@ func (p *Parser) parseUnaryExpr() ast.Expr {
 		Expr:     expr,
 		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
 	})
+}
+
+func (p *Parser) parseNumberLit(sign string) ast.Expr {
+	tok := p.advance()
+	literal, err := numeric.ParseLiteral(tok.Literal)
+	start := tok.Start
+	if sign != "" && p.pos >= 2 {
+		start = p.stream[p.pos-2].Start
+	}
+	loc := source.NewLocation(p.filePath, start, tok.End)
+	if err != nil {
+		p.diag.Add(diagnostics.NewError(err.Error()).WithCode(diagnostics.ErrInvalidNumber).WithPrimaryLabel(loc, ""))
+		return reg(p, &ast.BadExpr{Location: loc})
+	}
+	if sign == "-" {
+		literal.Value = "-" + literal.Value
+	}
+	return reg(p, &ast.NumberLit{Value: literal.Value, ExplicitType: literal.ExplicitType, Location: loc})
 }
 
 func (p *Parser) parseMoveExpr() ast.Expr {
@@ -328,15 +351,17 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 		p.advance()
 		inferred = true
 	} else {
-		lenTok := p.consume(token.NUMBER, "expected array literal length")
-		if lenTok == nil {
+		if !p.at(token.NUMBER) {
+			p.consume(token.NUMBER, "expected array literal length")
 			p.synchronize(token.RBRACK, token.LBRACE, token.SEMICOLON)
 			return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 		}
-		length = reg(p, &ast.NumberLit{
-			Value:    lenTok.Literal,
-			Location: source.NewLocation(p.filePath, lenTok.Start, lenTok.End),
-		})
+		parsed := p.parseNumberLit("")
+		var ok bool
+		length, ok = parsed.(*ast.NumberLit)
+		if !ok {
+			return parsed
+		}
 	}
 	if p.consume(token.RBRACK, "expected ']' after array literal length") == nil {
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})

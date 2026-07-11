@@ -1,0 +1,10 @@
+fn main() -> i32 {
+    let _ = 1f16;
+	let _ = 1i8388609;
+	let _ = 256u8;
+	let _ = -1u8;
+	let _ = [3f64]i32{1, 2, 3};
+	let values = [_]i32{1, 2, 3};
+	let _ = values[1f32];
+	return 0;
+}

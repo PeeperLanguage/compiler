@@ -15,13 +15,17 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
-	"compiler/pkg/numeric"
 )
 
 type checker struct {
 	ctx    *project.CompilerContext
 	module *project.Module
 }
+
+// Concrete values currently convert to satisfied interfaces implicitly. Keep
+// this policy separate from method-set satisfaction so a future language mode
+// can require explicit interface casts without rewriting interface analysis.
+const allowImplicitInterfaceConversion = true
 
 // --- helpers -----------------------------------------------------------------
 
@@ -70,7 +74,7 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 		defer delete(visiting, t)
 
 		switch typ := t.(type) {
-		case *typeinfo.IntegerType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
+		case *typeinfo.IntegerType, *typeinfo.ByteType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
 			return true
 		case *typeinfo.OwnedPtrType, *typeinfo.RawPtrType:
 			target, ok := typeinfo.PointerTarget(typ)
@@ -829,11 +833,14 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 	if dstTarget, dstMutable, dstRef := typeinfo.ReferenceTarget(typeinfo.Underlying(dst)); dstRef {
 		srcTarget, srcMutable, srcRef := typeinfo.ReferenceTarget(typeinfo.Underlying(src))
 		iface, interfaceRef := typeinfo.InterfaceTypeOf(dstTarget)
-		if srcRef && interfaceRef && (!dstMutable || srcMutable) {
+		if allowImplicitInterfaceConversion && srcRef && interfaceRef && (!dstMutable || srcMutable) {
 			return c.satisfiesInterface(iface, srcTarget)
 		}
 	}
 	if iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
+		if !allowImplicitInterfaceConversion {
+			return false
+		}
 		if _, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(src)); borrowed {
 			return false
 		}
@@ -1131,6 +1138,23 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
 		right = c.typeExpr(scope, node.Right, operandExpected)
 		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
+	} else if leftNumber, leftLiteral := node.Left.(*ast.NumberLit); leftLiteral {
+		if rightNumber, rightLiteral := node.Right.(*ast.NumberLit); !rightLiteral {
+			right = c.typeExpr(scope, node.Right, operandExpected)
+			left = c.typeExpr(scope, node.Left, right)
+		} else if leftNumber.ExplicitType != "" && rightNumber.ExplicitType == "" {
+			left = c.typeExpr(scope, node.Left, operandExpected)
+			right = c.typeExpr(scope, node.Right, left)
+		} else if leftNumber.ExplicitType == "" && rightNumber.ExplicitType != "" {
+			right = c.typeExpr(scope, node.Right, operandExpected)
+			left = c.typeExpr(scope, node.Left, right)
+		} else {
+			left = c.typeExpr(scope, node.Left, operandExpected)
+			right = c.typeExpr(scope, node.Right, operandExpected)
+		}
+	} else if _, rightLiteral := node.Right.(*ast.NumberLit); rightLiteral {
+		left = c.typeExpr(scope, node.Left, operandExpected)
+		right = c.typeExpr(scope, node.Right, left)
 	} else {
 		left = c.typeExpr(scope, node.Left, operandExpected)
 		rightExpected := operandExpected
@@ -1529,6 +1553,9 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		return &typeinfo.InvalidType{}
 	}
 	arrayType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	if typeinfo.IsInvalidOrUnknown(arrayType) {
+		return &typeinfo.InvalidType{}
+	}
 	array, ok := typeinfo.Underlying(arrayType).(*typeinfo.ArrayType)
 	if !ok || array == nil || array.Elem == nil || typeinfo.IsInvalidOrUnknown(array.Elem) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Type, "invalid array literal type"))
@@ -1706,6 +1733,21 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 	if typeinfo.IsInvalidOrUnknown(expected) {
 		expected = nil
 	}
+	if node.ExplicitType != "" {
+		explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType)
+		if !ok {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidNumber,
+				fmt.Sprintf("unsupported numeric literal suffix `%s`", node.ExplicitType), ast.LocOf(node), "").
+				WithHelp("integer suffix widths must be between 1 and 8388608; float suffixes are limited to f32 and f64")
+			return &typeinfo.InvalidType{}
+		}
+		if !typeinfo.LiteralFitsType(node.Value, explicit) {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidNumber,
+				fmt.Sprintf("literal `%s%s` does not fit %s", node.Value, node.ExplicitType, node.ExplicitType), ast.LocOf(node), "")
+			return &typeinfo.InvalidType{}
+		}
+		return explicit
+	}
 	if expected != nil {
 		numberTarget := expected
 		if optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType); ok && optional != nil && optional.Inner != nil {
@@ -1717,7 +1759,7 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected))))
 			return nil
 		}
-		if !literalFitsType(node.Value, numberTarget) {
+		if !typeinfo.LiteralFitsType(node.Value, numberTarget) {
 			d := diagnostics.NewError(fmt.Sprintf("literal `%s` does not fit %s", node.Value, typeinfo.TypeText(numberTarget))).
 				WithCode(diagnostics.ErrInvalidNumber).
 				WithPrimaryLabel(ast.LocOf(node), "")
@@ -1730,19 +1772,6 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 		return numberTarget
 	}
 	return typeinfo.DefaultNumberType(node.Value)
-}
-
-func literalFitsType(value string, typ typeinfo.Type) bool {
-	switch t := typ.(type) {
-	case *typeinfo.IntegerType:
-		return numeric.FitsIntegerLiteral(value, t.Bits, t.Signed)
-	case *typeinfo.FloatType:
-		if numeric.IsFloat(value) {
-			return numeric.FitsFloatLiteral(value, t.Bits)
-		}
-		return numeric.FitsIntegerLiteralInFloat(value, t.Bits)
-	}
-	return false
 }
 
 func integerRangeHint(t *typeinfo.IntegerType) string {

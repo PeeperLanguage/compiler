@@ -1,0 +1,38 @@
+fn widenSigned(value: i8) -> u16 {
+    return value;
+}
+
+fn widenUnsigned(value: u8) -> i16 {
+	return value;
+}
+
+fn identityByte(value: byte) -> byte {
+	return value;
+}
+
+fn main() -> i32 {
+    let bit: u1 = 1u1;
+    let min: i8 = -128i8;
+    let radix: u24 = 0xffu24;
+    let grouped: i64 = 1_000i64;
+    let single: f32 = 2.4f32;
+    let double: f64 = single;
+    let scientific: f64 = 1e3f64;
+    let raw: byte = 65;
+    let number: u8 = raw as u8;
+    let inferred: u8 = 1u8 + 2;
+
+    if bit as u8 != 1u8 {
+        return 1;
+    }
+    if min as i32 != -128i32 || radix as i32 != 255i32 || grouped as i32 != 1000i32 {
+        return 2;
+    }
+    if single != 2.4 || double != 2.4f32 || scientific != 1000f64 {
+        return 3;
+    }
+	if number != 65u8 || identityByte(raw) as u8 != 65u8 || inferred != 3u8 || widenSigned(7i8) as i32 != 7i32 || widenUnsigned(8u8) as i32 != 8i32 {
+		return 4;
+	}
+    return 0;
+}

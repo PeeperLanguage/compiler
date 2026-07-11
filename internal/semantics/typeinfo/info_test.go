@@ -201,3 +201,27 @@ func TestTypeFromSyntaxAppliesResolversRecursively(t *testing.T) {
 		t.Fatalf("expected resolved nested type, got %T", optional.Inner)
 	}
 }
+
+func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
+	invalidCalls := 0
+	typ := TypeFromSyntax(&ast.ArrayType{
+		Len:  &ast.NumberLit{Value: "3", ExplicitType: "f32"},
+		Elem: &ast.NamedType{Name: "i32"},
+	}, SyntaxOptions{
+		InvalidArrayLen: func(*ast.NumberLit) Type {
+			invalidCalls++
+			return &InvalidType{}
+		},
+	})
+	if !IsInvalidOrUnknown(typ) || invalidCalls != 1 {
+		t.Fatalf("array type = %T, invalid callbacks = %d", typ, invalidCalls)
+	}
+
+	valid := TypeFromSyntax(&ast.ArrayType{
+		Len:  &ast.NumberLit{Value: "3", ExplicitType: "u8"},
+		Elem: &ast.NamedType{Name: "i32"},
+	}, SyntaxOptions{})
+	if TypeText(valid) != "[3]i32" {
+		t.Fatalf("valid array type = %s, want [3]i32", TypeText(valid))
+	}
+}

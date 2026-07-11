@@ -24,8 +24,31 @@ func TestValueHelpers(t *testing.T) {
 	if CleanNumberString("1_2_3") != "123" {
 		t.Fatalf("CleanNumberString failed")
 	}
-	if !IsImaginary("12i") || IsImaginary("12") {
-		t.Fatalf("IsImaginary mismatch")
+}
+
+func TestParseLiteral(t *testing.T) {
+	tests := []struct {
+		input  string
+		value  string
+		suffix string
+	}{
+		{"42i32", "42", "i32"},
+		{"255u8", "255", "u8"},
+		{"2.4f32", "2.4", "f32"},
+		{"1e3f64", "1e3", "f64"},
+		{"0xffu24", "0xff", "u24"},
+		{"1_000i64", "1000", "i64"},
+	}
+	for _, tt := range tests {
+		got, err := ParseLiteral(tt.input)
+		if err != nil || got.Value != tt.value || got.ExplicitType != tt.suffix {
+			t.Fatalf("ParseLiteral(%q) = %#v, %v", tt.input, got, err)
+		}
+	}
+	for _, input := range []string{"1i", "2.4i32", "0b102u8"} {
+		if _, err := ParseLiteral(input); err == nil {
+			t.Fatalf("ParseLiteral(%q) accepted invalid literal", input)
+		}
 	}
 }
 

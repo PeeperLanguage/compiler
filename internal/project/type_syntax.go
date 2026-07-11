@@ -40,5 +40,12 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 			}
 			return &typeinfo.InvalidType{}
 		},
+		InvalidArrayLen: func(node *ast.NumberLit) typeinfo.Type {
+			if ctx != nil && ctx.Diagnostics != nil {
+				ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+					"array length must be an integer literal that fits its explicit type", ast.LocOf(node), "invalid array length")
+			}
+			return &typeinfo.InvalidType{}
+		},
 	}
 }

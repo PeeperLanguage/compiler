@@ -13,23 +13,47 @@ func DefaultNumberType(value string) Type {
 		if numeric.FitsIntegerLiteral(value, bits, true) {
 			return &IntegerType{Signed: true, Bits: bits}
 		}
+		if bits == numeric.MaxIntegerBits {
+			break
+		}
 	}
+	return &InvalidType{}
 }
 
 func DefaultIntegerType() Type {
 	return &IntegerType{Signed: true, Bits: 32}
 }
 
+func LiteralFitsType(value string, typ Type) bool {
+	switch t := Underlying(typ).(type) {
+	case *IntegerType:
+		return numeric.FitsIntegerLiteral(value, t.Bits, t.Signed)
+	case *FloatType:
+		if numeric.IsFloat(value) {
+			return numeric.FitsFloatLiteral(value, t.Bits)
+		}
+		return numeric.FitsIntegerLiteralInFloat(value, t.Bits)
+	case *ByteType:
+		return numeric.FitsIntegerLiteral(value, 8, false)
+	default:
+		return false
+	}
+}
+
 func IsIntegral(t Type) bool {
 	t = Underlying(t)
-	_, ok := t.(*IntegerType)
-	return ok
+	switch t.(type) {
+	case *IntegerType, *ByteType:
+		return true
+	default:
+		return false
+	}
 }
 
 func IsArithmetic(t Type) bool {
 	t = Underlying(t)
 	switch t.(type) {
-	case *IntegerType, *FloatType:
+	case *IntegerType, *ByteType, *FloatType:
 		return true
 	default:
 		return false
@@ -39,7 +63,7 @@ func IsArithmetic(t Type) bool {
 func IsEquatable(t Type) bool {
 	t = Underlying(t)
 	switch t.(type) {
-	case *IntegerType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
+	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
 		return true
 	case *OptionalType:
 		return true
@@ -75,7 +99,7 @@ func IsCopyType(t Type) bool {
 		return false
 	case *InvalidType, *UnknownType:
 		return false
-	case *IntegerType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
+	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
 		return true
 	case *OwnedPtrType:
 		return false

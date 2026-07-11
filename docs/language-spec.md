@@ -36,6 +36,34 @@ Core rules:
 `str` is a builtin text type. It must not force a library-shaped type into user
 code. Exact `str` storage remains tied to the array/string design work.
 
+## Numeric Literals And Conversions
+
+Numeric literals may carry an attached explicit source type:
+
+```peep
+42i32
+255u8
+0xffu24
+2.4f32
+1e3f64
+```
+
+`iN` and `uN` accept every LLVM integer width from 1 through 2^23. Floating
+postfixes are limited to `f32` and `f64`; other `fN` forms are reserved for a
+future language-owned floating representation.
+
+Signed and unsigned integers share one conversion class. Conversion to a wider
+integer width is implicit regardless of signedness. Same-width signedness
+changes and narrowing require `as`. Float widening from `f32` to `f64` is
+implicit; float narrowing requires `as`.
+
+Integer, float, byte, character, and string are separate conversion classes.
+Cross-class conversion is never implicit. `byte` is semantically distinct from
+`u8`, even though both currently lower to 8-bit storage; byte formatting is
+reserved for the future formatting API. Concrete values that satisfy an
+interface remain the deliberate exception and convert to that interface
+implicitly.
+
 ## Heap Handles
 
 `^T` is a unique heap handle. It is not a raw pointer.

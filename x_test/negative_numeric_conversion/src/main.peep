@@ -1,0 +1,7 @@
+fn main() -> i32 {
+    let _: u8 = 1i8;
+    let _: f32 = 1i8;
+    let raw: byte = 65;
+    let _: u8 = raw;
+    return 0;
+}

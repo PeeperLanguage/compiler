@@ -5,11 +5,12 @@ import (
 	"strings"
 
 	"compiler/internal/target"
+	"compiler/pkg/numeric"
 )
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "char", "str", "usize", "isize", "f32", "f64":
+	case "bool", "byte", "char", "str", "usize", "isize", "f32", "f64":
 		return true
 	default:
 		_, _, ok := ParseIntegerBuiltin(name)
@@ -23,8 +24,6 @@ func ParseIntegerBuiltin(name string) (signed bool, bits int, ok bool) {
 		return true, target.SizeBits(), true
 	case "usize":
 		return false, target.SizeBits(), true
-	case "byte":
-		return false, 8, true
 	}
 	if len(name) < 2 {
 		return false, 0, false
@@ -41,10 +40,7 @@ func ParseIntegerBuiltin(name string) (signed bool, bits int, ok bool) {
 		return false, 0, false
 	}
 	n, err := strconv.Atoi(name[1:])
-	if err != nil || n < 8 {
-		return false, 0, false
-	}
-	if n&(n-1) != 0 {
+	if err != nil || n < 1 || n > numeric.MaxIntegerBits {
 		return false, 0, false
 	}
 	return signed, n, true

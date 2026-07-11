@@ -31,6 +31,9 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 	case *ast.SelectorExpr:
 		a.checkSelector(scope, e, st, use)
 	case *ast.IndexExpr:
+		if typeinfo.IsInvalidOrUnknown(a.exprType(e)) {
+			return
+		}
 		a.checkExpr(scope, e.Expr, st, useRead)
 		a.checkExpr(scope, e.Index, st, useRead)
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {

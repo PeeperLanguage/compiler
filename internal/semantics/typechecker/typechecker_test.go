@@ -127,6 +127,40 @@ func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	return false
 }
 
+func TestExplicitNumericLiteralConversionClasses(t *testing.T) {
+	valid := checkTypeSource(t, `fn main() -> i32 {
+	let min: i8 = -128i8;
+	let wide_signed: u16 = 7i8;
+	let wide_unsigned: i16 = 7u8;
+	let wide_float: f64 = 2.4f32;
+	let raw: byte = 65;
+	let number: u8 = raw as u8;
+	return (min as i32) + (wide_signed as i32) + (wide_unsigned as i32) + (wide_float as i32) + (number as i32);
+}`)
+	if valid.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", valid.EmitAllToString())
+	}
+
+	invalid := checkTypeSource(t, `fn main() -> i32 {
+	let same_width_sign: u8 = 1i8;
+	let cross_class: f32 = 1i8;
+	let byte_number: u8 = 65 as byte;
+	return 0;
+}`)
+	if !invalid.HasErrors() {
+		t.Fatalf("expected explicit-cast diagnostics")
+	}
+}
+
+func TestByteTypeIsLowerableInFunctionSignature(t *testing.T) {
+	diag := checkTypeSource(t, `fn identity(value: byte) -> byte {
+	return value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestImplMethodAllowsSelfForBuiltinTarget(t *testing.T) {
 	src := `impl i32 {
 	fn abs(self: Self) -> Self {
@@ -1104,6 +1138,28 @@ func TestIndexExprRejectsNonIntegerIndex(t *testing.T) {
 	}
 }
 
+func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
+	src := `fn first(xs: [4]i32) -> i32 {
+	return xs[1f32];
+}`
+	module, diag := checkTypeModule(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+		t.Fatalf("expected invalid index diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
+		t.Fatalf("invalid index reached constant evaluation:\n%s", diag.EmitAllToString())
+	}
+	if hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("invalid index reached ownership analysis:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	index := ret.Value.(*ast.IndexExpr)
+	if !typeinfo.IsInvalidOrUnknown(module.Semantics.ExprTypes[index.ID()]) {
+		t.Fatalf("index expression should have invalid semantic type")
+	}
+}
+
 func TestIndexExprRejectsNonIndexableBase(t *testing.T) {
 	src := `fn first(x: i32) -> i32 {
 	return x[0];
@@ -1178,6 +1234,33 @@ func TestArrayLiteralRejectsWrongExplicitLength(t *testing.T) {
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
 		t.Fatalf("expected explicit length mismatch, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestArrayLiteralRejectsFloatPostfixLengthBeforeElementChecks(t *testing.T) {
+	src := `fn main() {
+	let arr = [3f64]i32{1, true, 3};
+}`
+	module, diag := checkTypeModule(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected invalid array length diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("invalid array literal continued into element checks:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	if !typeinfo.IsInvalidOrUnknown(module.Semantics.ExprTypes[letDecl.Value.ID()]) {
+		t.Fatalf("array literal should have invalid semantic type")
+	}
+}
+
+func TestArrayTypeRejectsFloatPostfixLength(t *testing.T) {
+	diag := checkTypeSource(t, `fn first(xs: [3f32]i32) -> i32 {
+	return 0;
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
+		t.Fatalf("expected invalid array length diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

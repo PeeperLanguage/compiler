@@ -10,6 +10,8 @@ import (
 )
 
 const (
+	MaxIntegerBits = 1 << 23
+
 	HexDigits = `[0-9a-fA-F]`
 	HexNumber = `0[xX]` + HexDigits + `(?:` + HexDigits + `|_` + HexDigits + `)*`
 	HexToken  = `0[xX][0-9A-Za-z](?:[0-9A-Za-z]|_[0-9A-Za-z])*`
@@ -25,13 +27,12 @@ const (
 	DecDigits = `[0-9]`
 	DecNumber = DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
 
-	FloatFrac   = `\.` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
-	FloatExp    = `[eE][+-]?` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
-	FloatNumber = DecNumber + `(?:` + FloatFrac + `)?(?:` + FloatExp + `)?`
-	ImagNumber  = FloatNumber + `i\b`
-
-	NumberPattern      = `(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + ImagNumber + `|` + FloatNumber + `)`
-	NumberTokenPattern = `(?:` + HexToken + `|` + OctToken + `|` + BinToken + `|` + ImagNumber + `|` + FloatNumber + `)`
+	FloatFrac          = `\.` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
+	FloatExp           = `[eE][+-]?` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
+	FloatNumber        = DecNumber + `(?:` + FloatFrac + `)?(?:` + FloatExp + `)?`
+	NumberSuffix       = `[iuf](?:[0-9_]+)?`
+	NumberPattern      = `(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + FloatNumber + `)(?:` + NumberSuffix + `)?`
+	NumberTokenPattern = `(?:` + HexToken + `|` + OctToken + `|` + BinToken + `|` + FloatNumber + `)(?:` + NumberSuffix + `)?`
 )
 
 var (
@@ -41,8 +42,14 @@ var (
 	binaryRegex     = regexp.MustCompile(`^` + BinNumber + `$`)
 	floatRegex      = regexp.MustCompile(`^-?` + DecNumber + `\.` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*$`)
 	scientificRegex = regexp.MustCompile(`^-?` + DecNumber + `(?:\.` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*)?` + FloatExp + `$`)
-	numberRegex     = regexp.MustCompile(`^(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + ImagNumber + `|` + FloatNumber + `)$`)
+	numberRegex     = regexp.MustCompile(`^(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + FloatNumber + `)$`)
+	suffixRegex     = regexp.MustCompile(`([iuf][0-9_]*)$`)
 )
+
+type Literal struct {
+	Value        string
+	ExplicitType string
+}
 
 func IsDecimal(s string) bool {
 	return decimalRegex.MatchString(s)
@@ -72,10 +79,6 @@ func CleanNumberString(s string) string {
 	return strings.ReplaceAll(s, "_", "")
 }
 
-func IsImaginary(s string) bool {
-	return strings.HasSuffix(CleanNumberString(s), "i")
-}
-
 func LooksFloatLike(s string) bool {
 	clean := CleanNumberString(s)
 	if clean == "" {
@@ -86,6 +89,42 @@ func LooksFloatLike(s string) bool {
 		return false
 	}
 	return strings.ContainsAny(clean, ".eE")
+}
+
+// ParseLiteral owns the boundary between source spelling and the numeric value
+// consumed by semantic and IR phases. Type postfixes must never leak into
+// constant parsing or backend text.
+func ParseLiteral(raw string) (Literal, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return Literal{}, fmt.Errorf("invalid numeric literal %s", raw)
+	}
+
+	body := text
+	suffix := ""
+	lower := strings.ToLower(text)
+	if strings.HasPrefix(lower, "0x") || strings.HasPrefix(lower, "0o") || strings.HasPrefix(lower, "0b") {
+		if index := strings.IndexAny(lower[2:], "iu"); index >= 0 {
+			index += 2
+			body, suffix = text[:index], text[index:]
+		}
+	} else if match := suffixRegex.FindStringSubmatchIndex(text); match != nil {
+		body = text[:match[2]]
+		suffix = text[match[2]:match[3]]
+	}
+
+	if err := ValidateLiteral(body); err != nil {
+		return Literal{}, err
+	}
+	if suffix != "" {
+		if strings.Contains(suffix, "_") || len(suffix) == 1 {
+			return Literal{}, fmt.Errorf("invalid numeric literal suffix %s", suffix)
+		}
+		if suffix[0] != 'f' && LooksFloatLike(body) {
+			return Literal{}, fmt.Errorf("integer suffix %s cannot be used on a float literal", suffix)
+		}
+	}
+	return Literal{Value: CleanNumberString(body), ExplicitType: suffix}, nil
 }
 
 func ValidateLiteral(s string) error {

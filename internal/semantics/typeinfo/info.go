@@ -19,6 +19,8 @@ type IntegerType struct {
 	Bits   int
 }
 
+type ByteType struct{}
+
 type FloatType struct {
 	Bits int
 }
@@ -114,6 +116,7 @@ type EnumType struct {
 func (*InvalidType) TypeNode()   {}
 func (*UnknownType) TypeNode()   {}
 func (*IntegerType) TypeNode()   {}
+func (*ByteType) TypeNode()      {}
 func (*FloatType) TypeNode()     {}
 func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
@@ -143,6 +146,8 @@ func (t *IntegerType) Text() string {
 	}
 	return "u" + strconv.Itoa(t.Bits)
 }
+
+func (*ByteType) Text() string { return "byte" }
 
 func (t *FloatType) Text() string {
 	if t == nil {

@@ -956,14 +956,11 @@ func (p *Parser) parseBracketTypeExpr() ast.TypeExpr {
 		}
 		return nil
 	}
-	lenTok := p.consume(token.NUMBER, "expected array length")
-	if lenTok == nil {
+	parsed := p.parseNumberLit("")
+	length, ok := parsed.(*ast.NumberLit)
+	if !ok {
 		return nil
 	}
-	length := reg(p, &ast.NumberLit{
-		Value:    lenTok.Literal,
-		Location: source.NewLocation(p.filePath, lenTok.Start, lenTok.End),
-	})
 	if p.consume(token.RBRACK, "expected ']' after array length") == nil {
 		return nil
 	}

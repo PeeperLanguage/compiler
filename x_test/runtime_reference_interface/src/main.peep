@@ -3,7 +3,8 @@ interface Reader {
 }
 
 interface Writer {
-    write(self: &mut Self, val: i32)
+    write(self: &mut Self, val: i32),
+    readFloat(self: &Self) -> f32
 }
 
 struct Counter {
@@ -18,6 +19,9 @@ impl Counter {
     fn write(self: &mut Self, val: i32) {
         self.value = val;
     }
+    fn readFloat(self: &Self) -> f32 {
+        return self.anotherField;
+    }
 }
 
 fn Read(reader: &Reader) -> i32 {
@@ -28,8 +32,9 @@ fn Write(writer: &mut Writer, val: i32) {
     writer.write(val);
 }
 
-fn WriteCopy(mut writer: Writer, val: i32) {
+fn WriteCopy(mut writer: Writer, val: i32) -> f32 {
     writer.write(val);
+    return writer.readFloat();
 }
 
 fn Rebind(mut value: i32) -> i32 {
@@ -38,12 +43,11 @@ fn Rebind(mut value: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    let mut counter: Counter = .{ 
+    let mut counter: Counter = .{
         value = 5,
         anotherField = 2.4
     };
-    WriteCopy(counter, 6);
-    if counter.value != 5 {
+    if WriteCopy(counter, 6) != 2.4f32 || counter.value != 5 || counter.anotherField != 2.4f32 {
         return 1;
     }
     if Rebind(1) != 9 {

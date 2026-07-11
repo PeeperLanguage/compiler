@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/problems"
@@ -89,7 +88,7 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, base))
 		index := emitRef(b, indexRef)
 		indexTypeText := mirRefType(indexRef)
-		_, indexBits, ok := token.ParseIntegerBuiltin(indexTypeText)
+		_, indexBits, ok := mirIntegerInfo(indexTypeText)
 		if !ok {
 			b.emitter.markInvalid("dynamic array index lowering requires integral index")
 			return ""
@@ -221,7 +220,7 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			b.line(fmt.Sprintf("%s = fcmp one %s %s, 0.0", out, fromLLVM, argRef))
 			return out
 		}
-		if _, _, ok := token.ParseIntegerBuiltin(fromType); ok {
+		if _, _, ok := mirIntegerInfo(fromType); ok {
 			fromLLVM := b.emitter.llvmType(fromType)
 			b.line(fmt.Sprintf("%s = icmp ne %s %s, 0", out, fromLLVM, argRef))
 			return out
@@ -229,7 +228,7 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 		return argRef
 	}
 
-	if toSigned, _, ok := token.ParseIntegerBuiltin(toType); isMIRFloatType(fromType) && ok {
+	if toSigned, _, ok := mirIntegerInfo(toType); isMIRFloatType(fromType) && ok {
 		out := b.nextReg()
 		fromLLVM := b.emitter.llvmType(fromType)
 		toLLVM := b.emitter.llvmType(toType)
@@ -239,7 +238,7 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			b.line(fmt.Sprintf("%s = fptoui %s %s to %s", out, fromLLVM, argRef, toLLVM))
 		}
 		return out
-	} else if fromSigned, _, ok := token.ParseIntegerBuiltin(fromType); ok && isMIRFloatType(toType) {
+	} else if fromSigned, _, ok := mirIntegerInfo(fromType); ok && isMIRFloatType(toType) {
 		out := b.nextReg()
 		fromLLVM := b.emitter.llvmType(fromType)
 		toLLVM := b.emitter.llvmType(toType)
@@ -260,8 +259,8 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 			return out
 		}
 		return argRef
-	} else if fromSigned, fromBits, ok := token.ParseIntegerBuiltin(fromType); ok {
-		_, toBits, ok := token.ParseIntegerBuiltin(toType)
+	} else if fromSigned, fromBits, ok := mirIntegerInfo(fromType); ok {
+		_, toBits, ok := mirIntegerInfo(toType)
 		if !ok {
 			return argRef
 		}
@@ -660,8 +659,8 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 				}
 				return "true"
 			}
-			if v.Type == "f32" {
-				return llvmFloat32Const(v.Value)
+			if v.Type == "f32" || v.Type == "f64" {
+				return llvmFloatConst(v.Value, v.Type)
 			}
 			if v.Type == "cstr" {
 				return "null"
@@ -756,12 +755,19 @@ func ensureLocalAddr(b *llvmBuilder, ref *mir.RefName) string {
 	return ptr
 }
 
-func llvmFloat32Const(value string) string {
-	parsed, err := strconv.ParseFloat(value, 32)
+func llvmFloatConst(value, typeText string) string {
+	bits := 64
+	if typeText == "f32" {
+		bits = 32
+	}
+	parsed, err := strconv.ParseFloat(value, bits)
 	if err != nil {
 		return value
 	}
-	return fmt.Sprintf("0x%016X", math.Float64bits(float64(float32(parsed))))
+	if bits == 32 {
+		parsed = float64(float32(parsed))
+	}
+	return fmt.Sprintf("0x%016X", math.Float64bits(parsed))
 }
 
 func emitCondRef(b *llvmBuilder, ref mir.ValueRef) string {
@@ -834,7 +840,7 @@ func integerComparePred(op string, typeText string) string {
 }
 
 func isUnsignedMIRType(typeText string) bool {
-	signed, _, ok := token.ParseIntegerBuiltin(typeText)
+	signed, _, ok := mirIntegerInfo(typeText)
 	return ok && !signed
 }
 

@@ -80,6 +80,17 @@ fn first(xs: [4]i32) -> i32 {
 	}
 }
 
+func TestGenerateHIRMaterializesNumericWidening(t *testing.T) {
+	out := generateTestHIR(t, "hir_numeric_widen_test"+peeper.SourceExt, "hir_numeric_widen_test", `fn widen(value: i8) -> u16 {
+	return value;
+}`)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	cast, ok := ret.Value.(*ir.Cast)
+	if !ok || cast.TypeText() != "u16" || cast.Expr.TypeText() != "i8" {
+		t.Fatalf("widening return = %#v, want i8-to-u16 cast", ret.Value)
+	}
+}
+
 func TestGenerateHIRLowersArrayLiteral(t *testing.T) {
 	const filePath = "hir_array_lit_test" + peeper.SourceExt
 	src := `fn first() -> [3]i32 {

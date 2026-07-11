@@ -68,16 +68,14 @@ func CheckCompatibility(dst, src Type) Compatibility {
 // CheckNumericCompatibility determines if src type can be converted to dst type
 // and returns the type of conversion required.
 //
-// Rules (inspired by Rust/Go strictness + Java widening):
+// Rules:
 //
 //   - Same type: Compatible
-//   - Byte (u8) to/from any: ExplicitCastable
-//   - Same family, dst larger: Compatible (widening)
-//   - Same family, dst smaller: ExplicitCastable (narrowing)
-//   - Integer to Float: Compatible only if float can represent all integer values exactly
-//   - Float to Integer: ExplicitCastable (fractional part loss)
-//   - Signed <-> Unsigned: ExplicitCastable
-//   - Different families: Incompatible
+//   - Wider integers are compatible regardless of signedness
+//   - Same-width signedness changes and integer narrowing are explicit
+//   - f32 to f64 is compatible; f64 to f32 is explicit
+//   - Integer, float, and byte are distinct conversion classes
+//   - Cross-class numeric conversions are explicit
 func CheckNumericCompatibility(dst, src Type) Compatibility {
 	// Same type: always compatible
 	if SameType(dst, src) {
@@ -92,41 +90,26 @@ func CheckNumericCompatibility(dst, src Type) Compatibility {
 		return Incompatible
 	}
 
-	// === BYTE RULE ===
-	// Byte (u8) always requires explicit cast to/from any type
-	if isByte(dst) || isByte(src) {
+	if dstFamily == NumericByte || srcFamily == NumericByte {
 		return ExplicitCastable
 	}
 
-	// === SAME FAMILY ===
-	if dstFamily == srcFamily {
-		if dstBits >= srcBits {
-			return Compatible // Widening: i8→i16, i16→i32, f32→f64
-		}
-		return ExplicitCastable // Narrowing: i16→i8, f64→f32
-	}
-
-	// === INTEGER → FLOAT ===
-	if isIntegerFamily(srcFamily) && isFloatFamily(dstFamily) {
-		// f64 can represent all i32 and smaller exactly (53-bit mantissa)
-		if dstBits == 64 && srcBits <= 32 {
+	if isIntegerFamily(dstFamily) && isIntegerFamily(srcFamily) {
+		if dstBits > srcBits {
 			return Compatible
 		}
-		// f32 can represent all i16 and smaller exactly (24-bit mantissa)
-		if dstBits == 32 && srcBits <= 16 {
-			return Compatible
-		}
-		return ExplicitCastable // i32→f32: loss of precision for values > 2^24
-	}
-
-	// === FLOAT → INTEGER ===
-	// Always explicit cast required (fractional part loss)
-	if isFloatFamily(srcFamily) && isIntegerFamily(dstFamily) {
 		return ExplicitCastable
 	}
 
-	// === SIGNED ↔ UNSIGNED ===
-	if isSignedFamily(srcFamily) != isSignedFamily(dstFamily) {
+	if isFloatFamily(dstFamily) && isFloatFamily(srcFamily) {
+		if dstBits > srcBits {
+			return Compatible
+		}
+		return ExplicitCastable
+	}
+
+	if (isIntegerFamily(dstFamily) && isFloatFamily(srcFamily)) ||
+		(isFloatFamily(dstFamily) && isIntegerFamily(srcFamily)) {
 		return ExplicitCastable
 	}
 
@@ -285,21 +268,6 @@ func checkEnumCompatibility(dst, src Type) Compatibility {
 	return Compatible
 }
 
-// isByte checks if the type represents a byte (u8)
-func isByte(t Type) bool {
-	if t == nil {
-		return false
-	}
-	switch typ := t.(type) {
-	case *IntegerType:
-		return !typ.Signed && typ.Bits == 8
-	case *NamedType:
-		return typ.Name == "byte" || typ.Name == "u8"
-	default:
-		return false
-	}
-}
-
 // isIntegerFamily returns true for signed and unsigned integer families
 func isIntegerFamily(f NumericFamily) bool {
 	return f == NumericSigned || f == NumericUnsigned
@@ -308,9 +276,4 @@ func isIntegerFamily(f NumericFamily) bool {
 // isFloatFamily returns true for floating-point family
 func isFloatFamily(f NumericFamily) bool {
 	return f == NumericFloat
-}
-
-// isSignedFamily returns true for signed integer family
-func isSignedFamily(f NumericFamily) bool {
-	return f == NumericSigned
 }

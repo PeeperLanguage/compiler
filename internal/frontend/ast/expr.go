@@ -112,8 +112,9 @@ func (e *BadExpr) loc() *source.Location { return e.Location }
 
 type NumberLit struct {
 	NodeIDHolder
-	Value    string
-	Location *source.Location
+	Value        string
+	ExplicitType string
+	Location     *source.Location
 }
 
 func (*NumberLit) exprNode()               {}

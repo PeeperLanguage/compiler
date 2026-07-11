@@ -11,6 +11,7 @@ type SyntaxOptions struct {
 	ResolveNamed      func(name string) (Type, bool)
 	ResolveQualified  func(moduleName, memberName string) (Type, bool)
 	InvalidSelf       func(node *ast.NamedType) Type
+	InvalidArrayLen   func(node *ast.NumberLit) Type
 }
 
 func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
@@ -42,6 +43,8 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		switch typ.Name {
 		case "bool":
 			return &BoolType{}
+		case "byte":
+			return &ByteType{}
 		case "cstr":
 			return &CStrType{}
 		case "string":
@@ -91,6 +94,23 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		}
 		length := ""
 		if typ.Len != nil {
+			lengthType := DefaultNumberType(typ.Len.Value)
+			if typ.Len.ExplicitType != "" {
+				var ok bool
+				lengthType, ok = NumericTypeFromName(typ.Len.ExplicitType)
+				if !ok {
+					if opts.InvalidArrayLen != nil {
+						return opts.InvalidArrayLen(typ.Len)
+					}
+					return &InvalidType{}
+				}
+			}
+			if !IsIntegral(lengthType) || !LiteralFitsType(typ.Len.Value, lengthType) {
+				if opts.InvalidArrayLen != nil {
+					return opts.InvalidArrayLen(typ.Len)
+				}
+				return &InvalidType{}
+			}
 			length = typ.Len.Value
 		}
 		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: TypeFromSyntax(typ.Elem, opts)}

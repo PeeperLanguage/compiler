@@ -107,7 +107,7 @@ func llvmTypeName(typeText string) (string, bool) {
 		}
 		return "{ " + strings.Join(parts, ", ") + " }", true
 	}
-	if _, bits, ok := token.ParseIntegerBuiltin(typeText); ok {
+	if _, bits, ok := mirIntegerInfo(typeText); ok {
 		return fmt.Sprintf("i%d", bits), true
 	}
 	switch typeText {
@@ -126,6 +126,13 @@ func llvmTypeName(typeText string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func mirIntegerInfo(typeText string) (signed bool, bits int, ok bool) {
+	if typeText == "byte" {
+		return false, 8, true
+	}
+	return token.ParseIntegerBuiltin(typeText)
 }
 
 func optionalInnerTypeText(typeText string) (string, bool) {

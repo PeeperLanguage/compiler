@@ -134,7 +134,7 @@ func numberHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	l.advanceBy(match)
-	l.push(token.Token{Kind: token.NUMBER, Literal: strings.ReplaceAll(match, "_", ""), Start: start, End: l.pos})
+	l.push(token.Token{Kind: token.NUMBER, Literal: match, Start: start, End: l.pos})
 }
 
 func stringHandler(l *Lexer, re *regexp.Regexp) {

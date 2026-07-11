@@ -381,6 +381,11 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
 		return ifaceExpr
 	}
+	if expectedType != nil && resolvedType != nil && !typeinfo.SameType(expectedType, resolvedType) &&
+		typeinfo.CheckNumericCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
+		value := lowerASTExpr(ctx, module, scope, expr, nil)
+		return &ir.Cast{Expr: value, Type: loweredTypeText(module, expectedType), Location: loc}
+	}
 	expectedTypeStr := loweredTypeText(module, expectedType)
 
 	switch node := expr.(type) {
@@ -472,10 +477,20 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	case *ast.BinaryExpr:
 		leftExpected := expectedType
 		rightExpected := expectedType
+		leftType := exprResolvedType(module, node.Left)
+		rightType := exprResolvedType(module, node.Right)
+		if common := typeinfo.CommonNumericType(leftType, rightType); common != nil {
+			leftExpected = common
+			rightExpected = common
+		}
 		switch node.Op {
 		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
-			leftExpected = exprResolvedType(module, node.Left)
-			rightExpected = exprResolvedType(module, node.Right)
+			if leftExpected == nil {
+				leftExpected = leftType
+			}
+			if rightExpected == nil {
+				rightExpected = rightType
+			}
 			if _, ok := node.Left.(*ast.NoneLit); ok && rightExpected != nil {
 				leftExpected = rightExpected
 			}
@@ -948,25 +963,28 @@ func lowerNumberLit(module *project.Module, node *ast.NumberLit, expectedType ty
 	if node == nil {
 		return &ir.InvalidExpr{Message: "nil number literal", Type: "<invalid>"}
 	}
+	integerValue := node.Value
+	if !numeric.IsFloat(node.Value) {
+		if canonical, err := numeric.CanonicalizeIntegerLiteral(node.Value); err == nil {
+			integerValue = canonical
+		}
+	}
 	if expectedType == nil || typeinfo.IsInvalidOrUnknown(expectedType) {
 		// No expected type — use language default.
 		if numeric.IsFloat(node.Value) {
 			return &ir.FloatLit{Value: node.Value, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value)), Location: loc}
 		}
-		return &ir.IntLit{Value: node.Value, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value)), Location: loc}
+		return &ir.IntLit{Value: integerValue, Type: typeinfo.TypeText(typeinfo.DefaultNumberType(node.Value)), Location: loc}
 	}
 	family, _, numericType := typeinfo.NumericInfo(expectedType)
 	if numericType && family == typeinfo.NumericFloat {
 		v := node.Value
-		if !numeric.IsFloat(v) {
-			// Convert integer text to float text for LLVM IR.
-			if iv, err := numeric.StringToBigInt(v); err == nil {
-				v = iv.String() + ".0"
-			}
+		if !numeric.IsFloat(node.Value) {
+			v = integerValue + ".0"
 		}
 		return &ir.FloatLit{Value: v, Type: loweredTypeText(module, expectedType), Location: loc}
 	}
-	return &ir.IntLit{Value: node.Value, Type: loweredTypeText(module, expectedType), Location: loc}
+	return &ir.IntLit{Value: integerValue, Type: loweredTypeText(module, expectedType), Location: loc}
 }
 
 func symbolName(sym *symbols.Symbol) string {

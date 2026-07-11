@@ -16,11 +16,12 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		{"same f64", &FloatType{Bits: 64}, &FloatType{Bits: 64}, Compatible},
 		{"same u8", &IntegerType{Signed: false, Bits: 8}, &IntegerType{Signed: false, Bits: 8}, Compatible},
 
-		// === BYTE RULES ===
-		{"byte to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: false, Bits: 8}, ExplicitCastable},
-		{"i32 to byte", &IntegerType{Signed: false, Bits: 8}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
-		{"byte to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 8}, ExplicitCastable},
-		{"byte to byte", &IntegerType{Signed: false, Bits: 8}, &IntegerType{Signed: false, Bits: 8}, Compatible},
+		// === BYTE CLASS ===
+		{"byte to i32", &IntegerType{Signed: true, Bits: 32}, &ByteType{}, ExplicitCastable},
+		{"i32 to byte", &ByteType{}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
+		{"byte to f64", &FloatType{Bits: 64}, &ByteType{}, ExplicitCastable},
+		{"byte to byte", &ByteType{}, &ByteType{}, Compatible},
+		{"u8 to byte", &ByteType{}, &IntegerType{Signed: false, Bits: 8}, ExplicitCastable},
 
 		// === INTEGER WIDENING (same signedness) ===
 		{"i8 to i16", &IntegerType{Signed: true, Bits: 16}, &IntegerType{Signed: true, Bits: 8}, Compatible},
@@ -34,7 +35,7 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		{"i64 to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: true, Bits: 64}, ExplicitCastable},
 
 		// === UNSIGNED WIDENING ===
-		// Note: u8 (8-bit unsigned) is treated as byte, so it requires explicit cast
+		{"u8 to u16", &IntegerType{Signed: false, Bits: 16}, &IntegerType{Signed: false, Bits: 8}, Compatible},
 		{"u16 to u32", &IntegerType{Signed: false, Bits: 32}, &IntegerType{Signed: false, Bits: 16}, Compatible},
 		{"u32 to u64", &IntegerType{Signed: false, Bits: 64}, &IntegerType{Signed: false, Bits: 32}, Compatible},
 
@@ -45,7 +46,8 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		// === SIGNED <-> UNSIGNED ===
 		{"i32 to u32", &IntegerType{Signed: false, Bits: 32}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
 		{"u32 to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
-		{"i8 to u16", &IntegerType{Signed: false, Bits: 16}, &IntegerType{Signed: true, Bits: 8}, ExplicitCastable},
+		{"i8 to u16", &IntegerType{Signed: false, Bits: 16}, &IntegerType{Signed: true, Bits: 8}, Compatible},
+		{"u8 to i16", &IntegerType{Signed: true, Bits: 16}, &IntegerType{Signed: false, Bits: 8}, Compatible},
 
 		// === FLOAT WIDENING ===
 		{"f32 to f64", &FloatType{Bits: 64}, &FloatType{Bits: 32}, Compatible},
@@ -53,22 +55,17 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		// === FLOAT NARROWING ===
 		{"f64 to f32", &FloatType{Bits: 32}, &FloatType{Bits: 64}, ExplicitCastable},
 
-		// === INTEGER TO FLOAT ===
-		// f64 can represent all i32 and smaller exactly
-		{"i8 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 8}, Compatible},
-		{"i16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 16}, Compatible},
-		{"i32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 32}, Compatible},
-		{"u16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 16}, Compatible},
-		{"u32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 32}, Compatible},
-
-		// i32 to f32: NOT allowed (f32 mantissa is only 24 bits, can't represent all i32)
+		// === INTEGER TO FLOAT: CROSS-CLASS ===
+		{"i8 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 8}, ExplicitCastable},
+		{"i16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 16}, ExplicitCastable},
+		{"i32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
+		{"u16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 16}, ExplicitCastable},
+		{"u32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
 		{"i32 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
 		{"u32 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
-
-		// f32 can represent i16 and smaller exactly (24-bit mantissa)
-		{"i8 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 8}, Compatible},
-		{"i16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 16}, Compatible},
-		{"u16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: false, Bits: 16}, Compatible},
+		{"i8 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 8}, ExplicitCastable},
+		{"i16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 16}, ExplicitCastable},
+		{"u16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: false, Bits: 16}, ExplicitCastable},
 
 		// === FLOAT TO INTEGER ===
 		// Always explicit (fractional part loss)

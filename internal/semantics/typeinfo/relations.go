@@ -18,6 +18,9 @@ func SameType(left, right Type) bool {
 	case *IntegerType:
 		r, ok := right.(*IntegerType)
 		return ok && r != nil && l.Signed == r.Signed && l.Bits == r.Bits
+	case *ByteType:
+		_, ok := right.(*ByteType)
+		return ok
 	case *BoolType:
 		_, ok := right.(*BoolType)
 		return ok
@@ -69,6 +72,7 @@ const (
 	NumericInvalid NumericFamily = iota
 	NumericSigned
 	NumericUnsigned
+	NumericByte
 	NumericFloat
 )
 
@@ -83,6 +87,8 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 			return NumericSigned, typ.Bits, true
 		}
 		return NumericUnsigned, typ.Bits, true
+	case *ByteType:
+		return NumericByte, 8, true
 	case *FloatType:
 		if typ == nil {
 			return NumericInvalid, 0, false
@@ -91,6 +97,9 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 	case *NamedType:
 		if typ == nil {
 			return NumericInvalid, 0, false
+		}
+		if typ.Name == "byte" {
+			return NumericByte, 8, true
 		}
 		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name); ok {
 			if signed {
@@ -108,6 +117,23 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 		}
 	default:
 		return NumericInvalid, 0, false
+	}
+}
+
+// NumericTypeFromName is the canonical bridge from explicit source type text
+// to semantic numeric identity. Arbitrary float widths stay rejected until the
+// language has a representation independent from LLVM's target float set.
+func NumericTypeFromName(name string) (Type, bool) {
+	if signed, bits, ok := token.ParseIntegerBuiltin(name); ok {
+		return &IntegerType{Signed: signed, Bits: bits}, true
+	}
+	switch name {
+	case "f32":
+		return &FloatType{Bits: 32}, true
+	case "f64":
+		return &FloatType{Bits: 64}, true
+	default:
+		return nil, false
 	}
 }
 

@@ -76,6 +76,30 @@ fn sum(a: i64, b: f32) -> f64 {
 	}
 }
 
+func TestParseExplicitNumericLiteralPostfixes(t *testing.T) {
+	mod, diag := parseTestModule(`fn main() -> i32 {
+	let a = -128i8;
+	let b = 0xffu24;
+	let c = 2.4f32;
+	return 0;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	wants := []struct {
+		value string
+		typ   string
+	}{{"-128", "i8"}, {"0xff", "u24"}, {"2.4", "f32"}}
+	for index, want := range wants {
+		decl := fn.Body.Stmts[index].(*ast.LetDecl)
+		lit, ok := decl.Value.(*ast.NumberLit)
+		if !ok || lit.Value != want.value || lit.ExplicitType != want.typ {
+			t.Fatalf("literal %d = %#v, want value=%q type=%q", index, decl.Value, want.value, want.typ)
+		}
+	}
+}
+
 func TestParseRejectsTopLevelLet(t *testing.T) {
 	src := `let x: i32 = 1;
 fn main() -> i32 { return 0; }`

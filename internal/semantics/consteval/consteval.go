@@ -121,7 +121,13 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		typ := typeinfo.DefaultNumberType(node.Value)
-		if expected != nil {
+		if node.ExplicitType != "" {
+			if explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType); ok {
+				typ = explicit
+			} else {
+				return nil, false
+			}
+		} else if expected != nil {
 			typ = expected
 		}
 		typText := typeinfo.TypeText(typ)

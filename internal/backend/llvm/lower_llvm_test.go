@@ -18,6 +18,9 @@ const (
 
 func TestLLVMTypeNameModelTypes(t *testing.T) {
 	cases := map[string]string{
+		"byte":             "i8",
+		"i24":              "i24",
+		"u8388608":         "i8388608",
 		"string":           "{ i8*, i64 }",
 		"?i32":             "{ i1, i32 }",
 		"?string":          "{ i1, { i8*, i64 } }",
@@ -41,6 +44,14 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		if got != want {
 			t.Fatalf("llvmTypeName(%q) = %q, want %q", typeText, got, want)
 		}
+	}
+}
+
+func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
+	f32 := llvmFloatConst("2.4", "f32")
+	f64 := llvmFloatConst("2.4", "f64")
+	if !strings.HasPrefix(f32, "0x") || !strings.HasPrefix(f64, "0x") || f32 == f64 {
+		t.Fatalf("float constants: f32=%q f64=%q", f32, f64)
 	}
 }
 

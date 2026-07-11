@@ -41,7 +41,7 @@ func TestBuiltinTypeAndStringer(t *testing.T) {
 	if !IsBuiltinType("i128") || !IsBuiltinType("u1024") {
 		t.Fatalf("expected arbitrary-width builtin integers to be recognized")
 	}
-	if IsBuiltinType("i24") || IsBuiltinType("u04") || IsBuiltinType("i3") {
+	if !IsBuiltinType("i24") || !IsBuiltinType("i3") || IsBuiltinType("u0") || IsBuiltinType("i8388609") {
 		t.Fatalf("expected invalid builtin integer widths to be rejected")
 	}
 	s := (Token{Kind: IDENT, Literal: "x"}).String()
@@ -61,9 +61,11 @@ func TestParseIntegerBuiltin(t *testing.T) {
 		{name: "u1024", signed: false, bits: 1024, ok: true},
 		{name: "isize", signed: true, bits: target.SizeBits(), ok: true},
 		{name: "usize", signed: false, bits: target.SizeBits(), ok: true},
-		{name: "byte", signed: false, bits: 8, ok: true},
-		{name: "i24", ok: false},
-		{name: "u04", ok: false},
+		{name: "byte", ok: false},
+		{name: "i24", signed: true, bits: 24, ok: true},
+		{name: "u4", signed: false, bits: 4, ok: true},
+		{name: "i8388608", signed: true, bits: 8388608, ok: true},
+		{name: "i8388609", ok: false},
 		{name: "foo", ok: false},
 	}
 	for _, tt := range tests {
