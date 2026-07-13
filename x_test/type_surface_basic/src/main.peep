@@ -1,15 +1,13 @@
-#[no_copy]
 struct Buffer {
-    ptr: ^u8
+    ptr: *u8
 }
 
-#[allow_copy]
 struct Cursor {
-    ptr: ^u8
+    ptr: *u8
 }
 
 struct View {
-    ptr: *u8
+    ptr: rawptr
 }
 
 type MaybeInt = ?i32;

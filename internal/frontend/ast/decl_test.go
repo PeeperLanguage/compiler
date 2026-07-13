@@ -60,7 +60,6 @@ func TestNonTypeDeclarationsDoNotImplementTypeDecl(t *testing.T) {
 		{name: "const", decl: &ConstDecl{}},
 		{name: "fn", decl: &FnDecl{}},
 		{name: "bad", decl: &BadDecl{}},
-		{name: "impl", decl: &ImplDecl{}},
 	}
 
 	for _, tt := range tests {

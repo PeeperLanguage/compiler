@@ -36,7 +36,7 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 		InvalidSelf: func(node *ast.NamedType) typeinfo.Type {
 			if ctx != nil && ctx.Diagnostics != nil {
 				ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-					"`Self` can only be used in interface methods and impl blocks", ast.LocOf(node), "")
+					"`Self` can only be used as an iface method receiver", ast.LocOf(node), "")
 			}
 			return &typeinfo.InvalidType{}
 		},

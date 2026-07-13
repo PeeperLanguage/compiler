@@ -1,0 +1,7 @@
+fn (self: i32) value() -> i32 {
+    return self;
+}
+
+fn main() -> i32 {
+    return 0;
+}

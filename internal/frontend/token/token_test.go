@@ -23,6 +23,15 @@ func TestLookupIdentAndKeywordHelpers(t *testing.T) {
 	if doc, ok := KeywordDocByKind(RETURN); !ok || !strings.Contains(doc, "Return") {
 		t.Fatalf("expected keyword doc for RETURN, got (%q, %v)", doc, ok)
 	}
+	if got := LookupIdent("free"); got != FREE {
+		t.Fatalf("LookupIdent(free) = %v", got)
+	}
+	if doc, ok := KeywordDocByKind(FREE); !ok || !strings.Contains(doc, "owned") {
+		t.Fatalf("expected keyword doc for FREE, got (%q, %v)", doc, ok)
+	}
+	if got := LookupIdent("print"); got != PRINT {
+		t.Fatalf("LookupIdent(print) = %v", got)
+	}
 	if _, ok := KeywordDoc("custom"); ok {
 		t.Fatalf("did not expect keyword doc for non-keyword ident")
 	}

@@ -62,9 +62,14 @@ func (p *Parser) ParseModule() *ast.Module {
 		case nil:
 			if !p.at(token.EOF) {
 				loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+				p.reportInvalidModuleStmt(loc, "module scope expects declaration", "remove unexpected token")
 				mod.Stmts = append(mod.Stmts, reg(p, &ast.BadStmt{Location: loc}))
+				before := p.pos
 				p.synchronize(token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
-					token.INTERFACE, token.ENUM, token.IMPL, token.TYPE)
+					token.IFACE, token.ENUM, token.TYPE)
+				if p.pos == before && !p.at(token.EOF) {
+					p.advance()
+				}
 			}
 		case ast.Decl:
 			if _, ok := node.(*ast.LetDecl); ok {
@@ -151,6 +156,10 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	if start == nil {
 		return nil
 	}
+	var receiver *ast.Param
+	if p.at(token.LPAREN) {
+		receiver = p.parseReceiver()
+	}
 	name, typeParams, params, returnType, ok := p.parseFnSignature()
 	if name != nil {
 		p.pushContext("function '" + name.Name + "'")
@@ -160,6 +169,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		// Return partial FnDecl with whatever was parsed
 		decl := reg(p, &ast.FnDecl{
 			Name:       name,
+			Receiver:   receiver,
 			TypeParams: typeParams,
 			Params:     params,
 			ReturnType: returnType,
@@ -170,6 +180,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	body := p.parseFnBody()
 	decl := reg(p, &ast.FnDecl{
 		Name:       name,
+		Receiver:   receiver,
 		TypeParams: typeParams,
 		Params:     params,
 		ReturnType: returnType,
@@ -177,6 +188,19 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		Location:   source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
 	})
 	return setDeclSurface(decl, fnDeclSurface("fn", decl))
+}
+
+func (p *Parser) parseReceiver() *ast.Param {
+	start := p.consume(token.LPAREN, "expected '(' before receiver")
+	if start == nil {
+		return nil
+	}
+	receiver, ok := p.parseParam()
+	p.expectClose(start.Start, token.RPAREN, "(")
+	if !ok {
+		return nil
+	}
+	return &receiver
 }
 
 // parseFnSignature parses the name, optional type parameters, parameter list,
@@ -334,7 +358,7 @@ func (p *Parser) parseStructDecl() ast.Decl {
 }
 
 func (p *Parser) parseInterfaceDecl() ast.Decl {
-	start := p.consume(token.INTERFACE, "expected interface")
+	start := p.consume(token.IFACE, "expected iface")
 	if start == nil {
 		return nil
 	}
@@ -375,53 +399,6 @@ func (p *Parser) parseEnumDecl() ast.Decl {
 		Location:   source.NewLocation(p.filePath, start.Start, end.End),
 	})
 	return setDeclSurface(decl, enumDeclSurface(decl))
-}
-
-func (p *Parser) parseImplDecl() ast.Decl {
-	start := p.consume(token.IMPL, "expected impl")
-	if start == nil {
-		return nil
-	}
-	target := p.parseTypeExpr()
-	if target == nil {
-		return nil
-	}
-	if p.consume(token.LBRACE, "expected '{' after impl target") == nil {
-		return nil
-	}
-	lbracePos := p.stream[p.pos-1].Start
-	var methods []*ast.FnDecl
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		doc, attrs := p.parseLeadingMetadata()
-		if p.at(token.RBRACE) || p.at(token.EOF) {
-			break
-		}
-		if p.current().Kind != token.FN {
-			p.diag.Add(diagnostics.NewError("expected method declaration").WithCode(diagnostics.ErrInvalidDeclaration).WithPrimaryLabel(source.NewLocation(p.filePath, p.stream[p.pos-1].Start, p.stream[p.pos-1].End), fmt.Sprintf("found %s", p.current().Kind)))
-			p.synchronize(token.FN, token.RBRACE)
-			continue
-		}
-		decl, ok := p.parseFnDecl().(*ast.FnDecl)
-		if !ok || decl == nil {
-			p.synchronize(token.FN, token.RBRACE)
-			continue
-		}
-		decl.SetDocComment(doc)
-		decl.SetAttributes(attrs)
-		methods = append(methods, decl)
-	}
-	end := p.expectClose(lbracePos, token.RBRACE, "{")
-	var endPos source.Position
-	if end != nil {
-		endPos = end.End
-	} else if len(methods) > 0 && methods[len(methods)-1].Location != nil && methods[len(methods)-1].Location.End != nil {
-		endPos = *methods[len(methods)-1].Location.End
-	} else {
-		endPos = lbracePos
-	}
-	p.match(token.SEMICOLON)
-	decl := reg(p, &ast.ImplDecl{Target: target, Methods: methods, Location: source.NewLocation(p.filePath, start.Start, endPos)})
-	return setDeclSurface(decl, implDeclSurface(decl))
 }
 
 func (p *Parser) parseTypeAliasDecl() ast.Decl {
@@ -591,16 +568,12 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 		if decl := p.parseStructDecl(); decl != nil {
 			stmt = decl.(ast.Stmt)
 		}
-	case token.INTERFACE:
+	case token.IFACE:
 		if decl := p.parseInterfaceDecl(); decl != nil {
 			stmt = decl.(ast.Stmt)
 		}
 	case token.ENUM:
 		if decl := p.parseEnumDecl(); decl != nil {
-			stmt = decl.(ast.Stmt)
-		}
-	case token.IMPL:
-		if decl := p.parseImplDecl(); decl != nil {
 			stmt = decl.(ast.Stmt)
 		}
 	case token.TYPE:
@@ -825,9 +798,9 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		return p.parseRefTypeExpr()
 	case token.QUESTION:
 		return p.parseOptionalTypeExpr()
-	case token.CARET:
-		return p.parseOwnedPtrTypeExpr()
 	case token.ASTERISK:
+		return p.parseOwnedPtrTypeExpr()
+	case token.RAWPTR:
 		return p.parseRawPtrTypeExpr()
 	case token.LBRACK:
 		return p.parseBracketTypeExpr()
@@ -835,7 +808,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		return p.parseFuncTypeExpr()
 	case token.STRUCT:
 		return p.parseStructTypeExpr()
-	case token.INTERFACE:
+	case token.IFACE:
 		return p.parseInterfaceTypeExpr()
 	case token.ENUM:
 		return p.parseEnumTypeExpr()
@@ -900,7 +873,7 @@ func (p *Parser) parseOptionalTypeExpr() ast.TypeExpr {
 }
 
 func (p *Parser) parseOwnedPtrTypeExpr() ast.TypeExpr {
-	start := p.consume(token.CARET, "expected '^' in owned pointer type")
+	start := p.consume(token.ASTERISK, "expected '*' in owned pointer type")
 	if start == nil {
 		return nil
 	}
@@ -915,17 +888,12 @@ func (p *Parser) parseOwnedPtrTypeExpr() ast.TypeExpr {
 }
 
 func (p *Parser) parseRawPtrTypeExpr() ast.TypeExpr {
-	start := p.consume(token.ASTERISK, "expected '*' in raw pointer type")
-	if start == nil {
-		return nil
-	}
-	target := p.parseTypeExpr()
-	if target == nil {
+	tok := p.consume(token.RAWPTR, "expected 'rawptr' in raw pointer type")
+	if tok == nil {
 		return nil
 	}
 	return reg(p, &ast.RawPtrType{
-		Target:   target,
-		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
+		Location: source.NewLocation(p.filePath, tok.Start, tok.End),
 	})
 }
 
@@ -985,10 +953,8 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	}
 	lparenPos := p.stream[p.pos-1].Start
 	var params []ast.TypeExpr
-	var consumes []bool
 	if !p.at(token.RPAREN) {
 		for {
-			consume := p.match(token.MOVE)
 			if p.at(token.IDENT) && p.next().Kind == token.COLON {
 				p.advance()
 				p.advance()
@@ -998,7 +964,6 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 				return nil
 			}
 			params = append(params, param)
-			consumes = append(consumes, consume)
 			if !p.match(token.COMMA) {
 				break
 			}
@@ -1020,7 +985,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	} else {
 		endPos = start.End
 	}
-	return reg(p, &ast.FuncType{Params: params, Consumes: consumes, Return: ret, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
 func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
@@ -1033,7 +998,7 @@ func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
 }
 
 func (p *Parser) parseInterfaceTypeExpr() ast.TypeExpr {
-	start := p.consume(token.INTERFACE, "expected interface")
+	start := p.consume(token.IFACE, "expected iface")
 	if start == nil {
 		return nil
 	}
@@ -1071,8 +1036,15 @@ func (p *Parser) parseStructFields() ([]ast.TypeField, *token.Token, bool) {
 }
 
 func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) {
-	return parseBracedItemList(p, "expected '{' after interface", "expected '}' after interface methods",
+	return parseBracedItemList(p, "expected '{' after iface", "expected '}' after iface methods",
 		func() (ast.TypeMethod, bool) {
+			if p.consume(token.FN, "expected 'fn' before interface method") == nil {
+				return ast.TypeMethod{}, false
+			}
+			receiver := p.parseReceiver()
+			if receiver == nil {
+				return ast.TypeMethod{}, false
+			}
 			name := p.parseIdent()
 			if name == nil {
 				return ast.TypeMethod{}, false
@@ -1098,6 +1070,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 			}
 			return ast.TypeMethod{
 				Name:       name,
+				Receiver:   receiver,
 				TypeParams: typeParams,
 				Params:     params,
 				ReturnType: ret,
@@ -1169,21 +1142,13 @@ func (p *Parser) parseParams() []ast.Param {
 
 func (p *Parser) parseParam() (ast.Param, bool) {
 	var (
-		consumes      bool
 		mutable       bool
 		modifierStart source.Position
 	)
-	if p.at(token.MOVE) {
-		tok := p.advance()
-		consumes = true
-		modifierStart = tok.Start
-	}
 	if p.at(token.MUT) {
 		tok := p.advance()
 		mutable = true
-		if !consumes {
-			modifierStart = tok.Start
-		}
+		modifierStart = tok.Start
 	}
 	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
 		name := p.parseIdent()
@@ -1200,21 +1165,17 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 			endPos = ast.EndOf(ty)
 		}
 		startPos := ast.StartOf(name)
-		if consumes || mutable {
+		if mutable {
 			startPos = modifierStart
 		}
-		return ast.Param{Consumes: consumes, IsMutable: mutable, Name: name, Type: ty, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
+		return ast.Param{IsMutable: mutable, Name: name, Type: ty, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
 	}
 	ty := p.parseTypeExpr()
 	if ty == nil {
 		return ast.Param{}, false
 	}
-	if consumes || mutable {
-		modifier := "mutable"
-		if consumes {
-			modifier = "move"
-		}
-		p.diag.Add(diagnostics.NewError(modifier+" parameter requires a named binding").
+	if mutable {
+		p.diag.Add(diagnostics.NewError("mutable parameter requires a named binding").
 			WithCode(diagnostics.ErrInvalidDeclaration).
 			WithPrimaryLabel(source.NewLocation(p.filePath, modifierStart, p.prev().End), "add a parameter name after the modifier"))
 		return ast.Param{}, false
@@ -1228,8 +1189,8 @@ func (p *Parser) synchronize(kinds ...token.Kind) {
 	for !p.at(token.EOF) {
 		switch p.current().Kind {
 		case token.SEMICOLON, token.RBRACE, token.RPAREN, token.RBRACK,
-			token.FN, token.LET, token.CONST, token.STRUCT, token.INTERFACE,
-			token.ENUM, token.IMPL, token.TYPE, token.IF, token.RETURN, token.IMPORT:
+			token.FN, token.LET, token.CONST, token.STRUCT, token.IFACE,
+			token.ENUM, token.TYPE, token.IF, token.RETURN, token.IMPORT:
 			return
 		}
 		if slices.Contains(kinds, p.current().Kind) {

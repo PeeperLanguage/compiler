@@ -147,7 +147,7 @@ func TestCompletionSelectorUsesFieldsMethodsAndFullIdentifierRange(t *testing.T)
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
 	source := "struct Point {\n\tName: i32,\n\tNumber: i32,\n}\n" +
-		"impl Point {\n\tfn Normalize(self: &Self) -> i32 { return self.Number; }\n}\n" +
+		"fn (self: &Point) Normalize() -> i32 { return self.Number; }\n" +
 		"fn inspect(point: &Point) -> i32 {\n\treturn point.Na__CURSOR__me;\n}\n"
 	state := NewServerState()
 	state.RootDir = root
@@ -175,7 +175,7 @@ func TestCompletionSelectorUsesFieldsMethodsAndFullIdentifierRange(t *testing.T)
 func TestCompletionSelectorIncludesInterfaceMethods(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
-	source := "interface Writer {\n\twrite(self: &mut Self, value: i32)\n}\n" +
+	source := "iface Writer {\n\tfn (&mut Self) write(value: i32)\n}\n" +
 		"fn use(writer: Writer) {\n\twriter.__CURSOR__;\n}\n"
 	state := NewServerState()
 	state.RootDir = root

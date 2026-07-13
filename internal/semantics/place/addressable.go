@@ -9,6 +9,19 @@ import (
 
 type ExprTypeFunc func(ast.Expr) typeinfo.Type
 
+func IsPlaceExpr(expr ast.Expr) bool {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return true
+	case *ast.SelectorExpr:
+		return node != nil && IsPlaceExpr(node.Expr)
+	case *ast.IndexExpr:
+		return node != nil && IsPlaceExpr(node.Expr)
+	default:
+		return false
+	}
+}
+
 func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool {
 	if scope == nil || expr == nil {
 		return false

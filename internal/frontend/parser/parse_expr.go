@@ -67,9 +67,10 @@ func init() {
 		tok := p.advance()
 		return reg(p, &ast.BoolLit{Value: false, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.MOVE, func(p *Parser) ast.Expr { return p.parseMoveExpr() })
 	nud(token.AT, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressRaw) })
 	nud(token.AMP, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressShared) })
+	nud(token.FREE, func(p *Parser) ast.Expr { return p.parseFreeExpr() })
+	nud(token.PRINT, func(p *Parser) ast.Expr { return p.parsePrintExpr() })
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
 	// grouping
@@ -192,19 +193,6 @@ func (p *Parser) parseNumberLit(sign string) ast.Expr {
 	return reg(p, &ast.NumberLit{Value: literal.Value, ExplicitType: literal.ExplicitType, Location: loc})
 }
 
-func (p *Parser) parseMoveExpr() ast.Expr {
-	tok := p.advance()
-	expr := p.parseExpr(precPrefix)
-	if expr == nil {
-		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
-		return reg(p, &ast.BadExpr{Location: loc})
-	}
-	return reg(p, &ast.MoveExpr{
-		Expr:     expr,
-		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
-	})
-}
-
 func (p *Parser) parseAddressExpr(mode ast.AddressMode) ast.Expr {
 	tok := p.advance()
 	if mode == ast.AddressShared && p.match(token.MUT) {
@@ -220,6 +208,37 @@ func (p *Parser) parseAddressExpr(mode ast.AddressMode) ast.Expr {
 		Expr:     expr,
 		Location: source.NewLocation(p.filePath, tok.Start, ast.EndOf(expr)),
 	})
+}
+
+func (p *Parser) parseFreeExpr() ast.Expr {
+	start := p.advance()
+	if p.consume(token.LPAREN, "expected '(' after 'free'") == nil {
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+	}
+	expr := p.parseExpr(precLowest)
+	end := p.expectClose(start.Start, token.RPAREN, "(")
+	endPos := ast.EndOf(expr)
+	if end != nil {
+		endPos = end.End
+	}
+	return reg(p, &ast.FreeExpr{
+		Expr:     expr,
+		Location: source.NewLocation(p.filePath, start.Start, endPos),
+	})
+}
+
+func (p *Parser) parsePrintExpr() ast.Expr {
+	start := p.advance()
+	if p.consume(token.LPAREN, "expected '(' after 'print'") == nil {
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+	}
+	expr := p.parseExpr(precLowest)
+	end := p.expectClose(start.Start, token.RPAREN, "(")
+	endPos := ast.EndOf(expr)
+	if end != nil {
+		endPos = end.End
+	}
+	return reg(p, &ast.PrintExpr{Expr: expr, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
 func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {

@@ -43,6 +43,32 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{{
+			Name:       "release",
+			ReturnType: "i32",
+			Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{
+				Value:   &ir.IntLit{Value: "7", Type: "i32"},
+				Cleanup: []ir.Expr{&ir.Drop{Value: &ir.Ident{Name: "owner", Type: "*i32"}}},
+			}}},
+		}},
+	}
+	out := GenerateMIR(mod, nil, nil)
+	block := out.Funcs[0].Blocks[0]
+	if len(block.Instrs) != 1 {
+		t.Fatalf("expected one cleanup instruction, got %#v", block.Instrs)
+	}
+	if _, ok := block.Instrs[0].(*Drop); !ok {
+		t.Fatalf("expected MIR drop, got %#v", block.Instrs[0])
+	}
+	ret, ok := block.Term.(*Ret)
+	if !ok || ret.Value.Text() != "7" {
+		t.Fatalf("expected preserved return value, got %#v", block.Term)
+	}
+}
+
 func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 	mod := &hir.Module{Name: "test"}
 	scope := table.New(nil)
@@ -195,7 +221,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
+func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",
 		Funcs: []*hir.Function{
@@ -208,12 +234,12 @@ func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
 							Name: "ptr",
 							Value: &ir.AddrOf{
 								Expr: &ir.Field{
-									Base:       &ir.Ident{Name: "boxptr", Type: "^struct{value: i32}"},
+									Base:       &ir.Ident{Name: "boxptr", Type: "*struct{value: i32}"},
 									Index:      0,
 									ThroughPtr: true,
 									Type:       "i32",
 								},
-								Type: "^i32",
+								Type: "rawptr",
 							},
 						},
 						&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
@@ -227,12 +253,22 @@ func TestGenerateMIRLowersAddressOfPointerFieldAsProjectField(t *testing.T) {
 	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
-	assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	assign, ok := instrs[0].(*Assign)
 	if !ok {
-		t.Fatalf("expected first instruction assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
+		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
-	if _, ok := assign.Value.(*ProjectField); !ok {
+	projected, ok := assign.Value.(*ProjectField)
+	if !ok || projected.Type != "&mut i32" {
 		t.Fatalf("expected address-of field to lower as ProjectField, got %#v", assign.Value)
+	}
+	castAssign, ok := instrs[1].(*Assign)
+	if !ok {
+		t.Fatalf("expected second instruction assignment, got %#v", instrs)
+	}
+	cast, ok := castAssign.Value.(*Cast)
+	if !ok || cast.Type != "rawptr" {
+		t.Fatalf("expected projected field address to cast to rawptr, got %#v", castAssign.Value)
 	}
 }
 
@@ -265,6 +301,33 @@ func TestGenerateMIRLowersSliceView(t *testing.T) {
 	view, ok := assign.Value.(*SliceView)
 	if !ok || view.Type != "&[]i32" || view.Source.Text() != "xs" {
 		t.Fatalf("expected MIR SliceView, got %#v", assign.Value)
+	}
+}
+
+func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{{
+			Name:       "slice",
+			ReturnType: "i32",
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Binding{Name: "view", Value: &ir.SliceView{
+					Source:       &ir.Ident{Name: "xs", Type: "&[]i32"},
+					Start:        &ir.IntLit{Value: "1", Type: "i32"},
+					End:          &ir.IntLit{Value: "3", Type: "i32"},
+					EndExclusive: true,
+					Type:         "&[]i32",
+				}},
+				&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	assign := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+	view, ok := assign.Value.(*SliceView)
+	if !ok || !view.EndExclusive || view.Start.Text() != "1" || view.End.Text() != "3" {
+		t.Fatalf("expected preserved MIR range, got %#v", assign.Value)
 	}
 }
 
@@ -313,6 +376,55 @@ func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRDropsOwnerBearingTemporaryAfterFieldProjection(t *testing.T) {
+	ownerType := "struct{value: i32, ptr: *i32}"
+	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
+		Name: "read", ReturnType: "i32", Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Field{
+			Base:  &ir.Call{Callee: &ir.Ident{Name: "make", Type: "fn() -> " + ownerType}, Type: ownerType},
+			Index: 0, DropBase: true, Type: "i32",
+		}}}},
+	}}}
+	out := GenerateMIR(mod, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 3 {
+		t.Fatalf("expected call, projection, and drop, got %#v", instrs)
+	}
+	if _, ok := instrs[0].(*Assign); !ok {
+		t.Fatalf("expected call assignment, got %#v", instrs[0])
+	}
+	if _, ok := instrs[1].(*Assign); !ok {
+		t.Fatalf("expected field projection assignment, got %#v", instrs[1])
+	}
+	if _, ok := instrs[2].(*Drop); !ok {
+		t.Fatalf("expected temporary drop after projection, got %#v", instrs[2])
+	}
+}
+
+func TestGenerateMIRLowersSliceViewIndexReadAsProjectIndexLoad(t *testing.T) {
+	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
+		Name: "first", Params: []ir.Param{{Name: "xs", Type: "&[]i32"}}, ReturnType: "i32",
+		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Index{
+			Base: &ir.Ident{Name: "xs", Type: "&[]i32"}, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32",
+		}}}},
+	}}}
+	out := GenerateMIR(mod, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("expected project index and load instructions, got %#v", instrs)
+	}
+	project, projectOK := instrs[0].(*Assign)
+	load, loadOK := instrs[1].(*Assign)
+	if !projectOK || !loadOK {
+		t.Fatalf("expected assignments, got %#v", instrs)
+	}
+	if _, ok := project.Value.(*ProjectIndex); !ok {
+		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
+	}
+	if _, ok := load.Value.(*Load); !ok {
+		t.Fatalf("expected Load, got %#v", load.Value)
+	}
+}
+
 func TestGenerateMIRLowersIndexAssignmentAsProjectIndexStore(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",
@@ -350,6 +462,31 @@ func TestGenerateMIRLowersIndexAssignmentAsProjectIndexStore(t *testing.T) {
 	project, ok := instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs[0])
+	}
+	if _, ok := project.Value.(*ProjectIndex); !ok {
+		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
+	}
+	if _, ok := instrs[1].(*Store); !ok {
+		t.Fatalf("expected Store, got %#v", instrs[1])
+	}
+}
+
+func TestGenerateMIRLowersMutableSliceViewIndexAssignmentAsProjectIndexStore(t *testing.T) {
+	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
+		Name: "set_first", Params: []ir.Param{{Name: "xs", Type: "&mut []i32"}, {Name: "value", Type: "i32"}},
+		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Assign{
+			Target: &ir.Index{Base: &ir.Ident{Name: "xs", Type: "&mut []i32"}, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+			Value:  &ir.Ident{Name: "value", Type: "i32"},
+		}}},
+	}}}
+	out := GenerateMIR(mod, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("expected project index and store instructions, got %#v", instrs)
+	}
+	project, projectOK := instrs[0].(*Assign)
+	if !projectOK {
+		t.Fatalf("expected project assignment, got %#v", instrs[0])
 	}
 	if _, ok := project.Value.(*ProjectIndex); !ok {
 		t.Fatalf("expected ProjectIndex, got %#v", project.Value)

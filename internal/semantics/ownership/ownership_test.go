@@ -1,21 +1,29 @@
 package ownership
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
 
-func checkOwnershipSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
+type ownershipResult struct {
+	*diagnostics.DiagnosticBag
+	module *project.Module
+}
+
+func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	t.Helper()
 	const filePath = "ownership_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
@@ -36,14 +44,14 @@ func checkOwnershipSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	Check(ctx, module)
-	return diag
+	return &ownershipResult{DiagnosticBag: diag, module: module}
 }
 
-func hasOwnershipCode(diag *diagnostics.DiagnosticBag, code string) bool {
-	if diag == nil {
+func hasOwnershipCode(result *ownershipResult, code string) bool {
+	if result == nil {
 		return false
 	}
-	for _, item := range diag.Diagnostics() {
+	for _, item := range result.Diagnostics() {
 		if item != nil && item.Code == code {
 			return true
 		}
@@ -51,31 +59,262 @@ func hasOwnershipCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	return false
 }
 
-func TestOwnedPointerCopyRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn make() -> ^byte;
+func cleanupSymbolNames(cleanup []*symbols.Symbol) []string {
+	names := make([]string, 0, len(cleanup))
+	for _, sym := range cleanup {
+		if sym != nil {
+			names = append(names, sym.Name)
+		}
+	}
+	return names
+}
+
+func TestOwnedPointerBindingMovesImplicitly(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn make() -> *byte;
 
 fn main() {
-	let ptr: ^byte = make();
-	let copy = ptr;
+	let ptr: *byte = make();
+	let duplicate = ptr;
+	let invalid = ptr;
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestRawPointerCopyAllowed(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn main() {
 	let value: i32 = 1;
-	let ptr: *i32 = @value;
-	let copy = ptr;
+	let ptr: rawptr = @value;
+	let duplicate = ptr;
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
+func TestLiveOwnerFieldOverwritePlansDrop(t *testing.T) {
+	result := checkOwnershipSource(t, `struct Holder { value: *i32 }
+fn make() -> *i32;
+fn bad(mut holder: Holder) {
+	let next = make();
+	holder.value = next;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected overwrite diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[2].(*ast.FnDecl)
+	assign := fn.Body.Stmts[1].(*ast.AssignStmt)
+	if _, ok := result.module.Semantics.DropBeforeAssign[assign.ID()]; !ok {
+		t.Fatalf("missing drop-before-assignment plan")
+	}
+}
+
+func TestFieldAssignmentRejectsRHSMoveOfTargetBase(t *testing.T) {
+	result := checkOwnershipSource(t, `struct Box { ptr: *i32 }
+fn replace(_: Box) -> *i32;
+fn bad(mut box: Box) {
+	box.ptr = replace(box);
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected moved assignment-base diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestCleanupPlanUsesReverseLexicalOrder(t *testing.T) {
+	result := checkOwnershipSource(t, `fn make() -> *i32;
+fn main() {
+	let first = make();
+	{
+		let nested = make();
+	}
+	let last = make();
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected cleanup diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	nested := fn.Body.Stmts[1].(*ast.BlockStmt)
+	if got := cleanupSymbolNames(result.module.Semantics.CleanupAfterBlock[nested.ID()]); !slices.Equal(got, []string{"nested"}) {
+		t.Fatalf("nested cleanup = %v, want [nested]", got)
+	}
+	if got := cleanupSymbolNames(result.module.Semantics.CleanupAfterBlock[fn.Body.ID()]); !slices.Equal(got, []string{"last", "first"}) {
+		t.Fatalf("function cleanup = %v, want [last first]", got)
+	}
+}
+
+func TestReturnCleanupSuppressesMovedResult(t *testing.T) {
+	result := checkOwnershipSource(t, `fn pass(value: *i32, spare: *i32) -> *i32 {
+	return value;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected return diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if got := cleanupSymbolNames(result.module.Semantics.CleanupBeforeReturn[ret.ID()]); !slices.Equal(got, []string{"spare"}) {
+		t.Fatalf("return cleanup = %v, want [spare]", got)
+	}
+}
+
+func TestReturnCleanupClearsStateBeforeExitMerge(t *testing.T) {
+	result := checkOwnershipSource(t, `fn make() -> *i32;
+fn main(cond: bool) {
+	let value = make();
+	if cond {
+		return;
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected return diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	ret := fn.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ReturnStmt)
+	if got := cleanupSymbolNames(result.module.Semantics.CleanupBeforeReturn[ret.ID()]); !slices.Equal(got, []string{"value"}) {
+		t.Fatalf("return cleanup = %v, want [value]", got)
+	}
+}
+
+func TestReturnCleanupKeepsReplacementOwnerLive(t *testing.T) {
+	result := checkOwnershipSource(t, `fn make() -> *i32;
+fn main() -> i32 {
+	let mut first = make();
+	{
+		let nested = make();
+	}
+	let next = make();
+	first = next;
+	let early = make();
+	free(early);
+	make();
+	return 0;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected return diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	ret := fn.Body.Stmts[7].(*ast.ReturnStmt)
+	if got := cleanupSymbolNames(result.module.Semantics.CleanupBeforeReturn[ret.ID()]); !slices.Equal(got, []string{"first"}) {
+		t.Fatalf("return cleanup = %v, want [first]", got)
+	}
+}
+
+func TestBranchOwnershipStateMustConverge(t *testing.T) {
+	result := checkOwnershipSource(t, `fn consume(_: *i32) {}
+fn bad(cond: bool, value: *i32) {
+	if cond {
+		consume(value);
+	}
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
+		t.Fatalf("expected branch convergence diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestLoopOwnershipStateMustConverge(t *testing.T) {
+	result := checkOwnershipSource(t, `fn consume(_: *i32) {}
+fn bad(cond: bool, value: *i32) {
+	for cond {
+		consume(value);
+	}
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
+		t.Fatalf("expected loop convergence diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestOwnershipTrackedModuleBindingRejected(t *testing.T) {
+	result := checkOwnershipSource(t, `fn make() -> *i32;
+const Global = make();`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership-tracked module bindings are not supported") {
+		t.Fatalf("expected owned-global diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyModuleBindingWithoutDropRejected(t *testing.T) {
+	result := checkOwnershipSource(t, `struct Token { value: i32 }
+const Global = .Token{ value = 1 };`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership-tracked module bindings are not supported") {
+		t.Fatalf("expected move-only global diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestArrayLiteralConsumesCompositeElements(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Point { value: i32 }
+fn consume(point: Point) {}
+fn bad(point: Point) {
+	let points = [1]Point{point};
+	consume(point);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected array insertion to consume point, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUserCopyMethodWithValueReceiverConsumesCaller(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Point { value: i32 }
+	fn (self: Point) copy() -> Point { return self; }
+fn bad(point: Point) -> i32 {
+	let duplicate = point.copy();
+	return point.value + duplicate.value;
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected copy method value receiver to consume caller, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestConsumingOwnedInterfaceMethodMovesCarrier(t *testing.T) {
+	diag := checkOwnershipSource(t, `iface Consumer { fn (Self) consume() }
+struct Resource {}
+fn (self: Resource) consume() {}
+fn bad(resource: *Resource) {
+	let consumer: *Consumer = resource;
+	consumer.consume();
+	free(consumer);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected consuming interface call to move carrier, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestBorrowedCopyMethodCannotExtractOwnedField(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Owner { value: *i32 }
+	fn (self: &Owner) copy() -> Owner { return .{ value = self.value }; }
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected borrowed copy method owner extraction rejection, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDiscardedOwnedProjectionFromTemporaryRejected(t *testing.T) {
+	result := checkOwnershipSource(t, `struct Pair { first: *i32, second: *i32 }
+fn make() -> Pair;
+fn bad() {
+	make().first;
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected temporary owner-projection diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
 func TestMoveOnlyIndexedElementCopyRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn first(values: []^i32, index: usize) -> ^i32 {
+	diag := checkOwnershipSource(t, `fn first(values: []*i32, index: usize) -> *i32 {
+	return values[index];
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
+		t.Fatalf("expected indexed move-only copy diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "indexed moves are tracked") {
+		t.Fatalf("expected indexed-limitation, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveOnlySliceViewElementCopyRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn first(values: &[]*i32, index: usize) -> *i32 {
 	return values[index];
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
@@ -87,9 +326,9 @@ func TestMoveOnlyIndexedElementCopyRejected(t *testing.T) {
 }
 
 func TestMoveOnlyIndexedElementCannotBeConsumedRepeatedly(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn consume(move value: ^i32) {}
+	diag := checkOwnershipSource(t, `fn consume(value: *i32) {}
 
-fn duplicate(values: []^i32, index: usize) {
+fn duplicate(values: []*i32, index: usize) {
 	consume(values[index]);
 	consume(values[index]);
 }`)
@@ -109,16 +348,13 @@ func TestCopyableIndexedElementReadAllowed(t *testing.T) {
 }
 
 func TestReferenceReceiverDoesNotCopyMoveOnlyOwner(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Counter {
+	diag := checkOwnershipSource(t, `struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn get(self: &Self) -> i32 {
+	fn (self: &Counter) get() -> i32 {
 		return self.value;
 	}
-}
 
 fn main() -> i32 {
 	let c: Counter = .{ value = 1 };
@@ -142,94 +378,88 @@ fn forward(value: &mut i32) {
 	}
 }
 
-func TestMutableReferenceBindingRequiresExplicitTransfer(t *testing.T) {
+func TestMutableReferenceBindingTransfersImplicitly(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn duplicate(reference: &mut i32) {
 	let alias = reference;
+	let invalid = reference;
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected mutable-reference copy diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-	if !strings.Contains(diag.EmitAllToString(), "mutable reference cannot be copied") ||
-		!strings.Contains(diag.EmitAllToString(), "use `move` to transfer") {
-		t.Fatalf("expected mutable-reference transfer guidance, got:\n%s", diag.EmitAllToString())
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestMutableReferenceBindingCanMove(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn transfer(reference: &mut i32) {
-	let alias = move reference;
+	let alias = reference;
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+func TestImplicitBindingTransfersNoCopyValue(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	let next = move current;
-	destroy(next);
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestCopyOfNoCopyBindingRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main() {
 	let current: Buffer = get_buffer();
 	let next = current;
 	destroy(next);
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestUseAfterMoveRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+func TestNoCopyBindingMovesImplicitly(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main() {
 	let current: Buffer = get_buffer();
-	let next = move current;
+	let next = current;
 	destroy(current);
 	destroy(next);
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestMoveParamConsumesArgument(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+func TestUseAfterMoveRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
+
+fn main() {
+	let current: Buffer = get_buffer();
+	let next = current;
+	destroy(current);
+	destroy(next);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestValueParamConsumesArgument(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
+}
+
+fn get_buffer() -> Buffer;
+fn destroy(data: Buffer) {}
 
 fn main() {
 	let current: Buffer = get_buffer();
@@ -240,10 +470,9 @@ fn main() {
 	}
 }
 
-func TestExplicitMoveToPlainParamRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+func TestPlainValueParamConsumesArgument(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
@@ -251,23 +480,19 @@ fn inspect(data: Buffer) {}
 
 fn main() {
 	let current: Buffer = get_buffer();
-	inspect(move current);
+	inspect(current);
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-	if !strings.Contains(diag.EmitAllToString(), "explicit `move` requires a consuming parameter") {
+	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestReassignmentClearsMovedLocal(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
+	diag := checkOwnershipSource(t, `struct Buffer {
 	value: i32,
 }
 
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main() {
 	let mut current: Buffer = .{ value = 1 };
@@ -280,10 +505,9 @@ fn main() {
 	}
 }
 
-func TestNoCopyArgumentToPlainParamRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+func TestNoCopyArgumentToPlainParamMoves(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
@@ -292,78 +516,33 @@ fn inspect(data: Buffer) {}
 fn main() {
 	let current: Buffer = get_buffer();
 	inspect(current);
+	inspect(current);
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestNoCopyInterfaceConversionRequiresMove(t *testing.T) {
-	diag := checkOwnershipSource(t, `interface Reader {
-	read(self: Self) -> i32
-}
-
-#[no_copy]
-struct Buffer {
-	ptr: ^u8
-}
-
-fn get_buffer() -> Buffer;
-
-impl Buffer {
-	fn read(self: Self) -> i32 {
-		return 0;
-	}
-}
-
+func TestFreeConsumesOwnedPointer(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn get_value() -> *i32;
 fn main() {
-	let current: Buffer = get_buffer();
-	let reader: Reader = current;
+	let value = get_value();
+	free(value);
+	free(value);
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
-		t.Fatalf("expected invalid copy diagnostic, got:\n%s", diag.EmitAllToString())
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected use-after-free diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestMoveNoCopyInterfaceConversionAccepted(t *testing.T) {
-	diag := checkOwnershipSource(t, `interface Reader {
-	read(self: Self) -> i32
-}
-
-#[no_copy]
-struct Buffer {
-	ptr: ^u8
+func TestValueReceiverConsumesBinding(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
 
-impl Buffer {
-	fn read(self: Self) -> i32 {
-		return 0;
-	}
-}
-
-fn main() {
-	let current: Buffer = get_buffer();
-	let reader: Reader = move current;
-	reader.read();
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestMoveReceiverConsumesBinding(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
-}
-
-fn get_buffer() -> Buffer;
-
-impl Buffer {
-	fn close(move self: Self) {}
-}
+	fn (self: Buffer) close() {}
 
 fn main() {
 	let current: Buffer = get_buffer();
@@ -371,14 +550,13 @@ fn main() {
 	current.close();
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestNoCopyFieldSubexpressionRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 struct Holder {
@@ -397,13 +575,12 @@ fn main() {
 }
 
 func TestMoveInBranchRejectsUseAfterJoin(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main(flag: bool) {
 	let current: Buffer = get_buffer();
@@ -413,18 +590,17 @@ fn main(flag: bool) {
 	destroy(current);
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestMoveInLoopRejectsLaterUse(t *testing.T) {
-	diag := checkOwnershipSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+	diag := checkOwnershipSource(t, `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main(flag: bool) {
 	let current: Buffer = get_buffer();
@@ -434,12 +610,12 @@ fn main(flag: bool) {
 	destroy(current);
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected use-after-move diagnostic, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestReturnAddressOfLocalRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn bad() -> *i32 {
+	diag := checkOwnershipSource(t, `fn bad() -> rawptr {
 	let value: i32 = 1;
 	return @value;
 }`)
@@ -449,9 +625,9 @@ func TestReturnAddressOfLocalRejected(t *testing.T) {
 }
 
 func TestReturnLocalPointerBindingRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn bad() -> *i32 {
+	diag := checkOwnershipSource(t, `fn bad() -> rawptr {
 	let value: i32 = 1;
-	let ptr: *i32 = @value;
+	let ptr: rawptr = @value;
 	return ptr;
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
@@ -462,7 +638,7 @@ func TestReturnLocalPointerBindingRejected(t *testing.T) {
 func TestReturnAddressOfModuleGlobalAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `const global: i32 = 1;
 
-fn get() -> *i32 {
+fn get() -> rawptr {
 	return @global;
 }`)
 	if diag.HasErrors() {
@@ -473,8 +649,8 @@ fn get() -> *i32 {
 func TestReturnModuleGlobalPointerBindingAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `const global: i32 = 1;
 
-fn get() -> *i32 {
-	let ptr: *i32 = @global;
+fn get() -> rawptr {
+	let ptr: rawptr = @global;
 	return ptr;
 }`)
 	if diag.HasErrors() {
@@ -483,7 +659,7 @@ fn get() -> *i32 {
 }
 
 func TestReturnPointerParamAccepted(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn identity(ptr: *i32) -> *i32 {
+	diag := checkOwnershipSource(t, `fn identity(ptr: rawptr) -> rawptr {
 	return ptr;
 }`)
 	if diag.HasErrors() {
@@ -493,9 +669,9 @@ func TestReturnPointerParamAccepted(t *testing.T) {
 
 func TestReturnExternPointerAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `#[extern]
-fn open_value() -> *i32;
+fn open_value() -> rawptr;
 
-fn get() -> *i32 {
+fn get() -> rawptr {
 	return open_value();
 }`)
 	if diag.HasErrors() {

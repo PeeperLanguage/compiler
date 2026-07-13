@@ -451,7 +451,7 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *t
 	}
 
 	if err := os.Rename(fileUtil, outsideUtil); err != nil {
-		t.Fatalf("move util outside src: %v", err)
+		t.Fatalf("util outside src: %v", err)
 	}
 	if err := index.rebuild(nil); err != nil {
 		t.Fatalf("rebuild after moving util: %v", err)

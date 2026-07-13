@@ -1,0 +1,8 @@
+struct Point {
+    value: i32
+}
+
+fn invalid(point: Point) -> i32 {
+    let next = point;
+    return point.value + next.value;
+}

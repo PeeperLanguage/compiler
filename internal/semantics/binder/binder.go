@@ -34,8 +34,6 @@ func (b *binder) bindModule() {
 			b.bindModuleBinding(node.Name, node.Type)
 		case *ast.ConstDecl:
 			b.bindModuleBinding(node.Name, node.Type)
-		case *ast.ImplDecl:
-			b.bindImplDecl(node)
 		}
 		return true
 	})
@@ -47,8 +45,14 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
 	}
-	b.bindModuleScopeType(fn.Name.Name,
-		typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
+	fnType := typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
+	if fn.Receiver != nil {
+		if sym := b.module.Semantics.MethodSymbol[fn.ID()]; sym != nil {
+			sym.BindType(fnType)
+		}
+		return
+	}
+	b.bindModuleScopeType(fn.Name.Name, fnType)
 }
 
 // Bind top-level value declarations. Explicit types win; otherwise keep
@@ -84,43 +88,18 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
 		return
 	}
 	underlying := typeinfo.TypeFromSyntax(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true))
-	copyMode := typeinfo.CopyInfer
-	for _, attr := range decl.GetAttributes() {
-		if mode, ok := typeinfo.NamedTypeCopyMode(attr.Name); ok {
-			copyMode = mode
-		}
-	}
 	if defined, ok := sym.Type.(*typeinfo.DefinedType); ok && defined != nil {
 		// Reuse same shell so self-references keep same type identity.
 		defined.Name = name.Name
 		defined.Underlying = underlying
-		defined.CopyMode = copyMode
 		deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
 		return
 	}
 	sym.BindType(&typeinfo.DefinedType{
 		Name:       name.Name,
 		Underlying: underlying,
-		CopyMode:   copyMode,
 	})
 	deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
-}
-
-func (b *binder) bindImplDecl(decl *ast.ImplDecl) {
-	if b == nil || b.module == nil || b.module.Semantics == nil || decl == nil || decl.Target == nil {
-		return
-	}
-	selfType := typeinfo.TypeFromSyntax(decl.Target, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
-	for _, method := range decl.Methods {
-		if method == nil {
-			continue
-		}
-		sym, ok := b.module.Semantics.MethodSymbol[method.ID()]
-		if !ok || sym == nil {
-			continue
-		}
-		sym.BindType(typeinfo.FuncTypeFromDeclWithOptions(method, project.TypeSyntaxOptions(b.ctx, b.module, selfType, false)))
-	}
 }
 
 func (b *binder) moduleScopeSymbol(name string) *symbols.Symbol {

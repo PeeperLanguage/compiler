@@ -78,59 +78,148 @@ func IsCondition(t Type) bool {
 	return ok
 }
 
-func IsCopyType(t Type) bool {
-	switch typ := t.(type) {
-	case *DefinedType:
-		if typ == nil {
-			return false
-		}
-		switch typ.CopyMode {
-		case CopyAllow:
-			return true
-		case CopyDeny:
-			return false
-		default:
-			return IsCopyType(typ.Underlying)
-		}
-	}
-	t = Underlying(t)
-	switch typ := t.(type) {
-	case nil:
-		return false
-	case *InvalidType, *UnknownType:
-		return false
-	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType:
+func IsImplicitCopyType(t Type) bool {
+	switch Underlying(t).(type) {
+	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *RawPtrType:
 		return true
-	case *OwnedPtrType:
-		return false
-	case *RawPtrType:
-		return typ != nil
 	case *RefType:
-		return typ != nil && !typ.Mutable
-	case *OptionalType:
-		return typ != nil && IsCopyType(typ.Inner)
-	case *ArrayType:
-		return typ != nil && !typ.Dynamic && typ.Len != "" && IsCopyType(typ.Elem)
-	case *FuncType:
-		if typ == nil {
-			return false
-		}
-		return true
-	case *InterfaceType:
-		return typ != nil
-	case *EnumType:
-		return typ != nil
-	case *StructType:
-		if typ == nil {
-			return false
-		}
-		for _, field := range typ.Fields {
-			if !IsCopyType(field.Type) {
-				return false
-			}
-		}
-		return true
+		ref, _ := Underlying(t).(*RefType)
+		return ref != nil && !ref.Mutable
 	default:
 		return false
 	}
+}
+
+func IsSizedType(t Type) bool {
+	visiting := make(map[*DefinedType]bool)
+	var check func(Type) bool
+	check = func(current Type) bool {
+		if current == nil {
+			return false
+		}
+		if defined, ok := current.(*DefinedType); ok {
+			if defined == nil || visiting[defined] {
+				return false
+			}
+			visiting[defined] = true
+			defer delete(visiting, defined)
+			return check(defined.Underlying)
+		}
+		switch typ := Underlying(current).(type) {
+		case *InvalidType, *UnknownType, *InterfaceType:
+			return false
+		case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *EnumType:
+			return true
+		case *OwnedPtrType:
+			return typ != nil && typ.Target != nil
+		case *RefType:
+			return typ != nil && typ.Target != nil
+		case *RawPtrType:
+			return typ != nil
+		case *OptionalType:
+			return typ != nil && check(typ.Inner)
+		case *ArrayType:
+			if typ == nil || typ.Elem == nil {
+				return false
+			}
+			return check(typ.Elem)
+		case *StructType:
+			if typ == nil {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if !check(field.Type) {
+					return false
+				}
+			}
+			return true
+		case *FuncType:
+			if typ == nil {
+				return false
+			}
+			for _, param := range typ.Params {
+				if !check(param) {
+					return false
+				}
+			}
+			return typ.Return == nil || check(typ.Return)
+		default:
+			return false
+		}
+	}
+	return check(t)
+}
+
+func IsNoCopyType(t Type) bool {
+	seen := make(map[*DefinedType]bool)
+	var check func(Type) bool
+	check = func(current Type) bool {
+		switch typ := current.(type) {
+		case *DefinedType:
+			if typ == nil || seen[typ] {
+				return false
+			}
+			seen[typ] = true
+			return check(typ.Underlying)
+		}
+		switch typ := Underlying(current).(type) {
+		case *OwnedPtrType, *StringType, *InterfaceType:
+			return true
+		case *RefType:
+			return typ != nil && typ.Mutable
+		case *OptionalType:
+			return typ != nil && check(typ.Inner)
+		case *ArrayType:
+			return typ != nil && (typ.Dynamic || check(typ.Elem))
+		case *StructType:
+			if typ == nil {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if check(field.Type) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return check(t)
+}
+
+// NeedsDrop reports whether normal scope cleanup must destroy runtime-owned
+// state reachable through a value. Move-only borrows and plain composites do
+// not need destruction; this is intentionally narrower than IsNoCopyType.
+func NeedsDrop(t Type) bool {
+	seen := make(map[*DefinedType]bool)
+	var check func(Type) bool
+	check = func(current Type) bool {
+		switch typ := current.(type) {
+		case *DefinedType:
+			if typ == nil || seen[typ] {
+				return false
+			}
+			seen[typ] = true
+			defer delete(seen, typ)
+			return check(typ.Underlying)
+		}
+		switch typ := Underlying(current).(type) {
+		case *OwnedPtrType, *StringType:
+			return true
+		case *OptionalType:
+			return typ != nil && check(typ.Inner)
+		case *ArrayType:
+			return typ != nil && (typ.Dynamic || check(typ.Elem))
+		case *StructType:
+			if typ == nil {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if check(field.Type) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return check(t)
 }

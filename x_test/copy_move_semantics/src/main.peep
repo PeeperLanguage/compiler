@@ -1,0 +1,19 @@
+struct Point {
+    x: i32,
+    y: i32
+}
+
+    fn (self: &Point) copy() -> Point {
+        return .{x = self.x, y = self.y};
+    }
+
+fn consume(point: Point) -> i32 {
+    return point.x + point.y;
+}
+
+fn main() -> i32 {
+    let point: Point = .{x = 10, y = 20};
+    let duplicate = point.copy();
+    let result = consume(duplicate);
+    return result - point.x - point.y;
+}

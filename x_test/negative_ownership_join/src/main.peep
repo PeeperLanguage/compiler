@@ -1,0 +1,15 @@
+#[extern]
+fn acquire() -> *i32;
+
+fn consume(_: *i32) {}
+
+fn diverge(cond: bool) {
+    let value = acquire();
+    if cond {
+        consume(value);
+    }
+}
+
+fn main() -> i32 {
+    return 0;
+}

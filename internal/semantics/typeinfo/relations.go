@@ -43,7 +43,8 @@ func SameType(left, right Type) bool {
 		r, ok := right.(*OwnedPtrType)
 		return ok && r != nil && SameType(l.Target, r.Target)
 	case *RawPtrType:
-		return checkPointerCompatibility(l, right) == Compatible
+		_, ok := right.(*RawPtrType)
+		return ok
 	case *RefType:
 		r, ok := right.(*RefType)
 		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
@@ -161,7 +162,7 @@ func Assignable(dst, src Type) bool {
 }
 
 func ContainsAbstractSelf(t Type) bool {
-	return containsType(t, typeTraversal{followRawPointer: true, followCallable: true}, func(candidate Type, _ bool) bool {
+	return containsType(t, typeTraversal{followCallable: true}, func(candidate Type, _ bool) bool {
 		named, ok := candidate.(*NamedType)
 		return ok && named != nil && named.Name == "Self"
 	})
@@ -182,9 +183,8 @@ func ContainsStoredReference(t Type) bool {
 }
 
 type typeTraversal struct {
-	followDefined    bool
-	followRawPointer bool
-	followCallable   bool
+	followDefined  bool
+	followCallable bool
 }
 
 func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool) bool {
@@ -212,8 +212,6 @@ func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool
 			return traversal.followDefined && typ != nil && visit(typ.Underlying, stored)
 		case *OwnedPtrType:
 			return typ != nil && visit(typ.Target, true)
-		case *RawPtrType:
-			return traversal.followRawPointer && typ != nil && visit(typ.Target, stored)
 		case *RefType:
 			return typ != nil && visit(typ.Target, stored)
 		case *OptionalType:
@@ -275,7 +273,7 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		if typ == nil {
 			return nil
 		}
-		return &RawPtrType{Target: ReplaceAbstractSelf(typ.Target, ownerType)}
+		return &RawPtrType{}
 	case *RefType:
 		if typ == nil {
 			return nil
@@ -299,8 +297,7 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		for _, param := range typ.Params {
 			params = append(params, ReplaceAbstractSelf(param, ownerType))
 		}
-		consumes := append([]bool(nil), typ.Consumes...)
-		return &FuncType{Params: params, Consumes: consumes, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
+		return &FuncType{Params: params, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
 	case *StructType:
 		if typ == nil {
 			return nil

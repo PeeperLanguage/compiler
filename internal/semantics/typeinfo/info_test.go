@@ -8,17 +8,17 @@ import (
 func TestPointerTypeTextAndEquality(t *testing.T) {
 	ownedA := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	ownedB := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
-	rawPtr := &RawPtrType{Target: &NamedType{Name: "Foo"}}
+	rawPtr := &RawPtrType{}
 	ref := &RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}}
 	opt := &OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}
 	array := &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}
 	dynArray := &ArrayType{Dynamic: true, Elem: &StringType{}}
 
-	if got := ownedA.Text(); got != "^i32" {
-		t.Fatalf("owned pointer text: got %q want %q", got, "^i32")
+	if got := ownedA.Text(); got != "*i32" {
+		t.Fatalf("owned pointer text: got %q want %q", got, "*i32")
 	}
-	if got := rawPtr.Text(); got != "*Foo" {
-		t.Fatalf("raw pointer text: got %q want %q", got, "*Foo")
+	if got := rawPtr.Text(); got != "rawptr" {
+		t.Fatalf("raw pointer text: got %q want %q", got, "rawptr")
 	}
 	if got := ref.Text(); got != "&[]string" {
 		t.Fatalf("reference text: got %q want %q", got, "&[]string")
@@ -37,28 +37,22 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	}
 }
 
-func TestIsCopyTypeRespectsPointerOwnershipModel(t *testing.T) {
-	if IsCopyType(&OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}) {
-		t.Fatalf("^T should be non-copy by default")
+func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
+	i32 := &IntegerType{Signed: true, Bits: 32}
+	if !IsImplicitCopyType(i32) || !IsImplicitCopyType(&RawPtrType{}) || !IsImplicitCopyType(&RefType{Target: i32}) {
+		t.Fatalf("scalar, raw pointer, and shared reference should copy implicitly")
 	}
-	if !IsCopyType(&RawPtrType{Target: &IntegerType{Signed: true, Bits: 32}}) {
-		t.Fatalf("*T should be copyable")
+	if IsImplicitCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
+		t.Fatalf("struct should not copy implicitly")
 	}
-	if IsCopyType(&ArrayType{Dynamic: true, Elem: &IntegerType{Signed: true, Bits: 32}}) {
-		t.Fatalf("[]T should be non-copy by default")
+	if IsNoCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
+		t.Fatalf("scalar-only struct should support structural copy")
 	}
-	if !IsCopyType(&RefType{Target: &IntegerType{Signed: true, Bits: 32}}) {
-		t.Fatalf("&T should be copyable")
+	if !IsNoCopyType(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}) {
+		t.Fatalf("owned pointer should propagate nocopy through struct")
 	}
-	if IsCopyType(&RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}) {
-		t.Fatalf("&mut T should be non-copy")
-	}
-	if !IsCopyType(&DefinedType{
-		Name:       "Cursor",
-		Underlying: &StructType{Fields: []Field{{Name: "ptr", Type: &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}}}},
-		CopyMode:   CopyAllow,
-	}) {
-		t.Fatalf("allow_copy should override default no-copy")
+	if !IsNoCopyType(&ArrayType{Dynamic: true, Elem: i32}) {
+		t.Fatalf("dynamic array should be intrinsically nocopy")
 	}
 }
 
@@ -68,14 +62,39 @@ func TestReferenceTargetPreservesMutability(t *testing.T) {
 	if !ok || got != target || !mutable {
 		t.Fatalf("reference target = (%v, %v, %v), want (%v, true, true)", got, mutable, ok, target)
 	}
-	if _, _, ok := ReferenceTarget(&RawPtrType{Target: target}); ok {
+	if _, _, ok := ReferenceTarget(&RawPtrType{}); ok {
 		t.Fatalf("raw pointer must not classify as reference")
+	}
+}
+
+func TestSizedTypesDistinguishInterfaceCarriers(t *testing.T) {
+	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
+	if IsSizedType(iface) {
+		t.Fatalf("bare interface must be unsized")
+	}
+	for _, carrier := range []Type{
+		&RefType{Target: iface},
+		&RefType{Mutable: true, Target: iface},
+		&OwnedPtrType{Target: iface},
+	} {
+		if !IsSizedType(carrier) {
+			t.Fatalf("interface carrier %s must be sized", TypeText(carrier))
+		}
+	}
+	if !IsSizedType(&RawPtrType{}) {
+		t.Fatalf("raw pointer must be sized")
+	}
+	if !IsSizedType(&NamedType{Name: "T"}) {
+		t.Fatalf("generic type parameter must be sized")
+	}
+	if IsSizedType(&ArrayType{Dynamic: true, Elem: iface}) {
+		t.Fatalf("dynamic array cannot contain unsized interface elements")
 	}
 }
 
 func TestInterfaceTypeOfRecognizesReferencedInterface(t *testing.T) {
 	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
-	for _, typ := range []Type{iface, &RefType{Target: iface}, &RefType{Mutable: true, Target: iface}} {
+	for _, typ := range []Type{iface, &RefType{Target: iface}, &RefType{Mutable: true, Target: iface}, &OwnedPtrType{Target: iface}} {
 		got, ok := InterfaceTypeOf(typ)
 		if !ok || got != iface {
 			t.Fatalf("interface type = (%v, %v), want (%v, true)", got, ok, iface)
@@ -83,6 +102,9 @@ func TestInterfaceTypeOfRecognizesReferencedInterface(t *testing.T) {
 	}
 	if _, ok := InterfaceTypeOf(&RefType{Target: &IntegerType{Signed: true, Bits: 32}}); ok {
 		t.Fatalf("reference to concrete type must not classify as interface")
+	}
+	if _, ok := InterfaceTypeOf(&RawPtrType{}); ok {
+		t.Fatalf("raw pointer must not classify as interface fat pointer")
 	}
 }
 
@@ -143,39 +165,30 @@ func TestContainsAbstractSelfDoesNotExpandResolvedTypes(t *testing.T) {
 	}
 }
 
-func TestFuncTypeTextIncludesMoveParams(t *testing.T) {
+func TestFuncTypeTextIncludesParams(t *testing.T) {
 	fn := &FuncType{
-		Params:   []Type{&NamedType{Name: "Buffer"}},
-		Consumes: []bool{true},
+		Params: []Type{&NamedType{Name: "Buffer"}},
 	}
-	if got := fn.Text(); got != "fn(move Buffer)" {
-		t.Fatalf("func text: got %q want %q", got, "fn(move Buffer)")
+	if got := fn.Text(); got != "fn(Buffer)" {
+		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
 }
 
-func TestTypeFromSyntaxPreservesFuncTypeConsumes(t *testing.T) {
+func TestTypeFromSyntaxPreservesFuncTypeParams(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
-		Params:   []ast.TypeExpr{&ast.NamedType{Name: "Buffer"}},
-		Consumes: []bool{true},
+		Params: []ast.TypeExpr{&ast.NamedType{Name: "Buffer"}},
 	}, SyntaxOptions{}).(*FuncType)
-	if len(fn.Consumes) != 1 || !fn.Consumes[0] {
-		t.Fatalf("expected consuming first param, got %#v", fn.Consumes)
-	}
-	if got := fn.Text(); got != "fn(move Buffer)" {
-		t.Fatalf("func text: got %q want %q", got, "fn(move Buffer)")
+	if got := fn.Text(); got != "fn(Buffer)" {
+		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
 }
 
 func TestTypeFromSyntaxAllowsAbstractSelf(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
-		Params:   []ast.TypeExpr{&ast.NamedType{Name: "Self"}},
-		Consumes: []bool{true},
+		Params: []ast.TypeExpr{&ast.NamedType{Name: "Self"}},
 	}, SyntaxOptions{AllowAbstractSelf: true}).(*FuncType)
-	if len(fn.Consumes) != 1 || !fn.Consumes[0] {
-		t.Fatalf("expected consuming first param, got %#v", fn.Consumes)
-	}
-	if got := fn.Text(); got != "fn(move Self)" {
-		t.Fatalf("func text: got %q want %q", got, "fn(move Self)")
+	if got := fn.Text(); got != "fn(Self)" {
+		t.Fatalf("func text: got %q want %q", got, "fn(Self)")
 	}
 }
 
@@ -223,5 +236,39 @@ func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
 	}, SyntaxOptions{})
 	if TypeText(valid) != "[3]i32" {
 		t.Fatalf("valid array type = %s, want [3]i32", TypeText(valid))
+	}
+}
+
+func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
+	owner := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
+	cases := []struct {
+		name string
+		typ  Type
+		want bool
+	}{
+		{name: "owned pointer", typ: owner, want: true},
+		{name: "string", typ: &StringType{}, want: true},
+		{name: "dynamic array", typ: &ArrayType{Dynamic: true, Elem: &IntegerType{Signed: true, Bits: 32}}, want: true},
+		{name: "fixed owner array", typ: &ArrayType{Len: "2", Elem: owner}, want: true},
+		{name: "optional owner", typ: &OptionalType{Inner: owner}, want: true},
+		{name: "nested owner", typ: &StructType{Fields: []Field{{Name: "value", Type: owner}}}, want: true},
+		{name: "plain composite", typ: &StructType{Fields: []Field{{Name: "value", Type: &IntegerType{Signed: true, Bits: 32}}}}, want: false},
+		{name: "mutable borrow", typ: &RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}, want: false},
+		{name: "function", typ: &FuncType{}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NeedsDrop(tc.typ); got != tc.want {
+				t.Fatalf("NeedsDrop(%s) = %v, want %v", TypeText(tc.typ), got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDynamicArrayRequiresRecursivelySizedElement(t *testing.T) {
+	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
+	nested := &ArrayType{Dynamic: true, Elem: &ArrayType{Len: "2", Elem: iface}}
+	if IsSizedType(nested) {
+		t.Fatalf("dynamic array of fixed arrays containing bare interfaces must be unsized")
 	}
 }

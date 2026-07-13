@@ -1,0 +1,3 @@
+name = "negative_borrowed_interface_consume"
+build = "program"
+entry = "src/main.peep"

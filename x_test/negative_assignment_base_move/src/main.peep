@@ -1,0 +1,9 @@
+struct Box {
+    ptr: *i32
+}
+
+fn replace(_: Box) -> *i32;
+
+fn Invalid(mut box: Box) {
+    box.ptr = replace(box);
+}

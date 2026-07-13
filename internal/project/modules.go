@@ -95,6 +95,11 @@ type SemanticInfo struct {
 	MethodSets          map[string][]*symbols.Symbol
 	MethodSymbol        map[ast.NodeID]*symbols.Symbol
 	DiscardBindingValue map[symbols.SymbolID]struct{}
+	CleanupAfterBlock   map[ast.NodeID][]*symbols.Symbol
+	CleanupBeforeReturn map[ast.NodeID][]*symbols.Symbol
+	DropBeforeAssign    map[ast.NodeID]struct{}
+	DropDiscardedExpr   map[ast.NodeID]struct{}
+	DropProjectionBase  map[ast.NodeID]struct{}
 }
 
 func NewSemanticInfo() *SemanticInfo {
@@ -105,6 +110,11 @@ func NewSemanticInfo() *SemanticInfo {
 		MethodSets:          make(map[string][]*symbols.Symbol),
 		MethodSymbol:        make(map[ast.NodeID]*symbols.Symbol),
 		DiscardBindingValue: make(map[symbols.SymbolID]struct{}),
+		CleanupAfterBlock:   make(map[ast.NodeID][]*symbols.Symbol),
+		CleanupBeforeReturn: make(map[ast.NodeID][]*symbols.Symbol),
+		DropBeforeAssign:    make(map[ast.NodeID]struct{}),
+		DropDiscardedExpr:   make(map[ast.NodeID]struct{}),
+		DropProjectionBase:  make(map[ast.NodeID]struct{}),
 	}
 }
 

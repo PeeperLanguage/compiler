@@ -44,6 +44,7 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 		return &Index{
 			Base:     FoldExpr(node.Base, env),
 			Index:    FoldExpr(node.Index, env),
+			DropBase: node.DropBase,
 			Type:     node.Type,
 			Location: node.Location,
 		}

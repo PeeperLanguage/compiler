@@ -1,0 +1,2 @@
+name = "negative_shared_slice_view_mutation"
+build = "lib"

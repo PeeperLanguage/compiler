@@ -1,0 +1,3 @@
+name = "negative_print_printf_symbol"
+build = "program"
+entry = "src/main.peep"

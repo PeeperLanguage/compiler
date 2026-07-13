@@ -47,12 +47,10 @@ type Attribute struct {
 }
 
 const (
-	AttributeExtern    = "extern"
-	AttributeTest      = "test"
-	AttributeTargetOS  = "target_os"
-	AttributeMaxCalls  = "max_calls"
-	AttributeNoCopy    = "no_copy"
-	AttributeAllowCopy = "allow_copy"
+	AttributeExtern   = "extern"
+	AttributeTest     = "test"
+	AttributeTargetOS = "target_os"
+	AttributeMaxCalls = "max_calls"
 )
 
 type AttributeDefinition struct {
@@ -71,7 +69,6 @@ type AttributeConflictGroup uint8
 
 const (
 	AttributeConflictNone AttributeConflictGroup = iota
-	AttributeConflictCopyMode
 )
 
 type AttributeTarget uint8
@@ -101,16 +98,24 @@ var AttributeDefinitions = map[string]AttributeDefinition{
 		Targets: AttributeTargetFunc,
 		Doc:     "Limit how many calls to a function are expected or permitted by later analysis.",
 	},
-	AttributeNoCopy: {
-		Targets:       AttributeTargetType,
-		ConflictGroup: AttributeConflictCopyMode,
-		Doc:           "Mark a named type as move-only.",
-	},
-	AttributeAllowCopy: {
-		Targets:       AttributeTargetType,
-		ConflictGroup: AttributeConflictCopyMode,
-		Doc:           "Force a named type to remain copyable.",
-	},
+}
+
+func FunctionLinkName(fn *FnDecl, defaultName string) (string, bool) {
+	if fn == nil || fn.Body != nil {
+		return "", false
+	}
+	attr, ok := fn.GetAttribute(AttributeExtern)
+	if !ok {
+		return "", false
+	}
+	if len(attr.Args) == 0 {
+		return defaultName, true
+	}
+	name, ok := attr.Args[0].(*StringLit)
+	if !ok || name == nil {
+		return "", false
+	}
+	return name.Value, true
 }
 
 type Attributed struct {

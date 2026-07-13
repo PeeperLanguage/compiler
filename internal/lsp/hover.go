@@ -84,13 +84,6 @@ func resolveAttributeHoverSubject(cc *cursorContext) *hoverSubject {
 		if subject := attributeHoverSubject(stmt, cc); subject != nil {
 			return subject
 		}
-		if impl, ok := stmt.(*ast.ImplDecl); ok && impl != nil {
-			for _, method := range impl.Methods {
-				if subject := attributeHoverSubject(method, cc); subject != nil {
-					return subject
-				}
-			}
-		}
 	}
 	return nil
 }
@@ -142,7 +135,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	if !ok || typeNode == nil {
 		return nil
 	}
-	selfType, allowAbstractSelf := hoverTypeSyntaxContext(typeNode, cc.parents, cc.ctx, cc.module)
+	selfType, allowAbstractSelf := hoverTypeSyntaxContext(typeNode, cc.parents)
 	resolved := typeinfo.TypeFromSyntax(typeNode, project.TypeSyntaxOptions(cc.ctx, cc.module, selfType, allowAbstractSelf))
 	if resolved == nil {
 		return nil
@@ -205,16 +198,11 @@ func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr
 	return nil, false
 }
 
-func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node, ctx *project.CompilerContext, module *project.Module) (typeinfo.Type, bool) {
+func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) (typeinfo.Type, bool) {
 	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
-		switch node := curr.(type) {
+		switch curr.(type) {
 		case *ast.InterfaceDecl:
 			return nil, true
-		case *ast.ImplDecl:
-			if ctx == nil || module == nil || node.Target == nil {
-				return nil, false
-			}
-			return typeinfo.TypeFromSyntax(node.Target, project.TypeSyntaxOptions(ctx, module, nil, false)), false
 		}
 	}
 	return nil, false
@@ -237,15 +225,11 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 		return p.Type == typeNode
 	case *ast.EnumDecl:
 		return p.Type == typeNode
-	case *ast.ImplDecl:
-		return p.Target == typeNode
 	case *ast.AsExpr:
 		return p.TypeExpr == typeNode
 	case *ast.StructLit:
 		return p.Type == typeNode
 	case *ast.OwnedPtrType:
-		return p.Target == typeNode
-	case *ast.RawPtrType:
 		return p.Target == typeNode
 	case *ast.RefType:
 		return p.Target == typeNode
@@ -271,6 +255,9 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 			if method.ReturnType == typeNode {
 				return true
 			}
+			if method.Receiver != nil && method.Receiver.Type == typeNode {
+				return true
+			}
 			for _, param := range method.Params {
 				if param.Type == typeNode {
 					return true
@@ -279,6 +266,9 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 		}
 	case *ast.FnDecl:
 		if p.ReturnType == typeNode {
+			return true
+		}
+		if p.Receiver != nil && p.Receiver.Type == typeNode {
 			return true
 		}
 		for _, param := range p.Params {
@@ -396,12 +386,9 @@ func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, mo
 		return nil
 	}
 	parent := parents[ident.ID()]
-	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident {
-		owner := parents[fn.ID()]
-		if _, ok := owner.(*ast.ImplDecl); ok {
-			if sym, ok := module.Semantics.MethodSymbol[fn.ID()]; ok && sym != nil {
-				return sym
-			}
+	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident && fn.Receiver != nil {
+		if sym, ok := module.Semantics.MethodSymbol[fn.ID()]; ok && sym != nil {
+			return sym
 		}
 	}
 	return nil
@@ -416,18 +403,23 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]a
 		return nil
 	}
 	opts := project.TypeSyntaxOptions(ctx, module, nil, true)
-	for _, method := range iface.Methods {
-		if method.Name != ident {
+	resolved, ok := typeinfo.TypeFromSyntax(iface, opts).(*typeinfo.InterfaceType)
+	if !ok || resolved == nil {
+		return nil
+	}
+	for i, method := range iface.Methods {
+		if method.Name != ident || i >= len(resolved.Methods) {
 			continue
 		}
-		params := make([]typeinfo.Type, 0, len(method.Params))
-		for _, param := range method.Params {
-			params = append(params, typeinfo.TypeFromSyntax(param.Type, opts))
+		resolvedMethod := resolved.Methods[i]
+		params := make([]typeinfo.Type, 0, len(resolvedMethod.Params))
+		for _, param := range resolvedMethod.Params {
+			params = append(params, param.Type)
 		}
 		sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
 		sym.Type = &typeinfo.FuncType{
 			Params: params,
-			Return: typeinfo.TypeFromSyntax(method.ReturnType, opts),
+			Return: resolvedMethod.Return,
 		}
 		return sym
 	}
@@ -613,7 +605,7 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 			return ""
 		}
 		var b strings.Builder
-		b.WriteString("interface{\n")
+		b.WriteString("iface{\n")
 		for _, method := range t.Methods {
 			b.WriteString("  ")
 			b.WriteString(method.Name)

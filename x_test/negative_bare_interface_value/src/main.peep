@@ -1,0 +1,17 @@
+iface Reader {
+    fn (&Self) read() -> i32
+
+}
+struct Counter {
+    value: i32
+}
+
+    fn (self: &Counter) read() -> i32 {
+        return self.value;
+    }
+
+fn main() -> i32 {
+    let counter: Counter = .{ value = 1 };
+    let reader: Reader = counter;
+    return 0;
+}

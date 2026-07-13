@@ -19,6 +19,10 @@ func Inspect(node Node, f func(Node) bool) {
 		Inspect(n.Alias, f)
 	case *FnDecl:
 		Inspect(n.Name, f)
+		if n.Receiver != nil {
+			Inspect(n.Receiver.Name, f)
+			Inspect(n.Receiver.Type, f)
+		}
 		for _, tp := range n.TypeParams {
 			Inspect(tp.Name, f)
 		}
@@ -60,11 +64,6 @@ func Inspect(node Node, f func(Node) bool) {
 			Inspect(tp.Name, f)
 		}
 		Inspect(n.Type, f)
-	case *ImplDecl:
-		Inspect(n.Target, f)
-		for _, method := range n.Methods {
-			Inspect(method, f)
-		}
 	case *BlockStmt:
 		for _, stmt := range n.Stmts {
 			Inspect(stmt, f)
@@ -108,8 +107,6 @@ func Inspect(node Node, f func(Node) bool) {
 		for _, value := range n.Values {
 			Inspect(value, f)
 		}
-	case *MoveExpr:
-		Inspect(n.Expr, f)
 	case *AddressExpr:
 		Inspect(n.Expr, f)
 	case *UnaryExpr:
@@ -122,12 +119,14 @@ func Inspect(node Node, f func(Node) bool) {
 		for _, arg := range n.Args {
 			Inspect(arg, f)
 		}
+	case *FreeExpr:
+		Inspect(n.Expr, f)
+	case *PrintExpr:
+		Inspect(n.Expr, f)
 	case *AsExpr:
 		Inspect(n.Expr, f)
 		Inspect(n.TypeExpr, f)
 	case *OwnedPtrType:
-		Inspect(n.Target, f)
-	case *RawPtrType:
 		Inspect(n.Target, f)
 	case *RefType:
 		Inspect(n.Target, f)
@@ -149,6 +148,10 @@ func Inspect(node Node, f func(Node) bool) {
 	case *InterfaceType:
 		for _, method := range n.Methods {
 			Inspect(method.Name, f)
+			if method.Receiver != nil {
+				Inspect(method.Receiver.Name, f)
+				Inspect(method.Receiver.Type, f)
+			}
 			for _, tp := range method.TypeParams {
 				Inspect(tp.Name, f)
 			}
@@ -168,7 +171,7 @@ func Inspect(node Node, f func(Node) bool) {
 		// Leaf — no children
 	case *BadDecl:
 		// Leaf — no children
-	case *NamedType, *NumberLit, *StringLit, *BoolLit, *NoneLit:
+	case *NamedType, *RawPtrType, *NumberLit, *StringLit, *BoolLit, *NoneLit:
 		// Leaf — no children
 	default:
 		panic(fmt.Sprintf("unhandled node type %T in ast.Inspect", node))

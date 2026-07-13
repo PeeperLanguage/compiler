@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"maps"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/project"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 )
 
 type nodeKind uint8
@@ -16,6 +19,8 @@ type nodeKind uint8
 const (
 	nodeEntry nodeKind = iota
 	nodeStmt
+	nodeJoin
+	nodeBlockExit
 	nodeExit
 )
 
@@ -28,6 +33,7 @@ type flowNode struct {
 	id    graph.NodeID
 	kind  nodeKind
 	stmt  ast.Stmt
+	block *ast.BlockStmt
 	scope *table.Scope
 }
 
@@ -46,9 +52,11 @@ type builder struct {
 }
 
 type analyzer struct {
-	ctx    *project.CompilerContext
-	module *project.Module
-	flow   *flow
+	ctx           *project.CompilerContext
+	module        *project.Module
+	flow          *flow
+	functionScope *table.Scope
+	reportedJoin  map[graph.NodeID]bool
 }
 
 type pointerOrigin struct {
@@ -58,6 +66,7 @@ type pointerOrigin struct {
 
 type state struct {
 	moved    map[*symbols.Symbol]ast.Node
+	live     map[*symbols.Symbol]struct{}
 	pointers map[*symbols.Symbol]pointerOrigin
 }
 
@@ -68,24 +77,32 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil {
 		return
 	}
+	clear(module.Semantics.CleanupAfterBlock)
+	clear(module.Semantics.CleanupBeforeReturn)
+	clear(module.Semantics.DropBeforeAssign)
 	for _, stmt := range module.AST.Stmts {
 		switch node := stmt.(type) {
-		case *ast.FnDecl:
-			sym, found := module.ModuleScope.Lookup(node.Name.Name)
+		case *ast.LetDecl, *ast.ConstDecl:
+			sym, found := module.ModuleScope.LookupNode(node)
 			if !found || sym == nil {
+				continue
+			}
+			if ownershipTrackedSymbol(sym) {
+				ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+					"ownership-tracked module bindings are not supported", ast.LocOf(node), "")
+			}
+		case *ast.FnDecl:
+			var sym *symbols.Symbol
+			if node.Receiver != nil {
+				sym = module.Semantics.MethodSymbol[node.ID()]
+			} else {
+				sym, _ = module.ModuleScope.Lookup(node.Name.Name)
+			}
+			if sym == nil {
 				continue
 			}
 			scope, _ := sym.Scope.(*table.Scope)
 			checkFunction(ctx, module, node, scope)
-		case *ast.ImplDecl:
-			for _, method := range node.Methods {
-				sym := module.Semantics.MethodSymbol[method.ID()]
-				if sym == nil {
-					continue
-				}
-				scope, _ := sym.Scope.(*table.Scope)
-				checkFunction(ctx, module, method, scope)
-			}
 		}
 	}
 }
@@ -95,7 +112,13 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 		return
 	}
 	f := build(module, fn.Body, scope)
-	(&analyzer{ctx: ctx, module: module, flow: f}).run()
+	(&analyzer{
+		ctx:           ctx,
+		module:        module,
+		flow:          f,
+		functionScope: scope,
+		reportedJoin:  make(map[graph.NodeID]bool),
+	}).run()
 }
 
 func build(module *project.Module, body *ast.BlockStmt, scope *table.Scope) *flow {
@@ -159,7 +182,13 @@ func (b *builder) buildBlock(in []graph.NodeID, block *ast.BlockStmt, fallback *
 			break
 		}
 	}
-	return tails
+	if len(tails) == 0 {
+		return nil
+	}
+	exit := b.newNode(nodeBlockExit, nil, scope)
+	exit.block = block
+	b.connectAll(tails, exit.id)
+	return []graph.NodeID{exit.id}
 }
 
 func (b *builder) buildStmt(in []graph.NodeID, stmt ast.Stmt, scope *table.Scope) []graph.NodeID {
@@ -172,7 +201,7 @@ func (b *builder) buildStmt(in []graph.NodeID, stmt ast.Stmt, scope *table.Scope
 	case *ast.IfStmt:
 		node := b.newNode(nodeStmt, stmt, scope)
 		b.connectAll(in, node.id)
-		join := b.newNode(nodeStmt, nil, scope)
+		join := b.newNode(nodeJoin, stmt, scope)
 		thenTails := b.buildBlock([]graph.NodeID{node.id}, s.Then, scope)
 		b.connectAll(thenTails, join.id)
 		if s.Else != nil {
@@ -185,7 +214,7 @@ func (b *builder) buildStmt(in []graph.NodeID, stmt ast.Stmt, scope *table.Scope
 	case *ast.ForStmt:
 		header := b.newNode(nodeStmt, stmt, scope)
 		b.connectAll(in, header.id)
-		after := b.newNode(nodeStmt, nil, scope)
+		after := b.newNode(nodeJoin, stmt, scope)
 		bodyTails := b.buildBlock([]graph.NodeID{header.id}, s.Body, scope)
 		b.connectAll(bodyTails, header.id)
 		b.connect(header.id, after.id)
@@ -206,7 +235,13 @@ func (a *analyzer) run() {
 	if a == nil || a.flow == nil || a.flow.graph == nil || a.flow.entry == "" {
 		return
 	}
-	in := map[graph.NodeID]state{a.flow.entry: newState()}
+	entryState := newState()
+	for _, sym := range a.functionScope.Symbols() {
+		if sym != nil && sym.Kind == symbols.SymbolParam && ownershipTrackedSymbol(sym) {
+			entryState.live[sym] = struct{}{}
+		}
+	}
+	in := map[graph.NodeID]state{a.flow.entry: entryState}
 	queue := []graph.NodeID{a.flow.entry}
 	queued := map[graph.NodeID]bool{a.flow.entry: true}
 	for len(queue) > 0 {
@@ -215,11 +250,19 @@ func (a *analyzer) run() {
 		queued[id] = false
 		node := a.flow.nodes[id]
 		next := copyState(in[id])
-		if node != nil && node.kind == nodeStmt && node.stmt != nil {
-			a.applyStmt(node.scope, node.stmt, next)
+		if node != nil {
+			switch node.kind {
+			case nodeStmt:
+				if node.stmt != nil {
+					a.applyStmt(node.scope, node.stmt, next)
+				}
+			case nodeBlockExit:
+				a.applyBlockExit(node, next)
+			}
 		}
 		for _, succ := range a.flow.graph.Successors(id) {
-			merged, changed := mergeState(in[succ], next)
+			current, exists := in[succ]
+			merged, changed := a.mergeState(succ, current, next, exists)
 			if !changed {
 				continue
 			}
@@ -235,15 +278,47 @@ func (a *analyzer) run() {
 func copyState(src state) state {
 	dst := newState()
 	maps.Copy(dst.moved, src.moved)
+	maps.Copy(dst.live, src.live)
 	maps.Copy(dst.pointers, src.pointers)
 	return dst
 }
 
-func mergeState(dst, src state) (state, bool) {
-	if dst.moved == nil || dst.pointers == nil {
+func (a *analyzer) mergeState(nodeID graph.NodeID, dst, src state, exists bool) (state, bool) {
+	if !exists {
+		return copyState(src), true
+	}
+	if a.flow.graph.InDegree(nodeID) <= 1 {
+		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) {
+			return dst, false
+		}
 		return copyState(src), true
 	}
 	changed := false
+	mismatch := false
+	for sym := range dst.live {
+		if _, ok := src.live[sym]; ok {
+			continue
+		}
+		delete(dst.live, sym)
+		changed = true
+		mismatch = true
+	}
+	for sym := range src.live {
+		if _, ok := dst.live[sym]; !ok {
+			mismatch = true
+		}
+	}
+	if mismatch && !a.reportedJoin[nodeID] {
+		a.reportedJoin[nodeID] = true
+		node := a.flow.nodes[nodeID]
+		var site ast.Node
+		if node != nil {
+			site = node.stmt
+		}
+		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+			"ownership state differs across control-flow paths", ast.LocOf(site), "").
+			WithHelp("move or reinitialize ownership-tracked values on every path")
+	}
 	for sym, site := range src.moved {
 		if _, ok := dst.moved[sym]; ok {
 			continue
@@ -264,27 +339,100 @@ func mergeState(dst, src state) (state, bool) {
 func newState() state {
 	return state{
 		moved:    make(map[*symbols.Symbol]ast.Node),
+		live:     make(map[*symbols.Symbol]struct{}),
 		pointers: make(map[*symbols.Symbol]pointerOrigin),
+	}
+}
+
+func (a *analyzer) applyBlockExit(node *flowNode, st state) {
+	if a == nil || node == nil || node.block == nil || node.scope == nil {
+		return
+	}
+	delete(a.module.Semantics.CleanupAfterBlock, node.block.ID())
+	cleanup := cleanupSymbols(node.scope, st)
+	if len(cleanup) > 0 {
+		a.module.Semantics.CleanupAfterBlock[node.block.ID()] = cleanup
+	}
+	clearScopeOwnership(node.scope, st)
+}
+
+func clearScopeOwnership(scope *table.Scope, st state) {
+	if scope == nil {
+		return
+	}
+	for _, sym := range scope.Symbols() {
+		delete(st.live, sym)
+		delete(st.moved, sym)
+		delete(st.pointers, sym)
+	}
+}
+
+func cleanupSymbols(scope *table.Scope, st state) []*symbols.Symbol {
+	if scope == nil {
+		return nil
+	}
+	symbolsInScope := scope.Symbols()
+	cleanup := make([]*symbols.Symbol, 0)
+	for i := len(symbolsInScope) - 1; i >= 0; i-- {
+		sym := symbolsInScope[i]
+		if sym == nil {
+			continue
+		}
+		if _, live := st.live[sym]; !live {
+			continue
+		}
+		typ, ok := symbols.GetSymbolType(sym)
+		if ok && typeinfo.NeedsDrop(typ) {
+			cleanup = append(cleanup, sym)
+		}
+	}
+	return cleanup
+}
+
+func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt, st state) {
+	if a == nil || stmt == nil {
+		return
+	}
+	delete(a.module.Semantics.CleanupBeforeReturn, stmt.ID())
+	cleanup := make([]*symbols.Symbol, 0)
+	for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+		cleanup = append(cleanup, cleanupSymbols(current, st)...)
+		clearScopeOwnership(current, st)
+	}
+	if len(cleanup) > 0 {
+		a.module.Semantics.CleanupBeforeReturn[stmt.ID()] = cleanup
 	}
 }
 
 func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	switch s := stmt.(type) {
 	case *ast.LetDecl:
-		a.checkExpr(scope, s.Value, st, bindingValueUse(s.Value))
+		a.checkExpr(scope, s.Value, st, useConsume)
 		a.updatePointerBinding(scope, s, s.Value, st)
+		a.markBindingLive(scope, s, st)
 	case *ast.ConstDecl:
-		a.checkExpr(scope, s.Value, st, bindingValueUse(s.Value))
+		a.checkExpr(scope, s.Value, st, useConsume)
 		a.updatePointerBinding(scope, s, s.Value, st)
+		a.markBindingLive(scope, s, st)
 	case *ast.AssignStmt:
+		delete(a.module.Semantics.DropBeforeAssign, s.ID())
+		a.checkExpr(scope, s.Value, st, useConsume)
 		if _, ok := s.Target.(*ast.Ident); !ok {
 			a.checkExpr(scope, s.Target, st, useRead)
+			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
+				a.module.Semantics.DropBeforeAssign[s.ID()] = struct{}{}
+			}
 		}
-		a.checkExpr(scope, s.Value, st, bindingValueUse(s.Value))
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
 			if sym, found := scope.Lookup(target.Name); found {
+				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
+					if _, live := st.live[sym]; live {
+						a.module.Semantics.DropBeforeAssign[s.ID()] = struct{}{}
+					}
+				}
 				if ownershipTrackedSymbol(sym) {
 					delete(st.moved, sym)
+					st.live[sym] = struct{}{}
 				}
 				a.updatePointerSymbol(sym, scope, s.Value, st)
 			}
@@ -292,8 +440,12 @@ func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	case *ast.ReturnStmt:
 		a.checkPointerEscape(scope, s.Value, st)
 		a.checkExpr(scope, s.Value, st, useConsume)
+		a.cleanupBeforeReturn(scope, s, st)
 	case *ast.ExprStmt:
 		a.checkExpr(scope, s.Expr, st, useRead)
+		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.NeedsDrop(a.exprType(s.Expr)) {
+			a.module.Semantics.DropDiscardedExpr[s.Expr.ID()] = struct{}{}
+		}
 	case *ast.IfStmt:
 		a.checkExpr(scope, s.Cond, st, useRead)
 	case *ast.ForStmt:
@@ -301,9 +453,14 @@ func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 	}
 }
 
-func bindingValueUse(expr ast.Expr) useKind {
-	if _, ok := expr.(*ast.MoveExpr); ok {
-		return useConsume
+func (a *analyzer) markBindingLive(scope *table.Scope, stmt ast.Stmt, st state) {
+	if scope == nil || stmt == nil {
+		return
 	}
-	return useCopy
+	sym, found := scope.LookupNode(stmt)
+	if !found || sym == nil || !ownershipTrackedSymbol(sym) {
+		return
+	}
+	delete(st.moved, sym)
+	st.live[sym] = struct{}{}
 }

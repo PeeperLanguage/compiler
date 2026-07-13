@@ -1,12 +1,10 @@
 struct Point {
     x: i32,
-    y: i32,
+    y: i32
 }
 
-impl Point {
-    fn sum(self: Self) -> i32 {
-        return self.x + self.y;
-    }
+fn (self: &Point) sum() -> i32 {
+    return self.x + self.y;
 }
 
 fn main() -> i32 {

@@ -1,0 +1,11 @@
+struct Point {
+    value: i32
+}
+
+fn show(point: Point) {
+    print(point);
+}
+
+fn main() -> i32 {
+    return 0;
+}

@@ -1,0 +1,2 @@
+name = "runtime_print_scalars"
+build = "program"

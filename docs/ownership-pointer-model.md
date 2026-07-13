@@ -6,13 +6,13 @@ and optionals.
 Target model:
 
 - `T` owns values.
-- `^T` is a non-null unique heap handle.
-- `*T` is a nullable raw pointer for FFI and unsafe interop.
+- `*T` is a non-null unique heap handle.
+- `rawptr` is an opaque nullable pointer for FFI and unsafe interop.
 - `?T` is optional for non-raw values.
-- `?^T` is optional heap-handle storage.
-- `move` transfers ownership explicitly.
-- `copy` must be explicit when duplication is allowed.
-- Shallow copy of `^T` is never implicit.
+- `?*T` is optional heap-handle storage.
+- scalar/raw values copy implicitly; composites move implicitly.
+- duplication beyond implicit scalar/raw copy is ordinary user-defined method behavior.
+- Shallow copy of `*T` is never implicit.
 - `@expr` creates raw pointers; `&expr` creates safe references.
 - `[]T` is the target spelling for dynamic arrays.
 - `&[]T` and `&mut []T` are the target spellings for slice views.
@@ -22,7 +22,7 @@ Rejected old model:
 
 - `^T` as raw pointer
 - `^const T`
-- shallow-copy opt-in for owning pointer fields
+- type-level copy/nocopy annotations
 - allocator provenance hidden behind plain value `T`
 
 ## `T`
@@ -41,28 +41,28 @@ let s: str = "fuad"
 let xs: []i32 = make_array()
 ```
 
-Ownership belongs to the binding. A plain `T` may be copied when its type is
-copyable. A `T` containing heap handles is move-only unless the type
-defines an explicit deep copy.
+Ownership belongs to the binding. Plain composites move on assignment, argument
+passing, aggregate insertion, and return. The compiler provides no generic copy
+operation; methods may construct independent results using normal ownership rules.
 
 ## Heap Handles
 
-### `^T`
+### `*T`
 
-`^T` is a unique handle to heap storage containing `T`.
+`*T` is a unique handle to heap storage containing `T`.
 
 - non-null by default
-- must be moved or freed explicitly
+- moves on transfer and drops automatically when still live
 - cannot be implicitly copied
 - cannot be forged from raw pointer bits with `as`
-- may be nullable only when written as `?^T`
+- may be nullable only when written as `?*T`
 
 Examples:
 
 ```peep
-let node: ^Node = allocator.alloc<Node>()
-let next: ?^Node = none
-let moved: ^Node = move node
+let node: *Node = allocator.alloc<Node>()
+let next: ?*Node = none
+let moved: *Node = node
 ```
 
 Raw memory returned from C is not automatically owned. Ownership adoption must
@@ -70,24 +70,24 @@ go through an explicit allocator/provenance API.
 
 ## Raw Pointers
 
-### `*T`
+### `rawptr`
 
-`*T` is a nullable raw pointer to `T`.
+`rawptr` is an opaque nullable raw address.
 
 - points to storage owned somewhere else
 - does not own or free that storage
 - may be null
 - may dangle
-- may be copied because copying raw pointer bits does not copy ownership
-- dereference and raw-to-reference conversion require `unsafe`
+- may be copied because raw pointers carry no tracked ownership
+- has no pointee type, field access, method lookup, or safe dereference
 
 Examples:
 
 ```peep
 #[extern("read")]
-fn read(fd: i32, buf: *byte, n: usize) -> isize;
+fn read(fd: i32, buf: rawptr, n: usize) -> isize;
 
-let raw: *byte = malloc(16)
+let raw: rawptr = malloc(16)
 if raw == none {
     return
 }
@@ -101,16 +101,16 @@ Examples:
 
 ```peep
 let x: ?i32 = none
-let next: ?^Node = none
+let next: ?*Node = none
 ```
 
 Implementation status:
 
 - `none` lowers in expected optional contexts.
 - `T` can lower to `?T` as `some(T)`.
-- `?^T` should use pointer niche layout.
+- `?*T` should use pointer niche layout.
 - other optionals currently use tagged layout.
-- raw `*T` is nullable by default, so `?*T` is not part of the target model.
+- `rawptr` is nullable by default, so `?rawptr` is not part of target model.
 
 Future layout work may add niche detection for more types.
 
@@ -125,53 +125,46 @@ when the operation itself is available. A decoded Unicode scalar is `char`, a
 
 ## Copy And Move
 
-Normal `T` values copy by default.
-
-`^T` is move-only. Types containing `^T` are also move-only unless they define
-an explicit deep copy.
+Integer/float scalars, bool, byte, char, raw pointers, and cstr copy implicitly.
+Shared references duplicate their borrow header. Every other value moves on a
+by-value use.
 
 ```peep
 struct Buffer {
-    ptr: *byte,
+    ptr: rawptr,
     len: int,
 }
 ```
 
-Passing or assigning an owned handle without `move` is invalid when the
-operation would transfer ownership.
-
 ```peep
-let a: ^Buffer = make_buffer()
-let b: ^Buffer = move a
+let a: *Buffer = make_buffer()
+let b: *Buffer = a
+use(a) // error: a moved into b
 ```
 
-After `move a`, `a` is dead until reassigned.
+After a move, the source is dead until reassigned.
 
-`copy` is explicit and must mean an ownership-safe duplication:
+A user-defined method may expose duplication:
 
 ```peep
-let clone: ^Buffer = copy a
+let point_copy = point.copy()
 ```
 
-The implementation may use memcpy only for trivially copyable payloads. If `T`
-contains owned fields, copy must recursively clone those fields or reject the
-operation until the type defines clone behavior.
+This is an ordinary method call. Its implementation may copy scalar fields,
+allocate new storage, or reject duplication by not defining the method.
 
 ## Function Passing
 
-Passing `T` means value passing:
+Passing `T` means value passing: Category A copies; Category B moves. Use `&T`
+or `&mut T` when the callee must borrow instead.
 
-- copy if type is copyable
-- move only when explicitly written and the callee consumes ownership
+Passing `*T` transfers the heap handle implicitly.
 
-Passing `^T` means heap-handle passing. Passing it to a consuming
-parameter requires `move`.
-
-Passing `*T` means raw pointer passing. No ownership transfer is implied.
+Passing `rawptr` copies opaque address. No ownership transfer is implied.
 
 ```peep
-fn destroy(move buf: ^Buffer) {
-    allocator.free(move buf)
+fn destroy(buf: *Buffer) {
+    allocator.free(buf)
 }
 ```
 
@@ -180,22 +173,21 @@ fn destroy(move buf: ^Buffer) {
 Allocator APIs return heap handles.
 
 ```peep
-let x: ^Buffer = allocator.alloc<Buffer>()
+let x: *Buffer = allocator.alloc<Buffer>()
 ```
 
-Free consumes allocator-owned `^T`:
+Free consumes allocator-owned `*T`:
 
 ```peep
-defer allocator.free(move x)
+free(x) // explicit early destruction; scope drop is suppressed
 ```
 
-Calling `free` with a raw `*T` or a non-owned value should be a compile error
-once allocator provenance checks exist.
+Calling `free` with `rawptr` or a non-owned value is a compile error.
 
 Implementation status:
 
 - allocator provenance tracking is not complete
-- `free` ownership validation is future work
+- typed allocation construction and allocator-instance provenance remain future work
 
 ## Raw Pointer Escape Analysis
 
@@ -205,7 +197,7 @@ to return raw pointers to local stack storage.
 Use `@expr` to produce a raw pointer to addressable storage:
 
 ```peep
-fn bad() -> *i32 {
+fn bad() -> rawptr {
     let x: i32 = 1
     return @x // error: pointer to local storage escapes
 }
@@ -238,7 +230,7 @@ Safe reference syntax is separate from raw pointer syntax:
 ```peep
 let r: &T = &value
 let m: &mut T = &mut value
-let p: *T = @value
+let p: rawptr = @value
 ```
 
 References are temporary views. They cannot be stored inside structs, arrays,
@@ -262,7 +254,66 @@ Implementation status:
 
 - `&T`, `&mut T`, `&expr`, and `&mut expr` are implemented for current v1 storage boundaries.
 - `[]T` is represented as dynamic-array storage, not a slice view.
-- dynamic-array receiver borrows, slice-view creation/indexing, reference-origin summaries, and borrow-conflict checks remain future work.
+- dynamic-array construction, reference-origin summaries, and borrow-conflict checks remain future work.
+
+## Automatic Destruction
+
+Every live owned value is destroyed on normal scope exit. Moves and explicit
+`free` invalidate source and suppress later drop. Assignment into a live owned
+destination drops old value before storing replacement.
+
+Drop planning belongs to ownership phase. It produces explicit cleanup actions
+for lowering; HIR and backend do not re-infer liveness. Control-flow joins and
+loop backedges require identical ownership state, so compiler never needs a
+runtime drop flag.
+
+Plans cover named values and unnamed full-expression temporaries. When a scalar
+is projected from an ownership-bearing temporary, lowering preserves the scalar
+result and then executes the ownership-planned drop for the projection base.
+
+Drop glue recurses through owning pointers, structs, arrays, strings, dynamic
+arrays, optionals, and erased payloads. Locals, fields, and elements drop in
+reverse declaration/index order. Panic aborts without unwind cleanup. Owned
+globals reject until module shutdown ordering exists.
+
+## Interface Ownership
+
+Bare interface values are unsized and illegal at runtime. Interface dispatch
+uses explicit carriers:
+
+```peep
+let view: &Reader = &counter
+let owner: *Reader = concrete_owner
+```
+
+`&Reader` and `&mut Reader` borrow existing concrete storage and never allocate.
+`*Reader` accepts only existing `*Concrete`, adopts that allocation without
+moving payload storage, and never allocates replacement storage.
+
+Interface methods declare receiver explicitly:
+
+```peep
+iface Reader {
+    fn (&Self) read() -> i32
+}
+```
+
+All carriers use `{ rawptr, vtable }`. Vtable slot zero is
+`drop_value(rawptr)`; method slots follow. Borrowed carriers never clean up.
+Dropping `*Reader` destroys erased payload, then carrier releases allocation.
+`&Reader` calls shared receivers, `&mut Reader` calls shared or mutable
+receivers, and `*Reader` may also call consuming receivers.
+
+Concrete methods are receiver functions declared in concrete type's module:
+
+```peep
+fn (reader: &Counter) read() -> i32 {
+    return reader.value
+}
+```
+
+`impl` declarations, interface receivers, non-receiver `Self`, generic interface
+methods, and bare interface storage are not part of target model.
 
 ## Linked Structures
 
@@ -271,35 +322,38 @@ Unsafe linked structures can use raw pointers directly.
 ```peep
 struct Node {
     val: i32,
-    next: *Node,
+    next: rawptr,
 }
 ```
 
-This is valid because `*Node` has fixed size and `next` is non-owning.
+This is valid because `rawptr` has fixed size and `next` is non-owning.
 
 This does not make the list ownership-safe. Whoever owns nodes must keep them
 alive longer than all raw pointers that reference them.
 
-Owned recursive structures use `?^Node` and transfer/free recursively by policy:
+Owned recursive structures use `?*Node` and drop recursively:
 
 ```peep
 struct Node {
     val: i32,
-    next: ?^Node,
+    next: ?*Node,
 }
 ```
 
 ## Final Rules
 
 - `T` owns.
-- `^T` is non-null unique heap handle.
-- `*T` is nullable raw pointer only.
+- `*T` is non-null unique heap handle.
+- `rawptr` is nullable raw pointer only.
 - `@expr` produces a non-owning raw pointer to addressable storage.
 - `?T` is optional for non-raw values.
-- `?^T` is nullable heap-handle storage.
+- `?*T` is nullable heap-handle storage.
 - `str` is builtin `byte[]`.
-- allocator returns `^T`.
-- `free` consumes allocator-created `^T`.
-- type containing `^T` is move-only unless explicit deep copy exists.
-- `*T` copy is shallow pointer-bit copy because it owns nothing.
+- allocator returns `*T`.
+- `free` consumes allocator-created `*T`.
+- live owned values drop automatically on normal scope exit.
+- every composite moves implicitly on by-value use.
+- `*T`, `*Interface`, dynamic arrays/strings, and mutable references never duplicate implicitly.
+- `rawptr` copy is shallow address-bit copy because it owns nothing.
+- bare interfaces are unsized contracts; runtime values require `&`, `&mut`, or `*`.
 - compiler rejects returned raw pointers when they are known to point at local storage.

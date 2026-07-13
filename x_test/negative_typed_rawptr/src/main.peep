@@ -1,0 +1,7 @@
+fn invalid(value: rawptr i32) {
+    let _ = value;
+}
+
+fn main() -> i32 {
+    return 0;
+}

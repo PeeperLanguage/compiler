@@ -1,0 +1,3 @@
+name = "negative_nested_unsized_array"
+build = "program"
+entry = "src/main.peep"

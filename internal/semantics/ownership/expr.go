@@ -24,8 +24,6 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 	switch e := expr.(type) {
 	case *ast.Ident:
 		a.checkIdent(scope, e, st, use)
-	case *ast.MoveExpr:
-		a.checkMove(scope, e, st, use)
 	case *ast.AddressExpr:
 		a.checkExpr(scope, e.Expr, st, useRead)
 	case *ast.SelectorExpr:
@@ -36,23 +34,40 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 		}
 		a.checkExpr(scope, e.Expr, st, useRead)
 		a.checkExpr(scope, e.Index, st, useRead)
+		if _, slicing := e.Index.(*ast.RangeExpr); slicing {
+			return
+		}
+		if a.planProjectionBaseDrop(e, e.Expr) {
+			return
+		}
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 				"move-only indexed element cannot be copied or consumed until indexed moves are tracked", ast.LocOf(e), "")
 		}
+	case *ast.RangeExpr:
+		a.checkExpr(scope, e.Start, st, useRead)
+		a.checkExpr(scope, e.End, st, useRead)
 	case *ast.StructLit:
 		for _, field := range e.Fields {
-			a.checkExpr(scope, field.Value, st, useCopy)
+			a.checkExpr(scope, field.Value, st, useConsume)
+		}
+	case *ast.ArrayLit:
+		for _, value := range e.Values {
+			a.checkExpr(scope, value, st, useConsume)
 		}
 	case *ast.CallExpr:
 		a.checkCall(scope, e, st)
+	case *ast.FreeExpr:
+		a.checkExpr(scope, e.Expr, st, useConsume)
+	case *ast.PrintExpr:
+		a.checkExpr(scope, e.Expr, st, useRead)
 	case *ast.UnaryExpr:
 		a.checkExpr(scope, e.Expr, st, useRead)
 	case *ast.BinaryExpr:
 		a.checkExpr(scope, e.Left, st, useRead)
 		a.checkExpr(scope, e.Right, st, useRead)
 	case *ast.AsExpr:
-		a.checkExpr(scope, e.Expr, st, useCopy)
+		a.checkExpr(scope, e.Expr, st, useConsume)
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
@@ -84,51 +99,15 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 		if symType, ok := symbols.GetSymbolType(sym); ok {
 			if _, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && mutable {
 				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-					"mutable reference cannot be copied; use `move` to transfer it or pass it directly to reborrow", ast.LocOf(ident), "")
+					"mutable reference cannot be copied; pass it directly to transfer or reborrow", ast.LocOf(ident), "")
 				return
 			}
 		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"copy of move-only value requires `move` or consuming context", ast.LocOf(ident), "")
+			"copy of move-only value requires a consuming context", ast.LocOf(ident), "")
 	case useConsume:
 		st.moved[sym] = ident
-	}
-}
-
-func (a *analyzer) checkMove(scope *table.Scope, move *ast.MoveExpr, st state, use useKind) {
-	if scope == nil || move == nil {
-		return
-	}
-	ident, ok := move.Expr.(*ast.Ident)
-	if !ok || ident == nil {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-			"`move` currently requires an identifier operand", ast.LocOf(move), "")
-		return
-	}
-	if use == useRead {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"explicit `move` is not allowed in expression", ast.LocOf(move), "")
-		return
-	}
-	if use != useConsume {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"explicit `move` requires a consuming parameter or move binding target", ast.LocOf(move), "")
-		return
-	}
-	sym, found := scope.Lookup(ident.Name)
-	if !found || sym == nil {
-		return
-	}
-	if site, moved := st.moved[sym]; moved {
-		diag := a.ctx.Diagnostics.AddError(diagnostics.ErrUseAfterMove,
-			"value used after move", ast.LocOf(ident), "")
-		if site != nil {
-			diag.WithSecondaryLabel(ast.LocOf(site), "moved here")
-		}
-		return
-	}
-	if ownershipTrackedSymbol(sym) {
-		st.moved[sym] = move
+		delete(st.live, sym)
 	}
 }
 
@@ -137,13 +116,32 @@ func (a *analyzer) checkSelector(scope *table.Scope, selector *ast.SelectorExpr,
 		return
 	}
 	a.checkExpr(scope, selector.Expr, st, useRead)
+	if a.planProjectionBaseDrop(selector, selector.Expr) {
+		return
+	}
 	if use == useRead {
 		return
 	}
 	if ownershipTrackedType(a.exprType(selector)) {
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"move-only subexpression must be bound before copy or move", ast.LocOf(selector), "")
+			"move-only subexpression must be bound before it can be consumed", ast.LocOf(selector), "")
 	}
+}
+
+func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
+	if a == nil || a.module == nil || a.module.Semantics == nil || projection == nil || base == nil {
+		return false
+	}
+	if place.IsPlaceExpr(base) || !typeinfo.NeedsDrop(a.exprType(base)) {
+		return false
+	}
+	if typeinfo.NeedsDrop(a.exprType(projection)) {
+		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"ownership-bearing projection from temporary must be bound before use", ast.LocOf(projection), "")
+		return true
+	}
+	a.module.Semantics.DropProjectionBase[projection.ID()] = struct{}{}
+	return false
 }
 
 func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state) {
@@ -191,15 +189,16 @@ func (a *analyzer) checkMethodCall(scope *table.Scope, selector *ast.SelectorExp
 }
 
 func paramUse(fn *typeinfo.FuncType, index int) useKind {
-	if fn != nil && index >= 0 && index < len(fn.Consumes) && fn.Consumes[index] {
-		return useConsume
-	}
 	if fn != nil && index >= 0 && index < len(fn.Params) {
-		if _, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fn.Params[index])); ok {
+		paramType := fn.Params[index]
+		if typeinfo.IsImplicitCopyType(paramType) {
+			return useRead
+		}
+		if _, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType)); ok {
 			return useRead
 		}
 	}
-	return useCopy
+	return useConsume
 }
 
 func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
@@ -253,8 +252,6 @@ func (a *analyzer) checkPointerEscape(scope *table.Scope, expr ast.Expr, st stat
 		for _, field := range e.Fields {
 			a.checkPointerEscape(scope, field.Value, st)
 		}
-	case *ast.MoveExpr:
-		a.checkPointerEscape(scope, e.Expr, st)
 	}
 }
 
@@ -276,8 +273,6 @@ func (a *analyzer) pointerOrigin(scope *table.Scope, expr ast.Expr, st state) (p
 		}
 		origin, ok := st.pointers[sym]
 		return origin, ok
-	case *ast.MoveExpr:
-		return a.pointerOrigin(scope, e.Expr, st)
 	default:
 		return pointerOrigin{}, false
 	}
@@ -301,7 +296,7 @@ func ownershipTrackedSymbol(sym *symbols.Symbol) bool {
 }
 
 func ownershipTrackedType(t typeinfo.Type) bool {
-	if t == nil || typeinfo.IsCopyType(t) {
+	if t == nil || typeinfo.IsImplicitCopyType(t) {
 		return false
 	}
 	return true

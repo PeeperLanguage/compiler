@@ -45,12 +45,11 @@ func (t *OwnedPtrType) TypeText() string {
 	if t == nil {
 		return ""
 	}
-	return "^" + TypeText(t.Target)
+	return "*" + TypeText(t.Target)
 }
 
 type RawPtrType struct {
 	NodeIDHolder
-	Target   TypeExpr
 	Location *source.Location
 }
 
@@ -60,7 +59,7 @@ func (t *RawPtrType) TypeText() string {
 	if t == nil {
 		return ""
 	}
-	return "*" + TypeText(t.Target)
+	return "rawptr"
 }
 
 type RefType struct {
@@ -124,7 +123,6 @@ func (t *ArrayType) TypeText() string {
 type FuncType struct {
 	NodeIDHolder
 	Params   []TypeExpr
-	Consumes []bool
 	Return   TypeExpr
 	Location *source.Location
 }
@@ -192,11 +190,16 @@ func (t *InterfaceType) TypeText() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("interface {")
+	b.WriteString("iface {")
 	for i, method := range t.Methods {
 		if i > 0 {
 			b.WriteString(", ")
 		}
+		b.WriteString("fn (")
+		if method.Receiver != nil {
+			b.WriteString(TypeText(method.Receiver.Type))
+		}
+		b.WriteString(") ")
 		if method.Name != nil {
 			b.WriteString(method.Name.Name)
 		}
@@ -255,6 +258,7 @@ type TypeField struct {
 
 type TypeMethod struct {
 	Name       *Ident
+	Receiver   *Param
 	TypeParams []TypeParam
 	Params     []Param
 	ReturnType TypeExpr
@@ -267,7 +271,6 @@ type EnumVariant struct {
 }
 
 type Param struct {
-	Consumes  bool
 	IsMutable bool
 	Name      *Ident
 	Type      TypeExpr
@@ -313,6 +316,7 @@ type FnDecl struct {
 	Documented
 	Attributed
 	Name       *Ident
+	Receiver   *Param
 	TypeParams []TypeParam
 	Params     []Param
 	ReturnType TypeExpr
@@ -323,6 +327,17 @@ type FnDecl struct {
 func (*FnDecl) declNode()               {}
 func (*FnDecl) stmtNode()               {}
 func (d *FnDecl) loc() *source.Location { return d.Location }
+func (d *FnDecl) ParamsWithReceiver() []Param {
+	if d == nil {
+		return nil
+	}
+	if d.Receiver == nil {
+		return d.Params
+	}
+	params := make([]Param, 0, len(d.Params)+1)
+	params = append(params, *d.Receiver)
+	return append(params, d.Params...)
+}
 
 type TypeAliasDecl struct {
 	NodeIDHolder
@@ -412,15 +427,3 @@ type BadDecl struct {
 func (*BadDecl) declNode()               {}
 func (*BadDecl) stmtNode()               {}
 func (d *BadDecl) loc() *source.Location { return d.Location }
-
-type ImplDecl struct {
-	NodeIDHolder
-	Documented
-	Target   TypeExpr
-	Methods  []*FnDecl
-	Location *source.Location
-}
-
-func (*ImplDecl) declNode()               {}
-func (*ImplDecl) stmtNode()               {}
-func (d *ImplDecl) loc() *source.Location { return d.Location }

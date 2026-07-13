@@ -38,8 +38,6 @@ func (r *resolver) resolveModule() {
 			if node != nil && node.Body != nil {
 				r.resolveFunction(node)
 			}
-		case *ast.ImplDecl:
-			r.resolveImpl(node)
 		}
 		return true
 	})
@@ -79,8 +77,13 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if r == nil || r.module == nil || fn == nil || fn.Body == nil {
 		return
 	}
-	sym, found := r.module.ModuleScope.Lookup(fn.Name.Name)
-	if !found || sym == nil || sym.Scope == nil {
+	var sym *symbols.Symbol
+	if fn.Receiver != nil {
+		sym = r.module.Semantics.MethodSymbol[fn.ID()]
+	} else {
+		sym, _ = r.module.ModuleScope.Lookup(fn.Name.Name)
+	}
+	if sym == nil || sym.Scope == nil {
 		return
 	}
 	r.resolveFunctionBody(sym, fn)
@@ -91,7 +94,7 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 		return
 	}
 	funcScope := sym.Scope.(*table.Scope)
-	for _, param := range fn.Params {
+	for _, param := range fn.ParamsWithReceiver() {
 		if param.Name == nil || param.Name.Name == "" {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", param.Location, "")
 			return
@@ -105,22 +108,6 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 		}
 	}
 	r.resolveBlock(funcScope, fn.Body)
-}
-
-func (r *resolver) resolveImpl(decl *ast.ImplDecl) {
-	if r == nil || r.module == nil || r.module.Semantics == nil || decl == nil {
-		return
-	}
-	for _, method := range decl.Methods {
-		if method == nil || method.Body == nil {
-			continue
-		}
-		sym, ok := r.module.Semantics.MethodSymbol[method.ID()]
-		if !ok || sym == nil {
-			continue
-		}
-		r.resolveFunctionBody(sym, method)
-	}
 }
 
 func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {
@@ -282,8 +269,6 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 	case *ast.UnaryExpr:
 		r.resolveExpr(scope, node.Expr)
-	case *ast.MoveExpr:
-		r.resolveExpr(scope, node.Expr)
 	case *ast.AddressExpr:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
@@ -294,6 +279,10 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		for _, arg := range node.Args {
 			r.resolveExpr(scope, arg)
 		}
+	case *ast.FreeExpr:
+		r.resolveExpr(scope, node.Expr)
+	case *ast.PrintExpr:
+		r.resolveExpr(scope, node.Expr)
 	case *ast.AsExpr:
 		r.resolveExpr(scope, node.Expr)
 	default:

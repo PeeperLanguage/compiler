@@ -1,0 +1,7 @@
+fn show(value: u128) {
+    print(value);
+}
+
+fn main() -> i32 {
+    return 0;
+}

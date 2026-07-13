@@ -1,0 +1,7 @@
+fn consume_raw(raw: rawptr) {
+    free(raw);
+}
+
+fn main() -> i32 {
+    return 0;
+}

@@ -107,9 +107,6 @@ func addTypeDeclEdges(ctx *project.CompilerContext, module *project.Module, owne
 	case *ast.OwnedPtrType:
 		// Pointer target is not a layout dependency.
 		addTypeDeclEdges(ctx, module, owner, node.Target, true)
-	case *ast.RawPtrType:
-		// Pointer target is not a layout dependency.
-		addTypeDeclEdges(ctx, module, owner, node.Target, true)
 	case *ast.RefType:
 		// Reference target is not owned inline storage.
 		addTypeDeclEdges(ctx, module, owner, node.Target, true)

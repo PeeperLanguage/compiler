@@ -1,0 +1,3 @@
+fn Write(xs: &[]i32, index: usize, value: i32) {
+    xs[index] = value;
+}

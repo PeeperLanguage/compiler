@@ -1,52 +1,52 @@
-interface Summer {
-    sum(Self) -> i32,
+iface Summer {
+    fn (&Self) sum() -> i32
 }
 
 struct Point {
     x: i32,
-    y: i32,
+    y: i32
 }
 
-impl Point {
-    fn sum(self: Self) -> i32 {
-        return self.x + self.y;
-    }
+fn (self: &Point) sum() -> i32 {
+    return self.x + self.y;
 }
 
 struct SummerHolder {
-    s: Summer,
+    value: *Summer
 }
 
-// This is an example comment to see the lsp can capture it or not
-interface SummerConsumer {
-    consume(Self, val: Summer) -> i32,
+iface SummerConsumer {
+    fn (&Self) consume(value: &Summer) -> i32
 }
 
 struct ConsumerImpl {}
 
-impl ConsumerImpl {
-    fn consume(_: Self, val: Summer) -> i32 {
-        return val.sum();
-    }
+fn (_: &ConsumerImpl) consume(value: &Summer) -> i32 {
+    return value.sum();
 }
 
-// program entry point
+#[extern("malloc")]
+fn acquire_point(size: usize) -> *Point;
+
 fn main() -> i32 {
-    let p: Point = .{ x = 15, y = 25 };
-    let s: Summer = p;
+    let first = acquire_point(8);
+    first.x = 15;
+    first.y = 25;
+    let first_summer: *Summer = first;
+    let mut holder: SummerHolder = .{ value = first_summer };
 
-    //let myname = "fuad";
+    let replacement = acquire_point(8);
+    replacement.x = 15;
+    replacement.y = 25;
+    let replacement_summer: *Summer = replacement;
+    holder.value = replacement_summer;
 
-    // Test escaping interface via Struct Field (StoreField)
-    let mut h: SummerHolder = .{ s = s };
-    h.s = s;
+    let point: Point = .{ x = 15, y = 25 };
+    let consumer_impl: ConsumerImpl = .{};
+    let consumer: &SummerConsumer = &consumer_impl;
+    let result = consumer.consume(&point);
 
-    // Test Interface Call with another Interface as argument
-    let impl_val: ConsumerImpl = .{};
-    let c: SummerConsumer = impl_val;
-    let result: i32 = c.consume(s);
-
-    if result == 40 {
+    if result == 40 && holder.value.sum() == 40 {
         let ok: cstr = "nested interface ok\n";
         write(stdout, ok, 20);
         return 0;

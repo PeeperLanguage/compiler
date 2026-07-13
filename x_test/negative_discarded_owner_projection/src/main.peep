@@ -1,0 +1,10 @@
+struct Pair {
+    first: *i32,
+    second: *i32
+}
+
+fn make() -> Pair;
+
+fn Invalid() {
+    make().first;
+}

@@ -47,7 +47,11 @@ func fnDeclSurface(prefix string, fn *ast.FnDecl) string {
 	if fn == nil || fn.Name == nil {
 		return prefix + ":"
 	}
-	return prefix + ":" + fn.Name.Name + ":" + strings.Join(typeParamNames(fn.TypeParams), ",") + ":" + strings.Join(paramSurface(fn.Params), ",") + ":" + ast.TypeText(fn.ReturnType)
+	receiver := ""
+	if fn.Receiver != nil {
+		receiver = paramSurface([]ast.Param{*fn.Receiver})[0]
+	}
+	return prefix + ":" + receiver + ":" + fn.Name.Name + ":" + strings.Join(typeParamNames(fn.TypeParams), ",") + ":" + strings.Join(paramSurface(fn.Params), ",") + ":" + ast.TypeText(fn.ReturnType)
 }
 
 func structDeclSurface(decl *ast.StructDecl) string {
@@ -80,7 +84,7 @@ func interfaceDeclSurface(decl *ast.InterfaceDecl) string {
 	for _, method := range ifaceType.Methods {
 		methods = append(methods, typeMethodSurface("method", method))
 	}
-	return "interface:" + decl.Name.Name + ":" + strings.Join(methods, ";")
+	return "iface:" + decl.Name.Name + ":" + strings.Join(methods, ";")
 }
 
 func enumDeclSurface(decl *ast.EnumDecl) string {
@@ -130,23 +134,16 @@ func letDeclSurface(decl *ast.LetDecl) string {
 	return "let:" + decl.Name.Name + ":" + ast.TypeText(decl.Type) + valueShape
 }
 
-func implDeclSurface(decl *ast.ImplDecl) string {
-	if decl == nil {
-		return ""
-	}
-	methods := make([]string, 0, len(decl.Methods))
-	for _, method := range decl.Methods {
-		methods = append(methods, fnDeclSurface("method", method))
-	}
-	return "impl:" + ast.TypeText(decl.Target) + ":" + strings.Join(methods, ";")
-}
-
 func typeMethodSurface(prefix string, method ast.TypeMethod) string {
 	name := ""
 	if method.Name != nil {
 		name = method.Name.Name
 	}
-	return prefix + ":" + name + ":" + strings.Join(typeParamNames(method.TypeParams), ",") + ":" + strings.Join(paramSurface(method.Params), ",") + ":" + ast.TypeText(method.ReturnType)
+	receiver := ""
+	if method.Receiver != nil {
+		receiver = paramSurface([]ast.Param{*method.Receiver})[0]
+	}
+	return prefix + ":" + receiver + ":" + name + ":" + strings.Join(typeParamNames(method.TypeParams), ",") + ":" + strings.Join(paramSurface(method.Params), ",") + ":" + ast.TypeText(method.ReturnType)
 }
 
 func typeParamNames(typeParams []ast.TypeParam) []string {
@@ -167,11 +164,8 @@ func paramSurface(params []ast.Param) []string {
 			name = param.Name.Name
 		}
 		prefix := ""
-		if param.Consumes {
-			prefix = "move "
-		}
 		if param.IsMutable {
-			prefix += "mut "
+			prefix = "mut "
 		}
 		out = append(out, prefix+name+":"+ast.TypeText(param.Type))
 	}

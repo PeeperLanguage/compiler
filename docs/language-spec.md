@@ -13,25 +13,28 @@ Core rules:
 
 - Builtin concepts must use builtin syntax, not library-shaped names.
 - Heap allocation is explicit.
-- Resource-owning values cannot be implicitly copied.
-- `move` transfers resource authority explicitly.
-- `copy` means an explicit duplication operation, never silent shallow copy.
+- Scalars and raw pointers copy implicitly.
+- Composites move implicitly on every by-value use.
+- Duplication beyond implicit scalar/raw copy is an ordinary user-defined method API.
+- Types containing tracked ownership cannot be copied.
+- Live owned values are destroyed automatically at normal scope exit.
 - Safe references and raw pointers are different syntax and different semantics.
 
 ## Types
 
 | Syntax | Meaning | Copy behavior |
 | --- | --- | --- |
-| `T` | Value | Copyable when all contained values are copyable |
-| `?T` | Optional value | Copyable when `T` is copyable |
-| `^T` | Unique heap handle to `T` | Move-only |
-| `*T` | Raw nullable pointer to `T` | Copyable pointer bits |
+| scalar builtin | Scalar value | Implicit copy |
+| `T` | Composite value | Implicit move; user methods may construct duplicates |
+| `?T` | Optional value | Implicit move |
+| `*T` | Unique non-null heap handle to `T` | Implicit move; never copyable |
+| `rawptr` | Opaque nullable pointer | Copyable pointer bits |
 | `&T` | Shared reference to `T` | Copyable temporary view |
-| `&mut T` | Mutable exclusive reference to `T` | Not copyable |
-| `[N]T` | Fixed array value | Copyable when `T` is copyable |
-| `[]T` | Dynamic array value | Move-only |
+| `&mut T` | Mutable exclusive reference to `T` | Implicit transfer; never copyable |
+| `[N]T` | Fixed array value | Implicit move; duplication is user-defined |
+| `[]T` | Dynamic array value | Implicit move; never copyable |
 | `&[]T` | Shared slice view | Copyable temporary view |
-| `&mut []T` | Mutable exclusive slice view | Not copyable |
+| `&mut []T` | Mutable exclusive slice view | Implicit transfer; never copyable |
 
 `str` is a builtin text type. It must not force a library-shaped type into user
 code. Exact `str` storage remains tied to the array/string design work.
@@ -60,39 +63,50 @@ implicit; float narrowing requires `as`.
 Integer, float, byte, character, and string are separate conversion classes.
 Cross-class conversion is never implicit. `byte` is semantically distinct from
 `u8`, even though both currently lower to 8-bit storage; byte formatting is
-reserved for the future formatting API. Concrete values that satisfy an
-interface remain the deliberate exception and convert to that interface
-implicitly.
+reserved for the future formatting API. Concrete references and heap owners
+that satisfy an interface remain the deliberate exception and convert to the
+matching interface carrier implicitly.
+
+## Basic Output
+
+`print(expr)` writes one primitive scalar to standard output without appending
+a newline.
+
+Supported values are signed and unsigned integers, floats, `bool`, `byte`,
+`cstr`, and `rawptr`. Integers and bytes use decimal text, booleans use `true`
+or `false`, and raw pointers use hexadecimal pointer notation. Composite and
+ownership-bearing values are rejected before lowering.
+
+`println` and character formatting are not part of this first output slice.
 
 ## Heap Handles
 
-`^T` is a unique heap handle. It is not a raw pointer.
+`*T` is a unique heap handle. It is not a raw pointer.
 
 Rules:
 
-- `^T` is non-null.
-- `^T` controls access and cleanup for one heap value.
-- `^T` cannot be implicitly copied.
-- `move h` transfers the handle.
-- After `move h`, `h` is unusable until reassigned.
-- `copy h` is allowed only when the type defines a valid duplication operation.
-- `^T` may produce `&T` or `&mut T` views.
+- `*T` is non-null.
+- `*T` controls access and cleanup for one heap value.
+- `*T` moves on every by-value use.
+- After a move, the source is unusable until reassigned.
+- no builtin copy operation exists; a user-defined method may allocate a distinct owner.
+- `*T` may produce `&T` or `&mut T` views.
 - A heap handle cannot be moved or freed while references derived from it are live.
 
-Use `?^T` when absence is needed.
+Use `?*T` when absence is needed.
 
 ## Raw Pointers
 
-`*T` is a raw nullable pointer for unsafe or foreign-memory boundaries.
+`rawptr` is an opaque nullable pointer for unsafe or foreign-memory boundaries.
 
 Rules:
 
 - Raw pointer address syntax is `@expr`.
-- `@expr` produces `*T`, not `&T`.
+- `@expr` produces `rawptr`, not `&T`.
 - Raw pointers do not own storage.
 - Raw pointers may dangle.
-- Raw pointer dereference and raw-to-reference conversion require `unsafe`.
-- `*T` is nullable by default; `?*T` is not part of the target model.
+- `rawptr` has no pointee type, field access, method lookup, or safe dereference.
+- Future raw-to-typed conversion must require explicit unsafe syntax.
 
 Keeping `@` for raw address syntax makes safe reference syntax (`&`) visually and
 semantically separate from unsafe pointer creation.
@@ -105,8 +119,8 @@ Rules:
 
 - `&x` creates a shared reference.
 - `&mut x` creates a mutable exclusive reference.
-- `&h`, where `h: ^T`, borrows the heap value and produces `&T`.
-- `&mut h`, where `h: ^T`, borrows the heap value and produces `&mut T`.
+- `&h`, where `h: *T`, borrows the heap value and produces `&T`.
+- `&mut h`, where `h: *T`, borrows the heap value and produces `&mut T`.
 - Reference-to-reference types are not part of v1.
 - References may be local variables and parameters.
 - References cannot be stored in structs, arrays, dynamic arrays, globals, or heap objects in v1.
@@ -116,7 +130,7 @@ Borrowing a field preserves the root origin:
 
 ```peep
 let r = &player.position
-let h: ^Player = make_player()
+let h: *Player = make_player()
 let hp = &h.position
 ```
 
@@ -127,12 +141,12 @@ let hp = &h.position
 
 `&mut T` is exclusive for the borrowed storage.
 
-Binding an existing mutable reference to another local requires `move` because
-the binding transfers the one exclusive access capability. Passing it to a
-non-consuming reference parameter creates a temporary reborrow instead:
+Binding an existing mutable reference to another local transfers the one
+exclusive access capability implicitly. Passing it to a reference parameter
+creates a temporary reborrow instead:
 
 ```peep
-let next = move current_mut_ref
+let next = current_mut_ref
 inspect(current_mut_ref) // invalid after transfer
 mutate(next)             // call temporarily reborrows next
 ```
@@ -163,21 +177,58 @@ fn update(mut writer: Writer, mut value: i32) {
 ```
 
 Mutable binding permits reassignment, field mutation, mutable borrowing, and
-calls requiring a mutable receiver. It is independent from ownership transfer;
-`move mut value: T` is both consuming and mutable.
+calls requiring a mutable receiver. By-value composite parameters consume their
+arguments automatically; reference parameters borrow.
 
 A parameter whose type is already `&mut T` does not need a mutable binding to
 mutate referenced value. Its binding remains immutable and cannot be reassigned.
 Parameter mutability is therefore not part of function type compatibility.
 
-## Interface Values
+## Automatic Destruction
 
-Bare interfaces follow ordinary value rules. Converting copyable `T` to an
-interface boxes a copy. Converting move-only `T` requires `move`, like any other
-value-consuming operation.
+Owned values that remain live on normal scope exit are destroyed automatically.
+Moves invalidate source and suppress later destruction. Replacing a live owned
+destination destroys its old value before storing replacement.
 
-Interface references provide borrowed runtime dispatch without copying concrete
-value:
+Unnamed ownership-bearing temporaries are destroyed after their final use in
+the full expression. Scalar projection materializes the selected value before
+destroying the temporary aggregate or owning pointer that supplied it.
+
+Drop glue recurses through owning pointers, structs, arrays, strings, dynamic
+arrays, optionals, and erased interface payloads. Locals, fields, and array
+elements drop in reverse declaration or index order. Ownership state must agree
+at every control-flow join and loop backedge; ambiguous conditional ownership is
+a compile error, never a runtime drop flag.
+
+`free(owner)` performs same cleanup early for an owning pointer and consumes
+owner. Panics abort without unwinding in initial model. Ownership-tracked globals
+remain rejected until module shutdown ordering exists.
+
+## Interface Contracts And Carriers
+
+`iface` declares a contract. Bare interface names are unsized contracts, not
+runtime value types. Runtime dispatch requires `&Shape`, `&mut Shape`, or
+`*Shape`.
+
+```peep
+iface Reader {
+    fn (&Self) read() -> i32
+}
+
+fn (counter: &Counter) read() -> i32 {
+    return counter.value
+}
+```
+
+Interface satisfaction is implicit and requires exact method signature after
+replacing receiver `Self` with concrete receiver type. `Self` may appear only as
+receiver. Generic interface methods and `Self` in parameters or returns reject.
+
+Methods are top-level receiver functions. Receiver target must be concrete named
+type declared in current module. Interfaces, aliases, imported types, and
+builtins cannot receive user methods. `impl` is not target syntax.
+
+Interface carriers provide runtime dispatch without copying concrete storage:
 
 ```peep
 fn read(reader: &Reader) -> i32
@@ -189,26 +240,43 @@ write(&mut counter, 7)
 
 `&Interface` is a shared fat view of original concrete value. `&mut Interface`
 is an exclusive fat view, so mutations performed through interface methods
-update original value. Neither form owns or boxes a copy of concrete value.
+update original value. Neither form owns or allocates concrete storage.
+
+`*Concrete` converts to `*Interface` by moving existing allocation owner and
+adding vtable metadata. Conversion never allocates or copies payload storage.
+`Concrete -> Interface` and `Concrete -> *Interface` are illegal. Bare interface
+types are also illegal in parameters, returns, globals, and aggregate storage.
+
+All carriers lower as `{ rawptr, vtable }`. Vtable slot zero destroys erased
+payload; remaining slots dispatch methods. Borrowed carriers never invoke
+cleanup. Dropping `*Interface` destroys payload through vtable, then releases
+allocation through selected program allocator.
+
+Callable receiver set follows carrier:
+
+- `&Shape`: `&Self` only.
+- `&mut Shape`: `&Self` and `&mut Self`.
+- `*Shape`: all receivers, including consuming `Self`.
+
+Mutable receivers require mutable binding. Consuming dispatch through `*Shape`
+moves payload, invalidates carrier, releases allocation storage, and suppresses
+later drop.
+
+Compile-time `T: Shape` constraints remain future generics work; current type
+parameter syntax has no constraint checking or monomorphization.
 
 ## Returned References
 
 Peeper has no lifetime syntax.
 
-When a function returns a reference, the compiler records which reference
-parameters can be the return origin.
+Returned-reference origin summaries are future work. The current compiler
+rejects every reference return rather than accepting an unproven lifetime.
 
 ```peep
-fn choose(a: &Item, b: &Item, use_a: bool) -> &Item {
-    if use_a {
-        return a
-    }
-    return b
-}
+fn choose(a: &Item, b: &Item, use_a: bool) -> &Item // rejected for now
 ```
 
-The summary for `choose` says the return may originate from `a` or `b`. At each
-call site, the returned reference must not outlive any possible origin.
+Future work will infer parameter-origin sets and substitute them at call sites.
 
 Invalid:
 
@@ -261,11 +329,12 @@ data[i..=j]   // includes j
 
 `..<` is not part of the target language.
 
-## Implementation Pre-Work
+## Remaining Implementation Work
 
-Current branch already split `^T` from raw `*T` and tracks move-only heap handles.
-Remaining work:
+Current branch already parses owned `*T`, opaque `rawptr`, implicit composite
+moves, automatic drop, `iface`, receiver functions, and bare-interface
+rejection. Remaining work:
 
-1. Add returned-reference origin summaries.
-2. Add borrow locks so heap handles cannot move while derived refs are live.
-3. Lower dynamic-array operations and slice-view creation once bounds and ABI policy are complete.
+1. Replace old interface allocation path with direct borrowed and owned carriers.
+2. Add typed allocation construction and allocator selection as separate work.
+3. Add generic interface constraints and returned-reference origin summaries as separate work.
