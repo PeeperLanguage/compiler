@@ -22,9 +22,8 @@ type checker struct {
 	module *project.Module
 }
 
-// Concrete values currently convert to satisfied interfaces implicitly. Keep
-// this policy separate from method-set satisfaction so a future language mode
-// can require explicit interface casts without rewriting interface analysis.
+// Concrete references convert to satisfied interface borrows, while owned
+// concrete pointers erase by adopting their existing allocation.
 const allowImplicitInterfaceConversion = true
 
 // --- helpers -----------------------------------------------------------------
@@ -76,9 +75,11 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 		switch typ := t.(type) {
 		case *typeinfo.IntegerType, *typeinfo.ByteType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
 			return true
-		case *typeinfo.OwnedPtrType, *typeinfo.RawPtrType:
+		case *typeinfo.OwnedPtrType:
 			target, ok := typeinfo.PointerTarget(typ)
 			return ok && target != nil
+		case *typeinfo.RawPtrType:
+			return typ != nil
 		case *typeinfo.RefType:
 			if typ == nil || typ.Target == nil {
 				return false
@@ -165,6 +166,7 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
+	c.checkReservedPrintSymbol()
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
 		c.checkDeclAttributes(decl)
 		typeDecl, ok := decl.(ast.TypeDecl)
@@ -196,13 +198,65 @@ func (c *checker) checkModule() {
 			if node == nil {
 				return true
 			}
-			sym, found := c.module.ModuleScope.Lookup(node.Name.Name)
-			if !found || sym == nil {
+			var sym *symbols.Symbol
+			if node.Receiver != nil {
+				sym = c.module.Semantics.MethodSymbol[node.ID()]
+				c.checkReceiverFunction(node)
+			} else {
+				sym, _ = c.module.ModuleScope.Lookup(node.Name.Name)
+			}
+			if sym == nil {
 				return true
 			}
-			c.checkFunctionWithSelf(sym, node, nil, false)
-		case *ast.ImplDecl:
-			c.checkImplDecl(node)
+			c.checkFunction(sym, node)
+		}
+		return true
+	})
+}
+
+func (c *checker) checkReservedPrintSymbol() {
+	usesPrint := false
+	for _, module := range c.ctx.Modules() {
+		if module == nil || module.AST == nil {
+			continue
+		}
+		for _, stmt := range module.AST.Stmts {
+			ast.Inspect(stmt, func(node ast.Node) bool {
+				if _, ok := node.(*ast.PrintExpr); ok {
+					usesPrint = true
+				}
+				return !usesPrint
+			})
+			if usesPrint {
+				break
+			}
+		}
+		if usesPrint {
+			break
+		}
+	}
+	if !usesPrint {
+		return
+	}
+	checkFn := func(fn *ast.FnDecl) {
+		if fn == nil || fn.Name == nil {
+			return
+		}
+		linkedName := fn.Name.Name
+		if fn.Receiver != nil {
+			linkedName = ""
+		}
+		if externalName, ok := ast.FunctionLinkName(fn, linkedName); ok {
+			linkedName = externalName
+		}
+		if linkedName == "printf" {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
+				"linked symbol `printf` is reserved when module uses print", ast.LocOf(fn.Name), "conflicts with print runtime")
+		}
+	}
+	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
+		if node, ok := decl.(*ast.FnDecl); ok {
+			checkFn(node)
 		}
 		return true
 	})
@@ -324,11 +378,11 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 	}
 }
 
-func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
+func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if c == nil || sym == nil || fn == nil {
 		return
 	}
-	c.checkFunctionShapeWithSelf(fn, selfType, allowAbstractSelf)
+	c.checkFunctionShape(fn)
 	if fn.Body == nil {
 		return
 	}
@@ -336,7 +390,7 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 		return
 	}
 	funcScope := sym.Scope.(*table.Scope)
-	for _, param := range fn.Params {
+	for _, param := range fn.ParamsWithReceiver() {
 		if param.Name == nil {
 			continue
 		}
@@ -345,9 +399,9 @@ func (c *checker) checkFunctionWithSelf(sym *symbols.Symbol, fn *ast.FnDecl, sel
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
 		}
-		paramSym.BindType(typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf)))
+		paramSym.BindType(typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false)))
 	}
-	returnType := typeinfo.TypeFromSyntax(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	returnType := typeinfo.TypeFromSyntax(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	c.checkBlock(funcScope, fn.Body, returnType)
 }
 
@@ -581,6 +635,10 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	if !found || sym == nil {
 		return
 	}
+	if declType != nil && c.rejectUnsizedType(declType, typeNode, "binding") {
+		sym.BindType(&typeinfo.InvalidType{})
+		return
+	}
 
 	if value == nil {
 		if requireInitializer {
@@ -621,6 +679,10 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
+	if declType == nil && c.rejectUnsizedType(valType, node, "binding") {
+		sym.BindType(&typeinfo.InvalidType{})
+		return
+	}
 	if declType != nil && !c.assignable(declType, valType) {
 		d := typeMismatchError(value,
 			fmt.Sprintf("cannot assign %s to %s",
@@ -645,6 +707,19 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 	}
 }
 
+func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context string) bool {
+	if typeinfo.IsSizedType(typ) {
+		return false
+	}
+	diagnostic := invalidTypeError(site,
+		fmt.Sprintf("%s requires a sized type; %s is unsized", context, typeinfo.TypeText(typ)))
+	if _, ok := typeinfo.Underlying(typ).(*typeinfo.InterfaceType); ok {
+		diagnostic.WithHelp("use &Interface, &mut Interface, or *Interface instead of a bare interface value")
+	}
+	c.ctx.Diagnostics.Add(diagnostic)
+	return true
+}
+
 func (c *checker) rejectBindingReferenceStorage(scope *table.Scope, typ typeinfo.Type, site ast.Node) bool {
 	moduleBinding := c != nil && c.module != nil && scope == c.module.ModuleScope
 	context := "array or heap-owned values"
@@ -667,16 +742,20 @@ func (c *checker) rejectReferenceStorage(typ typeinfo.Type, site ast.Node, conte
 	return true
 }
 
-func (c *checker) checkFunctionShapeWithSelf(decl *ast.FnDecl, selfType typeinfo.Type, allowAbstractSelf bool) {
+func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	if decl == nil {
 		return
 	}
-	retType := typeinfo.TypeFromSyntax(decl.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
-	if !c.checkReturnType(decl.ReturnType, retType, decl, allowAbstractSelf) {
+	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+	retType := typeinfo.TypeFromSyntax(decl.ReturnType, opts)
+	if !c.checkReturnType(decl.ReturnType, retType, decl, false) {
 		return
 	}
-	for _, param := range decl.Params {
-		paramType := typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, allowAbstractSelf))
+	for _, param := range decl.ParamsWithReceiver() {
+		paramType := typeinfo.TypeFromSyntax(param.Type, opts)
+		if c.rejectUnsizedType(paramType, param.Type, "parameter") {
+			return
+		}
 		if c.rejectReferenceStorage(paramType, param.Type, "parameter aggregate types", false) {
 			return
 		}
@@ -708,6 +787,9 @@ func (c *checker) checkReturnType(typeNode ast.TypeExpr, typ typeinfo.Type, fall
 	if allowAbstractSelf && typeinfo.ContainsAbstractSelf(typ) {
 		return true
 	}
+	if c.rejectUnsizedType(typ, typeNode, "function return") {
+		return false
+	}
 	if !c.isLowerableType(typ) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 			"function return type is not lowerable in current compiler stage", site, "")
@@ -728,7 +810,9 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 			return
 		}
 		for _, field := range strct.Fields {
-			c.rejectReferenceStorage(typeinfo.TypeFromSyntax(field.Type, opts), field.Type, "struct fields", true)
+			fieldType := typeinfo.TypeFromSyntax(field.Type, opts)
+			c.rejectReferenceStorage(fieldType, field.Type, "struct fields", true)
+			c.rejectUnsizedType(fieldType, field.Type, "struct field")
 		}
 	case *ast.TypeAliasDecl:
 		typ := typeinfo.TypeFromSyntax(node.Type, opts)
@@ -752,22 +836,30 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", method.Location, "")
 			continue
 		}
-		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
+		receiverOpts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
+		if method.Receiver == nil {
+			c.ctx.Diagnostics.Add(invalidTypeError(method.Name,
+				"iface methods require Self, &Self, or &mut Self receiver"))
+			continue
+		}
+		receiverType := typeinfo.TypeFromSyntax(method.Receiver.Type, receiverOpts)
+		receiverTarget, ok := typeinfo.ReceiverTarget(receiverType)
+		receiverSelf, abstractSelf := receiverTarget.(*typeinfo.NamedType)
+		_, ownedReceiver := typeinfo.PointerTarget(receiverType)
+		if !ok || ownedReceiver || !abstractSelf || receiverSelf == nil || receiverSelf.Name != "Self" {
+			c.ctx.Diagnostics.Add(invalidTypeError(method.Receiver.Type,
+				"iface method receiver must be Self, &Self, or &mut Self"))
+		}
+		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
 		for _, param := range method.Params {
-			if param.Consumes {
-				site := ast.Node(decl)
-				if param.Name != nil {
-					site = param.Name
-				}
-				c.ctx.Diagnostics.Add(invalidTypeError(site,
-					"interface methods cannot use `move` parameters in current compiler stage"))
-			}
 			paramType := typeinfo.TypeFromSyntax(param.Type, opts)
+			if c.rejectUnsizedType(paramType, param.Type, "interface method parameter") {
+				continue
+			}
 			if c.rejectReferenceStorage(paramType, param.Type, "interface parameter aggregate types", false) {
 				continue
 			}
-			// Abstract Self is resolved at impl time; skip lowerability check.
-			if paramType != nil && !typeinfo.ContainsAbstractSelf(paramType) && !c.isLowerableType(paramType) {
+			if paramType != nil && !c.isLowerableType(paramType) {
 				site := ast.Node(decl)
 				if param.Name != nil {
 					site = param.Name
@@ -777,49 +869,40 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			}
 		}
 		retType := typeinfo.TypeFromSyntax(method.ReturnType, opts)
-		c.checkReturnType(method.ReturnType, retType, decl, true)
+		c.checkReturnType(method.ReturnType, retType, decl, false)
 	}
 
 }
 
-func (c *checker) checkImplDecl(decl *ast.ImplDecl) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
+func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {
+	if c == nil || c.module == nil || fn == nil || fn.Receiver == nil {
 		return
 	}
-	selfType := typeinfo.TypeFromSyntax(decl.Target, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-	for _, method := range decl.Methods {
-		if method == nil {
-			continue
-		}
-		c.checkDeclAttributes(method)
-		sym, ok := c.module.Semantics.MethodSymbol[method.ID()]
-		if !ok || sym == nil {
-			continue
-		}
-		errmsg := "impl methods must declare a `Self` receiver as the first parameter"
-		if len(method.Params) == 0 {
-			site := ast.LocOf(method)
-			if method.Name != nil {
-				site = ast.LocOf(method.Name)
-			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, site, "").
-				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
-				WithHelp(fmt.Sprintf("receiver target must match impl target %s", typeinfo.TypeText(selfType)))
-			continue
-		}
-		firstParamType := typeinfo.TypeFromSyntax(method.Params[0].Type, project.TypeSyntaxOptions(c.ctx, c.module, selfType, true))
-		if !isValidReceiverType(firstParamType, selfType) {
-			site := method.Params[0].Location
-			if method.Params[0].Type != nil {
-				site = ast.LocOf(method.Params[0].Type)
-			}
-			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver, errmsg, site, "").
-				WithSecondaryLabel(ast.LocOf(decl.Target), fmt.Sprintf("impl target is %s", typeinfo.TypeText(selfType))).
-				WithHelp(fmt.Sprintf("receiver target must match impl target %s", typeinfo.TypeText(selfType)))
-			continue
-		}
-
-		c.checkFunctionWithSelf(sym, method, selfType, false)
+	if fn.Receiver.Name == nil || fn.Receiver.Name.Name == "" {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
+			"receiver function requires a named receiver", ast.LocOf(fn.Receiver.Type), "")
+		return
+	}
+	receiverType := typeinfo.TypeFromSyntax(fn.Receiver.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	targetType, ok := typeinfo.ReceiverTarget(receiverType)
+	defined, named := targetType.(*typeinfo.DefinedType)
+	if !ok || !named || defined == nil || !isValidReceiverType(receiverType, defined) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
+			"receiver target must be a concrete named type declared in current module", ast.LocOf(fn.Receiver.Type), "")
+		return
+	}
+	sym, local := c.module.ModuleScope.LookupLocal(defined.Name)
+	if !local || sym == nil || !typeinfo.SameType(sym.Type, defined) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
+			"receiver target must be declared in current module", ast.LocOf(fn.Receiver.Type), "")
+		return
+	}
+	switch sym.ASTNode.(type) {
+	case *ast.StructDecl, *ast.EnumDecl:
+		return
+	default:
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
+			"receiver target must be a concrete named type", ast.LocOf(fn.Receiver.Type), "")
 	}
 }
 
@@ -837,14 +920,12 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 			return c.satisfiesInterface(iface, srcTarget)
 		}
 	}
-	if iface, ok := typeinfo.Underlying(dst).(*typeinfo.InterfaceType); ok && iface != nil {
-		if !allowImplicitInterfaceConversion {
-			return false
+	if dstTarget, dstOwned := typeinfo.PointerTarget(typeinfo.Underlying(dst)); dstOwned {
+		srcTarget, srcOwned := typeinfo.PointerTarget(typeinfo.Underlying(src))
+		iface, interfaceOwned := typeinfo.InterfaceTypeOf(dstTarget)
+		if allowImplicitInterfaceConversion && srcOwned && interfaceOwned {
+			return c.satisfiesInterface(iface, srcTarget)
 		}
-		if _, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(src)); borrowed {
-			return false
-		}
-		return c.satisfiesInterface(iface, src)
 	}
 	return false
 }
@@ -973,16 +1054,6 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 			"`none` requires optional context", ast.LocOf(node), "")
 		return &typeinfo.InvalidType{}
 
-	case *ast.MoveExpr:
-		if node.Expr == nil {
-			return &typeinfo.InvalidType{}
-		}
-		valueType := c.typeExpr(scope, node.Expr, expected)
-		if typeinfo.IsInvalidOrUnknown(valueType) {
-			return valueType
-		}
-		return valueType
-
 	case *ast.AddressExpr:
 		return c.typeAddressExpr(scope, node, expected)
 
@@ -1031,11 +1102,58 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.CallExpr:
 		return c.typeCallExpr(scope, node, expected)
 
+	case *ast.FreeExpr:
+		return c.typeFreeExpr(scope, node)
+
+	case *ast.PrintExpr:
+		return c.typePrintExpr(scope, node)
+
 	case *ast.AsExpr:
 		return c.typeAsExpr(scope, node)
 
 	default:
 		return nil // resolver already diagnosed unsupported expressions
+	}
+}
+
+func (c *checker) typeFreeExpr(scope *table.Scope, node *ast.FreeExpr) typeinfo.Type {
+	if node == nil || node.Expr == nil {
+		return &typeinfo.InvalidType{}
+	}
+	operandType := c.typeExpr(scope, node.Expr, nil)
+	if typeinfo.IsInvalidOrUnknown(operandType) {
+		return &typeinfo.InvalidType{}
+	}
+	if _, ok := typeinfo.Underlying(operandType).(*typeinfo.OwnedPtrType); !ok {
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Expr,
+			fmt.Sprintf("free requires an owned pointer, got %s", typeinfo.TypeText(operandType))))
+		return &typeinfo.InvalidType{}
+	}
+	return nil
+}
+
+func (c *checker) typePrintExpr(scope *table.Scope, node *ast.PrintExpr) typeinfo.Type {
+	if node == nil || node.Expr == nil {
+		return &typeinfo.InvalidType{}
+	}
+	operandType := c.typeExpr(scope, node.Expr, nil)
+	if typeinfo.IsInvalidOrUnknown(operandType) {
+		return &typeinfo.InvalidType{}
+	}
+	switch operand := typeinfo.Underlying(operandType).(type) {
+	case *typeinfo.IntegerType:
+		if operand.Bits > 64 {
+			c.ctx.Diagnostics.Add(invalidTypeError(node.Expr,
+				fmt.Sprintf("print supports integers up to 64 bits, got %s", typeinfo.TypeText(operandType))))
+			return &typeinfo.InvalidType{}
+		}
+		return nil
+	case *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.ByteType, *typeinfo.CStrType, *typeinfo.RawPtrType:
+		return nil
+	default:
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Expr,
+			fmt.Sprintf("print requires a primitive scalar, got %s", typeinfo.TypeText(operandType))))
+		return &typeinfo.InvalidType{}
 	}
 }
 
@@ -1119,7 +1237,7 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 		}
 		return &typeinfo.RefType{Target: valueType}
 	}
-	return &typeinfo.RawPtrType{Target: valueType}
+	return &typeinfo.RawPtrType{}
 }
 
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
@@ -1311,11 +1429,6 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 			"indexing requires array or slice value"))
 		return &typeinfo.InvalidType{}
 	}
-	if shape == indexableSharedSliceView || shape == indexableMutableSliceView {
-		c.ctx.Diagnostics.Add(invalidExpressionError(node,
-			"slice-view indexing is not lowerable in current compiler stage"))
-		return &typeinfo.InvalidType{}
-	}
 	if shape != indexableFixedArray {
 		return elem
 	}
@@ -1345,16 +1458,32 @@ func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, ra
 	if c == nil || node == nil || rangeIndex == nil {
 		return &typeinfo.InvalidType{}
 	}
-	if _, _, ok := indexableSequence(baseType); ok {
-		c.checkRangeBound(scope, rangeIndex.Start)
-		c.checkRangeBound(scope, rangeIndex.End)
-		c.ctx.Diagnostics.Add(invalidExpressionError(node,
-			"slicing is not lowerable in current compiler stage"))
+	elem, shape, ok := indexableSequence(baseType)
+	if !ok {
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+			"slicing requires array or slice value"))
 		return &typeinfo.InvalidType{}
 	}
-	c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
-		"slicing requires array or slice value"))
-	return &typeinfo.InvalidType{}
+	c.checkRangeBound(scope, rangeIndex.Start)
+	c.checkRangeBound(scope, rangeIndex.End)
+	exprType := func(expr ast.Expr) typeinfo.Type {
+		return c.typeExpr(scope, expr, nil)
+	}
+	if shape == indexableFixedArray || shape == indexableDynamicArray {
+		if !place.Addressable(scope, node.Expr, exprType) {
+			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+				"slicing requires addressable array storage"))
+			return &typeinfo.InvalidType{}
+		}
+	}
+	mutable := shape == indexableMutableSliceView
+	if shape == indexableFixedArray || shape == indexableDynamicArray {
+		mutable, _ = place.MutableAddressable(scope, node.Expr, exprType)
+	}
+	return &typeinfo.RefType{
+		Mutable: mutable,
+		Target:  &typeinfo.ArrayType{Dynamic: true, Elem: elem},
+	}
 }
 
 type indexableSequenceShape uint8
@@ -1664,7 +1793,9 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 		resolved := typeinfo.ReplaceAbstractSelf(param.Type, selfType)
 		if i == 0 {
 			if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(resolved)); !referenceReceiver {
-				resolved = receiverType
+				if _, _, borrowedCarrier := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); !borrowedCarrier {
+					resolved = receiverType
+				}
 			}
 		}
 		params = append(params, resolved)
@@ -1703,6 +1834,9 @@ func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type
 	targetType := typeinfo.TypeFromSyntax(node.TypeExpr, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
+		return &typeinfo.InvalidType{}
+	}
+	if c.rejectUnsizedType(targetType, node.TypeExpr, "cast target") {
 		return &typeinfo.InvalidType{}
 	}
 	if node.Expr == nil {
@@ -1933,15 +2067,6 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 						c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
 						continue
 					}
-				}
-			}
-			if ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(paramType)); ok && c.matchesReceiverTarget(ptrTarget, argType) {
-				if addressable, _ := c.mutableAddressableExpr(scope, receiverExpr); addressable {
-					continue
-				}
-				if site, msg, ok := c.mutableReceiverDiagnostic(scope, receiverExpr); ok {
-					c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
-					continue
 				}
 			}
 		}

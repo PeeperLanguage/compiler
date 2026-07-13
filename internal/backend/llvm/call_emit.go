@@ -121,7 +121,7 @@ func emitCall(b *llvmBuilder, result string, returnType string, callee string, c
 }
 
 // emitInterfaceCallTarget performs interface dispatch lookup.
-// It extracts boxed data pointer and itab pointer from interface value, loads
+// It extracts data pointer and itab pointer from interface value, loads
 // function pointer from requested slot, then bitcasts it to callable LLVM type.
 // Callers reuse this for both expression-form and discarded-result calls.
 func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (data string, fn string, ok bool) {
@@ -141,7 +141,7 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (data 
 	vtable := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", vtable, itab))
 	fnPtrPtr := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", fnPtrPtr, vtable, slot))
+	b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", fnPtrPtr, vtable, slot+1))
 	fnI8 := b.nextReg()
 	b.line(fmt.Sprintf("%s = load i8*, i8** %s", fnI8, fnPtrPtr))
 	fn = b.nextReg()
@@ -171,4 +171,15 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	}
 	args := append([]string{"i8* " + data}, llvmCallArgs(b, call.Args)...)
 	emitCall(b, "", b.emitter.llvmType(call.Type), fn, args)
+	if consumesOwnedInterfaceStorage(call) {
+		emitFreeCall(b, data, "rawptr")
+	}
+}
+
+func consumesOwnedInterfaceStorage(call *mir.InterfaceCall) bool {
+	if call == nil || !call.Consumes {
+		return false
+	}
+	_, ok := ownedInterfaceTypeText(mirRefType(call.Base))
+	return ok
 }

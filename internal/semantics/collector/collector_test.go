@@ -96,17 +96,15 @@ func TestTargetOSImplMethodsStillCollide(t *testing.T) {
 	value: i32
 }
 
-impl Buffer {
 	#[target_os("linux")]
-	fn Platform(self: Self) -> i32 {
+	fn (self: Buffer) Platform() -> i32 {
 		return 1;
 	}
 
 	#[target_os("darwin")]
-	fn Platform(self: Self) -> i32 {
+	fn (self: Buffer) Platform() -> i32 {
 		return 2;
 	}
-}
 `
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)

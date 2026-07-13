@@ -1,0 +1,10 @@
+#[extern("malloc")]
+fn acquire(size: usize) -> *i32;
+
+#[extern("free")]
+fn BadFree(value: i32);
+
+fn main() -> i32 {
+    let _ = acquire(4);
+    return 0;
+}

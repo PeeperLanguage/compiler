@@ -1,5 +1,3 @@
-#[no_copy]
-//#[no_copy]
 struct Buffer {
     value: i32
 }
@@ -8,17 +6,15 @@ struct Buffer {
 /// and
 /// does nothing
 // doc comments needs to snap on to the next decl node, should merge all previous doc comments lines even if have gaps
-fn destroy(move _: Buffer) {}
+fn destroy(_: Buffer) {}
 
 fn main() -> i32 {
     let mut current: Buffer = .{ value = 1 };
-    let mut next = move current;
-    let ptr = @next;
+    let mut next = current;
     next.value = 2;
-    ptr.value = 4;
     //let another = current;
 
-    if next.value == ptr.value {
+    if next.value == 2 {
         return 69;
     }
 

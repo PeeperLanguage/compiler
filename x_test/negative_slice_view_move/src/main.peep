@@ -1,0 +1,3 @@
+fn Take(xs: &[]*i32, index: usize) -> *i32 {
+    return xs[index];
+}

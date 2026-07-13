@@ -10,11 +10,9 @@ fn BorrowImmutableArray(xs: []i32) {
 fn Touch(_: &mut []i32) {
 }
 
-impl []i32 {
-    fn Write(self: &mut Self) {
+    fn (self: &mut []i32) Write() {
         Touch(self);
     }
-}
 
 fn CallMutableArray(xs: []i32) {
     xs.Write();

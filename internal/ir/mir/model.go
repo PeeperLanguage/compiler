@@ -99,6 +99,16 @@ type Store struct {
 	Location *source.Location
 }
 
+type Print struct {
+	Value    ValueRef
+	Location *source.Location
+}
+
+type Drop struct {
+	Value    ValueRef
+	Location *source.Location
+}
+
 type ValueExpr interface {
 	valueExprNode()
 	Text() string
@@ -155,9 +165,12 @@ type AddrOf struct {
 }
 
 type SliceView struct {
-	Source   ValueRef
-	Type     string
-	Location *source.Location
+	Source       ValueRef
+	Start        ValueRef
+	End          ValueRef
+	EndExclusive bool
+	Type         string
+	Location     *source.Location
 }
 
 type Load struct {
@@ -214,8 +227,6 @@ type OptionalSome struct {
 type InterfaceMake struct {
 	Value    ValueRef
 	DataType string
-	BoxValue bool
-	StackBox bool
 	Slots    []ValueRef
 	Type     string
 	Location *source.Location
@@ -225,6 +236,7 @@ type InterfaceCall struct {
 	Base     ValueRef
 	Slot     int
 	Args     []ValueRef
+	Consumes bool
 	Type     string
 	Location *source.Location
 }
@@ -235,6 +247,14 @@ func (i *Assign) Text() string {
 
 func (i *Store) Text() string {
 	return fmt.Sprintf("store %s, %s", i.Ptr.Text(), i.Value.Text())
+}
+
+func (i *Print) Text() string {
+	return "print " + i.Value.Text()
+}
+
+func (i *Drop) Text() string {
+	return "drop " + i.Value.Text()
 }
 
 func (i *Jump) Text() string {
@@ -359,6 +379,10 @@ func InstrLocation(instr Instr) *source.Location {
 	case *Assign:
 		return node.Location
 	case *Store:
+		return node.Location
+	case *Print:
+		return node.Location
+	case *Drop:
 		return node.Location
 	case *Call:
 		return node.Location

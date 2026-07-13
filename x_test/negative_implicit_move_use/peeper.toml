@@ -1,0 +1,2 @@
+name = "negative_implicit_move_use"
+build = "lib"

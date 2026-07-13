@@ -161,15 +161,13 @@ func TestByteTypeIsLowerableInFunctionSignature(t *testing.T) {
 	}
 }
 
-func TestImplMethodAllowsSelfForBuiltinTarget(t *testing.T) {
-	src := `impl i32 {
-	fn abs(self: Self) -> Self {
+func TestReceiverFunctionRejectsBuiltinTarget(t *testing.T) {
+	src := `fn (self: i32) abs() -> i32 {
 		return self;
-	}
 }`
 	diag := checkTypeSource(t, src)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	if !hasTypeCode(diag, diagnostics.ErrInvalidMethodReceiver) {
+		t.Fatalf("expected invalid receiver diagnostic:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -243,7 +241,7 @@ func TestStringBuiltinAcceptedInTypedBinding(t *testing.T) {
 func TestUnknownTypeAttributeRejected(t *testing.T) {
 	src := `#[weird]
 struct Buffer {
-	ptr: ^u8
+	ptr: *u8
 }`
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
@@ -254,17 +252,18 @@ struct Buffer {
 	}
 }
 
-func TestConflictingTypeAttributesRejected(t *testing.T) {
+func TestObsoleteCopyAttributesRejected(t *testing.T) {
 	src := `#[no_copy]
 #[allow_copy]
 struct Buffer {
-	ptr: ^u8
+	ptr: *u8
 }`
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	if !strings.Contains(diag.EmitAllToString(), "conflicting attributes `#[no_copy]` and `#[allow_copy]`") {
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "unknown attribute `#[no_copy]`") || !strings.Contains(out, "unknown attribute `#[allow_copy]`") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
@@ -284,8 +283,8 @@ fn puts(msg: cstr) -> i32;
 }
 
 func TestDuplicateAttributePointsAtRepeatedAttribute(t *testing.T) {
-	src := `#[no_copy]
-#[no_copy]
+	src := `#[target_os("linux")]
+#[target_os("linux")]
 struct Buffer {
 	value: i32
 }
@@ -345,14 +344,14 @@ fn puts(msg: cstr) -> i32;
 }
 
 func TestInvalidAttributeTargetRejected(t *testing.T) {
-	src := `#[no_copy]
-fn ext();
+	src := `#[extern]
+struct Buffer {}
 `
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
-	if !strings.Contains(diag.EmitAllToString(), "attribute `#[no_copy]` cannot be used on this declaration") {
+	if !strings.Contains(diag.EmitAllToString(), "attribute `#[extern]` cannot be used on this declaration") {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
@@ -400,12 +399,10 @@ fn disabled() -> i32 {
 	return missing_name;
 }
 
-impl Buffer {
 	#[target_os("linux")]
-	fn disabled(self: Self) -> i32 {
+	fn (self: Buffer) disabled() -> i32 {
 		return missing_method;
 	}
-}
 `
 	diag := checkTypeSource(t, src)
 	out := diag.EmitAllToString()
@@ -431,10 +428,8 @@ func TestImplMethodAttributesValidated(t *testing.T) {
 	value: i32
 }
 
-impl Buffer {
 	#[target_oz("linux")]
-	fn bad(self: Self) {}
-}
+	fn (self: Buffer) bad() {}
 `
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
@@ -450,11 +445,9 @@ func TestDuplicateImplMethodAttributesRejected(t *testing.T) {
 	value: i32
 }
 
-impl Buffer {
 	#[target_os("linux")]
 	#[target_os("linux")]
-	fn bad(self: Self) {}
-}
+	fn (self: Buffer) bad() {}
 `
 	diag := checkTypeSource(t, src)
 	if !diag.HasErrors() {
@@ -491,18 +484,17 @@ fn puts(msg: cstr) -> i32 {
 	}
 }
 
-func TestMoveExprTransfersNoCopyBinding(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
-	ptr: ^u8
+func TestImplicitBindingTransfersNoCopyValue(t *testing.T) {
+	diag := checkTypeSource(t, `struct Buffer {
+	ptr: *u8
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main() {
 	let current: Buffer = get_buffer();
-	let next = move current;
+	let next = current;
 	destroy(next);
 }`)
 	if diag.HasErrors() {
@@ -511,12 +503,11 @@ fn main() {
 }
 
 func TestReassignmentClearsMovedLocal(t *testing.T) {
-	diag := checkTypeSource(t, `#[no_copy]
-struct Buffer {
+	diag := checkTypeSource(t, `struct Buffer {
 	value: i32
 }
 
-fn destroy(move data: Buffer) {}
+fn destroy(data: Buffer) {}
 
 fn main() {
 	let mut current: Buffer = .{ value = 1 };
@@ -528,26 +519,13 @@ fn main() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
-func TestInterfaceMoveParamRejectedForNow(t *testing.T) {
-	diag := checkTypeSource(t, `interface Reader {
-	read(move self: Self);
-}`)
-	if !diag.HasErrors() {
-		t.Fatalf("expected diagnostics")
-	}
-	if !strings.Contains(diag.EmitAllToString(), "interface methods cannot use `move` parameters") {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestImplReceiverDiagnosticUsesParameterSite(t *testing.T) {
+func TestReceiverDiagnosticUsesReceiverTypeSite(t *testing.T) {
 	diag := checkTypeSource(t, `struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn bump(value: i32) {}
-}`)
+	fn (value: i32) bump() {}
+`)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostics")
 	}
@@ -561,17 +539,17 @@ impl Counter {
 	if targetDiag == nil || len(targetDiag.Labels) == 0 || targetDiag.Labels[0].Location == nil || targetDiag.Labels[0].Location.Start == nil || targetDiag.Labels[0].Location.End == nil {
 		t.Fatalf("missing receiver diagnostic location: %#v", targetDiag)
 	}
-	if targetDiag.Labels[0].Location.Start.Line != 6 || targetDiag.Labels[0].Location.Start.Column != 17 {
-		t.Fatalf("primary label start = %v, want line 6 col 17", *targetDiag.Labels[0].Location.Start)
+	if targetDiag.Labels[0].Location.Start.Line != 5 || targetDiag.Labels[0].Location.Start.Column != 13 {
+		t.Fatalf("primary label start = %v, want line 5 col 13", *targetDiag.Labels[0].Location.Start)
 	}
-	if targetDiag.Labels[0].Location.End.Line != 6 || targetDiag.Labels[0].Location.End.Column != 20 {
-		t.Fatalf("primary label end = %v, want line 6 col 20", *targetDiag.Labels[0].Location.End)
+	if targetDiag.Labels[0].Location.End.Line != 5 || targetDiag.Labels[0].Location.End.Column != 16 {
+		t.Fatalf("primary label end = %v, want line 5 col 16", *targetDiag.Labels[0].Location.End)
 	}
 }
 
 func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Buffer {
-	ptr: ^u8
+	ptr: *u8
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -584,7 +562,7 @@ func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing Buffer type")
 	}
-	if typeinfo.IsCopyType(typ) {
+	if !typeinfo.IsNoCopyType(typ) {
 		t.Fatalf("Buffer should default to no-copy")
 	}
 }
@@ -592,7 +570,7 @@ func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 func TestAddressOfMutableLocalAssignsMutablePointer(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() -> i32 {
 	let mut value: i32 = 1;
-	let ptr: *i32 = @value;
+	let ptr: rawptr = @value;
 	return 0;
 }`)
 	if diag.HasErrors() {
@@ -603,7 +581,7 @@ func TestAddressOfMutableLocalAssignsMutablePointer(t *testing.T) {
 func TestAddressOfImmutableLocalAssignsConstPointer(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() -> i32 {
 	let value: i32 = 1;
-	let ptr: *i32 = @value;
+	let ptr: rawptr = @value;
 	return 0;
 }`)
 	if diag.HasErrors() {
@@ -614,7 +592,7 @@ func TestAddressOfImmutableLocalAssignsConstPointer(t *testing.T) {
 func TestAddressOfImmutableLocalRejectsMutablePointer(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() -> i32 {
 	let value: i32 = 1;
-	let ptr: ^i32 = @value;
+	let ptr: *i32 = @value;
 	return 0;
 }`)
 	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
@@ -633,9 +611,9 @@ func TestAddressOperatorRequiresAddressableStorage(t *testing.T) {
 	}
 }
 
-func TestConstPointerFieldStaysCopyable(t *testing.T) {
+func TestRawPointerFieldStructSupportsExplicitCopy(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct View {
-	ptr: *u8,
+	ptr: rawptr,
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -648,37 +626,15 @@ func TestConstPointerFieldStaysCopyable(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing View type")
 	}
-	if !typeinfo.IsCopyType(typ) {
-		t.Fatalf("View should stay copyable")
+	if typeinfo.IsImplicitCopyType(typ) || typeinfo.IsNoCopyType(typ) {
+		t.Fatalf("View should implicitly and support explicit copy")
 	}
 }
 
-func TestAllowCopyOverridesMutablePointerDefault(t *testing.T) {
-	module, diag := checkTypeModule(t, `#[allow_copy]
-struct Cursor {
-	ptr: ^u8
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-	sym, ok := module.ModuleScope.LookupLocal("Cursor")
-	if !ok || sym == nil {
-		t.Fatalf("missing Cursor symbol")
-	}
-	typ, ok := symbols.GetSymbolType(sym)
-	if !ok || typ == nil {
-		t.Fatalf("missing Cursor type")
-	}
-	if !typeinfo.IsCopyType(typ) {
-		t.Fatalf("allow_copy should override default no-copy")
-	}
-}
-
-func TestImplMethodAllowsNonSelfReceiverName(t *testing.T) {
-	src := `impl i32 {
-	fn abs(value: Self) -> Self {
+func TestReceiverFunctionAllowsAnyReceiverName(t *testing.T) {
+	src := `struct Number { value: i32 }
+fn (value: Number) abs() -> Number {
 		return value;
-	}
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
@@ -686,25 +642,24 @@ func TestImplMethodAllowsNonSelfReceiverName(t *testing.T) {
 	}
 }
 
-func TestInterfaceAndImplAllowSelf(t *testing.T) {
-	src := `interface Reader {
-	read(^Self, buf: cstr) -> i32,
+func TestIfaceAndReceiverFunctionMatch(t *testing.T) {
+	src := `iface Reader {
+	fn (&Self) read(buf: cstr) -> i32
 }
 
 struct File {}
 
-impl File {
-	fn read(self: ^Self, buf: cstr) -> i32 {
+	fn (self: &File) read(buf: cstr) -> i32 {
 		return 0;
 	}
-}`
+`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestSelfOutsideInterfaceOrImplIsRejected(t *testing.T) {
+func TestSelfOutsideIfaceReceiverIsRejected(t *testing.T) {
 	src := `fn bad(value: Self) -> i32 {
 	return 0;
 }`
@@ -714,16 +669,15 @@ func TestSelfOutsideInterfaceOrImplIsRejected(t *testing.T) {
 	}
 }
 
-func TestBuiltinMethodCallResolvesThroughImpl(t *testing.T) {
-	src := `impl i32 {
-	fn abs(self: Self) -> Self {
+func TestReceiverFunctionCallResolves(t *testing.T) {
+	src := `struct Number { value: i32 }
+fn (self: Number) abs() -> Number {
 		return self;
-	}
 }
 
 fn main() -> i32 {
-	let x: i32 = 1;
-	return x.abs();
+	let x: Number = .{ value = 1 };
+	return x.abs().value;
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
@@ -929,15 +883,15 @@ func TestIfBothBranchesAssignmentDefinitelyInitializes(t *testing.T) {
 
 func TestPointerRecursiveStructBindingResolves(t *testing.T) {
 	src := `struct Node {
-	next: ^Node,
+	next: *Node,
 }
 
 #[extern]
-fn next_node() -> ^Node;
+fn next_node() -> *Node;
 
 fn main() -> i32 {
 	let node: Node = .{ next = next_node() };
-	let next: ^Node = node.next;
+	let next: *Node = node.next;
 	return 0;
 }`
 	diag := checkTypeSource(t, src)
@@ -1010,8 +964,8 @@ fn count(node: Node) -> i32 {
 	if !hasTypeCode(diag, diagnostics.ErrInvalidType) {
 		t.Fatalf("expected recursive runtime type diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(diag.EmitAllToString(), "parameter type is not lowerable") {
-		t.Fatalf("expected lowerability diagnostic, got:\n%s", diag.EmitAllToString())
+	if !strings.Contains(diag.EmitAllToString(), "requires a sized type") {
+		t.Fatalf("expected recursive sizedness diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1052,26 +1006,23 @@ fn aliased(value: &mut Shared) -> i32 {
 	}
 }
 
-func TestSliceViewIndexExprRejectedUntilLoweringExists(t *testing.T) {
+func TestSliceViewIndexExprReturnsElementType(t *testing.T) {
 	src := `fn first(xs: &[]i32, i: usize) -> i32 {
 	return xs[i];
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
-		t.Fatalf("expected slice-view indexing diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-	if !strings.Contains(diag.EmitAllToString(), "slice-view indexing is not lowerable") {
-		t.Fatalf("expected slice-view indexing message, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestMutableSliceViewIndexAssignmentRejectedUntilLoweringExists(t *testing.T) {
+func TestMutableSliceViewIndexAssignmentAccepted(t *testing.T) {
 	src := `fn fill(xs: &mut []i32, i: usize) {
 	xs[i] = 1;
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
-		t.Fatalf("expected slice-view indexing diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1080,31 +1031,43 @@ func TestSharedSliceViewRejectsIndexAssignment(t *testing.T) {
 	xs[i] = 1;
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
-		t.Fatalf("expected slice-view indexing diagnostic, got:\n%s", diag.EmitAllToString())
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected shared-view mutation diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "index assignment requires mutable array or mutable slice view") {
+		t.Fatalf("unexpected shared-view mutation diagnostic:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestArraySliceRangeExprRejectedUntilLoweringExists(t *testing.T) {
-	src := `fn first(xs: [4]i32) -> &[]i32 {
-	return xs[1..3];
+func TestRangeExprCreatesSliceViews(t *testing.T) {
+	src := `fn ranges(fixed: [4]i32, owner: []i32, shared: &[]i32, mutable: &mut []i32) {
+	let prefix = fixed[..2];
+	let suffix = owner[1..];
+	let full = shared[..];
+	let inclusive = mutable[1..=2];
+	inclusive[0] = 9;
+}
+
+fn mutate(mut fixed: [4]i32) {
+	let middle = fixed[1..3];
+	middle[0] = 7;
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
-		t.Fatalf("expected slicing lowerability diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-	if !strings.Contains(diag.EmitAllToString(), "slicing is not lowerable") {
-		t.Fatalf("expected slicing lowerability message, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected range slicing diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestFullRangeExprRejectedUntilLoweringExists(t *testing.T) {
-	src := `fn first(xs: []i32) -> &[]i32 {
-	return xs[..];
+func TestRangeExprRejectsNonAddressableFixedArray(t *testing.T) {
+	src := `fn invalid() {
+	let _ = [_]i32{1, 2, 3}[..];
 }`
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
-		t.Fatalf("expected slicing lowerability diagnostic, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("expected addressable slicing diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "slicing requires addressable array storage") {
+		t.Fatalf("unexpected addressable slicing diagnostic:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1308,7 +1271,7 @@ fn main() -> i32 {
 
 func TestSelfRecursiveStructThroughPointersAccepted(t *testing.T) {
 	src := `struct OwnedNode {
-	next: ^OwnedNode
+	next: *OwnedNode
 }
 
 struct RawNode {
@@ -1336,45 +1299,41 @@ fn main() -> i32 {
 	}
 }
 
-func TestPointerSelfInterfaceAssignmentRequiresPointerValue(t *testing.T) {
-	src := `interface Reader {
-	read(^Self, buf: cstr) -> i32,
+func TestOwnedInterfaceAssignmentAcceptsDirectCarrier(t *testing.T) {
+	src := `iface Reader {
+	fn (&Self) read(buf: cstr) -> i32
 }
 
 struct File {}
 
-impl File {
-	fn read(self: ^Self, buf: cstr) -> i32 {
+	fn (self: &File) read(buf: cstr) -> i32 {
 		return 0;
 	}
-}
 
-fn main(file: ^File) -> i32 {
-	let reader: Reader = file;
+fn main(file: *File) -> i32 {
+	let reader: *Reader = file;
 	return reader.read("ok");
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		t.Fatalf("unexpected owned-interface conversion diagnostic:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestPointerSelfInterfaceAssignmentRejectsValue(t *testing.T) {
-	src := `interface Reader {
-	read(^Self, buf: cstr) -> i32,
+func TestOwnedInterfaceAssignmentRejectsStackValue(t *testing.T) {
+	src := `iface Reader {
+	fn (&Self) read(buf: cstr) -> i32
 }
 
 struct File {}
 
-impl File {
-	fn read(self: ^Self, buf: cstr) -> i32 {
+	fn (self: &File) read(buf: cstr) -> i32 {
 		return 0;
 	}
-}
 
 fn main() -> i32 {
 	let file: File = .{};
-	let reader: Reader = file;
+	let reader: *Reader = file;
 	return 0;
 }`
 	diag := checkTypeSource(t, src)
@@ -1383,24 +1342,22 @@ fn main() -> i32 {
 	}
 }
 
-func TestReferenceSelfInterfaceAssignmentAcceptsValue(t *testing.T) {
-	src := `interface Reader {
-	read(self: &Self) -> i32
+func TestReferenceSelfInterfaceAssignmentAcceptsBorrow(t *testing.T) {
+	src := `iface Reader {
+	fn (&Self) read() -> i32
 }
 
 struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn read(self: &Self) -> i32 {
+	fn (self: &Counter) read() -> i32 {
 		return self.value;
 	}
-}
 
 fn main() -> i32 {
 	let counter: Counter = .{ value = 7 };
-	let reader: Reader = counter;
+	let reader: &Reader = &counter;
 	return reader.read();
 }`
 	diag := checkTypeSource(t, src)
@@ -1410,27 +1367,25 @@ fn main() -> i32 {
 }
 
 func TestBorrowedInterfaceArgumentsAcceptConcreteReferences(t *testing.T) {
-	src := `interface Reader {
-	read(self: &Self) -> i32
+	src := `iface Reader {
+	fn (&Self) read() -> i32
 }
 
-interface Writer {
-	write(self: &mut Self, value: i32)
-}
+iface Writer {
+	fn (&mut Self) write(value: i32)
 
+}
 struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn read(self: &Self) -> i32 {
+	fn (self: &Counter) read() -> i32 {
 		return self.value;
 	}
 
-	fn write(self: &mut Self, value: i32) {
+	fn (self: &mut Counter) write(value: i32) {
 		self.value = value;
 	}
-}
 
 fn read(reader: &Reader) -> i32 {
 	return reader.read();
@@ -1465,19 +1420,17 @@ func TestMutableReferenceExpressionRejectsImmutableStorage(t *testing.T) {
 }
 
 func TestBareInterfaceRejectsBorrowedConcreteValue(t *testing.T) {
-	src := `interface Reader {
-	read(self: &Self) -> i32
+	src := `iface Reader {
+	fn (&Self) read() -> i32
 }
 
 struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn read(self: &Self) -> i32 {
+	fn (self: &Counter) read() -> i32 {
 		return self.value;
 	}
-}
 
 fn main() -> i32 {
 	let counter: Counter = .{ value = 5 };
@@ -1485,32 +1438,32 @@ fn main() -> i32 {
 	return 0;
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
-		t.Fatalf("expected bare interface to reject borrowed concrete value, got:\n%s", diag.EmitAllToString())
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) || !strings.Contains(diag.EmitAllToString(), "unsized") {
+		t.Fatalf("expected bare interface sizedness diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestMutableInterfaceReceiverRequiresMutableOwnedParam(t *testing.T) {
-	src := `interface Writer {
-	write(self: &mut Self, value: i32)
+func TestMutableInterfaceReceiverRejectsSharedBorrow(t *testing.T) {
+	src := `iface Writer {
+	fn (&mut Self) write(value: i32)
 }
 
-fn write(writer: Writer) {
+fn write(writer: &Writer) {
 	writer.write(7);
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) ||
-		!strings.Contains(diag.EmitAllToString(), "mutable receiver method requires a mutable binding") {
-		t.Fatalf("expected immutable parameter receiver diagnostic, got:\n%s", diag.EmitAllToString())
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) ||
+		!strings.Contains(diag.EmitAllToString(), "cannot implicitly convert &Writer to &mut Writer") {
+		t.Fatalf("expected mutable interface mismatch, got:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestMutableOwnedParamSupportsReceiverCallAndReassignment(t *testing.T) {
-	src := `interface Writer {
-	write(self: &mut Self, value: i32)
+func TestMutableInterfaceBorrowSupportsReceiverCall(t *testing.T) {
+	src := `iface Writer {
+	fn (&mut Self) write(value: i32)
 }
 
-fn write(mut writer: Writer, mut value: i32) -> i32 {
+fn write(writer: &mut Writer, mut value: i32) -> i32 {
 	writer.write(value);
 	value = 9;
 	return value;
@@ -1518,6 +1471,138 @@ fn write(mut writer: Writer, mut value: i32) -> i32 {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestIfaceAllowsConsumingSelfReceiver(t *testing.T) {
+	diag := checkTypeSource(t, `iface Reader { fn (Self) read() -> i32 }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected consuming receiver diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestConsumingInterfaceMethodRequiresOwnedCarrier(t *testing.T) {
+	invalid := checkTypeSource(t, `iface Consumer { fn (Self) consume() }
+fn bad(value: &Consumer) { value.consume(); }`)
+	if !hasTypeCode(invalid, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected borrowed consuming receiver mismatch, got:\n%s", invalid.EmitAllToString())
+	}
+	valid := checkTypeSource(t, `iface Consumer { fn (Self) consume() }
+fn take(value: *Consumer) { value.consume(); }`)
+	if valid.HasErrors() {
+		t.Fatalf("unexpected owned consuming receiver diagnostic:\n%s", valid.EmitAllToString())
+	}
+}
+
+func TestMutableInterfaceCarrierCallsSharedReceiver(t *testing.T) {
+	diag := checkTypeSource(t, `iface Reader { fn (&Self) read() -> i32 }
+fn read(value: &mut Reader) -> i32 { return value.read(); }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected shared receiver diagnostic on mutable carrier:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestOwnedInterfaceAssignmentAcceptsNestedOwnerTarget(t *testing.T) {
+	diag := checkTypeSource(t, `iface Reader { fn (&Self) read() -> i32 }
+struct Resource { child: *i32 }
+fn (self: &Resource) read() -> i32 { return 0; }
+fn bad(resource: *Resource) { let reader: *Reader = resource; }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected nested-owner erasure diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFreeAcceptsOwnedPointers(t *testing.T) {
+	valid := checkTypeSource(t, `iface Reader { fn (&Self) read() -> i32 }
+fn release_value(value: *i32) { free(value); }
+fn release_interface(reader: *Reader) { free(reader); }`)
+	if valid.HasErrors() {
+		t.Fatalf("unexpected free diagnostics:\n%s", valid.EmitAllToString())
+	}
+	invalid := checkTypeSource(t, `fn bad(raw: rawptr, value: i32) { free(raw); free(value); }`)
+	if count := strings.Count(invalid.EmitAllToString(), "free requires an owned pointer"); count != 2 {
+		t.Fatalf("expected two invalid free diagnostics, got %d:\n%s", count, invalid.EmitAllToString())
+	}
+}
+
+func TestPrintRejectsIntegersWiderThan64Bits(t *testing.T) {
+	diag := checkTypeSource(t, `fn show(value: u128) { print(value); }`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
+		!strings.Contains(diag.EmitAllToString(), "print supports integers up to 64 bits") {
+		t.Fatalf("expected print width diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPrintReservesPrintfLinkedSymbol(t *testing.T) {
+	for _, src := range []string{
+		`fn printf() {} fn main() { print(1); }`,
+		`#[extern("printf")] fn output(value: cstr); fn main() { print(1); }`,
+		`struct Printer {} #[extern("printf")] fn (_: &Printer) output(value: cstr); fn main() { print(1); }`,
+	} {
+		diag := checkTypeSource(t, src)
+		if !hasTypeCode(diag, diagnostics.ErrRedeclaredSymbol) ||
+			!strings.Contains(diag.EmitAllToString(), "linked symbol `printf` is reserved") {
+			t.Fatalf("expected reserved printf diagnostic, got:\n%s", diag.EmitAllToString())
+		}
+	}
+	valid := checkTypeSource(t, `struct Printer {} fn (_: Printer) printf() {} fn main() { print(1); }`)
+	if valid.HasErrors() {
+		t.Fatalf("receiver method named printf must use its mangled symbol:\n%s", valid.EmitAllToString())
+	}
+}
+
+func TestPrintReservesPrintfLinkedSymbolAcrossModules(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	parseModule := func(path, importPath, src string) *project.Module {
+		module := &project.Module{
+			Key:        project.ModuleKeyFor(project.ModuleOriginLocal, path),
+			ImportPath: importPath,
+			FilePath:   path,
+			Content:    src,
+			AST:        parser.New(path, lexer.New(path, src, diag).Tokenize(), diag).ParseModule(),
+			Imports:    make(map[string]project.ResolvedImport),
+		}
+		ctx.AddModule(module)
+		return module
+	}
+	printer := parseModule("printer.peep", "printer", `fn main() { print(42); }`)
+	hijack := parseModule("hijack.peep", "hijack", `fn printf(value: i32) {}`)
+	for _, module := range []*project.Module{printer, hijack} {
+		collector.Collect(ctx, module)
+		binder.Bind(ctx, module)
+		resolver.Resolve(ctx, module)
+		Check(ctx, module)
+	}
+	if !hasTypeCode(diag, diagnostics.ErrRedeclaredSymbol) ||
+		!strings.Contains(diag.EmitAllToString(), "linked symbol `printf` is reserved") {
+		t.Fatalf("expected cross-module printf reservation, got:\n%s", diag.EmitAllToString())
+	}
+	if count := strings.Count(diag.EmitAllToString(), "linked symbol `printf` is reserved"); count != 1 {
+		t.Fatalf("expected one printf reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
+	}
+}
+
+func TestPrintAcceptsPrimitiveScalars(t *testing.T) {
+	diag := checkTypeSource(t, `fn show(mut value: i32, raw: rawptr) {
+	print(value);
+	print(42u32);
+	print(2.5f64);
+	print(true);
+	print(value as byte);
+	print("hello");
+	print(raw);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected print diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPrintRejectsComposite(t *testing.T) {
+	diag := checkTypeSource(t, `struct Point { x: i32 }
+fn show(point: Point) { print(point); }`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) || !strings.Contains(diag.EmitAllToString(), "print requires a primitive scalar") {
+		t.Fatalf("expected invalid print operand diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1536,13 +1621,11 @@ func TestImmutableParamReassignmentIsRejected(t *testing.T) {
 func TestPointerSelfMethodCallResolvesOnPointerValue(t *testing.T) {
 	src := `struct File {}
 
-impl File {
-	fn read(self: ^Self, buf: cstr) -> i32 {
+	fn (self: *File) read(buf: cstr) -> i32 {
 		return 0;
 	}
-}
 
-fn main(file: ^File) -> i32 {
+fn main(file: *File) -> i32 {
 	return file.read("ok");
 }`
 	diag := checkTypeSource(t, src)
@@ -1556,7 +1639,7 @@ func TestOwnedPointerFieldAssignmentAccepted(t *testing.T) {
 	value: i32
 }
 
-fn main(ptr: ^Box) {
+fn main(ptr: *Box) {
 	ptr.value = 2;
 }`
 	diag := checkTypeSource(t, src)
@@ -1565,33 +1648,24 @@ fn main(ptr: ^Box) {
 	}
 }
 
-func TestRawPointerSelfMethodCallResolvesOnAddressableValue(t *testing.T) {
-	src := `impl i32 {
-	fn to_str(receiver: *Self) -> cstr {
+func TestRawPointerCannotBeSelfReceiver(t *testing.T) {
+	src := `fn (receiver: rawptr) to_str() -> cstr {
 		return "ok";
-	}
-}
-
-fn main() -> i32 {
-	let mut i: i32 = 42;
-	let s: cstr = i.to_str();
-	return 0;
 }`
 	diag := checkTypeSource(t, src)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	if !hasTypeCode(diag, diagnostics.ErrInvalidMethodReceiver) {
+		t.Fatalf("expected invalid raw pointer receiver diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestOwnedPointerSelfMethodCallRejectsStackValue(t *testing.T) {
-	src := `impl i32 {
-	fn to_str(receiver: ^Self) -> cstr {
+	src := `struct Number { value: i32 }
+fn (receiver: *Number) to_str() -> cstr {
 		return "ok";
-	}
 }
 
 fn main() -> i32 {
-	let mut i: i32 = 42;
+	let mut i: Number = .{ value = 42 };
 	let s: cstr = i.to_str();
 	return 0;
 }`
@@ -1601,17 +1675,15 @@ fn main() -> i32 {
 	}
 }
 
-func TestPointerSelfMethodCallRejectsConstValue(t *testing.T) {
+func TestMutableReferenceSelfMethodCallRejectsConstValue(t *testing.T) {
 	src := `struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn bump(self: *Self) -> i32 {
+	fn (self: &mut Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
-}
 
 fn main() -> i32 {
 	const c: Counter = .{ value = 0 };
@@ -1631,25 +1703,23 @@ func TestReferenceSelfMethodsAcceptAddressableValue(t *testing.T) {
 	value: i32
 }
 
-impl Counter {
-	fn get(self: &Self) -> i32 {
+	fn (self: &Counter) get() -> i32 {
 		return self.value;
 	}
 
-	fn twice(self: &Self) -> i32 {
+	fn (self: &Counter) twice() -> i32 {
 		return self.get() + self.get();
 	}
 
-	fn bump(self: &mut Self) -> i32 {
+	fn (self: &mut Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
 
-	fn touch(self: &mut Self) -> i32 {
+	fn (self: &mut Counter) touch() -> i32 {
 		self.bump();
 		return self.get();
 	}
-}
 
 fn main() -> i32 {
 	let mut c: Counter = .{ value = 0 };
@@ -1667,11 +1737,9 @@ func TestSharedReferenceSelfMethodRejectsFieldMutation(t *testing.T) {
 	value: i32
 }
 
-impl Counter {
-	fn bump(self: &Self) {
+	fn (self: &Counter) bump() {
 		self.value = self.value + 1;
 	}
-}
 
 fn main() -> i32 {
 	let c: Counter = .{ value = 0 };
@@ -1727,11 +1795,9 @@ func TestReferenceReturnRejectedUntilOriginTrackingExists(t *testing.T) {
 	value: i32
 }
 
-impl Box {
-	fn reference(self: &Self) -> &Self {
+	fn (self: &Box) reference() -> &Box {
 		return self;
 	}
-}
 
 fn leak() -> &Box {
 	let box: Box = .{ value = 1 };
@@ -1754,9 +1820,8 @@ func TestBodylessReferenceReturnsRejected(t *testing.T) {
 #[extern]
 fn ExternalLeak() -> &Box;
 
-impl Box {
 	#[extern]
-	fn ExternalReference(self: &Self) -> &Self;
+	fn (self: &Box) ExternalReference() -> &Box;
 }`
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
@@ -1833,12 +1898,10 @@ func TestMutableReferenceSelfMethodRejectsImmutableValue(t *testing.T) {
 	value: i32
 }
 
-impl Counter {
-	fn bump(self: &mut Self) -> i32 {
+	fn (self: &mut Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
-}
 
 fn main() -> i32 {
 	let c: Counter = .{ value = 0 };
@@ -1983,12 +2046,11 @@ func TestPointerFieldAssignmentResolves(t *testing.T) {
 	value: i32
 }
 
-impl Counter {
-	fn bump(self: *Self) -> i32 {
+	fn (self: *Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
-}`
+`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())

@@ -89,10 +89,10 @@ func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
 		t.Fatalf("mkdir allocator: %v", err)
 	}
 	allocatorSrc := `#[extern("malloc")]
-fn Malloc(size: usize) -> *byte;
+fn Malloc(size: usize) -> rawptr;
 
 #[extern("free")]
-fn Free(ptr: *byte);
+fn Free(ptr: rawptr);
 `
 	if err := os.WriteFile(allocatorPath, []byte(allocatorSrc), 0o644); err != nil {
 		t.Fatalf("write allocator: %v", err)
@@ -102,7 +102,7 @@ fn Free(ptr: *byte);
 	entrySrc := `import "core:allocator";
 
 fn main() -> i32 {
-	let ptr: *byte = allocator::Malloc(8);
+	let ptr: rawptr = allocator::Malloc(8);
 	allocator::Free(ptr);
 	return 0;
 }`
@@ -325,19 +325,18 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
-func TestPipelineAcceptsMoveExprSurface(t *testing.T) {
+func TestPipelineAcceptsImplicitMoveSurface(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `#[no_copy]
-struct Buffer {
-	ptr: ^u8,
+	entrySrc := `struct Buffer {
+	ptr: *u8,
 }
 
 fn get_buffer() -> Buffer;
-fn destroy(move data: Buffer) {}
+fn destroy(_: Buffer) {}
 
 fn main() -> i32 {
 	let current: Buffer = get_buffer();
-	let next = move current;
+	let next = current;
 	destroy(next);
 	return 0;
 }`
@@ -352,7 +351,7 @@ func TestPipelineLowersAddressExprSurface(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn main() -> i32 {
 	let mut value: i32 = 1;
-	let ptr: *i32 = @value;
+	let ptr: rawptr = @value;
 	return value;
 }`
 
@@ -369,11 +368,11 @@ func TestPipelineLowersAddressOfFieldStorage(t *testing.T) {
 }
 
 #[extern]
-fn use_ptr(ptr: *i32);
+fn use_ptr(ptr: rawptr);
 
 fn main() -> i32 {
 	let mut box: Box = .{ value = 1 };
-	let ptr: *i32 = @box.value;
+	let ptr: rawptr = @box.value;
 	use_ptr(ptr);
 	return 0;
 }`
@@ -677,17 +676,17 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineLowersImplMethodCalls(t *testing.T) {
+func TestPipelineLowersReceiverFunctionCalls(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `impl i32 {
-	fn abs(self: Self) -> Self {
+	entrySrc := `struct Number { value: i32 }
+
+fn (self: Number) abs() -> Number {
 		return self;
-	}
 }
 
 fn main() -> i32 {
-	let x: i32 = 1;
-	return x.abs();
+	let x: Number = .{ value = 1 };
+	return x.abs().value;
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
@@ -703,11 +702,9 @@ func TestPipelineLowersPointerReceiverOnNamedStruct(t *testing.T) {
 #[extern]
 fn open_file() -> *File;
 
-impl File {
-	fn read(self: *Self, buf: cstr) -> i32 {
+	fn (self: *File) read(buf: cstr) -> i32 {
 		return 0;
 	}
-}
 
 fn main() -> i32 {
 	let file = open_file();
@@ -723,15 +720,15 @@ fn main() -> i32 {
 func TestPipelineAllowsPointerRecursiveStruct(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Node {
-	next: *Node
+	next: rawptr
 }
 
 #[extern]
-fn next_node() -> *Node;
+fn next_node() -> rawptr;
 
 fn main() -> i32 {
 	let node: Node = .{ next = next_node() };
-	let next: *Node = node.next;
+	let next: rawptr = node.next;
 	return 0;
 }`
 
@@ -775,16 +772,16 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineLowersAutoAddressedPointerReceiverOnValue(t *testing.T) {
+func TestPipelineLowersAutoAddressedMutableReferenceReceiverOnValue(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `impl i32 {
-	fn id(self: *Self) -> i32 {
+	entrySrc := `struct Number { value: i32 }
+
+fn (self: &mut Number) id() -> i32 {
 		return 7;
-	}
 }
 
 fn main() -> i32 {
-	let mut x: i32 = 1;
+	let mut x: Number = .{ value = 1 };
 	return x.id();
 }`
 
@@ -800,25 +797,23 @@ func TestPipelineLowersReferenceReceiversOnValue(t *testing.T) {
 	value: i32
 }
 
-impl Counter {
-	fn get(self: &Self) -> i32 {
+	fn (self: &Counter) get() -> i32 {
 		return self.value;
 	}
 
-	fn twice(self: &Self) -> i32 {
+	fn (self: &Counter) twice() -> i32 {
 		return self.get() + self.get();
 	}
 
-	fn bump(self: &mut Self) -> i32 {
+	fn (self: &mut Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
 
-	fn touch(self: &mut Self) -> i32 {
+	fn (self: &mut Counter) touch() -> i32 {
 		self.bump();
 		return self.twice();
 	}
-}
 
 fn main() -> i32 {
 	let mut c: Counter = .{ value = 6 };
@@ -836,11 +831,9 @@ func TestPipelineBorrowsNestedReferenceReceiverFromFieldPlace(t *testing.T) {
 	value: i32
 }
 
-impl Inner {
-	fn bump(self: &mut Self) {
+	fn (self: &mut Inner) bump() {
 		self.value = self.value + 1;
 	}
-}
 
 struct Outer {
 	inner: Inner
@@ -884,12 +877,10 @@ func TestPipelineLowersPointerFieldAssignment(t *testing.T) {
 #[extern]
 fn open_counter() -> *Counter;
 
-impl Counter {
-	fn bump(self: *Self) -> i32 {
+	fn (self: *Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
-}
 
 fn main() -> i32 {
 	let c = open_counter();
@@ -989,6 +980,44 @@ func TestPipelineLowersInferredArrayLiteralIndexAssignment(t *testing.T) {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersSliceViewIndexReadAndWrite(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn read_at(xs: &[]i32, index: usize) -> i32 {
+	return xs[index];
+}
+
+fn write_at(xs: &mut []i32, index: usize, value: i32) {
+	xs[index] = value;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersRangeSliceForms(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn ranges(xs: [4]i32) -> i32 {
+	let prefix = xs[..2];
+	let suffix = xs[1..];
+	let middle = xs[1..3];
+	let inclusive = xs[1..=2];
+	let full = xs[..];
+	return prefix[0] + suffix[0] + middle[0] + inclusive[0] + full[0];
+}
+
+fn mutate(mut xs: [4]i32) {
+	let middle = xs[1..3];
+	middle[0] = 9;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected range slicing diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1096,7 +1125,7 @@ func TestPipelineLowersPointerFieldAccess(t *testing.T) {
 }
 
 #[extern]
-fn open_point() -> ^Point;
+fn open_point() -> *Point;
 
 fn main() -> i32 {
 	let p = open_point();
@@ -1109,124 +1138,27 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineLowersInterfaceDispatchForValueReceiver(t *testing.T) {
-	preludeSrc := ``
-	entrySrc := `interface Summer {
-	sum(Self) -> i32,
-}
-
-struct Point {
-	x: i32,
-	y: i32,
-}
-
-impl Point {
-	fn sum(self: Self) -> i32 {
-		return self.x + self.y;
-	}
-}
-
-fn total(v: Summer) -> i32 {
-	return v.sum();
-}
-
-fn main() -> i32 {
-	let p: Point = .{ x = 10, y = 20 };
-	return total(p);
-}`
-
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestPipelineLowersInterfaceDispatchForPointerReceiver(t *testing.T) {
-	preludeSrc := ``
-	entrySrc := `interface Reader {
-	read(*Self, buf: cstr) -> i32
-}
-
-struct File {}
-
-#[extern]
-fn open_file() -> *File;
-
-impl File {
-	fn read(self: *Self, buf: cstr) -> i32 {
-		return 7;
-	}
-}
-
-fn use(reader: Reader) -> i32 {
-	return reader.read("ok");
-}
-
-fn main() -> i32 {
-	let file = open_file();
-	return use(file);
-}`
-
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestPipelineLowersInterfaceDispatchForReferenceReceiver(t *testing.T) {
-	preludeSrc := ``
-	entrySrc := `interface Reader {
-	read(self: &Self) -> i32
-}
-
-struct Counter {
-	value: i32
-}
-
-impl Counter {
-	fn read(self: &Self) -> i32 {
-		return self.value;
-	}
-}
-
-fn use(reader: Reader) -> i32 {
-	return reader.read();
-}
-
-fn main() -> i32 {
-	let counter: Counter = .{ value = 7 };
-	return use(counter);
-}`
-
-	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
 func TestPipelineLowersBorrowedInterfaceDispatch(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `interface Reader {
-	read(self: &Self) -> i32
+	entrySrc := `iface Reader {
+	fn (&Self) read() -> i32
 }
 
-interface Writer {
-	write(self: &mut Self, value: i32)
-}
+iface Writer {
+	fn (&mut Self) write(value: i32)
 
+}
 struct Counter {
 	value: i32
 }
 
-impl Counter {
-	fn read(self: &Self) -> i32 {
+	fn (self: &Counter) read() -> i32 {
 		return self.value;
 	}
 
-	fn write(self: &mut Self, value: i32) {
+	fn (self: &mut Counter) write(value: i32) {
 		self.value = value;
 	}
-}
 
 fn read(reader: &Reader) -> i32 {
 	return reader.read();
@@ -1248,107 +1180,27 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineInterfaceDuplicateWrappers(t *testing.T) {
+func TestPipelineLowersOwnedInterfaceDirectCarrier(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `interface Summer {
-	sum(Self) -> i32,
+	entrySrc := `iface Reader {
+	fn (&Self) read() -> i32
 }
 
-struct Point {
-	x: i32,
-	y: i32,
+struct Counter {
+	value: i32
 }
 
-impl Point {
-	fn sum(self: Self) -> i32 {
-		return self.x + self.y;
+	fn (self: &Counter) read() -> i32 {
+		return self.value;
 	}
-}
 
-fn make_summer_1() -> Summer {
-	let p: Point = .{ x = 10, y = 20 };
-	return p;
-}
-
-fn make_summer_2() -> Summer {
-	let p: Point = .{ x = 30, y = 40 };
-	return p;
-}
-
-fn main() -> i32 {
-	return 0;
+fn convert(counter: *Counter) -> *Reader {
+	return counter;
 }`
 
-	const preludePath = "core/global" + peeper.SourceExt
-	const entryPath = "entry" + peeper.SourceExt
-
-	diag := diagnostics.NewDiagnosticBag()
-	diag.AddSourceContent(preludePath, preludeSrc)
-	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", peeper.SourceExt, diag)
-
-	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
-
-	if err := New(ctx).Run(entry); err != nil {
-		t.Fatalf("pipeline.Run returned error: %v", err)
-	}
-
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-
-	// The thunk function for Summer -> Point -> sum should be defined exactly once.
-	// We count "define i32 @__ifacethunk__" to verify.
-	wrapperDef := "define i32 @__ifacethunk__"
-	count := strings.Count(entry.LLVMIR, wrapperDef)
-	if count != 1 {
-		t.Errorf("expected exactly 1 definition of the interface wrapper function, got %d. LLVM IR:\n%s", count, entry.LLVMIR)
-	}
-}
-
-func TestPipelineUsesStackBoxForNonEscapingInterfaceValue(t *testing.T) {
-	preludeSrc := ``
-	entrySrc := `interface Summer {
-	sum(Self) -> i32,
-}
-
-struct Point {
-	x: i32,
-	y: i32,
-}
-
-impl Point {
-	fn sum(self: Self) -> i32 {
-		return self.x + self.y;
-	}
-}
-
-fn main() -> i32 {
-	let p: Point = .{ x = 10, y = 20 };
-	let s: Summer = p;
-	return s.sum();
-}`
-
-	const preludePath = "core/global" + peeper.SourceExt
-	const entryPath = "entry" + peeper.SourceExt
-
-	diag := diagnostics.NewDiagnosticBag()
-	diag.AddSourceContent(preludePath, preludeSrc)
-	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", peeper.SourceExt, diag)
-
-	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
-
-	if err := New(ctx).Run(entry); err != nil {
-		t.Fatalf("pipeline.Run returned error: %v", err)
-	}
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-	if strings.Contains(entry.LLVMIR, "@malloc") {
-		t.Fatalf("expected non-escaping local interface value to avoid malloc, LLVM IR:\n%s", entry.LLVMIR)
+		t.Fatalf("unexpected owned-interface conversion diagnostic:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1376,12 +1228,10 @@ func TestPipelineLowersPointerReceiverOnNestedField(t *testing.T) {
 	entrySrc := `struct Counter {
 	value: i32
 }
-impl Counter {
-	fn bump(self: *Self) -> i32 {
+	fn (self: &mut Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
-}
 struct Container {
 	counter: Counter
 }
@@ -1421,91 +1271,5 @@ fn main() -> i32 {
 	}
 	if !found {
 		t.Fatalf("expected ErrInvalidAssignment error, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestPipelineInterfaceEscapesViaStoreAndInterfaceCall(t *testing.T) {
-	preludeSrc := ``
-	entrySrc := `interface Summer {
-	sum(Self) -> i32,
-}
-
-struct Point {
-	x: i32,
-	y: i32,
-}
-
-impl Point {
-	fn sum(self: Self) -> i32 {
-		return self.x + self.y;
-	}
-}
-
-struct SummerHolder {
-	s: Summer,
-}
-
-#[extern]
-fn consume_holder(h: SummerHolder);
-
-#[extern]
-fn consume_summer(s: Summer);
-
-interface SummerConsumer {
-	consume(Self, val: Summer) -> i32,
-}
-
-#[extern]
-fn get_consumer() -> SummerConsumer;
-
-fn test_store_field() -> i32 {
-	let p: Point = .{ x = 10, y = 20 };
-	let s: Summer = p;
-	let mut h: SummerHolder = .{ s = s };
-	h.s = s;
-	consume_holder(h);
-	return 0;
-}
-
-fn test_interface_call_arg(c: SummerConsumer) -> i32 {
-	let p: Point = .{ x = 10, y = 20 };
-	let s: Summer = p;
-	let _ = c.consume(s);
-	consume_summer(s);
-	return 0;
-}
-
-fn main() -> i32 {
-	test_store_field();
-	let c = get_consumer();
-	test_interface_call_arg(c);
-	return 0;
-}`
-
-	const preludePath = "core/global" + peeper.SourceExt
-	const entryPath = "entry" + peeper.SourceExt
-
-	diag := diagnostics.NewDiagnosticBag()
-	diag.AddSourceContent(preludePath, preludeSrc)
-	diag.AddSourceContent(entryPath, entrySrc)
-	ctx := project.New(".", peeper.SourceExt, diag)
-
-	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
-
-	if err := New(ctx).Run(entry); err != nil {
-		t.Fatalf("pipeline.Run returned error: %v", err)
-	}
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-	if strings.Contains(entry.HIR.Text(), "<invalid: unsupported interface method shape>") {
-		t.Fatalf("unexpected invalid interface lowering in HIR:\n%s", entry.HIR.Text())
-	}
-	if !strings.Contains(entry.LLVMIR, "@malloc") {
-		t.Fatalf("expected escaping interface values to use malloc, LLVM IR:\n%s", entry.LLVMIR)
-	}
-	if strings.Contains(entry.LLVMIR, "extractvalue { i8*, i8* } 0") {
-		t.Fatalf("unexpected zero interface receiver in LLVM IR:\n%s", entry.LLVMIR)
 	}
 }

@@ -1,0 +1,6 @@
+import "negative_imported_printf_symbol/hijack";
+
+fn main() {
+    hijack::Printf(0);
+    print(42);
+}

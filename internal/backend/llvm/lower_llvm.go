@@ -32,6 +32,48 @@ func emitStore(b *llvmBuilder, store *mir.Store) {
 	b.line(fmt.Sprintf("store %s %s, %s* %s", valueType, value, valueType, ptr))
 }
 
+func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
+	if b == nil || printInstr == nil || printInstr.Value == nil {
+		return
+	}
+	typeText := mirRefType(printInstr.Value)
+	value := emitRef(b, printInstr.Value)
+	formatName := ""
+	formatSize := 0
+	argument := ""
+	switch {
+	case typeText == "bool":
+		selected := b.nextReg()
+		b.line(fmt.Sprintf("%s = select i1 %s, i8* getelementptr inbounds ([5 x i8], [5 x i8]* @.print.true, i32 0, i32 0), i8* getelementptr inbounds ([6 x i8], [6 x i8]* @.print.false, i32 0, i32 0)", selected, value))
+		formatName, formatSize, argument = "string", 3, "i8* "+selected
+	case typeText == "cstr":
+		formatName, formatSize, argument = "string", 3, "i8* "+value
+	case typeText == "rawptr":
+		formatName, formatSize, argument = "pointer", 3, "i8* "+value
+	case isMIRFloatType(typeText):
+		if typeText == "f32" {
+			value = emitCast(b, &mir.Cast{Arg: printInstr.Value, Type: "f64"})
+		}
+		formatName, formatSize, argument = "float", 3, "double "+value
+	default:
+		signed, _, ok := mirIntegerInfo(typeText)
+		if !ok {
+			b.emitter.markInvalid("print reached LLVM with unsupported type " + typeText)
+			return
+		}
+		promotedType := "u64"
+		formatName = "unsigned"
+		if signed {
+			promotedType = "i64"
+			formatName = "signed"
+		}
+		value = emitCast(b, &mir.Cast{Arg: printInstr.Value, Type: promotedType})
+		formatSize, argument = 5, "i64 "+value
+	}
+	format := fmt.Sprintf("getelementptr inbounds ([%d x i8], [%d x i8]* @.print.%s, i32 0, i32 0)", formatSize, formatSize, formatName)
+	b.line(fmt.Sprintf("call i32 (i8*, ...) @printf(i8* %s, %s)", format, argument))
+}
+
 func emitFieldPtr(b *llvmBuilder, baseRef mir.ValueRef, index int) string {
 	if b == nil || baseRef == nil {
 		return ""
@@ -58,6 +100,150 @@ func emitFieldPtr(b *llvmBuilder, baseRef mir.ValueRef, index int) string {
 	return ptr
 }
 
+func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, length string) (compareIndex, compareLength, compareType, indexI64 string, ok bool) {
+	if b == nil || indexRef == nil {
+		return "", "", "", "", false
+	}
+	indexTypeText := mirRefType(indexRef)
+	_, indexBits, ok := mirIntegerInfo(indexTypeText)
+	if !ok {
+		b.emitter.markInvalid("dynamic array index lowering requires integral index")
+		return "", "", "", "", false
+	}
+	compareIndex = emitRef(b, indexRef)
+	compareLength = length
+	compareType = b.emitter.llvmType(indexTypeText)
+	indexI64 = compareIndex
+	if indexBits < 64 {
+		compareIndex = emitCast(b, &mir.Cast{Arg: indexRef, Type: "u64"})
+		compareType = "i64"
+		indexI64 = compareIndex
+	} else if indexBits > 64 {
+		compareLength = b.nextReg()
+		b.line(fmt.Sprintf("%s = zext i64 %s to %s", compareLength, length, compareType))
+		indexI64 = b.nextReg()
+		b.line(fmt.Sprintf("%s = trunc %s %s to i64", indexI64, compareType, compareIndex))
+	}
+	return compareIndex, compareLength, compareType, indexI64, true
+}
+
+func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
+	if b == nil || view == nil || view.Source == nil {
+		return "0"
+	}
+	sourceTypeText := mirRefType(view.Source)
+	targetTypeText := sourceTypeText
+	referenced := false
+	if target, ok := referenceTypeTextTarget(sourceTypeText); ok {
+		targetTypeText = target
+		referenced = true
+	}
+	var data, fixedArrayPtr, length, elemTypeText string
+	if elem, dynamicArray := strings.CutPrefix(targetTypeText, "[]"); dynamicArray {
+		elemTypeText = strings.TrimSpace(elem)
+		sourceType := b.emitter.llvmType(sourceTypeText)
+		source := emitRef(b, view.Source)
+		data = b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
+		length = b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
+	} else if lengthText, elem, fixedArray := ir.ArrayTypeParts(targetTypeText); fixedArray {
+		elemTypeText = elem
+		length = lengthText
+		if referenced {
+			fixedArrayPtr = emitRef(b, view.Source)
+		} else if ref, ok := view.Source.(*mir.RefName); ok {
+			fixedArrayPtr = ensureLocalAddr(b, ref)
+		}
+		if fixedArrayPtr == "" {
+			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
+			return "0"
+		}
+	} else {
+		b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
+		return "0"
+	}
+
+	startI64 := "0"
+	endI64 := length
+	invalid := ""
+	if view.Start != nil {
+		start, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.Start, length)
+		if !ok {
+			return "0"
+		}
+		startI64 = normalized
+		invalid = b.nextReg()
+		b.line(fmt.Sprintf("%s = icmp ugt %s %s, %s", invalid, compareType, start, compareLength))
+	}
+	if view.End != nil {
+		end, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.End, length)
+		if !ok {
+			return "0"
+		}
+		endI64 = normalized
+		endInvalid := b.nextReg()
+		predicate := "ugt"
+		if !view.EndExclusive {
+			predicate = "uge"
+		}
+		b.line(fmt.Sprintf("%s = icmp %s %s %s, %s", endInvalid, predicate, compareType, end, compareLength))
+		if invalid == "" {
+			invalid = endInvalid
+		} else {
+			combined := b.nextReg()
+			b.line(fmt.Sprintf("%s = or i1 %s, %s", combined, invalid, endInvalid))
+			invalid = combined
+		}
+	}
+
+	boundsID := b.nextID
+	b.nextID++
+	failLabel := fmt.Sprintf("slice_bounds_fail_%d", boundsID)
+	normalizedLabel := fmt.Sprintf("slice_bounds_normalized_%d", boundsID)
+	readyLabel := fmt.Sprintf("slice_bounds_ready_%d", boundsID)
+	failEmitted := false
+	if invalid != "" {
+		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", invalid, failLabel, normalizedLabel))
+		b.namedLabel(failLabel)
+		b.line("call void @llvm.trap()")
+		b.line("unreachable")
+		b.namedLabel(normalizedLabel)
+		failEmitted = true
+	}
+	if view.End != nil && !view.EndExclusive {
+		inclusiveEnd := b.nextReg()
+		b.line(fmt.Sprintf("%s = add i64 %s, 1", inclusiveEnd, endI64))
+		endI64 = inclusiveEnd
+	}
+	reversed := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ugt i64 %s, %s", reversed, startI64, endI64))
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", reversed, failLabel, readyLabel))
+	if !failEmitted {
+		b.namedLabel(failLabel)
+		b.line("call void @llvm.trap()")
+		b.line("unreachable")
+	}
+	b.namedLabel(readyLabel)
+
+	elemType := b.emitter.llvmType(elemTypeText)
+	if fixedArrayPtr != "" {
+		arrayType := b.emitter.llvmType(targetTypeText)
+		data = b.nextReg()
+		b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, i32 0, i32 0", data, arrayType, arrayType, fixedArrayPtr))
+	}
+	adjustedData := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, i64 %s", adjustedData, elemType, elemType, data, startI64))
+	viewLength := b.nextReg()
+	b.line(fmt.Sprintf("%s = sub i64 %s, %s", viewLength, endI64, startI64))
+	viewType := b.emitter.llvmType(view.Type)
+	withData := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, %s* %s, 0", withData, viewType, elemType, adjustedData))
+	withLength := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s %s, i64 %s, 1", withLength, viewType, withData, viewLength))
+	return withLength
+}
+
 func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) string {
 	if b == nil || baseRef == nil || indexRef == nil {
 		return ""
@@ -67,8 +253,13 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 	if !pointed {
 		targetType = baseType
 	}
+	aggregateType := targetType
+	if referencedType, referenced := referenceTypeTextTarget(baseType); referenced {
+		targetType = referencedType
+		aggregateType = baseType
+	}
 	if strings.HasPrefix(targetType, "[]") {
-		arrayType, ok := llvmTypeName(targetType)
+		arrayType, ok := llvmTypeName(aggregateType)
 		if !ok {
 			return ""
 		}
@@ -86,23 +277,9 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, base))
 		length := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, base))
-		index := emitRef(b, indexRef)
-		indexTypeText := mirRefType(indexRef)
-		_, indexBits, ok := mirIntegerInfo(indexTypeText)
+		compareIndex, compareLength, compareType, _, ok := normalizeIndexForLength(b, indexRef, length)
 		if !ok {
-			b.emitter.markInvalid("dynamic array index lowering requires integral index")
 			return ""
-		}
-		indexType := b.emitter.llvmType(indexTypeText)
-		compareIndex := index
-		compareLength := length
-		compareType := indexType
-		if indexBits < 64 {
-			compareIndex = emitCast(b, &mir.Cast{Arg: indexRef, Type: "u64"})
-			compareType = "i64"
-		} else if indexBits > 64 {
-			compareLength = b.nextReg()
-			b.line(fmt.Sprintf("%s = zext i64 %s to %s", compareLength, length, indexType))
 		}
 		outOfBounds := b.nextReg()
 		// Unsigned comparison also rejects negative signed indexes after sign extension.
@@ -112,10 +289,10 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		failLabel := fmt.Sprintf("bounds_fail_%d", boundsID)
 		okLabel := fmt.Sprintf("bounds_ok_%d", boundsID)
 		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", outOfBounds, failLabel, okLabel))
-		fmt.Fprintf(b.out, "%s:\n", failLabel)
+		b.namedLabel(failLabel)
 		b.line("call void @llvm.trap()")
 		b.line("unreachable")
-		fmt.Fprintf(b.out, "%s:\n", okLabel)
+		b.namedLabel(okLabel)
 		ptr := b.nextReg()
 		b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, %s %s", ptr, elemType, elemType, data, compareType, compareIndex))
 		return ptr
@@ -161,33 +338,6 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 	return ptr
 }
 
-func emitInterfaceBoxedData(b *llvmBuilder, value mir.ValueRef, dataType string, stackBox bool) string {
-	if b == nil || value == nil {
-		return "null"
-	}
-	llvmType := b.emitter.llvmType(dataType)
-	if stackBox {
-		typed := b.nextReg()
-		b.line(fmt.Sprintf("%s = alloca %s", typed, llvmType))
-		val := emitRef(b, value)
-		b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, typed))
-		cast := b.nextReg()
-		b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", cast, llvmType, typed))
-		return cast
-	}
-	sizePtr := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr %s, %s* null, i32 1", sizePtr, llvmType, llvmType))
-	size := b.nextReg()
-	b.line(fmt.Sprintf("%s = ptrtoint %s* %s to i64", size, llvmType, sizePtr))
-	mem := b.nextReg()
-	b.line(fmt.Sprintf("%s = call i8* @malloc(i64 %s)", mem, size))
-	typed := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to %s*", typed, mem, llvmType))
-	val := emitRef(b, value)
-	b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, typed))
-	return mem
-}
-
 type llvmBuilder struct {
 	out             *strings.Builder
 	nextID          int
@@ -198,6 +348,7 @@ type llvmBuilder struct {
 	debug           *llvmDebugEmitter
 	debugScopeID    int
 	debugLocationID int
+	currentLabel    string
 }
 
 func emitCast(b *llvmBuilder, cast *mir.Cast) string {
@@ -211,6 +362,21 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 
 	if fromType == toType {
 		return argRef
+	}
+	if toType == "rawptr" {
+		_, pointer := pointerTypeTextTarget(fromType)
+		if !pointer {
+			_, pointer = referenceTypeTextTarget(fromType)
+		}
+		if pointer {
+			fromLLVM := b.emitter.llvmType(fromType)
+			if fromLLVM == "i8*" {
+				return argRef
+			}
+			out := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", out, fromLLVM, argRef))
+			return out
+		}
 	}
 
 	if toType == "bool" {
@@ -322,7 +488,12 @@ func (b *llvmBuilder) line(text string) {
 }
 
 func (b *llvmBuilder) label(id int) {
-	fmt.Fprintf(b.out, "b%d:\n", id)
+	b.namedLabel(fmt.Sprintf("b%d", id))
+}
+
+func (b *llvmBuilder) namedLabel(name string) {
+	fmt.Fprintf(b.out, "%s:\n", name)
+	b.currentLabel = name
 }
 
 func (b *llvmBuilder) setLocation(loc *source.Location) {
@@ -445,7 +616,13 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		case *mir.AddrOf:
 			if ref, ok := e.Base.(*mir.RefName); ok && ref != nil {
 				if ptr := ensureLocalAddr(b, ref); ptr != "" {
-					return ptr
+					if e.Type != "rawptr" {
+						return ptr
+					}
+					cast := b.nextReg()
+					baseType := b.emitter.llvmType(mirRefType(e.Base))
+					b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", cast, baseType, ptr))
+					return cast
 				}
 			}
 			baseType := mirRefType(e.Base)
@@ -456,25 +633,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
 			return ptr
 		case *mir.SliceView:
-			sourceTypeText := mirRefType(e.Source)
-			elemTypeText, dynamicArray := strings.CutPrefix(sourceTypeText, "[]")
-			if !dynamicArray {
-				b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
-				return "0"
-			}
-			sourceType := b.emitter.llvmType(sourceTypeText)
-			viewType := b.emitter.llvmType(e.Type)
-			elemType := b.emitter.llvmType(strings.TrimSpace(elemTypeText))
-			source := emitRef(b, e.Source)
-			data := b.nextReg()
-			b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
-			length := b.nextReg()
-			b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
-			withData := b.nextReg()
-			b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, %s* %s, 0", withData, viewType, elemType, data))
-			withLength := b.nextReg()
-			b.line(fmt.Sprintf("%s = insertvalue %s %s, i64 %s, 1", withLength, viewType, withData, length))
-			return withLength
+			return emitSliceView(b, e)
 		case *mir.Load:
 			ptr := emitRef(b, e.Ptr)
 			llvmType := b.emitter.llvmType(e.Type)
@@ -558,23 +717,13 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			return withValue
 		case *mir.InterfaceMake:
 			llvmType := b.emitter.llvmType(e.Type)
-			dataPtr := "null"
-			if e.BoxValue {
-				dataPtr = emitInterfaceBoxedData(b, e.Value, e.DataType, e.StackBox)
-			} else {
-				value := emitRef(b, e.Value)
-				valueType := b.emitter.llvmType(mirRefType(e.Value))
-				cast := b.nextReg()
-				b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, valueType, value))
-				dataPtr = cast
-			}
-			itabPtr := "null"
-			if len(e.Slots) > 0 {
-				itabSym := itabSymbolName(e.Type, e.DataType)
-				itabCast := b.nextReg()
-				b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabCast, len(e.Slots), itabSym))
-				itabPtr = itabCast
-			}
+			value := emitRef(b, e.Value)
+			valueType := b.emitter.llvmType(mirRefType(e.Value))
+			dataPtr := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", dataPtr, valueType, value))
+			itabSym := itabSymbolName(e.Type, e.DataType)
+			itabPtr := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabPtr, len(e.Slots)+1, itabSym))
 			current := "zeroinitializer"
 			reg1 := b.nextReg()
 			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataPtr))
@@ -589,6 +738,9 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			out := b.nextReg()
 			args := append([]string{"i8* " + data}, llvmCallArgs(b, e.Args)...)
 			emitCall(b, out, b.emitter.llvmType(e.Type), fn, args)
+			if consumesOwnedInterfaceStorage(e) {
+				emitFreeCall(b, data, "rawptr")
+			}
 			return out
 		default:
 			return "0"

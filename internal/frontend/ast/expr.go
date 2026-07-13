@@ -146,15 +146,6 @@ type NoneLit struct {
 func (*NoneLit) exprNode()               {}
 func (e *NoneLit) loc() *source.Location { return e.Location }
 
-type MoveExpr struct {
-	NodeIDHolder
-	Expr     Expr
-	Location *source.Location
-}
-
-func (*MoveExpr) exprNode()               {}
-func (e *MoveExpr) loc() *source.Location { return e.Location }
-
 type AddressMode uint8
 
 const (
@@ -203,6 +194,24 @@ type CallExpr struct {
 
 func (*CallExpr) exprNode()               {}
 func (e *CallExpr) loc() *source.Location { return e.Location }
+
+type FreeExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Location *source.Location
+}
+
+func (*FreeExpr) exprNode()               {}
+func (e *FreeExpr) loc() *source.Location { return e.Location }
+
+type PrintExpr struct {
+	NodeIDHolder
+	Expr     Expr
+	Location *source.Location
+}
+
+func (*PrintExpr) exprNode()               {}
+func (e *PrintExpr) loc() *source.Location { return e.Location }
 
 type AsExpr struct {
 	NodeIDHolder

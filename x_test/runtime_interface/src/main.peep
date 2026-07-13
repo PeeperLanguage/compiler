@@ -1,59 +1,55 @@
-interface Summer {
-    sum(Self) -> i32,
+iface Summer {
+    fn (&Self) sum() -> i32
 }
 
 struct Point {
     x: i32,
-    y: i32,
+    y: i32
 }
 
-impl Point {
-    fn sum(self: Self) -> i32 {
-        return self.x + self.y;
-    }
+fn (self: &Point) sum() -> i32 {
+    return self.x + self.y;
 }
 
-fn total(v: Summer) -> i32 {
+fn total(v: &Summer) -> i32 {
     return v.sum();
 }
 
-impl i32 {
-    fn to_float(self: Self) -> f32 {
-        return (self+1) as f32;
-    }
+struct Number {
+    value: i32
 }
 
-impl i32 {
-    fn to_str(_: *Self) -> cstr {
-        return "converted\n";
-    }
+fn (self: &Number) to_float() -> f32 {
+    return (self.value + 1) as f32;
+}
+
+fn (_: &Number) to_str() -> cstr {
+    return "converted\n";
 }
 
 struct Counter {
-    value: i32,
+    value: i32
 }
 
-impl Counter {
-    fn bump(self: *Self) -> i32 {
-        self.value = self.value + 1;
-        return self.value;
-    }
+fn (self: &mut Counter) bump() -> i32 {
+    self.value = self.value + 1;
+    return self.value;
 }
 
 fn main() {
     let p: Point = .{ x = 10, y = 20 };
-    if total(p) == 30 {
+    if total(&p) == 30 {
         let ok: cstr = "interface ok\n";
         write(stdout, ok, 13);
-        let mut i: i32 = 42;
-        let f: f32 = i.to_float();
+        let number: Number = .{ value = 42 };
+        let f: f32 = number.to_float();
         if f == 43.0 {
             let s: cstr = "float ok\n";
             write(stdout, s, 9);
         }
 
-        let s: cstr = i.to_str();
-        write(stdout, s, 11);
+        let s: cstr = number.to_str();
+        write(stdout, s, 10);
 
         let mut c: Counter = .{ value = 0 };
         let v: i32 = c.bump();

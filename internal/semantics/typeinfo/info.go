@@ -37,37 +37,16 @@ type NamedType struct {
 	Name string
 }
 
-type CopyMode uint8
-
-const (
-	CopyInfer CopyMode = iota
-	CopyAllow
-	CopyDeny
-)
-
-var namedTypeCopyModes = map[string]CopyMode{
-	"allow_copy": CopyAllow,
-	"no_copy":    CopyDeny,
-}
-
-func NamedTypeCopyMode(name string) (CopyMode, bool) {
-	mode, ok := namedTypeCopyModes[name]
-	return mode, ok
-}
-
 type DefinedType struct {
 	Name       string
 	Underlying Type
-	CopyMode   CopyMode
 }
 
 type OwnedPtrType struct {
 	Target Type
 }
 
-type RawPtrType struct {
-	Target Type
-}
+type RawPtrType struct{}
 
 type RefType struct {
 	Mutable bool
@@ -85,9 +64,8 @@ type ArrayType struct {
 }
 
 type FuncType struct {
-	Params   []Type
-	Consumes []bool
-	Return   Type
+	Params []Type
+	Return Type
 }
 
 type Field struct {
@@ -192,14 +170,14 @@ func (t *OwnedPtrType) Text() string {
 	if t == nil {
 		return ""
 	}
-	return "^" + TypeText(t.Target)
+	return "*" + TypeText(t.Target)
 }
 
 func (t *RawPtrType) Text() string {
 	if t == nil {
 		return ""
 	}
-	return "*" + TypeText(t.Target)
+	return "rawptr"
 }
 
 func (t *RefType) Text() string {
@@ -243,9 +221,6 @@ func (t *FuncType) Text() string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		if funcParamConsumes(t, i) {
-			b.WriteString("move ")
-		}
 		b.WriteString(TypeText(param))
 	}
 	b.WriteString(")")
@@ -279,7 +254,7 @@ func (t *InterfaceType) Text() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("interface{")
+	b.WriteString("iface{")
 	for i, method := range t.Methods {
 		if i > 0 {
 			b.WriteString("; ")
@@ -318,11 +293,4 @@ func TypeText(typ Type) string {
 		return ""
 	}
 	return typ.Text()
-}
-
-func funcParamConsumes(fn *FuncType, i int) bool {
-	if fn == nil || i < 0 || i >= len(fn.Consumes) {
-		return false
-	}
-	return fn.Consumes[i]
 }

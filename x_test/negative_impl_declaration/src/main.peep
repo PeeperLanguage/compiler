@@ -1,0 +1,13 @@
+struct Counter {
+    value: i32
+}
+
+impl Counter {
+    fn read(self: &Self) -> i32 {
+        return self.value;
+    }
+}
+
+fn main() -> i32 {
+    return 0;
+}

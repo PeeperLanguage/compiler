@@ -68,10 +68,14 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:
-		if node.Value == nil {
-			return []hir.Stmt{&hir.Return{Location: node.Location}}
+		cleanup := make([]ir.Expr, 0, len(node.Cleanup))
+		for _, expr := range node.Cleanup {
+			cleanup = append(cleanup, ir.FoldExpr(expr, env))
 		}
-		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
+		if node.Value == nil {
+			return []hir.Stmt{&hir.Return{Cleanup: cleanup, Location: node.Location}}
+		}
+		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value, env), Cleanup: cleanup, Location: node.Location}}
 	case *hir.If:
 		thenBlock := foldBlock(node.Then, diag, env)
 		var elseStmt hir.Stmt

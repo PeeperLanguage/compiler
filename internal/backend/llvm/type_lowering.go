@@ -48,6 +48,12 @@ func llvmTypeName(typeText string) (string, bool) {
 	if strings.HasPrefix(typeText, "fn(") {
 		return llvmFunctionPtrType(typeText)
 	}
+	if typeText == "rawptr" {
+		return "i8*", true
+	}
+	if _, ok := ownedInterfaceTypeText(typeText); ok {
+		return "{ i8*, i8* }", true
+	}
 	if remainder, ok := pointerTypeTextTarget(typeText); ok {
 		target, ok := llvmTypeName(remainder)
 		if !ok {
@@ -83,7 +89,7 @@ func llvmTypeName(typeText string) (string, bool) {
 		}
 		return "[" + length + " x " + elem + "]", true
 	}
-	if strings.HasPrefix(typeText, "interface{") && strings.HasSuffix(typeText, "}") {
+	if strings.HasPrefix(typeText, "iface{") && strings.HasSuffix(typeText, "}") {
 		return "{ i8*, i8* }", true
 	}
 	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
@@ -151,10 +157,14 @@ type optionalNiche struct {
 
 func optionalNicheLayout(typeText string) (optionalNiche, bool) {
 	typeText = strings.TrimSpace(typeText)
-	if remainder, ok := strings.CutPrefix(typeText, "^"); ok {
+	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
 		// Owned pointers are non-null by language rule, so optional owned
 		// pointers can use null as the none sentinel instead of a tagged struct.
-		if strings.TrimSpace(remainder) == "" {
+		remainder = strings.TrimSpace(remainder)
+		if remainder == "" {
+			return optionalNiche{}, false
+		}
+		if _, ok := runtimeInterfaceTypeText(remainder); ok {
 			return optionalNiche{}, false
 		}
 		llvmType, ok := llvmTypeName(typeText)
@@ -306,47 +316,22 @@ func splitTopLevel(text string, sep rune) []string {
 	return parts
 }
 
-func usesInterfaceBoxing(mod *mir.Module) bool {
-	if mod == nil {
-		return false
-	}
-	for _, fn := range mod.Funcs {
-		if fn == nil || fn.Blocks == nil {
-			continue
-		}
-		for _, block := range fn.Blocks {
-			if block == nil {
-				continue
-			}
-			for _, instr := range block.Instrs {
-				assign, ok := instr.(*mir.Assign)
-				if !ok || assign == nil {
-					continue
-				}
-				makeVal, ok := assign.Value.(*mir.InterfaceMake)
-				if ok && makeVal != nil && makeVal.BoxValue && !makeVal.StackBox {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 func itabSymbolName(interfaceType, dataType string) string {
 	raw := fmt.Sprintf("__itab__%s__%s", interfaceType, dataType)
 	return "@" + ir.SanitizeSymbolName(raw)
 }
 
+func interfaceDropSymbolName(interfaceType, dataType string) string {
+	raw := fmt.Sprintf("__iface_drop__%s__%s", interfaceType, dataType)
+	return "@" + ir.SanitizeSymbolName(raw)
+}
+
 func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (string, bool) {
-	interfaceTypeText = strings.TrimSpace(interfaceTypeText)
-	if target, ok := referenceTypeTextTarget(interfaceTypeText); ok {
-		interfaceTypeText = target
-	}
-	if !strings.HasPrefix(interfaceTypeText, "interface{") || !strings.HasSuffix(interfaceTypeText, "}") {
+	interfaceTypeText, ok := runtimeInterfaceTypeText(interfaceTypeText)
+	if !ok {
 		return "", false
 	}
-	body := strings.TrimSuffix(strings.TrimPrefix(interfaceTypeText, "interface{"), "}")
+	body := strings.TrimSuffix(strings.TrimPrefix(interfaceTypeText, "iface{"), "}")
 	methods := splitTopLevel(body, ';')
 	if slot < 0 || slot >= len(methods) {
 		return "", false
@@ -368,7 +353,7 @@ func llvmRefTypeName(target string) (string, bool) {
 		}
 		return "{ " + elem + "*, i64 }", true
 	}
-	if strings.HasPrefix(target, "interface{") && strings.HasSuffix(target, "}") {
+	if strings.HasPrefix(target, "iface{") && strings.HasSuffix(target, "}") {
 		return llvmTypeName(target)
 	}
 	elem, ok := llvmTypeName(target)
@@ -444,11 +429,30 @@ func parseFunctionTypeText(typeText string) (string, string, []string, bool) {
 
 func pointerTypeTextTarget(typeText string) (string, bool) {
 	typeText = strings.TrimSpace(typeText)
-	for _, prefix := range []string{"^", "*"} {
-		if remainder, ok := strings.CutPrefix(typeText, prefix); ok {
-			remainder = strings.TrimSpace(remainder)
-			return remainder, remainder != ""
-		}
+	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
+		remainder = strings.TrimSpace(remainder)
+		return remainder, remainder != ""
+	}
+	return "", false
+}
+
+func ownedInterfaceTypeText(typeText string) (string, bool) {
+	target, ok := pointerTypeTextTarget(typeText)
+	if !ok {
+		return "", false
+	}
+	return runtimeInterfaceTypeText(target)
+}
+
+func runtimeInterfaceTypeText(typeText string) (string, bool) {
+	typeText = strings.TrimSpace(typeText)
+	if target, ok := referenceTypeTextTarget(typeText); ok {
+		typeText = target
+	} else if target, ok := pointerTypeTextTarget(typeText); ok {
+		typeText = target
+	}
+	if strings.HasPrefix(typeText, "iface{") && strings.HasSuffix(typeText, "}") {
+		return typeText, true
 	}
 	return "", false
 }

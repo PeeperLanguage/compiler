@@ -1,0 +1,9 @@
+struct Printer {}
+
+#[extern("printf")]
+fn (_: &Printer) output(value: cstr);
+
+fn main() -> i32 {
+    print(1);
+    return 0;
+}

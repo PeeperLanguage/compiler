@@ -1,0 +1,3 @@
+name = "negative_nonaddressable_slice"
+build = "program"
+entry = "src/main.peep"

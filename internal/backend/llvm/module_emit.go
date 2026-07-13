@@ -32,6 +32,16 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	b.WriteString("target triple = \"")
 	b.WriteString(targetTriple)
 	b.WriteString("\"\n\n")
+	printUsed, dropUsed := moduleRuntimeOperations(mod)
+	if printUsed {
+		b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
+		b.WriteString("@.print.unsigned = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n")
+		b.WriteString("@.print.float = private unnamed_addr constant [3 x i8] c\"%g\\00\", align 1\n")
+		b.WriteString("@.print.string = private unnamed_addr constant [3 x i8] c\"%s\\00\", align 1\n")
+		b.WriteString("@.print.pointer = private unnamed_addr constant [3 x i8] c\"%p\\00\", align 1\n")
+		b.WriteString("@.print.true = private unnamed_addr constant [5 x i8] c\"true\\00\", align 1\n")
+		b.WriteString("@.print.false = private unnamed_addr constant [6 x i8] c\"false\\00\", align 1\n\n")
+	}
 
 	for _, entry := range mod.StaticData {
 		isStr := entry.Type == "cstr" || (strings.HasPrefix(entry.Type, "[") && strings.HasSuffix(entry.Type, " x i8]"))
@@ -48,6 +58,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	}
 
 	emittedItabs := make(map[string]bool)
+	interfaceMakes := make([]*mir.InterfaceMake, 0)
 	hasItab := false
 	for _, fn := range mod.Funcs {
 		if fn == nil || fn.Blocks == nil {
@@ -71,14 +82,14 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 					continue
 				}
 				emittedItabs[itabSym] = true
+				interfaceMakes = append(interfaceMakes, makeVal)
 				hasItab = true
 
 				b.WriteString(itabSym)
-				fmt.Fprintf(&b, " = private constant [%d x i8*] [", len(makeVal.Slots))
+				fmt.Fprintf(&b, " = private constant [%d x i8*] [", len(makeVal.Slots)+1)
+				fmt.Fprintf(&b, "i8* bitcast (void (i8*)* %s to i8*)", interfaceDropSymbolName(makeVal.Type, makeVal.DataType))
 				for i, slot := range makeVal.Slots {
-					if i > 0 {
-						b.WriteString(", ")
-					}
+					b.WriteString(", ")
 					refName, ok := slot.(*mir.RefName)
 					slotName := ""
 					if ok && refName != nil {
@@ -105,15 +116,26 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	}
 
 	hasDecl := false
+	freeDeclared := false
+	freeConflict := false
 	for _, fn := range mod.Funcs {
-		if fn == nil || fn.Blocks != nil {
+		if fn == nil {
+			continue
+		}
+		name := ir.SanitizeSymbolName(fn.Name)
+		if name == "free" {
+			compatible := fn.Blocks == nil && fn.ReturnType == "void" && len(fn.Params) == 1 && fn.Params[0].Type == "rawptr"
+			freeDeclared = freeDeclared || compatible
+			freeConflict = freeConflict || !compatible
+		}
+		if fn.Blocks != nil {
 			continue
 		}
 		hasDecl = true
 		b.WriteString("declare ")
 		b.WriteString(emitter.llvmType(llvmFunctionReturnType(fn)))
 		b.WriteString(" @")
-		b.WriteString(ir.SanitizeSymbolName(fn.Name))
+		b.WriteString(name)
 		b.WriteString("(")
 		for i, param := range fn.Params {
 			if i > 0 {
@@ -126,8 +148,14 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	if hasDecl {
 		b.WriteString("\n")
 	}
-	if usesInterfaceBoxing(mod) {
-		b.WriteString("declare i8* @malloc(i64)\n\n")
+	if printUsed {
+		b.WriteString("declare i32 @printf(i8*, ...)\n\n")
+	}
+	if dropUsed && freeConflict {
+		emitter.markInvalid("runtime symbol `free` must have signature fn(rawptr) -> void")
+	}
+	if dropUsed && !freeDeclared {
+		b.WriteString("declare void @free(i8*)\n\n")
 	}
 
 	decls := collectCallDecls(mod)
@@ -162,7 +190,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	for _, thunk := range mod.InterfaceThunks {
 		emitInterfaceThunk(&b, emitter, thunk)
 	}
-	if len(mod.InterfaceThunks) > 0 {
+	for _, makeVal := range interfaceMakes {
+		emitInterfacePayloadDropThunk(&b, emitter, makeVal)
+	}
+	if len(mod.InterfaceThunks) > 0 || len(interfaceMakes) > 0 {
 		b.WriteString("\n")
 	}
 	for _, fn := range mod.Funcs {
@@ -201,7 +232,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 			if block == nil {
 				continue
 			}
-			fmt.Fprintf(&b, "b%d:\n", block.ID)
+			lb.label(block.ID)
 			if block.ID == fn.EntryID {
 				emitStackLocalSlots(lb, stackSlots)
 			}
@@ -223,6 +254,14 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				}
 				if store, ok := instr.(*mir.Store); ok && store != nil {
 					emitStore(lb, store)
+					continue
+				}
+				if printInstr, ok := instr.(*mir.Print); ok && printInstr != nil {
+					emitPrint(lb, printInstr)
+					continue
+				}
+				if dropInstr, ok := instr.(*mir.Drop); ok && dropInstr != nil {
+					emitDrop(lb, dropInstr)
 					continue
 				}
 				if call, ok := instr.(*mir.Call); ok && call != nil {
@@ -259,6 +298,45 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		b.WriteString("}\n")
 	}
 	return finalLLVMText(&b, emitter)
+}
+
+func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool) {
+	if mod == nil {
+		return false, false
+	}
+	for _, fn := range mod.Funcs {
+		if fn == nil {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			for _, instr := range block.Instrs {
+				if _, ok := instr.(*mir.Print); ok {
+					printUsed = true
+				}
+				if _, ok := instr.(*mir.Drop); ok {
+					dropUsed = true
+				}
+				if call, ok := instr.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(call) {
+					dropUsed = true
+				}
+				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
+					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil && typeTextNeedsDrop(makeVal.DataType) {
+						dropUsed = true
+					}
+					if call, ok := assign.Value.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(call) {
+						dropUsed = true
+					}
+				}
+				if printUsed && dropUsed {
+					return true, true
+				}
+			}
+		}
+	}
+	return printUsed, dropUsed
 }
 
 // finalLLVMText appends globals discovered late during instruction emission.

@@ -13,15 +13,12 @@ fn Sum(_: &[]i32) -> i32 {
 fn Fill(_: &mut []i32, _: i32) {
 }
 
-impl []i32 {
-    fn Read(self: &Self) -> i32 {
-        let _ = self;
-        return 0;
-    }
+fn ReadAt(xs: &[]i32, index: usize) -> i32 {
+    return xs[index];
+}
 
-    fn Write(self: &mut Self) {
-        let _ = self.Read();
-    }
+fn WriteAt(xs: &mut []i32, index: usize, value: i32) {
+    xs[index] = value;
 }
 
 fn Borrow(xs: []i32) {
@@ -29,18 +26,49 @@ fn Borrow(xs: []i32) {
 }
 
 fn ReadOwner(xs: []i32) -> i32 {
-    return xs.Read();
+    return Sum(&xs);
 }
 
 fn WriteOwner(mut xs: []i32) {
-    let _ = &mut xs;
-    xs.Write();
+    Fill(&mut xs, 0);
 }
 
 fn WriteNested(mut bucket: Bucket) {
-    bucket.items.Write();
+    Fill(&mut bucket.items, 0);
 }
 
 fn main() -> i32 {
+    let mut values = [_]i32{1, 2, 3, 4};
+    {
+        let middle = values[1..3];
+        middle[0] = 7;
+    }
+    if values[1] != 7 {
+        return 1;
+    }
+    {
+        let prefix = values[..2];
+        if prefix[1] != 7 {
+            return 2;
+        }
+    }
+    {
+        let suffix = values[2..];
+        if suffix[1] != 4 {
+            return 3;
+        }
+    }
+    {
+        let inclusive = values[1..=2];
+        if inclusive[1] != 3 {
+            return 4;
+        }
+    }
+    {
+        let full = values[..];
+        if full[3] != 4 {
+            return 5;
+        }
+    }
     return 0;
 }

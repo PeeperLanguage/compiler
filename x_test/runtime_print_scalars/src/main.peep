@@ -1,0 +1,21 @@
+struct Printer {}
+
+fn (_: Printer) printf() {}
+
+fn main() -> i32 {
+    let value: i32 = 7;
+    print(-42);
+    print("|");
+    print(42u32);
+    print("|");
+    print(2.5f64);
+    print("|");
+    print(true);
+    print("|");
+    print(255 as byte);
+    print("|");
+    print("hello");
+    print("|");
+    print(@value);
+    return 0;
+}

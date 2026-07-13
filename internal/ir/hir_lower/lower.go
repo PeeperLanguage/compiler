@@ -29,70 +29,49 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		Funcs:    make([]*hir.Function, 0),
 	}
 	ast.ForEachDecl(module.AST, func(decl ast.Decl) bool {
-		switch node := decl.(type) {
-		case *ast.FnDecl:
-			fn := node
-			sym, found := module.ModuleScope.Lookup(fn.Name.Name)
-			if !found || sym == nil {
-				return true
+		fn, ok := decl.(*ast.FnDecl)
+		if !ok || fn == nil || fn.Name == nil {
+			return true
+		}
+		var sym *symbols.Symbol
+		if fn.Receiver != nil {
+			sym = module.Semantics.MethodSymbol[fn.ID()]
+		} else {
+			sym, _ = module.ModuleScope.Lookup(fn.Name.Name)
+		}
+		if sym == nil {
+			return true
+		}
+		fnType, _ := symbols.GetSymbolType(sym)
+		resolvedFnType, _ := fnType.(*typeinfo.FuncType)
+		emittedName := sym.Name
+		if fn.Receiver != nil && resolvedFnType != nil && len(resolvedFnType.Params) > 0 {
+			if target, ok := typeinfo.ReceiverTarget(resolvedFnType.Params[0]); ok {
+				emittedName = methodFunctionName(typeinfo.TypeText(target), fn.Name.Name)
 			}
-			if fn.Body == nil {
-				fnType, _ := symbols.GetSymbolType(sym)
-				resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-				params, returnType := lowerExternSignature(module, fn.Params, fn.ReturnType, resolvedFnType)
-				out.Externs = append(out.Externs, hir.Extern{
-					Name:       symbolName(sym),
-					Params:     params,
-					ReturnType: returnType,
-				})
-			} else {
-				hirFn := lowerASTFunctionNamed(ctx, module, sym, fn, sym.Name)
-				if hirFn != nil {
-					out.Funcs = append(out.Funcs, hirFn)
-				}
+		}
+		if fn.Body == nil {
+			if fn.Receiver == nil {
+				emittedName = symbolName(sym)
 			}
-		case *ast.ImplDecl:
-			lowerImplDecl(ctx, module, out, node)
+			params, returnType := lowerExternSignature(module, fn.ParamsWithReceiver(), fn.ReturnType, resolvedFnType)
+			if externName, ok := externSymbolName(sym, emittedName); ok {
+				emittedName = externName
+			}
+			out.Externs = append(out.Externs, hir.Extern{
+				Name:       emittedName,
+				Params:     params,
+				ReturnType: returnType,
+			})
+		} else {
+			hirFn := lowerASTFunctionNamed(ctx, module, sym, fn, emittedName)
+			if hirFn != nil {
+				out.Funcs = append(out.Funcs, hirFn)
+			}
 		}
 		return true
 	})
 	return out
-}
-
-func lowerImplDecl(ctx *project.CompilerContext, module *project.Module, out *hir.Module, decl *ast.ImplDecl) {
-	if module == nil || out == nil || decl == nil || decl.Target == nil || module.Semantics == nil {
-		return
-	}
-	targetType := typeinfo.TypeFromSyntax(decl.Target, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
-	targetText := typeinfo.TypeText(targetType)
-	for _, method := range decl.Methods {
-		if method == nil || method.Name == nil {
-			continue
-		}
-		sym, ok := module.Semantics.MethodSymbol[method.ID()]
-		if !ok || sym == nil {
-			continue
-		}
-		if method.Body == nil {
-			fnType, _ := symbols.GetSymbolType(sym)
-			resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-			params, returnType := lowerExternSignature(module, method.Params, method.ReturnType, resolvedFnType)
-			name := methodFunctionName(targetText, method.Name.Name)
-			if externName, ok := externSymbolName(sym, name); ok {
-				name = externName
-			}
-			out.Externs = append(out.Externs, hir.Extern{
-				Name:       name,
-				Params:     params,
-				ReturnType: returnType,
-			})
-			continue
-		}
-		hirFn := lowerASTFunctionNamed(ctx, module, sym, method, methodFunctionName(targetText, method.Name.Name))
-		if hirFn != nil {
-			out.Funcs = append(out.Funcs, hirFn)
-		}
-	}
 }
 
 func lowerExternSignature(module *project.Module, params []ast.Param, fallbackReturnType ast.TypeExpr, resolvedFnType *typeinfo.FuncType) ([]ir.Param, string) {
@@ -133,12 +112,12 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 	retTypeStr := loweredReturnTypeText(module, retType)
 	hirFn := &hir.Function{
 		Name:       emittedName,
-		Params:     make([]ir.Param, 0, len(fn.Params)),
+		Params:     make([]ir.Param, 0, len(fn.ParamsWithReceiver())),
 		ReturnType: retTypeStr,
 		Body:       &hir.Block{Stmts: make([]hir.Stmt, 0), Location: ast.LocOf(fn.Body)},
 		Location:   ast.LocOf(fn),
 	}
-	for _, param := range fn.Params {
+	for _, param := range fn.ParamsWithReceiver() {
 		name := ""
 		paramType := typeinfo.TypeFromSyntax(param.Type, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
 		if param.Name != nil {
@@ -171,6 +150,11 @@ func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Bloc
 	}
 	for _, stmt := range block.Stmts {
 		appendStmt(module, scope, out, stmt, returnType, ctx)
+	}
+	if module.Semantics != nil {
+		for _, cleanup := range cleanupExprs(module, module.Semantics.CleanupAfterBlock[block.ID()], ast.LocOf(block)) {
+			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: cleanup, Location: ast.LocOf(block)})
+		}
 	}
 }
 
@@ -250,12 +234,16 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		out.Stmts = append(out.Stmts, loop)
 
 	case *ast.ReturnStmt:
+		cleanup := []ir.Expr(nil)
+		if module.Semantics != nil {
+			cleanup = cleanupExprs(module, module.Semantics.CleanupBeforeReturn[node.ID()], ast.LocOf(node))
+		}
 		if node.Value == nil {
-			out.Stmts = append(out.Stmts, &hir.Return{Location: ast.LocOf(node)})
+			out.Stmts = append(out.Stmts, &hir.Return{Cleanup: cleanup, Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, returnType)
-		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Cleanup: cleanup, Location: ast.LocOf(node)})
 
 	case *ast.ExprStmt:
 		if node.Expr == nil {
@@ -263,6 +251,13 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, nil)
+		dropValue := false
+		if module.Semantics != nil {
+			_, dropValue = module.Semantics.DropDiscardedExpr[node.Expr.ID()]
+		}
+		if dropValue {
+			valueExpr = &ir.Drop{Value: valueExpr, Location: ast.LocOf(node.Expr)}
+		}
 		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, Location: ast.LocOf(node)})
 	case *ast.AssignStmt:
 		if node.Target == nil || node.Value == nil {
@@ -272,8 +267,30 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		targetExpr := lowerPlaceExpr(ctx, module, scope, node.Target, true)
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
-		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, Location: ast.LocOf(node)})
+		dropTarget := false
+		if module.Semantics != nil {
+			_, dropTarget = module.Semantics.DropBeforeAssign[node.ID()]
+		}
+		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, DropTarget: dropTarget, Location: ast.LocOf(node)})
 	}
+}
+
+func cleanupExprs(module *project.Module, cleanup []*symbols.Symbol, loc *source.Location) []ir.Expr {
+	exprs := make([]ir.Expr, 0, len(cleanup))
+	for _, sym := range cleanup {
+		if sym == nil {
+			continue
+		}
+		typ, ok := symbols.GetSymbolType(sym)
+		if !ok || typ == nil {
+			continue
+		}
+		exprs = append(exprs, &ir.Drop{
+			Value:    &ir.Ident{Name: symbolName(sym), Type: loweredTypeText(module, typ), Location: loc},
+			Location: loc,
+		})
+	}
+	return exprs
 }
 
 func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, requireMutable bool) ir.Expr {
@@ -304,7 +321,7 @@ func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope 
 				return &ir.Field{
 					Base: &ir.AddrOf{
 						Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, requireMutable),
-						Type:     "*" + loweredTypeText(module, baseType),
+						Type:     "&mut " + loweredTypeText(module, baseType),
 						Location: ast.LocOf(selector.Expr),
 					},
 					Index:      fieldIndex,
@@ -453,9 +470,6 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		}
 		return &ir.Unary{Op: node.Op, Arg: arg, Type: t, Location: loc}
 
-	case *ast.MoveExpr:
-		return lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
-
 	case *ast.AddressExpr:
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
@@ -466,7 +480,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 			case ast.AddressMutable:
 				t = "&mut " + valueType
 			default:
-				t = "*" + valueType
+				t = "rawptr"
 			}
 		}
 		if node.Mode == ast.AddressShared || node.Mode == ast.AddressMutable {
@@ -548,6 +562,12 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		}
 		return &ir.Call{Callee: calleeExpr, Args: args, Type: t, Location: loc}
 
+	case *ast.PrintExpr:
+		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
+
+	case *ast.FreeExpr:
+		return &ir.Drop{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
+
 	case *ast.AsExpr:
 		t := resolvedTypeStr
 		if t == "" || t == "<invalid>" {
@@ -609,10 +629,16 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 			}
 			args = append(args, lowerASTExpr(ctx, module, scope, arg, argExpected))
 		}
+		consumes := false
+		if len(iface.Params) > 0 {
+			_, _, borrowedReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(iface.Params[0].Type))
+			consumes = !borrowedReceiver
+		}
 		return &ir.InterfaceCall{
 			Base:     lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Slot:     slot,
 			Args:     args,
+			Consumes: consumes,
 			Type:     loweredTypeText(module, iface.Return),
 			Location: ast.LocOf(call),
 		}
@@ -625,12 +651,6 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	switch receiverAddressKindFor(module, scope, fnType, baseType, selector.Expr) {
 	case receiverAddressReference:
 		baseExpr = lowerReferenceValue(ctx, module, scope, selector.Expr, fnType.Params[0], loweredTypeText(module, fnType.Params[0]))
-	case receiverAddressRawPointer:
-		baseExpr = &ir.AddrOf{
-			Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, true),
-			Type:     loweredTypeText(module, fnType.Params[0]),
-			Location: ast.LocOf(selector.Expr),
-		}
 	default:
 		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, nil)
 	}
@@ -660,7 +680,6 @@ type receiverAddressKind uint8
 const (
 	receiverAddressNone receiverAddressKind = iota
 	receiverAddressReference
-	receiverAddressRawPointer
 )
 
 func receiverAddressKindFor(module *project.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) receiverAddressKind {
@@ -669,17 +688,6 @@ func receiverAddressKindFor(module *project.Module, scope *table.Scope, fnType *
 	}
 	exprType := func(e ast.Expr) typeinfo.Type {
 		return exprResolvedType(module, e)
-	}
-	ptrTarget, ok := typeinfo.RawPointerTarget(typeinfo.Underlying(fnType.Params[0]))
-	if ok {
-		if !typeinfo.SameType(ptrTarget, baseType) {
-			return receiverAddressNone
-		}
-		addressable, _ := place.MutableAddressable(scope, receiver, exprType)
-		if addressable {
-			return receiverAddressRawPointer
-		}
-		return receiverAddressNone
 	}
 	refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0]))
 	if !ok || !typeinfo.SameType(refTarget, baseType) {
@@ -708,10 +716,15 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		if !throughPtr {
 			_, _, throughPtr = typeinfo.ReferenceTarget(typeinfo.Underlying(baseType))
 		}
+		dropBase := false
+		if module.Semantics != nil {
+			_, dropBase = module.Semantics.DropProjectionBase[selector.ID()]
+		}
 		return &ir.Field{
 			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Index:      fieldIndex,
 			ThroughPtr: throughPtr,
+			DropBase:   dropBase,
 			Type:       loweredTypeText(module, field.Type),
 			Location:   ast.LocOf(selector),
 		}
@@ -723,15 +736,51 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
 		return &ir.InvalidExpr{Message: "invalid index", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
+	if rangeIndex, ok := node.Index.(*ast.RangeExpr); ok && rangeIndex != nil {
+		var start, end ir.Expr
+		if rangeIndex.Start != nil {
+			start = lowerASTExpr(ctx, module, scope, rangeIndex.Start, typeinfo.DefaultIntegerType())
+		}
+		if rangeIndex.End != nil {
+			end = lowerASTExpr(ctx, module, scope, rangeIndex.End, typeinfo.DefaultIntegerType())
+		}
+		resultType := exprResolvedType(module, node)
+		source := lowerASTExpr(ctx, module, scope, node.Expr, nil)
+		if array, ok := loweredRuntimeType(module, exprResolvedType(module, node.Expr), nil).(*typeinfo.ArrayType); ok && array != nil && !array.Dynamic {
+			_, mutable, _ := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
+			prefix := "&"
+			if mutable {
+				prefix = "&mut "
+			}
+			source = &ir.AddrOf{
+				Expr:     lowerPlaceExpr(ctx, module, scope, node.Expr, mutable),
+				Type:     prefix + loweredTypeText(module, exprResolvedType(module, node.Expr)),
+				Location: ast.LocOf(node.Expr),
+			}
+		}
+		return &ir.SliceView{
+			Source:       source,
+			Start:        start,
+			End:          end,
+			EndExclusive: rangeIndex.EndExclusive,
+			Type:         loweredTypeText(module, resultType),
+			Location:     ast.LocOf(node),
+		}
+	}
 	index := lowerASTExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType())
 	if value, ok := consteval.EvaluateExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType()); ok {
 		if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
 			index = &ir.IntLit{Value: intConst.Value, Type: intConst.TypeText(), Location: ast.LocOf(node.Index)}
 		}
 	}
+	dropBase := false
+	if module.Semantics != nil {
+		_, dropBase = module.Semantics.DropProjectionBase[node.ID()]
+	}
 	return &ir.Index{
 		Base:     lowerASTExpr(ctx, module, scope, node.Expr, nil),
 		Index:    index,
+		DropBase: dropBase,
 		Type:     loweredTypeText(module, exprResolvedType(module, node)),
 		Location: ast.LocOf(node),
 	}
@@ -807,6 +856,8 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	}
 	dataType := resolvedRuntime
 	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(resolvedRuntime)); ok {
+		dataType = target
+	} else if target, ok := typeinfo.PointerTarget(typeinfo.Underlying(resolvedRuntime)); ok {
 		dataType = target
 	}
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
@@ -897,7 +948,7 @@ func lowerInterfaceSlotValueType(module *project.Module, t typeinfo.Type) (strin
 		return "", true
 	}
 	runtimeType := loweredRuntimeType(module, t, nil)
-	if _, ok := runtimeType.(*typeinfo.InterfaceType); ok {
+	if _, ok := typeinfo.InterfaceTypeOf(runtimeType); ok {
 		return loweredTypeText(module, runtimeType), true
 	}
 	if typeinfo.ContainsAbstractSelf(runtimeType) {
@@ -1002,21 +1053,10 @@ func externSymbolName(sym *symbols.Symbol, defaultName string) (string, bool) {
 		return "", false
 	}
 	fn, ok := sym.ASTNode.(*ast.FnDecl)
-	if !ok || fn.Body != nil {
-		return "", false
-	}
-	attr, ok := fn.GetAttribute(ast.AttributeExtern)
 	if !ok {
 		return "", false
 	}
-	if len(attr.Args) == 0 {
-		return defaultName, true
-	}
-	name, ok := attr.Args[0].(*ast.StringLit)
-	if !ok || name == nil {
-		return "", false
-	}
-	return name.Value, true
+	return ast.FunctionLinkName(fn, defaultName)
 }
 
 func shouldDiscardBindingValue(module *project.Module, symID symbols.SymbolID) bool {
@@ -1095,7 +1135,7 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.RawPtrType{Target: loweredRuntimeType(module, typ.Target, seen)}
+		return &typeinfo.RawPtrType{}
 	case *typeinfo.RefType:
 		if typ == nil {
 			return nil
@@ -1149,8 +1189,7 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 			params = append(params, loweredRuntimeType(module, param, seen))
 		}
 		// defensive slice copy to prevent sharing original backing array
-		consumes := append([]bool(nil), typ.Consumes...)
-		return &typeinfo.FuncType{Params: params, Consumes: consumes, Return: loweredRuntimeType(module, typ.Return, seen)}
+		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(module, typ.Return, seen)}
 	default:
 		return typeinfo.Underlying(t)
 	}

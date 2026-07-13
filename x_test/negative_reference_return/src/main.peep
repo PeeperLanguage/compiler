@@ -2,11 +2,9 @@ struct Box {
     value: i32
 }
 
-impl Box {
-    fn Reference(self: &Self) -> &Self {
+    fn (self: &Box) Reference() -> &Box {
         return self;
     }
-}
 
 fn Leak() -> &Box {
     let box: Box = .{ value = 1 };
@@ -16,7 +14,5 @@ fn Leak() -> &Box {
 #[extern]
 fn ExternalLeak() -> &Box;
 
-impl Box {
     #[extern]
-    fn ExternalReference(self: &Self) -> &Self;
-}
+    fn (self: &Box) ExternalReference() -> &Box;

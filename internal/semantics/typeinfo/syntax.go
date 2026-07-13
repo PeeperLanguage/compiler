@@ -77,7 +77,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
-		return &RawPtrType{Target: TypeFromSyntax(typ.Target, opts)}
+		return &RawPtrType{}
 	case *ast.RefType:
 		if typ == nil {
 			return nil
@@ -122,11 +122,9 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		for _, param := range typ.Params {
 			params = append(params, TypeFromSyntax(param, opts))
 		}
-		consumes := append([]bool(nil), typ.Consumes...)
 		return &FuncType{
-			Params:   params,
-			Consumes: consumes,
-			Return:   TypeFromSyntax(typ.Return, opts),
+			Params: params,
+			Return: TypeFromSyntax(typ.Return, opts),
 		}
 	case *ast.StructType:
 		if typ == nil {
@@ -148,11 +146,16 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
+		receiverOpts := opts
+		receiverOpts.AllowAbstractSelf = true
 		methodOpts := opts
-		methodOpts.AllowAbstractSelf = true
+		methodOpts.AllowAbstractSelf = false
 		methods := make([]Method, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
-			params := make([]Field, 0, len(method.Params))
+			params := make([]Field, 0, len(method.Params)+1)
+			if method.Receiver != nil {
+				params = append(params, Field{Type: TypeFromSyntax(method.Receiver.Type, receiverOpts)})
+			}
 			for _, param := range method.Params {
 				name := ""
 				if param.Name != nil {
@@ -194,15 +197,12 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 	if decl == nil {
 		return nil
 	}
-	params := make([]Type, 0, len(decl.Params))
-	consumes := make([]bool, 0, len(decl.Params))
-	for _, param := range decl.Params {
+	params := make([]Type, 0, len(decl.ParamsWithReceiver()))
+	for _, param := range decl.ParamsWithReceiver() {
 		params = append(params, TypeFromSyntax(param.Type, opts))
-		consumes = append(consumes, param.Consumes)
 	}
 	return &FuncType{
-		Params:   params,
-		Consumes: consumes,
-		Return:   TypeFromSyntax(decl.ReturnType, opts),
+		Params: params,
+		Return: TypeFromSyntax(decl.ReturnType, opts),
 	}
 }

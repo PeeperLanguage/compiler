@@ -7,6 +7,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 )
 
 func Analyze(ctx *project.CompilerContext, module *project.Module) {
@@ -84,6 +85,9 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 
 func shouldDiscardBindingValue(sym *symbols.Symbol) bool {
 	if sym == nil || sym.Used {
+		return false
+	}
+	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
 		return false
 	}
 	switch node := sym.ASTNode.(type) {

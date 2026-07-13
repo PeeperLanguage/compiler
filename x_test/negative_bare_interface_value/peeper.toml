@@ -1,0 +1,3 @@
+name = "negative_bare_interface_value"
+build = "program"
+entry = "src/main.peep"

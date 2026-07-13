@@ -1,0 +1,11 @@
+iface Consumer {
+    fn (Self) consume()
+}
+
+fn consume_borrow(value: &Consumer) {
+    value.consume();
+}
+
+fn main() -> i32 {
+    return 0;
+}

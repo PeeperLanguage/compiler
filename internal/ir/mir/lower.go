@@ -78,7 +78,6 @@ func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.Sym
 			l.setBlockTerm(l.current, &Ret{})
 			l.current = nil
 		}
-		markLocalInterfaceBoxing(fn)
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
@@ -197,6 +196,9 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 			return true
 		}
 		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
+		for _, cleanup := range node.Cleanup {
+			l.lowerExpr(cleanup, &l.current.Instrs)
+		}
 		l.setBlockTerm(l.current, &Ret{Value: retRef})
 		l.current = nil
 		return true
@@ -216,6 +218,9 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		value := l.lowerExpr(node.Value, &l.current.Instrs)
 		switch target := node.Target.(type) {
 		case *ir.Ident:
+			if node.DropTarget {
+				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: target.Name, Type: target.TypeText(), Location: ir.ExprLocation(target)}})
+			}
 			l.appendInstr(&l.current.Instrs, &Assign{Name: target.Name, Value: asValueExpr(value)})
 			return true
 		case *ir.Field:
@@ -223,13 +228,19 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 				return false
 			}
 			base := l.lowerExpr(target.Base, &l.current.Instrs)
-			ptr := l.projectField(&l.current.Instrs, base, target.Index, "*"+target.TypeText(), ir.ExprLocation(target))
+			ptr := l.projectField(&l.current.Instrs, base, target.Index, "&mut "+target.TypeText(), ir.ExprLocation(target))
+			if node.DropTarget {
+				l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, ptr, target.TypeText(), ir.ExprLocation(target))})
+			}
 			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
 			return true
 		case *ir.Index:
 			base := l.lowerExpr(target.Base, &l.current.Instrs)
 			index := l.lowerExpr(target.Index, &l.current.Instrs)
-			ptr := l.projectIndex(&l.current.Instrs, base, index, "*"+target.TypeText(), ir.ExprLocation(target))
+			ptr := l.projectIndex(&l.current.Instrs, base, index, "&mut "+target.TypeText(), ir.ExprLocation(target))
+			if node.DropTarget {
+				l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, ptr, target.TypeText(), ir.ExprLocation(target))})
+			}
 			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
 			return true
 		default:
@@ -337,6 +348,8 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 		node.Location = l.location
 	case *InterfaceCall:
 		node.Location = l.location
+	case *Drop:
+		node.Location = l.location
 	}
 	*out = append(*out, instr)
 }
@@ -351,6 +364,12 @@ func (l *lowerer) projectIndex(out *[]Instr, base ValueRef, index ValueRef, poin
 	name := l.nextTemp()
 	l.appendInstr(out, &Assign{Name: name, Value: &ProjectIndex{Base: base, Index: index, Type: pointerType, Location: loc}})
 	return &RefName{Name: name, Type: pointerType, Location: loc}
+}
+
+func (l *lowerer) load(out *[]Instr, ptr ValueRef, typ string, loc *source.Location) ValueRef {
+	name := l.nextTemp()
+	l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: typ, Location: loc}})
+	return &RefName{Name: name, Type: typ, Location: loc}
 }
 
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
@@ -422,10 +441,28 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.Print:
+		value := l.lowerExpr(e.Value, out)
+		l.appendInstr(out, &Print{Value: value, Location: ir.ExprLocation(e)})
+		return nil
+	case *ir.Drop:
+		value := l.lowerExpr(e.Value, out)
+		l.appendInstr(out, &Drop{Value: value, Location: ir.ExprLocation(e)})
+		return nil
 	case *ir.AddrOf:
 		if field, ok := e.Expr.(*ir.Field); ok && field != nil && field.ThroughPtr {
 			base := l.lowerExpr(field.Base, out)
-			return l.projectField(out, base, field.Index, e.TypeText(), ir.ExprLocation(e))
+			pointerType := e.TypeText()
+			if pointerType == "rawptr" {
+				pointerType = "&mut " + field.TypeText()
+			}
+			projected := l.projectField(out, base, field.Index, pointerType, ir.ExprLocation(e))
+			if e.TypeText() != "rawptr" {
+				return projected
+			}
+			name := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: projected, Type: "rawptr", Location: ir.ExprLocation(e)}})
+			return &RefName{Name: name, Type: "rawptr", Location: ir.ExprLocation(e)}
 		}
 		base := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
@@ -433,26 +470,49 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.SliceView:
 		source := l.lowerExpr(e.Source, out)
+		var start, end ValueRef
+		if e.Start != nil {
+			start = l.lowerExpr(e.Start, out)
+		}
+		if e.End != nil {
+			end = l.lowerExpr(e.End, out)
+		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &SliceView{Source: source, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		l.appendInstr(out, &Assign{Name: name, Value: &SliceView{
+			Source:       source,
+			Start:        start,
+			End:          end,
+			EndExclusive: e.EndExclusive,
+			Type:         e.TypeText(),
+			Location:     ir.ExprLocation(e),
+		}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		if e.ThroughPtr {
-			ptr := l.projectField(out, base, e.Index, "*"+e.TypeText(), ir.ExprLocation(e))
+			ptr := l.projectField(out, base, e.Index, "&mut "+e.TypeText(), ir.ExprLocation(e))
 			name := l.nextTemp()
 			l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+			if e.DropBase {
+				l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
+			}
 			return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		if e.DropBase {
+			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
+		}
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Index:
 		base := l.lowerExpr(e.Base, out)
 		index := l.lowerExpr(e.Index, out)
-		ptr := l.projectIndex(out, base, index, "*"+e.TypeText(), ir.ExprLocation(e))
+		ptr := l.projectIndex(out, base, index, "&mut "+e.TypeText(), ir.ExprLocation(e))
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		if e.DropBase {
+			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
+		}
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
@@ -472,7 +532,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
-		dataType, boxValue := interfaceStorageFor(e.Value.TypeText())
+		dataType := interfaceDataType(e.Value.TypeText())
 
 		slots := make([]ValueRef, 0, len(e.Slots))
 		for index, slot := range e.Slots {
@@ -486,7 +546,6 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: &InterfaceMake{
 			Value:    value,
 			DataType: dataType,
-			BoxValue: boxValue,
 			Slots:    slots,
 			Type:     e.TypeText(),
 			Location: ir.ExprLocation(e),
@@ -498,7 +557,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 		if call.Type == "" {
 			call.Type = "void"
 			l.appendInstr(out, call)
@@ -540,7 +599,7 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Type: e.TypeText()}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeText()}
 		if call.Type == "" {
 			call.Type = "void"
 		}
@@ -551,177 +610,17 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 	}
 }
 
-func interfaceStorageFor(typeText string) (string, bool) {
+func interfaceDataType(typeText string) string {
 	if remainder, ok := strings.CutPrefix(typeText, "&mut "); ok {
-		return remainder, false
+		return remainder
 	}
 	if remainder, ok := strings.CutPrefix(typeText, "&"); ok {
-		return remainder, false
+		return remainder
 	}
 	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
-		return remainder, false
+		return remainder
 	}
-	return typeText, true
-}
-
-func markLocalInterfaceBoxing(fn *Function) {
-	if fn == nil || fn.Blocks == nil {
-		return
-	}
-	producers := make(map[string]ValueExpr)
-	for _, block := range fn.Blocks {
-		if block == nil {
-			continue
-		}
-		for _, instr := range block.Instrs {
-			assign, ok := instr.(*Assign)
-			if !ok || assign == nil || assign.Name == "" || assign.Value == nil {
-				continue
-			}
-			producers[assign.Name] = assign.Value
-		}
-	}
-
-	rootCache := make(map[string]map[string]struct{})
-	var rootsOfName func(string, map[string]struct{}) map[string]struct{}
-	rootsOfName = func(name string, seen map[string]struct{}) map[string]struct{} {
-		if cached, ok := rootCache[name]; ok {
-			return cached
-		}
-		if _, ok := seen[name]; ok {
-			return nil
-		}
-		seen[name] = struct{}{}
-		value := producers[name]
-		switch node := value.(type) {
-		case *InterfaceMake:
-			if node != nil && node.BoxValue {
-				out := map[string]struct{}{name: {}}
-				rootCache[name] = out
-				return out
-			}
-		case *Move:
-			out := rootsOfRef(node.Src, rootsOfName, seen)
-			rootCache[name] = out
-			return out
-		}
-		rootCache[name] = nil
-		return nil
-	}
-
-	escapes := make(map[string]bool)
-	markEscape := func(ref ValueRef) {
-		for root := range rootsOfRef(ref, rootsOfName, nil) {
-			escapes[root] = true
-		}
-	}
-
-	for _, block := range fn.Blocks {
-		if block == nil {
-			continue
-		}
-		for _, instr := range block.Instrs {
-			if assign, ok := instr.(*Assign); ok && assign != nil {
-				if assign.Value == nil {
-					continue
-				}
-				switch value := assign.Value.(type) {
-				case *Move:
-					// pure alias, safe
-				case *InterfaceCall:
-					// The dispatch on the receiver is safe, but arguments passed can escape
-					for _, arg := range value.Args {
-						markEscape(arg)
-					}
-				case *Call:
-					for _, arg := range value.Args {
-						markEscape(arg)
-					}
-				default:
-					for _, ref := range valueRefsOf(value) {
-						markEscape(ref)
-					}
-				}
-			} else if store, ok := instr.(*Store); ok && store != nil {
-				// Interface values stored in struct fields escape
-				markEscape(store.Value)
-			}
-		}
-		if term, ok := block.Term.(*Ret); ok && term != nil {
-			markEscape(term.Value)
-		}
-	}
-
-	for name, value := range producers {
-		makeVal, ok := value.(*InterfaceMake)
-		if !ok || makeVal == nil || !makeVal.BoxValue {
-			continue
-		}
-		if !escapes[name] {
-			makeVal.StackBox = true
-		}
-	}
-}
-
-func rootsOfRef(ref ValueRef, rootsOfName func(string, map[string]struct{}) map[string]struct{}, seen map[string]struct{}) map[string]struct{} {
-	nameRef, ok := ref.(*RefName)
-	if !ok || nameRef == nil || rootsOfName == nil {
-		return nil
-	}
-	if seen == nil {
-		seen = make(map[string]struct{})
-	}
-	return rootsOfName(nameRef.Name, seen)
-}
-
-func valueRefsOf(expr ValueExpr) []ValueRef {
-	switch node := expr.(type) {
-	case *Move:
-		return []ValueRef{node.Src}
-	case *Unary:
-		return []ValueRef{node.Arg}
-	case *Binary:
-		return []ValueRef{node.Left, node.Right}
-	case *Cast:
-		return []ValueRef{node.Arg}
-	case *AddrOf:
-		return []ValueRef{node.Base}
-	case *SliceView:
-		return []ValueRef{node.Source}
-	case *Load:
-		return []ValueRef{node.Ptr}
-	case *ProjectField:
-		return []ValueRef{node.Base}
-	case *ProjectIndex:
-		return []ValueRef{node.Base, node.Index}
-	case *Field:
-		return []ValueRef{node.Base}
-	case *StructLit:
-		return append([]ValueRef(nil), node.Fields...)
-	case *ArrayLit:
-		return append([]ValueRef(nil), node.Values...)
-	case *ZeroValue:
-		return nil
-	case *OptionalSome:
-		return []ValueRef{node.Value}
-	case *InterfaceMake:
-		refs := make([]ValueRef, 0, len(node.Slots)+1)
-		refs = append(refs, node.Value)
-		refs = append(refs, node.Slots...)
-		return refs
-	case *InterfaceCall:
-		refs := make([]ValueRef, 0, len(node.Args)+1)
-		refs = append(refs, node.Base)
-		refs = append(refs, node.Args...)
-		return refs
-	case *Call:
-		refs := make([]ValueRef, 0, len(node.Args)+1)
-		refs = append(refs, node.Callee)
-		refs = append(refs, node.Args...)
-		return refs
-	default:
-		return nil
-	}
+	return typeText
 }
 
 func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {

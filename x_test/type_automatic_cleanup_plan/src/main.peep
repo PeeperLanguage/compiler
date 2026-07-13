@@ -1,0 +1,49 @@
+#[extern("malloc")]
+fn acquire(size: usize) -> *i32;
+
+#[extern("free")]
+fn ReleaseRaw(ptr: rawptr);
+
+struct Box {
+    value: i32,
+    ptr: *i32
+}
+
+fn MakeBox() -> Box {
+    return .Box{ value = 7, ptr = acquire(4) };
+}
+
+fn ReadTemporary() -> i32 {
+    return MakeBox().value;
+}
+
+fn ReadFieldAddress() {
+    let box = .Box{ value = 7, ptr = acquire(4) };
+    let raw: rawptr = @box.value;
+    print(raw);
+}
+
+fn ReplaceBoxField() {
+    let mut box = .Box{ value = 7, ptr = acquire(4) };
+    box.ptr = acquire(4);
+}
+
+fn ReleaseAll(_: []*i32) {}
+
+fn main() -> i32 {
+    let mut first = acquire(4);
+    {
+        let nested = acquire(4);
+    }
+    let next = acquire(4);
+    first = next;
+    let early = acquire(4);
+    free(early);
+    acquire(4);
+    .Box{ value = 0, ptr = acquire(4) };
+    [1]*i32{acquire(4)};
+    let _ = ReadTemporary();
+    ReadFieldAddress();
+    ReplaceBoxField();
+    return 0;
+}

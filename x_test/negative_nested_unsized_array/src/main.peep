@@ -1,0 +1,11 @@
+iface Reader {
+    fn (&Self) read() -> i32
+
+}
+fn inspect(values: [][2]Reader) -> i32 {
+    return 0;
+}
+
+fn main() -> i32 {
+    return 0;
+}

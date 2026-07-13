@@ -2,19 +2,17 @@ struct Counter {
     value: i32
 }
 
-impl Counter {
-    fn read(self: &Self) -> i32 {
-        return self.value;
-    }
+fn (self: &Counter) read() -> i32 {
+    return self.value;
+}
 
-    fn bump(self: &mut Self) {
-        self.value = self.value + 1;
-    }
+fn (self: &mut Counter) bump() {
+    self.value = self.value + 1;
+}
 
-    fn touch(self: &mut Self) -> i32 {
-        self.bump();
-        return self.read();
-    }
+fn (self: &mut Counter) touch() -> i32 {
+    self.bump();
+    return self.read();
 }
 
 struct Outer {
@@ -26,7 +24,7 @@ fn Forward(counter: &mut Counter) -> i32 {
 }
 
 fn Transfer(counter: &mut Counter) -> i32 {
-    let alias = move counter;
+    let alias = counter;
     return alias.read();
 }
 

@@ -51,8 +51,6 @@ func (c *collector) collectNode(node ast.Node) {
 	switch n := node.(type) {
 	case *ast.FnDecl:
 		c.collectFnDecl(n)
-	case *ast.ImplDecl:
-		c.collectImplDecl(n)
 	case *ast.LetDecl:
 		c.collectModuleBinding(n.Name, symbols.SymbolVar, n.Type, n)
 	case *ast.ConstDecl:
@@ -68,6 +66,36 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	}
 	if fn.Name == nil || fn.Name.Name == "" {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", ast.LocOf(fn), "")
+		return
+	}
+	if fn.Receiver != nil {
+		receiverType := typeinfo.TypeFromSyntax(fn.Receiver.Type, typeinfo.SyntaxOptions{})
+		targetType, ok := typeinfo.ReceiverTarget(receiverType)
+		if !ok {
+			return
+		}
+		targetKey := typeinfo.TypeText(targetType)
+		var previous *symbols.Symbol
+		for _, item := range c.module.Semantics.MethodSets[targetKey] {
+			if item != nil && item.Name == fn.Name.Name {
+				previous = item
+				break
+			}
+		}
+		if previous != nil {
+			d := diagnostics.NewError("method `"+fn.Name.Name+"` already declared for `"+targetKey+"`").
+				WithCode(diagnostics.ErrRedeclaredSymbol).
+				WithPrimaryLabel(fn.Name.Location, "redeclared here")
+			if previous.Location != nil {
+				d.WithSecondaryLabel(previous.Location, "first declared here")
+			}
+			c.ctx.Diagnostics.Add(d)
+			return
+		}
+		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
+		sym.Scope = table.New(c.module.ModuleScope)
+		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
+		c.module.Semantics.MethodSymbol[fn.ID()] = sym
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
@@ -107,43 +135,6 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 	sym.Type = &typeinfo.UnknownType{} // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
-	}
-}
-
-func (c *collector) collectImplDecl(decl *ast.ImplDecl) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || decl == nil || decl.Target == nil {
-		return
-	}
-	targetKey := typeinfo.TypeText(typeinfo.TypeFromSyntax(decl.Target, typeinfo.SyntaxOptions{AllowAbstractSelf: true}))
-	for _, method := range decl.Methods {
-		if method == nil || method.Name == nil || method.Name.Name == "" {
-			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "method name required", ast.LocOf(method), "")
-			continue
-		}
-		existing := c.module.Semantics.MethodSets[targetKey]
-		duplicate := false
-		var previous *symbols.Symbol
-		for _, item := range existing {
-			if item != nil && item.Name == method.Name.Name {
-				duplicate = true
-				previous = item
-				break
-			}
-		}
-		if duplicate {
-			d := diagnostics.NewError("method `"+method.Name.Name+"` already declared for `"+targetKey+"`").
-				WithCode(diagnostics.ErrRedeclaredSymbol).
-				WithPrimaryLabel(method.Name.Location, "redeclared here")
-			if previous != nil && previous.Location != nil {
-				d.WithSecondaryLabel(previous.Location, "first declared here")
-			}
-			c.ctx.Diagnostics.Add(d)
-			continue
-		}
-		sym := symbols.New(method.Name.Name, symbols.SymbolMethod, method, ast.LocOf(method.Name))
-		sym.Scope = table.New(c.module.ModuleScope)
-		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
-		c.module.Semantics.MethodSymbol[method.ID()] = sym
 	}
 }
 

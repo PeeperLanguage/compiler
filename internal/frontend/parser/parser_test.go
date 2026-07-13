@@ -182,8 +182,8 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	}
 }
 
-func TestParseMoveParam(t *testing.T) {
-	src := `fn destroy(move data: Buffer) {}`
+func TestParseValueParam(t *testing.T) {
+	src := `fn destroy(data: Buffer) {}`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -195,16 +195,13 @@ func TestParseMoveParam(t *testing.T) {
 	if len(fn.Params) != 1 {
 		t.Fatalf("params: got %d want 1", len(fn.Params))
 	}
-	if !fn.Params[0].Consumes {
-		t.Fatalf("expected move param")
-	}
-	if got := fn.GetDeclSurface(); !strings.Contains(got, "move data:Buffer") {
-		t.Fatalf("surface missing move marker: %q", got)
+	if got := fn.GetDeclSurface(); !strings.Contains(got, "data:Buffer") {
+		t.Fatalf("surface missing marker: %q", got)
 	}
 }
 
 func TestParseMutableParam(t *testing.T) {
-	src := `fn update(mut data: Buffer, move mut owned: Buffer) {}`
+	src := `fn update(mut data: Buffer, mut owned: Buffer) {}`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -213,13 +210,13 @@ func TestParseMutableParam(t *testing.T) {
 	if !ok || len(fn.Params) != 2 {
 		t.Fatalf("expected function with two params, got %#v", mod.Stmts[0])
 	}
-	if !fn.Params[0].IsMutable || fn.Params[0].Consumes {
-		t.Fatalf("first param should be mutable and non-consuming: %#v", fn.Params[0])
+	if !fn.Params[0].IsMutable {
+		t.Fatalf("first param should be mutable: %#v", fn.Params[0])
 	}
-	if !fn.Params[1].IsMutable || !fn.Params[1].Consumes {
-		t.Fatalf("second param should be mutable and consuming: %#v", fn.Params[1])
+	if !fn.Params[1].IsMutable {
+		t.Fatalf("second param should be mutable: %#v", fn.Params[1])
 	}
-	if got := fn.GetDeclSurface(); !strings.Contains(got, "mut data:Buffer") || !strings.Contains(got, "move mut owned:Buffer") {
+	if got := fn.GetDeclSurface(); !strings.Contains(got, "mut data:Buffer") || !strings.Contains(got, "mut owned:Buffer") {
 		t.Fatalf("surface missing parameter modifiers: %q", got)
 	}
 }
@@ -312,9 +309,9 @@ func TestParseUnaryPlus(t *testing.T) {
 	}
 }
 
-func TestParseMoveExpr(t *testing.T) {
+func TestParseImplicitMoveBindingAsIdent(t *testing.T) {
 	src := `fn main() {
-	let next = move current;
+	let next = current;
 }`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
@@ -328,12 +325,9 @@ func TestParseMoveExpr(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected let stmt, got %#v", fn.Body.Stmts[0])
 	}
-	moveExpr, ok := letDecl.Value.(*ast.MoveExpr)
-	if !ok {
-		t.Fatalf("expected move expr, got %#v", letDecl.Value)
-	}
-	if ident, ok := moveExpr.Expr.(*ast.Ident); !ok || ident.Name != "current" {
-		t.Fatalf("unexpected move operand: %#v", moveExpr.Expr)
+	ident, ok := letDecl.Value.(*ast.Ident)
+	if !ok || ident.Name != "current" {
+		t.Fatalf("expected expr, got %#v", letDecl.Value)
 	}
 }
 
@@ -604,8 +598,8 @@ func TestParseAnonymousTypesInBindings(t *testing.T) {
 	src := `const a: struct {
 	x: i32,
 } = value;
-const b: interface {
-	call(x: i32) -> i32,
+const b: iface {
+	fn (i32) call() -> i32,
 } = value;
 const c: enum {
 	One,
@@ -634,7 +628,7 @@ const c: enum {
 
 func TestParseOptionalPointerArrayAndReferenceArrayTypes(t *testing.T) {
 	src := `const a: ?i32 = none;
-const b: *Foo = value;
+const b: rawptr = value;
 const c: [4]i32 = value;
 const d: []string = value;
 const e: &[]string = value;
@@ -685,11 +679,11 @@ const f: &mut []string = value;`
 func TestParseTypeDeclAttributes(t *testing.T) {
 	src := `#[no_copy]
 struct Buffer<T> {
-	ptr: ^u8,
+	ptr: *u8,
 }
 
 #[allow_copy]
-type Cursor = ^u8;`
+type Cursor = *u8;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -851,8 +845,8 @@ func TestParseTypeDeclarations(t *testing.T) {
 	x: f32,
 	y: f32,
 }
-interface Adder {
-	add(i32, i32) -> i32,
+iface Adder {
+	fn (i32) add(i32) -> i32,
 }
 enum Color {
 	Red,
@@ -888,11 +882,11 @@ enum Color {
 	if len(a1Type.Methods) != 1 {
 		t.Fatalf("interface methods: got %d want 1", len(a1Type.Methods))
 	}
-	if got := len(a1Type.Methods[0].Params); got != 2 {
-		t.Fatalf("interface params: got %d want 2", got)
+	if got := len(a1Type.Methods[0].Params); got != 1 {
+		t.Fatalf("iface params: got %d want 1", got)
 	}
-	if a1Type.Methods[0].Params[0].Name != nil {
-		t.Fatalf("first interface param should be unnamed")
+	if a1Type.Methods[0].Receiver == nil || a1Type.Methods[0].Receiver.Name != nil {
+		t.Fatalf("iface receiver should be unnamed")
 	}
 	a2, ok := mod.Stmts[2].(*ast.EnumDecl)
 	if !ok {
@@ -907,36 +901,27 @@ enum Color {
 	}
 }
 
-func TestParseImplDecl(t *testing.T) {
-	src := `impl i32 {
-	fn abs(self: Self) -> Self {
+func TestParseReceiverFunction(t *testing.T) {
+	src := `struct Number { value: i32 }
+fn (self: Number) abs() -> Number {
 		return self;
-	}
 }`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	if len(mod.Stmts) != 1 {
-		t.Fatalf("decls: got %d want 1", len(mod.Stmts))
+	if len(mod.Stmts) != 2 {
+		t.Fatalf("decls: got %d want 2", len(mod.Stmts))
 	}
-	implDecl, ok := mod.Stmts[0].(*ast.ImplDecl)
+	method, ok := mod.Stmts[1].(*ast.FnDecl)
 	if !ok {
-		t.Fatalf("decl[0] expected impl decl")
+		t.Fatalf("decl[1] expected receiver function")
 	}
-	target, ok := implDecl.Target.(*ast.NamedType)
-	if !ok || target.Name != "i32" {
-		t.Fatalf("impl target mismatch: %#v", implDecl.Target)
-	}
-	if len(implDecl.Methods) != 1 {
-		t.Fatalf("methods: got %d want 1", len(implDecl.Methods))
-	}
-	method := implDecl.Methods[0]
 	if method.Name == nil || method.Name.Name != "abs" {
 		t.Fatalf("method name mismatch: %#v", method.Name)
 	}
-	if len(method.Params) != 1 || method.Params[0].Name == nil || method.Params[0].Name.Name != "self" {
-		t.Fatalf("self parameter not parsed")
+	if method.Receiver == nil || method.Receiver.Name == nil || method.Receiver.Name.Name != "self" {
+		t.Fatalf("receiver not parsed")
 	}
 }
 
@@ -973,6 +958,38 @@ func TestParseSelectorAndMethodCall(t *testing.T) {
 	field, ok := ret.Value.(*ast.SelectorExpr)
 	if !ok || field.Name == nil || field.Name.Name != "value" {
 		t.Fatalf("expected selector return expr, got %#v", ret.Value)
+	}
+}
+
+func TestParseFreeExpression(t *testing.T) {
+	mod, diag := parseTestModule(`fn destroy(ptr: *i32) { free(ptr); }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	stmt := fn.Body.Stmts[0].(*ast.ExprStmt)
+	freeExpr, ok := stmt.Expr.(*ast.FreeExpr)
+	if !ok {
+		t.Fatalf("expected free expression, got %T", stmt.Expr)
+	}
+	if ident, ok := freeExpr.Expr.(*ast.Ident); !ok || ident.Name != "ptr" {
+		t.Fatalf("unexpected free operand: %#v", freeExpr.Expr)
+	}
+}
+
+func TestParsePrintExpression(t *testing.T) {
+	mod, diag := parseTestModule(`fn show(value: i32) { print(value); }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	stmt := fn.Body.Stmts[0].(*ast.ExprStmt)
+	printExpr, ok := stmt.Expr.(*ast.PrintExpr)
+	if !ok {
+		t.Fatalf("expected print expression, got %T", stmt.Expr)
+	}
+	if ident, ok := printExpr.Expr.(*ast.Ident); !ok || ident.Name != "value" {
+		t.Fatalf("unexpected print operand: %#v", printExpr.Expr)
 	}
 }
 
@@ -1348,7 +1365,7 @@ struct Buffer {
 	if decl.Doc == nil || decl.Doc.Text != "buffer docs" {
 		t.Fatalf("struct doc mismatch: %#v", decl.Doc)
 	}
-	if _, ok := decl.GetAttribute(ast.AttributeNoCopy); !ok {
+	if _, ok := decl.GetAttribute("no_copy"); !ok {
 		t.Fatalf("expected no_copy attribute on struct")
 	}
 }
@@ -1414,25 +1431,23 @@ fn main() -> i32 {
 	}
 }
 
-func TestParseAllowsCommentAfterAttributeBeforeImplMethod(t *testing.T) {
+func TestParseAllowsCommentAfterAttributeBeforeReceiverFunction(t *testing.T) {
 	src := `struct Buffer {
 	value: i32
 }
 
-impl Buffer {
 	#[test]
 	/// method docs
-	fn destroy(self: Self) {}
-}`
+	fn (self: Buffer) destroy() {}
+`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	decl, ok := mod.Stmts[1].(*ast.ImplDecl)
-	if !ok || len(decl.Methods) != 1 {
-		t.Fatalf("impl methods mismatch: %#v", mod.Stmts[1])
+	method, ok := mod.Stmts[1].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("receiver function mismatch: %#v", mod.Stmts[1])
 	}
-	method := decl.Methods[0]
 	if method.Doc == nil || method.Doc.Text != "method docs" {
 		t.Fatalf("method doc mismatch: %#v", method.Doc)
 	}
@@ -1441,22 +1456,20 @@ impl Buffer {
 	}
 }
 
-func TestParseAllowsTrailingCommentBeforeImplClose(t *testing.T) {
+func TestParseAllowsTrailingCommentAfterReceiverFunction(t *testing.T) {
 	src := `struct Buffer {
 	value: i32
 }
 
-impl Buffer {
-	fn destroy(self: Self) {}
+	fn (self: Buffer) destroy() {}
 	// trailer
-}`
+`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
-	decl, ok := mod.Stmts[1].(*ast.ImplDecl)
-	if !ok || len(decl.Methods) != 1 {
-		t.Fatalf("impl methods mismatch: %#v", mod.Stmts[1])
+	if _, ok := mod.Stmts[1].(*ast.FnDecl); !ok {
+		t.Fatalf("receiver function mismatch: %#v", mod.Stmts[1])
 	}
 }
 
@@ -1501,8 +1514,8 @@ fn main() {}
 	}
 }
 
-func TestParsePointerTypes(t *testing.T) {
-	src := `const ptr: *i32;`
+func TestParseRawPointerTypes(t *testing.T) {
+	src := `const ptr: rawptr;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -1520,7 +1533,7 @@ func TestParsePointerTypes(t *testing.T) {
 }
 
 func TestParseOwnedPointerTypes(t *testing.T) {
-	src := `const ptr: ^i32;`
+	src := `const ptr: *i32;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -1569,7 +1582,7 @@ func TestParseFnExplicitReturnTypeOverridesDefault(t *testing.T) {
 // TestParseInterfaceMethodDefaultReturnType verifies interface methods also
 // default to no return value.
 func TestParseInterfaceMethodDefaultReturnType(t *testing.T) {
-	src := `interface I { method() }`
+	src := `iface I { fn (Self) method() }`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -1604,8 +1617,8 @@ func TestParseFuncTypeDefaultReturnType(t *testing.T) {
 	}
 }
 
-func TestParseFuncTypeMoveParam(t *testing.T) {
-	src := `const cb: fn(move x: Buffer) = 0;`
+func TestParseFuncTypeParam(t *testing.T) {
+	src := `const cb: fn(x: Buffer) = 0;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -1617,9 +1630,6 @@ func TestParseFuncTypeMoveParam(t *testing.T) {
 	}
 	if len(ft.Params) != 1 {
 		t.Fatalf("params: got %d want 1", len(ft.Params))
-	}
-	if len(ft.Consumes) != 1 || !ft.Consumes[0] {
-		t.Fatalf("expected consuming first param, got %#v", ft.Consumes)
 	}
 	if named, ok := ft.Params[0].(*ast.NamedType); !ok || named.Name != "Buffer" {
 		t.Fatalf("param type: got %T %#v want Buffer", ft.Params[0], ft.Params[0])
@@ -1663,7 +1673,7 @@ func TestParseEnumVariantsTrailingComma(t *testing.T) {
 
 // TestParseInterfaceMethodsTrailingComma verifies the same for interface methods.
 func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
-	src := `interface I { foo(), bar(), }`
+	src := `iface I { fn (Self) foo(), fn (&Self) bar(), }`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -1679,7 +1689,7 @@ func TestParseInterfaceMethodsTrailingComma(t *testing.T) {
 }
 
 func TestParseInterfaceMethodsUnexpectedSemicolonRecovers(t *testing.T) {
-	src := `interface I { foo(); bar() }`
+	src := `iface I { fn (Self) foo(); fn (&Self) bar() }`
 	mod, diag := parseTestModule(src)
 	if !diag.HasErrors() {
 		t.Fatalf("expected diagnostic for semicolon separator")
@@ -1692,7 +1702,7 @@ func TestParseInterfaceMethodsUnexpectedSemicolonRecovers(t *testing.T) {
 	if len(ifaceType.Methods) != 2 {
 		t.Fatalf("methods: got %d want 2", len(ifaceType.Methods))
 	}
-	if !strings.Contains(diag.EmitAllToString(), "expected '}' after interface methods") &&
+	if !strings.Contains(diag.EmitAllToString(), "expected '}' after iface methods") &&
 		!strings.Contains(diag.EmitAllToString(), "add missing `,` here") {
 		t.Fatalf("expected separator recovery diagnostic, got:\n%s", diag.EmitAllToString())
 	}
@@ -1790,9 +1800,9 @@ func TestParseCommentsInsideBraces(t *testing.T) {
 	x: i32,
 	// trailing struct comment
 }
-interface I {
+iface I {
 	// method comment
-	foo() -> i32,
+	fn (Self) foo() -> i32,
 }
 fn main() {
 	// stmt comment
@@ -1897,15 +1907,25 @@ func TestParseUnclosedBraceInStruct(t *testing.T) {
 	}
 }
 
-func TestParseUnclosedBraceInImpl(t *testing.T) {
-	src := `impl i32 {`
+func TestParseUnclosedBraceInIface(t *testing.T) {
+	src := `iface I {`
 	_, diag := parseTestModule(src)
 	if !diag.HasErrors() {
-		t.Fatalf("expected diagnostic for unclosed impl brace")
+		t.Fatalf("expected diagnostic for unclosed iface brace")
 	}
 	out := diag.EmitAllToString()
 	if !strings.Contains(out, "P0010") || !strings.Contains(out, "unclosed '{'") {
 		t.Fatalf("expected P0010 unclosed brace, got:\n%s", out)
+	}
+}
+
+func TestParseStrayClosingBraceMakesProgress(t *testing.T) {
+	mod, diag := parseTestModule(`}`)
+	if mod == nil || len(mod.Stmts) != 1 {
+		t.Fatalf("expected one recovered bad statement, got %#v", mod)
+	}
+	if !diag.HasErrors() {
+		t.Fatalf("expected stray closing brace diagnostic")
 	}
 }
 

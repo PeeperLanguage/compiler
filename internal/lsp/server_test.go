@@ -326,7 +326,7 @@ func TestHandleRenameMatchesSelectorField(t *testing.T) {
 func TestHandleRenameMatchesSelectorMethod(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n\nfn main() -> i32 {\n\tlet p: Point;\n\treturn p.__CURSOR__sum();\n}\n"
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nfn (self: Point) sum() -> i32 {\n\t\treturn self.x + self.y;\n}\n\nfn main() -> i32 {\n\tlet p: Point;\n\treturn p.__CURSOR__sum();\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -343,7 +343,7 @@ func TestHandleRenameMatchesSelectorMethod(t *testing.T) {
 	for _, edit := range edits {
 		lines[edit.Range.Start.Line] = true
 	}
-	if !lines[6] || !lines[13] || len(lines) != 2 {
+	if !lines[5] || !lines[11] || len(lines) != 2 {
 		t.Fatalf("method rename touched unexpected lines: %v", lines)
 	}
 }
@@ -620,7 +620,7 @@ func TestHoverShowsSelectorMemberFieldType(t *testing.T) {
 func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "impl i32 {\n\tfn abs(self: Self) -> Self {\n\t\treturn self;\n\t}\n}\n\nfn main() -> i32 {\n\tlet x: i32 = 1;\n\treturn x.__CURSOR__abs();\n}\n"
+	src := "fn (self: i32) abs() -> i32 {\n\t\treturn self;\n}\n\nfn main() -> i32 {\n\tlet x: i32 = 1;\n\treturn x.__CURSOR__abs();\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -636,7 +636,7 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 func TestHoverShowsConsumingFunctionParameter(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "fn consume(move value: ^i32) {}\n\nfn main() {\n\tlet value: ^i32;\n\t__CURSOR__consume(move value);\n}\n"
+	src := "fn consume(value: *i32) {}\n\nfn main() {\n\tlet value: *i32;\n\t__CURSOR__consume(value);\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -644,7 +644,7 @@ func TestHoverShowsConsumingFunctionParameter(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn(move ^i32)") {
+	if !strings.Contains(hover.Contents.Value, "fn(*i32)") {
 		t.Fatalf("expected consuming parameter, got %q", hover.Contents.Value)
 	}
 }
@@ -652,7 +652,7 @@ func TestHoverShowsConsumingFunctionParameter(t *testing.T) {
 func TestHoverPreservesMutableInterfaceReceiver(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "interface Writer {\n\twrite(self: &mut Self, val: i32)\n}\n\nfn use(mut writer: Writer) {\n\twriter.__CURSOR__write(7);\n}\n"
+	src := "iface Writer {\n\tfn (&mut Self) write(val: i32)\n}\n\nfn use(mut writer: Writer) {\n\twriter.__CURSOR__write(7);\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -665,10 +665,10 @@ func TestHoverPreservesMutableInterfaceReceiver(t *testing.T) {
 	}
 }
 
-func TestHoverShowsImplMethodNameSignature(t *testing.T) {
+func TestHoverShowsReceiverMethodNameSignature(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn __CURSOR__sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n"
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nfn (self: Point) __CURSOR__sum() -> i32 {\n\t\treturn self.x + self.y;\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -681,10 +681,10 @@ func TestHoverShowsImplMethodNameSignature(t *testing.T) {
 	}
 }
 
-func TestHoverShowsSelfTypeInsideImplMethodSignature(t *testing.T) {
+func TestHoverShowsReceiverTypeInsideMethodSignature(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: __CURSOR__Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n"
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nfn (self: __CURSOR__Point) sum() -> i32 {\n\t\treturn self.x + self.y;\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -703,7 +703,7 @@ func TestHoverShowsSelfTypeInsideImplMethodSignature(t *testing.T) {
 func TestHoverShowsInterfaceMethodSignature(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "interface SummerConsumer {\n\t__CURSOR__consume(Self, val: Summer) -> i32,\n}\n"
+	src := "iface SummerConsumer {\n\tfn (Self) __CURSOR__consume(val: Summer) -> i32,\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -719,10 +719,10 @@ func TestHoverShowsInterfaceMethodSignature(t *testing.T) {
 	}
 }
 
-func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
+func TestHoverShowsBareInterfaceReceiverType(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "__CURSOR__interface SummerConsumer {\n\tconsume(Self, val: Summer) -> i32,\n}\n"
+	src := "iface Consumer {\n\tfn (__CURSOR__Self) consume(),\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -730,7 +730,23 @@ func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "interface{\n  consume(Self, Summer) -> i32\n}") {
+	if !strings.Contains(hover.Contents.Value, "(type) Self") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "__CURSOR__iface SummerConsumer {\n\tfn (Self) consume(val: Summer) -> i32,\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "iface{\n  consume(Self, Summer) -> i32\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 	if strings.Contains(hover.Contents.Value, "val:") {
@@ -741,7 +757,7 @@ func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
 func TestHoverShowsTypeMethodsOnNamedType(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n\nfn main() -> i32 {\n\tlet p: __CURSOR__Point;\n\treturn 0;\n}\n"
+	src := "struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nfn (self: Point) sum() -> i32 {\n\t\treturn self.x + self.y;\n}\n\nfn main() -> i32 {\n\tlet p: __CURSOR__Point;\n\treturn 0;\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -760,7 +776,7 @@ func TestHoverShowsTypeMethodsOnNamedType(t *testing.T) {
 func TestHoverShowsTypeMethodsInsideNamedStructSyntax(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "__CURSOR__struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x + self.y;\n\t}\n}\n"
+	src := "__CURSOR__struct Point {\n\tx: i32,\n\ty: i32,\n}\n\nfn (self: Point) sum() -> i32 {\n\t\treturn self.x + self.y;\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -780,8 +796,8 @@ func TestHoverDoesNotLeakMethodsFromUnrelatedComponents(t *testing.T) {
 	root := t.TempDir()
 	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
 	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
-	firstSrc := "struct Point {\n\tx: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.x;\n\t}\n}\n"
-	secondSrc := "struct Point {\n\ty: i32,\n}\n\nimpl Point {\n\tfn sum(self: Self) -> i32 {\n\t\treturn self.y;\n\t}\n}\n\nfn main() -> i32 {\n\tlet p: __CURSOR__Point;\n\treturn 0;\n}\n"
+	firstSrc := "struct Point {\n\tx: i32,\n}\n\nfn (self: Point) sum() -> i32 {\n\t\treturn self.x;\n}\n"
+	secondSrc := "struct Point {\n\ty: i32,\n}\n\nfn (self: Point) sum() -> i32 {\n\t\treturn self.y;\n}\n\nfn main() -> i32 {\n\tlet p: __CURSOR__Point;\n\treturn 0;\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -1069,8 +1085,8 @@ func TestLSPDidChangePublishesSyntaxErrorsAfterDebounce(t *testing.T) {
 func TestLSPDidChangePublishesInterfaceSeparatorErrorsAfterDebounce(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
-	initial := "interface SummerConsumer {\n\tconsume(Self, val: i32) -> i32,\n}\n"
-	invalid := "interface SummerConsumer {\n\tconsume(Self, val: i32) -> i32;\n}\n"
+	initial := "iface SummerConsumer {\n\tfn (Self) consume(val: i32) -> i32,\n}\n"
+	invalid := "iface SummerConsumer {\n\tfn (Self) consume(val: i32) -> i32;\n}\n"
 
 	rootURI := DocumentURI(pathToURI(root))
 	initParams, err := json.Marshal(InitializeParams{RootURI: &rootURI})

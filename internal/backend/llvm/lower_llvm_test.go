@@ -24,8 +24,11 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"string":           "{ i8*, i64 }",
 		"?i32":             "{ i1, i32 }",
 		"?string":          "{ i1, { i8*, i64 } }",
-		"?^i32":            "i32*",
+		"?*i32":            "i32*",
+		"?*iface{}":        "{ i1, { i8*, i8* } }",
 		"*i32":             "i32*",
+		"*iface{}":         "{ i8*, i8* }",
+		"rawptr":           "i8*",
 		"[4]i32":           "[4 x i32]",
 		"[]i32":            "{ i32*, i64, i64 }",
 		"&i32":             "i32*",
@@ -52,6 +55,209 @@ func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
 	f64 := llvmFloatConst("2.4", "f64")
 	if !strings.HasPrefix(f32, "0x") || !strings.HasPrefix(f64, "0x") || f32 == f64 {
 		t.Fatalf("float constants: f32=%q f64=%q", f32, f64)
+	}
+}
+
+func TestGenerateLLVMIRLowersOwnedPointerDrop(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "release",
+			Params:     []ir.Param{{Name: "value", Type: "*i32"}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+				Term:   &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "declare void @free(i8*)") ||
+		!strings.Contains(out, "bitcast i32* %value to i8*") ||
+		!strings.Contains(out, "call void @free(i8*") {
+		t.Fatalf("expected owned-pointer deallocation, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRReusesExistingFreeDeclaration(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{Name: "free", Params: []ir.Param{{Name: "value", Type: "rawptr"}}, ReturnType: "void"},
+			{
+				Name:       "release",
+				Params:     []ir.Param{{Name: "value", Type: "*i32"}},
+				ReturnType: "void",
+				Blocks: []*mir.Block{{
+					ID:     0,
+					Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+					Term:   &mir.Ret{},
+				}},
+			},
+		},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if count := strings.Count(out, "declare void @free(i8*)"); count != 1 {
+		t.Fatalf("expected one free declaration, got %d:\n%s", count, out)
+	}
+	if !strings.Contains(out, "call void @free(i8*") {
+		t.Fatalf("expected automatic destruction to reuse free declaration, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRRejectsIncompatibleFreeDeclaration(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{Name: "free", Params: []ir.Param{{Name: "value", Type: "i32"}}, ReturnType: "void"},
+			{
+				Name:       "release",
+				Params:     []ir.Param{{Name: "value", Type: "*i32"}},
+				ReturnType: "void",
+				Blocks: []*mir.Block{{
+					ID:     0,
+					Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+					Term:   &mir.Ret{},
+				}},
+			},
+		},
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux")
+	if out != "" {
+		t.Fatalf("expected incompatible free ABI to suppress LLVM output, got:\n%s", out)
+	}
+	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `free` must have signature fn(rawptr) -> void") {
+		t.Fatalf("expected incompatible free ABI diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestGenerateLLVMIRDropsNestedOwnersBeforeStorage(t *testing.T) {
+	typeText := "*struct{child: *i32}"
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "release",
+			Params:     []ir.Param{{Name: "value", Type: typeText}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: typeText}}},
+				Term:   &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if count := strings.Count(out, "call void @free(i8*"); count != 2 {
+		t.Fatalf("expected child and outer storage frees, got %d:\n%s", count, out)
+	}
+}
+
+func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.T) {
+	const (
+		payloadType   = "struct{child: *i32}"
+		interfaceType = "*iface{}"
+	)
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "release",
+			Params:     []ir.Param{{Name: "resource", Type: "*" + payloadType}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{Name: "erased", Value: &mir.InterfaceMake{
+						Value:    &mir.RefName{Name: "resource", Type: "*" + payloadType},
+						DataType: payloadType,
+						Type:     interfaceType,
+					}},
+					&mir.Drop{Value: &mir.RefName{Name: "erased", Type: interfaceType}},
+				},
+				Term: &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if strings.Contains(out, "@malloc") || strings.Contains(out, "alloca "+payloadType) {
+		t.Fatalf("owned interface conversion must adopt existing allocation, got:\n%s", out)
+	}
+	if !strings.Contains(out, "private constant [1 x i8*]") ||
+		!strings.Contains(out, "define void @__iface_drop") ||
+		!strings.Contains(out, "bitcast { i32* }* %resource to i8*") {
+		t.Fatalf("expected direct fat carrier with payload-drop slot, got:\n%s", out)
+	}
+	if count := strings.Count(out, "call void @free(i8*"); count != 2 {
+		t.Fatalf("expected nested payload and carrier storage frees, got %d:\n%s", count, out)
+	}
+}
+
+func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
+	const interfaceType = "&iface{read(self: &Self): i32}"
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{
+				Name:       "read_thunk",
+				Params:     []ir.Param{{Name: "data", Type: "rawptr"}},
+				ReturnType: "i32",
+			},
+			{
+				Name:       "read",
+				Params:     []ir.Param{{Name: "counter", Type: "&struct{value: i32}"}},
+				ReturnType: "i32",
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Assign{Name: "reader", Value: &mir.InterfaceMake{
+							Value:    &mir.RefName{Name: "counter", Type: "&struct{value: i32}"},
+							DataType: "struct{value: i32}",
+							Slots:    []mir.ValueRef{&mir.RefName{Name: "read_thunk", Type: "fn(rawptr) -> i32"}},
+							Type:     interfaceType,
+						}},
+						&mir.Assign{Name: "result", Value: &mir.InterfaceCall{
+							Base: &mir.RefName{Name: "reader", Type: interfaceType},
+							Slot: 0,
+							Type: "i32",
+						}},
+					},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: "i32"}},
+				}},
+			},
+		},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "private constant [2 x i8*]") ||
+		!strings.Contains(out, "getelementptr inbounds i8*, i8**") ||
+		!strings.Contains(out, "i32 1") {
+		t.Fatalf("expected method dispatch after payload-drop slot, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
+	typeText := "[]*i32"
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "release",
+			Params:     []ir.Param{{Name: "values", Type: typeText}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "values", Type: typeText}}},
+				Term:   &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	decrement := strings.Index(out, " = sub i64 ")
+	elementLoad := strings.Index(out, " = getelementptr i32*, i32** ")
+	if !strings.Contains(out, " = icmp ugt i64 ") || decrement < 0 || elementLoad < decrement {
+		t.Fatalf("expected reverse dynamic-array drop loop, got:\n%s", out)
+	}
+	if strings.Contains(out, " = phi i64 [ 0,") || strings.Contains(out, " = add i64 ") {
+		t.Fatalf("dynamic-array drop must not advance from index zero, got:\n%s", out)
 	}
 }
 
@@ -99,8 +305,81 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{{
+			Name:       "slice",
+			Params:     []ir.Param{{Name: "xs", Type: "&mut [4]i32"}},
+			ReturnType: "i32",
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
+					Source: &mir.RefName{Name: "xs", Type: "&mut [4]i32"},
+					Start:  &mir.RefConst{Value: "1", Type: "i32"},
+					End:    &mir.RefConst{Value: "2", Type: "i32"},
+					Type:   "&mut []i32",
+				}}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	compare := strings.Index(irText, "icmp uge i64")
+	trap := strings.Index(irText, "call void @llvm.trap()")
+	add := strings.Index(irText, "add i64")
+	ready := strings.Index(irText, "\nslice_bounds_ready_")
+	gep := strings.Index(irText, "getelementptr [4 x i32]")
+	if compare < 0 || strings.Count(irText, "icmp ugt i64") < 2 || trap < compare || add < trap || ready < add || gep < ready {
+		t.Fatalf("range checks must dominate inclusive conversion and fixed-array GEP, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "sub i64") ||
+		!strings.Contains(irText, "insertvalue { i32*, i64 } zeroinitializer") {
+		t.Fatalf("expected adjusted {data,len} slice view, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "slice",
+			Params:     []ir.Param{{Name: "xs", Type: "&[]i32"}},
+			ReturnType: "i32",
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
+					Source:       &mir.RefName{Name: "xs", Type: "&[]i32"},
+					End:          &mir.RefConst{Value: "2", Type: "u8"},
+					EndExclusive: true,
+					Type:         "&[]i32",
+				}}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
+		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
+		t.Fatalf("expected shared view data and length extraction, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "{ i32*, i64, i64 }") {
+		t.Fatalf("reslicing must not recover capacity, got:\n%s", irText)
+	}
+	trap := strings.Index(irText, "call void @llvm.trap()")
+	ready := strings.Index(irText, "\nslice_bounds_ready_")
+	gep := strings.Index(irText, "getelementptr i32")
+	if strings.Count(irText, "icmp ugt i64") < 2 || trap < 0 || ready < trap || gep < ready {
+		t.Fatalf("exclusive and reversed bounds checks must dominate adjusted GEP, got:\n%s", irText)
+	}
+}
+
 func TestOptionalNicheLayout(t *testing.T) {
-	niche, ok := optionalNicheLayout("^i32")
+	niche, ok := optionalNicheLayout("*i32")
 	if !ok {
 		t.Fatalf("expected optional pointer niche")
 	}
@@ -109,6 +388,9 @@ func TestOptionalNicheLayout(t *testing.T) {
 	}
 	if _, ok := optionalNicheLayout("i32"); ok {
 		t.Fatalf("plain integer must not use niche layout without invalid value rule")
+	}
+	if _, ok := optionalNicheLayout("*iface{}"); ok {
+		t.Fatalf("fat owned interface must use tagged optional layout")
 	}
 }
 
@@ -132,14 +414,14 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 			},
 			{
 				Name:       "niche",
-				ReturnType: "?^i32",
+				ReturnType: "?*i32",
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "p", Value: &mir.ZeroValue{Type: "?^i32"}},
+						&mir.Assign{Name: "p", Value: &mir.ZeroValue{Type: "?*i32"}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: "?^i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: "?*i32"}},
 				}},
 			},
 		},
@@ -180,15 +462,15 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 			},
 			{
 				Name:       "niche",
-				Params:     []ir.Param{{Name: "p", Type: "^i32"}},
-				ReturnType: "?^i32",
+				Params:     []ir.Param{{Name: "p", Type: "*i32"}},
+				ReturnType: "?*i32",
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefName{Name: "p", Type: "^i32"}, Type: "?^i32"}},
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefName{Name: "p", Type: "*i32"}, Type: "?*i32"}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?^i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?*i32"}},
 				}},
 			},
 		},
@@ -545,7 +827,7 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 
 func TestGenerateLLVMIRLowersIndirectProjectFieldWithoutTempAlloca(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	for _, baseType := range []string{"^struct{value: i32}", "&struct{value: i32}", "&mut struct{value: i32}"} {
+	for _, baseType := range []string{"*struct{value: i32}", "&struct{value: i32}", "&mut struct{value: i32}"} {
 		t.Run(baseType, func(t *testing.T) {
 			mod := &mir.Module{
 				Name:     "test",
@@ -590,6 +872,44 @@ func TestGenerateLLVMIRLowersIndirectProjectFieldWithoutTempAlloca(t *testing.T)
 	}
 }
 
+func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := &mir.Module{
+		Name:     "test",
+		FilePath: unixTestPath,
+		Funcs: []*mir.Function{{
+			Name:       "main",
+			Params:     []ir.Param{{Name: "box", Type: "&mut struct{value: i32}"}},
+			ReturnType: "i32",
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{
+						Name: "fieldptr",
+						Value: &mir.ProjectField{
+							Base:  &mir.RefName{Name: "box", Type: "&mut struct{value: i32}"},
+							Index: 0,
+							Type:  "&mut i32",
+						},
+					},
+					&mir.Assign{
+						Name:  "raw",
+						Value: &mir.Cast{Arg: &mir.RefName{Name: "fieldptr", Type: "&mut i32"}, Type: "rawptr"},
+					},
+				},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") ||
+		!strings.Contains(irText, "bitcast i32*") || !strings.Contains(irText, "to i8*") {
+		t.Fatalf("expected projected field address rawptr cast, got:\n%s", irText)
+	}
+}
+
 func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 	params := []ir.Param{{Name: "xs", Type: baseType}}
 	if ref, ok := index.(*mir.RefName); ok {
@@ -613,12 +933,12 @@ func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 								Value: &mir.ProjectIndex{
 									Base:  &mir.RefName{Name: "xs", Type: baseType},
 									Index: index,
-									Type:  "*i32",
+									Type:  "&mut i32",
 								},
 							},
 							&mir.Assign{
 								Name:  "item",
-								Value: &mir.Load{Ptr: &mir.RefName{Name: "idxptr", Type: "*i32"}, Type: "i32"},
+								Value: &mir.Load{Ptr: &mir.RefName{Name: "idxptr", Type: "&mut i32"}, Type: "i32"},
 							},
 						},
 						Term: &mir.Ret{Value: &mir.RefName{Name: "item", Type: "i32"}},
@@ -651,11 +971,11 @@ func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 								Value: &mir.ProjectIndex{
 									Base:  &mir.RefName{Name: "xs", Type: baseType},
 									Index: index,
-									Type:  "*i32",
+									Type:  "&mut i32",
 								},
 							},
 							&mir.Store{
-								Ptr:   &mir.RefName{Name: "idxptr", Type: "*i32"},
+								Ptr:   &mir.RefName{Name: "idxptr", Type: "&mut i32"},
 								Value: &mir.RefName{Name: "value", Type: "i32"},
 							},
 						},
@@ -823,5 +1143,77 @@ func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
 	}
 	if !strings.Contains(irText, "store i32 %value, i32*") {
 		t.Fatalf("expected dynamic array index store to write element, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	irText := GenerateLLVMIR(indexReadMIRModule("&[]i32", &mir.RefName{Name: "i", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
+		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
+		t.Fatalf("expected slice-view data and length extraction, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs") {
+		t.Fatalf("slice view must not use dynamic-array capacity layout, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "sext i32 %i to i64") ||
+		!strings.Contains(irText, "icmp uge i64") ||
+		!strings.Contains(irText, "call void @llvm.trap()") {
+		t.Fatalf("expected slice-view bounds guard, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "getelementptr i32, i32*") || !strings.Contains(irText, "load i32, i32*") {
+		t.Fatalf("expected slice-view ProjectIndex load, got:\n%s", irText)
+	}
+	compare := strings.Index(irText, "icmp uge i64")
+	trap := strings.Index(irText, "call void @llvm.trap()")
+	okBlock := strings.Index(irText, "\nbounds_ok_")
+	gep := strings.Index(irText, "getelementptr i32")
+	if compare < 0 || trap < compare || okBlock < trap || gep < okBlock {
+		t.Fatalf("bounds guard must dominate slice-view GEP, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersMutableSliceViewIndexStore(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	irText := GenerateLLVMIR(indexStoreMIRModule("&mut []i32", &mir.RefConst{Value: "0", Type: "u8"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
+		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
+		t.Fatalf("expected mutable slice-view data and length extraction, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "zext i8 0 to i64") ||
+		!strings.Contains(irText, "icmp uge i64") ||
+		!strings.Contains(irText, "call void @llvm.trap()") {
+		t.Fatalf("expected mutable slice-view bounds guard, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "getelementptr i32, i32*") || !strings.Contains(irText, "store i32 %value, i32*") {
+		t.Fatalf("expected mutable slice-view ProjectIndex store, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
+	const interfaceType = "*iface{take(self: Self)}"
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "consume",
+			Params:     []ir.Param{{Name: "value", Type: interfaceType}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.InterfaceCall{
+					Base:     &mir.RefName{Name: "value", Type: interfaceType},
+					Slot:     0,
+					Consumes: true,
+					Type:     "void",
+				}},
+				Term: &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	callIndex := strings.Index(out, "call void %")
+	freeIndex := strings.Index(out, "call void @free(i8*")
+	if !strings.Contains(out, "declare void @free(i8*)") || callIndex < 0 || freeIndex < callIndex {
+		t.Fatalf("expected consuming dispatch before carrier storage free, got:\n%s", out)
 	}
 }

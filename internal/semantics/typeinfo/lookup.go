@@ -35,25 +35,11 @@ func GetMethodLookupKeys(baseType Type) []string {
 }
 
 func PointerTarget(t Type) (Type, bool) {
-	switch ptr := t.(type) {
-	case *OwnedPtrType:
-		if ptr != nil && ptr.Target != nil {
-			return ptr.Target, true
-		}
-	case *RawPtrType:
-		if ptr != nil && ptr.Target != nil {
-			return ptr.Target, true
-		}
+	ptr, ok := t.(*OwnedPtrType)
+	if ok && ptr != nil && ptr.Target != nil {
+		return ptr.Target, true
 	}
 	return nil, false
-}
-
-func RawPointerTarget(t Type) (Type, bool) {
-	ptr, ok := t.(*RawPtrType)
-	if !ok || ptr == nil || ptr.Target == nil {
-		return nil, false
-	}
-	return ptr.Target, true
 }
 
 func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
@@ -64,10 +50,26 @@ func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
 	return ref.Target, ref.Mutable, true
 }
 
-// InterfaceTypeOf recognizes both owned interface values and borrowed
-// interface views so semantic lookup and lowering share one type boundary.
-func InterfaceTypeOf(t Type) (*InterfaceType, bool) {
+// ReceiverTarget returns concrete type whose method set owns receiver.
+func ReceiverTarget(t Type) (Type, bool) {
+	if target, ok := PointerTarget(t); ok {
+		return target, true
+	}
 	if target, _, ok := ReferenceTarget(Underlying(t)); ok {
+		return target, true
+	}
+	if t == nil {
+		return nil, false
+	}
+	return t, true
+}
+
+// InterfaceTypeOf recognizes interface declarations and their borrowed or
+// owned fat-pointer carriers. Raw pointers never carry interface metadata.
+func InterfaceTypeOf(t Type) (*InterfaceType, bool) {
+	if owner, ok := Underlying(t).(*OwnedPtrType); ok && owner != nil {
+		t = owner.Target
+	} else if target, _, ok := ReferenceTarget(Underlying(t)); ok {
 		t = target
 	}
 	iface, ok := Underlying(t).(*InterfaceType)

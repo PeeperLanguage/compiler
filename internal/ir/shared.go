@@ -98,9 +98,12 @@ type AddrOf struct {
 
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
-	Source   Expr
-	Type     string
-	Location *source.Location
+	Source       Expr
+	Start        Expr
+	End          Expr
+	EndExclusive bool
+	Type         string
+	Location     *source.Location
 }
 
 type InterfaceSlot struct {
@@ -124,6 +127,7 @@ type InterfaceCall struct {
 	Base     Expr
 	Slot     int
 	Args     []Expr
+	Consumes bool
 	Type     string
 	Location *source.Location
 }
@@ -132,6 +136,7 @@ type Field struct {
 	Base       Expr
 	Index      int
 	ThroughPtr bool
+	DropBase   bool
 	Type       string
 	Location   *source.Location
 }
@@ -139,6 +144,7 @@ type Field struct {
 type Index struct {
 	Base     Expr
 	Index    Expr
+	DropBase bool
 	Type     string
 	Location *source.Location
 }
@@ -158,6 +164,16 @@ type ArrayLit struct {
 type Cast struct {
 	Expr     Expr
 	Type     string
+	Location *source.Location
+}
+
+type Print struct {
+	Value    Expr
+	Location *source.Location
+}
+
+type Drop struct {
+	Value    Expr
 	Location *source.Location
 }
 
@@ -181,6 +197,8 @@ func (*Index) exprNode()         {}
 func (*StructLit) exprNode()     {}
 func (*ArrayLit) exprNode()      {}
 func (*Cast) exprNode()          {}
+func (*Print) exprNode()         {}
+func (*Drop) exprNode()          {}
 
 func ExprLocation(expr Expr) *source.Location {
 	switch node := expr.(type) {
@@ -223,6 +241,10 @@ func ExprLocation(expr Expr) *source.Location {
 	case *ArrayLit:
 		return node.Location
 	case *Cast:
+		return node.Location
+	case *Print:
+		return node.Location
+	case *Drop:
 		return node.Location
 	default:
 		return nil
@@ -361,6 +383,24 @@ func (e *Call) TypeText() string {
 	}
 	return e.Type
 }
+
+func (e *Print) String() string {
+	if e == nil || e.Value == nil {
+		return "print(<nil>)"
+	}
+	return "print(" + e.Value.String() + ")"
+}
+
+func (*Print) TypeText() string { return "" }
+
+func (e *Drop) String() string {
+	if e == nil || e.Value == nil {
+		return "drop(<nil>)"
+	}
+	return "drop(" + e.Value.String() + ")"
+}
+
+func (*Drop) TypeText() string { return "" }
 
 func (e *AddrOf) String() string {
 	if e == nil || e.Expr == nil {

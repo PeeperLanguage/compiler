@@ -1,0 +1,3 @@
+name = "negative_ownership_join"
+build = "program"
+entry = "src/main.peep"
