@@ -54,6 +54,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.Sym
 			Params:     append([]ir.Param(nil), ex.Params...),
 			ReturnType: ex.ReturnType,
 			Blocks:     nil,
+			Location:   ex.Location,
 		})
 	}
 	for _, hirFn := range in.Funcs {

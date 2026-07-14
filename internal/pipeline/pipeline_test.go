@@ -50,6 +50,40 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	return diag
 }
 
+func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string) *diagnostics.DiagnosticBag {
+	t.Helper()
+	root := t.TempDir()
+	srcDir := filepath.Join(root, peeper.SourceDirName)
+	entryPath := filepath.Join(srcDir, peeper.MainFileName)
+	runtimePath := filepath.Join(srcDir, "runtime"+peeper.SourceExt)
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	if err := os.WriteFile(entryPath, []byte(entrySrc), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	if err := os.WriteFile(runtimePath, []byte(runtimeSrc), 0o644); err != nil {
+		t.Fatalf("write runtime module: %v", err)
+	}
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:     root,
+		ProjectName: "app",
+		Extension:   peeper.SourceExt,
+	}, diag)
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
+		ImportPath: "app/main",
+		FilePath:   entryPath,
+		Origin:     project.ModuleOriginLocal,
+	}
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	return diag
+}
+
 // TestPipelinePreludeSymbolsVisibleInEntry verifies that prelude-defined symbols
 // (write, stdout, etc.) are resolved correctly in user entry modules even when
 // the entry module has no explicit import of the prelude.
@@ -134,6 +168,74 @@ fn main() -> i32 {
 	}
 	if !strings.Contains(entry.LLVMIR, "declare void @free(i8*)") {
 		t.Fatalf("expected free declaration, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}
+
+func TestPipelineScalarShrinkLocalDropReservesForeignFree(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn shorten(values: []i32) {
+	let shortened = shrink(values, 0);
+}`, `type Word = i32;
+
+#[extern("free")]
+fn BadFree(value: Word);`)
+	if !strings.Contains(diag.EmitAllToString(), "runtime requires fn(rawptr) -> void") {
+		t.Fatalf("expected local scalar shrink cleanup to reserve free:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineScalarShrinkReturnDoesNotReserveForeignFree(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn shorten(values: []i32) -> []i32 {
+	return shrink(values, 0);
+}`, `type Word = i32;
+
+#[extern("free")]
+fn BadFree(value: Word);`)
+	if diag.HasErrors() {
+		t.Fatalf("scalar shrink pass-through must not reserve free:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineOwnerShrinkReservesForeignFree(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+struct Resource { value: *i32 }
+
+fn shorten(values: []Resource) -> []Resource {
+	return shrink(values, 0);
+}`, `type Word = i32;
+
+#[extern("free")]
+fn BadFree(value: Word);`)
+	if !strings.Contains(diag.EmitAllToString(), "runtime requires fn(rawptr) -> void") {
+		t.Fatalf("expected owner-bearing shrink cleanup to reserve free:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRuntimeSymbolsReservedAcrossModules(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn main() {
+	print(42);
+	let values = []i32{1};
+}`, `type Word = i32;
+
+fn printf(value: i32) {}
+
+#[extern("malloc")]
+fn BadMalloc(size: Word) -> rawptr;
+
+#[extern("free")]
+fn BadFree(value: Word);`)
+	out := diag.EmitAllToString()
+	for _, symbol := range []string{"printf", "malloc", "free"} {
+		message := "runtime symbol `" + symbol + "`"
+		if count := strings.Count(out, message); count != 1 {
+			t.Fatalf("expected one %s reservation diagnostic, got %d:\n%s", symbol, count, out)
+		}
 	}
 }
 

@@ -62,6 +62,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 				Name:       emittedName,
 				Params:     params,
 				ReturnType: returnType,
+				Location:   ast.LocOf(fn.Name),
 			})
 		} else {
 			hirFn := lowerASTFunctionNamed(ctx, module, sym, fn, emittedName)
