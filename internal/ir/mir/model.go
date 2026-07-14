@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/ir"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
 
@@ -213,6 +214,21 @@ type ArrayLit struct {
 	Location *source.Location
 }
 
+type DynamicArrayAlloc struct {
+	Length   int
+	Type     string
+	Location *source.Location
+}
+
+type DynamicArrayOp struct {
+	Op       symbols.CompilerOp
+	Array    ValueRef
+	Length   ValueRef
+	Value    ValueRef
+	Type     string
+	Location *source.Location
+}
+
 type ZeroValue struct {
 	Type     string
 	Location *source.Location
@@ -272,24 +288,26 @@ func (i *Ret) Text() string {
 	return "ret " + i.Value.Text()
 }
 
-func (*Unary) valueExprNode()         {}
-func (*Binary) valueExprNode()        {}
-func (*Move) valueExprNode()          {}
-func (*Cast) valueExprNode()          {}
-func (*AddrOf) valueExprNode()        {}
-func (*SliceView) valueExprNode()     {}
-func (*Load) valueExprNode()          {}
-func (*ProjectField) valueExprNode()  {}
-func (*ProjectIndex) valueExprNode()  {}
-func (*Field) valueExprNode()         {}
-func (*StructLit) valueExprNode()     {}
-func (*ArrayLit) valueExprNode()      {}
-func (*ZeroValue) valueExprNode()     {}
-func (*OptionalSome) valueExprNode()  {}
-func (*InterfaceMake) valueExprNode() {}
-func (*InterfaceCall) valueExprNode() {}
-func (*RefConst) valueRefNode()       {}
-func (*RefName) valueRefNode()        {}
+func (*Unary) valueExprNode()             {}
+func (*Binary) valueExprNode()            {}
+func (*Move) valueExprNode()              {}
+func (*Cast) valueExprNode()              {}
+func (*AddrOf) valueExprNode()            {}
+func (*SliceView) valueExprNode()         {}
+func (*Load) valueExprNode()              {}
+func (*ProjectField) valueExprNode()      {}
+func (*ProjectIndex) valueExprNode()      {}
+func (*Field) valueExprNode()             {}
+func (*StructLit) valueExprNode()         {}
+func (*ArrayLit) valueExprNode()          {}
+func (*DynamicArrayAlloc) valueExprNode() {}
+func (*DynamicArrayOp) valueExprNode()    {}
+func (*ZeroValue) valueExprNode()         {}
+func (*OptionalSome) valueExprNode()      {}
+func (*InterfaceMake) valueExprNode()     {}
+func (*InterfaceCall) valueExprNode()     {}
+func (*RefConst) valueRefNode()           {}
+func (*RefName) valueRefNode()            {}
 
 func (r *RefConst) Text() string { return r.Value }
 func (r *RefName) Text() string  { return r.Name }
@@ -334,6 +352,24 @@ func (v *ArrayLit) Text() string {
 	}
 	b.WriteString(")")
 	return b.String()
+}
+
+func (v *DynamicArrayAlloc) Text() string {
+	return fmt.Sprintf("allocarray %d", v.Length)
+}
+
+func (v *DynamicArrayOp) Text() string {
+	if v == nil {
+		return ""
+	}
+	args := []string{v.Array.Text()}
+	if v.Length != nil {
+		args = append(args, v.Length.Text())
+	}
+	if v.Value != nil {
+		args = append(args, v.Value.Text())
+	}
+	return string(v.Op) + " " + strings.Join(args, ", ")
 }
 
 func (v *ZeroValue) Text() string {
@@ -431,6 +467,10 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *StructLit:
 		return node.Location
 	case *ArrayLit:
+		return node.Location
+	case *DynamicArrayAlloc:
+		return node.Location
+	case *DynamicArrayOp:
 		return node.Location
 	case *ZeroValue:
 		return node.Location

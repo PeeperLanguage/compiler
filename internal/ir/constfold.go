@@ -53,7 +53,16 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 		for _, value := range node.Values {
 			values = append(values, FoldExpr(value, env))
 		}
-		return &ArrayLit{Values: values, Type: node.Type, Location: node.Location}
+		return &ArrayLit{Values: values, Dynamic: node.Dynamic, Type: node.Type, Location: node.Location}
+	case *DynamicArrayOp:
+		return &DynamicArrayOp{
+			Op:       node.Op,
+			Array:    FoldExpr(node.Array, env),
+			Length:   FoldExpr(node.Length, env),
+			Value:    FoldExpr(node.Value, env),
+			Type:     node.Type,
+			Location: node.Location,
+		}
 	default:
 		return expr
 	}

@@ -244,14 +244,16 @@ const Global = .Token{ value = 1 };`)
 }
 
 func TestArrayLiteralConsumesCompositeElements(t *testing.T) {
-	diag := checkOwnershipSource(t, `struct Point { value: i32 }
+	for _, literal := range []string{"[1]Point{point}", "[]Point{point}"} {
+		diag := checkOwnershipSource(t, `struct Point { value: i32 }
 fn consume(point: Point) {}
 fn bad(point: Point) {
-	let points = [1]Point{point};
+	let points = `+literal+`;
 	consume(point);
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected array insertion to consume point, got:\n%s", diag.EmitAllToString())
+		if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+			t.Fatalf("expected %s insertion to consume point, got:\n%s", literal, diag.EmitAllToString())
+		}
 	}
 }
 
@@ -502,6 +504,42 @@ fn main() {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayOwnerOperationsConsumeAndReinitializeOwner(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn main() {
+	let mut values = []i32{};
+	values = append(values, 1);
+	values = reserve(values, 8);
+	values = resize(values, 4, 0);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayAppendConsumesOwner(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn main() {
+	let values = []i32{};
+	let extended = append(values, 1);
+	print(values[0]);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected moved-owner diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayAppendConsumesCompositeElement(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Point { x: i32 }
+fn consume(point: Point) {}
+fn main() {
+	let point = .Point{x = 1};
+	let values = append([]Point{}, point);
+	consume(point);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected moved-element diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

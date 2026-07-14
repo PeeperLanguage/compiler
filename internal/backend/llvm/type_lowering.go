@@ -389,6 +389,10 @@ func mirValueType(expr mir.ValueExpr) string {
 		return v.Type
 	case *mir.ArrayLit:
 		return v.Type
+	case *mir.DynamicArrayAlloc:
+		return v.Type
+	case *mir.DynamicArrayOp:
+		return v.Type
 	case *mir.ZeroValue:
 		return v.Type
 	case *mir.OptionalSome:

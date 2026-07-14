@@ -324,6 +324,39 @@ fn bad() -> &i32 {
 `[N]T` is fixed-size inline storage. `[]T` is dynamic array storage with runtime
 length/capacity and heap-backed elements.
 
+`[]T{...}` constructs a dynamic-array owner through selected program allocator:
+
+```peep
+let empty = []i32{}
+let values = []i32{1, 2, 3}
+```
+
+Empty literal is `{null, 0, 0}` and performs no allocation. Non-empty literal
+starts with length and capacity equal to element count. Allocation and checked
+size calculation happen before element initializers run; allocation failure
+traps in initial infallible literal model. Category B element initializers move
+into array slots.
+
+Dynamic-array owner operations consume old owner and return replacement owner:
+
+```peep
+let mut values = []i32{1, 2}
+values = append(values, 3)
+values = reserve(values, 16)
+values = resize(values, 8, 0)
+```
+
+`append(array, value)` moves Category B values into new slot. It writes within
+capacity or grows geometrically with checked arithmetic. `reserve(array,
+minimum)` preserves length and relocates elements only when capacity is too
+small. Relocation does not copy or drop moved source slots.
+
+Initial `resize(array, length, fill)` accepts only Category A element types. It
+reserves when growing, repeats implicitly copyable `fill`, and shortens length
+without element destruction when shrinking. Category B arrays grow through
+`append`; a future dedicated shrink operation must define removed-owner drop
+order without pretending one moved fill value can be repeated.
+
 Slice views use reference syntax over dynamic-array element spelling:
 
 ```peep

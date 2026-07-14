@@ -523,12 +523,52 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.ArrayLit:
+		if e.Dynamic {
+			name := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayAlloc{
+				Length:   len(e.Values),
+				Type:     e.TypeText(),
+				Location: ir.ExprLocation(e),
+			}})
+			array := &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+			elemType, ok := strings.CutPrefix(e.TypeText(), "[]")
+			if !ok || strings.TrimSpace(elemType) == "" {
+				panic(fmt.Sprintf("dynamic array literal has invalid type %q", e.TypeText()))
+			}
+			elemType = strings.TrimSpace(elemType)
+			for index, valueExpr := range e.Values {
+				value := l.lowerExpr(valueExpr, out)
+				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: "usize", Location: ir.ExprLocation(valueExpr)}
+				ptr := l.projectIndex(out, array, indexRef, "&mut "+elemType, ir.ExprLocation(valueExpr))
+				l.appendInstr(out, &Store{Ptr: ptr, Value: value, Location: ir.ExprLocation(valueExpr)})
+			}
+			return array
+		}
 		values := make([]ValueRef, 0, len(e.Values))
 		for _, value := range e.Values {
 			values = append(values, l.lowerExpr(value, out))
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.DynamicArrayOp:
+		array := l.lowerExpr(e.Array, out)
+		var length, value ValueRef
+		if e.Length != nil {
+			length = l.lowerExpr(e.Length, out)
+		}
+		if e.Value != nil {
+			value = l.lowerExpr(e.Value, out)
+		}
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayOp{
+			Op:       e.Op,
+			Array:    array,
+			Length:   length,
+			Value:    value,
+			Type:     e.TypeText(),
+			Location: ir.ExprLocation(e),
+		}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)

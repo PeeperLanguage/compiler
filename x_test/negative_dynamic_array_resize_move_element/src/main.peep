@@ -1,0 +1,9 @@
+struct Point {
+    x: i32
+}
+
+fn main() {
+    let points = []Point{.Point{x = 1}};
+    let resized = resize(points, 2, .Point{x = 0});
+}
+

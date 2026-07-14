@@ -1243,18 +1243,27 @@ func TestParseArrayLiteralThenIndexWithoutHang(t *testing.T) {
 	}
 }
 
-func TestParseDynamicArrayLiteralRejectedWithoutHang(t *testing.T) {
+func TestParseDynamicArrayLiteral(t *testing.T) {
 	src := `fn main() -> i32 {
 	let arr = []i32{1, 2};
 	return 0;
 }`
 	mod, diag := parseTestModule(src)
-	if !diag.HasErrors() {
-		t.Fatalf("expected dynamic array literal diagnostics")
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 	fn := mod.Stmts[0].(*ast.FnDecl)
 	if fn.Body == nil || len(fn.Body.Stmts) != 2 {
-		t.Fatalf("parser did not preserve later statements: %#v", fn.Body)
+		t.Fatalf("unexpected body shape: %#v", fn.Body)
+	}
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	lit, ok := letDecl.Value.(*ast.ArrayLit)
+	if !ok || len(lit.Values) != 2 {
+		t.Fatalf("expected dynamic array literal, got %#v", letDecl.Value)
+	}
+	arrayType, ok := lit.Type.(*ast.ArrayType)
+	if !ok || !arrayType.Dynamic || arrayType.Len != nil {
+		t.Fatalf("unexpected dynamic array type: %#v", lit.Type)
 	}
 }
 

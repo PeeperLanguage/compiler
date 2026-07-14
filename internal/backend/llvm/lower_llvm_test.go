@@ -7,7 +7,9 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
+	"compiler/internal/target"
 	"compiler/pkg/peeper"
 )
 
@@ -202,6 +204,215 @@ func TestGenerateLLVMIRRejectsIncompatibleFreeDeclaration(t *testing.T) {
 	}
 	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `free` must have signature fn(rawptr) -> void") {
 		t.Fatalf("expected incompatible free ABI diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestGenerateLLVMIRLowersDynamicArrayAllocation(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "values",
+			ReturnType: "[]i32",
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{
+					Length: 3,
+					Type:   "[]i32",
+				}}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	for _, expected := range []string{
+		"declare i8* @malloc(i64)",
+		"@llvm.umul.with.overflow.i64",
+		"ptrtoint i32* getelementptr",
+		"select i1",
+		"i64 1, i64",
+		"call i8* @malloc(i64",
+		"icmp eq i8*",
+		"call void @llvm.trap()",
+		"insertvalue { i32*, i64, i64 }",
+		"i64 3, 2",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("expected %q in dynamic allocation IR:\n%s", expected, out)
+		}
+	}
+}
+
+func TestGenerateLLVMIRLowersEmptyDynamicArrayWithoutAllocation(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "values",
+			ReturnType: "[]i32",
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Type: "[]i32"}}},
+				Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if strings.Contains(out, "@malloc") || strings.Contains(out, "umul.with.overflow") {
+		t.Fatalf("empty dynamic array must not allocate:\n%s", out)
+	}
+	if !strings.Contains(out, "ret { i32*, i64, i64 } zeroinitializer") {
+		t.Fatalf("empty dynamic array must return zero header:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       symbols.CompilerOp
+		length   mir.ValueRef
+		value    mir.ValueRef
+		expected []string
+	}{
+		{
+			name:  "append",
+			op:    symbols.CompilerOpAppend,
+			value: &mir.RefName{Name: "value", Type: "i32"},
+			expected: []string{
+				"array_append_capacity_", "@llvm.umul.with.overflow.i64", "array_relocate_loop_",
+				"store i32 %value", "call void @free(i8*",
+			},
+		},
+		{
+			name:   "reserve",
+			op:     symbols.CompilerOpReserve,
+			length: &mir.RefName{Name: "size", Type: "usize"},
+			expected: []string{
+				"icmp uge i64", "array_reserve_reuse_", "array_relocate_loop_", "call i8* @malloc(i64", "call void @free(i8*",
+			},
+		},
+		{
+			name:   "resize",
+			op:     symbols.CompilerOpResize,
+			length: &mir.RefName{Name: "size", Type: "usize"},
+			value:  &mir.RefName{Name: "value", Type: "i32"},
+			expected: []string{
+				"array_resize_loop_", "icmp ult i64", "store i32 %value", "insertvalue { i32*, i64, i64 }",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mod := dynamicArrayOperationModule(tt.name, tt.op, tt.length, tt.value)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			for _, expected := range append([]string{"declare i8* @malloc(i64)", "declare void @free(i8*)"}, tt.expected...) {
+				if !strings.Contains(out, expected) {
+					t.Fatalf("expected %q in %s IR:\n%s", expected, tt.name, out)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRLowersDynamicArrayOwnerOperationsFor32BitTarget(t *testing.T) {
+	previousBits := target.SizeBits()
+	if err := target.SetSizeBits(target.Bits32); err != nil {
+		t.Fatalf("set 32-bit target: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := target.SetSizeBits(previousBits); err != nil {
+			t.Fatalf("restore target size: %v", err)
+		}
+	})
+
+	tests := []struct {
+		name   string
+		op     symbols.CompilerOp
+		length mir.ValueRef
+		value  mir.ValueRef
+	}{
+		{name: "append", op: symbols.CompilerOpAppend, value: &mir.RefName{Name: "value", Type: "i32"}},
+		{name: "reserve", op: symbols.CompilerOpReserve, length: &mir.RefName{Name: "size", Type: "usize"}},
+		{name: "resize", op: symbols.CompilerOpResize, length: &mir.RefName{Name: "size", Type: "usize"}, value: &mir.RefName{Name: "value", Type: "i32"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mod := dynamicArrayOperationModule(tt.name, tt.op, tt.length, tt.value)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "i386-unknown-linux-gnu", false, "linux")
+			for _, expected := range []string{"@llvm.umul.with.overflow.i32", "icmp ugt i64", "trunc i64"} {
+				if !strings.Contains(out, expected) {
+					t.Fatalf("expected %q in 32-bit %s IR:\n%s", expected, tt.name, out)
+				}
+			}
+			if tt.length != nil && !strings.Contains(out, "zext i32 %size to i64") {
+				t.Fatalf("expected usize normalization in 32-bit %s IR:\n%s", tt.name, out)
+			}
+		})
+	}
+}
+
+func dynamicArrayOperationModule(name string, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
+	params := []ir.Param{{Name: "values", Type: "[]i32"}}
+	if length != nil {
+		params = append(params, ir.Param{Name: "size", Type: "usize"})
+	}
+	if value != nil {
+		params = append(params, ir.Param{Name: "value", Type: "i32"})
+	}
+	return &mir.Module{Name: "test", Funcs: []*mir.Function{{
+		Name: name, Params: params, ReturnType: "[]i32", Blocks: []*mir.Block{{
+			ID: 0,
+			Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.DynamicArrayOp{
+				Op: op, Array: &mir.RefName{Name: "values", Type: "[]i32"}, Length: length, Value: value, Type: "[]i32",
+			}}},
+			Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: "[]i32"}},
+		}},
+	}}}
+}
+
+func TestGenerateLLVMIRReusesCompatibleMallocDeclaration(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: "usize"}}, ReturnType: "rawptr"},
+			{
+				Name:       "values",
+				ReturnType: "[]i32",
+				Blocks: []*mir.Block{{
+					ID:     0,
+					Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: "[]i32"}}},
+					Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+				}},
+			},
+		},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if count := strings.Count(out, "declare i8* @malloc(i64)"); count != 1 {
+		t.Fatalf("expected one malloc declaration, got %d:\n%s", count, out)
+	}
+}
+
+func TestGenerateLLVMIRRejectsIncompatibleMallocDeclaration(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: "i32"}}, ReturnType: "rawptr"},
+			{
+				Name:       "values",
+				ReturnType: "[]i32",
+				Blocks: []*mir.Block{{
+					ID:     0,
+					Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: "[]i32"}}},
+					Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+				}},
+			},
+		},
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux")
+	if out != "" {
+		t.Fatalf("expected incompatible malloc ABI to suppress LLVM output, got:\n%s", out)
+	}
+	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `malloc` must have signature fn(usize) -> rawptr") {
+		t.Fatalf("expected incompatible malloc ABI diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

@@ -983,6 +983,23 @@ func TestPipelineLowersInferredArrayLiteralIndexAssignment(t *testing.T) {
 	}
 }
 
+func TestPipelineLowersDynamicArrayLiteral(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `fn make_values() -> []i32 {
+	return []i32{1, 2, 3};
+}
+
+fn first() -> i32 {
+	let values = make_values();
+	return values[0];
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersSliceViewIndexReadAndWrite(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn read_at(xs: &[]i32, index: usize) -> i32 {

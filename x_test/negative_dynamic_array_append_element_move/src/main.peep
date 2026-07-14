@@ -1,0 +1,13 @@
+struct Point {
+    x: i32
+}
+
+fn consume(_: Point) {
+}
+
+fn main() {
+    let point = .Point{x = 1};
+    let values = append([]Point{}, point);
+    consume(point);
+}
+

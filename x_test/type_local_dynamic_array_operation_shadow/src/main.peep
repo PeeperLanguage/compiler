@@ -1,0 +1,14 @@
+#[extern("malloc")]
+fn unrelated_allocate(size: i32) -> rawptr;
+
+#[extern("free")]
+fn unrelated_release(value: i32);
+
+fn add(left: i32, right: i32) -> i32 {
+    return left + right;
+}
+
+fn main() {
+    let append = add;
+    let _ = append(1, 2);
+}

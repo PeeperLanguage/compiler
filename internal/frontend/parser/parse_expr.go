@@ -375,29 +375,29 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	if start == nil {
 		return nil
 	}
-	if p.match(token.RBRACK) {
-		return p.parseUnsupportedDynamicArrayLiteral(start)
-	}
+	dynamic := p.match(token.RBRACK)
 	inferred := false
 	var length *ast.NumberLit
-	if p.current().Kind == token.IDENT && p.current().Literal == "_" {
-		p.advance()
-		inferred = true
-	} else {
-		if !p.at(token.NUMBER) {
-			p.consume(token.NUMBER, "expected array literal length")
-			p.synchronize(token.RBRACK, token.LBRACE, token.SEMICOLON)
+	if !dynamic {
+		if p.current().Kind == token.IDENT && p.current().Literal == "_" {
+			p.advance()
+			inferred = true
+		} else {
+			if !p.at(token.NUMBER) {
+				p.consume(token.NUMBER, "expected array literal length")
+				p.synchronize(token.RBRACK, token.LBRACE, token.SEMICOLON)
+				return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+			}
+			parsed := p.parseNumberLit("")
+			var ok bool
+			length, ok = parsed.(*ast.NumberLit)
+			if !ok {
+				return parsed
+			}
+		}
+		if p.consume(token.RBRACK, "expected ']' after array literal length") == nil {
 			return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 		}
-		parsed := p.parseNumberLit("")
-		var ok bool
-		length, ok = parsed.(*ast.NumberLit)
-		if !ok {
-			return parsed
-		}
-	}
-	if p.consume(token.RBRACK, "expected ']' after array literal length") == nil {
-		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 	}
 	elem := p.parseTypeExpr()
 	if elem == nil {
@@ -419,6 +419,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	}
 	typ := reg(p, &ast.ArrayType{
 		Len:      length,
+		Dynamic:  dynamic,
 		Elem:     elem,
 		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
 	})
@@ -428,35 +429,6 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 		InferredLen: inferred,
 		Location:    source.NewLocation(p.filePath, start.Start, end.End),
 	})
-}
-
-func (p *Parser) parseUnsupportedDynamicArrayLiteral(start *token.Token) ast.Expr {
-	if start == nil {
-		return nil
-	}
-	elem := p.parseTypeExpr()
-	var values []ast.Expr
-	var end *token.Token
-	if elem != nil && p.at(token.LBRACE) {
-		values, end, _ = parseBracedItemList(p, "expected '{' after dynamic array literal type", "expected '}' after dynamic array literal",
-			func() (ast.Expr, bool) {
-				value := p.parseExpr(precLowest)
-				return value, value != nil
-			})
-	}
-	endPos := start.End
-	if end != nil {
-		endPos = end.End
-	} else if len(values) > 0 {
-		endPos = ast.EndOf(values[len(values)-1])
-	} else if elem != nil {
-		endPos = ast.EndOf(elem)
-	}
-	loc := source.NewLocation(p.filePath, start.Start, endPos)
-	p.diag.Add(diagnostics.NewError("dynamic array literals are not supported yet").
-		WithCode(diagnostics.ErrInvalidExpression).
-		WithPrimaryLabel(loc, "use fixed array literal `[N]T{...}` or `[_]T{...}`"))
-	return reg(p, &ast.BadExpr{Location: loc})
 }
 
 func (p *Parser) parseIdentExpr() ast.Expr {

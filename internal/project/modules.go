@@ -90,6 +90,7 @@ type Module struct {
 
 type SemanticInfo struct {
 	BlockScopes         map[ast.NodeID]*table.Scope
+	ResolvedSymbols     map[ast.NodeID]*symbols.Symbol
 	ExprTypes           map[ast.NodeID]typeinfo.Type
 	ConstValues         map[symbols.SymbolID]constvalue.Value
 	MethodSets          map[string][]*symbols.Symbol
@@ -105,6 +106,7 @@ type SemanticInfo struct {
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
 		BlockScopes:         make(map[ast.NodeID]*table.Scope),
+		ResolvedSymbols:     make(map[ast.NodeID]*symbols.Symbol),
 		ExprTypes:           make(map[ast.NodeID]typeinfo.Type),
 		ConstValues:         make(map[symbols.SymbolID]constvalue.Value),
 		MethodSets:          make(map[string][]*symbols.Symbol),

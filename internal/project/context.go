@@ -237,6 +237,30 @@ func predeclaredScope() *table.Scope {
 	declarePredeclaredConst(scope, "true")
 	declarePredeclaredConst(scope, "false")
 	declarePredeclaredConst(scope, "none")
+
+	elementType := &typeinfo.NamedType{Name: "T"}
+	arrayType := &typeinfo.ArrayType{Dynamic: true, Elem: elementType}
+	sizeType, ok := typeinfo.NumericTypeFromName("usize")
+	if !ok {
+		panic("missing builtin usize type")
+	}
+	operations := []struct {
+		op     symbols.CompilerOp
+		params []typeinfo.Type
+	}{
+		{op: symbols.CompilerOpAppend, params: []typeinfo.Type{arrayType, elementType}},
+		{op: symbols.CompilerOpReserve, params: []typeinfo.Type{arrayType, sizeType}},
+		{op: symbols.CompilerOpResize, params: []typeinfo.Type{arrayType, sizeType, elementType}},
+	}
+	for _, operation := range operations {
+		sym := symbols.New(string(operation.op), symbols.SymbolFunc, nil, nil)
+		sym.CompilerOp = operation.op
+		sym.Type = &typeinfo.FuncType{Params: operation.params, Return: arrayType}
+		sym.IsPub = true
+		if err := scope.Declare(sym); err != nil {
+			panic(err)
+		}
+	}
 	return scope
 }
 

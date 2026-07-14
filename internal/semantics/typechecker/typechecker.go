@@ -168,7 +168,7 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
-	c.checkReservedPrintSymbol()
+	c.checkReservedRuntimeSymbols()
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
 		c.checkDeclAttributes(decl)
 		typeDecl, ok := decl.(ast.TypeDecl)
@@ -216,28 +216,47 @@ func (c *checker) checkModule() {
 	})
 }
 
-func (c *checker) checkReservedPrintSymbol() {
+func (c *checker) checkReservedRuntimeSymbols() {
 	usesPrint := false
+	usesDynamicArrayAllocation := false
+	usesDynamicArrayStorage := false
 	for _, module := range c.ctx.Modules() {
 		if module == nil || module.AST == nil {
 			continue
 		}
 		for _, stmt := range module.AST.Stmts {
 			ast.Inspect(stmt, func(node ast.Node) bool {
-				if _, ok := node.(*ast.PrintExpr); ok {
+				switch value := node.(type) {
+				case *ast.PrintExpr:
 					usesPrint = true
+				case *ast.ArrayLit:
+					array, ok := value.Type.(*ast.ArrayType)
+					if ok && array != nil && array.Dynamic {
+						usesDynamicArrayStorage = true
+						usesDynamicArrayAllocation = usesDynamicArrayAllocation || len(value.Values) > 0
+					}
+				case *ast.CallExpr:
+					callee, ok := value.Callee.(*ast.Ident)
+					if !ok || callee == nil || module.Semantics == nil {
+						break
+					}
+					sym := module.Semantics.ResolvedSymbols[callee.ID()]
+					if sym != nil && sym.CompilerOp != "" {
+						usesDynamicArrayAllocation = true
+						usesDynamicArrayStorage = true
+					}
 				}
-				return !usesPrint
+				return !(usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage)
 			})
-			if usesPrint {
+			if usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage {
 				break
 			}
 		}
-		if usesPrint {
+		if usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage {
 			break
 		}
 	}
-	if !usesPrint {
+	if !usesPrint && !usesDynamicArrayAllocation && !usesDynamicArrayStorage {
 		return
 	}
 	checkFn := func(fn *ast.FnDecl) {
@@ -251,9 +270,40 @@ func (c *checker) checkReservedPrintSymbol() {
 		if externalName, ok := ast.FunctionLinkName(fn, linkedName); ok {
 			linkedName = externalName
 		}
-		if linkedName == "printf" {
+		if usesPrint && linkedName == "printf" {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
 				"linked symbol `printf` is reserved when module uses print", ast.LocOf(fn.Name), "conflicts with print runtime")
+		}
+		if usesDynamicArrayAllocation && linkedName == "malloc" {
+			opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+			sizeType := typeinfo.TypeFromSyntax(&ast.NamedType{Name: "usize"}, opts)
+			paramType := typeinfo.Type(nil)
+			if len(fn.Params) == 1 {
+				paramType = typeinfo.TypeFromSyntax(fn.Params[0].Type, opts)
+			}
+			returnType := typeinfo.TypeFromSyntax(fn.ReturnType, opts)
+			compatible := fn.Receiver == nil && fn.Body == nil && len(fn.Params) == 1 &&
+				typeinfo.SameType(paramType, sizeType) && typeinfo.SameType(returnType, &typeinfo.RawPtrType{})
+			if !compatible {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
+					"linked symbol `malloc` is reserved for dynamic-array allocation", ast.LocOf(fn.Name),
+					"runtime requires fn(usize) -> rawptr")
+			}
+		}
+		if usesDynamicArrayStorage && linkedName == "free" {
+			opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+			paramType := typeinfo.Type(nil)
+			if len(fn.Params) == 1 {
+				paramType = typeinfo.TypeFromSyntax(fn.Params[0].Type, opts)
+			}
+			returnType := typeinfo.TypeFromSyntax(fn.ReturnType, opts)
+			compatible := fn.Receiver == nil && fn.Body == nil && len(fn.Params) == 1 &&
+				typeinfo.SameType(paramType, &typeinfo.RawPtrType{}) && returnType == nil
+			if !compatible {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol,
+					"linked symbol `free` is reserved for dynamic-array storage", ast.LocOf(fn.Name),
+					"runtime requires fn(rawptr) -> void")
+			}
 		}
 	}
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
@@ -1069,6 +1119,11 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		if sym.Initializing || (!sym.Initialized && symbols.RequiresInitialization(sym.Kind)) {
 			return &typeinfo.InvalidType{}
 		}
+		if sym.CompilerOp != "" {
+			c.ctx.Diagnostics.Add(invalidExpressionError(node,
+				fmt.Sprintf("compiler operation `%s` must be called directly", node.Name)))
+			return &typeinfo.InvalidType{}
+		}
 		t, ok := symbols.GetSymbolType(sym)
 		if !ok || t == nil {
 			return &typeinfo.UnknownType{}
@@ -1392,6 +1447,11 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
 		return c.typeSelectorCall(scope, selector, node)
 	}
+	if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
+		if sym := c.module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
+			return c.typeDynamicArrayOwnerCall(scope, node, sym.CompilerOp)
+		}
+	}
 	calleeType := c.typeExpr(scope, node.Callee, expected)
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
 	fnType, _ := calleeType.(*typeinfo.FuncType)
@@ -1404,6 +1464,62 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	c.checkFunctionCall(node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
+}
+
+func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) typeinfo.Type {
+	wantArgs := 2
+	if op == symbols.CompilerOpResize {
+		wantArgs = 3
+	}
+	if len(node.Args) != wantArgs {
+		for _, arg := range node.Args {
+			c.typeExpr(scope, arg, nil)
+		}
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, len(node.Args), wantArgs))
+		return &typeinfo.InvalidType{}
+	}
+
+	ownerType := c.typeExpr(scope, node.Args[0], nil)
+	array, ok := typeinfo.Underlying(ownerType).(*typeinfo.ArrayType)
+	if !ok || array == nil || !array.Dynamic || array.Elem == nil {
+		for _, arg := range node.Args[1:] {
+			c.typeExpr(scope, arg, nil)
+		}
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
+			fmt.Sprintf("`%s` requires a dynamic-array owner `[]T` as first argument", op)))
+		return &typeinfo.InvalidType{}
+	}
+
+	sizeType, ok := typeinfo.NumericTypeFromName("usize")
+	if !ok {
+		panic("missing builtin usize type")
+	}
+	params := []typeinfo.Type{ownerType}
+	switch op {
+	case symbols.CompilerOpAppend:
+		params = append(params, array.Elem)
+	case symbols.CompilerOpReserve:
+		params = append(params, sizeType)
+	case symbols.CompilerOpResize:
+		params = append(params, sizeType, array.Elem)
+	default:
+		panic(fmt.Sprintf("unsupported dynamic-array compiler operation %q", op))
+	}
+
+	fnType := &typeinfo.FuncType{Params: params, Return: ownerType}
+	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
+	argTypes := make([]typeinfo.Type, 0, len(node.Args))
+	argTypes = append(argTypes, ownerType)
+	for i, arg := range node.Args[1:] {
+		argTypes = append(argTypes, c.typeExpr(scope, arg, params[i+1]))
+	}
+	c.checkFunctionCall(node, fnType, argTypes)
+	if op == symbols.CompilerOpResize && !typeinfo.IsImplicitCopyType(array.Elem) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"resize requires implicitly copyable elements; grow Category B arrays with append",
+			ast.LocOf(node), "")
+	}
+	return ownerType
 }
 
 func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) typeinfo.Type {
@@ -1717,6 +1833,17 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 	if !ok || array == nil || array.Elem == nil || typeinfo.IsInvalidOrUnknown(array.Elem) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Type, "invalid array literal type"))
 		return &typeinfo.InvalidType{}
+	}
+	if array.Dynamic {
+		if c.rejectReferenceStorage(array.Elem, node.Type, "dynamic arrays", true) ||
+			c.rejectUnsizedType(array.Elem, node.Type, "dynamic array element") {
+			return &typeinfo.InvalidType{}
+		}
+		if !c.isLowerableType(array.Elem) {
+			c.ctx.Diagnostics.Add(invalidTypeError(node.Type,
+				"dynamic array element type is not lowerable in current compiler stage"))
+			return &typeinfo.InvalidType{}
+		}
 	}
 	if !node.InferredLen {
 		if nodeLen, ok := arrayLiteralLength(node); ok {
