@@ -450,13 +450,31 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Drop{Value: value, Location: ir.ExprLocation(e)})
 		return nil
 	case *ir.AddrOf:
-		if field, ok := e.Expr.(*ir.Field); ok && field != nil && field.ThroughPtr {
-			base := l.lowerExpr(field.Base, out)
+		var projected ValueRef
+		switch place := e.Expr.(type) {
+		case *ir.Field:
+			if place == nil || !place.ThroughPtr {
+				break
+			}
+			base := l.lowerExpr(place.Base, out)
 			pointerType := e.TypeText()
 			if pointerType == "rawptr" {
-				pointerType = "&mut " + field.TypeText()
+				pointerType = "&mut " + place.TypeText()
 			}
-			projected := l.projectField(out, base, field.Index, pointerType, ir.ExprLocation(e))
+			projected = l.projectField(out, base, place.Index, pointerType, ir.ExprLocation(e))
+		case *ir.Index:
+			if place == nil {
+				break
+			}
+			base := l.lowerExpr(place.Base, out)
+			index := l.lowerExpr(place.Index, out)
+			pointerType := e.TypeText()
+			if pointerType == "rawptr" {
+				pointerType = "&mut " + place.TypeText()
+			}
+			projected = l.projectIndex(out, base, index, pointerType, ir.ExprLocation(e))
+		}
+		if projected != nil {
 			if e.TypeText() != "rawptr" {
 				return projected
 			}

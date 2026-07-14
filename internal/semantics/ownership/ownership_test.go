@@ -110,6 +110,21 @@ fn bad(mut holder: Holder) {
 	}
 }
 
+func TestLiveOwnerIndexedOverwritePlansDrop(t *testing.T) {
+	result := checkOwnershipSource(t, `fn make() -> *i32;
+fn replace(mut values: [1]*i32) {
+	values[0] = make();
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected overwrite diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	assign := fn.Body.Stmts[0].(*ast.AssignStmt)
+	if _, ok := result.module.Semantics.DropBeforeAssign[assign.ID()]; !ok {
+		t.Fatalf("missing indexed drop-before-assignment plan")
+	}
+}
+
 func TestFieldAssignmentRejectsRHSMoveOfTargetBase(t *testing.T) {
 	result := checkOwnershipSource(t, `struct Box { ptr: *i32 }
 fn replace(_: Box) -> *i32;
@@ -310,8 +325,8 @@ func TestMoveOnlyIndexedElementCopyRejected(t *testing.T) {
 	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
 		t.Fatalf("expected indexed move-only copy diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(diag.EmitAllToString(), "indexed moves are tracked") {
-		t.Fatalf("expected indexed-limitation, got:\n%s", diag.EmitAllToString())
+	if !strings.Contains(diag.EmitAllToString(), "cannot be used by value") {
+		t.Fatalf("expected permanent indexed move rejection, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -322,8 +337,8 @@ func TestMoveOnlySliceViewElementCopyRejected(t *testing.T) {
 	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
 		t.Fatalf("expected indexed move-only copy diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(diag.EmitAllToString(), "indexed moves are tracked") {
-		t.Fatalf("expected indexed-move limitation, got:\n%s", diag.EmitAllToString())
+	if !strings.Contains(diag.EmitAllToString(), "cannot be used by value") {
+		t.Fatalf("expected permanent indexed move rejection, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -659,6 +674,16 @@ func TestReturnAddressOfLocalRejected(t *testing.T) {
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
 		t.Fatalf("expected pointer escape diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReturnAddressOfLocalIndexedElementRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn bad() -> rawptr {
+	let values = [_]i32{1};
+	return @values[0];
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
+		t.Fatalf("expected indexed pointer escape diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

@@ -367,6 +367,20 @@ fn fill(xs: &mut []i32, value: i32)
 `&[]T` can read elements but cannot mutate them. `&mut []T` can mutate elements
 but cannot resize the dynamic array that supplied the view.
 
+Indexed value access follows element copy category:
+
+```peep
+let number = numbers[index]       // Copy element: copies
+let item = items[index]           // error when Item is move-only
+let shared = &items[index]        // shared borrow
+let exclusive = &mut items[index] // exclusive borrow
+items[index] = replacement        // drops old element, moves replacement
+let address = @items[index]       // raw address; does not extract element
+```
+
+Move-only elements cannot be moved out through indexing. Borrow element or
+replace slot instead. No indexed partial-move state exists.
+
 These reference forms are the language's slice views. There is no separate
 slice type: borrowing dynamic-array elements produces `&[]T` or `&mut []T`,
 and neither form owns or resizes the source array.

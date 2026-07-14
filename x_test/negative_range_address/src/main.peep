@@ -1,0 +1,5 @@
+fn Keep(_: rawptr) {}
+
+fn Invalid(values: []i32) {
+    Keep(@values[..]);
+}

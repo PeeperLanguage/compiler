@@ -1,0 +1,17 @@
+struct Token {
+    value: i32
+}
+
+fn Consume(_: Token) {}
+
+fn FromOwner(values: []Token) -> Token {
+    return values[0];
+}
+
+fn FromView(values: &[]Token) -> Token {
+    return values[0];
+}
+
+fn ConsumeAt(values: []Token) {
+    Consume(values[0]);
+}
