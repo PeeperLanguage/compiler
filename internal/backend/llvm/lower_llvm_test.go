@@ -60,6 +60,68 @@ func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersBooleanCallArguments(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{Name: "accept", Params: []ir.Param{{Name: "value", Type: "bool"}}, ReturnType: "void"},
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Call{
+							Callee: &mir.RefName{Name: "accept", Type: "fn(bool) -> void"},
+							Args:   []mir.ValueRef{&mir.RefConst{Value: "true", Type: "bool"}},
+							Type:   "void",
+						},
+						&mir.Call{
+							Callee: &mir.RefName{Name: "accept", Type: "fn(bool) -> void"},
+							Args:   []mir.ValueRef{&mir.RefConst{Value: "false", Type: "bool"}},
+							Type:   "void",
+						},
+					},
+					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				}},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	for _, call := range []string{"call void @accept(i1 true)", "call void @accept(i1 false)"} {
+		if !strings.Contains(irText, call) {
+			t.Fatalf("expected %q, got:\n%s", call, irText)
+		}
+	}
+}
+
+func TestGenerateLLVMIRRejectsNumericBooleanConstants(t *testing.T) {
+	for _, value := range []string{"0", "1"} {
+		t.Run(value, func(t *testing.T) {
+			diag := diagnostics.NewDiagnosticBag()
+			mod := &mir.Module{
+				Name: "test",
+				Funcs: []*mir.Function{{
+					Name:       "invalid_bool",
+					ReturnType: "bool",
+					Blocks: []*mir.Block{{
+						ID:   0,
+						Term: &mir.Ret{Value: &mir.RefConst{Value: value, Type: "bool"}},
+					}},
+				}},
+			}
+
+			if irText := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); irText != "" {
+				t.Fatalf("numeric boolean constant must suppress LLVM output, got:\n%s", irText)
+			}
+			if !diag.HasErrors() {
+				t.Fatal("numeric boolean constant must emit diagnostic")
+			}
+		})
+	}
+}
+
 func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 	tests := []struct {
 		name        string

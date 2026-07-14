@@ -1215,11 +1215,11 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 	return b.withLocation(mir.ValueRefLocation(ref), func() string {
 		switch v := ref.(type) {
 		case *mir.RefConst:
-			if v.Type == "bool" {
-				if v.Value == "0" {
-					return "false"
+			if v.Type == "bool" && v.Value != "false" && v.Value != "true" {
+				if b != nil && b.emitter != nil {
+					b.emitter.markInvalid("invalid boolean constant: " + v.Value)
 				}
-				return "true"
+				return "false"
 			}
 			if v.Type == "f32" || v.Type == "f64" {
 				return llvmFloatConst(v.Value, v.Type)
