@@ -168,7 +168,6 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
-	c.checkReservedRuntimeSymbols()
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
 		c.checkDeclAttributes(decl)
 		typeDecl, ok := decl.(ast.TypeDecl)
@@ -214,44 +213,44 @@ func (c *checker) checkModule() {
 		}
 		return true
 	})
+	c.checkReservedRuntimeSymbols()
 }
 
 func (c *checker) checkReservedRuntimeSymbols() {
 	usesPrint := false
 	usesDynamicArrayAllocation := false
 	usesDynamicArrayStorage := false
-	for _, module := range c.ctx.Modules() {
-		if module == nil || module.AST == nil {
-			continue
-		}
-		for _, stmt := range module.AST.Stmts {
-			ast.Inspect(stmt, func(node ast.Node) bool {
-				switch value := node.(type) {
-				case *ast.PrintExpr:
-					usesPrint = true
-				case *ast.ArrayLit:
-					array, ok := value.Type.(*ast.ArrayType)
-					if ok && array != nil && array.Dynamic {
-						usesDynamicArrayStorage = true
-						usesDynamicArrayAllocation = usesDynamicArrayAllocation || len(value.Values) > 0
-					}
-				case *ast.CallExpr:
-					callee, ok := value.Callee.(*ast.Ident)
-					if !ok || callee == nil || module.Semantics == nil {
-						break
-					}
-					sym := module.Semantics.ResolvedSymbols[callee.ID()]
-					if sym != nil && sym.CompilerOp != "" {
-						usesDynamicArrayAllocation = true
-						usesDynamicArrayStorage = true
-					}
+	for _, stmt := range c.module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.PrintExpr:
+				usesPrint = true
+			case *ast.ArrayLit:
+				array, ok := value.Type.(*ast.ArrayType)
+				if ok && array != nil && array.Dynamic {
+					usesDynamicArrayStorage = true
+					usesDynamicArrayAllocation = usesDynamicArrayAllocation || len(value.Values) > 0
 				}
-				return !(usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage)
-			})
-			if usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage {
-				break
+			case *ast.CallExpr:
+				callee, ok := value.Callee.(*ast.Ident)
+				if !ok || callee == nil || c.module.Semantics == nil {
+					break
+				}
+				sym := c.module.Semantics.ResolvedSymbols[callee.ID()]
+				if sym == nil || sym.CompilerOp == "" {
+					break
+				}
+				if sym.CompilerOp == symbols.CompilerOpShrink {
+					ownerType := c.module.Semantics.ExprTypes[value.ID()]
+					array, ok := typeinfo.Underlying(ownerType).(*typeinfo.ArrayType)
+					usesDynamicArrayStorage = usesDynamicArrayStorage || !ok || array == nil || typeinfo.NeedsDrop(array.Elem)
+					break
+				}
+				usesDynamicArrayAllocation = true
+				usesDynamicArrayStorage = true
 			}
-		}
+			return !(usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage)
+		})
 		if usesPrint && usesDynamicArrayAllocation && usesDynamicArrayStorage {
 			break
 		}
@@ -259,7 +258,7 @@ func (c *checker) checkReservedRuntimeSymbols() {
 	if !usesPrint && !usesDynamicArrayAllocation && !usesDynamicArrayStorage {
 		return
 	}
-	checkFn := func(fn *ast.FnDecl) {
+	checkFn := func(module *project.Module, fn *ast.FnDecl) {
 		if fn == nil || fn.Name == nil {
 			return
 		}
@@ -275,7 +274,7 @@ func (c *checker) checkReservedRuntimeSymbols() {
 				"linked symbol `printf` is reserved when module uses print", ast.LocOf(fn.Name), "conflicts with print runtime")
 		}
 		if usesDynamicArrayAllocation && linkedName == "malloc" {
-			opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+			opts := project.TypeSyntaxOptions(c.ctx, module, nil, false)
 			sizeType := typeinfo.TypeFromSyntax(&ast.NamedType{Name: "usize"}, opts)
 			paramType := typeinfo.Type(nil)
 			if len(fn.Params) == 1 {
@@ -291,7 +290,7 @@ func (c *checker) checkReservedRuntimeSymbols() {
 			}
 		}
 		if usesDynamicArrayStorage && linkedName == "free" {
-			opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+			opts := project.TypeSyntaxOptions(c.ctx, module, nil, false)
 			paramType := typeinfo.Type(nil)
 			if len(fn.Params) == 1 {
 				paramType = typeinfo.TypeFromSyntax(fn.Params[0].Type, opts)
@@ -306,12 +305,17 @@ func (c *checker) checkReservedRuntimeSymbols() {
 			}
 		}
 	}
-	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
-		if node, ok := decl.(*ast.FnDecl); ok {
-			checkFn(node)
+	for _, module := range c.ctx.Modules() {
+		if module == nil || module.AST == nil {
+			continue
 		}
-		return true
-	})
+		ast.ForEachDecl(module.AST, func(decl ast.Decl) bool {
+			if node, ok := decl.(*ast.FnDecl); ok {
+				checkFn(module, node)
+			}
+			return true
+		})
+	}
 }
 
 func (c *checker) checkDeclAttributes(decl ast.Decl) {
@@ -1498,7 +1502,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 	switch op {
 	case symbols.CompilerOpAppend:
 		params = append(params, array.Elem)
-	case symbols.CompilerOpReserve:
+	case symbols.CompilerOpReserve, symbols.CompilerOpShrink:
 		params = append(params, sizeType)
 	case symbols.CompilerOpResize:
 		params = append(params, sizeType, array.Elem)
@@ -1579,11 +1583,6 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 	array := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
 	value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
 	if !ok {
-		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("fixed-array index must be constant until runtime bounds policy is implemented").
-				WithCode(diagnostics.ErrArrayIndexNotConst).
-				WithPrimaryLabel(ast.LocOf(node.Index), "index is not a compile-time constant"),
-		)
 		return elem
 	}
 	indexConst, ok := value.(*constvalue.IntConst)

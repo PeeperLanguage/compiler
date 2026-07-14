@@ -21,6 +21,7 @@ const (
 	CompilerOpAppend  CompilerOp = "append"
 	CompilerOpReserve CompilerOp = "reserve"
 	CompilerOpResize  CompilerOp = "resize"
+	CompilerOpShrink  CompilerOp = "shrink"
 )
 
 const (

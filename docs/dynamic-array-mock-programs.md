@@ -52,6 +52,7 @@ fn build() {
     values = append(values, 3)
     values = reserve(values, 16)
     values = resize(values, 8, 0)
+    values = shrink(values, 4)
 }
 
 fn compose() {
@@ -90,8 +91,16 @@ require an addressable binding and lose this composition.
 - growing reserves space and initializes new slots from `fill`
 - Category B arrays grow through repeated `append`, which supplies one distinct
   value per new slot
-- Category B shrinking needs a future dedicated operation that does not require
-  a reusable fill value
+- Category B arrays cannot use this operation because one reusable fill value
+  cannot represent repeated moves
+
+`shrink(array, length)`:
+
+- consumes array owner and accepts every element type
+- returns array unchanged when `length` is not smaller than current length
+- otherwise destroys removed elements in reverse index order
+- preserves data pointer and capacity and never allocates
+- supplies Category B shrinking without pretending a fill value can be reused
 
 These are compiler-owned polymorphic operations, not user methods and not
 generic core-library functions. Current compiler parses generic declarations
@@ -175,3 +184,19 @@ storage.
 General Category B `resize(..., fill)` is rejected because repeating one moved
 value would duplicate ownership. Future closures or iterator-based extension
 may provide one freshly constructed value per slot.
+
+## Runtime Fixed-Array Indexes
+
+Fixed arrays accept integral runtime indexes through the same checked element
+projection used by dynamic arrays and slice views:
+
+```peep
+fn read(values: [4]i32, index: usize) -> i32 {
+    return values[index]
+}
+```
+
+Known constant out-of-bounds indexes remain compile errors. Runtime
+out-of-bounds indexes trap before pointer projection. Reads, writes, references,
+and raw addresses continue to use `ProjectIndex`; runtime indexing does not add
+a separate place or partial-move model.

@@ -976,13 +976,13 @@ fn first(xs: [4]i32) -> i32 {
 	}
 }
 
-func TestArrayIndexExprRejectsDynamicIndexUntilBoundsPolicy(t *testing.T) {
+func TestArrayIndexExprAcceptsRuntimeIndex(t *testing.T) {
 	src := `fn first(xs: [4]i32, i: i32) -> i32 {
 	return xs[i];
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
-		t.Fatalf("expected const-index diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1198,9 +1198,6 @@ func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
 	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
 		t.Fatalf("expected invalid index diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
-		t.Fatalf("invalid index reached constant evaluation:\n%s", diag.EmitAllToString())
-	}
 	if hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
 		t.Fatalf("invalid index reached ownership analysis:\n%s", diag.EmitAllToString())
 	}
@@ -1300,6 +1297,7 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	let appended = append([]i32{}, 1);
 	let reserved = reserve(appended, 8);
 	let resized = resize(reserved, 4, 0);
+	let shrunk = shrink(resized, 2);
 }`
 	module, diag := checkTypeModule(t, src)
 	if diag.HasErrors() {
@@ -1311,6 +1309,17 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 		if got := typeinfo.TypeText(module.Semantics.ExprTypes[binding.Value.ID()]); got != "[]i32" {
 			t.Fatalf("%s result type = %s, want []i32", binding.Name.Name, got)
 		}
+	}
+}
+
+func TestDynamicArrayShrinkAcceptsMoveOnlyElements(t *testing.T) {
+	diag := checkTypeSource(t, `struct Point { x: i32 }
+fn main() {
+	let points = []Point{.Point{x = 1}};
+	let shrunk = shrink(points, 0);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected move-only shrink diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1344,6 +1353,16 @@ fn main() -> i32 {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected shadowing diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayShrinkRequiresOwner(t *testing.T) {
+	diag := checkTypeSource(t, `fn shorten(values: &[]i32) {
+	shrink(values, 1);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
+		!strings.Contains(diag.EmitAllToString(), "requires a dynamic-array owner") {
+		t.Fatalf("expected shrink owner diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1779,6 +1798,45 @@ fn main() {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected compatible malloc diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayShrinkDoesNotReserveMalloc(t *testing.T) {
+	diag := checkTypeSource(t, `#[extern("malloc")]
+fn unrelated_allocate(size: i32) -> rawptr;
+
+fn shorten(values: []i32) -> []i32 {
+	return shrink(values, 0);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("shrink must not reserve malloc:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestScalarDynamicArrayShrinkDoesNotReserveFree(t *testing.T) {
+	diag := checkTypeSource(t, `#[extern("free")]
+fn unrelated_release(value: i32);
+
+fn shorten(values: []i32) -> []i32 {
+	return shrink(values, 0);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("scalar shrink pass-through must not reserve free:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestOwnerDynamicArrayShrinkReservesFree(t *testing.T) {
+	diag := checkTypeSource(t, `#[extern("free")]
+fn unrelated_release(value: i32);
+
+struct Resource { value: *i32 }
+
+fn shorten(values: []Resource) -> []Resource {
+	return shrink(values, 0);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrRedeclaredSymbol) ||
+		!strings.Contains(diag.EmitAllToString(), "linked symbol `free` is reserved") {
+		t.Fatalf("owner-bearing shrink must reserve free:\n%s", diag.EmitAllToString())
 	}
 }
 

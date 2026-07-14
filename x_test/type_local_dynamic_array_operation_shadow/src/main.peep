@@ -8,7 +8,13 @@ fn add(left: i32, right: i32) -> i32 {
     return left + right;
 }
 
+fn subtract(left: i32, right: i32) -> i32 {
+    return left - right;
+}
+
 fn main() {
     let append = add;
     let _ = append(1, 2);
+    let shrink = subtract;
+    let _ = shrink(4, 2);
 }

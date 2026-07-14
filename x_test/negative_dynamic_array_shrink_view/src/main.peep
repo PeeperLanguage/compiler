@@ -1,0 +1,4 @@
+fn main() {
+    let mut values = []i32{1, 2};
+    shrink(values[..], 1);
+}

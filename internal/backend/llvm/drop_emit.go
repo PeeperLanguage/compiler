@@ -151,36 +151,41 @@ func emitDynamicArrayDrop(b *llvmBuilder, value, typeText, elem string) {
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, value))
 	length := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, value))
-	if typeTextNeedsDrop(elem) {
-		id := b.nextID
-		b.nextID++
-		entryLabel := b.currentLabel
-		loopLabel := fmt.Sprintf("drop_array_loop_%d", id)
-		bodyLabel := fmt.Sprintf("drop_array_body_%d", id)
-		continueLabel := fmt.Sprintf("drop_array_continue_%d", id)
-		doneLabel := fmt.Sprintf("drop_array_done_%d", id)
-		b.line(fmt.Sprintf("br label %%%s", loopLabel))
-		b.namedLabel(loopLabel)
-		remaining := b.nextReg()
-		index := b.nextReg()
-		b.line(fmt.Sprintf("%s = phi i64 [ %s, %%%s ], [ %s, %%%s ]", remaining, length, entryLabel, index, continueLabel))
-		more := b.nextReg()
-		b.line(fmt.Sprintf("%s = icmp ugt i64 %s, 0", more, remaining))
-		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", more, bodyLabel, doneLabel))
-		b.namedLabel(bodyLabel)
-		b.line(fmt.Sprintf("%s = sub i64 %s, 1", index, remaining))
-		elemType := b.emitter.llvmType(elem)
-		ptr := b.nextReg()
-		b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, i64 %s", ptr, elemType, elemType, data, index))
-		item := b.nextReg()
-		b.line(fmt.Sprintf("%s = load %s, %s* %s", item, elemType, elemType, ptr))
-		emitDropValue(b, item, elem)
-		b.line(fmt.Sprintf("br label %%%s", continueLabel))
-		b.namedLabel(continueLabel)
-		b.line(fmt.Sprintf("br label %%%s", loopLabel))
-		b.namedLabel(doneLabel)
-	}
+	emitDynamicArrayElementRangeDrop(b, data, elem, "0", length)
 	emitFreeCall(b, data, "rawptr")
+}
+
+func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data, elem, start, end string) {
+	if !typeTextNeedsDrop(elem) {
+		return
+	}
+	id := b.nextID
+	b.nextID++
+	entryLabel := b.currentLabel
+	loopLabel := fmt.Sprintf("drop_array_loop_%d", id)
+	bodyLabel := fmt.Sprintf("drop_array_body_%d", id)
+	continueLabel := fmt.Sprintf("drop_array_continue_%d", id)
+	doneLabel := fmt.Sprintf("drop_array_done_%d", id)
+	b.line(fmt.Sprintf("br label %%%s", loopLabel))
+	b.namedLabel(loopLabel)
+	remaining := b.nextReg()
+	index := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi i64 [ %s, %%%s ], [ %s, %%%s ]", remaining, end, entryLabel, index, continueLabel))
+	more := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ugt i64 %s, %s", more, remaining, start))
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", more, bodyLabel, doneLabel))
+	b.namedLabel(bodyLabel)
+	b.line(fmt.Sprintf("%s = sub i64 %s, 1", index, remaining))
+	elemType := b.emitter.llvmType(elem)
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, i64 %s", ptr, elemType, elemType, data, index))
+	item := b.nextReg()
+	b.line(fmt.Sprintf("%s = load %s, %s* %s", item, elemType, elemType, ptr))
+	emitDropValue(b, item, elem)
+	b.line(fmt.Sprintf("br label %%%s", continueLabel))
+	b.namedLabel(continueLabel)
+	b.line(fmt.Sprintf("br label %%%s", loopLabel))
+	b.namedLabel(doneLabel)
 }
 
 func emitFreeCall(b *llvmBuilder, value, typeText string) {

@@ -633,7 +633,7 @@ func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
 }
 
 func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
-	for _, op := range []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize} {
+	for _, op := range []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize, symbols.CompilerOpShrink} {
 		t.Run(string(op), func(t *testing.T) {
 			expr := &ir.DynamicArrayOp{
 				Op:     op,
@@ -645,7 +645,7 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 			if op == symbols.CompilerOpAppend {
 				expr.Length = nil
 			}
-			if op == symbols.CompilerOpReserve {
+			if op == symbols.CompilerOpReserve || op == symbols.CompilerOpShrink {
 				expr.Value = nil
 			}
 			mod := &hir.Module{

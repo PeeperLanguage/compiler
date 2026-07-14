@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/semantics/symbols"
 )
 
 // GenerateLLVMIR is backend entrypoint.
@@ -347,9 +348,14 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 					if alloc, ok := assign.Value.(*mir.DynamicArrayAlloc); ok && alloc != nil && alloc.Length > 0 {
 						allocUsed = true
 					}
-					if _, ok := assign.Value.(*mir.DynamicArrayOp); ok {
-						allocUsed = true
-						dropUsed = true
+					if operation, ok := assign.Value.(*mir.DynamicArrayOp); ok {
+						if operation.Op == symbols.CompilerOpShrink {
+							elem := strings.TrimSpace(strings.TrimPrefix(operation.Type, "[]"))
+							dropUsed = dropUsed || typeTextNeedsDrop(elem)
+						} else {
+							allocUsed = true
+							dropUsed = true
+						}
 					}
 					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil && typeTextNeedsDrop(makeVal.DataType) {
 						dropUsed = true

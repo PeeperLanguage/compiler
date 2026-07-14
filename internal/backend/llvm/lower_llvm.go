@@ -108,7 +108,7 @@ func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, length strin
 	indexTypeText := mirRefType(indexRef)
 	_, indexBits, ok := mirIntegerInfo(indexTypeText)
 	if !ok {
-		b.emitter.markInvalid("dynamic array index lowering requires integral index")
+		b.emitter.markInvalid("indexed access lowering requires integral index")
 		return "", "", "", "", false
 	}
 	compareIndex = emitRef(b, indexRef)
@@ -126,6 +126,26 @@ func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, length strin
 		b.line(fmt.Sprintf("%s = trunc %s %s to i64", indexI64, compareType, compareIndex))
 	}
 	return compareIndex, compareLength, compareType, indexI64, true
+}
+
+func emitBoundsCheckedIndex(b *llvmBuilder, indexRef mir.ValueRef, length string) (string, bool) {
+	compareIndex, compareLength, compareType, index, ok := normalizeIndexForLength(b, indexRef, length)
+	if !ok {
+		return "", false
+	}
+	outOfBounds := b.nextReg()
+	// Unsigned comparison also rejects negative signed indexes after sign extension.
+	b.line(fmt.Sprintf("%s = icmp uge %s %s, %s", outOfBounds, compareType, compareIndex, compareLength))
+	boundsID := b.nextID
+	b.nextID++
+	failLabel := fmt.Sprintf("bounds_fail_%d", boundsID)
+	okLabel := fmt.Sprintf("bounds_ok_%d", boundsID)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", outOfBounds, failLabel, okLabel))
+	b.namedLabel(failLabel)
+	b.line("call void @llvm.trap()")
+	b.line("unreachable")
+	b.namedLabel(okLabel)
+	return index, true
 }
 
 func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
@@ -404,10 +424,46 @@ func emitDynamicArrayOp(b *llvmBuilder, op *mir.DynamicArrayOp) string {
 		return emitDynamicArrayAppend(b, op, array, elemTypeText)
 	case symbols.CompilerOpResize:
 		return emitDynamicArrayResize(b, op, array, elemTypeText)
+	case symbols.CompilerOpShrink:
+		return emitDynamicArrayShrink(b, op, array, elemTypeText)
 	default:
 		b.emitter.markInvalid("unknown dynamic array operation " + string(op.Op))
 		return array
 	}
+}
+
+func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemTypeText string) string {
+	if op.Length == nil {
+		b.emitter.markInvalid("shrink requires a length")
+		return array
+	}
+	arrayType := b.emitter.llvmType(op.Type)
+	data := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, array))
+	oldLength := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", oldLength, arrayType, array))
+	capacity := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", capacity, arrayType, array))
+	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: "u64"})
+	shorter := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ult i64 %s, %s", shorter, newLength, oldLength))
+	id := b.nextID
+	b.nextID++
+	keepLabel := fmt.Sprintf("array_shrink_keep_%d", id)
+	shrinkLabel := fmt.Sprintf("array_shrink_drop_%d", id)
+	doneLabel := fmt.Sprintf("array_shrink_done_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", shorter, shrinkLabel, keepLabel))
+	b.namedLabel(keepLabel)
+	b.line(fmt.Sprintf("br label %%%s", doneLabel))
+	b.namedLabel(shrinkLabel)
+	emitDynamicArrayElementRangeDrop(b, data, elemTypeText, newLength, oldLength)
+	shrunk := emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, capacity)
+	shrinkDoneLabel := b.currentLabel
+	b.line(fmt.Sprintf("br label %%%s", doneLabel))
+	b.namedLabel(doneLabel)
+	result := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi %s [ %s, %%%s ], [ %s, %%%s ]", result, arrayType, array, keepLabel, shrunk, shrinkDoneLabel))
+	return result
 }
 
 func emitDynamicArrayAppend(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemTypeText string) string {
@@ -548,43 +604,40 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, base))
 		length := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, base))
-		compareIndex, compareLength, compareType, _, ok := normalizeIndexForLength(b, indexRef, length)
+		index, ok := emitBoundsCheckedIndex(b, indexRef, length)
 		if !ok {
 			return ""
 		}
-		outOfBounds := b.nextReg()
-		// Unsigned comparison also rejects negative signed indexes after sign extension.
-		b.line(fmt.Sprintf("%s = icmp uge %s %s, %s", outOfBounds, compareType, compareIndex, compareLength))
-		boundsID := b.nextID
-		b.nextID++
-		failLabel := fmt.Sprintf("bounds_fail_%d", boundsID)
-		okLabel := fmt.Sprintf("bounds_ok_%d", boundsID)
-		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", outOfBounds, failLabel, okLabel))
-		b.namedLabel(failLabel)
-		b.line("call void @llvm.trap()")
-		b.line("unreachable")
-		b.namedLabel(okLabel)
 		ptr := b.nextReg()
-		b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, %s %s", ptr, elemType, elemType, data, compareType, compareIndex))
+		b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, i64 %s", ptr, elemType, elemType, data, index))
 		return ptr
-	}
-	if _, ok := indexRef.(*mir.RefConst); !ok {
-		b.emitter.markInvalid("dynamic array index lowering requires bounds policy")
-		return ""
 	}
 	lengthText, _, ok := ir.ArrayTypeParts(targetType)
 	if !ok {
 		return ""
 	}
 	length, lengthErr := strconv.Atoi(lengthText)
-	indexConst := indexRef.(*mir.RefConst)
-	indexValue, indexErr := strconv.Atoi(indexConst.Value)
-	if lengthErr != nil || indexErr != nil || indexValue < 0 || indexValue >= length {
-		b.emitter.invalid = true
-		if b.emitter.diag != nil {
-			b.emitter.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, lengthText, nil))
+	index := ""
+	indexType := "i64"
+	if indexConst, constant := indexRef.(*mir.RefConst); constant {
+		indexValue, indexErr := strconv.Atoi(indexConst.Value)
+		if lengthErr != nil || indexErr != nil || indexValue < 0 || indexValue >= length {
+			b.emitter.invalid = true
+			if b.emitter.diag != nil {
+				b.emitter.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, lengthText, nil))
+			}
+			return ""
 		}
-		return ""
+		index = emitRef(b, indexRef)
+		indexType = b.emitter.llvmType(mirRefType(indexRef))
+	} else {
+		if lengthErr != nil {
+			return ""
+		}
+		index, ok = emitBoundsCheckedIndex(b, indexRef, lengthText)
+		if !ok {
+			return ""
+		}
 	}
 	arrayType, ok := llvmTypeName(targetType)
 	if !ok {
@@ -602,8 +655,6 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		b.line(fmt.Sprintf("%s = alloca %s", basePtr, arrayType))
 		b.line(fmt.Sprintf("store %s %s, %s* %s", arrayType, baseValue, arrayType, basePtr))
 	}
-	index := emitRef(b, indexRef)
-	indexType := b.emitter.llvmType(mirRefType(indexRef))
 	ptr := b.nextReg()
 	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s* %s, i32 0, %s %s", ptr, arrayType, arrayType, basePtr, indexType, index))
 	return ptr

@@ -69,9 +69,10 @@ func TestGenerateHIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 	let appended = append([]i32{}, 1);
 	let reserved = reserve(appended, 8);
 	let resized = resize(reserved, 4, 0);
+	let shrunk = shrink(resized, 2);
 }`
 	out := generateTestHIR(t, "hir_dynamic_array_ops_test"+peeper.SourceExt, "hir_dynamic_array_ops_test", src)
-	want := []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize}
+	want := []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize, symbols.CompilerOpShrink}
 	if len(out.Funcs[0].Body.Stmts) < len(want) {
 		t.Fatalf("operation statements = %d, want at least %d", len(out.Funcs[0].Body.Stmts), len(want))
 	}

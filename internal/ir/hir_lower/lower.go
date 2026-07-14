@@ -875,7 +875,7 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 	switch op {
 	case symbols.CompilerOpAppend:
 		out.Value = args[1]
-	case symbols.CompilerOpReserve:
+	case symbols.CompilerOpReserve, symbols.CompilerOpShrink:
 		out.Length = args[1]
 	case symbols.CompilerOpResize:
 		if len(args) != 3 {

@@ -528,9 +528,21 @@ func TestDynamicArrayOwnerOperationsConsumeAndReinitializeOwner(t *testing.T) {
 	values = append(values, 1);
 	values = reserve(values, 8);
 	values = resize(values, 4, 0);
+	values = shrink(values, 2);
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayShrinkConsumesOwner(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn main() {
+	let values = []i32{1};
+	let shortened = shrink(values, 0);
+	print(values[0]);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected moved-owner diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

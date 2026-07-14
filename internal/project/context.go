@@ -251,6 +251,7 @@ func predeclaredScope() *table.Scope {
 		{op: symbols.CompilerOpAppend, params: []typeinfo.Type{arrayType, elementType}},
 		{op: symbols.CompilerOpReserve, params: []typeinfo.Type{arrayType, sizeType}},
 		{op: symbols.CompilerOpResize, params: []typeinfo.Type{arrayType, sizeType, elementType}},
+		{op: symbols.CompilerOpShrink, params: []typeinfo.Type{arrayType, sizeType}},
 	}
 	for _, operation := range operations {
 		sym := symbols.New(string(operation.op), symbols.SymbolFunc, nil, nil)
