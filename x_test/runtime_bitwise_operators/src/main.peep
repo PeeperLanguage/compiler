@@ -1,0 +1,70 @@
+type Flags = u8;
+
+const Mask: Flags = ~0;
+const WrappedShift: Flags = 1 << (255 + 1);
+
+fn bit_and(left: u8, right: u8) -> u8 {
+    return left & right;
+}
+
+fn bit_or(left: u8, right: u8) -> u8 {
+    return left | right;
+}
+
+fn bit_xor(left: u8, right: u8) -> u8 {
+    return left ^ right;
+}
+
+fn bit_not(value: u8) -> u8 {
+    return ~value;
+}
+
+fn shift_left(value: i8, count: i8) -> i8 {
+    return value << count;
+}
+
+fn shift_right_signed(value: i8, count: i8) -> i8 {
+    return value >> count;
+}
+
+fn shift_right_unsigned(value: u8, count: u8) -> u8 {
+    return value >> count;
+}
+
+fn precedence(a: u8, b: u8, c: u8, d: u8) -> u8 {
+    return a | b ^ c & d;
+}
+
+fn main() -> i32 {
+    if bit_and(12u8, 10u8) != 8u8 {
+        return 1;
+    }
+    if bit_or(12u8, 10u8) != 14u8 {
+        return 2;
+    }
+    if bit_xor(12u8, 10u8) != 6u8 {
+        return 3;
+    }
+    if bit_not(0u8) != 255u8 {
+        return 4;
+    }
+    if shift_left(127i8, 1i8) != -2i8 {
+        return 5;
+    }
+    if shift_right_signed(-8i8, 2i8) != -2i8 {
+        return 6;
+    }
+    if shift_right_unsigned(128u8, 2u8) != 32u8 {
+        return 7;
+    }
+    if precedence(1u8, 2u8, 3u8, 1u8) != 3u8 {
+        return 8;
+    }
+    if Mask != 255u8 {
+        return 9;
+    }
+    if WrappedShift != 1u8 {
+        return 10;
+    }
+    return 0;
+}

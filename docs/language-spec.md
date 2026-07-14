@@ -67,6 +67,36 @@ reserved for the future formatting API. Concrete references and heap owners
 that satisfy an interface remain the deliberate exception and convert to the
 matching interface carrier implicitly.
 
+## Operators And Precedence
+
+Integer and `byte` values support bitwise AND (`&`), OR (`|`), XOR (`^`),
+complement (`~`), left shift (`<<`), and right shift (`>>`). Floats, booleans,
+raw pointers, and composites do not support bitwise operators. Binary operands
+use normal common-numeric-type conversion and produce that integral type.
+
+Bitwise results use finite-width two-complement representation. Right shift is
+arithmetic for signed integers and logical for unsigned integers and `byte`.
+Shift count must be non-negative and smaller than operand width. Invalid
+constant counts are compile errors; invalid runtime counts trap before shift.
+
+Expression precedence, highest to lowest, is:
+
+1. call, index, and selector
+2. prefix `+`, `-`, `!`, `~`, `&`, `&mut`, and `@`
+3. cast `as`
+4. multiplicative `*`, `/`, `%`
+5. additive `+`, `-`
+6. shift `<<`, `>>`
+7. relational `<`, `<=`, `>`, `>=`
+8. equality `==`, `!=`
+9. bitwise AND `&`
+10. bitwise XOR `^`
+11. bitwise OR `|`
+12. logical AND `&&`
+13. logical OR `||`
+
+Compound bitwise assignments are not part of current operator surface.
+
 ## Basic Output
 
 `print(expr)` writes one primitive scalar to standard output without appending

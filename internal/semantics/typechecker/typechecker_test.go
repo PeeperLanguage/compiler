@@ -152,6 +152,50 @@ func TestExplicitNumericLiteralConversionClasses(t *testing.T) {
 	}
 }
 
+func TestBitwiseOperatorsRequireIntegralOperands(t *testing.T) {
+	valid := checkTypeSource(t, `fn main() -> i32 {
+	let a: u8 = 12u8;
+	let b: u8 = 10u8;
+	let and: u8 = a & b;
+	let or: u8 = a | b;
+	let xor: u8 = a ^ b;
+	let complement: u8 = ~a;
+	let left: u8 = a << 2u8;
+	let signed: i8 = -8i8;
+	let right: i8 = signed >> 2i8;
+	let wrapped_count: u8 = 1u8 << (255u8 + 1u8);
+	return 0;
+}`)
+	if valid.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", valid.EmitAllToString())
+	}
+
+	invalid := checkTypeSource(t, `fn main() -> i32 {
+	let float_and = 1.0 & 2.0;
+	let bool_or = true | false;
+	let bool_not = ~true;
+	return 0;
+}`)
+	out := invalid.EmitAllToString()
+	if !invalid.HasErrors() || !strings.Contains(out, "unsupported operand type for operator `&`") ||
+		!strings.Contains(out, "unsupported operand type for operator `|`") ||
+		!strings.Contains(out, "unsupported unary operand type for operator `~`") {
+		t.Fatalf("expected integral-only diagnostics, got:\n%s", out)
+	}
+}
+
+func TestBitwiseShiftRejectsConstantCountOutsideTypeWidth(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() -> i32 {
+	let negative: i8 = 1i8 << -1i8;
+	let too_wide: u8 = 1u8 >> 8u8;
+	return 0;
+}`)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || strings.Count(out, "shift count must be between 0 and 7") != 2 {
+		t.Fatalf("expected checked shift-count diagnostics, got:\n%s", out)
+	}
+}
+
 func TestByteTypeIsLowerableInFunctionSignature(t *testing.T) {
 	diag := checkTypeSource(t, `fn identity(value: byte) -> byte {
 	return value;

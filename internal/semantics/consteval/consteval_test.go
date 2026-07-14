@@ -49,6 +49,39 @@ const C = true && false;
 	assertBoolConst(t, module, "C", false)
 }
 
+func TestEvaluateBitwiseConstExpressions(t *testing.T) {
+	module, diag := constevalModule(t, `const And: u8 = 12u8 & 10u8;
+const Or: u8 = 12u8 | 10u8;
+const Xor: u8 = 12u8 ^ 10u8;
+const Complement: u8 = ~0u8;
+const Left: i8 = 127i8 << 1i8;
+const Right: i8 = -8i8 >> 2i8;
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "And", "8", "u8")
+	assertIntConst(t, module, "Or", "14", "u8")
+	assertIntConst(t, module, "Xor", "6", "u8")
+	assertIntConst(t, module, "Complement", "255", "u8")
+	assertIntConst(t, module, "Left", "-2", "i8")
+	assertIntConst(t, module, "Right", "-2", "i8")
+}
+
+func TestEvaluateBitwiseConstExpressionsThroughIntegralAlias(t *testing.T) {
+	module, diag := constevalModule(t, `type Flags = u8;
+const Mask: Flags = ~0;
+const Shifted: Flags = 1 << 2;
+const Wrapped: Flags = 1 << (255 + 1);
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "Mask", "255", "u8")
+	assertIntConst(t, module, "Shifted", "4", "u8")
+	assertIntConst(t, module, "Wrapped", "1", "u8")
+}
+
 func TestEvaluateReportsConstCycle(t *testing.T) {
 	_, diag := constevalModule(t, `const A = B;
 const B = A;
