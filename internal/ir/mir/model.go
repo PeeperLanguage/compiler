@@ -95,7 +95,7 @@ type Ret struct {
 }
 
 type Store struct {
-	Ptr      ValueRef
+	Place    *Place
 	Value    ValueRef
 	Location *source.Location
 }
@@ -159,14 +159,37 @@ type Cast struct {
 	Location *source.Location
 }
 
+type PlaceProjectionKind uint8
+
+const (
+	PlaceProjectionDeref PlaceProjectionKind = iota
+	PlaceProjectionField
+	PlaceProjectionIndex
+)
+
+type PlaceProjection struct {
+	Kind       PlaceProjectionKind
+	FieldIndex int
+	Index      ValueRef
+	Type       string
+	Location   *source.Location
+}
+
+type Place struct {
+	Root        ValueRef
+	Projections []PlaceProjection
+	Type        string
+	Location    *source.Location
+}
+
 type AddrOf struct {
-	Base     ValueRef
+	Place    *Place
 	Type     string
 	Location *source.Location
 }
 
 type SliceView struct {
-	Source       ValueRef
+	Source       *Place
 	Start        ValueRef
 	End          ValueRef
 	EndExclusive bool
@@ -175,31 +198,16 @@ type SliceView struct {
 }
 
 type Load struct {
-	Ptr      ValueRef
-	Type     string
-	Location *source.Location
-}
-
-type ProjectField struct {
-	Base     ValueRef
-	Index    int
-	Type     string
-	Location *source.Location
-}
-
-type ProjectIndex struct {
-	Base     ValueRef
-	Index    ValueRef
+	Place    *Place
 	Type     string
 	Location *source.Location
 }
 
 type Field struct {
-	Base       ValueRef
-	Index      int
-	ThroughPtr bool
-	Type       string
-	Location   *source.Location
+	Base     ValueRef
+	Index    int
+	Type     string
+	Location *source.Location
 }
 
 type StructLit struct {
@@ -262,7 +270,7 @@ func (i *Assign) Text() string {
 }
 
 func (i *Store) Text() string {
-	return fmt.Sprintf("store %s, %s", i.Ptr.Text(), i.Value.Text())
+	return fmt.Sprintf("store %s, %s", i.Place.Text(), i.Value.Text())
 }
 
 func (i *Print) Text() string {
@@ -295,8 +303,6 @@ func (*Cast) valueExprNode()              {}
 func (*AddrOf) valueExprNode()            {}
 func (*SliceView) valueExprNode()         {}
 func (*Load) valueExprNode()              {}
-func (*ProjectField) valueExprNode()      {}
-func (*ProjectIndex) valueExprNode()      {}
 func (*Field) valueExprNode()             {}
 func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
@@ -315,17 +321,38 @@ func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
 func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
-func (v *AddrOf) Text() string   { return fmt.Sprintf("addr %s", v.Base.Text()) }
+func (p *Place) Text() string {
+	if p == nil || p.Root == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(p.Root.Text())
+	for _, projection := range p.Projections {
+		switch projection.Kind {
+		case PlaceProjectionDeref:
+			root := b.String()
+			b.Reset()
+			b.WriteString("deref(")
+			b.WriteString(root)
+			b.WriteString(")")
+		case PlaceProjectionField:
+			fmt.Fprintf(&b, ".%d", projection.FieldIndex)
+		case PlaceProjectionIndex:
+			b.WriteString("[")
+			if projection.Index != nil {
+				b.WriteString(projection.Index.Text())
+			}
+			b.WriteString("]")
+		}
+	}
+	return b.String()
+}
+
+func (v *AddrOf) Text() string { return fmt.Sprintf("addr %s", v.Place.Text()) }
 func (v *SliceView) Text() string {
 	return fmt.Sprintf("view %s", v.Source.Text())
 }
-func (v *Load) Text() string { return fmt.Sprintf("load %s", v.Ptr.Text()) }
-func (v *ProjectField) Text() string {
-	return fmt.Sprintf("projectfield %s, %d", v.Base.Text(), v.Index)
-}
-func (v *ProjectIndex) Text() string {
-	return fmt.Sprintf("projectindex %s, %s", v.Base.Text(), v.Index.Text())
-}
+func (v *Load) Text() string  { return fmt.Sprintf("load %s", v.Place.Text()) }
 func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 
 func (v *StructLit) Text() string {
@@ -457,10 +484,6 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *SliceView:
 		return node.Location
 	case *Load:
-		return node.Location
-	case *ProjectField:
-		return node.Location
-	case *ProjectIndex:
 		return node.Location
 	case *Field:
 		return node.Location

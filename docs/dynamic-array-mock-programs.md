@@ -198,5 +198,13 @@ fn read(values: [4]i32, index: usize) -> i32 {
 
 Known constant out-of-bounds indexes remain compile errors. Runtime
 out-of-bounds indexes trap before pointer projection. Reads, writes, references,
-and raw addresses continue to use `ProjectIndex`; runtime indexing does not add
-a separate place or partial-move model.
+and raw addresses use one first-class place path composed from Deref, Field, and
+Index projections. MIR `Load`, `Store`, `AddrOf`, and `SliceView` consume that
+path directly; runtime indexing does not add a one-off address node or
+partial-move model.
+
+Range slicing creates a view value from its source place rather than adding a
+range projection. Future map element access extends the same place model.
+Reference-origin analysis must block map structural mutation while a derived
+element reference is live; that enforcement remains separate borrow-checking
+work.

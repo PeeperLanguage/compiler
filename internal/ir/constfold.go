@@ -40,13 +40,18 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 			}
 		}
 		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type}
-	case *Index:
-		return &Index{
-			Base:     FoldExpr(node.Base, env),
-			Index:    FoldExpr(node.Index, env),
-			DropBase: node.DropBase,
-			Type:     node.Type,
-			Location: node.Location,
+	case *Load:
+		return &Load{Place: foldPlace(node.Place, env), DropRoot: node.DropRoot, Location: node.Location}
+	case *AddrOf:
+		return &AddrOf{Place: foldPlace(node.Place, env), Type: node.Type, Location: node.Location}
+	case *SliceView:
+		return &SliceView{
+			Source:       foldPlace(node.Source, env),
+			Start:        FoldExpr(node.Start, env),
+			End:          FoldExpr(node.End, env),
+			EndExclusive: node.EndExclusive,
+			Type:         node.Type,
+			Location:     node.Location,
 		}
 	case *ArrayLit:
 		values := make([]Expr, 0, len(node.Values))
@@ -65,6 +70,24 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 		}
 	default:
 		return expr
+	}
+}
+
+func foldPlace(place *Place, env map[string]ConstValue) *Place {
+	if place == nil {
+		return nil
+	}
+	projections := make([]PlaceProjection, len(place.Projections))
+	for index, projection := range place.Projections {
+		projections[index] = projection
+		projections[index].Index = FoldExpr(projection.Index, env)
+	}
+	// Place roots carry storage identity; only projection operands are foldable.
+	return &Place{
+		Root:        place.Root,
+		Projections: projections,
+		Type:        place.Type,
+		Location:    place.Location,
 	}
 }
 

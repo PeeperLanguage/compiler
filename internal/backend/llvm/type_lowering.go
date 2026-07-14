@@ -379,10 +379,6 @@ func mirValueType(expr mir.ValueExpr) string {
 		return v.Type
 	case *mir.Load:
 		return v.Type
-	case *mir.ProjectField:
-		return v.Type
-	case *mir.ProjectIndex:
-		return v.Type
 	case *mir.Field:
 		return v.Type
 	case *mir.StructLit:

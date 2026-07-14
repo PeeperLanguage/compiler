@@ -60,6 +60,68 @@ func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersBooleanCallArguments(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{Name: "accept", Params: []ir.Param{{Name: "value", Type: "bool"}}, ReturnType: "void"},
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{
+						&mir.Call{
+							Callee: &mir.RefName{Name: "accept", Type: "fn(bool) -> void"},
+							Args:   []mir.ValueRef{&mir.RefConst{Value: "true", Type: "bool"}},
+							Type:   "void",
+						},
+						&mir.Call{
+							Callee: &mir.RefName{Name: "accept", Type: "fn(bool) -> void"},
+							Args:   []mir.ValueRef{&mir.RefConst{Value: "false", Type: "bool"}},
+							Type:   "void",
+						},
+					},
+					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				}},
+			},
+		},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	for _, call := range []string{"call void @accept(i1 true)", "call void @accept(i1 false)"} {
+		if !strings.Contains(irText, call) {
+			t.Fatalf("expected %q, got:\n%s", call, irText)
+		}
+	}
+}
+
+func TestGenerateLLVMIRRejectsNumericBooleanConstants(t *testing.T) {
+	for _, value := range []string{"0", "1"} {
+		t.Run(value, func(t *testing.T) {
+			diag := diagnostics.NewDiagnosticBag()
+			mod := &mir.Module{
+				Name: "test",
+				Funcs: []*mir.Function{{
+					Name:       "invalid_bool",
+					ReturnType: "bool",
+					Blocks: []*mir.Block{{
+						ID:   0,
+						Term: &mir.Ret{Value: &mir.RefConst{Value: value, Type: "bool"}},
+					}},
+				}},
+			}
+
+			if irText := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); irText != "" {
+				t.Fatalf("numeric boolean constant must suppress LLVM output, got:\n%s", irText)
+			}
+			if !diag.HasErrors() {
+				t.Fatal("numeric boolean constant must emit diagnostic")
+			}
+		})
+	}
+}
+
 func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -601,7 +663,7 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source: &mir.RefName{Name: "xs", Type: "[]i32"},
+					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: "[]i32"}, Type: "[]i32"},
 					Type:   "&[]i32",
 				}}},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
@@ -645,7 +707,7 @@ func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source: &mir.RefName{Name: "xs", Type: "&mut [4]i32"},
+					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: "&mut [4]i32"}, Type: "&mut [4]i32"},
 					Start:  &mir.RefConst{Value: "1", Type: "i32"},
 					End:    &mir.RefConst{Value: "2", Type: "i32"},
 					Type:   "&mut []i32",
@@ -680,7 +742,7 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:       &mir.RefName{Name: "xs", Type: "&[]i32"},
+					Source:       &mir.Place{Root: &mir.RefName{Name: "xs", Type: "&[]i32"}, Type: "&[]i32"},
 					End:          &mir.RefConst{Value: "2", Type: "u8"},
 					EndExclusive: true,
 					Type:         "&[]i32",
@@ -1153,7 +1215,7 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRLowersIndirectProjectFieldWithoutTempAlloca(t *testing.T) {
+func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	for _, baseType := range []string{"*struct{value: i32}", "&struct{value: i32}", "&mut struct{value: i32}"} {
 		t.Run(baseType, func(t *testing.T) {
@@ -1172,10 +1234,16 @@ func TestGenerateLLVMIRLowersIndirectProjectFieldWithoutTempAlloca(t *testing.T)
 								Instrs: []mir.Instr{
 									&mir.Assign{
 										Name: "fieldptr",
-										Value: &mir.ProjectField{
-											Base:  &mir.RefName{Name: "box", Type: baseType},
-											Index: 0,
-											Type:  "*i32",
+										Value: &mir.AddrOf{
+											Place: &mir.Place{
+												Root: &mir.RefName{Name: "box", Type: baseType},
+												Projections: []mir.PlaceProjection{
+													{Kind: mir.PlaceProjectionDeref, Type: "struct{value: i32}"},
+													{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+												},
+												Type: "i32",
+											},
+											Type: "&mut i32",
 										},
 									},
 								},
@@ -1215,10 +1283,16 @@ func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 				Instrs: []mir.Instr{
 					&mir.Assign{
 						Name: "fieldptr",
-						Value: &mir.ProjectField{
-							Base:  &mir.RefName{Name: "box", Type: "&mut struct{value: i32}"},
-							Index: 0,
-							Type:  "&mut i32",
+						Value: &mir.AddrOf{
+							Place: &mir.Place{
+								Root: &mir.RefName{Name: "box", Type: "&mut struct{value: i32}"},
+								Projections: []mir.PlaceProjection{
+									{Kind: mir.PlaceProjectionDeref, Type: "struct{value: i32}"},
+									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+								},
+								Type: "i32",
+							},
+							Type: "&mut i32",
 						},
 					},
 					&mir.Assign{
@@ -1235,6 +1309,16 @@ func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 	if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") ||
 		!strings.Contains(irText, "bitcast i32*") || !strings.Contains(irText, "to i8*") {
 		t.Fatalf("expected projected field address rawptr cast, got:\n%s", irText)
+	}
+}
+
+func indexedMIRPlace(baseType string, index mir.ValueRef) *mir.Place {
+	return &mir.Place{
+		Root: &mir.RefName{Name: "xs", Type: baseType},
+		Projections: []mir.PlaceProjection{
+			{Kind: mir.PlaceProjectionIndex, Index: index, Type: "i32"},
+		},
+		Type: "i32",
 	}
 }
 
@@ -1257,16 +1341,8 @@ func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 						ID: 0,
 						Instrs: []mir.Instr{
 							&mir.Assign{
-								Name: "idxptr",
-								Value: &mir.ProjectIndex{
-									Base:  &mir.RefName{Name: "xs", Type: baseType},
-									Index: index,
-									Type:  "&mut i32",
-								},
-							},
-							&mir.Assign{
 								Name:  "item",
-								Value: &mir.Load{Ptr: &mir.RefName{Name: "idxptr", Type: "&mut i32"}, Type: "i32"},
+								Value: &mir.Load{Place: indexedMIRPlace(baseType, index), Type: "i32"},
 							},
 						},
 						Term: &mir.Ret{Value: &mir.RefName{Name: "item", Type: "i32"}},
@@ -1294,16 +1370,8 @@ func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 					{
 						ID: 0,
 						Instrs: []mir.Instr{
-							&mir.Assign{
-								Name: "idxptr",
-								Value: &mir.ProjectIndex{
-									Base:  &mir.RefName{Name: "xs", Type: baseType},
-									Index: index,
-									Type:  "&mut i32",
-								},
-							},
 							&mir.Store{
-								Ptr:   &mir.RefName{Name: "idxptr", Type: "&mut i32"},
+								Place: indexedMIRPlace(baseType, index),
 								Value: &mir.RefName{Name: "value", Type: "i32"},
 							},
 						},
@@ -1315,7 +1383,7 @@ func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 	}
 }
 
-func TestGenerateLLVMIRLowersProjectIndexForArrayRead(t *testing.T) {
+func TestGenerateLLVMIRLowersIndexPlaceForArrayRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexReadMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
@@ -1349,7 +1417,7 @@ func TestGenerateLLVMIRBoundsChecksWideRuntimeFixedArrayIndexBeforeTruncation(t 
 	}
 }
 
-func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
+func TestGenerateLLVMIRLowersIndexPlaceStoreForArrayWrite(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexStoreMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
@@ -1500,7 +1568,7 @@ func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 		t.Fatalf("expected slice-view bounds guard, got:\n%s", irText)
 	}
 	if !strings.Contains(irText, "getelementptr i32, i32*") || !strings.Contains(irText, "load i32, i32*") {
-		t.Fatalf("expected slice-view ProjectIndex load, got:\n%s", irText)
+		t.Fatalf("expected slice-view place load, got:\n%s", irText)
 	}
 	compare := strings.Index(irText, "icmp uge i64")
 	trap := strings.Index(irText, "call void @llvm.trap()")
@@ -1524,7 +1592,66 @@ func TestGenerateLLVMIRLowersMutableSliceViewIndexStore(t *testing.T) {
 		t.Fatalf("expected mutable slice-view bounds guard, got:\n%s", irText)
 	}
 	if !strings.Contains(irText, "getelementptr i32, i32*") || !strings.Contains(irText, "store i32 %value, i32*") {
-		t.Fatalf("expected mutable slice-view ProjectIndex store, got:\n%s", irText)
+		t.Fatalf("expected mutable slice-view place store, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
+	const tokenType = "struct{value: i32}"
+	const bucketType = "struct{items: []" + tokenType + "}"
+	place := &mir.Place{
+		Root: &mir.RefName{Name: "bucket", Type: "&mut " + bucketType},
+		Projections: []mir.PlaceProjection{
+			{Kind: mir.PlaceProjectionDeref, Type: bucketType},
+			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "[]" + tokenType},
+			{Kind: mir.PlaceProjectionIndex, Index: &mir.RefName{Name: "index", Type: "usize"}, Type: tokenType},
+			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+		},
+		Type: "i32",
+	}
+	mod := &mir.Module{Name: "test", Funcs: []*mir.Function{{
+		Name: "read", Params: []ir.Param{{Name: "bucket", Type: "&mut " + bucketType}, {Name: "index", Type: "usize"}},
+		ReturnType: "i32", EntryID: 0,
+		Blocks: []*mir.Block{{
+			ID:     0,
+			Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: "i32"}}},
+			Term:   &mir.Ret{Value: &mir.RefName{Name: "value", Type: "i32"}},
+		}},
+	}}}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	headerField := strings.Index(irText, "getelementptr inbounds { { { i32 }*, i64, i64 } }")
+	element := strings.Index(irText, "getelementptr { i32 }, { i32 }*")
+	valueField := strings.LastIndex(irText, "getelementptr inbounds { i32 }, { i32 }*")
+	if headerField < 0 || element < headerField || valueField < element || !strings.Contains(irText, "load i32, i32*") {
+		t.Fatalf("deep place projections must lower in path order, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
+	const boxType = "struct{value: i32}"
+	place := &mir.Place{
+		Root: &mir.RefName{Name: "box", Type: boxType},
+		Projections: []mir.PlaceProjection{
+			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+		},
+		Type: "i32",
+	}
+	mod := &mir.Module{Name: "test", Funcs: []*mir.Function{{
+		Name: "choose", Params: []ir.Param{{Name: "cond", Type: "bool"}}, ReturnType: "i32", EntryID: 0,
+		Blocks: []*mir.Block{
+			{ID: 0, Instrs: []mir.Instr{&mir.Assign{Name: "box", Value: &mir.StructLit{Fields: []mir.ValueRef{&mir.RefConst{Value: "0", Type: "i32"}}, Type: boxType}}}, Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: "bool"}, ThenID: 1, ElseID: 2}},
+			{ID: 1, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "1", Type: "i32"}}}, Term: &mir.Jump{TargetID: 3}},
+			{ID: 2, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "2", Type: "i32"}}}, Term: &mir.Jump{TargetID: 3}},
+			{ID: 3, Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: "i32"}}}, Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: "i32"}}},
+		},
+	}}}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	alloca := strings.Index(irText, "alloca { i32 }")
+	firstBranch := strings.Index(irText, "\nb1:")
+	if alloca < 0 || firstBranch < 0 || alloca > firstBranch || strings.Count(irText, "alloca { i32 }") != 1 {
+		t.Fatalf("place root must have one entry-dominating slot, got:\n%s", irText)
 	}
 }
 

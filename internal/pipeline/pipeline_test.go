@@ -496,8 +496,11 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(entry.MIR.Text(), "projectfield") {
-		t.Fatalf("expected address-of field to lower as projectfield, MIR:\n%s", entry.MIR.Text())
+	if !strings.Contains(entry.MIR.Text(), " = addr ") || !strings.Contains(entry.MIR.Text(), ".0") {
+		t.Fatalf("expected address-of field to retain direct place, MIR:\n%s", entry.MIR.Text())
+	}
+	if strings.Contains(entry.MIR.Text(), "projectfield") {
+		t.Fatalf("legacy field projection instruction remains, MIR:\n%s", entry.MIR.Text())
 	}
 	if strings.Contains(entry.LLVMIR, "alloca i32") {
 		t.Fatalf("unexpected temp alloca for address-of field, LLVM IR:\n%s", entry.LLVMIR)
@@ -962,8 +965,11 @@ fn main() -> i32 {
 	if entry.MIR == nil {
 		t.Fatalf("expected nested receiver borrow MIR")
 	}
-	if !strings.Contains(entry.MIR.Text(), "projectfield") {
-		t.Fatalf("expected nested receiver borrow to project original field, MIR:\n%s", entry.MIR.Text())
+	if !strings.Contains(entry.MIR.Text(), " = addr ") || !strings.Contains(entry.MIR.Text(), ".0") {
+		t.Fatalf("expected nested receiver borrow to retain original field place, MIR:\n%s", entry.MIR.Text())
+	}
+	if strings.Contains(entry.MIR.Text(), "projectfield") {
+		t.Fatalf("legacy field projection instruction remains, MIR:\n%s", entry.MIR.Text())
 	}
 	if strings.Contains(entry.LLVMIR, "alloca { i32 }") {
 		t.Fatalf("nested receiver borrow must not allocate copied field, LLVM IR:\n%s", entry.LLVMIR)

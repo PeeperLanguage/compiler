@@ -24,10 +24,13 @@ type llvmEmitter struct {
 }
 
 func emitStore(b *llvmBuilder, store *mir.Store) {
-	if b == nil || store == nil || store.Ptr == nil || store.Value == nil {
+	if b == nil || store == nil || store.Place == nil || store.Value == nil {
 		return
 	}
-	ptr := emitRef(b, store.Ptr)
+	ptr := emitPlacePtr(b, store.Place)
+	if ptr == "" {
+		return
+	}
 	value := emitRef(b, store.Value)
 	valueType := b.emitter.llvmType(mirRefType(store.Value))
 	b.line(fmt.Sprintf("store %s %s, %s* %s", valueType, value, valueType, ptr))
@@ -75,21 +78,8 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	b.line(fmt.Sprintf("call i32 (i8*, ...) @printf(i8* %s, %s)", format, argument))
 }
 
-func emitFieldPtr(b *llvmBuilder, baseRef mir.ValueRef, index int) string {
-	if b == nil || baseRef == nil {
-		return ""
-	}
-	base := emitRef(b, baseRef)
-	baseType := mirRefType(baseRef)
-	llvmPtrType, ok := llvmTypeName(baseType)
-	if !ok {
-		return ""
-	}
-	structTypeText, ok := pointerTypeTextTarget(baseType)
-	if !ok {
-		structTypeText, ok = referenceTypeTextTarget(baseType)
-	}
-	if !ok {
+func emitFieldPtr(b *llvmBuilder, base, structTypeText string, index int) string {
+	if b == nil || base == "" || structTypeText == "" {
 		return ""
 	}
 	llvmStructType, ok := llvmTypeName(structTypeText)
@@ -97,7 +87,7 @@ func emitFieldPtr(b *llvmBuilder, baseRef mir.ValueRef, index int) string {
 		return ""
 	}
 	ptr := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s %s, i32 0, i32 %d", ptr, llvmStructType, llvmPtrType, base, index))
+	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s* %s, i32 0, i32 %d", ptr, llvmStructType, llvmStructType, base, index))
 	return ptr
 }
 
@@ -152,7 +142,7 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	if b == nil || view == nil || view.Source == nil {
 		return "0"
 	}
-	sourceTypeText := mirRefType(view.Source)
+	sourceTypeText := view.Source.Type
 	targetTypeText := sourceTypeText
 	referenced := false
 	if target, ok := referenceTypeTextTarget(sourceTypeText); ok {
@@ -163,7 +153,17 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	if elem, dynamicArray := strings.CutPrefix(targetTypeText, "[]"); dynamicArray {
 		elemTypeText = strings.TrimSpace(elem)
 		sourceType := b.emitter.llvmType(sourceTypeText)
-		source := emitRef(b, view.Source)
+		source := ""
+		if len(view.Source.Projections) == 0 {
+			source = emitRef(b, view.Source.Root)
+		} else {
+			ptr := emitPlacePtr(b, view.Source)
+			if ptr == "" {
+				return "0"
+			}
+			source = b.nextReg()
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceType, sourceType, ptr))
+		}
 		data = b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
 		length = b.nextReg()
@@ -171,10 +171,10 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	} else if lengthText, elem, fixedArray := ir.ArrayTypeParts(targetTypeText); fixedArray {
 		elemTypeText = elem
 		length = lengthText
-		if referenced {
-			fixedArrayPtr = emitRef(b, view.Source)
-		} else if ref, ok := view.Source.(*mir.RefName); ok {
-			fixedArrayPtr = ensureLocalAddr(b, ref)
+		if referenced && len(view.Source.Projections) == 0 {
+			fixedArrayPtr = emitRef(b, view.Source.Root)
+		} else {
+			fixedArrayPtr = emitPlacePtr(b, view.Source)
 		}
 		if fixedArrayPtr == "" {
 			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
@@ -569,11 +569,10 @@ func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemT
 	return emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, capacity)
 }
 
-func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) string {
-	if b == nil || baseRef == nil || indexRef == nil {
+func emitIndexPtr(b *llvmBuilder, base, baseType string, addressed bool, indexRef mir.ValueRef) string {
+	if b == nil || base == "" || baseType == "" || indexRef == nil {
 		return ""
 	}
-	baseType := mirRefType(baseRef)
 	targetType, pointed := pointerTypeTextTarget(baseType)
 	if !pointed {
 		targetType = baseType
@@ -594,8 +593,7 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		if !ok {
 			return ""
 		}
-		base := emitRef(b, baseRef)
-		if pointed {
+		if addressed || pointed {
 			loaded := b.nextReg()
 			b.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, arrayType, arrayType, base))
 			base = loaded
@@ -643,21 +641,106 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 	if !ok {
 		return ""
 	}
-	basePtr := ""
-	if pointed || referenced {
-		basePtr = emitRef(b, baseRef)
-	} else if ref, ok := baseRef.(*mir.RefName); ok && ref != nil {
-		basePtr = ensureLocalAddr(b, ref)
-	}
-	if basePtr == "" {
-		baseValue := emitRef(b, baseRef)
-		basePtr = b.nextReg()
-		b.line(fmt.Sprintf("%s = alloca %s", basePtr, arrayType))
-		b.line(fmt.Sprintf("store %s %s, %s* %s", arrayType, baseValue, arrayType, basePtr))
+	if !addressed && !pointed && !referenced {
+		b.emitter.markInvalid("fixed-array index place requires addressable storage")
+		return ""
 	}
 	ptr := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s* %s, i32 0, %s %s", ptr, arrayType, arrayType, basePtr, indexType, index))
+	b.line(fmt.Sprintf("%s = getelementptr inbounds %s, %s* %s, i32 0, %s %s", ptr, arrayType, arrayType, base, indexType, index))
 	return ptr
+}
+
+// Directly addressed roots need entry-block storage so one pointer dominates every place use.
+func placeNeedsRootAddr(place *mir.Place) bool {
+	if place == nil || place.Root == nil || len(place.Projections) == 0 {
+		return place != nil && place.Root != nil
+	}
+	projection := place.Projections[0]
+	switch projection.Kind {
+	case mir.PlaceProjectionDeref:
+		return false
+	case mir.PlaceProjectionField:
+		return true
+	case mir.PlaceProjectionIndex:
+		rootType := mirRefType(place.Root)
+		if _, pointed := pointerTypeTextTarget(rootType); pointed {
+			return false
+		}
+		if _, referenced := referenceTypeTextTarget(rootType); referenced {
+			return false
+		}
+		_, _, fixed := ir.ArrayTypeParts(rootType)
+		return fixed
+	default:
+		return false
+	}
+}
+
+func emitPlaceRootAddr(b *llvmBuilder, root mir.ValueRef) string {
+	if b == nil || root == nil {
+		return ""
+	}
+	if ref, ok := root.(*mir.RefName); ok && ref != nil {
+		if ptr := ensureLocalAddr(b, ref); ptr != "" {
+			return ptr
+		}
+	}
+	typeText := mirRefType(root)
+	llvmType := b.emitter.llvmType(typeText)
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmType))
+	b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, emitRef(b, root), llvmType, ptr))
+	return ptr
+}
+
+func emitPlacePtr(b *llvmBuilder, place *mir.Place) string {
+	if b == nil || place == nil || place.Root == nil {
+		return ""
+	}
+	previousLocation := b.debugLocationID
+	defer func() { b.debugLocationID = previousLocation }()
+
+	addressed := placeNeedsRootAddr(place)
+	current := ""
+	if addressed {
+		current = emitPlaceRootAddr(b, place.Root)
+	}
+	currentType := mirRefType(place.Root)
+	for _, projection := range place.Projections {
+		b.setLocation(projection.Location)
+		switch projection.Kind {
+		case mir.PlaceProjectionDeref:
+			if addressed {
+				llvmType := b.emitter.llvmType(currentType)
+				loaded := b.nextReg()
+				b.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, llvmType, llvmType, current))
+				current = loaded
+			} else {
+				current = emitRef(b, place.Root)
+			}
+			addressed = true
+		case mir.PlaceProjectionField:
+			current = emitFieldPtr(b, current, currentType, projection.FieldIndex)
+		case mir.PlaceProjectionIndex:
+			if current == "" {
+				current = emitRef(b, place.Root)
+			}
+			current = emitIndexPtr(b, current, currentType, addressed, projection.Index)
+			addressed = true
+		default:
+			b.emitter.markInvalid(fmt.Sprintf("unsupported MIR place projection %d", projection.Kind))
+			return ""
+		}
+		if current == "" {
+			return ""
+		}
+		currentType = projection.Type
+	}
+	if addressed {
+		return current
+	}
+	b.setLocation(place.Location)
+	return emitPlaceRootAddr(b, place.Root)
 }
 
 type llvmBuilder struct {
@@ -971,53 +1054,19 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			emitCall(b, out, b.emitter.llvmType(e.Type), emitRef(b, e.Callee), llvmCallArgs(b, e.Args))
 			return out
 		case *mir.AddrOf:
-			if ref, ok := e.Base.(*mir.RefName); ok && ref != nil {
-				if ptr := ensureLocalAddr(b, ref); ptr != "" {
-					if e.Type != "rawptr" {
-						return ptr
-					}
-					cast := b.nextReg()
-					baseType := b.emitter.llvmType(mirRefType(e.Base))
-					b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", cast, baseType, ptr))
-					return cast
-				}
-			}
-			baseType := mirRefType(e.Base)
-			llvmBaseType := b.emitter.llvmType(baseType)
-			ptr := b.nextReg()
-			b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmBaseType))
-			value := emitRef(b, e.Base)
-			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmBaseType, value, llvmBaseType, ptr))
-			return ptr
+			return emitPlacePtr(b, e.Place)
 		case *mir.SliceView:
 			return emitSliceView(b, e)
 		case *mir.Load:
-			ptr := emitRef(b, e.Ptr)
+			ptr := emitPlacePtr(b, e.Place)
+			if ptr == "" {
+				return "0"
+			}
 			llvmType := b.emitter.llvmType(e.Type)
 			out := b.nextReg()
 			b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmType, llvmType, ptr))
 			return out
-		case *mir.ProjectField:
-			if ptr := emitFieldPtr(b, e.Base, e.Index); ptr != "" {
-				return ptr
-			}
-			return "0"
-		case *mir.ProjectIndex:
-			if ptr := emitIndexPtr(b, e.Base, e.Index); ptr != "" {
-				return ptr
-			}
-			return "0"
 		case *mir.Field:
-			if e.ThroughPtr {
-				ptr := emitFieldPtr(b, e.Base, e.Index)
-				if ptr == "" {
-					return "0"
-				}
-				out := b.nextReg()
-				llvmFieldType := b.emitter.llvmType(e.Type)
-				b.line(fmt.Sprintf("%s = load %s, %s* %s", out, llvmFieldType, llvmFieldType, ptr))
-				return out
-			}
 			base := emitRef(b, e.Base)
 			baseType := mirRefType(e.Base)
 			llvmBaseType, ok := llvmTypeName(baseType)
@@ -1166,11 +1215,11 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 	return b.withLocation(mir.ValueRefLocation(ref), func() string {
 		switch v := ref.(type) {
 		case *mir.RefConst:
-			if v.Type == "bool" {
-				if v.Value == "0" {
-					return "false"
+			if v.Type == "bool" && v.Value != "false" && v.Value != "true" {
+				if b != nil && b.emitter != nil {
+					b.emitter.markInvalid("invalid boolean constant: " + v.Value)
 				}
-				return "true"
+				return "false"
 			}
 			if v.Type == "f32" || v.Type == "f64" {
 				return llvmFloatConst(v.Value, v.Type)

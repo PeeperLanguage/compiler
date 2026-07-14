@@ -217,36 +217,23 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 			return true
 		}
 		value := l.lowerExpr(node.Value, &l.current.Instrs)
-		switch target := node.Target.(type) {
-		case *ir.Ident:
-			if node.DropTarget {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: target.Name, Type: target.TypeText(), Location: ir.ExprLocation(target)}})
-			}
-			l.appendInstr(&l.current.Instrs, &Assign{Name: target.Name, Value: asValueExpr(value)})
-			return true
-		case *ir.Field:
-			if !target.ThroughPtr {
-				return false
-			}
-			base := l.lowerExpr(target.Base, &l.current.Instrs)
-			ptr := l.projectField(&l.current.Instrs, base, target.Index, "&mut "+target.TypeText(), ir.ExprLocation(target))
-			if node.DropTarget {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, ptr, target.TypeText(), ir.ExprLocation(target))})
-			}
-			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
-			return true
-		case *ir.Index:
-			base := l.lowerExpr(target.Base, &l.current.Instrs)
-			index := l.lowerExpr(target.Index, &l.current.Instrs)
-			ptr := l.projectIndex(&l.current.Instrs, base, index, "&mut "+target.TypeText(), ir.ExprLocation(target))
-			if node.DropTarget {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, ptr, target.TypeText(), ir.ExprLocation(target))})
-			}
-			l.appendInstr(&l.current.Instrs, &Store{Ptr: ptr, Value: value})
-			return true
-		default:
+		target := node.Target
+		if target == nil || target.Root == nil {
 			return false
 		}
+		if ident, direct := target.Root.(*ir.Ident); direct && len(target.Projections) == 0 {
+			if node.DropTarget {
+				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeText(), Location: ir.ExprLocation(ident)}})
+			}
+			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
+			return true
+		}
+		place := l.lowerPlace(target, &l.current.Instrs)
+		if node.DropTarget {
+			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeText(), target.Location)})
+		}
+		l.appendInstr(&l.current.Instrs, &Store{Place: place, Value: value})
+		return true
 	case *hir.If:
 		return l.appendIf(node)
 	case *hir.For:
@@ -355,22 +342,39 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	*out = append(*out, instr)
 }
 
-func (l *lowerer) projectField(out *[]Instr, base ValueRef, index int, pointerType string, loc *source.Location) ValueRef {
+func (l *lowerer) load(out *[]Instr, place *Place, typ string, loc *source.Location) ValueRef {
 	name := l.nextTemp()
-	l.appendInstr(out, &Assign{Name: name, Value: &ProjectField{Base: base, Index: index, Type: pointerType, Location: loc}})
-	return &RefName{Name: name, Type: pointerType, Location: loc}
-}
-
-func (l *lowerer) projectIndex(out *[]Instr, base ValueRef, index ValueRef, pointerType string, loc *source.Location) ValueRef {
-	name := l.nextTemp()
-	l.appendInstr(out, &Assign{Name: name, Value: &ProjectIndex{Base: base, Index: index, Type: pointerType, Location: loc}})
-	return &RefName{Name: name, Type: pointerType, Location: loc}
-}
-
-func (l *lowerer) load(out *[]Instr, ptr ValueRef, typ string, loc *source.Location) ValueRef {
-	name := l.nextTemp()
-	l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: typ, Location: loc}})
+	l.appendInstr(out, &Assign{Name: name, Value: &Load{Place: place, Type: typ, Location: loc}})
 	return &RefName{Name: name, Type: typ, Location: loc}
+}
+
+func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
+	if place == nil || place.Root == nil {
+		panic("MIR place lowering requires a root expression")
+	}
+	root := l.lowerExpr(place.Root, out)
+	projections := make([]PlaceProjection, 0, len(place.Projections))
+	for _, projection := range place.Projections {
+		lowered := PlaceProjection{FieldIndex: projection.FieldIndex, Type: projection.Type, Location: projection.Location}
+		switch projection.Kind {
+		case ir.PlaceProjectionDeref:
+			lowered.Kind = PlaceProjectionDeref
+		case ir.PlaceProjectionField:
+			lowered.Kind = PlaceProjectionField
+		case ir.PlaceProjectionIndex:
+			lowered.Kind = PlaceProjectionIndex
+			lowered.Index = l.lowerExpr(projection.Index, out)
+		default:
+			panic(fmt.Sprintf("unsupported HIR place projection %d", projection.Kind))
+		}
+		projections = append(projections, lowered)
+	}
+	return &Place{
+		Root:        root,
+		Projections: projections,
+		Type:        place.TypeText(),
+		Location:    place.Location,
+	}
 }
 
 func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
@@ -450,45 +454,30 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		value := l.lowerExpr(e.Value, out)
 		l.appendInstr(out, &Drop{Value: value, Location: ir.ExprLocation(e)})
 		return nil
+	case *ir.Load:
+		place := l.lowerPlace(e.Place, out)
+		value := l.load(out, place, e.TypeText(), ir.ExprLocation(e))
+		if e.DropRoot {
+			l.appendInstr(out, &Drop{Value: place.Root, Location: ir.ExprLocation(e.Place.Root)})
+		}
+		return value
 	case *ir.AddrOf:
-		var projected ValueRef
-		switch place := e.Expr.(type) {
-		case *ir.Field:
-			if place == nil || !place.ThroughPtr {
-				break
-			}
-			base := l.lowerExpr(place.Base, out)
-			pointerType := e.TypeText()
-			if pointerType == "rawptr" {
-				pointerType = "&mut " + place.TypeText()
-			}
-			projected = l.projectField(out, base, place.Index, pointerType, ir.ExprLocation(e))
-		case *ir.Index:
-			if place == nil {
-				break
-			}
-			base := l.lowerExpr(place.Base, out)
-			index := l.lowerExpr(place.Index, out)
-			pointerType := e.TypeText()
-			if pointerType == "rawptr" {
-				pointerType = "&mut " + place.TypeText()
-			}
-			projected = l.projectIndex(out, base, index, pointerType, ir.ExprLocation(e))
+		pointerType := e.TypeText()
+		if pointerType == "rawptr" {
+			pointerType = "&mut " + e.Place.TypeText()
 		}
-		if projected != nil {
-			if e.TypeText() != "rawptr" {
-				return projected
-			}
-			name := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: projected, Type: "rawptr", Location: ir.ExprLocation(e)}})
-			return &RefName{Name: name, Type: "rawptr", Location: ir.ExprLocation(e)}
-		}
-		base := l.lowerExpr(e.Expr, out)
+		place := l.lowerPlace(e.Place, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Base: base, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: pointerType, Location: ir.ExprLocation(e)}})
+		address := &RefName{Name: name, Type: pointerType, Location: ir.ExprLocation(e)}
+		if e.TypeText() == "rawptr" {
+			castName := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: castName, Value: &Cast{Arg: address, Type: "rawptr", Location: ir.ExprLocation(e)}})
+			return &RefName{Name: castName, Type: "rawptr", Location: ir.ExprLocation(e)}
+		}
+		return address
 	case *ir.SliceView:
-		source := l.lowerExpr(e.Source, out)
+		source := l.lowerPlace(e.Source, out)
 		var start, end ValueRef
 		if e.Start != nil {
 			start = l.lowerExpr(e.Start, out)
@@ -508,27 +497,8 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
-		if e.ThroughPtr {
-			ptr := l.projectField(out, base, e.Index, "&mut "+e.TypeText(), ir.ExprLocation(e))
-			name := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-			if e.DropBase {
-				l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
-			}
-			return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
-		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, ThroughPtr: e.ThroughPtr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		if e.DropBase {
-			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
-		}
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
-	case *ir.Index:
-		base := l.lowerExpr(e.Base, out)
-		index := l.lowerExpr(e.Index, out)
-		ptr := l.projectIndex(out, base, index, "&mut "+e.TypeText(), ir.ExprLocation(e))
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Load{Ptr: ptr, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
+		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
 		if e.DropBase {
 			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
 		}
@@ -558,8 +528,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			for index, valueExpr := range e.Values {
 				value := l.lowerExpr(valueExpr, out)
 				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: "usize", Location: ir.ExprLocation(valueExpr)}
-				ptr := l.projectIndex(out, array, indexRef, "&mut "+elemType, ir.ExprLocation(valueExpr))
-				l.appendInstr(out, &Store{Ptr: ptr, Value: value, Location: ir.ExprLocation(valueExpr)})
+				place := &Place{
+					Root: array,
+					Projections: []PlaceProjection{{
+						Kind: PlaceProjectionIndex, Index: indexRef, Type: elemType, Location: ir.ExprLocation(valueExpr),
+					}},
+					Type: elemType, Location: ir.ExprLocation(valueExpr),
+				}
+				l.appendInstr(out, &Store{Place: place, Value: value, Location: ir.ExprLocation(valueExpr)})
 			}
 			return array
 		}
