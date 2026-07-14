@@ -534,6 +534,92 @@ func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "values",
+				ReturnType: "[]i32",
+				Body: &hir.Block{Stmts: []hir.Stmt{
+					&hir.Return{Value: &ir.ArrayLit{
+						Values: []ir.Expr{
+							&ir.IntLit{Value: "1", Type: "i32"},
+							&ir.IntLit{Value: "2", Type: "i32"},
+						},
+						Dynamic: true,
+						Type:    "[]i32",
+					}},
+				}},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	block := out.Funcs[0].Blocks[0]
+	if len(block.Instrs) != 5 {
+		t.Fatalf("expected allocation and two indexed stores, got %#v", block.Instrs)
+	}
+	assign, ok := block.Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected leading allocation assignment, got %#v", block.Instrs[0])
+	}
+	alloc, allocOK := assign.Value.(*DynamicArrayAlloc)
+	if !allocOK || alloc.Length != 2 || alloc.Type != "[]i32" {
+		t.Fatalf("expected leading dynamic allocation, got %#v", block.Instrs[0])
+	}
+	for _, index := range []int{1, 3} {
+		project, ok := block.Instrs[index].(*Assign)
+		if !ok {
+			t.Fatalf("expected indexed projection at %d, got %#v", index, block.Instrs[index])
+		}
+		if _, ok := project.Value.(*ProjectIndex); !ok {
+			t.Fatalf("expected ProjectIndex at %d, got %#v", index, project.Value)
+		}
+		if _, ok := block.Instrs[index+1].(*Store); !ok {
+			t.Fatalf("expected Store at %d, got %#v", index+1, block.Instrs[index+1])
+		}
+	}
+}
+
+func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
+	for _, op := range []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize} {
+		t.Run(string(op), func(t *testing.T) {
+			expr := &ir.DynamicArrayOp{
+				Op:     op,
+				Array:  &ir.Ident{Name: "values", Type: "[]i32"},
+				Length: &ir.IntLit{Value: "8", Type: "usize"},
+				Value:  &ir.IntLit{Value: "1", Type: "i32"},
+				Type:   "[]i32",
+			}
+			if op == symbols.CompilerOpAppend {
+				expr.Length = nil
+			}
+			if op == symbols.CompilerOpReserve {
+				expr.Value = nil
+			}
+			mod := &hir.Module{
+				Name: "test",
+				Funcs: []*hir.Function{{
+					Name:       "grow",
+					Params:     []ir.Param{{Name: "values", Type: "[]i32"}},
+					ReturnType: "[]i32",
+					Body:       &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: expr}}},
+				}},
+			}
+			out := GenerateMIR(mod, nil, nil)
+			assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+			if !ok {
+				t.Fatalf("expected operation assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
+			}
+			got, ok := assign.Value.(*DynamicArrayOp)
+			if !ok || got.Op != op || got.Type != "[]i32" {
+				t.Fatalf("operation = %#v, want %s []i32", assign.Value, op)
+			}
+		})
+	}
+}
+
 func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 	testPath := "test" + peeper.SourceExt
 	mod := &hir.Module{

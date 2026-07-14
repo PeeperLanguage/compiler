@@ -1,0 +1,3 @@
+name = "runtime_dynamic_array_growth"
+build = "program"
+

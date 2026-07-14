@@ -1,0 +1,31 @@
+struct Point {
+    x: i32
+}
+
+struct Empty {
+}
+
+fn make_points() -> []Point {
+    let first = .Point{x = 10};
+    let second = .Point{x = 20};
+    return []Point{first, second};
+}
+
+fn main() -> i32 {
+    []i32{};
+    []Empty{.Empty{}};
+    let mut values = []i32{1, 2, 3};
+    values[1] = 9;
+    if values[1] != 9 {
+        return 1;
+    }
+
+    let points = make_points();
+    if points[0].x != 10 {
+        return 2;
+    }
+    if points[1].x != 20 {
+        return 3;
+    }
+    return 0;
+}

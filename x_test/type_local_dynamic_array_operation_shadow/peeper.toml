@@ -1,0 +1,4 @@
+name = "type_local_dynamic_array_operation_shadow"
+build = "program"
+entry = "src/main.peep"
+

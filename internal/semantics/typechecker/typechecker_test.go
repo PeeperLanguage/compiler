@@ -1234,6 +1234,95 @@ func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
 	}
 }
 
+func TestArrayLiteralTypechecksDynamicArray(t *testing.T) {
+	src := `fn main() {
+	let arr = []i32{1, 2, 3};
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
+	got := module.Semantics.ExprTypes[letDecl.Value.ID()]
+	if typeinfo.TypeText(got) != "[]i32" {
+		t.Fatalf("array literal type = %s, want []i32", typeinfo.TypeText(got))
+	}
+}
+
+func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
+	src := `fn main() {
+	let appended = append([]i32{}, 1);
+	let reserved = reserve(appended, 8);
+	let resized = resize(reserved, 4, 0);
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	for _, stmt := range fn.Body.Stmts {
+		binding := stmt.(*ast.LetDecl)
+		if got := typeinfo.TypeText(module.Semantics.ExprTypes[binding.Value.ID()]); got != "[]i32" {
+			t.Fatalf("%s result type = %s, want []i32", binding.Name.Name, got)
+		}
+	}
+}
+
+func TestDynamicArrayOwnerOperationRequiresOwner(t *testing.T) {
+	diag := checkTypeSource(t, `fn extend(values: &[]i32) {
+	append(values, 1);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
+		!strings.Contains(diag.EmitAllToString(), "requires a dynamic-array owner") {
+		t.Fatalf("expected owner diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayResizeRejectsMoveOnlyElements(t *testing.T) {
+	diag := checkTypeSource(t, `struct Point { x: i32 }
+fn main() {
+	resize([]Point{}, 2, .Point{x = 0});
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) ||
+		!strings.Contains(diag.EmitAllToString(), "grow Category B arrays with append") {
+		t.Fatalf("expected move-only resize diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUserFunctionShadowsDynamicArrayOwnerOperation(t *testing.T) {
+	diag := checkTypeSource(t, `fn append(left: i32, right: i32) -> i32 {
+	return left + right;
+}
+fn main() -> i32 {
+	return append(20, 22);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected shadowing diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayLiteralRejectsReferenceElementWithoutBinding(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() {
+	let value = 1;
+	[]&i32{&value};
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
+		!strings.Contains(diag.EmitAllToString(), "references cannot be stored in dynamic arrays") {
+		t.Fatalf("expected stored-reference diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayLiteralRejectsNonLowerableElement(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() {
+	[]void{};
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
+		!strings.Contains(diag.EmitAllToString(), "dynamic array element type is not lowerable") {
+		t.Fatalf("expected non-lowerable element diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestArrayLiteralRejectsWrongExplicitLength(t *testing.T) {
 	src := `fn main() {
 	let arr = [3]i32{1, 2};
@@ -1595,7 +1684,7 @@ func TestPrintReservesPrintfLinkedSymbol(t *testing.T) {
 	}
 }
 
-func TestPrintReservesPrintfLinkedSymbolAcrossModules(t *testing.T) {
+func TestRuntimeSymbolsReservedAcrossModules(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	parseModule := func(path, importPath, src string) *project.Module {
@@ -1610,9 +1699,9 @@ func TestPrintReservesPrintfLinkedSymbolAcrossModules(t *testing.T) {
 		ctx.AddModule(module)
 		return module
 	}
-	printer := parseModule("printer.peep", "printer", `fn main() { print(42); }`)
-	hijack := parseModule("hijack.peep", "hijack", `fn printf(value: i32) {}`)
-	for _, module := range []*project.Module{printer, hijack} {
+	user := parseModule("user.peep", "user", `fn main() { print(42); let _ = append([]i32{}, 1); }`)
+	hijack := parseModule("hijack.peep", "hijack", `fn printf(value: i32) {} #[extern("malloc")] fn BadMalloc(size: i32) -> rawptr; #[extern("free")] fn BadFree(value: i32);`)
+	for _, module := range []*project.Module{user, hijack} {
 		collector.Collect(ctx, module)
 		binder.Bind(ctx, module)
 		resolver.Resolve(ctx, module)
@@ -1624,6 +1713,59 @@ func TestPrintReservesPrintfLinkedSymbolAcrossModules(t *testing.T) {
 	}
 	if count := strings.Count(diag.EmitAllToString(), "linked symbol `printf` is reserved"); count != 1 {
 		t.Fatalf("expected one printf reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
+	}
+	if count := strings.Count(diag.EmitAllToString(), "linked symbol `malloc` is reserved"); count != 1 {
+		t.Fatalf("expected one malloc reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
+	}
+	if count := strings.Count(diag.EmitAllToString(), "linked symbol `free` is reserved"); count != 1 {
+		t.Fatalf("expected one free reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayLiteralAllowsCompatibleMallocDeclaration(t *testing.T) {
+	diag := checkTypeSource(t, `#[extern("malloc")]
+fn Allocate(size: usize) -> rawptr;
+
+#[extern("free")]
+fn Release(value: rawptr);
+
+fn main() {
+	let _ = []i32{1};
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected compatible malloc diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestEmptyDynamicArrayLiteralDoesNotReserveMalloc(t *testing.T) {
+	diag := checkTypeSource(t, `#[extern("malloc")]
+fn Unrelated(value: i32) -> rawptr;
+
+fn main() {
+	[]i32{};
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("empty dynamic literal must not reserve malloc:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestShadowedDynamicArrayOperationDoesNotReserveAllocatorSymbols(t *testing.T) {
+	diag := checkTypeSource(t, `#[extern("malloc")]
+fn UnrelatedAllocate(value: i32) -> rawptr;
+
+#[extern("free")]
+fn UnrelatedRelease(value: i32);
+
+fn add(left: i32, right: i32) -> i32 {
+	return left + right;
+}
+
+fn main() {
+	let append = add;
+	let _ = append(1, 2);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("shadowed append must remain an ordinary call:\n%s", diag.EmitAllToString())
 	}
 }
 

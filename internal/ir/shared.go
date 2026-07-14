@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
 
@@ -157,6 +158,16 @@ type StructLit struct {
 
 type ArrayLit struct {
 	Values   []Expr
+	Dynamic  bool
+	Type     string
+	Location *source.Location
+}
+
+type DynamicArrayOp struct {
+	Op       symbols.CompilerOp
+	Array    Expr
+	Length   Expr
+	Value    Expr
 	Type     string
 	Location *source.Location
 }
@@ -177,28 +188,29 @@ type Drop struct {
 	Location *source.Location
 }
 
-func (*InvalidExpr) exprNode()   {}
-func (*IntLit) exprNode()        {}
-func (*FloatLit) exprNode()      {}
-func (*StringLit) exprNode()     {}
-func (*BoolLit) exprNode()       {}
-func (*ZeroValue) exprNode()     {}
-func (*OptionalSome) exprNode()  {}
-func (*Ident) exprNode()         {}
-func (*Unary) exprNode()         {}
-func (*Binary) exprNode()        {}
-func (*Call) exprNode()          {}
-func (*AddrOf) exprNode()        {}
-func (*SliceView) exprNode()     {}
-func (*InterfaceMake) exprNode() {}
-func (*InterfaceCall) exprNode() {}
-func (*Field) exprNode()         {}
-func (*Index) exprNode()         {}
-func (*StructLit) exprNode()     {}
-func (*ArrayLit) exprNode()      {}
-func (*Cast) exprNode()          {}
-func (*Print) exprNode()         {}
-func (*Drop) exprNode()          {}
+func (*InvalidExpr) exprNode()    {}
+func (*IntLit) exprNode()         {}
+func (*FloatLit) exprNode()       {}
+func (*StringLit) exprNode()      {}
+func (*BoolLit) exprNode()        {}
+func (*ZeroValue) exprNode()      {}
+func (*OptionalSome) exprNode()   {}
+func (*Ident) exprNode()          {}
+func (*Unary) exprNode()          {}
+func (*Binary) exprNode()         {}
+func (*Call) exprNode()           {}
+func (*AddrOf) exprNode()         {}
+func (*SliceView) exprNode()      {}
+func (*InterfaceMake) exprNode()  {}
+func (*InterfaceCall) exprNode()  {}
+func (*Field) exprNode()          {}
+func (*Index) exprNode()          {}
+func (*StructLit) exprNode()      {}
+func (*ArrayLit) exprNode()       {}
+func (*DynamicArrayOp) exprNode() {}
+func (*Cast) exprNode()           {}
+func (*Print) exprNode()          {}
+func (*Drop) exprNode()           {}
 
 func ExprLocation(expr Expr) *source.Location {
 	switch node := expr.(type) {
@@ -239,6 +251,8 @@ func ExprLocation(expr Expr) *source.Location {
 	case *StructLit:
 		return node.Location
 	case *ArrayLit:
+		return node.Location
+	case *DynamicArrayOp:
 		return node.Location
 	case *Cast:
 		return node.Location
@@ -540,6 +554,30 @@ func (e *ArrayLit) String() string {
 }
 
 func (e *ArrayLit) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *DynamicArrayOp) String() string {
+	if e == nil {
+		return ""
+	}
+	args := make([]string, 0, 3)
+	if e.Array != nil {
+		args = append(args, e.Array.String())
+	}
+	if e.Length != nil {
+		args = append(args, e.Length.String())
+	}
+	if e.Value != nil {
+		args = append(args, e.Value.String())
+	}
+	return string(e.Op) + "(" + strings.Join(args, ", ") + ")"
+}
+
+func (e *DynamicArrayOp) TypeText() string {
 	if e == nil {
 		return ""
 	}

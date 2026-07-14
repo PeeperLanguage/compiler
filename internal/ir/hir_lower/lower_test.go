@@ -13,6 +13,7 @@ import (
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
@@ -60,6 +61,30 @@ func TestGenerateHIRLowersIndexExpr(t *testing.T) {
 	}
 	if index.TypeText() != "i32" {
 		t.Fatalf("index type = %q, want i32", index.TypeText())
+	}
+}
+
+func TestGenerateHIRLowersDynamicArrayOwnerOperations(t *testing.T) {
+	const src = `fn main() {
+	let appended = append([]i32{}, 1);
+	let reserved = reserve(appended, 8);
+	let resized = resize(reserved, 4, 0);
+}`
+	out := generateTestHIR(t, "hir_dynamic_array_ops_test"+peeper.SourceExt, "hir_dynamic_array_ops_test", src)
+	want := []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize}
+	if len(out.Funcs[0].Body.Stmts) < len(want) {
+		t.Fatalf("operation statements = %d, want at least %d", len(out.Funcs[0].Body.Stmts), len(want))
+	}
+	for i := range want {
+		stmt := out.Funcs[0].Body.Stmts[i]
+		binding, ok := stmt.(*hir.Binding)
+		if !ok {
+			t.Fatalf("stmt %d = %#v, want binding", i, stmt)
+		}
+		op, ok := binding.Value.(*ir.DynamicArrayOp)
+		if !ok || op.Op != want[i] || op.TypeText() != "[]i32" {
+			t.Fatalf("stmt %d operation = %#v, want %s []i32", i, binding.Value, want[i])
+		}
 	}
 }
 
@@ -234,8 +259,21 @@ func TestGenerateHIRLowersArrayLiteral(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected array literal, got %#v", ret.Value)
 	}
-	if lit.TypeText() != "[3]i32" || len(lit.Values) != 3 {
+	if lit.Dynamic || lit.TypeText() != "[3]i32" || len(lit.Values) != 3 {
 		t.Fatalf("unexpected array literal lowering: type=%q values=%d", lit.TypeText(), len(lit.Values))
+	}
+}
+
+func TestGenerateHIRLowersDynamicArrayLiteral(t *testing.T) {
+	const filePath = "hir_dynamic_array_lit_test" + peeper.SourceExt
+	src := `fn values() -> []i32 {
+	return []i32{1, 2, 3};
+}`
+	out := generateTestHIR(t, filePath, "hir_dynamic_array_lit_test", src)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	lit, ok := ret.Value.(*ir.ArrayLit)
+	if !ok || !lit.Dynamic || lit.TypeText() != "[]i32" || len(lit.Values) != 3 {
+		t.Fatalf("unexpected dynamic array literal lowering: %#v", ret.Value)
 	}
 }
 

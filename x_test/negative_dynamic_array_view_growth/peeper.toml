@@ -1,0 +1,4 @@
+name = "negative_dynamic_array_view_growth"
+build = "program"
+entry = "src/main.peep"
+

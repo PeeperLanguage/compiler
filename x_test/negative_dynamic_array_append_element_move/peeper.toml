@@ -1,0 +1,4 @@
+name = "negative_dynamic_array_append_element_move"
+build = "program"
+entry = "src/main.peep"
+

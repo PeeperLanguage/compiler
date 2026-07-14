@@ -1,0 +1,11 @@
+fn append_to_view(values: &mut []i32) {
+    let grown = append(values, 1);
+}
+
+fn reserve_view(values: &[]i32) {
+    let reserved = reserve(values, 16);
+}
+
+fn main() {
+}
+

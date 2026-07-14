@@ -32,7 +32,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	b.WriteString("target triple = \"")
 	b.WriteString(targetTriple)
 	b.WriteString("\"\n\n")
-	printUsed, dropUsed := moduleRuntimeOperations(mod)
+	printUsed, dropUsed, allocUsed := moduleRuntimeOperations(mod)
 	if printUsed {
 		b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
 		b.WriteString("@.print.unsigned = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n")
@@ -118,6 +118,8 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	hasDecl := false
 	freeDeclared := false
 	freeConflict := false
+	mallocDeclared := false
+	mallocConflict := false
 	for _, fn := range mod.Funcs {
 		if fn == nil {
 			continue
@@ -127,6 +129,12 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 			compatible := fn.Blocks == nil && fn.ReturnType == "void" && len(fn.Params) == 1 && fn.Params[0].Type == "rawptr"
 			freeDeclared = freeDeclared || compatible
 			freeConflict = freeConflict || !compatible
+		}
+		if name == "malloc" {
+			compatible := fn.Blocks == nil && fn.ReturnType == "rawptr" && len(fn.Params) == 1 &&
+				emitter.llvmType(fn.Params[0].Type) == emitter.llvmType("usize")
+			mallocDeclared = mallocDeclared || compatible
+			mallocConflict = mallocConflict || !compatible
 		}
 		if fn.Blocks != nil {
 			continue
@@ -157,9 +165,22 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	if dropUsed && !freeDeclared {
 		b.WriteString("declare void @free(i8*)\n\n")
 	}
+	if allocUsed && mallocConflict {
+		emitter.markInvalid("runtime symbol `malloc` must have signature fn(usize) -> rawptr")
+	}
+	if allocUsed {
+		sizeType := emitter.llvmType("usize")
+		if !mallocDeclared {
+			fmt.Fprintf(&b, "declare i8* @malloc(%s)\n", sizeType)
+		}
+		fmt.Fprintf(&b, "declare { %s, i1 } @llvm.umul.with.overflow.%s(%s, %s)\n\n", sizeType, sizeType, sizeType, sizeType)
+	}
 
 	decls := collectCallDecls(mod)
 	for _, decl := range decls {
+		if allocUsed && ir.SanitizeSymbolName(decl.Name) == "malloc" {
+			continue
+		}
 		b.WriteString("declare ")
 		b.WriteString(emitter.llvmType(decl.ReturnType))
 		b.WriteString(" @")
@@ -300,9 +321,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	return finalLLVMText(&b, emitter)
 }
 
-func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool) {
+func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, allocUsed bool) {
 	if mod == nil {
-		return false, false
+		return false, false, false
 	}
 	for _, fn := range mod.Funcs {
 		if fn == nil {
@@ -323,6 +344,13 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool) {
 					dropUsed = true
 				}
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
+					if alloc, ok := assign.Value.(*mir.DynamicArrayAlloc); ok && alloc != nil && alloc.Length > 0 {
+						allocUsed = true
+					}
+					if _, ok := assign.Value.(*mir.DynamicArrayOp); ok {
+						allocUsed = true
+						dropUsed = true
+					}
 					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil && typeTextNeedsDrop(makeVal.DataType) {
 						dropUsed = true
 					}
@@ -330,13 +358,13 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool) {
 						dropUsed = true
 					}
 				}
-				if printUsed && dropUsed {
-					return true, true
+				if printUsed && dropUsed && allocUsed {
+					return true, true, true
 				}
 			}
 		}
 	}
-	return printUsed, dropUsed
+	return printUsed, dropUsed, allocUsed
 }
 
 // finalLLVMText appends globals discovered late during instruction emission.

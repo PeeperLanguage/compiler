@@ -213,6 +213,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
+			r.module.Semantics.ResolvedSymbols[node.ID()] = sym
 			sym.Used = true
 			if sym.Kind == symbols.SymbolImport {
 				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", ast.LocOf(node), "")

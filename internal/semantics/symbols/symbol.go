@@ -15,6 +15,14 @@ var nextSymbolID atomic.Uint64
 
 type Kind string
 
+type CompilerOp string
+
+const (
+	CompilerOpAppend  CompilerOp = "append"
+	CompilerOpReserve CompilerOp = "reserve"
+	CompilerOpResize  CompilerOp = "resize"
+)
+
 const (
 	SymbolImport  Kind = "import"
 	SymbolVar     Kind = "var"
@@ -45,6 +53,7 @@ type Symbol struct {
 	Initializing bool
 	Initialized  bool
 	Used         bool
+	CompilerOp   CompilerOp
 	Location     *source.Location
 	ASTNode      ast.Node
 	Scope        any // Pointer to table.Scope (only if Kind == SymbolFunc)

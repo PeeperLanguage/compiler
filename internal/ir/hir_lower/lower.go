@@ -525,6 +525,11 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t, Location: loc}
 
 	case *ast.CallExpr:
+		if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
+			if sym := module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
+				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, sym.CompilerOp)
+			}
+		}
 		if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
 			return lowerSelectorMethodCall(ctx, module, scope, selector, node)
 		}
@@ -832,9 +837,42 @@ func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module,
 	}
 	return &ir.ArrayLit{
 		Values:   values,
+		Dynamic:  array.Dynamic,
 		Type:     loweredTypeText(module, resolved),
 		Location: ast.LocOf(node),
 	}
+}
+
+func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+	fnType, _ := typeinfo.Underlying(exprResolvedType(module, node.Callee)).(*typeinfo.FuncType)
+	if fnType == nil || len(fnType.Params) != len(node.Args) || len(node.Args) < 2 {
+		return &ir.InvalidExpr{Message: "dynamic-array operation type missing", Type: "<invalid>", Location: ast.LocOf(node)}
+	}
+	args := make([]ir.Expr, 0, len(node.Args))
+	for i, arg := range node.Args {
+		args = append(args, lowerASTExpr(ctx, module, scope, arg, fnType.Params[i]))
+	}
+	out := &ir.DynamicArrayOp{
+		Op:       op,
+		Array:    args[0],
+		Type:     loweredTypeText(module, exprResolvedType(module, node)),
+		Location: ast.LocOf(node),
+	}
+	switch op {
+	case symbols.CompilerOpAppend:
+		out.Value = args[1]
+	case symbols.CompilerOpReserve:
+		out.Length = args[1]
+	case symbols.CompilerOpResize:
+		if len(args) != 3 {
+			return &ir.InvalidExpr{Message: "resize operation arguments missing", Type: "<invalid>", Location: ast.LocOf(node)}
+		}
+		out.Length = args[1]
+		out.Value = args[2]
+	default:
+		panic(fmt.Sprintf("unsupported dynamic-array compiler operation %q", op))
+	}
+	return out
 }
 
 func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
