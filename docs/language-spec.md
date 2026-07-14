@@ -390,6 +390,18 @@ Fixed, dynamic, and slice-view indexes may be runtime integers. Known constant
 out-of-bounds fixed-array indexes are compile errors; runtime out-of-bounds
 indexes trap before element access.
 
+Field access, element indexing, and implicit pointer/reference dereference
+compose into one storage place. Reading loads from that place; assignment stores
+into it; `&`, `&mut`, and `@` reuse the same location instead of materializing a
+copied intermediate. Place roots evaluate once, and index operands evaluate
+left-to-right once.
+
+A range creates a slice-view value from a source place. The range is not an
+addressable element projection. Future map elements will follow array-style
+place semantics for reading, replacement, and borrowing. Map structural
+mutation while an element reference is live requires reference-origin conflict
+tracking and remains future work.
+
 These reference forms are the language's slice views. There is no separate
 slice type: borrowing dynamic-array elements produces `&[]T` or `&mut []T`,
 and neither form owns or resizes the source array.

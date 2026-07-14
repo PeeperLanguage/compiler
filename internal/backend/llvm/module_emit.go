@@ -488,13 +488,32 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 	}
 	counts := make(map[string]int)
 	types := make(map[string]string)
+	addressed := make(map[string]bool)
 	order := make([]string, 0)
 	seen := make(map[string]bool)
+	recordPlace := func(place *mir.Place) {
+		if !placeNeedsRootAddr(place) {
+			return
+		}
+		root, ok := place.Root.(*mir.RefName)
+		if !ok || root == nil || root.Name == "" {
+			return
+		}
+		addressed[root.Name] = true
+		if !seen[root.Name] {
+			seen[root.Name] = true
+			order = append(order, root.Name)
+		}
+	}
 	for _, block := range fn.Blocks {
 		if block == nil {
 			continue
 		}
 		for _, instr := range block.Instrs {
+			if store, ok := instr.(*mir.Store); ok && store != nil {
+				recordPlace(store.Place)
+				continue
+			}
 			assign, ok := instr.(*mir.Assign)
 			if !ok || assign == nil || assign.Name == "" {
 				continue
@@ -507,6 +526,26 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 			if typ := mirValueType(assign.Value); typ != "" {
 				types[assign.Name] = typ
 			}
+			switch value := assign.Value.(type) {
+			case *mir.AddrOf:
+				recordPlace(value.Place)
+			case *mir.Load:
+				recordPlace(value.Place)
+			case *mir.SliceView:
+				if value.Source == nil {
+					continue
+				}
+				if len(value.Source.Projections) > 0 {
+					recordPlace(value.Source)
+					continue
+				}
+				if _, reference := referenceTypeTextTarget(value.Source.Type); reference {
+					continue
+				}
+				if _, _, fixed := ir.ArrayTypeParts(value.Source.Type); fixed {
+					recordPlace(value.Source)
+				}
+			}
 		}
 	}
 	slots := make([]stackLocalSlot, 0)
@@ -518,7 +557,7 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 		if typ == "" {
 			continue
 		}
-		if counts[name] > 1 || paramTypes[name] != "" {
+		if counts[name] > 1 || paramTypes[name] != "" || addressed[name] {
 			slots = append(slots, stackLocalSlot{Name: name, Type: typ})
 		}
 	}

@@ -60,7 +60,7 @@ type ExprStmt struct {
 }
 
 type Assign struct {
-	Target     ir.Expr
+	Target     *ir.Place
 	Value      ir.Expr
 	DropTarget bool
 	Location   *source.Location

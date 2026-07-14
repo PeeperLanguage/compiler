@@ -14,16 +14,18 @@ func TestSignatureText(t *testing.T) {
 	}
 }
 
-func TestIndexExprText(t *testing.T) {
-	expr := &Index{
-		Base:  &Ident{Name: "xs", Type: "[4]i32"},
-		Index: &IntLit{Value: "0", Type: "i32"},
-		Type:  "i32",
+func TestPlaceText(t *testing.T) {
+	place := &Place{
+		Root: &Ident{Name: "xs", Type: "[4]i32"},
+		Projections: []PlaceProjection{
+			{Kind: PlaceProjectionIndex, Index: &IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+		},
+		Type: "i32",
 	}
-	if got := expr.String(); got != "xs[0]" {
-		t.Fatalf("index string = %q, want xs[0]", got)
+	if got := place.String(); got != "xs[0]" {
+		t.Fatalf("place string = %q, want xs[0]", got)
 	}
-	if got := expr.TypeText(); got != "i32" {
-		t.Fatalf("index type = %q, want i32", got)
+	if got := place.TypeText(); got != "i32" {
+		t.Fatalf("place type = %q, want i32", got)
 	}
 }

@@ -55,12 +55,12 @@ func TestGenerateHIRLowersIndexExpr(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected return stmt, got %#v", out.Funcs[0].Body.Stmts[0])
 	}
-	index, ok := ret.Value.(*ir.Index)
-	if !ok {
-		t.Fatalf("expected index expr, got %#v", ret.Value)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 {
+		t.Fatalf("expected indexed place load, got %#v", ret.Value)
 	}
-	if index.TypeText() != "i32" {
-		t.Fatalf("index type = %q, want i32", index.TypeText())
+	if load.TypeText() != "i32" || load.Place.Projections[0].Kind != ir.PlaceProjectionIndex {
+		t.Fatalf("index load = %#v, want i32 Index place", load)
 	}
 }
 
@@ -102,9 +102,9 @@ func TestGenerateHIRLowersSliceViewIndexExpr(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected return stmt, got %#v", out.Funcs[0].Body.Stmts[0])
 	}
-	index, ok := ret.Value.(*ir.Index)
-	if !ok || index.TypeText() != "i32" {
-		t.Fatalf("expected i32 index expr, got %#v", ret.Value)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.TypeText() != "i32" || load.Place == nil || len(load.Place.Projections) != 1 || load.Place.Projections[0].Kind != ir.PlaceProjectionIndex {
+		t.Fatalf("expected i32 indexed place load, got %#v", ret.Value)
 	}
 }
 
@@ -123,17 +123,14 @@ fn update(mut holder: Holder) {
 	if !ok || address.TypeText() != "&mut struct{value: i32}" {
 		t.Fatalf("expected mutable element address, got %#v", binding.Value)
 	}
-	index, ok := address.Expr.(*ir.Index)
-	if !ok {
-		t.Fatalf("expected indexed place, got %#v", address.Expr)
+	if address.Place == nil || address.Place.Root.TypeText() != "struct{tokens: [1]struct{value: i32}}" {
+		t.Fatalf("expected Holder place root, got %#v", address.Place)
 	}
-	base, ok := index.Base.(*ir.AddrOf)
-	if !ok || base.TypeText() != "&mut [1]struct{value: i32}" {
-		t.Fatalf("expected fixed-array field address, got %#v", index.Base)
+	if len(address.Place.Projections) != 2 {
+		t.Fatalf("expected Field/Index projections, got %#v", address.Place.Projections)
 	}
-	field, ok := base.Expr.(*ir.Field)
-	if !ok || !field.ThroughPtr {
-		t.Fatalf("expected original field projection, got %#v", base.Expr)
+	if address.Place.Projections[0].Kind != ir.PlaceProjectionField || address.Place.Projections[1].Kind != ir.PlaceProjectionIndex {
+		t.Fatalf("expected original Field/Index place, got %#v", address.Place.Projections)
 	}
 }
 
@@ -151,8 +148,8 @@ func TestGenerateHIRLowersFixedArrayRangeAsMutableSliceView(t *testing.T) {
 	if !ok || view.TypeText() != "&mut []i32" || view.EndExclusive {
 		t.Fatalf("expected inclusive mutable SliceView, got %#v", binding.Value)
 	}
-	if source, ok := view.Source.(*ir.AddrOf); !ok || source.TypeText() != "&mut [4]i32" {
-		t.Fatalf("expected fixed-array place address, got %#v", view.Source)
+	if view.Source == nil || view.Source.TypeText() != "[4]i32" || len(view.Source.Projections) != 0 {
+		t.Fatalf("expected fixed-array source place, got %#v", view.Source)
 	}
 	start, startOK := view.Start.(*ir.IntLit)
 	end, endOK := view.End.(*ir.IntLit)
@@ -170,13 +167,13 @@ fn first(xs: [4]i32) -> i32 {
 }`
 	out := generateTestHIR(t, filePath, "hir_const_index_test", src)
 	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
-	index, ok := ret.Value.(*ir.Index)
-	if !ok {
-		t.Fatalf("expected index expr, got %#v", ret.Value)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 {
+		t.Fatalf("expected index place load, got %#v", ret.Value)
 	}
-	lit, ok := index.Index.(*ir.IntLit)
+	lit, ok := load.Place.Projections[0].Index.(*ir.IntLit)
 	if !ok || lit.Value != "1" {
-		t.Fatalf("index = %#v, want literal 1", index.Index)
+		t.Fatalf("index = %#v, want literal 1", load.Place.Projections[0].Index)
 	}
 }
 
@@ -272,8 +269,8 @@ fn read(box: Box) -> i32 {
 	return box.value;
 }`)
 	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
-	field, ok := ret.Value.(*ir.Field)
-	if !ok || field.DropBase {
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.DropRoot {
 		t.Fatalf("named projection base must remain live, got %#v", ret.Value)
 	}
 }
@@ -366,8 +363,7 @@ fn nested(mut bucket: Bucket) {
 	if !ok || view.TypeText() != "&mut []i32" {
 		t.Fatalf("expected nested mutable SliceView, got %#v", binding.Value)
 	}
-	field, ok := view.Source.(*ir.Field)
-	if !ok || !field.ThroughPtr {
+	if view.Source == nil || len(view.Source.Projections) != 1 || view.Source.Projections[0].Kind != ir.PlaceProjectionField {
 		t.Fatalf("expected nested view from original field place, got %#v", view.Source)
 	}
 }
@@ -393,6 +389,49 @@ func TestGenerateHIRLowersAddressAsOpaqueRawPointer(t *testing.T) {
 	}
 	if address, ok := binding.Value.(*ir.AddrOf); !ok || address.TypeText() != "rawptr" {
 		t.Fatalf("expected raw pointer AddrOf, got %#v", binding.Value)
+	}
+}
+
+func TestGenerateHIRLowersMixedProjectionPlace(t *testing.T) {
+	const src = `struct Token { value: i32 }
+struct Bucket { items: []Token }
+fn read(bucket: &Bucket, index: usize) -> i32 {
+	return bucket.items[index].value;
+}
+fn write(bucket: &mut Bucket, index: usize, value: i32) {
+	bucket.items[index].value = value;
+}`
+	out := generateTestHIR(t, "hir_mixed_projection_place_test"+peeper.SourceExt, "hir_mixed_projection_place_test", src)
+	if len(out.Funcs) != 2 {
+		t.Fatalf("functions = %d, want 2", len(out.Funcs))
+	}
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil {
+		t.Fatalf("expected projected place load, got %#v", ret.Value)
+	}
+	want := []ir.PlaceProjectionKind{
+		ir.PlaceProjectionDeref,
+		ir.PlaceProjectionField,
+		ir.PlaceProjectionIndex,
+		ir.PlaceProjectionField,
+	}
+	if len(load.Place.Projections) != len(want) {
+		t.Fatalf("read projections = %#v, want %v", load.Place.Projections, want)
+	}
+	for index, kind := range want {
+		if load.Place.Projections[index].Kind != kind {
+			t.Fatalf("read projection %d = %d, want %d", index, load.Place.Projections[index].Kind, kind)
+		}
+	}
+	assign := out.Funcs[1].Body.Stmts[0].(*hir.Assign)
+	if assign.Target == nil || len(assign.Target.Projections) != len(want) {
+		t.Fatalf("write target = %#v, want mixed place", assign.Target)
+	}
+	for index, kind := range want {
+		if assign.Target.Projections[index].Kind != kind {
+			t.Fatalf("write projection %d = %d, want %d", index, assign.Target.Projections[index].Kind, kind)
+		}
 	}
 }
 

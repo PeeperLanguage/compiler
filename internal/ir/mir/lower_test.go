@@ -233,11 +233,13 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 						&hir.Binding{
 							Name: "ptr",
 							Value: &ir.AddrOf{
-								Expr: &ir.Field{
-									Base:       &ir.Ident{Name: "boxptr", Type: "*struct{value: i32}"},
-									Index:      0,
-									ThroughPtr: true,
-									Type:       "i32",
+								Place: &ir.Place{
+									Root: &ir.Ident{Name: "boxptr", Type: "*struct{value: i32}"},
+									Projections: []ir.PlaceProjection{
+										{Kind: ir.PlaceProjectionDeref, Type: "struct{value: i32}"},
+										{Kind: ir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+									},
+									Type: "i32",
 								},
 								Type: "rawptr",
 							},
@@ -258,9 +260,9 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
-	projected, ok := assign.Value.(*ProjectField)
-	if !ok || projected.Type != "&mut i32" {
-		t.Fatalf("expected address-of field to lower as ProjectField, got %#v", assign.Value)
+	address, ok := assign.Value.(*AddrOf)
+	if !ok || address.Type != "&mut i32" || address.Place == nil || len(address.Place.Projections) != 2 {
+		t.Fatalf("expected address-of field place, got %#v", assign.Value)
 	}
 	castAssign, ok := instrs[1].(*Assign)
 	if !ok {
@@ -284,10 +286,12 @@ func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 						&hir.Binding{
 							Name: "ptr",
 							Value: &ir.AddrOf{
-								Expr: &ir.Index{
-									Base:  &ir.Ident{Name: "values", Type: "[]i32"},
-									Index: &ir.IntLit{Value: "0", Type: "i32"},
-									Type:  "i32",
+								Place: &ir.Place{
+									Root: &ir.Ident{Name: "values", Type: "[]i32"},
+									Projections: []ir.PlaceProjection{
+										{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+									},
+									Type: "i32",
 								},
 								Type: "rawptr",
 							},
@@ -308,9 +312,9 @@ func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
-	projected, ok := assign.Value.(*ProjectIndex)
-	if !ok || projected.Type != "&mut i32" {
-		t.Fatalf("expected address-of element to lower as ProjectIndex, got %#v", assign.Value)
+	address, ok := assign.Value.(*AddrOf)
+	if !ok || address.Type != "&mut i32" || address.Place == nil || len(address.Place.Projections) != 1 {
+		t.Fatalf("expected address-of indexed place, got %#v", assign.Value)
 	}
 	castAssign, ok := instrs[1].(*Assign)
 	if !ok {
@@ -331,7 +335,7 @@ func TestGenerateMIRLowersSliceView(t *testing.T) {
 			ReturnType: "i32",
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.Binding{Name: "view", Value: &ir.SliceView{
-					Source: &ir.Ident{Name: "xs", Type: "[]i32"},
+					Source: &ir.Place{Root: &ir.Ident{Name: "xs", Type: "[]i32"}, Type: "[]i32"},
 					Type:   "&[]i32",
 				}},
 				&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
@@ -362,7 +366,7 @@ func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 			ReturnType: "i32",
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.Binding{Name: "view", Value: &ir.SliceView{
-					Source:       &ir.Ident{Name: "xs", Type: "&[]i32"},
+					Source:       &ir.Place{Root: &ir.Ident{Name: "xs", Type: "&[]i32"}, Type: "&[]i32"},
 					Start:        &ir.IntLit{Value: "1", Type: "i32"},
 					End:          &ir.IntLit{Value: "3", Type: "i32"},
 					EndExclusive: true,
@@ -381,7 +385,14 @@ func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
+func TestGenerateMIRLowersIndexReadAsPlaceLoad(t *testing.T) {
+	place := &ir.Place{
+		Root: &ir.Ident{Name: "xs", Type: "[4]i32"},
+		Projections: []ir.PlaceProjection{
+			{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+		},
+		Type: "i32",
+	}
 	mod := &hir.Module{
 		Name: "test",
 		Funcs: []*hir.Function{
@@ -391,11 +402,7 @@ func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
 				ReturnType: "i32",
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
-						&hir.Return{Value: &ir.Index{
-							Base:  &ir.Ident{Name: "xs", Type: "[4]i32"},
-							Index: &ir.IntLit{Value: "0", Type: "i32"},
-							Type:  "i32",
-						}},
+						&hir.Return{Value: &ir.Load{Place: place}},
 					},
 				},
 			},
@@ -407,22 +414,16 @@ func TestGenerateMIRLowersIndexReadAsProjectIndexLoad(t *testing.T) {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
 	instrs := out.Funcs[0].Blocks[0].Instrs
-	if len(instrs) != 2 {
-		t.Fatalf("expected project index and load instructions, got %#v", instrs)
+	if len(instrs) != 1 {
+		t.Fatalf("expected one place load instruction, got %#v", instrs)
 	}
-	project, ok := instrs[0].(*Assign)
+	assign, ok := instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs[0])
 	}
-	if _, ok := project.Value.(*ProjectIndex); !ok {
-		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
-	}
-	load, ok := instrs[1].(*Assign)
-	if !ok {
-		t.Fatalf("expected second instruction assignment, got %#v", instrs[1])
-	}
-	if _, ok := load.Value.(*Load); !ok {
-		t.Fatalf("expected Load after ProjectIndex, got %#v", load.Value)
+	load, ok := assign.Value.(*Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 || load.Place.Projections[0].Kind != PlaceProjectionIndex {
+		t.Fatalf("expected indexed place Load, got %#v", assign.Value)
 	}
 }
 
@@ -450,32 +451,34 @@ func TestGenerateMIRDropsOwnerBearingTemporaryAfterFieldProjection(t *testing.T)
 	}
 }
 
-func TestGenerateMIRLowersSliceViewIndexReadAsProjectIndexLoad(t *testing.T) {
+func TestGenerateMIRLowersSliceViewIndexReadAsPlaceLoad(t *testing.T) {
+	place := &ir.Place{
+		Root: &ir.Ident{Name: "xs", Type: "&[]i32"},
+		Projections: []ir.PlaceProjection{
+			{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+		},
+		Type: "i32",
+	}
 	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
 		Name: "first", Params: []ir.Param{{Name: "xs", Type: "&[]i32"}}, ReturnType: "i32",
-		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Index{
-			Base: &ir.Ident{Name: "xs", Type: "&[]i32"}, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32",
-		}}}},
+		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Load{Place: place}}}},
 	}}}
 	out := GenerateMIR(mod, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
-	if len(instrs) != 2 {
-		t.Fatalf("expected project index and load instructions, got %#v", instrs)
+	if len(instrs) != 1 {
+		t.Fatalf("expected one place load instruction, got %#v", instrs)
 	}
-	project, projectOK := instrs[0].(*Assign)
-	load, loadOK := instrs[1].(*Assign)
-	if !projectOK || !loadOK {
-		t.Fatalf("expected assignments, got %#v", instrs)
+	assign, ok := instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected assignment, got %#v", instrs)
 	}
-	if _, ok := project.Value.(*ProjectIndex); !ok {
-		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
-	}
-	if _, ok := load.Value.(*Load); !ok {
-		t.Fatalf("expected Load, got %#v", load.Value)
+	load, ok := assign.Value.(*Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 {
+		t.Fatalf("expected indexed place Load, got %#v", assign.Value)
 	}
 }
 
-func TestGenerateMIRLowersIndexAssignmentAsProjectIndexStore(t *testing.T) {
+func TestGenerateMIRLowersIndexAssignmentAsPlaceStore(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",
 		Funcs: []*hir.Function{
@@ -488,10 +491,12 @@ func TestGenerateMIRLowersIndexAssignmentAsProjectIndexStore(t *testing.T) {
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Assign{
-							Target: &ir.Index{
-								Base:  &ir.Ident{Name: "xs", Type: "[4]i32"},
-								Index: &ir.IntLit{Value: "0", Type: "i32"},
-								Type:  "i32",
+							Target: &ir.Place{
+								Root: &ir.Ident{Name: "xs", Type: "[4]i32"},
+								Projections: []ir.PlaceProjection{
+									{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+								},
+								Type: "i32",
 							},
 							Value: &ir.Ident{Name: "value", Type: "i32"},
 						},
@@ -506,43 +511,37 @@ func TestGenerateMIRLowersIndexAssignmentAsProjectIndexStore(t *testing.T) {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
 	instrs := out.Funcs[0].Blocks[0].Instrs
-	if len(instrs) != 2 {
-		t.Fatalf("expected project index and store instructions, got %#v", instrs)
+	if len(instrs) != 1 {
+		t.Fatalf("expected one place store instruction, got %#v", instrs)
 	}
-	project, ok := instrs[0].(*Assign)
-	if !ok {
-		t.Fatalf("expected first instruction assignment, got %#v", instrs[0])
-	}
-	if _, ok := project.Value.(*ProjectIndex); !ok {
-		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
-	}
-	if _, ok := instrs[1].(*Store); !ok {
-		t.Fatalf("expected Store, got %#v", instrs[1])
+	store, ok := instrs[0].(*Store)
+	if !ok || store.Place == nil || len(store.Place.Projections) != 1 {
+		t.Fatalf("expected indexed place Store, got %#v", instrs[0])
 	}
 }
 
-func TestGenerateMIRLowersMutableSliceViewIndexAssignmentAsProjectIndexStore(t *testing.T) {
+func TestGenerateMIRLowersMutableSliceViewIndexAssignmentAsPlaceStore(t *testing.T) {
 	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
 		Name: "set_first", Params: []ir.Param{{Name: "xs", Type: "&mut []i32"}, {Name: "value", Type: "i32"}},
 		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Assign{
-			Target: &ir.Index{Base: &ir.Ident{Name: "xs", Type: "&mut []i32"}, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
-			Value:  &ir.Ident{Name: "value", Type: "i32"},
+			Target: &ir.Place{
+				Root: &ir.Ident{Name: "xs", Type: "&mut []i32"},
+				Projections: []ir.PlaceProjection{
+					{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+				},
+				Type: "i32",
+			},
+			Value: &ir.Ident{Name: "value", Type: "i32"},
 		}}},
 	}}}
 	out := GenerateMIR(mod, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
-	if len(instrs) != 2 {
-		t.Fatalf("expected project index and store instructions, got %#v", instrs)
+	if len(instrs) != 1 {
+		t.Fatalf("expected one place store instruction, got %#v", instrs)
 	}
-	project, projectOK := instrs[0].(*Assign)
-	if !projectOK {
-		t.Fatalf("expected project assignment, got %#v", instrs[0])
-	}
-	if _, ok := project.Value.(*ProjectIndex); !ok {
-		t.Fatalf("expected ProjectIndex, got %#v", project.Value)
-	}
-	if _, ok := instrs[1].(*Store); !ok {
-		t.Fatalf("expected Store, got %#v", instrs[1])
+	store, ok := instrs[0].(*Store)
+	if !ok || store.Place == nil || len(store.Place.Projections) != 1 {
+		t.Fatalf("expected indexed place Store, got %#v", instrs[0])
 	}
 }
 
@@ -607,7 +606,7 @@ func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
 
 	out := GenerateMIR(mod, nil, nil)
 	block := out.Funcs[0].Blocks[0]
-	if len(block.Instrs) != 5 {
+	if len(block.Instrs) != 3 {
 		t.Fatalf("expected allocation and two indexed stores, got %#v", block.Instrs)
 	}
 	assign, ok := block.Instrs[0].(*Assign)
@@ -618,16 +617,10 @@ func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
 	if !allocOK || alloc.Length != 2 || alloc.Type != "[]i32" {
 		t.Fatalf("expected leading dynamic allocation, got %#v", block.Instrs[0])
 	}
-	for _, index := range []int{1, 3} {
-		project, ok := block.Instrs[index].(*Assign)
-		if !ok {
-			t.Fatalf("expected indexed projection at %d, got %#v", index, block.Instrs[index])
-		}
-		if _, ok := project.Value.(*ProjectIndex); !ok {
-			t.Fatalf("expected ProjectIndex at %d, got %#v", index, project.Value)
-		}
-		if _, ok := block.Instrs[index+1].(*Store); !ok {
-			t.Fatalf("expected Store at %d, got %#v", index+1, block.Instrs[index+1])
+	for _, index := range []int{1, 2} {
+		store, ok := block.Instrs[index].(*Store)
+		if !ok || store.Place == nil || len(store.Place.Projections) != 1 {
+			t.Fatalf("expected indexed place Store at %d, got %#v", index, block.Instrs[index])
 		}
 	}
 }

@@ -1,0 +1,76 @@
+struct Cell {
+    value: i32
+}
+
+struct Row {
+    fixed: [2]Cell,
+    dynamic: []Cell
+}
+
+struct Board {
+    row: Row
+}
+
+fn apply(board: &mut Board, first: bool) {
+    if first {
+        board.row.fixed[1].value = 11;
+    } else {
+        board.row.fixed[1].value = 21;
+    }
+    board.row.dynamic[1].value = board.row.fixed[1].value + 1;
+}
+
+fn read(cell: &Cell) -> i32 {
+    return cell.value;
+}
+
+fn write(cell: &mut Cell, value: i32) {
+    cell.value = value;
+}
+
+fn main() -> i32 {
+    let mut board = .Board{row = .{
+        fixed = [_]Cell{.{value = 1}, .{value = 2}},
+        dynamic = []Cell{.{value = 3}, .{value = 4}}
+    }};
+
+    apply(&mut board, true);
+    if board.row.fixed[1].value != 11 || board.row.dynamic[1].value != 12 {
+        return 1;
+    }
+    apply(&mut board, false);
+    if board.row.fixed[1].value != 21 || board.row.dynamic[1].value != 22 {
+        return 2;
+    }
+
+    if read(&board.row.dynamic[1]) != 22 {
+        return 3;
+    }
+    write(&mut board.row.fixed[0], 7);
+    if board.row.fixed[0].value != 7 {
+        return 4;
+    }
+
+    let first_address: rawptr = @board.row.fixed[0].value;
+    let second_address: rawptr = @board.row.fixed[0].value;
+    if first_address != second_address {
+        return 5;
+    }
+
+    {
+        let fixed_view = board.row.fixed[..];
+        fixed_view[1].value = 31;
+    }
+    if board.row.fixed[1].value != 31 {
+        return 6;
+    }
+
+    {
+        let dynamic_view = board.row.dynamic[..];
+        dynamic_view[0].value = 41;
+    }
+    if board.row.dynamic[0].value != 41 {
+        return 7;
+    }
+    return 0;
+}

@@ -91,15 +91,44 @@ type Call struct {
 	Location *source.Location
 }
 
+type PlaceProjectionKind uint8
+
+const (
+	PlaceProjectionDeref PlaceProjectionKind = iota
+	PlaceProjectionField
+	PlaceProjectionIndex
+)
+
+type PlaceProjection struct {
+	Kind       PlaceProjectionKind
+	FieldIndex int
+	Index      Expr
+	Type       string
+	Location   *source.Location
+}
+
+type Place struct {
+	Root        Expr
+	Projections []PlaceProjection
+	Type        string
+	Location    *source.Location
+}
+
+type Load struct {
+	Place    *Place
+	DropRoot bool
+	Location *source.Location
+}
+
 type AddrOf struct {
-	Expr     Expr
+	Place    *Place
 	Type     string
 	Location *source.Location
 }
 
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
-	Source       Expr
+	Source       *Place
 	Start        Expr
 	End          Expr
 	EndExclusive bool
@@ -134,17 +163,8 @@ type InterfaceCall struct {
 }
 
 type Field struct {
-	Base       Expr
-	Index      int
-	ThroughPtr bool
-	DropBase   bool
-	Type       string
-	Location   *source.Location
-}
-
-type Index struct {
 	Base     Expr
-	Index    Expr
+	Index    int
 	DropBase bool
 	Type     string
 	Location *source.Location
@@ -199,12 +219,12 @@ func (*Ident) exprNode()          {}
 func (*Unary) exprNode()          {}
 func (*Binary) exprNode()         {}
 func (*Call) exprNode()           {}
+func (*Load) exprNode()           {}
 func (*AddrOf) exprNode()         {}
 func (*SliceView) exprNode()      {}
 func (*InterfaceMake) exprNode()  {}
 func (*InterfaceCall) exprNode()  {}
 func (*Field) exprNode()          {}
-func (*Index) exprNode()          {}
 func (*StructLit) exprNode()      {}
 func (*ArrayLit) exprNode()       {}
 func (*DynamicArrayOp) exprNode() {}
@@ -236,6 +256,8 @@ func ExprLocation(expr Expr) *source.Location {
 		return node.Location
 	case *Call:
 		return node.Location
+	case *Load:
+		return node.Location
 	case *AddrOf:
 		return node.Location
 	case *SliceView:
@@ -245,8 +267,6 @@ func ExprLocation(expr Expr) *source.Location {
 	case *InterfaceCall:
 		return node.Location
 	case *Field:
-		return node.Location
-	case *Index:
 		return node.Location
 	case *StructLit:
 		return node.Location
@@ -416,11 +436,59 @@ func (e *Drop) String() string {
 
 func (*Drop) TypeText() string { return "" }
 
-func (e *AddrOf) String() string {
-	if e == nil || e.Expr == nil {
+func (p *Place) String() string {
+	if p == nil || p.Root == nil {
 		return ""
 	}
-	return "^(" + e.Expr.String() + ")"
+	var b strings.Builder
+	b.WriteString(p.Root.String())
+	for _, projection := range p.Projections {
+		switch projection.Kind {
+		case PlaceProjectionDeref:
+			root := b.String()
+			b.Reset()
+			b.WriteString("deref(")
+			b.WriteString(root)
+			b.WriteString(")")
+		case PlaceProjectionField:
+			fmt.Fprintf(&b, ".%d", projection.FieldIndex)
+		case PlaceProjectionIndex:
+			b.WriteString("[")
+			if projection.Index != nil {
+				b.WriteString(projection.Index.String())
+			}
+			b.WriteString("]")
+		}
+	}
+	return b.String()
+}
+
+func (p *Place) TypeText() string {
+	if p == nil {
+		return ""
+	}
+	return p.Type
+}
+
+func (e *Load) String() string {
+	if e == nil || e.Place == nil {
+		return ""
+	}
+	return "load(" + e.Place.String() + ")"
+}
+
+func (e *Load) TypeText() string {
+	if e == nil || e.Place == nil {
+		return ""
+	}
+	return e.Place.TypeText()
+}
+
+func (e *AddrOf) String() string {
+	if e == nil || e.Place == nil {
+		return ""
+	}
+	return "^(" + e.Place.String() + ")"
 }
 
 func (e *AddrOf) TypeText() string {
@@ -490,20 +558,6 @@ func (e *Field) String() string {
 }
 
 func (e *Field) TypeText() string {
-	if e == nil {
-		return ""
-	}
-	return e.Type
-}
-
-func (e *Index) String() string {
-	if e == nil || e.Base == nil || e.Index == nil {
-		return ""
-	}
-	return fmt.Sprintf("%s[%s]", e.Base.String(), e.Index.String())
-}
-
-func (e *Index) TypeText() string {
 	if e == nil {
 		return ""
 	}

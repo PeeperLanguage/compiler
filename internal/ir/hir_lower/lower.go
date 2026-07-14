@@ -265,7 +265,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "assignment missing target or value", Location: ast.LocOf(node)})
 			return
 		}
-		targetExpr := lowerPlaceExpr(ctx, module, scope, node.Target, true)
+		targetExpr := lowerPlace(ctx, module, scope, node.Target)
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
 		dropTarget := false
@@ -294,65 +294,63 @@ func cleanupExprs(module *project.Module, cleanup []*symbols.Symbol, loc *source
 	return exprs
 }
 
-func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, requireMutable bool) ir.Expr {
-	if index, ok := expr.(*ast.IndexExpr); ok && index != nil {
-		if _, slicing := index.Index.(*ast.RangeExpr); !slicing {
-			base := lowerIndexBase(ctx, module, scope, index.Expr, requireMutable)
-			return lowerIndexExpr(ctx, module, scope, index, base)
-		}
-	}
-	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil {
-		exprType := func(e ast.Expr) typeinfo.Type {
-			return exprResolvedType(module, e)
-		}
+func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr) *ir.Place {
+	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil && selector.Expr != nil && selector.Name != nil {
 		baseType := exprResolvedType(module, selector.Expr)
 		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
-			_, throughPtr := typeinfo.PointerTarget(typeinfo.Underlying(baseType))
-			if !throughPtr {
-				_, _, throughPtr = typeinfo.ReferenceTarget(typeinfo.Underlying(baseType))
+			out := lowerPlace(ctx, module, scope, selector.Expr)
+			if target, pointer := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); pointer {
+				out.Projections = append(out.Projections, ir.PlaceProjection{
+					Kind: ir.PlaceProjectionDeref, Type: loweredTypeText(module, target), Location: ast.LocOf(selector.Expr),
+				})
+			} else if target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); reference {
+				out.Projections = append(out.Projections, ir.PlaceProjection{
+					Kind: ir.PlaceProjectionDeref, Type: loweredTypeText(module, target), Location: ast.LocOf(selector.Expr),
+				})
 			}
-			if throughPtr {
-				return &ir.Field{
-					Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
-					Index:      fieldIndex,
-					ThroughPtr: true,
-					Type:       loweredTypeText(module, field.Type),
-					Location:   ast.LocOf(selector),
-				}
-			}
-			addressable := place.Addressable(scope, selector.Expr, exprType)
-			if requireMutable {
-				addressable, _ = place.MutableAddressable(scope, selector.Expr, exprType)
-			}
-			if addressable {
-				return &ir.Field{
-					Base: &ir.AddrOf{
-						Expr:     lowerPlaceExpr(ctx, module, scope, selector.Expr, requireMutable),
-						Type:     "&mut " + loweredTypeText(module, baseType),
-						Location: ast.LocOf(selector.Expr),
-					},
-					Index:      fieldIndex,
-					ThroughPtr: true,
-					Type:       loweredTypeText(module, field.Type),
-					Location:   ast.LocOf(selector),
-				}
-			}
+			out.Projections = append(out.Projections, ir.PlaceProjection{
+				Kind: ir.PlaceProjectionField, FieldIndex: fieldIndex,
+				Type: loweredTypeText(module, field.Type), Location: ast.LocOf(selector),
+			})
+			out.Type = loweredTypeText(module, field.Type)
+			out.Location = ast.LocOf(selector)
+			return out
 		}
 	}
-	return lowerASTExpr(ctx, module, scope, expr, nil)
+	if index, ok := expr.(*ast.IndexExpr); ok && index != nil && index.Expr != nil && index.Index != nil {
+		if _, slicing := index.Index.(*ast.RangeExpr); !slicing {
+			indexExpr := lowerASTExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType())
+			if value, ok := consteval.EvaluateExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType()); ok {
+				if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
+					indexExpr = &ir.IntLit{Value: intConst.Value, Type: intConst.TypeText(), Location: ast.LocOf(index.Index)}
+				}
+			}
+			out := lowerPlace(ctx, module, scope, index.Expr)
+			out.Type = loweredTypeText(module, exprResolvedType(module, index))
+			out.Location = ast.LocOf(index)
+			out.Projections = append(out.Projections, ir.PlaceProjection{
+				Kind: ir.PlaceProjectionIndex, Index: indexExpr, Type: out.Type, Location: ast.LocOf(index),
+			})
+			return out
+		}
+	}
+	typeText := loweredTypeText(module, exprResolvedType(module, expr))
+	return &ir.Place{
+		Root: lowerASTExpr(ctx, module, scope, expr, nil), Type: typeText, Location: ast.LocOf(expr),
+	}
 }
 
 func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, resultType typeinfo.Type, typeText string) ir.Expr {
-	target, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
+	target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
 	if !reference {
 		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: "<invalid>", Location: ast.LocOf(expr)}
 	}
-	value := lowerPlaceExpr(ctx, module, scope, expr, mutable)
+	value := lowerPlace(ctx, module, scope, expr)
 	array, isDynamicArray := loweredRuntimeType(module, target, nil).(*typeinfo.ArrayType)
 	if isDynamicArray && array != nil && array.Dynamic {
 		return &ir.SliceView{Source: value, Type: typeText, Location: ast.LocOf(expr)}
 	}
-	return &ir.AddrOf{Expr: value, Type: typeText, Location: ast.LocOf(expr)}
+	return &ir.AddrOf{Place: value, Type: typeText, Location: ast.LocOf(expr)}
 }
 
 func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
@@ -493,7 +491,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		if node.Mode == ast.AddressShared || node.Mode == ast.AddressMutable {
 			return lowerReferenceValue(ctx, module, scope, node.Expr, resolvedType, t)
 		}
-		return &ir.AddrOf{Expr: lowerPlaceExpr(ctx, module, scope, node.Expr, false), Type: t, Location: loc}
+		return &ir.AddrOf{Place: lowerPlace(ctx, module, scope, node.Expr), Type: t, Location: loc}
 
 	case *ast.BinaryExpr:
 		leftExpected := expectedType
@@ -592,7 +590,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return lowerSelectorExpr(ctx, module, scope, node)
 
 	case *ast.IndexExpr:
-		return lowerIndexExpr(ctx, module, scope, node, nil)
+		return lowerIndexExpr(ctx, module, scope, node)
 
 	case *ast.StructLit:
 		return lowerStructLiteralExpr(ctx, module, scope, node)
@@ -732,35 +730,24 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		if module.Semantics != nil {
 			_, dropBase = module.Semantics.DropProjectionBase[selector.ID()]
 		}
+		exprType := func(expr ast.Expr) typeinfo.Type {
+			return exprResolvedType(module, expr)
+		}
+		if throughPtr || place.Addressable(scope, selector.Expr, exprType) {
+			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), DropRoot: dropBase, Location: ast.LocOf(selector)}
+		}
 		return &ir.Field{
-			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
-			Index:      fieldIndex,
-			ThroughPtr: throughPtr,
-			DropBase:   dropBase,
-			Type:       loweredTypeText(module, field.Type),
-			Location:   ast.LocOf(selector),
+			Base:     lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+			Index:    fieldIndex,
+			DropBase: dropBase,
+			Type:     loweredTypeText(module, field.Type),
+			Location: ast.LocOf(selector),
 		}
 	}
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>", Location: ast.LocOf(selector)}
 }
 
-func lowerIndexBase(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, requireMutable bool) ir.Expr {
-	array, ok := loweredRuntimeType(module, exprResolvedType(module, expr), nil).(*typeinfo.ArrayType)
-	if !ok || array == nil || array.Dynamic {
-		return lowerASTExpr(ctx, module, scope, expr, nil)
-	}
-	prefix := "&"
-	if requireMutable {
-		prefix = "&mut "
-	}
-	return &ir.AddrOf{
-		Expr:     lowerPlaceExpr(ctx, module, scope, expr, requireMutable),
-		Type:     prefix + loweredTypeText(module, exprResolvedType(module, expr)),
-		Location: ast.LocOf(expr),
-	}
-}
-
-func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.IndexExpr, base ir.Expr) ir.Expr {
+func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.IndexExpr) ir.Expr {
 	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
 		return &ir.InvalidExpr{Message: "invalid index", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
@@ -773,10 +760,8 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 			end = lowerASTExpr(ctx, module, scope, rangeIndex.End, typeinfo.DefaultIntegerType())
 		}
 		resultType := exprResolvedType(module, node)
-		_, mutable, _ := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
-		source := lowerIndexBase(ctx, module, scope, node.Expr, mutable)
 		return &ir.SliceView{
-			Source:       source,
+			Source:       lowerPlace(ctx, module, scope, node.Expr),
 			Start:        start,
 			End:          end,
 			EndExclusive: rangeIndex.EndExclusive,
@@ -784,26 +769,11 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 			Location:     ast.LocOf(node),
 		}
 	}
-	index := lowerASTExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType())
-	if value, ok := consteval.EvaluateExpr(ctx, module, scope, node.Index, typeinfo.DefaultIntegerType()); ok {
-		if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
-			index = &ir.IntLit{Value: intConst.Value, Type: intConst.TypeText(), Location: ast.LocOf(node.Index)}
-		}
-	}
 	dropBase := false
 	if module.Semantics != nil {
 		_, dropBase = module.Semantics.DropProjectionBase[node.ID()]
 	}
-	if base == nil {
-		base = lowerASTExpr(ctx, module, scope, node.Expr, nil)
-	}
-	return &ir.Index{
-		Base:     base,
-		Index:    index,
-		DropBase: dropBase,
-		Type:     loweredTypeText(module, exprResolvedType(module, node)),
-		Location: ast.LocOf(node),
-	}
+	return &ir.Load{Place: lowerPlace(ctx, module, scope, node), DropRoot: dropBase, Location: ast.LocOf(node)}
 }
 
 func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {
