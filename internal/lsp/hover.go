@@ -26,16 +26,17 @@ const (
 // hoverSubject is the normalized cursor target after resolution. It hides how
 // the cursor was found so the renderer can stay flat and data-driven.
 type hoverSubject struct {
-	Kind           hoverSubjectKind
-	Node           ast.Node
-	Range          Range
-	Symbol         *symbols.Symbol
-	ExprType       typeinfo.Type
-	ResolvedType   typeinfo.Type
-	Decl           ast.Node
-	ResolvedImport *project.ResolvedImport
-	Attribute      *ast.Attribute
-	MethodSymbols  []*symbols.Symbol
+	Kind            hoverSubjectKind
+	Node            ast.Node
+	Range           Range
+	Symbol          *symbols.Symbol
+	ExprType        typeinfo.Type
+	ResolvedType    typeinfo.Type
+	Decl            ast.Node
+	ResolvedImport  *project.ResolvedImport
+	Attribute       *ast.Attribute
+	MethodSymbols   []*symbols.Symbol
+	InterfaceMethod *typeinfo.Method
 }
 
 func hoverRange(node ast.Node) Range {
@@ -333,12 +334,40 @@ func resolveSelectorHoverSubject(cc *cursorContext) *hoverSubject {
 			Symbol: sym,
 		}
 	}
+	if subject := resolveInterfaceSelectorMethodHoverSubject(cc, sel, ident); subject != nil {
+		return subject
+	}
 	if exprType, ok := cc.module.Semantics.ExprTypes[sel.ID()]; ok {
 		return &hoverSubject{
 			Kind:     hoverSubjectExpr,
 			Node:     ident,
 			Range:    hoverRange(ident),
 			ExprType: exprType,
+		}
+	}
+	return nil
+}
+
+func resolveInterfaceSelectorMethodHoverSubject(cc *cursorContext, sel *ast.SelectorExpr, ident *ast.Ident) *hoverSubject {
+	baseType, ok := selectorBaseType(sel.Expr, cc.parents, cc.module, cc.ctx)
+	if !ok {
+		return nil
+	}
+	iface, ok := typeinfo.InterfaceTypeOf(baseType)
+	if !ok || iface == nil {
+		return nil
+	}
+	for i := range iface.Methods {
+		method := &iface.Methods[i]
+		if method.Name != ident.Name {
+			continue
+		}
+		return &hoverSubject{
+			Kind:            hoverSubjectSymbol,
+			Node:            ident,
+			Range:           hoverRange(ident),
+			Symbol:          interfaceMethodSymbol(ident, method),
+			InterfaceMethod: method,
 		}
 	}
 	return nil
@@ -411,19 +440,22 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]a
 		if method.Name != ident || i >= len(resolved.Methods) {
 			continue
 		}
-		resolvedMethod := resolved.Methods[i]
-		params := make([]typeinfo.Type, 0, len(resolvedMethod.Params))
-		for _, param := range resolvedMethod.Params {
-			params = append(params, param.Type)
-		}
-		sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
-		sym.Type = &typeinfo.FuncType{
-			Params: params,
-			Return: resolvedMethod.Return,
-		}
-		return sym
+		return interfaceMethodSymbol(ident, &resolved.Methods[i])
 	}
 	return nil
+}
+
+func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.Symbol {
+	if ident == nil || method == nil {
+		return nil
+	}
+	params := make([]typeinfo.Type, len(method.Params))
+	for i, param := range method.Params {
+		params[i] = param.Type
+	}
+	sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
+	sym.Type = &typeinfo.FuncType{Params: params, Return: method.Return}
+	return sym
 }
 
 func lookupMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Symbol {
@@ -499,6 +531,12 @@ func renderHoverSubject(subject *hoverSubject) string {
 		if subject.Symbol == nil {
 			return ""
 		}
+		if subject.Symbol.Kind == symbols.SymbolFunc || subject.Symbol.Kind == symbols.SymbolMethod {
+			if signature := hoverSubjectFunctionSignature(subject).text(); signature != "" {
+				text = fmt.Sprintf("(%s) %s", subject.Symbol.Kind, signature)
+				break
+			}
+		}
 		text = fmt.Sprintf("(%s) %s", subject.Symbol.Kind, subject.Symbol.Name)
 		if typ, ok := symbols.GetSymbolType(subject.Symbol); ok && typ != nil {
 			if subject.Symbol.Kind == symbols.SymbolType {
@@ -548,6 +586,143 @@ func renderHoverSubject(subject *hoverSubject) string {
 	return fmt.Sprintf("```peeper\n%s\n```", text)
 }
 
+type hoverFunctionSignature struct {
+	receiver   string
+	name       string
+	typeParams []string
+	params     []string
+	result     string
+}
+
+func (s hoverFunctionSignature) text() string {
+	if s.name == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("fn ")
+	if s.receiver != "" {
+		b.WriteString("(")
+		b.WriteString(s.receiver)
+		b.WriteString(") ")
+	}
+	b.WriteString(s.name)
+	if len(s.typeParams) > 0 {
+		b.WriteString("<")
+		b.WriteString(strings.Join(s.typeParams, ", "))
+		b.WriteString(">")
+	}
+	b.WriteString("(")
+	b.WriteString(strings.Join(s.params, ", "))
+	b.WriteString(")")
+	if s.result != "" {
+		b.WriteString(" -> ")
+		b.WriteString(s.result)
+	}
+	return b.String()
+}
+
+func hoverSubjectFunctionSignature(subject *hoverSubject) hoverFunctionSignature {
+	if subject == nil || subject.Symbol == nil {
+		return hoverFunctionSignature{}
+	}
+	if decl, ok := subject.Decl.(*ast.InterfaceDecl); ok && decl != nil {
+		if iface, ok := decl.Type.(*ast.InterfaceType); ok && iface != nil {
+			for i := range iface.Methods {
+				method := &iface.Methods[i]
+				if method.Name == subject.Node {
+					return hoverASTFunctionSignature(method.Receiver, method.Name, method.TypeParams, method.Params, method.ReturnType)
+				}
+			}
+		}
+	}
+	if subject.InterfaceMethod != nil {
+		return hoverSemanticMethodSignature(subject.InterfaceMethod)
+	}
+	return hoverSymbolFunctionSignature(subject.Symbol)
+}
+
+func hoverASTFunctionSignature(receiver *ast.Param, name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, result ast.TypeExpr) hoverFunctionSignature {
+	if name == nil {
+		return hoverFunctionSignature{}
+	}
+	signature := hoverFunctionSignature{name: name.Name, result: ast.TypeText(result)}
+	if receiver != nil {
+		signature.receiver = hoverASTParamText(*receiver)
+	}
+	for _, typeParam := range typeParams {
+		if typeParam.Name != nil {
+			signature.typeParams = append(signature.typeParams, typeParam.Name.Name)
+		}
+	}
+	for _, param := range params {
+		signature.params = append(signature.params, hoverASTParamText(param))
+	}
+	return signature
+}
+
+func hoverASTParamText(param ast.Param) string {
+	var b strings.Builder
+	if param.IsMutable {
+		b.WriteString("mut ")
+	}
+	if param.Name != nil {
+		b.WriteString(param.Name.Name)
+		b.WriteString(": ")
+	}
+	b.WriteString(ast.TypeText(param.Type))
+	return b.String()
+}
+
+func hoverSemanticMethodSignature(method *typeinfo.Method) hoverFunctionSignature {
+	if method == nil {
+		return hoverFunctionSignature{}
+	}
+	signature := hoverFunctionSignature{name: method.Name, result: typeinfo.TypeText(method.Return)}
+	params := method.Params
+	if len(params) > 0 {
+		signature.receiver = typeinfo.TypeText(params[0].Type)
+		params = params[1:]
+	}
+	for _, param := range params {
+		text := ""
+		if param.Name != "" {
+			text = param.Name + ": "
+		}
+		signature.params = append(signature.params, text+typeinfo.TypeText(param.Type))
+	}
+	return signature
+}
+
+func hoverSymbolFunctionSignature(sym *symbols.Symbol) hoverFunctionSignature {
+	if sym == nil {
+		return hoverFunctionSignature{}
+	}
+	if decl, ok := sym.ASTNode.(*ast.FnDecl); ok && decl != nil {
+		return hoverASTFunctionSignature(decl.Receiver, decl.Name, decl.TypeParams, decl.Params, decl.ReturnType)
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok {
+		return hoverFunctionSignature{}
+	}
+	fn, ok := typ.(*typeinfo.FuncType)
+	if !ok || fn == nil {
+		return hoverFunctionSignature{}
+	}
+	signature := hoverFunctionSignature{name: sym.Name, result: typeinfo.TypeText(fn.Return)}
+	start := 0
+	if sym.Kind == symbols.SymbolMethod {
+		if len(fn.Params) == 0 {
+			return hoverFunctionSignature{}
+		}
+		signature.receiver = typeinfo.TypeText(fn.Params[0])
+		start = 1
+	}
+	for _, param := range fn.Params[start:] {
+		signature.params = append(signature.params, typeinfo.TypeText(param))
+	}
+	return signature
+}
+
 func renderTypeDetails(typ typeinfo.Type, methods []*symbols.Symbol) string {
 	body := formatHoverTypeBody(typ)
 	methodText := formatHoverMethods(methods)
@@ -569,59 +744,48 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 		if t == nil || t.Underlying == nil {
 			return ""
 		}
-		return formatHoverTypeBody(t.Underlying)
+		if body := formatHoverTypeBody(t.Underlying); body != "" {
+			return body
+		}
+		return typeinfo.TypeText(t.Underlying)
 	case *typeinfo.StructType:
 		if t == nil {
 			return ""
 		}
 		var b strings.Builder
-		b.WriteString("struct{\n")
+		b.WriteString("struct {\n")
 		for _, field := range t.Fields {
 			b.WriteString("  ")
 			b.WriteString(field.Name)
 			b.WriteString(": ")
 			b.WriteString(typeinfo.TypeText(field.Type))
-			b.WriteString("\n")
+			b.WriteString(",\n")
 		}
 		b.WriteString("}")
 		return b.String()
-	case *typeinfo.OptionalType:
-		if t == nil {
-			return ""
-		}
-		return typeinfo.TypeText(t)
-	case *typeinfo.ArrayType:
-		if t == nil {
-			return ""
-		}
-		return typeinfo.TypeText(t)
-	case *typeinfo.RefType:
-		if t == nil {
-			return ""
-		}
-		return typeinfo.TypeText(t)
 	case *typeinfo.InterfaceType:
 		if t == nil {
 			return ""
 		}
 		var b strings.Builder
-		b.WriteString("iface{\n")
-		for _, method := range t.Methods {
+		b.WriteString("iface {\n")
+		for i := range t.Methods {
 			b.WriteString("  ")
-			b.WriteString(method.Name)
-			b.WriteString("(")
-			for i, param := range method.Params {
-				if i > 0 {
-					b.WriteString(", ")
-				}
-				b.WriteString(typeinfo.TypeText(param.Type))
-			}
-			b.WriteString(")")
-			if ret := typeinfo.TypeText(method.Return); ret != "" {
-				b.WriteString(" -> ")
-				b.WriteString(ret)
-			}
-			b.WriteString("\n")
+			b.WriteString(hoverSemanticMethodSignature(&t.Methods[i]).text())
+			b.WriteString(",\n")
+		}
+		b.WriteString("}")
+		return b.String()
+	case *typeinfo.EnumType:
+		if t == nil {
+			return ""
+		}
+		var b strings.Builder
+		b.WriteString("enum {\n")
+		for _, variant := range t.Variants {
+			b.WriteString("  ")
+			b.WriteString(variant)
+			b.WriteString(",\n")
 		}
 		b.WriteString("}")
 		return b.String()
@@ -639,18 +803,21 @@ func formatHoverMethods(methods []*symbols.Symbol) string {
 		if method == nil {
 			continue
 		}
-		b.WriteString("  ")
-		b.WriteString(method.Name)
-		if typ, ok := symbols.GetSymbolType(method); ok && typ != nil {
-			b.WriteString(": ")
-			b.WriteString(typeinfo.TypeText(typ))
+		signature := hoverSymbolFunctionSignature(method).text()
+		if signature == "" {
+			continue
 		}
+		b.WriteString("  ")
+		b.WriteString(signature)
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func hoverTypeLabel(typ typeinfo.Type) (string, bool) {
+	if typ == nil {
+		return "", false
+	}
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		if t == nil {
@@ -662,8 +829,11 @@ func hoverTypeLabel(typ typeinfo.Type) (string, bool) {
 			return "", false
 		}
 		return t.Name, true
-	default:
+	case *typeinfo.StructType, *typeinfo.InterfaceType, *typeinfo.EnumType:
 		return "", false
+	default:
+		text := typeinfo.TypeText(typ)
+		return text, text != ""
 	}
 }
 

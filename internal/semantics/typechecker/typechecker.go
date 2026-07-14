@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/pkg/numeric"
 )
 
 type checker struct {
@@ -1158,14 +1160,15 @@ func (c *checker) typePrintExpr(scope *table.Scope, node *ast.PrintExpr) typeinf
 }
 
 func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expected typeinfo.Type) typeinfo.Type {
-	if node.Op != "+" && node.Op != "-" && node.Op != "!" {
+	if node.Op != "+" && node.Op != "-" && node.Op != "!" && node.Op != "~" {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported unary operator `"+node.Op+"`"))
 		return nil
 	}
 
 	argExpected := typeinfo.Type(nil)
-	if node.Op != "!" && expected != nil && typeinfo.IsArithmetic(expected) {
+	if node.Op != "!" && expected != nil &&
+		((node.Op == "~" && typeinfo.IsIntegral(expected)) || (node.Op != "~" && typeinfo.IsArithmetic(expected))) {
 		argExpected = expected
 		if node.Op == "-" {
 			if _, ok := expected.(*typeinfo.IntegerType); ok {
@@ -1187,6 +1190,14 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 			return nil
 		}
 		return &typeinfo.BoolType{}
+	}
+	if node.Op == "~" {
+		if !typeinfo.IsIntegral(argType) {
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"unsupported unary operand type for operator `~`"))
+			return nil
+		}
+		return argType
 	}
 	if !typeinfo.IsArithmetic(argType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
@@ -1326,10 +1337,27 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		return &typeinfo.BoolType{}
 	}
 
-	if !c.validBinaryTypes(node.Op, left) {
+	if !c.validBinaryTypes(node.Op, exprType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported operand type for operator `"+node.Op+"`"))
 		return nil
+	}
+	if node.Op == "<<" || node.Op == ">>" {
+		if value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Right, exprType); ok {
+			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
+				parsed, err := numeric.StringToBigInt(count.Value)
+				_, bits, _ := typeinfo.NumericInfo(exprType)
+				if err == nil {
+					normalized, normalizedOK := constvalue.NormalizeInteger(parsed,
+						typeinfo.TypeText(typeinfo.Underlying(exprType)))
+					if normalizedOK && (normalized.Sign() < 0 || normalized.Cmp(big.NewInt(int64(bits))) >= 0) {
+						c.ctx.Diagnostics.Add(invalidOperationError(node.Right,
+							fmt.Sprintf("shift count must be between 0 and %d", bits-1)))
+						return &typeinfo.InvalidType{}
+					}
+				}
+			}
+		}
 	}
 	return exprType
 }
@@ -1922,6 +1950,8 @@ func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 		return typeinfo.IsArithmetic(typ)
 	case "%":
 		return typeinfo.IsIntegral(typ)
+	case "&", "|", "^", "<<", ">>":
+		return typeinfo.IsIntegral(typ)
 	case "==", "!=":
 		return typeinfo.IsEquatable(typ)
 	case "<", "<=", ">", ">=":
@@ -1935,7 +1965,7 @@ func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 
 func (c *checker) allowedOp(op string) bool {
 	switch op {
-	case "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+	case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "==", "!=", "<", "<=", ">", ">=", "&&", "||":
 		return true
 	default:
 		return false

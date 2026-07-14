@@ -107,6 +107,13 @@ func FoldUnary(op string, value Value) (Value, bool) {
 		case "-":
 			n.Neg(n)
 			return &IntConst{Value: n.String(), TypeID: v.TypeID}, true
+		case "~":
+			n.Not(n)
+			n, ok := NormalizeInteger(n, v.TypeText())
+			if !ok {
+				return nil, false
+			}
+			return &IntConst{Value: n.String(), TypeID: v.TypeID}, true
 		case "!":
 			return &BoolConst{Value: n.Sign() == 0}, true
 		}
@@ -186,6 +193,24 @@ func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
 		}
 		out.Rem(lv, rv)
 		return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
+	case "&":
+		out.And(lv, rv)
+	case "|":
+		out.Or(lv, rv)
+	case "^":
+		out.Xor(lv, rv)
+	case "<<", ">>":
+		_, bits, ok := integerConstantType(left.TypeText())
+		countValue, countOK := NormalizeInteger(rv, right.TypeText())
+		if !ok || !countOK || countValue.Sign() < 0 || countValue.Cmp(big.NewInt(int64(bits))) >= 0 {
+			return nil, false
+		}
+		count := uint(countValue.Uint64())
+		if op == "<<" {
+			out.Lsh(lv, count)
+		} else {
+			out.Rsh(lv, count)
+		}
 	case "==":
 		return &BoolConst{Value: lv.Cmp(rv) == 0}, true
 	case "!=":
@@ -205,6 +230,33 @@ func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
 	default:
 		return nil, false
 	}
+	out, ok := NormalizeInteger(out, left.TypeText())
+	if !ok {
+		return nil, false
+	}
+	return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
+}
+
+func integerConstantType(typeID string) (signed bool, bits int, ok bool) {
+	if typeID == "byte" {
+		return false, 8, true
+	}
+	return numeric.ParseIntegerTypeName(typeID)
+}
+
+// NormalizeInteger applies finite-width two's-complement semantics; typeID
+// must name the canonical underlying integer type.
+func NormalizeInteger(value *big.Int, typeID string) (*big.Int, bool) {
+	signed, bits, ok := integerConstantType(typeID)
+	if !ok || value == nil {
+		return nil, false
+	}
+	modulus := new(big.Int).Lsh(big.NewInt(1), uint(bits))
+	out := new(big.Int).Mod(value, modulus)
+	if signed && out.Bit(bits-1) != 0 {
+		out.Sub(out, modulus)
+	}
+	return out, true
 }
 
 func foldFloatBinary(op string, left, right *FloatConst) (Value, bool) {

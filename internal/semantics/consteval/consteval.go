@@ -130,7 +130,7 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 		} else if expected != nil {
 			typ = expected
 		}
-		typText := typeinfo.TypeText(typ)
+		typText := typeinfo.TypeText(typeinfo.Underlying(typ))
 		family, _, _ := typeinfo.NumericInfo(typ)
 		if family == typeinfo.NumericFloat {
 			return &constvalue.FloatConst{Value: node.Value, TypeID: typText}, true
@@ -193,7 +193,7 @@ func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (
 	if !ok {
 		return value, true
 	}
-	typeText := typeinfo.TypeText(expected)
+	typeText := typeinfo.TypeText(typeinfo.Underlying(expected))
 	switch v := value.(type) {
 	case *constvalue.IntConst:
 		if v == nil {

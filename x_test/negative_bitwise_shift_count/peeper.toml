@@ -1,0 +1,2 @@
+name = "negative_bitwise_shift_count"
+build = "program"

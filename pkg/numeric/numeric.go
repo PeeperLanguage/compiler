@@ -91,6 +91,28 @@ func LooksFloatLike(s string) bool {
 	return strings.ContainsAny(clean, ".eE")
 }
 
+func ParseIntegerTypeName(name string) (signed bool, bits int, ok bool) {
+	if len(name) < 2 {
+		return false, 0, false
+	}
+	switch name[0] {
+	case 'i':
+		signed = true
+	case 'u':
+		signed = false
+	default:
+		return false, 0, false
+	}
+	if name[1] == '0' {
+		return false, 0, false
+	}
+	n, err := strconv.Atoi(name[1:])
+	if err != nil || n < 1 || n > MaxIntegerBits {
+		return false, 0, false
+	}
+	return signed, n, true
+}
+
 // ParseLiteral owns the boundary between source spelling and the numeric value
 // consumed by semantic and IR phases. Type postfixes must never leak into
 // constant parsing or backend text.

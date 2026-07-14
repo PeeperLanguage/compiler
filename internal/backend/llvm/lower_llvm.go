@@ -539,6 +539,10 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 				return out
 			case "!":
 				return emitLogicalNot(b, arg, e.Arg)
+			case "~":
+				out := b.nextReg()
+				b.line(fmt.Sprintf("%s = xor %s %s, -1", out, typ, arg))
+				return out
 			default:
 				return arg
 			}
@@ -582,6 +586,37 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 				} else {
 					b.line(fmt.Sprintf("%s = srem %s %s, %s", out, leftType, left, right))
 				}
+			case "&":
+				b.line(fmt.Sprintf("%s = and %s %s, %s", out, leftType, left, right))
+			case "|":
+				b.line(fmt.Sprintf("%s = or %s %s, %s", out, leftType, left, right))
+			case "^":
+				b.line(fmt.Sprintf("%s = xor %s %s, %s", out, leftType, left, right))
+			case "<<", ">>":
+				_, bits, ok := mirIntegerInfo(mirRefType(e.Left))
+				if !ok {
+					b.emitter.markInvalid("shift lowering requires integral operands")
+					return left
+				}
+				invalid := b.nextReg()
+				b.line(fmt.Sprintf("%s = icmp uge %s %s, %d", invalid, leftType, right, bits))
+				shiftID := b.nextID
+				b.nextID++
+				failLabel := fmt.Sprintf("shift_fail_%d", shiftID)
+				readyLabel := fmt.Sprintf("shift_ready_%d", shiftID)
+				b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", invalid, failLabel, readyLabel))
+				b.namedLabel(failLabel)
+				b.line("call void @llvm.trap()")
+				b.line("unreachable")
+				b.namedLabel(readyLabel)
+				opcode := "shl"
+				if e.Op == ">>" {
+					opcode = "ashr"
+					if isUnsignedMIRType(mirRefType(e.Left)) {
+						opcode = "lshr"
+					}
+				}
+				b.line(fmt.Sprintf("%s = %s %s %s, %s", out, opcode, leftType, left, right))
 			case "==", "!=", "<", "<=", ">", ">=":
 				if result, ok := emitOptionalNoneCompare(b, e.Op, e.Left, e.Right, left, right); ok {
 					return result

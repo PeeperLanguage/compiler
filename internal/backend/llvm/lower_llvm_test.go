@@ -58,6 +58,78 @@ func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
+	tests := []struct {
+		name        string
+		op          string
+		typeText    string
+		instruction string
+		shift       bool
+	}{
+		{name: "and", op: "&", typeText: "u8", instruction: " = and i8 %left, %right"},
+		{name: "or", op: "|", typeText: "u8", instruction: " = or i8 %left, %right"},
+		{name: "xor", op: "^", typeText: "u8", instruction: " = xor i8 %left, %right"},
+		{name: "left shift", op: "<<", typeText: "u8", instruction: " = shl i8 %left, %right", shift: true},
+		{name: "signed right shift", op: ">>", typeText: "i8", instruction: " = ashr i8 %left, %right", shift: true},
+		{name: "unsigned right shift", op: ">>", typeText: "u8", instruction: " = lshr i8 %left, %right", shift: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &mir.RefName{Name: "result", Type: tt.typeText}
+			mod := &mir.Module{
+				Name: "test",
+				Funcs: []*mir.Function{{
+					Name:       "apply",
+					Params:     []ir.Param{{Name: "left", Type: tt.typeText}, {Name: "right", Type: tt.typeText}},
+					ReturnType: tt.typeText,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+							Op: tt.op, Left: &mir.RefName{Name: "left", Type: tt.typeText}, Right: &mir.RefName{Name: "right", Type: tt.typeText}, Type: tt.typeText,
+						}}},
+						Term: &mir.Ret{Value: result},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			if !strings.Contains(out, tt.instruction) {
+				t.Fatalf("expected %s, got:\n%s", tt.instruction, out)
+			}
+			if tt.shift {
+				guard := strings.Index(out, "icmp uge i8 %right, 8")
+				trap := strings.Index(out, "call void @llvm.trap()")
+				shift := strings.Index(out, tt.instruction)
+				if guard < 0 || trap < guard || shift < trap {
+					t.Fatalf("shift guard must dominate instruction, got:\n%s", out)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRLowersIntegerComplement(t *testing.T) {
+	result := &mir.RefName{Name: "result", Type: "u8"}
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "complement",
+			Params:     []ir.Param{{Name: "value", Type: "u8"}},
+			ReturnType: "u8",
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Unary{
+					Op: "~", Arg: &mir.RefName{Name: "value", Type: "u8"}, Type: "u8",
+				}}},
+				Term: &mir.Ret{Value: result},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, " = xor i8 %value, -1") {
+		t.Fatalf("expected finite-width complement, got:\n%s", out)
+	}
+}
+
 func TestGenerateLLVMIRLowersOwnedPointerDrop(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test",

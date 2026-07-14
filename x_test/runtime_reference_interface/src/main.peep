@@ -5,22 +5,22 @@ iface Reader {
 iface Writer {
     fn (&mut Self) write(val: i32),
     fn (&Self) readFloat() -> f32
-
 }
+
 struct Counter {
     value: i32,
     anotherField: f32
 }
 
-    fn (self: &Counter) read() -> i32 {
-        return self.value;
-    }
-    fn (self: &mut Counter) write(val: i32) {
-        self.value = val;
-    }
-    fn (self: &Counter) readFloat() -> f32 {
-        return self.anotherField;
-    }
+fn (self: &Counter) read() -> i32 {
+    return self.value;
+}
+fn (self: &mut Counter) write(val: i32) {
+    self.value = val;
+}
+fn (self: &Counter) readFloat() -> f32 {
+    return self.anotherField;
+}
 
 fn Read(reader: &Reader) -> i32 {
     return reader.read();

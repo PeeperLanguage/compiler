@@ -67,3 +67,24 @@ fn main() -> i32 {
 		t.Fatalf("doc tokens mismatch: %#v", docs)
 	}
 }
+
+func TestLexBitwiseOperatorsLongestFirst(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	stream := New("test"+peeper.SourceExt, `a & b | c ^ ~d << e >> f && g || h`, diag).Tokenize()
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	want := []token.Kind{
+		token.IDENT, token.AMP, token.IDENT, token.BAR, token.IDENT, token.CARET,
+		token.TILDE, token.IDENT, token.SHL, token.IDENT, token.SHR, token.IDENT,
+		token.ANDAND, token.IDENT, token.OROR, token.IDENT, token.EOF,
+	}
+	if len(stream) != len(want) {
+		t.Fatalf("token length mismatch: got=%d want=%d", len(stream), len(want))
+	}
+	for i, kind := range want {
+		if stream[i].Kind != kind {
+			t.Fatalf("token[%d]: got %s want %s", i, stream[i].Kind, kind)
+		}
+	}
+}

@@ -14,10 +14,14 @@ import (
 
 const (
 	precLowest uint8 = iota
-	precOr
-	precAnd
+	precLogicalOr
+	precLogicalAnd
+	precBitOr
+	precBitXor
+	precBitAnd
 	precEquality
 	precCompare
+	precShift
 	precSum
 	precProduct
 	precCast
@@ -87,14 +91,20 @@ func init() {
 	nud(token.PLUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 	nud(token.MINUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 	nud(token.BANG, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+	nud(token.TILDE, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
 
 	// composite literal
 	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseCompositeLiteral() })
 	nud(token.LBRACK, func(p *Parser) ast.Expr { return p.parseArrayLiteral() })
 
 	// logical
-	led(token.OROR, precOr, parseBinaryExpr)
-	led(token.ANDAND, precAnd, parseBinaryExpr)
+	led(token.OROR, precLogicalOr, parseBinaryExpr)
+	led(token.ANDAND, precLogicalAnd, parseBinaryExpr)
+
+	// bitwise
+	led(token.BAR, precBitOr, parseBinaryExpr)
+	led(token.CARET, precBitXor, parseBinaryExpr)
+	led(token.AMP, precBitAnd, parseBinaryExpr)
 
 	// equality
 	led(token.EQ, precEquality, parseBinaryExpr)
@@ -105,6 +115,10 @@ func init() {
 	led(token.GT, precCompare, parseBinaryExpr)
 	led(token.LE, precCompare, parseBinaryExpr)
 	led(token.GE, precCompare, parseBinaryExpr)
+
+	// shift
+	led(token.SHL, precShift, parseBinaryExpr)
+	led(token.SHR, precShift, parseBinaryExpr)
 
 	// additive
 	led(token.PLUS, precSum, parseBinaryExpr)

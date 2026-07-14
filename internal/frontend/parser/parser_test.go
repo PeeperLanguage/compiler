@@ -364,6 +364,36 @@ func TestParseAddressExpr(t *testing.T) {
 	}
 }
 
+func TestParseBitwisePrecedenceAndBorrowAmpersand(t *testing.T) {
+	src := `fn main() {
+	let value = ~a || b && c | d ^ e & f == g < h << i + j * k;
+	let shared = &a;
+}`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	value := fn.Body.Stmts[0].(*ast.LetDecl).Value
+	for _, want := range []string{"||", "&&", "|", "^", "&", "==", "<", "<<", "+", "*"} {
+		binary, ok := value.(*ast.BinaryExpr)
+		if !ok || binary.Op != want {
+			t.Fatalf("expected right-spine operator %q, got %#v", want, value)
+		}
+		value = binary.Right
+	}
+	root := fn.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.BinaryExpr)
+	unary, ok := root.Left.(*ast.UnaryExpr)
+	if !ok || unary.Op != "~" {
+		t.Fatalf("expected unary complement on left, got %#v", root.Left)
+	}
+	shared := fn.Body.Stmts[1].(*ast.LetDecl).Value
+	address, ok := shared.(*ast.AddressExpr)
+	if !ok || address.Mode != ast.AddressShared {
+		t.Fatalf("expected prefix ampersand to remain shared borrow, got %#v", shared)
+	}
+}
+
 func TestParseCastBindsLooserThanUnary(t *testing.T) {
 	src := `fn main() -> i32 {
 	let x: i8 = -128 as i8;
