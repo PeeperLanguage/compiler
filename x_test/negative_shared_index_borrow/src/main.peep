@@ -1,0 +1,7 @@
+struct Token {
+    value: i32
+}
+
+fn Invalid(values: &[]Token) {
+    let _ = &mut values[0];
+}

@@ -42,7 +42,7 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 		}
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-				"move-only indexed element cannot be copied or consumed until indexed moves are tracked", ast.LocOf(e), "")
+				"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", ast.LocOf(e), "")
 		}
 	case *ast.RangeExpr:
 		a.checkExpr(scope, e.Start, st, useRead)

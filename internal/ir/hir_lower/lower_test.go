@@ -107,6 +107,35 @@ func TestGenerateHIRLowersSliceViewIndexExpr(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRPreservesFixedArrayFieldForIndexedMutableBorrow(t *testing.T) {
+	const src = `struct Token { value: i32 }
+struct Holder { tokens: [1]Token }
+fn update(mut holder: Holder) {
+	let _ = &mut holder.tokens[0];
+}`
+	out := generateTestHIR(t, "hir_indexed_field_borrow_test"+peeper.SourceExt, "hir_indexed_field_borrow_test", src)
+	binding, ok := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
+	if !ok {
+		t.Fatalf("expected reference binding, got %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	address, ok := binding.Value.(*ir.AddrOf)
+	if !ok || address.TypeText() != "&mut struct{value: i32}" {
+		t.Fatalf("expected mutable element address, got %#v", binding.Value)
+	}
+	index, ok := address.Expr.(*ir.Index)
+	if !ok {
+		t.Fatalf("expected indexed place, got %#v", address.Expr)
+	}
+	base, ok := index.Base.(*ir.AddrOf)
+	if !ok || base.TypeText() != "&mut [1]struct{value: i32}" {
+		t.Fatalf("expected fixed-array field address, got %#v", index.Base)
+	}
+	field, ok := base.Expr.(*ir.Field)
+	if !ok || !field.ThroughPtr {
+		t.Fatalf("expected original field projection, got %#v", base.Expr)
+	}
+}
+
 func TestGenerateHIRLowersFixedArrayRangeAsMutableSliceView(t *testing.T) {
 	const filePath = "hir_range_slice_test" + peeper.SourceExt
 	src := `fn slice(mut xs: [4]i32) {

@@ -1070,6 +1070,51 @@ func TestMutableSliceViewIndexAssignmentAccepted(t *testing.T) {
 	}
 }
 
+func TestIndexedElementReferencesAllowed(t *testing.T) {
+	src := `struct Token { value: i32 }
+fn inspect(_: &Token) {}
+fn update(_: &mut Token) {}
+fn keep(_: rawptr) {}
+
+fn use(mut values: []Token) {
+	inspect(&values[0]);
+	update(&mut values[0]);
+	keep(@values[0]);
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected indexed reference diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSharedSliceViewRejectsMutableIndexedReference(t *testing.T) {
+	src := `struct Token { value: i32 }
+fn invalid(values: &[]Token) {
+	let reference = &mut values[0];
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected shared-view mutable reference diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "value is behind an immutable reference") {
+		t.Fatalf("unexpected shared-view mutable reference diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRawAddressRejectsRangeTemporary(t *testing.T) {
+	src := `fn keep(_: rawptr) {}
+fn invalid(values: []i32) {
+	keep(@values[..]);
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidExpression) {
+		t.Fatalf("expected range-address diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "address operator requires addressable storage") {
+		t.Fatalf("unexpected range-address diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestSharedSliceViewRejectsIndexAssignment(t *testing.T) {
 	src := `fn fill(xs: &[]i32, i: usize) {
 	xs[i] = 1;

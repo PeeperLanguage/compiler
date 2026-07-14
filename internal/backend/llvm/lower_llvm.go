@@ -523,9 +523,11 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		targetType = baseType
 	}
 	aggregateType := targetType
-	if referencedType, referenced := referenceTypeTextTarget(baseType); referenced {
+	referenced := false
+	if referencedType, isReference := referenceTypeTextTarget(baseType); isReference {
 		targetType = referencedType
 		aggregateType = baseType
+		referenced = true
 	}
 	if strings.HasPrefix(targetType, "[]") {
 		arrayType, ok := llvmTypeName(aggregateType)
@@ -589,7 +591,7 @@ func emitIndexPtr(b *llvmBuilder, baseRef mir.ValueRef, indexRef mir.ValueRef) s
 		return ""
 	}
 	basePtr := ""
-	if pointed {
+	if pointed || referenced {
 		basePtr = emitRef(b, baseRef)
 	} else if ref, ok := baseRef.(*mir.RefName); ok && ref != nil {
 		basePtr = ensureLocalAddr(b, ref)

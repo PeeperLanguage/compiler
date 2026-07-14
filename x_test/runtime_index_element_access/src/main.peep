@@ -1,0 +1,51 @@
+struct Token {
+    value: i32
+}
+
+struct Holder {
+    tokens: [1]Token
+}
+
+fn Read(token: &Token) -> i32 {
+    return token.value;
+}
+
+fn Write(token: &mut Token, value: i32) {
+    token.value = value;
+}
+
+fn Keep(_: rawptr) {}
+
+fn main() -> i32 {
+    let numbers = []i32{7};
+    let copied = numbers[0];
+    if copied != 7 || numbers[0] != 7 {
+        return 1;
+    }
+
+    let mut tokens = []Token{.{value = 1}, .{value = 2}};
+    if Read(&tokens[0]) != 1 {
+        return 2;
+    }
+    Write(&mut tokens[1], 9);
+    tokens[0] = .{value = 3};
+    if tokens[0].value != 3 || tokens[1].value != 9 {
+        return 3;
+    }
+    Keep(@tokens[0]);
+
+    let old = []i32{10};
+    let replacement = []i32{20};
+    let mut nested = [][]i32{old};
+    nested[0] = replacement;
+    if nested[0][0] != 20 {
+        return 4;
+    }
+
+    let mut holder = .Holder{tokens = [_]Token{.{value = 5}}};
+    Write(&mut holder.tokens[0], 11);
+    if holder.tokens[0].value != 11 {
+        return 5;
+    }
+    return 0;
+}

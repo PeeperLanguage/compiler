@@ -272,6 +272,56 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{
+			{
+				Name:       "main",
+				ReturnType: "i32",
+				Body: &hir.Block{
+					Stmts: []hir.Stmt{
+						&hir.Binding{
+							Name: "ptr",
+							Value: &ir.AddrOf{
+								Expr: &ir.Index{
+									Base:  &ir.Ident{Name: "values", Type: "[]i32"},
+									Index: &ir.IntLit{Value: "0", Type: "i32"},
+									Type:  "i32",
+								},
+								Type: "rawptr",
+							},
+						},
+						&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+					},
+				},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, nil, nil)
+	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	assign, ok := instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected first instruction assignment, got %#v", instrs)
+	}
+	projected, ok := assign.Value.(*ProjectIndex)
+	if !ok || projected.Type != "&mut i32" {
+		t.Fatalf("expected address-of element to lower as ProjectIndex, got %#v", assign.Value)
+	}
+	castAssign, ok := instrs[1].(*Assign)
+	if !ok {
+		t.Fatalf("expected second instruction assignment, got %#v", instrs)
+	}
+	cast, ok := castAssign.Value.(*Cast)
+	if !ok || cast.Type != "rawptr" {
+		t.Fatalf("expected projected element address to cast to rawptr, got %#v", castAssign.Value)
+	}
+}
+
 func TestGenerateMIRLowersSliceView(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test",

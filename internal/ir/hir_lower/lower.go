@@ -294,6 +294,12 @@ func cleanupExprs(module *project.Module, cleanup []*symbols.Symbol, loc *source
 }
 
 func lowerPlaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, requireMutable bool) ir.Expr {
+	if index, ok := expr.(*ast.IndexExpr); ok && index != nil {
+		if _, slicing := index.Index.(*ast.RangeExpr); !slicing {
+			base := lowerIndexBase(ctx, module, scope, index.Expr, requireMutable)
+			return lowerIndexExpr(ctx, module, scope, index, base)
+		}
+	}
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil {
 		exprType := func(e ast.Expr) typeinfo.Type {
 			return exprResolvedType(module, e)
@@ -585,7 +591,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return lowerSelectorExpr(ctx, module, scope, node)
 
 	case *ast.IndexExpr:
-		return lowerIndexExpr(ctx, module, scope, node)
+		return lowerIndexExpr(ctx, module, scope, node, nil)
 
 	case *ast.StructLit:
 		return lowerStructLiteralExpr(ctx, module, scope, node)
@@ -737,7 +743,23 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: "<invalid>", Location: ast.LocOf(selector)}
 }
 
-func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.IndexExpr) ir.Expr {
+func lowerIndexBase(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, requireMutable bool) ir.Expr {
+	array, ok := loweredRuntimeType(module, exprResolvedType(module, expr), nil).(*typeinfo.ArrayType)
+	if !ok || array == nil || array.Dynamic {
+		return lowerASTExpr(ctx, module, scope, expr, nil)
+	}
+	prefix := "&"
+	if requireMutable {
+		prefix = "&mut "
+	}
+	return &ir.AddrOf{
+		Expr:     lowerPlaceExpr(ctx, module, scope, expr, requireMutable),
+		Type:     prefix + loweredTypeText(module, exprResolvedType(module, expr)),
+		Location: ast.LocOf(expr),
+	}
+}
+
+func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.IndexExpr, base ir.Expr) ir.Expr {
 	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
 		return &ir.InvalidExpr{Message: "invalid index", Type: "<invalid>", Location: ast.LocOf(node)}
 	}
@@ -750,19 +772,8 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 			end = lowerASTExpr(ctx, module, scope, rangeIndex.End, typeinfo.DefaultIntegerType())
 		}
 		resultType := exprResolvedType(module, node)
-		source := lowerASTExpr(ctx, module, scope, node.Expr, nil)
-		if array, ok := loweredRuntimeType(module, exprResolvedType(module, node.Expr), nil).(*typeinfo.ArrayType); ok && array != nil && !array.Dynamic {
-			_, mutable, _ := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
-			prefix := "&"
-			if mutable {
-				prefix = "&mut "
-			}
-			source = &ir.AddrOf{
-				Expr:     lowerPlaceExpr(ctx, module, scope, node.Expr, mutable),
-				Type:     prefix + loweredTypeText(module, exprResolvedType(module, node.Expr)),
-				Location: ast.LocOf(node.Expr),
-			}
-		}
+		_, mutable, _ := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
+		source := lowerIndexBase(ctx, module, scope, node.Expr, mutable)
 		return &ir.SliceView{
 			Source:       source,
 			Start:        start,
@@ -782,8 +793,11 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 	if module.Semantics != nil {
 		_, dropBase = module.Semantics.DropProjectionBase[node.ID()]
 	}
+	if base == nil {
+		base = lowerASTExpr(ctx, module, scope, node.Expr, nil)
+	}
 	return &ir.Index{
-		Base:     lowerASTExpr(ctx, module, scope, node.Expr, nil),
+		Base:     base,
 		Index:    index,
 		DropBase: dropBase,
 		Type:     loweredTypeText(module, exprResolvedType(module, node)),

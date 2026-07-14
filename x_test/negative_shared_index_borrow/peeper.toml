@@ -1,0 +1,2 @@
+name = "negative_shared_index_borrow"
+build = "lib"
