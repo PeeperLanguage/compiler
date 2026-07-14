@@ -144,25 +144,23 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	}
 	sourceTypeText := view.Source.Type
 	targetTypeText := sourceTypeText
-	referenced := false
 	if target, ok := referenceTypeTextTarget(sourceTypeText); ok {
 		targetTypeText = target
-		referenced = true
 	}
 	var data, fixedArrayPtr, length, elemTypeText string
 	if elem, dynamicArray := strings.CutPrefix(targetTypeText, "[]"); dynamicArray {
 		elemTypeText = strings.TrimSpace(elem)
 		sourceType := b.emitter.llvmType(sourceTypeText)
 		source := ""
-		if len(view.Source.Projections) == 0 {
-			source = emitRef(b, view.Source.Root)
-		} else {
+		if sliceViewUsesPlacePtr(view.Source) {
 			ptr := emitPlacePtr(b, view.Source)
 			if ptr == "" {
 				return "0"
 			}
 			source = b.nextReg()
 			b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceType, sourceType, ptr))
+		} else {
+			source = emitRef(b, view.Source.Root)
 		}
 		data = b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
@@ -171,10 +169,10 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	} else if lengthText, elem, fixedArray := ir.ArrayTypeParts(targetTypeText); fixedArray {
 		elemTypeText = elem
 		length = lengthText
-		if referenced && len(view.Source.Projections) == 0 {
-			fixedArrayPtr = emitRef(b, view.Source.Root)
-		} else {
+		if sliceViewUsesPlacePtr(view.Source) {
 			fixedArrayPtr = emitPlacePtr(b, view.Source)
+		} else {
+			fixedArrayPtr = emitRef(b, view.Source.Root)
 		}
 		if fixedArrayPtr == "" {
 			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
@@ -263,6 +261,20 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	withLength := b.nextReg()
 	b.line(fmt.Sprintf("%s = insertvalue %s %s, i64 %s, 1", withLength, viewType, withData, viewLength))
 	return withLength
+}
+
+func sliceViewUsesPlacePtr(source *mir.Place) bool {
+	if source == nil {
+		return false
+	}
+	if len(source.Projections) > 0 {
+		return true
+	}
+	if _, reference := referenceTypeTextTarget(source.Type); reference {
+		return false
+	}
+	_, _, fixed := ir.ArrayTypeParts(source.Type)
+	return fixed
 }
 
 func emitDynamicArrayAlloc(b *llvmBuilder, alloc *mir.DynamicArrayAlloc) string {
@@ -1216,7 +1228,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) string {
 		switch v := ref.(type) {
 		case *mir.RefConst:
 			if v.Type == "bool" && v.Value != "false" && v.Value != "true" {
-				if b != nil && b.emitter != nil {
+				if b.emitter != nil {
 					b.emitter.markInvalid("invalid boolean constant: " + v.Value)
 				}
 				return "false"

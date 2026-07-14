@@ -532,17 +532,7 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 			case *mir.Load:
 				recordPlace(value.Place)
 			case *mir.SliceView:
-				if value.Source == nil {
-					continue
-				}
-				if len(value.Source.Projections) > 0 {
-					recordPlace(value.Source)
-					continue
-				}
-				if _, reference := referenceTypeTextTarget(value.Source.Type); reference {
-					continue
-				}
-				if _, _, fixed := ir.ArrayTypeParts(value.Source.Type); fixed {
+				if sliceViewUsesPlacePtr(value.Source) {
 					recordPlace(value.Source)
 				}
 			}

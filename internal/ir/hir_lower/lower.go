@@ -299,11 +299,12 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *tab
 		baseType := exprResolvedType(module, selector.Expr)
 		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
 			out := lowerPlace(ctx, module, scope, selector.Expr)
-			if target, pointer := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); pointer {
-				out.Projections = append(out.Projections, ir.PlaceProjection{
-					Kind: ir.PlaceProjectionDeref, Type: loweredTypeText(module, target), Location: ast.LocOf(selector.Expr),
-				})
-			} else if target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); reference {
+			runtimeBase := typeinfo.Underlying(baseType)
+			target, indirect := typeinfo.PointerTarget(runtimeBase)
+			if !indirect {
+				target, _, indirect = typeinfo.ReferenceTarget(runtimeBase)
+			}
+			if indirect {
 				out.Projections = append(out.Projections, ir.PlaceProjection{
 					Kind: ir.PlaceProjectionDeref, Type: loweredTypeText(module, target), Location: ast.LocOf(selector.Expr),
 				})
