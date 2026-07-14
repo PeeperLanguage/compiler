@@ -1,0 +1,8 @@
+#[extern("free")]
+fn UnrelatedRelease(value: i32);
+
+fn Shorten(values: []i32) -> []i32 {
+    return shrink(values, 0);
+}
+
+fn main() {}

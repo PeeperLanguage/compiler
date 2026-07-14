@@ -1,0 +1,8 @@
+fn invalid_index() -> usize {
+    return 2;
+}
+
+fn main() -> i32 {
+    let values = [_]i32{1, 2};
+    return values[invalid_index()];
+}

@@ -18,6 +18,7 @@ type Extern struct {
 	Name       string
 	Params     []ir.Param
 	ReturnType string
+	Location   *source.Location
 }
 
 type Function struct {

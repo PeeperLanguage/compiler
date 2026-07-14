@@ -157,6 +157,13 @@ func (p *Pipeline) Run(entry *project.Module) error {
 			break
 		}
 	}
+	mirModules := make([]*mir.Module, 0, len(orderedModules))
+	for _, module := range orderedModules {
+		if module != nil && module.MIR != nil {
+			mirModules = append(mirModules, module.MIR)
+		}
+	}
+	llvm.ValidateRuntimeSymbols(mirModules, diag)
 	return nil
 }
 

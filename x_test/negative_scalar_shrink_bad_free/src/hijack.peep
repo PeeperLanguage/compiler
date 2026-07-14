@@ -1,0 +1,4 @@
+type Word = i32;
+
+#[extern("free")]
+fn BadFree(value: Word);

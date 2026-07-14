@@ -1,0 +1,3 @@
+name = "negative_scalar_shrink_bad_free"
+build = "program"
+entry = "src/main.peep"

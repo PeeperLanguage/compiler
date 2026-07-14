@@ -976,13 +976,13 @@ fn first(xs: [4]i32) -> i32 {
 	}
 }
 
-func TestArrayIndexExprRejectsDynamicIndexUntilBoundsPolicy(t *testing.T) {
+func TestArrayIndexExprAcceptsRuntimeIndex(t *testing.T) {
 	src := `fn first(xs: [4]i32, i: i32) -> i32 {
 	return xs[i];
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
-		t.Fatalf("expected const-index diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1198,9 +1198,6 @@ func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
 	if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
 		t.Fatalf("expected invalid index diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if hasTypeCode(diag, diagnostics.ErrArrayIndexNotConst) {
-		t.Fatalf("invalid index reached constant evaluation:\n%s", diag.EmitAllToString())
-	}
 	if hasTypeCode(diag, diagnostics.ErrInvalidCopy) {
 		t.Fatalf("invalid index reached ownership analysis:\n%s", diag.EmitAllToString())
 	}
@@ -1300,6 +1297,7 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	let appended = append([]i32{}, 1);
 	let reserved = reserve(appended, 8);
 	let resized = resize(reserved, 4, 0);
+	let shrunk = shrink(resized, 2);
 }`
 	module, diag := checkTypeModule(t, src)
 	if diag.HasErrors() {
@@ -1311,6 +1309,17 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 		if got := typeinfo.TypeText(module.Semantics.ExprTypes[binding.Value.ID()]); got != "[]i32" {
 			t.Fatalf("%s result type = %s, want []i32", binding.Name.Name, got)
 		}
+	}
+}
+
+func TestDynamicArrayShrinkAcceptsMoveOnlyElements(t *testing.T) {
+	diag := checkTypeSource(t, `struct Point { x: i32 }
+fn main() {
+	let points = []Point{.Point{x = 1}};
+	let shrunk = shrink(points, 0);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected move-only shrink diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1344,6 +1353,16 @@ fn main() -> i32 {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected shadowing diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayShrinkRequiresOwner(t *testing.T) {
+	diag := checkTypeSource(t, `fn shorten(values: &[]i32) {
+	shrink(values, 1);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
+		!strings.Contains(diag.EmitAllToString(), "requires a dynamic-array owner") {
+		t.Fatalf("expected shrink owner diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1708,109 +1727,6 @@ func TestPrintRejectsIntegersWiderThan64Bits(t *testing.T) {
 	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
 		!strings.Contains(diag.EmitAllToString(), "print supports integers up to 64 bits") {
 		t.Fatalf("expected print width diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestPrintReservesPrintfLinkedSymbol(t *testing.T) {
-	for _, src := range []string{
-		`fn printf() {} fn main() { print(1); }`,
-		`#[extern("printf")] fn output(value: cstr); fn main() { print(1); }`,
-		`struct Printer {} #[extern("printf")] fn (_: &Printer) output(value: cstr); fn main() { print(1); }`,
-	} {
-		diag := checkTypeSource(t, src)
-		if !hasTypeCode(diag, diagnostics.ErrRedeclaredSymbol) ||
-			!strings.Contains(diag.EmitAllToString(), "linked symbol `printf` is reserved") {
-			t.Fatalf("expected reserved printf diagnostic, got:\n%s", diag.EmitAllToString())
-		}
-	}
-	valid := checkTypeSource(t, `struct Printer {} fn (_: Printer) printf() {} fn main() { print(1); }`)
-	if valid.HasErrors() {
-		t.Fatalf("receiver method named printf must use its mangled symbol:\n%s", valid.EmitAllToString())
-	}
-}
-
-func TestRuntimeSymbolsReservedAcrossModules(t *testing.T) {
-	diag := diagnostics.NewDiagnosticBag()
-	ctx := project.New(".", peeper.SourceExt, diag)
-	parseModule := func(path, importPath, src string) *project.Module {
-		module := &project.Module{
-			Key:        project.ModuleKeyFor(project.ModuleOriginLocal, path),
-			ImportPath: importPath,
-			FilePath:   path,
-			Content:    src,
-			AST:        parser.New(path, lexer.New(path, src, diag).Tokenize(), diag).ParseModule(),
-			Imports:    make(map[string]project.ResolvedImport),
-		}
-		ctx.AddModule(module)
-		return module
-	}
-	user := parseModule("user.peep", "user", `fn main() { print(42); let _ = append([]i32{}, 1); }`)
-	hijack := parseModule("hijack.peep", "hijack", `fn printf(value: i32) {} #[extern("malloc")] fn BadMalloc(size: i32) -> rawptr; #[extern("free")] fn BadFree(value: i32);`)
-	for _, module := range []*project.Module{user, hijack} {
-		collector.Collect(ctx, module)
-		binder.Bind(ctx, module)
-		resolver.Resolve(ctx, module)
-		Check(ctx, module)
-	}
-	if !hasTypeCode(diag, diagnostics.ErrRedeclaredSymbol) ||
-		!strings.Contains(diag.EmitAllToString(), "linked symbol `printf` is reserved") {
-		t.Fatalf("expected cross-module printf reservation, got:\n%s", diag.EmitAllToString())
-	}
-	if count := strings.Count(diag.EmitAllToString(), "linked symbol `printf` is reserved"); count != 1 {
-		t.Fatalf("expected one printf reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
-	}
-	if count := strings.Count(diag.EmitAllToString(), "linked symbol `malloc` is reserved"); count != 1 {
-		t.Fatalf("expected one malloc reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
-	}
-	if count := strings.Count(diag.EmitAllToString(), "linked symbol `free` is reserved"); count != 1 {
-		t.Fatalf("expected one free reservation diagnostic, got %d:\n%s", count, diag.EmitAllToString())
-	}
-}
-
-func TestDynamicArrayLiteralAllowsCompatibleMallocDeclaration(t *testing.T) {
-	diag := checkTypeSource(t, `#[extern("malloc")]
-fn Allocate(size: usize) -> rawptr;
-
-#[extern("free")]
-fn Release(value: rawptr);
-
-fn main() {
-	let _ = []i32{1};
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected compatible malloc diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestEmptyDynamicArrayLiteralDoesNotReserveMalloc(t *testing.T) {
-	diag := checkTypeSource(t, `#[extern("malloc")]
-fn Unrelated(value: i32) -> rawptr;
-
-fn main() {
-	[]i32{};
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("empty dynamic literal must not reserve malloc:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestShadowedDynamicArrayOperationDoesNotReserveAllocatorSymbols(t *testing.T) {
-	diag := checkTypeSource(t, `#[extern("malloc")]
-fn UnrelatedAllocate(value: i32) -> rawptr;
-
-#[extern("free")]
-fn UnrelatedRelease(value: i32);
-
-fn add(left: i32, right: i32) -> i32 {
-	return left + right;
-}
-
-fn main() {
-	let append = add;
-	let _ = append(1, 2);
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("shadowed append must remain an ordinary call:\n%s", diag.EmitAllToString())
 	}
 }
 

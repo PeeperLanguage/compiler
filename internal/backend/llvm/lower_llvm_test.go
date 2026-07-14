@@ -301,11 +301,36 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mod := dynamicArrayOperationModule(tt.name, tt.op, tt.length, tt.value)
+			mod := dynamicArrayOperationModule(tt.name, "[]i32", tt.op, tt.length, tt.value)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
 			for _, expected := range append([]string{"declare i8* @malloc(i64)", "declare void @free(i8*)"}, tt.expected...) {
 				if !strings.Contains(out, expected) {
 					t.Fatalf("expected %q in %s IR:\n%s", expected, tt.name, out)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRLowersDynamicArrayShrink(t *testing.T) {
+	tests := []struct {
+		name      string
+		arrayType string
+		expected  []string
+	}{
+		{name: "scalar", arrayType: "[]i32", expected: []string{"array_shrink_drop_", "icmp ult i64", "array_shrink_done_"}},
+		{name: "owner", arrayType: "[][]i32", expected: []string{"drop_array_loop_", "icmp ugt i64", "call void @free(i8*"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mod := dynamicArrayOperationModule(tt.name, tt.arrayType, symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: "usize"}, nil)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			if strings.Contains(out, "@malloc") || strings.Contains(out, "umul.with.overflow") {
+				t.Fatalf("shrink must not allocate:\n%s", out)
+			}
+			for _, expected := range tt.expected {
+				if !strings.Contains(out, expected) {
+					t.Fatalf("expected %q in %s shrink IR:\n%s", expected, tt.name, out)
 				}
 			}
 		})
@@ -335,7 +360,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperationsFor32BitTarget(t *testin
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mod := dynamicArrayOperationModule(tt.name, tt.op, tt.length, tt.value)
+			mod := dynamicArrayOperationModule(tt.name, "[]i32", tt.op, tt.length, tt.value)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "i386-unknown-linux-gnu", false, "linux")
 			for _, expected := range []string{"@llvm.umul.with.overflow.i32", "icmp ugt i64", "trunc i64"} {
 				if !strings.Contains(out, expected) {
@@ -349,8 +374,28 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperationsFor32BitTarget(t *testin
 	}
 }
 
-func dynamicArrayOperationModule(name string, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
-	params := []ir.Param{{Name: "values", Type: "[]i32"}}
+func TestGenerateLLVMIRLowersDynamicArrayShrinkFor32BitTarget(t *testing.T) {
+	previousBits := target.SizeBits()
+	if err := target.SetSizeBits(target.Bits32); err != nil {
+		t.Fatalf("set 32-bit target: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := target.SetSizeBits(previousBits); err != nil {
+			t.Fatalf("restore target size: %v", err)
+		}
+	})
+	mod := dynamicArrayOperationModule("shrink", "[]i32", symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: "usize"}, nil)
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "i386-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "zext i32 %size to i64") {
+		t.Fatalf("expected usize normalization in 32-bit shrink IR:\n%s", out)
+	}
+	if strings.Contains(out, "@malloc") || strings.Contains(out, "umul.with.overflow") {
+		t.Fatalf("32-bit shrink must not allocate:\n%s", out)
+	}
+}
+
+func dynamicArrayOperationModule(name, arrayType string, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
+	params := []ir.Param{{Name: "values", Type: arrayType}}
 	if length != nil {
 		params = append(params, ir.Param{Name: "size", Type: "usize"})
 	}
@@ -358,12 +403,12 @@ func dynamicArrayOperationModule(name string, op symbols.CompilerOp, length, val
 		params = append(params, ir.Param{Name: "value", Type: "i32"})
 	}
 	return &mir.Module{Name: "test", Funcs: []*mir.Function{{
-		Name: name, Params: params, ReturnType: "[]i32", Blocks: []*mir.Block{{
+		Name: name, Params: params, ReturnType: arrayType, Blocks: []*mir.Block{{
 			ID: 0,
 			Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.DynamicArrayOp{
-				Op: op, Array: &mir.RefName{Name: "values", Type: "[]i32"}, Length: length, Value: value, Type: "[]i32",
+				Op: op, Array: &mir.RefName{Name: "values", Type: arrayType}, Length: length, Value: value, Type: arrayType,
 			}}},
-			Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: "[]i32"}},
+			Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: arrayType}},
 		}},
 	}}}
 }
@@ -1282,6 +1327,28 @@ func TestGenerateLLVMIRLowersProjectIndexForArrayRead(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRBoundsChecksRuntimeFixedArrayIndex(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := indexReadMIRModule("[4]i32", &mir.RefName{Name: "index", Type: "i32"})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	for _, expected := range []string{"sext i32 %index to i64", "icmp uge i64", "call void @llvm.trap()", "getelementptr inbounds [4 x i32]"} {
+		if !strings.Contains(irText, expected) {
+			t.Fatalf("expected %q in runtime fixed-array index IR:\n%s", expected, irText)
+		}
+	}
+}
+
+func TestGenerateLLVMIRBoundsChecksWideRuntimeFixedArrayIndexBeforeTruncation(t *testing.T) {
+	const targetTriple = "x86_64-unknown-linux-gnu"
+	mod := indexReadMIRModule("[4]i32", &mir.RefName{Name: "index", Type: "u128"})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	for _, expected := range []string{"zext i64 4 to i128", "icmp uge i128 %index", "trunc i128 %index to i64", "getelementptr inbounds [4 x i32]"} {
+		if !strings.Contains(irText, expected) {
+			t.Fatalf("expected %q in wide fixed-array index IR:\n%s", expected, irText)
+		}
+	}
+}
+
 func TestGenerateLLVMIRLowersProjectIndexStoreForArrayWrite(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexStoreMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
@@ -1359,18 +1426,6 @@ func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
 		if !strings.Contains(diag.EmitAllToString(), want) {
 			t.Fatalf("expected %q diagnostic, got:\n%s", want, diag.EmitAllToString())
 		}
-	}
-}
-
-func TestGenerateLLVMIRRejectsDynamicFixedArrayIndexUntilBoundsPolicy(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
-	diag := diagnostics.NewDiagnosticBag()
-	irText := GenerateLLVMIR(indexReadMIRModule("[4]i32", &mir.RefName{Name: "i", Type: "i32"}), diag, targetTriple, false, "linux")
-	if irText != "" {
-		t.Fatalf("expected invalid dynamic index lowering to suppress LLVM output, got:\n%s", irText)
-	}
-	if !strings.Contains(diag.EmitAllToString(), "dynamic array index lowering requires bounds policy") {
-		t.Fatalf("expected dynamic index diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

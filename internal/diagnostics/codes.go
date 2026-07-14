@@ -61,7 +61,6 @@ const (
 	ErrInvalidErrorReturn      = "T0025"
 	ErrMissingCatch            = "T0026"
 	ErrUseBeforeDecl           = "T0027"
-	ErrArrayIndexNotConst      = "T0028"
 	ErrMissingField            = "T0029"
 	ErrUnknownField            = "T0030"
 	ErrDuplicateField          = "T0040"

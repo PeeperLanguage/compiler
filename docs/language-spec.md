@@ -344,6 +344,7 @@ let mut values = []i32{1, 2}
 values = append(values, 3)
 values = reserve(values, 16)
 values = resize(values, 8, 0)
+values = shrink(values, 4)
 ```
 
 `append(array, value)` moves Category B values into new slot. It writes within
@@ -354,8 +355,12 @@ small. Relocation does not copy or drop moved source slots.
 Initial `resize(array, length, fill)` accepts only Category A element types. It
 reserves when growing, repeats implicitly copyable `fill`, and shortens length
 without element destruction when shrinking. Category B arrays grow through
-`append`; a future dedicated shrink operation must define removed-owner drop
-order without pretending one moved fill value can be repeated.
+`append`.
+
+`shrink(array, length)` accepts every dynamic-array element type. It consumes
+and returns the owner, preserves allocation and capacity, and returns the array
+unchanged when `length` is not smaller. Removed elements are destroyed in
+reverse index order, so Category B arrays shrink without a reusable fill value.
 
 Slice views use reference syntax over dynamic-array element spelling:
 
@@ -380,6 +385,10 @@ let address = @items[index]       // raw address; does not extract element
 
 Move-only elements cannot be moved out through indexing. Borrow element or
 replace slot instead. No indexed partial-move state exists.
+
+Fixed, dynamic, and slice-view indexes may be runtime integers. Known constant
+out-of-bounds fixed-array indexes are compile errors; runtime out-of-bounds
+indexes trap before element access.
 
 These reference forms are the language's slice views. There is no separate
 slice type: borrowing dynamic-array elements produces `&[]T` or `&mut []T`,

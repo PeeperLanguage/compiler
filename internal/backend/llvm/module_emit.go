@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/semantics/symbols"
 )
 
 // GenerateLLVMIR is backend entrypoint.
@@ -15,6 +16,9 @@ import (
 // lowering failures and deferred external globals are reported consistently.
 func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTriple string, debugBuild bool, targetOS string) string {
 	if mod == nil {
+		return ""
+	}
+	if !ValidateRuntimeSymbols([]*mir.Module{mod}, diag) {
 		return ""
 	}
 
@@ -117,24 +121,17 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 
 	hasDecl := false
 	freeDeclared := false
-	freeConflict := false
 	mallocDeclared := false
-	mallocConflict := false
 	for _, fn := range mod.Funcs {
 		if fn == nil {
 			continue
 		}
 		name := ir.SanitizeSymbolName(fn.Name)
 		if name == "free" {
-			compatible := fn.Blocks == nil && fn.ReturnType == "void" && len(fn.Params) == 1 && fn.Params[0].Type == "rawptr"
-			freeDeclared = freeDeclared || compatible
-			freeConflict = freeConflict || !compatible
+			freeDeclared = freeDeclared || runtimeFreeDeclaration(fn)
 		}
 		if name == "malloc" {
-			compatible := fn.Blocks == nil && fn.ReturnType == "rawptr" && len(fn.Params) == 1 &&
-				emitter.llvmType(fn.Params[0].Type) == emitter.llvmType("usize")
-			mallocDeclared = mallocDeclared || compatible
-			mallocConflict = mallocConflict || !compatible
+			mallocDeclared = mallocDeclared || runtimeMallocDeclaration(fn)
 		}
 		if fn.Blocks != nil {
 			continue
@@ -159,14 +156,8 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	if printUsed {
 		b.WriteString("declare i32 @printf(i8*, ...)\n\n")
 	}
-	if dropUsed && freeConflict {
-		emitter.markInvalid("runtime symbol `free` must have signature fn(rawptr) -> void")
-	}
 	if dropUsed && !freeDeclared {
 		b.WriteString("declare void @free(i8*)\n\n")
-	}
-	if allocUsed && mallocConflict {
-		emitter.markInvalid("runtime symbol `malloc` must have signature fn(usize) -> rawptr")
 	}
 	if allocUsed {
 		sizeType := emitter.llvmType("usize")
@@ -321,6 +312,79 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	return finalLLVMText(&b, emitter)
 }
 
+// ValidateRuntimeSymbols checks runtime ABI reservations after ownership and
+// lowering have made actual print, allocation, and destruction use explicit.
+func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticBag) bool {
+	printUsed := false
+	dropUsed := false
+	allocUsed := false
+	for _, mod := range modules {
+		usesPrint, usesDrop, usesAlloc := moduleRuntimeOperations(mod)
+		printUsed = printUsed || usesPrint
+		dropUsed = dropUsed || usesDrop
+		allocUsed = allocUsed || usesAlloc
+	}
+	if !printUsed && !dropUsed && !allocUsed {
+		return true
+	}
+
+	valid := true
+	for _, mod := range modules {
+		if mod == nil {
+			continue
+		}
+		for _, fn := range mod.Funcs {
+			if fn == nil {
+				continue
+			}
+			switch ir.SanitizeSymbolName(fn.Name) {
+			case "printf":
+				if printUsed {
+					valid = false
+					if diag != nil {
+						diag.AddError(diagnostics.ErrRedeclaredSymbol,
+							"runtime symbol `printf` is reserved when print is used", fn.Location,
+							"conflicts with print runtime")
+					}
+				}
+			case "free":
+				if dropUsed && !runtimeFreeDeclaration(fn) {
+					valid = false
+					if diag != nil {
+						diag.AddError(diagnostics.ErrRedeclaredSymbol,
+							"runtime symbol `free` must have signature fn(rawptr) -> void", fn.Location,
+							"runtime requires fn(rawptr) -> void")
+					}
+				}
+			case "malloc":
+				if allocUsed && !runtimeMallocDeclaration(fn) {
+					valid = false
+					if diag != nil {
+						diag.AddError(diagnostics.ErrRedeclaredSymbol,
+							"runtime symbol `malloc` must have signature fn(usize) -> rawptr", fn.Location,
+							"runtime requires fn(usize) -> rawptr")
+					}
+				}
+			}
+		}
+	}
+	return valid
+}
+
+func runtimeFreeDeclaration(fn *mir.Function) bool {
+	return fn != nil && fn.Blocks == nil && fn.ReturnType == "void" &&
+		len(fn.Params) == 1 && fn.Params[0].Type == "rawptr"
+}
+
+func runtimeMallocDeclaration(fn *mir.Function) bool {
+	if fn == nil || fn.Blocks != nil || fn.ReturnType != "rawptr" || len(fn.Params) != 1 {
+		return false
+	}
+	paramType, paramOK := llvmTypeName(fn.Params[0].Type)
+	sizeType, sizeOK := llvmTypeName("usize")
+	return paramOK && sizeOK && paramType == sizeType
+}
+
 func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, allocUsed bool) {
 	if mod == nil {
 		return false, false, false
@@ -347,9 +411,14 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 					if alloc, ok := assign.Value.(*mir.DynamicArrayAlloc); ok && alloc != nil && alloc.Length > 0 {
 						allocUsed = true
 					}
-					if _, ok := assign.Value.(*mir.DynamicArrayOp); ok {
-						allocUsed = true
-						dropUsed = true
+					if operation, ok := assign.Value.(*mir.DynamicArrayOp); ok {
+						if operation.Op == symbols.CompilerOpShrink {
+							elem := strings.TrimSpace(strings.TrimPrefix(operation.Type, "[]"))
+							dropUsed = dropUsed || typeTextNeedsDrop(elem)
+						} else {
+							allocUsed = true
+							dropUsed = true
+						}
 					}
 					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil && typeTextNeedsDrop(makeVal.DataType) {
 						dropUsed = true
