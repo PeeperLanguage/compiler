@@ -3,6 +3,7 @@ package typeinfo
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
+	"compiler/pkg/numeric"
 )
 
 type SyntaxOptions struct {
@@ -111,7 +112,14 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 				}
 				return &InvalidType{}
 			}
-			length = typ.Len.Value
+			canonical, err := numeric.CanonicalizeIntegerLiteral(typ.Len.Value)
+			if err != nil {
+				if opts.InvalidArrayLen != nil {
+					return opts.InvalidArrayLen(typ.Len)
+				}
+				return &InvalidType{}
+			}
+			length = canonical
 		}
 		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: TypeFromSyntax(typ.Elem, opts)}
 	case *ast.FuncType:

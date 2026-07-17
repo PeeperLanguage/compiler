@@ -100,6 +100,35 @@ func TestParseExplicitNumericLiteralPostfixes(t *testing.T) {
 	}
 }
 
+func TestParseWarnsOnLeadingZeroDecimalIntegers(t *testing.T) {
+	_, diag := parseTestModule(`fn main() {
+	let decimal = 01;
+	let grouped = 0_1u8;
+	let negative = -01i32;
+	let zero = 0;
+	let hexadecimal = 0x01;
+	let octal = 0o01;
+	let binary = 0b01;
+	let decimalFloat = 01.0;
+	let scientific = 01e2;
+	let suffixedFloat = 01f32;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected errors:\n%s", diag.EmitAllToString())
+	}
+	if diag.WarningCount() != 3 {
+		t.Fatalf("warnings = %d, want 3:\n%s", diag.WarningCount(), diag.EmitAllToString())
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Severity == diagnostics.Warning && item.Code != diagnostics.WarnLeadingZeroDecimal {
+			t.Fatalf("warning code = %q, want %q", item.Code, diagnostics.WarnLeadingZeroDecimal)
+		}
+	}
+	if output := diag.EmitAllToString(); !strings.Contains(output, "use the `0o` prefix for octal values") {
+		t.Fatalf("missing octal help:\n%s", output)
+	}
+}
+
 func TestParseRejectsTopLevelLet(t *testing.T) {
 	src := `let x: i32 = 1;
 fn main() -> i32 { return 0; }`

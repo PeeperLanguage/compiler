@@ -1742,11 +1742,9 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		}
 	}
 	if !node.InferredLen {
-		if nodeLen, ok := arrayLiteralLength(node); ok {
-			if nodeLen != len(node.Values) {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
-					fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
-			}
+		if nodeLen, err := strconv.Atoi(array.Len); err == nil && nodeLen != len(node.Values) {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
 		}
 	}
 	for _, value := range node.Values {
@@ -1762,15 +1760,6 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		}
 	}
 	return arrayType
-}
-
-func arrayLiteralLength(node *ast.ArrayLit) (int, bool) {
-	array, ok := node.Type.(*ast.ArrayType)
-	if !ok || array == nil || array.Len == nil {
-		return 0, false
-	}
-	length, err := strconv.Atoi(array.Len.Value)
-	return length, err == nil
 }
 
 func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {

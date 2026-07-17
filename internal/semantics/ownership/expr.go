@@ -208,17 +208,6 @@ func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
 	return a.module.Semantics.ExprTypes[expr.ID()]
 }
 
-func (a *analyzer) updatePointerBinding(scope *table.Scope, node ast.Stmt, value ast.Expr, st state) {
-	if scope == nil || node == nil {
-		return
-	}
-	sym, found := scope.LookupNode(node)
-	if !found {
-		return
-	}
-	a.updatePointerSymbol(sym, scope, value, st)
-}
-
 func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *table.Scope, value ast.Expr, st state) {
 	if sym == nil || st.pointers == nil {
 		return

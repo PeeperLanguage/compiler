@@ -67,6 +67,27 @@ func TestReferenceTargetPreservesMutability(t *testing.T) {
 	}
 }
 
+func TestReferenceValueTargetUnwrapsOptionalAliases(t *testing.T) {
+	target := &IntegerType{Signed: true, Bits: 32}
+	valueType := &DefinedType{
+		Name: "MaybeReference",
+		Underlying: &OptionalType{Inner: &OptionalType{Inner: &DefinedType{
+			Name:       "MutableReference",
+			Underlying: &RefType{Mutable: true, Target: target},
+		}}},
+	}
+	got, mutable, ok := ReferenceValueTarget(valueType)
+	if !ok || got != target || !mutable {
+		t.Fatalf("reference value target = (%v, %v, %v), want (%v, true, true)", got, mutable, ok, target)
+	}
+	if _, _, ok := ReferenceTarget(Underlying(valueType)); ok {
+		t.Fatalf("direct reference lookup must not unwrap optional values")
+	}
+	if _, _, ok := ReferenceValueTarget(&OptionalType{Inner: &RawPtrType{}}); ok {
+		t.Fatalf("optional raw pointer must not classify as reference value")
+	}
+}
+
 func TestSizedTypesDistinguishInterfaceCarriers(t *testing.T) {
 	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
 	if IsSizedType(iface) {
@@ -236,6 +257,14 @@ func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
 	}, SyntaxOptions{})
 	if TypeText(valid) != "[3]i32" {
 		t.Fatalf("valid array type = %s, want [3]i32", TypeText(valid))
+	}
+
+	hexadecimal := TypeFromSyntax(&ast.ArrayType{
+		Len:  &ast.NumberLit{Value: "0x2"},
+		Elem: &ast.NamedType{Name: "i32"},
+	}, SyntaxOptions{})
+	if TypeText(hexadecimal) != "[2]i32" {
+		t.Fatalf("hexadecimal array type = %s, want [2]i32", TypeText(hexadecimal))
 	}
 }
 

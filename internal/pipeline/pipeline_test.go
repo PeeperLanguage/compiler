@@ -1197,6 +1197,18 @@ fn first() -> i32 {
 	}
 }
 
+func TestPipelineLowersBasePrefixedArrayLengthsValuesAndIndexes(t *testing.T) {
+	entrySrc := `fn main() -> i32 {
+	let values = [0x2]i32{0xa, 0x14};
+	return values[0x1] - 0x14;
+}`
+
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", entrySrc)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersMixedWidthConstArrayIndex(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `const A = 1;
