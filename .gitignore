@@ -23,4 +23,5 @@ graphify-out
 *_REVIEW.md
 *.patch
 clean.md
-.*
+.*/
+!.gitignore
