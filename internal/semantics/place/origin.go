@@ -30,6 +30,7 @@ type Origin struct {
 type OriginOptions struct {
 	ExprType         ExprTypeFunc
 	ReferenceOrigins func(*symbols.Symbol) []Origin
+	CallOrigins      func(*ast.CallExpr) []Origin
 	ConstantIndex    func(ast.Expr) (string, bool)
 }
 
@@ -72,6 +73,11 @@ func Origins(scope *table.Scope, expr ast.Expr, opts OriginOptions) []Origin {
 			}
 		}
 		return appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
+	case *ast.CallExpr:
+		if opts.CallOrigins != nil {
+			return CloneOrigins(opts.CallOrigins(node))
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -123,6 +129,20 @@ func SameOrigins(left, right []Origin) bool {
 	return true
 }
 
+// OriginsOverlap is conservative unless two canonical paths prove disjoint at
+// a concrete field or fixed index. Prefixes overlap because one path names
+// storage containing the other; wildcards overlap every descendant.
+func OriginsOverlap(left, right []Origin) bool {
+	for _, leftOrigin := range left {
+		for _, rightOrigin := range right {
+			if originOverlap(leftOrigin, rightOrigin) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func appendIndirectProjection(origins []Origin, base ast.Expr, exprType ExprTypeFunc) []Origin {
 	if exprType == nil {
 		return origins
@@ -153,6 +173,31 @@ func sameOrigin(left, right Origin) bool {
 		if left.Projections[i] != right.Projections[i] {
 			return false
 		}
+	}
+	return true
+}
+
+func originOverlap(left, right Origin) bool {
+	if left.Root == nil || left.Root != right.Root {
+		return false
+	}
+	limit := min(len(left.Projections), len(right.Projections))
+	for i := 0; i < limit; i++ {
+		leftProjection := left.Projections[i]
+		rightProjection := right.Projections[i]
+		if leftProjection == rightProjection {
+			continue
+		}
+		if leftProjection.Kind == OriginWildcard || rightProjection.Kind == OriginWildcard {
+			return true
+		}
+		if leftProjection.Kind == OriginField && rightProjection.Kind == OriginField {
+			return false
+		}
+		if leftProjection.Kind == OriginIndex && rightProjection.Kind == OriginIndex {
+			return false
+		}
+		return true
 	}
 	return true
 }

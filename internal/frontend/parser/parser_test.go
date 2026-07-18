@@ -1699,8 +1699,35 @@ func TestParseFuncTypeParam(t *testing.T) {
 	if len(ft.Params) != 1 {
 		t.Fatalf("params: got %d want 1", len(ft.Params))
 	}
-	if named, ok := ft.Params[0].(*ast.NamedType); !ok || named.Name != "Buffer" {
-		t.Fatalf("param type: got %T %#v want Buffer", ft.Params[0], ft.Params[0])
+	if ft.Params[0].Name == nil || ft.Params[0].Name.Name != "x" {
+		t.Fatalf("param name: got %#v want x", ft.Params[0].Name)
+	}
+	if named, ok := ft.Params[0].Type.(*ast.NamedType); !ok || named.Name != "Buffer" {
+		t.Fatalf("param type: got %T %#v want Buffer", ft.Params[0].Type, ft.Params[0].Type)
+	}
+}
+
+func TestParseReferenceReturnOrigins(t *testing.T) {
+	src := `
+fn first(xs: &[]i32) -> &i32 from xs { return &xs[0]; }
+iface Reader { fn (&Self) current(fallback: &i32) -> &i32 from(self, fallback) }
+const callback: fn(xs: &[]i32) -> &i32 from xs = first;
+`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	if fn.ReturnOrigins == nil || len(fn.ReturnOrigins.Sources) != 1 || fn.ReturnOrigins.Sources[0].Name != "xs" {
+		t.Fatalf("function origins: %#v", fn.ReturnOrigins)
+	}
+	iface := mod.Stmts[1].(*ast.InterfaceDecl).Type.(*ast.InterfaceType)
+	if got := iface.Methods[0].ReturnOrigins.Text(); got != " from (self, fallback)" {
+		t.Fatalf("interface origins: got %q", got)
+	}
+	callback := mod.Stmts[2].(*ast.ConstDecl).Type.(*ast.FuncType)
+	if callback.Params[0].Name == nil || callback.Params[0].Name.Name != "xs" || callback.ReturnOrigins.Text() != " from xs" {
+		t.Fatalf("function type contract not preserved: %#v", callback)
 	}
 }
 

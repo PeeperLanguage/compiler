@@ -69,6 +69,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		ctx:           result.ctx,
 		module:        result.module,
 		flow:          build(result.module, fn.Body, scope),
+		function:      fn,
 		functionScope: scope,
 		reportedJoin:  make(map[graph.NodeID]bool),
 	}
@@ -474,7 +475,7 @@ fn inspect(mut holder: Holder) {
 		{Kind: place.OriginField, Field: "values"},
 		{Kind: place.OriginIndex, Index: "1"},
 	}}}
-	if got := analysis.inStates[finalNode.id].references[second].origins; !place.SameOrigins(got, want) {
+	if got := analysis.inStates[finalNode.id].references[second].origins(); !place.SameOrigins(got, want) {
 		t.Fatalf("second origins = %#v, want %#v", got, want)
 	}
 }
@@ -496,7 +497,7 @@ func TestReferenceOriginsCanonicalizeEquivalentConstantIndexes(t *testing.T) {
 	want := []place.Origin{{Root: values, Projections: []place.OriginProjection{{Kind: place.OriginIndex, Index: "1"}}}}
 	for _, name := range []string{"decimal", "padded", "hexadecimal"} {
 		sym, _ := analysis.functionScope.Lookup(name)
-		if got := analysis.inStates[finalNode.id].references[sym].origins; !place.SameOrigins(got, want) {
+		if got := analysis.inStates[finalNode.id].references[sym].origins(); !place.SameOrigins(got, want) {
 			t.Fatalf("%s origins = %#v, want %#v", name, got, want)
 		}
 	}
@@ -533,7 +534,7 @@ fn parameter(maybe: ?&i32) {
 	value, _ := local.functionScope.Lookup("value")
 	copied, _ := local.functionScope.Lookup("copied")
 	want := []place.Origin{{Root: value}}
-	if got := local.inStates[localUse.id].references[copied].origins; !place.SameOrigins(got, want) {
+	if got := local.inStates[localUse.id].references[copied].origins(); !place.SameOrigins(got, want) {
 		t.Fatalf("copied optional origins = %#v, want %#v", got, want)
 	}
 	if _, live := local.referenceLiveIn[localUse.id][copied]; !live {
@@ -544,7 +545,7 @@ fn parameter(maybe: ?&i32) {
 	mutableFn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	mutableUse := analysisNodeForStmt(t, mutable, mutableFn.Body.Stmts[1])
 	maybeMutable, _ := mutable.functionScope.Lookup("maybe")
-	if tracked := mutable.inStates[mutableUse.id].references[maybeMutable]; !tracked.mutable {
+	if tracked := mutable.inStates[mutableUse.id].references[maybeMutable]; len(tracked) != 1 || !tracked[0].mutable {
 		t.Fatalf("optional mutable reference lost mutable loan kind")
 	}
 
@@ -561,8 +562,8 @@ fn parameter(maybe: ?&i32) {
 	parameterUse := analysisNodeForStmt(t, parameter, parameterFn.Body.Stmts[0])
 	maybeParameter, _ := parameter.functionScope.Lookup("maybe")
 	parameterValue := parameter.inStates[parameterUse.id].references[maybeParameter]
-	if !place.SameOrigins(parameterValue.origins, []place.Origin{{Root: maybeParameter}}) {
-		t.Fatalf("optional reference parameter origins = %#v", parameterValue.origins)
+	if !place.SameOrigins(parameterValue.origins(), []place.Origin{{Root: maybeParameter}}) {
+		t.Fatalf("optional reference parameter origins = %#v", parameterValue.origins())
 	}
 	if _, live := parameter.referenceLiveIn[parameterUse.id][maybeParameter]; !live {
 		t.Fatalf("optional reference parameter not live at none comparison")
@@ -587,8 +588,12 @@ func TestReferenceOriginsUnionAtConditionalJoin(t *testing.T) {
 	left, _ := analysis.functionScope.Lookup("left")
 	right, _ := analysis.functionScope.Lookup("right")
 	want := []place.Origin{{Root: left}, {Root: right}}
-	if got := analysis.inStates[copyNode.id].references[selected].origins; !place.SameOrigins(got, want) {
+	selectedValue := analysis.inStates[copyNode.id].references[selected]
+	if got := selectedValue.origins(); !place.SameOrigins(got, want) {
 		t.Fatalf("joined origins = %#v, want %#v", got, want)
+	}
+	if len(selectedValue) != 2 {
+		t.Fatalf("joined reference collapsed %d distinct loans, want 2", len(selectedValue))
 	}
 }
 
@@ -697,6 +702,181 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 	if _, live := analysis.referenceLiveIn[join.id][maybe]; live {
 		t.Fatalf("synthetic loop exit repeats condition use")
 	}
+}
+
+func TestBorrowCompatibleAccesses(t *testing.T) {
+	tests := map[string]string{
+		"shared borrows": `fn Read(_: &i32) {}
+fn valid(value: i32) {
+	let first = &value;
+	let second = &value;
+	Read(first);
+	Read(second);
+}`,
+		"optional shared borrows": `fn Both(_: ?&i32, _: &i32) {}
+fn valid(value: i32) {
+	Both(&value, &value);
+	Both(none, &value);
+}`,
+		"disjoint fields": `struct Pair { left: i32, right: i32 }
+fn Write(_: &mut i32) {}
+fn valid(mut pair: Pair) {
+	let left = &mut pair.left;
+	pair.right = 2;
+	Write(left);
+}`,
+		"disjoint fixed indexes": `fn Write(_: &mut i32) {}
+fn valid(mut values: [2]i32) {
+	let first = &mut values[0];
+	values[1] = 2;
+	Write(first);
+}`,
+		"after final use": `fn Read(_: &i32) {}
+fn valid(mut value: i32) {
+	let reference = &value;
+	Read(reference);
+	value = 2;
+}`,
+		"through mutable reference": `struct Cell { value: i32 }
+fn valid(reference: &mut Cell) -> i32 {
+	reference.value = 2;
+	return reference.value;
+}`,
+		"sequential mutable reborrows": `fn Write(_: &mut i32) {}
+fn valid(reference: &mut i32) {
+	Write(reference);
+	Write(reference);
+}`,
+		"raw address outside safe loans": `fn Keep(_: rawptr) {}
+fn Read(_: &mut i32) {}
+fn valid(mut value: i32) {
+	let reference = &mut value;
+	Keep(@value);
+	Read(reference);
+}`,
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			result := checkOwnershipSource(t, src)
+			if result.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestBorrowConflictingAccesses(t *testing.T) {
+	tests := map[string]string{
+		"shared during mutable borrow": `fn Read(_: &i32) {}
+fn bad(mut value: i32) {
+	let exclusive = &mut value;
+	Read(&value);
+	Read(exclusive);
+}`,
+		"mutation during shared borrow": `fn Read(_: &i32) {}
+fn bad(mut value: i32) {
+	let reference = &value;
+	value = 2;
+	Read(reference);
+}`,
+		"one phase call arguments": `fn Both(_: &mut i32, _: &i32) {}
+fn bad(mut value: i32) {
+	Both(&mut value, &value);
+}`,
+		"optional mutable call argument": `fn Both(_: ?&mut i32, _: &i32) {}
+fn bad(mut value: i32) {
+	Both(&mut value, &value);
+}`,
+		"optional shared call argument": `fn Both(_: ?&i32, _: &mut i32) {}
+fn bad(mut value: i32) {
+	Both(&value, &mut value);
+}`,
+		"nested call argument": `fn Read(_: &i32) -> i32 { return 0; }
+fn Both(_: &mut i32, _: i32) {}
+fn bad(mut value: i32) {
+	Both(&mut value, Read(&value));
+}`,
+		"mutable method receiver": `struct Counter { value: i32 }
+fn (self: &mut Counter) Mix(_: &Counter) {}
+fn bad(mut value: Counter) {
+	value.Mix(&value);
+}`,
+		"child reborrow": `struct Cell { value: i32 }
+fn Write(_: &mut i32, _: i32) {}
+fn bad(parent: &mut Cell) {
+	let child = &mut parent.value;
+	let current = parent.value;
+	Write(child, current);
+}`,
+		"conditional origin union": `fn Read(_: &i32) {}
+fn bad(cond: bool, mut left: i32, right: i32) {
+	let mut selected = &left;
+	if cond {
+		selected = &right;
+	}
+	left = 3;
+	Read(selected);
+}`,
+		"borrowed local scope exit": `fn Read(_: &i32) {}
+fn bad(seed: i32) {
+	let mut escaped = &seed;
+	{
+		let local = 1;
+		escaped = &local;
+	}
+	Read(escaped);
+}`,
+		"owner move": `struct Box { value: i32 }
+fn Consume(_: Box) {}
+fn Read(_: &Box) {}
+fn bad(owner: Box) {
+	let reference = &owner;
+	Consume(owner);
+	Read(reference);
+}`,
+		"owner free": `fn Read(_: &*i32) {}
+fn bad(owner: *i32) {
+	let reference = &owner;
+	free(owner);
+	Read(reference);
+}`,
+		"slice view source": `fn Read(_: &[]i32) {}
+fn bad(mut values: [2]i32) {
+	let view = values[..];
+	values[0] = 3;
+	Read(view);
+}`,
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			result := checkOwnershipSource(t, src)
+			if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+				t.Fatalf("expected borrow-conflict diagnostic, got:\n%s", result.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestBorrowConflictDiagnosticShowsLoanLifetime(t *testing.T) {
+	result := checkOwnershipSource(t, `fn Both(_: &mut i32, _: &i32) {}
+fn bad(mut value: i32) {
+	Both(&mut value, &value);
+}`)
+	for _, item := range result.Diagnostics() {
+		if item == nil || item.Code != diagnostics.ErrBorrowConflict {
+			continue
+		}
+		if len(item.Labels) != 3 {
+			t.Fatalf("borrow diagnostic labels = %d, want conflict, creation, and lifetime", len(item.Labels))
+		}
+		if !strings.Contains(item.Labels[0].Message, "conflicting access") ||
+			!strings.Contains(item.Labels[1].Message, "borrow created here") ||
+			!strings.Contains(item.Labels[2].Message, "call completes") {
+			t.Fatalf("unexpected borrow diagnostic labels: %#v", item.Labels)
+		}
+		return
+	}
+	t.Fatalf("expected borrow-conflict diagnostic, got:\n%s", result.EmitAllToString())
 }
 
 func TestImplicitBindingTransfersNoCopyValue(t *testing.T) {
@@ -1036,5 +1216,81 @@ fn get() -> rawptr {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReferenceReturnOriginsAcceptDeclaredParameterPaths(t *testing.T) {
+	result := checkOwnershipSource(t, `
+fn choose(cond: bool, left: &i32, right: &i32) -> &i32 from(left, right) {
+	if cond {
+		return left;
+	}
+	return right;
+}
+
+fn recursive(value: &i32, done: bool) -> &i32 from value {
+	if done {
+		return value;
+	}
+	return recursive(value, true);
+}
+`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected declared-origin diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestReferenceReturnRejectsOriginOutsideContract(t *testing.T) {
+	result := checkOwnershipSource(t, `
+fn wrong(left: &i32, right: &i32) -> &i32 from left {
+	return right;
+}
+
+fn local(source: &i32) -> &i32 from source {
+	let value: i32 = 1;
+	return &value;
+}
+`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidReturn) ||
+		strings.Count(result.EmitAllToString(), "outside declared `from` sources") != 2 {
+		t.Fatalf("expected undeclared return-origin diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestReferenceReturningCallExtendsSourceLoan(t *testing.T) {
+	result := checkOwnershipSource(t, `
+fn identity(value: &i32) -> &i32 from value {
+	return value;
+}
+
+fn Read(_: &i32) {}
+
+fn bad(mut value: i32) {
+	let reference = identity(&value);
+	value = 2;
+	Read(reference);
+}
+`)
+	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+		t.Fatalf("expected returned-call loan conflict:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestReferenceReturningCallLoanEndsAfterLastUse(t *testing.T) {
+	result := checkOwnershipSource(t, `
+fn identity(value: &i32) -> &i32 from value {
+	return value;
+}
+
+fn Read(_: &i32) {}
+
+fn valid(mut value: i32) {
+	let reference = identity(&value);
+	Read(reference);
+	value = 2;
+}
+`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected returned-call loan diagnostics:\n%s", result.EmitAllToString())
 	}
 }

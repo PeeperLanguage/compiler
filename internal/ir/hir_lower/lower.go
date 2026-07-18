@@ -346,8 +346,19 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	if !reference {
 		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: "<invalid>", Location: ast.LocOf(expr)}
 	}
-	value := lowerPlace(ctx, module, scope, expr)
 	array, isDynamicArray := loweredRuntimeType(module, target, nil).(*typeinfo.ArrayType)
+	exprType := func(node ast.Expr) typeinfo.Type {
+		return exprResolvedType(module, node)
+	}
+	if !place.Addressable(scope, expr, exprType) {
+		return &ir.TempBorrow{
+			Value:    lowerASTExpr(ctx, module, scope, expr, target),
+			Slice:    isDynamicArray && array != nil && array.Dynamic,
+			Type:     typeText,
+			Location: ast.LocOf(expr),
+		}
+	}
+	value := lowerPlace(ctx, module, scope, expr)
 	if isDynamicArray && array != nil && array.Dynamic {
 		return &ir.SliceView{Source: value, Type: typeText, Location: ast.LocOf(expr)}
 	}

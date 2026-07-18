@@ -1,0 +1,31 @@
+fn Both(_: &mut i32, _: &i32) {
+}
+
+fn BothOptional(_: ?&mut i32, _: &i32) {
+}
+
+fn Read(_: &i32) {
+}
+
+fn ConflictingArguments(mut value: i32) {
+    Both(&mut value, &value);
+}
+
+fn ConflictingOptionalArguments(mut value: i32) {
+    BothOptional(&mut value, &value);
+}
+
+fn MutateBorrowed(mut value: i32) {
+    let reference = &value;
+    value = 2;
+    Read(reference);
+}
+
+fn EscapeInnerScope(seed: i32) {
+    let mut escaped = &seed;
+    {
+        let local = 1;
+        escaped = &local;
+    }
+    Read(escaped);
+}

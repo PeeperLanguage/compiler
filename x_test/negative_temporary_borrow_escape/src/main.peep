@@ -1,0 +1,32 @@
+fn Make() -> []i32 {
+    return []i32{1, 2};
+}
+
+fn Identity(value: &[]i32) -> &[]i32 from value {
+    return value;
+}
+
+fn longest(a: &i32, b: &i32, c: &i32) -> &i32 from (a, b) {
+    return a;
+}
+
+fn BindingEscape() {
+    let reference = &Make();
+}
+
+fn AssignmentEscape(seed: []i32) {
+    let mut reference = &seed;
+    reference = &Make();
+}
+
+fn ContractEscape() {
+    let reference = Identity(&Make());
+}
+
+fn NestedContractEscape() {
+    let reference = Identity(Identity(&Make()));
+}
+
+fn RawTemporaryAddress() {
+    let pointer = @Make();
+}

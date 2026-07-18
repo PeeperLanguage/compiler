@@ -1,0 +1,11 @@
+import "runtime_reference_return_import/references";
+
+fn Keep(_: &i32) {
+}
+
+fn main() -> i32 {
+    let value: i32 = 7;
+    let reference = references::Identity(&value);
+    Keep(reference);
+    return 0;
+}

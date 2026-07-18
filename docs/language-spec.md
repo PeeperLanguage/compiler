@@ -6,8 +6,9 @@ other way around.
 
 ## Core Model
 
-Peeper is a systems language with explicit allocation, visible mutation, and no
-user-written lifetime parameters.
+Peeper is a systems language with explicit allocation and visible mutation.
+Reference-return relationships use `from` clauses instead of lifetime type
+parameters.
 
 Core rules:
 
@@ -18,6 +19,7 @@ Core rules:
 - Duplication beyond implicit scalar/raw copy is an ordinary user-defined method API.
 - Types containing tracked ownership cannot be copied.
 - Live owned values are destroyed automatically at normal scope exit.
+- Safe code cannot suppress destruction of an owned value.
 - Safe references and raw pointers are different syntax and different semantics.
 
 ## Types
@@ -155,6 +157,8 @@ Rules:
 - References may be local variables and parameters.
 - References cannot be stored in structs, arrays, dynamic arrays, globals, or heap objects in v1.
 - `?&T` is allowed; arrays or dynamic arrays of references are not.
+- A borrowed rvalue temporary lives through its enclosing full expression only.
+- A reference to a temporary cannot escape through a binding, return, or stored value.
 
 Borrowing a field preserves the root origin:
 
@@ -234,6 +238,10 @@ a compile error, never a runtime drop flag.
 owner. Panics abort without unwinding in initial model. Ownership-tracked globals
 remain rejected until module shutdown ordering exists.
 
+Safe code has no `forget` or `leak` operation. A future foreign-memory handoff
+must make ownership transfer explicit and require `unsafe`; it cannot silently
+disable normal destruction.
+
 ## Interface Contracts And Carriers
 
 `iface` declares a contract. Bare interface names are unsized contracts, not
@@ -297,25 +305,57 @@ parameter syntax has no constraint checking or monomorphization.
 
 ## Returned References
 
-Peeper has no lifetime syntax.
-
-Returned-reference origin summaries are future work. The current compiler
-rejects every reference return rather than accepting an unproven lifetime.
+Every direct or optional reference return declares its possible parameter
+origins with a `from` clause. This is a compile-time callable contract, not a
+runtime lifetime value.
 
 ```peep
-fn choose(a: &Item, b: &Item, use_a: bool) -> &Item // rejected for now
+fn first(items: &[]Item) -> &Item from items
+
+fn choose(a: &Item, b: &Item, use_a: bool) -> &Item from(a, b)
+
+fn element(items: &mut []Item, index: usize) -> &mut Item from items
 ```
 
-Future work will infer parameter-origin sets and substitute them at call sites.
+`from source` declares one possible origin. `from(a, b)` declares alternatives;
+the returned loan remains valid only while every possible source remains valid.
+Sources are borrowed parameters or `self`. A mutable reference result requires
+a mutable-capable source. Function bodies may use fewer origins than declared,
+but may never return an undeclared local or parameter origin.
+
+The clause is required even when only one source is possible. It is part of
+function-type compatibility and imported callable metadata, so extern and
+interface declarations do not require a body for origin inference. It is erased
+before HIR and has no runtime representation.
 
 Invalid:
 
 ```peep
-fn bad() -> &i32 {
+fn bad(source: &i32) -> &i32 from source {
     let x = 1
-    return &x
+    return &x // error: x does not originate from source
 }
 ```
+
+Returning references is rejected until `from` checking is implemented. Safe
+self-referential aggregates remain forbidden. Externally borrowed aggregate
+fields may be designed later without changing this callable contract.
+
+## Borrowed Temporaries
+
+Safe references may borrow an rvalue only for the enclosing full expression:
+
+```peep
+inspect(&make_item()) // valid: temporary is destroyed after inspect returns
+
+let item = &make_item() // error: reference escapes full expression
+return first(&make_items()) // error: returned reference escapes temporary
+```
+
+Temporary storage is materialized without hidden heap allocation. Temporaries
+are destroyed in reverse creation order when the full expression completes.
+Raw `@temporary` remains invalid because raw pointers are outside safe-loan
+escape enforcement.
 
 ## Arrays And Slice Views
 

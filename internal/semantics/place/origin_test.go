@@ -102,3 +102,36 @@ func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
 		t.Fatalf("merge aliased input projection storage")
 	}
 }
+
+func TestOriginsOverlap(t *testing.T) {
+	root := symbols.New("root", symbols.SymbolVar, nil, nil)
+	other := symbols.New("other", symbols.SymbolVar, nil, nil)
+	field := func(name string) OriginProjection { return OriginProjection{Kind: OriginField, Field: name} }
+	index := func(value string) OriginProjection { return OriginProjection{Kind: OriginIndex, Index: value} }
+	wildcard := OriginProjection{Kind: OriginWildcard}
+
+	tests := []struct {
+		name    string
+		left    []Origin
+		right   []Origin
+		overlap bool
+	}{
+		{name: "same root", left: []Origin{{Root: root}}, right: []Origin{{Root: root}}, overlap: true},
+		{name: "different roots", left: []Origin{{Root: root}}, right: []Origin{{Root: other}}},
+		{name: "path prefix", left: []Origin{{Root: root}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, overlap: true},
+		{name: "same field", left: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, overlap: true},
+		{name: "different fields", left: []Origin{{Root: root, Projections: []OriginProjection{field("left")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("right")}}}},
+		{name: "different fixed indexes", left: []Origin{{Root: root, Projections: []OriginProjection{index("0")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("1")}}}},
+		{name: "wildcard index", left: []Origin{{Root: root, Projections: []OriginProjection{wildcard}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("1")}}}, overlap: true},
+		{name: "different projection kinds", left: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("0")}}}, overlap: true},
+		{name: "any origin pair", left: []Origin{{Root: other}, {Root: root, Projections: []OriginProjection{field("value")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, overlap: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := OriginsOverlap(test.left, test.right); got != test.overlap {
+				t.Fatalf("OriginsOverlap() = %v, want %v", got, test.overlap)
+			}
+		})
+	}
+}

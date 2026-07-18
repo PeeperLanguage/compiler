@@ -99,9 +99,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
-	if fn.Body != nil {
-		sym.Scope = table.New(c.module.ModuleScope)
-	}
+	sym.Scope = table.New(c.module.ModuleScope)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return

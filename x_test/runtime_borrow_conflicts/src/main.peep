@@ -1,0 +1,28 @@
+struct Pair {
+    left: i32,
+    right: i32
+}
+
+fn Keep(_: &mut i32) {
+}
+
+fn KeepRaw(_: rawptr) {
+}
+
+fn main() -> i32 {
+    let mut pair: Pair = .{ left = 1, right = 2 };
+    let left = &mut pair.left;
+    pair.right = 7;
+    KeepRaw(@pair.right);
+    Keep(left);
+
+    let mut values = [_]i32{1, 2};
+    let first = &mut values[0];
+    values[1] = pair.right;
+    Keep(first);
+
+    if values[1] == 7 {
+        return 0;
+    }
+    return 1;
+}

@@ -17,24 +17,60 @@ const (
 	useConsume
 )
 
-func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use useKind) {
+func (a *analyzer) checkExpr(
+	scope *table.Scope,
+	expr ast.Expr,
+	st state,
+	use useKind,
+	loans *loanContext,
+	projectionBase bool,
+) {
 	if a == nil || expr == nil {
 		return
 	}
 	switch e := expr.(type) {
 	case *ast.Ident:
 		a.checkIdent(scope, e, st, use)
+		sym := a.module.Semantics.ResolvedSymbols[e.ID()]
+		if _, reference := referenceMutability(sym); reference {
+			loans.useReference(sym)
+			return
+		}
+		if !projectionBase {
+			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
+		}
 	case *ast.AddressExpr:
-		a.checkExpr(scope, e.Expr, st, useRead)
+		if e.Mode != ast.AddressRaw {
+			access := storageSharedBorrow
+			if e.Mode == ast.AddressMutable {
+				access = storageMutableBorrow
+			}
+			a.checkStorageAccess(scope, e.Expr, st, loans, access)
+		}
+		a.checkExpr(scope, e.Expr, st, useRead, loans, true)
 	case *ast.SelectorExpr:
-		a.checkSelector(scope, e, st, use)
+		if !projectionBase {
+			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
+		}
+		a.checkSelector(scope, e, st, use, loans)
 	case *ast.IndexExpr:
 		if typeinfo.IsInvalidOrUnknown(a.exprType(e)) {
 			return
 		}
-		a.checkExpr(scope, e.Expr, st, useRead)
-		a.checkExpr(scope, e.Index, st, useRead)
-		if _, slicing := e.Index.(*ast.RangeExpr); slicing {
+		_, slicing := e.Index.(*ast.RangeExpr)
+		if !projectionBase {
+			access := storageAccessForUse(a.exprType(e), use)
+			if slicing {
+				access = storageSharedBorrow
+				if _, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(a.exprType(e))); reference && mutable {
+					access = storageMutableBorrow
+				}
+			}
+			a.checkStorageAccess(scope, e, st, loans, access)
+		}
+		a.checkExpr(scope, e.Expr, st, useRead, loans, true)
+		a.checkExpr(scope, e.Index, st, useRead, loans, false)
+		if slicing {
 			return
 		}
 		if a.planProjectionBaseDrop(e, e.Expr) {
@@ -45,34 +81,41 @@ func (a *analyzer) checkExpr(scope *table.Scope, expr ast.Expr, st state, use us
 				"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", ast.LocOf(e), "")
 		}
 	case *ast.RangeExpr:
-		a.checkExpr(scope, e.Start, st, useRead)
-		a.checkExpr(scope, e.End, st, useRead)
+		a.checkExpr(scope, e.Start, st, useRead, loans, false)
+		a.checkExpr(scope, e.End, st, useRead, loans, false)
 	case *ast.StructLit:
 		for _, field := range e.Fields {
-			a.checkExpr(scope, field.Value, st, useConsume)
+			a.checkExpr(scope, field.Value, st, useConsume, loans, false)
 		}
 	case *ast.ArrayLit:
 		for _, value := range e.Values {
-			a.checkExpr(scope, value, st, useConsume)
+			a.checkExpr(scope, value, st, useConsume, loans, false)
 		}
 	case *ast.CallExpr:
-		a.checkCall(scope, e, st)
+		a.checkCall(scope, e, st, loans)
 	case *ast.FreeExpr:
-		a.checkExpr(scope, e.Expr, st, useConsume)
+		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
 	case *ast.PrintExpr:
-		a.checkExpr(scope, e.Expr, st, useRead)
+		a.checkExpr(scope, e.Expr, st, useRead, loans, false)
 	case *ast.UnaryExpr:
-		a.checkExpr(scope, e.Expr, st, useRead)
+		a.checkExpr(scope, e.Expr, st, useRead, loans, false)
 	case *ast.BinaryExpr:
-		a.checkExpr(scope, e.Left, st, useRead)
-		a.checkExpr(scope, e.Right, st, useRead)
+		a.checkExpr(scope, e.Left, st, useRead, loans, false)
+		a.checkExpr(scope, e.Right, st, useRead, loans, false)
 	case *ast.AsExpr:
-		a.checkExpr(scope, e.Expr, st, useConsume)
+		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
 		return
 	}
+}
+
+func storageAccessForUse(typ typeinfo.Type, use useKind) storageAccess {
+	if use == useConsume && ownershipTrackedType(typ) {
+		return storageConsume
+	}
+	return storageRead
 }
 
 func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, use useKind) {
@@ -111,11 +154,17 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 	}
 }
 
-func (a *analyzer) checkSelector(scope *table.Scope, selector *ast.SelectorExpr, st state, use useKind) {
+func (a *analyzer) checkSelector(
+	scope *table.Scope,
+	selector *ast.SelectorExpr,
+	st state,
+	use useKind,
+	loans *loanContext,
+) {
 	if selector == nil {
 		return
 	}
-	a.checkExpr(scope, selector.Expr, st, useRead)
+	a.checkExpr(scope, selector.Expr, st, useRead, loans, true)
 	if a.planProjectionBaseDrop(selector, selector.Expr) {
 		return
 	}
@@ -144,61 +193,97 @@ func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
 	return false
 }
 
-func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state) {
+func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, loans *loanContext) {
 	if call == nil {
 		return
 	}
+	temporaryMark := len(loans.temporary)
+	defer func() {
+		loans.temporary = loans.temporary[:temporaryMark]
+	}()
 	if selector, ok := call.Callee.(*ast.SelectorExpr); ok && selector != nil {
-		a.checkMethodCall(scope, selector, call, st)
+		a.checkMethodCall(scope, selector, call, st, loans)
 		return
 	}
-	a.checkExpr(scope, call.Callee, st, useRead)
+	a.checkExpr(scope, call.Callee, st, useRead, loans, false)
 	fn, ok := a.exprType(call.Callee).(*typeinfo.FuncType)
 	if !ok || fn == nil || len(call.Args) != len(fn.Params) {
 		for _, arg := range call.Args {
-			a.checkExpr(scope, arg, st, useRead)
+			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
 		return
 	}
 	for i, arg := range call.Args {
-		a.checkExpr(scope, arg, st, paramUse(fn, i))
+		a.checkCallArgument(scope, arg, fn.Params[i], call, st, loans)
 	}
 }
 
-func (a *analyzer) checkMethodCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr, st state) {
+func (a *analyzer) checkMethodCall(
+	scope *table.Scope,
+	selector *ast.SelectorExpr,
+	call *ast.CallExpr,
+	st state,
+	loans *loanContext,
+) {
 	fn, ok := a.exprType(selector).(*typeinfo.FuncType)
 	if !ok || fn == nil || selector == nil || call == nil {
 		if selector != nil {
-			a.checkExpr(scope, selector.Expr, st, useRead)
+			a.checkExpr(scope, selector.Expr, st, useRead, loans, false)
 		}
 		for _, arg := range call.Args {
-			a.checkExpr(scope, arg, st, useRead)
+			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
 		return
 	}
-	a.checkExpr(scope, selector.Expr, st, paramUse(fn, 0))
+	a.checkCallArgument(scope, selector.Expr, fn.Params[0], call, st, loans)
 	if len(call.Args)+1 != len(fn.Params) {
 		for _, arg := range call.Args {
-			a.checkExpr(scope, arg, st, useRead)
+			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
 		return
 	}
 	for i, arg := range call.Args {
-		a.checkExpr(scope, arg, st, paramUse(fn, i+1))
+		a.checkCallArgument(scope, arg, fn.Params[i+1], call, st, loans)
 	}
 }
 
-func paramUse(fn *typeinfo.FuncType, index int) useKind {
-	if fn != nil && index >= 0 && index < len(fn.Params) {
-		paramType := fn.Params[index]
+func (a *analyzer) checkCallArgument(
+	scope *table.Scope,
+	arg ast.Expr,
+	paramType typeinfo.Type,
+	call *ast.CallExpr,
+	st state,
+	loans *loanContext,
+) {
+	_, mutable, reference := typeinfo.ReferenceValueTarget(paramType)
+	if !reference {
+		use := useConsume
 		if typeinfo.IsImplicitCopyType(paramType) {
-			return useRead
+			use = useRead
 		}
-		if _, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType)); ok {
-			return useRead
-		}
+		a.checkExpr(scope, arg, st, use, loans, false)
+		return
 	}
-	return useConsume
+	if _, explicitBorrow := arg.(*ast.AddressExpr); explicitBorrow {
+		a.checkExpr(scope, arg, st, useRead, loans, false)
+	} else {
+		a.checkExpr(scope, arg, st, useRead, loans, true)
+		access := storageSharedBorrow
+		if mutable {
+			access = storageMutableBorrow
+		}
+		a.checkStorageAccess(scope, arg, st, loans, access)
+	}
+	origins := a.originsForExpr(scope, arg, st)
+	if len(origins) == 0 {
+		return
+	}
+	loans.addTemporary(referenceValue{{
+		id:      loanID{node: arg},
+		origins: origins,
+		mutable: mutable,
+		site:    arg,
+	}}, call)
 }
 
 func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
@@ -247,6 +332,9 @@ func (a *analyzer) checkPointerEscape(scope *table.Scope, expr ast.Expr, st stat
 func (a *analyzer) pointerOrigin(scope *table.Scope, expr ast.Expr, st state) (pointerOrigin, bool) {
 	switch e := expr.(type) {
 	case *ast.AddressExpr:
+		if e.Mode != ast.AddressRaw {
+			return pointerOrigin{}, false
+		}
 		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType)
 		if !ok || root == nil {
 			return pointerOrigin{}, false

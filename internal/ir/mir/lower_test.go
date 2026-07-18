@@ -770,3 +770,38 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 		t.Fatalf("expected backedge to header block, got %#v", fn.Blocks[2].Term)
 	}
 }
+
+func TestGenerateMIRDropsBorrowedTemporariesAfterCallInReverseOrder(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test",
+		Funcs: []*hir.Function{{
+			Name:       "main",
+			ReturnType: "void",
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.ExprStmt{Value: &ir.Call{
+					Callee: &ir.Ident{Name: "Both", Type: "fn(&Box, &Box)"},
+					Args: []ir.Expr{
+						&ir.TempBorrow{Value: &ir.Call{Callee: &ir.Ident{Name: "MakeFirst", Type: "fn() -> Box"}, Type: "Box"}, Type: "&Box"},
+						&ir.TempBorrow{Value: &ir.Call{Callee: &ir.Ident{Name: "MakeSecond", Type: "fn() -> Box"}, Type: "Box"}, Type: "&Box"},
+					},
+				}},
+			},
+			},
+		}},
+	}
+	out := GenerateMIR(mod, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 7 {
+		t.Fatalf("temporary borrow instructions = %d, want 7: %#v", len(instrs), instrs)
+	}
+	if _, ok := instrs[4].(*Call); !ok {
+		t.Fatalf("expected outer call before cleanup, got %#v", instrs[4])
+	}
+	secondDrop, secondOK := instrs[5].(*Drop)
+	firstDrop, firstOK := instrs[6].(*Drop)
+	secondValue := instrs[2].(*Assign)
+	firstValue := instrs[0].(*Assign)
+	if !secondOK || !firstOK || secondDrop.Value.Text() != secondValue.Name || firstDrop.Value.Text() != firstValue.Name {
+		t.Fatalf("expected reverse temporary cleanup, got %#v, %#v", instrs[5], instrs[6])
+	}
+}

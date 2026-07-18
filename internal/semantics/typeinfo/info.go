@@ -64,8 +64,14 @@ type ArrayType struct {
 }
 
 type FuncType struct {
-	Params []Type
-	Return Type
+	Params        []Type
+	ParamNames    []string
+	Return        Type
+	ReturnOrigins *ReturnOriginContract
+}
+
+type ReturnOriginContract struct {
+	Sources []int
 }
 
 type Field struct {
@@ -78,9 +84,25 @@ type StructType struct {
 }
 
 type Method struct {
-	Name   string
-	Params []Field
-	Return Type
+	Name          string
+	Params        []Field
+	Return        Type
+	ReturnOrigins *ReturnOriginContract
+}
+
+func (m Method) CallableType() *FuncType {
+	params := make([]Type, len(m.Params))
+	paramNames := make([]string, len(m.Params))
+	for i, param := range m.Params {
+		params[i] = param.Type
+		paramNames[i] = param.Name
+	}
+	return &FuncType{
+		Params:        params,
+		ParamNames:    paramNames,
+		Return:        m.Return,
+		ReturnOrigins: m.ReturnOrigins,
+	}
 }
 
 type InterfaceType struct {
@@ -228,7 +250,33 @@ func (t *FuncType) Text() string {
 		b.WriteString(" -> ")
 		b.WriteString(ret)
 	}
+	b.WriteString(t.ReturnOriginText())
 	return b.String()
+}
+
+func (t *FuncType) ReturnOriginText() string {
+	if t != nil && t.ReturnOrigins != nil && len(t.ReturnOrigins.Sources) > 0 {
+		var b strings.Builder
+		b.WriteString(" from ")
+		if len(t.ReturnOrigins.Sources) > 1 {
+			b.WriteString("(")
+		}
+		for i, slot := range t.ReturnOrigins.Sources {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if slot >= 0 && slot < len(t.ParamNames) && t.ParamNames[slot] != "" {
+				b.WriteString(t.ParamNames[slot])
+			} else {
+				b.WriteString("?")
+			}
+		}
+		if len(t.ReturnOrigins.Sources) > 1 {
+			b.WriteString(")")
+		}
+		return b.String()
+	}
+	return ""
 }
 
 func (t *StructType) Text() string {

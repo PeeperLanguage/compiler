@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"compiler/internal/frontend/ast"
@@ -242,8 +241,10 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 		if p.Return == typeNode {
 			return true
 		}
-		if slices.Contains(p.Params, typeNode) {
-			return true
+		for _, param := range p.Params {
+			if param.Type == typeNode {
+				return true
+			}
 		}
 	case *ast.StructType:
 		for _, field := range p.Fields {
@@ -449,12 +450,8 @@ func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.S
 	if ident == nil || method == nil {
 		return nil
 	}
-	params := make([]typeinfo.Type, len(method.Params))
-	for i, param := range method.Params {
-		params[i] = param.Type
-	}
 	sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
-	sym.Type = &typeinfo.FuncType{Params: params, Return: method.Return}
+	sym.Type = method.CallableType()
 	return sym
 }
 
@@ -587,11 +584,12 @@ func renderHoverSubject(subject *hoverSubject) string {
 }
 
 type hoverFunctionSignature struct {
-	receiver   string
-	name       string
-	typeParams []string
-	params     []string
-	result     string
+	receiver      string
+	name          string
+	typeParams    []string
+	params        []string
+	result        string
+	returnOrigins string
 }
 
 func (s hoverFunctionSignature) text() string {
@@ -618,6 +616,7 @@ func (s hoverFunctionSignature) text() string {
 		b.WriteString(" -> ")
 		b.WriteString(s.result)
 	}
+	b.WriteString(s.returnOrigins)
 	return b.String()
 }
 
@@ -630,7 +629,7 @@ func hoverSubjectFunctionSignature(subject *hoverSubject) hoverFunctionSignature
 			for i := range iface.Methods {
 				method := &iface.Methods[i]
 				if method.Name == subject.Node {
-					return hoverASTFunctionSignature(method.Receiver, method.Name, method.TypeParams, method.Params, method.ReturnType)
+					return hoverASTFunctionSignature(method.Receiver, method.Name, method.TypeParams, method.Params, method.ReturnType, method.ReturnOrigins)
 				}
 			}
 		}
@@ -641,11 +640,14 @@ func hoverSubjectFunctionSignature(subject *hoverSubject) hoverFunctionSignature
 	return hoverSymbolFunctionSignature(subject.Symbol)
 }
 
-func hoverASTFunctionSignature(receiver *ast.Param, name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, result ast.TypeExpr) hoverFunctionSignature {
+func hoverASTFunctionSignature(receiver *ast.Param, name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, result ast.TypeExpr, origins *ast.ReturnOriginClause) hoverFunctionSignature {
 	if name == nil {
 		return hoverFunctionSignature{}
 	}
 	signature := hoverFunctionSignature{name: name.Name, result: ast.TypeText(result)}
+	if origins != nil {
+		signature.returnOrigins = origins.Text()
+	}
 	if receiver != nil {
 		signature.receiver = hoverASTParamText(*receiver)
 	}
@@ -677,7 +679,12 @@ func hoverSemanticMethodSignature(method *typeinfo.Method) hoverFunctionSignatur
 	if method == nil {
 		return hoverFunctionSignature{}
 	}
-	signature := hoverFunctionSignature{name: method.Name, result: typeinfo.TypeText(method.Return)}
+	callable := method.CallableType()
+	signature := hoverFunctionSignature{
+		name:          method.Name,
+		result:        typeinfo.TypeText(method.Return),
+		returnOrigins: callable.ReturnOriginText(),
+	}
 	params := method.Params
 	if len(params) > 0 {
 		signature.receiver = typeinfo.TypeText(params[0].Type)
@@ -698,7 +705,7 @@ func hoverSymbolFunctionSignature(sym *symbols.Symbol) hoverFunctionSignature {
 		return hoverFunctionSignature{}
 	}
 	if decl, ok := sym.ASTNode.(*ast.FnDecl); ok && decl != nil {
-		return hoverASTFunctionSignature(decl.Receiver, decl.Name, decl.TypeParams, decl.Params, decl.ReturnType)
+		return hoverASTFunctionSignature(decl.Receiver, decl.Name, decl.TypeParams, decl.Params, decl.ReturnType, decl.ReturnOrigins)
 	}
 	typ, ok := symbols.GetSymbolType(sym)
 	if !ok {
@@ -708,7 +715,11 @@ func hoverSymbolFunctionSignature(sym *symbols.Symbol) hoverFunctionSignature {
 	if !ok || fn == nil {
 		return hoverFunctionSignature{}
 	}
-	signature := hoverFunctionSignature{name: sym.Name, result: typeinfo.TypeText(fn.Return)}
+	signature := hoverFunctionSignature{
+		name:          sym.Name,
+		result:        typeinfo.TypeText(fn.Return),
+		returnOrigins: fn.ReturnOriginText(),
+	}
 	start := 0
 	if sym.Kind == symbols.SymbolMethod {
 		if len(fn.Params) == 0 {

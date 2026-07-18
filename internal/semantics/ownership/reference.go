@@ -2,8 +2,10 @@ package ownership
 
 import (
 	"compiler/internal/constvalue"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -11,13 +13,232 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-type referenceValue struct {
+type loanID struct {
+	node      ast.Node
+	parameter *symbols.Symbol
+}
+
+type referenceLoan struct {
+	id      loanID
 	origins []place.Origin
 	mutable bool
 	site    ast.Node
 }
 
+type referenceValue []referenceLoan
+
 type referenceLiveSet map[*symbols.Symbol]ast.Node
+
+type referenceUse struct {
+	symbol *symbols.Symbol
+	site   ast.Node
+}
+
+type activeLoan struct {
+	loan         referenceLoan
+	holder       *symbols.Symbol
+	keepingAlive ast.Node
+}
+
+type loanContext struct {
+	persistent []activeLoan
+	temporary  []activeLoan
+	remaining  map[*symbols.Symbol]int
+	liveOut    referenceLiveSet
+}
+
+type storageAccess uint8
+
+const (
+	storageRead storageAccess = iota
+	storageSharedBorrow
+	storageMutableBorrow
+	storageMutate
+	storageConsume
+	storageDestroy
+)
+
+func (a *analyzer) newLoanContext(node *flowNode, st state) *loanContext {
+	ctx := &loanContext{
+		remaining: make(map[*symbols.Symbol]int),
+		liveOut:   a.referenceLiveOut[node.id],
+	}
+	for _, use := range a.referenceUseSequence(node) {
+		ctx.remaining[use.symbol]++
+	}
+	for sym, keepingAlive := range a.referenceLiveIn[node.id] {
+		value, tracked := st.references[sym]
+		if !tracked {
+			continue
+		}
+		for _, loan := range value {
+			ctx.persistent = append(ctx.persistent, activeLoan{
+				loan:         loan,
+				holder:       sym,
+				keepingAlive: keepingAlive,
+			})
+		}
+	}
+	return ctx
+}
+
+func (ctx *loanContext) useReference(sym *symbols.Symbol) {
+	if ctx == nil || sym == nil || ctx.remaining[sym] == 0 {
+		return
+	}
+	ctx.remaining[sym]--
+	if ctx.remaining[sym] > 0 {
+		return
+	}
+	if _, live := ctx.liveOut[sym]; live {
+		return
+	}
+	ctx.removeHolder(sym)
+}
+
+func (ctx *loanContext) removeHolder(sym *symbols.Symbol) {
+	if ctx == nil || sym == nil {
+		return
+	}
+	kept := ctx.persistent[:0]
+	for _, active := range ctx.persistent {
+		if active.holder != sym {
+			kept = append(kept, active)
+		}
+	}
+	ctx.persistent = kept
+}
+
+func (ctx *loanContext) addTemporary(value referenceValue, call ast.Node) {
+	if ctx == nil {
+		return
+	}
+	for _, loan := range value {
+		ctx.temporary = append(ctx.temporary, activeLoan{loan: loan, keepingAlive: call})
+	}
+}
+
+func (a *analyzer) checkStorageAccess(
+	scope *table.Scope,
+	expr ast.Expr,
+	st state,
+	loans *loanContext,
+	access storageAccess,
+) {
+	if a == nil || expr == nil || loans == nil {
+		return
+	}
+	a.reportLoanConflict(
+		a.originsForExpr(scope, expr, st),
+		a.referenceHolder(expr),
+		access,
+		expr,
+		loans,
+	)
+}
+
+func (a *analyzer) reportLoanConflict(
+	origins []place.Origin,
+	exempt *symbols.Symbol,
+	access storageAccess,
+	site ast.Node,
+	loans *loanContext,
+) {
+	if a == nil || len(origins) == 0 || loans == nil {
+		return
+	}
+	conflicts := func(active activeLoan) bool {
+		if (exempt != nil && active.holder == exempt) || !place.OriginsOverlap(origins, active.loan.origins) {
+			return false
+		}
+		return active.loan.mutable || access >= storageMutableBorrow
+	}
+	var conflict *activeLoan
+	for i := range loans.persistent {
+		if conflicts(loans.persistent[i]) {
+			conflict = &loans.persistent[i]
+			break
+		}
+	}
+	if conflict == nil {
+		for i := range loans.temporary {
+			if conflicts(loans.temporary[i]) {
+				conflict = &loans.temporary[i]
+				break
+			}
+		}
+	}
+	if conflict == nil {
+		return
+	}
+
+	message := "cannot access storage while it is borrowed"
+	switch access {
+	case storageRead:
+		message = "cannot read storage while it is mutably borrowed"
+	case storageSharedBorrow:
+		message = "cannot borrow storage while it is mutably borrowed"
+	case storageMutableBorrow:
+		message = "cannot borrow storage mutably while it is already borrowed"
+	case storageMutate:
+		message = "cannot mutate storage while it is borrowed"
+	case storageConsume:
+		message = "cannot consume storage while it is borrowed"
+	case storageDestroy:
+		message = "cannot destroy storage while it is borrowed"
+	}
+	diag := a.ctx.Diagnostics.AddError(diagnostics.ErrBorrowConflict, message, ast.LocOf(site), "conflicting access")
+	borrowKind := "shared borrow created here"
+	if conflict.loan.mutable {
+		borrowKind = "mutable borrow created here"
+	}
+	if conflict.loan.site != nil {
+		diag.WithSecondaryLabel(ast.LocOf(conflict.loan.site), borrowKind)
+	}
+	if conflict.keepingAlive != nil && conflict.keepingAlive != conflict.loan.site {
+		keepingMessage := "borrow remains live until this use"
+		if conflict.holder == nil {
+			keepingMessage = "borrow remains active until this call completes"
+		}
+		diag.WithSecondaryLabel(ast.LocOf(conflict.keepingAlive), keepingMessage)
+	}
+}
+
+func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
+	if a == nil || a.module == nil || a.module.Semantics == nil {
+		return nil
+	}
+	for {
+		switch node := expr.(type) {
+		case *ast.AddressExpr:
+			if node == nil {
+				return nil
+			}
+			expr = node.Expr
+		case *ast.SelectorExpr:
+			if node == nil {
+				return nil
+			}
+			expr = node.Expr
+		case *ast.IndexExpr:
+			if node == nil {
+				return nil
+			}
+			expr = node.Expr
+		case *ast.Ident:
+			if node == nil {
+				return nil
+			}
+			sym := a.module.Semantics.ResolvedSymbols[node.ID()]
+			if _, reference := referenceMutability(sym); reference {
+				return sym
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
+}
 
 func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st state) (referenceValue, bool) {
 	if a == nil || scope == nil || expr == nil {
@@ -27,10 +248,35 @@ func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st s
 	if !ok {
 		return referenceValue{}, false
 	}
-	origins := place.Origins(scope, expr, place.OriginOptions{
+	if ident, ok := expr.(*ast.Ident); ok {
+		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+		if value, tracked := st.references[sym]; tracked {
+			return copyReferenceValue(value), true
+		}
+	}
+	origins := a.originsForExpr(scope, expr, st)
+	if len(origins) == 0 {
+		return referenceValue{}, false
+	}
+	return referenceValue{{
+		id:      loanID{node: expr},
+		origins: origins,
+		mutable: mutable,
+		site:    expr,
+	}}, true
+}
+
+func (a *analyzer) originsForExpr(scope *table.Scope, expr ast.Expr, st state) []place.Origin {
+	if a == nil || scope == nil || expr == nil {
+		return nil
+	}
+	return place.Origins(scope, expr, place.OriginOptions{
 		ExprType: a.exprType,
 		ReferenceOrigins: func(sym *symbols.Symbol) []place.Origin {
-			return st.references[sym].origins
+			return st.references[sym].origins()
+		},
+		CallOrigins: func(call *ast.CallExpr) []place.Origin {
+			return a.callReturnOrigins(scope, call, st)
 		},
 		ConstantIndex: func(index ast.Expr) (string, bool) {
 			expected := a.exprType(index)
@@ -45,10 +291,66 @@ func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st s
 			return integer.Value, true
 		},
 	})
-	if len(origins) == 0 {
-		return referenceValue{}, false
+}
+
+func (a *analyzer) callReturnOrigins(scope *table.Scope, call *ast.CallExpr, st state) []place.Origin {
+	if a == nil || call == nil || call.Callee == nil {
+		return nil
 	}
-	return referenceValue{origins: origins, mutable: mutable, site: expr}, true
+	fnType, _ := typeinfo.Underlying(a.exprType(call.Callee)).(*typeinfo.FuncType)
+	if fnType == nil || fnType.ReturnOrigins == nil {
+		return nil
+	}
+	var origins []place.Origin
+	for _, source := range typeinfo.ReturnOriginSources(call, fnType) {
+		origins = place.MergeOrigins(origins, a.originsForExpr(scope, source, st))
+	}
+	return origins
+}
+
+func (a *analyzer) validateReferenceReturn(scope *table.Scope, stmt *ast.ReturnStmt, st state) {
+	if a == nil || a.function == nil || scope == nil || stmt == nil || stmt.Value == nil {
+		return
+	}
+	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !reference {
+		return
+	}
+	value, found := a.referenceValueForExpr(scope, stmt.Value, st)
+	if !found {
+		return
+	}
+	fnType := typeinfo.FuncTypeFromDeclWithOptions(
+		a.function,
+		project.TypeSyntaxOptions(a.ctx, a.module, nil, false),
+	)
+	if fnType == nil || fnType.ReturnOrigins == nil {
+		return
+	}
+	params := a.function.ParamsWithReceiver()
+	allowed := make(map[*symbols.Symbol]struct{}, len(fnType.ReturnOrigins.Sources))
+	for _, slot := range fnType.ReturnOrigins.Sources {
+		if slot < 0 || slot >= len(params) || params[slot].Name == nil {
+			continue
+		}
+		if sym, ok := a.functionScope.LookupNode(params[slot].Name); ok && sym != nil {
+			allowed[sym] = struct{}{}
+		}
+	}
+	for _, origin := range value.origins() {
+		if _, declared := allowed[origin.Root]; declared {
+			continue
+		}
+		diagnostic := a.ctx.Diagnostics.AddError(
+			diagnostics.ErrInvalidReturn,
+			"returned reference originates outside declared `from` sources",
+			ast.LocOf(stmt.Value),
+			"undeclared return origin",
+		)
+		if a.function.ReturnOrigins != nil {
+			diagnostic.WithSecondaryLabel(a.function.ReturnOrigins.Location, "declared return origins")
+		}
+		return
+	}
 }
 
 func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value referenceValue, hasValue bool, st state) {
@@ -60,8 +362,10 @@ func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value referenceVal
 		delete(st.references, sym)
 		return
 	}
-	value.mutable = mutable
-	value.origins = place.CloneOrigins(value.origins)
+	value = copyReferenceValue(value)
+	for i := range value {
+		value[i].mutable = mutable
+	}
 	st.references[sym] = value
 }
 
@@ -75,8 +379,12 @@ func referenceMutability(sym *symbols.Symbol) (bool, bool) {
 }
 
 func copyReferenceValue(value referenceValue) referenceValue {
-	value.origins = place.CloneOrigins(value.origins)
-	return value
+	copyValue := make(referenceValue, len(value))
+	copy(copyValue, value)
+	for i := range copyValue {
+		copyValue[i].origins = place.CloneOrigins(copyValue[i].origins)
+	}
+	return copyValue
 }
 
 func sameReferenceValues(left, right map[*symbols.Symbol]referenceValue) bool {
@@ -85,8 +393,7 @@ func sameReferenceValues(left, right map[*symbols.Symbol]referenceValue) bool {
 	}
 	for sym, leftValue := range left {
 		rightValue, ok := right[sym]
-		if !ok || leftValue.mutable != rightValue.mutable || leftValue.site != rightValue.site ||
-			!place.SameOrigins(leftValue.origins, rightValue.origins) {
+		if !ok || !sameReferenceValue(leftValue, rightValue) {
 			return false
 		}
 	}
@@ -102,18 +409,58 @@ func mergeReferenceValues(dst, src map[*symbols.Symbol]referenceValue) bool {
 			changed = true
 			continue
 		}
-		merged := place.MergeOrigins(dstValue.origins, srcValue.origins)
-		if !place.SameOrigins(dstValue.origins, merged) {
-			dstValue.origins = merged
-			changed = true
-		}
-		if earlierNode(srcValue.site, dstValue.site) == srcValue.site && dstValue.site != srcValue.site {
-			dstValue.site = srcValue.site
-			changed = true
+		for _, srcLoan := range srcValue {
+			index := referenceLoanIndex(dstValue, srcLoan.id)
+			if index < 0 {
+				srcLoan.origins = place.CloneOrigins(srcLoan.origins)
+				dstValue = append(dstValue, srcLoan)
+				changed = true
+				continue
+			}
+			merged := place.MergeOrigins(dstValue[index].origins, srcLoan.origins)
+			if !place.SameOrigins(dstValue[index].origins, merged) {
+				dstValue[index].origins = merged
+				changed = true
+			}
 		}
 		dst[sym] = dstValue
 	}
 	return changed
+}
+
+func (value referenceValue) origins() []place.Origin {
+	var origins []place.Origin
+	for _, loan := range value {
+		origins = place.MergeOrigins(origins, loan.origins)
+	}
+	return origins
+}
+
+func sameReferenceValue(left, right referenceValue) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for _, leftLoan := range left {
+		index := referenceLoanIndex(right, leftLoan.id)
+		if index < 0 {
+			return false
+		}
+		rightLoan := right[index]
+		if leftLoan.mutable != rightLoan.mutable || leftLoan.site != rightLoan.site ||
+			!place.SameOrigins(leftLoan.origins, rightLoan.origins) {
+			return false
+		}
+	}
+	return true
+}
+
+func referenceLoanIndex(loans []referenceLoan, id loanID) int {
+	for i := range loans {
+		if loans[i].id == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func (a *analyzer) computeReferenceLiveness() {
@@ -175,9 +522,61 @@ func (a *analyzer) referenceUsesAndDefinitions(node *flowNode) (referenceLiveSet
 			}
 		}
 	}
-	addUses := func(expr ast.Expr) {
-		if expr == nil || a.module == nil || a.module.Semantics == nil {
-			return
+
+	switch stmt := node.stmt.(type) {
+	case *ast.LetDecl:
+		addDefinition(stmt)
+	case *ast.ConstDecl:
+		addDefinition(stmt)
+	case *ast.AssignStmt:
+		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
+			if sym, found := node.scope.Lookup(target.Name); found {
+				if _, reference := referenceMutability(sym); reference {
+					definitions[sym] = struct{}{}
+				}
+			}
+		}
+	}
+	for _, use := range a.referenceUseSequence(node) {
+		if previous, found := uses[use.symbol]; !found {
+			uses[use.symbol] = use.site
+		} else {
+			uses[use.symbol] = earlierNode(previous, use.site)
+		}
+	}
+	return uses, definitions
+}
+
+func (a *analyzer) referenceUseSequence(node *flowNode) []referenceUse {
+	if a == nil || node == nil || node.kind != nodeStmt || node.stmt == nil ||
+		a.module == nil || a.module.Semantics == nil {
+		return nil
+	}
+	var expressions []ast.Expr
+	switch stmt := node.stmt.(type) {
+	case *ast.LetDecl:
+		expressions = append(expressions, stmt.Value)
+	case *ast.ConstDecl:
+		expressions = append(expressions, stmt.Value)
+	case *ast.AssignStmt:
+		expressions = append(expressions, stmt.Value)
+		if _, binding := stmt.Target.(*ast.Ident); !binding {
+			expressions = append(expressions, stmt.Target)
+		}
+	case *ast.ReturnStmt:
+		expressions = append(expressions, stmt.Value)
+	case *ast.ExprStmt:
+		expressions = append(expressions, stmt.Expr)
+	case *ast.IfStmt:
+		expressions = append(expressions, stmt.Cond)
+	case *ast.ForStmt:
+		expressions = append(expressions, stmt.Cond)
+	}
+
+	var uses []referenceUse
+	for _, expr := range expressions {
+		if expr == nil {
+			continue
 		}
 		ast.Inspect(expr, func(current ast.Node) bool {
 			ident, ok := current.(*ast.Ident)
@@ -186,44 +585,12 @@ func (a *analyzer) referenceUsesAndDefinitions(node *flowNode) (referenceLiveSet
 			}
 			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
 			if _, reference := referenceMutability(sym); reference {
-				if previous, found := uses[sym]; !found {
-					uses[sym] = ident
-				} else {
-					uses[sym] = earlierNode(previous, ident)
-				}
+				uses = append(uses, referenceUse{symbol: sym, site: ident})
 			}
 			return true
 		})
 	}
-
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		addDefinition(stmt)
-		addUses(stmt.Value)
-	case *ast.ConstDecl:
-		addDefinition(stmt)
-		addUses(stmt.Value)
-	case *ast.AssignStmt:
-		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
-			if sym, found := node.scope.Lookup(target.Name); found {
-				if _, reference := referenceMutability(sym); reference {
-					definitions[sym] = struct{}{}
-				}
-			}
-		} else {
-			addUses(stmt.Target)
-		}
-		addUses(stmt.Value)
-	case *ast.ReturnStmt:
-		addUses(stmt.Value)
-	case *ast.ExprStmt:
-		addUses(stmt.Expr)
-	case *ast.IfStmt:
-		addUses(stmt.Cond)
-	case *ast.ForStmt:
-		addUses(stmt.Cond)
-	}
-	return uses, definitions
+	return uses
 }
 
 func cloneReferenceLiveSet(src referenceLiveSet) referenceLiveSet {

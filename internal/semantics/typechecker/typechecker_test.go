@@ -1937,7 +1937,7 @@ fn bad(shared: &Outer) {
 	}
 }
 
-func TestReferenceReturnRejectedUntilOriginTrackingExists(t *testing.T) {
+func TestReferenceReturnRequiresFromClause(t *testing.T) {
 	src := `struct Box {
 	value: i32
 }
@@ -1945,37 +1945,74 @@ func TestReferenceReturnRejectedUntilOriginTrackingExists(t *testing.T) {
 	fn (self: &Box) reference() -> &Box {
 		return self;
 	}
-
-fn leak() -> &Box {
-	let box: Box = .{ value = 1 };
-	return box.reference();
-}`
+`
 	diag := checkTypeSource(t, src)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
-		t.Fatalf("expected unsupported reference-return diagnostic, got:\n%s", diag.EmitAllToString())
+		t.Fatalf("expected missing reference-return contract diagnostic, got:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(diag.EmitAllToString(), "returning references requires origin tracking") {
-		t.Fatalf("expected reference-origin diagnostic, got:\n%s", diag.EmitAllToString())
+	if !strings.Contains(diag.EmitAllToString(), "requires a `from` clause") {
+		t.Fatalf("expected missing from-clause diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestBodylessReferenceReturnsRejected(t *testing.T) {
+func TestReferenceReturnContractsAcceptedAcrossCallableForms(t *testing.T) {
 	src := `struct Box {
 	value: i32
 }
 
-#[extern]
-fn ExternalLeak() -> &Box;
+fn first(value: &Box) -> &Box from value {
+	return value;
+}
 
-	#[extern]
-	fn (self: &Box) ExternalReference() -> &Box;
+#[extern]
+fn External(value: &Box) -> &Box from value;
+
+fn (self: &Box) reference() -> &Box from self {
+	return self;
+}
+
+iface Reader {
+	fn (&Self) current(fallback: &Box) -> &Box from(self, fallback)
+}
+
+fn useCallback(callback: fn(value: &Box) -> &Box from value, value: &Box) -> &Box from value {
+	return callback(value);
 }`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
-		t.Fatalf("expected bodyless reference-return diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected reference-return contract diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if strings.Count(diag.EmitAllToString(), "returning references requires origin tracking") != 2 {
-		t.Fatalf("expected top-level and method return diagnostics, got:\n%s", diag.EmitAllToString())
+	if strings.Contains(diag.EmitAllToString(), "requires a `from` clause") {
+		t.Fatalf("valid contracts reported missing:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestInvalidReferenceReturnContractsRejected(t *testing.T) {
+	src := `
+fn missing(value: &i32) -> &i32;
+fn unknown(value: &i32) -> &i32 from other;
+fn owned(value: i32) -> &i32 from value;
+fn duplicate(value: &i32) -> &i32 from(value, value);
+fn mutable(value: &i32) -> &mut i32 from value;
+fn scalar(value: &i32) -> i32 from value;
+const callback: fn(&i32) -> &i32 = missing;
+`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidReturn) {
+		t.Fatalf("expected invalid return-contract diagnostics, got:\n%s", diag.EmitAllToString())
+	}
+	out := diag.EmitAllToString()
+	for _, want := range []string{
+		"requires a `from` clause",
+		"must name a borrowed parameter or `self` receiver",
+		"source must be a borrowed parameter",
+		"duplicate source",
+		"mutable reference return requires mutable borrowed sources",
+		"only valid on reference returns",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q diagnostic, got:\n%s", want, out)
+		}
 	}
 }
 
@@ -2272,5 +2309,83 @@ fn main() -> i32 {
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTemporaryBorrowsAllowedForCallDuration(t *testing.T) {
+	src := `struct Box { value: i32 }
+fn Make() -> Box { return .{ value = 1 }; }
+fn Read(_: &Box) {}
+fn Write(_: &mut Box) {}
+fn valid() {
+	Read(&Make());
+	Write(&mut Make());
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTemporaryBorrowEscapeRejected(t *testing.T) {
+	src := `struct Box { value: i32 }
+fn Make() -> Box { return .{ value = 1 }; }
+fn binding() {
+	let reference = &Make();
+}
+fn assignment(seed: Box) {
+	let mut reference = &seed;
+	reference = &Make();
+}
+fn raw() {
+	let pointer = @Make();
+}`
+	diag := checkTypeSource(t, src)
+	out := diag.EmitAllToString()
+	if strings.Count(out, "reference to temporary cannot escape") != 2 {
+		t.Fatalf("expected binding and assignment escape diagnostics, got:\n%s", out)
+	}
+	if !strings.Contains(out, "address operator requires addressable storage") {
+		t.Fatalf("expected raw temporary address rejection, got:\n%s", out)
+	}
+}
+
+func TestTemporaryBorrowEscapeThroughReturnContractRejected(t *testing.T) {
+	tests := map[string]string{
+		"binding":               `fn bad() { let reference = Identity(&Make()); }`,
+		"assignment":            `fn bad(seed: Box) { let mut reference = &seed; reference = Identity(&Make()); }`,
+		"return":                `fn bad(seed: &Box) -> &Box from seed { return Identity(&Make()); }`,
+		"nested call":           `fn bad() { let reference = Identity(Identity(&Make())); }`,
+		"possible multi origin": `fn bad(seed: Box) { let reference = Choose(true, &seed, &Make()); }`,
+		"optional return":       `fn bad() { let reference = Maybe(&Make()); }`,
+	}
+	prefix := `struct Box { value: i32 }
+fn Make() -> Box { return .{ value = 1 }; }
+fn Identity(value: &Box) -> &Box from value { return value; }
+fn Choose(cond: bool, left: &Box, right: &Box) -> &Box from(left, right) {
+	if cond { return left; }
+	return right;
+}
+fn Maybe(value: ?&Box) -> ?&Box from value { return value; }
+`
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			diag := checkTypeSource(t, prefix+src)
+			if !strings.Contains(diag.EmitAllToString(), "reference to temporary cannot escape") {
+				t.Fatalf("expected temporary contract escape diagnostic, got:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestTemporaryBorrowContractScalarProjectionAllowed(t *testing.T) {
+	diag := checkTypeSource(t, `struct Box { value: i32 }
+fn Make() -> Box { return .{ value = 1 }; }
+fn Identity(value: &Box) -> &Box from value { return value; }
+fn valid() -> i32 {
+	return Identity(&Make()).value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected scalar projection diagnostics:\n%s", diag.EmitAllToString())
 	}
 }

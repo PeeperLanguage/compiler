@@ -31,6 +31,11 @@ func Inspect(node Node, f func(Node) bool) {
 			Inspect(p.Type, f)
 		}
 		Inspect(n.ReturnType, f)
+		if n.ReturnOrigins != nil {
+			for _, origin := range n.ReturnOrigins.Sources {
+				Inspect(origin, f)
+			}
+		}
 		Inspect(n.Body, f)
 	case *LetDecl:
 		Inspect(n.Name, f)
@@ -137,9 +142,15 @@ func Inspect(node Node, f func(Node) bool) {
 		Inspect(n.Elem, f)
 	case *FuncType:
 		for _, p := range n.Params {
-			Inspect(p, f)
+			Inspect(p.Name, f)
+			Inspect(p.Type, f)
 		}
 		Inspect(n.Return, f)
+		if n.ReturnOrigins != nil {
+			for _, origin := range n.ReturnOrigins.Sources {
+				Inspect(origin, f)
+			}
+		}
 	case *StructType:
 		for _, field := range n.Fields {
 			Inspect(field.Name, f)
@@ -160,6 +171,11 @@ func Inspect(node Node, f func(Node) bool) {
 				Inspect(p.Type, f)
 			}
 			Inspect(method.ReturnType, f)
+			if method.ReturnOrigins != nil {
+				for _, origin := range method.ReturnOrigins.Sources {
+					Inspect(origin, f)
+				}
+			}
 		}
 	case *EnumType:
 		for _, v := range n.Variants {

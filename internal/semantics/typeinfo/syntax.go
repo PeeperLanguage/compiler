@@ -127,12 +127,16 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			return nil
 		}
 		params := make([]Type, 0, len(typ.Params))
+		paramNames := make([]string, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, TypeFromSyntax(param, opts))
+			params = append(params, TypeFromSyntax(param.Type, opts))
+			paramNames = append(paramNames, parameterName(param))
 		}
 		return &FuncType{
-			Params: params,
-			Return: TypeFromSyntax(typ.Return, opts),
+			Params:        params,
+			ParamNames:    paramNames,
+			Return:        TypeFromSyntax(typ.Return, opts),
+			ReturnOrigins: returnOriginContract(typ.ReturnOrigins, typ.Params, false),
 		}
 	case *ast.StructType:
 		if typ == nil {
@@ -161,8 +165,10 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		methods := make([]Method, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
 			params := make([]Field, 0, len(method.Params)+1)
+			originParams := make([]ast.Param, 0, len(method.Params)+1)
 			if method.Receiver != nil {
-				params = append(params, Field{Type: TypeFromSyntax(method.Receiver.Type, receiverOpts)})
+				params = append(params, Field{Name: "self", Type: TypeFromSyntax(method.Receiver.Type, receiverOpts)})
+				originParams = append(originParams, *method.Receiver)
 			}
 			for _, param := range method.Params {
 				name := ""
@@ -173,15 +179,17 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 					Name: name,
 					Type: TypeFromSyntax(param.Type, methodOpts),
 				})
+				originParams = append(originParams, param)
 			}
 			name := ""
 			if method.Name != nil {
 				name = method.Name.Name
 			}
 			methods = append(methods, Method{
-				Name:   name,
-				Params: params,
-				Return: TypeFromSyntax(method.ReturnType, methodOpts),
+				Name:          name,
+				Params:        params,
+				Return:        TypeFromSyntax(method.ReturnType, methodOpts),
+				ReturnOrigins: returnOriginContract(method.ReturnOrigins, originParams, method.Receiver != nil),
 			})
 		}
 		return &InterfaceType{Methods: methods}
@@ -206,11 +214,71 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 		return nil
 	}
 	params := make([]Type, 0, len(decl.ParamsWithReceiver()))
-	for _, param := range decl.ParamsWithReceiver() {
+	paramNames := make([]string, 0, len(decl.ParamsWithReceiver()))
+	allParams := decl.ParamsWithReceiver()
+	for i, param := range allParams {
 		params = append(params, TypeFromSyntax(param.Type, opts))
+		name := parameterName(param)
+		if decl.Receiver != nil && i == 0 {
+			name = "self"
+		}
+		paramNames = append(paramNames, name)
 	}
 	return &FuncType{
-		Params: params,
-		Return: TypeFromSyntax(decl.ReturnType, opts),
+		Params:        params,
+		ParamNames:    paramNames,
+		Return:        TypeFromSyntax(decl.ReturnType, opts),
+		ReturnOrigins: returnOriginContract(decl.ReturnOrigins, allParams, decl.Receiver != nil),
 	}
+}
+
+func parameterName(param ast.Param) string {
+	if param.Name == nil {
+		return ""
+	}
+	return param.Name.Name
+}
+
+func returnOriginContract(clause *ast.ReturnOriginClause, params []ast.Param, hasReceiver bool) *ReturnOriginContract {
+	if clause == nil {
+		return nil
+	}
+	contract := &ReturnOriginContract{Sources: make([]int, 0, len(clause.Sources))}
+	for _, source := range clause.Sources {
+		slot := -1
+		if source != nil {
+			if hasReceiver && source.Name == "self" {
+				slot = 0
+			} else {
+				for i, param := range params {
+					if (!hasReceiver || i != 0) && param.Name != nil && param.Name.Name == source.Name {
+						slot = i
+						break
+					}
+				}
+			}
+		}
+		contract.Sources = append(contract.Sources, slot)
+	}
+	return contract
+}
+
+func ReturnOriginSources(call *ast.CallExpr, fn *FuncType) []ast.Expr {
+	if call == nil || call.Callee == nil || fn == nil || fn.ReturnOrigins == nil {
+		return nil
+	}
+	selector, methodCall := call.Callee.(*ast.SelectorExpr)
+	sources := make([]ast.Expr, 0, len(fn.ReturnOrigins.Sources))
+	for _, slot := range fn.ReturnOrigins.Sources {
+		if methodCall {
+			if slot == 0 {
+				sources = append(sources, selector.Expr)
+			} else if slot > 0 && slot <= len(call.Args) {
+				sources = append(sources, call.Args[slot-1])
+			}
+		} else if slot >= 0 && slot < len(call.Args) {
+			sources = append(sources, call.Args[slot])
+		}
+	}
+	return sources
 }

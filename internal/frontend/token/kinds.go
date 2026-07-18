@@ -84,6 +84,7 @@ const (
 	BREAK    Kind = "break"
 	CONTINUE Kind = "continue"
 	RETURN   Kind = "return"
+	FROM     Kind = "from"
 	FREE     Kind = "free"
 	PRINT    Kind = "print"
 	RAWPTR   Kind = "rawptr"

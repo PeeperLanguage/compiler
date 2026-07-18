@@ -35,9 +35,7 @@ func (r *resolver) resolveModule() {
 	ast.ForEachDecl(r.module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
-			if node != nil && node.Body != nil {
-				r.resolveFunction(node)
-			}
+			r.resolveFunction(node)
 		}
 		return true
 	})
@@ -74,7 +72,7 @@ func (r *resolver) resolveTopLevelBinding(name *ast.Ident, value ast.Expr) {
 }
 
 func (r *resolver) resolveFunction(fn *ast.FnDecl) {
-	if r == nil || r.module == nil || fn == nil || fn.Body == nil {
+	if r == nil || r.module == nil || fn == nil {
 		return
 	}
 	var sym *symbols.Symbol
@@ -86,18 +84,15 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if sym == nil || sym.Scope == nil {
 		return
 	}
-	r.resolveFunctionBody(sym, fn)
-}
-
-func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
-	if r == nil || r.module == nil || sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
-		return
-	}
 	funcScope := sym.Scope.(*table.Scope)
-	for _, param := range fn.ParamsWithReceiver() {
+	params := fn.ParamsWithReceiver()
+	for _, param := range params {
 		if param.Name == nil || param.Name.Name == "" {
-			r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", param.Location, "")
-			return
+			if fn.Body != nil {
+				r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", param.Location, "")
+				return
+			}
+			continue
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		paramSym.Mutable = param.IsMutable
@@ -107,7 +102,24 @@ func (r *resolver) resolveFunctionBody(sym *symbols.Symbol, fn *ast.FnDecl) {
 			return
 		}
 	}
-	r.resolveBlock(funcScope, fn.Body)
+	if fn.ReturnOrigins != nil {
+		for _, origin := range fn.ReturnOrigins.Sources {
+			if origin == nil {
+				continue
+			}
+			name := origin.Name
+			if name == "self" && fn.Receiver != nil && fn.Receiver.Name != nil {
+				name = fn.Receiver.Name.Name
+			}
+			if source, ok := funcScope.Lookup(name); ok && source != nil && source.Kind == symbols.SymbolParam {
+				r.module.Semantics.ResolvedSymbols[origin.ID()] = source
+				source.Used = true
+			}
+		}
+	}
+	if fn.Body != nil {
+		r.resolveBlock(funcScope, fn.Body)
+	}
 }
 
 func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {

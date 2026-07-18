@@ -2,6 +2,7 @@ package typeinfo
 
 import (
 	"compiler/internal/frontend/ast"
+	"slices"
 	"testing"
 )
 
@@ -197,16 +198,50 @@ func TestFuncTypeTextIncludesParams(t *testing.T) {
 
 func TestTypeFromSyntaxPreservesFuncTypeParams(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
-		Params: []ast.TypeExpr{&ast.NamedType{Name: "Buffer"}},
+		Params: []ast.Param{{Type: &ast.NamedType{Name: "Buffer"}}},
 	}, SyntaxOptions{}).(*FuncType)
 	if got := fn.Text(); got != "fn(Buffer)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
 }
 
+func TestTypeFromSyntaxPreservesReferenceReturnContract(t *testing.T) {
+	fn := TypeFromSyntax(&ast.FuncType{
+		Params:        []ast.Param{{Name: &ast.Ident{Name: "value"}, Type: &ast.RefType{Target: &ast.NamedType{Name: "i32"}}}},
+		Return:        &ast.RefType{Target: &ast.NamedType{Name: "i32"}},
+		ReturnOrigins: &ast.ReturnOriginClause{Sources: []*ast.Ident{{Name: "value"}}},
+	}, SyntaxOptions{}).(*FuncType)
+	if fn.ReturnOrigins == nil || !slices.Equal(fn.ReturnOrigins.Sources, []int{0}) {
+		t.Fatalf("return origins: %#v", fn.ReturnOrigins)
+	}
+	if got := fn.Text(); got != "fn(&i32) -> &i32 from value" {
+		t.Fatalf("function text: got %q", got)
+	}
+}
+
+func TestReturnOriginSourcesMapDirectAndMethodSlots(t *testing.T) {
+	first := &ast.Ident{Name: "first"}
+	second := &ast.Ident{Name: "second"}
+	direct := &ast.CallExpr{Callee: &ast.Ident{Name: "choose"}, Args: []ast.Expr{first, second}}
+	fn := &FuncType{ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0, -1, 2}}}
+	if got := ReturnOriginSources(direct, fn); !slices.Equal(got, []ast.Expr{second, first}) {
+		t.Fatalf("direct return sources = %#v", got)
+	}
+
+	receiver := &ast.Ident{Name: "receiver"}
+	method := &ast.CallExpr{
+		Callee: &ast.SelectorExpr{Expr: receiver, Name: &ast.Ident{Name: "choose"}},
+		Args:   []ast.Expr{first, second},
+	}
+	fn.ReturnOrigins.Sources = []int{0, 2, 3, -1}
+	if got := ReturnOriginSources(method, fn); !slices.Equal(got, []ast.Expr{receiver, second}) {
+		t.Fatalf("method return sources = %#v", got)
+	}
+}
+
 func TestTypeFromSyntaxAllowsAbstractSelf(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
-		Params: []ast.TypeExpr{&ast.NamedType{Name: "Self"}},
+		Params: []ast.Param{{Type: &ast.NamedType{Name: "Self"}}},
 	}, SyntaxOptions{AllowAbstractSelf: true}).(*FuncType)
 	if got := fn.Text(); got != "fn(Self)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Self)")

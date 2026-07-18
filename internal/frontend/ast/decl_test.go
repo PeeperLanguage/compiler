@@ -73,9 +73,9 @@ func TestNonTypeDeclarationsDoNotImplementTypeDecl(t *testing.T) {
 
 func TestTypeTextNamedAndFunction(t *testing.T) {
 	fnType := &FuncType{
-		Params: []TypeExpr{
-			&NamedType{Name: "i32"},
-			&NamedType{Name: "bool"},
+		Params: []Param{
+			{Type: &NamedType{Name: "i32"}},
+			{Type: &NamedType{Name: "bool"}},
 		},
 		Return: &NamedType{Name: "i32"},
 	}

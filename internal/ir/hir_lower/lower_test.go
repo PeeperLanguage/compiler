@@ -501,3 +501,30 @@ fn main() -> i32 {
 		t.Fatalf("expected interface carrier slot, got %#v", call.Args[0])
 	}
 }
+
+func TestGenerateHIRPreservesTemporaryBorrow(t *testing.T) {
+	const src = `struct Box { value: i32 }
+fn Make() -> Box { return .{ value = 1 }; }
+fn Read(_: &Box) -> i32 { return 0; }
+fn main() -> i32 { return Read(&Make()); }`
+	out := generateTestHIR(t, "hir_temporary_borrow_test"+peeper.SourceExt, "hir_temporary_borrow_test", src)
+	var mainFn *hir.Function
+	for _, fn := range out.Funcs {
+		if fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil || mainFn.Body == nil || len(mainFn.Body.Stmts) != 1 {
+		t.Fatalf("unexpected main HIR: %#v", mainFn)
+	}
+	ret := mainFn.Body.Stmts[0].(*hir.Return)
+	call, ok := ret.Value.(*ir.Call)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("expected Read call, got %#v", ret.Value)
+	}
+	temporary, ok := call.Args[0].(*ir.TempBorrow)
+	if !ok || temporary.Value == nil || temporary.TypeText() != "&struct{value: i32}" || temporary.Slice {
+		t.Fatalf("expected temporary Box borrow, got %#v", call.Args[0])
+	}
+}

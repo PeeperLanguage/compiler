@@ -51,7 +51,7 @@ func fnDeclSurface(prefix string, fn *ast.FnDecl) string {
 	if fn.Receiver != nil {
 		receiver = paramSurface([]ast.Param{*fn.Receiver})[0]
 	}
-	return prefix + ":" + receiver + ":" + fn.Name.Name + ":" + strings.Join(typeParamNames(fn.TypeParams), ",") + ":" + strings.Join(paramSurface(fn.Params), ",") + ":" + ast.TypeText(fn.ReturnType)
+	return prefix + ":" + receiver + ":" + fn.Name.Name + ":" + strings.Join(typeParamNames(fn.TypeParams), ",") + ":" + strings.Join(paramSurface(fn.Params), ",") + ":" + ast.TypeText(fn.ReturnType) + fn.ReturnOrigins.Text()
 }
 
 func structDeclSurface(decl *ast.StructDecl) string {
@@ -143,7 +143,7 @@ func typeMethodSurface(prefix string, method ast.TypeMethod) string {
 	if method.Receiver != nil {
 		receiver = paramSurface([]ast.Param{*method.Receiver})[0]
 	}
-	return prefix + ":" + receiver + ":" + name + ":" + strings.Join(typeParamNames(method.TypeParams), ",") + ":" + strings.Join(paramSurface(method.Params), ",") + ":" + ast.TypeText(method.ReturnType)
+	return prefix + ":" + receiver + ":" + name + ":" + strings.Join(typeParamNames(method.TypeParams), ",") + ":" + strings.Join(paramSurface(method.Params), ",") + ":" + ast.TypeText(method.ReturnType) + method.ReturnOrigins.Text()
 }
 
 func typeParamNames(typeParams []ast.TypeParam) []string {

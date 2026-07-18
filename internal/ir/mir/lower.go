@@ -14,12 +14,13 @@ import (
 )
 
 type lowerer struct {
-	module      *Module
-	fn          *Function
-	tmp         int
-	nextBlockID int
-	current     *Block
-	location    *source.Location
+	module         *Module
+	fn             *Function
+	tmp            int
+	nextBlockID    int
+	current        *Block
+	location       *source.Location
+	temporaryDrops []ValueRef
 }
 
 func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
@@ -186,17 +187,22 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		if l.current == nil {
 			return true
 		}
+		temporaryMark := len(l.temporaryDrops)
 		ref := l.lowerExpr(node.Value, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
+			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
 		}
 		l.appendInstr(&l.current.Instrs, &Assign{Name: node.Name, Value: asValueExpr(ref)})
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.Return:
 		if l.current == nil {
 			return true
 		}
+		temporaryMark := len(l.temporaryDrops)
 		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		for _, cleanup := range node.Cleanup {
 			l.lowerExpr(cleanup, &l.current.Instrs)
 		}
@@ -207,15 +213,19 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		if l.current == nil {
 			return true
 		}
+		temporaryMark := len(l.temporaryDrops)
 		if l.lowerDiscardedExpr(node.Value, &l.current.Instrs) {
+			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
 		}
 		l.lowerExpr(node.Value, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.Assign:
 		if l.current == nil {
 			return true
 		}
+		temporaryMark := len(l.temporaryDrops)
 		value := l.lowerExpr(node.Value, &l.current.Instrs)
 		target := node.Target
 		if target == nil || target.Root == nil {
@@ -226,6 +236,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeText(), Location: ir.ExprLocation(ident)}})
 			}
 			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
+			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
 		}
 		place := l.lowerPlace(target, &l.current.Instrs)
@@ -233,6 +244,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeText(), target.Location)})
 		}
 		l.appendInstr(&l.current.Instrs, &Store{Place: place, Value: value})
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.If:
 		return l.appendIf(node)
@@ -243,11 +255,23 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 	}
 }
 
+func (l *lowerer) flushTemporaryDrops(out *[]Instr, mark int) {
+	if l == nil || out == nil || mark < 0 || mark > len(l.temporaryDrops) {
+		return
+	}
+	for i := len(l.temporaryDrops) - 1; i >= mark; i-- {
+		l.appendInstr(out, &Drop{Value: l.temporaryDrops[i]})
+	}
+	l.temporaryDrops = l.temporaryDrops[:mark]
+}
+
 func (l *lowerer) appendIf(node *hir.If) bool {
 	if l.current == nil || node == nil {
 		return true
 	}
+	temporaryMark := len(l.temporaryDrops)
 	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
+	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 	condBlock := l.current
 	thenBlock := l.newBlock()
 	elseBlock := l.newBlock()
@@ -306,7 +330,9 @@ func (l *lowerer) appendFor(node *hir.For) bool {
 	l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
 
 	l.current = headerBlock
+	temporaryMark := len(l.temporaryDrops)
 	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
+	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 	l.setBlockTerm(headerBlock, &Branch{Cond: condRef, ThenID: bodyBlock.ID, ElseID: exitBlock.ID})
 
 	l.current = bodyBlock
@@ -476,6 +502,26 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			return &RefName{Name: castName, Type: "rawptr", Location: ir.ExprLocation(e)}
 		}
 		return address
+	case *ir.TempBorrow:
+		value := l.lowerExpr(e.Value, out)
+		if value == nil {
+			panic("temporary borrow requires value expression")
+		}
+		place := &Place{Root: value, Type: e.Value.TypeText(), Location: ir.ExprLocation(e.Value)}
+		l.temporaryDrops = append(l.temporaryDrops, value)
+		name := l.nextTemp()
+		if e.Slice {
+			l.appendInstr(out, &Assign{Name: name, Value: &SliceView{
+				Source: place,
+				Type:   e.TypeText(),
+			}})
+		} else {
+			l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{
+				Place: place,
+				Type:  e.TypeText(),
+			}})
+		}
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.SliceView:
 		source := l.lowerPlace(e.Source, out)
 		var start, end ValueRef
