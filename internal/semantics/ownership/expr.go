@@ -46,15 +46,17 @@ func (a *analyzer) checkExpr(
 		}
 		a.checkAddressExpr(scope, e, st, loans, access)
 	case *ast.SelectorExpr:
+		a.checkSelector(scope, e, st, use, loans)
 		if !projectionBase {
 			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
 		}
-		a.checkSelector(scope, e, st, use, loans)
 	case *ast.IndexExpr:
 		if typeinfo.IsInvalidOrUnknown(a.exprType(e)) {
 			return
 		}
 		_, slicing := e.Index.(*ast.RangeExpr)
+		a.checkExpr(scope, e.Expr, st, useRead, loans, true)
+		a.checkExpr(scope, e.Index, st, useRead, loans, false)
 		if !projectionBase {
 			access := storageAccessForUse(a.exprType(e), use)
 			if slicing {
@@ -65,8 +67,6 @@ func (a *analyzer) checkExpr(
 			}
 			a.checkStorageAccess(scope, e, st, loans, access)
 		}
-		a.checkExpr(scope, e.Expr, st, useRead, loans, true)
-		a.checkExpr(scope, e.Index, st, useRead, loans, false)
 		if slicing {
 			return
 		}
@@ -118,10 +118,10 @@ func (a *analyzer) checkAddressExpr(
 	if expr == nil {
 		return
 	}
+	a.checkExpr(scope, expr.Expr, st, useRead, loans, true)
 	if expr.Mode != ast.AddressRaw {
 		a.checkStorageAccess(scope, expr.Expr, st, loans, access)
 	}
-	a.checkExpr(scope, expr.Expr, st, useRead, loans, true)
 }
 
 func storageAccessForUse(typ typeinfo.Type, use useKind) storageAccess {
@@ -308,7 +308,6 @@ func (a *analyzer) checkCallArgument(
 			loan:         loan,
 			holder:       a.referenceHolder(arg),
 			keepingAlive: call,
-			reserved:     true,
 		})
 		return
 	}

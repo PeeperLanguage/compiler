@@ -758,6 +758,13 @@ fn valid(mut value: i32) {
 	let reference = &value;
 	Both(&mut value, Read(reference));
 }`,
+		"final reference use in borrow index": `fn Index(_: &mut [2]i32) -> usize { return 0; }
+fn Write(_: &mut i32) {}
+fn valid() {
+	let mut values = [_]i32{1, 2};
+	let reference = &mut values;
+	Write(&mut values[Index(reference)]);
+}`,
 		"mutable reference reborrow before activation": `fn Read(_: &i32) -> i32 { return 0; }
 fn Both(_: &mut i32, _: i32) {}
 fn valid(reference: &mut i32) {

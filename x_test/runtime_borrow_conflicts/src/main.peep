@@ -21,6 +21,10 @@ fn KeepPair(_: &mut Pair, current: i32) -> i32 {
     return current;
 }
 
+fn Index(_: &mut [2]i32) -> usize {
+    return 0;
+}
+
 fn (self: &Counter) Current() -> i32 {
     return self.value;
 }
@@ -51,6 +55,9 @@ fn main() -> i32 {
     let first = &mut values[0];
     values[1] = pair.right;
     Keep(first);
+
+    let reference = &mut values;
+    Keep(&mut values[Index(reference)]);
 
     if values[1] == 7 {
         return 0;
