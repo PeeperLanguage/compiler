@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	"compiler/pkg/manifest"
 	"compiler/pkg/registry"
+	"compiler/pkg/semver"
 )
 
 type updatePlan struct {
@@ -69,7 +71,7 @@ func prepareUpdateScanContext(args []string) (*updateScanContext, error) {
 	}, nil
 }
 
-func collectUpdatePlans(file *manifest.File, lockfile *manifest.Lockfile, devConfig *manifest.DevConfig, filter map[string]bool) ([]updatePlan, int, error) {
+func collectUpdatePlans(httpClient *http.Client, file *manifest.File, lockfile *manifest.Lockfile, devConfig *manifest.DevConfig, filter map[string]bool) ([]updatePlan, int, error) {
 	if file == nil {
 		return nil, 0, nil
 	}
@@ -99,17 +101,17 @@ func collectUpdatePlans(file *manifest.File, lockfile *manifest.Lockfile, devCon
 		}
 		checked++
 		constraint := updateConstraint(dep.Version)
-		available, err := registry.ListAvailableVersions(dep.Path, devConfig)
+		available, err := registry.ListAvailableVersions(httpClient, dep.Path, devConfig)
 		if err != nil {
 			printWarning(fmt.Sprintf("%s: %v", dep.Path, err))
 			continue
 		}
-		target, err := registry.FindBestMatch(available, constraint)
+		target, err := semver.BestMatch(available, constraint)
 		if err != nil {
 			continue
 		}
-		currentParsed, currentErr := registry.ParseVersion(entry.Version)
-		targetParsed, targetErr := registry.ParseVersion(target)
+		currentParsed, currentErr := semver.Parse(entry.Version)
+		targetParsed, targetErr := semver.Parse(target)
 		if currentErr != nil || targetErr != nil || targetParsed.Compare(currentParsed) <= 0 {
 			continue
 		}
@@ -145,7 +147,7 @@ func isExactVersion(version string) bool {
 			return false
 		}
 	}
-	_, err := registry.ParseVersion(version)
+	_, err := semver.Parse(version)
 	return err == nil
 }
 
@@ -154,9 +156,17 @@ func listOrphanCandidates(cachePath string, lockfile *manifest.Lockfile) ([]orph
 
 	lockOrphans := lockfile.GetUnusedDependencies()
 	for _, packageID := range lockOrphans {
+		repo, version, ok := lockedPackageIdentity(lockfile, packageID)
+		if !ok {
+			return nil, fmt.Errorf("lockfile package %q has no remote identity", packageID)
+		}
+		path, err := registry.GetModulePath(cachePath, repo, version)
+		if err != nil {
+			return nil, fmt.Errorf("invalid lockfile package %q: %w", packageID, err)
+		}
 		candidates[packageID] = orphanCandidate{
 			PackageID: packageID,
-			Path:      filepath.Join(cachePath, filepath.FromSlash(packageID)),
+			Path:      path,
 			InLock:    true,
 		}
 	}
@@ -227,9 +237,20 @@ func discoverCachedPackagePaths(cachePath string) (map[string]string, error) {
 	return out, err
 }
 
-func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) []string {
+func lockedPackageIdentity(lockfile *manifest.Lockfile, packageID string) (string, string, bool) {
+	if repo, version, parsed := manifest.SplitPackageID(packageID); parsed {
+		return repo, version, true
+	}
+	entry, ok := lockfile.GetDependency(packageID)
+	if !ok || entry.ResolvedURL == "" || entry.Version == "" {
+		return "", "", false
+	}
+	return entry.ResolvedURL, entry.Version, true
+}
+
+func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) ([]string, error) {
 	if lockfile == nil {
-		return nil
+		return nil, nil
 	}
 	removed := make([]string, 0)
 	seen := make(map[string]struct{})
@@ -240,19 +261,18 @@ func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) []st
 			if _, ok := seen[packageID]; ok {
 				continue
 			}
-			entry, ok := lockfile.GetDependency(packageID)
-			if !ok {
+			if _, ok := lockfile.GetDependency(packageID); !ok {
 				seen[packageID] = struct{}{}
 				continue
 			}
-			repo := entry.ResolvedURL
-			version := entry.Version
-			if parsedRepo, parsedVersion, parsed := manifest.SplitPackageID(packageID); parsed {
-				repo = parsedRepo
-				version = parsedVersion
+			repo, version, ok := lockedPackageIdentity(lockfile, packageID)
+			if !ok {
+				sort.Strings(removed)
+				return removed, fmt.Errorf("lockfile package %q has no remote identity", packageID)
 			}
-			if repo != "" && version != "" {
-				_ = registry.DeleteModule(cachePath, repo, version)
+			if err := registry.DeleteModule(cachePath, repo, version); err != nil {
+				sort.Strings(removed)
+				return removed, fmt.Errorf("delete unused package %q: %w", packageID, err)
 			}
 			lockfile.RemoveDependency(packageID)
 			seen[packageID] = struct{}{}
@@ -264,5 +284,5 @@ func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) []st
 		}
 	}
 	sort.Strings(removed)
-	return removed
+	return removed, nil
 }

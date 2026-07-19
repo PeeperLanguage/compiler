@@ -37,13 +37,19 @@ func CleanupCommand(args []string) error {
 	fmt.Printf("Found %d orphaned dependencies:\n", len(candidates))
 	for _, candidate := range candidates {
 		fmt.Printf("  → Removing %s\n", candidate.PackageID)
-		_ = os.RemoveAll(candidate.Path)
+		if err := os.RemoveAll(candidate.Path); err != nil {
+			return fmt.Errorf("remove cached package %q: %w", candidate.PackageID, err)
+		}
 		removed[candidate.PackageID] = struct{}{}
 		if candidate.InLock {
 			lockfile.RemoveDependency(candidate.PackageID)
 		}
 	}
-	for _, packageID := range pruneUnusedDependencies(lockfile, cachePath) {
+	pruned, err := pruneUnusedDependencies(lockfile, cachePath)
+	if err != nil {
+		return err
+	}
+	for _, packageID := range pruned {
 		removed[packageID] = struct{}{}
 	}
 

@@ -36,7 +36,9 @@ func RemoveCommand(args []string) error {
 
 	if dep.Type == manifest.DependencyRemote {
 		lockfile.RemoveDirectDependency(packageName)
-		pruneUnusedDependencies(lockfile, cachePath)
+		if _, err := pruneUnusedDependencies(lockfile, cachePath); err != nil {
+			return err
+		}
 	}
 
 	delete(file.Dependencies, packageName)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"compiler/pkg/manifest"
 	"compiler/pkg/registry"
+	"compiler/pkg/semver"
 )
 
 type installContext struct {
@@ -89,7 +91,7 @@ func installAllDependencies() error {
 			printDim(fmt.Sprintf("  Local: %s", dep.Path))
 			continue
 		}
-		if err := installPackageRecursive(ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, name, "", map[string]bool{}); err != nil {
+		if err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, name, "", map[string]bool{}); err != nil {
 			return err
 		}
 		if resolved, ok := resolvedDirectVersion(ctx.lockfile, name); ok {
@@ -107,7 +109,7 @@ func installAllDependencies() error {
 	return nil
 }
 
-func installPackageRecursive(cachePath, repoPath, versionConstraint string, devConfig *manifest.DevConfig, lockfile *manifest.Lockfile, constraints map[string][]string, directAlias, parentPackageID string, processed map[string]bool) error {
+func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versionConstraint string, devConfig *manifest.DevConfig, lockfile *manifest.Lockfile, constraints map[string][]string, directAlias, parentPackageID string, processed map[string]bool) error {
 	if !slices.Contains(constraints[repoPath], versionConstraint) {
 		constraints[repoPath] = append(constraints[repoPath], versionConstraint)
 	}
@@ -117,11 +119,11 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 		return err
 	}
 	if !found {
-		availableVersions, listErr := registry.ListAvailableVersions(repoPath, devConfig)
+		availableVersions, listErr := registry.ListAvailableVersions(httpClient, repoPath, devConfig)
 		if listErr != nil {
 			return fmt.Errorf("list versions for %s: %w", repoPath, listErr)
 		}
-		version, err = registry.FindBestMatchMultipleConstraints(availableVersions, constraints[repoPath])
+		version, err = semver.BestMatchAll(availableVersions, constraints[repoPath])
 		if err != nil {
 			return err
 		}
@@ -130,13 +132,16 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 	printPackage(repoPath, version)
 	if !registry.IsModuleCached(cachePath, repoPath, version) {
 		printDownload(fmt.Sprintf("Downloading %s@%s...", repoPath, version))
-		if err := registry.DownloadRemotePackage(cachePath, repoPath, version, devConfig); err != nil {
+		if err := registry.DownloadRemotePackage(httpClient, cachePath, repoPath, version, devConfig); err != nil {
 			return fmt.Errorf("download %s@%s: %w", repoPath, version, err)
 		}
 	}
 	printCached()
 
-	modulePath := registry.GetModulePath(cachePath, repoPath, version)
+	modulePath, err := registry.GetModulePath(cachePath, repoPath, version)
+	if err != nil {
+		return err
+	}
 	packageManifest, err := manifest.Load(filepath.Join(modulePath, manifest.FileName))
 	if err != nil {
 		return fmt.Errorf("load package manifest for %s: %w", repoPath, err)
@@ -182,8 +187,11 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 			continue
 		}
 		printTransitive(dep.Path, dep.Version)
-		childIDBefore, _, _, _ := findBestLockedPackageID(lockfile, dep.Path, []string{dep.Version})
-		if err := installPackageRecursive(cachePath, dep.Path, dep.Version, devConfig, lockfile, constraints, "", packageID, processed); err != nil {
+		childIDBefore, _, _, err := findBestLockedPackageID(lockfile, dep.Path, []string{dep.Version})
+		if err != nil {
+			return err
+		}
+		if err := installPackageRecursive(httpClient, cachePath, dep.Path, dep.Version, devConfig, lockfile, constraints, "", packageID, processed); err != nil {
 			return err
 		}
 		childID := childIDBefore
@@ -223,7 +231,7 @@ func installPackage(packageSpec string) error {
 
 	if dep.Type == manifest.DependencyRemote {
 		constraints := map[string][]string{}
-		if err := installPackageRecursive(ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, depName, "", map[string]bool{}); err != nil {
+		if err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, depName, "", map[string]bool{}); err != nil {
 			return err
 		}
 		if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
@@ -252,7 +260,7 @@ func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, const
 	}
 	bestID := ""
 	bestVersion := ""
-	var bestParsed *registry.Version
+	var bestParsed *semver.Version
 	for _, id := range ids {
 		entry, ok := lockfile.GetDependency(id)
 		if !ok || entry.Version == "" {
@@ -260,7 +268,7 @@ func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, const
 		}
 		matchesAll := true
 		for _, constraint := range constraintSet {
-			matches, err := registry.MatchesConstraint(entry.Version, constraint)
+			matches, err := semver.Match(entry.Version, constraint)
 			if err != nil {
 				return "", "", false, fmt.Errorf("version conflict for %s: %s does not satisfy %s", repoPath, entry.Version, constraint)
 			}
@@ -272,7 +280,7 @@ func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, const
 		if !matchesAll {
 			continue
 		}
-		parsed, err := registry.ParseVersion(entry.Version)
+		parsed, err := semver.Parse(entry.Version)
 		if err != nil {
 			continue
 		}

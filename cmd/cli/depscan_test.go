@@ -72,6 +72,17 @@ build = "lib"
 	}
 }
 
+func TestListOrphanCandidatesRejectsInvalidLockIdentity(t *testing.T) {
+	lock := manifest.NewLockfile()
+	lock.SetDependency("../../outside@v1", manifest.LockfileEntry{
+		Version:     "v1",
+		ResolvedURL: "../../outside",
+	})
+	if _, err := listOrphanCandidates(t.TempDir(), lock); err == nil {
+		t.Fatal("invalid lock identity produced cleanup candidate")
+	}
+}
+
 func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 	root := t.TempDir()
 	cachePath := manifest.CacheModulesDir(root)
@@ -79,60 +90,86 @@ func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 		t.Fatal(err)
 	}
 	lock := manifest.NewLockfile()
-	lock.SetDependency("A@v1", manifest.LockfileEntry{
+	lock.SetDependency("github.com/acme/a@v1", manifest.LockfileEntry{
 		Version:      "v1",
-		ResolvedURL:  "A",
+		ResolvedURL:  "github.com/acme/a",
 		Direct:       false,
-		Dependencies: []string{"B@v1"},
+		Dependencies: []string{"github.com/acme/b@v1"},
 	})
-	lock.SetDependency("E@v1", manifest.LockfileEntry{
+	lock.SetDependency("github.com/acme/e@v1", manifest.LockfileEntry{
 		Version:      "v1",
-		ResolvedURL:  "E",
+		ResolvedURL:  "github.com/acme/e",
 		Direct:       true,
-		Dependencies: []string{"B@v1"},
+		Dependencies: []string{"github.com/acme/b@v1"},
 	})
-	lock.SetDependency("B@v1", manifest.LockfileEntry{
+	lock.SetDependency("github.com/acme/b@v1", manifest.LockfileEntry{
 		Version:      "v1",
-		ResolvedURL:  "B",
+		ResolvedURL:  "github.com/acme/b",
 		Direct:       false,
-		Dependencies: []string{"C@v1"},
-		UsedBy:       []string{"A@v1", "E@v1"},
+		Dependencies: []string{"github.com/acme/c@v1"},
+		UsedBy:       []string{"github.com/acme/a@v1", "github.com/acme/e@v1"},
 	})
-	lock.SetDependency("C@v1", manifest.LockfileEntry{
+	lock.SetDependency("github.com/acme/c@v1", manifest.LockfileEntry{
 		Version:      "v1",
-		ResolvedURL:  "C",
+		ResolvedURL:  "github.com/acme/c",
 		Direct:       false,
-		Dependencies: []string{"F@v1"},
-		UsedBy:       []string{"B@v1"},
+		Dependencies: []string{"github.com/acme/f@v1"},
+		UsedBy:       []string{"github.com/acme/b@v1"},
 	})
-	lock.SetDependency("F@v1", manifest.LockfileEntry{
+	lock.SetDependency("github.com/acme/f@v1", manifest.LockfileEntry{
 		Version:     "v1",
-		ResolvedURL: "F",
+		ResolvedURL: "github.com/acme/f",
 		Direct:      false,
-		UsedBy:      []string{"C@v1"},
+		UsedBy:      []string{"github.com/acme/c@v1"},
 	})
 
-	lock.RemoveDependency("A@v1")
-	removed := pruneUnusedDependencies(lock, cachePath)
+	lock.RemoveDependency("github.com/acme/a@v1")
+	removed, err := pruneUnusedDependencies(lock, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(removed) != 0 {
 		t.Fatalf("expected shared branch to remain; removed=%#v", removed)
 	}
-	if _, ok := lock.GetDependency("B@v1"); !ok {
+	if _, ok := lock.GetDependency("github.com/acme/b@v1"); !ok {
 		t.Fatalf("expected B to remain because E still uses it")
 	}
 
-	lock.RemoveDependency("E@v1")
-	removed = pruneUnusedDependencies(lock, cachePath)
+	lock.RemoveDependency("github.com/acme/e@v1")
+	removed, err = pruneUnusedDependencies(lock, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(removed) != 3 {
 		t.Fatalf("expected cascade removal of B/C/F, got %#v", removed)
 	}
-	if _, ok := lock.GetDependency("B@v1"); ok {
+	if _, ok := lock.GetDependency("github.com/acme/b@v1"); ok {
 		t.Fatal("expected B to be pruned")
 	}
-	if _, ok := lock.GetDependency("C@v1"); ok {
+	if _, ok := lock.GetDependency("github.com/acme/c@v1"); ok {
 		t.Fatal("expected C to be pruned")
 	}
-	if _, ok := lock.GetDependency("F@v1"); ok {
+	if _, ok := lock.GetDependency("github.com/acme/f@v1"); ok {
 		t.Fatal("expected F to be pruned")
+	}
+}
+
+func TestPruneUnusedDependenciesPreservesLockOnDeleteFailure(t *testing.T) {
+	lock := manifest.NewLockfile()
+	packageID := "github.com/acme/pkg@../../outside"
+	lock.SetDependency(packageID, manifest.LockfileEntry{
+		Version:     "../../outside",
+		ResolvedURL: "github.com/acme/pkg",
+	})
+
+	removed, err := pruneUnusedDependencies(lock, t.TempDir())
+	if err == nil {
+		t.Fatal("cache deletion failure was ignored")
+	}
+	if len(removed) != 0 {
+		t.Fatalf("failed cache deletion reported removed packages: %v", removed)
+	}
+	if _, ok := lock.GetDependency(packageID); !ok {
+		t.Fatal("failed cache deletion removed lock entry")
 	}
 }
