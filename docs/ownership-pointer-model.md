@@ -300,6 +300,23 @@ enclosing full expression and is then destroyed in reverse creation order. A
 loan derived from that storage cannot escape the expression. This avoids
 syntax-dependent temporary lifetime extension and hidden heap promotion.
 
+## Two-Phase Call Borrows
+
+Every mutable reference passed to a call first reserves its canonical storage
+origin. Method receivers reserve before explicit arguments; remaining arguments
+then evaluate left-to-right. Reservation permits reads and shared borrows, but
+blocks mutation, ownership transfer, destruction, and nested mutable activation.
+
+The mutable loan activates immediately before entering the callee. Activation
+requires all overlapping shared loans created during argument evaluation to have
+ended. A shared reference passed into the same call has not ended and conflicts.
+Unequal concrete fields and fixed indexes may reserve independently; dynamic
+indexes and slice views remain conservative.
+
+Reservation facts exist only while checking one expression. Persistent reference
+liveness remains on the existing ownership CFG, and HIR/MIR/backend call lowering
+does not carry reservation state.
+
 ## Interface Ownership
 
 Bare interface values are unsized and illegal at runtime. Interface dispatch

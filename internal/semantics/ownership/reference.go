@@ -33,15 +33,17 @@ type referenceUse struct {
 	site   ast.Node
 }
 
-type activeLoan struct {
+type loanFact struct {
 	loan         referenceLoan
 	holder       *symbols.Symbol
 	keepingAlive ast.Node
+	reserved     bool
 }
 
 type loanContext struct {
-	persistent []activeLoan
-	temporary  []activeLoan
+	persistent []loanFact
+	temporary  []loanFact
+	reserved   []loanFact
 	remaining  map[*symbols.Symbol]int
 	liveOut    map[*symbols.Symbol]ast.Node
 }
@@ -51,6 +53,7 @@ type storageAccess uint8
 const (
 	storageRead storageAccess = iota
 	storageSharedBorrow
+	storageMutableReservation
 	storageMutableBorrow
 	storageMutate
 	storageConsume
@@ -71,7 +74,7 @@ func (a *analyzer) newLoanContext(node *flowNode, st state) *loanContext {
 			continue
 		}
 		for _, loan := range value {
-			ctx.persistent = append(ctx.persistent, activeLoan{
+			ctx.persistent = append(ctx.persistent, loanFact{
 				loan:         loan,
 				holder:       sym,
 				keepingAlive: keepingAlive,
@@ -113,7 +116,7 @@ func (ctx *loanContext) addTemporary(value []referenceLoan, call ast.Node) {
 		return
 	}
 	for _, loan := range value {
-		ctx.temporary = append(ctx.temporary, activeLoan{loan: loan, keepingAlive: call})
+		ctx.temporary = append(ctx.temporary, loanFact{loan: loan, keepingAlive: call})
 	}
 }
 
@@ -146,13 +149,16 @@ func (a *analyzer) reportLoanConflict(
 	if a == nil || len(origins) == 0 || loans == nil {
 		return
 	}
-	conflicts := func(active activeLoan) bool {
-		if (exempt != nil && active.holder == exempt) || !place.OriginsOverlap(origins, active.loan.origins) {
+	conflicts := func(fact loanFact) bool {
+		if (exempt != nil && fact.holder == exempt) || !place.OriginsOverlap(origins, fact.loan.origins) {
 			return false
 		}
-		return active.loan.mutable || access >= storageMutableBorrow
+		if fact.reserved {
+			return access >= storageMutableBorrow
+		}
+		return fact.loan.mutable || access >= storageMutableBorrow
 	}
-	var conflict *activeLoan
+	var conflict *loanFact
 	for i := range loans.persistent {
 		if conflicts(loans.persistent[i]) {
 			conflict = &loans.persistent[i]
@@ -168,6 +174,14 @@ func (a *analyzer) reportLoanConflict(
 		}
 	}
 	if conflict == nil {
+		for i := range loans.reserved {
+			if conflicts(loans.reserved[i]) {
+				conflict = &loans.reserved[i]
+				break
+			}
+		}
+	}
+	if conflict == nil {
 		return
 	}
 
@@ -177,6 +191,8 @@ func (a *analyzer) reportLoanConflict(
 		message = "cannot read storage while it is mutably borrowed"
 	case storageSharedBorrow:
 		message = "cannot borrow storage while it is mutably borrowed"
+	case storageMutableReservation:
+		message = "cannot reserve mutable borrow while storage is mutably borrowed"
 	case storageMutableBorrow:
 		message = "cannot borrow storage mutably while it is already borrowed"
 	case storageMutate:
@@ -188,7 +204,9 @@ func (a *analyzer) reportLoanConflict(
 	}
 	diag := a.ctx.Diagnostics.AddError(diagnostics.ErrBorrowConflict, message, ast.LocOf(site), "conflicting access")
 	borrowKind := "shared borrow created here"
-	if conflict.loan.mutable {
+	if conflict.reserved {
+		borrowKind = "mutable borrow reserved here"
+	} else if conflict.loan.mutable {
 		borrowKind = "mutable borrow created here"
 	}
 	if conflict.loan.site != nil {
@@ -196,11 +214,76 @@ func (a *analyzer) reportLoanConflict(
 	}
 	if conflict.keepingAlive != nil && conflict.keepingAlive != conflict.loan.site {
 		keepingMessage := "borrow remains live until this use"
-		if conflict.holder == nil {
+		if conflict.reserved {
+			keepingMessage = "mutable borrow activates when this call starts"
+		} else if conflict.holder == nil {
 			keepingMessage = "borrow remains active until this call completes"
 		}
 		diag.WithSecondaryLabel(ast.LocOf(conflict.keepingAlive), keepingMessage)
 	}
+}
+
+func (a *analyzer) activateCallReservations(call *ast.CallExpr, mark int, loans *loanContext) {
+	if a == nil || call == nil || loans == nil || mark >= len(loans.reserved) {
+		return
+	}
+	current := loans.reserved[mark:]
+	for i := range current {
+		reservation := &current[i]
+		conflict := overlappingLoan(reservation.loan.origins, loans.persistent, reservation.holder)
+		if conflict == nil {
+			conflict = overlappingLoan(reservation.loan.origins, loans.temporary, nil)
+		}
+		if conflict == nil {
+			conflict = overlappingLoan(reservation.loan.origins, loans.reserved[:mark], nil)
+		}
+		if conflict == nil {
+			conflict = overlappingLoan(reservation.loan.origins, current[:i], nil)
+		}
+		if conflict == nil {
+			continue
+		}
+
+		diag := a.ctx.Diagnostics.AddError(
+			diagnostics.ErrBorrowConflict,
+			"cannot activate mutable borrow while storage is borrowed",
+			ast.LocOf(call),
+			"mutable borrow activates here",
+		)
+		if reservation.loan.site != nil {
+			diag.WithSecondaryLabel(ast.LocOf(reservation.loan.site), "mutable borrow reserved here")
+		}
+		conflictKind := "shared borrow created here"
+		if conflict.reserved {
+			conflictKind = "mutable borrow reserved here"
+		} else if conflict.loan.mutable {
+			conflictKind = "mutable borrow created here"
+		}
+		if conflict.loan.site != nil {
+			diag.WithSecondaryLabel(ast.LocOf(conflict.loan.site), conflictKind)
+		}
+		if conflict.keepingAlive != nil && conflict.keepingAlive != conflict.loan.site && conflict.keepingAlive != call {
+			keepingMessage := "borrow remains live until this use"
+			if conflict.reserved {
+				keepingMessage = "mutable borrow activates when this call starts"
+			} else if conflict.holder == nil {
+				keepingMessage = "borrow remains active until this call completes"
+			}
+			diag.WithSecondaryLabel(ast.LocOf(conflict.keepingAlive), keepingMessage)
+		}
+	}
+}
+
+func overlappingLoan(origins []place.Origin, facts []loanFact, exempt *symbols.Symbol) *loanFact {
+	for i := range facts {
+		if exempt != nil && facts[i].holder == exempt {
+			continue
+		}
+		if place.OriginsOverlap(origins, facts[i].loan.origins) {
+			return &facts[i]
+		}
+	}
+	return nil
 }
 
 func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {

@@ -3,10 +3,30 @@ struct Pair {
     right: i32
 }
 
+struct Counter {
+    value: i32
+}
+
 fn Keep(_: &mut i32) {
 }
 
 fn KeepRaw(_: rawptr) {
+}
+
+fn ReadPair(value: &Pair) -> i32 {
+    return value.left;
+}
+
+fn KeepPair(_: &mut Pair, current: i32) -> i32 {
+    return current;
+}
+
+fn (self: &Counter) Current() -> i32 {
+    return self.value;
+}
+
+fn (self: &mut Counter) Add(delta: i32) {
+    self.value = self.value + delta;
 }
 
 fn main() -> i32 {
@@ -16,6 +36,17 @@ fn main() -> i32 {
     KeepRaw(@pair.right);
     Keep(left);
 
+    let nested = KeepPair(&mut pair, ReadPair(&pair));
+    if nested != 1 {
+        return 1;
+    }
+
+    let mut counter: Counter = .{ value = 3 };
+    counter.Add(counter.Current());
+    if counter.value != 6 {
+        return 2;
+    }
+
     let mut values = [_]i32{1, 2};
     let first = &mut values[0];
     values[1] = pair.right;
@@ -24,5 +55,5 @@ fn main() -> i32 {
     if values[1] == 7 {
         return 0;
     }
-    return 1;
+    return 3;
 }

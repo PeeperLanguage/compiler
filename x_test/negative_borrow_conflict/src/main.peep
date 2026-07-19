@@ -7,12 +7,40 @@ fn BothOptional(_: ?&mut i32, _: &i32) {
 fn Read(_: &i32) {
 }
 
+fn ReadValue(_: &i32) -> i32 {
+    return 0;
+}
+
+fn MutateAndValue(_: &mut i32, _: i32) {
+}
+
+fn Write(_: &mut i32) -> i32 {
+    return 0;
+}
+
+fn BothMutable(_: &mut i32, _: &mut i32) {
+}
+
 fn ConflictingArguments(mut value: i32) {
     Both(&mut value, &value);
 }
 
 fn ConflictingOptionalArguments(mut value: i32) {
     BothOptional(&mut value, &value);
+}
+
+fn NestedMutableActivation(mut value: i32) {
+    MutateAndValue(&mut value, Write(&mut value));
+}
+
+fn OverlappingReservations(mut value: i32) {
+    BothMutable(&mut value, &mut value);
+}
+
+fn SharedLoanSurvivesActivation(mut value: i32) {
+    let reference = &value;
+    MutateAndValue(&mut value, ReadValue(reference));
+    Read(reference);
 }
 
 fn MutateBorrowed(mut value: i32) {

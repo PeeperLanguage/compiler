@@ -40,14 +40,11 @@ func (a *analyzer) checkExpr(
 			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
 		}
 	case *ast.AddressExpr:
-		if e.Mode != ast.AddressRaw {
-			access := storageSharedBorrow
-			if e.Mode == ast.AddressMutable {
-				access = storageMutableBorrow
-			}
-			a.checkStorageAccess(scope, e.Expr, st, loans, access)
+		access := storageSharedBorrow
+		if e.Mode == ast.AddressMutable {
+			access = storageMutableBorrow
 		}
-		a.checkExpr(scope, e.Expr, st, useRead, loans, true)
+		a.checkAddressExpr(scope, e, st, loans, access)
 	case *ast.SelectorExpr:
 		if !projectionBase {
 			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
@@ -109,6 +106,22 @@ func (a *analyzer) checkExpr(
 	default:
 		return
 	}
+}
+
+func (a *analyzer) checkAddressExpr(
+	scope *table.Scope,
+	expr *ast.AddressExpr,
+	st state,
+	loans *loanContext,
+	access storageAccess,
+) {
+	if expr == nil {
+		return
+	}
+	if expr.Mode != ast.AddressRaw {
+		a.checkStorageAccess(scope, expr.Expr, st, loans, access)
+	}
+	a.checkExpr(scope, expr.Expr, st, useRead, loans, true)
 }
 
 func storageAccessForUse(typ typeinfo.Type, use useKind) storageAccess {
@@ -198,11 +211,15 @@ func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, l
 		return
 	}
 	temporaryMark := len(loans.temporary)
+	reservationMark := len(loans.reserved)
 	defer func() {
 		loans.temporary = loans.temporary[:temporaryMark]
+		loans.reserved = loans.reserved[:reservationMark]
 	}()
 	if selector, ok := call.Callee.(*ast.SelectorExpr); ok && selector != nil {
-		a.checkMethodCall(scope, selector, call, st, loans)
+		if a.checkMethodCall(scope, selector, call, st, loans) {
+			a.activateCallReservations(call, reservationMark, loans)
+		}
 		return
 	}
 	a.checkExpr(scope, call.Callee, st, useRead, loans, false)
@@ -216,6 +233,7 @@ func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, l
 	for i, arg := range call.Args {
 		a.checkCallArgument(scope, arg, fn.Params[i], call, st, loans)
 	}
+	a.activateCallReservations(call, reservationMark, loans)
 }
 
 func (a *analyzer) checkMethodCall(
@@ -224,7 +242,7 @@ func (a *analyzer) checkMethodCall(
 	call *ast.CallExpr,
 	st state,
 	loans *loanContext,
-) {
+) bool {
 	fn, ok := a.exprType(selector).(*typeinfo.FuncType)
 	if !ok || fn == nil || selector == nil || call == nil {
 		if selector != nil {
@@ -233,18 +251,19 @@ func (a *analyzer) checkMethodCall(
 		for _, arg := range call.Args {
 			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
-		return
+		return false
 	}
 	a.checkCallArgument(scope, selector.Expr, fn.Params[0], call, st, loans)
 	if len(call.Args)+1 != len(fn.Params) {
 		for _, arg := range call.Args {
 			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
-		return
+		return false
 	}
 	for i, arg := range call.Args {
 		a.checkCallArgument(scope, arg, fn.Params[i+1], call, st, loans)
 	}
+	return true
 }
 
 func (a *analyzer) checkCallArgument(
@@ -264,26 +283,36 @@ func (a *analyzer) checkCallArgument(
 		a.checkExpr(scope, arg, st, use, loans, false)
 		return
 	}
-	if _, explicitBorrow := arg.(*ast.AddressExpr); explicitBorrow {
-		a.checkExpr(scope, arg, st, useRead, loans, false)
+	access := storageSharedBorrow
+	if mutable {
+		access = storageMutableReservation
+	}
+	if explicitBorrow, explicit := arg.(*ast.AddressExpr); explicit {
+		a.checkAddressExpr(scope, explicitBorrow, st, loans, access)
 	} else {
 		a.checkExpr(scope, arg, st, useRead, loans, true)
-		access := storageSharedBorrow
-		if mutable {
-			access = storageMutableBorrow
-		}
 		a.checkStorageAccess(scope, arg, st, loans, access)
 	}
 	origins := a.originsForExpr(scope, arg, st)
 	if len(origins) == 0 {
 		return
 	}
-	loans.addTemporary([]referenceLoan{{
+	loan := referenceLoan{
 		id:      loanID{node: arg},
 		origins: origins,
 		mutable: mutable,
 		site:    arg,
-	}}, call)
+	}
+	if mutable {
+		loans.reserved = append(loans.reserved, loanFact{
+			loan:         loan,
+			holder:       a.referenceHolder(arg),
+			keepingAlive: call,
+			reserved:     true,
+		})
+		return
+	}
+	loans.addTemporary([]referenceLoan{loan}, call)
 }
 
 func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
