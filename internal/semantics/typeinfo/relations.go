@@ -297,7 +297,12 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		for _, param := range typ.Params {
 			params = append(params, ReplaceAbstractSelf(param, ownerType))
 		}
-		return &FuncType{Params: params, Return: ReplaceAbstractSelf(typ.Return, ownerType)}
+		return &FuncType{
+			Params:        params,
+			ParamNames:    append([]string(nil), typ.ParamNames...),
+			Return:        ReplaceAbstractSelf(typ.Return, ownerType),
+			ReturnOrigins: typ.ReturnOrigins,
+		}
 	case *StructType:
 		if typ == nil {
 			return nil
@@ -318,9 +323,10 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 				params = append(params, Field{Name: param.Name, Type: ReplaceAbstractSelf(param.Type, ownerType)})
 			}
 			methods = append(methods, Method{
-				Name:   method.Name,
-				Params: params,
-				Return: ReplaceAbstractSelf(method.Return, ownerType),
+				Name:          method.Name,
+				Params:        params,
+				Return:        ReplaceAbstractSelf(method.Return, ownerType),
+				ReturnOrigins: method.ReturnOrigins,
 			})
 		}
 		return &InterfaceType{Methods: methods}

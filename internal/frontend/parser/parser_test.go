@@ -100,6 +100,35 @@ func TestParseExplicitNumericLiteralPostfixes(t *testing.T) {
 	}
 }
 
+func TestParseWarnsOnLeadingZeroDecimalIntegers(t *testing.T) {
+	_, diag := parseTestModule(`fn main() {
+	let decimal = 01;
+	let grouped = 0_1u8;
+	let negative = -01i32;
+	let zero = 0;
+	let hexadecimal = 0x01;
+	let octal = 0o01;
+	let binary = 0b01;
+	let decimalFloat = 01.0;
+	let scientific = 01e2;
+	let suffixedFloat = 01f32;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected errors:\n%s", diag.EmitAllToString())
+	}
+	if diag.WarningCount() != 3 {
+		t.Fatalf("warnings = %d, want 3:\n%s", diag.WarningCount(), diag.EmitAllToString())
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Severity == diagnostics.Warning && item.Code != diagnostics.WarnLeadingZeroDecimal {
+			t.Fatalf("warning code = %q, want %q", item.Code, diagnostics.WarnLeadingZeroDecimal)
+		}
+	}
+	if output := diag.EmitAllToString(); !strings.Contains(output, "use the `0o` prefix for octal values") {
+		t.Fatalf("missing octal help:\n%s", output)
+	}
+}
+
 func TestParseRejectsTopLevelLet(t *testing.T) {
 	src := `let x: i32 = 1;
 fn main() -> i32 { return 0; }`
@@ -1670,8 +1699,35 @@ func TestParseFuncTypeParam(t *testing.T) {
 	if len(ft.Params) != 1 {
 		t.Fatalf("params: got %d want 1", len(ft.Params))
 	}
-	if named, ok := ft.Params[0].(*ast.NamedType); !ok || named.Name != "Buffer" {
-		t.Fatalf("param type: got %T %#v want Buffer", ft.Params[0], ft.Params[0])
+	if ft.Params[0].Name == nil || ft.Params[0].Name.Name != "x" {
+		t.Fatalf("param name: got %#v want x", ft.Params[0].Name)
+	}
+	if named, ok := ft.Params[0].Type.(*ast.NamedType); !ok || named.Name != "Buffer" {
+		t.Fatalf("param type: got %T %#v want Buffer", ft.Params[0].Type, ft.Params[0].Type)
+	}
+}
+
+func TestParseReferenceReturnOrigins(t *testing.T) {
+	src := `
+fn first(xs: &[]i32) -> &i32 from xs { return &xs[0]; }
+iface Reader { fn (&Self) current(fallback: &i32) -> &i32 from(self, fallback) }
+const callback: fn(xs: &[]i32) -> &i32 from xs = first;
+`
+	mod, diag := parseTestModule(src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	if fn.ReturnOrigins == nil || len(fn.ReturnOrigins.Sources) != 1 || fn.ReturnOrigins.Sources[0].Name != "xs" {
+		t.Fatalf("function origins: %#v", fn.ReturnOrigins)
+	}
+	iface := mod.Stmts[1].(*ast.InterfaceDecl).Type.(*ast.InterfaceType)
+	if got := iface.Methods[0].ReturnOrigins.Text(); got != " from (self, fallback)" {
+		t.Fatalf("interface origins: got %q", got)
+	}
+	callback := mod.Stmts[2].(*ast.ConstDecl).Type.(*ast.FuncType)
+	if callback.Params[0].Name == nil || callback.Params[0].Name.Name != "xs" || callback.ReturnOrigins.Text() != " from xs" {
+		t.Fatalf("function type contract not preserved: %#v", callback)
 	}
 }
 

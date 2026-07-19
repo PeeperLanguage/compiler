@@ -8,6 +8,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/pkg/numeric"
 )
 
 type evaluator struct {
@@ -135,7 +136,11 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 		if family == typeinfo.NumericFloat {
 			return &constvalue.FloatConst{Value: node.Value, TypeID: typText}, true
 		}
-		return &constvalue.IntConst{Value: node.Value, TypeID: typText}, true
+		value, err := numeric.CanonicalizeIntegerLiteral(node.Value)
+		if err != nil {
+			return nil, false
+		}
+		return &constvalue.IntConst{Value: value, TypeID: typText}, true
 	case *ast.BoolLit:
 		return &constvalue.BoolConst{Value: node.Value}, true
 	case *ast.Ident:

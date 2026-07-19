@@ -348,6 +348,70 @@ func TestHandleRenameMatchesSelectorMethod(t *testing.T) {
 	}
 }
 
+func TestHandleRenameMatchesReferenceReturnSource(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn Identity(value: &i32) -> &i32 from __CURSOR__value {\n\treturn value;\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "source")
+	if edit == nil || len(edit.Changes) != 1 {
+		t.Fatalf("expected reference-return source rename edits, got %#v", edit)
+	}
+
+	edits := edit.Changes[DocumentURI(pathToURI(mainPath))]
+	if len(edits) != 3 {
+		t.Fatalf("expected parameter, contract, and return rename edits, got %#v", edits)
+	}
+}
+
+func TestHandleRenamePreservesReceiverReturnSource(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `struct Box { value: i32 }
+
+fn (self: &Box) identity() -> &Box from self {
+	return __CURSOR__self;
+}
+`
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "receiver")
+	if edit == nil || len(edit.Changes) != 1 {
+		t.Fatalf("expected receiver rename edits, got %#v", edit)
+	}
+
+	edits := edit.Changes[DocumentURI(pathToURI(mainPath))]
+	if len(edits) != 2 {
+		t.Fatalf("expected receiver declaration and body edits, got %#v", edits)
+	}
+	for _, edit := range edits {
+		if edit.Range.Start.Line == 2 && edit.Range.Start.Character > 35 {
+			t.Fatalf("receiver rename touched fixed return source: %#v", edit)
+		}
+	}
+}
+
+func TestHandleRenameIgnoresReceiverReturnSourceToken(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `struct Box { value: i32 }
+
+fn (self: &Box) identity() -> &Box from __CURSOR__self {
+	return self;
+}
+`
+
+	state := NewServerState()
+	state.RootDir = root
+	edit := renameAtSource(t, state, mainPath, src, "receiver")
+	if edit == nil || len(edit.Changes) != 0 {
+		t.Fatalf("expected no edits for fixed receiver source, got %#v", edit)
+	}
+}
+
 func TestHoverReusesFreshCompiledSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "main"+peeper.SourceExt)
@@ -659,6 +723,54 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 		t.Fatalf("expected hover result, got nil")
 	}
 	if !strings.Contains(hover.Contents.Value, "(method) fn (self: &mut Counter) write(val: i32)") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsReferenceReturnContract(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn Identity(value: &i32) -> &i32 from value {\n\treturn value;\n}\n\nfn Use(value: &i32) -> &i32 from value {\n\treturn __CURSOR__Identity(value);\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(func) fn Identity(value: &i32) -> &i32 from value") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverResolvesBodylessReferenceReturnSource(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "#[extern]\nfn External(value: &i32) -> &i32 from __CURSOR__value;\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(param) value: &i32") {
+		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsInterfaceReferenceReturnContract(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "iface Reader {\n\tfn (&Self) Current(fallback: &i32) -> &i32 from(self, fallback)\n}\n\nfn Use(reader: &Reader, fallback: &i32) -> &i32 from(reader, fallback) {\n\treturn reader.__CURSOR__Current(fallback);\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(method) fn (&Self) Current(fallback: &i32) -> &i32 from (self, fallback)") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }

@@ -50,6 +50,20 @@ func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
 	return ref.Target, ref.Mutable, true
 }
 
+// ReferenceValueTarget recognizes direct references and reference values made
+// nullable through optional wrappers. ReferenceTarget stays direct so pointer,
+// receiver, and method lookup rules do not treat optionals as transparent.
+func ReferenceValueTarget(t Type) (target Type, mutable bool, ok bool) {
+	for {
+		t = Underlying(t)
+		optional, optionalValue := t.(*OptionalType)
+		if !optionalValue || optional == nil {
+			return ReferenceTarget(t)
+		}
+		t = optional.Inner
+	}
+}
+
 // ReceiverTarget returns concrete type whose method set owns receiver.
 func ReceiverTarget(t Type) (Type, bool) {
 	if target, ok := PointerTarget(t); ok {

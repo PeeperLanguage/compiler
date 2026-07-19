@@ -236,6 +236,19 @@ let p: rawptr = @value
 References are temporary views. They cannot be stored inside structs, arrays,
 dynamic arrays, globals, or heap objects in the first implementation slice.
 
+Reference returns use explicit source contracts rather than lifetime type
+parameters:
+
+```peep
+fn first(xs: &[]i32) -> &i32 from xs
+fn choose(left: &i32, right: &i32, pick_left: bool) -> &i32 from(left, right)
+```
+
+The ownership phase validates returned origins and substitutes caller origins
+at calls. `from` metadata is erased before HIR. User aggregates containing
+external references remain future work; safe self-referential aggregates are
+forbidden because moving inline storage would invalidate their internal views.
+
 Arrays and dynamic arrays own storage:
 
 ```peep
@@ -254,7 +267,7 @@ Implementation status:
 
 - `&T`, `&mut T`, `&expr`, and `&mut expr` are implemented for current v1 storage boundaries.
 - `[]T` is represented as dynamic-array storage, not a slice view.
-- dynamic-array construction, reference-origin summaries, and borrow-conflict checks remain future work.
+- reference-return contracts and borrow-conflict checks remain future work.
 
 ## Automatic Destruction
 
@@ -275,6 +288,17 @@ Drop glue recurses through owning pointers, structs, arrays, strings, dynamic
 arrays, optionals, and erased payloads. Locals, fields, and elements drop in
 reverse declaration/index order. Panic aborts without unwind cleanup. Owned
 globals reject until module shutdown ordering exists.
+
+Safe code cannot suppress destruction with a `forget` or `leak` operation.
+Normal scope exit, return, overwrite, discarded ownership-bearing expressions,
+and explicit early cleanup all follow the same ownership plan. Process abort is
+outside structured cleanup; future foreign ownership handoff must be explicit
+and unsafe.
+
+Safe rvalue borrows use one fixed temporary rule: storage lives through the
+enclosing full expression and is then destroyed in reverse creation order. A
+loan derived from that storage cannot escape the expression. This avoids
+syntax-dependent temporary lifetime extension and hidden heap promotion.
 
 ## Interface Ownership
 
@@ -352,6 +376,9 @@ struct Node {
 - allocator returns `*T`.
 - `free` consumes allocator-created `*T`.
 - live owned values drop automatically on normal scope exit.
+- safe code cannot forget or leak an owned value.
+- reference returns declare parameter or receiver origins with `from`.
+- borrowed rvalue temporaries live through one full expression only.
 - every composite moves implicitly on by-value use.
 - `*T`, `*Interface`, dynamic arrays/strings, and mutable references never duplicate implicitly.
 - `rawptr` copy is shallow address-bit copy because it owns nothing.

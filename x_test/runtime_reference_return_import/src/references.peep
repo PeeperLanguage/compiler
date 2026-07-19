@@ -1,0 +1,3 @@
+fn Identity(value: &i32) -> &i32 from value {
+    return value;
+}

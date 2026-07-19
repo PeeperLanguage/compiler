@@ -126,6 +126,13 @@ type AddrOf struct {
 	Location *source.Location
 }
 
+type TempBorrow struct {
+	Value    Expr
+	Slice    bool
+	Type     string
+	Location *source.Location
+}
+
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
 	Source       *Place
@@ -221,6 +228,7 @@ func (*Binary) exprNode()         {}
 func (*Call) exprNode()           {}
 func (*Load) exprNode()           {}
 func (*AddrOf) exprNode()         {}
+func (*TempBorrow) exprNode()     {}
 func (*SliceView) exprNode()      {}
 func (*InterfaceMake) exprNode()  {}
 func (*InterfaceCall) exprNode()  {}
@@ -259,6 +267,8 @@ func ExprLocation(expr Expr) *source.Location {
 	case *Load:
 		return node.Location
 	case *AddrOf:
+		return node.Location
+	case *TempBorrow:
 		return node.Location
 	case *SliceView:
 		return node.Location
@@ -492,6 +502,20 @@ func (e *AddrOf) String() string {
 }
 
 func (e *AddrOf) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *TempBorrow) String() string {
+	if e == nil || e.Value == nil {
+		return "borrowtemp(<nil>)"
+	}
+	return "borrowtemp(" + e.Value.String() + ")"
+}
+
+func (e *TempBorrow) TypeText() string {
 	if e == nil {
 		return ""
 	}

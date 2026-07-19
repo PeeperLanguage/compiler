@@ -2,6 +2,7 @@ package typeinfo
 
 import (
 	"compiler/internal/frontend/ast"
+	"slices"
 	"testing"
 )
 
@@ -64,6 +65,27 @@ func TestReferenceTargetPreservesMutability(t *testing.T) {
 	}
 	if _, _, ok := ReferenceTarget(&RawPtrType{}); ok {
 		t.Fatalf("raw pointer must not classify as reference")
+	}
+}
+
+func TestReferenceValueTargetUnwrapsOptionalAliases(t *testing.T) {
+	target := &IntegerType{Signed: true, Bits: 32}
+	valueType := &DefinedType{
+		Name: "MaybeReference",
+		Underlying: &OptionalType{Inner: &OptionalType{Inner: &DefinedType{
+			Name:       "MutableReference",
+			Underlying: &RefType{Mutable: true, Target: target},
+		}}},
+	}
+	got, mutable, ok := ReferenceValueTarget(valueType)
+	if !ok || got != target || !mutable {
+		t.Fatalf("reference value target = (%v, %v, %v), want (%v, true, true)", got, mutable, ok, target)
+	}
+	if _, _, ok := ReferenceTarget(Underlying(valueType)); ok {
+		t.Fatalf("direct reference lookup must not unwrap optional values")
+	}
+	if _, _, ok := ReferenceValueTarget(&OptionalType{Inner: &RawPtrType{}}); ok {
+		t.Fatalf("optional raw pointer must not classify as reference value")
 	}
 }
 
@@ -176,16 +198,50 @@ func TestFuncTypeTextIncludesParams(t *testing.T) {
 
 func TestTypeFromSyntaxPreservesFuncTypeParams(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
-		Params: []ast.TypeExpr{&ast.NamedType{Name: "Buffer"}},
+		Params: []ast.Param{{Type: &ast.NamedType{Name: "Buffer"}}},
 	}, SyntaxOptions{}).(*FuncType)
 	if got := fn.Text(); got != "fn(Buffer)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
 }
 
+func TestTypeFromSyntaxPreservesReferenceReturnContract(t *testing.T) {
+	fn := TypeFromSyntax(&ast.FuncType{
+		Params:        []ast.Param{{Name: &ast.Ident{Name: "value"}, Type: &ast.RefType{Target: &ast.NamedType{Name: "i32"}}}},
+		Return:        &ast.RefType{Target: &ast.NamedType{Name: "i32"}},
+		ReturnOrigins: &ast.ReturnOriginClause{Sources: []*ast.Ident{{Name: "value"}}},
+	}, SyntaxOptions{}).(*FuncType)
+	if fn.ReturnOrigins == nil || !slices.Equal(fn.ReturnOrigins.Sources, []int{0}) {
+		t.Fatalf("return origins: %#v", fn.ReturnOrigins)
+	}
+	if got := fn.Text(); got != "fn(&i32) -> &i32 from value" {
+		t.Fatalf("function text: got %q", got)
+	}
+}
+
+func TestReturnOriginSourcesMapDirectAndMethodSlots(t *testing.T) {
+	first := &ast.Ident{Name: "first"}
+	second := &ast.Ident{Name: "second"}
+	direct := &ast.CallExpr{Callee: &ast.Ident{Name: "choose"}, Args: []ast.Expr{first, second}}
+	fn := &FuncType{ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0, -1, 2}}}
+	if got := ReturnOriginSources(direct, fn); !slices.Equal(got, []ast.Expr{second, first}) {
+		t.Fatalf("direct return sources = %#v", got)
+	}
+
+	receiver := &ast.Ident{Name: "receiver"}
+	method := &ast.CallExpr{
+		Callee: &ast.SelectorExpr{Expr: receiver, Name: &ast.Ident{Name: "choose"}},
+		Args:   []ast.Expr{first, second},
+	}
+	fn.ReturnOrigins.Sources = []int{0, 2, 3, -1}
+	if got := ReturnOriginSources(method, fn); !slices.Equal(got, []ast.Expr{receiver, second}) {
+		t.Fatalf("method return sources = %#v", got)
+	}
+}
+
 func TestTypeFromSyntaxAllowsAbstractSelf(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
-		Params: []ast.TypeExpr{&ast.NamedType{Name: "Self"}},
+		Params: []ast.Param{{Type: &ast.NamedType{Name: "Self"}}},
 	}, SyntaxOptions{AllowAbstractSelf: true}).(*FuncType)
 	if got := fn.Text(); got != "fn(Self)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Self)")
@@ -236,6 +292,14 @@ func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
 	}, SyntaxOptions{})
 	if TypeText(valid) != "[3]i32" {
 		t.Fatalf("valid array type = %s, want [3]i32", TypeText(valid))
+	}
+
+	hexadecimal := TypeFromSyntax(&ast.ArrayType{
+		Len:  &ast.NumberLit{Value: "0x2"},
+		Elem: &ast.NamedType{Name: "i32"},
+	}, SyntaxOptions{})
+	if TypeText(hexadecimal) != "[2]i32" {
+		t.Fatalf("hexadecimal array type = %s, want [2]i32", TypeText(hexadecimal))
 	}
 }
 

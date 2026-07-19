@@ -1,0 +1,26 @@
+struct Box {
+    value: i32
+}
+
+#[extern]
+fn External(value: &Box) -> &Box from value;
+
+iface Reader {
+    fn (&Self) Current(fallback: &Box) -> &Box from(self, fallback)
+}
+
+fn Identity(value: &Box) -> &Box from value {
+    return value;
+}
+
+fn SharedOptional(_: ?&Box, _: &Box) {
+}
+
+fn CompatibleOptionalLoans(value: &Box) {
+    SharedOptional(value, value);
+    SharedOptional(none, value);
+}
+
+fn UseCallback(callback: fn(value: &Box) -> &Box from value, value: &Box) -> &Box from value {
+    return callback(value);
+}

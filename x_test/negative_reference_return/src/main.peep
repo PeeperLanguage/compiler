@@ -2,17 +2,19 @@ struct Box {
     value: i32
 }
 
-    fn (self: &Box) Reference() -> &Box {
-        return self;
-    }
+fn Missing(value: &Box) -> &Box;
 
-fn Leak() -> &Box {
-    let box: Box = .{ value = 1 };
-    return box.Reference();
+fn Unknown(value: &Box) -> &Box from other;
+
+fn Narrow(left: &Box, right: &Box) -> &Box from left {
+    return right;
 }
 
-#[extern]
-fn ExternalLeak() -> &Box;
+fn Local(source: &Box) -> &Box from source {
+    let box: Box = .{ value = 1 };
+    return &box;
+}
 
-    #[extern]
-    fn (self: &Box) ExternalReference() -> &Box;
+fn Mutable(value: &Box) -> &mut Box from value;
+
+fn InvalidCallback(_: fn(value: &Box) -> &Box) {}

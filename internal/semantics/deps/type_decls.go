@@ -120,7 +120,7 @@ func addTypeDeclEdges(ctx *project.CompilerContext, module *project.Module, owne
 		}
 	case *ast.FuncType:
 		for _, param := range node.Params {
-			addTypeDeclEdges(ctx, module, owner, param, true)
+			addTypeDeclEdges(ctx, module, owner, param.Type, true)
 		}
 		addTypeDeclEdges(ctx, module, owner, node.Return, true)
 	case *ast.InterfaceType:

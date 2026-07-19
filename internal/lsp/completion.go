@@ -388,16 +388,11 @@ func selectorCompletionItems(ctx *project.CompilerContext, module *project.Modul
 			if method.Name == "" || !strings.HasPrefix(method.Name, prefix) {
 				continue
 			}
-			params := make([]typeinfo.Type, len(method.Params))
-			for i, param := range method.Params {
-				params[i] = param.Type
-			}
 			seen[method.Name] = struct{}{}
-			methodType := &typeinfo.FuncType{Params: params, Return: method.Return}
 			items = append(items, CompletionItem{
 				Label:    method.Name,
 				Kind:     completionKindMethod,
-				Detail:   fmt.Sprintf("(method) %s: %s", method.Name, typeinfo.TypeText(methodType)),
+				Detail:   fmt.Sprintf("(method) %s: %s", method.Name, typeinfo.TypeText(method.CallableType())),
 				TextEdit: TextEdit{Range: replacement, NewText: method.Name},
 			})
 		}

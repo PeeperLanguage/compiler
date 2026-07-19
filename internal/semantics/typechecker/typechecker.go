@@ -168,6 +168,7 @@ func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
 	}
+	c.checkFunctionTypeContracts()
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
 		c.checkDeclAttributes(decl)
 		typeDecl, ok := decl.(ast.TypeDecl)
@@ -336,9 +337,6 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		return
 	}
 	c.checkFunctionShape(fn)
-	if fn.Body == nil {
-		return
-	}
 	if sym.Scope == nil {
 		return
 	}
@@ -353,6 +351,9 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 			return
 		}
 		paramSym.BindType(typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false)))
+	}
+	if fn.Body == nil {
+		return
 	}
 	returnType := typeinfo.TypeFromSyntax(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	c.checkBlock(funcScope, fn.Body, returnType)
@@ -397,6 +398,9 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		}
 		retType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, returnType), "return")
 		if typeinfo.IsInvalidOrUnknown(retType) {
+			return
+		}
+		if c.rejectTemporaryBorrowEscape(scope, node.Value, "return") {
 			return
 		}
 		if !c.assignable(returnType, retType) {
@@ -453,6 +457,9 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 	valueType := c.typeExpr(scope, node.Value, targetType)
 	valueType = c.requireValueType(node.Value, valueType, "assignment")
 	if typeinfo.IsInvalidOrUnknown(valueType) {
+		return
+	}
+	if c.rejectTemporaryBorrowEscape(scope, node.Value, "assignment") {
 		return
 	}
 	if !c.assignable(targetType, valueType) {
@@ -628,6 +635,10 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		}
 		return
 	}
+	if c.rejectTemporaryBorrowEscape(scope, value, "binding") {
+		sym.BindType(&typeinfo.InvalidType{})
+		return
+	}
 	if declType == nil && c.rejectBindingReferenceStorage(scope, valType, node) {
 		sym.BindType(&typeinfo.InvalidType{})
 		return
@@ -700,8 +711,8 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 		return
 	}
 	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
-	retType := typeinfo.TypeFromSyntax(decl.ReturnType, opts)
-	if !c.checkReturnType(decl.ReturnType, retType, decl, false) {
+	fnType := typeinfo.FuncTypeFromDeclWithOptions(decl, opts)
+	if !c.checkCallableReturn(decl.ReturnType, decl, fnType, decl.ReturnOrigins) {
 		return
 	}
 	for _, param := range decl.ParamsWithReceiver() {
@@ -724,21 +735,85 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 }
 
-func (c *checker) checkReturnType(typeNode ast.TypeExpr, typ typeinfo.Type, fallback ast.Node, allowAbstractSelf bool) bool {
-	if typ == nil {
-		return true
+func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, fnType *typeinfo.FuncType, clause *ast.ReturnOriginClause) bool {
+	if fnType == nil {
+		return false
 	}
+	typ := fnType.Return
 	site := ast.LocOf(typeNode)
 	if site == nil {
 		site = ast.LocOf(fallback)
 	}
-	if typeinfo.ContainsReference(typ) {
+	_, returnMutable, referenceReturn := typeinfo.ReferenceValueTarget(typ)
+	if typ == nil {
+		if clause != nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+				"`from` clause requires a reference return type", clause.Location, "")
+			return false
+		}
+		return true
+	}
+	if typeinfo.ContainsReference(typ) && !referenceReturn {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
-			"returning references requires origin tracking, which is not supported in current compiler stage", site, "")
+			"reference return must be a direct reference or optional reference value", site, "")
 		return false
 	}
-	if allowAbstractSelf && typeinfo.ContainsAbstractSelf(typ) {
-		return true
+	if !referenceReturn {
+		if clause != nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+				"`from` clause is only valid on reference returns", clause.Location, "")
+			return false
+		}
+	} else if clause == nil {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+			"reference return requires a `from` clause naming borrowed source parameters", site, "")
+		return false
+	} else if fnType.ReturnOrigins == nil || len(fnType.ReturnOrigins.Sources) != len(clause.Sources) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+			"invalid reference return origin contract", clause.Location, "")
+		return false
+	} else {
+		valid := len(clause.Sources) > 0
+		if !valid {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+				"`from` clause must name at least one borrowed source parameter", clause.Location, "")
+		}
+		seen := make(map[int]struct{}, len(clause.Sources))
+		for i, source := range clause.Sources {
+			sourceSite := clause.Location
+			if source != nil {
+				sourceSite = source.Location
+			}
+			slot := fnType.ReturnOrigins.Sources[i]
+			if slot < 0 || slot >= len(fnType.Params) {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+					"`from` source must name a borrowed parameter or `self` receiver", sourceSite, "")
+				valid = false
+				continue
+			}
+			if _, duplicate := seen[slot]; duplicate {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+					"duplicate source in reference return `from` clause", sourceSite, "")
+				valid = false
+				continue
+			}
+			seen[slot] = struct{}{}
+			_, sourceMutable, borrowed := typeinfo.ReferenceValueTarget(fnType.Params[slot])
+			if !borrowed {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+					"reference return source must be a borrowed parameter", sourceSite, "")
+				valid = false
+				continue
+			}
+			if returnMutable && !sourceMutable {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
+					"mutable reference return requires mutable borrowed sources", sourceSite, "")
+				valid = false
+			}
+		}
+		if !valid {
+			return false
+		}
 	}
 	if c.rejectUnsizedType(typ, typeNode, "function return") {
 		return false
@@ -749,6 +824,22 @@ func (c *checker) checkReturnType(typeNode ast.TypeExpr, typ typeinfo.Type, fall
 		return false
 	}
 	return true
+}
+
+func (c *checker) checkFunctionTypeContracts() {
+	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
+		ast.Inspect(decl, func(node ast.Node) bool {
+			fnTypeSyntax, ok := node.(*ast.FuncType)
+			if !ok || fnTypeSyntax == nil {
+				return true
+			}
+			fnType, _ := typeinfo.TypeFromSyntax(fnTypeSyntax, opts).(*typeinfo.FuncType)
+			c.checkCallableReturn(fnTypeSyntax.Return, fnTypeSyntax, fnType, fnTypeSyntax.ReturnOrigins)
+			return true
+		})
+		return true
+	})
 }
 
 func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
@@ -784,7 +875,8 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
 		return
 	}
-	for _, method := range iface.Methods {
+	resolvedIface, _ := typeinfo.TypeFromSyntax(iface, project.TypeSyntaxOptions(c.ctx, c.module, nil, false)).(*typeinfo.InterfaceType)
+	for methodIndex, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", method.Location, "")
 			continue
@@ -821,8 +913,9 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 					"interface method parameter type is not lowerable in current compiler stage"))
 			}
 		}
-		retType := typeinfo.TypeFromSyntax(method.ReturnType, opts)
-		c.checkReturnType(method.ReturnType, retType, decl, false)
+		if resolvedIface != nil && methodIndex < len(resolvedIface.Methods) {
+			c.checkCallableReturn(method.ReturnType, decl, resolvedIface.Methods[methodIndex].CallableType(), method.ReturnOrigins)
+		}
 	}
 
 }
@@ -892,7 +985,7 @@ func (c *checker) satisfiesInterface(iface *typeinfo.InterfaceType, src typeinfo
 		return false
 	}
 	for _, required := range iface.Methods {
-		requiredType := c.instantiateInterfaceMethod(required, owner)
+		requiredType := typeinfo.ReplaceAbstractSelf(required.CallableType(), owner)
 		actualType, _, ok := c.lookupMethodType(owner, required.Name)
 		if !ok || actualType == nil {
 			return false
@@ -962,18 +1055,6 @@ func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
 		return target
 	}
 	return src
-}
-
-func (c *checker) instantiateInterfaceMethod(method typeinfo.Method, ownerType typeinfo.Type) typeinfo.Type {
-	params := make([]typeinfo.Type, 0, len(method.Params))
-	for _, param := range method.Params {
-		t := typeinfo.ReplaceAbstractSelf(param.Type, ownerType)
-		params = append(params, t)
-	}
-	return &typeinfo.FuncType{
-		Params: params,
-		Return: typeinfo.ReplaceAbstractSelf(method.Return, ownerType),
-	}
 }
 
 // typeExpr computes the type of an expression using scope lookup, records it in the
@@ -1175,8 +1256,9 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 	exprType := func(expr ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, expr, nil)
 	}
+	addressable := place.Addressable(scope, node.Expr, exprType)
 	if node.Mode == ast.AddressMutable {
-		if mutable, sharedReference := place.MutableAddressable(scope, node.Expr, exprType); !mutable {
+		if mutable, sharedReference := place.MutableAddressable(scope, node.Expr, exprType); addressable && !mutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
 			if sharedReference != nil {
@@ -1191,7 +1273,7 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 		}
 		return &typeinfo.RefType{Mutable: true, Target: valueType}
 	}
-	if !place.Addressable(scope, node.Expr, exprType) {
+	if node.Mode == ast.AddressRaw && !addressable {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 			"address operator requires addressable storage", ast.LocOf(node.Expr), "")
 		return &typeinfo.InvalidType{}
@@ -1205,6 +1287,69 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 		return &typeinfo.RefType{Target: valueType}
 	}
 	return &typeinfo.RawPtrType{}
+}
+
+func (c *checker) rejectTemporaryBorrowEscape(scope *table.Scope, expr ast.Expr, context string) bool {
+	if c.module == nil || c.module.Semantics == nil {
+		return false
+	}
+	temporary := c.temporaryBorrowSource(scope, expr)
+	if temporary == nil {
+		return false
+	}
+	diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+		fmt.Sprintf("reference to temporary cannot escape through %s", context), ast.LocOf(expr), "temporary borrow escapes here").
+		WithHelp("pass the borrow directly to a call so it ends with the full expression")
+	if temporary != expr {
+		diagnostic.WithSecondaryLabel(ast.LocOf(temporary), "temporary borrowed here")
+	}
+	return true
+}
+
+func (c *checker) temporaryBorrowSource(scope *table.Scope, expr ast.Expr) ast.Expr {
+	if c == nil || c.module == nil || c.module.Semantics == nil || expr == nil {
+		return nil
+	}
+	exprType := func(node ast.Expr) typeinfo.Type {
+		if node == nil {
+			return nil
+		}
+		return c.module.Semantics.ExprTypes[node.ID()]
+	}
+	if _, _, reference := typeinfo.ReferenceValueTarget(exprType(expr)); !reference {
+		return nil
+	}
+	switch node := expr.(type) {
+	case *ast.AddressExpr:
+		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.Addressable(scope, node.Expr, exprType) {
+			return nil
+		}
+		return node
+	case *ast.CallExpr:
+		fn, _ := typeinfo.Underlying(exprType(node.Callee)).(*typeinfo.FuncType)
+		for _, source := range typeinfo.ReturnOriginSources(node, fn) {
+			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
+				return temporary
+			}
+		}
+	case *ast.AsExpr:
+		return c.temporaryBorrowSource(scope, node.Expr)
+	case *ast.SelectorExpr:
+		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
+			return temporary
+		}
+		if !place.Addressable(scope, node.Expr, exprType) {
+			return node
+		}
+	case *ast.IndexExpr:
+		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
+			return temporary
+		}
+		if !place.Addressable(scope, node.Expr, exprType) {
+			return node
+		}
+	}
+	return nil
 }
 
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
@@ -1742,11 +1887,9 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		}
 	}
 	if !node.InferredLen {
-		if nodeLen, ok := arrayLiteralLength(node); ok {
-			if nodeLen != len(node.Values) {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
-					fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
-			}
+		if nodeLen, err := strconv.Atoi(array.Len); err == nil && nodeLen != len(node.Values) {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+				fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
 		}
 	}
 	for _, value := range node.Values {
@@ -1762,15 +1905,6 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		}
 	}
 	return arrayType
-}
-
-func arrayLiteralLength(node *ast.ArrayLit) (int, bool) {
-	array, ok := node.Type.(*ast.ArrayType)
-	if !ok || array == nil || array.Len == nil {
-		return 0, false
-	}
-	length, err := strconv.Atoi(array.Len.Value)
-	return length, err == nil
 }
 
 func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {
@@ -1839,22 +1973,16 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); ok {
 		selfType = target
 	}
-	params := make([]typeinfo.Type, 0, len(method.Params))
-	for i, param := range method.Params {
-		resolved := typeinfo.ReplaceAbstractSelf(param.Type, selfType)
-		if i == 0 {
-			if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(resolved)); !referenceReceiver {
-				if _, _, borrowedCarrier := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); !borrowedCarrier {
-					resolved = receiverType
-				}
-			}
+	fnType, _ := typeinfo.ReplaceAbstractSelf(method.CallableType(), selfType).(*typeinfo.FuncType)
+	if fnType == nil || len(fnType.Params) == 0 {
+		return fnType
+	}
+	if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0])); !referenceReceiver {
+		if _, _, borrowedCarrier := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); !borrowedCarrier {
+			fnType.Params[0] = receiverType
 		}
-		params = append(params, resolved)
 	}
-	return &typeinfo.FuncType{
-		Params: params,
-		Return: typeinfo.ReplaceAbstractSelf(method.Return, selfType),
-	}
+	return fnType
 }
 
 func (c *checker) callReturnType(call *ast.CallExpr, calleeType typeinfo.Type) typeinfo.Type {

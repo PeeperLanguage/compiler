@@ -32,6 +32,9 @@ func TestLookupIdentAndKeywordHelpers(t *testing.T) {
 	if got := LookupIdent("print"); got != PRINT {
 		t.Fatalf("LookupIdent(print) = %v", got)
 	}
+	if got := LookupIdent("from"); got != FROM {
+		t.Fatalf("LookupIdent(from) = %v", got)
+	}
 	if _, ok := KeywordDoc("custom"); ok {
 		t.Fatalf("did not expect keyword doc for non-keyword ident")
 	}

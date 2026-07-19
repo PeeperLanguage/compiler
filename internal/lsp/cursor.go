@@ -92,6 +92,11 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	if ident == nil {
 		return nil
 	}
+	if module != nil && module.Semantics != nil {
+		if sym := module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil {
+			return sym
+		}
+	}
 	parent := parents[ident.ID()]
 	if parent == nil {
 		if sym, ok := module.ModuleScope.Lookup(ident.Name); ok {

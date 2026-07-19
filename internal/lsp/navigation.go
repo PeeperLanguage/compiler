@@ -59,6 +59,9 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 	if ident == nil {
 		return nil, nil
 	}
+	if isFixedReceiverReturnOrigin(ident, cc.parents[ident.ID()]) {
+		return &WorkspaceEdit{Changes: map[DocumentURI][]TextEdit{}}, nil
+	}
 	targetSym := resolveIdentSymbol(ident, cc.parents, cc.module, cc.ctx)
 	if targetSym == nil || targetSym.Location == nil {
 		return nil, nil
@@ -86,6 +89,9 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 			if !ok || ident.Name != targetSym.Name {
 				return true
 			}
+			if isFixedReceiverReturnOrigin(ident, parents[ident.ID()]) {
+				return true
+			}
 			resolved := resolveIdentSymbol(ident, parents, mod, s.LastCtx)
 			loc := ast.LocOf(ident)
 			if resolved == nil {
@@ -110,4 +116,33 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 	}
 
 	return &WorkspaceEdit{Changes: changes}, nil
+}
+
+func isFixedReceiverReturnOrigin(ident *ast.Ident, parent ast.Node) bool {
+	if ident == nil || ident.Name != "self" || parent == nil {
+		return false
+	}
+	switch node := parent.(type) {
+	case *ast.FnDecl:
+		return node.Receiver != nil && returnOriginsContain(node.ReturnOrigins, ident)
+	case *ast.InterfaceType:
+		for _, method := range node.Methods {
+			if method.Receiver != nil && returnOriginsContain(method.ReturnOrigins, ident) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func returnOriginsContain(clause *ast.ReturnOriginClause, ident *ast.Ident) bool {
+	if clause == nil || ident == nil {
+		return false
+	}
+	for _, source := range clause.Sources {
+		if source == ident {
+			return true
+		}
+	}
+	return false
 }

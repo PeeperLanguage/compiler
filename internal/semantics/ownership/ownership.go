@@ -52,11 +52,15 @@ type builder struct {
 }
 
 type analyzer struct {
-	ctx           *project.CompilerContext
-	module        *project.Module
-	flow          *flow
-	functionScope *table.Scope
-	reportedJoin  map[graph.NodeID]bool
+	ctx              *project.CompilerContext
+	module           *project.Module
+	flow             *flow
+	function         *ast.FnDecl
+	functionScope    *table.Scope
+	reportedJoin     map[graph.NodeID]bool
+	inStates         map[graph.NodeID]state
+	referenceLiveIn  map[graph.NodeID]referenceLiveSet
+	referenceLiveOut map[graph.NodeID]referenceLiveSet
 }
 
 type pointerOrigin struct {
@@ -65,9 +69,10 @@ type pointerOrigin struct {
 }
 
 type state struct {
-	moved    map[*symbols.Symbol]ast.Node
-	live     map[*symbols.Symbol]struct{}
-	pointers map[*symbols.Symbol]pointerOrigin
+	moved      map[*symbols.Symbol]ast.Node
+	live       map[*symbols.Symbol]struct{}
+	pointers   map[*symbols.Symbol]pointerOrigin
+	references map[*symbols.Symbol]referenceValue
 }
 
 // Check runs flow-sensitive ownership checks after typechecking has populated
@@ -116,6 +121,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 		ctx:           ctx,
 		module:        module,
 		flow:          f,
+		function:      fn,
 		functionScope: scope,
 		reportedJoin:  make(map[graph.NodeID]bool),
 	}).run()
@@ -235,13 +241,25 @@ func (a *analyzer) run() {
 	if a == nil || a.flow == nil || a.flow.graph == nil || a.flow.entry == "" {
 		return
 	}
+	a.computeReferenceLiveness()
 	entryState := newState()
 	for _, sym := range a.functionScope.Symbols() {
-		if sym != nil && sym.Kind == symbols.SymbolParam && ownershipTrackedSymbol(sym) {
+		if sym == nil || sym.Kind != symbols.SymbolParam {
+			continue
+		}
+		if ownershipTrackedSymbol(sym) {
 			entryState.live[sym] = struct{}{}
 		}
+		if mutable, reference := referenceMutability(sym); reference {
+			entryState.references[sym] = referenceValue{{
+				id:      loanID{parameter: sym},
+				origins: []place.Origin{{Root: sym}},
+				mutable: mutable,
+				site:    sym.ASTNode,
+			}}
+		}
 	}
-	in := map[graph.NodeID]state{a.flow.entry: entryState}
+	a.inStates = map[graph.NodeID]state{a.flow.entry: entryState}
 	queue := []graph.NodeID{a.flow.entry}
 	queued := map[graph.NodeID]bool{a.flow.entry: true}
 	for len(queue) > 0 {
@@ -249,24 +267,24 @@ func (a *analyzer) run() {
 		queue = queue[1:]
 		queued[id] = false
 		node := a.flow.nodes[id]
-		next := copyState(in[id])
+		next := copyState(a.inStates[id])
 		if node != nil {
 			switch node.kind {
 			case nodeStmt:
 				if node.stmt != nil {
-					a.applyStmt(node.scope, node.stmt, next)
+					a.applyStmt(node, next)
 				}
 			case nodeBlockExit:
-				a.applyBlockExit(node, next)
+				a.applyBlockExit(node, next, a.newLoanContext(node, next))
 			}
 		}
 		for _, succ := range a.flow.graph.Successors(id) {
-			current, exists := in[succ]
+			current, exists := a.inStates[succ]
 			merged, changed := a.mergeState(succ, current, next, exists)
 			if !changed {
 				continue
 			}
-			in[succ] = merged
+			a.inStates[succ] = merged
 			if !queued[succ] {
 				queue = append(queue, succ)
 				queued[succ] = true
@@ -280,6 +298,9 @@ func copyState(src state) state {
 	maps.Copy(dst.moved, src.moved)
 	maps.Copy(dst.live, src.live)
 	maps.Copy(dst.pointers, src.pointers)
+	for sym, value := range src.references {
+		dst.references[sym] = copyReferenceValue(value)
+	}
 	return dst
 }
 
@@ -288,7 +309,8 @@ func (a *analyzer) mergeState(nodeID graph.NodeID, dst, src state, exists bool) 
 		return copyState(src), true
 	}
 	if a.flow.graph.InDegree(nodeID) <= 1 {
-		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) {
+		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) &&
+			sameReferenceValues(dst.references, src.references) {
 			return dst, false
 		}
 		return copyState(src), true
@@ -333,21 +355,26 @@ func (a *analyzer) mergeState(nodeID graph.NodeID, dst, src state, exists bool) 
 		dst.pointers[sym] = origin
 		changed = true
 	}
+	if mergeReferenceValues(dst.references, src.references) {
+		changed = true
+	}
 	return dst, changed
 }
 
 func newState() state {
 	return state{
-		moved:    make(map[*symbols.Symbol]ast.Node),
-		live:     make(map[*symbols.Symbol]struct{}),
-		pointers: make(map[*symbols.Symbol]pointerOrigin),
+		moved:      make(map[*symbols.Symbol]ast.Node),
+		live:       make(map[*symbols.Symbol]struct{}),
+		pointers:   make(map[*symbols.Symbol]pointerOrigin),
+		references: make(map[*symbols.Symbol]referenceValue),
 	}
 }
 
-func (a *analyzer) applyBlockExit(node *flowNode, st state) {
+func (a *analyzer) applyBlockExit(node *flowNode, st state, loans *loanContext) {
 	if a == nil || node == nil || node.block == nil || node.scope == nil {
 		return
 	}
+	a.checkScopeDestruction(node.scope, node.block, loans)
 	delete(a.module.Semantics.CleanupAfterBlock, node.block.ID())
 	cleanup := cleanupSymbols(node.scope, st)
 	if len(cleanup) > 0 {
@@ -364,6 +391,7 @@ func clearScopeOwnership(scope *table.Scope, st state) {
 		delete(st.live, sym)
 		delete(st.moved, sym)
 		delete(st.pointers, sym)
+		delete(st.references, sym)
 	}
 }
 
@@ -389,13 +417,14 @@ func cleanupSymbols(scope *table.Scope, st state) []*symbols.Symbol {
 	return cleanup
 }
 
-func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt, st state) {
+func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt, st state, loans *loanContext) {
 	if a == nil || stmt == nil {
 		return
 	}
 	delete(a.module.Semantics.CleanupBeforeReturn, stmt.ID())
 	cleanup := make([]*symbols.Symbol, 0)
 	for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+		a.checkScopeDestruction(current, stmt, loans)
 		cleanup = append(cleanup, cleanupSymbols(current, st)...)
 		clearScopeOwnership(current, st)
 	}
@@ -404,27 +433,48 @@ func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt,
 	}
 }
 
-func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
-	switch s := stmt.(type) {
+func (a *analyzer) checkScopeDestruction(scope *table.Scope, site ast.Node, loans *loanContext) {
+	if a == nil || scope == nil || loans == nil {
+		return
+	}
+	for _, sym := range scope.Symbols() {
+		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst && sym.Kind != symbols.SymbolParam) {
+			continue
+		}
+		if _, reference := referenceMutability(sym); reference {
+			continue
+		}
+		a.reportLoanConflict([]place.Origin{{Root: sym}}, nil, storageDestroy, site, loans)
+	}
+}
+
+func (a *analyzer) applyStmt(node *flowNode, st state) {
+	if a == nil || node == nil || node.scope == nil || node.stmt == nil {
+		return
+	}
+	scope := node.scope
+	loans := a.newLoanContext(node, st)
+	switch s := node.stmt.(type) {
 	case *ast.LetDecl:
-		a.checkExpr(scope, s.Value, st, useConsume)
-		a.updatePointerBinding(scope, s, s.Value, st)
-		a.markBindingLive(scope, s, st)
+		a.applyBinding(scope, s, s.Value, st, loans)
 	case *ast.ConstDecl:
-		a.checkExpr(scope, s.Value, st, useConsume)
-		a.updatePointerBinding(scope, s, s.Value, st)
-		a.markBindingLive(scope, s, st)
+		a.applyBinding(scope, s, s.Value, st, loans)
 	case *ast.AssignStmt:
+		reference, hasReference := a.referenceValueForExpr(scope, s.Value, st)
 		delete(a.module.Semantics.DropBeforeAssign, s.ID())
-		a.checkExpr(scope, s.Value, st, useConsume)
+		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
 		if _, ok := s.Target.(*ast.Ident); !ok {
-			a.checkExpr(scope, s.Target, st, useRead)
+			a.checkExpr(scope, s.Target, st, useRead, loans, true)
+			a.checkStorageAccess(scope, s.Target, st, loans, storageMutate)
 			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
 				a.module.Semantics.DropBeforeAssign[s.ID()] = struct{}{}
 			}
 		}
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
 			if sym, found := scope.Lookup(target.Name); found {
+				if _, referenceTarget := referenceMutability(sym); !referenceTarget {
+					a.checkStorageAccess(scope, target, st, loans, storageMutate)
+				}
 				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
 					if _, live := st.live[sym]; live {
 						a.module.Semantics.DropBeforeAssign[s.ID()] = struct{}{}
@@ -435,32 +485,40 @@ func (a *analyzer) applyStmt(scope *table.Scope, stmt ast.Stmt, st state) {
 					st.live[sym] = struct{}{}
 				}
 				a.updatePointerSymbol(sym, scope, s.Value, st)
+				a.updateReferenceSymbol(sym, reference, hasReference, st)
 			}
 		}
 	case *ast.ReturnStmt:
 		a.checkPointerEscape(scope, s.Value, st)
-		a.checkExpr(scope, s.Value, st, useConsume)
-		a.cleanupBeforeReturn(scope, s, st)
+		a.validateReferenceReturn(scope, s, st)
+		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
+		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
-		a.checkExpr(scope, s.Expr, st, useRead)
+		a.checkExpr(scope, s.Expr, st, useRead, loans, false)
 		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.NeedsDrop(a.exprType(s.Expr)) {
 			a.module.Semantics.DropDiscardedExpr[s.Expr.ID()] = struct{}{}
 		}
 	case *ast.IfStmt:
-		a.checkExpr(scope, s.Cond, st, useRead)
+		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 	case *ast.ForStmt:
-		a.checkExpr(scope, s.Cond, st, useRead)
+		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 	}
 }
 
-func (a *analyzer) markBindingLive(scope *table.Scope, stmt ast.Stmt, st state) {
+func (a *analyzer) applyBinding(scope *table.Scope, stmt ast.Stmt, value ast.Expr, st state, loans *loanContext) {
 	if scope == nil || stmt == nil {
 		return
 	}
+	reference, hasReference := a.referenceValueForExpr(scope, value, st)
+	a.checkExpr(scope, value, st, useConsume, loans, false)
 	sym, found := scope.LookupNode(stmt)
-	if !found || sym == nil || !ownershipTrackedSymbol(sym) {
+	if !found || sym == nil {
 		return
 	}
-	delete(st.moved, sym)
-	st.live[sym] = struct{}{}
+	a.updatePointerSymbol(sym, scope, value, st)
+	a.updateReferenceSymbol(sym, reference, hasReference, st)
+	if ownershipTrackedSymbol(sym) {
+		delete(st.moved, sym)
+		st.live[sym] = struct{}{}
+	}
 }

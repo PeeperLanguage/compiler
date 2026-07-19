@@ -49,6 +49,21 @@ const C = true && false;
 	assertBoolConst(t, module, "C", false)
 }
 
+func TestEvaluateCanonicalizesIntegerLiteralBases(t *testing.T) {
+	module, diag := constevalModule(t, `const Hex = 0x10;
+const Octal = 0o10;
+const Binary = 0b10;
+const Padded = 01;
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "Hex", "16", "")
+	assertIntConst(t, module, "Octal", "8", "")
+	assertIntConst(t, module, "Binary", "2", "")
+	assertIntConst(t, module, "Padded", "1", "")
+}
+
 func TestEvaluateBitwiseConstExpressions(t *testing.T) {
 	module, diag := constevalModule(t, `const And: u8 = 12u8 & 10u8;
 const Or: u8 = 12u8 | 10u8;

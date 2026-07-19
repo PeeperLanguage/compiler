@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    let values = [0x2]i32{0xa, 0x14};
+    let padded = 01;
+    return values[0x1] - 0x14 + padded - 1;
+}

@@ -70,6 +70,7 @@ const (
 	ErrUseAfterMove            = "T0034"
 	ErrInvalidCopy             = "T0035"
 	ErrPointerEscape           = "T0036"
+	ErrBorrowConflict          = "T0037"
 	ErrUnknownIdentifier       = "T0038"
 	ErrUninitializedVariable   = "T0039"
 
@@ -101,4 +102,5 @@ const (
 	WarnUnmodifiedMutable      = "W0013"
 	WarnNonSelfReceiverName    = "W0014"
 	WarnIgnoredTargetOS        = "W0015"
+	WarnLeadingZeroDecimal     = "W0017"
 )

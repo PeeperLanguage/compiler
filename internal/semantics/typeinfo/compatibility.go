@@ -1,5 +1,7 @@
 package typeinfo
 
+import "slices"
+
 // Compatibility indicates the type of conversion allowed between types
 type Compatibility int
 
@@ -184,6 +186,9 @@ func checkFuncCompatibility(dst, src Type) Compatibility {
 	if !SameType(left.Return, right.Return) {
 		return Incompatible
 	}
+	if !sameReturnOriginContract(left.ReturnOrigins, right.ReturnOrigins) {
+		return Incompatible
+	}
 	return Compatible
 }
 
@@ -241,8 +246,26 @@ func checkInterfaceCompatibility(dst, src Type) Compatibility {
 		if !SameType(leftMethod.Return, rightMethod.Return) {
 			return Incompatible
 		}
+		if !sameReturnOriginContract(leftMethod.ReturnOrigins, rightMethod.ReturnOrigins) {
+			return Incompatible
+		}
 	}
 	return Compatible
+}
+
+func sameReturnOriginContract(left, right *ReturnOriginContract) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	if len(left.Sources) != len(right.Sources) {
+		return false
+	}
+	for _, source := range left.Sources {
+		if !slices.Contains(right.Sources, source) {
+			return false
+		}
+	}
+	return true
 }
 
 func checkEnumCompatibility(dst, src Type) Compatibility {

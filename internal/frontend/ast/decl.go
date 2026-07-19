@@ -122,9 +122,10 @@ func (t *ArrayType) TypeText() string {
 
 type FuncType struct {
 	NodeIDHolder
-	Params   []TypeExpr
-	Return   TypeExpr
-	Location *source.Location
+	Params        []Param
+	Return        TypeExpr
+	ReturnOrigins *ReturnOriginClause
+	Location      *source.Location
 }
 
 func (*FuncType) typeNode()               {}
@@ -139,13 +140,44 @@ func (t *FuncType) TypeText() string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(TypeText(param))
+		if param.Name != nil {
+			b.WriteString(param.Name.Name)
+			b.WriteString(": ")
+		}
+		b.WriteString(TypeText(param.Type))
 	}
 	b.WriteString(")")
 	if ret := TypeText(t.Return); ret != "" {
 		b.WriteString(" -> ")
 		b.WriteString(ret)
 	}
+	b.WriteString(t.ReturnOrigins.Text())
+	return b.String()
+}
+
+type ReturnOriginClause struct {
+	Sources  []*Ident
+	Location *source.Location
+}
+
+func (c *ReturnOriginClause) Text() string {
+	if c == nil || len(c.Sources) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(" from ")
+	if len(c.Sources) == 1 {
+		b.WriteString(c.Sources[0].Name)
+		return b.String()
+	}
+	b.WriteString("(")
+	for i, source := range c.Sources {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(source.Name)
+	}
+	b.WriteString(")")
 	return b.String()
 }
 
@@ -219,6 +251,7 @@ func (t *InterfaceType) TypeText() string {
 			b.WriteString(" -> ")
 			b.WriteString(ret)
 		}
+		b.WriteString(method.ReturnOrigins.Text())
 	}
 	b.WriteString("}")
 	return b.String()
@@ -257,12 +290,13 @@ type TypeField struct {
 }
 
 type TypeMethod struct {
-	Name       *Ident
-	Receiver   *Param
-	TypeParams []TypeParam
-	Params     []Param
-	ReturnType TypeExpr
-	Location   *source.Location
+	Name          *Ident
+	Receiver      *Param
+	TypeParams    []TypeParam
+	Params        []Param
+	ReturnType    TypeExpr
+	ReturnOrigins *ReturnOriginClause
+	Location      *source.Location
 }
 
 type EnumVariant struct {
@@ -315,13 +349,14 @@ type FnDecl struct {
 	NodeIDHolder
 	Documented
 	Attributed
-	Name       *Ident
-	Receiver   *Param
-	TypeParams []TypeParam
-	Params     []Param
-	ReturnType TypeExpr
-	Body       *BlockStmt
-	Location   *source.Location
+	Name          *Ident
+	Receiver      *Param
+	TypeParams    []TypeParam
+	Params        []Param
+	ReturnType    TypeExpr
+	ReturnOrigins *ReturnOriginClause
+	Body          *BlockStmt
+	Location      *source.Location
 }
 
 func (*FnDecl) declNode()               {}

@@ -201,6 +201,13 @@ func (p *Parser) parseNumberLit(sign string) ast.Expr {
 		p.diag.Add(diagnostics.NewError(err.Error()).WithCode(diagnostics.ErrInvalidNumber).WithPrimaryLabel(loc, ""))
 		return reg(p, &ast.BadExpr{Location: loc})
 	}
+	if len(literal.Value) > 1 && literal.Value[0] == '0' && numeric.IsDecimal(literal.Value) &&
+		(literal.ExplicitType == "" || literal.ExplicitType[0] != 'f') {
+		p.diag.Add(diagnostics.NewWarning("decimal integer literal has a leading zero").
+			WithCode(diagnostics.WarnLeadingZeroDecimal).
+			WithPrimaryLabel(loc, "remove the leading zero").
+			WithHelp("use the `0o` prefix for octal values"))
+	}
 	if sign == "-" {
 		literal.Value = "-" + literal.Value
 	}

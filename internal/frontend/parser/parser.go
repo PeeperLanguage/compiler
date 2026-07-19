@@ -160,7 +160,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	if p.at(token.LPAREN) {
 		receiver = p.parseReceiver()
 	}
-	name, typeParams, params, returnType, ok := p.parseFnSignature()
+	name, typeParams, params, returnType, returnOrigins, ok := p.parseFnSignature()
 	if name != nil {
 		p.pushContext("function '" + name.Name + "'")
 		defer p.popContext()
@@ -168,24 +168,26 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	if !ok {
 		// Return partial FnDecl with whatever was parsed
 		decl := reg(p, &ast.FnDecl{
-			Name:       name,
-			Receiver:   receiver,
-			TypeParams: typeParams,
-			Params:     params,
-			ReturnType: returnType,
-			Location:   source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
+			Name:          name,
+			Receiver:      receiver,
+			TypeParams:    typeParams,
+			Params:        params,
+			ReturnType:    returnType,
+			ReturnOrigins: returnOrigins,
+			Location:      source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
 		})
 		return setDeclSurface(decl, fnDeclSurface("fn", decl))
 	}
 	body := p.parseFnBody()
 	decl := reg(p, &ast.FnDecl{
-		Name:       name,
-		Receiver:   receiver,
-		TypeParams: typeParams,
-		Params:     params,
-		ReturnType: returnType,
-		Body:       body,
-		Location:   source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
+		Name:          name,
+		Receiver:      receiver,
+		TypeParams:    typeParams,
+		Params:        params,
+		ReturnType:    returnType,
+		ReturnOrigins: returnOrigins,
+		Body:          body,
+		Location:      source.NewLocation(p.filePath, start.Start, p.lastNonNilToken(*start).End),
 	})
 	return setDeclSurface(decl, fnDeclSurface("fn", decl))
 }
@@ -206,14 +208,14 @@ func (p *Parser) parseReceiver() *ast.Param {
 // parseFnSignature parses the name, optional type parameters, parameter list,
 // and optional return type of a function. When no arrow is present the
 // function has no return value.
-func (p *Parser) parseFnSignature() (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, ok bool) {
+func (p *Parser) parseFnSignature() (name *ast.Ident, typeParams []ast.TypeParam, params []ast.Param, returnType ast.TypeExpr, returnOrigins *ast.ReturnOriginClause, ok bool) {
 	name = p.parseFunctionName()
 	if name == nil {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, nil, nil, false
 	}
 	typeParams = p.parseOptionalTypeParams()
 	if p.consume(token.LPAREN, "expected '(' after function name") == nil {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, nil, nil, false
 	}
 	lparenPos := p.stream[p.pos-1].Start
 	params = p.parseParams()
@@ -222,7 +224,37 @@ func (p *Parser) parseFnSignature() (name *ast.Ident, typeParams []ast.TypeParam
 		returnType = p.parseTypeExpr()
 		// nil is OK — type-checker validates return types
 	}
-	return name, typeParams, params, returnType, true
+	returnOrigins = p.parseReturnOriginClause()
+	return name, typeParams, params, returnType, returnOrigins, true
+}
+
+func (p *Parser) parseReturnOriginClause() *ast.ReturnOriginClause {
+	if !p.at(token.FROM) {
+		return nil
+	}
+	start := p.advance()
+	sources := make([]*ast.Ident, 0, 1)
+	end := start.End
+	if p.match(token.LPAREN) {
+		for !p.at(token.RPAREN) && !p.at(token.EOF) {
+			sourceName := p.parseIdent()
+			if sourceName == nil {
+				break
+			}
+			sources = append(sources, sourceName)
+			end = ast.EndOf(sourceName)
+			if !p.match(token.COMMA) {
+				break
+			}
+		}
+		if close := p.consume(token.RPAREN, "expected ')' after reference return origins"); close != nil {
+			end = close.End
+		}
+	} else if sourceName := p.parseIdent(); sourceName != nil {
+		sources = append(sources, sourceName)
+		end = ast.EndOf(sourceName)
+	}
+	return &ast.ReturnOriginClause{Sources: sources, Location: source.NewLocation(p.filePath, start.Start, end)}
 }
 
 func (p *Parser) parseFunctionName() *ast.Ident {
@@ -952,18 +984,23 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 		return nil
 	}
 	lparenPos := p.stream[p.pos-1].Start
-	var params []ast.TypeExpr
+	var params []ast.Param
 	if !p.at(token.RPAREN) {
 		for {
+			var name *ast.Ident
 			if p.at(token.IDENT) && p.next().Kind == token.COLON {
-				p.advance()
+				name = p.parseIdent()
 				p.advance()
 			}
 			param := p.parseTypeExpr()
 			if param == nil {
 				return nil
 			}
-			params = append(params, param)
+			startPos := ast.StartOf(param)
+			if name != nil {
+				startPos = ast.StartOf(name)
+			}
+			params = append(params, ast.Param{Name: name, Type: param, Location: source.NewLocation(p.filePath, startPos, ast.EndOf(param))})
 			if !p.match(token.COMMA) {
 				break
 			}
@@ -977,15 +1014,18 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 			return nil
 		}
 	}
+	returnOrigins := p.parseReturnOriginClause()
 	var endPos source.Position
-	if ret != nil {
+	if returnOrigins != nil && returnOrigins.Location != nil {
+		endPos = *returnOrigins.Location.End
+	} else if ret != nil {
 		endPos = ast.EndOf(ret)
 	} else if len(params) > 0 {
-		endPos = ast.EndOf(params[len(params)-1])
+		endPos = ast.EndOf(params[len(params)-1].Type)
 	} else {
 		endPos = start.End
 	}
-	return reg(p, &ast.FuncType{Params: params, Return: ret, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	return reg(p, &ast.FuncType{Params: params, Return: ret, ReturnOrigins: returnOrigins, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
 func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
@@ -1061,7 +1101,11 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 				ret = p.parseTypeExpr()
 				// nil is OK — type-checker validates return types
 			}
+			returnOrigins := p.parseReturnOriginClause()
 			endPos := ast.EndOf(ret)
+			if returnOrigins != nil && returnOrigins.Location != nil {
+				endPos = *returnOrigins.Location.End
+			}
 			if endPos.IsZero() && len(params) > 0 {
 				endPos = ast.EndOf(params[len(params)-1].Type)
 			}
@@ -1069,12 +1113,13 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 				endPos = ast.EndOf(name)
 			}
 			return ast.TypeMethod{
-				Name:       name,
-				Receiver:   receiver,
-				TypeParams: typeParams,
-				Params:     params,
-				ReturnType: ret,
-				Location:   source.NewLocation(p.filePath, ast.StartOf(name), endPos),
+				Name:          name,
+				Receiver:      receiver,
+				TypeParams:    typeParams,
+				Params:        params,
+				ReturnType:    ret,
+				ReturnOrigins: returnOrigins,
+				Location:      source.NewLocation(p.filePath, ast.StartOf(name), endPos),
 			}, true
 		})
 }
