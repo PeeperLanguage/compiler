@@ -152,7 +152,7 @@ func SaveLockfile(projectRoot string, lock *Lockfile) error {
 		return fmt.Errorf("marshal lockfile: %w", err)
 	}
 	path := filepath.Join(projectRoot, LockfileName)
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomic(path, data, 0o644)
 }
 
 // sortEntriesByKey returns a new map whose iteration order is alphabetical by key.

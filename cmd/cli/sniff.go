@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/http"
 )
 
 func SniffCommand(args []string) error {
@@ -14,7 +15,7 @@ func SniffCommand(args []string) error {
 		return nil
 	}
 
-	plans, checked, err := collectUpdatePlans(ctx.file, ctx.lockfile, &ctx.devConfig, ctx.filter)
+	plans, checked, err := collectUpdatePlans(http.DefaultClient, ctx.file, ctx.lockfile, &ctx.devConfig, ctx.filter)
 	if err != nil {
 		return err
 	}

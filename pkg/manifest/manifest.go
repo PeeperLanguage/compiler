@@ -11,6 +11,7 @@ import (
 
 	"compiler/pkg/peeper"
 	"compiler/pkg/remotes"
+	"compiler/pkg/semver"
 	"compiler/pkg/toml"
 )
 
@@ -78,7 +79,6 @@ type SourceFileProject struct {
 var (
 	identifierPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 	versionPattern    = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
-	constraintPattern = regexp.MustCompile(`^[A-Za-z0-9._+\-~^<>=*]+$`)
 )
 
 func FindManifestPath(startDir string) (string, error) {
@@ -219,9 +219,6 @@ func Load(path string) (*File, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid dependency %q: %w", alias, err)
 			}
-			if dep.Type == DependencyRemote && dep.Version != "" && !constraintPattern.MatchString(dep.Version) {
-				return nil, fmt.Errorf("invalid dependency %q version %q", alias, dep.Version)
-			}
 			manifest.Dependencies[alias] = dep
 		}
 	}
@@ -257,9 +254,6 @@ func parseDependencyString(value string) (Dependency, error) {
 	if strings.HasPrefix(value, "../") || strings.HasPrefix(value, "./") {
 		return Dependency{Type: DependencyNeighbor, Path: filepath.Clean(value)}, nil
 	}
-	if !remotes.IsRemotePath(value) {
-		return Dependency{}, fmt.Errorf("dependency must be a relative neighbor path or remote repo path")
-	}
 	dep := Dependency{Type: DependencyRemote, Path: value, Version: "latest"}
 	if idx := strings.LastIndex(value, "@"); idx >= 0 {
 		before := strings.TrimSpace(value[:idx])
@@ -269,6 +263,12 @@ func parseDependencyString(value string) (Dependency, error) {
 		}
 		dep.Path = before
 		dep.Version = after
+	}
+	if !remotes.IsRemotePath(dep.Path) {
+		return Dependency{}, fmt.Errorf("dependency must be a relative neighbor path or remote repo path")
+	}
+	if err := semver.ValidateConstraint(dep.Version); err != nil {
+		return Dependency{}, fmt.Errorf("invalid version %q: %w", dep.Version, err)
 	}
 	return dep, nil
 }
@@ -318,6 +318,9 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 		if version == "" {
 			version = "latest"
 		}
+		if err := semver.ValidateConstraint(version); err != nil {
+			return Dependency{}, fmt.Errorf("invalid version %q: %w", version, err)
+		}
 		return Dependency{Type: DependencyRemote, Path: repo, Version: version}, nil
 	default:
 		return Dependency{}, fmt.Errorf("unknown dependency type %q", typeName)
@@ -340,7 +343,7 @@ func Save(path string, file *File) error {
 	if !strings.HasSuffix(builder.String(), "\n") {
 		builder.WriteString("\n")
 	}
-	return os.WriteFile(path, []byte(builder.String()), 0o644)
+	return writeFileAtomic(path, []byte(builder.String()), 0o644)
 }
 
 func renderPackageSection(builder *strings.Builder, pkg *PackageInfo) {

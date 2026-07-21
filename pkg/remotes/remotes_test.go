@@ -25,6 +25,13 @@ func TestParse(t *testing.T) {
 			wantOK:       true,
 		},
 		{
+			name:         "gitlab subgroup",
+			path:         "gitlab.com/group/platform/repo",
+			wantProvider: ProviderGitLab,
+			wantRepoPath: "group/platform/repo",
+			wantOK:       true,
+		},
+		{
 			name:         "bitbucket",
 			path:         "bitbucket.org/team/pkg",
 			wantProvider: ProviderBitbucket,
@@ -39,6 +46,41 @@ func TestParse(t *testing.T) {
 		{
 			name:   "missing repo path",
 			path:   "github.com/",
+			wantOK: false,
+		},
+		{
+			name:   "missing owner",
+			path:   "github.com/repo",
+			wantOK: false,
+		},
+		{
+			name:   "github extra path",
+			path:   "github.com/acme/repo/subdir",
+			wantOK: false,
+		},
+		{
+			name:   "parent traversal",
+			path:   "github.com/acme/../../outside",
+			wantOK: false,
+		},
+		{
+			name:   "empty segment",
+			path:   "github.com/acme//pkg",
+			wantOK: false,
+		},
+		{
+			name:   "backslash",
+			path:   `github.com/acme\..\outside`,
+			wantOK: false,
+		},
+		{
+			name:   "query delimiter",
+			path:   "github.com/acme/pkg?ref=main",
+			wantOK: false,
+		},
+		{
+			name:   "fragment delimiter",
+			path:   "gitlab.com/acme/pkg#readme",
 			wantOK: false,
 		},
 	}

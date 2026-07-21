@@ -23,6 +23,21 @@ func Parse(path string) (provider Provider, repoPath string, ok bool) {
 	for _, provider := range supportedProviders {
 		prefix := string(provider) + "/"
 		if after, matched := strings.CutPrefix(path, prefix); matched && after != "" {
+			segments := strings.Split(after, "/")
+			if len(segments) < 2 || (provider != ProviderGitLab && len(segments) != 2) {
+				return "", "", false
+			}
+			for _, segment := range segments {
+				if segment == "" || segment == "." || segment == ".." {
+					return "", "", false
+				}
+				for _, char := range segment {
+					if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' {
+						continue
+					}
+					return "", "", false
+				}
+			}
 			return provider, after, true
 		}
 	}

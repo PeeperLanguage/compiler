@@ -128,6 +128,46 @@ func TestSaveWritesBuildType(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomicReplacesFileAndCleansFailedTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(path, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Fatalf("atomic replacement wrote %q", data)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("atomic replacement mode = %o, want 600", info.Mode().Perm())
+	}
+
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.Mkdir(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(blocked, []byte("data"), 0o644); err == nil {
+		t.Fatal("replacement of directory succeeded")
+	}
+	temps, err := filepath.Glob(filepath.Join(dir, ".blocked.tmp-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("temporary files remain: %v", temps)
+	}
+}
+
 func TestSaveWritesExplicitLatestRemoteDependency(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
@@ -218,5 +258,17 @@ func TestParseDependencyRejectsUnsupportedRemoteProvider(t *testing.T) {
 	}
 	if want := "dependency must be a relative neighbor path or remote repo path"; err.Error() != want {
 		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestParseDependencyRejectsInvalidConstraint(t *testing.T) {
+	for _, dependency := range []string{
+		"github.com/acme/json@release",
+		"github.com/acme/json@^1.2",
+		"github.com/acme/json@999999999999999999999999999999.0.0",
+	} {
+		if _, err := ParseDependency(dependency); err == nil {
+			t.Fatalf("ParseDependency(%q) accepted invalid constraint", dependency)
+		}
 	}
 }

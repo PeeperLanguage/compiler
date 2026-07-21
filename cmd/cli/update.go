@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 
 	"compiler/pkg/manifest"
@@ -22,7 +23,7 @@ func UpdateCommand(args []string) error {
 		return err
 	}
 
-	plans, checked, err := collectUpdatePlans(ctx.file, ctx.lockfile, &ctx.devConfig, ctx.filter)
+	plans, checked, err := collectUpdatePlans(http.DefaultClient, ctx.file, ctx.lockfile, &ctx.devConfig, ctx.filter)
 	if err != nil {
 		return err
 	}
@@ -33,7 +34,7 @@ func UpdateCommand(args []string) error {
 		constraints := map[string][]string{
 			plan.RepoPath: []string{">" + plan.CurrentVersion, "<=" + plan.TargetVersion},
 		}
-		if err := installPackageRecursive(cachePath, plan.RepoPath, "latest", &ctx.devConfig, ctx.lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
+		if err := installPackageRecursive(http.DefaultClient, cachePath, plan.RepoPath, "latest", &ctx.devConfig, ctx.lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
 			printError(fmt.Sprintf("Failed to update %s: %v", plan.RepoPath, err))
 			continue
 		}
@@ -44,7 +45,9 @@ func UpdateCommand(args []string) error {
 		updated++
 	}
 	if updated > 0 {
-		pruneUnusedDependencies(ctx.lockfile, cachePath)
+		if _, err := pruneUnusedDependencies(ctx.lockfile, cachePath); err != nil {
+			return err
+		}
 	}
 
 	if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
