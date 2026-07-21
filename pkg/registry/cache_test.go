@@ -63,6 +63,48 @@ func TestModuleCacheRejectsInvalidIdentity(t *testing.T) {
 	}
 }
 
+func TestModuleCacheRejectsSymlinks(t *testing.T) {
+	cache := t.TempDir()
+	repo := "github.com/acme/math"
+	version := "1.2.3"
+	modulePath, err := GetModulePath(cache, repo, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	externalModule := t.TempDir()
+	manifestText := "name = \"math\"\nbuild = \"lib\"\n"
+	if err := os.WriteFile(filepath.Join(externalModule, manifest.FileName), []byte(manifestText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalModule, modulePath); err != nil {
+		t.Skipf("module symlink unsupported: %v", err)
+	}
+	if IsModuleCached(cache, repo, version) {
+		t.Fatal("symlinked module directory reported as cached")
+	}
+	if err := os.Remove(modulePath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(modulePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	externalManifest := filepath.Join(t.TempDir(), manifest.FileName)
+	if err := os.WriteFile(externalManifest, []byte(manifestText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalManifest, filepath.Join(modulePath, manifest.FileName)); err != nil {
+		t.Skipf("manifest symlink unsupported: %v", err)
+	}
+	if IsModuleCached(cache, repo, version) {
+		t.Fatal("symlinked manifest reported as cached")
+	}
+}
+
 func TestModulePathPreservesSafeLegacyVersion(t *testing.T) {
 	cache := t.TempDir()
 	path, err := GetModulePath(cache, " github.com/acme/pkg ", " v1 ")

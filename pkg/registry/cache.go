@@ -32,11 +32,16 @@ func IsModuleCached(cachePath, repoName, version string) bool {
 }
 
 func isModuleCached(modulePath string) bool {
-	info, err := os.Stat(modulePath)
+	info, err := os.Lstat(modulePath)
 	if err != nil || !info.IsDir() {
 		return false
 	}
-	_, err = manifest.Load(filepath.Join(modulePath, manifest.FileName))
+	manifestPath := filepath.Join(modulePath, manifest.FileName)
+	info, err = os.Lstat(manifestPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	_, err = manifest.Load(manifestPath)
 	return err == nil
 }
 

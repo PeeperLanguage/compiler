@@ -138,6 +138,35 @@ func TestExtractTarGzRejectsUnsafeEntries(t *testing.T) {
 	}
 }
 
+func TestExtractTarGzRequiresOneArchiveRoot(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []archiveEntry
+	}{
+		{
+			name: "unwrapped file",
+			entries: []archiveEntry{
+				{name: "peeper.toml", typeflag: tar.TypeReg, content: "name = \"pkg\"\n"},
+			},
+		},
+		{
+			name: "mixed roots",
+			entries: []archiveEntry{
+				{name: "first/peeper.toml", typeflag: tar.TypeReg, content: "name = \"pkg\"\n"},
+				{name: "second/src/pkg.peep", typeflag: tar.TypeReg, content: "pub fn Value() int { return 1 }\n"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			archive := writeTestArchive(t, test.entries)
+			if err := extractTarGz(archive, filepath.Join(t.TempDir(), "module")); err == nil || !strings.Contains(err.Error(), "archive root") {
+				t.Fatalf("archive root error = %v", err)
+			}
+		})
+	}
+}
+
 func TestExtractTarGzEnforcesEntryLimit(t *testing.T) {
 	entries := make([]archiveEntry, maxPackageEntries+1)
 	for i := range entries {
@@ -316,6 +345,22 @@ func TestListAvailableVersionsRejectsCrossOriginPagination(t *testing.T) {
 	})}
 	if _, err := ListAvailableVersions(httpClient, "github.com/acme/pkg", nil); err == nil || !strings.Contains(err.Error(), "pagination changed origin") {
 		t.Fatalf("pagination origin error = %v", err)
+	}
+}
+
+func TestListAvailableVersionsRejectsTagWithoutName(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body := `[{"commit":{"sha":"abc"}}]`
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader(body)),
+			ContentLength: int64(len(body)),
+			Request:       request,
+		}, nil
+	})}
+	if _, err := ListAvailableVersions(httpClient, "github.com/acme/pkg", nil); err == nil || !strings.Contains(err.Error(), "tag name") {
+		t.Fatalf("missing tag name error = %v", err)
 	}
 }
 

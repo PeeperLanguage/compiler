@@ -192,13 +192,9 @@ func listMockVersions(repoName, mockBasePath string) ([]string, error) {
 	return versions, nil
 }
 
-type versionTag struct {
-	Name string `json:"name"`
-}
-
 type bitbucketTagResponse struct {
-	Values []versionTag `json:"values"`
-	Next   string       `json:"next"`
+	Values []map[string]json.RawMessage `json:"values"`
+	Next   string                       `json:"next"`
 }
 
 func getJSON(ctx context.Context, httpClient *http.Client, requestURL, statusLabel string, target any, remaining *int64) (http.Header, error) {
@@ -234,10 +230,21 @@ func getJSON(ctx context.Context, httpClient *http.Client, requestURL, statusLab
 	return response.Header, nil
 }
 
-func collectVersionNames(repoName string, tags []versionTag) ([]string, error) {
+func collectVersionNames(repoName string, tags []map[string]json.RawMessage) ([]string, error) {
 	versions := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		versions = append(versions, tag.Name)
+		rawName, ok := tag["name"]
+		if !ok {
+			return nil, fmt.Errorf("tag name missing for %s", repoName)
+		}
+		var name string
+		if err := json.Unmarshal(rawName, &name); err != nil {
+			return nil, fmt.Errorf("invalid tag name for %s: %w", repoName, err)
+		}
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("tag name missing for %s", repoName)
+		}
+		versions = append(versions, name)
 	}
 	if len(versions) == 0 {
 		return nil, fmt.Errorf("no versions found for %s", repoName)
@@ -247,9 +254,9 @@ func collectVersionNames(repoName string, tags []versionTag) ([]string, error) {
 
 func fetchGitHubVersions(ctx context.Context, httpClient *http.Client, repoName, repoPath string, remaining *int64) ([]string, error) {
 	requestURL := fmt.Sprintf("https://api.github.com/repos/%s/tags?per_page=100", repoPath)
-	var all []versionTag
+	var all []map[string]json.RawMessage
 	for range maxTagPages {
-		var tags []versionTag
+		var tags []map[string]json.RawMessage
 		header, err := getJSON(ctx, httpClient, requestURL, "github tags API", &tags, remaining)
 		if err != nil {
 			return nil, err
@@ -288,9 +295,9 @@ func githubNextPage(linkHeader string) (string, error) {
 
 func fetchGitLabVersions(ctx context.Context, httpClient *http.Client, repoName, repoPath string, remaining *int64) ([]string, error) {
 	requestURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/repository/tags?per_page=100", url.PathEscape(repoPath))
-	var all []versionTag
+	var all []map[string]json.RawMessage
 	for range maxTagPages {
-		var tags []versionTag
+		var tags []map[string]json.RawMessage
 		header, err := getJSON(ctx, httpClient, requestURL, "gitlab tags API", &tags, remaining)
 		if err != nil {
 			return nil, err
@@ -318,7 +325,7 @@ func fetchGitLabVersions(ctx context.Context, httpClient *http.Client, repoName,
 
 func fetchBitbucketVersions(ctx context.Context, httpClient *http.Client, repoName, repoPath string, remaining *int64) ([]string, error) {
 	requestURL := fmt.Sprintf("https://api.bitbucket.org/2.0/repositories/%s/refs/tags?pagelen=100", repoPath)
-	var all []versionTag
+	var all []map[string]json.RawMessage
 	for range maxTagPages {
 		var payload bitbucketTagResponse
 		if _, err := getJSON(ctx, httpClient, requestURL, "bitbucket tags API", &payload, remaining); err != nil {
@@ -416,6 +423,7 @@ func extractTarGz(archivePath, destPath string) error {
 
 	var extracted int64
 	entries := 0
+	archiveRoot := ""
 	tarReader := tar.NewReader(gzipReader)
 	for {
 		header, err := tarReader.Next()
@@ -429,11 +437,19 @@ func extractTarGz(archivePath, destPath string) error {
 		if entries > maxPackageEntries {
 			return fmt.Errorf("package archive exceeds %d entry limit", maxPackageEntries)
 		}
-		target, ok, err := archiveTarget(destPath, header.Name)
+		target, root, ok, err := archiveTarget(destPath, header.Name)
 		if err != nil {
 			return err
 		}
+		if archiveRoot == "" {
+			archiveRoot = root
+		} else if root != archiveRoot {
+			return fmt.Errorf("package archive contains multiple archive roots %q and %q", archiveRoot, root)
+		}
 		if !ok {
+			if header.Typeflag != tar.TypeDir {
+				return fmt.Errorf("archive entry %q has no archive root", header.Name)
+			}
 			continue
 		}
 		switch header.Typeflag {
@@ -473,34 +489,33 @@ func extractTarGz(archivePath, destPath string) error {
 	}
 }
 
-func archiveTarget(destPath, name string) (string, bool, error) {
+func archiveTarget(destPath, name string) (string, string, bool, error) {
 	if strings.ContainsRune(name, '\x00') || strings.ContainsRune(name, '\\') {
-		return "", false, fmt.Errorf("unsafe archive path %q", name)
+		return "", "", false, fmt.Errorf("unsafe archive path %q", name)
 	}
 	cleaned := pathpkg.Clean(name)
 	if pathpkg.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", false, fmt.Errorf("archive path escapes destination: %q", name)
+		return "", "", false, fmt.Errorf("archive path escapes destination: %q", name)
 	}
-	relative := name
-	if _, after, ok := strings.Cut(relative, "/"); ok {
-		relative = after
+	root, relative, ok := strings.Cut(cleaned, "/")
+	if root == "" || root == "." {
+		return "", "", false, fmt.Errorf("invalid archive root in path %q", name)
 	}
-	relative = pathpkg.Clean(relative)
-	if relative == "." {
-		return "", false, nil
+	if !ok || relative == "." {
+		return "", root, false, nil
 	}
 	if pathpkg.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
-		return "", false, fmt.Errorf("archive path escapes destination: %q", name)
+		return "", "", false, fmt.Errorf("archive path escapes destination: %q", name)
 	}
 	target := filepath.Join(destPath, filepath.FromSlash(relative))
 	contained, err := filepath.Rel(destPath, target)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	if contained == ".." || strings.HasPrefix(contained, ".."+string(filepath.Separator)) || filepath.IsAbs(contained) {
-		return "", false, fmt.Errorf("archive path escapes destination: %q", name)
+		return "", "", false, fmt.Errorf("archive path escapes destination: %q", name)
 	}
-	return target, true, nil
+	return target, root, true, nil
 }
 
 func copyDir(src, dst string) error {
