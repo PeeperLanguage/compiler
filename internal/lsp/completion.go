@@ -481,7 +481,7 @@ func offsetAtPosition(text string, position Position) (int, bool) {
 		return 0, false
 	}
 	lineStart := 0
-	for line := 0; line < position.Line; line++ {
+	for range position.Line {
 		newline := strings.IndexByte(text[lineStart:], '\n')
 		if newline < 0 {
 			return 0, false

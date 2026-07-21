@@ -1,6 +1,9 @@
 package ownership
 
 import (
+	"maps"
+	"slices"
+
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -25,10 +28,6 @@ type referenceLoan struct {
 	site    ast.Node
 }
 
-type referenceValue []referenceLoan
-
-type referenceLiveSet map[*symbols.Symbol]ast.Node
-
 type referenceUse struct {
 	symbol *symbols.Symbol
 	site   ast.Node
@@ -44,7 +43,7 @@ type loanContext struct {
 	persistent []activeLoan
 	temporary  []activeLoan
 	remaining  map[*symbols.Symbol]int
-	liveOut    referenceLiveSet
+	liveOut    map[*symbols.Symbol]ast.Node
 }
 
 type storageAccess uint8
@@ -109,7 +108,7 @@ func (ctx *loanContext) removeHolder(sym *symbols.Symbol) {
 	ctx.persistent = kept
 }
 
-func (ctx *loanContext) addTemporary(value referenceValue, call ast.Node) {
+func (ctx *loanContext) addTemporary(value []referenceLoan, call ast.Node) {
 	if ctx == nil {
 		return
 	}
@@ -240,25 +239,25 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	}
 }
 
-func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st state) (referenceValue, bool) {
+func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st state) ([]referenceLoan, bool) {
 	if a == nil || scope == nil || expr == nil {
-		return referenceValue{}, false
+		return []referenceLoan{}, false
 	}
 	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
 	if !ok {
-		return referenceValue{}, false
+		return []referenceLoan{}, false
 	}
 	if ident, ok := expr.(*ast.Ident); ok {
 		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
 		if value, tracked := st.references[sym]; tracked {
-			return copyReferenceValue(value), true
+			return copyReferenceLoans(value), true
 		}
 	}
 	origins := a.originsForExpr(scope, expr, st)
 	if len(origins) == 0 {
-		return referenceValue{}, false
+		return []referenceLoan{}, false
 	}
-	return referenceValue{{
+	return []referenceLoan{{
 		id:      loanID{node: expr},
 		origins: origins,
 		mutable: mutable,
@@ -273,7 +272,7 @@ func (a *analyzer) originsForExpr(scope *table.Scope, expr ast.Expr, st state) [
 	return place.Origins(scope, expr, place.OriginOptions{
 		ExprType: a.exprType,
 		ReferenceOrigins: func(sym *symbols.Symbol) []place.Origin {
-			return st.references[sym].origins()
+			return referenceOrigins(st.references[sym])
 		},
 		CallOrigins: func(call *ast.CallExpr) []place.Origin {
 			return a.callReturnOrigins(scope, call, st)
@@ -336,7 +335,7 @@ func (a *analyzer) validateReferenceReturn(scope *table.Scope, stmt *ast.ReturnS
 			allowed[sym] = struct{}{}
 		}
 	}
-	for _, origin := range value.origins() {
+	for _, origin := range referenceOrigins(value) {
 		if _, declared := allowed[origin.Root]; declared {
 			continue
 		}
@@ -353,7 +352,7 @@ func (a *analyzer) validateReferenceReturn(scope *table.Scope, stmt *ast.ReturnS
 	}
 }
 
-func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value referenceValue, hasValue bool, st state) {
+func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value []referenceLoan, hasValue bool, st state) {
 	if sym == nil {
 		return
 	}
@@ -362,7 +361,7 @@ func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value referenceVal
 		delete(st.references, sym)
 		return
 	}
-	value = copyReferenceValue(value)
+	value = copyReferenceLoans(value)
 	for i := range value {
 		value[i].mutable = mutable
 	}
@@ -378,8 +377,8 @@ func referenceMutability(sym *symbols.Symbol) (bool, bool) {
 	return mutable, reference
 }
 
-func copyReferenceValue(value referenceValue) referenceValue {
-	copyValue := make(referenceValue, len(value))
+func copyReferenceLoans(value []referenceLoan) []referenceLoan {
+	copyValue := make([]referenceLoan, len(value))
 	copy(copyValue, value)
 	for i := range copyValue {
 		copyValue[i].origins = place.CloneOrigins(copyValue[i].origins)
@@ -387,25 +386,25 @@ func copyReferenceValue(value referenceValue) referenceValue {
 	return copyValue
 }
 
-func sameReferenceValues(left, right map[*symbols.Symbol]referenceValue) bool {
+func sameReferenceValues(left, right map[*symbols.Symbol][]referenceLoan) bool {
 	if len(left) != len(right) {
 		return false
 	}
 	for sym, leftValue := range left {
 		rightValue, ok := right[sym]
-		if !ok || !sameReferenceValue(leftValue, rightValue) {
+		if !ok || !sameReferenceLoans(leftValue, rightValue) {
 			return false
 		}
 	}
 	return true
 }
 
-func mergeReferenceValues(dst, src map[*symbols.Symbol]referenceValue) bool {
+func mergeReferenceValues(dst, src map[*symbols.Symbol][]referenceLoan) bool {
 	changed := false
 	for sym, srcValue := range src {
 		dstValue, exists := dst[sym]
 		if !exists {
-			dst[sym] = copyReferenceValue(srcValue)
+			dst[sym] = copyReferenceLoans(srcValue)
 			changed = true
 			continue
 		}
@@ -428,15 +427,15 @@ func mergeReferenceValues(dst, src map[*symbols.Symbol]referenceValue) bool {
 	return changed
 }
 
-func (value referenceValue) origins() []place.Origin {
+func referenceOrigins(loans []referenceLoan) []place.Origin {
 	var origins []place.Origin
-	for _, loan := range value {
+	for _, loan := range loans {
 		origins = place.MergeOrigins(origins, loan.origins)
 	}
 	return origins
 }
 
-func sameReferenceValue(left, right referenceValue) bool {
+func sameReferenceLoans(left, right []referenceLoan) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -467,12 +466,11 @@ func (a *analyzer) computeReferenceLiveness() {
 	if a == nil || a.flow == nil || a.flow.graph == nil {
 		return
 	}
-	a.referenceLiveIn = make(map[graph.NodeID]referenceLiveSet, len(a.flow.order))
-	a.referenceLiveOut = make(map[graph.NodeID]referenceLiveSet, len(a.flow.order))
+	a.referenceLiveIn = make(map[graph.NodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
+	a.referenceLiveOut = make(map[graph.NodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
 	queue := make([]graph.NodeID, 0, len(a.flow.order))
 	queued := make(map[graph.NodeID]bool, len(a.flow.order))
-	for i := len(a.flow.order) - 1; i >= 0; i-- {
-		id := a.flow.order[i]
+	for _, id := range slices.Backward(a.flow.order) {
 		queue = append(queue, id)
 		queued[id] = true
 	}
@@ -481,18 +479,18 @@ func (a *analyzer) computeReferenceLiveness() {
 		queue = queue[1:]
 		queued[id] = false
 
-		out := make(referenceLiveSet)
+		out := make(map[*symbols.Symbol]ast.Node)
 		for _, succ := range a.flow.graph.Successors(id) {
 			mergeReferenceLiveSets(out, a.referenceLiveIn[succ])
 		}
 		uses, definitions := a.referenceUsesAndDefinitions(a.flow.nodes[id])
-		in := cloneReferenceLiveSet(out)
+		in := maps.Clone(out)
 		for sym := range definitions {
 			delete(in, sym)
 		}
 		mergeReferenceLiveSets(in, uses)
 
-		if sameReferenceLiveSet(a.referenceLiveIn[id], in) && sameReferenceLiveSet(a.referenceLiveOut[id], out) {
+		if maps.Equal(a.referenceLiveIn[id], in) && maps.Equal(a.referenceLiveOut[id], out) {
 			continue
 		}
 		a.referenceLiveIn[id] = in
@@ -506,8 +504,8 @@ func (a *analyzer) computeReferenceLiveness() {
 	}
 }
 
-func (a *analyzer) referenceUsesAndDefinitions(node *flowNode) (referenceLiveSet, map[*symbols.Symbol]struct{}) {
-	uses := make(referenceLiveSet)
+func (a *analyzer) referenceUsesAndDefinitions(node *flowNode) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
+	uses := make(map[*symbols.Symbol]ast.Node)
 	definitions := make(map[*symbols.Symbol]struct{})
 	if a == nil || node == nil || node.kind != nodeStmt || node.stmt == nil {
 		return uses, definitions
@@ -593,15 +591,7 @@ func (a *analyzer) referenceUseSequence(node *flowNode) []referenceUse {
 	return uses
 }
 
-func cloneReferenceLiveSet(src referenceLiveSet) referenceLiveSet {
-	dst := make(referenceLiveSet, len(src))
-	for sym, site := range src {
-		dst[sym] = site
-	}
-	return dst
-}
-
-func mergeReferenceLiveSets(dst, src referenceLiveSet) {
+func mergeReferenceLiveSets(dst, src map[*symbols.Symbol]ast.Node) {
 	for sym, site := range src {
 		if previous, found := dst[sym]; !found {
 			dst[sym] = site
@@ -609,18 +599,6 @@ func mergeReferenceLiveSets(dst, src referenceLiveSet) {
 			dst[sym] = earlierNode(previous, site)
 		}
 	}
-}
-
-func sameReferenceLiveSet(left, right referenceLiveSet) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for sym, site := range left {
-		if right[sym] != site {
-			return false
-		}
-	}
-	return true
 }
 
 func earlierNode(left, right ast.Node) ast.Node {

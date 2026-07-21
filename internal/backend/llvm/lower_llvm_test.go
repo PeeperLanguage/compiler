@@ -1524,7 +1524,7 @@ func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) 
 		t.Fatalf("expected narrow unsigned index widening, got:\n%s", irText)
 	}
 	gep := ""
-	for _, line := range strings.Split(irText, "\n") {
+	for line := range strings.SplitSeq(irText, "\n") {
 		if strings.Contains(line, "getelementptr i32") {
 			gep = line
 			break

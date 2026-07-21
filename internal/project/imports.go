@@ -125,8 +125,7 @@ func (ctx *CompilerContext) importRootCandidates(prefix string) []ImportCandidat
 func (ctx *CompilerContext) importCandidateRoot(prefix string) (root, sourcePrefix, relativePrefix string, ok bool) {
 	if ctx.Config.ProjectName != "" {
 		localPrefix := ctx.Config.ProjectName + "/"
-		if strings.HasPrefix(prefix, localPrefix) {
-			relative := strings.TrimPrefix(prefix, localPrefix)
+		if relative, found := strings.CutPrefix(prefix, localPrefix); found {
 			if hasHiddenImportSegment(relative) {
 				return "", "", "", false
 			}

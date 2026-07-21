@@ -114,12 +114,12 @@ func (d *llvmDebugEmitter) appendModuleMetadata(b *strings.Builder) {
 		return
 	}
 	b.WriteString("\n!llvm.dbg.cu = !{!")
-	b.WriteString(fmt.Sprintf("%d", d.compileUnitID))
+	fmt.Fprintf(b, "%d", d.compileUnitID)
 	b.WriteString("}\n")
 	b.WriteString("!llvm.module.flags = !{!")
-	b.WriteString(fmt.Sprintf("%d", d.platformFlagID))
+	fmt.Fprintf(b, "%d", d.platformFlagID)
 	b.WriteString(", !")
-	b.WriteString(fmt.Sprintf("%d", d.debugFlagID))
+	fmt.Fprintf(b, "%d", d.debugFlagID)
 	b.WriteString("}\n")
 	for _, def := range d.defs {
 		b.WriteString(def)

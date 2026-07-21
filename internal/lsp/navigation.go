@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"slices"
+
 	"compiler/internal/frontend/ast"
 	"compiler/internal/source"
 )
@@ -139,10 +141,5 @@ func returnOriginsContain(clause *ast.ReturnOriginClause, ident *ast.Ident) bool
 	if clause == nil || ident == nil {
 		return false
 	}
-	for _, source := range clause.Sources {
-		if source == ident {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(clause.Sources, ident)
 }

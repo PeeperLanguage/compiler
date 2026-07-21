@@ -1424,7 +1424,7 @@ func isLLVMFloatType(typeText string) bool {
 
 func llvmEscapeString(s string) string {
 	var sb strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		b := s[i]
 		if b == '\\' {
 			sb.WriteString(`\5C`)

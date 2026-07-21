@@ -72,7 +72,7 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 func runBenchCase(b *testing.B, name string, fixture benchFixture, prepare func(*ServerState) string) {
 	b.Run(name, func(b *testing.B) {
 		var totalParsed, totalReused, totalDowngraded, totalAdvances float64
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			state := NewServerState()
 			state.RootDir = fixture.root
 			target := prepare(state)
