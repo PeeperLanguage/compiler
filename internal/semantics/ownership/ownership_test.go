@@ -752,6 +752,10 @@ fn Both(_: &mut i32, _: i32) {}
 fn valid(mut value: i32) {
 	Both(&mut value, Read(&value));
 }`,
+		"indirect callable nested read": `fn Read(_: &i32) -> i32 { return 0; }
+fn valid(call: fn(&mut i32, i32), mut value: i32) {
+	call(&mut value, Read(&value));
+}`,
 		"final reference use before activation": `fn Read(_: &i32) -> i32 { return 0; }
 fn Both(_: &mut i32, _: i32) {}
 fn valid(mut value: i32) {

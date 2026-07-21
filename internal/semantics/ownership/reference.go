@@ -248,14 +248,14 @@ func (a *analyzer) activateCallReservations(call *ast.CallExpr, mark int, loans 
 func addLoanConflictLabels(
 	diag *diagnostics.Diagnostic,
 	conflict *loanFact,
-	reserved bool,
+	reservationConflict bool,
 	excludedKeepingAlive ast.Node,
 ) {
 	if diag == nil || conflict == nil {
 		return
 	}
 	borrowKind := "shared borrow created here"
-	if reserved {
+	if reservationConflict {
 		borrowKind = "mutable borrow reserved here"
 	} else if conflict.loan.mutable {
 		borrowKind = "mutable borrow created here"
@@ -268,7 +268,7 @@ func addLoanConflictLabels(
 		return
 	}
 	keepingMessage := "borrow remains live until this use"
-	if reserved {
+	if reservationConflict {
 		keepingMessage = "mutable borrow activates when this call starts"
 	} else if conflict.holder == nil {
 		keepingMessage = "borrow remains active until this call completes"
