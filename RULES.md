@@ -21,6 +21,10 @@ Use existing functions directly if behavior is identical.
 
 Do not add or keep a function that only forwards arguments or returns results unchanged.
 
+Do not add struct which only has one single field. There is no point of that then. For future work, explicitly add comments so its not removed by later cleanup.
+
+Do not create aliases without any valid reason.
+
 Do not keep an old local function name as a wrapper around a new canonical function.
 
 Do not keep an old function signature while ignoring one or more parameters.
