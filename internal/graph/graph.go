@@ -1,6 +1,9 @@
 package graph
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 type NodeID string
 
@@ -275,7 +278,7 @@ func degree(edgesByKind map[EdgeKind]map[NodeID]struct{}, allowed map[EdgeKind]s
 }
 
 func extractCycle(stack []NodeID, target NodeID) []NodeID {
-	for i := len(stack) - 1; i >= 0; i-- {
+	for i := range slices.Backward(stack) {
 		if stack[i] == target {
 			cycle := append([]NodeID{}, stack[i:]...)
 			cycle = append(cycle, target)

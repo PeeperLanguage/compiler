@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -82,13 +83,13 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
 		fields := structFieldTypeTexts(typeText)
 		structType := b.emitter.llvmType(typeText)
-		for index := len(fields) - 1; index >= 0; index-- {
-			if !typeTextNeedsDrop(fields[index]) {
+		for index, fieldType := range slices.Backward(fields) {
+			if !typeTextNeedsDrop(fieldType) {
 				continue
 			}
 			field := b.nextReg()
 			b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", field, structType, value, index))
-			emitDropValue(b, field, fields[index])
+			emitDropValue(b, field, fieldType)
 		}
 	}
 }
@@ -212,12 +213,7 @@ func typeTextNeedsDrop(typeText string) bool {
 	if _, elem, ok := ir.ArrayTypeParts(typeText); ok {
 		return typeTextNeedsDrop(elem)
 	}
-	for _, field := range structFieldTypeTexts(typeText) {
-		if typeTextNeedsDrop(field) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeTextNeedsDrop)
 }
 
 func structFieldTypeTexts(typeText string) []string {

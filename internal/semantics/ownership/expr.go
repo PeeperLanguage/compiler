@@ -278,7 +278,7 @@ func (a *analyzer) checkCallArgument(
 	if len(origins) == 0 {
 		return
 	}
-	loans.addTemporary(referenceValue{{
+	loans.addTemporary([]referenceLoan{{
 		id:      loanID{node: arg},
 		origins: origins,
 		mutable: mutable,

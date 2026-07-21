@@ -182,7 +182,7 @@ func originOverlap(left, right Origin) bool {
 		return false
 	}
 	limit := min(len(left.Projections), len(right.Projections))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		leftProjection := left.Projections[i]
 		rightProjection := right.Projections[i]
 		if leftProjection == rightProjection {

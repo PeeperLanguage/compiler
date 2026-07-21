@@ -278,7 +278,7 @@ func fetchGitHubVersions(ctx context.Context, httpClient *http.Client, repoName,
 }
 
 func githubNextPage(linkHeader string) (string, error) {
-	for _, part := range strings.Split(linkHeader, ",") {
+	for part := range strings.SplitSeq(linkHeader, ",") {
 		part = strings.TrimSpace(part)
 		if !strings.Contains(part, `rel="next"`) {
 			continue

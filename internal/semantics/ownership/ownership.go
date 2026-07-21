@@ -3,6 +3,7 @@ package ownership
 import (
 	"fmt"
 	"maps"
+	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -59,8 +60,8 @@ type analyzer struct {
 	functionScope    *table.Scope
 	reportedJoin     map[graph.NodeID]bool
 	inStates         map[graph.NodeID]state
-	referenceLiveIn  map[graph.NodeID]referenceLiveSet
-	referenceLiveOut map[graph.NodeID]referenceLiveSet
+	referenceLiveIn  map[graph.NodeID]map[*symbols.Symbol]ast.Node
+	referenceLiveOut map[graph.NodeID]map[*symbols.Symbol]ast.Node
 }
 
 type pointerOrigin struct {
@@ -72,7 +73,7 @@ type state struct {
 	moved      map[*symbols.Symbol]ast.Node
 	live       map[*symbols.Symbol]struct{}
 	pointers   map[*symbols.Symbol]pointerOrigin
-	references map[*symbols.Symbol]referenceValue
+	references map[*symbols.Symbol][]referenceLoan
 }
 
 // Check runs flow-sensitive ownership checks after typechecking has populated
@@ -251,7 +252,7 @@ func (a *analyzer) run() {
 			entryState.live[sym] = struct{}{}
 		}
 		if mutable, reference := referenceMutability(sym); reference {
-			entryState.references[sym] = referenceValue{{
+			entryState.references[sym] = []referenceLoan{{
 				id:      loanID{parameter: sym},
 				origins: []place.Origin{{Root: sym}},
 				mutable: mutable,
@@ -299,7 +300,7 @@ func copyState(src state) state {
 	maps.Copy(dst.live, src.live)
 	maps.Copy(dst.pointers, src.pointers)
 	for sym, value := range src.references {
-		dst.references[sym] = copyReferenceValue(value)
+		dst.references[sym] = copyReferenceLoans(value)
 	}
 	return dst
 }
@@ -366,7 +367,7 @@ func newState() state {
 		moved:      make(map[*symbols.Symbol]ast.Node),
 		live:       make(map[*symbols.Symbol]struct{}),
 		pointers:   make(map[*symbols.Symbol]pointerOrigin),
-		references: make(map[*symbols.Symbol]referenceValue),
+		references: make(map[*symbols.Symbol][]referenceLoan),
 	}
 }
 
@@ -401,8 +402,7 @@ func cleanupSymbols(scope *table.Scope, st state) []*symbols.Symbol {
 	}
 	symbolsInScope := scope.Symbols()
 	cleanup := make([]*symbols.Symbol, 0)
-	for i := len(symbolsInScope) - 1; i >= 0; i-- {
-		sym := symbolsInScope[i]
+	for _, sym := range slices.Backward(symbolsInScope) {
 		if sym == nil {
 			continue
 		}
