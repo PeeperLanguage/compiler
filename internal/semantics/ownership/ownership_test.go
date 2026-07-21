@@ -747,6 +747,54 @@ fn valid(reference: &mut i32) {
 	Write(reference);
 	Write(reference);
 }`,
+		"nested read before activation": `fn Read(_: &i32) -> i32 { return 0; }
+fn Both(_: &mut i32, _: i32) {}
+fn valid(mut value: i32) {
+	Both(&mut value, Read(&value));
+}`,
+		"indirect callable nested read": `fn Read(_: &i32) -> i32 { return 0; }
+fn valid(call: fn(&mut i32, i32), mut value: i32) {
+	call(&mut value, Read(&value));
+}`,
+		"final reference use before activation": `fn Read(_: &i32) -> i32 { return 0; }
+fn Both(_: &mut i32, _: i32) {}
+fn valid(mut value: i32) {
+	let reference = &value;
+	Both(&mut value, Read(reference));
+}`,
+		"final reference use in borrow index": `fn Index(_: &mut [2]i32) -> usize { return 0; }
+fn Write(_: &mut i32) {}
+fn valid() {
+	let mut values = [_]i32{1, 2};
+	let reference = &mut values;
+	Write(&mut values[Index(reference)]);
+}`,
+		"mutable reference reborrow before activation": `fn Read(_: &i32) -> i32 { return 0; }
+fn Both(_: &mut i32, _: i32) {}
+fn valid(reference: &mut i32) {
+	Both(reference, Read(reference));
+}`,
+		"optional mutable nested read": `fn Read(_: &i32) -> i32 { return 0; }
+fn Both(_: ?&mut i32, _: i32) {}
+fn valid(mut value: i32) {
+	Both(&mut value, Read(&value));
+	Both(none, Read(&value));
+}`,
+		"mutable receiver nested read": `struct Counter { value: i32 }
+fn (self: &Counter) Current() -> i32 { return self.value; }
+fn (self: &mut Counter) Add(_: i32) {}
+fn valid(mut value: Counter) {
+	value.Add(value.Current());
+}`,
+		"disjoint call reservations": `struct Pair { left: i32, right: i32 }
+fn Both(_: &mut i32, _: &mut i32) {}
+fn valid(mut pair: Pair) {
+	Both(&mut pair.left, &mut pair.right);
+}`,
+		"disjoint fixed index reservations": `fn Both(_: &mut i32, _: &mut i32) {}
+fn valid(mut values: [2]i32) {
+	Both(&mut values[0], &mut values[1]);
+}`,
 		"raw address outside safe loans": `fn Keep(_: rawptr) {}
 fn Read(_: &mut i32) {}
 fn valid(mut value: i32) {
@@ -779,7 +827,7 @@ fn bad(mut value: i32) {
 	value = 2;
 	Read(reference);
 }`,
-		"one phase call arguments": `fn Both(_: &mut i32, _: &i32) {}
+		"same call aliases": `fn Both(_: &mut i32, _: &i32) {}
 fn bad(mut value: i32) {
 	Both(&mut value, &value);
 }`,
@@ -791,10 +839,32 @@ fn bad(mut value: i32) {
 fn bad(mut value: i32) {
 	Both(&value, &mut value);
 }`,
-		"nested call argument": `fn Read(_: &i32) -> i32 { return 0; }
+		"nested mutable activation": `fn Write(_: &mut i32) -> i32 { return 0; }
 fn Both(_: &mut i32, _: i32) {}
 fn bad(mut value: i32) {
-	Both(&mut value, Read(&value));
+	Both(&mut value, Write(&mut value));
+}`,
+		"overlapping reservations": `fn Both(_: &mut i32, _: &mut i32) {}
+fn bad(mut value: i32) {
+	Both(&mut value, &mut value);
+}`,
+		"dynamic index reservations": `fn Both(_: &mut i32, _: &mut i32) {}
+fn bad(mut values: [2]i32, left: usize, right: usize) {
+	Both(&mut values[left], &mut values[right]);
+}`,
+		"consume during reservation": `struct Box { value: i32 }
+fn Consume(_: Box) -> i32 { return 0; }
+fn Both(_: &mut Box, _: i32) {}
+fn bad(mut owner: Box) {
+	Both(&mut owner, Consume(owner));
+}`,
+		"shared loan live after activation": `fn Read(_: &i32) -> i32 { return 0; }
+fn Keep(_: &i32) {}
+fn Both(_: &mut i32, _: i32) {}
+fn bad(mut value: i32) {
+	let reference = &value;
+	Both(&mut value, Read(reference));
+	Keep(reference);
 }`,
 		"mutable method receiver": `struct Counter { value: i32 }
 fn (self: &mut Counter) Mix(_: &Counter) {}
@@ -867,11 +937,11 @@ fn bad(mut value: i32) {
 			continue
 		}
 		if len(item.Labels) != 3 {
-			t.Fatalf("borrow diagnostic labels = %d, want conflict, creation, and lifetime", len(item.Labels))
+			t.Fatalf("borrow diagnostic labels = %d, want activation, reservation, and conflict", len(item.Labels))
 		}
-		if !strings.Contains(item.Labels[0].Message, "conflicting access") ||
-			!strings.Contains(item.Labels[1].Message, "borrow created here") ||
-			!strings.Contains(item.Labels[2].Message, "call completes") {
+		if !strings.Contains(item.Labels[0].Message, "activates here") ||
+			!strings.Contains(item.Labels[1].Message, "reserved here") ||
+			!strings.Contains(item.Labels[2].Message, "borrow created here") {
 			t.Fatalf("unexpected borrow diagnostic labels: %#v", item.Labels)
 		}
 		return

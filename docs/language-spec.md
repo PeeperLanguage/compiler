@@ -192,6 +192,29 @@ foo(&mut x, &x)      // error
 foo(&mut x, &mut x)  // error
 ```
 
+Mutable call borrows use reservation and activation. Receiver and arguments
+still evaluate left-to-right. A mutable reference argument reserves its storage
+when evaluated, but becomes exclusive only when the call starts. Reads and
+shared borrows may occur while reserved when they finish before activation:
+
+```peep
+update(&mut x, read(&x)) // valid when read returns an owned or copied value
+items.push(items.len())  // mutable receiver activates after len returns
+```
+
+Mutation, move, free, destruction, and another mutable call activation remain
+invalid while storage is reserved. Shared references passed into the same call
+remain live at activation and therefore still conflict:
+
+```peep
+both(&mut x, &x)             // error: shared loan enters both
+outer(&mut x, write(&mut x)) // error: nested mutable activation
+```
+
+This rule applies to explicit `&mut`, implicit mutable reborrows, mutable method
+receivers, and optional mutable-reference parameters. It changes only static
+loan checking; runtime reference representation and call ABI do not change.
+
 For aggregate paths, the compiler may be conservative:
 
 ```peep
