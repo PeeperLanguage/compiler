@@ -1,0 +1,12 @@
+fn add(base: i32, step: i32 = base + 1, total: i32) -> i32 {
+    return base + step + total;
+}
+
+fn normal(base: i32, step: i32 = base + 1) -> i32 {
+    return base + step;
+}
+
+fn main() -> i32 {
+    let callback = normal;
+    return callback(4);
+}

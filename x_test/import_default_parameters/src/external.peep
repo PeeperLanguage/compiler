@@ -1,0 +1,9 @@
+import "import_default_parameters/helpers";
+
+const value: i32 = 7;
+
+fn Add(base: i32, step: i32 = base + helpers::Value()) -> i32 {
+    return base + step;
+}
+
+fn TakePointer(pointer: rawptr = @value) {}

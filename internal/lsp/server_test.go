@@ -727,6 +727,22 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 	}
 }
 
+func TestHoverShowsDefaultParameterExpression(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn Add(base: i32, step: i32 = base + 1) -> i32 { return base + step; }\n\nfn main() -> i32 { return __CURSOR__Add(4); }\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(func) fn Add(base: i32, step: i32 = (base + 1)) -> i32") {
+		t.Fatalf("expected default expression in hover contents: %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverShowsReferenceReturnContract(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)

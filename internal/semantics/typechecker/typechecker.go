@@ -58,6 +58,16 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 	return &typeinfo.InvalidType{}
 }
 
+func (c *checker) expandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || ident == nil {
+		return place.Binding{}, false
+	}
+	if _, ok := c.module.Semantics.ExpandedDefaultBindings[ident.ID()]; !ok {
+		return place.Binding{}, false
+	}
+	return place.Binding{Symbol: c.module.Semantics.ResolvedSymbols[ident.ID()]}, true
+}
+
 func (c *checker) isLowerableType(t typeinfo.Type) bool {
 	// Semantic indirection may permit recursion, but LLVM type text cannot yet
 	// name recursive runtime shells. Re-entering an active type must reject here.
@@ -352,11 +362,84 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		}
 		paramSym.BindType(typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false)))
 	}
+	c.checkDefaultParameters(funcScope, fn)
 	if fn.Body == nil {
 		return
 	}
 	returnType := typeinfo.TypeFromSyntax(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 	c.checkBlock(funcScope, fn.Body, returnType)
+}
+
+func (c *checker) checkDefaultParameters(scope *table.Scope, fn *ast.FnDecl) {
+	if c == nil || scope == nil || fn == nil {
+		return
+	}
+	params := fn.ParamsWithReceiver()
+	seenDefault := false
+	for i, param := range params {
+		if param.Default == nil {
+			if seenDefault {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidDeclaration,
+					"required parameter cannot follow parameter with default", ast.LocOf(param.Name), "")
+			}
+			continue
+		}
+		seenDefault = true
+		if i == 0 && fn.Receiver != nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidDeclaration,
+				"receiver cannot have a default value", ast.LocOf(param.Default), "")
+		}
+		paramType := typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		if paramType == nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+				"defaulted parameter requires an explicit type", ast.LocOf(param.Name), "")
+			continue
+		}
+		defaultType := c.typeExpr(scope, param.Default, paramType)
+		defaultType = c.requireValueType(param.Default, defaultType, "default value")
+		if !typeinfo.IsInvalidOrUnknown(defaultType) && !c.assignable(paramType, defaultType) {
+			c.ctx.Diagnostics.Add(typeMismatchError(param.Default,
+				fmt.Sprintf("cannot implicitly convert %s to %s", typeinfo.TypeText(defaultType), typeinfo.TypeText(paramType))))
+		}
+		c.rejectOwnedParameterReferences(scope, fn, i, param.Default)
+	}
+}
+
+func (c *checker) rejectOwnedParameterReferences(scope *table.Scope, fn *ast.FnDecl, current int, expr ast.Expr) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || fn == nil || expr == nil {
+		return
+	}
+	params := fn.ParamsWithReceiver()
+	paramIndexes := make(map[*symbols.Symbol]int, len(params))
+	for i, param := range params {
+		if param.Name == nil {
+			continue
+		}
+		if sym, ok := scope.Lookup(param.Name.Name); ok && sym != nil {
+			paramIndexes[sym] = i
+		}
+	}
+	ast.Inspect(expr, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if !ok || ident == nil {
+			return true
+		}
+		sym := c.module.Semantics.ResolvedSymbols[ident.ID()]
+		index, isParam := paramIndexes[sym]
+		if !isParam || index >= current || index < 0 || index >= len(params) {
+			return true
+		}
+		paramType := typeinfo.TypeFromSyntax(params[index].Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		if typeinfo.IsImplicitCopyType(paramType) {
+			return true
+		}
+		if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference {
+			return true
+		}
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"default value cannot reuse move-only parameter; bind or pass an owned value explicitly", ast.LocOf(ident), "")
+		return true
+	})
 }
 
 func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -1092,7 +1175,15 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return c.typeAddressExpr(scope, node, expected)
 
 	case *ast.Ident:
-		sym, ok := scope.Lookup(node.Name)
+		var sym *symbols.Symbol
+		var ok bool
+		if c.module != nil && c.module.Semantics != nil {
+			sym = c.module.Semantics.ResolvedSymbols[node.ID()]
+			ok = sym != nil
+		}
+		if !ok {
+			sym, ok = scope.Lookup(node.Name)
+		}
 		if !ok || sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name), ast.LocOf(node), "")
@@ -1256,9 +1347,9 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 	exprType := func(expr ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, expr, nil)
 	}
-	addressable := place.Addressable(scope, node.Expr, exprType)
+	addressable := place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		if mutable, sharedReference := place.MutableAddressable(scope, node.Expr, exprType); addressable && !mutable {
+		if mutable, sharedReference := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding); addressable && !mutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
 			if sharedReference != nil {
@@ -1321,7 +1412,7 @@ func (c *checker) temporaryBorrowSource(scope *table.Scope, expr ast.Expr) ast.E
 	}
 	switch node := expr.(type) {
 	case *ast.AddressExpr:
-		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.Addressable(scope, node.Expr, exprType) {
+		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			return nil
 		}
 		return node
@@ -1338,14 +1429,14 @@ func (c *checker) temporaryBorrowSource(scope *table.Scope, expr ast.Expr) ast.E
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.Addressable(scope, node.Expr, exprType) {
+		if !place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			return node
 		}
 	case *ast.IndexExpr:
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.Addressable(scope, node.Expr, exprType) {
+		if !place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			return node
 		}
 	}
@@ -1499,6 +1590,9 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 		}
 	}
 	calleeType := c.typeExpr(scope, node.Callee, expected)
+	if sym := c.callableSymbol(node.Callee); sym != nil {
+		c.expandCallDefaults(node, sym, c.callableModule(node.Callee))
+	}
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
 	fnType, _ := calleeType.(*typeinfo.FuncType)
 	for i, arg := range node.Args {
@@ -1655,7 +1749,7 @@ func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, ra
 		return c.typeExpr(scope, expr, nil)
 	}
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		if !place.Addressable(scope, node.Expr, exprType) {
+		if !place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 				"slicing requires addressable array storage"))
 			return &typeinfo.InvalidType{}
@@ -1663,7 +1757,7 @@ func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, ra
 	}
 	mutable := shape == indexableMutableSliceView
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		mutable, _ = place.MutableAddressable(scope, node.Expr, exprType)
+		mutable, _ = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	}
 	return &typeinfo.RefType{
 		Mutable: mutable,
@@ -1728,8 +1822,11 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	methodType, _, ok := c.lookupMethodType(baseType, selector.Name.Name)
+	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
 	if ok {
+		if methodSym != nil {
+			c.expandCallDefaults(call, methodSym, c.module)
+		}
 		if c.module != nil && c.module.Semantics != nil {
 			c.module.Semantics.ExprTypes[selector.ID()] = methodType
 		}
@@ -1763,6 +1860,131 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	}
 	c.ctx.Diagnostics.Add(d)
 	return &typeinfo.InvalidType{}
+}
+
+func (c *checker) callableSymbol(callee ast.Expr) *symbols.Symbol {
+	if c == nil || c.module == nil || callee == nil {
+		return nil
+	}
+	switch node := callee.(type) {
+	case *ast.Ident:
+		if c.module.Semantics != nil {
+			return c.module.Semantics.ResolvedSymbols[node.ID()]
+		}
+	case *ast.ScopeResolution:
+		if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name); ok {
+			return resolved.Symbol
+		}
+	}
+	return nil
+}
+
+func (c *checker) callableModule(callee ast.Expr) *project.Module {
+	if c == nil || c.module == nil {
+		return nil
+	}
+	if node, ok := callee.(*ast.ScopeResolution); ok && node != nil {
+		if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name); ok && resolved.Module != nil {
+			return resolved.Module
+		}
+	}
+	return c.module
+}
+
+func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, declModule *project.Module) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || call == nil || sym == nil {
+		return
+	}
+	fn, ok := sym.ASTNode.(*ast.FnDecl)
+	if !ok || fn == nil {
+		return
+	}
+	params := fn.ParamsWithReceiver()
+	offset := 0
+	var receiver ast.Expr
+	if selector, ok := call.Callee.(*ast.SelectorExpr); ok && selector != nil {
+		offset = 1
+		receiver = selector.Expr
+	}
+	firstDefault := -1
+	for i, param := range params {
+		if param.Default != nil {
+			firstDefault = i
+			break
+		}
+	}
+	provided := len(call.Args) + offset
+	if firstDefault < 0 || provided < firstDefault || provided >= len(params) {
+		return
+	}
+	substitutions := make(map[string]ast.Expr, len(params))
+	slotExprs := make([]ast.Expr, len(params))
+	if receiver != nil && len(slotExprs) > 0 {
+		slotExprs[0] = receiver
+	}
+	for i, arg := range call.Args {
+		slot := i + offset
+		if slot >= len(slotExprs) {
+			break
+		}
+		slotExprs[slot] = arg
+	}
+	for i := 0; i < provided; i++ {
+		if params[i].Name == nil || slotExprs[i] == nil {
+			continue
+		}
+		substitutions[params[i].Name.Name] = slotExprs[i]
+	}
+	for i := provided; i < len(params); i++ {
+		if params[i].Default == nil {
+			return
+		}
+		ast.Inspect(params[i].Default, func(node ast.Node) bool {
+			ident, ok := node.(*ast.Ident)
+			if !ok || ident == nil {
+				return true
+			}
+			if replacement := substitutions[ident.Name]; replacement != nil && containsEffectfulExpression(replacement) {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+					"default value reuses an effectful argument; bind it before the call", ast.LocOf(ident), "")
+			}
+			return true
+		})
+		expanded, clonedIDs := ast.SubstituteExpr(params[i].Default, substitutions)
+		if declModule != nil && declModule.Semantics != nil {
+			for originalID, clonedID := range clonedIDs {
+				if resolved := declModule.Semantics.ResolvedSymbols[originalID]; resolved != nil {
+					c.module.Semantics.ResolvedSymbols[clonedID] = resolved
+					c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
+				}
+				if typ := declModule.Semantics.ExprTypes[originalID]; typ != nil {
+					c.module.Semantics.ExprTypes[clonedID] = typ
+				}
+			}
+		}
+		call.Args = append(call.Args, expanded)
+		slotExprs[i] = expanded
+		if params[i].Name != nil {
+			substitutions[params[i].Name.Name] = expanded
+		}
+	}
+}
+
+func containsEffectfulExpression(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	effectful := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		switch node.(type) {
+		case *ast.CallExpr, *ast.FreeExpr, *ast.PrintExpr:
+			effectful = true
+			return false
+		default:
+			return true
+		}
+	})
+	return effectful
 }
 
 func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expected typeinfo.Type) typeinfo.Type {
@@ -2171,7 +2393,7 @@ func (c *checker) mutableAddressableExpr(scope *table.Scope, expr ast.Expr) (boo
 	}
 	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
-	})
+	}, c.expandedDefaultBinding)
 }
 
 func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {
@@ -2236,7 +2458,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 			if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType)); ok && c.matchesReceiverTarget(refTarget, argType) {
 				addressable := place.Addressable(scope, receiverExpr, func(e ast.Expr) typeinfo.Type {
 					return c.typeExpr(scope, e, nil)
-				})
+				}, c.expandedDefaultBinding)
 				if mutable {
 					addressable, _ = c.mutableAddressableExpr(scope, receiverExpr)
 				}
@@ -2279,11 +2501,18 @@ func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 	if c == nil || node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name)
-	if !ok || resolved.Symbol == nil {
-		return &typeinfo.InvalidType{}
+	var sym *symbols.Symbol
+	if c.module != nil && c.module.Semantics != nil {
+		sym = c.module.Semantics.ResolvedSymbols[node.ID()]
 	}
-	t, ok := symbols.GetSymbolType(resolved.Symbol)
+	if sym == nil {
+		resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name)
+		if !ok || resolved.Symbol == nil {
+			return &typeinfo.InvalidType{}
+		}
+		sym = resolved.Symbol
+	}
+	t, ok := symbols.GetSymbolType(sym)
 	if !ok || t == nil {
 		return &typeinfo.UnknownType{}
 	}

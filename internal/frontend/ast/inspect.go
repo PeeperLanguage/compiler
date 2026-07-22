@@ -22,6 +22,7 @@ func Inspect(node Node, f func(Node) bool) {
 		if n.Receiver != nil {
 			Inspect(n.Receiver.Name, f)
 			Inspect(n.Receiver.Type, f)
+			Inspect(n.Receiver.Default, f)
 		}
 		for _, tp := range n.TypeParams {
 			Inspect(tp.Name, f)
@@ -29,6 +30,7 @@ func Inspect(node Node, f func(Node) bool) {
 		for _, p := range n.Params {
 			Inspect(p.Name, f)
 			Inspect(p.Type, f)
+			Inspect(p.Default, f)
 		}
 		Inspect(n.ReturnType, f)
 		if n.ReturnOrigins != nil {
@@ -144,6 +146,7 @@ func Inspect(node Node, f func(Node) bool) {
 		for _, p := range n.Params {
 			Inspect(p.Name, f)
 			Inspect(p.Type, f)
+			Inspect(p.Default, f)
 		}
 		Inspect(n.Return, f)
 		if n.ReturnOrigins != nil {
@@ -162,6 +165,7 @@ func Inspect(node Node, f func(Node) bool) {
 			if method.Receiver != nil {
 				Inspect(method.Receiver.Name, f)
 				Inspect(method.Receiver.Type, f)
+				Inspect(method.Receiver.Default, f)
 			}
 			for _, tp := range method.TypeParams {
 				Inspect(tp.Name, f)
@@ -169,6 +173,7 @@ func Inspect(node Node, f func(Node) bool) {
 			for _, p := range method.Params {
 				Inspect(p.Name, f)
 				Inspect(p.Type, f)
+				Inspect(p.Default, f)
 			}
 			Inspect(method.ReturnType, f)
 			if method.ReturnOrigins != nil {

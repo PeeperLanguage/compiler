@@ -350,7 +350,7 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	exprType := func(node ast.Expr) typeinfo.Type {
 		return exprResolvedType(module, node)
 	}
-	if !place.Addressable(scope, expr, exprType) {
+	if !place.Addressable(scope, expr, exprType, expandedDefaultBindingResolver(module)) {
 		return &ir.TempBorrow{
 			Value:    lowerASTExpr(ctx, module, scope, expr, target),
 			Slice:    isDynamicArray && array != nil && array.Dynamic,
@@ -447,7 +447,15 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.InvalidExpr{Message: "`none` requires optional context", Type: "<invalid>", Location: loc}
 
 	case *ast.Ident:
-		sym, ok := scope.Lookup(node.Name)
+		var sym *symbols.Symbol
+		var ok bool
+		if module != nil && module.Semantics != nil {
+			sym = module.Semantics.ResolvedSymbols[node.ID()]
+			ok = sym != nil
+		}
+		if !ok {
+			sym, ok = scope.Lookup(node.Name)
+		}
 		if !ok || sym == nil {
 			return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: "<invalid>", Location: loc}
 		}
@@ -462,8 +470,16 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.Ident{Name: symbolName(sym), Type: t, Location: loc}
 
 	case *ast.ScopeResolution:
-		if resolved, ok := project.LookupImportedSymbol(ctx, module, node.Module.Name, node.Name.Name); ok && resolved.Symbol != nil {
-			sym := resolved.Symbol
+		var sym *symbols.Symbol
+		if module != nil && module.Semantics != nil {
+			sym = module.Semantics.ResolvedSymbols[node.ID()]
+		}
+		if sym == nil {
+			if resolved, ok := project.LookupImportedSymbol(ctx, module, node.Module.Name, node.Name.Name); ok {
+				sym = resolved.Symbol
+			}
+		}
+		if sym != nil {
 			t := resolvedTypeStr
 			if t == "" || t == "<invalid>" || t == "<unknown>" {
 				if symType, ok := symbols.GetSymbolType(sym); ok {
@@ -715,14 +731,15 @@ func receiverAddressKindFor(module *project.Module, scope *table.Scope, fnType *
 	if !ok || !typeinfo.SameType(refTarget, baseType) {
 		return receiverAddressNone
 	}
+	resolveBinding := expandedDefaultBindingResolver(module)
 	if mutable {
-		addressable, _ := place.MutableAddressable(scope, receiver, exprType)
+		addressable, _ := place.MutableAddressable(scope, receiver, exprType, resolveBinding)
 		if addressable {
 			return receiverAddressReference
 		}
 		return receiverAddressNone
 	}
-	if place.Addressable(scope, receiver, exprType) {
+	if place.Addressable(scope, receiver, exprType, resolveBinding) {
 		return receiverAddressReference
 	}
 	return receiverAddressNone
@@ -745,7 +762,7 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		exprType := func(expr ast.Expr) typeinfo.Type {
 			return exprResolvedType(module, expr)
 		}
-		if throughPtr || place.Addressable(scope, selector.Expr, exprType) {
+		if throughPtr || place.Addressable(scope, selector.Expr, exprType, expandedDefaultBindingResolver(module)) {
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), DropRoot: dropBase, Location: ast.LocOf(selector)}
 		}
 		return &ir.Field{
@@ -1081,6 +1098,18 @@ func symbolName(sym *symbols.Symbol) string {
 		return name
 	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
+}
+
+func expandedDefaultBindingResolver(module *project.Module) place.BindingResolver {
+	return func(ident *ast.Ident) (place.Binding, bool) {
+		if module == nil || module.Semantics == nil || ident == nil {
+			return place.Binding{}, false
+		}
+		if _, ok := module.Semantics.ExpandedDefaultBindings[ident.ID()]; !ok {
+			return place.Binding{}, false
+		}
+		return place.Binding{Symbol: module.Semantics.ResolvedSymbols[ident.ID()]}, true
+	}
 }
 
 func externSymbolName(sym *symbols.Symbol, defaultName string) (string, bool) {

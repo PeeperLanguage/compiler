@@ -294,6 +294,32 @@ fn helper() -> i32 { let x = 1; return x; }`)
 	}
 }
 
+func TestParseDefaultExpressionFingerprintPreservesPayloadAndShape(t *testing.T) {
+	castI32, diag := parseTestModule(`fn use(value: i32 = 1 as i32) -> i32 { return value; }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	castBool, diag := parseTestModule(`fn use(value: i32 = 1 as bool) -> i32 { return value; }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if castI32.ExportFingerprint == castBool.ExportFingerprint {
+		t.Fatalf("cast target change should alter export fingerprint")
+	}
+
+	leftGrouped, diag := parseTestModule(`fn use(value: i32 = (1 + 2) * 3) -> i32 { return value; }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	rightGrouped, diag := parseTestModule(`fn use(value: i32 = 1 + (2 * 3)) -> i32 { return value; }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	if leftGrouped.ExportFingerprint == rightGrouped.ExportFingerprint {
+		t.Fatalf("default expression grouping change should alter export fingerprint")
+	}
+}
+
 func TestParseFunctionReturnArrowSyntax(t *testing.T) {
 	src := `fn main() -> i32 {
 	return 10;
@@ -390,6 +416,28 @@ func TestParseAddressExpr(t *testing.T) {
 		if ident, ok := addr.Expr.(*ast.Ident); !ok || ident.Name != "current" {
 			t.Fatalf("unexpected address operand: %#v", addr.Expr)
 		}
+	}
+}
+
+func TestParseRejectsInterfaceMethodDefaults(t *testing.T) {
+	_, diag := parseTestModule(`iface Reader {
+	fn (&Self) read(value: i32 = unknown) -> i32
+}`)
+	if !diag.HasErrors() {
+		t.Fatalf("expected interface default diagnostic")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "interface method defaults are not supported") {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+
+	_, diag = parseTestModule(`iface Reader {
+	fn (self: Self = unknown) read(value: i32) -> i32
+}`)
+	if !diag.HasErrors() {
+		t.Fatalf("expected receiver default diagnostic")
+	}
+	if !strings.Contains(diag.EmitAllToString(), "interface method defaults are not supported") {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
 	}
 }
 

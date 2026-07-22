@@ -1,0 +1,6 @@
+import "import_default_parameters/external";
+
+fn main() -> i32 {
+    external::TakePointer();
+    return external::Add(4) - 10;
+}

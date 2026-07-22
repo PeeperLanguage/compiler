@@ -108,6 +108,16 @@ func (a *analyzer) checkExpr(
 	}
 }
 
+func (a *analyzer) expandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
+	if a == nil || a.module == nil || a.module.Semantics == nil || ident == nil {
+		return place.Binding{}, false
+	}
+	if _, ok := a.module.Semantics.ExpandedDefaultBindings[ident.ID()]; !ok {
+		return place.Binding{}, false
+	}
+	return place.Binding{Symbol: a.module.Semantics.ResolvedSymbols[ident.ID()]}, true
+}
+
 func (a *analyzer) checkAddressExpr(
 	scope *table.Scope,
 	expr *ast.AddressExpr,
@@ -135,7 +145,15 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 	if scope == nil || ident == nil {
 		return
 	}
-	sym, ok := scope.Lookup(ident.Name)
+	var sym *symbols.Symbol
+	var ok bool
+	if a.module != nil && a.module.Semantics != nil {
+		sym = a.module.Semantics.ResolvedSymbols[ident.ID()]
+		ok = sym != nil
+	}
+	if !ok {
+		sym, ok = scope.Lookup(ident.Name)
+	}
 	if !ok || sym == nil {
 		return
 	}
@@ -363,7 +381,7 @@ func (a *analyzer) pointerOrigin(scope *table.Scope, expr ast.Expr, st state) (p
 		if e.Mode != ast.AddressRaw {
 			return pointerOrigin{}, false
 		}
-		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType)
+		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType, a.expandedDefaultBinding)
 		if !ok || root == nil {
 			return pointerOrigin{}, false
 		}
@@ -372,7 +390,15 @@ func (a *analyzer) pointerOrigin(scope *table.Scope, expr ast.Expr, st state) (p
 		if scope == nil {
 			return pointerOrigin{}, false
 		}
-		sym, found := scope.Lookup(e.Name)
+		var sym *symbols.Symbol
+		var found bool
+		if a.module != nil && a.module.Semantics != nil {
+			sym = a.module.Semantics.ResolvedSymbols[e.ID()]
+			found = sym != nil
+		}
+		if !found {
+			sym, found = scope.Lookup(e.Name)
+		}
 		if !found || sym == nil {
 			return pointerOrigin{}, false
 		}

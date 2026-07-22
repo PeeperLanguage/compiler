@@ -1,0 +1,19 @@
+fn add(base: i32, step: i32 = base + 1) -> i32 {
+    return base + step;
+}
+
+struct Point {
+    value: i32
+}
+
+fn (self: &Point) add(extra: i32 = self.value) -> i32 {
+    return self.value + extra;
+}
+
+fn main() -> i32 {
+    let omitted = add(4);
+    let explicit = add(4, 10);
+    let point: Point = .{value = 3};
+    let method = point.add();
+    return omitted + explicit + method - 29;
+}
