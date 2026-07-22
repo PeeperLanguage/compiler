@@ -89,34 +89,41 @@ type Module struct {
 }
 
 type SemanticInfo struct {
-	BlockScopes         map[ast.NodeID]*table.Scope
-	ResolvedSymbols     map[ast.NodeID]*symbols.Symbol
-	ExprTypes           map[ast.NodeID]typeinfo.Type
-	ConstValues         map[symbols.SymbolID]constvalue.Value
-	MethodSets          map[string][]*symbols.Symbol
-	MethodSymbol        map[ast.NodeID]*symbols.Symbol
-	DiscardBindingValue map[symbols.SymbolID]struct{}
-	CleanupAfterBlock   map[ast.NodeID][]*symbols.Symbol
-	CleanupBeforeReturn map[ast.NodeID][]*symbols.Symbol
-	DropBeforeAssign    map[ast.NodeID]struct{}
-	DropDiscardedExpr   map[ast.NodeID]struct{}
-	DropProjectionBase  map[ast.NodeID]struct{}
+	BlockScopes             map[ast.NodeID]*table.Scope
+	ResolvedSymbols         map[ast.NodeID]*symbols.Symbol
+	// ExpandedDefaultBindings marks cloned NodeIDs injected by
+	// call-site default expansion. These idents must resolve
+	// through the declaration module's ResolvedSymbols instead of
+	// caller scope. The Binding.Local gate prevents pointer-escape
+	// misclassification.
+	ExpandedDefaultBindings map[ast.NodeID]struct{}
+	ExprTypes               map[ast.NodeID]typeinfo.Type
+	ConstValues             map[symbols.SymbolID]constvalue.Value
+	MethodSets              map[string][]*symbols.Symbol
+	MethodSymbol            map[ast.NodeID]*symbols.Symbol
+	DiscardBindingValue     map[symbols.SymbolID]struct{}
+	CleanupAfterBlock       map[ast.NodeID][]*symbols.Symbol
+	CleanupBeforeReturn     map[ast.NodeID][]*symbols.Symbol
+	DropBeforeAssign        map[ast.NodeID]struct{}
+	DropDiscardedExpr       map[ast.NodeID]struct{}
+	DropProjectionBase      map[ast.NodeID]struct{}
 }
 
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
-		BlockScopes:         make(map[ast.NodeID]*table.Scope),
-		ResolvedSymbols:     make(map[ast.NodeID]*symbols.Symbol),
-		ExprTypes:           make(map[ast.NodeID]typeinfo.Type),
-		ConstValues:         make(map[symbols.SymbolID]constvalue.Value),
-		MethodSets:          make(map[string][]*symbols.Symbol),
-		MethodSymbol:        make(map[ast.NodeID]*symbols.Symbol),
-		DiscardBindingValue: make(map[symbols.SymbolID]struct{}),
-		CleanupAfterBlock:   make(map[ast.NodeID][]*symbols.Symbol),
-		CleanupBeforeReturn: make(map[ast.NodeID][]*symbols.Symbol),
-		DropBeforeAssign:    make(map[ast.NodeID]struct{}),
-		DropDiscardedExpr:   make(map[ast.NodeID]struct{}),
-		DropProjectionBase:  make(map[ast.NodeID]struct{}),
+		BlockScopes:             make(map[ast.NodeID]*table.Scope),
+		ResolvedSymbols:         make(map[ast.NodeID]*symbols.Symbol),
+		ExpandedDefaultBindings: make(map[ast.NodeID]struct{}),
+		ExprTypes:               make(map[ast.NodeID]typeinfo.Type),
+		ConstValues:             make(map[symbols.SymbolID]constvalue.Value),
+		MethodSets:              make(map[string][]*symbols.Symbol),
+		MethodSymbol:            make(map[ast.NodeID]*symbols.Symbol),
+		DiscardBindingValue:     make(map[symbols.SymbolID]struct{}),
+		CleanupAfterBlock:       make(map[ast.NodeID][]*symbols.Symbol),
+		CleanupBeforeReturn:     make(map[ast.NodeID][]*symbols.Symbol),
+		DropBeforeAssign:        make(map[ast.NodeID]struct{}),
+		DropDiscardedExpr:       make(map[ast.NodeID]struct{}),
+		DropProjectionBase:      make(map[ast.NodeID]struct{}),
 	}
 }
 

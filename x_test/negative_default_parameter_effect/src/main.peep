@@ -1,0 +1,11 @@
+fn next() -> i32 {
+    return 1;
+}
+
+fn double(value: i32, result: i32 = value + 1) -> i32 {
+    return value + result;
+}
+
+fn main() -> i32 {
+    return double(next());
+}

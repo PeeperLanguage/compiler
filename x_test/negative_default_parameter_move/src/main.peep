@@ -1,0 +1,11 @@
+struct Box {
+    value: i32
+}
+
+fn bad(value: Box, again: Box = value) {}
+
+fn main() -> i32 {
+    let value: Box = .{value = 1};
+    bad(value);
+    return 0;
+}

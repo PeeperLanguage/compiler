@@ -9,6 +9,25 @@ import (
 
 type ExprTypeFunc func(ast.Expr) typeinfo.Type
 
+// Binding carries a symbol lookup result with transient context.
+// Symbol is the underlying cross-module symbol pointer; Local is
+// true only when the symbol was resolved in the current module's
+// scope tree. A shared *symbols.Symbol cannot carry "local-to-this-
+// module" because the same pointer appears in both the declaration
+// and caller module's ExpandedDefaultBindings.
+type Binding struct {
+	Symbol *symbols.Symbol
+	Local  bool
+}
+
+// BindingResolver supplies symbols for idents that were injected
+// into the caller AST (e.g. cloned default expressions). When the
+// resolver reports a match, scope lookup must be skipped entirely.
+// Expanded defaults use Local=false to prevent LocalRoot from
+// misclassifying declaration-module storage as a caller pointer-
+// escape source.
+type BindingResolver func(*ast.Ident) (Binding, bool)
+
 func IsPlaceExpr(expr ast.Expr) bool {
 	switch node := expr.(type) {
 	case *ast.Ident:
@@ -22,13 +41,18 @@ func IsPlaceExpr(expr ast.Expr) bool {
 	}
 }
 
-func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool {
+func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
 	var base ast.Expr
 	switch e := expr.(type) {
 	case *ast.Ident:
+		if resolve != nil {
+			if binding, found := resolve(e); found {
+				return addressableSymbol(binding.Symbol)
+			}
+		}
 		sym, found := scope.Lookup(e.Name)
 		return found && addressableSymbol(sym)
 	case *ast.SelectorExpr:
@@ -49,16 +73,22 @@ func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) bool 
 			return true
 		}
 	}
-	return Addressable(scope, base, exprType)
+	return Addressable(scope, base, exprType, resolve)
 }
 
-func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) (mutable bool, sharedReference typeinfo.Type) {
+func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type) {
 	if scope == nil || expr == nil {
 		return false, nil
 	}
 	var base ast.Expr
 	switch e := expr.(type) {
 	case *ast.Ident:
+		if resolve != nil {
+			if binding, found := resolve(e); found {
+				sym := binding.Symbol
+				return sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable(), nil
+			}
+		}
 		return scope.IsMutableBinding(e.Name), nil
 	case *ast.SelectorExpr:
 		base = e.Expr
@@ -81,16 +111,27 @@ func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc
 			return false, target
 		}
 	}
-	return MutableAddressable(scope, base, exprType)
+	return MutableAddressable(scope, base, exprType, resolve)
 }
 
-func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprTypeFunc) (*symbols.Symbol, bool) {
+func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (*symbols.Symbol, bool) {
 	if scope == nil || moduleScope == nil || expr == nil {
 		return nil, false
 	}
 	var base ast.Expr
 	switch e := expr.(type) {
 	case *ast.Ident:
+		if resolve != nil {
+			if binding, found := resolve(e); found {
+				// Expanded defaults have Local=false: the symbol
+				// lives in the declaration module, not the caller,
+				// so it is not a pointer-escape source.
+				if binding.Local && addressableSymbol(binding.Symbol) {
+					return binding.Symbol, true
+				}
+				return nil, false
+			}
+		}
 		for current := scope; current != nil && current != moduleScope; current = current.Parent() {
 			sym, found := current.LookupLocal(e.Name)
 			if found {
@@ -113,7 +154,7 @@ func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprType
 			return nil, false
 		}
 	}
-	return LocalRoot(scope, moduleScope, base, exprType)
+	return LocalRoot(scope, moduleScope, base, exprType, resolve)
 }
 
 func isElementIndexExpr(expr *ast.IndexExpr) bool {

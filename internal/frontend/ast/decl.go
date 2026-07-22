@@ -308,6 +308,7 @@ type Param struct {
 	IsMutable bool
 	Name      *Ident
 	Type      TypeExpr
+	Default   Expr
 	Location  *source.Location
 }
 

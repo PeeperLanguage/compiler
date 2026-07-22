@@ -672,6 +672,10 @@ func hoverASTParamText(param ast.Param) string {
 		b.WriteString(": ")
 	}
 	b.WriteString(ast.TypeText(param.Type))
+	if param.Default != nil {
+		b.WriteString(" = ")
+		b.WriteString(ast.ExprText(param.Default))
+	}
 	return b.String()
 }
 

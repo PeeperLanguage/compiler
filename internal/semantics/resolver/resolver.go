@@ -94,6 +94,12 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 			}
 			continue
 		}
+		// Resolve each default before declaring its parameter. This makes
+		// receiver and earlier parameters visible while rejecting self and
+		// later-parameter references at the declaration boundary.
+		if param.Default != nil {
+			r.resolveExpr(funcScope, param.Default)
+		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		paramSym.Mutable = param.IsMutable
 		paramSym.Initialized = true
@@ -393,5 +399,6 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
 			WithNote("symbols with uppercase are exported otherwise private")
 		return false
 	}
+	r.module.Semantics.ResolvedSymbols[node.ID()] = resolved.Symbol
 	return true
 }

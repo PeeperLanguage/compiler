@@ -167,7 +167,11 @@ func paramSurface(params []ast.Param) []string {
 		if param.IsMutable {
 			prefix = "mut "
 		}
-		out = append(out, prefix+name+":"+ast.TypeText(param.Type))
+		text := prefix + name + ":" + ast.TypeText(param.Type)
+		if param.Default != nil {
+			text += "=" + ast.ExprText(param.Default)
+		}
+		out = append(out, text)
 	}
 	return out
 }

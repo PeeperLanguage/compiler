@@ -60,6 +60,18 @@ type Stmt interface {
 type Expr interface {
 	Node
 	exprNode()
+	// copyExpr clones the expression for call-site expansion.
+	// substitutions map parameter names to their caller-side
+	// argument expressions. newID assigns a fresh NodeID and
+	// records the original→cloned mapping in clonedIDs.
+	// Ident returns the replacement directly when its name
+	// matches a substitution; all other types clone recursively.
+	copyExpr(substitutions map[string]Expr, newID func(NodeID) NodeID, clonedIDs *map[NodeID]NodeID) Expr
+	// exprText returns a stable, source-like text representation.
+	// Payloads such as literal values, operator text, and type
+	// annotations are included so the output is suitable for
+	// export fingerprints and hover signatures.
+	exprText() string
 }
 
 type TypeExpr interface {

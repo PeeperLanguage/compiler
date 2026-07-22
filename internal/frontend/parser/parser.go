@@ -1096,6 +1096,17 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 			lparenPos := p.stream[p.pos-1].Start
 			params := p.parseParams()
 			p.expectClose(lparenPos, token.RPAREN, "(")
+			if receiver.Default != nil {
+				p.diag.AddError(diagnostics.ErrInvalidDeclaration,
+					"interface method defaults are not supported", ast.LocOf(receiver.Default), "")
+			}
+			for _, param := range params {
+				if param.Default == nil {
+					continue
+				}
+				p.diag.AddError(diagnostics.ErrInvalidDeclaration,
+					"interface method defaults are not supported", ast.LocOf(param.Default), "")
+			}
 			var ret ast.TypeExpr
 			if p.match(token.ARROW) {
 				ret = p.parseTypeExpr()
@@ -1209,11 +1220,18 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 		if ty != nil {
 			endPos = ast.EndOf(ty)
 		}
+		var defaultValue ast.Expr
+		if p.match(token.ASSIGN) {
+			defaultValue = p.parseExpr(precLowest)
+			if defaultValue != nil {
+				endPos = ast.EndOf(defaultValue)
+			}
+		}
 		startPos := ast.StartOf(name)
 		if mutable {
 			startPos = modifierStart
 		}
-		return ast.Param{IsMutable: mutable, Name: name, Type: ty, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
+		return ast.Param{IsMutable: mutable, Name: name, Type: ty, Default: defaultValue, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
 	}
 	ty := p.parseTypeExpr()
 	if ty == nil {
