@@ -36,6 +36,9 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 		return
 	}
 	if target, ok := pointerTypeTextTarget(typeText); ok {
+		llvmStructType := b.emitter.llvmType(typeText)
+		data := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmStructType, value))
 		if typeTextNeedsDrop(target) {
 			targetType, lowerable := llvmTypeName(target)
 			if !lowerable {
@@ -43,10 +46,10 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 				return
 			}
 			payload := b.nextReg()
-			b.line(fmt.Sprintf("%s = load %s, %s* %s", payload, targetType, targetType, value))
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", payload, targetType, targetType, data))
 			emitDropValue(b, payload, target)
 		}
-		emitFreeCall(b, value, typeText)
+		emitOwnedPointerFree(b, value, typeText, target)
 		return
 	}
 	if typeText == "string" {
@@ -187,6 +190,35 @@ func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data, elem, start, end str
 	b.namedLabel(continueLabel)
 	b.line(fmt.Sprintf("br label %%%s", loopLabel))
 	b.namedLabel(doneLabel)
+}
+
+func emitOwnedPointerFree(b *llvmBuilder, value, typeText, targetTypeText string) {
+	llvmStructType := b.emitter.llvmType(typeText)
+	sizeType := b.emitter.llvmType("usize")
+
+	data := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmStructType, value))
+	desc := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", desc, llvmStructType, value))
+
+	targetLLVM := b.emitter.llvmType(targetTypeText)
+	rawData := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", rawData, targetLLVM, data))
+
+	size := b.nextReg()
+	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, targetLLVM, targetLLVM, targetLLVM, sizeType))
+
+	ctx := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8*, i8** %s", ctx, desc))
+
+	deallocSlot := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i8*, i8** %s, i32 2", deallocSlot, desc))
+	deallocRaw := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8*, i8** %s", deallocRaw, deallocSlot))
+	deallocFn := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast i8* %s to void (i8*, i8*, %s, i32)*", deallocFn, deallocRaw, sizeType))
+
+	b.line(fmt.Sprintf("call void %s(i8* %s, i8* %s, %s %s, i32 8)", deallocFn, ctx, rawData, sizeType, size))
 }
 
 func emitFreeCall(b *llvmBuilder, value, typeText string) {

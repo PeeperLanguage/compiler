@@ -1,0 +1,7 @@
+fn consume(ptr: *i32) {
+    let _ = ptr;
+}
+
+fn main() -> i32 {
+    return 0;
+}

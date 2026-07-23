@@ -730,6 +730,14 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) string {
 			} else {
 				current = emitRef(b, place.Root)
 			}
+			if _, isIface := ownedInterfaceTypeText(currentType); !isIface {
+				if _, ok := pointerTypeTextTarget(currentType); ok {
+					llvmStructType := b.emitter.llvmType(currentType)
+					data := b.nextReg()
+					b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmStructType, current))
+					current = data
+				}
+			}
 			addressed = true
 		case mir.PlaceProjectionField:
 			current = emitFieldPtr(b, current, currentType, projection.FieldIndex)
@@ -1141,14 +1149,24 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			llvmType := b.emitter.llvmType(e.Type)
 			value := emitRef(b, e.Value)
 			valueType := b.emitter.llvmType(mirRefType(e.Value))
-			dataPtr := b.nextReg()
-			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", dataPtr, valueType, value))
+			dataPtr := value
+			dataLlvmType := valueType
+			if target, isOwned := pointerTypeTextTarget(mirRefType(e.Value)); isOwned {
+				if _, isIface := ownedInterfaceTypeText(mirRefType(e.Value)); !isIface {
+					dataPtr = b.nextReg()
+					b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", dataPtr, valueType, value))
+					targetLLVM, _ := llvmTypeName(target)
+					dataLlvmType = targetLLVM + "*"
+				}
+			}
+			dataBytePtr := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", dataBytePtr, dataLlvmType, dataPtr))
 			itabSym := itabSymbolName(e.Type, e.DataType)
 			itabPtr := b.nextReg()
 			b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabPtr, len(e.Slots)+1, itabSym))
 			current := "zeroinitializer"
 			reg1 := b.nextReg()
-			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataPtr))
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataBytePtr))
 			reg2 := b.nextReg()
 			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 1", reg2, llvmType, reg1, itabPtr))
 			return reg2

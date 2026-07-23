@@ -25,3 +25,4 @@ graphify-out
 clean.md
 .*/
 !.gitignore
+x_test/owned_pointer_carrier/main
