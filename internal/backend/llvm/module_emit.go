@@ -36,7 +36,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	b.WriteString("target triple = \"")
 	b.WriteString(targetTriple)
 	b.WriteString("\"\n\n")
-	printUsed, dropUsed, allocUsed := moduleRuntimeOperations(mod)
+	printUsed, dropUsed, allocUsed, ownedPtrUsed := moduleRuntimeOperations(mod)
 	if printUsed {
 		b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
 		b.WriteString("@.print.unsigned = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n")
@@ -159,12 +159,23 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	if dropUsed && !freeDeclared {
 		b.WriteString("declare void @free(i8*)\n\n")
 	}
-	if allocUsed {
+	if allocUsed || ownedPtrUsed {
 		sizeType := emitter.llvmType("usize")
 		if !mallocDeclared {
 			fmt.Fprintf(&b, "declare i8* @malloc(%s)\n", sizeType)
 		}
-		fmt.Fprintf(&b, "declare { %s, i1 } @llvm.umul.with.overflow.%s(%s, %s)\n\n", sizeType, sizeType, sizeType, sizeType)
+		if allocUsed {
+			fmt.Fprintf(&b, "declare { %s, i1 } @llvm.umul.with.overflow.%s(%s, %s)\n\n", sizeType, sizeType, sizeType, sizeType)
+		} else {
+			b.WriteString("\n")
+		}
+	}
+
+	if ownedPtrUsed {
+		if !freeDeclared && !dropUsed {
+			b.WriteString("declare void @free(i8*)\n\n")
+		}
+		emitDefaultDescriptorThunks(&b, emitter)
 	}
 
 	decls := collectCallDecls(mod)
@@ -319,7 +330,7 @@ func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticB
 	dropUsed := false
 	allocUsed := false
 	for _, mod := range modules {
-		usesPrint, usesDrop, usesAlloc := moduleRuntimeOperations(mod)
+		usesPrint, usesDrop, usesAlloc, _ := moduleRuntimeOperations(mod)
 		printUsed = printUsed || usesPrint
 		dropUsed = dropUsed || usesDrop
 		allocUsed = allocUsed || usesAlloc
@@ -385,13 +396,28 @@ func runtimeMallocDeclaration(fn *mir.Function) bool {
 	return paramOK && sizeOK && paramType == sizeType
 }
 
-func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, allocUsed bool) {
+func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, allocUsed bool, ownedPtrUsed bool) {
 	if mod == nil {
-		return false, false, false
+		return false, false, false, false
 	}
 	for _, fn := range mod.Funcs {
 		if fn == nil {
 			continue
+		}
+		for _, param := range fn.Params {
+			if _, ok := pointerTypeTextTarget(param.Type); ok {
+				if _, isIface := ownedInterfaceTypeText(param.Type); !isIface {
+					ownedPtrUsed = true
+					break
+				}
+			}
+		}
+		if !ownedPtrUsed {
+			if _, ok := pointerTypeTextTarget(fn.ReturnType); ok {
+				if _, isIface := ownedInterfaceTypeText(fn.ReturnType); !isIface {
+					ownedPtrUsed = true
+				}
+			}
 		}
 		for _, block := range fn.Blocks {
 			if block == nil {
@@ -427,13 +453,41 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 						dropUsed = true
 					}
 				}
-				if printUsed && dropUsed && allocUsed {
-					return true, true, true
+				if printUsed && dropUsed && allocUsed && ownedPtrUsed {
+					return true, true, true, true
 				}
 			}
 		}
 	}
-	return printUsed, dropUsed, allocUsed
+	return printUsed, dropUsed, allocUsed, ownedPtrUsed
+}
+
+func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
+	sizeType := emitter.llvmType("usize")
+	b.WriteString("\n")
+	b.WriteString("@peeper_default_alloc = private constant [3 x i8*] [i8* null, i8* bitcast (i8* (i8*, ")
+	b.WriteString(sizeType)
+	b.WriteString(", i32)* @peeper_default_alloc_fn to i8*), i8* bitcast (void (i8*, i8*, ")
+	b.WriteString(sizeType)
+	b.WriteString(", i32)* @peeper_default_free_fn to i8*)]\n\n")
+
+	fmt.Fprintf(b, "define i8* @peeper_default_alloc_fn(i8* %%ctx, %s %%size, i32 %%align) {\n", sizeType)
+	b.WriteString("entry:\n")
+	fmt.Fprintf(b, "  %%ptr = call i8* @malloc(%s %%size)\n", sizeType)
+	b.WriteString("  %isnull = icmp eq i8* %ptr, null\n")
+	b.WriteString("  br i1 %isnull, label %trap, label %done\n")
+	b.WriteString("trap:\n")
+	b.WriteString("  call void @llvm.trap()\n")
+	b.WriteString("  unreachable\n")
+	b.WriteString("done:\n")
+	b.WriteString("  ret i8* %ptr\n")
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "define void @peeper_default_free_fn(i8* %%ctx, i8* %%ptr, %s %%size, i32 %%align) {\n", sizeType)
+	b.WriteString("entry:\n")
+	b.WriteString("  call void @free(i8* %ptr)\n")
+	b.WriteString("  ret void\n")
+	b.WriteString("}\n\n")
 }
 
 // finalLLVMText appends globals discovered late during instruction emission.

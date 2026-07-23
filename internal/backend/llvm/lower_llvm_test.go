@@ -26,9 +26,9 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"string":           "{ i8*, i64 }",
 		"?i32":             "{ i1, i32 }",
 		"?string":          "{ i1, { i8*, i64 } }",
-		"?*i32":            "i32*",
+		"?*i32":            "{ i1, { i32*, i8* } }",
 		"?*iface{}":        "{ i1, { i8*, i8* } }",
-		"*i32":             "i32*",
+		"*i32":             "{ i32*, i8* }",
 		"*iface{}":         "{ i8*, i8* }",
 		"rawptr":           "i8*",
 		"[4]i32":           "[4 x i32]",
@@ -37,7 +37,7 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"&mut i32":         "i32*",
 		"&[]i32":           "{ i32*, i64 }",
 		"&mut []i32":       "{ i32*, i64 }",
-		"*string":          "{ i8*, i64 }*",
+		"*string":          "{ { i8*, i64 }*, i8* }",
 		"[]?string":        "{ { i1, { i8*, i64 } }*, i64, i64 }",
 		"struct{x: [2]u8}": "{ [2 x i8] }",
 	}
@@ -209,10 +209,11 @@ func TestGenerateLLVMIRLowersOwnedPointerDrop(t *testing.T) {
 		}},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	if !strings.Contains(out, "declare void @free(i8*)") ||
-		!strings.Contains(out, "bitcast i32* %value to i8*") ||
-		!strings.Contains(out, "call void @free(i8*") {
-		t.Fatalf("expected owned-pointer deallocation, got:\n%s", out)
+	if !strings.Contains(out, "extractvalue { i32*, i8* } %value, 1") ||
+		!strings.Contains(out, "extractvalue { i32*, i8* } %value, 0") ||
+		!strings.Contains(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to i64") ||
+		!strings.Contains(out, "@peeper_default_free_fn") {
+		t.Fatalf("expected owned-pointer deallocation through allocator, got:\n%s", out)
 	}
 }
 
@@ -539,8 +540,93 @@ func TestGenerateLLVMIRDropsNestedOwnersBeforeStorage(t *testing.T) {
 		}},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	if count := strings.Count(out, "call void @free(i8*"); count != 2 {
-		t.Fatalf("expected child and outer storage frees, got %d:\n%s", count, out)
+	if count := strings.Count(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to i64"); count != 1 {
+		t.Fatalf("expected child size computation, got %d:\n%s", count, out)
+	}
+	if !strings.Contains(out, "@peeper_default_free_fn") {
+		t.Fatalf("expected deallocation through descriptor, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRLowersOwnedPointerStructLayout(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "pass",
+			Params:     []ir.Param{{Name: "value", Type: "*i32"}},
+			ReturnType: "*i32",
+			Blocks: []*mir.Block{{
+				ID:   0,
+				Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: "*i32"}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "define { i32*, i8* } @pass({ i32*, i8* } %value)") {
+		t.Fatalf("expected owned pointer struct ABI {T*, i8*}, got:\n%s", out)
+	}
+	if !strings.Contains(out, "ret { i32*, i8* } %value") {
+		t.Fatalf("expected owned pointer struct return, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRLowersOptionalOwnedPointerAsTagged(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "nullable",
+			Params:     []ir.Param{{Name: "opt", Type: "?*i32"}},
+			ReturnType: "?*i32",
+			Blocks: []*mir.Block{{
+				ID:   0,
+				Term: &mir.Ret{Value: &mir.RefName{Name: "opt", Type: "?*i32"}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "define { i1, { i32*, i8* } } @nullable({ i1, { i32*, i8* } }") {
+		t.Fatalf("expected tagged optional owned pointer ABI, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRDefaultDescriptorEmitted(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "drop",
+			Params:     []ir.Param{{Name: "value", Type: "*i32"}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+				Term:   &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "@peeper_default_alloc = private constant [3 x i8*]") {
+		t.Fatalf("expected default descriptor global, got:\n%s", out)
+	}
+	if !strings.Contains(out, "@peeper_default_alloc_fn") || !strings.Contains(out, "@peeper_default_free_fn") {
+		t.Fatalf("expected default descriptor thunks, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRNoDescriptorWithoutOwnedPointers(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "main",
+			ReturnType: "i32",
+			Blocks: []*mir.Block{{
+				ID:   0,
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if strings.Contains(out, "@peeper_default_alloc") {
+		t.Fatalf("unexpected default descriptor without owned pointers, got:\n%s", out)
 	}
 }
 
@@ -570,16 +656,16 @@ func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.
 		}},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	if strings.Contains(out, "@malloc") || strings.Contains(out, "alloca "+payloadType) {
+	if strings.Contains(out, "alloca "+payloadType) {
 		t.Fatalf("owned interface conversion must adopt existing allocation, got:\n%s", out)
 	}
 	if !strings.Contains(out, "private constant [1 x i8*]") ||
 		!strings.Contains(out, "define void @__iface_drop") ||
-		!strings.Contains(out, "bitcast { i32* }* %resource to i8*") {
+		!strings.Contains(out, "bitcast { { i32*, i8* } }* %") {
 		t.Fatalf("expected direct fat carrier with payload-drop slot, got:\n%s", out)
 	}
-	if count := strings.Count(out, "call void @free(i8*"); count != 2 {
-		t.Fatalf("expected nested payload and carrier storage frees, got %d:\n%s", count, out)
+	if count := strings.Count(out, "@peeper_default_free_fn"); count < 2 {
+		t.Fatalf("expected nested payload and carrier storage deallocs through descriptor, got %d:\n%s", count, out)
 	}
 }
 
@@ -642,7 +728,7 @@ func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
 	decrement := strings.Index(out, " = sub i64 ")
-	elementLoad := strings.Index(out, " = getelementptr i32*, i32** ")
+	elementLoad := strings.Index(out, " = getelementptr { i32*, i8* }, { i32*, i8* }* ")
 	if !strings.Contains(out, " = icmp ugt i64 ") || decrement < 0 || elementLoad < decrement {
 		t.Fatalf("expected reverse dynamic-array drop loop, got:\n%s", out)
 	}
@@ -769,12 +855,8 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 }
 
 func TestOptionalNicheLayout(t *testing.T) {
-	niche, ok := optionalNicheLayout("*i32")
-	if !ok {
-		t.Fatalf("expected optional pointer niche")
-	}
-	if niche.llvmType != "i32*" || niche.none != "zeroinitializer" {
-		t.Fatalf("unexpected niche layout: %#v", niche)
+	if _, ok := optionalNicheLayout("*i32"); ok {
+		t.Fatalf("optional owned pointer niche removed: {T*, i8*} has no null sentinel")
 	}
 	if _, ok := optionalNicheLayout("i32"); ok {
 		t.Fatalf("plain integer must not use niche layout without invalid value rule")
@@ -824,11 +906,11 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 	if !strings.Contains(irText, "ret { i1, i32 } zeroinitializer") {
 		t.Fatalf("expected tagged optional none as zeroinitializer, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "define i32* @niche(") {
-		t.Fatalf("expected niche optional pointer return type, got:\n%s", irText)
+	if !strings.Contains(irText, "define { i1, { i32*, i8* } } @niche(") {
+		t.Fatalf("expected tagged optional pointer return type, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "ret i32* zeroinitializer") {
-		t.Fatalf("expected niche optional none as pointer zero, got:\n%s", irText)
+	if !strings.Contains(irText, "ret { i1, { i32*, i8* } } zeroinitializer") {
+		t.Fatalf("expected tagged optional none as zeroinitializer for pointer, got:\n%s", irText)
 	}
 }
 
@@ -873,11 +955,11 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 	if !strings.Contains(irText, "insertvalue { i1, i32 } %") || !strings.Contains(irText, "i32 7, 1") {
 		t.Fatalf("expected tagged optional payload, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "define i32* @niche(i32* %p)") {
-		t.Fatalf("expected niche optional pointer ABI, got:\n%s", irText)
+	if !strings.Contains(irText, "define { i1, { i32*, i8* } } @niche({ i32*, i8* } %p)") {
+		t.Fatalf("expected tagged optional pointer ABI, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "ret i32* %p") {
-		t.Fatalf("expected niche optional some as raw pointer value, got:\n%s", irText)
+	if !strings.Contains(irText, "insertvalue { i1, { i32*, i8* } } %") || !strings.Contains(irText, "{ i32*, i8* } %p, 1") {
+		t.Fatalf("expected tagged optional pointer payload, got:\n%s", irText)
 	}
 }
 
@@ -1255,7 +1337,12 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 			}
 
 			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
-			if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") {
+			if _, isOwned := pointerTypeTextTarget(baseType); isOwned {
+				if !strings.Contains(irText, "extractvalue { { i32 }*, i8* }") {
+					t.Fatalf("expected extractvalue for owned pointer struct, got:\n%s", irText)
+				}
+			}
+			if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }*") {
 				t.Fatalf("expected field address to lower as GEP, got:\n%s", irText)
 			}
 			if strings.Contains(irText, "alloca i32") {

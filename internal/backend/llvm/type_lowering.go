@@ -58,9 +58,9 @@ func llvmTypeName(typeText string) (string, bool) {
 		target, ok := llvmTypeName(remainder)
 		if !ok {
 			// Unknown pointee still lowers as pointer-sized storage.
-			return "i8*", true
+			return "{ i8*, i8* }", true
 		}
-		return target + "*", true
+		return "{ " + target + "*, i8* }", true
 	}
 	if innerTypeText, ok := optionalInnerTypeText(typeText); ok {
 		if niche, ok := optionalNicheLayout(innerTypeText); ok {
@@ -156,23 +156,10 @@ type optionalNiche struct {
 }
 
 func optionalNicheLayout(typeText string) (optionalNiche, bool) {
-	typeText = strings.TrimSpace(typeText)
-	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
-		// Owned pointers are non-null by language rule, so optional owned
-		// pointers can use null as the none sentinel instead of a tagged struct.
-		remainder = strings.TrimSpace(remainder)
-		if remainder == "" {
-			return optionalNiche{}, false
-		}
-		if _, ok := runtimeInterfaceTypeText(remainder); ok {
-			return optionalNiche{}, false
-		}
-		llvmType, ok := llvmTypeName(typeText)
-		if !ok {
-			return optionalNiche{}, false
-		}
-		return optionalNiche{llvmType: llvmType, none: "zeroinitializer"}, true
-	}
+	// TODO(#26): Owned pointers (*T) no longer qualify — their runtime layout is
+	// {T*, i8*} (struct), not T* (null-safe pointer). Future types with invalid
+	// bit patterns (e.g. non-null pointers after ZST optimization, enums with
+	// discriminant gaps) may restore niche usage.
 	return optionalNiche{}, false
 }
 
