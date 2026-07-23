@@ -1,6 +1,9 @@
 package ir
 
-import "testing"
+import (
+	"compiler/internal/constvalue"
+	"testing"
+)
 
 func TestFoldExprConstantArithmetic(t *testing.T) {
 	expr := &Binary{
@@ -42,8 +45,8 @@ func TestFoldExprConstEnv(t *testing.T) {
 		Right: &IntLit{Value: "5", Type: "i32"},
 		Type:  "i32",
 	}
-	folded := FoldExpr(expr, map[string]ConstValue{
-		"a$1": &IntConst{Value: "2", TypeID: "i32"},
+	folded := FoldExpr(expr, map[string]constvalue.Value{
+		"a$1": &constvalue.IntConst{Value: "2", TypeID: "i32"},
 	})
 	lit, ok := folded.(*IntLit)
 	if !ok || lit.Value != "7" {

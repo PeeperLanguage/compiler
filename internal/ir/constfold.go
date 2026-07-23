@@ -5,12 +5,15 @@ import (
 	"compiler/internal/source"
 )
 
-type ConstValue = constvalue.Value
-type IntConst = constvalue.IntConst
-type FloatConst = constvalue.FloatConst
-type BoolConst = constvalue.BoolConst
-
-func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
+// FoldExpr recursively folds value-bearing expressions.
+// It can replace an entire expression with a constant (e.g., "40 + 2" → IntLit{42}).
+//
+// Use FoldExpr for sub-expressions that carry values: operands, arguments,
+// struct fields, array elements.
+//
+// Use foldPlace for l-value projections: the root is storage identity
+// (not foldable), only index sub-expressions inside are folded.
+func FoldExpr(expr Expr, env map[string]constvalue.Value) Expr {
 	switch node := expr.(type) {
 	case *IntLit, *FloatLit, *BoolLit:
 		return expr
@@ -68,12 +71,25 @@ func FoldExpr(expr Expr, env map[string]ConstValue) Expr {
 			Type:     node.Type,
 			Location: node.Location,
 		}
+	case *AllocExpr:
+		// alloc(value, allocator) — fold the value and allocator sub-expressions.
+		// The Type and Location are identity-bearing, not foldable.
+		var foldedAlloc Expr
+		if node.Allocator != nil {
+			foldedAlloc = FoldExpr(node.Allocator, env)
+		}
+		return &AllocExpr{
+			Value:     FoldExpr(node.Value, env),
+			Allocator: foldedAlloc,
+			Type:      node.Type,
+			Location:  node.Location,
+		}
 	default:
 		return expr
 	}
 }
 
-func foldPlace(place *Place, env map[string]ConstValue) *Place {
+func foldPlace(place *Place, env map[string]constvalue.Value) *Place {
 	if place == nil {
 		return nil
 	}
@@ -91,36 +107,36 @@ func foldPlace(place *Place, env map[string]ConstValue) *Place {
 	}
 }
 
-func constValueExprAt(value ConstValue, loc *source.Location) Expr {
+func constValueExprAt(value constvalue.Value, loc *source.Location) Expr {
 	switch node := value.(type) {
-	case *IntConst:
+	case *constvalue.IntConst:
 		if node == nil {
 			return &IntLit{Value: "0", Type: "i32", Location: loc}
 		}
 		return &IntLit{Value: node.Value, Type: node.TypeID, Location: loc}
-	case *FloatConst:
+	case *constvalue.FloatConst:
 		if node == nil {
 			return &FloatLit{Value: "0.0", Type: "f64", Location: loc}
 		}
 		return &FloatLit{Value: node.Value, Type: node.TypeID, Location: loc}
-	case *BoolConst:
+	case *constvalue.BoolConst:
 		return &BoolLit{Value: node != nil && node.Value, Location: loc}
 	default:
 		return &InvalidExpr{Message: "unknown constant", Type: "<invalid>", Location: loc}
 	}
 }
 
-func ConstValueOf(expr Expr) (ConstValue, bool) {
+func ConstValueOf(expr Expr) (constvalue.Value, bool) {
 	switch node := expr.(type) {
 	case *IntLit:
 		if node.Type == "bool" {
-			return &BoolConst{Value: node.Value != "0"}, true
+			return &constvalue.BoolConst{Value: node.Value != "0"}, true
 		}
-		return &IntConst{Value: node.Value, TypeID: node.TypeText()}, true
+		return &constvalue.IntConst{Value: node.Value, TypeID: node.TypeText()}, true
 	case *FloatLit:
-		return &FloatConst{Value: node.Value, TypeID: node.TypeText()}, true
+		return &constvalue.FloatConst{Value: node.Value, TypeID: node.TypeText()}, true
 	case *BoolLit:
-		return &BoolConst{Value: node.Value}, true
+		return &constvalue.BoolConst{Value: node.Value}, true
 	default:
 		return nil, false
 	}

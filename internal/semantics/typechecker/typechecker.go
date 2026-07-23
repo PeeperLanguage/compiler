@@ -85,7 +85,7 @@ func (c *checker) isLowerableType(t typeinfo.Type) bool {
 		defer delete(visiting, t)
 
 		switch typ := t.(type) {
-		case *typeinfo.IntegerType, *typeinfo.ByteType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType:
+		case *typeinfo.IntegerType, *typeinfo.ByteType, *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.CStrType, *typeinfo.StringType, *typeinfo.AllocatorType:
 			return true
 		case *typeinfo.OwnedPtrType:
 			target, ok := typeinfo.PointerTarget(typ)
@@ -1586,6 +1586,9 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
 		if sym := c.module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
+			if sym.CompilerOp == symbols.CompilerOpAlloc {
+				return c.typeAllocCall(scope, node)
+			}
 			return c.typeDynamicArrayOwnerCall(scope, node, sym.CompilerOp)
 		}
 	}
@@ -1660,6 +1663,39 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 			ast.LocOf(node), "")
 	}
 	return ownerType
+}
+
+func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo.Type {
+	wantArgs := 2
+	if len(node.Args) < 1 || len(node.Args) > wantArgs {
+		for _, arg := range node.Args {
+			c.typeExpr(scope, arg, nil)
+		}
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, len(node.Args), wantArgs))
+		return &typeinfo.InvalidType{}
+	}
+
+	valueType := c.typeExpr(scope, node.Args[0], nil)
+	if valueType == nil {
+		return &typeinfo.InvalidType{}
+	}
+
+	if rejected := typeinfo.ContainsStoredReference(valueType); rejected {
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Args[0],
+			"alloc cannot store value containing a reference in owned heap storage"))
+	}
+
+	if !c.isLowerableType(valueType) {
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Args[0],
+			"alloc target type is not lowerable in current compiler stage"))
+	}
+
+	allocType := &typeinfo.AllocatorType{}
+	if len(node.Args) > 1 {
+		c.typeExpr(scope, node.Args[1], allocType)
+	}
+
+	return &typeinfo.OwnedPtrType{Target: valueType}
 }
 
 func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) typeinfo.Type {

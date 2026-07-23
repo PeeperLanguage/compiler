@@ -560,6 +560,9 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	case *ast.CallExpr:
 		if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
 			if sym := module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
+				if sym.CompilerOp == symbols.CompilerOpAlloc {
+					return lowerAllocCall(ctx, module, scope, node)
+				}
 				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, sym.CompilerOp)
 			}
 		}
@@ -887,6 +890,24 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 		panic(fmt.Sprintf("unsupported dynamic-array compiler operation %q", op))
 	}
 	return out
+}
+
+func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.CallExpr) ir.Expr {
+	if len(node.Args) < 1 || len(node.Args) > 2 {
+		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 arguments", Type: "<invalid>", Location: ast.LocOf(node)}
+	}
+	value := lowerASTExpr(ctx, module, scope, node.Args[0], nil)
+	var allocator ir.Expr
+	if len(node.Args) > 1 {
+		allocator = lowerASTExpr(ctx, module, scope, node.Args[1], &typeinfo.AllocatorType{})
+	}
+	resultType := loweredTypeText(module, exprResolvedType(module, node))
+	return &ir.AllocExpr{
+		Value:     value,
+		Allocator: allocator,
+		Type:      resultType,
+		Location:  ast.LocOf(node),
+	}
 }
 
 func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {

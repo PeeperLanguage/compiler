@@ -356,6 +356,67 @@ func emitDynamicArrayHeader(b *llvmBuilder, arrayTypeText, elemTypeText, data, l
 	return withCapacity
 }
 
+func emitAlloc(b *llvmBuilder, e *mir.Alloc) string {
+	typeText := e.Type
+	targetTypeText := strings.TrimSpace(strings.TrimPrefix(typeText, "*"))
+	llvmStructType := b.emitter.llvmType(typeText)
+	targetLLVM := b.emitter.llvmType(targetTypeText)
+	sizeType := b.emitter.llvmType("usize")
+
+	var allocReg string
+	if e.Allocator != nil {
+		allocReg = emitRef(b, e.Allocator)
+	} else {
+		allocReg = b.nextReg()
+		b.line(fmt.Sprintf("%s = bitcast [3 x i8*]* @peeper_default_alloc to i8**", allocReg))
+	}
+	ctx := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8*, i8** %s", ctx, allocReg))
+
+	allocSlot := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i8*, i8** %s, i32 1", allocSlot, allocReg))
+	allocRaw := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8*, i8** %s", allocRaw, allocSlot))
+	allocFn := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8* (i8*, %s, i32)*", allocFn, allocRaw, sizeType))
+
+	size := b.nextReg()
+	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, targetLLVM, targetLLVM, targetLLVM, sizeType))
+
+	zeroSize := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq %s %s, 0", zeroSize, sizeType, size))
+	normSize := b.nextReg()
+	b.line(fmt.Sprintf("%s = select i1 %s, %s 1, %s %s", normSize, zeroSize, sizeType, sizeType, size))
+
+	raw := b.nextReg()
+	b.line(fmt.Sprintf("%s = call i8* %s(i8* %s, %s %s, i32 8)", raw, allocFn, ctx, sizeType, normSize))
+
+	isNull := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8* %s, null", isNull, raw))
+	id := b.nextID
+	b.nextID++
+	failLabel := fmt.Sprintf("alloc_fail_%d", id)
+	doneLabel := fmt.Sprintf("alloc_done_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", isNull, failLabel, doneLabel))
+	b.namedLabel(failLabel)
+	b.line("call void @llvm.trap()")
+	b.line("unreachable")
+	b.namedLabel(doneLabel)
+
+	dataPtr := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast i8* %s to %s*", dataPtr, raw, targetLLVM))
+
+	valueLLVMType := b.emitter.llvmType(mirRefType(e.Value))
+	valueReg := emitRef(b, e.Value)
+	b.line(fmt.Sprintf("store %s %s, %s* %s", valueLLVMType, valueReg, targetLLVM, dataPtr))
+
+	carrier := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, %s* %s, 0", carrier, llvmStructType, targetLLVM, dataPtr))
+	final := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 1", final, llvmStructType, carrier, allocReg))
+	return final
+}
+
 func emitDynamicArrayReserve(b *llvmBuilder, array, typeText, minimum string) string {
 	elemTypeText := strings.TrimSpace(strings.TrimPrefix(typeText, "[]"))
 	arrayType := b.emitter.llvmType(typeText)
@@ -1122,6 +1183,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			return emitDynamicArrayAlloc(b, e)
 		case *mir.DynamicArrayOp:
 			return emitDynamicArrayOp(b, e)
+		case *mir.Alloc:
+			return emitAlloc(b, e)
 		case *mir.ZeroValue:
 			if innerTypeText, ok := optionalInnerTypeText(e.Type); ok {
 				if niche, ok := optionalNicheLayout(innerTypeText); ok {

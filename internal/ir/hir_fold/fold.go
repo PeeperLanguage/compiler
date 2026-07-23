@@ -1,6 +1,7 @@
 package hir_fold
 
 import (
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
@@ -21,7 +22,7 @@ func ApplyConstantFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir
 	return mod
 }
 
-func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[string]ir.ConstValue) *hir.Block {
+func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[string]constvalue.Value) *hir.Block {
 	if block == nil {
 		return nil
 	}
@@ -50,7 +51,7 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[
 	return out
 }
 
-func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.ConstValue) []hir.Stmt {
+func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]constvalue.Value) []hir.Stmt {
 	switch node := stmt.(type) {
 	case *hir.Block:
 		return []hir.Stmt{foldBlock(node, diag, env)}
@@ -116,11 +117,11 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]ir.
 	}
 }
 
-func cloneConstEnv(src map[string]ir.ConstValue) map[string]ir.ConstValue {
+func cloneConstEnv(src map[string]constvalue.Value) map[string]constvalue.Value {
 	if len(src) == 0 {
-		return make(map[string]ir.ConstValue)
+		return make(map[string]constvalue.Value)
 	}
-	out := make(map[string]ir.ConstValue, len(src))
+	out := make(map[string]constvalue.Value, len(src))
 	maps.Copy(out, src)
 	return out
 }

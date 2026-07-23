@@ -434,6 +434,11 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 					dropUsed = true
 				}
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
+					if _, ok := assign.Value.(*mir.Alloc); ok {
+						ownedPtrUsed = true
+						dropUsed = true
+						continue
+					}
 					if alloc, ok := assign.Value.(*mir.DynamicArrayAlloc); ok && alloc != nil && alloc.Length > 0 {
 						allocUsed = true
 					}

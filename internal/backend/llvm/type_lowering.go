@@ -51,6 +51,9 @@ func llvmTypeName(typeText string) (string, bool) {
 	if typeText == "rawptr" {
 		return "i8*", true
 	}
+	if typeText == "Allocator" {
+		return "i8*", true
+	}
 	if _, ok := ownedInterfaceTypeText(typeText); ok {
 		return "{ i8*, i8* }", true
 	}

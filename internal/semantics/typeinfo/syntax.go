@@ -54,6 +54,8 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			return &FloatType{Bits: 32}
 		case "f64":
 			return &FloatType{Bits: 64}
+		case "Allocator":
+			return &AllocatorType{}
 		}
 		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name); ok {
 			return &IntegerType{Signed: signed, Bits: bits}
