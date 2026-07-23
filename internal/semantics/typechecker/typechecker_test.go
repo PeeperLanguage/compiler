@@ -1387,6 +1387,32 @@ func TestDynamicArrayLiteralRejectsNonLowerableElement(t *testing.T) {
 	}
 }
 
+func TestAllocTypecheck(t *testing.T) {
+	src := `fn main() {
+	let x = 42;
+	let p = alloc(x);
+}`
+	module, diag := checkTypeModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	letDecl := fn.Body.Stmts[1].(*ast.LetDecl)
+	if got := typeinfo.TypeText(module.Semantics.ExprTypes[letDecl.Value.ID()]); got != "*i32" {
+		t.Fatalf("alloc type = %s, want *i32", got)
+	}
+}
+
+func TestAllocRejectsStoredReference(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() {
+	let value = 1;
+	let p = alloc(&value);
+}`)
+	if !diag.HasErrors() {
+		t.Fatalf("expected diagnostic for alloc with stored reference, got none")
+	}
+}
+
 func TestArrayLiteralRejectsWrongExplicitLength(t *testing.T) {
 	src := `fn main() {
 	let arr = [3]i32{1, 2};

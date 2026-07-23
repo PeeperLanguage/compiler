@@ -80,7 +80,7 @@ func IsCondition(t Type) bool {
 
 func IsImplicitCopyType(t Type) bool {
 	switch Underlying(t).(type) {
-	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *RawPtrType:
+	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
 		return true
 	case *RefType:
 		ref, _ := Underlying(t).(*RefType)

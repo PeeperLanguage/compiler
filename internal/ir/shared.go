@@ -199,6 +199,13 @@ type DynamicArrayOp struct {
 	Location *source.Location
 }
 
+type AllocExpr struct {
+	Value     Expr
+	Allocator Expr
+	Type      string
+	Location  *source.Location
+}
+
 type Cast struct {
 	Expr     Expr
 	Type     string
@@ -236,6 +243,7 @@ func (*Field) exprNode()          {}
 func (*StructLit) exprNode()      {}
 func (*ArrayLit) exprNode()       {}
 func (*DynamicArrayOp) exprNode() {}
+func (*AllocExpr) exprNode()     {}
 func (*Cast) exprNode()           {}
 func (*Print) exprNode()          {}
 func (*Drop) exprNode()           {}
@@ -283,6 +291,8 @@ func ExprLocation(expr Expr) *source.Location {
 	case *ArrayLit:
 		return node.Location
 	case *DynamicArrayOp:
+		return node.Location
+	case *AllocExpr:
 		return node.Location
 	case *Cast:
 		return node.Location
@@ -656,6 +666,23 @@ func (e *DynamicArrayOp) String() string {
 }
 
 func (e *DynamicArrayOp) TypeText() string {
+	if e == nil {
+		return ""
+	}
+	return e.Type
+}
+
+func (e *AllocExpr) String() string {
+	if e == nil {
+		return ""
+	}
+	if e.Allocator != nil {
+		return "alloc(" + e.Value.String() + ", " + e.Allocator.String() + ")"
+	}
+	return "alloc(" + e.Value.String() + ")"
+}
+
+func (e *AllocExpr) TypeText() string {
 	if e == nil {
 		return ""
 	}

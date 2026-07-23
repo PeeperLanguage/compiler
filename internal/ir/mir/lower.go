@@ -611,6 +611,17 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			Location: ir.ExprLocation(e),
 		}})
 		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+	case *ir.AllocExpr:
+		value := l.lowerExpr(e.Value, out)
+		var allocRef ValueRef
+		if e.Allocator != nil {
+			allocRef = l.lowerExpr(e.Allocator, out)
+		}
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &Alloc{
+			Value: value, Allocator: allocRef, Type: e.TypeText(), Location: ir.ExprLocation(e),
+		}})
+		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
 		dataType := interfaceDataType(e.Value.TypeText())

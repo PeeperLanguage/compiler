@@ -33,6 +33,9 @@ func SameType(left, right Type) bool {
 	case *NoneType:
 		_, ok := right.(*NoneType)
 		return ok
+	case *AllocatorType:
+		_, ok := right.(*AllocatorType)
+		return ok
 	case *FloatType:
 		r, ok := right.(*FloatType)
 		return ok && r != nil && l.Bits == r.Bits

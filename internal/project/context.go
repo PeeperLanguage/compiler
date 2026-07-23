@@ -237,6 +237,7 @@ func predeclaredScope() *table.Scope {
 	declarePredeclaredConst(scope, "true")
 	declarePredeclaredConst(scope, "false")
 	declarePredeclaredConst(scope, "none")
+	declarePredeclaredType(scope, "Allocator", &typeinfo.AllocatorType{})
 
 	elementType := &typeinfo.NamedType{Name: "T"}
 	arrayType := &typeinfo.ArrayType{Dynamic: true, Elem: elementType}
@@ -262,6 +263,15 @@ func predeclaredScope() *table.Scope {
 			panic(err)
 		}
 	}
+	valueType := &typeinfo.NamedType{Name: "T"}
+	allocType := &typeinfo.AllocatorType{}
+	allocSym := symbols.New(string(symbols.CompilerOpAlloc), symbols.SymbolFunc, nil, nil)
+	allocSym.CompilerOp = symbols.CompilerOpAlloc
+	allocSym.Type = &typeinfo.FuncType{Params: []typeinfo.Type{valueType, allocType}, Return: &typeinfo.OwnedPtrType{Target: valueType}}
+	allocSym.IsPub = true
+	if err := scope.Declare(allocSym); err != nil {
+		panic(err)
+	}
 	return scope
 }
 
@@ -282,6 +292,18 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	sym.IsPub = true
 	if err := scope.Declare(sym); err != nil {
 		// Predeclared constants should never fail to declare
+		panic(err)
+	}
+}
+
+func declarePredeclaredType(scope *table.Scope, name string, typ typeinfo.Type) {
+	if scope == nil || name == "" || typ == nil {
+		return
+	}
+	sym := symbols.New(name, symbols.SymbolType, nil, ast.LocOf(nil))
+	sym.Type = typ
+	sym.IsPub = true
+	if err := scope.Declare(sym); err != nil {
 		panic(err)
 	}
 }

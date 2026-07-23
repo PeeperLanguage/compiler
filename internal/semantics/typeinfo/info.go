@@ -33,6 +33,8 @@ type StringType struct{}
 
 type NoneType struct{}
 
+type AllocatorType struct{}
+
 type NamedType struct {
 	Name string
 }
@@ -122,6 +124,7 @@ func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
 func (*StringType) TypeNode()    {}
 func (*NoneType) TypeNode()      {}
+func (*AllocatorType) TypeNode() {}
 func (*NamedType) TypeNode()     {}
 func (*DefinedType) TypeNode()   {}
 func (*OwnedPtrType) TypeNode()  {}
@@ -163,6 +166,8 @@ func (*CStrType) Text() string { return "cstr" }
 func (*StringType) Text() string { return "string" }
 
 func (*NoneType) Text() string { return "none" }
+
+func (*AllocatorType) Text() string { return "Allocator" }
 
 func (t *NamedType) Text() string {
 	if t == nil {

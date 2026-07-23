@@ -1769,3 +1769,42 @@ func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
 		t.Fatalf("expected consuming dispatch before carrier storage free, got:\n%s", out)
 	}
 }
+
+func TestGenerateLLVMIRLowersAlloc(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "main",
+			ReturnType: "*i32",
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{
+						Name:  "p",
+						Value: &mir.Alloc{Value: &mir.RefConst{Value: "42", Type: "i32"}, Type: "*i32"},
+					},
+				},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: "*i32"}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "@peeper_default_alloc") {
+		t.Fatalf("expected default allocator descriptor, got:\n%s", out)
+	}
+	if !strings.Contains(out, "bitcast [3 x i8*]* @peeper_default_alloc to i8**") {
+		t.Fatalf("expected descriptor bitcast, got:\n%s", out)
+	}
+	if !strings.Contains(out, "getelementptr i8*, i8** %") {
+		t.Fatalf("expected descriptor index, got:\n%s", out)
+	}
+	if !strings.Contains(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to i64") {
+		t.Fatalf("expected size computation, got:\n%s", out)
+	}
+	if !strings.Contains(out, "insertvalue { i32*, i8* }") {
+		t.Fatalf("expected owned pointer carrier construction, got:\n%s", out)
+	}
+	if !strings.Contains(out, "icmp eq i8*") {
+		t.Fatalf("expected null check for allocation, got:\n%s", out)
+	}
+}

@@ -237,6 +237,13 @@ type DynamicArrayOp struct {
 	Location *source.Location
 }
 
+type Alloc struct {
+	Value     ValueRef
+	Allocator ValueRef
+	Type      string
+	Location  *source.Location
+}
+
 type ZeroValue struct {
 	Type     string
 	Location *source.Location
@@ -308,6 +315,7 @@ func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
 func (*DynamicArrayAlloc) valueExprNode() {}
 func (*DynamicArrayOp) valueExprNode()    {}
+func (*Alloc) valueExprNode()             {}
 func (*ZeroValue) valueExprNode()         {}
 func (*OptionalSome) valueExprNode()      {}
 func (*InterfaceMake) valueExprNode()     {}
@@ -397,6 +405,16 @@ func (v *DynamicArrayOp) Text() string {
 		args = append(args, v.Value.Text())
 	}
 	return string(v.Op) + " " + strings.Join(args, ", ")
+}
+
+func (v *Alloc) Text() string {
+	if v == nil {
+		return ""
+	}
+	if v.Allocator != nil {
+		return "alloc " + v.Value.Text() + ", " + v.Allocator.Text()
+	}
+	return "alloc " + v.Value.Text()
 }
 
 func (v *ZeroValue) Text() string {

@@ -18,6 +18,7 @@ type Kind string
 type CompilerOp string
 
 const (
+	CompilerOpAlloc  CompilerOp = "alloc"
 	CompilerOpAppend  CompilerOp = "append"
 	CompilerOpReserve CompilerOp = "reserve"
 	CompilerOpResize  CompilerOp = "resize"
