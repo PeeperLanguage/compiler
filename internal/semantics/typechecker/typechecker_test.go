@@ -1403,6 +1403,20 @@ func TestAllocTypecheck(t *testing.T) {
 	}
 }
 
+func TestAllocAcceptsAllocatorParameterAndEquality(t *testing.T) {
+	diag := checkTypeSource(t, `fn make(value: i32, allocator: Allocator) -> *i32 {
+	let same = allocator == allocator;
+	if same {
+		return alloc(value, allocator);
+	}
+	return alloc(value);
+}
+fn main() {}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected allocator diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestAllocRejectsStoredReference(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() {
 	let value = 1;

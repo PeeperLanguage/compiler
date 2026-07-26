@@ -1,0 +1,6 @@
+fn main() -> i32 {
+    let value = 42;
+    let not_allocator = 1;
+    let _ = alloc(value, not_allocator);
+    return 0;
+}

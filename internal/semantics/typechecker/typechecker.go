@@ -1692,7 +1692,14 @@ func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo
 
 	allocType := &typeinfo.AllocatorType{}
 	if len(node.Args) > 1 {
-		c.typeExpr(scope, node.Args[1], allocType)
+		allocatorValueType := c.typeExpr(scope, node.Args[1], allocType)
+		if allocatorValueType != nil && !c.assignable(allocType, allocatorValueType) {
+			d := typeMismatchError(node.Args[1],
+				fmt.Sprintf("cannot implicitly convert %s to %s",
+					typeinfo.TypeText(allocatorValueType), typeinfo.TypeText(allocType)))
+			c.addInterfaceHint(d, allocType, allocatorValueType)
+			c.ctx.Diagnostics.Add(d)
+		}
 	}
 
 	return &typeinfo.OwnedPtrType{Target: valueType}

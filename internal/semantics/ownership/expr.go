@@ -241,6 +241,18 @@ func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, l
 		return
 	}
 	a.checkExpr(scope, call.Callee, st, useRead, loans, false)
+	if ident, ok := call.Callee.(*ast.Ident); ok && ident != nil {
+		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+		if sym != nil && sym.CompilerOp == symbols.CompilerOpAlloc {
+			if len(call.Args) > 0 {
+				a.checkExpr(scope, call.Args[0], st, useConsume, loans, false)
+			}
+			for _, arg := range call.Args[1:] {
+				a.checkExpr(scope, arg, st, useRead, loans, false)
+			}
+			return
+		}
+	}
 	fn, ok := a.exprType(call.Callee).(*typeinfo.FuncType)
 	if !ok || fn == nil || len(call.Args) != len(fn.Params) {
 		for _, arg := range call.Args {

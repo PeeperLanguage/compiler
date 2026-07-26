@@ -123,6 +123,18 @@ fn main() {
 	}
 }
 
+func TestAllocConsumesOwnedValue(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn main() {
+	let q = alloc(42);
+	let p = alloc(q);
+	free(p);
+	free(q);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected alloc to consume owned argument, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestRawPointerCopyAllowed(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn main() {
 	let value: i32 = 1;

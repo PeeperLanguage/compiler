@@ -1,0 +1,11 @@
+fn Make(value: i32, allocator: Allocator) -> *i32 {
+    let same = allocator == allocator;
+    if same {
+        return alloc(value, allocator);
+    }
+    return alloc(value);
+}
+
+fn main() -> i32 {
+    return 0;
+}

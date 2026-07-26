@@ -1,0 +1,3 @@
+name = "negative_alloc_wrong_allocator"
+build = "program"
+entry = "src/main.peep"

@@ -57,6 +57,19 @@ func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	}
 }
 
+func TestAllocatorCapabilities(t *testing.T) {
+	allocator := &AllocatorType{}
+	if !IsSizedType(allocator) {
+		t.Fatal("allocator must be sized")
+	}
+	if !IsImplicitCopyType(allocator) {
+		t.Fatal("allocator must copy implicitly")
+	}
+	if !IsEquatable(allocator) {
+		t.Fatal("allocator must be equatable")
+	}
+}
+
 func TestReferenceTargetPreservesMutability(t *testing.T) {
 	target := &IntegerType{Signed: true, Bits: 32}
 	got, mutable, ok := ReferenceTarget(&RefType{Mutable: true, Target: target})
