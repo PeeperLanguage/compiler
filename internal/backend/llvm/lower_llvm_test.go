@@ -23,22 +23,22 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"byte":             "i8",
 		"i24":              "i24",
 		"u8388608":         "i8388608",
-		"string":           "{ i8*, i64 }",
+		"string":           "{ i8*, i64, i8* }",
 		"?i32":             "{ i1, i32 }",
-		"?string":          "{ i1, { i8*, i64 } }",
+		"?string":          "{ i1, { i8*, i64, i8* } }",
 		"?*i32":            "{ i1, { i32*, i8* } }",
 		"?*iface{}":        "{ i1, { i8*, i8* } }",
 		"*i32":             "{ i32*, i8* }",
 		"*iface{}":         "{ i8*, i8* }",
 		"rawptr":           "i8*",
 		"[4]i32":           "[4 x i32]",
-		"[]i32":            "{ i32*, i64, i64 }",
+		"[]i32":            "{ i32*, i64, i64, i8* }",
 		"&i32":             "i32*",
 		"&mut i32":         "i32*",
 		"&[]i32":           "{ i32*, i64 }",
 		"&mut []i32":       "{ i32*, i64 }",
-		"*string":          "{ { i8*, i64 }*, i8* }",
-		"[]?string":        "{ { i1, { i8*, i64 } }*, i64, i64 }",
+		"*string":          "{ { i8*, i64, i8* }*, i8* }",
+		"[]?string":        "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }",
 		"struct{x: [2]u8}": "{ [2 x i8] }",
 	}
 	for typeText, want := range cases {
@@ -296,7 +296,7 @@ func TestGenerateLLVMIRLowersDynamicArrayAllocation(t *testing.T) {
 		"call i8* @malloc(i64",
 		"icmp eq i8*",
 		"call void @llvm.trap()",
-		"insertvalue { i32*, i64, i64 }",
+		"insertvalue { i32*, i64, i64, i8* }",
 		"i64 3, 2",
 	} {
 		if !strings.Contains(out, expected) {
@@ -319,11 +319,11 @@ func TestGenerateLLVMIRLowersEmptyDynamicArrayWithoutAllocation(t *testing.T) {
 		}},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	if strings.Contains(out, "@malloc") || strings.Contains(out, "umul.with.overflow") {
-		t.Fatalf("empty dynamic array must not allocate:\n%s", out)
+	if strings.Count(out, "call i8* @malloc") != 1 || strings.Contains(out, "umul.with.overflow") {
+		t.Fatalf("empty dynamic array must not allocate storage:\n%s", out)
 	}
-	if !strings.Contains(out, "ret { i32*, i64, i64 } zeroinitializer") {
-		t.Fatalf("empty dynamic array must return zero header:\n%s", out)
+	if !strings.Contains(out, "ret { i32*, i64, i64, i8* }") || !strings.Contains(out, "i64 0, 2") {
+		t.Fatalf("empty dynamic array must return zero-length header:\n%s", out)
 	}
 }
 
@@ -358,7 +358,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 			length: &mir.RefName{Name: "size", Type: "usize"},
 			value:  &mir.RefName{Name: "value", Type: "i32"},
 			expected: []string{
-				"array_resize_loop_", "icmp ult i64", "store i32 %value", "insertvalue { i32*, i64, i64 }",
+				"array_resize_loop_", "icmp ult i64", "store i32 %value", "insertvalue { i32*, i64, i64, i8* }",
 			},
 		},
 	}
@@ -388,8 +388,8 @@ func TestGenerateLLVMIRLowersDynamicArrayShrink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mod := dynamicArrayOperationModule(tt.name, tt.arrayType, symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: "usize"}, nil)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-			if strings.Contains(out, "@malloc") || strings.Contains(out, "umul.with.overflow") {
-				t.Fatalf("shrink must not allocate:\n%s", out)
+			if tt.name == "scalar" && strings.Contains(out, "umul.with.overflow") {
+				t.Fatalf("shrink must not calculate storage size:\n%s", out)
 			}
 			for _, expected := range tt.expected {
 				if !strings.Contains(out, expected) {
@@ -452,8 +452,8 @@ func TestGenerateLLVMIRLowersDynamicArrayShrinkFor32BitTarget(t *testing.T) {
 	if !strings.Contains(out, "zext i32 %size to i64") {
 		t.Fatalf("expected usize normalization in 32-bit shrink IR:\n%s", out)
 	}
-	if strings.Contains(out, "@malloc") || strings.Contains(out, "umul.with.overflow") {
-		t.Fatalf("32-bit shrink must not allocate:\n%s", out)
+	if strings.Contains(out, "umul.with.overflow") {
+		t.Fatalf("32-bit shrink must not calculate storage size:\n%s", out)
 	}
 }
 
@@ -630,6 +630,62 @@ func TestGenerateLLVMIRNoDescriptorWithoutOwnedPointers(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRPassThroughArrayDoesNotReserveAllocatorRuntime(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{
+			{
+				Name:       "free",
+				Params:     []ir.Param{{Name: "value", Type: "i32"}},
+				ReturnType: "void",
+			},
+			{
+				Name:       "shorten",
+				Params:     []ir.Param{{Name: "values", Type: "[]i32"}},
+				ReturnType: "[]i32",
+				Blocks: []*mir.Block{{
+					ID: 0,
+					Instrs: []mir.Instr{&mir.Assign{
+						Name: "result",
+						Value: &mir.DynamicArrayOp{
+							Op:     symbols.CompilerOpShrink,
+							Array:  &mir.RefName{Name: "values", Type: "[]i32"},
+							Length: &mir.RefName{Name: "size", Type: "usize"},
+							Type:   "[]i32",
+						},
+					}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: "[]i32"}},
+				}},
+			},
+		},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "declare void @free(i32)") {
+		t.Fatalf("expected unrelated free declaration, got:\n%s", out)
+	}
+	if strings.Contains(out, "@peeper_default_alloc") || strings.Contains(out, "declare i8* @malloc") || strings.Contains(out, "declare void @free(i8*)") {
+		t.Fatalf("carrier-only pass-through must not reserve allocator runtime, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "malloc",
+			Params:     []ir.Param{{Name: "size", Type: "usize"}},
+			ReturnType: "*i32",
+		}},
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	if out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); out != "" {
+		t.Fatalf("owner-bearing extern must suppress LLVM output, got:\n%s", out)
+	}
+	if !diag.HasErrors() {
+		t.Fatal("owner-bearing extern must emit diagnostic")
+	}
+}
+
 func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.T) {
 	const (
 		payloadType   = "struct{child: *i32}"
@@ -737,6 +793,33 @@ func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRDropsStringThroughAllocator(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test",
+		Funcs: []*mir.Function{{
+			Name:       "release",
+			Params:     []ir.Param{{Name: "value", Type: "string"}},
+			ReturnType: "void",
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "string"}}},
+				Term:   &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	for _, expected := range []string{
+		"extractvalue { i8*, i64, i8* } %value, 2",
+		"ptrtoint i8* getelementptr (i8, i8* null, i32 1) to i64",
+		"i32 1)",
+		"call void %",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("expected %q in string drop IR:\n%s", expected, out)
+		}
+	}
+}
+
 func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 	mod := &mir.Module{
 		Name:     "test",
@@ -768,8 +851,8 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 	for _, target := range targets {
 		t.Run(target.name, func(t *testing.T) {
 			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), target.triple, false, target.targetOS)
-			if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 0") ||
-				!strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 1") {
+			if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") ||
+				!strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 1") {
 				t.Fatalf("expected view to extract owner data and length, got:\n%s", irText)
 			}
 			if !strings.Contains(irText, "insertvalue { i32*, i64 } zeroinitializer, i32*") ||
@@ -843,7 +926,7 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected shared view data and length extraction, got:\n%s", irText)
 	}
-	if strings.Contains(irText, "{ i32*, i64, i64 }") {
+	if strings.Contains(irText, "{ i32*, i64, i64, i8* }") {
 		t.Fatalf("reslicing must not recover capacity, got:\n%s", irText)
 	}
 	trap := strings.Index(irText, "call void @llvm.trap()")
@@ -1587,10 +1670,10 @@ func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
 func TestGenerateLLVMIRLowersDynamicArrayIndexRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexReadMIRModule("[]i32", &mir.RefName{Name: "i", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
-	if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 0") {
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") {
 		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 1") ||
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 1") ||
 		!strings.Contains(irText, "sext i32 %i to i64") ||
 		!strings.Contains(irText, "icmp uge i64") ||
 		!strings.Contains(irText, "call void @llvm.trap()") {
@@ -1625,7 +1708,7 @@ func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) 
 func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexStoreMIRModule("[]i32", &mir.RefConst{Value: "0", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
-	if !strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs, 0") {
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") {
 		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
 	}
 	if !strings.Contains(irText, "icmp uge i64") || !strings.Contains(irText, "call void @llvm.trap()") {
@@ -1646,7 +1729,7 @@ func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected slice-view data and length extraction, got:\n%s", irText)
 	}
-	if strings.Contains(irText, "extractvalue { i32*, i64, i64 } %xs") {
+	if strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs") {
 		t.Fatalf("slice view must not use dynamic-array capacity layout, got:\n%s", irText)
 	}
 	if !strings.Contains(irText, "sext i32 %i to i64") ||
@@ -1707,7 +1790,7 @@ func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
 	}}}
 
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	headerField := strings.Index(irText, "getelementptr inbounds { { { i32 }*, i64, i64 } }")
+	headerField := strings.Index(irText, "getelementptr inbounds { { { i32 }*, i64, i64, i8* } }")
 	element := strings.Index(irText, "getelementptr { i32 }, { i32 }*")
 	valueField := strings.LastIndex(irText, "getelementptr inbounds { i32 }, { i32 }*")
 	if headerField < 0 || element < headerField || valueField < element || !strings.Contains(irText, "load i32, i32*") {
@@ -1792,7 +1875,7 @@ func TestGenerateLLVMIRLowersAlloc(t *testing.T) {
 	if !strings.Contains(out, "@peeper_default_alloc") {
 		t.Fatalf("expected default allocator descriptor, got:\n%s", out)
 	}
-	if !strings.Contains(out, "bitcast [3 x i8*]* @peeper_default_alloc to i8**") {
+	if !strings.Contains(out, "bitcast [3 x i8*]* @peeper_default_alloc to i8*") {
 		t.Fatalf("expected descriptor bitcast, got:\n%s", out)
 	}
 	if !strings.Contains(out, "getelementptr i8*, i8** %") {

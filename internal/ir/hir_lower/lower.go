@@ -989,7 +989,7 @@ func lookupInterfaceMethod(module *project.Module, baseType typeinfo.Type, name 
 
 func interfaceSlotTypeText(module *project.Module, method typeinfo.Method) string {
 	var b strings.Builder
-	b.WriteString("fn(*byte")
+	b.WriteString("fn(rawptr")
 	for i, param := range method.Params {
 		if i == 0 {
 			continue

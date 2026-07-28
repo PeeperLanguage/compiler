@@ -26,9 +26,6 @@ fn (self: Counter) take() -> i32 {
     return self.value;
 }
 
-#[extern("malloc")]
-fn acquire_counter(size: usize) -> *Counter;
-
 fn read(reader: &Reader) -> i32 {
     return reader.read();
 }
@@ -48,7 +45,7 @@ fn main() -> i32 {
         return 2;
     }
 
-    let owned_counter = acquire_counter(4);
+    let owned_counter = alloc(.Counter{ value = 4 });
     owned_counter.value = 9;
     let owned_reader: *Reader = owned_counter;
     let owned_value = owned_reader.read();
@@ -59,13 +56,13 @@ fn main() -> i32 {
 
     let mut automatic_value = 0;
     {
-        let automatic_counter = acquire_counter(4);
+        let automatic_counter = alloc(.Counter{ value = 4 });
         automatic_counter.value = 13;
         let automatic_reader: *Reader = automatic_counter;
         automatic_value = automatic_reader.read();
     }
 
-    let consumed_counter = acquire_counter(4);
+    let consumed_counter = alloc(.Counter{ value = 4 });
     consumed_counter.value = 11;
     let consumer: *Consumer = consumed_counter;
     return automatic_value + consumer.take() - 24;

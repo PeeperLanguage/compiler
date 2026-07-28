@@ -1,5 +1,5 @@
 #[extern("malloc")]
-fn Unrelated(value: i32) -> rawptr;
+fn Unrelated(value: usize) -> rawptr;
 
 fn main() {
     []i32{};

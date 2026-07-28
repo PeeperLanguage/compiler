@@ -223,9 +223,10 @@ type ArrayLit struct {
 }
 
 type DynamicArrayAlloc struct {
-	Length   int
-	Type     string
-	Location *source.Location
+	Length    int
+	Allocator ValueRef
+	Type      string
+	Location  *source.Location
 }
 
 type DynamicArrayOp struct {
@@ -390,6 +391,12 @@ func (v *ArrayLit) Text() string {
 }
 
 func (v *DynamicArrayAlloc) Text() string {
+	if v == nil {
+		return ""
+	}
+	if v.Allocator != nil {
+		return fmt.Sprintf("allocarray %d, %s", v.Length, v.Allocator.Text())
+	}
 	return fmt.Sprintf("allocarray %d", v.Length)
 }
 

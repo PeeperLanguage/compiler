@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed design for issue #26. No compiler behavior implements this document yet.
+Design and implementation tracker for issue #26. Steps 2-4 are implemented;
+owned-interface and FFI closure remain future steps.
 
 ## Goal
 
@@ -23,15 +24,16 @@ Current source model already has correct ownership timing:
 - ownership analysis decides when moves invalidate values and where `Drop`
   actions occur.
 - HIR and MIR carry explicit `Drop` operations.
-- LLVM recursively destroys payloads, then calls global `free`.
-- dynamic-array allocation and growth call global `malloc` and `free`.
+- LLVM recursively destroys payloads, then releases through owner-carried
+  allocator descriptors.
+- dynamic-array allocation, growth, and release use the originating allocator;
+  the default descriptor currently bridges to `malloc` and `free`.
 - `*Interface` carries `{data, vtable}` and its vtable drop slot destroys erased
   payload before global `free` releases concrete allocation.
 
-Missing information is allocator identity. `*T` currently lowers to `T*`,
-dynamic arrays to `{T*, len, cap}`, strings to `{byte*, len}`, and owned
-interfaces to `{data, vtable}`. None can select original allocator after values
-cross a function or erase concrete type.
+Missing information remains allocator identity for owned interfaces. `*T`
+lowers to `{T*, allocator}`, dynamic arrays to `{T*, len, cap, allocator}`,
+strings to `{byte*, len, allocator}`, and owned interfaces to `{data, vtable}`.
 
 ## Decisions
 

@@ -35,6 +35,28 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 		emitFreeCall(b, data, "rawptr")
 		return
 	}
+	if typeText == "string" {
+		stringType := b.emitter.llvmType(typeText)
+		data := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, stringType, value))
+		length := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, stringType, value))
+		allocator := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", allocator, stringType, value))
+		nonNull := b.nextReg()
+		b.line(fmt.Sprintf("%s = icmp ne i8* %s, null", nonNull, data))
+		id := b.nextID
+		b.nextID++
+		releaseLabel := fmt.Sprintf("drop_string_release_%d", id)
+		doneLabel := fmt.Sprintf("drop_string_done_%d", id)
+		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", nonNull, releaseLabel, doneLabel))
+		b.namedLabel(releaseLabel)
+		size := emitAllocatorStorageSize(b, "byte", length)
+		emitAllocatorDeallocate(b, allocator, data, size, "1")
+		b.line(fmt.Sprintf("br label %%%s", doneLabel))
+		b.namedLabel(doneLabel)
+		return
+	}
 	if target, ok := pointerTypeTextTarget(typeText); ok {
 		llvmStructType := b.emitter.llvmType(typeText)
 		data := b.nextReg()
@@ -50,12 +72,6 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 			emitDropValue(b, payload, target)
 		}
 		emitOwnedPointerFree(b, value, typeText, target)
-		return
-	}
-	if typeText == "string" {
-		data := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue { i8*, i64 } %s, 0", data, value))
-		b.line(fmt.Sprintf("call void @free(i8* %s)", data))
 		return
 	}
 	if inner, ok := optionalInnerTypeText(typeText); ok {
@@ -155,8 +171,25 @@ func emitDynamicArrayDrop(b *llvmBuilder, value, typeText, elem string) {
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, value))
 	length := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, value))
+	capacity := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", capacity, arrayType, value))
+	allocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 3", allocator, arrayType, value))
 	emitDynamicArrayElementRangeDrop(b, data, elem, "0", length)
-	emitFreeCall(b, data, "rawptr")
+	nonNull := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ne %s* %s, null", nonNull, b.emitter.llvmType(elem), data))
+	id := b.nextID
+	b.nextID++
+	releaseLabel := fmt.Sprintf("drop_array_release_%d", id)
+	doneLabel := fmt.Sprintf("drop_array_done_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", nonNull, releaseLabel, doneLabel))
+	b.namedLabel(releaseLabel)
+	size := emitAllocatorStorageSize(b, elem, capacity)
+	rawData := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", rawData, b.emitter.llvmType(elem), data))
+	emitAllocatorDeallocate(b, allocator, rawData, size, "8")
+	b.line(fmt.Sprintf("br label %%%s", doneLabel))
+	b.namedLabel(doneLabel)
 }
 
 func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data, elem, start, end string) {
@@ -208,17 +241,7 @@ func emitOwnedPointerFree(b *llvmBuilder, value, typeText, targetTypeText string
 	size := b.nextReg()
 	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, targetLLVM, targetLLVM, targetLLVM, sizeType))
 
-	ctx := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", ctx, desc))
-
-	deallocSlot := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr i8*, i8** %s, i32 2", deallocSlot, desc))
-	deallocRaw := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", deallocRaw, deallocSlot))
-	deallocFn := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to void (i8*, i8*, %s, i32)*", deallocFn, deallocRaw, sizeType))
-
-	b.line(fmt.Sprintf("call void %s(i8* %s, i8* %s, %s %s, i32 8)", deallocFn, ctx, rawData, sizeType, size))
+	emitAllocatorDeallocate(b, desc, rawData, size, "8")
 }
 
 func emitFreeCall(b *llvmBuilder, value, typeText string) {
@@ -246,6 +269,27 @@ func typeTextNeedsDrop(typeText string) bool {
 		return typeTextNeedsDrop(elem)
 	}
 	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeTextNeedsDrop)
+}
+
+func typeCarriesAllocator(typeText string) bool {
+	typeText = strings.TrimSpace(typeText)
+	if typeText == "string" {
+		return true
+	}
+	if inner, ok := optionalInnerTypeText(typeText); ok {
+		return typeCarriesAllocator(inner)
+	}
+	if _, ok := strings.CutPrefix(typeText, "[]"); ok {
+		return true
+	}
+	if target, ok := pointerTypeTextTarget(typeText); ok {
+		_, isInterface := ownedInterfaceTypeText(typeText)
+		return !isInterface && target != ""
+	}
+	if _, elem, ok := ir.ArrayTypeParts(typeText); ok {
+		return typeCarriesAllocator(elem)
+	}
+	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeCarriesAllocator)
 }
 
 func structFieldTypeTexts(typeText string) []string {

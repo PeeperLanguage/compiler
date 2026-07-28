@@ -281,9 +281,6 @@ func emitDynamicArrayAlloc(b *llvmBuilder, alloc *mir.DynamicArrayAlloc) string 
 	if b == nil || alloc == nil {
 		return "zeroinitializer"
 	}
-	if alloc.Length == 0 {
-		return "zeroinitializer"
-	}
 	if alloc.Length < 0 {
 		b.emitter.markInvalid("dynamic array allocation has negative length")
 		return "zeroinitializer"
@@ -294,57 +291,35 @@ func emitDynamicArrayAlloc(b *llvmBuilder, alloc *mir.DynamicArrayAlloc) string 
 		return "zeroinitializer"
 	}
 	elemTypeText = strings.TrimSpace(elemTypeText)
-	data := emitDynamicArrayStorageAlloc(b, elemTypeText, strconv.Itoa(alloc.Length))
-	return emitDynamicArrayHeader(b, alloc.Type, elemTypeText, data, strconv.Itoa(alloc.Length), strconv.Itoa(alloc.Length))
+	allocator := allocatorHandleFromRef(b, alloc.Allocator)
+	if alloc.Length == 0 {
+		return emitDynamicArrayHeader(b, alloc.Type, elemTypeText, "null", "0", "0", allocator)
+	}
+	data := emitDynamicArrayStorageAlloc(b, elemTypeText, strconv.Itoa(alloc.Length), allocator)
+	return emitDynamicArrayHeader(b, alloc.Type, elemTypeText, data, strconv.Itoa(alloc.Length), strconv.Itoa(alloc.Length), allocator)
 }
 
-func emitDynamicArrayStorageAlloc(b *llvmBuilder, elemTypeText, capacity string) string {
-	elemType := b.emitter.llvmType(elemTypeText)
-	sizeType := b.emitter.llvmType("usize")
+func emitDynamicArrayStorageAlloc(b *llvmBuilder, elemTypeText, capacity, allocator string) string {
+	size := emitAllocatorStorageSize(b, elemTypeText, capacity)
+	raw := emitAllocatorAllocate(b, allocator, size, "8")
+	missing := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8* %s, null", missing, raw))
 	id := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("array_alloc_fail_%d", id)
-	if sizeType == "i32" {
-		capacityReadyLabel := fmt.Sprintf("array_alloc_capacity_ready_%d", id)
-		tooLarge := b.nextReg()
-		b.line(fmt.Sprintf("%s = icmp ugt i64 %s, 4294967295", tooLarge, capacity))
-		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", tooLarge, failLabel, capacityReadyLabel))
-		b.namedLabel(capacityReadyLabel)
-		narrowed := b.nextReg()
-		b.line(fmt.Sprintf("%s = trunc i64 %s to i32", narrowed, capacity))
-		capacity = narrowed
-	}
-	elemSize := b.nextReg()
-	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", elemSize, elemType, elemType, elemType, sizeType))
-	sizeAndOverflow := b.nextReg()
-	b.line(fmt.Sprintf("%s = call { %s, i1 } @llvm.umul.with.overflow.%s(%s %s, %s %s)", sizeAndOverflow, sizeType, sizeType, sizeType, elemSize, sizeType, capacity))
-	size := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue { %s, i1 } %s, 0", size, sizeType, sizeAndOverflow))
-	overflow := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue { %s, i1 } %s, 1", overflow, sizeType, sizeAndOverflow))
-	sizeReadyLabel := fmt.Sprintf("array_alloc_size_ready_%d", id)
 	readyLabel := fmt.Sprintf("array_alloc_ready_%d", id)
-	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", overflow, failLabel, sizeReadyLabel))
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", missing, failLabel, readyLabel))
 	b.namedLabel(failLabel)
 	b.line("call void @llvm.trap()")
 	b.line("unreachable")
-	b.namedLabel(sizeReadyLabel)
-	emptySize := b.nextReg()
-	b.line(fmt.Sprintf("%s = icmp eq %s %s, 0", emptySize, sizeType, size))
-	allocationSize := b.nextReg()
-	b.line(fmt.Sprintf("%s = select i1 %s, %s 1, %s %s", allocationSize, emptySize, sizeType, sizeType, size))
-	raw := b.nextReg()
-	b.line(fmt.Sprintf("%s = call i8* @malloc(%s %s)", raw, sizeType, allocationSize))
-	missing := b.nextReg()
-	b.line(fmt.Sprintf("%s = icmp eq i8* %s, null", missing, raw))
-	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", missing, failLabel, readyLabel))
 	b.namedLabel(readyLabel)
 	data := b.nextReg()
+	elemType := b.emitter.llvmType(elemTypeText)
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to %s*", data, raw, elemType))
 	return data
 }
 
-func emitDynamicArrayHeader(b *llvmBuilder, arrayTypeText, elemTypeText, data, length, capacity string) string {
+func emitDynamicArrayHeader(b *llvmBuilder, arrayTypeText, elemTypeText, data, length, capacity, allocator string) string {
 	arrayType := b.emitter.llvmType(arrayTypeText)
 	elemType := b.emitter.llvmType(elemTypeText)
 	withData := b.nextReg()
@@ -353,7 +328,9 @@ func emitDynamicArrayHeader(b *llvmBuilder, arrayTypeText, elemTypeText, data, l
 	b.line(fmt.Sprintf("%s = insertvalue %s %s, i64 %s, 1", withLength, arrayType, withData, length))
 	withCapacity := b.nextReg()
 	b.line(fmt.Sprintf("%s = insertvalue %s %s, i64 %s, 2", withCapacity, arrayType, withLength, capacity))
-	return withCapacity
+	withAllocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 3", withAllocator, arrayType, withCapacity, allocator))
+	return withAllocator
 }
 
 func emitAlloc(b *llvmBuilder, e *mir.Alloc) string {
@@ -363,22 +340,7 @@ func emitAlloc(b *llvmBuilder, e *mir.Alloc) string {
 	targetLLVM := b.emitter.llvmType(targetTypeText)
 	sizeType := b.emitter.llvmType("usize")
 
-	var allocReg string
-	if e.Allocator != nil {
-		allocReg = emitRef(b, e.Allocator)
-	} else {
-		allocReg = b.nextReg()
-		b.line(fmt.Sprintf("%s = bitcast [3 x i8*]* @peeper_default_alloc to i8**", allocReg))
-	}
-	ctx := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", ctx, allocReg))
-
-	allocSlot := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr i8*, i8** %s, i32 1", allocSlot, allocReg))
-	allocRaw := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", allocRaw, allocSlot))
-	allocFn := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8* (i8*, %s, i32)*", allocFn, allocRaw, sizeType))
+	allocReg := allocatorHandleFromRef(b, e.Allocator)
 
 	size := b.nextReg()
 	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, targetLLVM, targetLLVM, targetLLVM, sizeType))
@@ -388,8 +350,7 @@ func emitAlloc(b *llvmBuilder, e *mir.Alloc) string {
 	normSize := b.nextReg()
 	b.line(fmt.Sprintf("%s = select i1 %s, %s 1, %s %s", normSize, zeroSize, sizeType, sizeType, size))
 
-	raw := b.nextReg()
-	b.line(fmt.Sprintf("%s = call i8* %s(i8* %s, %s %s, i32 8)", raw, allocFn, ctx, sizeType, normSize))
+	raw := emitAllocatorAllocate(b, allocReg, normSize, "8")
 
 	isNull := b.nextReg()
 	b.line(fmt.Sprintf("%s = icmp eq i8* %s, null", isNull, raw))
@@ -427,6 +388,8 @@ func emitDynamicArrayReserve(b *llvmBuilder, array, typeText, minimum string) st
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, array))
 	capacity := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", capacity, arrayType, array))
+	allocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 3", allocator, arrayType, array))
 	sufficient := b.nextReg()
 	b.line(fmt.Sprintf("%s = icmp uge i64 %s, %s", sufficient, capacity, minimum))
 	id := b.nextID
@@ -442,7 +405,7 @@ func emitDynamicArrayReserve(b *llvmBuilder, array, typeText, minimum string) st
 	b.namedLabel(reuseLabel)
 	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
 	b.namedLabel(growLabel)
-	newData := emitDynamicArrayStorageAlloc(b, elemTypeText, minimum)
+	newData := emitDynamicArrayStorageAlloc(b, elemTypeText, minimum, allocator)
 	relocateEntry := b.currentLabel
 	b.line(fmt.Sprintf("br label %%%s", loopLabel))
 	b.namedLabel(loopLabel)
@@ -465,12 +428,23 @@ func emitDynamicArrayReserve(b *llvmBuilder, array, typeText, minimum string) st
 	b.line(fmt.Sprintf("%s = add i64 %s, 1", nextIndex, index))
 	b.line(fmt.Sprintf("br label %%%s", loopLabel))
 	b.namedLabel(doneLabel)
-	emitFreeCall(b, oldData, "*"+elemTypeText)
-	resized := emitDynamicArrayHeader(b, typeText, elemTypeText, newData, length, minimum)
+	oldIsNull := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq %s* %s, null", oldIsNull, elemType, oldData))
+	releaseLabel := fmt.Sprintf("array_reserve_release_%d", id)
+	releaseDoneLabel := fmt.Sprintf("array_reserve_release_done_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", oldIsNull, releaseDoneLabel, releaseLabel))
+	b.namedLabel(releaseLabel)
+	oldSize := emitAllocatorStorageSize(b, elemTypeText, capacity)
+	oldRaw := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", oldRaw, elemType, oldData))
+	emitAllocatorDeallocate(b, allocator, oldRaw, oldSize, "8")
+	b.line(fmt.Sprintf("br label %%%s", releaseDoneLabel))
+	b.namedLabel(releaseDoneLabel)
+	resized := emitDynamicArrayHeader(b, typeText, elemTypeText, newData, length, minimum, allocator)
 	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
 	b.namedLabel(mergeLabel)
 	result := b.nextReg()
-	b.line(fmt.Sprintf("%s = phi %s [ %s, %%%s ], [ %s, %%%s ]", result, arrayType, array, reuseLabel, resized, doneLabel))
+	b.line(fmt.Sprintf("%s = phi %s [ %s, %%%s ], [ %s, %%%s ]", result, arrayType, array, reuseLabel, resized, releaseDoneLabel))
 	return result
 }
 
@@ -517,6 +491,8 @@ func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemT
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", oldLength, arrayType, array))
 	capacity := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", capacity, arrayType, array))
+	allocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 3", allocator, arrayType, array))
 	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: "u64"})
 	shorter := b.nextReg()
 	b.line(fmt.Sprintf("%s = icmp ult i64 %s, %s", shorter, newLength, oldLength))
@@ -530,7 +506,7 @@ func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemT
 	b.line(fmt.Sprintf("br label %%%s", doneLabel))
 	b.namedLabel(shrinkLabel)
 	emitDynamicArrayElementRangeDrop(b, data, elemTypeText, newLength, oldLength)
-	shrunk := emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, capacity)
+	shrunk := emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, capacity, allocator)
 	shrinkDoneLabel := b.currentLabel
 	b.line(fmt.Sprintf("br label %%%s", doneLabel))
 	b.namedLabel(doneLabel)
@@ -597,7 +573,9 @@ func emitDynamicArrayAppend(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemT
 	elemType := b.emitter.llvmType(elemTypeText)
 	b.line(fmt.Sprintf("%s = getelementptr %s, %s* %s, i64 %s", ptr, elemType, elemType, data, length))
 	b.line(fmt.Sprintf("store %s %s, %s* %s", elemType, emitRef(b, op.Value), elemType, ptr))
-	return emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, finalCapacity)
+	allocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 3", allocator, arrayType, reserved))
+	return emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, finalCapacity, allocator)
 }
 
 func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemTypeText string) string {
@@ -614,6 +592,8 @@ func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemT
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, resized))
 	capacity := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", capacity, arrayType, resized))
+	allocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 3", allocator, arrayType, resized))
 	id := b.nextID
 	b.nextID++
 	entryLabel := b.currentLabel
@@ -639,7 +619,7 @@ func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array, elemT
 	b.line(fmt.Sprintf("%s = add i64 %s, 1", nextIndex, index))
 	b.line(fmt.Sprintf("br label %%%s", loopLabel))
 	b.namedLabel(doneLabel)
-	return emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, capacity)
+	return emitDynamicArrayHeader(b, op.Type, elemTypeText, data, newLength, capacity, allocator)
 }
 
 func emitIndexPtr(b *llvmBuilder, base, baseType string, addressed bool, indexRef mir.ValueRef) string {

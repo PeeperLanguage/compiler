@@ -37,6 +37,10 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 		emitter.markInvalid("failed to parse interface thunk slot type: " + thunk.SlotType)
 		return
 	}
+	if slotParams[0] != "i8*" {
+		emitter.markInvalid("interface thunk receiver slot must use rawptr: " + thunk.SlotType)
+		return
+	}
 	out.WriteString("define ")
 	out.WriteString(slotRet)
 	out.WriteString(" @")

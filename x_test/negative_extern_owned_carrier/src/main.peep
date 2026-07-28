@@ -1,0 +1,11 @@
+struct Counter {
+    value: i32
+}
+
+#[extern("malloc")]
+fn acquire_counter(size: usize) -> *Counter;
+
+fn main() -> i32 {
+    let _ = acquire_counter(4);
+    return 0;
+}

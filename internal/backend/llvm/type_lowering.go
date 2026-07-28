@@ -80,7 +80,7 @@ func llvmTypeName(typeText string) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		return "{ " + elem + "*, i64, i64 }", true
+		return "{ " + elem + "*, i64, i64, i8* }", true
 	}
 	if remainder, ok := referenceTypeTextTarget(typeText); ok {
 		return llvmRefTypeName(remainder)
@@ -131,7 +131,7 @@ func llvmTypeName(typeText string) (string, bool) {
 	case "cstr":
 		return "i8*", true
 	case "string":
-		return "{ i8*, i64 }", true
+		return "{ i8*, i64, i8* }", true
 	default:
 		return "", false
 	}
@@ -215,7 +215,7 @@ func interfaceMethodSlotTypeText(methodText string) (string, bool) {
 		return "", false
 	}
 	paramsText := strings.TrimSpace(methodText[open+1 : close])
-	parts := []string{"*byte"}
+	parts := []string{"rawptr"}
 	params := splitTopLevel(paramsText, ',')
 	for i, param := range params {
 		if i == 0 {
