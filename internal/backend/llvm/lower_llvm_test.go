@@ -792,6 +792,35 @@ func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.T) {
+	interfaceType := "iface{read(self: &Self): i32}"
+	mod := &mir.Module{
+		Name: "test",
+		InterfaceThunks: []*mir.InterfaceThunk{{
+			Name:     "interface_thunk",
+			SlotType: "fn(rawptr) -> i32",
+			FuncName: "consume_interface",
+			FuncType: "fn(" + interfaceType + ") -> i32",
+			DataType: "struct{value: i32}",
+		}},
+		Funcs: []*mir.Function{{
+			Name:       "consume_interface",
+			Params:     []ir.Param{{Name: "value", Type: interfaceType}},
+			ReturnType: "i32",
+			Blocks: []*mir.Block{{
+				ID:   0,
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+			}},
+		}},
+	}
+
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	if !strings.Contains(out, "bitcast i8* %p0 to { i8*, i8* }*") ||
+		!strings.Contains(out, "load { i8*, i8* }, { i8*, i8* }*") {
+		t.Fatalf("interface thunk must load actual interface receiver type, got:\n%s", out)
+	}
+}
+
 func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
 	typeText := "[]*i32"
 	mod := &mir.Module{

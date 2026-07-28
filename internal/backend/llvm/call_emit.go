@@ -27,8 +27,7 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 		emitter.markInvalid("failed to parse interface thunk function type: " + thunk.FuncType)
 		return
 	}
-	dataLLVMType, ok := llvmTypeName(thunk.DataType)
-	if !ok {
+	if _, ok := llvmTypeName(thunk.DataType); !ok {
 		emitter.markInvalid("unsupported interface thunk data type: " + thunk.DataType)
 		return
 	}
@@ -66,9 +65,10 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 		emitThunkTargetCall(builder, actualRet, thunk.FuncName, callArgs)
 	} else {
 		cast := builder.nextReg()
-		builder.line(fmt.Sprintf("%s = bitcast i8* %%p0 to %s*", cast, dataLLVMType))
+		receiverType := actualParams[0]
+		builder.line(fmt.Sprintf("%s = bitcast i8* %%p0 to %s*", cast, receiverType))
 		loaded := builder.nextReg()
-		builder.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, dataLLVMType, dataLLVMType, cast))
+		builder.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, receiverType, receiverType, cast))
 		callArgs := []string{actualParams[0] + " " + loaded}
 		for i := 1; i < len(slotParams); i++ {
 			callArgs = append(callArgs, actualParams[i]+" %p"+strconv.Itoa(i))
