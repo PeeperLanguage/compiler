@@ -430,10 +430,12 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 func TestPipelineAcceptsImplicitMoveSurface(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Buffer {
-	ptr: *u8,
+	ptr: i32,
 }
 
-fn get_buffer() -> Buffer;
+fn get_buffer() -> Buffer {
+	return .{ ptr = 0 };
+}
 fn destroy(_: Buffer) {}
 
 fn main() -> i32 {
@@ -804,8 +806,9 @@ func TestPipelineLowersPointerReceiverOnNamedStruct(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct File {}
 
-#[extern]
-fn open_file() -> *File;
+fn open_file() -> *File {
+	return alloc(.File{});
+}
 
 	fn (self: *File) read(buf: cstr) -> i32 {
 		return 0;
@@ -982,8 +985,9 @@ func TestPipelineLowersPointerFieldAssignment(t *testing.T) {
 	value: i32
 }
 
-#[extern]
-fn open_counter() -> *Counter;
+fn open_counter() -> *Counter {
+	return alloc(.Counter{ value = 0 });
+}
 
 	fn (self: *Counter) bump() -> i32 {
 		self.value = self.value + 1;
@@ -1261,8 +1265,9 @@ func TestPipelineLowersPointerFieldAccess(t *testing.T) {
 	y: i32,
 }
 
-#[extern]
-fn open_point() -> *Point;
+fn open_point() -> *Point {
+	return alloc(.Point{ x = 0, y = 0 });
+}
 
 fn main() -> i32 {
 	let p = open_point();

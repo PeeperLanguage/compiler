@@ -32,7 +32,7 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 		dropFn := b.nextReg()
 		b.line(fmt.Sprintf("%s = bitcast i8* %s to void (i8*)*", dropFn, dropSlot))
 		b.line(fmt.Sprintf("call void %s(i8* %s)", dropFn, data))
-		emitFreeCall(b, data, "rawptr")
+		emitInterfaceStorageRelease(b, typeText, value, data)
 		return
 	}
 	if typeText == "string" {
@@ -132,6 +132,48 @@ func emitInterfacePayloadDropThunk(out *strings.Builder, emitter *llvmEmitter, m
 	emitDropValue(builder, value, makeVal.DataType)
 	builder.line("ret void")
 	out.WriteString("}\n")
+}
+
+func emitInterfacePayloadReleaseThunk(out *strings.Builder, emitter *llvmEmitter, makeVal *mir.InterfaceMake) {
+	if out == nil || emitter == nil || makeVal == nil {
+		return
+	}
+	dataType, ok := llvmTypeName(makeVal.DataType)
+	if !ok {
+		emitter.markInvalid("unsupported interface payload release type: " + makeVal.DataType)
+		return
+	}
+	fmt.Fprintf(out, "define void %s(i8* %%allocator, i8* %%data) {\n", interfaceReleaseSymbolName(makeVal.Type, makeVal.DataType))
+	builder := newLLVMBuilder(out, emitter, -1)
+	builder.namedLabel("entry")
+	size := builder.nextReg()
+	builder.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, dataType, dataType, dataType, emitter.llvmType("usize")))
+	emitAllocatorDeallocate(builder, "%allocator", "%data", size, "8")
+	builder.line("ret void")
+	out.WriteString("}\n")
+}
+
+func emitInterfaceStorageRelease(b *llvmBuilder, interfaceType, interfaceValue, data string) {
+	if b == nil || interfaceValue == "" || data == "" {
+		return
+	}
+	if _, owned := ownedInterfaceTypeText(interfaceType); !owned {
+		return
+	}
+	llvmType := b.emitter.llvmType(interfaceType)
+	itab := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", itab, llvmType, interfaceValue))
+	allocator := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", allocator, llvmType, interfaceValue))
+	vtable := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", vtable, itab))
+	releaseSlot := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", releaseSlot, vtable, interfaceReleaseVtableSlot))
+	releaseI8 := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8*, i8** %s", releaseI8, releaseSlot))
+	releaseFn := b.nextReg()
+	b.line(fmt.Sprintf("%s = bitcast i8* %s to void (i8*, i8*)*", releaseFn, releaseI8))
+	b.line(fmt.Sprintf("call void %s(i8* %s, i8* %s)", releaseFn, allocator, data))
 }
 
 func emitOptionalDrop(b *llvmBuilder, value, typeText, inner string) {
@@ -276,6 +318,9 @@ func typeCarriesAllocator(typeText string) bool {
 	if typeText == "string" {
 		return true
 	}
+	if _, ok := ownedInterfaceTypeText(typeText); ok {
+		return true
+	}
 	if inner, ok := optionalInnerTypeText(typeText); ok {
 		return typeCarriesAllocator(inner)
 	}
@@ -290,6 +335,26 @@ func typeCarriesAllocator(typeText string) bool {
 		return typeCarriesAllocator(elem)
 	}
 	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeCarriesAllocator)
+}
+
+func typeTextNeedsRawFree(typeText string) bool {
+	typeText = strings.TrimSpace(typeText)
+	if _, ok := ownedInterfaceTypeText(typeText); ok {
+		return false
+	}
+	if target, ok := pointerTypeTextTarget(typeText); ok {
+		return typeTextNeedsRawFree(target)
+	}
+	if inner, ok := optionalInnerTypeText(typeText); ok {
+		return typeTextNeedsRawFree(inner)
+	}
+	if elem, ok := strings.CutPrefix(typeText, "[]"); ok {
+		return typeTextNeedsRawFree(elem)
+	}
+	if _, elem, ok := ir.ArrayTypeParts(typeText); ok {
+		return typeTextNeedsRawFree(elem)
+	}
+	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeTextNeedsRawFree)
 }
 
 func structFieldTypeTexts(typeText string) []string {

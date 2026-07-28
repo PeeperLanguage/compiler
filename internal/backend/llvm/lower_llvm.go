@@ -1194,10 +1194,13 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			valueType := b.emitter.llvmType(mirRefType(e.Value))
 			dataPtr := value
 			dataLlvmType := valueType
+			allocator := ""
 			if target, isOwned := pointerTypeTextTarget(mirRefType(e.Value)); isOwned {
 				if _, isIface := ownedInterfaceTypeText(mirRefType(e.Value)); !isIface {
 					dataPtr = b.nextReg()
 					b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", dataPtr, valueType, value))
+					allocator = b.nextReg()
+					b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", allocator, valueType, value))
 					targetLLVM, _ := llvmTypeName(target)
 					dataLlvmType = targetLLVM + "*"
 				}
@@ -1206,13 +1209,18 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", dataBytePtr, dataLlvmType, dataPtr))
 			itabSym := itabSymbolName(e.Type, e.DataType)
 			itabPtr := b.nextReg()
-			b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabPtr, len(e.Slots)+1, itabSym))
+			b.line(fmt.Sprintf("%s = bitcast [%d x i8*]* %s to i8*", itabPtr, interfaceVtableLength(e.Type, len(e.Slots)), itabSym))
 			current := "zeroinitializer"
 			reg1 := b.nextReg()
 			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 0", reg1, llvmType, current, dataBytePtr))
 			reg2 := b.nextReg()
 			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 1", reg2, llvmType, reg1, itabPtr))
-			return reg2
+			if allocator == "" {
+				return reg2
+			}
+			reg3 := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* %s, 2", reg3, llvmType, reg2, allocator))
+			return reg3
 		case *mir.InterfaceCall:
 			data, fn, ok := emitInterfaceCallTarget(b, e.Base, e.Slot)
 			if !ok {
@@ -1222,7 +1230,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			args := append([]string{"i8* " + data}, llvmCallArgs(b, e.Args)...)
 			emitCall(b, out, b.emitter.llvmType(e.Type), fn, args)
 			if consumesOwnedInterfaceStorage(e) {
-				emitFreeCall(b, data, "rawptr")
+				emitInterfaceStorageRelease(b, mirRefType(e.Base), emitRef(b, e.Base), data)
 			}
 			return out
 		default:

@@ -25,17 +25,14 @@ fn (_: &ConsumerImpl) consume(value: &Summer) -> i32 {
     return value.sum();
 }
 
-#[extern("malloc")]
-fn acquire_point(size: usize) -> *Point;
-
 fn main() -> i32 {
-    let first = acquire_point(8);
+    let first = alloc(.Point{ x = 0, y = 0 });
     first.x = 15;
     first.y = 25;
     let first_summer: *Summer = first;
     let mut holder: SummerHolder = .{ value = first_summer };
 
-    let replacement = acquire_point(8);
+    let replacement = alloc(.Point{ x = 0, y = 0 });
     replacement.x = 15;
     replacement.y = 25;
     let replacement_summer: *Summer = replacement;

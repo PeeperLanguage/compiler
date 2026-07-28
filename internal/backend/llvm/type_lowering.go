@@ -55,7 +55,7 @@ func llvmTypeName(typeText string) (string, bool) {
 		return "i8*", true
 	}
 	if _, ok := ownedInterfaceTypeText(typeText); ok {
-		return "{ i8*, i8* }", true
+		return "{ i8*, i8*, i8* }", true
 	}
 	if remainder, ok := pointerTypeTextTarget(typeText); ok {
 		target, ok := llvmTypeName(remainder)
@@ -314,6 +314,25 @@ func itabSymbolName(interfaceType, dataType string) string {
 func interfaceDropSymbolName(interfaceType, dataType string) string {
 	raw := fmt.Sprintf("__iface_drop__%s__%s", interfaceType, dataType)
 	return "@" + ir.SanitizeSymbolName(raw)
+}
+
+func interfaceReleaseSymbolName(interfaceType, dataType string) string {
+	raw := fmt.Sprintf("__iface_release__%s__%s", interfaceType, dataType)
+	return "@" + ir.SanitizeSymbolName(raw)
+}
+
+const interfaceReleaseVtableSlot = 1
+
+func interfaceMethodVtableSlot(interfaceTypeText string, methodSlot int) int {
+	methodOffset := interfaceReleaseVtableSlot
+	if _, owned := ownedInterfaceTypeText(interfaceTypeText); owned {
+		methodOffset++
+	}
+	return methodOffset + methodSlot
+}
+
+func interfaceVtableLength(interfaceTypeText string, methodCount int) int {
+	return interfaceMethodVtableSlot(interfaceTypeText, methodCount)
 }
 
 func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (string, bool) {

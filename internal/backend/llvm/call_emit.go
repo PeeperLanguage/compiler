@@ -145,7 +145,8 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (data 
 	vtable := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", vtable, itab))
 	fnPtrPtr := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", fnPtrPtr, vtable, slot+1))
+	methodOffset := interfaceMethodVtableSlot(mirRefType(base), slot)
+	b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", fnPtrPtr, vtable, methodOffset))
 	fnI8 := b.nextReg()
 	b.line(fmt.Sprintf("%s = load i8*, i8** %s", fnI8, fnPtrPtr))
 	fn = b.nextReg()
@@ -176,7 +177,7 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	args := append([]string{"i8* " + data}, llvmCallArgs(b, call.Args)...)
 	emitCall(b, "", b.emitter.llvmType(call.Type), fn, args)
 	if consumesOwnedInterfaceStorage(call) {
-		emitFreeCall(b, data, "rawptr")
+		emitInterfaceStorageRelease(b, mirRefType(call.Base), emitRef(b, call.Base), data)
 	}
 }
 

@@ -2,7 +2,7 @@ struct Counter {
     value: i32
 }
 
-#[extern("malloc")]
+#[extern("acquire")]
 fn acquire_counter(size: usize) -> *Counter;
 
 fn main() -> i32 {

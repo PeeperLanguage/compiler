@@ -27,9 +27,9 @@ func TestLLVMTypeNameModelTypes(t *testing.T) {
 		"?i32":             "{ i1, i32 }",
 		"?string":          "{ i1, { i8*, i64, i8* } }",
 		"?*i32":            "{ i1, { i32*, i8* } }",
-		"?*iface{}":        "{ i1, { i8*, i8* } }",
+		"?*iface{}":        "{ i1, { i8*, i8*, i8* } }",
 		"*i32":             "{ i32*, i8* }",
-		"*iface{}":         "{ i8*, i8* }",
+		"*iface{}":         "{ i8*, i8*, i8* }",
 		"rawptr":           "i8*",
 		"[4]i32":           "[4 x i32]",
 		"[]i32":            "{ i32*, i64, i64, i8* }",
@@ -672,7 +672,7 @@ func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test",
 		Funcs: []*mir.Function{{
-			Name:       "malloc",
+			Name:       "acquire",
 			Params:     []ir.Param{{Name: "size", Type: "usize"}},
 			ReturnType: "*i32",
 		}},
@@ -683,6 +683,30 @@ func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
 	}
 	if !diag.HasErrors() {
 		t.Fatal("owner-bearing extern must emit diagnostic")
+	}
+}
+
+func TestGenerateLLVMIRReservesAllocatorForInterfaceDrops(t *testing.T) {
+	for _, typeText := range []string{"*iface{take(self: Self)}", "?*iface{take(self: Self)}"} {
+		t.Run(typeText, func(t *testing.T) {
+			mod := &mir.Module{
+				Name: "test",
+				Funcs: []*mir.Function{{
+					Name:       "release",
+					Params:     []ir.Param{{Name: "value", Type: typeText}},
+					ReturnType: "void",
+					Blocks: []*mir.Block{{
+						ID:     0,
+						Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: typeText}}},
+						Term:   &mir.Ret{},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			if !strings.Contains(out, "@peeper_default_alloc") || !strings.Contains(out, "void (i8*, i8*)*") {
+				t.Fatalf("interface drop must reserve allocator release, got:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -715,8 +739,9 @@ func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.
 	if strings.Contains(out, "alloca "+payloadType) {
 		t.Fatalf("owned interface conversion must adopt existing allocation, got:\n%s", out)
 	}
-	if !strings.Contains(out, "private constant [1 x i8*]") ||
+	if !strings.Contains(out, "private constant [2 x i8*]") ||
 		!strings.Contains(out, "define void @__iface_drop") ||
+		!strings.Contains(out, "define void @__iface_release") ||
 		!strings.Contains(out, "bitcast { { i32*, i8* } }* %") {
 		t.Fatalf("expected direct fat carrier with payload-drop slot, got:\n%s", out)
 	}
@@ -1846,10 +1871,10 @@ func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
 		}},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	callIndex := strings.Index(out, "call void %")
-	freeIndex := strings.Index(out, "call void @free(i8*")
-	if !strings.Contains(out, "declare void @free(i8*)") || callIndex < 0 || freeIndex < callIndex {
-		t.Fatalf("expected consuming dispatch before carrier storage free, got:\n%s", out)
+	if !strings.Contains(out, "@peeper_default_alloc") ||
+		!strings.Contains(out, "void (i8*, i8*)*") ||
+		!strings.Contains(out, "call void %") {
+		t.Fatalf("expected consuming dispatch before allocator-backed carrier release, got:\n%s", out)
 	}
 }
 

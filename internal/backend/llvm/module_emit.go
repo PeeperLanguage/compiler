@@ -88,10 +88,12 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				emittedItabs[itabSym] = true
 				interfaceMakes = append(interfaceMakes, makeVal)
 				hasItab = true
-
 				b.WriteString(itabSym)
-				fmt.Fprintf(&b, " = private constant [%d x i8*] [", len(makeVal.Slots)+1)
+				fmt.Fprintf(&b, " = private constant [%d x i8*] [", interfaceVtableLength(makeVal.Type, len(makeVal.Slots)))
 				fmt.Fprintf(&b, "i8* bitcast (void (i8*)* %s to i8*)", interfaceDropSymbolName(makeVal.Type, makeVal.DataType))
+				if _, owned := ownedInterfaceTypeText(makeVal.Type); owned {
+					fmt.Fprintf(&b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceReleaseSymbolName(makeVal.Type, makeVal.DataType))
+				}
 				for i, slot := range makeVal.Slots {
 					b.WriteString(", ")
 					refName, ok := slot.(*mir.RefName)
@@ -212,6 +214,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	}
 	for _, makeVal := range interfaceMakes {
 		emitInterfacePayloadDropThunk(&b, emitter, makeVal)
+		if _, owned := ownedInterfaceTypeText(makeVal.Type); owned {
+			emitInterfacePayloadReleaseThunk(&b, emitter, makeVal)
+		}
 	}
 	if len(mod.InterfaceThunks) > 0 || len(interfaceMakes) > 0 {
 		b.WriteString("\n")
@@ -328,9 +333,10 @@ func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticB
 	allocUsed := false
 	allocatorRuntimeUsed := false
 	freeRuntimeUsed := false
+	externsValid := true
 	for _, mod := range modules {
 		if !validateExternOwnership(mod, diag) {
-			allocatorRuntimeUsed = true
+			externsValid = false
 		}
 		usesPrint, usesDrop, usesAlloc, usesAllocatorRuntime, usesFreeRuntime := moduleRuntimeOperations(mod)
 		printUsed = printUsed || usesPrint
@@ -338,6 +344,9 @@ func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticB
 		allocUsed = allocUsed || usesAlloc
 		allocatorRuntimeUsed = allocatorRuntimeUsed || usesAllocatorRuntime
 		freeRuntimeUsed = freeRuntimeUsed || usesFreeRuntime
+	}
+	if !externsValid {
+		return false
 	}
 	if !printUsed && !dropUsed && !allocUsed && !allocatorRuntimeUsed && !freeRuntimeUsed {
 		return true
@@ -395,9 +404,6 @@ func validateExternOwnership(mod *mir.Module, diag *diagnostics.DiagnosticBag) b
 		if fn == nil || fn.Blocks != nil {
 			continue
 		}
-		if ir.SanitizeSymbolName(fn.Name) != "malloc" {
-			continue
-		}
 		owned := typeTextNeedsDrop(fn.ReturnType)
 		for _, param := range fn.Params {
 			owned = owned || typeTextNeedsDrop(param.Type)
@@ -446,17 +452,17 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 				if _, ok := instr.(*mir.Print); ok {
 					printUsed = true
 				}
-				if _, ok := instr.(*mir.Drop); ok {
+				if drop, ok := instr.(*mir.Drop); ok && drop != nil {
 					dropUsed = true
-					if drop, ok := instr.(*mir.Drop); ok && drop != nil && typeCarriesAllocator(mirRefType(drop.Value)) {
+					freeRuntimeUsed = freeRuntimeUsed || typeTextNeedsRawFree(mirRefType(drop.Value))
+					if typeCarriesAllocator(mirRefType(drop.Value)) {
 						allocUsed = true
 						allocatorRuntimeUsed = true
-						freeRuntimeUsed = true
 					}
 				}
 				if call, ok := instr.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(call) {
 					dropUsed = true
-					freeRuntimeUsed = true
+					allocatorRuntimeUsed = true
 				}
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					if _, ok := assign.Value.(*mir.Alloc); ok {
@@ -476,7 +482,7 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 							dropUsed = dropUsed || typeTextNeedsDrop(elem)
 							allocUsed = allocUsed || typeCarriesAllocator(elem)
 							allocatorRuntimeUsed = allocatorRuntimeUsed || typeCarriesAllocator(elem)
-							freeRuntimeUsed = freeRuntimeUsed || typeCarriesAllocator(elem)
+							freeRuntimeUsed = freeRuntimeUsed || typeTextNeedsRawFree(elem)
 						} else {
 							allocUsed = true
 							dropUsed = true
@@ -484,14 +490,19 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 							freeRuntimeUsed = true
 						}
 					}
-					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil && typeTextNeedsDrop(makeVal.DataType) {
-						dropUsed = true
-						allocatorRuntimeUsed = true
-						freeRuntimeUsed = true
+					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil {
+						if _, owned := ownedInterfaceTypeText(makeVal.Type); owned {
+							allocatorRuntimeUsed = true
+						}
+						if typeTextNeedsDrop(makeVal.DataType) {
+							dropUsed = true
+							allocatorRuntimeUsed = true
+							freeRuntimeUsed = freeRuntimeUsed || typeTextNeedsRawFree(makeVal.DataType)
+						}
 					}
 					if call, ok := assign.Value.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(call) {
 						dropUsed = true
-						freeRuntimeUsed = true
+						allocatorRuntimeUsed = true
 					}
 				}
 				if printUsed && dropUsed && allocUsed && allocatorRuntimeUsed && freeRuntimeUsed {
