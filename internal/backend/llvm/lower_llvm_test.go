@@ -821,6 +821,17 @@ func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.
 	}
 }
 
+func TestInterfaceSymbolsDistinguishOwnedAndBorrowedABI(t *testing.T) {
+	interfaceBody := "iface{read(self: &Self): i32}"
+	owned := "*" + interfaceBody
+	borrowed := "&" + interfaceBody
+
+	if itabSymbolName(owned, "struct{value: i32}") == itabSymbolName(borrowed, "struct{value: i32}") ||
+		interfaceDropSymbolName(owned, "struct{value: i32}") == interfaceDropSymbolName(borrowed, "struct{value: i32}") {
+		t.Fatal("owned and borrowed interface symbols must not share ABI names")
+	}
+}
+
 func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
 	typeText := "[]*i32"
 	mod := &mir.Module{

@@ -307,18 +307,25 @@ func splitTopLevel(text string, sep rune) []string {
 }
 
 func itabSymbolName(interfaceType, dataType string) string {
-	raw := fmt.Sprintf("__itab__%s__%s", interfaceType, dataType)
+	raw := fmt.Sprintf("__itab__%s__%s__%s", interfaceABIKind(interfaceType), interfaceType, dataType)
 	return "@" + ir.SanitizeSymbolName(raw)
 }
 
 func interfaceDropSymbolName(interfaceType, dataType string) string {
-	raw := fmt.Sprintf("__iface_drop__%s__%s", interfaceType, dataType)
+	raw := fmt.Sprintf("__iface_drop__%s__%s__%s", interfaceABIKind(interfaceType), interfaceType, dataType)
 	return "@" + ir.SanitizeSymbolName(raw)
 }
 
 func interfaceReleaseSymbolName(interfaceType, dataType string) string {
-	raw := fmt.Sprintf("__iface_release__%s__%s", interfaceType, dataType)
+	raw := fmt.Sprintf("__iface_release__%s__%s__%s", interfaceABIKind(interfaceType), interfaceType, dataType)
 	return "@" + ir.SanitizeSymbolName(raw)
+}
+
+func interfaceABIKind(interfaceType string) string {
+	if _, owned := ownedInterfaceTypeText(interfaceType); owned {
+		return "owned"
+	}
+	return "borrowed"
 }
 
 const interfaceReleaseVtableSlot = 1
