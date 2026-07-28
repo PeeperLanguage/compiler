@@ -1,0 +1,6 @@
+import "runtime_import_owned_abi/owned";
+
+fn main() -> i32 {
+    let counter = owned::MakeCounter();
+    return counter.value - 42;
+}

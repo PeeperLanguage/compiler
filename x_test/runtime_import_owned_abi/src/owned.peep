@@ -1,0 +1,7 @@
+struct Counter {
+    value: i32
+}
+
+fn MakeCounter() -> *Counter {
+    return alloc(.Counter{ value = 42 });
+}

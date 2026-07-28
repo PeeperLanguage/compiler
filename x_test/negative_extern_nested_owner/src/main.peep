@@ -1,0 +1,10 @@
+struct Box {
+    value: *i32
+}
+
+#[extern("consume_box")]
+fn ConsumeBox(value: Box);
+
+fn main() -> i32 {
+    return 0;
+}

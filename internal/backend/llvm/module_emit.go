@@ -523,7 +523,7 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 	b.WriteString(sizeType)
 	b.WriteString(", i32)* @peeper_default_free_fn to i8*)]\n\n")
 
-	fmt.Fprintf(b, "define i8* @peeper_default_alloc_fn(i8* %%ctx, %s %%size, i32 %%align) {\n", sizeType)
+	fmt.Fprintf(b, "define internal i8* @peeper_default_alloc_fn(i8* %%ctx, %s %%size, i32 %%align) {\n", sizeType)
 	b.WriteString("entry:\n")
 	fmt.Fprintf(b, "  %%ptr = call i8* @malloc(%s %%size)\n", sizeType)
 	b.WriteString("  %isnull = icmp eq i8* %ptr, null\n")
@@ -535,7 +535,7 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 	b.WriteString("  ret i8* %ptr\n")
 	b.WriteString("}\n\n")
 
-	fmt.Fprintf(b, "define void @peeper_default_free_fn(i8* %%ctx, i8* %%ptr, %s %%size, i32 %%align) {\n", sizeType)
+	fmt.Fprintf(b, "define internal void @peeper_default_free_fn(i8* %%ctx, i8* %%ptr, %s %%size, i32 %%align) {\n", sizeType)
 	b.WriteString("entry:\n")
 	b.WriteString("  call void @free(i8* %ptr)\n")
 	b.WriteString("  ret void\n")

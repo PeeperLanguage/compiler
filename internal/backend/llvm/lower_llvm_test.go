@@ -669,20 +669,46 @@ func TestGenerateLLVMIRPassThroughArrayDoesNotReserveAllocatorRuntime(t *testing
 }
 
 func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		params     []ir.Param
+		returnType string
+	}{
+		{name: "owner return", params: []ir.Param{{Name: "size", Type: "usize"}}, returnType: "*i32"},
+		{name: "owner parameter", params: []ir.Param{{Name: "value", Type: "*i32"}}, returnType: "void"},
+		{name: "nested owner", params: []ir.Param{{Name: "value", Type: "struct{value: *i32}"}}, returnType: "void"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := &mir.Module{
+				Name: "test",
+				Funcs: []*mir.Function{{
+					Name:       "foreign",
+					Params:     tc.params,
+					ReturnType: tc.returnType,
+				}},
+			}
+			diag := diagnostics.NewDiagnosticBag()
+			if out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); out != "" {
+				t.Fatalf("owner-bearing extern must suppress LLVM output, got:\n%s", out)
+			}
+			if !diag.HasErrors() {
+				t.Fatal("owner-bearing extern must emit diagnostic")
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRAcceptsRawExternBoundaries(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test",
-		Funcs: []*mir.Function{{
-			Name:       "acquire",
-			Params:     []ir.Param{{Name: "size", Type: "usize"}},
-			ReturnType: "*i32",
-		}},
+		Funcs: []*mir.Function{
+			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: "usize"}}, ReturnType: "rawptr"},
+			{Name: "free", Params: []ir.Param{{Name: "value", Type: "rawptr"}}, ReturnType: "void"},
+			{Name: "puts", Params: []ir.Param{{Name: "value", Type: "cstr"}}, ReturnType: "i32"},
+		},
 	}
-	diag := diagnostics.NewDiagnosticBag()
-	if out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); out != "" {
-		t.Fatalf("owner-bearing extern must suppress LLVM output, got:\n%s", out)
-	}
-	if !diag.HasErrors() {
-		t.Fatal("owner-bearing extern must emit diagnostic")
+	if out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux"); out == "" {
+		t.Fatal("rawptr and cstr extern boundaries must remain valid")
 	}
 }
 

@@ -2,8 +2,9 @@
 
 ## Status
 
-Design and implementation tracker for issue #26. Steps 2-4 are implemented;
-owned-interface and FFI closure remain future steps.
+Design and implementation tracker for issue #26. Allocator provenance through
+owned interfaces is implemented; FFI closure and bridge retirement remain the
+next boundary.
 
 ## Goal
 
@@ -28,12 +29,13 @@ Current source model already has correct ownership timing:
   allocator descriptors.
 - dynamic-array allocation, growth, and release use the originating allocator;
   the default descriptor currently bridges to `malloc` and `free`.
-- `*Interface` carries `{data, vtable}` and its vtable drop slot destroys erased
-  payload before global `free` releases concrete allocation.
+- `*Interface` carries `{data, vtable, allocator}`. Its drop slot destroys the
+  erased payload, then its release slot deallocates concrete storage through the
+  carried allocator.
 
-Missing information remains allocator identity for owned interfaces. `*T`
-lowers to `{T*, allocator}`, dynamic arrays to `{T*, len, cap, allocator}`,
-strings to `{byte*, len, allocator}`, and owned interfaces to `{data, vtable}`.
+`*T` lowers to `{T*, allocator}`, dynamic arrays to `{T*, len, cap, allocator}`,
+strings to `{byte*, len, allocator}`, and owned interfaces to
+`{data, vtable, allocator}`. Borrowed interfaces retain `{data, vtable}`.
 
 ## Decisions
 
@@ -77,9 +79,11 @@ Size and alignment are passed to both operations. This supports allocators that
 require layout on deallocation and prevents libc assumptions from entering
 source semantics.
 
-Compiler emits one default descriptor. Initial bridge thunks may call current
-`malloc` and `free`; portable runtime work may replace thunks with
-`peeper_rt_*` calls without changing source types, owner layouts, HIR, or MIR.
+Each LLVM module emits a private default descriptor with internal bridge thunks.
+The thunks may call current `malloc` and `free`; portable runtime work may
+replace them with `peeper_rt_*` calls without changing source types, owner
+layouts, HIR, or MIR. Internal linkage prevents duplicate bridge definitions
+when imported Peeper modules are linked together.
 
 ### Destruction selects allocator from owner
 
@@ -310,9 +314,13 @@ consuming interface calls each destroy and deallocate exactly once.
 
 ### Step 6: FFI closure and bridge retirement readiness
 
-Reject unsupported extern ownership carriers, document raw boundary, centralize
-bridge validation, and prove portable runtime can replace bridge without source
-or IR model changes.
+Reject all extern signatures containing allocation-owning carriers, document the
+rawptr/cstr boundary, centralize bridge validation, and prove a portable runtime
+can replace the current malloc/free bridge without source or IR model changes.
+
+Imported Peeper functions remain valid because they use compiler-generated owner
+carriers. Bodyless foreign declarations may use rawptr, cstr, references, and
+scalars only. Rawptr values are never automatically freed or adopted as owners.
 
 Stop for review when all safe owner-producing paths attach provenance and no
 backend path emits unconditional global `free` for an owned carrier.
@@ -324,7 +332,10 @@ Each behavior step requires Go tests plus bundled `x_test/` fixtures.
 - positive: allocate, move, return, optional some/none, aggregate field, nested
   owner, early free, automatic drop, dynamic growth/shrink, owned interface
 - negative: invalid allocator operand, stored reference target, direct allocator
-  construction, raw/owner mixing, unsupported extern ownership carrier
+  construction, raw/owner mixing, owner-returning/parameter/nested-owner extern
+  declarations
+- FFI boundary: raw malloc/free and cstr calls compile; owner-bearing foreign
+  declarations fail before LLVM; imported Peeper owner ABI remains valid
 - runtime: allocator counters prove allocation/deallocation pair and exactly-once
   release; two allocator descriptors prove each owner routes to origin
 - backend: 64-bit and 32-bit layout/object checks; pointer niche, dynamic header,

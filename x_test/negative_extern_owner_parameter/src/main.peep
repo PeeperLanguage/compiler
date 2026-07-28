@@ -1,0 +1,10 @@
+struct Counter {
+    value: i32
+}
+
+#[extern("consume_counter")]
+fn ConsumeCounter(value: *Counter);
+
+fn main() -> i32 {
+    return 0;
+}

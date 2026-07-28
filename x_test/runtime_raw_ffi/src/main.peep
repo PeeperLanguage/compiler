@@ -1,0 +1,15 @@
+#[extern("malloc")]
+fn MallocRaw(size: usize) -> rawptr;
+
+#[extern("free")]
+fn FreeRaw(ptr: rawptr);
+
+#[extern("puts")]
+fn PutLine(value: cstr) -> i32;
+
+fn main() -> i32 {
+    let ptr: rawptr = MallocRaw(4);
+    FreeRaw(ptr);
+    let _ = PutLine("raw ffi ok");
+    return 0;
+}
