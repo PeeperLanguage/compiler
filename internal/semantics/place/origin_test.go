@@ -9,6 +9,25 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
+func TestOriginsPreferResolvedBindingOverShadowingScope(t *testing.T) {
+	scope := table.New(nil)
+	callerValue := symbols.New("value", symbols.SymbolVar, nil, nil)
+	declarationValue := symbols.New("value", symbols.SymbolConst, nil, nil)
+	if err := scope.Declare(callerValue); err != nil {
+		t.Fatal(err)
+	}
+
+	ident := &ast.Ident{Name: "value"}
+	origins := Origins(scope, ident, OriginOptions{
+		ResolveBinding: func(*ast.Ident) (Binding, bool) {
+			return Binding{Symbol: declarationValue}, true
+		},
+	})
+	if !SameOrigins(origins, []Origin{{Root: declarationValue}}) {
+		t.Fatalf("origins = %#v, want declaration binding", origins)
+	}
+}
+
 func TestOriginsNormalizeReferenceRootsAndProjections(t *testing.T) {
 	scope := table.New(nil)
 	value := symbols.New("value", symbols.SymbolVar, nil, nil)

@@ -2,5 +2,9 @@ import "import_default_parameters/external";
 
 fn main() -> i32 {
     external::TakePointer();
+    let mut value: i32 = 1;
+    let reference = external::Borrow();
+    value = 2;
+    external::Read(reference);
     return external::Add(4) - 10;
 }

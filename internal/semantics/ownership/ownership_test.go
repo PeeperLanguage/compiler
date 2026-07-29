@@ -146,6 +146,32 @@ func TestRawPointerCopyAllowed(t *testing.T) {
 	}
 }
 
+func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
+	result := checkOwnershipSource(t, `fn main() {
+	let value: i32 = 1;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+
+	staleID := ast.NodeID(999999)
+	stale := symbols.New("stale", symbols.SymbolVar, nil, nil)
+	result.module.Semantics.CleanupAfterBlock[staleID] = []*symbols.Symbol{stale}
+	result.module.Semantics.CleanupBeforeReturn[staleID] = []*symbols.Symbol{stale}
+	result.module.Semantics.DropBeforeAssign[staleID] = struct{}{}
+	result.module.Semantics.DropDiscardedExpr[staleID] = struct{}{}
+	result.module.Semantics.DropProjectionBase[staleID] = struct{}{}
+
+	Check(result.ctx, result.module)
+	if len(result.module.Semantics.CleanupAfterBlock) != 0 ||
+		len(result.module.Semantics.CleanupBeforeReturn) != 0 ||
+		len(result.module.Semantics.DropBeforeAssign) != 0 ||
+		len(result.module.Semantics.DropDiscardedExpr) != 0 ||
+		len(result.module.Semantics.DropProjectionBase) != 0 {
+		t.Fatalf("stale ownership plans survived rerun: %#v", result.module.Semantics)
+	}
+}
+
 func TestLiveOwnerFieldOverwritePlansDrop(t *testing.T) {
 	result := checkOwnershipSource(t, `struct Holder { value: *i32 }
 fn make() -> *i32;

@@ -355,7 +355,8 @@ func (a *analyzer) originsForExpr(scope *table.Scope, expr ast.Expr, st state) [
 		return nil
 	}
 	return place.Origins(scope, expr, place.OriginOptions{
-		ExprType: a.exprType,
+		ExprType:       a.exprType,
+		ResolveBinding: a.expandedDefaultBinding,
 		ReferenceOrigins: func(sym *symbols.Symbol) []place.Origin {
 			return referenceOrigins(st.references[sym])
 		},

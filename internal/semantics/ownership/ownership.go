@@ -86,6 +86,8 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 	clear(module.Semantics.CleanupAfterBlock)
 	clear(module.Semantics.CleanupBeforeReturn)
 	clear(module.Semantics.DropBeforeAssign)
+	clear(module.Semantics.DropDiscardedExpr)
+	clear(module.Semantics.DropProjectionBase)
 	for _, stmt := range module.AST.Stmts {
 		switch node := stmt.(type) {
 		case *ast.LetDecl, *ast.ConstDecl:
