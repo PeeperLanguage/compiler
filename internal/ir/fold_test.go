@@ -6,18 +6,20 @@ import (
 )
 
 func TestFoldExprConstantArithmetic(t *testing.T) {
+	types := NewTypeTable()
+	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
 	expr := &Binary{
 		Op:   "+",
-		Left: &IntLit{Value: "2", Type: "i32"},
+		Left: &IntLit{Value: "2", Type: i32},
 		Right: &Binary{
 			Op:    "*",
-			Left:  &IntLit{Value: "3", Type: "i32"},
-			Right: &IntLit{Value: "4", Type: "i32"},
-			Type:  "i32",
+			Left:  &IntLit{Value: "3", Type: i32},
+			Right: &IntLit{Value: "4", Type: i32},
+			Type:  i32,
 		},
-		Type: "i32",
+		Type: i32,
 	}
-	folded := FoldExpr(expr, nil)
+	folded := FoldExpr(types, expr, nil)
 	lit, ok := folded.(*IntLit)
 	if !ok || lit.Value != "14" {
 		t.Fatalf("expected 14, got %#v", folded)
@@ -25,13 +27,16 @@ func TestFoldExprConstantArithmetic(t *testing.T) {
 }
 
 func TestFoldExprConstantCondition(t *testing.T) {
+	types := NewTypeTable()
+	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	boolType := types.Intern(Type{Kind: TypeBool})
 	expr := &Binary{
 		Op:    "<",
-		Left:  &IntLit{Value: "1", Type: "i32"},
-		Right: &IntLit{Value: "2", Type: "i32"},
-		Type:  "bool",
+		Left:  &IntLit{Value: "1", Type: i32},
+		Right: &IntLit{Value: "2", Type: i32},
+		Type:  boolType,
 	}
-	folded := FoldExpr(expr, nil)
+	folded := FoldExpr(types, expr, nil)
 	lit, ok := folded.(*BoolLit)
 	if !ok || !lit.Value {
 		t.Fatalf("expected true bool literal, got %#v", folded)
@@ -39,13 +44,15 @@ func TestFoldExprConstantCondition(t *testing.T) {
 }
 
 func TestFoldExprConstEnv(t *testing.T) {
+	types := NewTypeTable()
+	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
 	expr := &Binary{
 		Op:    "+",
-		Left:  &Ident{Name: "a$1", Type: "i32"},
-		Right: &IntLit{Value: "5", Type: "i32"},
-		Type:  "i32",
+		Left:  &Ident{Name: "a$1", Type: i32},
+		Right: &IntLit{Value: "5", Type: i32},
+		Type:  i32,
 	}
-	folded := FoldExpr(expr, map[string]constvalue.Value{
+	folded := FoldExpr(types, expr, map[string]constvalue.Value{
 		"a$1": &constvalue.IntConst{Value: "2", TypeID: "i32"},
 	})
 	lit, ok := folded.(*IntLit)

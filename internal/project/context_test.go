@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -14,6 +16,35 @@ func TestPackagedLibraryBaseForExecutableUsesSiblingLibsDir(t *testing.T) {
 	want := filepath.Join("/tmp", "peeper", "build", "libs")
 	if got != want {
 		t.Fatalf("packaged library base = %q, want %q", got, want)
+	}
+}
+
+func TestContextsKeepIndependentTargetSizedPredeclaredTypes(t *testing.T) {
+	ctx32 := NewWithConfig(Config{RootDir: t.TempDir(), Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: "386"}, nil)
+	ctx64 := NewWithConfig(Config{RootDir: t.TempDir(), Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: "amd64"}, nil)
+	if ctx32.Target.PointerBits != 32 || ctx64.Target.PointerBits != 64 {
+		t.Fatalf("target widths = %d, %d", ctx32.Target.PointerBits, ctx64.Target.PointerBits)
+	}
+	for _, tt := range []struct {
+		ctx  *CompilerContext
+		bits int
+	}{
+		{ctx: ctx32, bits: 32},
+		{ctx: ctx64, bits: 64},
+	} {
+		sym, ok := tt.ctx.GlobalScope.Lookup("reserve")
+		if !ok {
+			t.Fatal("missing reserve predeclared symbol")
+		}
+		symType, found := symbols.GetSymbolType(sym)
+		fn, ok := symType.(*typeinfo.FuncType)
+		if !found || !ok || len(fn.Params) != 2 {
+			t.Fatalf("reserve type = %#v", symType)
+		}
+		_, bits, ok := typeinfo.NumericInfo(fn.Params[1])
+		if !ok || bits != tt.bits {
+			t.Fatalf("reserve usize width = %d, want %d", bits, tt.bits)
+		}
 	}
 }
 

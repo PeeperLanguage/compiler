@@ -1,6 +1,7 @@
 package cfg
 
 import (
+	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 )
 
@@ -14,13 +15,14 @@ type builder struct {
 // The CFG normalizes structured HIR into basic blocks with explicit
 // terminators so later analyses can reason about reachability,
 // fallthrough, and return paths without reinterpreting syntax trees.
-func buildCFGFunction(sourceFn *hir.Function) *Graph {
+func buildCFGFunction(types *ir.TypeTable, sourceFn *hir.Function) *Graph {
 	if sourceFn == nil {
 		return nil
 	}
 	fn := &Graph{
 		Name:       sourceFn.Name,
 		ReturnType: sourceFn.ReturnType,
+		Types:      types,
 		Source:     sourceFn,
 		Blocks:     make([]*Block, 0),
 	}

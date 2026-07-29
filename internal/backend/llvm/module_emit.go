@@ -8,33 +8,41 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/target"
 )
 
 // GenerateLLVMIR is backend entrypoint.
 // It emits module text in LLVM order: static data, helper itabs, declarations,
 // thunks, then function bodies. It also keeps one emitter state object so type
 // lowering failures and deferred external globals are reported consistently.
-func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTriple string, debugBuild bool, targetOS string) string {
+func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info, debugBuild bool) string {
 	if mod == nil {
 		return ""
 	}
-	if !ValidateRuntimeSymbols([]*mir.Module{mod}, diag) {
+	if !targetInfo.Valid() {
+		if diag != nil {
+			diag.Add(diagnostics.NewError("invalid LLVM target").WithCode(diagnostics.ErrInvalidType))
+		}
+		return ""
+	}
+	if !ValidateRuntimeSymbols([]*mir.Module{mod}, diag, targetInfo) {
 		return ""
 	}
 
 	emitter := &llvmEmitter{
 		mod:             mod,
 		diag:            diag,
+		target:          targetInfo,
 		badTypes:        make(map[string]struct{}),
-		externalGlobals: make(map[string]string),
-		debug:           newLLVMDebugEmitter(mod, targetOS, debugBuild),
+		externalGlobals: make(map[string]ir.TypeID),
+		debug:           newLLVMDebugEmitter(mod, targetInfo.OS, debugBuild),
 	}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
 	b.WriteString(mod.Name)
 	b.WriteString("\"\n")
 	b.WriteString("target triple = \"")
-	b.WriteString(targetTriple)
+	b.WriteString(targetInfo.LLVMTriple)
 	b.WriteString("\"\n\n")
 	printUsed, _, allocUsed, allocatorRuntimeUsed, freeRuntimeUsed := moduleRuntimeOperations(mod)
 	if printUsed {
@@ -48,10 +56,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	}
 
 	for _, entry := range mod.StaticData {
-		isStr := entry.Type == "cstr" || (strings.HasPrefix(entry.Type, "[") && strings.HasSuffix(entry.Type, " x i8]"))
-		if isStr {
+		if entry.Bytes {
 			escaped := llvmEscapeString(entry.Value)
-			fmt.Fprintf(&b, "%s = private unnamed_addr constant %s c\"%s\", align %d\n", entry.Name, entry.Type, escaped, entry.Align)
+			fmt.Fprintf(&b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Value)+1, escaped, entry.Align)
 		} else {
 			llvmType := emitter.llvmType(entry.Type)
 			fmt.Fprintf(&b, "%s = constant %s %s, align %d\n", entry.Name, llvmType, entry.Value, entry.Align)
@@ -81,7 +88,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				if !ok || makeVal == nil {
 					continue
 				}
-				itabSym := itabSymbolName(makeVal.Type, makeVal.DataType)
+				itabSym := interfaceSymbolName("itab", mod.Types, makeVal.Type, makeVal.DataType)
 				if emittedItabs[itabSym] {
 					continue
 				}
@@ -89,10 +96,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 				interfaceMakes = append(interfaceMakes, makeVal)
 				hasItab = true
 				b.WriteString(itabSym)
-				fmt.Fprintf(&b, " = private constant [%d x i8*] [", interfaceVtableLength(makeVal.Type, len(makeVal.Slots)))
-				fmt.Fprintf(&b, "i8* bitcast (void (i8*)* %s to i8*)", interfaceDropSymbolName(makeVal.Type, makeVal.DataType))
-				if _, owned := ownedInterfaceTypeText(makeVal.Type); owned {
-					fmt.Fprintf(&b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceReleaseSymbolName(makeVal.Type, makeVal.DataType))
+				fmt.Fprintf(&b, " = private constant [%d x i8*] [", interfaceVtableLength(mod.Types, makeVal.Type, len(makeVal.Slots)))
+				fmt.Fprintf(&b, "i8* bitcast (void (i8*)* %s to i8*)", interfaceSymbolName("iface_drop", mod.Types, makeVal.Type, makeVal.DataType))
+				if isOwnedInterfaceType(mod.Types, makeVal.Type) {
+					fmt.Fprintf(&b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceSymbolName("iface_release", mod.Types, makeVal.Type, makeVal.DataType))
 				}
 				for i, slot := range makeVal.Slots {
 					b.WriteString(", ")
@@ -103,7 +110,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 					} else {
 						slotName = "null"
 					}
-					slotType, ok := interfaceSlotLLVMTypeFromInterface(makeVal.Type, i)
+					slotType, ok := interfaceSlotLLVMType(mod.Types, makeVal.Type, i)
 					if !ok {
 						slotType = "i8*"
 					}
@@ -130,17 +137,17 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		}
 		name := ir.SanitizeSymbolName(fn.Name)
 		if name == "free" {
-			freeDeclared = freeDeclared || runtimeFreeDeclaration(fn)
+			freeDeclared = freeDeclared || runtimeFreeDeclaration(mod.Types, fn)
 		}
 		if name == "malloc" {
-			mallocDeclared = mallocDeclared || runtimeMallocDeclaration(fn)
+			mallocDeclared = mallocDeclared || runtimeMallocDeclaration(mod.Types, fn)
 		}
 		if fn.Blocks != nil {
 			continue
 		}
 		hasDecl = true
 		b.WriteString("declare ")
-		b.WriteString(emitter.llvmType(llvmFunctionReturnType(fn)))
+		b.WriteString(emitter.llvmType(llvmFunctionReturnType(mod.Types, fn)))
 		b.WriteString(" @")
 		b.WriteString(name)
 		b.WriteString("(")
@@ -162,7 +169,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		b.WriteString("declare void @free(i8*)\n\n")
 	}
 	if allocUsed || allocatorRuntimeUsed {
-		sizeType := emitter.llvmType("usize")
+		sizeType := emitter.llvmType(mod.Types.IndexType)
 		if !mallocDeclared {
 			fmt.Fprintf(&b, "declare i8* @malloc(%s)\n", sizeType)
 		}
@@ -214,7 +221,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 	}
 	for _, makeVal := range interfaceMakes {
 		emitInterfacePayloadDropThunk(&b, emitter, makeVal)
-		if _, owned := ownedInterfaceTypeText(makeVal.Type); owned {
+		if isOwnedInterfaceType(mod.Types, makeVal.Type) {
 			emitInterfacePayloadReleaseThunk(&b, emitter, makeVal)
 		}
 	}
@@ -230,7 +237,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 			debugScopeID = emitter.debug.functionID(fn)
 		}
 		b.WriteString("define ")
-		b.WriteString(emitter.llvmType(llvmFunctionReturnType(fn)))
+		b.WriteString(emitter.llvmType(llvmFunctionReturnType(mod.Types, fn)))
 		b.WriteString(" @")
 		b.WriteString(ir.SanitizeSymbolName(fn.Name))
 		b.WriteString("(")
@@ -248,7 +255,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 		}
 		b.WriteString(" {\n")
 		lb := newLLVMBuilder(&b, emitter, debugScopeID)
-		stackSlots := stackLocalSlots(fn)
+		stackSlots := stackLocalSlots(mod.Types, fn)
 		for _, param := range fn.Params {
 			lb.locals[param.Name] = "%" + param.Name
 			lb.localTypes[param.Name] = param.Type
@@ -271,7 +278,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 						lb.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, ptr))
 					} else {
 						lb.locals[assign.Name] = val
-						if valueType != "" {
+						if valueType != ir.InvalidType {
 							lb.localTypes[assign.Name] = valueType
 						}
 					}
@@ -306,8 +313,8 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 					cond := emitCondRef(lb, term.Cond)
 					lb.line(fmt.Sprintf("br i1 %s, label %%b%d, label %%b%d", cond, term.ThenID, term.ElseID))
 				case *mir.Ret:
-					if term.Value == nil || fn.ReturnType == "void" {
-						if llvmFunctionReturnType(fn) == "i32" {
+					if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
+						if llvmFunctionReturnType(mod.Types, fn) == mod.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32}) {
 							lb.line("ret i32 0")
 						} else {
 							lb.line("ret void")
@@ -327,7 +334,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetTrip
 
 // ValidateRuntimeSymbols checks runtime ABI reservations after ownership and
 // lowering have made actual print, allocation, and destruction use explicit.
-func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticBag) bool {
+func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info) bool {
 	printUsed := false
 	dropUsed := false
 	allocUsed := false
@@ -372,7 +379,7 @@ func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticB
 					}
 				}
 			case "free":
-				if (allocatorRuntimeUsed || freeRuntimeUsed) && !runtimeFreeDeclaration(fn) {
+				if (allocatorRuntimeUsed || freeRuntimeUsed) && !runtimeFreeDeclaration(mod.Types, fn) {
 					valid = false
 					if diag != nil {
 						diag.AddError(diagnostics.ErrRedeclaredSymbol,
@@ -381,7 +388,7 @@ func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticB
 					}
 				}
 			case "malloc":
-				if (allocUsed || allocatorRuntimeUsed) && !runtimeMallocDeclaration(fn) {
+				if (allocUsed || allocatorRuntimeUsed) && !runtimeMallocDeclaration(mod.Types, fn) {
 					valid = false
 					if diag != nil {
 						diag.AddError(diagnostics.ErrRedeclaredSymbol,
@@ -404,9 +411,9 @@ func validateExternOwnership(mod *mir.Module, diag *diagnostics.DiagnosticBag) b
 		if fn == nil || fn.Blocks != nil {
 			continue
 		}
-		owned := typeTextNeedsDrop(fn.ReturnType)
+		owned := typeNeedsDrop(mod.Types, fn.ReturnType)
 		for _, param := range fn.Params {
-			owned = owned || typeTextNeedsDrop(param.Type)
+			owned = owned || typeNeedsDrop(mod.Types, param.Type)
 		}
 		if !owned {
 			continue
@@ -422,18 +429,18 @@ func validateExternOwnership(mod *mir.Module, diag *diagnostics.DiagnosticBag) b
 	return valid
 }
 
-func runtimeFreeDeclaration(fn *mir.Function) bool {
-	return fn != nil && fn.Blocks == nil && fn.ReturnType == "void" &&
-		len(fn.Params) == 1 && fn.Params[0].Type == "rawptr"
-}
-
-func runtimeMallocDeclaration(fn *mir.Function) bool {
-	if fn == nil || fn.Blocks != nil || fn.ReturnType != "rawptr" || len(fn.Params) != 1 {
+func runtimeFreeDeclaration(types *ir.TypeTable, fn *mir.Function) bool {
+	if fn == nil || fn.Blocks != nil || len(fn.Params) != 1 {
 		return false
 	}
-	paramType, paramOK := llvmTypeName(fn.Params[0].Type)
-	sizeType, sizeOK := llvmTypeName("usize")
-	return paramOK && sizeOK && paramType == sizeType
+	return isVoidType(types, fn.ReturnType) && isTypeKind(types, fn.Params[0].Type, ir.TypeRawPtr)
+}
+
+func runtimeMallocDeclaration(types *ir.TypeTable, fn *mir.Function) bool {
+	if fn == nil || fn.Blocks != nil || len(fn.Params) != 1 {
+		return false
+	}
+	return isTypeKind(types, fn.ReturnType, ir.TypeRawPtr) && fn.Params[0].Type == types.IndexType
 }
 
 func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, allocUsed bool, allocatorRuntimeUsed bool, freeRuntimeUsed bool) {
@@ -454,13 +461,13 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 				}
 				if drop, ok := instr.(*mir.Drop); ok && drop != nil {
 					dropUsed = true
-					freeRuntimeUsed = freeRuntimeUsed || typeTextNeedsRawFree(mirRefType(drop.Value))
-					if typeCarriesAllocator(mirRefType(drop.Value)) {
+					freeRuntimeUsed = freeRuntimeUsed || typeNeedsRawFreeID(mod.Types, mirRefType(drop.Value))
+					if typeCarriesAllocatorID(mod.Types, mirRefType(drop.Value)) {
 						allocUsed = true
 						allocatorRuntimeUsed = true
 					}
 				}
-				if call, ok := instr.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(call) {
+				if call, ok := instr.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(mod.Types, call) {
 					dropUsed = true
 					allocatorRuntimeUsed = true
 				}
@@ -478,11 +485,11 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 					}
 					if operation, ok := assign.Value.(*mir.DynamicArrayOp); ok {
 						if operation.Op == symbols.CompilerOpShrink {
-							elem := strings.TrimSpace(strings.TrimPrefix(operation.Type, "[]"))
-							dropUsed = dropUsed || typeTextNeedsDrop(elem)
-							allocUsed = allocUsed || typeCarriesAllocator(elem)
-							allocatorRuntimeUsed = allocatorRuntimeUsed || typeCarriesAllocator(elem)
-							freeRuntimeUsed = freeRuntimeUsed || typeTextNeedsRawFree(elem)
+							elem, ok := dynamicArrayElementType(mod.Types, operation.Type)
+							dropUsed = dropUsed || (ok && typeNeedsDrop(mod.Types, elem))
+							allocUsed = allocUsed || (ok && typeCarriesAllocatorID(mod.Types, elem))
+							allocatorRuntimeUsed = allocatorRuntimeUsed || (ok && typeCarriesAllocatorID(mod.Types, elem))
+							freeRuntimeUsed = freeRuntimeUsed || (ok && typeNeedsRawFreeID(mod.Types, elem))
 						} else {
 							allocUsed = true
 							dropUsed = true
@@ -491,16 +498,16 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 						}
 					}
 					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil {
-						if _, owned := ownedInterfaceTypeText(makeVal.Type); owned {
+						if isOwnedInterfaceType(mod.Types, makeVal.Type) {
 							allocatorRuntimeUsed = true
 						}
-						if typeTextNeedsDrop(makeVal.DataType) {
+						if typeNeedsDrop(mod.Types, makeVal.DataType) {
 							dropUsed = true
 							allocatorRuntimeUsed = true
-							freeRuntimeUsed = freeRuntimeUsed || typeTextNeedsRawFree(makeVal.DataType)
+							freeRuntimeUsed = freeRuntimeUsed || typeNeedsRawFreeID(mod.Types, makeVal.DataType)
 						}
 					}
-					if call, ok := assign.Value.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(call) {
+					if call, ok := assign.Value.(*mir.InterfaceCall); ok && consumesOwnedInterfaceStorage(mod.Types, call) {
 						dropUsed = true
 						allocatorRuntimeUsed = true
 					}
@@ -515,7 +522,7 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 }
 
 func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
-	sizeType := emitter.llvmType("usize")
+	sizeType := emitter.llvmType(emitter.mod.Types.IndexType)
 	b.WriteString("\n")
 	b.WriteString("@peeper_default_alloc = private constant [3 x i8*] [i8* null, i8* bitcast (i8* (i8*, ")
 	b.WriteString(sizeType)
@@ -554,8 +561,8 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 	}
 	if emitter != nil && len(emitter.externalGlobals) > 0 {
 		b.WriteString("\n; external globals\n")
-		for name, typeText := range emitter.externalGlobals {
-			llvmType := emitter.llvmType(typeText)
+		for name, typeID := range emitter.externalGlobals {
+			llvmType := emitter.llvmType(typeID)
 			fmt.Fprintf(b, "%s = external global %s\n", name, llvmType)
 		}
 	}
@@ -569,36 +576,36 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 // Most functions keep their MIR return type. `main` is special: source-level
 // no-value `main` is represented internally as `void`, but native process entry
 // still needs an `i32` return in LLVM, so backend converts only that case.
-func llvmFunctionReturnType(fn *mir.Function) string {
+func llvmFunctionReturnType(types *ir.TypeTable, fn *mir.Function) ir.TypeID {
 	if fn == nil {
-		return ""
+		return ir.InvalidType
 	}
-	if fn.Name == "main" && fn.ReturnType == "void" {
-		return "i32"
+	if fn.Name == "main" && isVoidType(types, fn.ReturnType) {
+		return types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
 	}
 	return fn.ReturnType
 }
 
 type stackLocalSlot struct {
 	Name string
-	Type string
+	Type ir.TypeID
 }
 
-func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
+func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function) []stackLocalSlot {
 	if fn == nil {
 		return nil
 	}
-	paramTypes := make(map[string]string, len(fn.Params))
+	paramTypes := make(map[string]ir.TypeID, len(fn.Params))
 	for _, param := range fn.Params {
 		paramTypes[param.Name] = param.Type
 	}
 	counts := make(map[string]int)
-	types := make(map[string]string)
+	types := make(map[string]ir.TypeID)
 	addressed := make(map[string]bool)
 	order := make([]string, 0)
 	seen := make(map[string]bool)
 	recordPlace := func(place *mir.Place) {
-		if !placeNeedsRootAddr(place) {
+		if !placeNeedsRootAddr(typeTable, place) {
 			return
 		}
 		root, ok := place.Root.(*mir.RefName)
@@ -629,7 +636,7 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 				order = append(order, assign.Name)
 			}
 			counts[assign.Name]++
-			if typ := mirValueType(assign.Value); typ != "" {
+			if typ := mirValueType(assign.Value); typ != ir.InvalidType {
 				types[assign.Name] = typ
 			}
 			switch value := assign.Value.(type) {
@@ -638,7 +645,7 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 			case *mir.Load:
 				recordPlace(value.Place)
 			case *mir.SliceView:
-				if sliceViewUsesPlacePtr(value.Source) {
+				if sliceViewUsesPlacePtr(typeTable, value.Source) {
 					recordPlace(value.Source)
 				}
 			}
@@ -647,13 +654,13 @@ func stackLocalSlots(fn *mir.Function) []stackLocalSlot {
 	slots := make([]stackLocalSlot, 0)
 	for _, name := range order {
 		typ := types[name]
-		if typ == "" {
+		if typ == ir.InvalidType {
 			typ = paramTypes[name]
 		}
-		if typ == "" {
+		if typ == ir.InvalidType {
 			continue
 		}
-		if counts[name] > 1 || paramTypes[name] != "" || addressed[name] {
+		if counts[name] > 1 || paramTypes[name] != ir.InvalidType || addressed[name] {
 			slots = append(slots, stackLocalSlot{Name: name, Type: typ})
 		}
 	}

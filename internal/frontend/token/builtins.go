@@ -10,17 +10,17 @@ func IsBuiltinType(name string) bool {
 	case "bool", "byte", "char", "str", "usize", "isize", "f32", "f64":
 		return true
 	default:
-		_, _, ok := ParseIntegerBuiltin(name)
+		_, _, ok := numeric.ParseIntegerTypeName(name)
 		return ok
 	}
 }
 
-func ParseIntegerBuiltin(name string) (signed bool, bits int, ok bool) {
+func ParseIntegerBuiltin(name string, targetInfo target.Info) (signed bool, bits int, ok bool) {
 	switch name {
 	case "isize":
-		return true, target.SizeBits(), true
+		return true, targetInfo.PointerBits, targetInfo.Valid()
 	case "usize":
-		return false, target.SizeBits(), true
+		return false, targetInfo.PointerBits, targetInfo.Valid()
 	}
 	return numeric.ParseIntegerTypeName(name)
 }

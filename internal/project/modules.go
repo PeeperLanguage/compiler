@@ -9,6 +9,7 @@ import (
 	"compiler/internal/graph"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -39,6 +40,7 @@ const (
 	PhaseOwnership
 	PhaseUsage
 	PhaseHIR
+	PhaseCFG
 	PhaseMIR
 	PhaseBackend
 )
@@ -78,6 +80,7 @@ type Module struct {
 	AST *ast.Module
 	// Canonical IR slots.
 	HIR    *hir.Module
+	CFG    []*cfg.Graph
 	MIR    *mir.Module
 	LLVMIR string
 	// Top-level names visible in module.
@@ -89,8 +92,8 @@ type Module struct {
 }
 
 type SemanticInfo struct {
-	BlockScopes             map[ast.NodeID]*table.Scope
-	ResolvedSymbols         map[ast.NodeID]*symbols.Symbol
+	BlockScopes     map[ast.NodeID]*table.Scope
+	ResolvedSymbols map[ast.NodeID]*symbols.Symbol
 	// ExpandedDefaultBindings marks cloned NodeIDs injected by
 	// call-site default expansion. These idents must resolve
 	// through the declaration module's ResolvedSymbols instead of

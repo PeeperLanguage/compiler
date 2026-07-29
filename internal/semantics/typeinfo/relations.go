@@ -1,6 +1,10 @@
 package typeinfo
 
-import "compiler/internal/frontend/token"
+import (
+	"compiler/internal/frontend/token"
+	"compiler/internal/target"
+	"compiler/pkg/numeric"
+)
 
 func SameType(left, right Type) bool {
 	if left == right {
@@ -105,7 +109,7 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 		if typ.Name == "byte" {
 			return NumericByte, 8, true
 		}
-		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name); ok {
+		if signed, bits, ok := numeric.ParseIntegerTypeName(typ.Name); ok {
 			if signed {
 				return NumericSigned, bits, true
 			}
@@ -127,8 +131,11 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 // NumericTypeFromName is the canonical bridge from explicit source type text
 // to semantic numeric identity. Arbitrary float widths stay rejected until the
 // language has a representation independent from LLVM's target float set.
-func NumericTypeFromName(name string) (Type, bool) {
-	if signed, bits, ok := token.ParseIntegerBuiltin(name); ok {
+func NumericTypeFromName(name string, targetInfo target.Info) (Type, bool) {
+	if !targetInfo.Valid() {
+		targetInfo = target.Host()
+	}
+	if signed, bits, ok := token.ParseIntegerBuiltin(name, targetInfo); ok {
 		return &IntegerType{Signed: signed, Bits: bits}, true
 	}
 	switch name {

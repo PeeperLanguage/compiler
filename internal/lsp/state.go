@@ -196,8 +196,17 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		if phase <= project.PhaseParsed {
 			cloned.ModuleScope = nil
 			cloned.Semantics = nil
+		}
+		if phase < project.PhaseHIR {
 			cloned.HIR = nil
+		}
+		if phase < project.PhaseCFG {
+			cloned.CFG = nil
+		}
+		if phase < project.PhaseMIR {
 			cloned.MIR = nil
+		}
+		if phase < project.PhaseBackend {
 			cloned.LLVMIR = ""
 		}
 		ctx.AddModule(&cloned)

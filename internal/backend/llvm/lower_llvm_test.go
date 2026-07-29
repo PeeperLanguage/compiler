@@ -18,43 +18,138 @@ const (
 	windowsTestPath = `C:\tmp\test` + peeper.SourceExt
 )
 
-func TestLLVMTypeNameModelTypes(t *testing.T) {
-	cases := map[string]string{
-		"byte":             "i8",
-		"i24":              "i24",
-		"u8388608":         "i8388608",
-		"string":           "{ i8*, i64, i8* }",
-		"?i32":             "{ i1, i32 }",
-		"?string":          "{ i1, { i8*, i64, i8* } }",
-		"?*i32":            "{ i1, { i32*, i8* } }",
-		"?*iface{}":        "{ i1, { i8*, i8*, i8* } }",
-		"*i32":             "{ i32*, i8* }",
-		"*iface{}":         "{ i8*, i8*, i8* }",
-		"rawptr":           "i8*",
-		"[4]i32":           "[4 x i32]",
-		"[]i32":            "{ i32*, i64, i64, i8* }",
-		"&i32":             "i32*",
-		"&mut i32":         "i32*",
-		"&[]i32":           "{ i32*, i64 }",
-		"&mut []i32":       "{ i32*, i64 }",
-		"*string":          "{ { i8*, i64, i8* }*, i8* }",
-		"[]?string":        "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }",
-		"struct{x: [2]u8}": "{ [2 x i8] }",
+var (
+	testLinuxAMD64   = mustTestTarget("linux", "amd64")
+	testLinux386     = mustTestTarget("linux", "386")
+	testDarwinARM64  = mustTestTarget("darwin", "arm64")
+	testWindowsAMD64 = mustTestTarget("windows", "amd64")
+)
+
+type llvmTypeFixture struct {
+	table                                                          *ir.TypeTable
+	void, boolType, cstr, stringType, rawptr, i32                  ir.TypeID
+	i8, u8, u128, usize, ownedI32, optionalI32, optionalOwnedI32   ir.TypeID
+	dynamicI32, dynamicDynamicI32, fixed3I32, fixed4I32            ir.TypeID
+	refI32, mutRefI32, refDynamicI32                               ir.TypeID
+	mutRefDynamicI32, mutRefFixed4I32, valueStruct, refValueStruct ir.TypeID
+	ownedValueStruct, fnI32, fnVoid, fnBoolVoid                    ir.TypeID
+	fnRawptrI32                                                    ir.TypeID
+}
+
+var llvmTypes = newLLVMTypeFixture(target.Bits64)
+
+func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
+	table := ir.NewTypeTable()
+	void := table.Intern(ir.Type{Kind: ir.TypeVoid})
+	i32 := table.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	usize := table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: indexBits})
+	table.SetIndexType(usize)
+	boolType := table.Intern(ir.Type{Kind: ir.TypeBool})
+	rawptr := table.Intern(ir.Type{Kind: ir.TypeRawPtr})
+	dynamicI32 := table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
+	valueStruct := table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}}})
+	return llvmTypeFixture{
+		table:             table,
+		void:              void,
+		boolType:          boolType,
+		cstr:              table.Intern(ir.Type{Kind: ir.TypeCStr}),
+		stringType:        table.Intern(ir.Type{Kind: ir.TypeString}),
+		rawptr:            rawptr,
+		i32:               i32,
+		i8:                table.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 8}),
+		u8:                table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 8}),
+		u128:              table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 128}),
+		usize:             usize,
+		ownedI32:          table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32}),
+		optionalI32:       table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: i32}),
+		optionalOwnedI32:  table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32})}),
+		dynamicI32:        dynamicI32,
+		dynamicDynamicI32: table.Intern(ir.Type{Kind: ir.TypeArray, Elem: dynamicI32}),
+		fixed3I32:         table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "3"}),
+		fixed4I32:         table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"}),
+		refI32:            table.Intern(ir.Type{Kind: ir.TypeReference, Elem: i32}),
+		mutRefI32:         table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: i32}),
+		refDynamicI32:     table.Intern(ir.Type{Kind: ir.TypeReference, Elem: dynamicI32}),
+		mutRefDynamicI32:  table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: dynamicI32}),
+		mutRefFixed4I32:   table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"})}),
+		valueStruct:       valueStruct,
+		refValueStruct:    table.Intern(ir.Type{Kind: ir.TypeReference, Elem: valueStruct}),
+		ownedValueStruct:  table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: valueStruct}),
+		fnI32:             table.Intern(ir.Type{Kind: ir.TypeFunction, Return: i32}),
+		fnVoid:            table.Intern(ir.Type{Kind: ir.TypeFunction, Return: void}),
+		fnBoolVoid:        table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{boolType}, Return: void}),
+		fnRawptrI32:       table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: i32}),
 	}
-	for typeText, want := range cases {
-		got, ok := llvmTypeName(typeText)
-		if !ok {
-			t.Fatalf("llvmTypeName(%q) was rejected", typeText)
-		}
-		if got != want {
-			t.Fatalf("llvmTypeName(%q) = %q, want %q", typeText, got, want)
+}
+
+func mustTestTarget(os, arch string) target.Info {
+	info, err := target.New(os, arch)
+	if err != nil {
+		panic(err)
+	}
+	return info
+}
+
+func TestLLVMTypeIDModelTypes(t *testing.T) {
+	types := llvmTypes.table
+	byteType := types.Intern(ir.Type{Kind: ir.TypeByte})
+	interfaceType := types.Intern(ir.Type{Kind: ir.TypeInterface})
+	ownedInterface := types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: interfaceType})
+	cases := []struct {
+		id   ir.TypeID
+		want string
+	}{
+		{byteType, "i8"},
+		{types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 24}), "i24"},
+		{types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 8388608}), "i8388608"},
+		{llvmTypes.stringType, "{ i8*, i64, i8* }"},
+		{llvmTypes.optionalI32, "{ i1, i32 }"},
+		{types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.stringType}), "{ i1, { i8*, i64, i8* } }"},
+		{llvmTypes.optionalOwnedI32, "{ i1, { i32*, i8* } }"},
+		{types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: ownedInterface}), "{ i1, { i8*, i8*, i8* } }"},
+		{llvmTypes.ownedI32, "{ i32*, i8* }"},
+		{ownedInterface, "{ i8*, i8*, i8* }"},
+		{llvmTypes.rawptr, "i8*"},
+		{llvmTypes.fixed4I32, "[4 x i32]"},
+		{llvmTypes.dynamicI32, "{ i32*, i64, i64, i8* }"},
+		{llvmTypes.refI32, "i32*"},
+		{llvmTypes.mutRefI32, "i32*"},
+		{llvmTypes.refDynamicI32, "{ i32*, i64 }"},
+		{llvmTypes.mutRefDynamicI32, "{ i32*, i64 }"},
+		{types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: llvmTypes.stringType}), "{ { i8*, i64, i8* }*, i8* }"},
+		{types.Intern(ir.Type{Kind: ir.TypeArray, Elem: types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.stringType})}), "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }"},
+		{types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "x", Type: types.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.u8, Length: "2"})}}}), "{ [2 x i8] }"},
+	}
+	for _, tt := range cases {
+		got, ok := llvmTypeID(types, tt.id)
+		if !ok || got != tt.want {
+			t.Fatalf("llvmTypeID(%s) = %q, %v; want %q, true", types.Text(tt.id), got, ok, tt.want)
 		}
 	}
 }
 
+func TestLLVMTypeIDUsesContextSizedUsize(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		info target.Info
+		want string
+	}{
+		{name: "32-bit", info: testLinux386, want: "i32"},
+		{name: "64-bit", info: testLinuxAMD64, want: "i64"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(tt.info.IndexBits)
+			got, ok := llvmTypeID(types.table, types.usize)
+			if !ok || got != tt.want {
+				t.Fatalf("llvmTypeID(usize) = %q, %v; want %q, true", got, ok, tt.want)
+			}
+		})
+	}
+}
+
 func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
-	f32 := llvmFloatConst("2.4", "f32")
-	f64 := llvmFloatConst("2.4", "f64")
+	f32 := llvmFloatConst("2.4", 32)
+	f64 := llvmFloatConst("2.4", 64)
 	if !strings.HasPrefix(f32, "0x") || !strings.HasPrefix(f64, "0x") || f32 == f64 {
 		t.Fatalf("float constants: f32=%q f64=%q", f32, f64)
 	}
@@ -62,33 +157,33 @@ func TestLLVMFloatConstantsUseWidthCorrectHex(t *testing.T) {
 
 func TestGenerateLLVMIRLowersBooleanCallArguments(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "accept", Params: []ir.Param{{Name: "value", Type: "bool"}}, ReturnType: "void"},
+			{Name: "accept", Params: []ir.Param{{Name: "value", Type: llvmTypes.boolType}}, ReturnType: llvmTypes.void},
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
 						&mir.Call{
-							Callee: &mir.RefName{Name: "accept", Type: "fn(bool) -> void"},
-							Args:   []mir.ValueRef{&mir.RefConst{Value: "true", Type: "bool"}},
-							Type:   "void",
+							Callee: &mir.RefName{Name: "accept", Type: llvmTypes.fnBoolVoid},
+							Args:   []mir.ValueRef{&mir.RefConst{Value: "true", Type: llvmTypes.boolType}},
+							Type:   llvmTypes.void,
 						},
 						&mir.Call{
-							Callee: &mir.RefName{Name: "accept", Type: "fn(bool) -> void"},
-							Args:   []mir.ValueRef{&mir.RefConst{Value: "false", Type: "bool"}},
-							Type:   "void",
+							Callee: &mir.RefName{Name: "accept", Type: llvmTypes.fnBoolVoid},
+							Args:   []mir.ValueRef{&mir.RefConst{Value: "false", Type: llvmTypes.boolType}},
+							Type:   llvmTypes.void,
 						},
 					},
-					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 				}},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, call := range []string{"call void @accept(i1 true)", "call void @accept(i1 false)"} {
 		if !strings.Contains(irText, call) {
 			t.Fatalf("expected %q, got:\n%s", call, irText)
@@ -101,18 +196,18 @@ func TestGenerateLLVMIRRejectsNumericBooleanConstants(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			diag := diagnostics.NewDiagnosticBag()
 			mod := &mir.Module{
-				Name: "test",
+				Name: "test", Types: llvmTypes.table,
 				Funcs: []*mir.Function{{
 					Name:       "invalid_bool",
-					ReturnType: "bool",
+					ReturnType: llvmTypes.boolType,
 					Blocks: []*mir.Block{{
 						ID:   0,
-						Term: &mir.Ret{Value: &mir.RefConst{Value: value, Type: "bool"}},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: value, Type: llvmTypes.boolType}},
 					}},
 				}},
 			}
 
-			if irText := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); irText != "" {
+			if irText := GenerateLLVMIR(mod, diag, testLinuxAMD64, false); irText != "" {
 				t.Fatalf("numeric boolean constant must suppress LLVM output, got:\n%s", irText)
 			}
 			if !diag.HasErrors() {
@@ -126,36 +221,36 @@ func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 	tests := []struct {
 		name        string
 		op          string
-		typeText    string
+		typeID      ir.TypeID
 		instruction string
 		shift       bool
 	}{
-		{name: "and", op: "&", typeText: "u8", instruction: " = and i8 %left, %right"},
-		{name: "or", op: "|", typeText: "u8", instruction: " = or i8 %left, %right"},
-		{name: "xor", op: "^", typeText: "u8", instruction: " = xor i8 %left, %right"},
-		{name: "left shift", op: "<<", typeText: "u8", instruction: " = shl i8 %left, %right", shift: true},
-		{name: "signed right shift", op: ">>", typeText: "i8", instruction: " = ashr i8 %left, %right", shift: true},
-		{name: "unsigned right shift", op: ">>", typeText: "u8", instruction: " = lshr i8 %left, %right", shift: true},
+		{name: "and", op: "&", typeID: llvmTypes.u8, instruction: " = and i8 %left, %right"},
+		{name: "or", op: "|", typeID: llvmTypes.u8, instruction: " = or i8 %left, %right"},
+		{name: "xor", op: "^", typeID: llvmTypes.u8, instruction: " = xor i8 %left, %right"},
+		{name: "left shift", op: "<<", typeID: llvmTypes.u8, instruction: " = shl i8 %left, %right", shift: true},
+		{name: "signed right shift", op: ">>", typeID: llvmTypes.i8, instruction: " = ashr i8 %left, %right", shift: true},
+		{name: "unsigned right shift", op: ">>", typeID: llvmTypes.u8, instruction: " = lshr i8 %left, %right", shift: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := &mir.RefName{Name: "result", Type: tt.typeText}
+			result := &mir.RefName{Name: "result", Type: tt.typeID}
 			mod := &mir.Module{
-				Name: "test",
+				Name: "test", Types: llvmTypes.table,
 				Funcs: []*mir.Function{{
 					Name:       "apply",
-					Params:     []ir.Param{{Name: "left", Type: tt.typeText}, {Name: "right", Type: tt.typeText}},
-					ReturnType: tt.typeText,
+					Params:     []ir.Param{{Name: "left", Type: tt.typeID}, {Name: "right", Type: tt.typeID}},
+					ReturnType: tt.typeID,
 					Blocks: []*mir.Block{{
 						ID: 0,
 						Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
-							Op: tt.op, Left: &mir.RefName{Name: "left", Type: tt.typeText}, Right: &mir.RefName{Name: "right", Type: tt.typeText}, Type: tt.typeText,
+							Op: tt.op, Left: &mir.RefName{Name: "left", Type: tt.typeID}, Right: &mir.RefName{Name: "right", Type: tt.typeID}, Type: tt.typeID,
 						}}},
 						Term: &mir.Ret{Value: result},
 					}},
 				}},
 			}
-			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 			if !strings.Contains(out, tt.instruction) {
 				t.Fatalf("expected %s, got:\n%s", tt.instruction, out)
 			}
@@ -172,23 +267,23 @@ func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersIntegerComplement(t *testing.T) {
-	result := &mir.RefName{Name: "result", Type: "u8"}
+	result := &mir.RefName{Name: "result", Type: llvmTypes.u8}
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "complement",
-			Params:     []ir.Param{{Name: "value", Type: "u8"}},
-			ReturnType: "u8",
+			Params:     []ir.Param{{Name: "value", Type: llvmTypes.u8}},
+			ReturnType: llvmTypes.u8,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Unary{
-					Op: "~", Arg: &mir.RefName{Name: "value", Type: "u8"}, Type: "u8",
+					Op: "~", Arg: &mir.RefName{Name: "value", Type: llvmTypes.u8}, Type: llvmTypes.u8,
 				}}},
 				Term: &mir.Ret{Value: result},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, " = xor i8 %value, -1") {
 		t.Fatalf("expected finite-width complement, got:\n%s", out)
 	}
@@ -196,19 +291,19 @@ func TestGenerateLLVMIRLowersIntegerComplement(t *testing.T) {
 
 func TestGenerateLLVMIRLowersOwnedPointerDrop(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "release",
-			Params:     []ir.Param{{Name: "value", Type: "*i32"}},
-			ReturnType: "void",
+			Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID:     0,
-				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: llvmTypes.ownedI32}}},
 				Term:   &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "extractvalue { i32*, i8* } %value, 1") ||
 		!strings.Contains(out, "extractvalue { i32*, i8* } %value, 0") ||
 		!strings.Contains(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to i64") ||
@@ -219,22 +314,22 @@ func TestGenerateLLVMIRLowersOwnedPointerDrop(t *testing.T) {
 
 func TestGenerateLLVMIRReusesExistingFreeDeclaration(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "free", Params: []ir.Param{{Name: "value", Type: "rawptr"}}, ReturnType: "void"},
+			{Name: "free", Params: []ir.Param{{Name: "value", Type: llvmTypes.rawptr}}, ReturnType: llvmTypes.void},
 			{
 				Name:       "release",
-				Params:     []ir.Param{{Name: "value", Type: "*i32"}},
-				ReturnType: "void",
+				Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
+				ReturnType: llvmTypes.void,
 				Blocks: []*mir.Block{{
 					ID:     0,
-					Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+					Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: llvmTypes.ownedI32}}},
 					Term:   &mir.Ret{},
 				}},
 			},
 		},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if count := strings.Count(out, "declare void @free(i8*)"); count != 1 {
 		t.Fatalf("expected one free declaration, got %d:\n%s", count, out)
 	}
@@ -245,23 +340,23 @@ func TestGenerateLLVMIRReusesExistingFreeDeclaration(t *testing.T) {
 
 func TestGenerateLLVMIRRejectsIncompatibleFreeDeclaration(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "free", Params: []ir.Param{{Name: "value", Type: "i32"}}, ReturnType: "void"},
+			{Name: "free", Params: []ir.Param{{Name: "value", Type: llvmTypes.i32}}, ReturnType: llvmTypes.void},
 			{
 				Name:       "release",
-				Params:     []ir.Param{{Name: "value", Type: "*i32"}},
-				ReturnType: "void",
+				Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
+				ReturnType: llvmTypes.void,
 				Blocks: []*mir.Block{{
 					ID:     0,
-					Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+					Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: llvmTypes.ownedI32}}},
 					Term:   &mir.Ret{},
 				}},
 			},
 		},
 	}
 	diag := diagnostics.NewDiagnosticBag()
-	out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false)
 	if out != "" {
 		t.Fatalf("expected incompatible free ABI to suppress LLVM output, got:\n%s", out)
 	}
@@ -272,21 +367,21 @@ func TestGenerateLLVMIRRejectsIncompatibleFreeDeclaration(t *testing.T) {
 
 func TestGenerateLLVMIRLowersDynamicArrayAllocation(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "values",
-			ReturnType: "[]i32",
+			ReturnType: llvmTypes.dynamicI32,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{
 					Length: 3,
-					Type:   "[]i32",
+					Type:   llvmTypes.dynamicI32,
 				}}},
-				Term: &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "values", Type: llvmTypes.dynamicI32}},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{
 		"declare i8* @malloc(i64)",
 		"@llvm.umul.with.overflow.i64",
@@ -307,18 +402,18 @@ func TestGenerateLLVMIRLowersDynamicArrayAllocation(t *testing.T) {
 
 func TestGenerateLLVMIRLowersEmptyDynamicArrayWithoutAllocation(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "values",
-			ReturnType: "[]i32",
+			ReturnType: llvmTypes.dynamicI32,
 			Blocks: []*mir.Block{{
 				ID:     0,
-				Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Type: "[]i32"}}},
-				Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+				Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Type: llvmTypes.dynamicI32}}},
+				Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: llvmTypes.dynamicI32}},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if strings.Count(out, "call i8* @malloc") != 1 || strings.Contains(out, "umul.with.overflow") {
 		t.Fatalf("empty dynamic array must not allocate storage:\n%s", out)
 	}
@@ -338,7 +433,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 		{
 			name:  "append",
 			op:    symbols.CompilerOpAppend,
-			value: &mir.RefName{Name: "value", Type: "i32"},
+			value: &mir.RefName{Name: "value", Type: llvmTypes.i32},
 			expected: []string{
 				"array_append_capacity_", "@llvm.umul.with.overflow.i64", "array_relocate_loop_",
 				"store i32 %value", "call void @free(i8*",
@@ -347,7 +442,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 		{
 			name:   "reserve",
 			op:     symbols.CompilerOpReserve,
-			length: &mir.RefName{Name: "size", Type: "usize"},
+			length: &mir.RefName{Name: "size", Type: llvmTypes.usize},
 			expected: []string{
 				"icmp uge i64", "array_reserve_reuse_", "array_relocate_loop_", "call i8* @malloc(i64", "call void @free(i8*",
 			},
@@ -355,8 +450,8 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 		{
 			name:   "resize",
 			op:     symbols.CompilerOpResize,
-			length: &mir.RefName{Name: "size", Type: "usize"},
-			value:  &mir.RefName{Name: "value", Type: "i32"},
+			length: &mir.RefName{Name: "size", Type: llvmTypes.usize},
+			value:  &mir.RefName{Name: "value", Type: llvmTypes.i32},
 			expected: []string{
 				"array_resize_loop_", "icmp ult i64", "store i32 %value", "insertvalue { i32*, i64, i64, i8* }",
 			},
@@ -364,8 +459,8 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mod := dynamicArrayOperationModule(tt.name, "[]i32", tt.op, tt.length, tt.value)
-			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			mod := dynamicArrayOperationModule(llvmTypes, tt.name, llvmTypes.dynamicI32, tt.op, tt.length, tt.value)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 			for _, expected := range append([]string{"declare i8* @malloc(i64)", "declare void @free(i8*)"}, tt.expected...) {
 				if !strings.Contains(out, expected) {
 					t.Fatalf("expected %q in %s IR:\n%s", expected, tt.name, out)
@@ -378,16 +473,16 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 func TestGenerateLLVMIRLowersDynamicArrayShrink(t *testing.T) {
 	tests := []struct {
 		name      string
-		arrayType string
+		arrayType ir.TypeID
 		expected  []string
 	}{
-		{name: "scalar", arrayType: "[]i32", expected: []string{"array_shrink_drop_", "icmp ult i64", "array_shrink_done_"}},
-		{name: "owner", arrayType: "[][]i32", expected: []string{"drop_array_loop_", "icmp ugt i64", "call void @free(i8*"}},
+		{name: "scalar", arrayType: llvmTypes.dynamicI32, expected: []string{"array_shrink_drop_", "icmp ult i64", "array_shrink_done_"}},
+		{name: "owner", arrayType: llvmTypes.dynamicDynamicI32, expected: []string{"drop_array_loop_", "icmp ugt i64", "call void @free(i8*"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mod := dynamicArrayOperationModule(tt.name, tt.arrayType, symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: "usize"}, nil)
-			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+			mod := dynamicArrayOperationModule(llvmTypes, tt.name, tt.arrayType, symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: llvmTypes.usize}, nil)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 			if tt.name == "scalar" && strings.Contains(out, "umul.with.overflow") {
 				t.Fatalf("shrink must not calculate storage size:\n%s", out)
 			}
@@ -401,71 +496,61 @@ func TestGenerateLLVMIRLowersDynamicArrayShrink(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersDynamicArrayOwnerOperationsFor32BitTarget(t *testing.T) {
-	previousBits := target.SizeBits()
-	if err := target.SetSizeBits(target.Bits32); err != nil {
-		t.Fatalf("set 32-bit target: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := target.SetSizeBits(previousBits); err != nil {
-			t.Fatalf("restore target size: %v", err)
-		}
-	})
-
 	tests := []struct {
 		name   string
 		op     symbols.CompilerOp
-		length mir.ValueRef
-		value  mir.ValueRef
+		length bool
+		value  bool
 	}{
-		{name: "append", op: symbols.CompilerOpAppend, value: &mir.RefName{Name: "value", Type: "i32"}},
-		{name: "reserve", op: symbols.CompilerOpReserve, length: &mir.RefName{Name: "size", Type: "usize"}},
-		{name: "resize", op: symbols.CompilerOpResize, length: &mir.RefName{Name: "size", Type: "usize"}, value: &mir.RefName{Name: "value", Type: "i32"}},
+		{name: "append", op: symbols.CompilerOpAppend, value: true},
+		{name: "reserve", op: symbols.CompilerOpReserve, length: true},
+		{name: "resize", op: symbols.CompilerOpResize, length: true, value: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mod := dynamicArrayOperationModule(tt.name, "[]i32", tt.op, tt.length, tt.value)
-			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "i386-unknown-linux-gnu", false, "linux")
+			types := newLLVMTypeFixture(target.Bits32)
+			var length, value mir.ValueRef
+			if tt.length {
+				length = &mir.RefName{Name: "size", Type: types.usize}
+			}
+			if tt.value {
+				value = &mir.RefName{Name: "value", Type: types.i32}
+			}
+			mod := dynamicArrayOperationModule(types, tt.name, types.dynamicI32, tt.op, length, value)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinux386, false)
 			for _, expected := range []string{"@llvm.umul.with.overflow.i32", "icmp ugt i64", "trunc i64"} {
 				if !strings.Contains(out, expected) {
 					t.Fatalf("expected %q in 32-bit %s IR:\n%s", expected, tt.name, out)
 				}
 			}
-			if tt.length != nil && !strings.Contains(out, "zext i32 %size to i64") {
-				t.Fatalf("expected usize normalization in 32-bit %s IR:\n%s", tt.name, out)
+			if tt.length && strings.Contains(out, "zext i32 %size to i64") {
+				t.Fatalf("32-bit usize must stay i32 in %s IR:\n%s", tt.name, out)
 			}
 		})
 	}
 }
 
 func TestGenerateLLVMIRLowersDynamicArrayShrinkFor32BitTarget(t *testing.T) {
-	previousBits := target.SizeBits()
-	if err := target.SetSizeBits(target.Bits32); err != nil {
-		t.Fatalf("set 32-bit target: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := target.SetSizeBits(previousBits); err != nil {
-			t.Fatalf("restore target size: %v", err)
-		}
-	})
-	mod := dynamicArrayOperationModule("shrink", "[]i32", symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: "usize"}, nil)
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "i386-unknown-linux-gnu", false, "linux")
-	if !strings.Contains(out, "zext i32 %size to i64") {
-		t.Fatalf("expected usize normalization in 32-bit shrink IR:\n%s", out)
+	types := newLLVMTypeFixture(target.Bits32)
+	mod := dynamicArrayOperationModule(types, "shrink", types.dynamicI32, symbols.CompilerOpShrink, &mir.RefName{Name: "size", Type: types.usize}, nil)
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinux386, false)
+	if strings.Contains(out, "zext i32 %size to i64") {
+		t.Fatalf("32-bit usize must stay i32 in shrink IR:\n%s", out)
 	}
 	if strings.Contains(out, "umul.with.overflow") {
 		t.Fatalf("32-bit shrink must not calculate storage size:\n%s", out)
 	}
 }
 
-func dynamicArrayOperationModule(name, arrayType string, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
+func dynamicArrayOperationModule(types llvmTypeFixture, name string, arrayType ir.TypeID, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
 	params := []ir.Param{{Name: "values", Type: arrayType}}
 	if length != nil {
-		params = append(params, ir.Param{Name: "size", Type: "usize"})
+		params = append(params, ir.Param{Name: "size", Type: types.usize})
 	}
 	if value != nil {
-		params = append(params, ir.Param{Name: "value", Type: "i32"})
+		params = append(params, ir.Param{Name: "value", Type: types.i32})
 	}
-	return &mir.Module{Name: "test", Funcs: []*mir.Function{{
+	return &mir.Module{Name: "test", Types: types.table, Funcs: []*mir.Function{{
 		Name: name, Params: params, ReturnType: arrayType, Blocks: []*mir.Block{{
 			ID: 0,
 			Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.DynamicArrayOp{
@@ -478,44 +563,80 @@ func dynamicArrayOperationModule(name, arrayType string, op symbols.CompilerOp, 
 
 func TestGenerateLLVMIRReusesCompatibleMallocDeclaration(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: "usize"}}, ReturnType: "rawptr"},
+			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.usize}}, ReturnType: llvmTypes.rawptr},
 			{
 				Name:       "values",
-				ReturnType: "[]i32",
+				ReturnType: llvmTypes.dynamicI32,
 				Blocks: []*mir.Block{{
 					ID:     0,
-					Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: "[]i32"}}},
-					Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+					Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: llvmTypes.dynamicI32}}},
+					Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: llvmTypes.dynamicI32}},
 				}},
 			},
 		},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if count := strings.Count(out, "declare i8* @malloc(i64)"); count != 1 {
 		t.Fatalf("expected one malloc declaration, got %d:\n%s", count, out)
 	}
 }
 
+func TestGenerateLLVMIRMallocUsesTargetSizedUsize(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		info target.Info
+		want string
+	}{
+		{name: "32-bit", info: testLinux386, want: "declare i8* @malloc(i32)"},
+		{name: "64-bit", info: testLinuxAMD64, want: "declare i8* @malloc(i64)"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(tt.info.IndexBits)
+			mod := dynamicArrayAllocModule(types)
+			mod.Funcs = append([]*mir.Function{{Name: "malloc", Params: []ir.Param{{Name: "size", Type: types.usize}}, ReturnType: types.rawptr}}, mod.Funcs...)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), tt.info, false)
+			if !strings.Contains(out, tt.want) {
+				t.Fatalf("expected %q, got:\n%s", tt.want, out)
+			}
+		})
+	}
+}
+
+func dynamicArrayAllocModule(types llvmTypeFixture) *mir.Module {
+	return &mir.Module{
+		Name: "test", Types: types.table,
+		Funcs: []*mir.Function{{
+			Name:       "values",
+			ReturnType: types.dynamicI32,
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: types.dynamicI32}}},
+				Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: types.dynamicI32}},
+			}},
+		}},
+	}
+}
+
 func TestGenerateLLVMIRRejectsIncompatibleMallocDeclaration(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: "i32"}}, ReturnType: "rawptr"},
+			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.i32}}, ReturnType: llvmTypes.rawptr},
 			{
 				Name:       "values",
-				ReturnType: "[]i32",
+				ReturnType: llvmTypes.dynamicI32,
 				Blocks: []*mir.Block{{
 					ID:     0,
-					Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: "[]i32"}}},
-					Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: "[]i32"}},
+					Instrs: []mir.Instr{&mir.Assign{Name: "values", Value: &mir.DynamicArrayAlloc{Length: 1, Type: llvmTypes.dynamicI32}}},
+					Term:   &mir.Ret{Value: &mir.RefName{Name: "values", Type: llvmTypes.dynamicI32}},
 				}},
 			},
 		},
 	}
 	diag := diagnostics.NewDiagnosticBag()
-	out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false)
 	if out != "" {
 		t.Fatalf("expected incompatible malloc ABI to suppress LLVM output, got:\n%s", out)
 	}
@@ -525,21 +646,22 @@ func TestGenerateLLVMIRRejectsIncompatibleMallocDeclaration(t *testing.T) {
 }
 
 func TestGenerateLLVMIRDropsNestedOwnersBeforeStorage(t *testing.T) {
-	typeText := "*struct{child: *i32}"
+	child := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "child", Type: llvmTypes.ownedI32}}})
+	typeID := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: child})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "release",
-			Params:     []ir.Param{{Name: "value", Type: typeText}},
-			ReturnType: "void",
+			Params:     []ir.Param{{Name: "value", Type: typeID}},
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID:     0,
-				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: typeText}}},
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: typeID}}},
 				Term:   &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if count := strings.Count(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to i64"); count != 1 {
 		t.Fatalf("expected child size computation, got %d:\n%s", count, out)
 	}
@@ -550,18 +672,18 @@ func TestGenerateLLVMIRDropsNestedOwnersBeforeStorage(t *testing.T) {
 
 func TestGenerateLLVMIRLowersOwnedPointerStructLayout(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "pass",
-			Params:     []ir.Param{{Name: "value", Type: "*i32"}},
-			ReturnType: "*i32",
+			Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
+			ReturnType: llvmTypes.ownedI32,
 			Blocks: []*mir.Block{{
 				ID:   0,
-				Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: "*i32"}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: llvmTypes.ownedI32}},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "define { i32*, i8* } @pass({ i32*, i8* } %value)") {
 		t.Fatalf("expected owned pointer struct ABI {T*, i8*}, got:\n%s", out)
 	}
@@ -571,19 +693,20 @@ func TestGenerateLLVMIRLowersOwnedPointerStructLayout(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersOptionalOwnedPointerAsTagged(t *testing.T) {
+	optionalOwnedI32 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.ownedI32})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "nullable",
-			Params:     []ir.Param{{Name: "opt", Type: "?*i32"}},
-			ReturnType: "?*i32",
+			Params:     []ir.Param{{Name: "opt", Type: optionalOwnedI32}},
+			ReturnType: optionalOwnedI32,
 			Blocks: []*mir.Block{{
 				ID:   0,
-				Term: &mir.Ret{Value: &mir.RefName{Name: "opt", Type: "?*i32"}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "opt", Type: optionalOwnedI32}},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "define { i1, { i32*, i8* } } @nullable({ i1, { i32*, i8* } }") {
 		t.Fatalf("expected tagged optional owned pointer ABI, got:\n%s", out)
 	}
@@ -591,19 +714,19 @@ func TestGenerateLLVMIRLowersOptionalOwnedPointerAsTagged(t *testing.T) {
 
 func TestGenerateLLVMIRDefaultDescriptorEmitted(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "drop",
-			Params:     []ir.Param{{Name: "value", Type: "*i32"}},
-			ReturnType: "void",
+			Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID:     0,
-				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "*i32"}}},
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: llvmTypes.ownedI32}}},
 				Term:   &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "@peeper_default_alloc = private constant [3 x i8*]") {
 		t.Fatalf("expected default descriptor global, got:\n%s", out)
 	}
@@ -614,17 +737,17 @@ func TestGenerateLLVMIRDefaultDescriptorEmitted(t *testing.T) {
 
 func TestGenerateLLVMIRNoDescriptorWithoutOwnedPointers(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "main",
-			ReturnType: "i32",
+			ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{{
 				ID:   0,
-				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if strings.Contains(out, "@peeper_default_alloc") {
 		t.Fatalf("unexpected default descriptor without owned pointers, got:\n%s", out)
 	}
@@ -632,34 +755,34 @@ func TestGenerateLLVMIRNoDescriptorWithoutOwnedPointers(t *testing.T) {
 
 func TestGenerateLLVMIRPassThroughArrayDoesNotReserveAllocatorRuntime(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
 			{
 				Name:       "free",
-				Params:     []ir.Param{{Name: "value", Type: "i32"}},
-				ReturnType: "void",
+				Params:     []ir.Param{{Name: "value", Type: llvmTypes.i32}},
+				ReturnType: llvmTypes.void,
 			},
 			{
 				Name:       "shorten",
-				Params:     []ir.Param{{Name: "values", Type: "[]i32"}},
-				ReturnType: "[]i32",
+				Params:     []ir.Param{{Name: "values", Type: llvmTypes.dynamicI32}},
+				ReturnType: llvmTypes.dynamicI32,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{&mir.Assign{
 						Name: "result",
 						Value: &mir.DynamicArrayOp{
 							Op:     symbols.CompilerOpShrink,
-							Array:  &mir.RefName{Name: "values", Type: "[]i32"},
-							Length: &mir.RefName{Name: "size", Type: "usize"},
-							Type:   "[]i32",
+							Array:  &mir.RefName{Name: "values", Type: llvmTypes.dynamicI32},
+							Length: &mir.RefName{Name: "size", Type: llvmTypes.usize},
+							Type:   llvmTypes.dynamicI32,
 						},
 					}},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: "[]i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: llvmTypes.dynamicI32}},
 				}},
 			},
 		},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "declare void @free(i32)") {
 		t.Fatalf("expected unrelated free declaration, got:\n%s", out)
 	}
@@ -672,15 +795,15 @@ func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		params     []ir.Param
-		returnType string
+		returnType ir.TypeID
 	}{
-		{name: "owner return", params: []ir.Param{{Name: "size", Type: "usize"}}, returnType: "*i32"},
-		{name: "owner parameter", params: []ir.Param{{Name: "value", Type: "*i32"}}, returnType: "void"},
-		{name: "nested owner", params: []ir.Param{{Name: "value", Type: "struct{value: *i32}"}}, returnType: "void"},
+		{name: "owner return", params: []ir.Param{{Name: "size", Type: llvmTypes.usize}}, returnType: llvmTypes.ownedI32},
+		{name: "owner parameter", params: []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}}, returnType: llvmTypes.void},
+		{name: "nested owner", params: []ir.Param{{Name: "value", Type: llvmTypes.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: llvmTypes.ownedI32}}})}}, returnType: llvmTypes.void},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mod := &mir.Module{
-				Name: "test",
+				Name: "test", Types: llvmTypes.table,
 				Funcs: []*mir.Function{{
 					Name:       "foreign",
 					Params:     tc.params,
@@ -688,7 +811,7 @@ func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
 				}},
 			}
 			diag := diagnostics.NewDiagnosticBag()
-			if out := GenerateLLVMIR(mod, diag, "x86_64-unknown-linux-gnu", false, "linux"); out != "" {
+			if out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false); out != "" {
 				t.Fatalf("owner-bearing extern must suppress LLVM output, got:\n%s", out)
 			}
 			if !diag.HasErrors() {
@@ -700,69 +823,75 @@ func TestGenerateLLVMIRRejectsOwnerBearingExtern(t *testing.T) {
 
 func TestGenerateLLVMIRAcceptsRawExternBoundaries(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: "usize"}}, ReturnType: "rawptr"},
-			{Name: "free", Params: []ir.Param{{Name: "value", Type: "rawptr"}}, ReturnType: "void"},
-			{Name: "puts", Params: []ir.Param{{Name: "value", Type: "cstr"}}, ReturnType: "i32"},
+			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.usize}}, ReturnType: llvmTypes.rawptr},
+			{Name: "free", Params: []ir.Param{{Name: "value", Type: llvmTypes.rawptr}}, ReturnType: llvmTypes.void},
+			{Name: "puts", Params: []ir.Param{{Name: "value", Type: llvmTypes.cstr}}, ReturnType: llvmTypes.i32},
 		},
 	}
-	if out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux"); out == "" {
+	if out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false); out == "" {
 		t.Fatal("rawptr and cstr extern boundaries must remain valid")
 	}
 }
 
-func TestGenerateLLVMIRReservesAllocatorForInterfaceDrops(t *testing.T) {
-	for _, typeText := range []string{"*iface{take(self: Self)}", "?*iface{take(self: Self)}"} {
-		t.Run(typeText, func(t *testing.T) {
+func TestGenerateLLVMIRUsesCarriedAllocatorForInterfaceDrops(t *testing.T) {
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.valueStruct}}, Return: llvmTypes.void}}})
+	ownedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
+	optionalOwnedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: ownedIface})
+	for _, tt := range []struct {
+		name   string
+		typeID ir.TypeID
+	}{{"owned", ownedIface}, {"optional owned", optionalOwnedIface}} {
+		t.Run(tt.name, func(t *testing.T) {
 			mod := &mir.Module{
-				Name: "test",
+				Name: "test", Types: llvmTypes.table,
 				Funcs: []*mir.Function{{
 					Name:       "release",
-					Params:     []ir.Param{{Name: "value", Type: typeText}},
-					ReturnType: "void",
+					Params:     []ir.Param{{Name: "value", Type: tt.typeID}},
+					ReturnType: llvmTypes.void,
 					Blocks: []*mir.Block{{
 						ID:     0,
-						Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: typeText}}},
+						Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: tt.typeID}}},
 						Term:   &mir.Ret{},
 					}},
 				}},
 			}
-			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-			if !strings.Contains(out, "@peeper_default_alloc") || !strings.Contains(out, "void (i8*, i8*)*") {
-				t.Fatalf("interface drop must reserve allocator release, got:\n%s", out)
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+			if strings.Contains(out, "@peeper_default_alloc") || !strings.Contains(out, "void (i8*, i8*)*") {
+				t.Fatalf("interface drop must use its carried allocator release, got:\n%s", out)
 			}
 		})
 	}
 }
 
 func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.T) {
-	const (
-		payloadType   = "struct{child: *i32}"
-		interfaceType = "*iface{}"
-	)
+	payload := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "child", Type: llvmTypes.ownedI32}}})
+	ownedPayload := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: payload})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface})
+	ownedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "release",
-			Params:     []ir.Param{{Name: "resource", Type: "*" + payloadType}},
-			ReturnType: "void",
+			Params:     []ir.Param{{Name: "resource", Type: ownedPayload}},
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{
 					&mir.Assign{Name: "erased", Value: &mir.InterfaceMake{
-						Value:    &mir.RefName{Name: "resource", Type: "*" + payloadType},
-						DataType: payloadType,
-						Type:     interfaceType,
+						Value:    &mir.RefName{Name: "resource", Type: ownedPayload},
+						DataType: payload,
+						Type:     ownedIface,
 					}},
-					&mir.Drop{Value: &mir.RefName{Name: "erased", Type: interfaceType}},
+					&mir.Drop{Value: &mir.RefName{Name: "erased", Type: ownedIface}},
 				},
 				Term: &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
-	if strings.Contains(out, "alloca "+payloadType) {
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if strings.Contains(out, "alloca { { i32*, i8* } }") {
 		t.Fatalf("owned interface conversion must adopt existing allocation, got:\n%s", out)
 	}
 	if !strings.Contains(out, "private constant [2 x i8*]") ||
@@ -777,40 +906,41 @@ func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.
 }
 
 func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
-	const interfaceType = "&iface{read(self: &Self): i32}"
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.refValueStruct}}, Return: llvmTypes.i32}}})
+	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: iface})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
 			{
 				Name:       "read_thunk",
-				Params:     []ir.Param{{Name: "data", Type: "rawptr"}},
-				ReturnType: "i32",
+				Params:     []ir.Param{{Name: "data", Type: llvmTypes.rawptr}},
+				ReturnType: llvmTypes.i32,
 			},
 			{
 				Name:       "read",
-				Params:     []ir.Param{{Name: "counter", Type: "&struct{value: i32}"}},
-				ReturnType: "i32",
+				Params:     []ir.Param{{Name: "counter", Type: llvmTypes.refValueStruct}},
+				ReturnType: llvmTypes.i32,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
 						&mir.Assign{Name: "reader", Value: &mir.InterfaceMake{
-							Value:    &mir.RefName{Name: "counter", Type: "&struct{value: i32}"},
-							DataType: "struct{value: i32}",
-							Slots:    []mir.ValueRef{&mir.RefName{Name: "read_thunk", Type: "fn(rawptr) -> i32"}},
+							Value:    &mir.RefName{Name: "counter", Type: llvmTypes.refValueStruct},
+							DataType: llvmTypes.valueStruct,
+							Slots:    []mir.ValueRef{&mir.RefName{Name: "read_thunk", Type: llvmTypes.fnRawptrI32}},
 							Type:     interfaceType,
 						}},
 						&mir.Assign{Name: "result", Value: &mir.InterfaceCall{
 							Base: &mir.RefName{Name: "reader", Type: interfaceType},
 							Slot: 0,
-							Type: "i32",
+							Type: llvmTypes.i32,
 						}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: "i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: llvmTypes.i32}},
 				}},
 			},
 		},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "private constant [2 x i8*]") ||
 		!strings.Contains(out, "getelementptr inbounds i8*, i8**") ||
 		!strings.Contains(out, "i32 1") {
@@ -819,28 +949,29 @@ func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
 }
 
 func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.T) {
-	interfaceType := "iface{read(self: &Self): i32}"
+	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.refValueStruct}}, Return: llvmTypes.i32}}})
+	functionType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{interfaceType}, Return: llvmTypes.i32})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		InterfaceThunks: []*mir.InterfaceThunk{{
 			Name:     "interface_thunk",
-			SlotType: "fn(rawptr) -> i32",
+			SlotType: llvmTypes.fnRawptrI32,
 			FuncName: "consume_interface",
-			FuncType: "fn(" + interfaceType + ") -> i32",
-			DataType: "struct{value: i32}",
+			FuncType: functionType,
+			DataType: llvmTypes.valueStruct,
 		}},
 		Funcs: []*mir.Function{{
 			Name:       "consume_interface",
 			Params:     []ir.Param{{Name: "value", Type: interfaceType}},
-			ReturnType: "i32",
+			ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{{
 				ID:   0,
-				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
 		}},
 	}
 
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "bitcast i8* %p0 to { i8*, i8* }*") ||
 		!strings.Contains(out, "load { i8*, i8* }, { i8*, i8* }*") {
 		t.Fatalf("interface thunk must load actual interface receiver type, got:\n%s", out)
@@ -848,32 +979,32 @@ func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.
 }
 
 func TestInterfaceSymbolsDistinguishOwnedAndBorrowedABI(t *testing.T) {
-	interfaceBody := "iface{read(self: &Self): i32}"
-	owned := "*" + interfaceBody
-	borrowed := "&" + interfaceBody
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.refValueStruct}}, Return: llvmTypes.i32}}})
+	owned := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
+	borrowed := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: iface})
 
-	if itabSymbolName(owned, "struct{value: i32}") == itabSymbolName(borrowed, "struct{value: i32}") ||
-		interfaceDropSymbolName(owned, "struct{value: i32}") == interfaceDropSymbolName(borrowed, "struct{value: i32}") {
+	if interfaceSymbolName("itab", llvmTypes.table, owned, llvmTypes.valueStruct) == interfaceSymbolName("itab", llvmTypes.table, borrowed, llvmTypes.valueStruct) ||
+		interfaceSymbolName("iface_drop", llvmTypes.table, owned, llvmTypes.valueStruct) == interfaceSymbolName("iface_drop", llvmTypes.table, borrowed, llvmTypes.valueStruct) {
 		t.Fatal("owned and borrowed interface symbols must not share ABI names")
 	}
 }
 
 func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
-	typeText := "[]*i32"
+	typeID := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.ownedI32})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "release",
-			Params:     []ir.Param{{Name: "values", Type: typeText}},
-			ReturnType: "void",
+			Params:     []ir.Param{{Name: "values", Type: typeID}},
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID:     0,
-				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "values", Type: typeText}}},
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "values", Type: typeID}}},
 				Term:   &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	decrement := strings.Index(out, " = sub i64 ")
 	elementLoad := strings.Index(out, " = getelementptr { i32*, i8* }, { i32*, i8* }* ")
 	if !strings.Contains(out, " = icmp ugt i64 ") || decrement < 0 || elementLoad < decrement {
@@ -886,19 +1017,19 @@ func TestGenerateLLVMIRDropsDynamicArrayElementsInReverse(t *testing.T) {
 
 func TestGenerateLLVMIRDropsStringThroughAllocator(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "release",
-			Params:     []ir.Param{{Name: "value", Type: "string"}},
-			ReturnType: "void",
+			Params:     []ir.Param{{Name: "value", Type: llvmTypes.stringType}},
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID:     0,
-				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: "string"}}},
+				Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: llvmTypes.stringType}}},
 				Term:   &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{
 		"extractvalue { i8*, i64, i8* } %value, 2",
 		"ptrtoint i8* getelementptr (i8, i8* null, i32 1) to i64",
@@ -914,34 +1045,34 @@ func TestGenerateLLVMIRDropsStringThroughAllocator(t *testing.T) {
 func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{{
 			Name:       "borrow",
-			Params:     []ir.Param{{Name: "xs", Type: "[]i32"}},
-			ReturnType: "i32",
+			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.dynamicI32}},
+			ReturnType: llvmTypes.i32,
 			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: "[]i32"}, Type: "[]i32"},
-					Type:   "&[]i32",
+					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.dynamicI32}, Type: llvmTypes.dynamicI32},
+					Type:   llvmTypes.refDynamicI32,
 				}}},
-				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
 		}},
 	}
 	targets := []struct {
-		name     string
-		triple   string
-		targetOS string
+		name string
+		info target.Info
 	}{
-		{name: "linux", triple: "x86_64-unknown-linux-gnu", targetOS: "linux"},
-		{name: "darwin", triple: "aarch64-apple-darwin", targetOS: "darwin"},
-		{name: "windows", triple: "x86_64-pc-windows-msvc", targetOS: "windows"},
+		{name: "linux", info: testLinuxAMD64},
+		{name: "darwin", info: testDarwinARM64},
+		{name: "windows", info: testWindowsAMD64},
 	}
 	for _, target := range targets {
 		t.Run(target.name, func(t *testing.T) {
-			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), target.triple, false, target.targetOS)
+			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), target.info, false)
 			if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") ||
 				!strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 1") {
 				t.Fatalf("expected view to extract owner data and length, got:\n%s", irText)
@@ -958,26 +1089,27 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{{
 			Name:       "slice",
-			Params:     []ir.Param{{Name: "xs", Type: "&mut [4]i32"}},
-			ReturnType: "i32",
+			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.mutRefFixed4I32}},
+			ReturnType: llvmTypes.i32,
 			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: "&mut [4]i32"}, Type: "&mut [4]i32"},
-					Start:  &mir.RefConst{Value: "1", Type: "i32"},
-					End:    &mir.RefConst{Value: "2", Type: "i32"},
-					Type:   "&mut []i32",
+					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.mutRefFixed4I32}, Type: llvmTypes.mutRefFixed4I32},
+					Start:  &mir.RefConst{Value: "1", Type: llvmTypes.i32},
+					End:    &mir.RefConst{Value: "2", Type: llvmTypes.i32},
+					Type:   llvmTypes.mutRefDynamicI32,
 				}}},
-				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
 		}},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	compare := strings.Index(irText, "icmp uge i64")
 	trap := strings.Index(irText, "call void @llvm.trap()")
 	add := strings.Index(irText, "add i64")
@@ -994,25 +1126,25 @@ func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 
 func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "slice",
-			Params:     []ir.Param{{Name: "xs", Type: "&[]i32"}},
-			ReturnType: "i32",
+			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.refDynamicI32}},
+			ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:       &mir.Place{Root: &mir.RefName{Name: "xs", Type: "&[]i32"}, Type: "&[]i32"},
-					End:          &mir.RefConst{Value: "2", Type: "u8"},
+					Source:       &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refDynamicI32}, Type: llvmTypes.refDynamicI32},
+					End:          &mir.RefConst{Value: "2", Type: llvmTypes.u8},
 					EndExclusive: true,
-					Type:         "&[]i32",
+					Type:         llvmTypes.refDynamicI32,
 				}}},
-				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
 		}},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected shared view data and length extraction, got:\n%s", irText)
@@ -1028,52 +1160,41 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 	}
 }
 
-func TestOptionalNicheLayout(t *testing.T) {
-	if _, ok := optionalNicheLayout("*i32"); ok {
-		t.Fatalf("optional owned pointer niche removed: {T*, i8*} has no null sentinel")
-	}
-	if _, ok := optionalNicheLayout("i32"); ok {
-		t.Fatalf("plain integer must not use niche layout without invalid value rule")
-	}
-	if _, ok := optionalNicheLayout("*iface{}"); ok {
-		t.Fatalf("fat owned interface must use tagged optional layout")
-	}
-}
-
 func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "tagged",
-				ReturnType: "?i32",
+				ReturnType: llvmTypes.optionalI32,
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.ZeroValue{Type: "?i32"}},
+						&mir.Assign{Name: "x", Value: &mir.ZeroValue{Type: llvmTypes.optionalI32}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalI32}},
 				}},
 			},
 			{
 				Name:       "niche",
-				ReturnType: "?*i32",
+				ReturnType: llvmTypes.optionalOwnedI32,
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "p", Value: &mir.ZeroValue{Type: "?*i32"}},
+						&mir.Assign{Name: "p", Value: &mir.ZeroValue{Type: llvmTypes.optionalOwnedI32}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: "?*i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: llvmTypes.optionalOwnedI32}},
 				}},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "define { i1, i32 } @tagged(") {
 		t.Fatalf("expected tagged optional return type, got:\n%s", irText)
 	}
@@ -1092,37 +1213,38 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "tagged",
-				ReturnType: "?i32",
+				ReturnType: llvmTypes.optionalI32,
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: "i32"}, Type: "?i32"}},
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalI32}},
 				}},
 			},
 			{
 				Name:       "niche",
-				Params:     []ir.Param{{Name: "p", Type: "*i32"}},
-				ReturnType: "?*i32",
+				Params:     []ir.Param{{Name: "p", Type: llvmTypes.ownedI32}},
+				ReturnType: llvmTypes.optionalOwnedI32,
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefName{Name: "p", Type: "*i32"}, Type: "?*i32"}},
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefName{Name: "p", Type: llvmTypes.ownedI32}, Type: llvmTypes.optionalOwnedI32}},
 					},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: "?*i32"}},
+					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalOwnedI32}},
 				}},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "insertvalue { i1, i32 } zeroinitializer, i1 true, 0") {
 		t.Fatalf("expected tagged optional some discriminant, got:\n%s", irText)
 	}
@@ -1141,31 +1263,32 @@ func TestGenerateLLVMIRComparesTaggedOptionalWithNone(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: "i32"}, Type: "?i32"}},
-						&mir.Assign{Name: "none", Value: &mir.ZeroValue{Type: "?i32"}},
+						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
+						&mir.Assign{Name: "none", Value: &mir.ZeroValue{Type: llvmTypes.optionalI32}},
 						&mir.Assign{Name: "isnone", Value: &mir.Binary{
 							Op:    "==",
-							Left:  &mir.RefName{Name: "x", Type: "?i32"},
-							Right: &mir.RefName{Name: "none", Type: "?i32"},
-							Type:  "bool",
+							Left:  &mir.RefName{Name: "x", Type: llvmTypes.optionalI32},
+							Right: &mir.RefName{Name: "none", Type: llvmTypes.optionalI32},
+							Type:  llvmTypes.boolType,
 						}},
 					},
-					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+					Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 				}},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i1, i32 } %") {
 		t.Fatalf("expected optional tag extraction, got:\n%s", irText)
 	}
@@ -1178,17 +1301,18 @@ func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
 						Instrs: []mir.Instr{
-							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefConst{Value: "0", Type: "i32"}, Type: "i32"}},
+							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefConst{Value: "0", Type: llvmTypes.i32}, Type: llvmTypes.i32}},
 						},
 						Term: &mir.Jump{TargetID: 1},
 					},
@@ -1197,36 +1321,36 @@ func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
 						Instrs: []mir.Instr{
 							&mir.Assign{Name: "cond", Value: &mir.Binary{
 								Op:    "<",
-								Left:  &mir.RefName{Name: "n", Type: "i32"},
-								Right: &mir.RefConst{Value: "3", Type: "i32"},
-								Type:  "bool",
+								Left:  &mir.RefName{Name: "n", Type: llvmTypes.i32},
+								Right: &mir.RefConst{Value: "3", Type: llvmTypes.i32},
+								Type:  llvmTypes.boolType,
 							}},
 						},
-						Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: "bool"}, ThenID: 2, ElseID: 3},
+						Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: llvmTypes.boolType}, ThenID: 2, ElseID: 3},
 					},
 					{
 						ID: 2,
 						Instrs: []mir.Instr{
 							&mir.Assign{Name: "next", Value: &mir.Binary{
 								Op:    "+",
-								Left:  &mir.RefName{Name: "n", Type: "i32"},
-								Right: &mir.RefConst{Value: "1", Type: "i32"},
-								Type:  "i32",
+								Left:  &mir.RefName{Name: "n", Type: llvmTypes.i32},
+								Right: &mir.RefConst{Value: "1", Type: llvmTypes.i32},
+								Type:  llvmTypes.i32,
 							}},
-							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefName{Name: "next", Type: "i32"}, Type: "i32"}},
+							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefName{Name: "next", Type: llvmTypes.i32}, Type: llvmTypes.i32}},
 						},
 						Term: &mir.Jump{TargetID: 1},
 					},
 					{
 						ID:   3,
-						Term: &mir.Ret{Value: &mir.RefName{Name: "n", Type: "i32"}},
+						Term: &mir.Ret{Value: &mir.RefName{Name: "n", Type: llvmTypes.i32}},
 					},
 				},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "alloca i32") {
 		t.Fatalf("expected stack slot for loop-mutated local, got:\n%s", irText)
 	}
@@ -1239,11 +1363,12 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "void",
+				ReturnType: llvmTypes.void,
 				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
@@ -1251,8 +1376,8 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 						ID: 0,
 						Instrs: []mir.Instr{
 							&mir.Assign{Name: "t1", Value: &mir.Call{
-								Callee: &mir.RefName{Name: "write", Type: "fn() -> i32"},
-								Type:   "i32",
+								Callee: &mir.RefName{Name: "write", Type: llvmTypes.fnI32},
+								Type:   llvmTypes.i32,
 							}, Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 12})},
 						},
 						Term: &mir.Ret{Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 8})},
@@ -1262,7 +1387,7 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "target triple = \""+targetTriple+"\"") {
 		t.Fatalf("expected configured target triple, got:\n%s", irText)
 	}
@@ -1278,11 +1403,12 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 	const targetTriple = "x86_64-pc-windows-msvc"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: windowsTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Location:   source.NewLocation(windowsTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
@@ -1290,19 +1416,19 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 						ID: 0,
 						Instrs: []mir.Instr{
 							&mir.Call{
-								Callee:   &mir.RefName{Name: "Ping", Type: "fn() -> void"},
-								Type:     "void",
+								Callee:   &mir.RefName{Name: "Ping", Type: llvmTypes.fnVoid},
+								Type:     llvmTypes.void,
 								Location: source.NewLocation(windowsTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 8}),
 							},
 						},
-						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}, Location: source.NewLocation(windowsTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10})},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}, Location: source.NewLocation(windowsTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10})},
 					},
 				},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "windows")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testWindowsAMD64, false)
 	if !strings.Contains(irText, "target triple = \""+targetTriple+"\"") {
 		t.Fatalf("expected configured target triple, got:\n%s", irText)
 	}
@@ -1318,11 +1444,12 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
@@ -1330,13 +1457,13 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 						ID: 0,
 						Instrs: []mir.Instr{
 							&mir.Call{
-								Callee:   &mir.RefName{Name: "Ping", Type: "fn() -> void"},
-								Type:     "void",
+								Callee:   &mir.RefName{Name: "Ping", Type: llvmTypes.fnVoid},
+								Type:     llvmTypes.void,
 								Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 8}),
 							},
 						},
 						Term: &mir.Ret{
-							Value:    &mir.RefConst{Value: "0", Type: "i32"},
+							Value:    &mir.RefConst{Value: "0", Type: llvmTypes.i32},
 							Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 10}),
 						},
 					},
@@ -1345,7 +1472,7 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, true, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, true)
 	if !strings.Contains(irText, "!llvm.dbg.cu") {
 		t.Fatalf("expected debug compile unit metadata, got:\n%s", irText)
 	}
@@ -1364,11 +1491,12 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
@@ -1379,9 +1507,9 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 								Name: "t1",
 								Value: &mir.Binary{
 									Op:       "+",
-									Left:     &mir.RefConst{Value: "1", Type: "i32", Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
-									Right:    &mir.RefConst{Value: "2", Type: "i32", Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
-									Type:     "i32",
+									Left:     &mir.RefConst{Value: "1", Type: llvmTypes.i32, Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
+									Right:    &mir.RefConst{Value: "2", Type: llvmTypes.i32, Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
+									Type:     llvmTypes.i32,
 									Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
 								},
 								Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
@@ -1390,16 +1518,16 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 								Name: "t2",
 								Value: &mir.Binary{
 									Op:       "*",
-									Left:     &mir.RefName{Name: "t1", Type: "i32", Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7})},
-									Right:    &mir.RefConst{Value: "3", Type: "i32", Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
-									Type:     "i32",
+									Left:     &mir.RefName{Name: "t1", Type: llvmTypes.i32, Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7})},
+									Right:    &mir.RefConst{Value: "3", Type: llvmTypes.i32, Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
+									Type:     llvmTypes.i32,
 									Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
 								},
 								Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
 							},
 						},
 						Term: &mir.Ret{
-							Value:    &mir.RefName{Name: "t2", Type: "i32", Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7})},
+							Value:    &mir.RefName{Name: "t2", Type: llvmTypes.i32, Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7})},
 							Location: source.NewLocation(unixTestPath, source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
 						},
 					},
@@ -1408,7 +1536,7 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, true, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, true)
 	if !strings.Contains(irText, "!DILocation(line: 2, column: 2") {
 		t.Fatalf("expected child expression debug location, got:\n%s", irText)
 	}
@@ -1421,11 +1549,12 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
@@ -1435,15 +1564,15 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 							&mir.Assign{
 								Name: "cond",
 								Value: &mir.Cast{
-									Arg:      &mir.RefConst{Value: "1", Type: "i32", Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
-									Type:     "bool",
+									Arg:      &mir.RefConst{Value: "1", Type: llvmTypes.i32, Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
+									Type:     llvmTypes.boolType,
 									Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11}),
 								},
 								Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11}),
 							},
 						},
 						Term: &mir.Branch{
-							Cond:     &mir.RefName{Name: "cond", Type: "bool", Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11})},
+							Cond:     &mir.RefName{Name: "cond", Type: llvmTypes.boolType, Location: source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 11})},
 							ThenID:   1,
 							ElseID:   2,
 							Location: source.NewLocation(unixTestPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 12}),
@@ -1451,18 +1580,18 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 					},
 					{
 						ID:   1,
-						Term: &mir.Ret{Value: &mir.RefConst{Value: "1", Type: "i32"}},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}},
 					},
 					{
 						ID:   2,
-						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 					},
 				},
 			},
 		},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "icmp ne i32 1, 0") {
 		t.Fatalf("expected explicit bool cast to lower as compare, got:\n%s", irText)
 	}
@@ -1473,16 +1602,24 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 
 func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	for _, baseType := range []string{"*struct{value: i32}", "&struct{value: i32}", "&mut struct{value: i32}"} {
-		t.Run(baseType, func(t *testing.T) {
+	owned := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: llvmTypes.valueStruct})
+	shared := llvmTypes.refValueStruct
+	mutable := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: llvmTypes.valueStruct})
+	for _, tt := range []struct {
+		name   string
+		typeID ir.TypeID
+		owned  bool
+	}{{"owned", owned, true}, {"shared", shared, false}, {"mutable", mutable, false}} {
+		t.Run(tt.name, func(t *testing.T) {
 			mod := &mir.Module{
 				Name:     "test",
+				Types:    llvmTypes.table,
 				FilePath: unixTestPath,
 				Funcs: []*mir.Function{
 					{
 						Name:       "main",
-						Params:     []ir.Param{{Name: "box", Type: baseType}},
-						ReturnType: "i32",
+						Params:     []ir.Param{{Name: "box", Type: tt.typeID}},
+						ReturnType: llvmTypes.i32,
 						EntryID:    0,
 						Blocks: []*mir.Block{
 							{
@@ -1492,26 +1629,26 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 										Name: "fieldptr",
 										Value: &mir.AddrOf{
 											Place: &mir.Place{
-												Root: &mir.RefName{Name: "box", Type: baseType},
+												Root: &mir.RefName{Name: "box", Type: tt.typeID},
 												Projections: []mir.PlaceProjection{
-													{Kind: mir.PlaceProjectionDeref, Type: "struct{value: i32}"},
-													{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+													{Kind: mir.PlaceProjectionDeref, Type: llvmTypes.valueStruct},
+													{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 												},
-												Type: "i32",
+												Type: llvmTypes.i32,
 											},
-											Type: "&mut i32",
+											Type: llvmTypes.mutRefI32,
 										},
 									},
 								},
-								Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+								Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 							},
 						},
 					},
 				},
 			}
 
-			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
-			if _, isOwned := pointerTypeTextTarget(baseType); isOwned {
+			irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+			if tt.owned {
 				if !strings.Contains(irText, "extractvalue { { i32 }*, i8* }") {
 					t.Fatalf("expected extractvalue for owned pointer struct, got:\n%s", irText)
 				}
@@ -1531,13 +1668,15 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 
 func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
+	mutableStruct := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: llvmTypes.valueStruct})
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{{
 			Name:       "main",
-			Params:     []ir.Param{{Name: "box", Type: "&mut struct{value: i32}"}},
-			ReturnType: "i32",
+			Params:     []ir.Param{{Name: "box", Type: mutableStruct}},
+			ReturnType: llvmTypes.i32,
 			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
@@ -1546,56 +1685,57 @@ func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 						Name: "fieldptr",
 						Value: &mir.AddrOf{
 							Place: &mir.Place{
-								Root: &mir.RefName{Name: "box", Type: "&mut struct{value: i32}"},
+								Root: &mir.RefName{Name: "box", Type: mutableStruct},
 								Projections: []mir.PlaceProjection{
-									{Kind: mir.PlaceProjectionDeref, Type: "struct{value: i32}"},
-									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+									{Kind: mir.PlaceProjectionDeref, Type: llvmTypes.valueStruct},
+									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 								},
-								Type: "i32",
+								Type: llvmTypes.i32,
 							},
-							Type: "&mut i32",
+							Type: llvmTypes.mutRefI32,
 						},
 					},
 					&mir.Assign{
 						Name:  "raw",
-						Value: &mir.Cast{Arg: &mir.RefName{Name: "fieldptr", Type: "&mut i32"}, Type: "rawptr"},
+						Value: &mir.Cast{Arg: &mir.RefName{Name: "fieldptr", Type: llvmTypes.mutRefI32}, Type: llvmTypes.rawptr},
 					},
 				},
-				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
 		}},
 	}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") ||
 		!strings.Contains(irText, "bitcast i32*") || !strings.Contains(irText, "to i8*") {
 		t.Fatalf("expected projected field address rawptr cast, got:\n%s", irText)
 	}
 }
 
-func indexedMIRPlace(baseType string, index mir.ValueRef) *mir.Place {
+func indexedMIRPlace(baseType ir.TypeID, index mir.ValueRef) *mir.Place {
 	return &mir.Place{
 		Root: &mir.RefName{Name: "xs", Type: baseType},
 		Projections: []mir.PlaceProjection{
-			{Kind: mir.PlaceProjectionIndex, Index: index, Type: "i32"},
+			{Kind: mir.PlaceProjectionIndex, Index: index, Type: llvmTypes.i32},
 		},
-		Type: "i32",
+		Type: llvmTypes.i32,
 	}
 }
 
-func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
+func indexReadMIRModule(baseType ir.TypeID, index mir.ValueRef) *mir.Module {
 	params := []ir.Param{{Name: "xs", Type: baseType}}
 	if ref, ok := index.(*mir.RefName); ok {
 		params = append(params, ir.Param{Name: ref.Name, Type: ref.Type})
 	}
 	return &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "first",
 				Params:     params,
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
@@ -1603,10 +1743,10 @@ func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 						Instrs: []mir.Instr{
 							&mir.Assign{
 								Name:  "item",
-								Value: &mir.Load{Place: indexedMIRPlace(baseType, index), Type: "i32"},
+								Value: &mir.Load{Place: indexedMIRPlace(baseType, index), Type: llvmTypes.i32},
 							},
 						},
-						Term: &mir.Ret{Value: &mir.RefName{Name: "item", Type: "i32"}},
+						Term: &mir.Ret{Value: &mir.RefName{Name: "item", Type: llvmTypes.i32}},
 					},
 				},
 			},
@@ -1614,18 +1754,19 @@ func indexReadMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 	}
 }
 
-func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
+func indexStoreMIRModule(baseType ir.TypeID, index mir.ValueRef) *mir.Module {
 	return &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name: "set_item",
 				Params: []ir.Param{
 					{Name: "xs", Type: baseType},
-					{Name: "value", Type: "i32"},
+					{Name: "value", Type: llvmTypes.i32},
 				},
-				ReturnType: "i32",
+				ReturnType: llvmTypes.i32,
 				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
@@ -1633,10 +1774,10 @@ func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 						Instrs: []mir.Instr{
 							&mir.Store{
 								Place: indexedMIRPlace(baseType, index),
-								Value: &mir.RefName{Name: "value", Type: "i32"},
+								Value: &mir.RefName{Name: "value", Type: llvmTypes.i32},
 							},
 						},
-						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: "i32"}},
+						Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 					},
 				},
 			},
@@ -1646,8 +1787,8 @@ func indexStoreMIRModule(baseType string, index mir.ValueRef) *mir.Module {
 
 func TestGenerateLLVMIRLowersIndexPlaceForArrayRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := indexReadMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: "0", Type: llvmTypes.i32})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
 		t.Fatalf("expected array index to lower as GEP, got:\n%s", irText)
 	}
@@ -1658,8 +1799,8 @@ func TestGenerateLLVMIRLowersIndexPlaceForArrayRead(t *testing.T) {
 
 func TestGenerateLLVMIRBoundsChecksRuntimeFixedArrayIndex(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := indexReadMIRModule("[4]i32", &mir.RefName{Name: "index", Type: "i32"})
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefName{Name: "index", Type: llvmTypes.i32})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{"sext i32 %index to i64", "icmp uge i64", "call void @llvm.trap()", "getelementptr inbounds [4 x i32]"} {
 		if !strings.Contains(irText, expected) {
 			t.Fatalf("expected %q in runtime fixed-array index IR:\n%s", expected, irText)
@@ -1669,8 +1810,8 @@ func TestGenerateLLVMIRBoundsChecksRuntimeFixedArrayIndex(t *testing.T) {
 
 func TestGenerateLLVMIRBoundsChecksWideRuntimeFixedArrayIndexBeforeTruncation(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := indexReadMIRModule("[4]i32", &mir.RefName{Name: "index", Type: "u128"})
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefName{Name: "index", Type: llvmTypes.u128})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{"zext i64 4 to i128", "icmp uge i128 %index", "trunc i128 %index to i64", "getelementptr inbounds [4 x i32]"} {
 		if !strings.Contains(irText, expected) {
 			t.Fatalf("expected %q in wide fixed-array index IR:\n%s", expected, irText)
@@ -1680,8 +1821,8 @@ func TestGenerateLLVMIRBoundsChecksWideRuntimeFixedArrayIndexBeforeTruncation(t 
 
 func TestGenerateLLVMIRLowersIndexPlaceStoreForArrayWrite(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	mod := indexStoreMIRModule("[4]i32", &mir.RefConst{Value: "0", Type: "i32"})
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	mod := indexStoreMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: "0", Type: llvmTypes.i32})
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
 		t.Fatalf("expected array index write to lower as GEP, got:\n%s", irText)
 	}
@@ -1694,11 +1835,12 @@ func TestGenerateLLVMIRLowersArrayLiteral(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
+		Types:    llvmTypes.table,
 		FilePath: unixTestPath,
 		Funcs: []*mir.Function{
 			{
 				Name:       "make",
-				ReturnType: "[3]i32",
+				ReturnType: llvmTypes.fixed3I32,
 				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
@@ -1708,21 +1850,21 @@ func TestGenerateLLVMIRLowersArrayLiteral(t *testing.T) {
 								Name: "arr",
 								Value: &mir.ArrayLit{
 									Values: []mir.ValueRef{
-										&mir.RefConst{Value: "1", Type: "i32"},
-										&mir.RefConst{Value: "2", Type: "i32"},
-										&mir.RefConst{Value: "3", Type: "i32"},
+										&mir.RefConst{Value: "1", Type: llvmTypes.i32},
+										&mir.RefConst{Value: "2", Type: llvmTypes.i32},
+										&mir.RefConst{Value: "3", Type: llvmTypes.i32},
 									},
-									Type: "[3]i32",
+									Type: llvmTypes.fixed3I32,
 								},
 							},
 						},
-						Term: &mir.Ret{Value: &mir.RefName{Name: "arr", Type: "[3]i32"}},
+						Term: &mir.Ret{Value: &mir.RefName{Name: "arr", Type: llvmTypes.fixed3I32}},
 					},
 				},
 			},
 		},
 	}
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "insertvalue [3 x i32] zeroinitializer, i32 1, 0") {
 		t.Fatalf("expected array literal insertvalue, got:\n%s", irText)
 	}
@@ -1734,7 +1876,7 @@ func TestGenerateLLVMIRLowersArrayLiteral(t *testing.T) {
 func TestGenerateLLVMIRRejectsConstantArrayIndexOutOfBounds(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	diag := diagnostics.NewDiagnosticBag()
-	irText := GenerateLLVMIR(indexReadMIRModule("[4]i32", &mir.RefConst{Value: "4", Type: "i32"}), diag, targetTriple, false, "linux")
+	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: "4", Type: llvmTypes.i32}), diag, testLinuxAMD64, false)
 	if irText != "" {
 		t.Fatalf("expected out-of-bounds index to suppress LLVM output, got:\n%s", irText)
 	}
@@ -1747,7 +1889,7 @@ func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	for _, index := range []string{"-1", "bad"} {
 		diag := diagnostics.NewDiagnosticBag()
-		irText := GenerateLLVMIR(indexReadMIRModule("[4]i32", &mir.RefConst{Value: index, Type: "i32"}), diag, targetTriple, false, "linux")
+		irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: index, Type: llvmTypes.i32}), diag, testLinuxAMD64, false)
 		if irText != "" {
 			t.Fatalf("expected invalid index %q to suppress LLVM output, got:\n%s", index, irText)
 		}
@@ -1760,7 +1902,7 @@ func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
 
 func TestGenerateLLVMIRLowersDynamicArrayIndexRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexReadMIRModule("[]i32", &mir.RefName{Name: "i", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.dynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") {
 		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
 	}
@@ -1780,7 +1922,7 @@ func TestGenerateLLVMIRLowersDynamicArrayIndexRead(t *testing.T) {
 
 func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexReadMIRModule("[]i32", &mir.RefName{Name: "i", Type: "u8"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.dynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "zext i8 %i to i64") {
 		t.Fatalf("expected narrow unsigned index widening, got:\n%s", irText)
 	}
@@ -1798,7 +1940,7 @@ func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) 
 
 func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexStoreMIRModule("[]i32", &mir.RefConst{Value: "0", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(indexStoreMIRModule(llvmTypes.dynamicI32, &mir.RefConst{Value: "0", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") {
 		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
 	}
@@ -1815,7 +1957,7 @@ func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
 
 func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexReadMIRModule("&[]i32", &mir.RefName{Name: "i", Type: "i32"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.refDynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected slice-view data and length extraction, got:\n%s", irText)
@@ -1842,7 +1984,7 @@ func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 
 func TestGenerateLLVMIRLowersMutableSliceViewIndexStore(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexStoreMIRModule("&mut []i32", &mir.RefConst{Value: "0", Type: "u8"}), diagnostics.NewDiagnosticBag(), targetTriple, false, "linux")
+	irText := GenerateLLVMIR(indexStoreMIRModule(llvmTypes.mutRefDynamicI32, &mir.RefConst{Value: "0", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected mutable slice-view data and length extraction, got:\n%s", irText)
@@ -1858,29 +2000,31 @@ func TestGenerateLLVMIRLowersMutableSliceViewIndexStore(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
-	const tokenType = "struct{value: i32}"
-	const bucketType = "struct{items: []" + tokenType + "}"
+	tokenType := llvmTypes.valueStruct
+	itemsType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: tokenType})
+	bucketType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "items", Type: itemsType}}})
+	borrowedBucket := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: bucketType})
 	place := &mir.Place{
-		Root: &mir.RefName{Name: "bucket", Type: "&mut " + bucketType},
+		Root: &mir.RefName{Name: "bucket", Type: borrowedBucket},
 		Projections: []mir.PlaceProjection{
 			{Kind: mir.PlaceProjectionDeref, Type: bucketType},
-			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "[]" + tokenType},
-			{Kind: mir.PlaceProjectionIndex, Index: &mir.RefName{Name: "index", Type: "usize"}, Type: tokenType},
-			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: itemsType},
+			{Kind: mir.PlaceProjectionIndex, Index: &mir.RefName{Name: "index", Type: llvmTypes.usize}, Type: tokenType},
+			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 		},
-		Type: "i32",
+		Type: llvmTypes.i32,
 	}
-	mod := &mir.Module{Name: "test", Funcs: []*mir.Function{{
-		Name: "read", Params: []ir.Param{{Name: "bucket", Type: "&mut " + bucketType}, {Name: "index", Type: "usize"}},
-		ReturnType: "i32", EntryID: 0,
+	mod := &mir.Module{Name: "test", Types: llvmTypes.table, Funcs: []*mir.Function{{
+		Name: "read", Params: []ir.Param{{Name: "bucket", Type: borrowedBucket}, {Name: "index", Type: llvmTypes.usize}},
+		ReturnType: llvmTypes.i32, EntryID: 0,
 		Blocks: []*mir.Block{{
 			ID:     0,
-			Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: "i32"}}},
-			Term:   &mir.Ret{Value: &mir.RefName{Name: "value", Type: "i32"}},
+			Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: llvmTypes.i32}}},
+			Term:   &mir.Ret{Value: &mir.RefName{Name: "value", Type: llvmTypes.i32}},
 		}},
 	}}}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	headerField := strings.Index(irText, "getelementptr inbounds { { { i32 }*, i64, i64, i8* } }")
 	element := strings.Index(irText, "getelementptr { i32 }, { i32 }*")
 	valueField := strings.LastIndex(irText, "getelementptr inbounds { i32 }, { i32 }*")
@@ -1890,25 +2034,25 @@ func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
 }
 
 func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
-	const boxType = "struct{value: i32}"
+	boxType := llvmTypes.valueStruct
 	place := &mir.Place{
 		Root: &mir.RefName{Name: "box", Type: boxType},
 		Projections: []mir.PlaceProjection{
-			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 		},
-		Type: "i32",
+		Type: llvmTypes.i32,
 	}
-	mod := &mir.Module{Name: "test", Funcs: []*mir.Function{{
-		Name: "choose", Params: []ir.Param{{Name: "cond", Type: "bool"}}, ReturnType: "i32", EntryID: 0,
+	mod := &mir.Module{Name: "test", Types: llvmTypes.table, Funcs: []*mir.Function{{
+		Name: "choose", Params: []ir.Param{{Name: "cond", Type: llvmTypes.boolType}}, ReturnType: llvmTypes.i32, EntryID: 0,
 		Blocks: []*mir.Block{
-			{ID: 0, Instrs: []mir.Instr{&mir.Assign{Name: "box", Value: &mir.StructLit{Fields: []mir.ValueRef{&mir.RefConst{Value: "0", Type: "i32"}}, Type: boxType}}}, Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: "bool"}, ThenID: 1, ElseID: 2}},
-			{ID: 1, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "1", Type: "i32"}}}, Term: &mir.Jump{TargetID: 3}},
-			{ID: 2, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "2", Type: "i32"}}}, Term: &mir.Jump{TargetID: 3}},
-			{ID: 3, Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: "i32"}}}, Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: "i32"}}},
+			{ID: 0, Instrs: []mir.Instr{&mir.Assign{Name: "box", Value: &mir.StructLit{Fields: []mir.ValueRef{&mir.RefConst{Value: "0", Type: llvmTypes.i32}}, Type: boxType}}}, Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: llvmTypes.boolType}, ThenID: 1, ElseID: 2}},
+			{ID: 1, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}}, Term: &mir.Jump{TargetID: 3}},
+			{ID: 2, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "2", Type: llvmTypes.i32}}}, Term: &mir.Jump{TargetID: 3}},
+			{ID: 3, Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: llvmTypes.i32}}}, Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: llvmTypes.i32}}},
 		},
 	}}}
 
-	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	alloca := strings.Index(irText, "alloca { i32 }")
 	firstBranch := strings.Index(irText, "\nb1:")
 	if alloca < 0 || firstBranch < 0 || alloca > firstBranch || strings.Count(irText, "alloca { i32 }") != 1 {
@@ -1917,26 +2061,27 @@ func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
 }
 
 func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
-	const interfaceType = "*iface{take(self: Self)}"
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.valueStruct}}, Return: llvmTypes.void}}})
+	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "consume",
 			Params:     []ir.Param{{Name: "value", Type: interfaceType}},
-			ReturnType: "void",
+			ReturnType: llvmTypes.void,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.InterfaceCall{
 					Base:     &mir.RefName{Name: "value", Type: interfaceType},
 					Slot:     0,
 					Consumes: true,
-					Type:     "void",
+					Type:     llvmTypes.void,
 				}},
 				Term: &mir.Ret{},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "@peeper_default_alloc") ||
 		!strings.Contains(out, "void (i8*, i8*)*") ||
 		!strings.Contains(out, "call void %") {
@@ -1946,23 +2091,23 @@ func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
 
 func TestGenerateLLVMIRLowersAlloc(t *testing.T) {
 	mod := &mir.Module{
-		Name: "test",
+		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "main",
-			ReturnType: "*i32",
+			ReturnType: llvmTypes.ownedI32,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{
 					&mir.Assign{
 						Name:  "p",
-						Value: &mir.Alloc{Value: &mir.RefConst{Value: "42", Type: "i32"}, Type: "*i32"},
+						Value: &mir.Alloc{Value: &mir.RefConst{Value: "42", Type: llvmTypes.i32}, Type: llvmTypes.ownedI32},
 					},
 				},
-				Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: "*i32"}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "p", Type: llvmTypes.ownedI32}},
 			}},
 		}},
 	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), "x86_64-unknown-linux-gnu", false, "linux")
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(out, "@peeper_default_alloc") {
 		t.Fatalf("expected default allocator descriptor, got:\n%s", out)
 	}

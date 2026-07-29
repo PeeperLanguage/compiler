@@ -64,17 +64,21 @@ func applyCommandCommonFlags(flags commandCommonFlags) (string, string, error) {
 	}
 	targetOS := target.NormalizeOS(*flags.targetOS)
 	targetArch := target.NormalizeArch(*flags.targetArch)
-	if _, err := target.LLVMTriple(targetOS, targetArch); err != nil {
-		return "", "", err
-	}
-	sizeBits := target.DefaultSizeBitsForArch(targetArch)
 	if *flags.m32 {
-		sizeBits = target.Bits32
+		if strings.TrimSpace(*flags.targetArch) != "" && target.DefaultSizeBitsForArch(targetArch) != target.Bits32 {
+			return "", "", fmt.Errorf("-m32 conflicts with explicit 64-bit target architecture %q; select a 32-bit target architecture", targetArch)
+		}
+		var err error
+		targetArch, err = target.ArchFor32BitMode(targetArch)
+		if err != nil {
+			return "", "", err
+		}
 	}
-	if err := target.SetSizeBits(sizeBits); err != nil {
+	targetInfo, err := target.New(targetOS, targetArch)
+	if err != nil {
 		return "", "", err
 	}
-	return targetOS, targetArch, nil
+	return targetInfo.OS, targetInfo.Arch, nil
 }
 
 type commandOptions struct {

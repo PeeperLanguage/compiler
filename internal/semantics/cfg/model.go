@@ -8,7 +8,8 @@ import (
 
 type Graph struct {
 	Name       string
-	ReturnType string
+	ReturnType ir.TypeID
+	Types      *ir.TypeTable
 	Source     *hir.Function
 	Entry      *Block
 	Exit       *Block

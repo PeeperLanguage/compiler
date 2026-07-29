@@ -2,27 +2,30 @@ package cfg
 
 import (
 	"compiler/internal/diagnostics"
+	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/source"
 )
 
-// AnalyzeModule builds CFG from lowered HIR and emits flow diagnostics:
-// - missing return paths for non-void functions
-// - unreachable code warnings
-func AnalyzeModule(hirMod *hir.Module, diag *diagnostics.DiagnosticBag) []*Graph {
+// BuildModule lowers a HIR module into its canonical CFG artifact.
+func BuildModule(hirMod *hir.Module) []*Graph {
 	if hirMod == nil {
 		return nil
 	}
 	graphs := make([]*Graph, 0, len(hirMod.Funcs))
 	for _, fn := range hirMod.Funcs {
-		graphs = append(graphs, buildCFGFunction(fn))
+		graphs = append(graphs, buildCFGFunction(hirMod.Types, fn))
 	}
+	return graphs
+}
+
+// Analyze emits flow diagnostics from an already-built CFG artifact.
+func Analyze(graphs []*Graph, diag *diagnostics.DiagnosticBag) {
 	for _, fn := range graphs {
 		if fn != nil {
 			analyzeFunction(fn, diag)
 		}
 	}
-	return graphs
 }
 
 func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
@@ -45,7 +48,8 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 		)
 	}
 
-	if fn.Exit != nil && fn.Exit.Reachable && fn.ReturnType != "" && fn.ReturnType != "void" {
+	returnType, hasReturnType := fn.Types.Type(fn.ReturnType)
+	if fn.Exit != nil && fn.Exit.Reachable && hasReturnType && returnType.Kind != ir.TypeVoid {
 		reportMissingReturnCFG(fn, diag)
 	}
 }
@@ -134,7 +138,7 @@ func reportMissingReturnCFG(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	}
 
 	if fn.Source.Location != nil {
-		d.WithSecondaryLabel(fn.Source.Location, "expected `"+fn.ReturnType+"` here")
+		d.WithSecondaryLabel(fn.Source.Location, "expected `"+fn.Types.Text(fn.ReturnType)+"` here")
 	}
 
 	for _, branch := range branches {

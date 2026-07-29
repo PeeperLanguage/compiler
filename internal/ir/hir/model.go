@@ -4,12 +4,18 @@ import (
 	"strings"
 
 	"compiler/internal/ir"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
+
+// NodeID identifies source AST node that produced this HIR node. It remains
+// valid across HIR transformations without retaining AST objects.
+type NodeID uint32
 
 type Module struct {
 	Name     string
 	FilePath string
+	Types    *ir.TypeTable
 	Externs  []Extern
 	Funcs    []*Function
 }
@@ -17,15 +23,19 @@ type Module struct {
 type Extern struct {
 	Name       string
 	Params     []ir.Param
-	ReturnType string
+	ReturnType ir.TypeID
+	NodeID     NodeID
+	SymbolID   symbols.SymbolID
 	Location   *source.Location
 }
 
 type Function struct {
 	Name       string
 	Params     []ir.Param
-	ReturnType string
+	ReturnType ir.TypeID
 	Body       *Block
+	NodeID     NodeID
+	SymbolID   symbols.SymbolID
 	Location   *source.Location
 }
 
@@ -33,6 +43,7 @@ type Stmt interface {
 	stmtNode()
 	appendText(*strings.Builder, int)
 	loc() *source.Location
+	nodeID() NodeID
 }
 
 func LocOf(node Stmt) *source.Location {
@@ -42,8 +53,16 @@ func LocOf(node Stmt) *source.Location {
 	return node.loc()
 }
 
+func NodeIDOf(node Stmt) NodeID {
+	if node == nil {
+		return 0
+	}
+	return node.nodeID()
+}
+
 type Block struct {
 	Stmts    []Stmt
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -51,11 +70,14 @@ type Binding struct {
 	Name     string
 	Constant bool
 	Value    ir.Expr
+	NodeID   NodeID
+	SymbolID symbols.SymbolID
 	Location *source.Location
 }
 
 type ExprStmt struct {
 	Value    ir.Expr
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -63,17 +85,20 @@ type Assign struct {
 	Target     *ir.Place
 	Value      ir.Expr
 	DropTarget bool
+	NodeID     NodeID
 	Location   *source.Location
 }
 
 type Invalid struct {
 	Message  string
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type Return struct {
 	Value    ir.Expr
 	Cleanup  []ir.Expr
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -81,12 +106,14 @@ type If struct {
 	Cond     ir.Expr
 	Then     *Block
 	Else     Stmt
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type For struct {
 	Cond     ir.Expr
 	Body     *Block
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -110,6 +137,15 @@ func (r *Return) loc() *source.Location   { return r.Location }
 func (f *If) loc() *source.Location       { return f.Location }
 func (f *For) loc() *source.Location      { return f.Location }
 
+func (b *Block) nodeID() NodeID    { return b.NodeID }
+func (b *Binding) nodeID() NodeID  { return b.NodeID }
+func (e *ExprStmt) nodeID() NodeID { return e.NodeID }
+func (a *Assign) nodeID() NodeID   { return a.NodeID }
+func (i *Invalid) nodeID() NodeID  { return i.NodeID }
+func (r *Return) nodeID() NodeID   { return r.NodeID }
+func (f *If) nodeID() NodeID       { return f.NodeID }
+func (f *For) nodeID() NodeID      { return f.NodeID }
+
 func (m *Module) Text() string {
 	if m == nil {
 		return ""
@@ -121,7 +157,7 @@ func (m *Module) Text() string {
 	for _, ex := range m.Externs {
 		b.WriteString("extern fn ")
 		b.WriteString(ex.Name)
-		b.WriteString(ir.SignatureText(ex.Params, ex.ReturnType))
+		b.WriteString(ir.SignatureText(m.Types, ex.Params, ex.ReturnType))
 		b.WriteString("\n")
 	}
 	if len(m.Externs) > 0 {
@@ -133,7 +169,7 @@ func (m *Module) Text() string {
 	for _, fn := range m.Funcs {
 		b.WriteString("fn ")
 		b.WriteString(fn.Name)
-		b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
+		b.WriteString(ir.SignatureText(m.Types, fn.Params, fn.ReturnType))
 		b.WriteString(" {\n")
 		appendBlockText(&b, fn.Body, 1)
 		b.WriteString("}\n")

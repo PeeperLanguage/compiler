@@ -5,13 +5,12 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 )
 
-func (e *llvmEmitter) llvmType(typeText string) string {
-	if mapped, ok := llvmTypeName(typeText); ok {
+func (e *llvmEmitter) llvmType(id ir.TypeID) string {
+	if mapped, ok := llvmTypeID(e.mod.Types, id); ok {
 		return mapped
 	}
 	if e != nil {
@@ -19,18 +18,284 @@ func (e *llvmEmitter) llvmType(typeText string) string {
 		if e.badTypes == nil {
 			e.badTypes = make(map[string]struct{})
 		}
-		if _, ok := e.badTypes[typeText]; !ok {
-			e.badTypes[typeText] = struct{}{}
+		text := "<invalid>"
+		if e.mod != nil && e.mod.Types != nil {
+			text = e.mod.Types.Text(id)
+		}
+		if _, ok := e.badTypes[text]; !ok {
+			e.badTypes[text] = struct{}{}
 			if e.diag != nil {
 				msg := "unsupported llvm type"
-				if typeText != "" {
-					msg = msg + ": " + typeText
+				if text != "<invalid>" {
+					msg = msg + ": " + text
 				}
 				e.diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidType))
 			}
 		}
 	}
 	return "i32"
+}
+
+// llvmTypeID lowers canonical compiler layout descriptors. LLVM owns physical
+// ABI sizing, while the table owns carrier shape and field order.
+func llvmTypeID(types *ir.TypeTable, id ir.TypeID) (string, bool) {
+	typ, ok := types.Type(id)
+	if !ok {
+		return "", false
+	}
+	switch typ.Kind {
+	case ir.TypeVoid:
+		return "void", true
+	case ir.TypeInteger:
+		return fmt.Sprintf("i%d", typ.Bits), true
+	case ir.TypeFloat:
+		switch typ.Bits {
+		case 32:
+			return "float", true
+		case 64:
+			return "double", true
+		default:
+			return "", false
+		}
+	case ir.TypeBool:
+		return "i1", true
+	case ir.TypeByte:
+		return "i8", true
+	case ir.TypeCStr, ir.TypeRawPtr, ir.TypeAllocator:
+		return "i8*", true
+	case ir.TypeString:
+		index, ok := llvmTypeID(types, types.IndexType)
+		if !ok {
+			return "", false
+		}
+		return "{ i8*, " + index + ", i8* }", true
+	case ir.TypeOwnedPtr:
+		if isOwnedInterfaceType(types, id) {
+			return "{ i8*, i8*, i8* }", true
+		}
+		elem, ok := llvmTypeID(types, typ.Elem)
+		if !ok {
+			return "", false
+		}
+		return "{ " + elem + "*, i8* }", true
+	case ir.TypeReference:
+		if isInterfaceType(types, typ.Elem) {
+			return "{ i8*, i8* }", true
+		}
+		elemType, ok := types.Type(typ.Elem)
+		if !ok {
+			return "", false
+		}
+		if elemType.Kind == ir.TypeArray && elemType.Length == "" {
+			elem, ok := llvmTypeID(types, elemType.Elem)
+			if !ok {
+				return "", false
+			}
+			index, ok := llvmTypeID(types, types.IndexType)
+			if !ok {
+				return "", false
+			}
+			return "{ " + elem + "*, " + index + " }", true
+		}
+		elem, ok := llvmTypeID(types, typ.Elem)
+		if !ok {
+			return "", false
+		}
+		return elem + "*", true
+	case ir.TypeOptional:
+		inner, ok := llvmTypeID(types, typ.Elem)
+		if !ok {
+			return "", false
+		}
+		return "{ i1, " + inner + " }", true
+	case ir.TypeArray:
+		elem, ok := llvmTypeID(types, typ.Elem)
+		if !ok {
+			return "", false
+		}
+		if typ.Length == "" {
+			index, ok := llvmTypeID(types, types.IndexType)
+			if !ok {
+				return "", false
+			}
+			return "{ " + elem + "*, " + index + ", " + index + ", i8* }", true
+		}
+		return "[" + typ.Length + " x " + elem + "]", true
+	case ir.TypeStruct:
+		fields := make([]string, 0, len(typ.Fields))
+		for _, field := range typ.Fields {
+			llvmField, ok := llvmTypeID(types, field.Type)
+			if !ok {
+				return "", false
+			}
+			fields = append(fields, llvmField)
+		}
+		return "{ " + strings.Join(fields, ", ") + " }", true
+	case ir.TypeInterface:
+		return "{ i8*, i8* }", true
+	case ir.TypeFunction:
+		returnType, ok := llvmTypeID(types, typ.Return)
+		if !ok {
+			return "", false
+		}
+		params := make([]string, 0, len(typ.Params))
+		for _, param := range typ.Params {
+			llvmParam, ok := llvmTypeID(types, param)
+			if !ok {
+				return "", false
+			}
+			params = append(params, llvmParam)
+		}
+		return returnType + " (" + strings.Join(params, ", ") + ")*", true
+	default:
+		return "", false
+	}
+}
+
+func isInterfaceType(types *ir.TypeTable, id ir.TypeID) bool {
+	typ, ok := types.Type(id)
+	return ok && typ.Kind == ir.TypeInterface
+}
+
+func isTypeKind(types *ir.TypeTable, id ir.TypeID, kind ir.TypeKind) bool {
+	typ, ok := types.Type(id)
+	return ok && typ.Kind == kind
+}
+
+func isVoidType(types *ir.TypeTable, id ir.TypeID) bool {
+	return isTypeKind(types, id, ir.TypeVoid)
+}
+
+func isOwnedInterfaceType(types *ir.TypeTable, id ir.TypeID) bool {
+	typ, ok := types.Type(id)
+	return ok && typ.Kind == ir.TypeOwnedPtr && isInterfaceType(types, typ.Elem)
+}
+
+func interfaceTypeID(types *ir.TypeTable, id ir.TypeID) (ir.TypeID, bool) {
+	typ, ok := types.Type(id)
+	if !ok {
+		return ir.InvalidType, false
+	}
+	if typ.Kind == ir.TypeOwnedPtr || typ.Kind == ir.TypeReference {
+		id = typ.Elem
+		typ, ok = types.Type(id)
+	}
+	return id, ok && typ.Kind == ir.TypeInterface
+}
+
+func interfaceSlotLLVMType(types *ir.TypeTable, id ir.TypeID, slot int) (string, bool) {
+	interfaceID, ok := interfaceTypeID(types, id)
+	if !ok {
+		return "", false
+	}
+	iface, _ := types.Type(interfaceID)
+	if slot < 0 || slot >= len(iface.Methods) {
+		return "", false
+	}
+	method := iface.Methods[slot]
+	params := make([]string, 0, len(method.Params))
+	params = append(params, "i8*")
+	for index, param := range method.Params {
+		if index == 0 {
+			continue
+		}
+		llvmParam, ok := llvmTypeID(types, param.Type)
+		if !ok {
+			return "", false
+		}
+		params = append(params, llvmParam)
+	}
+	ret, ok := llvmTypeID(types, method.Return)
+	if !ok {
+		return "", false
+	}
+	return ret + " (" + strings.Join(params, ", ") + ")*", true
+}
+
+func interfaceMethodVtableSlotID(types *ir.TypeTable, id ir.TypeID, methodSlot int) int {
+	offset := interfaceReleaseVtableSlot
+	if isOwnedInterfaceType(types, id) {
+		offset++
+	}
+	return offset + methodSlot
+}
+
+func dynamicArrayElementType(types *ir.TypeTable, id ir.TypeID) (ir.TypeID, bool) {
+	typ, ok := types.Type(id)
+	if !ok || typ.Kind != ir.TypeArray || typ.Length != "" {
+		return ir.InvalidType, false
+	}
+	return typ.Elem, true
+}
+
+func llvmFunctionSignature(types *ir.TypeTable, id ir.TypeID) (string, []string, bool) {
+	typ, ok := types.Type(id)
+	if !ok || typ.Kind != ir.TypeFunction {
+		return "", nil, false
+	}
+	ret, ok := llvmTypeID(types, typ.Return)
+	if !ok {
+		return "", nil, false
+	}
+	params := make([]string, 0, len(typ.Params))
+	for _, param := range typ.Params {
+		llvmParam, ok := llvmTypeID(types, param)
+		if !ok {
+			return "", nil, false
+		}
+		params = append(params, llvmParam)
+	}
+	return ret, params, true
+}
+
+func integerInfoID(types *ir.TypeTable, id ir.TypeID) (signed bool, bits int, ok bool) {
+	typ, ok := types.Type(id)
+	if !ok {
+		return false, 0, false
+	}
+	if typ.Kind == ir.TypeByte {
+		return false, 8, true
+	}
+	if typ.Kind != ir.TypeInteger {
+		return false, 0, false
+	}
+	return typ.Signed, typ.Bits, true
+}
+
+func isUnsignedTypeID(types *ir.TypeTable, id ir.TypeID) bool {
+	signed, _, ok := integerInfoID(types, id)
+	return ok && !signed
+}
+
+func integerComparePredID(types *ir.TypeTable, op string, id ir.TypeID) string {
+	if isUnsignedTypeID(types, id) {
+		switch op {
+		case "<":
+			return "ult"
+		case "<=":
+			return "ule"
+		case ">":
+			return "ugt"
+		case ">=":
+			return "uge"
+		}
+	}
+	switch op {
+	case "==":
+		return "eq"
+	case "!=":
+		return "ne"
+	case "<":
+		return "slt"
+	case "<=":
+		return "sle"
+	case ">":
+		return "sgt"
+	case ">=":
+		return "sge"
+	default:
+		return "eq"
+	}
 }
 
 func (e *llvmEmitter) markInvalid(msg string) {
@@ -43,343 +308,25 @@ func (e *llvmEmitter) markInvalid(msg string) {
 	}
 }
 
-func llvmTypeName(typeText string) (string, bool) {
-	typeText = strings.TrimSpace(typeText)
-	if strings.HasPrefix(typeText, "fn(") {
-		return llvmFunctionPtrType(typeText)
+func interfaceSymbolName(prefix string, types *ir.TypeTable, interfaceType, dataType ir.TypeID) string {
+	kind := "borrowed"
+	if isOwnedInterfaceType(types, interfaceType) {
+		kind = "owned"
 	}
-	if typeText == "rawptr" {
-		return "i8*", true
-	}
-	if typeText == "Allocator" {
-		return "i8*", true
-	}
-	if _, ok := ownedInterfaceTypeText(typeText); ok {
-		return "{ i8*, i8*, i8* }", true
-	}
-	if remainder, ok := pointerTypeTextTarget(typeText); ok {
-		target, ok := llvmTypeName(remainder)
-		if !ok {
-			// Unknown pointee still lowers as pointer-sized storage.
-			return "{ i8*, i8* }", true
-		}
-		return "{ " + target + "*, i8* }", true
-	}
-	if innerTypeText, ok := optionalInnerTypeText(typeText); ok {
-		if niche, ok := optionalNicheLayout(innerTypeText); ok {
-			return niche.llvmType, true
-		}
-		inner, ok := llvmTypeName(innerTypeText)
-		if !ok {
-			return "", false
-		}
-		return "{ i1, " + inner + " }", true
-	}
-	if remainder, ok := strings.CutPrefix(typeText, "[]"); ok {
-		elem, ok := llvmTypeName(strings.TrimSpace(remainder))
-		if !ok {
-			return "", false
-		}
-		return "{ " + elem + "*, i64, i64, i8* }", true
-	}
-	if remainder, ok := referenceTypeTextTarget(typeText); ok {
-		return llvmRefTypeName(remainder)
-	}
-	if length, elemTypeText, ok := ir.ArrayTypeParts(typeText); ok {
-		elem, ok := llvmTypeName(elemTypeText)
-		if !ok {
-			return "", false
-		}
-		return "[" + length + " x " + elem + "]", true
-	}
-	if strings.HasPrefix(typeText, "iface{") && strings.HasSuffix(typeText, "}") {
-		return "{ i8*, i8* }", true
-	}
-	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
-		body := strings.TrimSuffix(strings.TrimPrefix(typeText, "struct{"), "}")
-		fields := splitTopLevel(body, ';')
-		parts := make([]string, 0, len(fields))
-		for _, field := range fields {
-			field = strings.TrimSpace(field)
-			if field == "" {
-				continue
-			}
-			fieldTypeText := field
-			if _, remainder, ok := strings.Cut(field, ":"); ok {
-				fieldTypeText = strings.TrimSpace(remainder)
-			}
-			fieldType, ok := llvmTypeName(fieldTypeText)
-			if !ok {
-				return "", false
-			}
-			parts = append(parts, fieldType)
-		}
-		return "{ " + strings.Join(parts, ", ") + " }", true
-	}
-	if _, bits, ok := mirIntegerInfo(typeText); ok {
-		return fmt.Sprintf("i%d", bits), true
-	}
-	switch typeText {
-	case "f32":
-		return "float", true
-	case "f64":
-		return "double", true
-	case "bool":
-		return "i1", true
-	case "void":
-		return "void", true
-	case "cstr":
-		return "i8*", true
-	case "string":
-		return "{ i8*, i64, i8* }", true
-	default:
-		return "", false
-	}
-}
-
-func mirIntegerInfo(typeText string) (signed bool, bits int, ok bool) {
-	if typeText == "byte" {
-		return false, 8, true
-	}
-	return token.ParseIntegerBuiltin(typeText)
-}
-
-func optionalInnerTypeText(typeText string) (string, bool) {
-	inner, ok := strings.CutPrefix(strings.TrimSpace(typeText), "?")
-	if !ok {
-		return "", false
-	}
-	inner = strings.TrimSpace(inner)
-	return inner, inner != ""
-}
-
-type optionalNiche struct {
-	llvmType string
-	none     string
-}
-
-func optionalNicheLayout(typeText string) (optionalNiche, bool) {
-	// TODO(#26): Owned pointers (*T) no longer qualify — their runtime layout is
-	// {T*, i8*} (struct), not T* (null-safe pointer). Future types with invalid
-	// bit patterns (e.g. non-null pointers after ZST optimization, enums with
-	// discriminant gaps) may restore niche usage.
-	return optionalNiche{}, false
-}
-
-func llvmFunctionPtrType(typeText string) (string, bool) {
-	typeText = strings.TrimSpace(typeText)
-	if !strings.HasPrefix(typeText, "fn(") {
-		return "", false
-	}
-	start := strings.Index(typeText, "(")
-	end := matchingParenIndex(typeText, start)
-	if start < 0 || end < 0 {
-		return "", false
-	}
-	paramsText := strings.TrimSpace(typeText[start+1 : end])
-	returnText := "void"
-	remainder := strings.TrimSpace(typeText[end+1:])
-	if after, ok := strings.CutPrefix(remainder, "->"); ok {
-		ret, ok := llvmTypeName(strings.TrimSpace(after))
-		if !ok {
-			return "", false
-		}
-		returnText = ret
-	}
-	params := splitTopLevel(paramsText, ',')
-	llvmParams := make([]string, 0, len(params))
-	for _, param := range params {
-		param = strings.TrimSpace(param)
-		if param == "" {
-			continue
-		}
-		if idx := topLevelColonIndex(param); idx >= 0 {
-			param = strings.TrimSpace(param[idx+1:])
-		}
-		llvmParam, ok := llvmTypeName(param)
-		if !ok {
-			return "", false
-		}
-		llvmParams = append(llvmParams, llvmParam)
-	}
-	return returnText + " (" + strings.Join(llvmParams, ", ") + ")*", true
-}
-
-func interfaceMethodSlotTypeText(methodText string) (string, bool) {
-	open := strings.Index(methodText, "(")
-	if open < 0 {
-		return "", false
-	}
-	close := matchingParenIndex(methodText, open)
-	if close < 0 {
-		return "", false
-	}
-	paramsText := strings.TrimSpace(methodText[open+1 : close])
-	parts := []string{"rawptr"}
-	params := splitTopLevel(paramsText, ',')
-	for i, param := range params {
-		if i == 0 {
-			continue
-		}
-		param = strings.TrimSpace(param)
-		if param == "" {
-			continue
-		}
-		if idx := topLevelColonIndex(param); idx >= 0 {
-			param = strings.TrimSpace(param[idx+1:])
-		}
-		parts = append(parts, param)
-	}
-	var b strings.Builder
-	b.WriteString("fn(")
-	b.WriteString(strings.Join(parts, ", "))
-	b.WriteString(")")
-	remainder := strings.TrimSpace(methodText[close+1:])
-	if strings.HasPrefix(remainder, ":") {
-		b.WriteString(" -> ")
-		b.WriteString(strings.TrimSpace(strings.TrimPrefix(remainder, ":")))
-	}
-	return b.String(), true
-}
-
-func matchingParenIndex(text string, open int) int {
-	if open < 0 || open >= len(text) || text[open] != '(' {
-		return -1
-	}
-	depth := 0
-	for i := open; i < len(text); i++ {
-		switch text[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
-func topLevelColonIndex(text string) int {
-	depth := 0
-	for i, r := range text {
-		switch r {
-		case '{', '(', '[':
-			depth++
-		case '}', ')', ']':
-			if depth > 0 {
-				depth--
-			}
-		case ':':
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
-func splitTopLevel(text string, sep rune) []string {
-	if text == "" {
-		return nil
-	}
-	parts := make([]string, 0, 4)
-	depth := 0
-	start := 0
-	for i, r := range text {
-		switch r {
-		case '{', '(', '[':
-			depth++
-		case '}', ')', ']':
-			if depth > 0 {
-				depth--
-			}
-		default:
-			if r == sep && depth == 0 {
-				parts = append(parts, text[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, text[start:])
-	return parts
-}
-
-func itabSymbolName(interfaceType, dataType string) string {
-	raw := fmt.Sprintf("__itab__%s__%s__%s", interfaceABIKind(interfaceType), interfaceType, dataType)
+	raw := fmt.Sprintf("__%s__%s__%s__%s", prefix, kind, types.ABIKey(interfaceType), types.ABIKey(dataType))
 	return "@" + ir.SanitizeSymbolName(raw)
-}
-
-func interfaceDropSymbolName(interfaceType, dataType string) string {
-	raw := fmt.Sprintf("__iface_drop__%s__%s__%s", interfaceABIKind(interfaceType), interfaceType, dataType)
-	return "@" + ir.SanitizeSymbolName(raw)
-}
-
-func interfaceReleaseSymbolName(interfaceType, dataType string) string {
-	raw := fmt.Sprintf("__iface_release__%s__%s__%s", interfaceABIKind(interfaceType), interfaceType, dataType)
-	return "@" + ir.SanitizeSymbolName(raw)
-}
-
-func interfaceABIKind(interfaceType string) string {
-	if _, owned := ownedInterfaceTypeText(interfaceType); owned {
-		return "owned"
-	}
-	return "borrowed"
 }
 
 const interfaceReleaseVtableSlot = 1
 
-func interfaceMethodVtableSlot(interfaceTypeText string, methodSlot int) int {
-	methodOffset := interfaceReleaseVtableSlot
-	if _, owned := ownedInterfaceTypeText(interfaceTypeText); owned {
-		methodOffset++
+func interfaceVtableLength(types *ir.TypeTable, interfaceType ir.TypeID, methodCount int) int {
+	if isOwnedInterfaceType(types, interfaceType) {
+		return methodCount + 2
 	}
-	return methodOffset + methodSlot
+	return methodCount + 1
 }
 
-func interfaceVtableLength(interfaceTypeText string, methodCount int) int {
-	return interfaceMethodVtableSlot(interfaceTypeText, methodCount)
-}
-
-func interfaceSlotLLVMTypeFromInterface(interfaceTypeText string, slot int) (string, bool) {
-	interfaceTypeText, ok := runtimeInterfaceTypeText(interfaceTypeText)
-	if !ok {
-		return "", false
-	}
-	body := strings.TrimSuffix(strings.TrimPrefix(interfaceTypeText, "iface{"), "}")
-	methods := splitTopLevel(body, ';')
-	if slot < 0 || slot >= len(methods) {
-		return "", false
-	}
-	slotTypeText, ok := interfaceMethodSlotTypeText(strings.TrimSpace(methods[slot]))
-	if !ok {
-		return "", false
-	}
-	return llvmTypeName(slotTypeText)
-}
-
-func llvmRefTypeName(target string) (string, bool) {
-	target = strings.TrimSpace(target)
-	if elemTypeText, ok := strings.CutPrefix(target, "[]"); ok {
-		elemTypeText = strings.TrimSpace(elemTypeText)
-		elem, ok := llvmTypeName(elemTypeText)
-		if !ok {
-			return "", false
-		}
-		return "{ " + elem + "*, i64 }", true
-	}
-	if strings.HasPrefix(target, "iface{") && strings.HasSuffix(target, "}") {
-		return llvmTypeName(target)
-	}
-	elem, ok := llvmTypeName(target)
-	if !ok {
-		return "", false
-	}
-	return elem + "*", true
-}
-
-func mirValueType(expr mir.ValueExpr) string {
+func mirValueType(expr mir.ValueExpr) ir.TypeID {
 	switch v := expr.(type) {
 	case *mir.Move:
 		return mirRefType(v.Src)
@@ -416,70 +363,6 @@ func mirValueType(expr mir.ValueExpr) string {
 	case *mir.Call:
 		return v.Type
 	default:
-		return ""
+		return ir.InvalidType
 	}
-}
-
-func parseFunctionTypeText(typeText string) (string, string, []string, bool) {
-	fnType, ok := llvmTypeName(typeText)
-	if !ok {
-		return "", "", nil, false
-	}
-	open := strings.Index(fnType, "(")
-	close := matchingParenIndex(fnType, open)
-	if open < 0 || close < 0 || !strings.HasSuffix(fnType, "*") {
-		return "", "", nil, false
-	}
-	ret := strings.TrimSpace(fnType[:open])
-	paramsText := strings.TrimSpace(fnType[open+1 : close])
-	params := splitTopLevel(paramsText, ',')
-	out := make([]string, 0, len(params))
-	for _, param := range params {
-		param = strings.TrimSpace(param)
-		if param != "" {
-			out = append(out, param)
-		}
-	}
-	return fnType, ret, out, true
-}
-
-func pointerTypeTextTarget(typeText string) (string, bool) {
-	typeText = strings.TrimSpace(typeText)
-	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
-		remainder = strings.TrimSpace(remainder)
-		return remainder, remainder != ""
-	}
-	return "", false
-}
-
-func ownedInterfaceTypeText(typeText string) (string, bool) {
-	target, ok := pointerTypeTextTarget(typeText)
-	if !ok {
-		return "", false
-	}
-	return runtimeInterfaceTypeText(target)
-}
-
-func runtimeInterfaceTypeText(typeText string) (string, bool) {
-	typeText = strings.TrimSpace(typeText)
-	if target, ok := referenceTypeTextTarget(typeText); ok {
-		typeText = target
-	} else if target, ok := pointerTypeTextTarget(typeText); ok {
-		typeText = target
-	}
-	if strings.HasPrefix(typeText, "iface{") && strings.HasSuffix(typeText, "}") {
-		return typeText, true
-	}
-	return "", false
-}
-
-func referenceTypeTextTarget(typeText string) (string, bool) {
-	typeText = strings.TrimSpace(typeText)
-	for _, prefix := range []string{"&mut ", "&"} {
-		if remainder, ok := strings.CutPrefix(typeText, prefix); ok {
-			remainder = strings.TrimSpace(remainder)
-			return remainder, remainder != ""
-		}
-	}
-	return "", false
 }

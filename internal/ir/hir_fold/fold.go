@@ -17,17 +17,18 @@ func ApplyConstantFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir
 		if fn == nil || fn.Body == nil {
 			continue
 		}
-		fn.Body = foldBlock(fn.Body, diag, nil)
+		fn.Body = foldBlock(mod.Types, fn.Body, diag, nil)
 	}
 	return mod
 }
 
-func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[string]constvalue.Value) *hir.Block {
+func foldBlock(types *ir.TypeTable, block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[string]constvalue.Value) *hir.Block {
 	if block == nil {
 		return nil
 	}
 	out := &hir.Block{
 		Stmts:    make([]hir.Stmt, 0, len(block.Stmts)),
+		NodeID:   block.NodeID,
 		Location: block.Location,
 	}
 	env := cloneConstEnv(parentEnv)
@@ -40,7 +41,7 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[
 			addUnreachableWarning(diag, hir.LocOf(stmt))
 			continue
 		}
-		folded := foldStmt(stmt, diag, env)
+		folded := foldStmt(types, stmt, diag, env)
 		for _, item := range folded {
 			out.Stmts = append(out.Stmts, item)
 			if stmtTerminates(item) {
@@ -51,45 +52,45 @@ func foldBlock(block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[
 	return out
 }
 
-func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]constvalue.Value) []hir.Stmt {
+func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]constvalue.Value) []hir.Stmt {
 	switch node := stmt.(type) {
 	case *hir.Block:
-		return []hir.Stmt{foldBlock(node, diag, env)}
+		return []hir.Stmt{foldBlock(types, node, diag, env)}
 	case *hir.Binding:
-		value := ir.FoldExpr(node.Value, env)
-		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Value: value, Location: node.Location}
+		value := ir.FoldExpr(types, node.Value, env)
+		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Value: value, NodeID: node.NodeID, SymbolID: node.SymbolID, Location: node.Location}
 		if node.Constant {
-			if folded, ok := ir.ConstValueOf(value); ok {
+			if folded, ok := ir.ConstValueOf(types, value); ok {
 				env[node.Name] = folded
 			}
 		}
 		return []hir.Stmt{out}
 	case *hir.ExprStmt:
-		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(node.Value, env), Location: node.Location}}
+		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(types, node.Value, env), NodeID: node.NodeID, Location: node.Location}}
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:
 		cleanup := make([]ir.Expr, 0, len(node.Cleanup))
 		for _, expr := range node.Cleanup {
-			cleanup = append(cleanup, ir.FoldExpr(expr, env))
+			cleanup = append(cleanup, ir.FoldExpr(types, expr, env))
 		}
 		if node.Value == nil {
-			return []hir.Stmt{&hir.Return{Cleanup: cleanup, Location: node.Location}}
+			return []hir.Stmt{&hir.Return{Cleanup: cleanup, NodeID: node.NodeID, Location: node.Location}}
 		}
-		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(node.Value, env), Cleanup: cleanup, Location: node.Location}}
+		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(types, node.Value, env), Cleanup: cleanup, NodeID: node.NodeID, Location: node.Location}}
 	case *hir.If:
-		thenBlock := foldBlock(node.Then, diag, env)
+		thenBlock := foldBlock(types, node.Then, diag, env)
 		var elseStmt hir.Stmt
 		if node.Else != nil {
-			foldedElse := foldStmt(node.Else, diag, cloneConstEnv(env))
+			foldedElse := foldStmt(types, node.Else, diag, cloneConstEnv(env))
 			if len(foldedElse) == 1 {
 				elseStmt = foldedElse[0]
 			} else if len(foldedElse) > 1 {
-				elseStmt = &hir.Block{Stmts: foldedElse, Location: hir.LocOf(node.Else)}
+				elseStmt = &hir.Block{Stmts: foldedElse, NodeID: hir.NodeIDOf(node.Else), Location: hir.LocOf(node.Else)}
 			}
 		}
-		cond := ir.FoldExpr(node.Cond, env)
-		if value, ok := ir.ConstValueOf(cond); ok {
+		cond := ir.FoldExpr(types, node.Cond, env)
+		if value, ok := ir.ConstValueOf(types, cond); ok {
 			if truthy, ok := value.Truthy(); ok && truthy {
 				addConstantConditionWarning(diag, node.Location, true)
 				if thenBlock == nil {
@@ -105,13 +106,13 @@ func foldStmt(stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]con
 				return []hir.Stmt{elseStmt}
 			}
 		}
-		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, Location: node.Location}}
+		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, NodeID: node.NodeID, Location: node.Location}}
 	case *hir.For:
 		var cond ir.Expr
 		if node.Cond != nil {
-			cond = ir.FoldExpr(node.Cond, env)
+			cond = ir.FoldExpr(types, node.Cond, env)
 		}
-		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(node.Body, diag, cloneConstEnv(env)), Location: node.Location}}
+		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(types, node.Body, diag, cloneConstEnv(env)), NodeID: node.NodeID, Location: node.Location}}
 	default:
 		return []hir.Stmt{stmt}
 	}

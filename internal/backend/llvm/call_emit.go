@@ -17,27 +17,27 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 	if out == nil || emitter == nil || thunk == nil {
 		return
 	}
-	actualLLVMType, ok := llvmTypeName(thunk.FuncType)
+	_, ok := llvmTypeID(emitter.mod.Types, thunk.FuncType)
 	if !ok {
-		emitter.markInvalid("unsupported interface thunk function type: " + thunk.FuncType)
+		emitter.markInvalid("unsupported interface thunk function type: " + emitter.mod.Types.Text(thunk.FuncType))
 		return
 	}
-	actualFn, actualRet, actualParams, ok := parseFunctionTypeText(thunk.FuncType)
-	if !ok || actualFn != actualLLVMType {
-		emitter.markInvalid("failed to parse interface thunk function type: " + thunk.FuncType)
+	actualRet, actualParams, ok := llvmFunctionSignature(emitter.mod.Types, thunk.FuncType)
+	if !ok {
+		emitter.markInvalid("failed to lower interface thunk function type: " + emitter.mod.Types.Text(thunk.FuncType))
 		return
 	}
-	if _, ok := llvmTypeName(thunk.DataType); !ok {
-		emitter.markInvalid("unsupported interface thunk data type: " + thunk.DataType)
+	if _, ok := llvmTypeID(emitter.mod.Types, thunk.DataType); !ok {
+		emitter.markInvalid("unsupported interface thunk data type: " + emitter.mod.Types.Text(thunk.DataType))
 		return
 	}
-	_, slotRet, slotParams, ok := parseFunctionTypeText(thunk.SlotType)
+	slotRet, slotParams, ok := llvmFunctionSignature(emitter.mod.Types, thunk.SlotType)
 	if !ok || len(slotParams) == 0 || len(actualParams) == 0 {
-		emitter.markInvalid("failed to parse interface thunk slot type: " + thunk.SlotType)
+		emitter.markInvalid("failed to lower interface thunk slot type: " + emitter.mod.Types.Text(thunk.SlotType))
 		return
 	}
 	if slotParams[0] != "i8*" {
-		emitter.markInvalid("interface thunk receiver slot must use rawptr: " + thunk.SlotType)
+		emitter.markInvalid("interface thunk receiver slot must use rawptr: " + emitter.mod.Types.Text(thunk.SlotType))
 		return
 	}
 	out.WriteString("define ")
@@ -138,14 +138,14 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (data 
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, baseType, baseValue))
 	itab := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", itab, baseType, baseValue))
-	slotType, ok := interfaceSlotLLVMTypeFromInterface(mirRefType(base), slot)
+	slotType, ok := interfaceSlotLLVMType(b.emitter.mod.Types, mirRefType(base), slot)
 	if !ok {
 		return "", "", false
 	}
 	vtable := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", vtable, itab))
 	fnPtrPtr := b.nextReg()
-	methodOffset := interfaceMethodVtableSlot(mirRefType(base), slot)
+	methodOffset := interfaceMethodVtableSlotID(b.emitter.mod.Types, mirRefType(base), slot)
 	b.line(fmt.Sprintf("%s = getelementptr inbounds i8*, i8** %s, i32 %d", fnPtrPtr, vtable, methodOffset))
 	fnI8 := b.nextReg()
 	b.line(fmt.Sprintf("%s = load i8*, i8** %s", fnI8, fnPtrPtr))
@@ -176,15 +176,14 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	}
 	args := append([]string{"i8* " + data}, llvmCallArgs(b, call.Args)...)
 	emitCall(b, "", b.emitter.llvmType(call.Type), fn, args)
-	if consumesOwnedInterfaceStorage(call) {
+	if consumesOwnedInterfaceStorage(b.emitter.mod.Types, call) {
 		emitInterfaceStorageRelease(b, mirRefType(call.Base), emitRef(b, call.Base), data)
 	}
 }
 
-func consumesOwnedInterfaceStorage(call *mir.InterfaceCall) bool {
+func consumesOwnedInterfaceStorage(types *ir.TypeTable, call *mir.InterfaceCall) bool {
 	if call == nil || !call.Consumes {
 		return false
 	}
-	_, ok := ownedInterfaceTypeText(mirRefType(call.Base))
-	return ok
+	return isOwnedInterfaceType(types, mirRefType(call.Base))
 }

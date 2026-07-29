@@ -11,7 +11,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
 	"compiler/internal/project"
-	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -82,16 +81,15 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 	if len(llPaths) == 0 {
 		return fmt.Errorf("no LLVM IR emitted")
 	}
-	targetTriple, err := target.LLVMTriple(ctx.Config.TargetOS, ctx.Config.TargetArch)
-	if err != nil {
-		return fmt.Errorf("resolve llvm target triple: %w", err)
+	if !ctx.Target.Valid() {
+		return fmt.Errorf("compiler target is unavailable")
 	}
 
 	clangPath, err := exec.LookPath("clang")
 	if err != nil {
 		return fmt.Errorf("clang not found in PATH; install LLVM clang to build LLVM IR")
 	}
-	args := clangArgsForBuild(ctx.Config, targetTriple, llPaths, outputPath)
+	args := clangArgsForBuild(ctx.Config, ctx.Target.LLVMTriple, llPaths, outputPath)
 	cmd := exec.Command(clangPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

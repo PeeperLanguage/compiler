@@ -323,11 +323,14 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != project.PhaseHIR {
-		t.Fatalf("expected pipeline to continue through HIR and stop before MIR, got phase %v", entry.Phase)
+	if entry.Phase != project.PhaseCFG {
+		t.Fatalf("expected pipeline to continue through CFG and stop before MIR, got phase %v", entry.Phase)
 	}
 	if entry.HIR == nil {
 		t.Fatalf("expected HIR despite extern definition error")
+	}
+	if len(entry.CFG) == 0 {
+		t.Fatal("expected canonical CFG despite extern definition error")
 	}
 	if len(entry.HIR.Externs) != 0 {
 		t.Fatalf("extern definition should not lower as import, got externs %#v", entry.HIR.Externs)
@@ -408,6 +411,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseOwnership,
 		project.PhaseUsage,
 		project.PhaseHIR,
+		project.PhaseCFG,
 		project.PhaseMIR,
 		project.PhaseBackend,
 	}
@@ -417,6 +421,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		}
 		if entry.Phase != phase {
 			t.Fatalf("phase = %v, want %v", entry.Phase, phase)
+		}
+		if phase == project.PhaseCFG && len(entry.CFG) == 0 {
+			t.Fatal("CFG phase must retain canonical graph")
 		}
 	}
 	if pipeline.advanceModulePhase(entry, diag) {

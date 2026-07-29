@@ -3,7 +3,6 @@ package project
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -11,9 +10,11 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -25,6 +26,10 @@ const PACKAGED_LIBS_DIR = "../libs"
 type CompilerContext struct {
 	// Normalized compiler options.
 	Config Config
+	// Immutable target metadata shared by semantic and backend phases.
+	Target target.Info
+	// Canonical runtime types shared by HIR, MIR, and backend lowering.
+	Types *ir.TypeTable
 	// Shared diagnostic stream.
 	Diagnostics *diagnostics.DiagnosticBag
 	// Optional per-run metrics for benchmarks and incremental validation.
@@ -91,11 +96,12 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."
 	}
-	if cfg.TargetOS == "" {
-		cfg.TargetOS = runtime.GOOS
-	}
-	if cfg.TargetArch == "" {
-		cfg.TargetArch = runtime.GOARCH
+	cfg.TargetOS = target.NormalizeOS(cfg.TargetOS)
+	cfg.TargetArch = target.NormalizeArch(cfg.TargetArch)
+	compilerTarget, err := target.New(cfg.TargetOS, cfg.TargetArch)
+	if err != nil {
+		diag.Add(diagnostics.NewError("resolve compiler target: " + err.Error()))
+		compilerTarget = target.Host()
 	}
 	if cfg.TargetBackend == "" {
 		cfg.TargetBackend = "llvm"
@@ -143,9 +149,13 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	if cfg.DependencyRoots == nil {
 		cfg.DependencyRoots = make(map[string]string)
 	}
-	globalScope := predeclaredScope()
+	globalScope := predeclaredScope(compilerTarget)
+	types := ir.NewTypeTable()
+	types.SetIndexType(types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: compilerTarget.IndexBits}))
 	return &CompilerContext{
 		Config:      cfg,
+		Target:      compilerTarget,
+		Types:       types,
 		Diagnostics: diag,
 		GlobalScope: globalScope,
 		Graph:       graph.New(GraphNodeModule, GraphEdgeImport),
@@ -232,7 +242,7 @@ func (ctx *CompilerContext) ModuleOriginForFile(filePath string) (ModuleOrigin, 
 }
 
 // Compiler-owned names available before prelude parsing.
-func predeclaredScope() *table.Scope {
+func predeclaredScope(compilerTarget target.Info) *table.Scope {
 	scope := table.New(nil)
 	declarePredeclaredConst(scope, "true")
 	declarePredeclaredConst(scope, "false")
@@ -241,7 +251,7 @@ func predeclaredScope() *table.Scope {
 
 	elementType := &typeinfo.NamedType{Name: "T"}
 	arrayType := &typeinfo.ArrayType{Dynamic: true, Elem: elementType}
-	sizeType, ok := typeinfo.NumericTypeFromName("usize")
+	sizeType, ok := typeinfo.NumericTypeFromName("usize", compilerTarget)
 	if !ok {
 		panic("missing builtin usize type")
 	}

@@ -1,24 +1,9 @@
 package target
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 )
-
-// withSizeBits sets the global sizeBits for the duration of the test.
-func withSizeBits(t *testing.T, bits int) {
-	t.Helper()
-	prev := SizeBits()
-	if err := SetSizeBits(bits); err != nil {
-		t.Fatalf("set abi size: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := SetSizeBits(prev); err != nil {
-			t.Fatalf("restore abi size: %v", err)
-		}
-	})
-}
 
 func TestDefaultSizeBitsForArch(t *testing.T) {
 	tests := []struct {
@@ -62,43 +47,50 @@ func TestDefaultSizeBitsForArch(t *testing.T) {
 	}
 }
 
-func TestDefaultSizeBitsForHost(t *testing.T) {
-	want := DefaultSizeBitsForArch(runtime.GOARCH)
-	if got := SizeBits(); got != want {
-		t.Errorf("default SizeBits() = %d, want %d (matches %s)", got, want, runtime.GOARCH)
+func TestInfoUsesArchitectureWidthAndTriple(t *testing.T) {
+	tests := []struct {
+		os   string
+		arch string
+		bits int
+		want string
+	}{
+		{os: "linux", arch: "386", bits: Bits32, want: "i386-unknown-linux-gnu"},
+		{os: "linux", arch: "amd64", bits: Bits64, want: "x86_64-unknown-linux-gnu"},
 	}
-}
-
-func TestSetSizeBitsValid(t *testing.T) {
-	for _, bits := range []int{0, Bits32, Bits64} {
-		t.Run("", func(t *testing.T) {
-			withSizeBits(t, bits)
-			if bits == 0 {
-				if SizeBits() != DefaultSizeBitsForArch(runtime.GOARCH) {
-					t.Errorf("SetSizeBits(0) did not restore default")
-				}
-			} else if SizeBits() != bits {
-				t.Errorf("SizeBits() = %d, want %d", SizeBits(), bits)
+	for _, tt := range tests {
+		t.Run(tt.arch, func(t *testing.T) {
+			info, err := New(tt.os, tt.arch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.Valid() || info.PointerBits != tt.bits || info.IndexBits != tt.bits || info.LLVMTriple != tt.want {
+				t.Fatalf("Info = %#v", info)
 			}
 		})
 	}
 }
 
-func TestSetSizeBitsInvalid(t *testing.T) {
-	for _, bits := range []int{1, 8, 16, 24, 128, -1, 33, 65} {
-		t.Run("", func(t *testing.T) {
-			withSizeBits(t, Bits64)
-			err := SetSizeBits(bits)
-			if err == nil {
-				t.Fatalf("SetSizeBits(%d) returned nil, want error", bits)
-			}
-			if !strings.Contains(err.Error(), "invalid target ABI size") {
-				t.Errorf("unexpected error message: %v", err)
-			}
-			if SizeBits() != Bits64 {
-				t.Errorf("SizeBits() changed after invalid SetSizeBits: got %d", SizeBits())
-			}
-		})
+func TestInfoRejectsUnsupportedTarget(t *testing.T) {
+	_, err := New("linux", "mystery")
+	if err == nil || !strings.Contains(err.Error(), "unsupported target architecture") {
+		t.Fatalf("New returned %v, want unsupported architecture", err)
+	}
+}
+
+func TestArchFor32BitMode(t *testing.T) {
+	tests := map[string]string{
+		"amd64": "386",
+		"arm64": "arm",
+		"386":   "386",
+	}
+	for arch, want := range tests {
+		got, err := ArchFor32BitMode(arch)
+		if err != nil || got != want {
+			t.Fatalf("ArchFor32BitMode(%q) = (%q, %v), want (%q, nil)", arch, got, err, want)
+		}
+	}
+	if _, err := ArchFor32BitMode("riscv64"); err == nil {
+		t.Fatal("expected unsupported 32-bit counterpart")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/target"
 )
 
 // TypeSyntaxOptions bridges project/module state into generic type parsing.
@@ -12,7 +13,12 @@ import (
 // module's name lookup, import lookup, and `Self` rules without hard-wiring
 // project state into the typeinfo package.
 func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.Type, allowAbstractSelf bool) typeinfo.SyntaxOptions {
+	compilerTarget := target.Host()
+	if ctx != nil && ctx.Target.Valid() {
+		compilerTarget = ctx.Target
+	}
 	return typeinfo.SyntaxOptions{
+		Target:            compilerTarget,
 		SelfType:          selfType,
 		AllowAbstractSelf: allowAbstractSelf,
 		ResolveNamed: func(name string) (typeinfo.Type, bool) {

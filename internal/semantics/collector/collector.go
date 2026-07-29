@@ -69,7 +69,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		return
 	}
 	if fn.Receiver != nil {
-		receiverType := typeinfo.TypeFromSyntax(fn.Receiver.Type, typeinfo.SyntaxOptions{})
+		receiverType := typeinfo.TypeFromSyntax(fn.Receiver.Type, typeinfo.SyntaxOptions{Target: c.ctx.Target})
 		targetType, ok := typeinfo.ReceiverTarget(receiverType)
 		if !ok {
 			return

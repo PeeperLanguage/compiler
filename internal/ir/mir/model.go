@@ -12,6 +12,7 @@ import (
 type Module struct {
 	FilePath        string
 	Name            string
+	Types           *ir.TypeTable
 	StaticData      []*StaticEntry
 	InterfaceThunks []*InterfaceThunk
 	Funcs           []*Function
@@ -19,30 +20,31 @@ type Module struct {
 
 type InterfaceThunk struct {
 	Name     string
-	SlotType string
+	SlotType ir.TypeID
 	FuncName string
-	FuncType string
-	DataType string
+	FuncType ir.TypeID
+	DataType ir.TypeID
 }
 
 type StaticEntry struct {
 	Name  string
-	Type  string
+	Type  ir.TypeID
 	Value string
+	Bytes bool
 	Align int
 }
 
-func (m *Module) InternStatic(value string, elemType string, align int) string {
+func (m *Module) InternString(value string, align int) string {
 	for _, entry := range m.StaticData {
-		if entry.Value == value && entry.Type == elemType && entry.Align == align {
+		if entry.Bytes && entry.Value == value && entry.Align == align {
 			return entry.Name
 		}
 	}
 	name := fmt.Sprintf("@.data.%d", len(m.StaticData))
 	m.StaticData = append(m.StaticData, &StaticEntry{
 		Name:  name,
-		Type:  elemType,
 		Value: value,
+		Bytes: true,
 		Align: align,
 	})
 	return name
@@ -51,7 +53,7 @@ func (m *Module) InternStatic(value string, elemType string, align int) string {
 type Function struct {
 	Name       string
 	Params     []ir.Param
-	ReturnType string
+	ReturnType ir.TypeID
 	EntryID    int
 	Blocks     []*Block
 	Location   *source.Location
@@ -122,20 +124,20 @@ type ValueRef interface {
 
 type RefConst struct {
 	Value    string
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type RefName struct {
 	Name     string
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type Unary struct {
 	Op       string
 	Arg      ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -143,19 +145,19 @@ type Binary struct {
 	Op       string
 	Left     ValueRef
 	Right    ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type Move struct {
 	Src      ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type Cast struct {
 	Arg      ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -171,20 +173,20 @@ type PlaceProjection struct {
 	Kind       PlaceProjectionKind
 	FieldIndex int
 	Index      ValueRef
-	Type       string
+	Type       ir.TypeID
 	Location   *source.Location
 }
 
 type Place struct {
 	Root        ValueRef
 	Projections []PlaceProjection
-	Type        string
+	Type        ir.TypeID
 	Location    *source.Location
 }
 
 type AddrOf struct {
 	Place    *Place
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -193,39 +195,39 @@ type SliceView struct {
 	Start        ValueRef
 	End          ValueRef
 	EndExclusive bool
-	Type         string
+	Type         ir.TypeID
 	Location     *source.Location
 }
 
 type Load struct {
 	Place    *Place
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type Field struct {
 	Base     ValueRef
 	Index    int
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type StructLit struct {
 	Fields   []ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type ArrayLit struct {
 	Values   []ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type DynamicArrayAlloc struct {
 	Length    int
 	Allocator ValueRef
-	Type      string
+	Type      ir.TypeID
 	Location  *source.Location
 }
 
@@ -234,33 +236,33 @@ type DynamicArrayOp struct {
 	Array    ValueRef
 	Length   ValueRef
 	Value    ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type Alloc struct {
 	Value     ValueRef
 	Allocator ValueRef
-	Type      string
+	Type      ir.TypeID
 	Location  *source.Location
 }
 
 type ZeroValue struct {
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type OptionalSome struct {
 	Value    ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
 type InterfaceMake struct {
 	Value    ValueRef
-	DataType string
+	DataType ir.TypeID
 	Slots    []ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -269,7 +271,7 @@ type InterfaceCall struct {
 	Slot     int
 	Args     []ValueRef
 	Consumes bool
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -329,7 +331,7 @@ func (r *RefName) Text() string  { return r.Name }
 func (v *Move) Text() string     { return v.Src.Text() }
 func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
-func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to %s", v.Arg.Text(), v.Type) }
+func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to type#%d", v.Arg.Text(), v.Type) }
 func (p *Place) Text() string {
 	if p == nil || p.Root == nil {
 		return ""
@@ -425,10 +427,10 @@ func (v *Alloc) Text() string {
 }
 
 func (v *ZeroValue) Text() string {
-	if v == nil || v.Type == "" {
+	if v == nil || v.Type == ir.InvalidType {
 		return "zero"
 	}
-	return "zero(" + v.Type + ")"
+	return "zero"
 }
 func (v *OptionalSome) Text() string {
 	if v == nil || v.Value == nil {
@@ -550,7 +552,7 @@ func ValueRefLocation(ref ValueRef) *source.Location {
 type Call struct {
 	Callee   ValueRef
 	Args     []ValueRef
-	Type     string
+	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -579,7 +581,7 @@ func (m *Module) Text() string {
 	b.WriteString(m.Name)
 	b.WriteString("\n")
 	for _, data := range m.StaticData {
-		fmt.Fprintf(&b, "%s = constant %s %q, align %d\n", data.Name, data.Type, data.Value, data.Align)
+		fmt.Fprintf(&b, "%s = constant type#%d %q, align %d\n", data.Name, data.Type, data.Value, data.Align)
 	}
 	if len(m.StaticData) > 0 {
 		b.WriteString("\n")
@@ -591,12 +593,12 @@ func (m *Module) Text() string {
 		if fn.Blocks == nil {
 			b.WriteString("extern fn ")
 			b.WriteString(fn.Name)
-			b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
+			b.WriteString(ir.SignatureText(m.Types, fn.Params, fn.ReturnType))
 			b.WriteString("\n")
 		} else {
 			b.WriteString("fn ")
 			b.WriteString(fn.Name)
-			b.WriteString(ir.SignatureText(fn.Params, fn.ReturnType))
+			b.WriteString(ir.SignatureText(m.Types, fn.Params, fn.ReturnType))
 			b.WriteString(" {\n")
 			for _, block := range fn.Blocks {
 				if block == nil {
