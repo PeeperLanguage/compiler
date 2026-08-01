@@ -189,7 +189,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
-		if shouldDiscardBindingValue(module, sym.ID) {
+		if shouldDiscardBindingValue(sym) {
 			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
@@ -209,7 +209,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
-		if shouldDiscardBindingValue(module, sym.ID) {
+		if shouldDiscardBindingValue(sym) {
 			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
@@ -1133,12 +1133,23 @@ func externSymbolName(sym *symbols.Symbol, defaultName string) (string, bool) {
 	return ast.FunctionLinkName(fn, defaultName)
 }
 
-func shouldDiscardBindingValue(module *project.Module, symID symbols.SymbolID) bool {
-	if module == nil || module.Semantics == nil {
+func shouldDiscardBindingValue(sym *symbols.Symbol) bool {
+	if sym == nil || sym.Used {
 		return false
 	}
-	_, ok := module.Semantics.DiscardBindingValue[symID]
-	return ok
+	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
+		return false
+	}
+	switch node := sym.ASTNode.(type) {
+	case *ast.LetDecl:
+		_, ok := node.Value.(*ast.CallExpr)
+		return sym.Kind == symbols.SymbolVar && ok
+	case *ast.ConstDecl:
+		_, ok := node.Value.(*ast.CallExpr)
+		return sym.Kind == symbols.SymbolConst && ok
+	default:
+		return false
+	}
 }
 
 func loweredTypeID(ctx *project.CompilerContext, module *project.Module, t typeinfo.Type) ir.TypeID {

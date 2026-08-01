@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
@@ -16,6 +17,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -558,5 +560,29 @@ fn main() -> i32 { return Read(&Make()); }`
 	temporary, ok := call.Args[0].(*ir.TempBorrow)
 	if !ok || temporary.Value == nil || out.Types.Text(temporary.Type) != "&struct{value: i32}" || temporary.Slice {
 		t.Fatalf("expected temporary Box borrow, got %#v", call.Args[0])
+	}
+}
+
+func TestUnusedOwnerCallBindingIsNotDiscarded(t *testing.T) {
+	decl := &ast.LetDecl{Value: &ast.CallExpr{}}
+	sym := symbols.New("owner", symbols.SymbolVar, decl, nil)
+	sym.BindType(&typeinfo.OwnedPtrType{Target: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	if shouldDiscardBindingValue(sym) {
+		t.Fatalf("unused owner-returning call must remain materialized for cleanup")
+	}
+}
+
+func TestGenerateHIRDiscardsUnusedCopyableCallBinding(t *testing.T) {
+	out := generateTestHIR(t, "hir_discard_binding_test"+peeper.SourceExt, "hir_discard_binding_test", `fn make() -> i32;
+fn main() { let ignored = make(); }`)
+	if len(out.Funcs) != 1 || out.Funcs[0].Body == nil || len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("unexpected HIR: %#v", out)
+	}
+	stmt, ok := out.Funcs[0].Body.Stmts[0].(*hir.ExprStmt)
+	if !ok {
+		t.Fatalf("unused copyable call = %T, want expression statement", out.Funcs[0].Body.Stmts[0])
+	}
+	if _, ok := stmt.Value.(*ir.Call); !ok {
+		t.Fatalf("discarded value = %T, want call", stmt.Value)
 	}
 }

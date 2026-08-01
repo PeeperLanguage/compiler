@@ -104,7 +104,6 @@ type SemanticInfo struct {
 	ConstValues             map[symbols.SymbolID]constvalue.Value
 	MethodSets              map[string][]*symbols.Symbol
 	MethodSymbol            map[ast.NodeID]*symbols.Symbol
-	DiscardBindingValue     map[symbols.SymbolID]struct{}
 }
 
 func NewSemanticInfo() *SemanticInfo {
@@ -116,7 +115,6 @@ func NewSemanticInfo() *SemanticInfo {
 		ConstValues:             make(map[symbols.SymbolID]constvalue.Value),
 		MethodSets:              make(map[string][]*symbols.Symbol),
 		MethodSymbol:            make(map[ast.NodeID]*symbols.Symbol),
-		DiscardBindingValue:     make(map[symbols.SymbolID]struct{}),
 	}
 }
 
@@ -125,6 +123,41 @@ func (m *Module) ResetSemanticData() {
 		return
 	}
 	m.Semantics = NewSemanticInfo()
+}
+
+// ResetToPhase invalidates every artifact produced after phase. CFG cleanup
+// belongs to ownership, so retaining a CFG alone never retains a stale plan.
+func (m *Module) ResetToPhase(phase ModulePhase) {
+	if m == nil {
+		return
+	}
+	m.Phase = phase
+	if phase <= PhaseParsed {
+		m.ModuleScope = nil
+		m.Semantics = nil
+	}
+	if phase < PhaseHIR {
+		m.HIR = nil
+	}
+	if phase < PhaseCFG {
+		m.CFG = nil
+	} else if phase < PhaseOwnership {
+		graphs := make([]*cfg.Graph, len(m.CFG))
+		for index, graph := range m.CFG {
+			if graph != nil {
+				cloned := *graph
+				cloned.Cleanup = nil
+				graphs[index] = &cloned
+			}
+		}
+		m.CFG = graphs
+	}
+	if phase < PhaseMIR {
+		m.MIR = nil
+	}
+	if phase < PhaseBackend {
+		m.LLVMIR = ""
+	}
 }
 
 // CanonicalPath returns absolute slash-separated path for stable map keys.

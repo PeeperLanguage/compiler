@@ -7,15 +7,12 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
-	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -331,14 +328,5 @@ func TestUnusedLocalHasLocation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected unused local warning")
-	}
-}
-
-func TestUnusedOwnerCallBindingIsNotDiscarded(t *testing.T) {
-	decl := &ast.LetDecl{Value: &ast.CallExpr{}}
-	sym := symbols.New("owner", symbols.SymbolVar, decl, nil)
-	sym.BindType(&typeinfo.OwnedPtrType{Target: &typeinfo.IntegerType{Signed: true, Bits: 32}})
-	if shouldDiscardBindingValue(sym) {
-		t.Fatalf("unused owner-returning call must remain materialized for cleanup")
 	}
 }
