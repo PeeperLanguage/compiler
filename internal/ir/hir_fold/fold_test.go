@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/symbols"
 )
 
 func TestApplyConstantFoldingPreservesReturnCleanup(t *testing.T) {
@@ -66,5 +67,28 @@ func TestApplyConstantFoldingPreservesPlaceRootAndFoldsIndexes(t *testing.T) {
 	index, ok := load.Place.Projections[0].Index.(*ir.IntLit)
 	if !ok || index.Value != "1" {
 		t.Fatalf("folded place index = %#v, want literal 1", load.Place.Projections[0].Index)
+	}
+}
+
+func TestApplyConstantFoldingPreservesHIRIdentity(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	mod := &hir.Module{Funcs: []*hir.Function{{
+		Name:     "main",
+		NodeID:   11,
+		SymbolID: symbols.SymbolID(12),
+		Body: &hir.Block{NodeID: 13, Stmts: []hir.Stmt{
+			&hir.Binding{Name: "value", Constant: true, Value: &ir.IntLit{Value: "7", Type: i32}, NodeID: 14, SymbolID: symbols.SymbolID(15)},
+			&hir.ExprStmt{Value: &ir.IntLit{Value: "7", Type: i32}, NodeID: 16, ValueNodeID: 17},
+		}},
+	}}, Types: types}
+
+	out := ApplyConstantFolding(mod, nil)
+	fn := out.Funcs[0]
+	binding := fn.Body.Stmts[0].(*hir.Binding)
+	discarded := fn.Body.Stmts[1].(*hir.ExprStmt)
+	if fn.NodeID != 11 || fn.SymbolID != 12 || fn.Body.NodeID != 13 || binding.NodeID != 14 || binding.SymbolID != 15 ||
+		discarded.NodeID != 16 || discarded.ValueNodeID != 17 {
+		t.Fatalf("folded identity = %#v / %#v, want all origin fields preserved", fn, binding)
 	}
 }

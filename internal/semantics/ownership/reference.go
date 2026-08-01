@@ -7,7 +7,6 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/graph"
 	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
@@ -549,13 +548,13 @@ func referenceLoanIndex(loans []referenceLoan, id loanID) int {
 }
 
 func (a *analyzer) computeReferenceLiveness() {
-	if a == nil || a.flow == nil || a.flow.graph == nil {
+	if a == nil || a.flow == nil {
 		return
 	}
-	a.referenceLiveIn = make(map[graph.NodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
-	a.referenceLiveOut = make(map[graph.NodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
-	queue := make([]graph.NodeID, 0, len(a.flow.order))
-	queued := make(map[graph.NodeID]bool, len(a.flow.order))
+	a.referenceLiveIn = make(map[flowNodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
+	a.referenceLiveOut = make(map[flowNodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
+	queue := make([]flowNodeID, 0, len(a.flow.order))
+	queued := make(map[flowNodeID]bool, len(a.flow.order))
 	for _, id := range slices.Backward(a.flow.order) {
 		queue = append(queue, id)
 		queued[id] = true
@@ -566,7 +565,7 @@ func (a *analyzer) computeReferenceLiveness() {
 		queued[id] = false
 
 		out := make(map[*symbols.Symbol]ast.Node)
-		for _, succ := range a.flow.graph.Successors(id) {
+		for _, succ := range a.flow.successors[id] {
 			mergeReferenceLiveSets(out, a.referenceLiveIn[succ])
 		}
 		uses, definitions := a.referenceUsesAndDefinitions(a.flow.nodes[id])
@@ -581,7 +580,7 @@ func (a *analyzer) computeReferenceLiveness() {
 		}
 		a.referenceLiveIn[id] = in
 		a.referenceLiveOut[id] = out
-		for _, pred := range a.flow.graph.Predecessors(id) {
+		for _, pred := range a.flow.predecessors[id] {
 			if !queued[pred] {
 				queue = append(queue, pred)
 				queued[pred] = true

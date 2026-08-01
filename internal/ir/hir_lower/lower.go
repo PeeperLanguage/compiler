@@ -166,11 +166,6 @@ func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Bloc
 	for _, stmt := range block.Stmts {
 		appendStmt(module, scope, out, stmt, returnType, ctx)
 	}
-	if module.Semantics != nil {
-		for _, cleanup := range cleanupExprs(ctx, module, module.Semantics.CleanupAfterBlock[block.ID()], ast.LocOf(block)) {
-			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: cleanup, NodeID: hir.NodeID(block.ID()), Location: ast.LocOf(block)})
-		}
-	}
 }
 
 func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
@@ -195,7 +190,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
 		if shouldDiscardBindingValue(module, sym.ID) {
-			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
@@ -215,7 +210,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
 		if shouldDiscardBindingValue(module, sym.ID) {
-			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
 		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
@@ -251,16 +246,12 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		out.Stmts = append(out.Stmts, loop)
 
 	case *ast.ReturnStmt:
-		cleanup := []ir.Expr(nil)
-		if module.Semantics != nil {
-			cleanup = cleanupExprs(ctx, module, module.Semantics.CleanupBeforeReturn[node.ID()], ast.LocOf(node))
-		}
 		if node.Value == nil {
-			out.Stmts = append(out.Stmts, &hir.Return{Cleanup: cleanup, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+			out.Stmts = append(out.Stmts, &hir.Return{NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, returnType)
-		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, Cleanup: cleanup, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Return{Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 
 	case *ast.ExprStmt:
 		if node.Expr == nil {
@@ -268,14 +259,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			return
 		}
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Expr, nil)
-		dropValue := false
-		if module.Semantics != nil {
-			_, dropValue = module.Semantics.DropDiscardedExpr[node.Expr.ID()]
-		}
-		if dropValue {
-			valueExpr = &ir.Drop{Value: valueExpr, Location: ast.LocOf(node.Expr)}
-		}
-		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Expr.ID()), Location: ast.LocOf(node)})
 	case *ast.AssignStmt:
 		if node.Target == nil || node.Value == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "assignment missing target or value", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
@@ -284,30 +268,8 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		targetExpr := lowerPlace(ctx, module, scope, node.Target)
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
-		dropTarget := false
-		if module.Semantics != nil {
-			_, dropTarget = module.Semantics.DropBeforeAssign[node.ID()]
-		}
-		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, DropTarget: dropTarget, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 	}
-}
-
-func cleanupExprs(ctx *project.CompilerContext, module *project.Module, cleanup []*symbols.Symbol, loc *source.Location) []ir.Expr {
-	exprs := make([]ir.Expr, 0, len(cleanup))
-	for _, sym := range cleanup {
-		if sym == nil {
-			continue
-		}
-		typ, ok := symbols.GetSymbolType(sym)
-		if !ok || typ == nil {
-			continue
-		}
-		exprs = append(exprs, &ir.Drop{
-			Value:    &ir.Ident{Name: symbolName(sym), Type: loweredTypeID(ctx, module, typ), SymbolID: sym.ID, Location: loc},
-			Location: loc,
-		})
-	}
-	return exprs
 }
 
 func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr) *ir.Place {
@@ -800,20 +762,16 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		if !throughPtr {
 			_, _, throughPtr = typeinfo.ReferenceTarget(typeinfo.Underlying(baseType))
 		}
-		dropBase := false
-		if module.Semantics != nil {
-			_, dropBase = module.Semantics.DropProjectionBase[selector.ID()]
-		}
 		exprType := func(expr ast.Expr) typeinfo.Type {
 			return exprResolvedType(module, expr)
 		}
 		if throughPtr || place.Addressable(scope, selector.Expr, exprType, expandedDefaultBindingResolver(module)) {
-			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), DropRoot: dropBase, Location: ast.LocOf(selector)}
+			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}
 		}
 		return &ir.Field{
 			Base:     lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Index:    fieldIndex,
-			DropBase: dropBase,
+			NodeID:   ir.NodeID(selector.ID()),
 			Type:     loweredTypeID(ctx, module, field.Type),
 			Location: ast.LocOf(selector),
 		}
@@ -843,11 +801,7 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 			Location:     ast.LocOf(node),
 		}
 	}
-	dropBase := false
-	if module.Semantics != nil {
-		_, dropBase = module.Semantics.DropProjectionBase[node.ID()]
-	}
-	return &ir.Load{Place: lowerPlace(ctx, module, scope, node), DropRoot: dropBase, Location: ast.LocOf(node)}
+	return &ir.Load{Place: lowerPlace(ctx, module, scope, node), NodeID: ir.NodeID(node.ID()), Location: ast.LocOf(node)}
 }
 
 func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {

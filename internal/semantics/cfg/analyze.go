@@ -14,7 +14,9 @@ func BuildModule(hirMod *hir.Module) []*Graph {
 	}
 	graphs := make([]*Graph, 0, len(hirMod.Funcs))
 	for _, fn := range hirMod.Funcs {
-		graphs = append(graphs, buildCFGFunction(hirMod.Types, fn))
+		graph := buildCFGFunction(hirMod.Types, fn)
+		prepareGraph(graph)
+		graphs = append(graphs, graph)
 	}
 	return graphs
 }
@@ -32,8 +34,7 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
-	markReachable(fn.Entry, make(map[int]bool))
-	rebuildPredecessors(fn)
+	prepareGraph(fn)
 
 	for _, block := range fn.Blocks {
 		if block == nil || block.Reachable || len(block.Stmts) == 0 {
@@ -52,6 +53,21 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	if fn.Exit != nil && fn.Exit.Reachable && hasReturnType && returnType.Kind != ir.TypeVoid {
 		reportMissingReturnCFG(fn, diag)
 	}
+}
+
+// prepareGraph establishes structural facts every CFG consumer relies on.
+// Analysis may call it again after a graph mutation before issuing diagnostics.
+func prepareGraph(fn *Graph) {
+	if fn == nil || fn.Entry == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		if block != nil {
+			block.Reachable = false
+		}
+	}
+	markReachable(fn.Entry, make(map[int]bool))
+	rebuildPredecessors(fn)
 }
 
 func markReachable(block *Block, seen map[int]bool) {

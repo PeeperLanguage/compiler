@@ -4,6 +4,7 @@ import (
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
 	"compiler/internal/graph"
+	"compiler/internal/ir"
 	"compiler/internal/ir/hir_fold"
 	"compiler/internal/ir/hir_lower"
 	"compiler/internal/ir/mir"
@@ -14,6 +15,7 @@ import (
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/usage"
 	"errors"
@@ -215,14 +217,14 @@ func nextModulePhase(current project.ModulePhase) project.ModulePhase {
 	case project.PhaseConstEval:
 		return project.PhaseTypechecked
 	case project.PhaseTypechecked:
-		return project.PhaseOwnership
-	case project.PhaseOwnership:
-		return project.PhaseUsage
-	case project.PhaseUsage:
 		return project.PhaseHIR
 	case project.PhaseHIR:
 		return project.PhaseCFG
 	case project.PhaseCFG:
+		return project.PhaseOwnership
+	case project.PhaseOwnership:
+		return project.PhaseUsage
+	case project.PhaseUsage:
 		return project.PhaseMIR
 	case project.PhaseMIR:
 		return project.PhaseBackend
@@ -239,9 +241,15 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 		return project.PhaseBound
 	case project.PhaseConstEval, project.PhaseTypechecked:
 		return project.PhaseConstEval
-	case project.PhaseResolved, project.PhaseOwnership, project.PhaseUsage:
+	case project.PhaseResolved:
 		return project.PhaseCollected
 	case project.PhaseHIR:
+		return project.PhaseTypechecked
+	case project.PhaseCFG:
+		return project.PhaseHIR
+	case project.PhaseOwnership:
+		return project.PhaseCFG
+	case project.PhaseUsage:
 		return project.PhaseOwnership
 	default:
 		return project.PhaseNone
@@ -288,19 +296,6 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
-	if module.Phase < project.PhaseOwnership {
-		ownership.Check(p.ctx, module)
-		module.Phase = project.PhaseOwnership
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseUsage {
-		usage.Analyze(p.ctx, module)
-		module.Phase = project.PhaseUsage
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-
 	if module.Phase < project.PhaseHIR {
 		modhir := hir_lower.GenerateHIR(p.ctx, module)
 		if modhir == nil {
@@ -324,12 +319,29 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.CFG == nil {
 		return false
 	}
+	if module.Phase < project.PhaseOwnership {
+		ownership.Check(p.ctx, module)
+		for _, graph := range module.CFG {
+			if graph != nil {
+				graph.Cleanup = ownershipCleanupPlan(module.Semantics)
+			}
+		}
+		module.Phase = project.PhaseOwnership
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < project.PhaseUsage {
+		usage.Analyze(p.ctx, module)
+		module.Phase = project.PhaseUsage
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
 	if module.Phase < project.PhaseMIR {
 		cfg.Analyze(module.CFG, diag)
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope, module.Semantics.ConstValues)
+		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.ModuleScope, module.Semantics.ConstValues)
 		module.Phase = project.PhaseMIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -344,4 +356,45 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	module.Phase = project.PhaseBackend
 	p.ctx.Metrics.AddPhaseAdvance()
 	return true
+}
+
+// ownershipCleanupPlan converts semantic ownership decisions once at the CFG
+// boundary so MIR never reads mutable AST-keyed semantic maps.
+func ownershipCleanupPlan(info *project.SemanticInfo) *cfg.CleanupPlan {
+	if info == nil {
+		return nil
+	}
+	plan := &cfg.CleanupPlan{
+		AfterScope:     make(map[ir.NodeID][]symbols.SymbolID, len(info.CleanupAfterBlock)),
+		BeforeReturn:   make(map[ir.NodeID][]symbols.SymbolID, len(info.CleanupBeforeReturn)),
+		BeforeAssign:   make(map[ir.NodeID]struct{}, len(info.DropBeforeAssign)),
+		DiscardedValue: make(map[ir.NodeID]struct{}, len(info.DropDiscardedExpr)),
+		ProjectionBase: make(map[ir.NodeID]struct{}, len(info.DropProjectionBase)),
+	}
+	for nodeID, cleanup := range info.CleanupAfterBlock {
+		plan.AfterScope[ir.NodeID(nodeID)] = symbolIDs(cleanup)
+	}
+	for nodeID, cleanup := range info.CleanupBeforeReturn {
+		plan.BeforeReturn[ir.NodeID(nodeID)] = symbolIDs(cleanup)
+	}
+	for nodeID := range info.DropBeforeAssign {
+		plan.BeforeAssign[ir.NodeID(nodeID)] = struct{}{}
+	}
+	for nodeID := range info.DropDiscardedExpr {
+		plan.DiscardedValue[ir.NodeID(nodeID)] = struct{}{}
+	}
+	for nodeID := range info.DropProjectionBase {
+		plan.ProjectionBase[ir.NodeID(nodeID)] = struct{}{}
+	}
+	return plan
+}
+
+func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
+	ids := make([]symbols.SymbolID, 0, len(values))
+	for _, sym := range values {
+		if sym != nil {
+			ids = append(ids, sym.ID)
+		}
+	}
+	return ids
 }

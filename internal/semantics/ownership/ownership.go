@@ -1,14 +1,14 @@
 package ownership
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/graph"
+	"compiler/internal/ir/hir"
 	"compiler/internal/project"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -25,13 +25,10 @@ const (
 	nodeExit
 )
 
-const (
-	graphNodeFlow graph.NodeKind = "ownership_flow"
-	graphEdgeFlow graph.EdgeKind = "ownership_flow"
-)
+type flowNodeID uint32
 
 type flowNode struct {
-	id    graph.NodeID
+	id    flowNodeID
 	kind  nodeKind
 	stmt  ast.Stmt
 	block *ast.BlockStmt
@@ -39,17 +36,13 @@ type flowNode struct {
 }
 
 type flow struct {
-	graph *graph.Graph
-	nodes map[graph.NodeID]*flowNode
-	order []graph.NodeID
-	next  int
-	entry graph.NodeID
-	exit  graph.NodeID
-}
-
-type builder struct {
-	module *project.Module
-	flow   *flow
+	nodes        map[flowNodeID]*flowNode
+	successors   map[flowNodeID][]flowNodeID
+	predecessors map[flowNodeID][]flowNodeID
+	order        []flowNodeID
+	next         flowNodeID
+	entry        flowNodeID
+	exit         flowNodeID
 }
 
 type analyzer struct {
@@ -58,10 +51,10 @@ type analyzer struct {
 	flow             *flow
 	function         *ast.FnDecl
 	functionScope    *table.Scope
-	reportedJoin     map[graph.NodeID]bool
-	inStates         map[graph.NodeID]state
-	referenceLiveIn  map[graph.NodeID]map[*symbols.Symbol]ast.Node
-	referenceLiveOut map[graph.NodeID]map[*symbols.Symbol]ast.Node
+	reportedJoin     map[flowNodeID]bool
+	inStates         map[flowNodeID]state
+	referenceLiveIn  map[flowNodeID]map[*symbols.Symbol]ast.Node
+	referenceLiveOut map[flowNodeID]map[*symbols.Symbol]ast.Node
 }
 
 type pointerOrigin struct {
@@ -110,138 +103,211 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			scope, _ := sym.Scope.(*table.Scope)
-			checkFunction(ctx, module, node, scope)
+			checkFunction(ctx, module, node, scope, cfgForFunction(module, node))
 		}
 	}
 }
 
-func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope) {
-	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil {
+func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope, cfgFn *cfg.Graph) {
+	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil {
 		return
 	}
-	f := build(module, fn.Body, scope)
+	f := build(module, cfgFn, fn.Body, scope)
 	(&analyzer{
 		ctx:           ctx,
 		module:        module,
 		flow:          f,
 		function:      fn,
 		functionScope: scope,
-		reportedJoin:  make(map[graph.NodeID]bool),
+		reportedJoin:  make(map[flowNodeID]bool),
 	}).run()
 }
 
-func build(module *project.Module, body *ast.BlockStmt, scope *table.Scope) *flow {
-	f := &flow{
-		graph: graph.New(graphNodeFlow, graphEdgeFlow),
-		nodes: make(map[graph.NodeID]*flowNode),
-		order: make([]graph.NodeID, 0),
+func cfgForFunction(module *project.Module, fn *ast.FnDecl) *cfg.Graph {
+	if module == nil || fn == nil {
+		return nil
 	}
-	b := &builder{module: module, flow: f}
-	entry := b.newNode(nodeEntry, nil, scope)
-	exit := b.newNode(nodeExit, nil, scope)
+	for _, graph := range module.CFG {
+		if graph != nil && graph.Source != nil && graph.Source.NodeID == hir.NodeID(fn.ID()) {
+			return graph
+		}
+	}
+	return nil
+}
+
+type flowEndpoints struct {
+	first flowNodeID
+	last  flowNodeID
+}
+
+func build(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, scope *table.Scope) *flow {
+	if module == nil || cfgFn == nil || body == nil || scope == nil {
+		return nil
+	}
+	f := &flow{
+		nodes:        make(map[flowNodeID]*flowNode),
+		successors:   make(map[flowNodeID][]flowNodeID),
+		predecessors: make(map[flowNodeID][]flowNodeID),
+		order:        make([]flowNodeID, 0),
+	}
+	entry := newFlowNode(f, nodeEntry, nil, scope)
+	exit := newFlowNode(f, nodeExit, nil, scope)
 	f.entry = entry.id
 	f.exit = exit.id
-	tails := b.buildBlock([]graph.NodeID{entry.id}, body, scope)
-	b.connectAll(tails, exit.id)
+	nodes := sourceNodes(module)
+	scopes := sourceScopes(module, body, scope)
+	ends := make(map[*cfg.Block]flowEndpoints, len(cfgFn.Blocks))
+	for _, block := range cfgFn.Blocks {
+		if block == nil || !block.Reachable || block == cfgFn.Exit {
+			continue
+		}
+		currentScope := scope
+		var first, last flowNodeID
+		appendSite := func(kind nodeKind, stmt ast.Stmt, blockStmt *ast.BlockStmt, siteScope *table.Scope) {
+			if siteScope == nil {
+				siteScope = currentScope
+			}
+			node := newFlowNode(f, kind, stmt, siteScope)
+			node.block = blockStmt
+			if first == 0 {
+				first = node.id
+			} else {
+				connect(f, last, node.id)
+			}
+			last = node.id
+		}
+		for _, stmt := range block.Stmts {
+			siteID := hir.NodeIDOf(stmt)
+			astStmt, ok := nodes[siteID].(ast.Stmt)
+			if !ok || astStmt == nil {
+				continue
+			}
+			currentScope = scopes[siteID]
+			appendSite(nodeStmt, astStmt, nil, currentScope)
+		}
+		for _, scopeID := range block.ScopeExits {
+			blockStmt, ok := nodes[scopeID].(*ast.BlockStmt)
+			if !ok || blockStmt == nil {
+				continue
+			}
+			appendSite(nodeBlockExit, nil, blockStmt, scopes[scopeID])
+		}
+		if branch, ok := block.Terminator.(*cfg.Branch); ok {
+			if stmt, ok := nodes[branch.NodeID].(ast.Stmt); ok && stmt != nil {
+				appendSite(nodeStmt, stmt, nil, scopes[branch.NodeID])
+			}
+		}
+		if first == 0 {
+			appendSite(nodeJoin, nil, nil, currentScope)
+		}
+		ends[block] = flowEndpoints{first: first, last: last}
+	}
+	entryBlock := ends[cfgFn.Entry]
+	if entryBlock.first == 0 {
+		return f
+	}
+	connect(f, entry.id, entryBlock.first)
+	for block, endpoints := range ends {
+		switch term := block.Terminator.(type) {
+		case *cfg.Jump:
+			if term.Target == cfgFn.Exit {
+				connect(f, endpoints.last, exit.id)
+			} else if target := ends[term.Target]; target.first != 0 {
+				connect(f, endpoints.last, target.first)
+			}
+		case *cfg.Branch:
+			if target := ends[term.TrueTarget]; target.first != 0 {
+				connect(f, endpoints.last, target.first)
+			}
+			if target := ends[term.FalseTarget]; target.first != 0 {
+				connect(f, endpoints.last, target.first)
+			}
+		case *cfg.Return:
+			connect(f, endpoints.last, exit.id)
+		}
+	}
 	return f
 }
 
-func (b *builder) newNode(kind nodeKind, stmt ast.Stmt, scope *table.Scope) *flowNode {
-	id := graph.NodeID(fmt.Sprintf("ownership:%d", b.flow.next))
-	b.flow.next++
+func newFlowNode(f *flow, kind nodeKind, stmt ast.Stmt, scope *table.Scope) *flowNode {
+	f.next++
+	id := f.next
 	node := &flowNode{id: id, kind: kind, stmt: stmt, scope: scope}
-	b.flow.graph.AddNode(id)
-	b.flow.nodes[id] = node
-	b.flow.order = append(b.flow.order, id)
+	f.nodes[id] = node
+	f.order = append(f.order, id)
 	return node
 }
 
-func (b *builder) connect(from, to graph.NodeID) {
-	if from == "" || to == "" {
+func connect(f *flow, from, to flowNodeID) {
+	if f == nil || from == 0 || to == 0 {
 		return
 	}
-	b.flow.graph.AddEdge(from, to)
-}
-
-func (b *builder) connectAll(from []graph.NodeID, to graph.NodeID) {
-	for _, id := range from {
-		b.connect(id, to)
-	}
-}
-
-func (b *builder) blockScope(block *ast.BlockStmt, fallback *table.Scope) *table.Scope {
-	if b == nil || b.module == nil || b.module.Semantics == nil || block == nil {
-		return fallback
-	}
-	if scope, ok := b.module.Semantics.BlockScopes[block.ID()]; ok && scope != nil {
-		return scope
-	}
-	return fallback
-}
-
-func (b *builder) buildBlock(in []graph.NodeID, block *ast.BlockStmt, fallback *table.Scope) []graph.NodeID {
-	if block == nil {
-		return in
-	}
-	scope := b.blockScope(block, fallback)
-	tails := in
-	for _, stmt := range block.Stmts {
-		tails = b.buildStmt(tails, stmt, scope)
-		if len(tails) == 0 {
-			break
+	for _, existing := range f.successors[from] {
+		if existing == to {
+			return
 		}
 	}
-	if len(tails) == 0 {
-		return nil
-	}
-	exit := b.newNode(nodeBlockExit, nil, scope)
-	exit.block = block
-	b.connectAll(tails, exit.id)
-	return []graph.NodeID{exit.id}
+	f.successors[from] = append(f.successors[from], to)
+	f.predecessors[to] = append(f.predecessors[to], from)
 }
 
-func (b *builder) buildStmt(in []graph.NodeID, stmt ast.Stmt, scope *table.Scope) []graph.NodeID {
-	if stmt == nil {
-		return in
+func sourceNodes(module *project.Module) map[hir.NodeID]ast.Node {
+	nodes := make(map[hir.NodeID]ast.Node)
+	if module == nil || module.AST == nil {
+		return nodes
 	}
-	switch s := stmt.(type) {
-	case *ast.BlockStmt:
-		return b.buildBlock(in, s, scope)
-	case *ast.IfStmt:
-		node := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, node.id)
-		join := b.newNode(nodeJoin, stmt, scope)
-		thenTails := b.buildBlock([]graph.NodeID{node.id}, s.Then, scope)
-		b.connectAll(thenTails, join.id)
-		if s.Else != nil {
-			elseTails := b.buildStmt([]graph.NodeID{node.id}, s.Else, scope)
-			b.connectAll(elseTails, join.id)
-		} else {
-			b.connect(node.id, join.id)
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			if node != nil {
+				nodes[hir.NodeID(node.ID())] = node
+			}
+			return true
+		})
+	}
+	return nodes
+}
+
+func sourceScopes(module *project.Module, body *ast.BlockStmt, root *table.Scope) map[hir.NodeID]*table.Scope {
+	indexed := make(map[hir.NodeID]*table.Scope)
+	if module == nil || module.Semantics == nil || body == nil || root == nil {
+		return indexed
+	}
+	var indexStmt func(ast.Stmt, *table.Scope)
+	var indexBlock func(*ast.BlockStmt, *table.Scope)
+	indexBlock = func(block *ast.BlockStmt, parent *table.Scope) {
+		if block == nil {
+			return
 		}
-		return []graph.NodeID{join.id}
-	case *ast.ForStmt:
-		header := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, header.id)
-		after := b.newNode(nodeJoin, stmt, scope)
-		bodyTails := b.buildBlock([]graph.NodeID{header.id}, s.Body, scope)
-		b.connectAll(bodyTails, header.id)
-		b.connect(header.id, after.id)
-		return []graph.NodeID{after.id}
-	case *ast.ReturnStmt:
-		node := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, node.id)
-		b.connect(node.id, b.flow.exit)
-		return nil
-	default:
-		node := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, node.id)
-		return []graph.NodeID{node.id}
+		scope := parent
+		if resolved := module.Semantics.BlockScopes[block.ID()]; resolved != nil {
+			scope = resolved
+		}
+		indexed[hir.NodeID(block.ID())] = scope
+		for _, stmt := range block.Stmts {
+			indexStmt(stmt, scope)
+		}
 	}
+	indexStmt = func(stmt ast.Stmt, scope *table.Scope) {
+		if stmt == nil {
+			return
+		}
+		indexed[hir.NodeID(stmt.ID())] = scope
+		switch node := stmt.(type) {
+		case *ast.BlockStmt:
+			indexBlock(node, scope)
+		case *ast.IfStmt:
+			indexBlock(node.Then, scope)
+			indexStmt(node.Else, scope)
+		case *ast.ForStmt:
+			indexBlock(node.Body, scope)
+		}
+	}
+	indexBlock(body, root)
+	return indexed
 }
 
 func (a *analyzer) run() {
-	if a == nil || a.flow == nil || a.flow.graph == nil || a.flow.entry == "" {
+	if a == nil || a.flow == nil || a.flow.entry == 0 {
 		return
 	}
 	a.computeReferenceLiveness()
@@ -262,9 +328,9 @@ func (a *analyzer) run() {
 			}}
 		}
 	}
-	a.inStates = map[graph.NodeID]state{a.flow.entry: entryState}
-	queue := []graph.NodeID{a.flow.entry}
-	queued := map[graph.NodeID]bool{a.flow.entry: true}
+	a.inStates = map[flowNodeID]state{a.flow.entry: entryState}
+	queue := []flowNodeID{a.flow.entry}
+	queued := map[flowNodeID]bool{a.flow.entry: true}
 	for len(queue) > 0 {
 		id := queue[0]
 		queue = queue[1:]
@@ -281,7 +347,7 @@ func (a *analyzer) run() {
 				a.applyBlockExit(node, next, a.newLoanContext(node, next))
 			}
 		}
-		for _, succ := range a.flow.graph.Successors(id) {
+		for _, succ := range a.flow.successors[id] {
 			current, exists := a.inStates[succ]
 			merged, changed := a.mergeState(succ, current, next, exists)
 			if !changed {
@@ -307,11 +373,11 @@ func copyState(src state) state {
 	return dst
 }
 
-func (a *analyzer) mergeState(nodeID graph.NodeID, dst, src state, exists bool) (state, bool) {
+func (a *analyzer) mergeState(nodeID flowNodeID, dst, src state, exists bool) (state, bool) {
 	if !exists {
 		return copyState(src), true
 	}
-	if a.flow.graph.InDegree(nodeID) <= 1 {
+	if len(a.flow.predecessors[nodeID]) <= 1 {
 		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) &&
 			sameReferenceValues(dst.references, src.references) {
 			return dst, false

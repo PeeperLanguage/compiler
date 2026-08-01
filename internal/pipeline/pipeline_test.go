@@ -323,8 +323,8 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != project.PhaseCFG {
-		t.Fatalf("expected pipeline to continue through CFG and stop before MIR, got phase %v", entry.Phase)
+	if entry.Phase != project.PhaseUsage {
+		t.Fatalf("expected pipeline to run CFG ownership/usage and stop before MIR, got phase %v", entry.Phase)
 	}
 	if entry.HIR == nil {
 		t.Fatalf("expected HIR despite extern definition error")
@@ -408,10 +408,10 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseResolved,
 		project.PhaseConstEval,
 		project.PhaseTypechecked,
-		project.PhaseOwnership,
-		project.PhaseUsage,
 		project.PhaseHIR,
 		project.PhaseCFG,
+		project.PhaseOwnership,
+		project.PhaseUsage,
 		project.PhaseMIR,
 		project.PhaseBackend,
 	}

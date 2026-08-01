@@ -66,7 +66,7 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		}
 		return []hir.Stmt{out}
 	case *hir.ExprStmt:
-		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(types, node.Value, env), NodeID: node.NodeID, Location: node.Location}}
+		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(types, node.Value, env), NodeID: node.NodeID, ValueNodeID: node.ValueNodeID, Location: node.Location}}
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:

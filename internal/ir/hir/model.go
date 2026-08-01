@@ -10,7 +10,7 @@ import (
 
 // NodeID identifies source AST node that produced this HIR node. It remains
 // valid across HIR transformations without retaining AST objects.
-type NodeID uint32
+type NodeID = ir.NodeID
 
 type Module struct {
 	Name     string
@@ -76,9 +76,10 @@ type Binding struct {
 }
 
 type ExprStmt struct {
-	Value    ir.Expr
-	NodeID   NodeID
-	Location *source.Location
+	Value       ir.Expr
+	NodeID      NodeID
+	ValueNodeID NodeID
+	Location    *source.Location
 }
 
 type Assign struct {

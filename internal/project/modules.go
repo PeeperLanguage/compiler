@@ -37,10 +37,10 @@ const (
 	PhaseResolved
 	PhaseConstEval
 	PhaseTypechecked
-	PhaseOwnership
-	PhaseUsage
 	PhaseHIR
 	PhaseCFG
+	PhaseOwnership
+	PhaseUsage
 	PhaseMIR
 	PhaseBackend
 )

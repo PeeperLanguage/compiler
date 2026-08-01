@@ -10,6 +10,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
@@ -35,11 +36,14 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string) *hir.Module
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	ownership.Check(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	return GenerateHIR(ctx, module)
+	out := GenerateHIR(ctx, module)
+	module.HIR = out
+	module.CFG = cfg.BuildModule(out)
+	ownership.Check(ctx, module)
+	return out
 }
 
 func TestGenerateHIRLowersIndexExpr(t *testing.T) {
@@ -61,6 +65,38 @@ func TestGenerateHIRLowersIndexExpr(t *testing.T) {
 	}
 	if out.Types.Text(load.TypeID()) != "i32" || load.Place.Projections[0].Kind != ir.PlaceProjectionIndex {
 		t.Fatalf("index load = %#v, want i32 Index place", load)
+	}
+}
+
+func TestGenerateHIRPreservesSourceAndSymbolIdentity(t *testing.T) {
+	out := generateTestHIR(t, "hir_identity_test"+peeper.SourceExt, "hir_identity_test", `fn echo(value: i32) -> i32 {
+	let copy = value;
+	copy;
+	return copy;
+}`)
+	fn := out.Funcs[0]
+	if fn.NodeID == 0 || fn.SymbolID == 0 || fn.Body.NodeID == 0 || len(fn.Params) != 1 || fn.Params[0].SymbolID == 0 {
+		t.Fatalf("function identity = %#v, want source and symbol IDs", fn)
+	}
+	binding, ok := fn.Body.Stmts[0].(*hir.Binding)
+	if !ok || binding.NodeID == 0 || binding.SymbolID == 0 {
+		t.Fatalf("binding identity = %#v, want source and symbol IDs", fn.Body.Stmts[0])
+	}
+	paramUse, ok := binding.Value.(*ir.Ident)
+	if !ok || paramUse.SymbolID != fn.Params[0].SymbolID {
+		t.Fatalf("binding value = %#v, want parameter symbol %d", binding.Value, fn.Params[0].SymbolID)
+	}
+	discarded, ok := fn.Body.Stmts[1].(*hir.ExprStmt)
+	if !ok || discarded.NodeID == 0 || discarded.ValueNodeID == 0 {
+		t.Fatalf("discarded expression = %#v, want statement and value source IDs", fn.Body.Stmts[1])
+	}
+	ret, ok := fn.Body.Stmts[2].(*hir.Return)
+	if !ok || ret.NodeID == 0 {
+		t.Fatalf("return identity = %#v, want source ID", fn.Body.Stmts[2])
+	}
+	bindingUse, ok := ret.Value.(*ir.Ident)
+	if !ok || bindingUse.SymbolID != binding.SymbolID {
+		t.Fatalf("return value = %#v, want binding symbol %d", ret.Value, binding.SymbolID)
 	}
 }
 
@@ -201,7 +237,7 @@ func TestGenerateHIRLowersFreeAsDrop(t *testing.T) {
 	}
 }
 
-func TestGenerateHIRDropsDiscardedOwnerReturningCall(t *testing.T) {
+func TestGenerateHIRPreservesDiscardedOwnerReturningCallIdentity(t *testing.T) {
 	out := generateTestHIR(t, "hir_discarded_owner_call_test"+peeper.SourceExt, "hir_discarded_owner_call_test", `fn acquire() -> *i32;
 fn main() {
 	acquire();
@@ -210,16 +246,12 @@ fn main() {
 	if !ok {
 		t.Fatalf("expected expression statement, got %#v", out.Funcs[0].Body.Stmts[0])
 	}
-	drop, ok := stmt.Value.(*ir.Drop)
-	if !ok {
-		t.Fatalf("expected drop expression, got %#v", stmt.Value)
-	}
-	if _, ok := drop.Value.(*ir.Call); !ok {
-		t.Fatalf("expected dropped call, got %#v", drop.Value)
+	if _, ok := stmt.Value.(*ir.Call); !ok || stmt.ValueNodeID == 0 {
+		t.Fatalf("expected call with source identity, got %#v", stmt)
 	}
 }
 
-func TestGenerateHIRDropsDiscardedOwnedCompositeTemporaries(t *testing.T) {
+func TestGenerateHIRPreservesDiscardedOwnedCompositeIdentity(t *testing.T) {
 	out := generateTestHIR(t, "hir_discarded_owned_composite_test"+peeper.SourceExt, "hir_discarded_owned_composite_test", `struct Box { ptr: *i32 }
 fn acquire() -> *i32;
 fn main() {
@@ -234,8 +266,8 @@ fn main() {
 		if !ok {
 			t.Fatalf("statement %d = %#v, want expression statement", index, stmt)
 		}
-		if _, ok := exprStmt.Value.(*ir.Drop); !ok {
-			t.Fatalf("statement %d value = %#v, want dropped temporary", index, exprStmt.Value)
+		if _, dropped := exprStmt.Value.(*ir.Drop); dropped || exprStmt.ValueNodeID == 0 {
+			t.Fatalf("statement %d = %#v, want raw expression with source identity", index, exprStmt)
 		}
 	}
 }
@@ -250,7 +282,7 @@ func TestGenerateHIRDoesNotDropDiscardedOwnedPlace(t *testing.T) {
 	}
 }
 
-func TestGenerateHIRMarksOwnerBearingProjectionBaseForDrop(t *testing.T) {
+func TestGenerateHIRPreservesOwnerBearingProjectionIdentity(t *testing.T) {
 	out := generateTestHIR(t, "hir_projected_owner_temporary_test"+peeper.SourceExt, "hir_projected_owner_temporary_test", `struct Box { value: i32, ptr: *i32 }
 fn make() -> Box;
 fn read() -> i32 {
@@ -258,8 +290,8 @@ fn read() -> i32 {
 }`)
 	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
 	field, ok := ret.Value.(*ir.Field)
-	if !ok || !field.DropBase {
-		t.Fatalf("expected projected call temporary cleanup, got %#v", ret.Value)
+	if !ok || field.DropBase || field.NodeID == 0 {
+		t.Fatalf("expected projection source identity without embedded cleanup, got %#v", ret.Value)
 	}
 }
 

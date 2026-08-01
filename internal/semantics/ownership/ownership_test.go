@@ -9,9 +9,10 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/graph"
+	"compiler/internal/ir/hir_lower"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
@@ -47,6 +48,8 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
+	module.HIR = hir_lower.GenerateHIR(ctx, module)
+	module.CFG = cfg.BuildModule(module.HIR)
 	Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
 }
@@ -68,10 +71,10 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 	analysis := &analyzer{
 		ctx:           result.ctx,
 		module:        result.module,
-		flow:          build(result.module, fn.Body, scope),
+		flow:          build(result.module, cfgForFunction(result.module, fn), fn.Body, scope),
 		function:      fn,
 		functionScope: scope,
-		reportedJoin:  make(map[graph.NodeID]bool),
+		reportedJoin:  make(map[flowNodeID]bool),
 	}
 	analysis.run()
 	return analysis
@@ -725,20 +728,19 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 	}
 	analysis := inspectFunctionAnalysis(t, result, "inspect")
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
-	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	var join *flowNode
+	var exit *flowNode
 	for _, node := range analysis.flow.nodes {
-		if node != nil && node.kind == nodeJoin && node.stmt == loop {
-			join = node
+		if node != nil && node.kind == nodeBlockExit && node.block == fn.Body {
+			exit = node
 			break
 		}
 	}
-	if join == nil {
-		t.Fatalf("loop exit join not found")
+	if exit == nil {
+		t.Fatalf("loop exit continuation not found")
 	}
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[join.id][maybe]; live {
-		t.Fatalf("synthetic loop exit repeats condition use")
+	if _, live := analysis.referenceLiveIn[exit.id][maybe]; live {
+		t.Fatalf("loop exit continuation repeats condition use")
 	}
 }
 

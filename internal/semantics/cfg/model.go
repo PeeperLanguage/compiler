@@ -3,8 +3,19 @@ package cfg
 import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
+
+// CleanupPlan records ownership effects at stable CFG/HIR source sites. Symbol
+// IDs keep semantic ownership decisions independent from emitted storage names.
+type CleanupPlan struct {
+	AfterScope     map[ir.NodeID][]symbols.SymbolID
+	BeforeReturn   map[ir.NodeID][]symbols.SymbolID
+	BeforeAssign   map[ir.NodeID]struct{}
+	DiscardedValue map[ir.NodeID]struct{}
+	ProjectionBase map[ir.NodeID]struct{}
+}
 
 type Graph struct {
 	Name       string
@@ -14,13 +25,17 @@ type Graph struct {
 	Entry      *Block
 	Exit       *Block
 	Blocks     []*Block
+	Cleanup    *CleanupPlan
 }
 
 type Block struct {
-	ID           int
-	Location     *source.Location
-	BranchKind   string
-	Stmts        []hir.Stmt
+	ID         int
+	Location   *source.Location
+	BranchKind string
+	Stmts      []hir.Stmt
+	// ScopeExits is inner-to-outer lexical HIR block identity. Each listed
+	// scope completes immediately before this block's terminator.
+	ScopeExits   []hir.NodeID
 	Terminator   Terminator
 	Predecessors []*Block
 	Reachable    bool
@@ -40,10 +55,12 @@ type Branch struct {
 	Cond        ir.Expr
 	TrueTarget  *Block
 	FalseTarget *Block
+	NodeID      hir.NodeID
 }
 
 type Return struct {
-	Value ir.Expr
+	Value  ir.Expr
+	NodeID hir.NodeID
 }
 
 func (*Jump) termNode()   {}

@@ -7,6 +7,7 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -21,6 +22,8 @@ type lowerer struct {
 	current        *Block
 	location       *source.Location
 	temporaryDrops []ValueRef
+	cleanup        *cfg.CleanupPlan
+	symbolValues   map[symbols.SymbolID]*RefName
 }
 
 func (l *lowerer) isVoid(id ir.TypeID) bool {
@@ -31,7 +34,7 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
-func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil {
 		return nil
 	}
@@ -67,31 +70,87 @@ func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.Sym
 			Location:   ex.Location,
 		})
 	}
+	graphForFunction := make(map[*hir.Function]*cfg.Graph, len(graphs))
+	for _, graph := range graphs {
+		if graph != nil && graph.Source != nil {
+			graphForFunction[graph.Source] = graph
+		}
+	}
 	for _, hirFn := range in.Funcs {
-		if hirFn == nil {
-			continue
-		}
-		fn := &Function{
-			Name:       hirFn.Name,
-			Params:     append([]ir.Param(nil), hirFn.Params...),
-			ReturnType: hirFn.ReturnType,
-			EntryID:    0,
-			Blocks:     make([]*Block, 0),
-			Location:   hirFn.Location,
-		}
-		l := &lowerer{module: out, fn: fn}
-		l.current = l.newBlock()
-		fn.EntryID = l.current.ID
-		if !l.appendBlock(hirFn.Body) {
+		graph := graphForFunction[hirFn]
+		if graph == nil {
 			return nil
 		}
-		if l.current != nil && l.current.Term == nil && l.isVoid(fn.ReturnType) {
-			l.setBlockTerm(l.current, &Ret{})
-			l.current = nil
+		fn, ok := lowerCFGFunction(out, graph)
+		if !ok {
+			return nil
 		}
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
+}
+
+// lowerCFGFunction converts one normalized CFG into MIR without rebuilding
+// branches or loops from structured HIR.
+func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
+	if mod == nil || graph == nil || graph.Source == nil || graph.Entry == nil {
+		return nil, false
+	}
+	fn := &Function{
+		Name:       graph.Name,
+		Params:     append([]ir.Param(nil), graph.Source.Params...),
+		ReturnType: graph.ReturnType,
+		Blocks:     make([]*Block, 0, len(graph.Blocks)),
+		Location:   graph.Source.Location,
+	}
+	l := &lowerer{module: mod, fn: fn, cleanup: graph.Cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
+	for _, param := range fn.Params {
+		if param.SymbolID != 0 {
+			l.symbolValues[param.SymbolID] = &RefName{Name: param.Name, Type: param.Type}
+		}
+	}
+	blocks := make(map[*cfg.Block]*Block, len(graph.Blocks))
+	for _, source := range graph.Blocks {
+		if source == nil || source == graph.Exit || !source.Reachable {
+			continue
+		}
+		for _, stmt := range source.Stmts {
+			if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 && binding.Value != nil {
+				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Value.TypeID(), Location: binding.Location}
+			}
+		}
+		block := &Block{ID: source.ID, Instrs: make([]Instr, 0)}
+		blocks[source] = block
+		fn.Blocks = append(fn.Blocks, block)
+		if source == graph.Entry {
+			fn.EntryID = block.ID
+		}
+	}
+	if blocks[graph.Entry] == nil {
+		return nil, false
+	}
+	for _, source := range graph.Blocks {
+		block := blocks[source]
+		if block == nil {
+			continue
+		}
+		l.current = block
+		l.location = source.Location
+		for _, stmt := range source.Stmts {
+			if !l.lowerCFGStmt(stmt) {
+				return nil, false
+			}
+		}
+		if l.cleanup != nil {
+			for _, scopeID := range source.ScopeExits {
+				l.appendPlannedDrops(l.cleanup.AfterScope[scopeID], &block.Instrs)
+			}
+		}
+		if !l.lowerCFGTerminator(source, graph.Exit, blocks) {
+			return nil, false
+		}
+	}
+	return fn, true
 }
 
 func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {
@@ -159,32 +218,7 @@ func llvmFloatConstText(value string) string {
 	return value + ".0"
 }
 
-func (l *lowerer) newBlock() *Block {
-	block := &Block{
-		ID:     l.nextBlockID,
-		Instrs: make([]Instr, 0),
-	}
-	l.nextBlockID++
-	l.fn.Blocks = append(l.fn.Blocks, block)
-	return block
-}
-
-func (l *lowerer) appendBlock(block *hir.Block) bool {
-	if block == nil {
-		return true
-	}
-	for _, stmt := range block.Stmts {
-		if !l.appendStmt(stmt) {
-			return false
-		}
-		if l.current == nil {
-			break
-		}
-	}
-	return true
-}
-
-func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
+func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 	if l == nil || stmt == nil {
 		return true
 	}
@@ -194,12 +228,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.location = prevLoc
 	}()
 	switch node := stmt.(type) {
-	case *hir.Block:
-		return l.appendBlock(node)
 	case *hir.Binding:
-		if l.current == nil {
-			return true
-		}
 		temporaryMark := len(l.temporaryDrops)
 		ref := l.lowerExpr(node.Value, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
@@ -210,23 +239,21 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.Return:
-		if l.current == nil {
-			return true
-		}
-		temporaryMark := len(l.temporaryDrops)
-		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
-		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		for _, cleanup := range node.Cleanup {
-			l.lowerExpr(cleanup, &l.current.Instrs)
-		}
-		l.setBlockTerm(l.current, &Ret{Value: retRef})
-		l.current = nil
+		// Return value and cleanup lower with the matching CFG terminator so
+		// their evaluation occurs once on the edge to function exit.
 		return true
 	case *hir.ExprStmt:
-		if l.current == nil {
-			return true
-		}
 		temporaryMark := len(l.temporaryDrops)
+		if l.cleanup != nil {
+			if _, drop := l.cleanup.DiscardedValue[node.ValueNodeID]; drop {
+				value := l.lowerExpr(node.Value, &l.current.Instrs)
+				l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+				if value != nil {
+					l.appendInstr(&l.current.Instrs, &Drop{Value: value})
+				}
+				return true
+			}
+		}
 		if l.lowerDiscardedExpr(node.Value, &l.current.Instrs) {
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
@@ -235,17 +262,20 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.Assign:
-		if l.current == nil {
-			return true
-		}
 		temporaryMark := len(l.temporaryDrops)
 		value := l.lowerExpr(node.Value, &l.current.Instrs)
 		target := node.Target
 		if target == nil || target.Root == nil {
 			return false
 		}
+		dropTarget := node.DropTarget
+		if l.cleanup != nil {
+			if _, planned := l.cleanup.BeforeAssign[node.NodeID]; planned {
+				dropTarget = true
+			}
+		}
 		if ident, direct := target.Root.(*ir.Ident); direct && len(target.Projections) == 0 {
-			if node.DropTarget {
+			if dropTarget {
 				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ir.ExprLocation(ident)}})
 			}
 			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
@@ -253,18 +283,29 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 			return true
 		}
 		place := l.lowerPlace(target, &l.current.Instrs)
-		if node.DropTarget {
+		if dropTarget {
 			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeID(), target.Location)})
 		}
 		l.appendInstr(&l.current.Instrs, &Store{Place: place, Value: value})
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
-	case *hir.If:
-		return l.appendIf(node)
-	case *hir.For:
-		return l.appendFor(node)
+	case *hir.Invalid:
+		return false
 	default:
 		return false
+	}
+}
+
+func (l *lowerer) appendPlannedDrops(ids []symbols.SymbolID, out *[]Instr) {
+	if l == nil || out == nil {
+		return
+	}
+	for _, id := range ids {
+		ref := l.symbolValues[id]
+		if ref == nil {
+			continue
+		}
+		l.appendInstr(out, &Drop{Value: &RefName{Name: ref.Name, Type: ref.Type, Location: ref.Location}})
 	}
 }
 
@@ -278,85 +319,60 @@ func (l *lowerer) flushTemporaryDrops(out *[]Instr, mark int) {
 	l.temporaryDrops = l.temporaryDrops[:mark]
 }
 
-func (l *lowerer) appendIf(node *hir.If) bool {
-	if l.current == nil || node == nil {
-		return true
-	}
-	temporaryMark := len(l.temporaryDrops)
-	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
-	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-	condBlock := l.current
-	thenBlock := l.newBlock()
-	elseBlock := l.newBlock()
-	l.setBlockTerm(condBlock, &Branch{Cond: condRef, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
-
-	l.current = thenBlock
-	if !l.appendBlock(node.Then) {
+func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Block]*Block) bool {
+	if l == nil || source == nil || l.current == nil {
 		return false
 	}
-	thenFall := l.current
-
-	l.current = elseBlock
-	if node.Else != nil {
-		if !l.appendStmt(node.Else) {
+	switch term := source.Terminator.(type) {
+	case *cfg.Jump:
+		if term.Target == exit {
+			if l.fn.ReturnType != ir.InvalidType && !l.isVoid(l.fn.ReturnType) {
+				return false
+			}
+			l.setBlockTerm(l.current, &Ret{})
+			return true
+		}
+		target := blocks[term.Target]
+		if target == nil {
 			return false
 		}
-	}
-	elseFall := l.current
-
-	if thenFall == nil && elseFall == nil {
-		l.current = nil
+		l.setBlockTerm(l.current, &Jump{TargetID: target.ID})
 		return true
-	}
-
-	join := l.newBlock()
-	if thenFall != nil && thenFall.Term == nil {
-		l.setBlockTerm(thenFall, &Jump{TargetID: join.ID})
-	}
-	if elseFall != nil && elseFall.Term == nil {
-		l.setBlockTerm(elseFall, &Jump{TargetID: join.ID})
-	}
-	l.current = join
-	return true
-}
-
-func (l *lowerer) appendFor(node *hir.For) bool {
-	if l.current == nil || node == nil || node.Body == nil {
-		return true
-	}
-	if node.Cond == nil {
-		bodyBlock := l.newBlock()
-		l.setBlockTerm(l.current, &Jump{TargetID: bodyBlock.ID})
-		l.current = bodyBlock
-		if !l.appendBlock(node.Body) {
+	case *cfg.Branch:
+		thenBlock, elseBlock := blocks[term.TrueTarget], blocks[term.FalseTarget]
+		if thenBlock == nil || elseBlock == nil {
 			return false
 		}
-		if l.current != nil && l.current.Term == nil {
-			l.setBlockTerm(l.current, &Jump{TargetID: bodyBlock.ID})
-		}
-		l.current = nil
+		temporaryMark := len(l.temporaryDrops)
+		cond := l.lowerExpr(term.Cond, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		l.setBlockTerm(l.current, &Branch{Cond: cond, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
 		return true
-	}
-	headerBlock := l.newBlock()
-	bodyBlock := l.newBlock()
-	exitBlock := l.newBlock()
-	l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
-
-	l.current = headerBlock
-	temporaryMark := len(l.temporaryDrops)
-	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
-	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-	l.setBlockTerm(headerBlock, &Branch{Cond: condRef, ThenID: bodyBlock.ID, ElseID: exitBlock.ID})
-
-	l.current = bodyBlock
-	if !l.appendBlock(node.Body) {
+	case *cfg.Return:
+		temporaryMark := len(l.temporaryDrops)
+		value := l.lowerExpr(term.Value, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		for _, stmt := range source.Stmts {
+			if ret, ok := stmt.(*hir.Return); ok {
+				for _, cleanup := range ret.Cleanup {
+					l.lowerExpr(cleanup, &l.current.Instrs)
+				}
+			}
+		}
+		if l.cleanup != nil {
+			l.appendPlannedDrops(l.cleanup.BeforeReturn[term.NodeID], &l.current.Instrs)
+		}
+		l.setBlockTerm(l.current, &Ret{Value: value})
+		return true
+	case nil:
+		if l.fn.ReturnType != ir.InvalidType && !l.isVoid(l.fn.ReturnType) {
+			return false
+		}
+		l.setBlockTerm(l.current, &Ret{})
+		return true
+	default:
 		return false
 	}
-	if l.current != nil && l.current.Term == nil {
-		l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
-	}
-	l.current = exitBlock
-	return true
 }
 
 func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
@@ -494,7 +510,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
 		value := l.load(out, place, e.TypeID(), ir.ExprLocation(e))
-		if e.DropRoot {
+		dropRoot := e.DropRoot
+		if l.cleanup != nil {
+			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
+				dropRoot = true
+			}
+		}
+		if dropRoot {
 			l.appendInstr(out, &Drop{Value: place.Root, Location: ir.ExprLocation(e.Place.Root)})
 		}
 		return value
@@ -556,7 +578,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		if e.DropBase {
+		dropBase := e.DropBase
+		if l.cleanup != nil {
+			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
+				dropBase = true
+			}
+		}
+		if dropBase {
 			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
 		}
 		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}

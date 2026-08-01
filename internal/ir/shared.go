@@ -8,6 +8,9 @@ import (
 	"compiler/internal/source"
 )
 
+// NodeID identifies source syntax without retaining an AST object in IR.
+type NodeID uint32
+
 type Param struct {
 	Name     string
 	Type     TypeID
@@ -120,6 +123,7 @@ type Place struct {
 type Load struct {
 	Place    *Place
 	DropRoot bool
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -176,6 +180,7 @@ type Field struct {
 	Base     Expr
 	Index    int
 	DropBase bool
+	NodeID   NodeID
 	Type     TypeID
 	Location *source.Location
 }

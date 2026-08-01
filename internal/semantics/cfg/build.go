@@ -58,6 +58,9 @@ func (b *builder) buildBlock(block *hir.Block, current *Block) *Block {
 		}
 		next = b.buildStmt(stmt, next)
 	}
+	if next != nil && block.NodeID != 0 {
+		next.ScopeExits = append(next.ScopeExits, block.NodeID)
+	}
 	return next
 }
 
@@ -71,7 +74,16 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 	case nil:
 		return current
 	case *hir.Block:
-		return b.buildBlock(s, current)
+		end := b.buildBlock(s, current)
+		if end == nil {
+			return nil
+		}
+		// A lexical block may be followed by statements in its parent. Keep its
+		// scope exit on the predecessor so ownership destruction occurs before
+		// those continuation statements.
+		continuation := b.newBlock()
+		end.Terminator = &Jump{Target: continuation}
+		return continuation
 	case *hir.Binding:
 		current.Stmts = append(current.Stmts, s)
 		return current
@@ -83,7 +95,7 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		return current
 	case *hir.Return:
 		current.Stmts = append(current.Stmts, s)
-		current.Terminator = &Return{Value: s.Value}
+		current.Terminator = &Return{Value: s.Value, NodeID: s.NodeID}
 		current.Returns = true
 		return nil
 	case *hir.If:
@@ -98,7 +110,7 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		thenBlock.BranchKind = "if"
 		elseBlock.Location = s.Location
 		elseBlock.BranchKind = "else"
-		current.Terminator = &Branch{Cond: s.Cond, TrueTarget: thenBlock, FalseTarget: elseBlock}
+		current.Terminator = &Branch{Cond: s.Cond, TrueTarget: thenBlock, FalseTarget: elseBlock, NodeID: s.NodeID}
 
 		thenEnd := b.buildBlock(s.Then, thenBlock)
 		thenFallsThrough := thenEnd != nil
@@ -140,7 +152,7 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		bodyBlock.BranchKind = "for-body"
 		exit := b.newBlock()
 		current.Terminator = &Jump{Target: header}
-		header.Terminator = &Branch{Cond: s.Cond, TrueTarget: bodyBlock, FalseTarget: exit}
+		header.Terminator = &Branch{Cond: s.Cond, TrueTarget: bodyBlock, FalseTarget: exit, NodeID: s.NodeID}
 		bodyEnd := b.buildBlock(s.Body, bodyBlock)
 		if bodyEnd != nil && bodyEnd.Terminator == nil {
 			bodyEnd.Terminator = &Jump{Target: header}
