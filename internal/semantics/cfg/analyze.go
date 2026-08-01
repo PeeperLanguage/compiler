@@ -68,6 +68,77 @@ func prepareGraph(fn *Graph) {
 	}
 	markReachable(fn.Entry, make(map[int]bool))
 	rebuildPredecessors(fn)
+	rebuildSites(fn)
+}
+
+func rebuildSites(fn *Graph) {
+	if fn == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		block.Sites = block.Sites[:0]
+		for _, stmt := range block.Stmts {
+			if stmt != nil {
+				block.Sites = append(block.Sites, &Site{Kind: SiteStatement, NodeID: hir.NodeIDOf(stmt)})
+			}
+		}
+		for _, scopeID := range block.ScopeExits {
+			block.Sites = append(block.Sites, &Site{Kind: SiteScopeExit, NodeID: scopeID})
+		}
+		switch term := block.Terminator.(type) {
+		case *Branch:
+			block.Sites = append(block.Sites, &Site{Kind: SiteTerminator, NodeID: term.NodeID})
+		}
+		if len(block.Sites) == 0 {
+			block.Sites = append(block.Sites, &Site{Kind: SiteJoin})
+		}
+		for index, site := range block.Sites {
+			site.ID = SiteID{Block: block.ID, Index: index}
+			site.Successors = site.Successors[:0]
+			site.Predecessors = site.Predecessors[:0]
+		}
+	}
+	for _, block := range fn.Blocks {
+		if block == nil || len(block.Sites) == 0 {
+			continue
+		}
+		for index := 0; index+1 < len(block.Sites); index++ {
+			connectSites(block.Sites[index], block.Sites[index+1])
+		}
+		last := block.Sites[len(block.Sites)-1]
+		switch term := block.Terminator.(type) {
+		case *Jump:
+			connectBlockSite(last, term.Target)
+		case *Branch:
+			connectBlockSite(last, term.TrueTarget)
+			connectBlockSite(last, term.FalseTarget)
+		case *Return:
+			connectBlockSite(last, fn.Exit)
+		}
+	}
+}
+
+func connectBlockSite(from *Site, target *Block) {
+	if target == nil || len(target.Sites) == 0 {
+		return
+	}
+	connectSites(from, target.Sites[0])
+}
+
+func connectSites(from, to *Site) {
+	if from == nil || to == nil {
+		return
+	}
+	for _, existing := range from.Successors {
+		if existing == to.ID {
+			return
+		}
+	}
+	from.Successors = append(from.Successors, to.ID)
+	to.Predecessors = append(to.Predecessors, from.ID)
 }
 
 func markReachable(block *Block, seen map[int]bool) {

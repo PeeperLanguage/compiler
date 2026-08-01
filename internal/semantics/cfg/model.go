@@ -28,6 +28,33 @@ type Graph struct {
 	Cleanup    *CleanupPlan
 }
 
+// SiteID identifies one ordered ownership-analysis point within a CFG block.
+// It remains stable while the CFG artifact is unchanged.
+type SiteID struct {
+	Block int
+	Index int
+}
+
+type SiteKind uint8
+
+const (
+	SiteStatement SiteKind = iota
+	SiteScopeExit
+	SiteTerminator
+	SiteJoin
+)
+
+// Site records statement-granular control flow derived from a CFG block. It
+// lets ownership analyses retain statement ordering without rebuilding a
+// second graph from syntax.
+type Site struct {
+	ID           SiteID
+	Kind         SiteKind
+	NodeID       ir.NodeID
+	Successors   []SiteID
+	Predecessors []SiteID
+}
+
 type Block struct {
 	ID         int
 	Location   *source.Location
@@ -36,6 +63,7 @@ type Block struct {
 	// ScopeExits is inner-to-outer lexical HIR block identity. Each listed
 	// scope completes immediately before this block's terminator.
 	ScopeExits   []hir.NodeID
+	Sites        []*Site
 	Terminator   Terminator
 	Predecessors []*Block
 	Reachable    bool

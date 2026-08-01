@@ -80,3 +80,30 @@ func TestBuildModulePreservesTerminatorSourceIdentity(t *testing.T) {
 		t.Fatalf("return = %#v, want source node 40", ret)
 	}
 }
+
+func TestBuildModuleCreatesCanonicalSiteAdjacency(t *testing.T) {
+	types := ir.NewTypeTable()
+	void := types.Intern(ir.Type{Kind: ir.TypeVoid})
+	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
+	graph := BuildModule(&hir.Module{Types: types, Funcs: []*hir.Function{{
+		Name:       "main",
+		ReturnType: void,
+		Body: &hir.Block{Stmts: []hir.Stmt{
+			&hir.If{NodeID: 30, Cond: &ir.BoolLit{Value: true, Type: boolType}, Then: &hir.Block{}, Else: &hir.Block{}},
+		}},
+	}}})[0]
+	if graph == nil || graph.Entry == nil || len(graph.Entry.Sites) != 1 {
+		t.Fatalf("entry sites = %#v, want one branch site", graph)
+	}
+	branch := graph.Entry.Sites[0]
+	if branch.Kind != SiteTerminator || branch.NodeID != 30 || len(branch.Successors) != 2 {
+		t.Fatalf("branch site = %#v, want two branch successors", branch)
+	}
+	for _, successor := range branch.Successors {
+		block := graph.Blocks[successor.Block]
+		site := block.Sites[successor.Index]
+		if len(site.Predecessors) != 1 || site.Predecessors[0] != branch.ID {
+			t.Fatalf("site %#v predecessors = %v, want branch %#v", site.ID, site.Predecessors, branch.ID)
+		}
+	}
+}

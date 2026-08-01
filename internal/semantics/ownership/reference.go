@@ -8,6 +8,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -67,15 +68,18 @@ func (access storageAccess) requiresExclusiveAccess() bool {
 	}
 }
 
-func (a *analyzer) newLoanContext(node *flowNode, st state) *loanContext {
+func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
+	if node == nil || node.flow == nil {
+		return &loanContext{remaining: make(map[*symbols.Symbol]int)}
+	}
 	ctx := &loanContext{
 		remaining: make(map[*symbols.Symbol]int),
-		liveOut:   a.referenceLiveOut[node.id],
+		liveOut:   a.referenceLiveOut[node.flow.ID],
 	}
 	for _, use := range a.referenceUseSequence(node) {
 		ctx.remaining[use.symbol]++
 	}
-	for sym, keepingAlive := range a.referenceLiveIn[node.id] {
+	for sym, keepingAlive := range a.referenceLiveIn[node.flow.ID] {
 		value, tracked := st.references[sym]
 		if !tracked {
 			continue
@@ -548,14 +552,14 @@ func referenceLoanIndex(loans []referenceLoan, id loanID) int {
 }
 
 func (a *analyzer) computeReferenceLiveness() {
-	if a == nil || a.flow == nil {
+	if a == nil || a.sites == nil {
 		return
 	}
-	a.referenceLiveIn = make(map[flowNodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
-	a.referenceLiveOut = make(map[flowNodeID]map[*symbols.Symbol]ast.Node, len(a.flow.order))
-	queue := make([]flowNodeID, 0, len(a.flow.order))
-	queued := make(map[flowNodeID]bool, len(a.flow.order))
-	for _, id := range slices.Backward(a.flow.order) {
+	a.referenceLiveIn = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
+	a.referenceLiveOut = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
+	queue := make([]cfg.SiteID, 0, len(a.order))
+	queued := make(map[cfg.SiteID]bool, len(a.order))
+	for _, id := range slices.Backward(a.order) {
 		queue = append(queue, id)
 		queued[id] = true
 	}
@@ -565,10 +569,14 @@ func (a *analyzer) computeReferenceLiveness() {
 		queued[id] = false
 
 		out := make(map[*symbols.Symbol]ast.Node)
-		for _, succ := range a.flow.successors[id] {
+		node := a.sites[id]
+		if node == nil || node.flow == nil {
+			continue
+		}
+		for _, succ := range node.flow.Successors {
 			mergeReferenceLiveSets(out, a.referenceLiveIn[succ])
 		}
-		uses, definitions := a.referenceUsesAndDefinitions(a.flow.nodes[id])
+		uses, definitions := a.referenceUsesAndDefinitions(node)
 		in := maps.Clone(out)
 		for sym := range definitions {
 			delete(in, sym)
@@ -580,7 +588,7 @@ func (a *analyzer) computeReferenceLiveness() {
 		}
 		a.referenceLiveIn[id] = in
 		a.referenceLiveOut[id] = out
-		for _, pred := range a.flow.predecessors[id] {
+		for _, pred := range node.flow.Predecessors {
 			if !queued[pred] {
 				queue = append(queue, pred)
 				queued[pred] = true
@@ -589,10 +597,11 @@ func (a *analyzer) computeReferenceLiveness() {
 	}
 }
 
-func (a *analyzer) referenceUsesAndDefinitions(node *flowNode) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
+func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
 	uses := make(map[*symbols.Symbol]ast.Node)
 	definitions := make(map[*symbols.Symbol]struct{})
-	if a == nil || node == nil || node.kind != nodeStmt || node.stmt == nil {
+	if a == nil || node == nil || node.flow == nil ||
+		(node.flow.Kind != cfg.SiteStatement && node.flow.Kind != cfg.SiteTerminator) || node.stmt == nil {
 		return uses, definitions
 	}
 	addDefinition := func(binding ast.Node) {
@@ -630,8 +639,9 @@ func (a *analyzer) referenceUsesAndDefinitions(node *flowNode) (map[*symbols.Sym
 	return uses, definitions
 }
 
-func (a *analyzer) referenceUseSequence(node *flowNode) []referenceUse {
-	if a == nil || node == nil || node.kind != nodeStmt || node.stmt == nil ||
+func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
+	if a == nil || node == nil || node.flow == nil ||
+		(node.flow.Kind != cfg.SiteStatement && node.flow.Kind != cfg.SiteTerminator) || node.stmt == nil ||
 		a.module == nil || a.module.Semantics == nil {
 		return nil
 	}
