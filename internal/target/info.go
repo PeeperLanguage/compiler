@@ -48,11 +48,6 @@ func (i Info) Valid() bool {
 		(i.PointerBits == Bits32 || i.PointerBits == Bits64) && i.IndexBits == i.PointerBits
 }
 
-// IsHost reports whether this target matches the current compiler host.
-func (i Info) IsHost() bool {
-	return i.OS == runtime.GOOS && i.Arch == runtime.GOARCH
-}
-
 // ArchFor32BitMode returns the compatible 32-bit architecture for -m32.
 // Architectures without a supported LLVM 32-bit counterpart are rejected.
 func ArchFor32BitMode(arch string) (string, error) {

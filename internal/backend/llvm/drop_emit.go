@@ -153,7 +153,7 @@ func emitInterfacePayloadReleaseThunk(out *strings.Builder, emitter *llvmEmitter
 	builder := newLLVMBuilder(out, emitter, -1)
 	builder.namedLabel("entry")
 	size := builder.nextReg()
-	builder.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, dataType, dataType, dataType, emitter.llvmType(emitter.mod.Types.IndexType)))
+	builder.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, dataType, dataType, dataType, emitter.llvmType(emitter.mod.Types.IndexType())))
 	emitAllocatorDeallocate(builder, "%allocator", "%data", size, "8")
 	builder.line("ret void")
 	out.WriteString("}\n")
@@ -268,7 +268,7 @@ func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data string, elem ir.TypeI
 
 func emitOwnedPointerFree(b *llvmBuilder, value string, typeID, targetType ir.TypeID) {
 	llvmStructType := b.emitter.llvmType(typeID)
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 
 	data := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmStructType, value))

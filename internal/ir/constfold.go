@@ -44,7 +44,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		}
 		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type}
 	case *Load:
-		return &Load{Place: foldPlace(types, node.Place, env), DropRoot: node.DropRoot, Location: node.Location}
+		return &Load{Place: foldPlace(types, node.Place, env), DropRoot: node.DropRoot, NodeID: node.NodeID, Location: node.Location}
 	case *AddrOf:
 		return &AddrOf{Place: foldPlace(types, node.Place, env), Type: node.Type, Location: node.Location}
 	case *SliceView:

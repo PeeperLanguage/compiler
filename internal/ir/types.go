@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // TypeID identifies one runtime type in a compilation's TypeTable. IDs never
@@ -64,10 +65,11 @@ type Type struct {
 // TypeTable is owned by one CompilerContext. It is canonical storage for IR
 // types, their diagnostics text, and ABI identity.
 type TypeTable struct {
+	mu        sync.RWMutex
 	types     []Type
 	ids       map[string]TypeID
 	texts     map[string]TypeID
-	IndexType TypeID
+	indexType TypeID
 }
 
 func NewTypeTable() *TypeTable {
@@ -83,13 +85,15 @@ func (t *TypeTable) Intern(typ Type) TypeID {
 		panic("interning IR type without a type table")
 	}
 	key := t.key(typ)
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if id, ok := t.ids[key]; ok {
 		return id
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(typ))
 	t.ids[key] = id
-	t.texts[t.Text(id)] = id
+	t.texts[t.textLocked(id)] = id
 	return id
 }
 
@@ -100,32 +104,61 @@ func (t *TypeTable) LookupText(text string) (TypeID, bool) {
 	if t == nil {
 		return InvalidType, false
 	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	id, ok := t.texts[text]
 	return id, ok
 }
 
 func (t *TypeTable) SetIndexType(id TypeID) {
-	if _, ok := t.Type(id); !ok {
+	if t == nil {
 		panic("setting invalid IR index type")
 	}
-	t.IndexType = id
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if id == InvalidType || int(id) >= len(t.types) {
+		panic("setting invalid IR index type")
+	}
+	t.indexType = id
+}
+
+func (t *TypeTable) IndexType() TypeID {
+	if t == nil {
+		return InvalidType
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.indexType
 }
 
 func (t *TypeTable) Type(id TypeID) (Type, bool) {
-	if t == nil || id == InvalidType || int(id) >= len(t.types) {
+	if t == nil {
+		return Type{}, false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if id == InvalidType || int(id) >= len(t.types) {
 		return Type{}, false
 	}
 	return t.types[id], true
 }
 
 func (t *TypeTable) Text(id TypeID) string {
-	if id == InvalidType {
+	if t == nil {
 		return "<invalid>"
 	}
-	typ, ok := t.Type(id)
-	if !ok {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.textLocked(id)
+}
+
+// textLocked keeps recursive formatting under one read or write lock. Calling
+// public Type or Text here would deadlock when Intern holds the write lock.
+func (t *TypeTable) textLocked(id TypeID) string {
+	if id == InvalidType || int(id) >= len(t.types) {
 		return "<invalid>"
 	}
+	typ := t.types[id]
 	switch typ.Kind {
 	case TypeVoid:
 		return "void"
@@ -149,32 +182,32 @@ func (t *TypeTable) Text(id TypeID) string {
 	case TypeRawPtr:
 		return "rawptr"
 	case TypeOwnedPtr:
-		return "*" + t.Text(typ.Elem)
+		return "*" + t.textLocked(typ.Elem)
 	case TypeReference:
 		prefix := "&"
 		if typ.Mutable {
 			prefix = "&mut "
 		}
-		return prefix + t.Text(typ.Elem)
+		return prefix + t.textLocked(typ.Elem)
 	case TypeOptional:
-		return "?" + t.Text(typ.Elem)
+		return "?" + t.textLocked(typ.Elem)
 	case TypeArray:
 		if typ.Length == "" {
-			return "[]" + t.Text(typ.Elem)
+			return "[]" + t.textLocked(typ.Elem)
 		}
-		return "[" + typ.Length + "]" + t.Text(typ.Elem)
+		return "[" + typ.Length + "]" + t.textLocked(typ.Elem)
 	case TypeStruct:
-		return "struct{" + t.fieldsText(typ.Fields, ';') + "}"
+		return "struct{" + t.fieldsTextLocked(typ.Fields, ';') + "}"
 	case TypeInterface:
 		methods := make([]string, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
 			params := make([]string, 0, len(method.Params))
 			for _, param := range method.Params {
-				params = append(params, param.Name+": "+t.Text(param.Type))
+				params = append(params, param.Name+": "+t.textLocked(param.Type))
 			}
 			text := method.Name + "(" + strings.Join(params, ", ") + ")"
-			if method.Return != InvalidType && t.Text(method.Return) != "void" {
-				text += " -> " + t.Text(method.Return)
+			if method.Return != InvalidType && t.textLocked(method.Return) != "void" {
+				text += " -> " + t.textLocked(method.Return)
 			}
 			methods = append(methods, text)
 		}
@@ -182,11 +215,11 @@ func (t *TypeTable) Text(id TypeID) string {
 	case TypeFunction:
 		params := make([]string, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, t.Text(param))
+			params = append(params, t.textLocked(param))
 		}
 		text := "fn(" + strings.Join(params, ", ") + ")"
-		if typ.Return != InvalidType && t.Text(typ.Return) != "void" {
-			text += " -> " + t.Text(typ.Return)
+		if typ.Return != InvalidType && t.textLocked(typ.Return) != "void" {
+			text += " -> " + t.textLocked(typ.Return)
 		}
 		return text
 	case TypeNamed:
@@ -218,10 +251,10 @@ func (t *TypeTable) key(typ Type) string {
 	return b.String()
 }
 
-func (t *TypeTable) fieldsText(fields []TypeField, separator byte) string {
+func (t *TypeTable) fieldsTextLocked(fields []TypeField, separator byte) string {
 	parts := make([]string, 0, len(fields))
 	for _, field := range fields {
-		parts = append(parts, field.Name+": "+t.Text(field.Type))
+		parts = append(parts, field.Name+": "+t.textLocked(field.Type))
 	}
 	return strings.Join(parts, string(separator)+" ")
 }

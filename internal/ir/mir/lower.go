@@ -611,7 +611,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			}
 			for index, valueExpr := range e.Values {
 				value := l.lowerExpr(valueExpr, out)
-				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: l.module.Types.IndexType, Location: ir.ExprLocation(valueExpr)}
+				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: l.module.Types.IndexType(), Location: ir.ExprLocation(valueExpr)}
 				place := &Place{
 					Root: array,
 					Projections: []PlaceProjection{{

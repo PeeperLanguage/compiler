@@ -193,7 +193,7 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 		}
 	}
 
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	lengthI64 := length
 	if indexType != "i64" && fixedArrayPtr == "" {
 		lengthI64 = b.nextReg()
@@ -342,7 +342,7 @@ func emitDynamicArrayStorageAlloc(b *llvmBuilder, elemType ir.TypeID, capacity, 
 func emitDynamicArrayHeader(b *llvmBuilder, arrayTypeID, elemTypeID ir.TypeID, data, length, capacity, allocator string) string {
 	arrayType := b.emitter.llvmType(arrayTypeID)
 	elemType := b.emitter.llvmType(elemTypeID)
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	withData := b.nextReg()
 	b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, %s* %s, 0", withData, arrayType, elemType, data))
 	withLength := b.nextReg()
@@ -362,7 +362,7 @@ func emitAlloc(b *llvmBuilder, e *mir.Alloc) string {
 	}
 	llvmStructType := b.emitter.llvmType(e.Type)
 	targetLLVM := b.emitter.llvmType(pointerType.Elem)
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 
 	allocReg := allocatorHandleFromRef(b, e.Allocator)
 
@@ -410,7 +410,7 @@ func emitDynamicArrayReserve(b *llvmBuilder, array string, typeID ir.TypeID, min
 	}
 	arrayType := b.emitter.llvmType(typeID)
 	elemType := b.emitter.llvmType(elemTypeID)
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	oldData := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", oldData, arrayType, array))
 	length := b.nextReg()
@@ -493,7 +493,7 @@ func emitDynamicArrayOp(b *llvmBuilder, op *mir.DynamicArrayOp) string {
 			b.emitter.markInvalid("reserve requires a minimum capacity")
 			return array
 		}
-		minimum := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType})
+		minimum := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType()})
 		return emitDynamicArrayReserve(b, array, op.Type, minimum)
 	case symbols.CompilerOpAppend:
 		return emitDynamicArrayAppend(b, op, array, elemTypeID)
@@ -513,7 +513,7 @@ func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array string
 		return array
 	}
 	arrayType := b.emitter.llvmType(op.Type)
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	data := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, array))
 	oldLength := b.nextReg()
@@ -522,7 +522,7 @@ func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array string
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", capacity, arrayType, array))
 	allocator := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 3", allocator, arrayType, array))
-	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType})
+	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType()})
 	shorter := b.nextReg()
 	b.line(fmt.Sprintf("%s = icmp ult %s %s, %s", shorter, indexType, newLength, oldLength))
 	id := b.nextID
@@ -550,7 +550,7 @@ func emitDynamicArrayAppend(b *llvmBuilder, op *mir.DynamicArrayOp, array string
 		return array
 	}
 	arrayType := b.emitter.llvmType(op.Type)
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	length := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, array))
 	capacity := b.nextReg()
@@ -614,10 +614,10 @@ func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array string
 		return array
 	}
 	arrayType := b.emitter.llvmType(op.Type)
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	oldLength := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", oldLength, arrayType, array))
-	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType})
+	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType()})
 	resized := emitDynamicArrayReserve(b, array, op.Type, newLength)
 	data := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, resized))

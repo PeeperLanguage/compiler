@@ -169,7 +169,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		b.WriteString("declare void @free(i8*)\n\n")
 	}
 	if allocUsed || allocatorRuntimeUsed {
-		sizeType := emitter.llvmType(mod.Types.IndexType)
+		sizeType := emitter.llvmType(mod.Types.IndexType())
 		if !mallocDeclared {
 			fmt.Fprintf(&b, "declare i8* @malloc(%s)\n", sizeType)
 		}
@@ -440,7 +440,7 @@ func runtimeMallocDeclaration(types *ir.TypeTable, fn *mir.Function) bool {
 	if fn == nil || fn.Blocks != nil || len(fn.Params) != 1 {
 		return false
 	}
-	return isTypeKind(types, fn.ReturnType, ir.TypeRawPtr) && fn.Params[0].Type == types.IndexType
+	return isTypeKind(types, fn.ReturnType, ir.TypeRawPtr) && fn.Params[0].Type == types.IndexType()
 }
 
 func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, allocUsed bool, allocatorRuntimeUsed bool, freeRuntimeUsed bool) {
@@ -522,7 +522,7 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 }
 
 func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
-	sizeType := emitter.llvmType(emitter.mod.Types.IndexType)
+	sizeType := emitter.llvmType(emitter.mod.Types.IndexType())
 	b.WriteString("\n")
 	b.WriteString("@peeper_default_alloc = private constant [3 x i8*] [i8* null, i8* bitcast (i8* (i8*, ")
 	b.WriteString(sizeType)

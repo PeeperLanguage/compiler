@@ -1,6 +1,7 @@
 package target
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -57,5 +58,14 @@ func TestExecutableExt(t *testing.T) {
 	}
 	if got := ExecutableExt("linux"); got != "" {
 		t.Fatalf("ExecutableExt(linux) = %q, want empty", got)
+	}
+}
+
+func TestIsHostTargetUsesNormalizedTarget(t *testing.T) {
+	if !IsHostTarget("  "+strings.ToUpper(runtime.GOOS)+" ", " "+strings.ToUpper(runtime.GOARCH)+"  ") {
+		t.Fatal("normalized host target reported as non-host")
+	}
+	if IsHostTarget("unsupported-host-os", runtime.GOARCH) {
+		t.Fatal("non-host target reported as host")
 	}
 }

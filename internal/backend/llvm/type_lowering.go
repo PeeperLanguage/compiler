@@ -64,7 +64,7 @@ func llvmTypeID(types *ir.TypeTable, id ir.TypeID) (string, bool) {
 	case ir.TypeCStr, ir.TypeRawPtr, ir.TypeAllocator:
 		return "i8*", true
 	case ir.TypeString:
-		index, ok := llvmTypeID(types, types.IndexType)
+		index, ok := llvmTypeID(types, types.IndexType())
 		if !ok {
 			return "", false
 		}
@@ -91,7 +91,7 @@ func llvmTypeID(types *ir.TypeTable, id ir.TypeID) (string, bool) {
 			if !ok {
 				return "", false
 			}
-			index, ok := llvmTypeID(types, types.IndexType)
+			index, ok := llvmTypeID(types, types.IndexType())
 			if !ok {
 				return "", false
 			}
@@ -114,7 +114,7 @@ func llvmTypeID(types *ir.TypeTable, id ir.TypeID) (string, bool) {
 			return "", false
 		}
 		if typ.Length == "" {
-			index, ok := llvmTypeID(types, types.IndexType)
+			index, ok := llvmTypeID(types, types.IndexType())
 			if !ok {
 				return "", false
 			}

@@ -14,7 +14,7 @@ func emitDefaultAllocatorHandle(b *llvmBuilder) string {
 }
 
 func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment string) string {
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	desc := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", desc, handle))
 	ctx := b.nextReg()
@@ -31,7 +31,7 @@ func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment string) strin
 }
 
 func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment string) {
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	desc := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", desc, handle))
 	ctx := b.nextReg()
@@ -46,7 +46,7 @@ func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment string
 }
 
 func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity string) string {
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType)
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	id := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("allocator_size_fail_%d", id)
