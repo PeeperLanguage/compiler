@@ -1,67 +1,41 @@
 package ownership
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/graph"
+	"compiler/internal/ir"
+	"compiler/internal/ir/hir"
 	"compiler/internal/project"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
-type nodeKind uint8
-
-const (
-	nodeEntry nodeKind = iota
-	nodeStmt
-	nodeJoin
-	nodeBlockExit
-	nodeExit
-)
-
-const (
-	graphNodeFlow graph.NodeKind = "ownership_flow"
-	graphEdgeFlow graph.EdgeKind = "ownership_flow"
-)
-
-type flowNode struct {
-	id    graph.NodeID
-	kind  nodeKind
+type site struct {
+	flow  *cfg.Site
 	stmt  ast.Stmt
 	block *ast.BlockStmt
 	scope *table.Scope
 }
 
-type flow struct {
-	graph *graph.Graph
-	nodes map[graph.NodeID]*flowNode
-	order []graph.NodeID
-	next  int
-	entry graph.NodeID
-	exit  graph.NodeID
-}
-
-type builder struct {
-	module *project.Module
-	flow   *flow
-}
-
 type analyzer struct {
 	ctx              *project.CompilerContext
 	module           *project.Module
-	flow             *flow
+	graph            *cfg.Graph
+	sites            map[cfg.SiteID]*site
+	order            []cfg.SiteID
+	cleanup          *cfg.CleanupPlan
 	function         *ast.FnDecl
 	functionScope    *table.Scope
-	reportedJoin     map[graph.NodeID]bool
-	inStates         map[graph.NodeID]state
-	referenceLiveIn  map[graph.NodeID]map[*symbols.Symbol]ast.Node
-	referenceLiveOut map[graph.NodeID]map[*symbols.Symbol]ast.Node
+	reportedJoin     map[cfg.SiteID]bool
+	inStates         map[cfg.SiteID]state
+	referenceLiveIn  map[cfg.SiteID]map[*symbols.Symbol]ast.Node
+	referenceLiveOut map[cfg.SiteID]map[*symbols.Symbol]ast.Node
 }
 
 type pointerOrigin struct {
@@ -83,9 +57,18 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil {
 		return
 	}
-	clear(module.Semantics.CleanupAfterBlock)
-	clear(module.Semantics.CleanupBeforeReturn)
-	clear(module.Semantics.DropBeforeAssign)
+	for _, graph := range module.CFG {
+		if graph == nil {
+			continue
+		}
+		graph.Cleanup = &cfg.CleanupPlan{
+			AfterScope:     make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeReturn:   make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeAssign:   make(map[ir.NodeID]struct{}),
+			DiscardedValue: make(map[ir.NodeID]struct{}),
+			ProjectionBase: make(map[ir.NodeID]struct{}),
+		}
+	}
 	for _, stmt := range module.AST.Stmts {
 		switch node := stmt.(type) {
 		case *ast.LetDecl, *ast.ConstDecl:
@@ -108,138 +91,140 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			scope, _ := sym.Scope.(*table.Scope)
-			checkFunction(ctx, module, node, scope)
+			checkFunction(ctx, module, node, scope, cfgForFunction(module, node))
 		}
 	}
 }
 
-func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope) {
-	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil {
+func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope, cfgFn *cfg.Graph) {
+	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cfgFn.Cleanup == nil {
 		return
 	}
-	f := build(module, fn.Body, scope)
+	sites, order := indexSites(module, cfgFn, fn.Body, scope)
 	(&analyzer{
 		ctx:           ctx,
 		module:        module,
-		flow:          f,
+		graph:         cfgFn,
+		sites:         sites,
+		order:         order,
+		cleanup:       cfgFn.Cleanup,
 		function:      fn,
 		functionScope: scope,
-		reportedJoin:  make(map[graph.NodeID]bool),
+		reportedJoin:  make(map[cfg.SiteID]bool),
 	}).run()
 }
 
-func build(module *project.Module, body *ast.BlockStmt, scope *table.Scope) *flow {
-	f := &flow{
-		graph: graph.New(graphNodeFlow, graphEdgeFlow),
-		nodes: make(map[graph.NodeID]*flowNode),
-		order: make([]graph.NodeID, 0),
-	}
-	b := &builder{module: module, flow: f}
-	entry := b.newNode(nodeEntry, nil, scope)
-	exit := b.newNode(nodeExit, nil, scope)
-	f.entry = entry.id
-	f.exit = exit.id
-	tails := b.buildBlock([]graph.NodeID{entry.id}, body, scope)
-	b.connectAll(tails, exit.id)
-	return f
-}
-
-func (b *builder) newNode(kind nodeKind, stmt ast.Stmt, scope *table.Scope) *flowNode {
-	id := graph.NodeID(fmt.Sprintf("ownership:%d", b.flow.next))
-	b.flow.next++
-	node := &flowNode{id: id, kind: kind, stmt: stmt, scope: scope}
-	b.flow.graph.AddNode(id)
-	b.flow.nodes[id] = node
-	b.flow.order = append(b.flow.order, id)
-	return node
-}
-
-func (b *builder) connect(from, to graph.NodeID) {
-	if from == "" || to == "" {
-		return
-	}
-	b.flow.graph.AddEdge(from, to)
-}
-
-func (b *builder) connectAll(from []graph.NodeID, to graph.NodeID) {
-	for _, id := range from {
-		b.connect(id, to)
-	}
-}
-
-func (b *builder) blockScope(block *ast.BlockStmt, fallback *table.Scope) *table.Scope {
-	if b == nil || b.module == nil || b.module.Semantics == nil || block == nil {
-		return fallback
-	}
-	if scope, ok := b.module.Semantics.BlockScopes[block.ID()]; ok && scope != nil {
-		return scope
-	}
-	return fallback
-}
-
-func (b *builder) buildBlock(in []graph.NodeID, block *ast.BlockStmt, fallback *table.Scope) []graph.NodeID {
-	if block == nil {
-		return in
-	}
-	scope := b.blockScope(block, fallback)
-	tails := in
-	for _, stmt := range block.Stmts {
-		tails = b.buildStmt(tails, stmt, scope)
-		if len(tails) == 0 {
-			break
-		}
-	}
-	if len(tails) == 0 {
+func cfgForFunction(module *project.Module, fn *ast.FnDecl) *cfg.Graph {
+	if module == nil || fn == nil {
 		return nil
 	}
-	exit := b.newNode(nodeBlockExit, nil, scope)
-	exit.block = block
-	b.connectAll(tails, exit.id)
-	return []graph.NodeID{exit.id}
+	for _, graph := range module.CFG {
+		if graph != nil && graph.Source != nil && graph.Source.NodeID == hir.NodeID(fn.ID()) {
+			return graph
+		}
+	}
+	return nil
 }
 
-func (b *builder) buildStmt(in []graph.NodeID, stmt ast.Stmt, scope *table.Scope) []graph.NodeID {
-	if stmt == nil {
-		return in
+func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, scope *table.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+	sites := make(map[cfg.SiteID]*site)
+	order := make([]cfg.SiteID, 0)
+	if module == nil || cfgFn == nil || body == nil || scope == nil {
+		return sites, order
 	}
-	switch s := stmt.(type) {
-	case *ast.BlockStmt:
-		return b.buildBlock(in, s, scope)
-	case *ast.IfStmt:
-		node := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, node.id)
-		join := b.newNode(nodeJoin, stmt, scope)
-		thenTails := b.buildBlock([]graph.NodeID{node.id}, s.Then, scope)
-		b.connectAll(thenTails, join.id)
-		if s.Else != nil {
-			elseTails := b.buildStmt([]graph.NodeID{node.id}, s.Else, scope)
-			b.connectAll(elseTails, join.id)
-		} else {
-			b.connect(node.id, join.id)
+	nodes := sourceNodes(module)
+	scopes := sourceScopes(module, body, scope)
+	for _, block := range cfgFn.Blocks {
+		if block == nil || !block.Reachable {
+			continue
 		}
-		return []graph.NodeID{join.id}
-	case *ast.ForStmt:
-		header := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, header.id)
-		after := b.newNode(nodeJoin, stmt, scope)
-		bodyTails := b.buildBlock([]graph.NodeID{header.id}, s.Body, scope)
-		b.connectAll(bodyTails, header.id)
-		b.connect(header.id, after.id)
-		return []graph.NodeID{after.id}
-	case *ast.ReturnStmt:
-		node := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, node.id)
-		b.connect(node.id, b.flow.exit)
-		return nil
-	default:
-		node := b.newNode(nodeStmt, stmt, scope)
-		b.connectAll(in, node.id)
-		return []graph.NodeID{node.id}
+		currentScope := scope
+		for _, flowSite := range block.Sites {
+			if flowSite == nil {
+				continue
+			}
+			indexed := &site{flow: flowSite, scope: currentScope}
+			switch flowSite.Kind {
+			case cfg.SiteStatement, cfg.SiteTerminator:
+				if stmt, ok := nodes[hir.NodeID(flowSite.NodeID)].(ast.Stmt); ok && stmt != nil {
+					indexed.stmt = stmt
+					if resolved := scopes[hir.NodeID(flowSite.NodeID)]; resolved != nil {
+						currentScope = resolved
+						indexed.scope = resolved
+					}
+				}
+			case cfg.SiteScopeExit:
+				if blockStmt, ok := nodes[hir.NodeID(flowSite.NodeID)].(*ast.BlockStmt); ok && blockStmt != nil {
+					indexed.block = blockStmt
+					if resolved := scopes[hir.NodeID(flowSite.NodeID)]; resolved != nil {
+						indexed.scope = resolved
+					}
+				}
+			}
+			sites[flowSite.ID] = indexed
+			order = append(order, flowSite.ID)
+		}
 	}
+	return sites, order
+}
+
+func sourceNodes(module *project.Module) map[hir.NodeID]ast.Node {
+	nodes := make(map[hir.NodeID]ast.Node)
+	if module == nil || module.AST == nil {
+		return nodes
+	}
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			if node != nil {
+				nodes[hir.NodeID(node.ID())] = node
+			}
+			return true
+		})
+	}
+	return nodes
+}
+
+func sourceScopes(module *project.Module, body *ast.BlockStmt, root *table.Scope) map[hir.NodeID]*table.Scope {
+	indexed := make(map[hir.NodeID]*table.Scope)
+	if module == nil || module.Semantics == nil || body == nil || root == nil {
+		return indexed
+	}
+	var indexStmt func(ast.Stmt, *table.Scope)
+	var indexBlock func(*ast.BlockStmt, *table.Scope)
+	indexBlock = func(block *ast.BlockStmt, parent *table.Scope) {
+		if block == nil {
+			return
+		}
+		scope := parent
+		if resolved := module.Semantics.BlockScopes[block.ID()]; resolved != nil {
+			scope = resolved
+		}
+		indexed[hir.NodeID(block.ID())] = scope
+		for _, stmt := range block.Stmts {
+			indexStmt(stmt, scope)
+		}
+	}
+	indexStmt = func(stmt ast.Stmt, scope *table.Scope) {
+		if stmt == nil {
+			return
+		}
+		indexed[hir.NodeID(stmt.ID())] = scope
+		switch node := stmt.(type) {
+		case *ast.BlockStmt:
+			indexBlock(node, scope)
+		case *ast.IfStmt:
+			indexBlock(node.Then, scope)
+			indexStmt(node.Else, scope)
+		case *ast.ForStmt:
+			indexBlock(node.Body, scope)
+		}
+	}
+	indexBlock(body, root)
+	return indexed
 }
 
 func (a *analyzer) run() {
-	if a == nil || a.flow == nil || a.flow.graph == nil || a.flow.entry == "" {
+	if a == nil || a.graph == nil || a.graph.Entry == nil || len(a.graph.Entry.Sites) == 0 {
 		return
 	}
 	a.computeReferenceLiveness()
@@ -260,26 +245,30 @@ func (a *analyzer) run() {
 			}}
 		}
 	}
-	a.inStates = map[graph.NodeID]state{a.flow.entry: entryState}
-	queue := []graph.NodeID{a.flow.entry}
-	queued := map[graph.NodeID]bool{a.flow.entry: true}
+	entry := a.graph.Entry.Sites[0].ID
+	a.inStates = map[cfg.SiteID]state{entry: entryState}
+	queue := []cfg.SiteID{entry}
+	queued := map[cfg.SiteID]bool{entry: true}
 	for len(queue) > 0 {
 		id := queue[0]
 		queue = queue[1:]
 		queued[id] = false
-		node := a.flow.nodes[id]
+		node := a.sites[id]
 		next := copyState(a.inStates[id])
 		if node != nil {
-			switch node.kind {
-			case nodeStmt:
+			switch node.flow.Kind {
+			case cfg.SiteStatement, cfg.SiteTerminator:
 				if node.stmt != nil {
 					a.applyStmt(node, next)
 				}
-			case nodeBlockExit:
+			case cfg.SiteScopeExit:
 				a.applyBlockExit(node, next, a.newLoanContext(node, next))
 			}
 		}
-		for _, succ := range a.flow.graph.Successors(id) {
+		for _, succ := range node.flow.Successors {
+			if a.sites[succ] == nil {
+				continue
+			}
 			current, exists := a.inStates[succ]
 			merged, changed := a.mergeState(succ, current, next, exists)
 			if !changed {
@@ -305,11 +294,12 @@ func copyState(src state) state {
 	return dst
 }
 
-func (a *analyzer) mergeState(nodeID graph.NodeID, dst, src state, exists bool) (state, bool) {
+func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (state, bool) {
 	if !exists {
 		return copyState(src), true
 	}
-	if a.flow.graph.InDegree(nodeID) <= 1 {
+	node := a.sites[nodeID]
+	if node == nil || node.flow == nil || len(node.flow.Predecessors) <= 1 {
 		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) &&
 			sameReferenceValues(dst.references, src.references) {
 			return dst, false
@@ -333,7 +323,6 @@ func (a *analyzer) mergeState(nodeID graph.NodeID, dst, src state, exists bool) 
 	}
 	if mismatch && !a.reportedJoin[nodeID] {
 		a.reportedJoin[nodeID] = true
-		node := a.flow.nodes[nodeID]
 		var site ast.Node
 		if node != nil {
 			site = node.stmt
@@ -371,15 +360,15 @@ func newState() state {
 	}
 }
 
-func (a *analyzer) applyBlockExit(node *flowNode, st state, loans *loanContext) {
+func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	if a == nil || node == nil || node.block == nil || node.scope == nil {
 		return
 	}
 	a.checkScopeDestruction(node.scope, node.block, loans)
-	delete(a.module.Semantics.CleanupAfterBlock, node.block.ID())
+	delete(a.cleanup.AfterScope, ir.NodeID(node.block.ID()))
 	cleanup := cleanupSymbols(node.scope, st)
 	if len(cleanup) > 0 {
-		a.module.Semantics.CleanupAfterBlock[node.block.ID()] = cleanup
+		a.cleanup.AfterScope[ir.NodeID(node.block.ID())] = symbolIDs(cleanup)
 	}
 	clearScopeOwnership(node.scope, st)
 }
@@ -421,7 +410,7 @@ func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt,
 	if a == nil || stmt == nil {
 		return
 	}
-	delete(a.module.Semantics.CleanupBeforeReturn, stmt.ID())
+	delete(a.cleanup.BeforeReturn, ir.NodeID(stmt.ID()))
 	cleanup := make([]*symbols.Symbol, 0)
 	for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
 		a.checkScopeDestruction(current, stmt, loans)
@@ -429,7 +418,7 @@ func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt,
 		clearScopeOwnership(current, st)
 	}
 	if len(cleanup) > 0 {
-		a.module.Semantics.CleanupBeforeReturn[stmt.ID()] = cleanup
+		a.cleanup.BeforeReturn[ir.NodeID(stmt.ID())] = symbolIDs(cleanup)
 	}
 }
 
@@ -448,7 +437,7 @@ func (a *analyzer) checkScopeDestruction(scope *table.Scope, site ast.Node, loan
 	}
 }
 
-func (a *analyzer) applyStmt(node *flowNode, st state) {
+func (a *analyzer) applyStmt(node *site, st state) {
 	if a == nil || node == nil || node.scope == nil || node.stmt == nil {
 		return
 	}
@@ -461,13 +450,13 @@ func (a *analyzer) applyStmt(node *flowNode, st state) {
 		a.applyBinding(scope, s, s.Value, st, loans)
 	case *ast.AssignStmt:
 		reference, hasReference := a.referenceValueForExpr(scope, s.Value, st)
-		delete(a.module.Semantics.DropBeforeAssign, s.ID())
+		delete(a.cleanup.BeforeAssign, ir.NodeID(s.ID()))
 		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
 		if _, ok := s.Target.(*ast.Ident); !ok {
 			a.checkExpr(scope, s.Target, st, useRead, loans, true)
 			a.checkStorageAccess(scope, s.Target, st, loans, storageMutate)
 			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
-				a.module.Semantics.DropBeforeAssign[s.ID()] = struct{}{}
+				a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 			}
 		}
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
@@ -477,7 +466,7 @@ func (a *analyzer) applyStmt(node *flowNode, st state) {
 				}
 				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
 					if _, live := st.live[sym]; live {
-						a.module.Semantics.DropBeforeAssign[s.ID()] = struct{}{}
+						a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 					}
 				}
 				if ownershipTrackedSymbol(sym) {
@@ -496,13 +485,23 @@ func (a *analyzer) applyStmt(node *flowNode, st state) {
 	case *ast.ExprStmt:
 		a.checkExpr(scope, s.Expr, st, useRead, loans, false)
 		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.NeedsDrop(a.exprType(s.Expr)) {
-			a.module.Semantics.DropDiscardedExpr[s.Expr.ID()] = struct{}{}
+			a.cleanup.DiscardedValue[ir.NodeID(s.Expr.ID())] = struct{}{}
 		}
 	case *ast.IfStmt:
 		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 	case *ast.ForStmt:
 		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 	}
+}
+
+func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
+	ids := make([]symbols.SymbolID, 0, len(values))
+	for _, sym := range values {
+		if sym != nil {
+			ids = append(ids, sym.ID)
+		}
+	}
+	return ids
 }
 
 func (a *analyzer) applyBinding(scope *table.Scope, stmt ast.Stmt, value ast.Expr, st state, loans *loanContext) {

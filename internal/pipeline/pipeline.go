@@ -16,7 +16,6 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/usage"
-	"compiler/internal/target"
 	"errors"
 	"strings"
 	"sync"
@@ -163,7 +162,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 			mirModules = append(mirModules, module.MIR)
 		}
 	}
-	llvm.ValidateRuntimeSymbols(mirModules, diag)
+	llvm.ValidateRuntimeSymbols(mirModules, diag, p.ctx.Target)
 	return nil
 }
 
@@ -216,12 +215,14 @@ func nextModulePhase(current project.ModulePhase) project.ModulePhase {
 	case project.PhaseConstEval:
 		return project.PhaseTypechecked
 	case project.PhaseTypechecked:
+		return project.PhaseHIR
+	case project.PhaseHIR:
+		return project.PhaseCFG
+	case project.PhaseCFG:
 		return project.PhaseOwnership
 	case project.PhaseOwnership:
 		return project.PhaseUsage
 	case project.PhaseUsage:
-		return project.PhaseHIR
-	case project.PhaseHIR:
 		return project.PhaseMIR
 	case project.PhaseMIR:
 		return project.PhaseBackend
@@ -238,9 +239,15 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 		return project.PhaseBound
 	case project.PhaseConstEval, project.PhaseTypechecked:
 		return project.PhaseConstEval
-	case project.PhaseResolved, project.PhaseOwnership, project.PhaseUsage:
+	case project.PhaseResolved:
 		return project.PhaseCollected
 	case project.PhaseHIR:
+		return project.PhaseTypechecked
+	case project.PhaseCFG:
+		return project.PhaseHIR
+	case project.PhaseOwnership:
+		return project.PhaseCFG
+	case project.PhaseUsage:
 		return project.PhaseOwnership
 	default:
 		return project.PhaseNone
@@ -287,19 +294,6 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
-	if module.Phase < project.PhaseOwnership {
-		ownership.Check(p.ctx, module)
-		module.Phase = project.PhaseOwnership
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseUsage {
-		usage.Analyze(p.ctx, module)
-		module.Phase = project.PhaseUsage
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-
 	if module.Phase < project.PhaseHIR {
 		modhir := hir_lower.GenerateHIR(p.ctx, module)
 		if modhir == nil {
@@ -314,12 +308,33 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.HIR == nil {
 		return false
 	}
+	if module.Phase < project.PhaseCFG {
+		module.CFG = cfg.BuildModule(module.HIR)
+		module.Phase = project.PhaseCFG
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.CFG == nil {
+		return false
+	}
+	if module.Phase < project.PhaseOwnership {
+		ownership.Check(p.ctx, module)
+		module.Phase = project.PhaseOwnership
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < project.PhaseUsage {
+		usage.Analyze(p.ctx, module)
+		module.Phase = project.PhaseUsage
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
 	if module.Phase < project.PhaseMIR {
-		cfg.AnalyzeModule(module.HIR, diag)
+		cfg.Analyze(module.CFG, diag)
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.ModuleScope, module.Semantics.ConstValues)
+		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.ModuleScope, module.Semantics.ConstValues)
 		module.Phase = project.PhaseMIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -330,14 +345,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase >= project.PhaseBackend {
 		return false
 	}
-	targetTriple, err := target.LLVMTriple(p.ctx.Config.TargetOS, p.ctx.Config.TargetArch)
-	if err != nil {
-		if diag != nil {
-			diag.Add(diagnostics.NewError("resolve llvm target triple: " + err.Error()))
-		}
-		return false
-	}
-	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, diag, targetTriple, p.ctx.Config.BuildDebug, p.ctx.Config.TargetOS)
+	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, diag, p.ctx.Target, p.ctx.Config.BuildDebug)
 	module.Phase = project.PhaseBackend
 	p.ctx.Metrics.AddPhaseAdvance()
 	return true

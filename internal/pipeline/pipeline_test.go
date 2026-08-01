@@ -9,6 +9,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/mir"
 	"compiler/internal/project"
 	"compiler/pkg/peeper"
 )
@@ -323,11 +324,14 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != project.PhaseHIR {
-		t.Fatalf("expected pipeline to continue through HIR and stop before MIR, got phase %v", entry.Phase)
+	if entry.Phase != project.PhaseUsage {
+		t.Fatalf("expected pipeline to run CFG ownership/usage and stop before MIR, got phase %v", entry.Phase)
 	}
 	if entry.HIR == nil {
 		t.Fatalf("expected HIR despite extern definition error")
+	}
+	if len(entry.CFG) == 0 {
+		t.Fatal("expected canonical CFG despite extern definition error")
 	}
 	if len(entry.HIR.Externs) != 0 {
 		t.Fatalf("extern definition should not lower as import, got externs %#v", entry.HIR.Externs)
@@ -405,9 +409,10 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseResolved,
 		project.PhaseConstEval,
 		project.PhaseTypechecked,
+		project.PhaseHIR,
+		project.PhaseCFG,
 		project.PhaseOwnership,
 		project.PhaseUsage,
-		project.PhaseHIR,
 		project.PhaseMIR,
 		project.PhaseBackend,
 	}
@@ -417,6 +422,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		}
 		if entry.Phase != phase {
 			t.Fatalf("phase = %v, want %v", entry.Phase, phase)
+		}
+		if phase == project.PhaseCFG && len(entry.CFG) == 0 {
+			t.Fatal("CFG phase must retain canonical graph")
 		}
 	}
 	if pipeline.advanceModulePhase(entry, diag) {
@@ -617,6 +625,64 @@ fn main() -> i32 {
 	}
 	if entry.Phase != project.PhaseBackend {
 		t.Fatalf("entry phase = %v, want %v", entry.Phase, project.PhaseBackend)
+	}
+}
+
+func TestPipelineParallelModulesShareTypeTable(t *testing.T) {
+	root := t.TempDir()
+	srcDir := filepath.Join(root, peeper.SourceDirName)
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("mkdir src dir: %v", err)
+	}
+
+	sources := map[string]string{
+		peeper.MainFileName: `import "app/left";
+import "app/right";
+
+fn main() -> i32 {
+	return left::Value() + right::Value();
+}`,
+		"left" + peeper.SourceExt: `struct Box { value: i32 }
+
+fn Value() -> i32 {
+	let values = []Box{.{value = 19}};
+	return values[0].value;
+}`,
+		"right" + peeper.SourceExt: `struct Box { value: i32 }
+
+fn Value() -> i32 {
+	let values = []Box{.{value = 23}};
+	return values[0].value;
+}`,
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	for name, sourceText := range sources {
+		path := filepath.Join(srcDir, name)
+		diag.AddSourceContent(path, sourceText)
+		if err := os.WriteFile(path, []byte(sourceText), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	mainPath := filepath.Join(srcDir, peeper.MainFileName)
+	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
+	entry := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
+		ImportPath: "app/main",
+		FilePath:   mainPath,
+		Origin:     project.ModuleOriginLocal,
+	}
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	for _, name := range []string{"left", "right"} {
+		module, ok := ctx.ModuleByFile(filepath.Join(srcDir, name+peeper.SourceExt))
+		if !ok || module.Phase != project.PhaseBackend {
+			t.Fatalf("%s module = %#v, want backend phase", name, module)
+		}
 	}
 }
 
@@ -1109,6 +1175,55 @@ fn first() -> i32 {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineDropsTemporaryDynamicArrayAfterFoldedProjectionLoad(t *testing.T) {
+	entrySrc := `fn make_values() -> []i32 {
+	return []i32{41};
+}
+
+fn main() -> i32 {
+	return make_values()[0];
+}`
+	const entryPath = "entry" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+
+	found := false
+	for _, fn := range entry.MIR.Funcs {
+		if fn.Name != "main" {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			for index := 0; index+1 < len(block.Instrs); index++ {
+				assign, ok := block.Instrs[index].(*mir.Assign)
+				if !ok {
+					continue
+				}
+				load, ok := assign.Value.(*mir.Load)
+				if !ok {
+					continue
+				}
+				drop, ok := block.Instrs[index+1].(*mir.Drop)
+				if ok && drop.Value.Text() == load.Place.Root.Text() {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("temporary dynamic-array projection has no immediate root drop, MIR:\n%s", entry.MIR.Text())
 	}
 }
 

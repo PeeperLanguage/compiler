@@ -2,35 +2,39 @@ package cfg
 
 import (
 	"compiler/internal/diagnostics"
+	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/source"
 )
 
-// AnalyzeModule builds CFG from lowered HIR and emits flow diagnostics:
-// - missing return paths for non-void functions
-// - unreachable code warnings
-func AnalyzeModule(hirMod *hir.Module, diag *diagnostics.DiagnosticBag) []*Graph {
+// BuildModule lowers a HIR module into its canonical CFG artifact.
+func BuildModule(hirMod *hir.Module) []*Graph {
 	if hirMod == nil {
 		return nil
 	}
 	graphs := make([]*Graph, 0, len(hirMod.Funcs))
 	for _, fn := range hirMod.Funcs {
-		graphs = append(graphs, buildCFGFunction(fn))
+		graph := buildCFGFunction(hirMod.Types, fn)
+		prepareGraph(graph)
+		graphs = append(graphs, graph)
 	}
+	return graphs
+}
+
+// Analyze emits flow diagnostics from an already-built CFG artifact.
+func Analyze(graphs []*Graph, diag *diagnostics.DiagnosticBag) {
 	for _, fn := range graphs {
 		if fn != nil {
 			analyzeFunction(fn, diag)
 		}
 	}
-	return graphs
 }
 
 func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
-	markReachable(fn.Entry, make(map[int]bool))
-	rebuildPredecessors(fn)
+	prepareGraph(fn)
 
 	for _, block := range fn.Blocks {
 		if block == nil || block.Reachable || len(block.Stmts) == 0 {
@@ -45,9 +49,96 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 		)
 	}
 
-	if fn.Exit != nil && fn.Exit.Reachable && fn.ReturnType != "" && fn.ReturnType != "void" {
+	returnType, hasReturnType := fn.Types.Type(fn.ReturnType)
+	if fn.Exit != nil && fn.Exit.Reachable && hasReturnType && returnType.Kind != ir.TypeVoid {
 		reportMissingReturnCFG(fn, diag)
 	}
+}
+
+// prepareGraph establishes structural facts every CFG consumer relies on.
+// Analysis may call it again after a graph mutation before issuing diagnostics.
+func prepareGraph(fn *Graph) {
+	if fn == nil || fn.Entry == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		if block != nil {
+			block.Reachable = false
+		}
+	}
+	markReachable(fn.Entry, make(map[int]bool))
+	rebuildPredecessors(fn)
+	rebuildSites(fn)
+}
+
+func rebuildSites(fn *Graph) {
+	if fn == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		block.Sites = block.Sites[:0]
+		for _, stmt := range block.Stmts {
+			if stmt != nil {
+				block.Sites = append(block.Sites, &Site{Kind: SiteStatement, NodeID: hir.NodeIDOf(stmt)})
+			}
+		}
+		for _, scopeID := range block.ScopeExits {
+			block.Sites = append(block.Sites, &Site{Kind: SiteScopeExit, NodeID: scopeID})
+		}
+		switch term := block.Terminator.(type) {
+		case *Branch:
+			block.Sites = append(block.Sites, &Site{Kind: SiteTerminator, NodeID: term.NodeID})
+		}
+		if len(block.Sites) == 0 {
+			block.Sites = append(block.Sites, &Site{Kind: SiteJoin})
+		}
+		for index, site := range block.Sites {
+			site.ID = SiteID{Block: block.ID, Index: index}
+			site.Successors = site.Successors[:0]
+			site.Predecessors = site.Predecessors[:0]
+		}
+	}
+	for _, block := range fn.Blocks {
+		if block == nil || len(block.Sites) == 0 {
+			continue
+		}
+		for index := 0; index+1 < len(block.Sites); index++ {
+			connectSites(block.Sites[index], block.Sites[index+1])
+		}
+		last := block.Sites[len(block.Sites)-1]
+		switch term := block.Terminator.(type) {
+		case *Jump:
+			connectBlockSite(last, term.Target)
+		case *Branch:
+			connectBlockSite(last, term.TrueTarget)
+			connectBlockSite(last, term.FalseTarget)
+		case *Return:
+			connectBlockSite(last, fn.Exit)
+		}
+	}
+}
+
+func connectBlockSite(from *Site, target *Block) {
+	if target == nil || len(target.Sites) == 0 {
+		return
+	}
+	connectSites(from, target.Sites[0])
+}
+
+func connectSites(from, to *Site) {
+	if from == nil || to == nil {
+		return
+	}
+	for _, existing := range from.Successors {
+		if existing == to.ID {
+			return
+		}
+	}
+	from.Successors = append(from.Successors, to.ID)
+	to.Predecessors = append(to.Predecessors, from.ID)
 }
 
 func markReachable(block *Block, seen map[int]bool) {
@@ -134,7 +225,7 @@ func reportMissingReturnCFG(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	}
 
 	if fn.Source.Location != nil {
-		d.WithSecondaryLabel(fn.Source.Location, "expected `"+fn.ReturnType+"` here")
+		d.WithSecondaryLabel(fn.Source.Location, "expected `"+fn.Types.Text(fn.ReturnType)+"` here")
 	}
 
 	for _, branch := range branches {

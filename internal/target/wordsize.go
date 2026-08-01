@@ -1,10 +1,6 @@
 package target
 
-import (
-	"fmt"
-	"runtime"
-	"strings"
-)
+import "strings"
 
 // Pointer size constants (in bits) for the supported ABIs.
 const (
@@ -28,8 +24,6 @@ var arch32 = map[string]struct{}{
 	"wasm":        {},
 }
 
-var sizeBits = DefaultSizeBitsForArch(runtime.GOARCH)
-
 // DefaultSizeBitsForArch returns the default pointer size in bits
 // for the given Go architecture string. Unknown architectures
 // default to 64 bits, matching the behaviour of the Go runtime.
@@ -39,25 +33,4 @@ func DefaultSizeBitsForArch(arch string) int {
 		return Bits32
 	}
 	return Bits64
-}
-
-// SizeBits returns the currently configured pointer size in bits.
-// It defaults to the host architecture's native size and can be
-// overridden by SetSizeBits.
-func SizeBits() int {
-	return sizeBits
-}
-
-// SetSizeBits configures the global pointer size. Passing 0 restores
-// the default for the current GOARCH. Returns an error if bits is
-// not 0, 32, or 64.
-func SetSizeBits(bits int) error {
-	if bits == 0 {
-		bits = DefaultSizeBitsForArch(runtime.GOARCH)
-	}
-	if bits != Bits32 && bits != Bits64 {
-		return fmt.Errorf("invalid target ABI size %d (expected %d or %d)", bits, Bits32, Bits64)
-	}
-	sizeBits = bits
-	return nil
 }

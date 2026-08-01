@@ -3,10 +3,12 @@ package typeinfo
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
+	"compiler/internal/target"
 	"compiler/pkg/numeric"
 )
 
 type SyntaxOptions struct {
+	Target            target.Info
 	SelfType          Type
 	AllowAbstractSelf bool
 	ResolveNamed      func(name string) (Type, bool)
@@ -18,6 +20,9 @@ type SyntaxOptions struct {
 func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 	if node == nil {
 		return nil
+	}
+	if !opts.Target.Valid() {
+		opts.Target = target.Host()
 	}
 	switch typ := node.(type) {
 	case *ast.NamedType:
@@ -57,7 +62,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		case "Allocator":
 			return &AllocatorType{}
 		}
-		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name); ok {
+		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name, opts.Target); ok {
 			return &IntegerType{Signed: signed, Bits: bits}
 		}
 		return &NamedType{Name: typ.Name}
@@ -100,7 +105,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			lengthType := DefaultNumberType(typ.Len.Value)
 			if typ.Len.ExplicitType != "" {
 				var ok bool
-				lengthType, ok = NumericTypeFromName(typ.Len.ExplicitType)
+				lengthType, ok = NumericTypeFromName(typ.Len.ExplicitType, opts.Target)
 				if !ok {
 					if opts.InvalidArrayLen != nil {
 						return opts.InvalidArrayLen(typ.Len)

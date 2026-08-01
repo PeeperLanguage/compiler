@@ -123,7 +123,7 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 	case *ast.NumberLit:
 		typ := typeinfo.DefaultNumberType(node.Value)
 		if node.ExplicitType != "" {
-			if explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType); ok {
+			if explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType, e.ctx.Target); ok {
 				typ = explicit
 			} else {
 				return nil, false

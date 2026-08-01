@@ -29,6 +29,7 @@ type Origin struct {
 
 type OriginOptions struct {
 	ExprType         ExprTypeFunc
+	ResolveBinding   BindingResolver
 	ReferenceOrigins func(*symbols.Symbol) []Origin
 	CallOrigins      func(*ast.CallExpr) []Origin
 	ConstantIndex    func(ast.Expr) (string, bool)
@@ -44,7 +45,17 @@ func Origins(scope *table.Scope, expr ast.Expr, opts OriginOptions) []Origin {
 	case *ast.AddressExpr:
 		return Origins(scope, node.Expr, opts)
 	case *ast.Ident:
-		sym, found := scope.Lookup(node.Name)
+		var sym *symbols.Symbol
+		var found bool
+		if opts.ResolveBinding != nil {
+			binding, resolved := opts.ResolveBinding(node)
+			if resolved {
+				sym, found = binding.Symbol, true
+			}
+		}
+		if !found {
+			sym, found = scope.Lookup(node.Name)
+		}
 		if !found || sym == nil {
 			return nil
 		}

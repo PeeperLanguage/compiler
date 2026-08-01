@@ -8,9 +8,13 @@ import (
 	"compiler/internal/source"
 )
 
+// NodeID identifies source syntax without retaining an AST object in IR.
+type NodeID uint32
+
 type Param struct {
-	Name string
-	Type string
+	Name     string
+	Type     TypeID
+	SymbolID symbols.SymbolID
 }
 
 type Module interface {
@@ -20,59 +24,61 @@ type Module interface {
 type Expr interface {
 	exprNode()
 	String() string
-	TypeText() string
+	TypeID() TypeID
 }
 
 type InvalidExpr struct {
 	Message  string
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type IntLit struct {
 	Value    string
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type FloatLit struct {
 	Value    string
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type StringLit struct {
 	Value    string
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type BoolLit struct {
 	Value    bool
+	Type     TypeID
 	Location *source.Location
 }
 
 type ZeroValue struct {
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type OptionalSome struct {
 	Value    Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type Ident struct {
 	Name     string
-	Type     string
+	Type     TypeID
+	SymbolID symbols.SymbolID
 	Location *source.Location
 }
 
 type Unary struct {
 	Op       string
 	Arg      Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -80,14 +86,14 @@ type Binary struct {
 	Op       string
 	Left     Expr
 	Right    Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type Call struct {
 	Callee   Expr
 	Args     []Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -103,33 +109,34 @@ type PlaceProjection struct {
 	Kind       PlaceProjectionKind
 	FieldIndex int
 	Index      Expr
-	Type       string
+	Type       TypeID
 	Location   *source.Location
 }
 
 type Place struct {
 	Root        Expr
 	Projections []PlaceProjection
-	Type        string
+	Type        TypeID
 	Location    *source.Location
 }
 
 type Load struct {
 	Place    *Place
 	DropRoot bool
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type AddrOf struct {
 	Place    *Place
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type TempBorrow struct {
 	Value    Expr
 	Slice    bool
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -139,24 +146,24 @@ type SliceView struct {
 	Start        Expr
 	End          Expr
 	EndExclusive bool
-	Type         string
+	Type         TypeID
 	Location     *source.Location
 }
 
 type InterfaceSlot struct {
-	InterfaceType string
+	InterfaceType TypeID
 	MethodName    string
 	WrapperName   string
-	SlotType      string
+	SlotType      TypeID
 	FuncName      string
-	FuncType      string
-	DataType      string
+	FuncType      TypeID
+	DataType      TypeID
 }
 
 type InterfaceMake struct {
 	Value    Expr
 	Slots    []InterfaceSlot
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -165,7 +172,7 @@ type InterfaceCall struct {
 	Slot     int
 	Args     []Expr
 	Consumes bool
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -173,20 +180,21 @@ type Field struct {
 	Base     Expr
 	Index    int
 	DropBase bool
-	Type     string
+	NodeID   NodeID
+	Type     TypeID
 	Location *source.Location
 }
 
 type StructLit struct {
 	Fields   []Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type ArrayLit struct {
 	Values   []Expr
 	Dynamic  bool
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -195,20 +203,20 @@ type DynamicArrayOp struct {
 	Array    Expr
 	Length   Expr
 	Value    Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
 type AllocExpr struct {
 	Value     Expr
 	Allocator Expr
-	Type      string
+	Type      TypeID
 	Location  *source.Location
 }
 
 type Cast struct {
 	Expr     Expr
-	Type     string
+	Type     TypeID
 	Location *source.Location
 }
 
@@ -243,7 +251,7 @@ func (*Field) exprNode()          {}
 func (*StructLit) exprNode()      {}
 func (*ArrayLit) exprNode()       {}
 func (*DynamicArrayOp) exprNode() {}
-func (*AllocExpr) exprNode()     {}
+func (*AllocExpr) exprNode()      {}
 func (*Cast) exprNode()           {}
 func (*Print) exprNode()          {}
 func (*Drop) exprNode()           {}
@@ -311,9 +319,9 @@ func (e *InvalidExpr) String() string {
 	}
 	return "<invalid: " + e.Message + ">"
 }
-func (e *InvalidExpr) TypeText() string {
-	if e == nil || e.Type == "" {
-		return "<invalid>"
+func (e *InvalidExpr) TypeID() TypeID {
+	if e == nil || e.Type == InvalidType {
+		return InvalidType
 	}
 	return e.Type
 }
@@ -324,9 +332,9 @@ func (e *IntLit) String() string {
 	}
 	return e.Value
 }
-func (e *IntLit) TypeText() string {
-	if e == nil || e.Type == "" {
-		return "i32"
+func (e *IntLit) TypeID() TypeID {
+	if e == nil || e.Type == InvalidType {
+		return InvalidType
 	}
 	return e.Type
 }
@@ -336,9 +344,9 @@ func (e *FloatLit) String() string {
 	}
 	return e.Value
 }
-func (e *FloatLit) TypeText() string {
-	if e == nil || e.Type == "" {
-		return "f64"
+func (e *FloatLit) TypeID() TypeID {
+	if e == nil || e.Type == InvalidType {
+		return InvalidType
 	}
 	return e.Type
 }
@@ -348,9 +356,9 @@ func (e *StringLit) String() string {
 	}
 	return fmt.Sprintf("%q", e.Value)
 }
-func (e *StringLit) TypeText() string {
-	if e == nil || e.Type == "" {
-		return "cstr"
+func (e *StringLit) TypeID() TypeID {
+	if e == nil || e.Type == InvalidType {
+		return InvalidType
 	}
 	return e.Type
 }
@@ -360,16 +368,21 @@ func (e *BoolLit) String() string {
 	}
 	return "false"
 }
-func (e *BoolLit) TypeText() string { return "bool" }
+func (e *BoolLit) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
 func (e *ZeroValue) String() string {
-	if e == nil || e.Type == "" {
+	if e == nil || e.Type == InvalidType {
 		return "zero"
 	}
-	return "zero(" + e.Type + ")"
+	return "zero"
 }
-func (e *ZeroValue) TypeText() string {
+func (e *ZeroValue) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -379,38 +392,38 @@ func (e *OptionalSome) String() string {
 	}
 	return "some(" + e.Value.String() + ")"
 }
-func (e *OptionalSome) TypeText() string {
+func (e *OptionalSome) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
 func (e *Ident) String() string { return e.Name }
-func (e *Ident) TypeText() string {
+func (e *Ident) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
 func (e *Unary) String() string { return fmt.Sprintf("(%s %s)", e.Op, e.Arg.String()) }
-func (e *Unary) TypeText() string {
+func (e *Unary) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
-	if e.Type != "" {
+	if e.Type != InvalidType {
 		return e.Type
 	}
 	if e.Arg != nil {
-		return e.Arg.TypeText()
+		return e.Arg.TypeID()
 	}
-	return ""
+	return InvalidType
 }
 func (e *Binary) String() string {
 	return fmt.Sprintf("(%s %s %s)", e.Op, e.Left.String(), e.Right.String())
 }
-func (e *Binary) TypeText() string {
+func (e *Binary) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -431,9 +444,9 @@ func (e *Call) String() string {
 	b.WriteString(")")
 	return b.String()
 }
-func (e *Call) TypeText() string {
+func (e *Call) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -445,7 +458,7 @@ func (e *Print) String() string {
 	return "print(" + e.Value.String() + ")"
 }
 
-func (*Print) TypeText() string { return "" }
+func (*Print) TypeID() TypeID { return InvalidType }
 
 func (e *Drop) String() string {
 	if e == nil || e.Value == nil {
@@ -454,7 +467,7 @@ func (e *Drop) String() string {
 	return "drop(" + e.Value.String() + ")"
 }
 
-func (*Drop) TypeText() string { return "" }
+func (*Drop) TypeID() TypeID { return InvalidType }
 
 func (p *Place) String() string {
 	if p == nil || p.Root == nil {
@@ -483,9 +496,9 @@ func (p *Place) String() string {
 	return b.String()
 }
 
-func (p *Place) TypeText() string {
+func (p *Place) TypeID() TypeID {
 	if p == nil {
-		return ""
+		return InvalidType
 	}
 	return p.Type
 }
@@ -497,11 +510,11 @@ func (e *Load) String() string {
 	return "load(" + e.Place.String() + ")"
 }
 
-func (e *Load) TypeText() string {
+func (e *Load) TypeID() TypeID {
 	if e == nil || e.Place == nil {
-		return ""
+		return InvalidType
 	}
-	return e.Place.TypeText()
+	return e.Place.TypeID()
 }
 
 func (e *AddrOf) String() string {
@@ -511,9 +524,9 @@ func (e *AddrOf) String() string {
 	return "^(" + e.Place.String() + ")"
 }
 
-func (e *AddrOf) TypeText() string {
+func (e *AddrOf) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -525,9 +538,9 @@ func (e *TempBorrow) String() string {
 	return "borrowtemp(" + e.Value.String() + ")"
 }
 
-func (e *TempBorrow) TypeText() string {
+func (e *TempBorrow) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -539,9 +552,9 @@ func (e *SliceView) String() string {
 	return "view(" + e.Source.String() + ")"
 }
 
-func (e *SliceView) TypeText() string {
+func (e *SliceView) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -553,9 +566,9 @@ func (e *InterfaceMake) String() string {
 	return fmt.Sprintf("iface(%s)", e.Value.String())
 }
 
-func (e *InterfaceMake) TypeText() string {
+func (e *InterfaceMake) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -577,9 +590,9 @@ func (e *InterfaceCall) String() string {
 	return b.String()
 }
 
-func (e *InterfaceCall) TypeText() string {
+func (e *InterfaceCall) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -591,9 +604,9 @@ func (e *Field) String() string {
 	return fmt.Sprintf("%s.%d", e.Base.String(), e.Index)
 }
 
-func (e *Field) TypeText() string {
+func (e *Field) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -616,9 +629,9 @@ func (e *StructLit) String() string {
 	return b.String()
 }
 
-func (e *StructLit) TypeText() string {
+func (e *StructLit) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -641,9 +654,9 @@ func (e *ArrayLit) String() string {
 	return b.String()
 }
 
-func (e *ArrayLit) TypeText() string {
+func (e *ArrayLit) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -665,9 +678,9 @@ func (e *DynamicArrayOp) String() string {
 	return string(e.Op) + "(" + strings.Join(args, ", ") + ")"
 }
 
-func (e *DynamicArrayOp) TypeText() string {
+func (e *DynamicArrayOp) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -682,9 +695,9 @@ func (e *AllocExpr) String() string {
 	return "alloc(" + e.Value.String() + ")"
 }
 
-func (e *AllocExpr) TypeText() string {
+func (e *AllocExpr) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -693,12 +706,12 @@ func (e *Cast) String() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("(%s as %s)", e.Expr.String(), e.Type)
+	return fmt.Sprintf("cast(%s)", e.Expr.String())
 }
 
-func (e *Cast) TypeText() string {
+func (e *Cast) TypeID() TypeID {
 	if e == nil {
-		return ""
+		return InvalidType
 	}
 	return e.Type
 }
@@ -715,7 +728,10 @@ func ArrayTypeParts(typeText string) (string, string, bool) {
 	return strings.TrimSpace(typeText[1:close]), strings.TrimSpace(typeText[close+1:]), true
 }
 
-func SignatureText(params []Param, returnType string) string {
+func SignatureText(types *TypeTable, params []Param, returnType TypeID) string {
+	if types == nil {
+		panic("formatting IR signature without a type table")
+	}
 	var b strings.Builder
 	b.WriteString("(")
 	for i, param := range params {
@@ -724,16 +740,16 @@ func SignatureText(params []Param, returnType string) string {
 		}
 		if param.Name != "" {
 			b.WriteString(param.Name)
-			if param.Type != "" {
+			if param.Type != InvalidType {
 				b.WriteString(": ")
 			}
 		}
-		b.WriteString(param.Type)
+		b.WriteString(types.Text(param.Type))
 	}
 	b.WriteString(")")
-	if returnType != "" {
+	if returnType != InvalidType && types.Text(returnType) != "void" {
 		b.WriteString(" -> ")
-		b.WriteString(returnType)
+		b.WriteString(types.Text(returnType))
 	}
 	return b.String()
 }

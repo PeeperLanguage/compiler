@@ -7,6 +7,7 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -14,23 +15,78 @@ import (
 	"compiler/pkg/peeper"
 )
 
+type mirTypeFixture struct {
+	table                                      *ir.TypeTable
+	void, boolType, cstr, f64, i32             ir.TypeID
+	rawptr, usize, ownedI32, optionalI32       ir.TypeID
+	valueStruct, ownerStruct, ownedValueStruct ir.TypeID
+	fixed3I32, fixed4I32, dynamicI32           ir.TypeID
+	refI32, mutRefI32, refBox, refDynamicI32   ir.TypeID
+	mutRefDynamicI32                           ir.TypeID
+	fnI32, fnVoid, fnBox, fnOwner, fnTwoBox    ir.TypeID
+}
+
+var mirTypes = func() mirTypeFixture {
+	table := ir.NewTypeTable()
+	void := table.Intern(ir.Type{Kind: ir.TypeVoid})
+	i32 := table.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	boolType := table.Intern(ir.Type{Kind: ir.TypeBool})
+	cstr := table.Intern(ir.Type{Kind: ir.TypeCStr})
+	f64 := table.Intern(ir.Type{Kind: ir.TypeFloat, Bits: 64})
+	rawptr := table.Intern(ir.Type{Kind: ir.TypeRawPtr})
+	usize := table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
+	table.SetIndexType(usize)
+	valueStruct := table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}}})
+	ownerStruct := table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}, {Name: "ptr", Type: table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32})}}})
+	dynamicI32 := table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
+	return mirTypeFixture{
+		table:            table,
+		void:             void,
+		boolType:         boolType,
+		cstr:             cstr,
+		f64:              f64,
+		i32:              i32,
+		rawptr:           rawptr,
+		usize:            usize,
+		ownedI32:         table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32}),
+		optionalI32:      table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: i32}),
+		valueStruct:      valueStruct,
+		ownerStruct:      ownerStruct,
+		ownedValueStruct: table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: valueStruct}),
+		fixed3I32:        table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "3"}),
+		fixed4I32:        table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"}),
+		dynamicI32:       dynamicI32,
+		refI32:           table.Intern(ir.Type{Kind: ir.TypeReference, Elem: i32}),
+		mutRefI32:        table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: i32}),
+		refBox:           table.Intern(ir.Type{Kind: ir.TypeReference, Elem: valueStruct}),
+		refDynamicI32:    table.Intern(ir.Type{Kind: ir.TypeReference, Elem: dynamicI32}),
+		mutRefDynamicI32: table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: dynamicI32}),
+		fnI32:            table.Intern(ir.Type{Kind: ir.TypeFunction, Return: i32}),
+		fnVoid:           table.Intern(ir.Type{Kind: ir.TypeFunction, Return: void}),
+		fnBox:            table.Intern(ir.Type{Kind: ir.TypeFunction, Return: valueStruct}),
+		fnOwner:          table.Intern(ir.Type{Kind: ir.TypeFunction, Return: ownerStruct}),
+		fnTwoBox:         table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{table.Intern(ir.Type{Kind: ir.TypeReference, Elem: valueStruct}), table.Intern(ir.Type{Kind: ir.TypeReference, Elem: valueStruct})}, Return: void}),
+	}
+}()
+
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "main",
-				ReturnType: "void",
+				ReturnType: mirTypes.void,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
-						&hir.ExprStmt{Value: &ir.IntLit{Value: "1", Type: "i32"}},
+						&hir.ExprStmt{Value: &ir.IntLit{Value: "1", Type: mirTypes.i32}},
 					},
 				},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	graphs := cfg.BuildModule(mod)
+	out := GenerateMIR(mod, graphs, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -45,17 +101,17 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 
 func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{{
 			Name:       "release",
-			ReturnType: "i32",
+			ReturnType: mirTypes.i32,
 			Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{
-				Value:   &ir.IntLit{Value: "7", Type: "i32"},
-				Cleanup: []ir.Expr{&ir.Drop{Value: &ir.Ident{Name: "owner", Type: "*i32"}}},
+				Value:   &ir.IntLit{Value: "7", Type: mirTypes.i32},
+				Cleanup: []ir.Expr{&ir.Drop{Value: &ir.Ident{Name: "owner", Type: mirTypes.ownedI32}}},
 			}}},
 		}},
 	}
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	block := out.Funcs[0].Blocks[0]
 	if len(block.Instrs) != 1 {
 		t.Fatalf("expected one cleanup instruction, got %#v", block.Instrs)
@@ -69,8 +125,79 @@ func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRAppliesCFGCleanupPlan(t *testing.T) {
+	tests := []struct {
+		name string
+		body *hir.Block
+		plan *cfg.CleanupPlan
+		want int
+	}{
+		{
+			name: "scope exit",
+			body: &hir.Block{NodeID: 10},
+			plan: &cfg.CleanupPlan{AfterScope: map[ir.NodeID][]symbols.SymbolID{10: {1}}},
+			want: 1,
+		},
+		{
+			name: "return",
+			body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{NodeID: 20}}},
+			plan: &cfg.CleanupPlan{BeforeReturn: map[ir.NodeID][]symbols.SymbolID{20: {1}}},
+			want: 1,
+		},
+		{
+			name: "assignment",
+			body: &hir.Block{Stmts: []hir.Stmt{&hir.Assign{
+				NodeID: 30,
+				Target: &ir.Place{Root: &ir.Ident{Name: "owner", Type: mirTypes.ownedI32}, Type: mirTypes.ownedI32},
+				Value:  &ir.ZeroValue{Type: mirTypes.ownedI32},
+			}}},
+			plan: &cfg.CleanupPlan{BeforeAssign: map[ir.NodeID]struct{}{30: {}}},
+			want: 3,
+		},
+		{
+			name: "discarded value",
+			body: &hir.Block{Stmts: []hir.Stmt{&hir.ExprStmt{
+				ValueNodeID: 40,
+				Value:       &ir.Call{Callee: &ir.Ident{Name: "acquire", Type: mirTypes.fnOwner}, Type: mirTypes.ownedI32},
+			}}},
+			plan: &cfg.CleanupPlan{DiscardedValue: map[ir.NodeID]struct{}{40: {}}},
+			want: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{{
+				Name:       "main",
+				Params:     []ir.Param{{Name: "owner", Type: mirTypes.ownedI32, SymbolID: 1}},
+				ReturnType: mirTypes.void,
+				Body:       tt.body,
+			}}}
+			graphs := cfg.BuildModule(mod)
+			graphs[0].Cleanup = tt.plan
+			out := GenerateMIR(mod, graphs, nil, nil)
+			if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) == 0 {
+				t.Fatalf("MIR = %#v", out)
+			}
+			instrs := out.Funcs[0].Blocks[0].Instrs
+			if len(instrs) != tt.want {
+				t.Fatalf("instructions = %#v, want %d", instrs, tt.want)
+			}
+			hasDrop := false
+			for _, instr := range instrs {
+				if _, ok := instr.(*Drop); ok {
+					hasDrop = true
+					break
+				}
+			}
+			if !hasDrop {
+				t.Fatalf("instructions = %#v, want cleanup drop", instrs)
+			}
+		})
+	}
+}
+
 func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
-	mod := &hir.Module{Name: "test"}
+	mod := &hir.Module{Name: "test", Types: mirTypes.table}
 	scope := table.New(nil)
 	sym := symbols.New("Name", symbols.SymbolConst, nil, nil)
 	sym.BindType(&typeinfo.CStrType{})
@@ -78,20 +205,20 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 		t.Fatalf("declare const: %v", err)
 	}
 
-	out := GenerateMIR(mod, scope, map[symbols.SymbolID]constvalue.Value{
+	out := GenerateMIR(mod, cfg.BuildModule(mod), scope, map[symbols.SymbolID]constvalue.Value{
 		sym.ID: &constvalue.StringConst{Value: "puts", TypeID: "cstr"},
 	})
 	if out == nil || len(out.StaticData) != 1 {
 		t.Fatalf("expected one static entry, got %#v", out)
 	}
 	entry := out.StaticData[0]
-	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != "cstr" || entry.Value != "puts" || entry.Align != 8 {
+	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Value != "puts" || entry.Align != 8 {
 		t.Fatalf("unexpected static entry: %#v", entry)
 	}
 }
 
 func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
-	mod := &hir.Module{Name: "test"}
+	mod := &hir.Module{Name: "test", Types: mirTypes.table}
 	scope := table.New(nil)
 	sym := symbols.New("X", symbols.SymbolConst, nil, nil)
 	sym.BindType(&typeinfo.FloatType{Bits: 64})
@@ -99,41 +226,42 @@ func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 		t.Fatalf("declare const: %v", err)
 	}
 
-	out := GenerateMIR(mod, scope, map[symbols.SymbolID]constvalue.Value{
+	out := GenerateMIR(mod, cfg.BuildModule(mod), scope, map[symbols.SymbolID]constvalue.Value{
 		sym.ID: &constvalue.FloatConst{Value: "3", TypeID: "f64"},
 	})
 	if out == nil || len(out.StaticData) != 1 {
 		t.Fatalf("expected one static entry, got %#v", out)
 	}
 	entry := out.StaticData[0]
-	if entry.Type != "f64" || entry.Value != "3.0" {
+	if entry.Type != mirTypes.f64 || entry.Value != "3.0" {
 		t.Fatalf("unexpected float static entry: %#v", entry)
 	}
 }
 
 func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: mirTypes.i32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.ExprStmt{
 							Value: &ir.Call{
-								Callee: &ir.Ident{Name: "Ping", Type: "fn() -> i32"},
-								Type:   "i32",
+								Callee: &ir.Ident{Name: "Ping", Type: mirTypes.fnI32},
+								Type:   mirTypes.i32,
 							},
 						},
-						&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+						&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
 					},
 				},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	graphs := cfg.BuildModule(mod)
+	out := GenerateMIR(mod, graphs, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -148,28 +276,28 @@ func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected plain call instruction, got %#v", fn.Blocks[0].Instrs[0])
 	}
-	if call.Type != "i32" {
-		t.Fatalf("expected preserved call return type, got %q", call.Type)
+	if call.Type != mirTypes.i32 {
+		t.Fatalf("expected preserved call return type, got %d", call.Type)
 	}
 }
 
 func TestGenerateMIRLowersZeroValue(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "maybe",
-				ReturnType: "?i32",
+				ReturnType: mirTypes.optionalI32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
-						&hir.Return{Value: &ir.ZeroValue{Type: "?i32"}},
+						&hir.Return{Value: &ir.ZeroValue{Type: mirTypes.optionalI32}},
 					},
 				},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -182,28 +310,28 @@ func TestGenerateMIRLowersZeroValue(t *testing.T) {
 		t.Fatalf("expected assign, got %#v", block.Instrs[0])
 	}
 	zero, ok := assign.Value.(*ZeroValue)
-	if !ok || zero.Type != "?i32" {
+	if !ok || zero.Type != mirTypes.optionalI32 {
 		t.Fatalf("expected ?i32 zero value, got %#v", assign.Value)
 	}
 }
 
 func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "maybe",
-				ReturnType: "?i32",
+				ReturnType: mirTypes.optionalI32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
-						&hir.Return{Value: &ir.OptionalSome{Value: &ir.IntLit{Value: "7", Type: "i32"}, Type: "?i32"}},
+						&hir.Return{Value: &ir.OptionalSome{Value: &ir.IntLit{Value: "7", Type: mirTypes.i32}, Type: mirTypes.optionalI32}},
 					},
 				},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -216,42 +344,42 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 		t.Fatalf("expected assign, got %#v", block.Instrs[0])
 	}
 	some, ok := assign.Value.(*OptionalSome)
-	if !ok || some.Type != "?i32" {
+	if !ok || some.Type != mirTypes.optionalI32 {
 		t.Fatalf("expected ?i32 optional some, got %#v", assign.Value)
 	}
 }
 
 func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: mirTypes.i32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Binding{
 							Name: "ptr",
 							Value: &ir.AddrOf{
 								Place: &ir.Place{
-									Root: &ir.Ident{Name: "boxptr", Type: "*struct{value: i32}"},
+									Root: &ir.Ident{Name: "boxptr", Type: mirTypes.ownedValueStruct},
 									Projections: []ir.PlaceProjection{
-										{Kind: ir.PlaceProjectionDeref, Type: "struct{value: i32}"},
-										{Kind: ir.PlaceProjectionField, FieldIndex: 0, Type: "i32"},
+										{Kind: ir.PlaceProjectionDeref, Type: mirTypes.valueStruct},
+										{Kind: ir.PlaceProjectionField, FieldIndex: 0, Type: mirTypes.i32},
 									},
-									Type: "i32",
+									Type: mirTypes.i32,
 								},
-								Type: "rawptr",
+								Type: mirTypes.rawptr,
 							},
 						},
-						&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+						&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
 					},
 				},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -261,7 +389,7 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
 	address, ok := assign.Value.(*AddrOf)
-	if !ok || address.Type != "&mut i32" || address.Place == nil || len(address.Place.Projections) != 2 {
+	if !ok || address.Type != mirTypes.mutRefI32 || address.Place == nil || len(address.Place.Projections) != 2 {
 		t.Fatalf("expected address-of field place, got %#v", assign.Value)
 	}
 	castAssign, ok := instrs[1].(*Assign)
@@ -269,41 +397,41 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("expected second instruction assignment, got %#v", instrs)
 	}
 	cast, ok := castAssign.Value.(*Cast)
-	if !ok || cast.Type != "rawptr" {
+	if !ok || cast.Type != mirTypes.rawptr {
 		t.Fatalf("expected projected field address to cast to rawptr, got %#v", castAssign.Value)
 	}
 }
 
 func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: mirTypes.i32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Binding{
 							Name: "ptr",
 							Value: &ir.AddrOf{
 								Place: &ir.Place{
-									Root: &ir.Ident{Name: "values", Type: "[]i32"},
+									Root: &ir.Ident{Name: "values", Type: mirTypes.dynamicI32},
 									Projections: []ir.PlaceProjection{
-										{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+										{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: mirTypes.i32}, Type: mirTypes.i32},
 									},
-									Type: "i32",
+									Type: mirTypes.i32,
 								},
-								Type: "rawptr",
+								Type: mirTypes.rawptr,
 							},
 						},
-						&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+						&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
 					},
 				},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -313,7 +441,7 @@ func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
 	address, ok := assign.Value.(*AddrOf)
-	if !ok || address.Type != "&mut i32" || address.Place == nil || len(address.Place.Projections) != 1 {
+	if !ok || address.Type != mirTypes.mutRefI32 || address.Place == nil || len(address.Place.Projections) != 1 {
 		t.Fatalf("expected address-of indexed place, got %#v", assign.Value)
 	}
 	castAssign, ok := instrs[1].(*Assign)
@@ -321,29 +449,29 @@ func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("expected second instruction assignment, got %#v", instrs)
 	}
 	cast, ok := castAssign.Value.(*Cast)
-	if !ok || cast.Type != "rawptr" {
+	if !ok || cast.Type != mirTypes.rawptr {
 		t.Fatalf("expected projected element address to cast to rawptr, got %#v", castAssign.Value)
 	}
 }
 
 func TestGenerateMIRLowersSliceView(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{{
 			Name:       "borrow",
-			Params:     []ir.Param{{Name: "xs", Type: "[]i32"}},
-			ReturnType: "i32",
+			Params:     []ir.Param{{Name: "xs", Type: mirTypes.dynamicI32}},
+			ReturnType: mirTypes.i32,
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.Binding{Name: "view", Value: &ir.SliceView{
-					Source: &ir.Place{Root: &ir.Ident{Name: "xs", Type: "[]i32"}, Type: "[]i32"},
-					Type:   "&[]i32",
+					Source: &ir.Place{Root: &ir.Ident{Name: "xs", Type: mirTypes.dynamicI32}, Type: mirTypes.dynamicI32},
+					Type:   mirTypes.refDynamicI32,
 				}},
-				&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+				&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
 			}},
 		}},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 2 {
 		t.Fatalf("expected slice-view and binding assignments, got %#v", instrs)
@@ -353,31 +481,31 @@ func TestGenerateMIRLowersSliceView(t *testing.T) {
 		t.Fatalf("expected assignment, got %#v", instrs[0])
 	}
 	view, ok := assign.Value.(*SliceView)
-	if !ok || view.Type != "&[]i32" || view.Source.Text() != "xs" {
+	if !ok || view.Type != mirTypes.refDynamicI32 || view.Source.Text() != "xs" {
 		t.Fatalf("expected MIR SliceView, got %#v", assign.Value)
 	}
 }
 
 func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{{
 			Name:       "slice",
-			ReturnType: "i32",
+			ReturnType: mirTypes.i32,
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.Binding{Name: "view", Value: &ir.SliceView{
-					Source:       &ir.Place{Root: &ir.Ident{Name: "xs", Type: "&[]i32"}, Type: "&[]i32"},
-					Start:        &ir.IntLit{Value: "1", Type: "i32"},
-					End:          &ir.IntLit{Value: "3", Type: "i32"},
+					Source:       &ir.Place{Root: &ir.Ident{Name: "xs", Type: mirTypes.refDynamicI32}, Type: mirTypes.refDynamicI32},
+					Start:        &ir.IntLit{Value: "1", Type: mirTypes.i32},
+					End:          &ir.IntLit{Value: "3", Type: mirTypes.i32},
 					EndExclusive: true,
-					Type:         "&[]i32",
+					Type:         mirTypes.refDynamicI32,
 				}},
-				&hir.Return{Value: &ir.IntLit{Value: "0", Type: "i32"}},
+				&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
 			}},
 		}},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	assign := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
 	view, ok := assign.Value.(*SliceView)
 	if !ok || !view.EndExclusive || view.Start.Text() != "1" || view.End.Text() != "3" {
@@ -387,19 +515,19 @@ func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 
 func TestGenerateMIRLowersIndexReadAsPlaceLoad(t *testing.T) {
 	place := &ir.Place{
-		Root: &ir.Ident{Name: "xs", Type: "[4]i32"},
+		Root: &ir.Ident{Name: "xs", Type: mirTypes.fixed4I32},
 		Projections: []ir.PlaceProjection{
-			{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+			{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: mirTypes.i32}, Type: mirTypes.i32},
 		},
-		Type: "i32",
+		Type: mirTypes.i32,
 	}
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "first",
-				Params:     []ir.Param{{Name: "xs", Type: "[4]i32"}},
-				ReturnType: "i32",
+				Params:     []ir.Param{{Name: "xs", Type: mirTypes.fixed4I32}},
+				ReturnType: mirTypes.i32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Return{Value: &ir.Load{Place: place}},
@@ -409,7 +537,7 @@ func TestGenerateMIRLowersIndexReadAsPlaceLoad(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -428,14 +556,13 @@ func TestGenerateMIRLowersIndexReadAsPlaceLoad(t *testing.T) {
 }
 
 func TestGenerateMIRDropsOwnerBearingTemporaryAfterFieldProjection(t *testing.T) {
-	ownerType := "struct{value: i32, ptr: *i32}"
-	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
-		Name: "read", ReturnType: "i32", Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Field{
-			Base:  &ir.Call{Callee: &ir.Ident{Name: "make", Type: "fn() -> " + ownerType}, Type: ownerType},
-			Index: 0, DropBase: true, Type: "i32",
+	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{{
+		Name: "read", ReturnType: mirTypes.i32, Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Field{
+			Base:  &ir.Call{Callee: &ir.Ident{Name: "make", Type: mirTypes.fnOwner}, Type: mirTypes.ownerStruct},
+			Index: 0, DropBase: true, Type: mirTypes.i32,
 		}}}},
 	}}}
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 3 {
 		t.Fatalf("expected call, projection, and drop, got %#v", instrs)
@@ -453,17 +580,17 @@ func TestGenerateMIRDropsOwnerBearingTemporaryAfterFieldProjection(t *testing.T)
 
 func TestGenerateMIRLowersSliceViewIndexReadAsPlaceLoad(t *testing.T) {
 	place := &ir.Place{
-		Root: &ir.Ident{Name: "xs", Type: "&[]i32"},
+		Root: &ir.Ident{Name: "xs", Type: mirTypes.refDynamicI32},
 		Projections: []ir.PlaceProjection{
-			{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+			{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: mirTypes.i32}, Type: mirTypes.i32},
 		},
-		Type: "i32",
+		Type: mirTypes.i32,
 	}
-	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
-		Name: "first", Params: []ir.Param{{Name: "xs", Type: "&[]i32"}}, ReturnType: "i32",
+	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{{
+		Name: "first", Params: []ir.Param{{Name: "xs", Type: mirTypes.refDynamicI32}}, ReturnType: mirTypes.i32,
 		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Load{Place: place}}}},
 	}}}
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 1 {
 		t.Fatalf("expected one place load instruction, got %#v", instrs)
@@ -480,25 +607,25 @@ func TestGenerateMIRLowersSliceViewIndexReadAsPlaceLoad(t *testing.T) {
 
 func TestGenerateMIRLowersIndexAssignmentAsPlaceStore(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name: "set_first",
 				Params: []ir.Param{
-					{Name: "xs", Type: "[4]i32"},
-					{Name: "value", Type: "i32"},
+					{Name: "xs", Type: mirTypes.fixed4I32},
+					{Name: "value", Type: mirTypes.i32},
 				},
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Assign{
 							Target: &ir.Place{
-								Root: &ir.Ident{Name: "xs", Type: "[4]i32"},
+								Root: &ir.Ident{Name: "xs", Type: mirTypes.fixed4I32},
 								Projections: []ir.PlaceProjection{
-									{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+									{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: mirTypes.i32}, Type: mirTypes.i32},
 								},
-								Type: "i32",
+								Type: mirTypes.i32,
 							},
-							Value: &ir.Ident{Name: "value", Type: "i32"},
+							Value: &ir.Ident{Name: "value", Type: mirTypes.i32},
 						},
 					},
 				},
@@ -506,7 +633,7 @@ func TestGenerateMIRLowersIndexAssignmentAsPlaceStore(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -521,20 +648,20 @@ func TestGenerateMIRLowersIndexAssignmentAsPlaceStore(t *testing.T) {
 }
 
 func TestGenerateMIRLowersMutableSliceViewIndexAssignmentAsPlaceStore(t *testing.T) {
-	mod := &hir.Module{Name: "test", Funcs: []*hir.Function{{
-		Name: "set_first", Params: []ir.Param{{Name: "xs", Type: "&mut []i32"}, {Name: "value", Type: "i32"}},
+	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{{
+		Name: "set_first", Params: []ir.Param{{Name: "xs", Type: mirTypes.mutRefDynamicI32}, {Name: "value", Type: mirTypes.i32}},
 		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Assign{
 			Target: &ir.Place{
-				Root: &ir.Ident{Name: "xs", Type: "&mut []i32"},
+				Root: &ir.Ident{Name: "xs", Type: mirTypes.mutRefDynamicI32},
 				Projections: []ir.PlaceProjection{
-					{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: "i32"}, Type: "i32"},
+					{Kind: ir.PlaceProjectionIndex, Index: &ir.IntLit{Value: "0", Type: mirTypes.i32}, Type: mirTypes.i32},
 				},
-				Type: "i32",
+				Type: mirTypes.i32,
 			},
-			Value: &ir.Ident{Name: "value", Type: "i32"},
+			Value: &ir.Ident{Name: "value", Type: mirTypes.i32},
 		}}},
 	}}}
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 1 {
 		t.Fatalf("expected one place store instruction, got %#v", instrs)
@@ -547,20 +674,20 @@ func TestGenerateMIRLowersMutableSliceViewIndexAssignmentAsPlaceStore(t *testing
 
 func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "first",
-				ReturnType: "[3]i32",
+				ReturnType: mirTypes.fixed3I32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Return{Value: &ir.ArrayLit{
 							Values: []ir.Expr{
-								&ir.IntLit{Value: "1", Type: "i32"},
-								&ir.IntLit{Value: "2", Type: "i32"},
-								&ir.IntLit{Value: "3", Type: "i32"},
+								&ir.IntLit{Value: "1", Type: mirTypes.i32},
+								&ir.IntLit{Value: "2", Type: mirTypes.i32},
+								&ir.IntLit{Value: "3", Type: mirTypes.i32},
 							},
-							Type: "[3]i32",
+							Type: mirTypes.fixed3I32,
 						}},
 					},
 				},
@@ -568,7 +695,7 @@ func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 1 {
 		t.Fatalf("expected array literal assign, got %#v", instrs)
@@ -578,33 +705,33 @@ func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
 		t.Fatalf("expected assign, got %#v", instrs[0])
 	}
 	lit, ok := assign.Value.(*ArrayLit)
-	if !ok || lit.Type != "[3]i32" || len(lit.Values) != 3 {
+	if !ok || lit.Type != mirTypes.fixed3I32 || len(lit.Values) != 3 {
 		t.Fatalf("expected MIR array literal, got %#v", assign.Value)
 	}
 }
 
 func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "values",
-				ReturnType: "[]i32",
+				ReturnType: mirTypes.dynamicI32,
 				Body: &hir.Block{Stmts: []hir.Stmt{
 					&hir.Return{Value: &ir.ArrayLit{
 						Values: []ir.Expr{
-							&ir.IntLit{Value: "1", Type: "i32"},
-							&ir.IntLit{Value: "2", Type: "i32"},
+							&ir.IntLit{Value: "1", Type: mirTypes.i32},
+							&ir.IntLit{Value: "2", Type: mirTypes.i32},
 						},
 						Dynamic: true,
-						Type:    "[]i32",
+						Type:    mirTypes.dynamicI32,
 					}},
 				}},
 			},
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	block := out.Funcs[0].Blocks[0]
 	if len(block.Instrs) != 3 {
 		t.Fatalf("expected allocation and two indexed stores, got %#v", block.Instrs)
@@ -614,7 +741,7 @@ func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
 		t.Fatalf("expected leading allocation assignment, got %#v", block.Instrs[0])
 	}
 	alloc, allocOK := assign.Value.(*DynamicArrayAlloc)
-	if !allocOK || alloc.Length != 2 || alloc.Type != "[]i32" {
+	if !allocOK || alloc.Length != 2 || alloc.Type != mirTypes.dynamicI32 {
 		t.Fatalf("expected leading dynamic allocation, got %#v", block.Instrs[0])
 	}
 	for _, index := range []int{1, 2} {
@@ -630,10 +757,10 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 		t.Run(string(op), func(t *testing.T) {
 			expr := &ir.DynamicArrayOp{
 				Op:     op,
-				Array:  &ir.Ident{Name: "values", Type: "[]i32"},
-				Length: &ir.IntLit{Value: "8", Type: "usize"},
-				Value:  &ir.IntLit{Value: "1", Type: "i32"},
-				Type:   "[]i32",
+				Array:  &ir.Ident{Name: "values", Type: mirTypes.dynamicI32},
+				Length: &ir.IntLit{Value: "8", Type: mirTypes.usize},
+				Value:  &ir.IntLit{Value: "1", Type: mirTypes.i32},
+				Type:   mirTypes.dynamicI32,
 			}
 			if op == symbols.CompilerOpAppend {
 				expr.Length = nil
@@ -642,21 +769,21 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 				expr.Value = nil
 			}
 			mod := &hir.Module{
-				Name: "test",
+				Name: "test", Types: mirTypes.table,
 				Funcs: []*hir.Function{{
 					Name:       "grow",
-					Params:     []ir.Param{{Name: "values", Type: "[]i32"}},
-					ReturnType: "[]i32",
+					Params:     []ir.Param{{Name: "values", Type: mirTypes.dynamicI32}},
+					ReturnType: mirTypes.dynamicI32,
 					Body:       &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: expr}}},
 				}},
 			}
-			out := GenerateMIR(mod, nil, nil)
+			out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 			assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
 			if !ok {
 				t.Fatalf("expected operation assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
 			}
 			got, ok := assign.Value.(*DynamicArrayOp)
-			if !ok || got.Op != op || got.Type != "[]i32" {
+			if !ok || got.Op != op || got.Type != mirTypes.dynamicI32 {
 				t.Fatalf("operation = %#v, want %s []i32", assign.Value, op)
 			}
 		})
@@ -666,11 +793,11 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 	testPath := "test" + peeper.SourceExt
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "main",
-				ReturnType: "i32",
+				ReturnType: mirTypes.i32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.Return{
@@ -678,13 +805,13 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 								Op: "*",
 								Left: &ir.Binary{
 									Op:       "+",
-									Left:     &ir.IntLit{Value: "1", Type: "i32", Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
-									Right:    &ir.IntLit{Value: "2", Type: "i32", Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
-									Type:     "i32",
+									Left:     &ir.IntLit{Value: "1", Type: mirTypes.i32, Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
+									Right:    &ir.IntLit{Value: "2", Type: mirTypes.i32, Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
+									Type:     mirTypes.i32,
 									Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
 								},
-								Right:    &ir.IntLit{Value: "3", Type: "i32", Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
-								Type:     "i32",
+								Right:    &ir.IntLit{Value: "3", Type: mirTypes.i32, Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
+								Type:     mirTypes.i32,
 								Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
 							},
 							Location: source.NewLocation(testPath, source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
@@ -695,7 +822,7 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -715,21 +842,21 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 
 func TestGenerateMIRLowersForLoop(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
 			{
 				Name:       "main",
-				ReturnType: "void",
+				ReturnType: mirTypes.void,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.For{
-							Cond: &ir.IntLit{Value: "1", Type: "bool"},
+							Cond: &ir.IntLit{Value: "1", Type: mirTypes.boolType},
 							Body: &hir.Block{
 								Stmts: []hir.Stmt{
 									&hir.ExprStmt{
 										Value: &ir.Call{
-											Callee: &ir.Ident{Name: "Ping", Type: "fn() -> i32"},
-											Type:   "i32",
+											Callee: &ir.Ident{Name: "Ping", Type: mirTypes.fnI32},
+											Type:   mirTypes.i32,
 										},
 									},
 								},
@@ -741,13 +868,24 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, nil, nil)
+	graphs := cfg.BuildModule(mod)
+	out := GenerateMIR(mod, graphs, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
 	fn := out.Funcs[0]
 	if len(fn.Blocks) != 4 {
 		t.Fatalf("expected four blocks for loop, got %#v", fn.Blocks)
+	}
+	index := 0
+	for _, block := range graphs[0].Blocks {
+		if block == nil || block == graphs[0].Exit || !block.Reachable {
+			continue
+		}
+		if fn.Blocks[index].ID != block.ID {
+			t.Fatalf("MIR block %d ID = %d, want CFG ID %d", index, fn.Blocks[index].ID, block.ID)
+		}
+		index++
 	}
 	entry := fn.Blocks[0]
 	entryJump, ok := entry.Term.(*Jump)
@@ -773,23 +911,23 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 
 func TestGenerateMIRDropsBorrowedTemporariesAfterCallInReverseOrder(t *testing.T) {
 	mod := &hir.Module{
-		Name: "test",
+		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{{
 			Name:       "main",
-			ReturnType: "void",
+			ReturnType: mirTypes.void,
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.ExprStmt{Value: &ir.Call{
-					Callee: &ir.Ident{Name: "Both", Type: "fn(&Box, &Box)"},
+					Callee: &ir.Ident{Name: "Both", Type: mirTypes.fnTwoBox},
 					Args: []ir.Expr{
-						&ir.TempBorrow{Value: &ir.Call{Callee: &ir.Ident{Name: "MakeFirst", Type: "fn() -> Box"}, Type: "Box"}, Type: "&Box"},
-						&ir.TempBorrow{Value: &ir.Call{Callee: &ir.Ident{Name: "MakeSecond", Type: "fn() -> Box"}, Type: "Box"}, Type: "&Box"},
+						&ir.TempBorrow{Value: &ir.Call{Callee: &ir.Ident{Name: "MakeFirst", Type: mirTypes.fnBox}, Type: mirTypes.valueStruct}, Type: mirTypes.refBox},
+						&ir.TempBorrow{Value: &ir.Call{Callee: &ir.Ident{Name: "MakeSecond", Type: mirTypes.fnBox}, Type: mirTypes.valueStruct}, Type: mirTypes.refBox},
 					},
 				}},
 			},
 			},
 		}},
 	}
-	out := GenerateMIR(mod, nil, nil)
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 7 {
 		t.Fatalf("temporary borrow instructions = %d, want 7: %#v", len(instrs), instrs)

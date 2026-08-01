@@ -7,6 +7,7 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -21,15 +22,26 @@ type lowerer struct {
 	current        *Block
 	location       *source.Location
 	temporaryDrops []ValueRef
+	cleanup        *cfg.CleanupPlan
+	symbolValues   map[symbols.SymbolID]*RefName
 }
 
-func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+func (l *lowerer) isVoid(id ir.TypeID) bool {
+	if l == nil || l.module == nil || l.module.Types == nil {
+		return false
+	}
+	typ, ok := l.module.Types.Type(id)
+	return ok && typ.Kind == ir.TypeVoid
+}
+
+func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil {
 		return nil
 	}
 	out := &Module{
 		FilePath:        in.FilePath,
 		Name:            in.Name,
+		Types:           in.Types,
 		StaticData:      make([]*StaticEntry, 0),
 		InterfaceThunks: make([]*InterfaceThunk, 0),
 		Funcs:           make([]*Function, 0, len(in.Externs)+len(in.Funcs)),
@@ -41,7 +53,7 @@ func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.Sym
 				continue
 			}
 			if sym.Kind == symbols.SymbolConst {
-				entry, ok := staticEntryForConst(sym, constValues[sym.ID])
+				entry, ok := staticEntryForConst(in.Types, sym, constValues[sym.ID])
 				if ok {
 					out.StaticData = append(out.StaticData, entry)
 				}
@@ -58,35 +70,91 @@ func GenerateMIR(in *hir.Module, scope *table.Scope, constValues map[symbols.Sym
 			Location:   ex.Location,
 		})
 	}
+	graphForFunction := make(map[*hir.Function]*cfg.Graph, len(graphs))
+	for _, graph := range graphs {
+		if graph != nil && graph.Source != nil {
+			graphForFunction[graph.Source] = graph
+		}
+	}
 	for _, hirFn := range in.Funcs {
-		if hirFn == nil {
-			continue
-		}
-		fn := &Function{
-			Name:       hirFn.Name,
-			Params:     append([]ir.Param(nil), hirFn.Params...),
-			ReturnType: hirFn.ReturnType,
-			EntryID:    0,
-			Blocks:     make([]*Block, 0),
-			Location:   hirFn.Location,
-		}
-		l := &lowerer{module: out, fn: fn}
-		l.current = l.newBlock()
-		fn.EntryID = l.current.ID
-		if !l.appendBlock(hirFn.Body) {
+		graph := graphForFunction[hirFn]
+		if graph == nil {
 			return nil
 		}
-		if l.current != nil && l.current.Term == nil && fn.ReturnType == "void" {
-			l.setBlockTerm(l.current, &Ret{})
-			l.current = nil
+		fn, ok := lowerCFGFunction(out, graph)
+		if !ok {
+			return nil
 		}
 		out.Funcs = append(out.Funcs, fn)
 	}
 	return out
 }
 
-func staticEntryForConst(sym *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {
-	if sym == nil || value == nil {
+// lowerCFGFunction converts one normalized CFG into MIR without rebuilding
+// branches or loops from structured HIR.
+func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
+	if mod == nil || graph == nil || graph.Source == nil || graph.Entry == nil {
+		return nil, false
+	}
+	fn := &Function{
+		Name:       graph.Name,
+		Params:     append([]ir.Param(nil), graph.Source.Params...),
+		ReturnType: graph.ReturnType,
+		Blocks:     make([]*Block, 0, len(graph.Blocks)),
+		Location:   graph.Source.Location,
+	}
+	l := &lowerer{module: mod, fn: fn, cleanup: graph.Cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
+	for _, param := range fn.Params {
+		if param.SymbolID != 0 {
+			l.symbolValues[param.SymbolID] = &RefName{Name: param.Name, Type: param.Type}
+		}
+	}
+	blocks := make(map[*cfg.Block]*Block, len(graph.Blocks))
+	for _, source := range graph.Blocks {
+		if source == nil || source == graph.Exit || !source.Reachable {
+			continue
+		}
+		for _, stmt := range source.Stmts {
+			if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 && binding.Value != nil {
+				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Value.TypeID(), Location: binding.Location}
+			}
+		}
+		block := &Block{ID: source.ID, Instrs: make([]Instr, 0)}
+		blocks[source] = block
+		fn.Blocks = append(fn.Blocks, block)
+		if source == graph.Entry {
+			fn.EntryID = block.ID
+		}
+	}
+	if blocks[graph.Entry] == nil {
+		return nil, false
+	}
+	for _, source := range graph.Blocks {
+		block := blocks[source]
+		if block == nil {
+			continue
+		}
+		l.current = block
+		l.location = source.Location
+		for _, stmt := range source.Stmts {
+			if !l.lowerCFGStmt(stmt) {
+				return nil, false
+			}
+		}
+		if l.cleanup != nil {
+			for _, scopeID := range source.ScopeExits {
+				l.appendPlannedDrops(l.cleanup.AfterScope[scopeID], &block.Instrs)
+			}
+		}
+		if !l.lowerCFGTerminator(source, graph.Exit, blocks) {
+			return nil, false
+		}
+	}
+	return fn, true
+}
+
+func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {
+	if types == nil || sym == nil || value == nil {
 		return nil, false
 	}
 	valueText, ok := constStaticValueText(value)
@@ -97,13 +165,17 @@ func staticEntryForConst(sym *symbols.Symbol, value constvalue.Value) (*StaticEn
 	if sym.Type != nil {
 		typeText = typeinfo.TypeText(typeinfo.Underlying(sym.Type))
 	}
+	typ, ok := types.LookupText(typeText)
+	if !ok {
+		return nil, false
+	}
 	align := 4
 	if typeText == "cstr" {
 		align = 8
 	}
 	return &StaticEntry{
 		Name:  fmt.Sprintf("@%s$%d", sym.Name, sym.ID),
-		Type:  typeText,
+		Type:  typ,
 		Value: valueText,
 		Align: align,
 	}, true
@@ -146,32 +218,7 @@ func llvmFloatConstText(value string) string {
 	return value + ".0"
 }
 
-func (l *lowerer) newBlock() *Block {
-	block := &Block{
-		ID:     l.nextBlockID,
-		Instrs: make([]Instr, 0),
-	}
-	l.nextBlockID++
-	l.fn.Blocks = append(l.fn.Blocks, block)
-	return block
-}
-
-func (l *lowerer) appendBlock(block *hir.Block) bool {
-	if block == nil {
-		return true
-	}
-	for _, stmt := range block.Stmts {
-		if !l.appendStmt(stmt) {
-			return false
-		}
-		if l.current == nil {
-			break
-		}
-	}
-	return true
-}
-
-func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
+func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 	if l == nil || stmt == nil {
 		return true
 	}
@@ -181,12 +228,7 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.location = prevLoc
 	}()
 	switch node := stmt.(type) {
-	case *hir.Block:
-		return l.appendBlock(node)
 	case *hir.Binding:
-		if l.current == nil {
-			return true
-		}
 		temporaryMark := len(l.temporaryDrops)
 		ref := l.lowerExpr(node.Value, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
@@ -197,23 +239,21 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.Return:
-		if l.current == nil {
-			return true
-		}
-		temporaryMark := len(l.temporaryDrops)
-		retRef := l.lowerExpr(node.Value, &l.current.Instrs)
-		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		for _, cleanup := range node.Cleanup {
-			l.lowerExpr(cleanup, &l.current.Instrs)
-		}
-		l.setBlockTerm(l.current, &Ret{Value: retRef})
-		l.current = nil
+		// Return value and cleanup lower with the matching CFG terminator so
+		// their evaluation occurs once on the edge to function exit.
 		return true
 	case *hir.ExprStmt:
-		if l.current == nil {
-			return true
-		}
 		temporaryMark := len(l.temporaryDrops)
+		if l.cleanup != nil {
+			if _, drop := l.cleanup.DiscardedValue[node.ValueNodeID]; drop {
+				value := l.lowerExpr(node.Value, &l.current.Instrs)
+				l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+				if value != nil {
+					l.appendInstr(&l.current.Instrs, &Drop{Value: value})
+				}
+				return true
+			}
+		}
 		if l.lowerDiscardedExpr(node.Value, &l.current.Instrs) {
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
@@ -222,36 +262,50 @@ func (l *lowerer) appendStmt(stmt hir.Stmt) bool {
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
 	case *hir.Assign:
-		if l.current == nil {
-			return true
-		}
 		temporaryMark := len(l.temporaryDrops)
 		value := l.lowerExpr(node.Value, &l.current.Instrs)
 		target := node.Target
 		if target == nil || target.Root == nil {
 			return false
 		}
+		dropTarget := node.DropTarget
+		if l.cleanup != nil {
+			if _, planned := l.cleanup.BeforeAssign[node.NodeID]; planned {
+				dropTarget = true
+			}
+		}
 		if ident, direct := target.Root.(*ir.Ident); direct && len(target.Projections) == 0 {
-			if node.DropTarget {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeText(), Location: ir.ExprLocation(ident)}})
+			if dropTarget {
+				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ir.ExprLocation(ident)}})
 			}
 			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
 		}
 		place := l.lowerPlace(target, &l.current.Instrs)
-		if node.DropTarget {
-			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeText(), target.Location)})
+		if dropTarget {
+			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeID(), target.Location)})
 		}
 		l.appendInstr(&l.current.Instrs, &Store{Place: place, Value: value})
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
-	case *hir.If:
-		return l.appendIf(node)
-	case *hir.For:
-		return l.appendFor(node)
+	case *hir.Invalid:
+		return false
 	default:
 		return false
+	}
+}
+
+func (l *lowerer) appendPlannedDrops(ids []symbols.SymbolID, out *[]Instr) {
+	if l == nil || out == nil {
+		return
+	}
+	for _, id := range ids {
+		ref := l.symbolValues[id]
+		if ref == nil {
+			continue
+		}
+		l.appendInstr(out, &Drop{Value: &RefName{Name: ref.Name, Type: ref.Type, Location: ref.Location}})
 	}
 }
 
@@ -265,85 +319,60 @@ func (l *lowerer) flushTemporaryDrops(out *[]Instr, mark int) {
 	l.temporaryDrops = l.temporaryDrops[:mark]
 }
 
-func (l *lowerer) appendIf(node *hir.If) bool {
-	if l.current == nil || node == nil {
-		return true
-	}
-	temporaryMark := len(l.temporaryDrops)
-	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
-	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-	condBlock := l.current
-	thenBlock := l.newBlock()
-	elseBlock := l.newBlock()
-	l.setBlockTerm(condBlock, &Branch{Cond: condRef, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
-
-	l.current = thenBlock
-	if !l.appendBlock(node.Then) {
+func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Block]*Block) bool {
+	if l == nil || source == nil || l.current == nil {
 		return false
 	}
-	thenFall := l.current
-
-	l.current = elseBlock
-	if node.Else != nil {
-		if !l.appendStmt(node.Else) {
+	switch term := source.Terminator.(type) {
+	case *cfg.Jump:
+		if term.Target == exit {
+			if l.fn.ReturnType != ir.InvalidType && !l.isVoid(l.fn.ReturnType) {
+				return false
+			}
+			l.setBlockTerm(l.current, &Ret{})
+			return true
+		}
+		target := blocks[term.Target]
+		if target == nil {
 			return false
 		}
-	}
-	elseFall := l.current
-
-	if thenFall == nil && elseFall == nil {
-		l.current = nil
+		l.setBlockTerm(l.current, &Jump{TargetID: target.ID})
 		return true
-	}
-
-	join := l.newBlock()
-	if thenFall != nil && thenFall.Term == nil {
-		l.setBlockTerm(thenFall, &Jump{TargetID: join.ID})
-	}
-	if elseFall != nil && elseFall.Term == nil {
-		l.setBlockTerm(elseFall, &Jump{TargetID: join.ID})
-	}
-	l.current = join
-	return true
-}
-
-func (l *lowerer) appendFor(node *hir.For) bool {
-	if l.current == nil || node == nil || node.Body == nil {
-		return true
-	}
-	if node.Cond == nil {
-		bodyBlock := l.newBlock()
-		l.setBlockTerm(l.current, &Jump{TargetID: bodyBlock.ID})
-		l.current = bodyBlock
-		if !l.appendBlock(node.Body) {
+	case *cfg.Branch:
+		thenBlock, elseBlock := blocks[term.TrueTarget], blocks[term.FalseTarget]
+		if thenBlock == nil || elseBlock == nil {
 			return false
 		}
-		if l.current != nil && l.current.Term == nil {
-			l.setBlockTerm(l.current, &Jump{TargetID: bodyBlock.ID})
-		}
-		l.current = nil
+		temporaryMark := len(l.temporaryDrops)
+		cond := l.lowerExpr(term.Cond, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		l.setBlockTerm(l.current, &Branch{Cond: cond, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
 		return true
-	}
-	headerBlock := l.newBlock()
-	bodyBlock := l.newBlock()
-	exitBlock := l.newBlock()
-	l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
-
-	l.current = headerBlock
-	temporaryMark := len(l.temporaryDrops)
-	condRef := l.lowerExpr(node.Cond, &l.current.Instrs)
-	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-	l.setBlockTerm(headerBlock, &Branch{Cond: condRef, ThenID: bodyBlock.ID, ElseID: exitBlock.ID})
-
-	l.current = bodyBlock
-	if !l.appendBlock(node.Body) {
+	case *cfg.Return:
+		temporaryMark := len(l.temporaryDrops)
+		value := l.lowerExpr(term.Value, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		for _, stmt := range source.Stmts {
+			if ret, ok := stmt.(*hir.Return); ok {
+				for _, cleanup := range ret.Cleanup {
+					l.lowerExpr(cleanup, &l.current.Instrs)
+				}
+			}
+		}
+		if l.cleanup != nil {
+			l.appendPlannedDrops(l.cleanup.BeforeReturn[term.NodeID], &l.current.Instrs)
+		}
+		l.setBlockTerm(l.current, &Ret{Value: value})
+		return true
+	case nil:
+		if l.fn.ReturnType != ir.InvalidType && !l.isVoid(l.fn.ReturnType) {
+			return false
+		}
+		l.setBlockTerm(l.current, &Ret{})
+		return true
+	default:
 		return false
 	}
-	if l.current != nil && l.current.Term == nil {
-		l.setBlockTerm(l.current, &Jump{TargetID: headerBlock.ID})
-	}
-	l.current = exitBlock
-	return true
 }
 
 func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
@@ -368,7 +397,7 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	*out = append(*out, instr)
 }
 
-func (l *lowerer) load(out *[]Instr, place *Place, typ string, loc *source.Location) ValueRef {
+func (l *lowerer) load(out *[]Instr, place *Place, typ ir.TypeID, loc *source.Location) ValueRef {
 	name := l.nextTemp()
 	l.appendInstr(out, &Assign{Name: name, Value: &Load{Place: place, Type: typ, Location: loc}})
 	return &RefName{Name: name, Type: typ, Location: loc}
@@ -398,7 +427,7 @@ func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
 	return &Place{
 		Root:        root,
 		Projections: projections,
-		Type:        place.TypeText(),
+		Type:        place.TypeID(),
 		Location:    place.Location,
 	}
 }
@@ -421,57 +450,55 @@ func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
 	case *ir.IntLit:
-		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.FloatLit:
-		return &RefConst{Value: e.Value, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.BoolLit:
-		return &RefConst{Value: e.String(), Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefConst{Value: e.String(), Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.StringLit:
 		var name string
 		if l.module != nil {
-			elemType := fmt.Sprintf("[%d x i8]", len(e.Value)+1)
-			name = l.module.InternStatic(e.Value, elemType, 1)
+			name = l.module.InternString(e.Value, 1)
 		} else {
 			name = "@.str.unknown"
 		}
-		return &RefName{Name: name, Type: "cstr", Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.ZeroValue:
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.OptionalSome:
 		value := l.lowerExpr(e.Value, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Ident:
-		return &RefName{Name: e.Name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: e.Name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Unary:
 		arg := l.lowerExpr(e.Arg, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Binary:
 		left := l.lowerExpr(e.Left, out)
 		right := l.lowerExpr(e.Right, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Call:
 		callee := l.lowerExpr(e.Callee, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &Call{Callee: callee, Args: args, Type: e.TypeText(), Location: ir.ExprLocation(e)}
-		if call.Type == "" {
-			call.Type = "void"
+		call := &Call{Callee: callee, Args: args, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		if l.isVoid(call.Type) {
 			l.appendInstr(out, call)
 			return nil
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Print:
 		value := l.lowerExpr(e.Value, out)
 		l.appendInstr(out, &Print{Value: value, Location: ir.ExprLocation(e)})
@@ -482,24 +509,30 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return nil
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
-		value := l.load(out, place, e.TypeText(), ir.ExprLocation(e))
-		if e.DropRoot {
+		value := l.load(out, place, e.TypeID(), ir.ExprLocation(e))
+		dropRoot := e.DropRoot
+		if l.cleanup != nil {
+			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
+				dropRoot = true
+			}
+		}
+		if dropRoot {
 			l.appendInstr(out, &Drop{Value: place.Root, Location: ir.ExprLocation(e.Place.Root)})
 		}
 		return value
 	case *ir.AddrOf:
-		pointerType := e.TypeText()
-		if pointerType == "rawptr" {
-			pointerType = "&mut " + e.Place.TypeText()
+		pointerType := e.TypeID()
+		if typ, ok := l.module.Types.Type(pointerType); ok && typ.Kind == ir.TypeRawPtr {
+			pointerType = l.module.Types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: e.Place.TypeID()})
 		}
 		place := l.lowerPlace(e.Place, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: pointerType, Location: ir.ExprLocation(e)}})
 		address := &RefName{Name: name, Type: pointerType, Location: ir.ExprLocation(e)}
-		if e.TypeText() == "rawptr" {
+		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeRawPtr {
 			castName := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: castName, Value: &Cast{Arg: address, Type: "rawptr", Location: ir.ExprLocation(e)}})
-			return &RefName{Name: castName, Type: "rawptr", Location: ir.ExprLocation(e)}
+			l.appendInstr(out, &Assign{Name: castName, Value: &Cast{Arg: address, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+			return &RefName{Name: castName, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 		}
 		return address
 	case *ir.TempBorrow:
@@ -507,21 +540,21 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		if value == nil {
 			panic("temporary borrow requires value expression")
 		}
-		place := &Place{Root: value, Type: e.Value.TypeText(), Location: ir.ExprLocation(e.Value)}
+		place := &Place{Root: value, Type: e.Value.TypeID(), Location: ir.ExprLocation(e.Value)}
 		l.temporaryDrops = append(l.temporaryDrops, value)
 		name := l.nextTemp()
 		if e.Slice {
 			l.appendInstr(out, &Assign{Name: name, Value: &SliceView{
 				Source: place,
-				Type:   e.TypeText(),
+				Type:   e.TypeID(),
 			}})
 		} else {
 			l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{
 				Place: place,
-				Type:  e.TypeText(),
+				Type:  e.TypeID(),
 			}})
 		}
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.SliceView:
 		source := l.lowerPlace(e.Source, out)
 		var start, end ValueRef
@@ -537,49 +570,54 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			Start:        start,
 			End:          end,
 			EndExclusive: e.EndExclusive,
-			Type:         e.TypeText(),
+			Type:         e.TypeID(),
 			Location:     ir.ExprLocation(e),
 		}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		if e.DropBase {
+		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		dropBase := e.DropBase
+		if l.cleanup != nil {
+			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
+				dropBase = true
+			}
+		}
+		if dropBase {
 			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
 		}
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
 		for _, field := range e.Fields {
 			fields = append(fields, l.lowerExpr(field, out))
 		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.ArrayLit:
 		if e.Dynamic {
 			name := l.nextTemp()
 			l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayAlloc{
 				Length:   len(e.Values),
-				Type:     e.TypeText(),
+				Type:     e.TypeID(),
 				Location: ir.ExprLocation(e),
 			}})
-			array := &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
-			elemType, ok := strings.CutPrefix(e.TypeText(), "[]")
-			if !ok || strings.TrimSpace(elemType) == "" {
-				panic(fmt.Sprintf("dynamic array literal has invalid type %q", e.TypeText()))
+			array := &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+			arrayType, ok := l.module.Types.Type(e.TypeID())
+			if !ok || arrayType.Kind != ir.TypeArray || arrayType.Length != "" {
+				panic("dynamic array literal has invalid type")
 			}
-			elemType = strings.TrimSpace(elemType)
 			for index, valueExpr := range e.Values {
 				value := l.lowerExpr(valueExpr, out)
-				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: "usize", Location: ir.ExprLocation(valueExpr)}
+				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: l.module.Types.IndexType(), Location: ir.ExprLocation(valueExpr)}
 				place := &Place{
 					Root: array,
 					Projections: []PlaceProjection{{
-						Kind: PlaceProjectionIndex, Index: indexRef, Type: elemType, Location: ir.ExprLocation(valueExpr),
+						Kind: PlaceProjectionIndex, Index: indexRef, Type: arrayType.Elem, Location: ir.ExprLocation(valueExpr),
 					}},
-					Type: elemType, Location: ir.ExprLocation(valueExpr),
+					Type: arrayType.Elem, Location: ir.ExprLocation(valueExpr),
 				}
 				l.appendInstr(out, &Store{Place: place, Value: value, Location: ir.ExprLocation(valueExpr)})
 			}
@@ -590,8 +628,8 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			values = append(values, l.lowerExpr(value, out))
 		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.DynamicArrayOp:
 		array := l.lowerExpr(e.Array, out)
 		var length, value ValueRef
@@ -607,10 +645,10 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			Array:    array,
 			Length:   length,
 			Value:    value,
-			Type:     e.TypeText(),
+			Type:     e.TypeID(),
 			Location: ir.ExprLocation(e),
 		}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.AllocExpr:
 		value := l.lowerExpr(e.Value, out)
 		var allocRef ValueRef
@@ -619,16 +657,16 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Alloc{
-			Value: value, Allocator: allocRef, Type: e.TypeText(), Location: ir.ExprLocation(e),
+			Value: value, Allocator: allocRef, Type: e.TypeID(), Location: ir.ExprLocation(e),
 		}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
-		dataType := interfaceDataType(e.Value.TypeText())
+		dataType := interfaceDataType(l.module.Types, e.Value.TypeID())
 
 		slots := make([]ValueRef, 0, len(e.Slots))
 		for index, slot := range e.Slots {
-			wrapperName := ir.InterfaceThunkName(slot.InterfaceType, dataType, slot.MethodName, index)
+			wrapperName := ir.InterfaceThunkName(l.module.Types.ABIKey(slot.InterfaceType), l.module.Types.ABIKey(dataType), slot.MethodName, index)
 			slot.WrapperName = wrapperName
 			slot.DataType = dataType
 			l.registerInterfaceThunk(slot)
@@ -639,32 +677,31 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			Value:    value,
 			DataType: dataType,
 			Slots:    slots,
-			Type:     e.TypeText(),
+			Type:     e.TypeID(),
 			Location: ir.ExprLocation(e),
 		}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.InterfaceCall:
 		base := l.lowerExpr(e.Base, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeText(), Location: ir.ExprLocation(e)}
-		if call.Type == "" {
-			call.Type = "void"
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		if l.isVoid(call.Type) {
 			l.appendInstr(out, call)
 			return nil
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeText(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeText(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
 	default:
-		return &RefConst{Value: "0", Type: "i32"}
+		return &RefConst{Value: "0", Type: ir.InvalidType}
 	}
 }
 
@@ -679,10 +716,7 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &Call{Callee: callee, Args: args, Type: e.TypeText()}
-		if call.Type == "" {
-			call.Type = "void"
-		}
+		call := &Call{Callee: callee, Args: args, Type: e.TypeID()}
 		l.appendInstr(out, call)
 		return true
 	case *ir.InterfaceCall:
@@ -691,10 +725,7 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeText()}
-		if call.Type == "" {
-			call.Type = "void"
-		}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeID()}
 		l.appendInstr(out, call)
 		return true
 	default:
@@ -702,17 +733,15 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 	}
 }
 
-func interfaceDataType(typeText string) string {
-	if remainder, ok := strings.CutPrefix(typeText, "&mut "); ok {
-		return remainder
+func interfaceDataType(types *ir.TypeTable, id ir.TypeID) ir.TypeID {
+	typ, ok := types.Type(id)
+	if !ok {
+		return ir.InvalidType
 	}
-	if remainder, ok := strings.CutPrefix(typeText, "&"); ok {
-		return remainder
+	if typ.Kind == ir.TypeReference || typ.Kind == ir.TypeOwnedPtr {
+		return typ.Elem
 	}
-	if remainder, ok := strings.CutPrefix(typeText, "*"); ok {
-		return remainder
-	}
-	return typeText
+	return id
 }
 
 func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {
@@ -746,6 +775,6 @@ func asValueExpr(ref ValueRef) ValueExpr {
 	case *RefName:
 		return &Move{Src: ref, Type: node.Type}
 	default:
-		return &Move{Src: ref, Type: "i32"}
+		return &Move{Src: ref, Type: ir.InvalidType}
 	}
 }

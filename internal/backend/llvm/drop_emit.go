@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -17,10 +16,16 @@ func emitDrop(b *llvmBuilder, instr *mir.Drop) {
 	emitDropValue(b, emitRef(b, instr.Value), mirRefType(instr.Value))
 }
 
-func emitDropValue(b *llvmBuilder, value, typeText string) {
-	typeText = strings.TrimSpace(typeText)
-	if _, ok := ownedInterfaceTypeText(typeText); ok {
-		interfaceType := b.emitter.llvmType(typeText)
+func emitDropValue(b *llvmBuilder, value string, typeID ir.TypeID) {
+	if b == nil || b.emitter == nil || b.emitter.mod == nil {
+		return
+	}
+	typ, ok := b.emitter.mod.Types.Type(typeID)
+	if !ok {
+		return
+	}
+	if isOwnedInterfaceType(b.emitter.mod.Types, typeID) {
+		interfaceType := b.emitter.llvmType(typeID)
 		data := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, interfaceType, value))
 		itab := b.nextReg()
@@ -32,11 +37,11 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 		dropFn := b.nextReg()
 		b.line(fmt.Sprintf("%s = bitcast i8* %s to void (i8*)*", dropFn, dropSlot))
 		b.line(fmt.Sprintf("call void %s(i8* %s)", dropFn, data))
-		emitInterfaceStorageRelease(b, typeText, value, data)
+		emitInterfaceStorageRelease(b, typeID, value, data)
 		return
 	}
-	if typeText == "string" {
-		stringType := b.emitter.llvmType(typeText)
+	if typ.Kind == ir.TypeString {
+		stringType := b.emitter.llvmType(typeID)
 		data := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, stringType, value))
 		length := b.nextReg()
@@ -51,59 +56,60 @@ func emitDropValue(b *llvmBuilder, value, typeText string) {
 		doneLabel := fmt.Sprintf("drop_string_done_%d", id)
 		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", nonNull, releaseLabel, doneLabel))
 		b.namedLabel(releaseLabel)
-		size := emitAllocatorStorageSize(b, "byte", length)
+		byteType := b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeByte})
+		size := emitAllocatorStorageSize(b, byteType, length)
 		emitAllocatorDeallocate(b, allocator, data, size, "1")
 		b.line(fmt.Sprintf("br label %%%s", doneLabel))
 		b.namedLabel(doneLabel)
 		return
 	}
-	if target, ok := pointerTypeTextTarget(typeText); ok {
-		llvmStructType := b.emitter.llvmType(typeText)
+	if typ.Kind == ir.TypeOwnedPtr {
+		llvmStructType := b.emitter.llvmType(typeID)
 		data := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmStructType, value))
-		if typeTextNeedsDrop(target) {
-			targetType, lowerable := llvmTypeName(target)
+		if typeNeedsDrop(b.emitter.mod.Types, typ.Elem) {
+			targetType, lowerable := llvmTypeID(b.emitter.mod.Types, typ.Elem)
 			if !lowerable {
-				b.emitter.markInvalid("owned pointer payload has unsupported drop layout: " + target)
+				b.emitter.markInvalid("owned pointer payload has unsupported drop layout")
 				return
 			}
 			payload := b.nextReg()
 			b.line(fmt.Sprintf("%s = load %s, %s* %s", payload, targetType, targetType, data))
-			emitDropValue(b, payload, target)
+			emitDropValue(b, payload, typ.Elem)
 		}
-		emitOwnedPointerFree(b, value, typeText, target)
+		emitOwnedPointerFree(b, value, typeID, typ.Elem)
 		return
 	}
-	if inner, ok := optionalInnerTypeText(typeText); ok {
-		emitOptionalDrop(b, value, typeText, inner)
+	if typ.Kind == ir.TypeOptional {
+		emitOptionalDrop(b, value, typeID, typ.Elem)
 		return
 	}
-	if elem, ok := strings.CutPrefix(typeText, "[]"); ok {
-		emitDynamicArrayDrop(b, value, typeText, strings.TrimSpace(elem))
+	if typ.Kind == ir.TypeArray && typ.Length == "" {
+		emitDynamicArrayDrop(b, value, typeID, typ.Elem)
 		return
 	}
-	if lengthText, elem, ok := ir.ArrayTypeParts(typeText); ok {
-		length, err := strconv.Atoi(lengthText)
+	if typ.Kind == ir.TypeArray {
+		length, err := strconv.Atoi(typ.Length)
 		if err != nil {
-			b.emitter.markInvalid("fixed array drop has invalid length: " + lengthText)
+			b.emitter.markInvalid("fixed array drop has invalid length: " + typ.Length)
 			return
 		}
-		arrayType := b.emitter.llvmType(typeText)
+		arrayType := b.emitter.llvmType(typeID)
 		for index := length - 1; index >= 0; index-- {
-			if !typeTextNeedsDrop(elem) {
+			if !typeNeedsDrop(b.emitter.mod.Types, typ.Elem) {
 				break
 			}
 			item := b.nextReg()
 			b.line(fmt.Sprintf("%s = extractvalue %s %s, %d", item, arrayType, value, index))
-			emitDropValue(b, item, elem)
+			emitDropValue(b, item, typ.Elem)
 		}
 		return
 	}
-	if strings.HasPrefix(typeText, "struct{") && strings.HasSuffix(typeText, "}") {
-		fields := structFieldTypeTexts(typeText)
-		structType := b.emitter.llvmType(typeText)
-		for index, fieldType := range slices.Backward(fields) {
-			if !typeTextNeedsDrop(fieldType) {
+	if typ.Kind == ir.TypeStruct {
+		structType := b.emitter.llvmType(typeID)
+		for index := len(typ.Fields) - 1; index >= 0; index-- {
+			fieldType := typ.Fields[index].Type
+			if !typeNeedsDrop(b.emitter.mod.Types, fieldType) {
 				continue
 			}
 			field := b.nextReg()
@@ -117,12 +123,12 @@ func emitInterfacePayloadDropThunk(out *strings.Builder, emitter *llvmEmitter, m
 	if out == nil || emitter == nil || makeVal == nil {
 		return
 	}
-	dataType, ok := llvmTypeName(makeVal.DataType)
+	dataType, ok := llvmTypeID(emitter.mod.Types, makeVal.DataType)
 	if !ok {
-		emitter.markInvalid("unsupported interface payload drop type: " + makeVal.DataType)
+		emitter.markInvalid("unsupported interface payload drop type: " + emitter.mod.Types.Text(makeVal.DataType))
 		return
 	}
-	fmt.Fprintf(out, "define void %s(i8* %%data) {\n", interfaceDropSymbolName(makeVal.Type, makeVal.DataType))
+	fmt.Fprintf(out, "define void %s(i8* %%data) {\n", interfaceSymbolName("iface_drop", emitter.mod.Types, makeVal.Type, makeVal.DataType))
 	builder := newLLVMBuilder(out, emitter, -1)
 	builder.namedLabel("entry")
 	typed := builder.nextReg()
@@ -138,26 +144,26 @@ func emitInterfacePayloadReleaseThunk(out *strings.Builder, emitter *llvmEmitter
 	if out == nil || emitter == nil || makeVal == nil {
 		return
 	}
-	dataType, ok := llvmTypeName(makeVal.DataType)
+	dataType, ok := llvmTypeID(emitter.mod.Types, makeVal.DataType)
 	if !ok {
-		emitter.markInvalid("unsupported interface payload release type: " + makeVal.DataType)
+		emitter.markInvalid("unsupported interface payload release type: " + emitter.mod.Types.Text(makeVal.DataType))
 		return
 	}
-	fmt.Fprintf(out, "define void %s(i8* %%allocator, i8* %%data) {\n", interfaceReleaseSymbolName(makeVal.Type, makeVal.DataType))
+	fmt.Fprintf(out, "define void %s(i8* %%allocator, i8* %%data) {\n", interfaceSymbolName("iface_release", emitter.mod.Types, makeVal.Type, makeVal.DataType))
 	builder := newLLVMBuilder(out, emitter, -1)
 	builder.namedLabel("entry")
 	size := builder.nextReg()
-	builder.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, dataType, dataType, dataType, emitter.llvmType("usize")))
+	builder.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", size, dataType, dataType, dataType, emitter.llvmType(emitter.mod.Types.IndexType())))
 	emitAllocatorDeallocate(builder, "%allocator", "%data", size, "8")
 	builder.line("ret void")
 	out.WriteString("}\n")
 }
 
-func emitInterfaceStorageRelease(b *llvmBuilder, interfaceType, interfaceValue, data string) {
+func emitInterfaceStorageRelease(b *llvmBuilder, interfaceType ir.TypeID, interfaceValue, data string) {
 	if b == nil || interfaceValue == "" || data == "" {
 		return
 	}
-	if _, owned := ownedInterfaceTypeText(interfaceType); !owned {
+	if !isOwnedInterfaceType(b.emitter.mod.Types, interfaceType) {
 		return
 	}
 	llvmType := b.emitter.llvmType(interfaceType)
@@ -176,18 +182,11 @@ func emitInterfaceStorageRelease(b *llvmBuilder, interfaceType, interfaceValue, 
 	b.line(fmt.Sprintf("call void %s(i8* %s, i8* %s)", releaseFn, allocator, data))
 }
 
-func emitOptionalDrop(b *llvmBuilder, value, typeText, inner string) {
-	if !typeTextNeedsDrop(inner) {
+func emitOptionalDrop(b *llvmBuilder, value string, typeID, inner ir.TypeID) {
+	if !typeNeedsDrop(b.emitter.mod.Types, inner) {
 		return
 	}
-	if _, niche := optionalNicheLayout(inner); niche {
-		llvmType := b.emitter.llvmType(typeText)
-		present := b.nextReg()
-		b.line(fmt.Sprintf("%s = icmp ne %s %s, null", present, llvmType, value))
-		emitConditionalDrop(b, present, value, inner)
-		return
-	}
-	optionalType := b.emitter.llvmType(typeText)
+	optionalType := b.emitter.llvmType(typeID)
 	present := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", present, optionalType, value))
 	payload := b.nextReg()
@@ -195,20 +194,20 @@ func emitOptionalDrop(b *llvmBuilder, value, typeText, inner string) {
 	emitConditionalDrop(b, present, payload, inner)
 }
 
-func emitConditionalDrop(b *llvmBuilder, condition, value, typeText string) {
+func emitConditionalDrop(b *llvmBuilder, condition, value string, typeID ir.TypeID) {
 	id := b.nextID
 	b.nextID++
 	dropLabel := fmt.Sprintf("drop_some_%d", id)
 	doneLabel := fmt.Sprintf("drop_done_%d", id)
 	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", condition, dropLabel, doneLabel))
 	b.namedLabel(dropLabel)
-	emitDropValue(b, value, typeText)
+	emitDropValue(b, value, typeID)
 	b.line(fmt.Sprintf("br label %%%s", doneLabel))
 	b.namedLabel(doneLabel)
 }
 
-func emitDynamicArrayDrop(b *llvmBuilder, value, typeText, elem string) {
-	arrayType := b.emitter.llvmType(typeText)
+func emitDynamicArrayDrop(b *llvmBuilder, value string, typeID, elem ir.TypeID) {
+	arrayType := b.emitter.llvmType(typeID)
 	data := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, value))
 	length := b.nextReg()
@@ -234,8 +233,8 @@ func emitDynamicArrayDrop(b *llvmBuilder, value, typeText, elem string) {
 	b.namedLabel(doneLabel)
 }
 
-func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data, elem, start, end string) {
-	if !typeTextNeedsDrop(elem) {
+func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data string, elem ir.TypeID, start, end string) {
+	if !typeNeedsDrop(b.emitter.mod.Types, elem) {
 		return
 	}
 	id := b.nextID
@@ -267,16 +266,16 @@ func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data, elem, start, end str
 	b.namedLabel(doneLabel)
 }
 
-func emitOwnedPointerFree(b *llvmBuilder, value, typeText, targetTypeText string) {
-	llvmStructType := b.emitter.llvmType(typeText)
-	sizeType := b.emitter.llvmType("usize")
+func emitOwnedPointerFree(b *llvmBuilder, value string, typeID, targetType ir.TypeID) {
+	llvmStructType := b.emitter.llvmType(typeID)
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 
 	data := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmStructType, value))
 	desc := b.nextReg()
 	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", desc, llvmStructType, value))
 
-	targetLLVM := b.emitter.llvmType(targetTypeText)
+	targetLLVM := b.emitter.llvmType(targetType)
 	rawData := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", rawData, targetLLVM, data))
 
@@ -286,8 +285,8 @@ func emitOwnedPointerFree(b *llvmBuilder, value, typeText, targetTypeText string
 	emitAllocatorDeallocate(b, desc, rawData, size, "8")
 }
 
-func emitFreeCall(b *llvmBuilder, value, typeText string) {
-	llvmType := b.emitter.llvmType(typeText)
+func emitFreeCall(b *llvmBuilder, value string, typeID ir.TypeID) {
+	llvmType := b.emitter.llvmType(typeID)
 	if llvmType != "i8*" {
 		cast := b.nextReg()
 		b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, llvmType, value))
@@ -296,83 +295,70 @@ func emitFreeCall(b *llvmBuilder, value, typeText string) {
 	b.line(fmt.Sprintf("call void @free(i8* %s)", value))
 }
 
-func typeTextNeedsDrop(typeText string) bool {
-	typeText = strings.TrimSpace(typeText)
-	if _, ok := pointerTypeTextTarget(typeText); ok || typeText == "string" {
-		return true
-	}
-	if inner, ok := optionalInnerTypeText(typeText); ok {
-		return typeTextNeedsDrop(inner)
-	}
-	if _, ok := strings.CutPrefix(typeText, "[]"); ok {
-		return true
-	}
-	if _, elem, ok := ir.ArrayTypeParts(typeText); ok {
-		return typeTextNeedsDrop(elem)
-	}
-	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeTextNeedsDrop)
-}
-
-func typeCarriesAllocator(typeText string) bool {
-	typeText = strings.TrimSpace(typeText)
-	if typeText == "string" {
-		return true
-	}
-	if _, ok := ownedInterfaceTypeText(typeText); ok {
-		return true
-	}
-	if inner, ok := optionalInnerTypeText(typeText); ok {
-		return typeCarriesAllocator(inner)
-	}
-	if _, ok := strings.CutPrefix(typeText, "[]"); ok {
-		return true
-	}
-	if target, ok := pointerTypeTextTarget(typeText); ok {
-		_, isInterface := ownedInterfaceTypeText(typeText)
-		return !isInterface && target != ""
-	}
-	if _, elem, ok := ir.ArrayTypeParts(typeText); ok {
-		return typeCarriesAllocator(elem)
-	}
-	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeCarriesAllocator)
-}
-
-func typeTextNeedsRawFree(typeText string) bool {
-	typeText = strings.TrimSpace(typeText)
-	if _, ok := ownedInterfaceTypeText(typeText); ok {
+func typeNeedsDrop(types *ir.TypeTable, id ir.TypeID) bool {
+	typ, ok := types.Type(id)
+	if !ok {
 		return false
 	}
-	if target, ok := pointerTypeTextTarget(typeText); ok {
-		return typeTextNeedsRawFree(target)
+	switch typ.Kind {
+	case ir.TypeOwnedPtr, ir.TypeString:
+		return true
+	case ir.TypeOptional:
+		return typeNeedsDrop(types, typ.Elem)
+	case ir.TypeArray:
+		return typ.Length == "" || typeNeedsDrop(types, typ.Elem)
+	case ir.TypeStruct:
+		for _, field := range typ.Fields {
+			if typeNeedsDrop(types, field.Type) {
+				return true
+			}
+		}
 	}
-	if inner, ok := optionalInnerTypeText(typeText); ok {
-		return typeTextNeedsRawFree(inner)
-	}
-	if elem, ok := strings.CutPrefix(typeText, "[]"); ok {
-		return typeTextNeedsRawFree(elem)
-	}
-	if _, elem, ok := ir.ArrayTypeParts(typeText); ok {
-		return typeTextNeedsRawFree(elem)
-	}
-	return slices.ContainsFunc(structFieldTypeTexts(typeText), typeTextNeedsRawFree)
+	return false
 }
 
-func structFieldTypeTexts(typeText string) []string {
-	if !strings.HasPrefix(typeText, "struct{") || !strings.HasSuffix(typeText, "}") {
-		return nil
+func typeCarriesAllocatorID(types *ir.TypeTable, id ir.TypeID) bool {
+	typ, ok := types.Type(id)
+	if !ok {
+		return false
 	}
-	body := strings.TrimSuffix(strings.TrimPrefix(typeText, "struct{"), "}")
-	fields := splitTopLevel(body, ';')
-	types := make([]string, 0, len(fields))
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if field == "" {
-			continue
+	switch typ.Kind {
+	case ir.TypeString:
+		return true
+	case ir.TypeOwnedPtr:
+		return !isInterfaceType(types, typ.Elem)
+	case ir.TypeOptional:
+		return typeCarriesAllocatorID(types, typ.Elem)
+	case ir.TypeArray:
+		return typ.Length == "" || typeCarriesAllocatorID(types, typ.Elem)
+	case ir.TypeStruct:
+		for _, field := range typ.Fields {
+			if typeCarriesAllocatorID(types, field.Type) {
+				return true
+			}
 		}
-		if _, remainder, ok := strings.Cut(field, ":"); ok {
-			field = strings.TrimSpace(remainder)
-		}
-		types = append(types, field)
 	}
-	return types
+	return false
+}
+
+func typeNeedsRawFreeID(types *ir.TypeTable, id ir.TypeID) bool {
+	typ, ok := types.Type(id)
+	if !ok {
+		return false
+	}
+	switch typ.Kind {
+	case ir.TypeOwnedPtr:
+		return !isInterfaceType(types, typ.Elem) && typeNeedsRawFreeID(types, typ.Elem)
+	case ir.TypeOptional:
+		return typeNeedsRawFreeID(types, typ.Elem)
+	case ir.TypeArray:
+		return typ.Length == "" || typeNeedsRawFreeID(types, typ.Elem)
+	case ir.TypeStruct:
+		for _, field := range typ.Fields {
+			if typeNeedsRawFreeID(types, field.Type) {
+				return true
+			}
+		}
+	}
+	return false
 }

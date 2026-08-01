@@ -3,6 +3,7 @@ package llvm
 import (
 	"fmt"
 
+	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
 )
 
@@ -13,7 +14,7 @@ func emitDefaultAllocatorHandle(b *llvmBuilder) string {
 }
 
 func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment string) string {
-	sizeType := b.emitter.llvmType("usize")
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	desc := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", desc, handle))
 	ctx := b.nextReg()
@@ -30,7 +31,7 @@ func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment string) strin
 }
 
 func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment string) {
-	sizeType := b.emitter.llvmType("usize")
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	desc := b.nextReg()
 	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", desc, handle))
 	ctx := b.nextReg()
@@ -44,8 +45,8 @@ func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment string
 	b.line(fmt.Sprintf("call void %s(i8* %s, i8* %s, %s %s, i32 %s)", deallocFn, ctx, raw, sizeType, size, alignment))
 }
 
-func emitAllocatorStorageSize(b *llvmBuilder, elemTypeText, capacity string) string {
-	sizeType := b.emitter.llvmType("usize")
+func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity string) string {
+	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	id := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("allocator_size_fail_%d", id)
@@ -60,9 +61,9 @@ func emitAllocatorStorageSize(b *llvmBuilder, elemTypeText, capacity string) str
 		b.line(fmt.Sprintf("%s = trunc i64 %s to i32", narrowed, capacity))
 		capacity = narrowed
 	}
-	elemType := b.emitter.llvmType(elemTypeText)
+	elemLLVMType := b.emitter.llvmType(elemType)
 	elemSize := b.nextReg()
-	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", elemSize, elemType, elemType, elemType, sizeType))
+	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", elemSize, elemLLVMType, elemLLVMType, elemLLVMType, sizeType))
 	sizeAndOverflow := b.nextReg()
 	b.line(fmt.Sprintf("%s = call { %s, i1 } @llvm.umul.with.overflow.%s(%s %s, %s %s)", sizeAndOverflow, sizeType, sizeType, sizeType, elemSize, sizeType, capacity))
 	size := b.nextReg()

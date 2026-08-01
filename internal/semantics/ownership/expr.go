@@ -3,6 +3,7 @@ package ownership
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -209,7 +210,7 @@ func (a *analyzer) checkSelector(
 }
 
 func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
-	if a == nil || a.module == nil || a.module.Semantics == nil || projection == nil || base == nil {
+	if a == nil || a.cleanup == nil || projection == nil || base == nil {
 		return false
 	}
 	if place.IsPlaceExpr(base) || !typeinfo.NeedsDrop(a.exprType(base)) {
@@ -220,7 +221,7 @@ func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
 			"ownership-bearing projection from temporary must be bound before use", ast.LocOf(projection), "")
 		return true
 	}
-	a.module.Semantics.DropProjectionBase[projection.ID()] = struct{}{}
+	a.cleanup.ProjectionBase[ir.NodeID(projection.ID())] = struct{}{}
 	return false
 }
 

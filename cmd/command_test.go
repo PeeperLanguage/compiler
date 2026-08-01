@@ -22,6 +22,13 @@ func TestParseCommandArgsRunDebug(t *testing.T) {
 	}
 }
 
+func TestParseCommandArgsRejectsConflictingM32TargetArch(t *testing.T) {
+	_, err := parseCommandArgs("build", []string{"--m32", "--target-arch", "amd64"}, false)
+	if err == nil {
+		t.Fatal("expected -m32 and amd64 conflict")
+	}
+}
+
 func TestResolveBuildTargetUsesManifestEntryAndPackageName(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, manifest.FileName)

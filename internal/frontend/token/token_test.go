@@ -63,6 +63,7 @@ func TestBuiltinTypeAndStringer(t *testing.T) {
 }
 
 func TestParseIntegerBuiltin(t *testing.T) {
+	hostTarget := target.Host()
 	tests := []struct {
 		name   string
 		signed bool
@@ -71,8 +72,8 @@ func TestParseIntegerBuiltin(t *testing.T) {
 	}{
 		{name: "i128", signed: true, bits: 128, ok: true},
 		{name: "u1024", signed: false, bits: 1024, ok: true},
-		{name: "isize", signed: true, bits: target.SizeBits(), ok: true},
-		{name: "usize", signed: false, bits: target.SizeBits(), ok: true},
+		{name: "isize", signed: true, bits: hostTarget.PointerBits, ok: true},
+		{name: "usize", signed: false, bits: hostTarget.PointerBits, ok: true},
 		{name: "byte", ok: false},
 		{name: "i24", signed: true, bits: 24, ok: true},
 		{name: "u4", signed: false, bits: 4, ok: true},
@@ -81,29 +82,32 @@ func TestParseIntegerBuiltin(t *testing.T) {
 		{name: "foo", ok: false},
 	}
 	for _, tt := range tests {
-		signed, bits, ok := ParseIntegerBuiltin(tt.name)
+		signed, bits, ok := ParseIntegerBuiltin(tt.name, hostTarget)
 		if signed != tt.signed || bits != tt.bits || ok != tt.ok {
 			t.Fatalf("ParseIntegerBuiltin(%q) = (%v, %d, %v)", tt.name, signed, bits, ok)
 		}
 	}
 }
 
-func TestParseIntegerBuiltinUsesConfiguredABISize(t *testing.T) {
-	prev := target.SizeBits()
-	defer func() {
-		if err := target.SetSizeBits(prev); err != nil {
-			t.Fatalf("restore abi size: %v", err)
-		}
-	}()
-	if err := target.SetSizeBits(target.Bits32); err != nil {
-		t.Fatalf("set abi size: %v", err)
+func TestParseIntegerBuiltinUsesExplicitTarget(t *testing.T) {
+	target32, err := target.New("linux", "386")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target64, err := target.New("linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	signed, bits, ok := ParseIntegerBuiltin("isize")
+	signed, bits, ok := ParseIntegerBuiltin("isize", target32)
 	if !ok || !signed || bits != target.Bits32 {
 		t.Fatalf("ParseIntegerBuiltin(isize) = (%v, %d, %v)", signed, bits, ok)
 	}
-	signed, bits, ok = ParseIntegerBuiltin("usize")
+	signed, bits, ok = ParseIntegerBuiltin("usize", target64)
+	if !ok || signed || bits != target.Bits64 {
+		t.Fatalf("ParseIntegerBuiltin(usize) = (%v, %d, %v)", signed, bits, ok)
+	}
+	signed, bits, ok = ParseIntegerBuiltin("usize", target32)
 	if !ok || signed || bits != target.Bits32 {
 		t.Fatalf("ParseIntegerBuiltin(usize) = (%v, %d, %v)", signed, bits, ok)
 	}

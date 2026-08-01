@@ -6,4 +6,10 @@ fn Add(base: i32, step: i32 = base + helpers::Value()) -> i32 {
     return base + step;
 }
 
-fn TakePointer(pointer: rawptr = @value) {}
+fn TakePointer(_: rawptr = @value) {}
+
+fn Borrow(pointer: &i32 = &value) -> &i32 from pointer {
+    return pointer;
+}
+
+fn Read(_: &i32) {}

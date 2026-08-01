@@ -284,7 +284,7 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 					break
 				}
 			}
-			expectedType := typeinfo.TypeFromSyntax(spec.Type, typeinfo.SyntaxOptions{AllowAbstractSelf: true})
+			expectedType := typeinfo.TypeFromSyntax(spec.Type, typeinfo.SyntaxOptions{Target: c.ctx.Target, AllowAbstractSelf: true})
 			argType := c.typeExpr(c.module.ModuleScope, arg, expectedType)
 			if typeinfo.IsInvalidOrUnknown(argType) {
 				validArgs = false
@@ -1633,7 +1633,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 		return &typeinfo.InvalidType{}
 	}
 
-	sizeType, ok := typeinfo.NumericTypeFromName("usize")
+	sizeType, ok := typeinfo.NumericTypeFromName("usize", c.ctx.Target)
 	if !ok {
 		panic("missing builtin usize type")
 	}
@@ -2312,7 +2312,7 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 		expected = nil
 	}
 	if node.ExplicitType != "" {
-		explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType)
+		explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType, c.ctx.Target)
 		if !ok {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidNumber,
 				fmt.Sprintf("unsupported numeric literal suffix `%s`", node.ExplicitType), ast.LocOf(node), "").

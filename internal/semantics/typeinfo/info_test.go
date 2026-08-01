@@ -2,9 +2,33 @@ package typeinfo
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/target"
 	"slices"
 	"testing"
 )
+
+func TestTypeFromSyntaxUsesExplicitTargetForSizeIntegers(t *testing.T) {
+	target32, err := target.New("linux", "386")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target64, err := target.New("linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		target target.Info
+		bits   int
+	}{
+		{target: target32, bits: 32},
+		{target: target64, bits: 64},
+	} {
+		typ, ok := TypeFromSyntax(&ast.NamedType{Name: "usize"}, SyntaxOptions{Target: tt.target}).(*IntegerType)
+		if !ok || typ.Signed || typ.Bits != tt.bits {
+			t.Fatalf("usize type = %#v, want u%d", typ, tt.bits)
+		}
+	}
+}
 
 func TestPointerTypeTextAndEquality(t *testing.T) {
 	ownedA := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}

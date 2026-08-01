@@ -188,17 +188,10 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 			continue
 		}
 		cloned := *module
-		cloned.Phase = phase
+		cloned.ResetToPhase(phase)
 		ctx.Metrics.AddReusedModule()
 		if phase < module.Phase {
 			ctx.Metrics.AddDowngradedModule()
-		}
-		if phase <= project.PhaseParsed {
-			cloned.ModuleScope = nil
-			cloned.Semantics = nil
-			cloned.HIR = nil
-			cloned.MIR = nil
-			cloned.LLVMIR = ""
 		}
 		ctx.AddModule(&cloned)
 	}

@@ -87,7 +87,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 			module.ExportFingerprint = module.AST.ExportFingerprint
 		}
 		if module.Phase < project.PhaseParsed {
-			module.Phase = project.PhaseParsed
+			module.ResetToPhase(project.PhaseParsed)
 		}
 		return
 	}
@@ -110,7 +110,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	l.ctx.Metrics.AddParsedModule()
 	module.ImportFingerprint = module.AST.ImportFingerprint
 	module.ExportFingerprint = module.AST.ExportFingerprint
-	module.Phase = project.PhaseParsed
+	module.ResetToPhase(project.PhaseParsed)
 	l.resolveImports(module)
 }
 
