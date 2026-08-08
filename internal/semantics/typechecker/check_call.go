@@ -159,7 +159,7 @@ func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo
 			"alloc cannot store value containing a reference in owned heap storage"))
 	}
 
-	if !c.isLowerableType(valueType) {
+	if !typeinfo.IsLowerableType(valueType) {
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Args[0],
 			"alloc target type is not lowerable in current compiler stage"))
 	}

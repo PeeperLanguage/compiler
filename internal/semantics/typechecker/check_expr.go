@@ -619,7 +619,7 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 			c.rejectUnsizedType(array.Elem, node.Type, "dynamic array element") {
 			return &typeinfo.InvalidType{}
 		}
-		if !c.isLowerableType(array.Elem) {
+		if !typeinfo.IsLowerableType(array.Elem) {
 			c.ctx.Diagnostics.Add(invalidTypeError(node.Type,
 				"dynamic array element type is not lowerable in current compiler stage"))
 			return &typeinfo.InvalidType{}

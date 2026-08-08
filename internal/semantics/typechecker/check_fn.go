@@ -128,7 +128,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 		if c.rejectReferenceStorage(paramType, param.Type, "parameter aggregate types", false) {
 			return
 		}
-		if !c.isLowerableType(paramType) {
+		if !typeinfo.IsLowerableType(paramType) {
 			site := ast.Node(decl)
 			if param.Name != nil {
 				site = param.Name
@@ -223,7 +223,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 	if c.rejectUnsizedType(typ, typeNode, "function return") {
 		return false
 	}
-	if !c.isLowerableType(typ) {
+	if !typeinfo.IsLowerableType(typ) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 			"function return type is not lowerable in current compiler stage", site, "")
 		return false
@@ -309,7 +309,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			if c.rejectReferenceStorage(paramType, param.Type, "interface parameter aggregate types", false) {
 				continue
 			}
-			if paramType != nil && !c.isLowerableType(paramType) {
+			if paramType != nil && !typeinfo.IsLowerableType(paramType) {
 				site := ast.Node(decl)
 				if param.Name != nil {
 					site = param.Name
