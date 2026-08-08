@@ -276,7 +276,7 @@ func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 		}
 		if ident, direct := target.Root.(*ir.Ident); direct && len(target.Projections) == 0 {
 			if dropTarget {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ir.ExprLocation(ident)}})
+				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ident.Origin().Location}})
 			}
 			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
@@ -450,11 +450,11 @@ func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
 	case *ir.IntLit:
-		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.FloatLit:
-		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.BoolLit:
-		return &RefConst{Value: e.String(), Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefConst{Value: e.String(), Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.StringLit:
 		var name string
 		if l.module != nil {
@@ -462,54 +462,54 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		} else {
 			name = "@.str.unknown"
 		}
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.ZeroValue:
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.OptionalSome:
 		value := l.lowerExpr(e.Value, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Ident:
-		return &RefName{Name: e.Name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: e.Name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Unary:
 		arg := l.lowerExpr(e.Arg, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Binary:
 		left := l.lowerExpr(e.Left, out)
 		right := l.lowerExpr(e.Right, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Call:
 		callee := l.lowerExpr(e.Callee, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &Call{Callee: callee, Args: args, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		call := &Call{Callee: callee, Args: args, Type: e.TypeID(), Location: e.Origin().Location}
 		if l.isVoid(call.Type) {
 			l.appendInstr(out, call)
 			return nil
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Print:
 		value := l.lowerExpr(e.Value, out)
-		l.appendInstr(out, &Print{Value: value, Location: ir.ExprLocation(e)})
+		l.appendInstr(out, &Print{Value: value, Location: e.Origin().Location})
 		return nil
 	case *ir.Drop:
 		value := l.lowerExpr(e.Value, out)
-		l.appendInstr(out, &Drop{Value: value, Location: ir.ExprLocation(e)})
+		l.appendInstr(out, &Drop{Value: value, Location: e.Origin().Location})
 		return nil
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
-		value := l.load(out, place, e.TypeID(), ir.ExprLocation(e))
+		value := l.load(out, place, e.TypeID(), e.Origin().Location)
 		dropRoot := e.DropRoot
 		if l.cleanup != nil {
 			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
@@ -517,7 +517,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			}
 		}
 		if dropRoot {
-			l.appendInstr(out, &Drop{Value: place.Root, Location: ir.ExprLocation(e.Place.Root)})
+			l.appendInstr(out, &Drop{Value: place.Root, Location: e.Place.Root.Origin().Location})
 		}
 		return value
 	case *ir.AddrOf:
@@ -527,12 +527,12 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		place := l.lowerPlace(e.Place, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: pointerType, Location: ir.ExprLocation(e)}})
-		address := &RefName{Name: name, Type: pointerType, Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: pointerType, Location: e.Origin().Location}})
+		address := &RefName{Name: name, Type: pointerType, Location: e.Origin().Location}
 		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeRawPtr {
 			castName := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: castName, Value: &Cast{Arg: address, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-			return &RefName{Name: castName, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+			l.appendInstr(out, &Assign{Name: castName, Value: &Cast{Arg: address, Type: e.TypeID(), Location: e.Origin().Location}})
+			return &RefName{Name: castName, Type: e.TypeID(), Location: e.Origin().Location}
 		}
 		return address
 	case *ir.TempBorrow:
@@ -540,7 +540,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		if value == nil {
 			panic("temporary borrow requires value expression")
 		}
-		place := &Place{Root: value, Type: e.Value.TypeID(), Location: ir.ExprLocation(e.Value)}
+		place := &Place{Root: value, Type: e.Value.TypeID(), Location: e.Value.Origin().Location}
 		l.temporaryDrops = append(l.temporaryDrops, value)
 		name := l.nextTemp()
 		if e.Slice {
@@ -554,7 +554,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 				Type:  e.TypeID(),
 			}})
 		}
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.SliceView:
 		source := l.lowerPlace(e.Source, out)
 		var start, end ValueRef
@@ -571,13 +571,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			End:          end,
 			EndExclusive: e.EndExclusive,
 			Type:         e.TypeID(),
-			Location:     ir.ExprLocation(e),
+			Location:     e.Origin().Location,
 		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
+		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: e.Origin().Location}})
 		dropBase := e.DropBase
 		if l.cleanup != nil {
 			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
@@ -585,41 +585,41 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			}
 		}
 		if dropBase {
-			l.appendInstr(out, &Drop{Value: base, Location: ir.ExprLocation(e.Base)})
+			l.appendInstr(out, &Drop{Value: base, Location: e.Base.Origin().Location})
 		}
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
 		for _, field := range e.Fields {
 			fields = append(fields, l.lowerExpr(field, out))
 		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.ArrayLit:
 		if e.Dynamic {
 			name := l.nextTemp()
 			l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayAlloc{
 				Length:   len(e.Values),
 				Type:     e.TypeID(),
-				Location: ir.ExprLocation(e),
+				Location: e.Origin().Location,
 			}})
-			array := &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+			array := &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 			arrayType, ok := l.module.Types.Type(e.TypeID())
 			if !ok || arrayType.Kind != ir.TypeArray || arrayType.Length != "" {
 				panic("dynamic array literal has invalid type")
 			}
 			for index, valueExpr := range e.Values {
 				value := l.lowerExpr(valueExpr, out)
-				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: l.module.Types.IndexType(), Location: ir.ExprLocation(valueExpr)}
+				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: l.module.Types.IndexType(), Location: valueExpr.Origin().Location}
 				place := &Place{
 					Root: array,
 					Projections: []PlaceProjection{{
-						Kind: PlaceProjectionIndex, Index: indexRef, Type: arrayType.Elem, Location: ir.ExprLocation(valueExpr),
+						Kind: PlaceProjectionIndex, Index: indexRef, Type: arrayType.Elem, Location: valueExpr.Origin().Location,
 					}},
-					Type: arrayType.Elem, Location: ir.ExprLocation(valueExpr),
+					Type: arrayType.Elem, Location: valueExpr.Origin().Location,
 				}
-				l.appendInstr(out, &Store{Place: place, Value: value, Location: ir.ExprLocation(valueExpr)})
+				l.appendInstr(out, &Store{Place: place, Value: value, Location: valueExpr.Origin().Location})
 			}
 			return array
 		}
@@ -628,8 +628,8 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			values = append(values, l.lowerExpr(value, out))
 		}
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.DynamicArrayOp:
 		array := l.lowerExpr(e.Array, out)
 		var length, value ValueRef
@@ -646,9 +646,9 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			Length:   length,
 			Value:    value,
 			Type:     e.TypeID(),
-			Location: ir.ExprLocation(e),
+			Location: e.Origin().Location,
 		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.AllocExpr:
 		value := l.lowerExpr(e.Value, out)
 		var allocRef ValueRef
@@ -657,9 +657,9 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Alloc{
-			Value: value, Allocator: allocRef, Type: e.TypeID(), Location: ir.ExprLocation(e),
+			Value: value, Allocator: allocRef, Type: e.TypeID(), Location: e.Origin().Location,
 		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
 		dataType := interfaceDataType(l.module.Types, e.Value.TypeID())
@@ -678,28 +678,28 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			DataType: dataType,
 			Slots:    slots,
 			Type:     e.TypeID(),
-			Location: ir.ExprLocation(e),
+			Location: e.Origin().Location,
 		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.InterfaceCall:
 		base := l.lowerExpr(e.Base, out)
 		args := make([]ValueRef, 0, len(e.Args))
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeID(), Location: e.Origin().Location}
 		if l.isVoid(call.Type) {
 			l.appendInstr(out, call)
 			return nil
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: ir.ExprLocation(e)}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: ir.ExprLocation(e)}
+		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	default:
 		return &RefConst{Value: "0", Type: ir.InvalidType}
 	}

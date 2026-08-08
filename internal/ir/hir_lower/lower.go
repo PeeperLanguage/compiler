@@ -375,11 +375,14 @@ func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, return
 
 // lowerASTExpr directly lowers an AST expression to an IR expression using
 // the module context's resolved expression types side-table.
-func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) (result ir.Expr) {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
 	loc := ast.LocOf(expr)
+	defer func() {
+		result = ir.WithOrigin(result, ir.SourceInfo{NodeID: ir.NodeID(expr.ID()), Location: loc})
+	}()
 
 	// Fetch canonical type from the typechecker side-table when available.
 	resolvedType := exprResolvedType(module, expr)
