@@ -79,7 +79,7 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 		}
 		argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 	}
-	c.checkFunctionCall(node, calleeType, argTypes)
+	c.checkCall(scope, nil, node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
 }
 
@@ -130,7 +130,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 	for i, arg := range node.Args[1:] {
 		argTypes = append(argTypes, c.typeExpr(scope, arg, params[i+1]))
 	}
-	c.checkFunctionCall(node, fnType, argTypes)
+	c.checkCall(scope, nil, node, fnType, argTypes)
 	if op == symbols.CompilerOpResize && !typeinfo.IsImplicitCopyType(array.Elem) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"resize requires implicitly copyable elements; grow Category B arrays with append",
@@ -202,7 +202,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 			}
 			argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 		}
-		c.checkMethodCall(scope, selector.Expr, call, methodType, argTypes)
+		c.checkCall(scope, selector.Expr, call, methodType, argTypes)
 		return c.callReturnType(call, methodType)
 	}
 	if field, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
@@ -224,67 +224,41 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	return &typeinfo.InvalidType{}
 }
 
-func (c *checker) checkFunctionCall(callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
+func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
 	if c == nil || callExpr == nil || calleeType == nil {
 		return
 	}
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
 		if !typeinfo.IsInvalidOrUnknown(calleeType) {
-			c.ctx.Diagnostics.Add(notCallableError(callExpr, "call target is not a function"))
+			kind := "function"
+			if receiverExpr != nil {
+				kind = "method"
+			}
+			c.ctx.Diagnostics.Add(notCallableError(callExpr, "call target is not a "+kind))
 		}
 		return
 	}
+	argOffset := 0
+	if receiverExpr != nil {
+		argOffset = 1
+	}
 	if len(args) != len(fnType.Params) {
-		d := wrongArgumentCountError(callExpr, len(args), len(fnType.Params))
-		paramDescs := make([]string, len(fnType.Params))
-		for i, p := range fnType.Params {
-			paramDescs[i] = typeinfo.TypeText(p)
+		d := wrongArgumentCountError(callExpr, len(args)-argOffset, len(fnType.Params)-argOffset)
+		if receiverExpr == nil {
+			paramDescs := make([]string, len(fnType.Params))
+			for i, p := range fnType.Params {
+				paramDescs[i] = typeinfo.TypeText(p)
+			}
+			d.WithHelp(fmt.Sprintf("expected parameters: (%s)", strings.Join(paramDescs, ", ")))
 		}
-		d.WithHelp(fmt.Sprintf("expected parameters: (%s)", strings.Join(paramDescs, ", ")))
 		c.ctx.Diagnostics.Add(d)
 		return
 	}
 	for i, argType := range args {
 		if argType == nil {
-			c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i],
-				"argument requires a value-producing expression"))
-			continue
-		}
-		paramType := fnType.Params[i]
-		if paramType == nil {
-			continue
-		}
-		if !c.assignable(paramType, argType) {
-			d := typeMismatchError(callExpr.Args[i],
-				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
-			c.addInterfaceHint(d, paramType, argType)
-			c.ctx.Diagnostics.Add(d)
-			continue
-		}
-	}
-}
-
-func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
-	if c == nil || callExpr == nil || calleeType == nil {
-		return
-	}
-	fnType, ok := calleeType.(*typeinfo.FuncType)
-	if !ok || fnType == nil {
-		if !typeinfo.IsInvalidOrUnknown(calleeType) {
-			c.ctx.Diagnostics.Add(notCallableError(callExpr, "call target is not a method"))
-		}
-		return
-	}
-	if len(args) != len(fnType.Params) {
-		c.ctx.Diagnostics.Add(wrongArgumentCountError(callExpr, len(args)-1, len(fnType.Params)-1))
-		return
-	}
-	for i, argType := range args {
-		if argType == nil {
-			if i > 0 {
-				c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i-1],
+			if i >= argOffset {
+				c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i-argOffset],
 					"argument requires a value-producing expression"))
 			}
 			continue
@@ -293,7 +267,7 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 		if paramType == nil {
 			continue
 		}
-		if i == 0 {
+		if i == 0 && receiverExpr != nil {
 			if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType)); ok && c.matchesReceiverTarget(refTarget, argType) {
 				addressable := place.Addressable(scope, receiverExpr, func(e ast.Expr) typeinfo.Type {
 					return c.typeExpr(scope, e, nil)
@@ -314,12 +288,14 @@ func (c *checker) checkMethodCall(scope *table.Scope, receiverExpr ast.Expr, cal
 		}
 		if !c.assignable(paramType, argType) {
 			site := ast.Node(callExpr)
-			if i > 0 && i-1 < len(callExpr.Args) {
-				site = callExpr.Args[i-1]
+			if i >= argOffset && i-argOffset < len(callExpr.Args) {
+				site = callExpr.Args[i-argOffset]
 			}
-			c.ctx.Diagnostics.Add(typeMismatchError(site,
+			d := typeMismatchError(site,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
-					typeinfo.TypeText(argType), typeinfo.TypeText(paramType))))
+					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
+			c.addInterfaceHint(d, paramType, argType)
+			c.ctx.Diagnostics.Add(d)
 			continue
 		}
 	}
