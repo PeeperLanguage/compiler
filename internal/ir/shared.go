@@ -163,6 +163,13 @@ type TempBorrow struct {
 	Location *source.Location
 }
 
+type Len struct {
+	Value    Expr
+	Type     TypeID
+	NodeID   NodeID
+	Location *source.Location
+}
+
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
 	Source       *Place
@@ -253,6 +260,7 @@ type Cast struct {
 
 type Print struct {
 	Value    Expr
+	Newline  bool
 	NodeID   NodeID
 	Location *source.Location
 }
@@ -277,6 +285,7 @@ func (*Call) exprNode()           {}
 func (*Load) exprNode()           {}
 func (*AddrOf) exprNode()         {}
 func (*TempBorrow) exprNode()     {}
+func (*Len) exprNode()            {}
 func (*SliceView) exprNode()      {}
 func (*InterfaceMake) exprNode()  {}
 func (*InterfaceCall) exprNode()  {}
@@ -373,6 +382,12 @@ func (e *AddrOf) setOrigin(info SourceInfo) {
 }
 func (e *TempBorrow) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
 func (e *TempBorrow) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Len) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Len) setOrigin(info SourceInfo) {
 	if e != nil {
 		e.NodeID, e.Location = info.NodeID, info.Location
 	}
@@ -595,7 +610,11 @@ func (e *Print) String() string {
 	if e == nil || e.Value == nil {
 		return "print(<nil>)"
 	}
-	return "print(" + e.Value.String() + ")"
+	name := "print"
+	if e.Newline {
+		name = "println"
+	}
+	return name + "(" + e.Value.String() + ")"
 }
 
 func (*Print) TypeID() TypeID { return InvalidType }
@@ -679,6 +698,20 @@ func (e *TempBorrow) String() string {
 }
 
 func (e *TempBorrow) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
+
+func (e *Len) String() string {
+	if e == nil || e.Value == nil {
+		return "len(<nil>)"
+	}
+	return "len(" + e.Value.String() + ")"
+}
+
+func (e *Len) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
 	}

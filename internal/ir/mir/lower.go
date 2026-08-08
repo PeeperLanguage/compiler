@@ -508,7 +508,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Print:
 		value := l.lowerExpr(e.Value, out)
-		l.appendInstr(out, &Print{Value: value, Location: e.Origin().Location})
+		l.appendInstr(out, &Print{Value: value, Newline: e.Newline, Location: e.Origin().Location})
 		return nil
 	case *ir.Drop:
 		value := l.lowerExpr(e.Value, out)
@@ -527,6 +527,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			l.appendInstr(out, &Drop{Value: place.Root, Location: e.Place.Root.Origin().Location})
 		}
 		return value
+	case *ir.Len:
+		value := l.lowerExpr(e.Value, out)
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &Len{
+			Value: value, Type: e.TypeID(), Location: e.Origin().Location,
+		}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.AddrOf:
 		pointerType := e.TypeID()
 		if typ, ok := l.module.Types.Type(pointerType); ok && typ.Kind == ir.TypeRawPtr {

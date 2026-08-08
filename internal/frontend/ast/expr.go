@@ -609,6 +609,7 @@ func (e *FreeExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID) No
 type PrintExpr struct {
 	NodeIDHolder
 	Expr     Expr
+	Newline  bool
 	Location *source.Location
 }
 
@@ -618,7 +619,11 @@ func (e *PrintExpr) exprText() string {
 	if e == nil {
 		return ""
 	}
-	return "print(" + ExprText(e.Expr) + ")"
+	name := "print"
+	if e.Newline {
+		name = "println"
+	}
+	return name + "(" + ExprText(e.Expr) + ")"
 }
 
 func (e *PrintExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID) NodeID, clonedIDs *map[NodeID]NodeID) Expr {
@@ -629,7 +634,7 @@ func (e *PrintExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID) N
 	if clonedIDs != nil {
 		(*clonedIDs)[e.ID()] = id
 	}
-	return &PrintExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Expr: e.Expr.copyExpr(substitutions, newID, clonedIDs), Location: e.Location}
+	return &PrintExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Expr: e.Expr.copyExpr(substitutions, newID, clonedIDs), Newline: e.Newline, Location: e.Location}
 }
 
 type AsExpr struct {

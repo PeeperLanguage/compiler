@@ -1,0 +1,6 @@
+fn main() -> i32 {
+    println("hello");
+    println(42);
+    print("done");
+    return 0;
+}

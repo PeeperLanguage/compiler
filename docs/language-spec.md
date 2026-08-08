@@ -38,8 +38,20 @@ Core rules:
 | `&[]T` | Shared slice view | Copyable temporary view |
 | `&mut []T` | Mutable exclusive slice view | Implicit transfer; never copyable |
 
-`str` is a builtin text type. It must not force a library-shaped type into user
-code. Exact `str` storage remains tied to the array/string design work.
+`str` is a builtin owned immutable text type. Its binding owns the string value,
+but indexing cannot mutate its contents. A mutable binding may be reassigned to
+another `str` value. `&str` is a temporary borrowed view and never owns or frees
+the backing bytes. Literals may use permanent program storage; runtime-created
+strings follow normal owner destruction and allocator-provenance rules.
+
+Literal forms are explicit at the boundary: `"text"` produces owned `str`,
+`c"text"` produces non-owning `cstr`, `b'X'` produces `byte`, and `'X'`
+produces `char`. These forms are not implicitly interchangeable.
+
+`len` is a read-only builtin for borrowed strings and arrays. It requires an
+explicit shared or mutable borrow: `len(&text)`, `len(&fixed)`, or
+`len(&[]i32{1, 2})`. It returns string byte length or array element count.
+Borrowing a temporary is valid for the call and cannot escape it.
 
 ## Numeric Literals And Conversions
 
@@ -102,7 +114,8 @@ Compound bitwise assignments are not part of current operator surface.
 ## Basic Output
 
 `print(expr)` writes one primitive scalar to standard output without appending
-a newline.
+a newline. `println(expr)` writes the same supported scalar and then appends a
+newline.
 
 Supported values are signed and unsigned integers, floats, `bool`, `byte`,
 `cstr`, and `rawptr`. Integers and bytes use decimal text, booleans use `true`
@@ -199,7 +212,7 @@ shared borrows may occur while reserved when they finish before activation:
 
 ```peep
 update(&mut x, read(&x)) // valid when read returns an owned or copied value
-items.push(items.len())  // mutable receiver activates after len returns
+update(&mut items, len(&items)) // mutable borrow activates after len returns
 ```
 
 Mutation, move, free, destruction, and another mutable call activation remain

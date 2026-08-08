@@ -104,6 +104,7 @@ type Store struct {
 
 type Print struct {
 	Value    ValueRef
+	Newline  bool
 	Location *source.Location
 }
 
@@ -208,6 +209,12 @@ type SliceView struct {
 
 type Load struct {
 	Place    *Place
+	Type     ir.TypeID
+	Location *source.Location
+}
+
+type Len struct {
+	Value    ValueRef
 	Type     ir.TypeID
 	Location *source.Location
 }
@@ -320,6 +327,7 @@ func (*Cast) valueExprNode()              {}
 func (*AddrOf) valueExprNode()            {}
 func (*SliceView) valueExprNode()         {}
 func (*Load) valueExprNode()              {}
+func (*Len) valueExprNode()               {}
 func (*Field) valueExprNode()             {}
 func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
@@ -378,6 +386,7 @@ func (v *SliceView) Text() string {
 	return fmt.Sprintf("view %s", v.Source.Text())
 }
 func (v *Load) Text() string  { return fmt.Sprintf("load %s", v.Place.Text()) }
+func (v *Len) Text() string   { return fmt.Sprintf("len %s", v.Value.Text()) }
 func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 
 func (v *StructLit) Text() string {
@@ -525,6 +534,8 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *SliceView:
 		return node.Location
 	case *Load:
+		return node.Location
+	case *Len:
 		return node.Location
 	case *Field:
 		return node.Location

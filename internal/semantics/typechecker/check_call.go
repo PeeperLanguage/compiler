@@ -63,6 +63,9 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 			if sym.CompilerOp == symbols.CompilerOpAlloc {
 				return c.typeAllocCall(scope, node)
 			}
+			if sym.CompilerOp == symbols.CompilerOpLen {
+				return c.typeLenCall(scope, node)
+			}
 			return c.typeDynamicArrayOwnerCall(scope, node, sym.CompilerOp)
 		}
 	}
@@ -81,6 +84,44 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	c.checkCall(scope, nil, node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
+}
+
+func (c *checker) typeLenCall(scope *table.Scope, node *ast.CallExpr) typeinfo.Type {
+	if node == nil {
+		return &typeinfo.InvalidType{}
+	}
+	if len(node.Args) != 1 {
+		for _, arg := range node.Args {
+			c.typeExpr(scope, arg, nil)
+		}
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, len(node.Args), 1))
+		return &typeinfo.InvalidType{}
+	}
+
+	argType := c.typeExpr(scope, node.Args[0], nil)
+	target, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(argType))
+	if !borrowed {
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
+			fmt.Sprintf("`len` requires a shared or mutable borrow, got %s", typeinfo.TypeText(argType))))
+		return &typeinfo.InvalidType{}
+	}
+	target = typeinfo.Underlying(target)
+	switch target.(type) {
+	case *typeinfo.StringType, *typeinfo.ArrayType:
+	default:
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
+			fmt.Sprintf("`len` requires a string or array borrow, got %s", typeinfo.TypeText(target))))
+		return &typeinfo.InvalidType{}
+	}
+
+	sizeType, ok := typeinfo.NumericTypeFromName("usize", c.ctx.Target)
+	if !ok {
+		panic("missing builtin usize type")
+	}
+	fnType := &typeinfo.FuncType{Params: []typeinfo.Type{argType}, Return: sizeType}
+	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
+	c.checkCall(scope, nil, node, fnType, []typeinfo.Type{argType})
+	return sizeType
 }
 
 func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) typeinfo.Type {

@@ -88,6 +88,7 @@ const (
 	FROM     Kind = "from"
 	FREE     Kind = "free"
 	PRINT    Kind = "print"
+	PRINTLN  Kind = "println"
 	RAWPTR   Kind = "rawptr"
 	AS       Kind = "as"
 	IS       Kind = "is"

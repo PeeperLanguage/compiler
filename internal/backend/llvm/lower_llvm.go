@@ -102,6 +102,10 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	}
 	format := fmt.Sprintf("getelementptr inbounds ([%d x i8], [%d x i8]* @.print.%s, i32 0, i32 0)", formatSize, formatSize, formatName)
 	b.line(fmt.Sprintf("call i32 (i8*, ...) @printf(i8* %s, %s)", format, argument))
+	if printInstr.Newline {
+		newline := "getelementptr inbounds ([2 x i8], [2 x i8]* @.print.newline, i32 0, i32 0)"
+		b.line(fmt.Sprintf("call i32 (i8*, ...) @printf(i8* %s)", newline))
+	}
 }
 
 func emitFieldPtr(b *llvmBuilder, base string, structType ir.TypeID, index int) string {
@@ -300,6 +304,46 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	withLength := b.nextReg()
 	b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, 1", withLength, viewType, withData, indexType, viewLength))
 	return withLength
+}
+
+func emitLen(b *llvmBuilder, value mir.ValueRef) string {
+	if b == nil || value == nil {
+		return "0"
+	}
+	refType, ok := b.emitter.mod.Types.Type(mirRefType(value))
+	if !ok || refType.Kind != ir.TypeReference {
+		b.emitter.markInvalid("len requires a reference value")
+		return "0"
+	}
+	target, ok := b.emitter.mod.Types.Type(refType.Elem)
+	if !ok {
+		b.emitter.markInvalid("len has invalid reference target")
+		return "0"
+	}
+	switch target.Kind {
+	case ir.TypeString:
+		carrierType := b.emitter.llvmType(refType.Elem)
+		loaded := b.nextReg()
+		b.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, carrierType, carrierType, emitRef(b, value)))
+		length := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, carrierType, loaded))
+		return length
+	case ir.TypeArray:
+		if target.Length != "" {
+			if _, err := strconv.ParseUint(target.Length, 10, 64); err != nil {
+				b.emitter.markInvalid("fixed array has invalid length")
+				return "0"
+			}
+			return target.Length
+		}
+		arrayLLVMType := b.emitter.llvmType(mirRefType(value))
+		length := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayLLVMType, emitRef(b, value)))
+		return length
+	default:
+		b.emitter.markInvalid("len requires a string or array reference")
+		return "0"
+	}
 }
 
 func sliceViewUsesPlacePtr(types *ir.TypeTable, source *mir.Place) bool {
@@ -1030,6 +1074,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		switch e := expr.(type) {
 		case *mir.Move:
 			return emitRef(b, e.Src)
+		case *mir.Len:
+			return emitLen(b, e.Value)
 		case *mir.StringLiteral:
 			llvmType := b.emitter.llvmType(e.Type)
 			dataType := fmt.Sprintf("[%d x i8]", e.Length+1)

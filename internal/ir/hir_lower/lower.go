@@ -570,6 +570,16 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 				if sym.CompilerOp == symbols.CompilerOpAlloc {
 					return lowerAllocCall(ctx, module, scope, node)
 				}
+				if sym.CompilerOp == symbols.CompilerOpLen {
+					if len(node.Args) != 1 {
+						return &ir.InvalidExpr{Message: "len requires one argument", Type: ir.InvalidType, Location: loc}
+					}
+					return &ir.Len{
+						Value:    lowerASTExpr(ctx, module, scope, node.Args[0], nil),
+						Type:     loweredTypeID(ctx, module, exprResolvedType(module, node)),
+						Location: loc,
+					}
+				}
 				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, sym.CompilerOp)
 			}
 		}
@@ -611,7 +621,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.Call{Callee: calleeExpr, Args: args, Type: t, Location: loc}
 
 	case *ast.PrintExpr:
-		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
+		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Newline: node.Newline, Location: loc}
 
 	case *ast.FreeExpr:
 		return &ir.Drop{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
