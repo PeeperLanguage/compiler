@@ -16,6 +16,9 @@ fn main() -> i32 {
     print(c"|");
     print(c"hello");
     print(c"|");
+    let text: str = "owned";
+    print(text);
+    print(c"|");
     print(@value);
     return 0;
 }

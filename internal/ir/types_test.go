@@ -63,3 +63,10 @@ func TestTypeTableConcurrentInterningAndReads(t *testing.T) {
 		}
 	}
 }
+
+func TestTypeTableUsesLanguageNamesForStringTypes(t *testing.T) {
+	types := NewTypeTable()
+	if got := types.Text(types.Intern(Type{Kind: TypeString})); got != "str" {
+		t.Fatalf("string type text = %q, want str", got)
+	}
+}

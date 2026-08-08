@@ -179,7 +179,7 @@ func (t *TypeTable) textLocked(id TypeID) string {
 	case TypeCStr:
 		return "cstr"
 	case TypeString:
-		return "string"
+		return "str"
 	case TypeAllocator:
 		return "Allocator"
 	case TypeRawPtr:

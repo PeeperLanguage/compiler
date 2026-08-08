@@ -86,7 +86,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	}
 	funcScope := sym.Scope.(*table.Scope)
 	params := fn.ParamsWithReceiver()
-	for _, param := range params {
+	for i, param := range params {
 		if param.Name == nil || param.Name.Name == "" {
 			if fn.Body != nil {
 				r.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "parameter name required", param.Location, "")
@@ -102,6 +102,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		paramSym.Mutable = param.IsMutable
+		paramSym.IsReceiver = fn.Receiver != nil && i == 0
 		paramSym.Initialized = true
 		if err := funcScope.Declare(paramSym); err != nil {
 			problems.ReportRedeclaration(r.ctx, funcScope, err.Error(), param.Name.Name, param.Name.Location)

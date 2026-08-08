@@ -168,7 +168,7 @@ func (*BoolType) Text() string { return "bool" }
 
 func (*CStrType) Text() string { return "cstr" }
 
-func (*StringType) Text() string { return "string" }
+func (*StringType) Text() string { return "str" }
 
 func (*NoneType) Text() string { return "none" }
 

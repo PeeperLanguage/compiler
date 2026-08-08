@@ -45,7 +45,7 @@ func (c *checker) typePrintExpr(scope *table.Scope, node *ast.PrintExpr) typeinf
 			return &typeinfo.InvalidType{}
 		}
 		return nil
-	case *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.ByteType, *typeinfo.CStrType, *typeinfo.RawPtrType:
+	case *typeinfo.FloatType, *typeinfo.BoolType, *typeinfo.ByteType, *typeinfo.CStrType, *typeinfo.StringType, *typeinfo.RawPtrType:
 		return nil
 	default:
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Expr,

@@ -59,6 +59,24 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 		formatName, formatSize, argument = "string", 3, "i8* "+selected
 	case typ.Kind == ir.TypeCStr:
 		formatName, formatSize, argument = "string", 3, "i8* "+value
+	case typ.Kind == ir.TypeString:
+		llvmType := b.emitter.llvmType(typeID)
+		data := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmType, value))
+		length := b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, llvmType, value))
+		lengthType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+		precision := length
+		switch lengthType {
+		case "i32":
+		case "i64":
+			precision = b.nextReg()
+			b.line(fmt.Sprintf("%s = trunc i64 %s to i32", precision, length))
+		default:
+			b.emitter.markInvalid("print reached LLVM with unsupported string length type " + lengthType)
+			return
+		}
+		formatName, formatSize, argument = "str", 5, "i32 "+precision+", i8* "+data
 	case typ.Kind == ir.TypeRawPtr:
 		formatName, formatSize, argument = "pointer", 3, "i8* "+value
 	case typ.Kind == ir.TypeFloat:

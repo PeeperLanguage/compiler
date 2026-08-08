@@ -52,6 +52,7 @@ type Symbol struct {
 	Type         Type
 	IsPub        bool
 	Mutable      bool
+	IsReceiver   bool
 	Initializing bool
 	Initialized  bool
 	Used         bool

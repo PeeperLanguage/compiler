@@ -169,7 +169,7 @@ func TestUnusedParameterWarnsWithUnderscorePrefix(t *testing.T) {
 	}
 }
 
-func TestUnusedReceiverParameterWarnsLikeAnyOtherParam(t *testing.T) {
+func TestUnusedReceiverReportsReceiver(t *testing.T) {
 	src := `struct Number { value: i32 }
 
 fn (value: Number) to_str() -> cstr {
@@ -180,8 +180,9 @@ fn main() -> i32 {
 	return 0;
 }`
 	diag := checkUsageSource(t, src, false)
-	if !hasCode(diag, diagnostics.WarnUnusedParameter) {
-		t.Fatalf("expected unused parameter warning for receiver param, got:\n%s", diag.EmitAllToString())
+	out := diag.EmitAllToString()
+	if !hasCode(diag, diagnostics.WarnUnusedParameter) || !strings.Contains(out, "unused receiver `value`") {
+		t.Fatalf("expected unused receiver warning, got:\n%s", out)
 	}
 }
 
