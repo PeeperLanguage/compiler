@@ -1,4 +1,7 @@
 build/
+basic
+peeper
+test_void
 a.out
 *.ll
 *.peep.tmp
