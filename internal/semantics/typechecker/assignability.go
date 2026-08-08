@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -150,6 +151,9 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 			return c.boundInterfaceMethodType(method, baseType), nil, true
 		}
 	}
+	if intrinsic, ok := intrinsics.Symbol(baseType, name, c.ctx.Target); ok {
+		return intrinsic.Type, intrinsic, true
+	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		methods := c.module.Semantics.MethodSets[key]
 		for _, method := range methods {
@@ -171,6 +175,11 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 		return nil
 	}
 	var names []string
+	for _, method := range intrinsics.Symbols(baseType, c.ctx.Target) {
+		if method != nil {
+			names = append(names, method.Name)
+		}
+	}
 	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
 		for _, m := range iface.Methods {
 			names = append(names, m.Name)

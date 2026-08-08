@@ -347,6 +347,14 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	return &ir.AddrOf{Place: value, Type: typeID, Location: ast.LocOf(expr)}
 }
 
+func lowerImplicitReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, resultType typeinfo.Type) ir.Expr {
+	typeID := loweredTypeID(ctx, module, resultType)
+	if _, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(exprResolvedType(module, expr))); borrowed {
+		return lowerASTExpr(ctx, module, scope, expr, nil)
+	}
+	return lowerReferenceValue(ctx, module, scope, expr, resultType, typeID)
+}
+
 func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
@@ -570,20 +578,13 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 				if sym.CompilerOp == symbols.CompilerOpAlloc {
 					return lowerAllocCall(ctx, module, scope, node)
 				}
-				if sym.CompilerOp == symbols.CompilerOpLen {
-					if len(node.Args) != 1 {
-						return &ir.InvalidExpr{Message: "len requires one argument", Type: ir.InvalidType, Location: loc}
-					}
-					return &ir.Len{
-						Value:    lowerASTExpr(ctx, module, scope, node.Args[0], nil),
-						Type:     loweredTypeID(ctx, module, exprResolvedType(module, node)),
-						Location: loc,
-					}
-				}
 				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, sym.CompilerOp)
 			}
 		}
 		if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
+			if sym := module.Semantics.ResolvedSymbols[selector.Name.ID()]; sym != nil && sym.CompilerOp != "" {
+				return lowerIntrinsicMethodCall(ctx, module, scope, selector, node, sym.CompilerOp)
+			}
 			return lowerSelectorMethodCall(ctx, module, scope, selector, node)
 		}
 		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, nil)
@@ -648,6 +649,32 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 
 	default:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: ir.InvalidType, Location: loc}
+	}
+}
+
+func lowerIntrinsicMethodCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+	fnType, _ := exprResolvedType(module, selector).(*typeinfo.FuncType)
+	if fnType == nil || len(fnType.Params) != 1 {
+		return &ir.InvalidExpr{Message: "intrinsic method type missing", Type: ir.InvalidType, Location: ast.LocOf(call)}
+	}
+	receiver := lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, fnType.Params[0])
+	switch op {
+	case symbols.CompilerOpLen:
+		return &ir.Len{Value: receiver, Type: loweredReturnTypeID(ctx, module, fnType.Return), Location: ast.LocOf(call)}
+	case symbols.CompilerOpAsBytes:
+		return &ir.SliceView{
+			Source:   &ir.Place{Root: receiver, Type: receiver.TypeID(), Location: ast.LocOf(selector.Expr)},
+			Type:     loweredReturnTypeID(ctx, module, fnType.Return),
+			Location: ast.LocOf(call),
+		}
+	case symbols.CompilerOpAsChars:
+		return &ir.StringChars{
+			Value:    receiver,
+			Type:     loweredReturnTypeID(ctx, module, fnType.Return),
+			Location: ast.LocOf(call),
+		}
+	default:
+		return &ir.InvalidExpr{Message: "unsupported intrinsic method lowering", Type: ir.InvalidType, Location: ast.LocOf(call)}
 	}
 }
 
@@ -817,8 +844,15 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 			end = lowerASTExpr(ctx, module, scope, rangeIndex.End, typeinfo.DefaultIntegerType())
 		}
 		resultType := exprResolvedType(module, node)
+		source := lowerPlace(ctx, module, scope, node.Expr)
+		if target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType)); reference {
+			if _, stringRange := typeinfo.Underlying(target).(*typeinfo.StringType); stringRange {
+				root := lowerImplicitReferenceValue(ctx, module, scope, node.Expr, resultType)
+				source = &ir.Place{Root: root, Type: root.TypeID(), Location: ast.LocOf(node.Expr)}
+			}
+		}
 		return &ir.SliceView{
-			Source:       lowerPlace(ctx, module, scope, node.Expr),
+			Source:       source,
 			Start:        start,
 			End:          end,
 			EndExclusive: rangeIndex.EndExclusive,

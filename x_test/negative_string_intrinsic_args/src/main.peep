@@ -1,0 +1,6 @@
+fn Invalid() {
+    let number: i32 = 1;
+    let _ = number.len();
+    let text: str = "a";
+    let _ = text.as_bytes(1);
+}

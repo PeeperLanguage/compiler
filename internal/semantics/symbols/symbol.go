@@ -24,6 +24,8 @@ const (
 	CompilerOpResize  CompilerOp = "resize"
 	CompilerOpShrink  CompilerOp = "shrink"
 	CompilerOpLen     CompilerOp = "len"
+	CompilerOpAsBytes CompilerOp = "as_bytes"
+	CompilerOpAsChars CompilerOp = "as_chars"
 )
 
 const (

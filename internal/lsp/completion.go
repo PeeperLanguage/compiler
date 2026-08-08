@@ -11,6 +11,7 @@ import (
 	driver "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -396,6 +397,13 @@ func selectorCompletionItems(ctx *project.CompilerContext, module *project.Modul
 				TextEdit: TextEdit{Range: replacement, NewText: method.Name},
 			})
 		}
+	}
+	for _, method := range intrinsics.Symbols(baseType, ctx.Target) {
+		if method == nil || !strings.HasPrefix(method.Name, prefix) {
+			continue
+		}
+		seen[method.Name] = struct{}{}
+		items = append(items, symbolCompletionItem(method, replacement))
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		for _, method := range module.Semantics.MethodSets[key] {

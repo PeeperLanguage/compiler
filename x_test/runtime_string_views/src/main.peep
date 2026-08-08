@@ -1,0 +1,78 @@
+fn ReadBorrowed(text: &str) -> i32 {
+    let bytes = text.as_bytes();
+    if bytes[0] != b'a' {
+        return 1;
+    }
+    return bytes.len() as i32;
+}
+
+fn ReadChars(text: &str) -> i32 {
+    let chars = text.as_chars();
+    if chars.len() != 3 {
+        return 1;
+    }
+    if chars[1] != 'é' {
+        return 2;
+    }
+    if chars[2] != 'z' {
+        return 3;
+    }
+    return 3;
+}
+
+fn MakeText() -> str {
+    return "aéz";
+}
+
+fn main() -> i32 {
+    let text: str = "aéz";
+    let bytes = text.as_bytes();
+    if bytes.len() != 4 {
+        return 2;
+    }
+    if bytes[0] != b'a' {
+        return 3;
+    }
+    let byte_range = bytes[1..3];
+    if byte_range.len() != 2 {
+        return 4;
+    }
+    let prefix = text[0..3];
+    if prefix.len() != 3 {
+        return 5;
+    }
+    let first = text[0..=0];
+    if first.len() != 1 {
+        return 6;
+    }
+    if text.len() != 4 {
+        return 7;
+    }
+    if ReadBorrowed(&text) != 4 {
+        return 8;
+    }
+    let chars = text.as_chars();
+    if chars.len() != 3 {
+        return 9;
+    }
+    if chars[0] != 'a' || chars[1] != 'é' || chars[2] != 'z' {
+        return 10;
+    }
+    if ReadChars(&text) != 3 {
+        return 11;
+    }
+    if text.as_chars()[1] != 'é' {
+        return 12;
+    }
+    let empty_chars = "".as_chars();
+    if empty_chars.len() != 0 {
+        return 13;
+    }
+    if MakeText().as_bytes()[0] != b'a' {
+        return 14;
+    }
+    if MakeText()[0..3].len() != 3 {
+        return 15;
+    }
+    return 0;
+}

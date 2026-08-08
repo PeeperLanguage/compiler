@@ -2,6 +2,10 @@ fn Make() -> []i32 {
     return []i32{1, 2};
 }
 
+fn MakeText() -> str {
+    return "temporary";
+}
+
 fn Identity(value: &[]i32) -> &[]i32 from value {
     return value;
 }
@@ -16,6 +20,14 @@ fn BindingEscape() {
 
 fn StringBindingEscape() {
     let reference = &"temporary";
+}
+
+fn StringByteViewEscape() {
+    let bytes = MakeText().as_bytes();
+}
+
+fn StringRangeEscape() {
+    let range = MakeText()[0..1];
 }
 
 fn AssignmentEscape(seed: []i32) {

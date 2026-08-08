@@ -346,6 +346,8 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 		return v.Type
 	case *mir.Len:
 		return v.Type
+	case *mir.StringChars:
+		return v.Type
 	case *mir.Field:
 		return v.Type
 	case *mir.StructLit:

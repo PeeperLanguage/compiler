@@ -534,6 +534,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			Value: value, Type: e.TypeID(), Location: e.Origin().Location,
 		}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+	case *ir.StringChars:
+		value := l.lowerExpr(e.Value, out)
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &StringChars{
+			Value: value, Type: e.TypeID(), Location: e.Origin().Location,
+		}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.AddrOf:
 		pointerType := e.TypeID()
 		if typ, ok := l.module.Types.Type(pointerType); ok && typ.Kind == ir.TypeRawPtr {

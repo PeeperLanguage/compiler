@@ -196,6 +196,53 @@ func TestGenerateHIRLowersFixedArrayRangeAsMutableSliceView(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRLowersStringCharsIntrinsic(t *testing.T) {
+	src := `fn main() -> i32 {
+	let text: str = "aé";
+	let chars = text.as_chars();
+	return chars.len() as i32;
+}`
+	out := generateTestHIR(t, "hir_string_chars_test"+peeper.SourceExt, "hir_string_chars_test", src)
+	var chars *ir.StringChars
+	for _, stmt := range out.Funcs[0].Body.Stmts {
+		binding, ok := stmt.(*hir.Binding)
+		if !ok {
+			continue
+		}
+		if value, ok := binding.Value.(*ir.StringChars); ok {
+			chars = value
+			break
+		}
+	}
+	if chars == nil || out.Types.Text(chars.TypeID()) != "[]char" {
+		t.Fatalf("expected StringChars returning []char, got %#v", chars)
+	}
+}
+
+func TestGenerateHIRPreservesTemporaryStringViewOwners(t *testing.T) {
+	src := `fn Make() -> str { return "abc"; }
+fn main() -> i32 {
+	let byte = Make().as_bytes()[0];
+	let size = Make()[0..1].len();
+	return byte as i32 + size as i32;
+}`
+	out := generateTestHIR(t, "hir_temporary_string_views_test"+peeper.SourceExt, "hir_temporary_string_views_test", src)
+	mainFn := out.Funcs[1]
+	byteBinding := mainFn.Body.Stmts[0].(*hir.Binding)
+	byteLoad := byteBinding.Value.(*ir.Load)
+	byteView := byteLoad.Place.Root.(*ir.SliceView)
+	if _, ok := byteView.Source.Root.(*ir.TempBorrow); !ok {
+		t.Fatalf("temporary as_bytes source = %T, want TempBorrow", byteView.Source.Root)
+	}
+
+	sizeBinding := mainFn.Body.Stmts[1].(*hir.Binding)
+	rangeLen := sizeBinding.Value.(*ir.Len)
+	rangeView := rangeLen.Value.(*ir.SliceView)
+	if _, ok := rangeView.Source.Root.(*ir.TempBorrow); !ok {
+		t.Fatalf("temporary string range source = %T, want TempBorrow", rangeView.Source.Root)
+	}
+}
+
 func TestGenerateHIRLowersConstIndexExpr(t *testing.T) {
 	const filePath = "hir_const_index_test" + peeper.SourceExt
 	src := `const I: i32 = 1;

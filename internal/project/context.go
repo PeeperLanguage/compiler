@@ -259,7 +259,6 @@ func predeclaredScope(compilerTarget target.Info) *table.Scope {
 		op     symbols.CompilerOp
 		params []typeinfo.Type
 	}{
-		{op: symbols.CompilerOpLen, params: []typeinfo.Type{&typeinfo.RefType{Target: &typeinfo.NamedType{Name: "T"}}}},
 		{op: symbols.CompilerOpAppend, params: []typeinfo.Type{arrayType, elementType}},
 		{op: symbols.CompilerOpReserve, params: []typeinfo.Type{arrayType, sizeType}},
 		{op: symbols.CompilerOpResize, params: []typeinfo.Type{arrayType, sizeType, elementType}},

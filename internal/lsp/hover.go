@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -145,7 +146,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 		Node:          cc.node,
 		Range:         hoverRange(cc.node),
 		ResolvedType:  resolved,
-		MethodSymbols: lookupMethodSet(cc.ctx, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
+		MethodSymbols: lookupMethodSet(cc.ctx, resolved, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
 	}
 }
 
@@ -310,7 +311,9 @@ func declHoverSubject(cc *cursorContext, decl ast.Node, name *ast.Ident) *hoverS
 	if name != nil {
 		subject.Symbol = resolveIdentSymbol(name, cc.parents, cc.module, cc.ctx)
 		if subject.Symbol != nil && subject.Symbol.Kind == symbols.SymbolType {
-			subject.MethodSymbols = lookupMethodSet(cc.ctx, []string{subject.Symbol.Name})
+			if typ, ok := symbols.GetSymbolType(subject.Symbol); ok {
+				subject.MethodSymbols = lookupMethodSet(cc.ctx, typ, []string{subject.Symbol.Name})
+			}
 		}
 	}
 	return subject
@@ -397,7 +400,9 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 		Symbol: sym,
 	}
 	if sym.Kind == symbols.SymbolType {
-		subject.MethodSymbols = lookupMethodSet(cc.ctx, []string{sym.Name})
+		if typ, ok := symbols.GetSymbolType(sym); ok {
+			subject.MethodSymbols = lookupMethodSet(cc.ctx, typ, []string{sym.Name})
+		}
 	}
 	return subject
 }
@@ -455,8 +460,8 @@ func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.S
 	return sym
 }
 
-func lookupMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Symbol {
-	if ctx == nil || len(keys) == 0 {
+func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type, keys []string) []*symbols.Symbol {
+	if ctx == nil || typ == nil || len(keys) == 0 {
 		return nil
 	}
 	keySet := make(map[string]struct{}, len(keys))
@@ -470,7 +475,7 @@ func lookupMethodSet(ctx *project.CompilerContext, keys []string) []*symbols.Sym
 		return nil
 	}
 	seen := make(map[string]struct{})
-	var methods []*symbols.Symbol
+	methods := intrinsics.Symbols(typ, ctx.Target)
 	for _, module := range ctx.Modules() {
 		if module == nil || module.Semantics == nil {
 			continue
@@ -679,6 +684,17 @@ func hoverASTParamText(param ast.Param) string {
 	return b.String()
 }
 
+func hoverSemanticParamText(callable *typeinfo.FuncType, index int) string {
+	if callable == nil || index < 0 || index >= len(callable.Params) {
+		return ""
+	}
+	text := typeinfo.TypeText(callable.Params[index])
+	if index < len(callable.ParamNames) && callable.ParamNames[index] != "" {
+		return callable.ParamNames[index] + ": " + text
+	}
+	return text
+}
+
 func hoverSemanticMethodSignature(method *typeinfo.Method) hoverFunctionSignature {
 	if method == nil {
 		return hoverFunctionSignature{}
@@ -689,17 +705,13 @@ func hoverSemanticMethodSignature(method *typeinfo.Method) hoverFunctionSignatur
 		result:        typeinfo.TypeText(method.Return),
 		returnOrigins: callable.ReturnOriginText(),
 	}
-	params := method.Params
-	if len(params) > 0 {
-		signature.receiver = typeinfo.TypeText(params[0].Type)
-		params = params[1:]
+	start := 0
+	if len(callable.Params) > 0 {
+		signature.receiver = hoverSemanticParamText(callable, 0)
+		start = 1
 	}
-	for _, param := range params {
-		text := ""
-		if param.Name != "" {
-			text = param.Name + ": "
-		}
-		signature.params = append(signature.params, text+typeinfo.TypeText(param.Type))
+	for i := start; i < len(callable.Params); i++ {
+		signature.params = append(signature.params, hoverSemanticParamText(callable, i))
 	}
 	return signature
 }
@@ -729,11 +741,11 @@ func hoverSymbolFunctionSignature(sym *symbols.Symbol) hoverFunctionSignature {
 		if len(fn.Params) == 0 {
 			return hoverFunctionSignature{}
 		}
-		signature.receiver = typeinfo.TypeText(fn.Params[0])
+		signature.receiver = hoverSemanticParamText(fn, 0)
 		start = 1
 	}
-	for _, param := range fn.Params[start:] {
-		signature.params = append(signature.params, typeinfo.TypeText(param))
+	for i := start; i < len(fn.Params); i++ {
+		signature.params = append(signature.params, hoverSemanticParamText(fn, i))
 	}
 	return signature
 }
@@ -818,12 +830,11 @@ func formatHoverMethods(methods []*symbols.Symbol) string {
 		if method == nil {
 			continue
 		}
-		signature := hoverSymbolFunctionSignature(method).text()
-		if signature == "" {
+		signature := hoverSymbolFunctionSignature(method)
+		if signature.name == "" {
 			continue
 		}
-		b.WriteString("  ")
-		b.WriteString(signature)
+		b.WriteString(signature.text())
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")

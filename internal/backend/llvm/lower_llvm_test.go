@@ -1042,6 +1042,44 @@ func TestGenerateLLVMIRDropsStringThroughAllocator(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersStringCharsWithOwnedCarrier(t *testing.T) {
+	charType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeChar})
+	dynamicChar := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: charType})
+	refString := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: llvmTypes.stringType})
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "chars",
+			Params:     []ir.Param{{Name: "text", Type: refString}},
+			ReturnType: llvmTypes.void,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{Name: "chars", Value: &mir.StringChars{
+						Value: &mir.RefName{Name: "text", Type: refString}, Type: dynamicChar,
+					}},
+					&mir.Drop{Value: &mir.RefName{Name: "chars", Type: dynamicChar}},
+				},
+				Term: &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	for _, expected := range []string{
+		"utf8_count_loop_",
+		"utf8_decode_two_",
+		"utf8_decode_three_",
+		"utf8_decode_four_",
+		"call i8* %",
+		"store i32 %",
+		"insertvalue { i32*, i64, i64, i8* }",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("expected %q in string chars IR:\n%s", expected, out)
+		}
+	}
+}
+
 func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 	mod := &mir.Module{
 		Name:     "test",
