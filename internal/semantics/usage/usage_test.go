@@ -173,7 +173,7 @@ func TestUnusedReceiverParameterWarnsLikeAnyOtherParam(t *testing.T) {
 	src := `struct Number { value: i32 }
 
 fn (value: Number) to_str() -> cstr {
-		return "ok";
+		return c"ok";
 }
 
 fn main() -> i32 {

@@ -164,7 +164,7 @@ const B = A + (1 + 2);
 }
 
 func TestEvaluateStringConst(t *testing.T) {
-	module, diag := constevalModule(t, `const Name: cstr = "puts";
+	module, diag := constevalModule(t, `const Name: cstr = c"puts";
 `)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())

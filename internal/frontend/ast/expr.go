@@ -12,7 +12,7 @@ type Ident struct {
 	Location *source.Location
 }
 
-func (*Ident) exprNode() {}
+func (*Ident) exprNode()               {}
 func (e *Ident) loc() *source.Location { return e.Location }
 
 func (e *Ident) exprText() string {
@@ -314,6 +314,7 @@ func (e *NumberLit) copyExpr(substitutions map[string]Expr, newID func(NodeID) N
 type StringLit struct {
 	NodeIDHolder
 	Value    string
+	CString  bool
 	Location *source.Location
 }
 
@@ -322,6 +323,9 @@ func (e *StringLit) loc() *source.Location { return e.Location }
 func (e *StringLit) exprText() string {
 	if e == nil {
 		return ""
+	}
+	if e.CString {
+		return "c" + strconv.Quote(e.Value)
 	}
 	return strconv.Quote(e.Value)
 }
@@ -334,7 +338,59 @@ func (e *StringLit) copyExpr(substitutions map[string]Expr, newID func(NodeID) N
 	if clonedIDs != nil {
 		(*clonedIDs)[e.ID()] = id
 	}
-	return &StringLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Value: e.Value, Location: e.Location}
+	return &StringLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Value: e.Value, CString: e.CString, Location: e.Location}
+}
+
+type ByteLit struct {
+	NodeIDHolder
+	Value    string
+	Location *source.Location
+}
+
+func (*ByteLit) exprNode()               {}
+func (e *ByteLit) loc() *source.Location { return e.Location }
+func (e *ByteLit) exprText() string {
+	if e == nil {
+		return ""
+	}
+	return "b'" + e.Value + "'"
+}
+
+func (e *ByteLit) copyExpr(substitutions map[string]Expr, newID func(NodeID) NodeID, clonedIDs *map[NodeID]NodeID) Expr {
+	if e == nil {
+		return nil
+	}
+	id := newID(e.ID())
+	if clonedIDs != nil {
+		(*clonedIDs)[e.ID()] = id
+	}
+	return &ByteLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Value: e.Value, Location: e.Location}
+}
+
+type CharLit struct {
+	NodeIDHolder
+	Value    string
+	Location *source.Location
+}
+
+func (*CharLit) exprNode()               {}
+func (e *CharLit) loc() *source.Location { return e.Location }
+func (e *CharLit) exprText() string {
+	if e == nil {
+		return ""
+	}
+	return "'" + e.Value + "'"
+}
+
+func (e *CharLit) copyExpr(substitutions map[string]Expr, newID func(NodeID) NodeID, clonedIDs *map[NodeID]NodeID) Expr {
+	if e == nil {
+		return nil
+	}
+	id := newID(e.ID())
+	if clonedIDs != nil {
+		(*clonedIDs)[e.ID()] = id
+	}
+	return &CharLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Value: e.Value, Location: e.Location}
 }
 
 type BoolLit struct {

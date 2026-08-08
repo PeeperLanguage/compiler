@@ -462,6 +462,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		} else {
 			name = "@.str.unknown"
 		}
+		if l.module != nil {
+			if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeString {
+				temp := l.nextTemp()
+				l.appendInstr(out, &Assign{Name: temp, Value: &StringLiteral{Name: name, Length: len(e.Value), Type: e.TypeID(), Location: e.Origin().Location}})
+				return &RefName{Name: temp, Type: e.TypeID(), Location: e.Origin().Location}
+			}
+		}
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.ZeroValue:
 		name := l.nextTemp()

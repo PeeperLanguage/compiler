@@ -61,6 +61,8 @@ func llvmTypeID(types *ir.TypeTable, id ir.TypeID) (string, bool) {
 		return "i1", true
 	case ir.TypeByte:
 		return "i8", true
+	case ir.TypeChar:
+		return "i32", true
 	case ir.TypeCStr, ir.TypeRawPtr, ir.TypeAllocator:
 		return "i8*", true
 	case ir.TypeString:
@@ -359,6 +361,8 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 	case *mir.InterfaceMake:
 		return v.Type
 	case *mir.InterfaceCall:
+		return v.Type
+	case *mir.StringLiteral:
 		return v.Type
 	case *mir.Call:
 		return v.Type

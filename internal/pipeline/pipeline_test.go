@@ -833,7 +833,7 @@ func TestPipelineLowersUnusedCallBindingAsDiscardedCall(t *testing.T) {
 fn write(fd: i32, buf: cstr, n: i32) -> i32;
 `
 	entrySrc := `fn work() -> i32 {
-	let msg: cstr = "ping\n";
+	let msg: cstr = c"ping\n";
 	write(stdout, msg, 5);
 	return 7;
 }
@@ -882,7 +882,7 @@ fn open_file() -> *File {
 
 fn main() -> i32 {
 	let file = open_file();
-	return file.read("ok");
+	return file.read(c"ok");
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)

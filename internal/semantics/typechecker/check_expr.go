@@ -37,7 +37,16 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 		return c.typeNumber(node, expected)
 
 	case *ast.StringLit:
-		return &typeinfo.CStrType{}
+		if node.CString {
+			return &typeinfo.CStrType{}
+		}
+		return &typeinfo.StringType{}
+
+	case *ast.ByteLit:
+		return &typeinfo.ByteType{}
+
+	case *ast.CharLit:
+		return &typeinfo.CharType{}
 
 	case *ast.BoolLit:
 		return &typeinfo.BoolType{}

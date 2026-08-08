@@ -1012,6 +1012,20 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 		switch e := expr.(type) {
 		case *mir.Move:
 			return emitRef(b, e.Src)
+		case *mir.StringLiteral:
+			llvmType := b.emitter.llvmType(e.Type)
+			dataType := fmt.Sprintf("[%d x i8]", e.Length+1)
+			data := fmt.Sprintf("getelementptr inbounds (%s, %s* %s, i64 0, i64 0)", dataType, dataType, e.Name)
+			ptr := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast i8* %s to i8*", ptr, data))
+			indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+			withData := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, i8* %s, 0", withData, llvmType, ptr))
+			withLength := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %d, 1", withLength, llvmType, withData, indexType, e.Length))
+			withAllocator := b.nextReg()
+			b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* null, 2", withAllocator, llvmType, withLength))
+			return withAllocator
 		case *mir.Cast:
 			return emitCast(b, e)
 		case *mir.Unary:

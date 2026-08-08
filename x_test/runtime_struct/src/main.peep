@@ -10,12 +10,12 @@ fn (self: &Point) sum() -> i32 {
 fn main() -> i32 {
     let p: Point = .Point{ x = 10, y = 20 };
     if p.sum() == 30 {
-        let ok: cstr = "struct ok\n";
+        let ok: cstr = c"struct ok\n";
         write(stdout, ok, 10);
         return p.x;
     }
 
-    let bad: cstr = "struct bad\n";
+    let bad: cstr = c"struct bad\n";
     write(stdout, bad, 11);
     return 1;
 }

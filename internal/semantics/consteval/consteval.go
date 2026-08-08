@@ -108,7 +108,10 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *table.Scope) (co
 
 func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if node, ok := expr.(*ast.StringLit); ok {
-		typText := "cstr"
+		typText := "str"
+		if node.CString {
+			typText = "cstr"
+		}
 		switch typeinfo.Underlying(expected).(type) {
 		case *typeinfo.CStrType, *typeinfo.StringType:
 			typText = typeinfo.TypeText(expected)

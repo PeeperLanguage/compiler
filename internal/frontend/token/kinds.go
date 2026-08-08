@@ -9,7 +9,8 @@ const (
 	IDENT       Kind = "identifier"
 	NUMBER      Kind = "number"
 	STRING      Kind = "string"
-	CHAR        Kind = "charecter"
+	CSTRING     Kind = "c string"
+	CHAR        Kind = "character"
 	BYTE_CHAR   Kind = "byte character"
 	DOC_COMMENT Kind = "document comment"
 

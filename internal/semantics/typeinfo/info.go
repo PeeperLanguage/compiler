@@ -21,6 +21,8 @@ type IntegerType struct {
 
 type ByteType struct{}
 
+type CharType struct{}
+
 type FloatType struct {
 	Bits int
 }
@@ -119,6 +121,7 @@ func (*InvalidType) TypeNode()   {}
 func (*UnknownType) TypeNode()   {}
 func (*IntegerType) TypeNode()   {}
 func (*ByteType) TypeNode()      {}
+func (*CharType) TypeNode()      {}
 func (*FloatType) TypeNode()     {}
 func (*BoolType) TypeNode()      {}
 func (*CStrType) TypeNode()      {}
@@ -151,6 +154,8 @@ func (t *IntegerType) Text() string {
 }
 
 func (*ByteType) Text() string { return "byte" }
+
+func (*CharType) Text() string { return "char" }
 
 func (t *FloatType) Text() string {
 	if t == nil {

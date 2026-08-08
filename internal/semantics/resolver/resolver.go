@@ -224,6 +224,10 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		return
 	case *ast.StringLit:
 		return
+	case *ast.ByteLit:
+		return
+	case *ast.CharLit:
+		return
 	case *ast.BoolLit:
 		return
 	case *ast.NoneLit:

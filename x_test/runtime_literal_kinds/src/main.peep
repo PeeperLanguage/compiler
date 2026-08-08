@@ -1,0 +1,13 @@
+fn accept_string(value: str) -> str {
+    return value;
+}
+
+fn main() -> i32 {
+    let text: str = "owned text";
+    let c_text: cstr = c"c text";
+    let _: byte = b'X';
+    let _: char = 'λ';
+    let _: str = accept_string(text);
+    write(stdout, c_text, 6);
+    return 0;
+}

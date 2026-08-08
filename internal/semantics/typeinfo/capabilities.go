@@ -63,7 +63,7 @@ func IsArithmetic(t Type) bool {
 func IsEquatable(t Type) bool {
 	t = Underlying(t)
 	switch t.(type) {
-	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *AllocatorType:
+	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *AllocatorType:
 		return true
 	case *OptionalType:
 		return true
@@ -80,7 +80,7 @@ func IsCondition(t Type) bool {
 
 func IsImplicitCopyType(t Type) bool {
 	switch Underlying(t).(type) {
-	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
+	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
 		return true
 	case *RefType:
 		ref, _ := Underlying(t).(*RefType)
@@ -108,7 +108,7 @@ func IsSizedType(t Type) bool {
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
 			return false
-		case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *EnumType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *EnumType, *AllocatorType:
 			return true
 		case *OwnedPtrType:
 			return typ != nil && typ.Target != nil
@@ -203,7 +203,7 @@ func IsLowerableType(t Type) bool {
 		defer delete(visiting, t)
 
 		switch typ := t.(type) {
-		case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *AllocatorType:
 			return true
 		case *OwnedPtrType:
 			target, ok := PointerTarget(typ)

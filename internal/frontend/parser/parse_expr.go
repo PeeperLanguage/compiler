@@ -59,6 +59,18 @@ func init() {
 		tok := p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
+	nud(token.CSTRING, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.StringLit{Value: tok.Literal, CString: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.BYTE_CHAR, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.ByteLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.CHAR, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.CharLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
 	nud(token.NONE, func(p *Parser) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.NoneLit{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})

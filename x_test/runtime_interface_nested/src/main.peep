@@ -44,12 +44,12 @@ fn main() -> i32 {
     let result = consumer.consume(&point);
 
     if result == 40 && holder.value.sum() == 40 {
-        let ok: cstr = "nested interface ok\n";
+        let ok: cstr = c"nested interface ok\n";
         write(stdout, ok, 20);
         return 0;
     }
 
-    let bad: cstr = "nested interface bad\n";
+    let bad: cstr = c"nested interface bad\n";
     write(stdout, bad, 21);
     return 1;
 }

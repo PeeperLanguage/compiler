@@ -21,6 +21,7 @@ const (
 	TypeFloat
 	TypeBool
 	TypeByte
+	TypeChar
 	TypeCStr
 	TypeString
 	TypeAllocator
@@ -173,6 +174,8 @@ func (t *TypeTable) textLocked(id TypeID) string {
 		return "bool"
 	case TypeByte:
 		return "byte"
+	case TypeChar:
+		return "char"
 	case TypeCStr:
 		return "cstr"
 	case TypeString:

@@ -50,11 +50,15 @@ func emitDropValue(b *llvmBuilder, value string, typeID ir.TypeID) {
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", allocator, stringType, value))
 		nonNull := b.nextReg()
 		b.line(fmt.Sprintf("%s = icmp ne i8* %s, null", nonNull, data))
+		allocatorPresent := b.nextReg()
+		b.line(fmt.Sprintf("%s = icmp ne i8* %s, null", allocatorPresent, allocator))
+		canRelease := b.nextReg()
+		b.line(fmt.Sprintf("%s = and i1 %s, %s", canRelease, nonNull, allocatorPresent))
 		id := b.nextID
 		b.nextID++
 		releaseLabel := fmt.Sprintf("drop_string_release_%d", id)
 		doneLabel := fmt.Sprintf("drop_string_done_%d", id)
-		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", nonNull, releaseLabel, doneLabel))
+		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", canRelease, releaseLabel, doneLabel))
 		b.namedLabel(releaseLabel)
 		byteType := b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeByte})
 		size := emitAllocatorStorageSize(b, byteType, length)

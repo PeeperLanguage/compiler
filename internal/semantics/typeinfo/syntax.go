@@ -51,9 +51,11 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			return &BoolType{}
 		case "byte":
 			return &ByteType{}
+		case "char":
+			return &CharType{}
 		case "cstr":
 			return &CStrType{}
-		case "string":
+		case "str", "string":
 			return &StringType{}
 		case "f32":
 			return &FloatType{Bits: 32}

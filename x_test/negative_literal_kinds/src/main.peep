@@ -1,0 +1,7 @@
+fn wants_cstr(_: cstr) {}
+fn wants_str(_: str) {}
+
+fn main() {
+    wants_cstr("plain text");
+    wants_str(c"c text");
+}

@@ -88,3 +88,21 @@ func TestLexBitwiseOperatorsLongestFirst(t *testing.T) {
 		}
 	}
 }
+
+func TestLexLiteralKinds(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	stream := New("literals"+peeper.SourceExt, `"str" c"cstr" b'X' 'λ'`, diag).Tokenize()
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	wantKinds := []token.Kind{token.STRING, token.CSTRING, token.BYTE_CHAR, token.CHAR, token.EOF}
+	wantValues := []string{"str", "cstr", "X", "λ", ""}
+	if len(stream) != len(wantKinds) {
+		t.Fatalf("token length mismatch: got=%d want=%d", len(stream), len(wantKinds))
+	}
+	for i := range wantKinds {
+		if stream[i].Kind != wantKinds[i] || stream[i].Literal != wantValues[i] {
+			t.Fatalf("token[%d] = (%s, %q), want (%s, %q)", i, stream[i].Kind, stream[i].Literal, wantKinds[i], wantValues[i])
+		}
+	}
+}
