@@ -25,6 +25,9 @@ func SameType(left, right Type) bool {
 	case *ByteType:
 		_, ok := right.(*ByteType)
 		return ok
+	case *CharType:
+		_, ok := right.(*CharType)
+		return ok
 	case *BoolType:
 		_, ok := right.(*BoolType)
 		return ok

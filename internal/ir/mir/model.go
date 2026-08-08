@@ -104,6 +104,7 @@ type Store struct {
 
 type Print struct {
 	Value    ValueRef
+	Newline  bool
 	Location *source.Location
 }
 
@@ -130,6 +131,13 @@ type RefConst struct {
 
 type RefName struct {
 	Name     string
+	Type     ir.TypeID
+	Location *source.Location
+}
+
+type StringLiteral struct {
+	Name     string
+	Length   int
 	Type     ir.TypeID
 	Location *source.Location
 }
@@ -201,6 +209,12 @@ type SliceView struct {
 
 type Load struct {
 	Place    *Place
+	Type     ir.TypeID
+	Location *source.Location
+}
+
+type Len struct {
+	Value    ValueRef
 	Type     ir.TypeID
 	Location *source.Location
 }
@@ -313,6 +327,7 @@ func (*Cast) valueExprNode()              {}
 func (*AddrOf) valueExprNode()            {}
 func (*SliceView) valueExprNode()         {}
 func (*Load) valueExprNode()              {}
+func (*Len) valueExprNode()               {}
 func (*Field) valueExprNode()             {}
 func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
@@ -323,15 +338,22 @@ func (*ZeroValue) valueExprNode()         {}
 func (*OptionalSome) valueExprNode()      {}
 func (*InterfaceMake) valueExprNode()     {}
 func (*InterfaceCall) valueExprNode()     {}
+func (*StringLiteral) valueExprNode()     {}
 func (*RefConst) valueRefNode()           {}
 func (*RefName) valueRefNode()            {}
 
 func (r *RefConst) Text() string { return r.Value }
 func (r *RefName) Text() string  { return r.Name }
-func (v *Move) Text() string     { return v.Src.Text() }
-func (v *Unary) Text() string    { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
-func (v *Binary) Text() string   { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
-func (v *Cast) Text() string     { return fmt.Sprintf("cast %s to type#%d", v.Arg.Text(), v.Type) }
+func (v *StringLiteral) Text() string {
+	if v == nil {
+		return "string-literal"
+	}
+	return v.Name
+}
+func (v *Move) Text() string   { return v.Src.Text() }
+func (v *Unary) Text() string  { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
+func (v *Binary) Text() string { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
+func (v *Cast) Text() string   { return fmt.Sprintf("cast %s to type#%d", v.Arg.Text(), v.Type) }
 func (p *Place) Text() string {
 	if p == nil || p.Root == nil {
 		return ""
@@ -364,6 +386,7 @@ func (v *SliceView) Text() string {
 	return fmt.Sprintf("view %s", v.Source.Text())
 }
 func (v *Load) Text() string  { return fmt.Sprintf("load %s", v.Place.Text()) }
+func (v *Len) Text() string   { return fmt.Sprintf("len %s", v.Value.Text()) }
 func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 
 func (v *StructLit) Text() string {
@@ -512,6 +535,8 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 		return node.Location
 	case *Load:
 		return node.Location
+	case *Len:
+		return node.Location
 	case *Field:
 		return node.Location
 	case *StructLit:
@@ -529,6 +554,8 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *InterfaceMake:
 		return node.Location
 	case *InterfaceCall:
+		return node.Location
+	case *StringLiteral:
 		return node.Location
 	case *Call:
 		return node.Location

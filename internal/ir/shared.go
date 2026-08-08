@@ -11,6 +11,14 @@ import (
 // NodeID identifies source syntax without retaining an AST object in IR.
 type NodeID uint32
 
+// SourceInfo keeps semantic identity and source provenance together while IR
+// remains independent from AST objects. NodeID is stable across lowering;
+// Location is the current diagnostic/debug projection of that identity.
+type SourceInfo struct {
+	NodeID   NodeID
+	Location *source.Location
+}
+
 type Param struct {
 	Name     string
 	Type     TypeID
@@ -25,46 +33,55 @@ type Expr interface {
 	exprNode()
 	String() string
 	TypeID() TypeID
+	Origin() SourceInfo
+	setOrigin(SourceInfo)
 }
 
 type InvalidExpr struct {
 	Message  string
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type IntLit struct {
 	Value    string
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type FloatLit struct {
 	Value    string
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type StringLit struct {
 	Value    string
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type BoolLit struct {
 	Value    bool
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type ZeroValue struct {
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type OptionalSome struct {
 	Value    Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -72,6 +89,7 @@ type Ident struct {
 	Name     string
 	Type     TypeID
 	SymbolID symbols.SymbolID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -79,6 +97,7 @@ type Unary struct {
 	Op       string
 	Arg      Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -87,6 +106,7 @@ type Binary struct {
 	Left     Expr
 	Right    Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -94,6 +114,7 @@ type Call struct {
 	Callee   Expr
 	Args     []Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -130,6 +151,7 @@ type Load struct {
 type AddrOf struct {
 	Place    *Place
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -137,6 +159,14 @@ type TempBorrow struct {
 	Value    Expr
 	Slice    bool
 	Type     TypeID
+	NodeID   NodeID
+	Location *source.Location
+}
+
+type Len struct {
+	Value    Expr
+	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -147,6 +177,7 @@ type SliceView struct {
 	End          Expr
 	EndExclusive bool
 	Type         TypeID
+	NodeID       NodeID
 	Location     *source.Location
 }
 
@@ -164,6 +195,7 @@ type InterfaceMake struct {
 	Value    Expr
 	Slots    []InterfaceSlot
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -173,6 +205,7 @@ type InterfaceCall struct {
 	Args     []Expr
 	Consumes bool
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -188,6 +221,7 @@ type Field struct {
 type StructLit struct {
 	Fields   []Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -195,6 +229,7 @@ type ArrayLit struct {
 	Values   []Expr
 	Dynamic  bool
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -204,6 +239,7 @@ type DynamicArrayOp struct {
 	Length   Expr
 	Value    Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -211,22 +247,27 @@ type AllocExpr struct {
 	Value     Expr
 	Allocator Expr
 	Type      TypeID
+	NodeID    NodeID
 	Location  *source.Location
 }
 
 type Cast struct {
 	Expr     Expr
 	Type     TypeID
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type Print struct {
 	Value    Expr
+	Newline  bool
+	NodeID   NodeID
 	Location *source.Location
 }
 
 type Drop struct {
 	Value    Expr
+	NodeID   NodeID
 	Location *source.Location
 }
 
@@ -244,6 +285,7 @@ func (*Call) exprNode()           {}
 func (*Load) exprNode()           {}
 func (*AddrOf) exprNode()         {}
 func (*TempBorrow) exprNode()     {}
+func (*Len) exprNode()            {}
 func (*SliceView) exprNode()      {}
 func (*InterfaceMake) exprNode()  {}
 func (*InterfaceCall) exprNode()  {}
@@ -256,61 +298,174 @@ func (*Cast) exprNode()           {}
 func (*Print) exprNode()          {}
 func (*Drop) exprNode()           {}
 
-func ExprLocation(expr Expr) *source.Location {
-	switch node := expr.(type) {
-	case *InvalidExpr:
-		return node.Location
-	case *IntLit:
-		return node.Location
-	case *FloatLit:
-		return node.Location
-	case *StringLit:
-		return node.Location
-	case *BoolLit:
-		return node.Location
-	case *ZeroValue:
-		return node.Location
-	case *OptionalSome:
-		return node.Location
-	case *Ident:
-		return node.Location
-	case *Unary:
-		return node.Location
-	case *Binary:
-		return node.Location
-	case *Call:
-		return node.Location
-	case *Load:
-		return node.Location
-	case *AddrOf:
-		return node.Location
-	case *TempBorrow:
-		return node.Location
-	case *SliceView:
-		return node.Location
-	case *InterfaceMake:
-		return node.Location
-	case *InterfaceCall:
-		return node.Location
-	case *Field:
-		return node.Location
-	case *StructLit:
-		return node.Location
-	case *ArrayLit:
-		return node.Location
-	case *DynamicArrayOp:
-		return node.Location
-	case *AllocExpr:
-		return node.Location
-	case *Cast:
-		return node.Location
-	case *Print:
-		return node.Location
-	case *Drop:
-		return node.Location
-	default:
-		return nil
+func exprSource(nodeID NodeID, loc *source.Location) SourceInfo {
+	return SourceInfo{NodeID: nodeID, Location: loc}
+}
+
+func (e *InvalidExpr) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *InvalidExpr) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
 	}
+}
+func (e *IntLit) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *IntLit) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *FloatLit) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *FloatLit) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *StringLit) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *StringLit) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *BoolLit) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *BoolLit) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *ZeroValue) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *ZeroValue) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *OptionalSome) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *OptionalSome) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Ident) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Ident) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Unary) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Unary) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Binary) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Binary) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Call) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Call) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Load) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Load) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *AddrOf) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *AddrOf) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *TempBorrow) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *TempBorrow) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Len) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Len) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *SliceView) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *SliceView) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *InterfaceMake) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *InterfaceMake) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *InterfaceCall) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *InterfaceCall) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Field) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Field) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *StructLit) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *StructLit) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *ArrayLit) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *ArrayLit) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *DynamicArrayOp) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *DynamicArrayOp) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *AllocExpr) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *AllocExpr) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Cast) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Cast) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Print) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Print) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *Drop) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *Drop) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+
+// WithOrigin applies provenance at compiler phase boundaries, including
+// synthetic expressions returned by helper lowerers.
+func WithOrigin(expr Expr, info SourceInfo) Expr {
+	if expr != nil {
+		expr.setOrigin(info)
+	}
+	return expr
 }
 
 func (e *InvalidExpr) String() string {
@@ -455,7 +610,11 @@ func (e *Print) String() string {
 	if e == nil || e.Value == nil {
 		return "print(<nil>)"
 	}
-	return "print(" + e.Value.String() + ")"
+	name := "print"
+	if e.Newline {
+		name = "println"
+	}
+	return name + "(" + e.Value.String() + ")"
 }
 
 func (*Print) TypeID() TypeID { return InvalidType }
@@ -539,6 +698,20 @@ func (e *TempBorrow) String() string {
 }
 
 func (e *TempBorrow) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
+
+func (e *Len) String() string {
+	if e == nil || e.Value == nil {
+		return "len(<nil>)"
+	}
+	return "len(" + e.Value.String() + ")"
+}
+
+func (e *Len) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
 	}

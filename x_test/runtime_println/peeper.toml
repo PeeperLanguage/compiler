@@ -1,0 +1,2 @@
+name = "runtime_println"
+build = "program"

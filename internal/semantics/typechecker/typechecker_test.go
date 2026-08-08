@@ -357,7 +357,7 @@ fn ext();
 }
 
 func TestAttributeRejectsConstBindingArgument(t *testing.T) {
-	src := `const name: cstr = "puts";
+	src := `const name: cstr = c"puts";
 
 #[extern(name)]
 fn puts(msg: cstr) -> i32;
@@ -372,7 +372,7 @@ fn puts(msg: cstr) -> i32;
 }
 
 func TestAttributeRejectsNonConstantBindingArgument(t *testing.T) {
-	src := `fn symbol_name() -> cstr { return "puts"; }
+	src := `fn symbol_name() -> cstr { return c"puts"; }
 const name: cstr = symbol_name();
 
 #[extern(name)]
@@ -1549,7 +1549,7 @@ struct File {}
 
 fn main(file: *File) -> i32 {
 	let reader: *Reader = file;
-	return reader.read("ok");
+	return reader.read(c"ok");
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {
@@ -1777,7 +1777,7 @@ func TestPrintAcceptsPrimitiveScalars(t *testing.T) {
 	print(2.5f64);
 	print(true);
 	print(value as byte);
-	print("hello");
+	print(c"hello");
 	print(raw);
 }`)
 	if diag.HasErrors() {
@@ -1813,7 +1813,7 @@ func TestPointerSelfMethodCallResolvesOnPointerValue(t *testing.T) {
 	}
 
 fn main(file: *File) -> i32 {
-	return file.read("ok");
+	return file.read(c"ok");
 }`
 	diag := checkTypeSource(t, src)
 	if diag.HasErrors() {

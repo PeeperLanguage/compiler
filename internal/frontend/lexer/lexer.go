@@ -43,6 +43,7 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 		{regexp.MustCompile(`///[^\n\r]*`), docHandler},
 		{regexp.MustCompile(`//[^\n\r]*`), skipHandler},
 		{regexp.MustCompile(`(?s)/\*.*?\*/`), skipHandler},
+		{regexp.MustCompile(`c"(?:\\.|[^"\\])*"`), cstringHandler},
 		{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
 		{regexp.MustCompile(`b'(?:\\.|[^'\\])*'`), byteCharHandler},
 		{regexp.MustCompile(`'(?:\\.|[^'\\])*'`), charHandler},
@@ -144,6 +145,14 @@ func stringHandler(l *Lexer, re *regexp.Regexp) {
 	l.advanceBy(match)
 	inner := match[1 : len(match)-1]
 	l.push(token.Token{Kind: token.STRING, Literal: unescapeQuoted(inner, '"'), Start: start, End: l.pos})
+}
+
+func cstringHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	inner := match[2 : len(match)-1]
+	l.push(token.Token{Kind: token.CSTRING, Literal: unescapeQuoted(inner, '"'), Start: start, End: l.pos})
 }
 
 func charHandler(l *Lexer, re *regexp.Regexp) {

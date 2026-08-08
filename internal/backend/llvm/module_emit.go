@@ -50,9 +50,11 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		b.WriteString("@.print.unsigned = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n")
 		b.WriteString("@.print.float = private unnamed_addr constant [3 x i8] c\"%g\\00\", align 1\n")
 		b.WriteString("@.print.string = private unnamed_addr constant [3 x i8] c\"%s\\00\", align 1\n")
+		b.WriteString("@.print.str = private unnamed_addr constant [5 x i8] c\"%.*s\\00\", align 1\n")
 		b.WriteString("@.print.pointer = private unnamed_addr constant [3 x i8] c\"%p\\00\", align 1\n")
 		b.WriteString("@.print.true = private unnamed_addr constant [5 x i8] c\"true\\00\", align 1\n")
 		b.WriteString("@.print.false = private unnamed_addr constant [6 x i8] c\"false\\00\", align 1\n\n")
+		b.WriteString("@.print.newline = private unnamed_addr constant [2 x i8] c\"\\0A\\00\", align 1\n\n")
 	}
 
 	for _, entry := range mod.StaticData {

@@ -5,17 +5,20 @@ fn (_: Printer) printf() {}
 fn main() -> i32 {
     let value: i32 = 7;
     print(-42);
-    print("|");
+    print(c"|");
     print(42u32);
-    print("|");
+    print(c"|");
     print(2.5f64);
-    print("|");
+    print(c"|");
     print(true);
-    print("|");
+    print(c"|");
     print(255 as byte);
-    print("|");
-    print("hello");
-    print("|");
+    print(c"|");
+    print(c"hello");
+    print(c"|");
+    let text: str = "owned";
+    print(text);
+    print(c"|");
     print(@value);
     return 0;
 }

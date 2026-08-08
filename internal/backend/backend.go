@@ -1,8 +1,8 @@
 package backend
 
-type BACKEND_TYPE string
+type BackendType string
 
 const (
-	LLVM BACKEND_TYPE = "llvm"
-	WASM BACKEND_TYPE = "wasm"
+	BackendLLVM BackendType = "llvm"
+	BackendWASM BackendType = "wasm"
 )

@@ -34,7 +34,7 @@ func saveIRs(ctx *project.CompilerContext, backendName, dir string) error {
 		if err := os.WriteFile(filepath.Join(dir, base+".mir"), []byte(mirText), 0o644); err != nil {
 			return err
 		}
-		if backendName == string(backend.LLVM) {
+		if backendName == string(backend.BackendLLVM) {
 			if err := os.WriteFile(filepath.Join(dir, base+".ll"), []byte(module.LLVMIR), 0o644); err != nil {
 				return err
 			}

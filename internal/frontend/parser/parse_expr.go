@@ -59,6 +59,18 @@ func init() {
 		tok := p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
+	nud(token.CSTRING, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.StringLit{Value: tok.Literal, CString: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.BYTE_CHAR, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.ByteLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
+	nud(token.CHAR, func(p *Parser) ast.Expr {
+		tok := p.advance()
+		return reg(p, &ast.CharLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+	})
 	nud(token.NONE, func(p *Parser) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.NoneLit{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
@@ -75,6 +87,7 @@ func init() {
 	nud(token.AMP, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressShared) })
 	nud(token.FREE, func(p *Parser) ast.Expr { return p.parseFreeExpr() })
 	nud(token.PRINT, func(p *Parser) ast.Expr { return p.parsePrintExpr() })
+	nud(token.PRINTLN, func(p *Parser) ast.Expr { return p.parsePrintExpr() })
 	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
 
 	// grouping
@@ -259,7 +272,7 @@ func (p *Parser) parsePrintExpr() ast.Expr {
 	if end != nil {
 		endPos = end.End
 	}
-	return reg(p, &ast.PrintExpr{Expr: expr, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	return reg(p, &ast.PrintExpr{Expr: expr, Newline: start.Kind == token.PRINTLN, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
 func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {

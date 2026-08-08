@@ -24,7 +24,7 @@ fn (self: &Number) to_float() -> f32 {
 }
 
 fn (_: &Number) to_str() -> cstr {
-    return "converted\n";
+    return c"converted\n";
 }
 
 struct Counter {
@@ -39,12 +39,12 @@ fn (self: &mut Counter) bump() -> i32 {
 fn main() {
     let p: Point = .{ x = 10, y = 20 };
     if total(&p) == 30 {
-        let ok: cstr = "interface ok\n";
+        let ok: cstr = c"interface ok\n";
         write(stdout, ok, 13);
         let number: Number = .{ value = 42 };
         let f: f32 = number.to_float();
         if f == 43.0 {
-            let s: cstr = "float ok\n";
+            let s: cstr = c"float ok\n";
             write(stdout, s, 9);
         }
 
@@ -54,20 +54,20 @@ fn main() {
         let mut c: Counter = .{ value = 0 };
         let v: i32 = c.bump();
         if c.value == v {
-            let msg: cstr = "both updated\n";
+            let msg: cstr = c"both updated\n";
             write(stdout, msg, 13);
         } else {
-            let msg: cstr = "only value updated\n";
+            let msg: cstr = c"only value updated\n";
             write(stdout, msg, 19);
         }
 
         c.value = 100;
         if c.value == 100 {
-            let msg: cstr = "value updated to 100\n";
+            let msg: cstr = c"value updated to 100\n";
             write(stdout, msg, 21);
         }
     }
 
-    let bad: cstr = "interface bad\n";
+    let bad: cstr = c"interface bad\n";
     write(stdout, bad, 14);
 }

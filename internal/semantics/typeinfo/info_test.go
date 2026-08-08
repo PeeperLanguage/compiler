@@ -45,8 +45,8 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	if got := rawPtr.Text(); got != "rawptr" {
 		t.Fatalf("raw pointer text: got %q want %q", got, "rawptr")
 	}
-	if got := ref.Text(); got != "&[]string" {
-		t.Fatalf("reference text: got %q want %q", got, "&[]string")
+	if got := ref.Text(); got != "&[]str" {
+		t.Fatalf("reference text: got %q want %q", got, "&[]str")
 	}
 	if got := opt.Text(); got != "?i32" {
 		t.Fatalf("optional text: got %q want %q", got, "?i32")
@@ -54,8 +54,8 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	if got := array.Text(); got != "[4]i32" {
 		t.Fatalf("array text: got %q want %q", got, "[4]i32")
 	}
-	if got := dynArray.Text(); got != "[]string" {
-		t.Fatalf("dynamic array text: got %q want %q", got, "[]string")
+	if got := dynArray.Text(); got != "[]str" {
+		t.Fatalf("dynamic array text: got %q want %q", got, "[]str")
 	}
 	if !SameType(ownedA, ownedB) {
 		t.Fatalf("owned pointers with equal targets should match")

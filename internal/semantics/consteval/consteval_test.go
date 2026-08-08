@@ -164,7 +164,7 @@ const B = A + (1 + 2);
 }
 
 func TestEvaluateStringConst(t *testing.T) {
-	module, diag := constevalModule(t, `const Name: cstr = "puts";
+	module, diag := constevalModule(t, `const Name: cstr = c"puts";
 `)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -175,7 +175,7 @@ func TestEvaluateStringConst(t *testing.T) {
 	}
 	got, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.StringConst)
 	if !ok || got == nil || got.Value != "puts" || got.TypeText() != "cstr" {
-		t.Fatalf("Name = %#v, want string puts cstr", module.Semantics.ConstValues[sym.ID])
+		t.Fatalf("Name = %#v, want str puts cstr", module.Semantics.ConstValues[sym.ID])
 	}
 }
 

@@ -9,7 +9,8 @@ const (
 	IDENT       Kind = "identifier"
 	NUMBER      Kind = "number"
 	STRING      Kind = "string"
-	CHAR        Kind = "charecter"
+	CSTRING     Kind = "c string"
+	CHAR        Kind = "character"
 	BYTE_CHAR   Kind = "byte character"
 	DOC_COMMENT Kind = "document comment"
 
@@ -87,6 +88,7 @@ const (
 	FROM     Kind = "from"
 	FREE     Kind = "free"
 	PRINT    Kind = "print"
+	PRINTLN  Kind = "println"
 	RAWPTR   Kind = "rawptr"
 	AS       Kind = "as"
 	IS       Kind = "is"

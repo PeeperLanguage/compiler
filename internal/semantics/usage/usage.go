@@ -67,8 +67,12 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				}
 				switch sym.Kind {
 				case symbols.SymbolParam:
+					name := "parameter"
+					if sym.IsReceiver {
+						name = "receiver"
+					}
 					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
-						fmt.Sprintf("unused parameter `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
+						fmt.Sprintf("unused %s `%s`", name, sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 				case symbols.SymbolVar, symbols.SymbolConst:
 					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
 						fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")

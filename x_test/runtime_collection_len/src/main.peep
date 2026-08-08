@@ -1,0 +1,22 @@
+fn main() -> i32 {
+    let text: str = "hello";
+    let fixed = [3]i32{1, 2, 3};
+    let dynamic = []i32{4, 5};
+
+    if len(&text) != 5 {
+        return 1;
+    }
+    if len(&"ok") != 2 {
+        return 2;
+    }
+    if len(&"é") != 2 {
+        return 3;
+    }
+    if len(&fixed) != 3 {
+        return 4;
+    }
+    if len(&dynamic) != 2 {
+        return 5;
+    }
+    return 0;
+}

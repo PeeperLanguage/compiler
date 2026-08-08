@@ -23,6 +23,7 @@ var keywords = map[string]Kind{
 	"from":     FROM,
 	"free":     FREE,
 	"print":    PRINT,
+	"println":  PRINTLN,
 	"rawptr":   RAWPTR,
 	"as":       AS,
 	"is":       IS,

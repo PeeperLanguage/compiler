@@ -16,6 +16,7 @@ import (
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/numeric"
+	"unicode/utf8"
 )
 
 func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Module {
@@ -375,11 +376,14 @@ func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, return
 
 // lowerASTExpr directly lowers an AST expression to an IR expression using
 // the module context's resolved expression types side-table.
-func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) (result ir.Expr) {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
 	loc := ast.LocOf(expr)
+	defer func() {
+		result = ir.WithOrigin(result, ir.SourceInfo{NodeID: ir.NodeID(expr.ID()), Location: loc})
+	}()
 
 	// Fetch canonical type from the typechecker side-table when available.
 	resolvedType := exprResolvedType(module, expr)
@@ -415,9 +419,20 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	case *ast.StringLit:
 		t := resolvedTypeID
 		if t == ir.InvalidType {
-			t = loweredTypeID(ctx, module, &typeinfo.CStrType{})
+			if node.CString {
+				t = loweredTypeID(ctx, module, &typeinfo.CStrType{})
+			} else {
+				t = loweredTypeID(ctx, module, &typeinfo.StringType{})
+			}
 		}
 		return &ir.StringLit{Value: node.Value, Type: t, Location: loc}
+
+	case *ast.ByteLit:
+		return &ir.IntLit{Value: fmt.Sprintf("%d", node.Value[0]), Type: loweredTypeID(ctx, module, &typeinfo.ByteType{}), Location: loc}
+
+	case *ast.CharLit:
+		runeValue, _ := utf8.DecodeRuneInString(node.Value)
+		return &ir.IntLit{Value: fmt.Sprintf("%d", runeValue), Type: loweredTypeID(ctx, module, &typeinfo.CharType{}), Location: loc}
 
 	case *ast.BoolLit:
 		return &ir.BoolLit{Value: node.Value, Type: loweredTypeID(ctx, module, &typeinfo.BoolType{}), Location: loc}
@@ -555,6 +570,16 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 				if sym.CompilerOp == symbols.CompilerOpAlloc {
 					return lowerAllocCall(ctx, module, scope, node)
 				}
+				if sym.CompilerOp == symbols.CompilerOpLen {
+					if len(node.Args) != 1 {
+						return &ir.InvalidExpr{Message: "len requires one argument", Type: ir.InvalidType, Location: loc}
+					}
+					return &ir.Len{
+						Value:    lowerASTExpr(ctx, module, scope, node.Args[0], nil),
+						Type:     loweredTypeID(ctx, module, exprResolvedType(module, node)),
+						Location: loc,
+					}
+				}
 				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, sym.CompilerOp)
 			}
 		}
@@ -596,7 +621,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.Call{Callee: calleeExpr, Args: args, Type: t, Location: loc}
 
 	case *ast.PrintExpr:
-		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
+		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Newline: node.Newline, Location: loc}
 
 	case *ast.FreeExpr:
 		return &ir.Drop{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
@@ -1182,6 +1207,8 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 		return types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: typ.Signed, Bits: typ.Bits})
 	case *typeinfo.ByteType:
 		return types.Intern(ir.Type{Kind: ir.TypeByte})
+	case *typeinfo.CharType:
+		return types.Intern(ir.Type{Kind: ir.TypeChar})
 	case *typeinfo.FloatType:
 		if typ == nil {
 			return ir.InvalidType

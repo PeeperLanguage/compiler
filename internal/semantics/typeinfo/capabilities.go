@@ -63,7 +63,7 @@ func IsArithmetic(t Type) bool {
 func IsEquatable(t Type) bool {
 	t = Underlying(t)
 	switch t.(type) {
-	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *AllocatorType:
+	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *AllocatorType:
 		return true
 	case *OptionalType:
 		return true
@@ -80,7 +80,7 @@ func IsCondition(t Type) bool {
 
 func IsImplicitCopyType(t Type) bool {
 	switch Underlying(t).(type) {
-	case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
+	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
 		return true
 	case *RefType:
 		ref, _ := Underlying(t).(*RefType)
@@ -108,7 +108,7 @@ func IsSizedType(t Type) bool {
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
 			return false
-		case *IntegerType, *ByteType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *EnumType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *EnumType, *AllocatorType:
 			return true
 		case *OwnedPtrType:
 			return typ != nil && typ.Target != nil
@@ -182,6 +182,95 @@ func IsNoCopyType(t Type) bool {
 			}
 		}
 		return false
+	}
+	return check(t)
+}
+
+// IsLowerableType reports whether type can be represented by current backend
+// lowering without recursive runtime shells or abstract self parameters.
+func IsLowerableType(t Type) bool {
+	visiting := make(map[Type]struct{})
+	var check func(Type) bool
+	check = func(t Type) bool {
+		t = Underlying(t)
+		if t == nil {
+			return false
+		}
+		if _, found := visiting[t]; found {
+			return false
+		}
+		visiting[t] = struct{}{}
+		defer delete(visiting, t)
+
+		switch typ := t.(type) {
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *AllocatorType:
+			return true
+		case *OwnedPtrType:
+			target, ok := PointerTarget(typ)
+			return ok && target != nil
+		case *RawPtrType:
+			return typ != nil
+		case *RefType:
+			if typ == nil || typ.Target == nil {
+				return false
+			}
+			if _, nested := Underlying(typ.Target).(*RefType); nested {
+				return false
+			}
+			if target, ok := Underlying(typ.Target).(*ArrayType); ok && target != nil && target.Len == "" && !target.Dynamic {
+				return target.Elem != nil && check(target.Elem)
+			}
+			return check(typ.Target)
+		case *OptionalType:
+			return typ != nil && typ.Inner != nil && check(typ.Inner)
+		case *ArrayType:
+			return typ != nil && (typ.Dynamic || typ.Len != "") && typ.Elem != nil && check(typ.Elem)
+		case *StructType:
+			if typ == nil {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if !check(field.Type) {
+					return false
+				}
+			}
+			return true
+		case *InterfaceType:
+			if typ == nil {
+				return false
+			}
+			for _, method := range typ.Methods {
+				if len(method.Params) == 0 {
+					return false
+				}
+				for i, param := range method.Params {
+					if i == 0 {
+						continue
+					}
+					if ContainsAbstractSelf(param.Type) || !check(param.Type) {
+						return false
+					}
+				}
+				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return)) {
+					return false
+				}
+			}
+			return true
+		case *FuncType:
+			if typ == nil {
+				return false
+			}
+			for _, param := range typ.Params {
+				if !check(param) {
+					return false
+				}
+			}
+			return typ.Return == nil || check(typ.Return)
+		case *EnumType:
+			return typ != nil
+		default:
+			return false
+		}
 	}
 	return check(t)
 }

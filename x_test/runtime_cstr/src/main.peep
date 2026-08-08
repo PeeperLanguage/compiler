@@ -1,5 +1,5 @@
 fn sayhi() {
-    let hi: cstr = "Hello, world!\n";
+    let hi: cstr = c"Hello, world!\n";
     write(stdout, hi, 14);
 }
 
@@ -9,7 +9,7 @@ struct Point {
 }
 
 fn main() -> i32 {
-    let msg: cstr = "Hello from Peeper runtime ABI!\n";
+    let msg: cstr = c"Hello from Peeper runtime ABI!\n";
     write(stdout, msg, 31);
     sayhi();
     return 0;

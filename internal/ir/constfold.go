@@ -2,7 +2,6 @@ package ir
 
 import (
 	"compiler/internal/constvalue"
-	"compiler/internal/source"
 )
 
 // FoldExpr recursively folds value-bearing expressions.
@@ -20,7 +19,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {
-				return constValueExprAt(value, node.Type, ExprLocation(node))
+				return constValueExprAt(value, node.Type, node.Origin())
 			}
 		}
 		return expr
@@ -28,10 +27,10 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		arg := FoldExpr(types, node.Arg, env)
 		if value, ok := ConstValueOf(types, arg); ok {
 			if folded, ok := constvalue.FoldUnary(node.Op, value); ok {
-				return constValueExprAt(folded, node.Type, ExprLocation(node))
+				return constValueExprAt(folded, node.Type, node.Origin())
 			}
 		}
-		return &Unary{Op: node.Op, Arg: arg, Type: node.Type}
+		return &Unary{Op: node.Op, Arg: arg, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *Binary:
 		left := FoldExpr(types, node.Left, env)
 		right := FoldExpr(types, node.Right, env)
@@ -39,14 +38,14 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		rv, rok := ConstValueOf(types, right)
 		if lok && rok {
 			if folded, ok := constvalue.FoldBinary(node.Op, lv, rv); ok {
-				return constValueExprAt(folded, node.Type, ExprLocation(node))
+				return constValueExprAt(folded, node.Type, node.Origin())
 			}
 		}
-		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type}
+		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *Load:
 		return &Load{Place: foldPlace(types, node.Place, env), DropRoot: node.DropRoot, NodeID: node.NodeID, Location: node.Location}
 	case *AddrOf:
-		return &AddrOf{Place: foldPlace(types, node.Place, env), Type: node.Type, Location: node.Location}
+		return &AddrOf{Place: foldPlace(types, node.Place, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *SliceView:
 		return &SliceView{
 			Source:       foldPlace(types, node.Source, env),
@@ -54,6 +53,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			End:          FoldExpr(types, node.End, env),
 			EndExclusive: node.EndExclusive,
 			Type:         node.Type,
+			NodeID:       node.NodeID,
 			Location:     node.Location,
 		}
 	case *ArrayLit:
@@ -61,7 +61,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		for _, value := range node.Values {
 			values = append(values, FoldExpr(types, value, env))
 		}
-		return &ArrayLit{Values: values, Dynamic: node.Dynamic, Type: node.Type, Location: node.Location}
+		return &ArrayLit{Values: values, Dynamic: node.Dynamic, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *DynamicArrayOp:
 		return &DynamicArrayOp{
 			Op:       node.Op,
@@ -69,6 +69,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			Length:   FoldExpr(types, node.Length, env),
 			Value:    FoldExpr(types, node.Value, env),
 			Type:     node.Type,
+			NodeID:   node.NodeID,
 			Location: node.Location,
 		}
 	case *AllocExpr:
@@ -82,6 +83,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			Value:     FoldExpr(types, node.Value, env),
 			Allocator: foldedAlloc,
 			Type:      node.Type,
+			NodeID:    node.NodeID,
 			Location:  node.Location,
 		}
 	default:
@@ -107,22 +109,22 @@ func foldPlace(types *TypeTable, place *Place, env map[string]constvalue.Value) 
 	}
 }
 
-func constValueExprAt(value constvalue.Value, typ TypeID, loc *source.Location) Expr {
+func constValueExprAt(value constvalue.Value, typ TypeID, origin SourceInfo) Expr {
 	switch node := value.(type) {
 	case *constvalue.IntConst:
 		if node == nil {
-			return &IntLit{Value: "0", Type: typ, Location: loc}
+			return &IntLit{Value: "0", Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 		}
-		return &IntLit{Value: node.Value, Type: typ, Location: loc}
+		return &IntLit{Value: node.Value, Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 	case *constvalue.FloatConst:
 		if node == nil {
-			return &FloatLit{Value: "0.0", Type: typ, Location: loc}
+			return &FloatLit{Value: "0.0", Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 		}
-		return &FloatLit{Value: node.Value, Type: typ, Location: loc}
+		return &FloatLit{Value: node.Value, Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 	case *constvalue.BoolConst:
-		return &BoolLit{Value: node != nil && node.Value, Type: typ, Location: loc}
+		return &BoolLit{Value: node != nil && node.Value, Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 	default:
-		return &InvalidExpr{Message: "unknown constant", Type: InvalidType, Location: loc}
+		return &InvalidExpr{Message: "unknown constant", Type: InvalidType, NodeID: origin.NodeID, Location: origin.Location}
 	}
 }
 

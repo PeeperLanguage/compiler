@@ -27,6 +27,22 @@ func TestFoldExprConstantArithmetic(t *testing.T) {
 	}
 }
 
+func TestFoldExprPreservesExpressionOrigin(t *testing.T) {
+	types := NewTypeTable()
+	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	expr := &Binary{
+		Op:     "+",
+		Left:   &IntLit{Value: "2", Type: i32},
+		Right:  &IntLit{Value: "3", Type: i32},
+		Type:   i32,
+		NodeID: 73,
+	}
+	folded, ok := FoldExpr(types, expr, nil).(*IntLit)
+	if !ok || folded.NodeID != expr.NodeID {
+		t.Fatalf("folded origin = %#v, want NodeID %d", folded, expr.NodeID)
+	}
+}
+
 func TestFoldExprConstantCondition(t *testing.T) {
 	types := NewTypeTable()
 	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
