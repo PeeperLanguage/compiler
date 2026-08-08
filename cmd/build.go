@@ -41,14 +41,14 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 }
 
 // Build final output after successful compilation.
-func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string, targetType backend.BACKEND_TYPE) error {
+func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string, targetType backend.BackendType) error {
 	if ctx != nil && ctx.Diagnostics != nil && ctx.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
 	}
 	if entry == nil {
 		return fmt.Errorf("no entry module produced")
 	}
-	if targetType != backend.LLVM {
+	if targetType != backend.BackendLLVM {
 		return fmt.Errorf("unsupported backend: %s", targetType)
 	}
 

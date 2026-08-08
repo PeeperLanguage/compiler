@@ -110,7 +110,7 @@ func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptio
 	}, nil
 }
 
-func parseCommandBackend(command string) (string, backend.BACKEND_TYPE, error) {
+func parseCommandBackend(command string) (string, backend.BackendType, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return "", "", fmt.Errorf("empty command")
@@ -119,11 +119,11 @@ func parseCommandBackend(command string) (string, backend.BACKEND_TYPE, error) {
 	switch base {
 	case "build", "run":
 		if !hasSuffix || strings.TrimSpace(suffix) == "" {
-			return base, backend.LLVM, nil
+			return base, backend.BackendLLVM, nil
 		}
-		target := backend.BACKEND_TYPE(strings.ToLower(strings.TrimSpace(suffix)))
+		target := backend.BackendType(strings.ToLower(strings.TrimSpace(suffix)))
 		switch target {
-		case backend.LLVM:
+		case backend.BackendLLVM:
 			return base, target, nil
 		default:
 			return "", "", fmt.Errorf("invalid %s backend %q (expected llvm)", base, suffix)
@@ -141,7 +141,7 @@ type buildFlags struct {
 	targetArch string
 }
 
-func buildCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
+func buildCommand(args []string, backendTarget backend.BackendType) error {
 	opts, positional, err := parseBuildArgs("build", args)
 	if err != nil {
 		return err
@@ -163,7 +163,7 @@ func buildCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
 	}
 
 	if backendTarget == "" {
-		backendTarget = backend.LLVM
+		backendTarget = backend.BackendLLVM
 	}
 	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
@@ -211,7 +211,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	}, fs.Args(), nil
 }
 
-func runCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
+func runCommand(args []string, backendTarget backend.BackendType) error {
 	opts, err := parseCommandArgs("run", args, true)
 	if err != nil {
 		return err
@@ -235,7 +235,7 @@ func runCommand(args []string, backendTarget backend.BACKEND_TYPE) error {
 	}
 
 	if backendTarget == "" {
-		backendTarget = backend.LLVM
+		backendTarget = backend.BackendLLVM
 	}
 	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
@@ -372,7 +372,7 @@ func checkCommand(args []string) error {
 		path = opts.positional[0]
 	}
 
-	ctx, _ := compileEntry(path, string(backend.LLVM), false, opts.targetOS, opts.targetArch)
+	ctx, _ := compileEntry(path, string(backend.BackendLLVM), false, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
