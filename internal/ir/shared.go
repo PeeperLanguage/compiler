@@ -11,6 +11,14 @@ import (
 // NodeID identifies source syntax without retaining an AST object in IR.
 type NodeID uint32
 
+// SourceInfo keeps semantic identity and source provenance together while IR
+// remains independent from AST objects. NodeID is stable across lowering;
+// Location is the current diagnostic/debug projection of that identity.
+type SourceInfo struct {
+	NodeID   NodeID
+	Location *source.Location
+}
+
 type Param struct {
 	Name     string
 	Type     TypeID

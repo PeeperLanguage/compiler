@@ -42,22 +42,22 @@ type Function struct {
 type Stmt interface {
 	stmtNode()
 	appendText(*strings.Builder, int)
-	loc() *source.Location
-	nodeID() NodeID
+	sourceInfo() ir.SourceInfo
+}
+
+func SourceInfoOf(node Stmt) ir.SourceInfo {
+	if node == nil {
+		return ir.SourceInfo{}
+	}
+	return node.sourceInfo()
 }
 
 func LocOf(node Stmt) *source.Location {
-	if node == nil {
-		return nil
-	}
-	return node.loc()
+	return SourceInfoOf(node).Location
 }
 
 func NodeIDOf(node Stmt) NodeID {
-	if node == nil {
-		return 0
-	}
-	return node.nodeID()
+	return SourceInfoOf(node).NodeID
 }
 
 type Block struct {
@@ -127,25 +127,30 @@ func (*Return) stmtNode()   {}
 func (*If) stmtNode()       {}
 func (*For) stmtNode()      {}
 
-// -- implement loc --
-
-func (b *Block) loc() *source.Location    { return b.Location }
-func (b *Binding) loc() *source.Location  { return b.Location }
-func (e *ExprStmt) loc() *source.Location { return e.Location }
-func (a *Assign) loc() *source.Location   { return a.Location }
-func (i *Invalid) loc() *source.Location  { return i.Location }
-func (r *Return) loc() *source.Location   { return r.Location }
-func (f *If) loc() *source.Location       { return f.Location }
-func (f *For) loc() *source.Location      { return f.Location }
-
-func (b *Block) nodeID() NodeID    { return b.NodeID }
-func (b *Binding) nodeID() NodeID  { return b.NodeID }
-func (e *ExprStmt) nodeID() NodeID { return e.NodeID }
-func (a *Assign) nodeID() NodeID   { return a.NodeID }
-func (i *Invalid) nodeID() NodeID  { return i.NodeID }
-func (r *Return) nodeID() NodeID   { return r.NodeID }
-func (f *If) nodeID() NodeID       { return f.NodeID }
-func (f *For) nodeID() NodeID      { return f.NodeID }
+func (b *Block) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: b.NodeID, Location: b.Location}
+}
+func (b *Binding) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: b.NodeID, Location: b.Location}
+}
+func (e *ExprStmt) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: e.NodeID, Location: e.Location}
+}
+func (a *Assign) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: a.NodeID, Location: a.Location}
+}
+func (i *Invalid) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: i.NodeID, Location: i.Location}
+}
+func (r *Return) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: r.NodeID, Location: r.Location}
+}
+func (f *If) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: f.NodeID, Location: f.Location}
+}
+func (f *For) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: f.NodeID, Location: f.Location}
+}
 
 func (m *Module) Text() string {
 	if m == nil {
