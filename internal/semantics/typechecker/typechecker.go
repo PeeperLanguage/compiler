@@ -108,15 +108,6 @@ func (c *checker) checkModule() {
 	})
 }
 
-func (c *checker) allowedOp(op string) bool {
-	switch op {
-	case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "==", "!=", "<", "<=", ">", ">=", "&&", "||":
-		return true
-	default:
-		return false
-	}
-}
-
 func Check(ctx *project.CompilerContext, module *project.Module) {
 	if module == nil || ctx == nil {
 		return

@@ -219,12 +219,6 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 }
 
 func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
-	if !c.allowedOp(node.Op) {
-		c.ctx.Diagnostics.Add(invalidOperationError(node,
-			"unsupported binary operator `"+node.Op+"`"))
-		return nil
-	}
-
 	operandExpected := expected
 	if binaryResultIsBool(node.Op) {
 		operandExpected = nil
