@@ -374,7 +374,7 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
 		return field.Type
 	}
-	if methodType, methodSym, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
+	if methodType, methodSym, ok := c.lookupMethodType(baseType, node.Name.Name, true); ok {
 		if methodSym != nil {
 			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = methodSym
 		}

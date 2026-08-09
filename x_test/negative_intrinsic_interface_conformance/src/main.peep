@@ -1,0 +1,9 @@
+iface Lenner {
+    fn (&Self) len() -> usize
+}
+
+fn main() -> i32 {
+    let text: str = "abc";
+    let value: &Lenner = &text;
+    return value.len() as i32;
+}

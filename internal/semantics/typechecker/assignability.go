@@ -48,7 +48,7 @@ func (c *checker) satisfiesInterface(iface *typeinfo.InterfaceType, src typeinfo
 	}
 	for _, required := range iface.Methods {
 		requiredType := typeinfo.ReplaceAbstractSelf(required.CallableType(), owner)
-		actualType, _, ok := c.lookupMethodType(owner, required.Name)
+		actualType, _, ok := c.lookupMethodType(owner, required.Name, false)
 		if !ok || actualType == nil {
 			return false
 		}
@@ -86,7 +86,7 @@ func (c *checker) missingInterfaceMethods(iface *typeinfo.InterfaceType, src typ
 	}
 	var missing []string
 	for _, required := range iface.Methods {
-		actualType, _, ok := c.lookupMethodType(owner, required.Name)
+		actualType, _, ok := c.lookupMethodType(owner, required.Name, false)
 		if !ok || actualType == nil {
 			missing = append(missing, required.Name)
 		}
@@ -139,7 +139,7 @@ func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
 	return typeinfo.SameType(target, arg) || c.assignable(target, arg) || c.assignable(arg, target)
 }
 
-func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinfo.Type, *symbols.Symbol, bool) {
+func (c *checker) lookupMethodType(baseType typeinfo.Type, name string, includeIntrinsics bool) (typeinfo.Type, *symbols.Symbol, bool) {
 	if c == nil || c.module == nil || c.module.Semantics == nil {
 		return nil, nil, false
 	}
@@ -151,8 +151,11 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string) (typeinf
 			return c.boundInterfaceMethodType(method, baseType), nil, true
 		}
 	}
-	if intrinsic, ok := intrinsics.Symbol(baseType, name, c.ctx.Target); ok {
-		return intrinsic.Type, intrinsic, true
+	if includeIntrinsics {
+		intrinsic, ok := intrinsics.Symbol(baseType, name, c.ctx.Target)
+		if ok {
+			return intrinsic.Type, intrinsic, true
+		}
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		methods := c.module.Semantics.MethodSets[key]
