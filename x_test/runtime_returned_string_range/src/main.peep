@@ -1,0 +1,23 @@
+fn Prefix(text: &str) -> &str from text {
+    return text[0..1];
+}
+
+fn Clobber() {
+    let a: str = "abcdefghijklmnop";
+    let b: str = "qrstuvwxyz";
+    print(a);
+    print(b);
+}
+
+fn main() -> i32 {
+    let text: str = "hello";
+    let prefix = Prefix(&text);
+    Clobber();
+    if prefix.len() != 1 {
+        return 1;
+    }
+    if prefix.as_bytes()[0] != b'h' {
+        return 2;
+    }
+    return 0;
+}

@@ -349,7 +349,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
+func TestGenerateMIRLowersProjectedRawAddressDirectly(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
@@ -384,25 +384,25 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
 	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("projected raw address instructions = %d, want address plus binding: %#v", len(instrs), instrs)
+	}
 	assign, ok := instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
 	address, ok := assign.Value.(*AddrOf)
-	if !ok || address.Type != mirTypes.mutRefI32 || address.Place == nil || len(address.Place.Projections) != 2 {
-		t.Fatalf("expected address-of field place, got %#v", assign.Value)
+	if !ok || address.Type != mirTypes.rawptr || address.Place == nil || len(address.Place.Projections) != 2 {
+		t.Fatalf("expected direct raw address of field place, got %#v", assign.Value)
 	}
-	castAssign, ok := instrs[1].(*Assign)
-	if !ok {
-		t.Fatalf("expected second instruction assignment, got %#v", instrs)
-	}
-	cast, ok := castAssign.Value.(*Cast)
-	if !ok || cast.Type != mirTypes.rawptr {
-		t.Fatalf("expected projected field address to cast to rawptr, got %#v", castAssign.Value)
+	if binding, ok := instrs[1].(*Assign); !ok {
+		t.Fatalf("expected raw address binding, got %#v", instrs[1])
+	} else if _, ok := binding.Value.(*Cast); ok {
+		t.Fatalf("raw address must not use MIR cast, got %#v", binding.Value)
 	}
 }
 
-func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
+func TestGenerateMIRLowersIndexedRawAddressDirectly(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
@@ -436,21 +436,21 @@ func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
 	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("indexed raw address instructions = %d, want address plus binding: %#v", len(instrs), instrs)
+	}
 	assign, ok := instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
 	address, ok := assign.Value.(*AddrOf)
-	if !ok || address.Type != mirTypes.mutRefI32 || address.Place == nil || len(address.Place.Projections) != 1 {
-		t.Fatalf("expected address-of indexed place, got %#v", assign.Value)
+	if !ok || address.Type != mirTypes.rawptr || address.Place == nil || len(address.Place.Projections) != 1 {
+		t.Fatalf("expected direct raw address of indexed place, got %#v", assign.Value)
 	}
-	castAssign, ok := instrs[1].(*Assign)
-	if !ok {
-		t.Fatalf("expected second instruction assignment, got %#v", instrs)
-	}
-	cast, ok := castAssign.Value.(*Cast)
-	if !ok || cast.Type != mirTypes.rawptr {
-		t.Fatalf("expected projected element address to cast to rawptr, got %#v", castAssign.Value)
+	if binding, ok := instrs[1].(*Assign); !ok {
+		t.Fatalf("expected raw address binding, got %#v", instrs[1])
+	} else if _, ok := binding.Value.(*Cast); ok {
+		t.Fatalf("raw address must not use MIR cast, got %#v", binding.Value)
 	}
 }
 

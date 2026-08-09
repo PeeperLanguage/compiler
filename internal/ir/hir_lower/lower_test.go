@@ -231,15 +231,42 @@ fn main() -> i32 {
 	byteBinding := mainFn.Body.Stmts[0].(*hir.Binding)
 	byteLoad := byteBinding.Value.(*ir.Load)
 	byteView := byteLoad.Place.Root.(*ir.SliceView)
-	if _, ok := byteView.Source.Root.(*ir.TempBorrow); !ok {
+	byteOwner, ok := byteView.Source.Root.(*ir.TempBorrow)
+	if !ok {
 		t.Fatalf("temporary as_bytes source = %T, want TempBorrow", byteView.Source.Root)
+	}
+	if !byteOwner.Slice {
+		t.Fatal("temporary as_bytes borrow must use return-safe string view")
 	}
 
 	sizeBinding := mainFn.Body.Stmts[1].(*hir.Binding)
 	rangeLen := sizeBinding.Value.(*ir.Len)
 	rangeView := rangeLen.Value.(*ir.SliceView)
-	if _, ok := rangeView.Source.Root.(*ir.TempBorrow); !ok {
+	rangeOwner, ok := rangeView.Source.Root.(*ir.TempBorrow)
+	if !ok {
 		t.Fatalf("temporary string range source = %T, want TempBorrow", rangeView.Source.Root)
+	}
+	if !rangeOwner.Slice {
+		t.Fatal("temporary string range borrow must use return-safe string view")
+	}
+}
+
+func TestGenerateHIRLowersStringBorrowsAsSliceViews(t *testing.T) {
+	const src = `fn borrow(text: str) {
+	let view = &text;
+	let _ = view.len();
+}`
+	out := generateTestHIR(t, "hir_string_borrow_test"+peeper.SourceExt, "hir_string_borrow_test", src)
+	binding, ok := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
+	if !ok {
+		t.Fatalf("expected string borrow binding, got %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	view, ok := binding.Value.(*ir.SliceView)
+	if !ok || out.Types.Text(view.Type) != "&str" {
+		t.Fatalf("expected &str SliceView, got %#v", binding.Value)
+	}
+	if view.Source == nil || out.Types.Text(view.Source.Type) != "str" {
+		t.Fatalf("expected str source place, got %#v", view.Source)
 	}
 }
 

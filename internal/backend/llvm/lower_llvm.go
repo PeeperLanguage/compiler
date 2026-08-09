@@ -60,11 +60,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	case typ.Kind == ir.TypeCStr:
 		formatName, formatSize, argument = "string", 3, "i8* "+value
 	case typ.Kind == ir.TypeString:
-		llvmType := b.emitter.llvmType(typeID)
-		data := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmType, value))
-		length := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, llvmType, value))
+		data, length := emitStringDataAndLength(b, value, typeID)
 		lengthType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 		precision := length
 		switch lengthType {
@@ -169,68 +165,14 @@ func emitBoundsCheckedIndex(b *llvmBuilder, indexRef mir.ValueRef, length string
 	return index, true
 }
 
-func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
-	if b == nil || view == nil || view.Source == nil {
-		return "0"
-	}
-	sourceTypeID := view.Source.Type
-	targetTypeID := sourceTypeID
-	if sourceType, ok := b.emitter.mod.Types.Type(sourceTypeID); ok && sourceType.Kind == ir.TypeReference {
-		targetTypeID = sourceType.Elem
-	}
-	targetType, ok := b.emitter.mod.Types.Type(targetTypeID)
-	if ok && targetType.Kind == ir.TypeString {
-		return emitStringSliceView(b, view, targetTypeID)
-	}
-	if !ok || targetType.Kind != ir.TypeArray {
-		b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
-		return "0"
-	}
-	var data, fixedArrayPtr, length string
-	elemTypeID := targetType.Elem
-	if targetType.Length == "" {
-		sourceType := b.emitter.llvmType(sourceTypeID)
-		source := ""
-		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
-			ptr := emitPlacePtr(b, view.Source)
-			if ptr == "" {
-				return "0"
-			}
-			source = b.nextReg()
-			b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceType, sourceType, ptr))
-		} else {
-			source = emitRef(b, view.Source.Root)
-		}
-		data = b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
-		length = b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
-	} else {
-		length = targetType.Length
-		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
-			fixedArrayPtr = emitPlacePtr(b, view.Source)
-		} else {
-			fixedArrayPtr = emitRef(b, view.Source.Root)
-		}
-		if fixedArrayPtr == "" {
-			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
-			return "0"
-		}
-	}
-
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
-	lengthI64 := length
-	if indexType != "i64" && fixedArrayPtr == "" {
-		lengthI64 = b.nextReg()
-		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
-	}
+func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, length, lengthI64 string) (string, string, bool) {
 	startI64 := "0"
 	endI64 := lengthI64
 	invalid := ""
 	if view.Start != nil {
 		start, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.Start, length)
 		if !ok {
-			return "0"
+			return "", "", false
 		}
 		startI64 = normalized
 		invalid = b.nextReg()
@@ -239,7 +181,7 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	if view.End != nil {
 		end, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.End, length)
 		if !ok {
-			return "0"
+			return "", "", false
 		}
 		endI64 = normalized
 		endInvalid := b.nextReg()
@@ -285,6 +227,68 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 		b.line("unreachable")
 	}
 	b.namedLabel(readyLabel)
+	return startI64, endI64, true
+}
+
+func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
+	if b == nil || view == nil || view.Source == nil {
+		return "0"
+	}
+	sourceTypeID := view.Source.Type
+	targetTypeID := sourceTypeID
+	if sourceType, ok := b.emitter.mod.Types.Type(sourceTypeID); ok && sourceType.Kind == ir.TypeReference {
+		targetTypeID = sourceType.Elem
+	}
+	targetType, ok := b.emitter.mod.Types.Type(targetTypeID)
+	if ok && targetType.Kind == ir.TypeString {
+		return emitStringSliceView(b, view)
+	}
+	if !ok || targetType.Kind != ir.TypeArray {
+		b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
+		return "0"
+	}
+	var data, fixedArrayPtr, length string
+	elemTypeID := targetType.Elem
+	if targetType.Length == "" {
+		sourceType := b.emitter.llvmType(sourceTypeID)
+		source := ""
+		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
+			ptr := emitPlacePtr(b, view.Source)
+			if ptr == "" {
+				return "0"
+			}
+			source = b.nextReg()
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceType, sourceType, ptr))
+		} else {
+			source = emitRef(b, view.Source.Root)
+		}
+		data = b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
+		length = b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
+	} else {
+		length = targetType.Length
+		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
+			fixedArrayPtr = emitPlacePtr(b, view.Source)
+		} else {
+			fixedArrayPtr = emitRef(b, view.Source.Root)
+		}
+		if fixedArrayPtr == "" {
+			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
+			return "0"
+		}
+	}
+
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+	lengthI64 := length
+	if indexType != "i64" && fixedArrayPtr == "" {
+		lengthI64 = b.nextReg()
+		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
+	}
+	startI64, endI64, ok := emitSliceBounds(b, view, length, lengthI64)
+	if !ok {
+		return "0"
+	}
 
 	elemType := b.emitter.llvmType(elemTypeID)
 	if fixedArrayPtr != "" {
@@ -309,16 +313,25 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	return withLength
 }
 
-func emitStringSliceView(b *llvmBuilder, view *mir.SliceView, sourceTypeID ir.TypeID) string {
+func emitStringDataAndLength(b *llvmBuilder, value string, typeID ir.TypeID) (string, string) {
+	llvmType := b.emitter.llvmType(typeID)
+	data := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmType, value))
+	length := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, llvmType, value))
+	return data, length
+}
+
+func emitStringSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	if b == nil || view == nil || view.Source == nil {
 		return "0"
 	}
-	sourceType, ok := b.emitter.mod.Types.Type(view.Source.Type)
+	_, ok := b.emitter.mod.Types.Type(view.Source.Type)
 	if !ok {
 		b.emitter.markInvalid("string slice view has invalid source type")
 		return "0"
 	}
-	carrierType := b.emitter.llvmType(sourceTypeID)
+	sourceLLVMType := b.emitter.llvmType(view.Source.Type)
 	var source string
 	if len(view.Source.Projections) > 0 {
 		ptr := emitPlacePtr(b, view.Source)
@@ -326,17 +339,11 @@ func emitStringSliceView(b *llvmBuilder, view *mir.SliceView, sourceTypeID ir.Ty
 			return "0"
 		}
 		source = b.nextReg()
-		b.line(fmt.Sprintf("%s = load %s, %s* %s", source, carrierType, carrierType, ptr))
-	} else if sourceType.Kind == ir.TypeReference {
-		source = b.nextReg()
-		b.line(fmt.Sprintf("%s = load %s, %s* %s", source, carrierType, carrierType, emitRef(b, view.Source.Root)))
+		b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceLLVMType, sourceLLVMType, ptr))
 	} else {
 		source = emitRef(b, view.Source.Root)
 	}
-	data := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, carrierType, source))
-	length := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, carrierType, source))
+	data, length := emitStringDataAndLength(b, source, view.Source.Type)
 
 	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	lengthI64 := length
@@ -344,67 +351,10 @@ func emitStringSliceView(b *llvmBuilder, view *mir.SliceView, sourceTypeID ir.Ty
 		lengthI64 = b.nextReg()
 		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
 	}
-	startI64 := "0"
-	endI64 := lengthI64
-	invalid := ""
-	if view.Start != nil {
-		start, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.Start, length)
-		if !ok {
-			return "0"
-		}
-		startI64 = normalized
-		invalid = b.nextReg()
-		b.line(fmt.Sprintf("%s = icmp ugt %s %s, %s", invalid, compareType, start, compareLength))
+	startI64, endI64, ok := emitSliceBounds(b, view, length, lengthI64)
+	if !ok {
+		return "0"
 	}
-	if view.End != nil {
-		end, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.End, length)
-		if !ok {
-			return "0"
-		}
-		endI64 = normalized
-		endInvalid := b.nextReg()
-		predicate := "ugt"
-		if !view.EndExclusive {
-			predicate = "uge"
-		}
-		b.line(fmt.Sprintf("%s = icmp %s %s %s, %s", endInvalid, predicate, compareType, end, compareLength))
-		if invalid == "" {
-			invalid = endInvalid
-		} else {
-			combined := b.nextReg()
-			b.line(fmt.Sprintf("%s = or i1 %s, %s", combined, invalid, endInvalid))
-			invalid = combined
-		}
-	}
-
-	boundsID := b.nextID
-	b.nextID++
-	failLabel := fmt.Sprintf("string_slice_fail_%d", boundsID)
-	normalizedLabel := fmt.Sprintf("string_slice_normalized_%d", boundsID)
-	readyLabel := fmt.Sprintf("string_slice_ready_%d", boundsID)
-	failEmitted := false
-	if invalid != "" {
-		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", invalid, failLabel, normalizedLabel))
-		b.namedLabel(failLabel)
-		b.line("call void @llvm.trap()")
-		b.line("unreachable")
-		b.namedLabel(normalizedLabel)
-		failEmitted = true
-	}
-	if view.End != nil && !view.EndExclusive {
-		inclusiveEnd := b.nextReg()
-		b.line(fmt.Sprintf("%s = add i64 %s, 1", inclusiveEnd, endI64))
-		endI64 = inclusiveEnd
-	}
-	reversed := b.nextReg()
-	b.line(fmt.Sprintf("%s = icmp ugt i64 %s, %s", reversed, startI64, endI64))
-	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", reversed, failLabel, readyLabel))
-	if !failEmitted {
-		b.namedLabel(failLabel)
-		b.line("call void @llvm.trap()")
-		b.line("unreachable")
-	}
-	b.namedLabel(readyLabel)
 
 	resultType, ok := b.emitter.mod.Types.Type(view.Type)
 	if !ok || resultType.Kind != ir.TypeReference {
@@ -428,8 +378,10 @@ func emitStringSliceView(b *llvmBuilder, view *mir.SliceView, sourceTypeID ir.Ty
 				boundaryValid = combined
 			}
 		}
-		boundaryFail := fmt.Sprintf("string_boundary_fail_%d", boundsID)
-		boundaryReady := fmt.Sprintf("string_boundary_ready_%d", boundsID)
+		boundaryID := b.nextID
+		b.nextID++
+		boundaryFail := fmt.Sprintf("string_boundary_fail_%d", boundaryID)
+		boundaryReady := fmt.Sprintf("string_boundary_ready_%d", boundaryID)
 		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", boundaryValid, boundaryReady, boundaryFail))
 		b.namedLabel(boundaryFail)
 		b.line("call void @llvm.trap()")
@@ -447,17 +399,12 @@ func emitStringSliceView(b *llvmBuilder, view *mir.SliceView, sourceTypeID ir.Ty
 		viewLength = narrowed
 	}
 	if resultTarget.Kind == ir.TypeString {
-		viewType := b.emitter.llvmType(sourceTypeID)
+		viewType := b.emitter.llvmType(view.Type)
 		carrier := b.nextReg()
 		b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, i8* %s, 0", carrier, viewType, adjustedData))
 		withLength := b.nextReg()
 		b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, 1", withLength, viewType, carrier, indexType, viewLength))
-		withAllocator := b.nextReg()
-		b.line(fmt.Sprintf("%s = insertvalue %s %s, i8* null, 2", withAllocator, viewType, withLength))
-		result := b.nextReg()
-		b.line(fmt.Sprintf("%s = alloca %s", result, viewType))
-		b.line(fmt.Sprintf("store %s %s, %s* %s", viewType, withAllocator, viewType, result))
-		return result
+		return withLength
 	}
 	viewType := b.emitter.llvmType(view.Type)
 	elemType := b.emitter.llvmType(resultTarget.Elem)
@@ -521,13 +468,7 @@ func emitStringChars(b *llvmBuilder, chars *mir.StringChars) string {
 		return "zeroinitializer"
 	}
 
-	carrierType := b.emitter.llvmType(refType.Elem)
-	carrier := b.nextReg()
-	b.line(fmt.Sprintf("%s = load %s, %s* %s", carrier, carrierType, carrierType, emitRef(b, chars.Value)))
-	data := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, carrierType, carrier))
-	length := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, carrierType, carrier))
+	data, length := emitStringDataAndLength(b, emitRef(b, chars.Value), mirRefType(chars.Value))
 	lengthI64 := length
 	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	if indexType != "i64" {
@@ -869,11 +810,9 @@ func emitLen(b *llvmBuilder, value mir.ValueRef) string {
 	}
 	switch target.Kind {
 	case ir.TypeString:
-		carrierType := b.emitter.llvmType(refType.Elem)
-		loaded := b.nextReg()
-		b.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, carrierType, carrierType, emitRef(b, value)))
+		stringType := b.emitter.llvmType(mirRefType(value))
 		length := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, carrierType, loaded))
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, stringType, emitRef(b, value)))
 		return length
 	case ir.TypeArray:
 		if target.Length != "" {
@@ -1464,19 +1403,6 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 	if fromType == toType {
 		return argRef
 	}
-	if to.Kind == ir.TypeRawPtr {
-		pointer := from.Kind == ir.TypeOwnedPtr || from.Kind == ir.TypeReference
-		if pointer {
-			fromLLVM := b.emitter.llvmType(fromType)
-			if fromLLVM == "i8*" {
-				return argRef
-			}
-			out := b.nextReg()
-			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", out, fromLLVM, argRef))
-			return out
-		}
-	}
-
 	if to.Kind == ir.TypeBool {
 		out := b.nextReg()
 		if from.Kind == ir.TypeFloat {
@@ -1763,7 +1689,21 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			emitCall(b, out, b.emitter.llvmType(e.Type), emitRef(b, e.Callee), llvmCallArgs(b, e.Args))
 			return out
 		case *mir.AddrOf:
-			return emitPlacePtr(b, e.Place)
+			ptr := emitPlacePtr(b, e.Place)
+			if ptr == "" {
+				return "0"
+			}
+			resultType, ok := b.emitter.mod.Types.Type(e.Type)
+			if !ok || resultType.Kind != ir.TypeRawPtr {
+				return ptr
+			}
+			placeType := b.emitter.llvmType(e.Place.Type)
+			if placeType == "i8" {
+				return ptr
+			}
+			out := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", out, placeType, ptr))
+			return out
 		case *mir.SliceView:
 			return emitSliceView(b, e)
 		case *mir.StringChars:

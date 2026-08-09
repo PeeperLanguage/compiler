@@ -1013,18 +1013,27 @@ fn count(node: Node) -> i32 {
 	}
 }
 
-func TestSliceViewComparisonsRejectedBeforeLowering(t *testing.T) {
-	for _, op := range []string{"==", "!=", "<", "<=", ">", ">="} {
-		t.Run(op, func(t *testing.T) {
-			src := "fn compare(left: &[]i32, right: &[]i32) -> bool { return left " + op + " right; }"
-			diag := checkTypeSource(t, src)
-			if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
-				t.Fatalf("expected slice-view comparison diagnostic, got:\n%s", diag.EmitAllToString())
-			}
-			if !strings.Contains(diag.EmitAllToString(), "slice-view comparison is not supported") {
-				t.Fatalf("expected slice-view comparison limitation, got:\n%s", diag.EmitAllToString())
-			}
-		})
+func TestBorrowedViewComparisonsRejectedBeforeLowering(t *testing.T) {
+	for _, view := range []struct {
+		name     string
+		typeText string
+		message  string
+	}{
+		{name: "slice", typeText: "&[]i32", message: "slice-view comparison is not supported"},
+		{name: "string", typeText: "&str", message: "string-view comparison is not supported"},
+	} {
+		for _, op := range []string{"==", "!=", "<", "<=", ">", ">="} {
+			t.Run(view.name+"/"+op, func(t *testing.T) {
+				src := "fn compare(left: " + view.typeText + ", right: " + view.typeText + ") -> bool { return left " + op + " right; }"
+				diag := checkTypeSource(t, src)
+				if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+					t.Fatalf("expected %s comparison diagnostic, got:\n%s", view.name, diag.EmitAllToString())
+				}
+				if !strings.Contains(diag.EmitAllToString(), view.message) {
+					t.Fatalf("expected %s comparison limitation, got:\n%s", view.name, diag.EmitAllToString())
+				}
+			})
+		}
 	}
 }
 

@@ -6,9 +6,17 @@ fn SetFirst(values: &mut []i32) {
     values[0] = 7;
 }
 
+fn ReadString(_: &str) {}
+
 fn main() -> i32 {
     let sum = Sum(&[]i32{2, 3});
     SetFirst(&mut []i32{1, 2});
+    ReadString(&"temporary");
+    let greet = "Hello world!";
+    print("Size of: ");
+    print(greet);
+    print(" -> ");
+    println(greet.len());
     if sum == 5 {
         return 0;
     }

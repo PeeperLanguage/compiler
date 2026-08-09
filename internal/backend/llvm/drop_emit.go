@@ -42,10 +42,7 @@ func emitDropValue(b *llvmBuilder, value string, typeID ir.TypeID) {
 	}
 	if typ.Kind == ir.TypeString {
 		stringType := b.emitter.llvmType(typeID)
-		data := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, stringType, value))
-		length := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, stringType, value))
+		data, length := emitStringDataAndLength(b, value, typeID)
 		allocator := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 2", allocator, stringType, value))
 		nonNull := b.nextReg()

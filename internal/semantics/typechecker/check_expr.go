@@ -304,6 +304,11 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 				"slice-view comparison is not supported in current compiler stage"))
 			return &typeinfo.InvalidType{}
 		}
+		if isStringView(left) || isStringView(right) {
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"string-view comparison is not supported in current compiler stage"))
+			return &typeinfo.InvalidType{}
+		}
 		return &typeinfo.BoolType{}
 	}
 
@@ -478,6 +483,10 @@ func isStringSequence(typ typeinfo.Type) bool {
 	if _, ok := typeinfo.Underlying(typ).(*typeinfo.StringType); ok {
 		return true
 	}
+	return isStringView(typ)
+}
+
+func isStringView(typ typeinfo.Type) bool {
 	target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(typ))
 	if !ok {
 		return false

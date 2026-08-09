@@ -143,6 +143,12 @@ func TestLLVMTypeIDUsesContextSizedUsize(t *testing.T) {
 			if !ok || got != tt.want {
 				t.Fatalf("llvmTypeID(usize) = %q, %v; want %q, true", got, ok, tt.want)
 			}
+			refString := types.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: types.stringType})
+			got, ok = llvmTypeID(types.table, refString)
+			wantRefString := "{ i8*, " + tt.want + " }"
+			if !ok || got != wantRefString {
+				t.Fatalf("llvmTypeID(&str) = %q, %v; want %q, true", got, ok, wantRefString)
+			}
 		})
 	}
 }
@@ -1042,7 +1048,7 @@ func TestGenerateLLVMIRDropsStringThroughAllocator(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRLowersStringCharsWithOwnedCarrier(t *testing.T) {
+func TestGenerateLLVMIRLowersStringCharsFromBorrowedView(t *testing.T) {
 	charType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeChar})
 	dynamicChar := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: charType})
 	refString := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: llvmTypes.stringType})
@@ -1066,6 +1072,8 @@ func TestGenerateLLVMIRLowersStringCharsWithOwnedCarrier(t *testing.T) {
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{
+		"extractvalue { i8*, i64 } %text, 0",
+		"extractvalue { i8*, i64 } %text, 1",
 		"utf8_count_loop_",
 		"utf8_decode_two_",
 		"utf8_decode_three_",
@@ -1076,6 +1084,50 @@ func TestGenerateLLVMIRLowersStringCharsWithOwnedCarrier(t *testing.T) {
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("expected %q in string chars IR:\n%s", expected, out)
+		}
+	}
+	if strings.Contains(out, "load { i8*, i64, i8* }") {
+		t.Fatalf("borrowed string view unexpectedly loaded as owned carrier:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRReturnsStringSliceViewByValue(t *testing.T) {
+	refString := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: llvmTypes.stringType})
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "Prefix",
+			Params:     []ir.Param{{Name: "text", Type: refString}},
+			ReturnType: refString,
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
+					Source:       &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
+					Start:        &mir.RefConst{Value: "0", Type: llvmTypes.i32},
+					End:          &mir.RefConst{Value: "1", Type: llvmTypes.i32},
+					EndExclusive: true,
+					Type:         refString,
+				}}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "view", Type: refString}},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	for _, expected := range []string{
+		"define { i8*, i64 } @Prefix({ i8*, i64 } %text)",
+		"ret { i8*, i64 } %",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("expected %q in returned string view IR:\n%s", expected, out)
+		}
+	}
+	for _, unexpected := range []string{
+		"alloca { i8*, i64, i8* }",
+		"ret { i8*, i64, i8* }*",
+	} {
+		if strings.Contains(out, unexpected) {
+			t.Fatalf("unexpected callee-local string carrier %q:\n%s", unexpected, out)
 		}
 	}
 }
@@ -1704,7 +1756,7 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
+func TestGenerateLLVMIRLowersProjectedFieldRawAddressDirectly(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mutableStruct := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: llvmTypes.valueStruct})
 	mod := &mir.Module{
@@ -1720,7 +1772,7 @@ func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 				ID: 0,
 				Instrs: []mir.Instr{
 					&mir.Assign{
-						Name: "fieldptr",
+						Name: "raw",
 						Value: &mir.AddrOf{
 							Place: &mir.Place{
 								Root: &mir.RefName{Name: "box", Type: mutableStruct},
@@ -1730,12 +1782,8 @@ func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 								},
 								Type: llvmTypes.i32,
 							},
-							Type: llvmTypes.mutRefI32,
+							Type: llvmTypes.rawptr,
 						},
-					},
-					&mir.Assign{
-						Name:  "raw",
-						Value: &mir.Cast{Arg: &mir.RefName{Name: "fieldptr", Type: llvmTypes.mutRefI32}, Type: llvmTypes.rawptr},
 					},
 				},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
@@ -1747,6 +1795,62 @@ func TestGenerateLLVMIRCastsProjectedFieldAddressToRawptr(t *testing.T) {
 	if !strings.Contains(irText, "getelementptr inbounds { i32 }, { i32 }* %box") ||
 		!strings.Contains(irText, "bitcast i32*") || !strings.Contains(irText, "to i8*") {
 		t.Fatalf("expected projected field address rawptr cast, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersOwnedStringStorageRawAddress(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "address",
+			Params:     []ir.Param{{Name: "text", Type: llvmTypes.stringType}},
+			ReturnType: llvmTypes.rawptr,
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "raw", Value: &mir.AddrOf{
+					Place: &mir.Place{Root: &mir.RefName{Name: "text", Type: llvmTypes.stringType}, Type: llvmTypes.stringType},
+					Type:  llvmTypes.rawptr,
+				}}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "raw", Type: llvmTypes.rawptr}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if !strings.Contains(irText, "bitcast { i8*, i64, i8* }*") || !strings.Contains(irText, "to i8*") {
+		t.Fatalf("expected owned string storage pointer cast to rawptr, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "bitcast { i8*, i64, i8* } %") {
+		t.Fatalf("owned string aggregate must not be bitcast to pointer, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLowersBorrowedStringLengthWithoutDataExtraction(t *testing.T) {
+	refString := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: llvmTypes.stringType})
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "length",
+			Params:     []ir.Param{{Name: "text", Type: refString}},
+			ReturnType: llvmTypes.usize,
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "length", Value: &mir.Len{
+					Value: &mir.RefName{Name: "text", Type: refString}, Type: llvmTypes.usize,
+				}}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "length", Type: llvmTypes.usize}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if !strings.Contains(irText, "extractvalue { i8*, i64 } %text, 1") {
+		t.Fatalf("expected borrowed string length field extraction, got:\n%s", irText)
+	}
+	if strings.Contains(irText, "extractvalue { i8*, i64 } %text, 0") {
+		t.Fatalf("borrowed string length must not extract unused data field, got:\n%s", irText)
 	}
 }
 

@@ -542,20 +542,10 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.AddrOf:
-		pointerType := e.TypeID()
-		if typ, ok := l.module.Types.Type(pointerType); ok && typ.Kind == ir.TypeRawPtr {
-			pointerType = l.module.Types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: e.Place.TypeID()})
-		}
 		place := l.lowerPlace(e.Place, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: pointerType, Location: e.Origin().Location}})
-		address := &RefName{Name: name, Type: pointerType, Location: e.Origin().Location}
-		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeRawPtr {
-			castName := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: castName, Value: &Cast{Arg: address, Type: e.TypeID(), Location: e.Origin().Location}})
-			return &RefName{Name: castName, Type: e.TypeID(), Location: e.Origin().Location}
-		}
-		return address
+		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.TempBorrow:
 		value := l.lowerExpr(e.Value, out)
 		if value == nil {
