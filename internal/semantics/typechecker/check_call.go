@@ -63,9 +63,6 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 			if sym.CompilerOp == symbols.CompilerOpAlloc {
 				return c.typeAllocCall(scope, node)
 			}
-			if sym.CompilerOp == symbols.CompilerOpLen {
-				return c.typeLenCall(scope, node)
-			}
 			return c.typeDynamicArrayOwnerCall(scope, node, sym.CompilerOp)
 		}
 	}
@@ -84,44 +81,6 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	c.checkCall(scope, nil, node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
-}
-
-func (c *checker) typeLenCall(scope *table.Scope, node *ast.CallExpr) typeinfo.Type {
-	if node == nil {
-		return &typeinfo.InvalidType{}
-	}
-	if len(node.Args) != 1 {
-		for _, arg := range node.Args {
-			c.typeExpr(scope, arg, nil)
-		}
-		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, len(node.Args), 1))
-		return &typeinfo.InvalidType{}
-	}
-
-	argType := c.typeExpr(scope, node.Args[0], nil)
-	target, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(argType))
-	if !borrowed {
-		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
-			fmt.Sprintf("`len` requires a shared or mutable borrow, got %s", typeinfo.TypeText(argType))))
-		return &typeinfo.InvalidType{}
-	}
-	target = typeinfo.Underlying(target)
-	switch target.(type) {
-	case *typeinfo.StringType, *typeinfo.ArrayType:
-	default:
-		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
-			fmt.Sprintf("`len` requires a string or array borrow, got %s", typeinfo.TypeText(target))))
-		return &typeinfo.InvalidType{}
-	}
-
-	sizeType, ok := typeinfo.NumericTypeFromName("usize", c.ctx.Target)
-	if !ok {
-		panic("missing builtin usize type")
-	}
-	fnType := &typeinfo.FuncType{Params: []typeinfo.Type{argType}, Return: sizeType}
-	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
-	c.checkCall(scope, nil, node, fnType, []typeinfo.Type{argType})
-	return sizeType
 }
 
 func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) typeinfo.Type {
@@ -227,11 +186,14 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	}
 	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
 	if ok {
-		if methodSym != nil {
+		if methodSym != nil && methodSym.CompilerOp == "" {
 			c.expandCallDefaults(call, methodSym, c.module)
 		}
 		if c.module != nil && c.module.Semantics != nil {
 			c.module.Semantics.ExprTypes[selector.ID()] = methodType
+			if methodSym != nil {
+				c.module.Semantics.ResolvedSymbols[selector.Name.ID()] = methodSym
+			}
 		}
 		argTypes := make([]typeinfo.Type, 0, len(call.Args)+1)
 		argTypes = append(argTypes, baseType)
@@ -324,6 +286,10 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 						c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
 						continue
 					}
+				} else {
+					// Shared receivers may borrow a temporary for this full expression;
+					// HIR materializes and cleans that temporary after the call.
+					continue
 				}
 			}
 		}

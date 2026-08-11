@@ -397,9 +397,15 @@ func (c *checker) temporaryBorrowSource(scope *table.Scope, expr ast.Expr) ast.E
 		return node
 	case *ast.CallExpr:
 		fn, _ := typeinfo.Underlying(exprType(node.Callee)).(*typeinfo.FuncType)
+		selector, methodCall := node.Callee.(*ast.SelectorExpr)
 		for _, source := range typeinfo.ReturnOriginSources(node, fn) {
 			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
 				return temporary
+			}
+			if methodCall && source == selector.Expr && !place.Addressable(scope, source, exprType, c.expandedDefaultBinding) {
+				if _, _, reference := typeinfo.ReferenceValueTarget(exprType(source)); !reference {
+					return source
+				}
 			}
 		}
 	case *ast.AsExpr:

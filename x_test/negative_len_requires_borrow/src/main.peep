@@ -1,4 +1,4 @@
 fn main() {
     let text: str = "hello";
-    let ignored = len(text);
+    let ignored = len(&text);
 }

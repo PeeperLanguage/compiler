@@ -60,11 +60,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	case typ.Kind == ir.TypeCStr:
 		formatName, formatSize, argument = "string", 3, "i8* "+value
 	case typ.Kind == ir.TypeString:
-		llvmType := b.emitter.llvmType(typeID)
-		data := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmType, value))
-		length := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, llvmType, value))
+		data, length := emitStringDataAndLength(b, value, typeID)
 		lengthType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 		precision := length
 		switch lengthType {
@@ -169,65 +165,14 @@ func emitBoundsCheckedIndex(b *llvmBuilder, indexRef mir.ValueRef, length string
 	return index, true
 }
 
-func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
-	if b == nil || view == nil || view.Source == nil {
-		return "0"
-	}
-	sourceTypeID := view.Source.Type
-	targetTypeID := sourceTypeID
-	if sourceType, ok := b.emitter.mod.Types.Type(sourceTypeID); ok && sourceType.Kind == ir.TypeReference {
-		targetTypeID = sourceType.Elem
-	}
-	targetType, ok := b.emitter.mod.Types.Type(targetTypeID)
-	if !ok || targetType.Kind != ir.TypeArray {
-		b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
-		return "0"
-	}
-	var data, fixedArrayPtr, length string
-	elemTypeID := targetType.Elem
-	if targetType.Length == "" {
-		sourceType := b.emitter.llvmType(sourceTypeID)
-		source := ""
-		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
-			ptr := emitPlacePtr(b, view.Source)
-			if ptr == "" {
-				return "0"
-			}
-			source = b.nextReg()
-			b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceType, sourceType, ptr))
-		} else {
-			source = emitRef(b, view.Source.Root)
-		}
-		data = b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
-		length = b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
-	} else {
-		length = targetType.Length
-		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
-			fixedArrayPtr = emitPlacePtr(b, view.Source)
-		} else {
-			fixedArrayPtr = emitRef(b, view.Source.Root)
-		}
-		if fixedArrayPtr == "" {
-			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
-			return "0"
-		}
-	}
-
-	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
-	lengthI64 := length
-	if indexType != "i64" && fixedArrayPtr == "" {
-		lengthI64 = b.nextReg()
-		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
-	}
+func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, length, lengthI64 string) (string, string, bool) {
 	startI64 := "0"
 	endI64 := lengthI64
 	invalid := ""
 	if view.Start != nil {
 		start, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.Start, length)
 		if !ok {
-			return "0"
+			return "", "", false
 		}
 		startI64 = normalized
 		invalid = b.nextReg()
@@ -236,7 +181,7 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	if view.End != nil {
 		end, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.End, length)
 		if !ok {
-			return "0"
+			return "", "", false
 		}
 		endI64 = normalized
 		endInvalid := b.nextReg()
@@ -282,6 +227,68 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 		b.line("unreachable")
 	}
 	b.namedLabel(readyLabel)
+	return startI64, endI64, true
+}
+
+func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
+	if b == nil || view == nil || view.Source == nil {
+		return "0"
+	}
+	sourceTypeID := view.Source.Type
+	targetTypeID := sourceTypeID
+	if sourceType, ok := b.emitter.mod.Types.Type(sourceTypeID); ok && sourceType.Kind == ir.TypeReference {
+		targetTypeID = sourceType.Elem
+	}
+	targetType, ok := b.emitter.mod.Types.Type(targetTypeID)
+	if ok && targetType.Kind == ir.TypeString {
+		return emitStringSliceView(b, view)
+	}
+	if !ok || targetType.Kind != ir.TypeArray {
+		b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
+		return "0"
+	}
+	var data, fixedArrayPtr, length string
+	elemTypeID := targetType.Elem
+	if targetType.Length == "" {
+		sourceType := b.emitter.llvmType(sourceTypeID)
+		source := ""
+		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
+			ptr := emitPlacePtr(b, view.Source)
+			if ptr == "" {
+				return "0"
+			}
+			source = b.nextReg()
+			b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceType, sourceType, ptr))
+		} else {
+			source = emitRef(b, view.Source.Root)
+		}
+		data = b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, sourceType, source))
+		length = b.nextReg()
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, sourceType, source))
+	} else {
+		length = targetType.Length
+		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
+			fixedArrayPtr = emitPlacePtr(b, view.Source)
+		} else {
+			fixedArrayPtr = emitRef(b, view.Source.Root)
+		}
+		if fixedArrayPtr == "" {
+			b.emitter.markInvalid("fixed-array slicing requires addressable storage")
+			return "0"
+		}
+	}
+
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+	lengthI64 := length
+	if indexType != "i64" && fixedArrayPtr == "" {
+		lengthI64 = b.nextReg()
+		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
+	}
+	startI64, endI64, ok := emitSliceBounds(b, view, length, lengthI64)
+	if !ok {
+		return "0"
+	}
 
 	elemType := b.emitter.llvmType(elemTypeID)
 	if fixedArrayPtr != "" {
@@ -306,6 +313,487 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	return withLength
 }
 
+func emitStringDataAndLength(b *llvmBuilder, value string, typeID ir.TypeID) (string, string) {
+	llvmType := b.emitter.llvmType(typeID)
+	data := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, llvmType, value))
+	length := b.nextReg()
+	b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, llvmType, value))
+	return data, length
+}
+
+func emitStringSliceView(b *llvmBuilder, view *mir.SliceView) string {
+	if b == nil || view == nil || view.Source == nil {
+		return "0"
+	}
+	_, ok := b.emitter.mod.Types.Type(view.Source.Type)
+	if !ok {
+		b.emitter.markInvalid("string slice view has invalid source type")
+		return "0"
+	}
+	sourceLLVMType := b.emitter.llvmType(view.Source.Type)
+	var source string
+	if len(view.Source.Projections) > 0 {
+		ptr := emitPlacePtr(b, view.Source)
+		if ptr == "" {
+			return "0"
+		}
+		source = b.nextReg()
+		b.line(fmt.Sprintf("%s = load %s, %s* %s", source, sourceLLVMType, sourceLLVMType, ptr))
+	} else {
+		source = emitRef(b, view.Source.Root)
+	}
+	data, length := emitStringDataAndLength(b, source, view.Source.Type)
+
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+	lengthI64 := length
+	if indexType != "i64" {
+		lengthI64 = b.nextReg()
+		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
+	}
+	startI64, endI64, ok := emitSliceBounds(b, view, length, lengthI64)
+	if !ok {
+		return "0"
+	}
+
+	resultType, ok := b.emitter.mod.Types.Type(view.Type)
+	if !ok || resultType.Kind != ir.TypeReference {
+		b.emitter.markInvalid("string slice view has invalid result type")
+		return "0"
+	}
+	resultTarget, ok := b.emitter.mod.Types.Type(resultType.Elem)
+	if !ok {
+		b.emitter.markInvalid("string slice view has invalid result target")
+		return "0"
+	}
+	if resultTarget.Kind == ir.TypeString {
+		boundaryValid := ""
+		for _, index := range []string{startI64, endI64} {
+			boundary := emitUTF8BoundaryCheck(b, data, index, lengthI64)
+			if boundaryValid == "" {
+				boundaryValid = boundary
+			} else {
+				combined := b.nextReg()
+				b.line(fmt.Sprintf("%s = and i1 %s, %s", combined, boundaryValid, boundary))
+				boundaryValid = combined
+			}
+		}
+		boundaryID := b.nextID
+		b.nextID++
+		boundaryFail := fmt.Sprintf("string_boundary_fail_%d", boundaryID)
+		boundaryReady := fmt.Sprintf("string_boundary_ready_%d", boundaryID)
+		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", boundaryValid, boundaryReady, boundaryFail))
+		b.namedLabel(boundaryFail)
+		b.line("call void @llvm.trap()")
+		b.line("unreachable")
+		b.namedLabel(boundaryReady)
+	}
+
+	adjustedData := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i8, i8* %s, i64 %s", adjustedData, data, startI64))
+	viewLength := b.nextReg()
+	b.line(fmt.Sprintf("%s = sub i64 %s, %s", viewLength, endI64, startI64))
+	if indexType != "i64" {
+		narrowed := b.nextReg()
+		b.line(fmt.Sprintf("%s = trunc i64 %s to %s", narrowed, viewLength, indexType))
+		viewLength = narrowed
+	}
+	if resultTarget.Kind == ir.TypeString {
+		viewType := b.emitter.llvmType(view.Type)
+		carrier := b.nextReg()
+		b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, i8* %s, 0", carrier, viewType, adjustedData))
+		withLength := b.nextReg()
+		b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, 1", withLength, viewType, carrier, indexType, viewLength))
+		return withLength
+	}
+	viewType := b.emitter.llvmType(view.Type)
+	elemType := b.emitter.llvmType(resultTarget.Elem)
+	withData := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s zeroinitializer, %s* %s, 0", withData, viewType, elemType, adjustedData))
+	withLength := b.nextReg()
+	b.line(fmt.Sprintf("%s = insertvalue %s %s, %s %s, 1", withLength, viewType, withData, indexType, viewLength))
+	return withLength
+}
+
+func emitUTF8BoundaryCheck(b *llvmBuilder, data, index, length string) string {
+	atEnd := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i64 %s, %s", atEnd, index, length))
+	id := b.nextID
+	b.nextID++
+	loadLabel := fmt.Sprintf("utf8_boundary_load_%d", id)
+	endLabel := fmt.Sprintf("utf8_boundary_end_%d", id)
+	mergeLabel := fmt.Sprintf("utf8_boundary_merge_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", atEnd, endLabel, loadLabel))
+	b.namedLabel(loadLabel)
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i8, i8* %s, i64 %s", ptr, data, index))
+	value := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8, i8* %s", value, ptr))
+	masked := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i8 %s, -64", masked, value))
+	continuation := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8 %s, -128", continuation, masked))
+	notContinuation := b.nextReg()
+	b.line(fmt.Sprintf("%s = xor i1 %s, true", notContinuation, continuation))
+	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
+	b.namedLabel(endLabel)
+	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
+	b.namedLabel(mergeLabel)
+	result := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi i1 [ true, %%%s ], [ %s, %%%s ]", result, endLabel, notContinuation, loadLabel))
+	return result
+}
+
+func emitStringChars(b *llvmBuilder, chars *mir.StringChars) string {
+	if b == nil || chars == nil || chars.Value == nil {
+		return "zeroinitializer"
+	}
+	refType, ok := b.emitter.mod.Types.Type(mirRefType(chars.Value))
+	if !ok || refType.Kind != ir.TypeReference {
+		b.emitter.markInvalid("string character conversion requires a string reference")
+		return "zeroinitializer"
+	}
+	stringType, ok := b.emitter.mod.Types.Type(refType.Elem)
+	if !ok || stringType.Kind != ir.TypeString {
+		b.emitter.markInvalid("string character conversion requires a string reference")
+		return "zeroinitializer"
+	}
+	arrayType, ok := b.emitter.mod.Types.Type(chars.Type)
+	if !ok || arrayType.Kind != ir.TypeArray || arrayType.Length != "" || arrayType.Elem == ir.InvalidType {
+		b.emitter.markInvalid("string character conversion has invalid result type")
+		return "zeroinitializer"
+	}
+	if elemType, ok := b.emitter.mod.Types.Type(arrayType.Elem); !ok || elemType.Kind != ir.TypeChar {
+		b.emitter.markInvalid("string character conversion result must be a char array")
+		return "zeroinitializer"
+	}
+
+	data, length := emitStringDataAndLength(b, emitRef(b, chars.Value), mirRefType(chars.Value))
+	lengthI64 := length
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+	if indexType != "i64" {
+		lengthI64 = b.nextReg()
+		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
+	}
+	count := emitUTF8CodepointCount(b, data, lengthI64)
+	allocator := emitDefaultAllocatorHandle(b)
+	zero := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i64 %s, 0", zero, count))
+	id := b.nextID
+	b.nextID++
+	emptyLabel := fmt.Sprintf("string_chars_empty_%d", id)
+	allocateLabel := fmt.Sprintf("string_chars_allocate_%d", id)
+	readyLabel := fmt.Sprintf("string_chars_ready_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", zero, emptyLabel, allocateLabel))
+	b.namedLabel(emptyLabel)
+	b.line(fmt.Sprintf("br label %%%s", readyLabel))
+	emptyBlock := b.currentLabel
+	b.namedLabel(allocateLabel)
+	allocated := emitDynamicArrayStorageAlloc(b, arrayType.Elem, count, allocator)
+	b.line(fmt.Sprintf("br label %%%s", readyLabel))
+	allocatedBlock := b.currentLabel
+	b.namedLabel(readyLabel)
+	charData := b.nextReg()
+	elemLLVMType := b.emitter.llvmType(arrayType.Elem)
+	b.line(fmt.Sprintf("%s = phi %s* [ null, %%%s ], [ %s, %%%s ]", charData, elemLLVMType, emptyBlock, allocated, allocatedBlock))
+	countForHeader := count
+	if indexType != "i64" {
+		tooLarge := b.nextReg()
+		b.line(fmt.Sprintf("%s = icmp ugt i64 %s, 4294967295", tooLarge, count))
+		trapLabel := fmt.Sprintf("string_chars_length_fail_%d", id)
+		lengthReady := fmt.Sprintf("string_chars_length_ready_%d", id)
+		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", tooLarge, trapLabel, lengthReady))
+		b.namedLabel(trapLabel)
+		b.line("call void @llvm.trap()")
+		b.line("unreachable")
+		b.namedLabel(lengthReady)
+		countForHeader = b.nextReg()
+		b.line(fmt.Sprintf("%s = trunc i64 %s to %s", countForHeader, count, indexType))
+	}
+	return emitStringCharsFill(b, data, lengthI64, charData, countForHeader, arrayType.Elem, chars.Type, allocator)
+}
+
+func emitStringCharsFill(b *llvmBuilder, data, length, charData, count string, elemType, arrayType ir.TypeID, allocator string) string {
+	id := b.nextID
+	b.nextID++
+	entryLabel := b.currentLabel
+	loopLabel := fmt.Sprintf("string_chars_fill_loop_%d", id)
+	bodyLabel := fmt.Sprintf("string_chars_fill_body_%d", id)
+	continueLabel := fmt.Sprintf("string_chars_fill_continue_%d", id)
+	doneLabel := fmt.Sprintf("string_chars_fill_done_%d", id)
+	b.line(fmt.Sprintf("br label %%%s", loopLabel))
+	b.namedLabel(loopLabel)
+	byteIndex := b.nextReg()
+	nextByteIndex := b.nextReg()
+	charIndex := b.nextReg()
+	nextCharIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi i64 [ 0, %%%s ], [ %s, %%%s ]", byteIndex, entryLabel, nextByteIndex, continueLabel))
+	b.line(fmt.Sprintf("%s = phi i64 [ 0, %%%s ], [ %s, %%%s ]", charIndex, entryLabel, nextCharIndex, continueLabel))
+	more := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ult i64 %s, %s", more, byteIndex, length))
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", more, bodyLabel, doneLabel))
+	b.namedLabel(bodyLabel)
+	next, codepoint := emitUTF8DecodeStep(b, data, byteIndex, length)
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i32, i32* %s, i64 %s", ptr, charData, charIndex))
+	b.line(fmt.Sprintf("store i32 %s, i32* %s", codepoint, ptr))
+	b.line(fmt.Sprintf("br label %%%s", continueLabel))
+	b.namedLabel(continueLabel)
+	b.line(fmt.Sprintf("%s = add i64 %s, 0", nextByteIndex, next))
+	b.line(fmt.Sprintf("%s = add i64 %s, 1", nextCharIndex, charIndex))
+	b.line(fmt.Sprintf("br label %%%s", loopLabel))
+	b.namedLabel(doneLabel)
+	return emitDynamicArrayHeader(b, arrayType, elemType, charData, count, count, allocator)
+}
+
+func emitUTF8CodepointCount(b *llvmBuilder, data, length string) string {
+	id := b.nextID
+	b.nextID++
+	entryLabel := b.currentLabel
+	loopLabel := fmt.Sprintf("utf8_count_loop_%d", id)
+	bodyLabel := fmt.Sprintf("utf8_count_body_%d", id)
+	continueLabel := fmt.Sprintf("utf8_count_continue_%d", id)
+	doneLabel := fmt.Sprintf("utf8_count_done_%d", id)
+	b.line(fmt.Sprintf("br label %%%s", loopLabel))
+	b.namedLabel(loopLabel)
+	index := b.nextReg()
+	nextIndex := b.nextReg()
+	count := b.nextReg()
+	nextCount := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi i64 [ 0, %%%s ], [ %s, %%%s ]", index, entryLabel, nextIndex, continueLabel))
+	b.line(fmt.Sprintf("%s = phi i64 [ 0, %%%s ], [ %s, %%%s ]", count, entryLabel, nextCount, continueLabel))
+	more := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ult i64 %s, %s", more, index, length))
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", more, bodyLabel, doneLabel))
+	b.namedLabel(bodyLabel)
+	decodedNext, _ := emitUTF8DecodeStep(b, data, index, length)
+	b.line(fmt.Sprintf("%s = add i64 %s, 1", nextCount, count))
+	b.line(fmt.Sprintf("br label %%%s", continueLabel))
+	b.namedLabel(continueLabel)
+	b.line(fmt.Sprintf("%s = add i64 %s, 0", nextIndex, decodedNext))
+	b.line(fmt.Sprintf("br label %%%s", loopLabel))
+	b.namedLabel(doneLabel)
+	return count
+}
+
+func emitUTF8DecodeStep(b *llvmBuilder, data, index, length string) (string, string) {
+	id := b.nextID
+	b.nextID++
+	invalidLabel := fmt.Sprintf("utf8_decode_invalid_%d", id)
+	asciiLabel := fmt.Sprintf("utf8_decode_ascii_%d", id)
+	kindLabel := fmt.Sprintf("utf8_decode_kind_%d", id)
+	twoLabel := fmt.Sprintf("utf8_decode_two_%d", id)
+	threeOrFourLabel := fmt.Sprintf("utf8_decode_three_or_four_%d", id)
+	threeLabel := fmt.Sprintf("utf8_decode_three_%d", id)
+	fourLabel := fmt.Sprintf("utf8_decode_four_%d", id)
+	mergeLabel := fmt.Sprintf("utf8_decode_merge_%d", id)
+
+	leadPtr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i8, i8* %s, i64 %s", leadPtr, data, index))
+	lead := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8, i8* %s", lead, leadPtr))
+	isASCII := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, 127", isASCII, lead))
+	twoLow := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i8 %s, -62", twoLow, lead))
+	twoHigh := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, -33", twoHigh, lead))
+	isTwo := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i1 %s, %s", isTwo, twoLow, twoHigh))
+	threeLow := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i8 %s, -32", threeLow, lead))
+	threeHigh := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, -17", threeHigh, lead))
+	isThree := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i1 %s, %s", isThree, threeLow, threeHigh))
+	fourLow := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i8 %s, -16", fourLow, lead))
+	fourHigh := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, -12", fourHigh, lead))
+	isFour := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i1 %s, %s", isFour, fourLow, fourHigh))
+	validLead := b.nextReg()
+	validTwoThree := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i1 %s, %s", validTwoThree, isTwo, isThree))
+	b.line(fmt.Sprintf("%s = or i1 %s, %s", validLead, validTwoThree, isFour))
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", isASCII, asciiLabel, kindLabel))
+	b.namedLabel(kindLabel)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", validLead, kindLabel+"_valid", invalidLabel))
+	b.namedLabel(kindLabel + "_valid")
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", isTwo, twoLabel, threeOrFourLabel))
+	b.namedLabel(threeOrFourLabel)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", isThree, threeLabel, fourLabel))
+	b.namedLabel(invalidLabel)
+	b.line("call void @llvm.trap()")
+	b.line("unreachable")
+
+	b.namedLabel(asciiLabel)
+	asciiNext := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 1", asciiNext, index))
+	asciiRune := emitUTF8ByteI32(b, lead, 127)
+	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
+
+	b.namedLabel(twoLabel)
+	emitUTF8WidthCheck(b, index, length, 2, invalidLabel)
+	secondIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 1", secondIndex, index))
+	second := emitUTF8ContinuationByte(b, data, secondIndex, invalidLabel)
+	twoNext := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 2", twoNext, index))
+	twoRuneLead := emitUTF8ByteI32(b, lead, 31)
+	twoRuneSecond := emitUTF8ByteI32(b, second, 63)
+	twoShifted := b.nextReg()
+	b.line(fmt.Sprintf("%s = shl i32 %s, 6", twoShifted, twoRuneLead))
+	twoRune := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i32 %s, %s", twoRune, twoShifted, twoRuneSecond))
+	twoPred := b.currentLabel
+	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
+
+	b.namedLabel(threeLabel)
+	emitUTF8WidthCheck(b, index, length, 3, invalidLabel)
+	threeSecondIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 1", threeSecondIndex, index))
+	threeSecond := emitUTF8ContinuationByte(b, data, threeSecondIndex, invalidLabel)
+	e0 := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8 %s, -32", e0, lead))
+	ed := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8 %s, -19", ed, lead))
+	notE0 := b.nextReg()
+	b.line(fmt.Sprintf("%s = xor i1 %s, true", notE0, e0))
+	notED := b.nextReg()
+	b.line(fmt.Sprintf("%s = xor i1 %s, true", notED, ed))
+	e0OK := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i8 %s, -96", e0OK, threeSecond))
+	edOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, -97", edOK, threeSecond))
+	lowOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i1 %s, %s", lowOK, notE0, e0OK))
+	highOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i1 %s, %s", highOK, notED, edOK))
+	threeSecondOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i1 %s, %s", threeSecondOK, lowOK, highOK))
+	threeReady := fmt.Sprintf("utf8_decode_three_ready_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", threeSecondOK, threeReady, invalidLabel))
+	b.namedLabel(threeReady)
+	threeThirdIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 2", threeThirdIndex, index))
+	threeThird := emitUTF8ContinuationByte(b, data, threeThirdIndex, invalidLabel)
+	threeNext := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 3", threeNext, index))
+	threeLeadRune := emitUTF8ByteI32(b, lead, 15)
+	threeSecondRune := emitUTF8ByteI32(b, threeSecond, 63)
+	threeThirdRune := emitUTF8ByteI32(b, threeThird, 63)
+	threeLeadShift := b.nextReg()
+	b.line(fmt.Sprintf("%s = shl i32 %s, 12", threeLeadShift, threeLeadRune))
+	threeSecondShift := b.nextReg()
+	b.line(fmt.Sprintf("%s = shl i32 %s, 6", threeSecondShift, threeSecondRune))
+	threeFirstCombine := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i32 %s, %s", threeFirstCombine, threeLeadShift, threeSecondShift))
+	threeRune := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i32 %s, %s", threeRune, threeFirstCombine, threeThirdRune))
+	threePred := b.currentLabel
+	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
+
+	b.namedLabel(fourLabel)
+	emitUTF8WidthCheck(b, index, length, 4, invalidLabel)
+	fourSecondIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 1", fourSecondIndex, index))
+	fourSecond := emitUTF8ContinuationByte(b, data, fourSecondIndex, invalidLabel)
+	f0 := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8 %s, -16", f0, lead))
+	f4 := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i8 %s, -12", f4, lead))
+	notF0 := b.nextReg()
+	b.line(fmt.Sprintf("%s = xor i1 %s, true", notF0, f0))
+	notF4 := b.nextReg()
+	b.line(fmt.Sprintf("%s = xor i1 %s, true", notF4, f4))
+	f0OK := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i8 %s, -112", f0OK, fourSecond))
+	f4OK := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, -113", f4OK, fourSecond))
+	fourLowOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i1 %s, %s", fourLowOK, notF0, f0OK))
+	fourHighOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i1 %s, %s", fourHighOK, notF4, f4OK))
+	fourSecondOK := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i1 %s, %s", fourSecondOK, fourLowOK, fourHighOK))
+	fourReady := fmt.Sprintf("utf8_decode_four_ready_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", fourSecondOK, fourReady, invalidLabel))
+	b.namedLabel(fourReady)
+	fourThirdIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 2", fourThirdIndex, index))
+	fourThird := emitUTF8ContinuationByte(b, data, fourThirdIndex, invalidLabel)
+	fourFourthIndex := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 3", fourFourthIndex, index))
+	fourFourth := emitUTF8ContinuationByte(b, data, fourFourthIndex, invalidLabel)
+	fourNext := b.nextReg()
+	b.line(fmt.Sprintf("%s = add i64 %s, 4", fourNext, index))
+	fourLeadRune := emitUTF8ByteI32(b, lead, 7)
+	fourSecondRune := emitUTF8ByteI32(b, fourSecond, 63)
+	fourThirdRune := emitUTF8ByteI32(b, fourThird, 63)
+	fourFourthRune := emitUTF8ByteI32(b, fourFourth, 63)
+	fourLeadShift := b.nextReg()
+	b.line(fmt.Sprintf("%s = shl i32 %s, 18", fourLeadShift, fourLeadRune))
+	fourSecondShift := b.nextReg()
+	b.line(fmt.Sprintf("%s = shl i32 %s, 12", fourSecondShift, fourSecondRune))
+	fourThirdShift := b.nextReg()
+	b.line(fmt.Sprintf("%s = shl i32 %s, 6", fourThirdShift, fourThirdRune))
+	fourFirstCombine := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i32 %s, %s", fourFirstCombine, fourLeadShift, fourSecondShift))
+	fourSecondCombine := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i32 %s, %s", fourSecondCombine, fourFirstCombine, fourThirdShift))
+	fourRune := b.nextReg()
+	b.line(fmt.Sprintf("%s = or i32 %s, %s", fourRune, fourSecondCombine, fourFourthRune))
+	fourPred := b.currentLabel
+	b.line(fmt.Sprintf("br label %%%s", mergeLabel))
+
+	b.namedLabel(mergeLabel)
+	next := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi i64 [ %s, %%%s ], [ %s, %%%s ], [ %s, %%%s ], [ %s, %%%s ]", next, asciiNext, asciiLabel, twoNext, twoPred, threeNext, threePred, fourNext, fourPred))
+	runeValue := b.nextReg()
+	b.line(fmt.Sprintf("%s = phi i32 [ %s, %%%s ], [ %s, %%%s ], [ %s, %%%s ], [ %s, %%%s ]", runeValue, asciiRune, asciiLabel, twoRune, twoPred, threeRune, threePred, fourRune, fourPred))
+	return next, runeValue
+}
+
+func emitUTF8WidthCheck(b *llvmBuilder, index, length string, width int, invalidLabel string) {
+	remaining := b.nextReg()
+	b.line(fmt.Sprintf("%s = sub i64 %s, %s", remaining, length, index))
+	enough := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i64 %s, %d", enough, remaining, width))
+	id := b.nextID
+	b.nextID++
+	readyLabel := fmt.Sprintf("utf8_width_ready_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", enough, readyLabel, invalidLabel))
+	b.namedLabel(readyLabel)
+}
+
+func emitUTF8ContinuationByte(b *llvmBuilder, data, index, invalidLabel string) string {
+	ptr := b.nextReg()
+	b.line(fmt.Sprintf("%s = getelementptr i8, i8* %s, i64 %s", ptr, data, index))
+	value := b.nextReg()
+	b.line(fmt.Sprintf("%s = load i8, i8* %s", value, ptr))
+	low := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp uge i8 %s, -128", low, value))
+	high := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp ule i8 %s, -65", high, value))
+	valid := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i1 %s, %s", valid, low, high))
+	id := b.nextID
+	b.nextID++
+	readyLabel := fmt.Sprintf("utf8_continuation_ready_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", valid, readyLabel, invalidLabel))
+	b.namedLabel(readyLabel)
+	return value
+}
+
+func emitUTF8ByteI32(b *llvmBuilder, value string, mask int) string {
+	wide := b.nextReg()
+	b.line(fmt.Sprintf("%s = zext i8 %s to i32", wide, value))
+	masked := b.nextReg()
+	b.line(fmt.Sprintf("%s = and i32 %s, %d", masked, wide, mask))
+	return masked
+}
+
 func emitLen(b *llvmBuilder, value mir.ValueRef) string {
 	if b == nil || value == nil {
 		return "0"
@@ -322,11 +810,9 @@ func emitLen(b *llvmBuilder, value mir.ValueRef) string {
 	}
 	switch target.Kind {
 	case ir.TypeString:
-		carrierType := b.emitter.llvmType(refType.Elem)
-		loaded := b.nextReg()
-		b.line(fmt.Sprintf("%s = load %s, %s* %s", loaded, carrierType, carrierType, emitRef(b, value)))
+		stringType := b.emitter.llvmType(mirRefType(value))
 		length := b.nextReg()
-		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, carrierType, loaded))
+		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, stringType, emitRef(b, value)))
 		return length
 	case ir.TypeArray:
 		if target.Length != "" {
@@ -917,19 +1403,6 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) string {
 	if fromType == toType {
 		return argRef
 	}
-	if to.Kind == ir.TypeRawPtr {
-		pointer := from.Kind == ir.TypeOwnedPtr || from.Kind == ir.TypeReference
-		if pointer {
-			fromLLVM := b.emitter.llvmType(fromType)
-			if fromLLVM == "i8*" {
-				return argRef
-			}
-			out := b.nextReg()
-			b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", out, fromLLVM, argRef))
-			return out
-		}
-	}
-
 	if to.Kind == ir.TypeBool {
 		out := b.nextReg()
 		if from.Kind == ir.TypeFloat {
@@ -1216,9 +1689,25 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) string {
 			emitCall(b, out, b.emitter.llvmType(e.Type), emitRef(b, e.Callee), llvmCallArgs(b, e.Args))
 			return out
 		case *mir.AddrOf:
-			return emitPlacePtr(b, e.Place)
+			ptr := emitPlacePtr(b, e.Place)
+			if ptr == "" {
+				return "0"
+			}
+			resultType, ok := b.emitter.mod.Types.Type(e.Type)
+			if !ok || resultType.Kind != ir.TypeRawPtr {
+				return ptr
+			}
+			placeType := b.emitter.llvmType(e.Place.Type)
+			if placeType == "i8" {
+				return ptr
+			}
+			out := b.nextReg()
+			b.line(fmt.Sprintf("%s = bitcast %s* %s to i8*", out, placeType, ptr))
+			return out
 		case *mir.SliceView:
 			return emitSliceView(b, e)
+		case *mir.StringChars:
+			return emitStringChars(b, e)
 		case *mir.Load:
 			ptr := emitPlacePtr(b, e.Place)
 			if ptr == "" {

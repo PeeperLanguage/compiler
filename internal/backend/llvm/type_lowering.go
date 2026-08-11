@@ -88,6 +88,13 @@ func llvmTypeID(types *ir.TypeTable, id ir.TypeID) (string, bool) {
 		if !ok {
 			return "", false
 		}
+		if elemType.Kind == ir.TypeString {
+			index, ok := llvmTypeID(types, types.IndexType())
+			if !ok {
+				return "", false
+			}
+			return "{ i8*, " + index + " }", true
+		}
 		if elemType.Kind == ir.TypeArray && elemType.Length == "" {
 			elem, ok := llvmTypeID(types, elemType.Elem)
 			if !ok {
@@ -345,6 +352,8 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 	case *mir.Load:
 		return v.Type
 	case *mir.Len:
+		return v.Type
+	case *mir.StringChars:
 		return v.Type
 	case *mir.Field:
 		return v.Type

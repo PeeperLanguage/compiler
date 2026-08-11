@@ -219,6 +219,12 @@ type Len struct {
 	Location *source.Location
 }
 
+type StringChars struct {
+	Value    ValueRef
+	Type     ir.TypeID
+	Location *source.Location
+}
+
 type Field struct {
 	Base     ValueRef
 	Index    int
@@ -328,6 +334,7 @@ func (*AddrOf) valueExprNode()            {}
 func (*SliceView) valueExprNode()         {}
 func (*Load) valueExprNode()              {}
 func (*Len) valueExprNode()               {}
+func (*StringChars) valueExprNode()       {}
 func (*Field) valueExprNode()             {}
 func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
@@ -385,8 +392,11 @@ func (v *AddrOf) Text() string { return fmt.Sprintf("addr %s", v.Place.Text()) }
 func (v *SliceView) Text() string {
 	return fmt.Sprintf("view %s", v.Source.Text())
 }
-func (v *Load) Text() string  { return fmt.Sprintf("load %s", v.Place.Text()) }
-func (v *Len) Text() string   { return fmt.Sprintf("len %s", v.Value.Text()) }
+func (v *Load) Text() string { return fmt.Sprintf("load %s", v.Place.Text()) }
+func (v *Len) Text() string  { return fmt.Sprintf("len %s", v.Value.Text()) }
+func (v *StringChars) Text() string {
+	return fmt.Sprintf("chars %s", v.Value.Text())
+}
 func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 
 func (v *StructLit) Text() string {
@@ -536,6 +546,8 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *Load:
 		return node.Location
 	case *Len:
+		return node.Location
+	case *StringChars:
 		return node.Location
 	case *Field:
 		return node.Location

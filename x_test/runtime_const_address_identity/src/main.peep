@@ -1,9 +1,19 @@
+fn Keep(_: rawptr) {}
+
 fn main() -> i32 {
     const value: i32 = 7;
     let first: rawptr = @value;
     let second: rawptr = @value;
     if first != second {
         return 1;
+    }
+
+    let text: str = "address";
+    Keep(@text);
+    let text_first: rawptr = @text;
+    let text_second: rawptr = @text;
+    if text_first != text_second {
+        return 2;
     }
     return 0;
 }

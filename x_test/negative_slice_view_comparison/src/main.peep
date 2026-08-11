@@ -1,3 +1,27 @@
 fn Compare(left: &[]i32, right: &[]i32) -> bool {
     return left < right;
 }
+
+fn StringEqual(left: &str, right: &str) -> bool {
+    return left == right;
+}
+
+fn StringNotEqual(left: &str, right: &str) -> bool {
+    return left != right;
+}
+
+fn StringLess(left: &str, right: &str) -> bool {
+    return left < right;
+}
+
+fn StringLessEqual(left: &str, right: &str) -> bool {
+    return left <= right;
+}
+
+fn StringGreater(left: &str, right: &str) -> bool {
+    return left > right;
+}
+
+fn StringGreaterEqual(left: &str, right: &str) -> bool {
+    return left >= right;
+}

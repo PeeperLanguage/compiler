@@ -72,6 +72,13 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			NodeID:   node.NodeID,
 			Location: node.Location,
 		}
+	case *StringChars:
+		return &StringChars{
+			Value:    FoldExpr(types, node.Value, env),
+			Type:     node.Type,
+			NodeID:   node.NodeID,
+			Location: node.Location,
+		}
 	case *AllocExpr:
 		// alloc(value, allocator) — fold the value and allocator sub-expressions.
 		// The Type and Location are identity-bearing, not foldable.

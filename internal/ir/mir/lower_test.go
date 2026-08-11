@@ -349,7 +349,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
+func TestGenerateMIRLowersProjectedRawAddressDirectly(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
@@ -384,25 +384,25 @@ func TestGenerateMIRLowersProjectedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
 	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("projected raw address instructions = %d, want address plus binding: %#v", len(instrs), instrs)
+	}
 	assign, ok := instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
 	address, ok := assign.Value.(*AddrOf)
-	if !ok || address.Type != mirTypes.mutRefI32 || address.Place == nil || len(address.Place.Projections) != 2 {
-		t.Fatalf("expected address-of field place, got %#v", assign.Value)
+	if !ok || address.Type != mirTypes.rawptr || address.Place == nil || len(address.Place.Projections) != 2 {
+		t.Fatalf("expected direct raw address of field place, got %#v", assign.Value)
 	}
-	castAssign, ok := instrs[1].(*Assign)
-	if !ok {
-		t.Fatalf("expected second instruction assignment, got %#v", instrs)
-	}
-	cast, ok := castAssign.Value.(*Cast)
-	if !ok || cast.Type != mirTypes.rawptr {
-		t.Fatalf("expected projected field address to cast to rawptr, got %#v", castAssign.Value)
+	if binding, ok := instrs[1].(*Assign); !ok {
+		t.Fatalf("expected raw address binding, got %#v", instrs[1])
+	} else if _, ok := binding.Value.(*Cast); ok {
+		t.Fatalf("raw address must not use MIR cast, got %#v", binding.Value)
 	}
 }
 
-func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
+func TestGenerateMIRLowersIndexedRawAddressDirectly(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
@@ -436,21 +436,21 @@ func TestGenerateMIRLowersIndexedRawAddressWithCast(t *testing.T) {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
 	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 2 {
+		t.Fatalf("indexed raw address instructions = %d, want address plus binding: %#v", len(instrs), instrs)
+	}
 	assign, ok := instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected first instruction assignment, got %#v", instrs)
 	}
 	address, ok := assign.Value.(*AddrOf)
-	if !ok || address.Type != mirTypes.mutRefI32 || address.Place == nil || len(address.Place.Projections) != 1 {
-		t.Fatalf("expected address-of indexed place, got %#v", assign.Value)
+	if !ok || address.Type != mirTypes.rawptr || address.Place == nil || len(address.Place.Projections) != 1 {
+		t.Fatalf("expected direct raw address of indexed place, got %#v", assign.Value)
 	}
-	castAssign, ok := instrs[1].(*Assign)
-	if !ok {
-		t.Fatalf("expected second instruction assignment, got %#v", instrs)
-	}
-	cast, ok := castAssign.Value.(*Cast)
-	if !ok || cast.Type != mirTypes.rawptr {
-		t.Fatalf("expected projected element address to cast to rawptr, got %#v", castAssign.Value)
+	if binding, ok := instrs[1].(*Assign); !ok {
+		t.Fatalf("expected raw address binding, got %#v", instrs[1])
+	} else if _, ok := binding.Value.(*Cast); ok {
+		t.Fatalf("raw address must not use MIR cast, got %#v", binding.Value)
 	}
 }
 
@@ -483,6 +483,36 @@ func TestGenerateMIRLowersSliceView(t *testing.T) {
 	view, ok := assign.Value.(*SliceView)
 	if !ok || view.Type != mirTypes.refDynamicI32 || view.Source.Text() != "xs" {
 		t.Fatalf("expected MIR SliceView, got %#v", assign.Value)
+	}
+}
+
+func TestGenerateMIRLowersStringChars(t *testing.T) {
+	charType := mirTypes.table.Intern(ir.Type{Kind: ir.TypeChar})
+	dynamicChar := mirTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: charType})
+	stringType := mirTypes.table.Intern(ir.Type{Kind: ir.TypeString})
+	refString := mirTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: stringType})
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{{
+			Name:       "chars",
+			Params:     []ir.Param{{Name: "text", Type: refString}},
+			ReturnType: mirTypes.i32,
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Binding{Name: "chars", Value: &ir.StringChars{
+					Value: &ir.Ident{Name: "text", Type: refString}, Type: dynamicChar,
+				}},
+				&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
+			}},
+		}},
+	}
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected StringChars assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
+	}
+	chars, ok := assign.Value.(*StringChars)
+	if !ok || chars.Type != dynamicChar || chars.Value.Text() != "text" {
+		t.Fatalf("MIR StringChars = %#v, want text -> []char", assign.Value)
 	}
 }
 
@@ -941,5 +971,45 @@ func TestGenerateMIRDropsBorrowedTemporariesAfterCallInReverseOrder(t *testing.T
 	firstValue := instrs[0].(*Assign)
 	if !secondOK || !firstOK || secondDrop.Value.Text() != secondValue.Name || firstDrop.Value.Text() != firstValue.Name {
 		t.Fatalf("expected reverse temporary cleanup, got %#v, %#v", instrs[5], instrs[6])
+	}
+}
+
+func TestGenerateMIRDropsTemporaryStringOwnerAfterViewUse(t *testing.T) {
+	stringType := mirTypes.table.Intern(ir.Type{Kind: ir.TypeString})
+	refString := mirTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: stringType})
+	fnString := mirTypes.table.Intern(ir.Type{Kind: ir.TypeFunction, Return: stringType})
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{{
+			Name:       "main",
+			ReturnType: mirTypes.void,
+			Body: &hir.Block{Stmts: []hir.Stmt{&hir.ExprStmt{Value: &ir.Len{
+				Value: &ir.SliceView{
+					Source: &ir.Place{
+						Root: &ir.TempBorrow{
+							Value: &ir.Call{Callee: &ir.Ident{Name: "Make", Type: fnString}, Type: stringType},
+							Type:  refString,
+						},
+						Type: refString,
+					},
+					Type: refString,
+				},
+				Type: mirTypes.usize,
+			}}}},
+		}},
+	}
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 5 {
+		t.Fatalf("temporary string view instructions = %d, want 5: %#v", len(instrs), instrs)
+	}
+	if assign, ok := instrs[3].(*Assign); !ok {
+		t.Fatalf("expected view use before cleanup, got %#v", instrs[3])
+	} else if _, ok := assign.Value.(*Len); !ok {
+		t.Fatalf("expected length read before cleanup, got %#v", assign.Value)
+	}
+	drop, ok := instrs[4].(*Drop)
+	if !ok || drop.Value.Text() != instrs[0].(*Assign).Name {
+		t.Fatalf("expected one owner drop after view use, got %#v", instrs[4])
 	}
 }

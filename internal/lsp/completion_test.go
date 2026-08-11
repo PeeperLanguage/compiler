@@ -172,6 +172,21 @@ func TestCompletionSelectorUsesFieldsMethodsAndFullIdentifierRange(t *testing.T)
 	}
 }
 
+func TestCompletionSelectorIncludesStringIntrinsics(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	source := "fn main() {\n\tlet text: str = \"a\";\n\ttext.__CURSOR__;\n}\n"
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, filePath, source)
+	labels := completionLabels(items)
+	for _, want := range []string{"as_bytes", "as_chars", "len"} {
+		if !slices.Contains(labels, want) {
+			t.Fatalf("string completion labels = %v, missing %q", labels, want)
+		}
+	}
+}
+
 func TestCompletionSelectorIncludesInterfaceMethods(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)

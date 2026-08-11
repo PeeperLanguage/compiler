@@ -48,10 +48,21 @@ Literal forms are explicit at the boundary: `"text"` produces owned `str`,
 `c"text"` produces non-owning `cstr`, `b'X'` produces `byte`, and `'X'`
 produces `char`. These forms are not implicitly interchangeable.
 
-`len` is a read-only builtin for borrowed strings and arrays. It requires an
-explicit shared or mutable borrow: `len(&text)`, `len(&fixed)`, or
-`len(&[]i32{1, 2})`. It returns string byte length or array element count.
-Borrowing a temporary is valid for the call and cannot escape it.
+`.len()` is a read-only intrinsic for strings, arrays, and their borrowed
+views. The receiver borrow is checked implicitly: `text.len()`,
+`fixed.len()`, or `[]i32{1, 2}.len()`. It returns string byte length or array
+element count. Borrowing a temporary is valid for the call and cannot escape it.
+
+String indexing unit is explicit. `text[i]` is rejected; use
+`text.as_bytes()[i]` for a byte or `text.as_chars()[i]` for a decoded Unicode
+character. `.as_bytes()` returns a borrowed `&[]byte` view over the string's
+carrier bytes and never allocates. `.as_chars()` returns an owned `[]char`
+decoded from UTF-8, and its storage follows normal dynamic-array cleanup.
+
+String ranges use byte offsets and return borrowed `&str` views. Start and end
+must be ordered, within the byte length, and on UTF-8 codepoint boundaries.
+Invalid bounds or boundaries trap at runtime. The owner remains responsible
+for backing storage and is dropped exactly once.
 
 ## Numeric Literals And Conversions
 
@@ -212,7 +223,7 @@ shared borrows may occur while reserved when they finish before activation:
 
 ```peep
 update(&mut x, read(&x)) // valid when read returns an owned or copied value
-update(&mut items, len(&items)) // mutable borrow activates after len returns
+update(&mut items, items.len()) // mutable borrow activates after len returns
 ```
 
 Mutation, move, free, destruction, and another mutable call activation remain

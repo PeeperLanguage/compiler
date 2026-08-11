@@ -1013,18 +1013,27 @@ fn count(node: Node) -> i32 {
 	}
 }
 
-func TestSliceViewComparisonsRejectedBeforeLowering(t *testing.T) {
-	for _, op := range []string{"==", "!=", "<", "<=", ">", ">="} {
-		t.Run(op, func(t *testing.T) {
-			src := "fn compare(left: &[]i32, right: &[]i32) -> bool { return left " + op + " right; }"
-			diag := checkTypeSource(t, src)
-			if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
-				t.Fatalf("expected slice-view comparison diagnostic, got:\n%s", diag.EmitAllToString())
-			}
-			if !strings.Contains(diag.EmitAllToString(), "slice-view comparison is not supported") {
-				t.Fatalf("expected slice-view comparison limitation, got:\n%s", diag.EmitAllToString())
-			}
-		})
+func TestBorrowedViewComparisonsRejectedBeforeLowering(t *testing.T) {
+	for _, view := range []struct {
+		name     string
+		typeText string
+		message  string
+	}{
+		{name: "slice", typeText: "&[]i32", message: "slice-view comparison is not supported"},
+		{name: "string", typeText: "&str", message: "string-view comparison is not supported"},
+	} {
+		for _, op := range []string{"==", "!=", "<", "<=", ">", ">="} {
+			t.Run(view.name+"/"+op, func(t *testing.T) {
+				src := "fn compare(left: " + view.typeText + ", right: " + view.typeText + ") -> bool { return left " + op + " right; }"
+				diag := checkTypeSource(t, src)
+				if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+					t.Fatalf("expected %s comparison diagnostic, got:\n%s", view.name, diag.EmitAllToString())
+				}
+				if !strings.Contains(diag.EmitAllToString(), view.message) {
+					t.Fatalf("expected %s comparison limitation, got:\n%s", view.name, diag.EmitAllToString())
+				}
+			})
+		}
 	}
 }
 
@@ -2415,6 +2424,54 @@ fn Maybe(value: ?&Box) -> ?&Box from value { return value; }
 				t.Fatalf("expected temporary contract escape diagnostic, got:\n%s", diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestTemporaryStringViewEscapeRejected(t *testing.T) {
+	diag := checkTypeSource(t, `fn MakeText() -> str { return "abc"; }
+fn binding() {
+	let bytes = MakeText().as_bytes();
+}
+fn assignment(seed: &[]byte) {
+	let mut bytes = seed;
+	bytes = MakeText().as_bytes();
+}
+fn returning(seed: &str) -> &[]byte from seed {
+	return MakeText().as_bytes();
+}`)
+	out := diag.EmitAllToString()
+	if strings.Count(out, "reference to temporary cannot escape") != 3 {
+		t.Fatalf("expected string view escape diagnostics, got:\n%s", out)
+	}
+}
+
+func TestIntrinsicSelectorResolutionStoredForLaterPhases(t *testing.T) {
+	module, diag := checkTypeModule(t, `fn main() -> usize {
+	let text: str = "hello";
+	return text.len();
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	var selector *ast.SelectorExpr
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			candidate, ok := node.(*ast.SelectorExpr)
+			if ok && candidate.Name != nil && candidate.Name.Name == "len" {
+				selector = candidate
+			}
+			return selector == nil
+		})
+		if selector != nil {
+			break
+		}
+	}
+	if selector == nil {
+		t.Fatal("len selector missing from parsed module")
+	}
+	resolved := module.Semantics.ResolvedSymbols[selector.Name.ID()]
+	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
+		t.Fatalf("resolved selector = %#v, want len intrinsic", resolved)
 	}
 }
 

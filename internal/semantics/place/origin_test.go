@@ -9,6 +9,161 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
+func TestPlaceExpressionProjectionGrammar(t *testing.T) {
+	value := &ast.Ident{Name: "value"}
+	field := &ast.SelectorExpr{Expr: value, Name: &ast.Ident{Name: "field"}}
+	index := &ast.IndexExpr{Expr: field, Index: &ast.NumberLit{Value: "0"}}
+	rangeIndex := &ast.IndexExpr{
+		Expr:  value,
+		Index: &ast.RangeExpr{Start: &ast.NumberLit{Value: "0"}, End: &ast.NumberLit{Value: "1"}},
+	}
+	missingIndex := &ast.IndexExpr{Expr: value}
+	missingSelectorBase := &ast.SelectorExpr{Name: &ast.Ident{Name: "field"}}
+	missingIndexBase := &ast.IndexExpr{Index: &ast.NumberLit{Value: "0"}}
+	call := &ast.CallExpr{Callee: value}
+	var nilSelector *ast.SelectorExpr
+
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want bool
+	}{
+		{name: "identifier", expr: value, want: true},
+		{name: "selector", expr: field, want: true},
+		{name: "nested index", expr: index, want: true},
+		{name: "range", expr: rangeIndex},
+		{name: "missing index", expr: missingIndex},
+		{name: "missing selector base", expr: missingSelectorBase},
+		{name: "missing index base", expr: missingIndexBase},
+		{name: "call", expr: call},
+		{name: "nil selector", expr: nilSelector},
+		{name: "nil expression"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsPlaceExpr(test.expr); got != test.want {
+				t.Fatalf("IsPlaceExpr() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
+	scope := table.New(nil)
+	scopeValue := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	if err := scope.Declare(scopeValue); err != nil {
+		t.Fatal(err)
+	}
+	resolvedValue := symbols.New("value", symbols.SymbolConst, nil, nil)
+	projection := &ast.SelectorExpr{Expr: &ast.Ident{Name: "value"}, Name: &ast.Ident{Name: "field"}}
+	resolve := func(*ast.Ident) (Binding, bool) {
+		return Binding{Symbol: resolvedValue}, true
+	}
+	if !Addressable(scope, projection, nil, resolve) {
+		t.Fatal("Addressable() rejected resolved binding")
+	}
+
+	resolve = func(*ast.Ident) (Binding, bool) {
+		return Binding{Symbol: symbols.New("value", symbols.SymbolFunc, nil, nil)}, true
+	}
+	if Addressable(scope, projection, nil, resolve) {
+		t.Fatal("Addressable() fell back to shadowed scope binding")
+	}
+}
+
+func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
+	scope := table.New(nil)
+	base := &ast.Ident{Name: "value"}
+	projection := &ast.SelectorExpr{Expr: base, Name: &ast.Ident{Name: "field"}}
+	tests := []struct {
+		name string
+		typ  typeinfo.Type
+		want bool
+	}{
+		{name: "owned pointer", typ: &typeinfo.OwnedPtrType{Target: typeinfo.DefaultIntegerType()}, want: true},
+		{name: "reference", typ: &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			exprType := func(expr ast.Expr) typeinfo.Type {
+				if expr == base {
+					return test.typ
+				}
+				return nil
+			}
+			if got := Addressable(scope, projection, exprType, nil); got != test.want {
+				t.Fatalf("Addressable() = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	mutableReference := &typeinfo.RefType{Mutable: true, Target: typeinfo.DefaultIntegerType()}
+	sharedReference := &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()}
+	for _, test := range []struct {
+		name   string
+		typ    typeinfo.Type
+		want   bool
+		shared typeinfo.Type
+	}{
+		{name: "raw pointer", typ: &typeinfo.RawPtrType{}, want: true},
+		{name: "mutable reference", typ: mutableReference, want: true},
+		{name: "shared reference", typ: sharedReference, shared: typeinfo.DefaultIntegerType()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			exprType := func(expr ast.Expr) typeinfo.Type {
+				if expr == base {
+					return test.typ
+				}
+				return nil
+			}
+			mutable, shared := MutableAddressable(scope, projection, exprType, nil)
+			if mutable != test.want || !typeinfo.SameType(shared, test.shared) {
+				t.Fatalf("MutableAddressable() = (%v, %v), want (%v, %v)", mutable, shared, test.want, test.shared)
+			}
+		})
+	}
+}
+
+func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
+	moduleScope := table.New(nil)
+	scope := table.New(moduleScope)
+	local := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	if err := scope.Declare(local); err != nil {
+		t.Fatal(err)
+	}
+	base := &ast.Ident{Name: "value"}
+	projection := &ast.IndexExpr{Expr: base, Index: &ast.NumberLit{Value: "0"}}
+	root, ok := LocalRoot(scope, moduleScope, projection, nil, nil)
+	if !ok || root != local {
+		t.Fatalf("LocalRoot() = (%v, %v), want local root", root, ok)
+	}
+
+	pointerType := &typeinfo.OwnedPtrType{Target: typeinfo.DefaultIntegerType()}
+	exprType := func(expr ast.Expr) typeinfo.Type {
+		if expr == base {
+			return pointerType
+		}
+		return nil
+	}
+	if root, ok := LocalRoot(scope, moduleScope, projection, exprType, nil); ok || root != nil {
+		t.Fatalf("LocalRoot() crossed owned pointer cutoff: (%v, %v)", root, ok)
+	}
+
+	resolved := symbols.New("value", symbols.SymbolConst, nil, nil)
+	for _, localBinding := range []bool{false, true} {
+		root, ok := LocalRoot(scope, moduleScope, base, nil, func(*ast.Ident) (Binding, bool) {
+			return Binding{Symbol: resolved, Local: localBinding}, true
+		})
+		if localBinding {
+			if !ok || root != resolved {
+				t.Fatalf("LocalRoot() ignored local resolved binding: (%v, %v)", root, ok)
+			}
+		} else if ok || root != nil {
+			t.Fatalf("LocalRoot() treated non-local resolved binding as root: (%v, %v)", root, ok)
+		}
+	}
+}
+
 func TestOriginsPreferResolvedBindingOverShadowingScope(t *testing.T) {
 	scope := table.New(nil)
 	callerValue := symbols.New("value", symbols.SymbolVar, nil, nil)

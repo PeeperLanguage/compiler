@@ -304,6 +304,11 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 				"slice-view comparison is not supported in current compiler stage"))
 			return &typeinfo.InvalidType{}
 		}
+		if isStringView(left) || isStringView(right) {
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"string-view comparison is not supported in current compiler stage"))
+			return &typeinfo.InvalidType{}
+		}
 		return &typeinfo.BoolType{}
 	}
 
@@ -369,7 +374,10 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
 		return field.Type
 	}
-	if methodType, _, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
+	if methodType, methodSym, ok := c.lookupMethodType(baseType, node.Name.Name); ok {
+		if methodSym != nil {
+			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = methodSym
+		}
 		return methodType
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
@@ -403,6 +411,11 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 			"index expression must be an integer"))
 		return &typeinfo.InvalidType{}
 	}
+	if isStringSequence(baseType) {
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
+			"string indexing requires `.as_bytes()` or `.as_chars()`"))
+		return &typeinfo.InvalidType{}
+	}
 	elem, shape, ok := indexableSequence(baseType)
 	if !ok {
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
@@ -433,6 +446,11 @@ func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, ra
 	if c == nil || node == nil || rangeIndex == nil {
 		return &typeinfo.InvalidType{}
 	}
+	if isStringSequence(baseType) {
+		c.checkRangeBound(scope, rangeIndex.Start)
+		c.checkRangeBound(scope, rangeIndex.End)
+		return &typeinfo.RefType{Target: &typeinfo.StringType{}}
+	}
 	elem, shape, ok := indexableSequence(baseType)
 	if !ok {
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
@@ -459,6 +477,22 @@ func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, ra
 		Mutable: mutable,
 		Target:  &typeinfo.ArrayType{Dynamic: true, Elem: elem},
 	}
+}
+
+func isStringSequence(typ typeinfo.Type) bool {
+	if _, ok := typeinfo.Underlying(typ).(*typeinfo.StringType); ok {
+		return true
+	}
+	return isStringView(typ)
+}
+
+func isStringView(typ typeinfo.Type) bool {
+	target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(typ))
+	if !ok {
+		return false
+	}
+	_, ok = typeinfo.Underlying(target).(*typeinfo.StringType)
+	return ok
 }
 
 type indexableSequenceShape uint8

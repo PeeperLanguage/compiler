@@ -170,6 +170,14 @@ type Len struct {
 	Location *source.Location
 }
 
+// StringChars decodes a borrowed string into an owned dynamic char array.
+type StringChars struct {
+	Value    Expr
+	Type     TypeID
+	NodeID   NodeID
+	Location *source.Location
+}
+
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
 	Source       *Place
@@ -286,6 +294,7 @@ func (*Load) exprNode()           {}
 func (*AddrOf) exprNode()         {}
 func (*TempBorrow) exprNode()     {}
 func (*Len) exprNode()            {}
+func (*StringChars) exprNode()    {}
 func (*SliceView) exprNode()      {}
 func (*InterfaceMake) exprNode()  {}
 func (*InterfaceCall) exprNode()  {}
@@ -388,6 +397,12 @@ func (e *TempBorrow) setOrigin(info SourceInfo) {
 }
 func (e *Len) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
 func (e *Len) setOrigin(info SourceInfo) {
+	if e != nil {
+		e.NodeID, e.Location = info.NodeID, info.Location
+	}
+}
+func (e *StringChars) Origin() SourceInfo { return exprSource(e.NodeID, e.Location) }
+func (e *StringChars) setOrigin(info SourceInfo) {
 	if e != nil {
 		e.NodeID, e.Location = info.NodeID, info.Location
 	}
@@ -712,6 +727,20 @@ func (e *Len) String() string {
 }
 
 func (e *Len) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
+
+func (e *StringChars) String() string {
+	if e == nil || e.Value == nil {
+		return "chars(<nil>)"
+	}
+	return "chars(" + e.Value.String() + ")"
+}
+
+func (e *StringChars) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
 	}

@@ -29,25 +29,21 @@ type Binding struct {
 type BindingResolver func(*ast.Ident) (Binding, bool)
 
 func IsPlaceExpr(expr ast.Expr) bool {
-	switch node := expr.(type) {
-	case *ast.Ident:
-		return true
-	case *ast.SelectorExpr:
-		return node != nil && IsPlaceExpr(node.Expr)
-	case *ast.IndexExpr:
-		return isElementIndexExpr(node) && IsPlaceExpr(node.Expr)
-	default:
-		return false
+	if node, ok := expr.(*ast.Ident); ok {
+		return node != nil
 	}
+	base, ok := placeProjectionBase(expr)
+	return ok && IsPlaceExpr(base)
 }
 
 func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
-	var base ast.Expr
-	switch e := expr.(type) {
-	case *ast.Ident:
+	if e, ok := expr.(*ast.Ident); ok {
+		if e == nil {
+			return false
+		}
 		if resolve != nil {
 			if binding, found := resolve(e); found {
 				return addressableSymbol(binding.Symbol)
@@ -55,14 +51,9 @@ func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resol
 		}
 		sym, found := scope.Lookup(e.Name)
 		return found && addressableSymbol(sym)
-	case *ast.SelectorExpr:
-		base = e.Expr
-	case *ast.IndexExpr:
-		if !isElementIndexExpr(e) {
-			return false
-		}
-		base = e.Expr
-	default:
+	}
+	base, ok := placeProjectionBase(expr)
+	if !ok {
 		return false
 	}
 	if exprType != nil {
@@ -80,9 +71,10 @@ func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc
 	if scope == nil || expr == nil {
 		return false, nil
 	}
-	var base ast.Expr
-	switch e := expr.(type) {
-	case *ast.Ident:
+	if e, ok := expr.(*ast.Ident); ok {
+		if e == nil {
+			return false, nil
+		}
 		if resolve != nil {
 			if binding, found := resolve(e); found {
 				sym := binding.Symbol
@@ -90,14 +82,9 @@ func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc
 			}
 		}
 		return scope.IsMutableBinding(e.Name), nil
-	case *ast.SelectorExpr:
-		base = e.Expr
-	case *ast.IndexExpr:
-		if !isElementIndexExpr(e) {
-			return false, nil
-		}
-		base = e.Expr
-	default:
+	}
+	base, ok := placeProjectionBase(expr)
+	if !ok {
 		return false, nil
 	}
 	if exprType != nil {
@@ -118,9 +105,10 @@ func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprType
 	if scope == nil || moduleScope == nil || expr == nil {
 		return nil, false
 	}
-	var base ast.Expr
-	switch e := expr.(type) {
-	case *ast.Ident:
+	if e, ok := expr.(*ast.Ident); ok {
+		if e == nil {
+			return nil, false
+		}
 		if resolve != nil {
 			if binding, found := resolve(e); found {
 				// Expanded defaults have Local=false: the symbol
@@ -139,14 +127,9 @@ func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprType
 			}
 		}
 		return nil, false
-	case *ast.SelectorExpr:
-		base = e.Expr
-	case *ast.IndexExpr:
-		if !isElementIndexExpr(e) {
-			return nil, false
-		}
-		base = e.Expr
-	default:
+	}
+	base, ok := placeProjectionBase(expr)
+	if !ok {
 		return nil, false
 	}
 	if exprType != nil {
@@ -157,12 +140,24 @@ func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprType
 	return LocalRoot(scope, moduleScope, base, exprType, resolve)
 }
 
-func isElementIndexExpr(expr *ast.IndexExpr) bool {
-	if expr == nil || expr.Index == nil {
-		return false
+func placeProjectionBase(expr ast.Expr) (ast.Expr, bool) {
+	switch node := expr.(type) {
+	case *ast.SelectorExpr:
+		if node == nil || node.Expr == nil {
+			return nil, false
+		}
+		return node.Expr, true
+	case *ast.IndexExpr:
+		if node == nil || node.Expr == nil || node.Index == nil {
+			return nil, false
+		}
+		if _, slicing := node.Index.(*ast.RangeExpr); slicing {
+			return nil, false
+		}
+		return node.Expr, true
+	default:
+		return nil, false
 	}
-	_, slicing := expr.Index.(*ast.RangeExpr)
-	return !slicing
 }
 
 func addressableSymbol(sym *symbols.Symbol) bool {

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"compiler/internal/project"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -727,6 +729,62 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 	}
 }
 
+func TestHoverShowsStringIntrinsicSignature(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn main() {\n\tlet text: str = \"a\";\n\ttext.__CURSOR__len();\n}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	if !strings.Contains(hover.Contents.Value, "(method) fn (self: &str) len() -> u64") {
+		t.Fatalf("unexpected string intrinsic hover: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsStringIntrinsicsOnType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "fn use(value: __CURSOR__str) {}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil")
+	}
+	for _, signature := range []string{
+		"fn (self: &str) len() -> u64",
+		"fn (self: &str) as_bytes() -> &[]byte from self",
+		"fn (self: &str) as_chars() -> []char",
+	} {
+		if !strings.Contains(hover.Contents.Value, signature) {
+			t.Fatalf("expected %q in string type hover, got %q", signature, hover.Contents.Value)
+		}
+	}
+}
+
+func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
+	sym := symbols.New("contains", symbols.SymbolMethod, nil, nil)
+	sym.Type = &typeinfo.FuncType{
+		Params: []typeinfo.Type{
+			&typeinfo.RefType{Target: &typeinfo.StringType{}},
+			&typeinfo.ByteType{},
+		},
+		ParamNames: []string{"self", "needle"},
+		Return:     &typeinfo.BoolType{},
+	}
+
+	got := hoverSymbolFunctionSignature(sym).text()
+	want := "fn (self: &str) contains(needle: byte) -> bool"
+	if got != want {
+		t.Fatalf("synthetic method hover = %q, want %q", got, want)
+	}
+}
+
 func TestHoverShowsDefaultParameterExpression(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
@@ -786,7 +844,7 @@ func TestHoverShowsInterfaceReferenceReturnContract(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "(method) fn (&Self) Current(fallback: &i32) -> &i32 from (self, fallback)") {
+	if !strings.Contains(hover.Contents.Value, "(method) fn (self: &Self) Current(fallback: &i32) -> &i32 from (self, fallback)") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }
@@ -818,7 +876,7 @@ func TestHoverPreservesMutableInterfaceReceiver(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "(method) fn (&mut Self) write(val: i32)") {
+	if !strings.Contains(hover.Contents.Value, "(method) fn (self: &mut Self) write(val: i32)") {
 		t.Fatalf("expected mutable interface receiver, got %q", hover.Contents.Value)
 	}
 }
@@ -901,7 +959,7 @@ func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "iface {\n  fn (Self) consume(val: Summer) -> i32,\n}") {
+	if !strings.Contains(hover.Contents.Value, "iface {\n  fn (self: Self) consume(val: Summer) -> i32,\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }
@@ -936,7 +994,7 @@ func TestHoverShowsTypeMethodsOnNamedType(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "struct {\n  x: i32,\n  y: i32,\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "// methods\n  fn (self: Point) sum() -> i32") {
+	if !strings.Contains(hover.Contents.Value, "// methods\nfn (self: Point) sum() -> i32") {
 		t.Fatalf("expected method list in type hover, got %q", hover.Contents.Value)
 	}
 }
@@ -955,7 +1013,7 @@ func TestHoverShowsTypeMethodsInsideNamedStructSyntax(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "struct {\n  x: i32,\n  y: i32,\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "// methods\n  fn (self: Point) sum() -> i32") {
+	if !strings.Contains(hover.Contents.Value, "// methods\nfn (self: Point) sum() -> i32") {
 		t.Fatalf("expected method list in named struct syntax hover, got %q", hover.Contents.Value)
 	}
 }
