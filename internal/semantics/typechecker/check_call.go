@@ -184,7 +184,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name)
+	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name, true)
 	if ok {
 		if methodSym != nil && methodSym.CompilerOp == "" {
 			c.expandCallDefaults(call, methodSym, c.module)

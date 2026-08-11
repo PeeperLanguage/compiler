@@ -1461,6 +1461,31 @@ fn convert(counter: *Counter) -> *Reader {
 	}
 }
 
+func TestPipelineRejectsIntrinsicInterfaceConformance(t *testing.T) {
+	entrySrc := `iface Lenner {
+	fn (&Self) len() -> usize
+}
+
+fn main() -> i32 {
+	let text: str = "abc";
+	let value: &Lenner = &text;
+	return value.len() as i32;
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", entrySrc)
+	if !diag.HasErrors() {
+		t.Fatal("expected intrinsic interface conformance rejection")
+	}
+	out := diag.EmitAllToString()
+	if !strings.Contains(out, "missing methods: len") {
+		t.Fatalf("expected interface conformance diagnostic, got:\n%s", out)
+	}
+	for _, unexpected := range []string{"missing interface method implementation", "unsupported llvm type"} {
+		if strings.Contains(out, unexpected) {
+			t.Fatalf("intrinsic interface conformance reached lowering: %s", out)
+		}
+	}
+}
+
 func TestPipelineLowersNestedFieldAssignment(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Inner {

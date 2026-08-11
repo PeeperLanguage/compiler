@@ -41,6 +41,11 @@ fn main() -> i32 {
     if prefix.len() != 3 {
         return 5;
     }
+    let exact_text: str = "abcd";
+    let exact = exact_text[0..2];
+    if exact.len() != 2 {
+        return 16;
+    }
     let first = text[0..=0];
     if first.len() != 1 {
         return 6;

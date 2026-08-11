@@ -269,6 +269,7 @@ For compiler-flow work such as `parser`, `collector`, `resolver`, `typechecker`,
 5. If scope is intentionally limited, state exact boundary in code comments, local plan, and close-out notes.
 6. If a request implies future constructs such as multi-function, calls, scopes, loops, arrays, slices, optionals, strings, ownership, allocator provenance, or IR architecture, design touched code to extend without rewrite.
 7. Missing phase work must be tracked as an explicit TODO item in repo docs, issue tracker, or local plan notes with impact statement.
+8. Feature discovery and conformance checks must match downstream lowerability. A compiler-synthesized or intrinsic member may satisfy an interface only when HIR, MIR, and every affected backend can materialize and lower that member; otherwise reject the conformance during semantic analysis.
 
 Do not satisfy compiler requests with temporary shortcut paths that bypass intended phase boundaries.
 
@@ -470,6 +471,8 @@ For behavior changes:
 - Add or update focused tests near the changed subsystem.
 - Add regression tests for bugs that previously failed.
 - Validate both relevant backends when backend behavior is affected.
+- When lowering target-sized integers, lengths, indexes, pointers, or ABI carriers, validate every supported target width affected by the change. Operands used by one backend instruction must have matching backend types; width-normalization changes require a 32-bit regression when 32-bit targets are supported.
+- When semantic discovery changes method availability or interface conformance, add an end-to-end accepted or rejected regression through HIR and backend generation. Typechecker-only coverage is insufficient.
 - Run targeted Peeper smoke/repro tests if language or runtime behavior changed.
 - Run `go run ./scripts/bundle.go` with no args to bundle compiler and packaged libraries when packaging or bundled libraries may be affected.
 
@@ -575,12 +578,14 @@ Before merge, verify:
 - [ ] Existing invariant checks were preserved or intentionally moved/removed.
 - [ ] Any behavior removal is justified in commit rationale.
 - [ ] Compiler phase boundaries are preserved.
+- [ ] Semantic method and interface acceptance matches downstream HIR, MIR, and backend lowerability.
 - [ ] No fake `.hir`, `.mir`, or backend IR artifact was introduced.
 - [ ] Error messages preserve root-cause context with `%w`.
 - [ ] `panic` is only used for internal invariant violations.
 - [ ] Tests cover changed behavior.
 - [ ] Regression tests cover previous failure modes.
 - [ ] Backend behavior was validated where relevant.
+- [ ] Target-sized backend operands were validated on every supported width affected by the change.
 - [ ] `gofmt` passes.
 - [ ] `go test` passes for touched packages.
 - [ ] Bundle/smoke validation was run when needed.

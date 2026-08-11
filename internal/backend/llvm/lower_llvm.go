@@ -117,7 +117,23 @@ func emitFieldPtr(b *llvmBuilder, base string, structType ir.TypeID, index int) 
 	return ptr
 }
 
-func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, length string) (compareIndex, compareLength, compareType, indexI64 string, ok bool) {
+// emitTargetIndexAsI64 widens a target-sized length before it reaches lowering
+// paths whose arithmetic and comparisons are intentionally i64.
+func emitTargetIndexAsI64(b *llvmBuilder, value string) string {
+	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+	if indexType == "i64" {
+		return value
+	}
+	if indexType != "i32" {
+		b.emitter.markInvalid("unsupported target index type " + indexType)
+		return value
+	}
+	widened := b.nextReg()
+	b.line(fmt.Sprintf("%s = zext i32 %s to i64", widened, value))
+	return widened
+}
+
+func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, lengthI64 string) (compareIndex, compareLength, compareType, indexI64 string, ok bool) {
 	if b == nil || indexRef == nil {
 		return "", "", "", "", false
 	}
@@ -128,7 +144,7 @@ func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, length strin
 		return "", "", "", "", false
 	}
 	compareIndex = emitRef(b, indexRef)
-	compareLength = length
+	compareLength = lengthI64
 	compareType = b.emitter.llvmType(indexType)
 	indexI64 = compareIndex
 	if indexBits < 64 {
@@ -138,7 +154,7 @@ func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, length strin
 		indexI64 = compareIndex
 	} else if indexBits > 64 {
 		compareLength = b.nextReg()
-		b.line(fmt.Sprintf("%s = zext i64 %s to %s", compareLength, length, compareType))
+		b.line(fmt.Sprintf("%s = zext i64 %s to %s", compareLength, lengthI64, compareType))
 		indexI64 = b.nextReg()
 		b.line(fmt.Sprintf("%s = trunc %s %s to i64", indexI64, compareType, compareIndex))
 	}
@@ -165,12 +181,12 @@ func emitBoundsCheckedIndex(b *llvmBuilder, indexRef mir.ValueRef, length string
 	return index, true
 }
 
-func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, length, lengthI64 string) (string, string, bool) {
+func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, lengthI64 string) (string, string, bool) {
 	startI64 := "0"
 	endI64 := lengthI64
 	invalid := ""
 	if view.Start != nil {
-		start, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.Start, length)
+		start, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.Start, lengthI64)
 		if !ok {
 			return "", "", false
 		}
@@ -179,7 +195,7 @@ func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, length, lengthI64 stri
 		b.line(fmt.Sprintf("%s = icmp ugt %s %s, %s", invalid, compareType, start, compareLength))
 	}
 	if view.End != nil {
-		end, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.End, length)
+		end, compareLength, compareType, normalized, ok := normalizeIndexForLength(b, view.End, lengthI64)
 		if !ok {
 			return "", "", false
 		}
@@ -281,11 +297,10 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) string {
 
 	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
 	lengthI64 := length
-	if indexType != "i64" && fixedArrayPtr == "" {
-		lengthI64 = b.nextReg()
-		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
+	if fixedArrayPtr == "" {
+		lengthI64 = emitTargetIndexAsI64(b, length)
 	}
-	startI64, endI64, ok := emitSliceBounds(b, view, length, lengthI64)
+	startI64, endI64, ok := emitSliceBounds(b, view, lengthI64)
 	if !ok {
 		return "0"
 	}
@@ -346,12 +361,8 @@ func emitStringSliceView(b *llvmBuilder, view *mir.SliceView) string {
 	data, length := emitStringDataAndLength(b, source, view.Source.Type)
 
 	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
-	lengthI64 := length
-	if indexType != "i64" {
-		lengthI64 = b.nextReg()
-		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
-	}
-	startI64, endI64, ok := emitSliceBounds(b, view, length, lengthI64)
+	lengthI64 := emitTargetIndexAsI64(b, length)
+	startI64, endI64, ok := emitSliceBounds(b, view, lengthI64)
 	if !ok {
 		return "0"
 	}
@@ -469,33 +480,11 @@ func emitStringChars(b *llvmBuilder, chars *mir.StringChars) string {
 	}
 
 	data, length := emitStringDataAndLength(b, emitRef(b, chars.Value), mirRefType(chars.Value))
-	lengthI64 := length
+	lengthI64 := emitTargetIndexAsI64(b, length)
 	indexType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
-	if indexType != "i64" {
-		lengthI64 = b.nextReg()
-		b.line(fmt.Sprintf("%s = zext %s %s to i64", lengthI64, indexType, length))
-	}
 	count := emitUTF8CodepointCount(b, data, lengthI64)
-	allocator := emitDefaultAllocatorHandle(b)
-	zero := b.nextReg()
-	b.line(fmt.Sprintf("%s = icmp eq i64 %s, 0", zero, count))
 	id := b.nextID
 	b.nextID++
-	emptyLabel := fmt.Sprintf("string_chars_empty_%d", id)
-	allocateLabel := fmt.Sprintf("string_chars_allocate_%d", id)
-	readyLabel := fmt.Sprintf("string_chars_ready_%d", id)
-	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", zero, emptyLabel, allocateLabel))
-	b.namedLabel(emptyLabel)
-	b.line(fmt.Sprintf("br label %%%s", readyLabel))
-	emptyBlock := b.currentLabel
-	b.namedLabel(allocateLabel)
-	allocated := emitDynamicArrayStorageAlloc(b, arrayType.Elem, count, allocator)
-	b.line(fmt.Sprintf("br label %%%s", readyLabel))
-	allocatedBlock := b.currentLabel
-	b.namedLabel(readyLabel)
-	charData := b.nextReg()
-	elemLLVMType := b.emitter.llvmType(arrayType.Elem)
-	b.line(fmt.Sprintf("%s = phi %s* [ null, %%%s ], [ %s, %%%s ]", charData, elemLLVMType, emptyBlock, allocated, allocatedBlock))
 	countForHeader := count
 	if indexType != "i64" {
 		tooLarge := b.nextReg()
@@ -510,6 +499,24 @@ func emitStringChars(b *llvmBuilder, chars *mir.StringChars) string {
 		countForHeader = b.nextReg()
 		b.line(fmt.Sprintf("%s = trunc i64 %s to %s", countForHeader, count, indexType))
 	}
+	allocator := emitDefaultAllocatorHandle(b)
+	zero := b.nextReg()
+	b.line(fmt.Sprintf("%s = icmp eq i64 %s, 0", zero, count))
+	emptyLabel := fmt.Sprintf("string_chars_empty_%d", id)
+	allocateLabel := fmt.Sprintf("string_chars_allocate_%d", id)
+	readyLabel := fmt.Sprintf("string_chars_ready_%d", id)
+	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", zero, emptyLabel, allocateLabel))
+	b.namedLabel(emptyLabel)
+	b.line(fmt.Sprintf("br label %%%s", readyLabel))
+	emptyBlock := b.currentLabel
+	b.namedLabel(allocateLabel)
+	allocated := emitDynamicArrayStorageAlloc(b, arrayType.Elem, countForHeader, allocator)
+	b.line(fmt.Sprintf("br label %%%s", readyLabel))
+	allocatedBlock := b.currentLabel
+	b.namedLabel(readyLabel)
+	charData := b.nextReg()
+	elemLLVMType := b.emitter.llvmType(arrayType.Elem)
+	b.line(fmt.Sprintf("%s = phi %s* [ null, %%%s ], [ %s, %%%s ]", charData, elemLLVMType, emptyBlock, allocated, allocatedBlock))
 	return emitStringCharsFill(b, data, lengthI64, charData, countForHeader, arrayType.Elem, chars.Type, allocator)
 }
 
@@ -1232,7 +1239,7 @@ func emitIndexPtr(b *llvmBuilder, base string, baseType ir.TypeID, addressed boo
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 0", data, arrayType, base))
 		length := b.nextReg()
 		b.line(fmt.Sprintf("%s = extractvalue %s %s, 1", length, arrayType, base))
-		index, ok := emitBoundsCheckedIndex(b, indexRef, length)
+		index, ok := emitBoundsCheckedIndex(b, indexRef, emitTargetIndexAsI64(b, length))
 		if !ok {
 			return ""
 		}

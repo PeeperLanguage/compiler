@@ -1,6 +1,8 @@
 package llvm
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -524,13 +526,13 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperationsFor32BitTarget(t *testin
 			}
 			mod := dynamicArrayOperationModule(types, tt.name, types.dynamicI32, tt.op, length, value)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinux386, false)
-			for _, expected := range []string{"@llvm.umul.with.overflow.i32", "icmp ugt i64", "trunc i64"} {
+			for _, expected := range []string{"@llvm.umul.with.overflow.i32", "call i8* %"} {
 				if !strings.Contains(out, expected) {
 					t.Fatalf("expected %q in 32-bit %s IR:\n%s", expected, tt.name, out)
 				}
 			}
-			if tt.length && strings.Contains(out, "zext i32 %size to i64") {
-				t.Fatalf("32-bit usize must stay i32 in %s IR:\n%s", tt.name, out)
+			if strings.Contains(out, "icmp ugt i64") || strings.Contains(out, "trunc i64") {
+				t.Fatalf("32-bit storage size must stay target-sized in %s IR:\n%s", tt.name, out)
 			}
 		})
 	}
@@ -1129,6 +1131,53 @@ func TestGenerateLLVMIRReturnsStringSliceViewByValue(t *testing.T) {
 		if strings.Contains(out, unexpected) {
 			t.Fatalf("unexpected callee-local string carrier %q:\n%s", unexpected, out)
 		}
+	}
+}
+
+func TestGenerateLLVMIRLowersBoundedStringSliceViewFor32BitTarget(t *testing.T) {
+	types := newLLVMTypeFixture(target.Bits32)
+	refString := types.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: types.stringType})
+	mod := &mir.Module{
+		Name: "test", Types: types.table,
+		Funcs: []*mir.Function{{
+			Name:       "Prefix",
+			Params:     []ir.Param{{Name: "text", Type: refString}},
+			ReturnType: refString,
+			EntryID:    0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
+					Source:       &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
+					Start:        &mir.RefConst{Value: "0", Type: types.i32},
+					End:          &mir.RefConst{Value: "2", Type: types.i32},
+					EndExclusive: true,
+					Type:         refString,
+				}}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "view", Type: refString}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinux386, false)
+	for _, expected := range []string{
+		"define { i8*, i32 } @Prefix({ i8*, i32 } %text)",
+		"zext i32",
+		"icmp ugt i64",
+		"ret { i8*, i32 } %",
+	} {
+		if !strings.Contains(irText, expected) {
+			t.Fatalf("expected %q in 32-bit string range IR:\n%s", expected, irText)
+		}
+	}
+
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang unavailable for LLVM IR validation")
+	}
+	cmd := exec.Command(clang, "-target", testLinux386.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "prefix.o"), "-")
+	cmd.Stdin = strings.NewReader(irText)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("32-bit bounded string range LLVM IR is invalid: %v\n%s\n%s", err, out, irText)
 	}
 }
 

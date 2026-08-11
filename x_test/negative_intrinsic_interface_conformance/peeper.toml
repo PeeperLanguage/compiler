@@ -1,0 +1,3 @@
+name = "negative_intrinsic_interface_conformance"
+build = "program"
+entry = "src/main.peep"

@@ -2475,6 +2475,24 @@ func TestIntrinsicSelectorResolutionStoredForLaterPhases(t *testing.T) {
 	}
 }
 
+func TestIntrinsicMethodDoesNotSatisfyInterface(t *testing.T) {
+	diag := checkTypeSource(t, `iface Lenner {
+	fn (&Self) len() -> usize
+}
+
+fn main() -> i32 {
+	let text: str = "abc";
+	let value: &Lenner = &text;
+	return value.len() as i32;
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected intrinsic interface conformance rejection, got:\n%s", diag.EmitAllToString())
+	}
+	if !strings.Contains(diag.EmitAllToString(), "missing methods: len") {
+		t.Fatalf("expected missing intrinsic method hint, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestTemporaryBorrowContractScalarProjectionAllowed(t *testing.T) {
 	diag := checkTypeSource(t, `struct Box { value: i32 }
 fn Make() -> Box { return .{ value = 1 }; }

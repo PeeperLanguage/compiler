@@ -50,17 +50,7 @@ func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity strin
 	id := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("allocator_size_fail_%d", id)
-	capacityReadyLabel := fmt.Sprintf("allocator_capacity_ready_%d", id)
 	sizeReadyLabel := fmt.Sprintf("allocator_size_ready_%d", id)
-	if sizeType == "i32" {
-		tooLarge := b.nextReg()
-		b.line(fmt.Sprintf("%s = icmp ugt i64 %s, 4294967295", tooLarge, capacity))
-		b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", tooLarge, failLabel, capacityReadyLabel))
-		b.namedLabel(capacityReadyLabel)
-		narrowed := b.nextReg()
-		b.line(fmt.Sprintf("%s = trunc i64 %s to i32", narrowed, capacity))
-		capacity = narrowed
-	}
 	elemLLVMType := b.emitter.llvmType(elemType)
 	elemSize := b.nextReg()
 	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", elemSize, elemLLVMType, elemLLVMType, elemLLVMType, sizeType))
