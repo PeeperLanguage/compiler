@@ -14,3 +14,124 @@ Supported release installers:
 # Todo
  - [ ] Add `as!`
  - [x] Highlight `@`
+
+## Compiler Contract Spine
+
+Compiler now enforces each contract in phase that owns it. Source accepted by
+semantics must carry enough evidence to lower through HIR and MIR into valid
+target-specific LLVM.
+
+### Before
+
+```mermaid
+flowchart LR
+    AST[AST] --> TC[Typechecker]
+    TC --> IC[Interface conformance walk]
+    TC --> MM[Separate missing-method walk]
+    TC --> IL[Intrinsic lookup with boolean policy]
+    IC --> HR[HIR method-set relookup]
+    MM --> HR
+    IL --> HR
+    HR --> MIR[MIR TypeID and Place]
+    MIR --> RAW[Raw LLVM operand strings]
+    RAW --> CLANG[clang or target exposes mismatch]
+
+    TC -. explicit literal type only .-> AL[Fixed-array length]
+    AL -. target usize unchecked .-> RAW
+
+    IDX[Numeric carrier indexes in many emitters] --> RAW
+    REG[Split intrinsic registries] -. no completeness proof .-> HR
+```
+
+Old flow had several competing authorities:
+
+- Interface acceptance, missing-method diagnostics, and HIR slot lowering could
+  resolve same method independently.
+- Intrinsic members were callable, but boolean lookup policy could blur line
+  between direct calls and real interface implementations.
+- Fixed-array length could fit explicit numeric literal type while exceeding
+  target `usize`, especially on 32-bit targets.
+- LLVM values and addresses were bare strings. Width, aggregate shape, pointee,
+  and call-signature mistakes could survive until malformed LLVM reached clang.
+- Built-in carrier field indexes were repeated across lowering, allocation, and
+  drop paths.
+- Adding intrinsic discovery did not prove HIR, MIR, and LLVM lowering existed.
+
+### Now
+
+```mermaid
+flowchart LR
+    AST[AST] --> SEM[Semantic analysis]
+
+    REG[Unified intrinsic registry] --> SEM
+    SEM --> RS[ResolvedSymbols and ExprTypes]
+    SEM --> IE[InterfaceImplementations evidence]
+    SEM --> TV[Target usize validation]
+
+    RS --> HIR[HIR consumes semantic results]
+    IE --> HIR
+    TV --> HIR
+    HIR --> MIR[MIR TypeID and Place]
+
+    MIR --> LAYOUT[Cached llvmLayout descriptors]
+    LAYOUT --> VALUE[llvmValue and llvmPlace]
+    VALUE --> BUILDER[Typed LLVM builder]
+    BUILDER --> LLVM[LLVM IR]
+    LLVM --> TARGETS[32-bit and 64-bit clang assembly]
+
+    REG --> COMPLETE[Pipeline completeness test]
+    COMPLETE --> SEM
+    COMPLETE --> HIR
+    COMPLETE --> MIR
+    COMPLETE --> LLVM
+```
+
+### Problems and solutions
+
+```mermaid
+flowchart TB
+    P1[Conformance could accept member HIR could not materialize]
+    P1 --> S1[Resolve declared implementations once in semantics]
+    S1 --> R1[Store exact symbol callable type and owner key per conversion]
+    R1 --> O1[HIR lowers recorded evidence without method relookup]
+
+    P2[32-bit array length could exceed target usize]
+    P2 --> S2[Validate explicit numeric type and selected target width]
+    S2 --> O2[Reject invalid source before HIR]
+
+    P3[Raw LLVM strings hid type and pointee mismatches]
+    P3 --> S3[Carry physical layout in llvmValue and llvmPlace]
+    S3 --> R3[Typed load store GEP cast compare phi call branch and return]
+    R3 --> O3[Compiler invariant fails before malformed LLVM emission]
+
+    P4[Carrier field numbers were duplicated]
+    P4 --> S4[Name fields in canonical layout descriptors]
+    S4 --> O4[Allocator drop string array optional pointer and interface paths share layout]
+
+    P5[Intrinsic discovery could outrun lowering support]
+    P5 --> S5[Derive operation list from compiler registries]
+    S5 --> O5[Real pipeline test exercises every operation on both target widths]
+```
+
+| Contract | Owning boundary | Result |
+| --- | --- | --- |
+| Interface implementation | Semantic analysis | Successful conversion records method name, exact symbol, callable type, and owner key. Intrinsic-only conformance stays rejected. |
+| Target representation | Type construction | Fixed-array length must fit explicit numeric type and target `usize`. |
+| Physical LLVM representation | LLVM layout descriptors | Rendered type, layout kind, pointee, elements, function signature, and named carrier fields have one authority. |
+| LLVM operands and addresses | Typed builder | Loads, stores, comparisons, arithmetic, casts, GEPs, phis, calls, branches, and returns validate layouts before text emission. |
+| Intrinsic lowerability | End-to-end pipeline test | Every registered operation must survive semantics, HIR, MIR, LLVM generation, and 32/64-bit clang assembly. |
+
+Canonical built-in carrier fields:
+
+- owned string: `data`, `length`, `allocator`
+- borrowed string or array: `data`, `length`
+- dynamic array: `data`, `length`, `capacity`, `allocator`
+- optional: `present`, `value`
+- owned pointer: `data`, `allocator`
+- interface: `data`, `dispatch`, plus `allocator` when owned
+
+Phase chain remains unchanged: AST → semantics → HIR → MIR → LLVM. Semantic
+types still describe language meaning; LLVM layouts own physical representation.
+User struct projections still use field indexes supplied by IR. Labels, symbol
+names, and textual constants may remain strings; emitted values and addresses
+must stay typed.

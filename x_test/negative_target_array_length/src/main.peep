@@ -1,0 +1,5 @@
+type TooLarge = [4294967296u64]u8;
+
+fn main() -> i32 {
+    return 0;
+}

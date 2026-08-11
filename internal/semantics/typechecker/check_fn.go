@@ -66,7 +66,7 @@ func (c *checker) checkDefaultParameters(scope *table.Scope, fn *ast.FnDecl) {
 		}
 		defaultType := c.typeExpr(scope, param.Default, paramType)
 		defaultType = c.requireValueType(param.Default, defaultType, "default value")
-		if !typeinfo.IsInvalidOrUnknown(defaultType) && !c.assignable(paramType, defaultType) {
+		if !typeinfo.IsInvalidOrUnknown(defaultType) && !c.assignable(paramType, defaultType, param.Default) {
 			c.ctx.Diagnostics.Add(typeMismatchError(param.Default,
 				fmt.Sprintf("cannot implicitly convert %s to %s", typeinfo.TypeText(defaultType), typeinfo.TypeText(paramType))))
 		}
@@ -422,8 +422,8 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 				break
 			}
 			if !typeinfo.SameType(argType, expectedType) &&
-				!c.assignable(expectedType, argType) &&
-				!c.assignable(argType, expectedType) {
+				!c.assignable(expectedType, argType, arg) &&
+				!c.assignable(argType, expectedType, arg) {
 				validArgs = false
 				break
 			}

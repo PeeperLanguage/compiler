@@ -99,22 +99,34 @@ type SemanticInfo struct {
 	// through the declaration module's ResolvedSymbols instead of
 	// caller scope. The Binding.Local gate prevents pointer-escape
 	// misclassification.
-	ExpandedDefaultBindings map[ast.NodeID]struct{}
-	ExprTypes               map[ast.NodeID]typeinfo.Type
-	ConstValues             map[symbols.SymbolID]constvalue.Value
-	MethodSets              map[string][]*symbols.Symbol
-	MethodSymbol            map[ast.NodeID]*symbols.Symbol
+	ExpandedDefaultBindings  map[ast.NodeID]struct{}
+	ExprTypes                map[ast.NodeID]typeinfo.Type
+	ConstValues              map[symbols.SymbolID]constvalue.Value
+	MethodSets               map[string][]*symbols.Symbol
+	MethodSymbol             map[ast.NodeID]*symbols.Symbol
+	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
+}
+
+// InterfaceImplementation is typechecker proof that one declared method can
+// materialize an interface slot. HIR consumes this proof without resolving the
+// concrete method set again.
+type InterfaceImplementation struct {
+	MethodName   string
+	Symbol       *symbols.Symbol
+	CallableType *typeinfo.FuncType
+	OwnerKey     string
 }
 
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
-		BlockScopes:             make(map[ast.NodeID]*table.Scope),
-		ResolvedSymbols:         make(map[ast.NodeID]*symbols.Symbol),
-		ExpandedDefaultBindings: make(map[ast.NodeID]struct{}),
-		ExprTypes:               make(map[ast.NodeID]typeinfo.Type),
-		ConstValues:             make(map[symbols.SymbolID]constvalue.Value),
-		MethodSets:              make(map[string][]*symbols.Symbol),
-		MethodSymbol:            make(map[ast.NodeID]*symbols.Symbol),
+		BlockScopes:              make(map[ast.NodeID]*table.Scope),
+		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
+		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
+		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
+		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
+		MethodSets:               make(map[string][]*symbols.Symbol),
+		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
+		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
 	}
 }
 

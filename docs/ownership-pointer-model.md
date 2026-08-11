@@ -116,12 +116,18 @@ Future layout work may add niche detection for more types.
 
 ## Strings
 
-`str` is a builtin alias for `byte[]`.
+`str` is an owned immutable text value. Its binding owns the string value and
+follows normal composite move and destruction rules. String contents cannot be
+changed through indexing or mutation operations.
 
-There is no special immutability mechanism for strings. The normal binding rule
-decides mutation: immutable bindings cannot mutate, mutable bindings may mutate
-when the operation itself is available. A decoded Unicode scalar is `char`, a
-4-byte value distinct from UTF-8 bytes.
+The binding may still be reassigned when declared mutable; reassignment replaces
+the owned string value. A string literal may use permanent program storage and
+therefore needs no runtime deallocation, while runtime-created strings carry
+their allocation provenance and are cleaned up normally. A decoded Unicode
+scalar is `char`, a 4-byte value distinct from UTF-8 bytes.
+
+`&str` is a borrowed string view. It may refer to an owned `str` value or to
+permanent literal storage, but never owns or frees its backing bytes.
 
 ## Copy And Move
 
@@ -389,7 +395,7 @@ struct Node {
 - `@expr` produces a non-owning raw pointer to addressable storage.
 - `?T` is optional for non-raw values.
 - `?*T` is nullable heap-handle storage.
-- `str` is builtin `byte[]`.
+- `str` is an owned immutable text value; `&str` is its borrowed view.
 - allocator returns `*T`.
 - `free` consumes allocator-created `*T`.
 - live owned values drop automatically on normal scope exit.

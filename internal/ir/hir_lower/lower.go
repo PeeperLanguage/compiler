@@ -745,10 +745,16 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 			Location: ast.LocOf(call),
 		}
 	}
-	methodOwnerKey, methodSym, fnType := lookupLoweredMethod(module, baseType, selector.Name.Name)
-	if methodSym == nil || fnType == nil {
+	methodSym := module.Semantics.ResolvedSymbols[selector.Name.ID()]
+	fnType, _ := module.Semantics.ExprTypes[selector.ID()].(*typeinfo.FuncType)
+	if methodSym == nil || fnType == nil || len(fnType.Params) == 0 {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: ir.InvalidType}
 	}
+	methodOwner, ok := typeinfo.ReceiverTarget(fnType.Params[0])
+	if !ok {
+		return &ir.InvalidExpr{Message: "selector method receiver missing", Type: ir.InvalidType}
+	}
+	methodOwnerKey := typeinfo.TypeText(methodOwner)
 	var baseExpr ir.Expr
 	switch receiverAddressKindFor(module, scope, fnType, baseType, selector.Expr) {
 	case receiverAddressReference:
@@ -995,9 +1001,13 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 		dataType = target
 	}
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
-	for _, method := range iface.Methods {
-		actualType, methodSym, ownerKey, ok := lookupInterfaceImplementation(module, resolved, method.Name)
-		if !ok || actualType == nil || methodSym == nil {
+	implementations := module.Semantics.InterfaceImplementations[expr.ID()]
+	if len(implementations) != len(iface.Methods) {
+		return &ir.InvalidExpr{Message: "missing interface implementation evidence", Type: ir.InvalidType, Location: ast.LocOf(expr)}
+	}
+	for index, method := range iface.Methods {
+		implementation := implementations[index]
+		if implementation.MethodName != method.Name || implementation.CallableType == nil || implementation.Symbol == nil || implementation.OwnerKey == "" {
 			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: ir.InvalidType, Location: ast.LocOf(expr)}
 		}
 		slotType, ok := interfaceSlotTypeID(ctx, module, method)
@@ -1008,8 +1018,8 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 			InterfaceType: loweredTypeID(ctx, module, expectedType),
 			MethodName:    method.Name,
 			SlotType:      slotType,
-			FuncName:      methodSymbolRefName(ownerKey, methodSym),
-			FuncType:      loweredTypeID(ctx, module, actualType),
+			FuncName:      methodSymbolRefName(implementation.OwnerKey, implementation.Symbol),
+			FuncType:      loweredTypeID(ctx, module, implementation.CallableType),
 			DataType:      loweredTypeID(ctx, module, dataType),
 		})
 	}
@@ -1019,20 +1029,6 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 		Type:     loweredTypeID(ctx, module, expectedType),
 		Location: ast.LocOf(expr),
 	}
-}
-
-func lookupInterfaceImplementation(module *project.Module, concrete typeinfo.Type, name string) (*typeinfo.FuncType, *symbols.Symbol, string, bool) {
-	owner := concrete
-	if target, ok := typeinfo.PointerTarget(concrete); ok {
-		owner = target
-	} else if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(concrete)); ok {
-		owner = target
-	}
-	ownerKey, sym, fnType := lookupLoweredMethod(module, owner, name)
-	if sym == nil || fnType == nil {
-		return nil, nil, "", false
-	}
-	return fnType, sym, ownerKey, true
 }
 
 func lookupInterfaceMethod(module *project.Module, baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
@@ -1095,30 +1091,6 @@ func exprResolvedType(module *project.Module, expr ast.Expr) typeinfo.Type {
 		return nil
 	}
 	return module.Semantics.ExprTypes[expr.ID()]
-}
-
-// lookupLoweredMethod maps lowered receiver type back to semantic method-set
-// entries so call lowering can reuse checker-known symbols and signatures.
-func lookupLoweredMethod(module *project.Module, baseType typeinfo.Type, name string) (string, *symbols.Symbol, *typeinfo.FuncType) {
-	if module == nil || module.Semantics == nil || baseType == nil || name == "" {
-		return "", nil, nil
-	}
-	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		for _, method := range module.Semantics.MethodSets[key] {
-			if method == nil || method.Name != name {
-				continue
-			}
-			typ, ok := symbols.GetSymbolType(method)
-			if !ok {
-				continue
-			}
-			fnType, ok := typ.(*typeinfo.FuncType)
-			if ok && fnType != nil {
-				return key, method, fnType
-			}
-		}
-	}
-	return "", nil, nil
 }
 
 func methodFunctionName(targetText, methodName string) string {

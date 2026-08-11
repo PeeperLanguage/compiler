@@ -1,0 +1,3 @@
+name = "negative_target_array_length"
+build = "program"
+entry = "src/main.peep"

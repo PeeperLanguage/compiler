@@ -14,7 +14,7 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-func (c *checker) assignable(dst, src typeinfo.Type) bool {
+func (c *checker) assignable(dst, src typeinfo.Type, conversion ast.Expr) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
@@ -25,73 +25,77 @@ func (c *checker) assignable(dst, src typeinfo.Type) bool {
 		srcTarget, srcMutable, srcRef := typeinfo.ReferenceTarget(typeinfo.Underlying(src))
 		iface, interfaceRef := typeinfo.InterfaceTypeOf(dstTarget)
 		if allowImplicitInterfaceConversion && srcRef && interfaceRef && (!dstMutable || srcMutable) {
-			return c.satisfiesInterface(iface, srcTarget)
+			implementations, _, ok := c.resolveInterfaceImplementations(iface, srcTarget)
+			if ok {
+				c.storeInterfaceImplementations(conversion, implementations)
+			}
+			return ok
 		}
 	}
 	if dstTarget, dstOwned := typeinfo.PointerTarget(typeinfo.Underlying(dst)); dstOwned {
 		srcTarget, srcOwned := typeinfo.PointerTarget(typeinfo.Underlying(src))
 		iface, interfaceOwned := typeinfo.InterfaceTypeOf(dstTarget)
 		if allowImplicitInterfaceConversion && srcOwned && interfaceOwned {
-			return c.satisfiesInterface(iface, srcTarget)
+			implementations, _, ok := c.resolveInterfaceImplementations(iface, srcTarget)
+			if ok {
+				c.storeInterfaceImplementations(conversion, implementations)
+			}
+			return ok
 		}
 	}
 	return false
 }
 
-func (c *checker) satisfiesInterface(iface *typeinfo.InterfaceType, src typeinfo.Type) bool {
+func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]project.InterfaceImplementation, []string, bool) {
 	if c == nil || iface == nil || src == nil {
-		return false
+		return nil, nil, false
 	}
 	owner := c.interfaceImplementorType(src)
 	if owner == nil {
-		return false
+		missing := make([]string, len(iface.Methods))
+		for i, method := range iface.Methods {
+			missing[i] = method.Name
+		}
+		return nil, missing, false
 	}
+	implementations := make([]project.InterfaceImplementation, 0, len(iface.Methods))
+	missing := make([]string, 0)
 	for _, required := range iface.Methods {
 		requiredType := typeinfo.ReplaceAbstractSelf(required.CallableType(), owner)
-		actualType, _, ok := c.lookupMethodType(owner, required.Name, false)
-		if !ok || actualType == nil {
-			return false
-		}
-		if !typeinfo.SameType(requiredType, actualType) {
-			return false
+		actual, ok := c.lookupDeclaredCallableMember(owner, required.Name)
+		actualType, callable := actual.Type.(*typeinfo.FuncType)
+		if !ok || actual.Symbol == nil || !callable || actualType == nil || !typeinfo.SameType(requiredType, actualType) {
+			missing = append(missing, required.Name)
+			continue
 		}
 		fnType, ok := requiredType.(*typeinfo.FuncType)
 		if !ok || fnType == nil || len(fnType.Params) == 0 {
-			return false
+			missing = append(missing, required.Name)
+			continue
 		}
 		receiver := fnType.Params[0]
 		if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(receiver)); referenceReceiver {
 			if !isValidReceiverType(receiver, src) {
-				return false
+				missing = append(missing, required.Name)
+				continue
 			}
 		} else if !typeinfo.Assignable(receiver, src) {
-			return false
+			missing = append(missing, required.Name)
+			continue
 		}
+		implementations = append(implementations, project.InterfaceImplementation{
+			MethodName: required.Name, Symbol: actual.Symbol,
+			CallableType: actualType, OwnerKey: actual.OwnerKey,
+		})
 	}
-	return true
+	return implementations, missing, len(missing) == 0
 }
 
-// missingInterfaceMethods returns names of interface methods not satisfied by src.
-func (c *checker) missingInterfaceMethods(iface *typeinfo.InterfaceType, src typeinfo.Type) []string {
-	if c == nil || iface == nil || src == nil {
-		return nil
+func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []project.InterfaceImplementation) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || expr == nil {
+		return
 	}
-	owner := c.interfaceImplementorType(src)
-	if owner == nil {
-		names := make([]string, len(iface.Methods))
-		for i, m := range iface.Methods {
-			names[i] = m.Name
-		}
-		return names
-	}
-	var missing []string
-	for _, required := range iface.Methods {
-		actualType, _, ok := c.lookupMethodType(owner, required.Name, false)
-		if !ok || actualType == nil {
-			missing = append(missing, required.Name)
-		}
-	}
-	return missing
+	c.module.Semantics.InterfaceImplementations[expr.ID()] = implementations
 }
 
 func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
@@ -99,7 +103,8 @@ func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.
 	if !ok || iface == nil {
 		return
 	}
-	if missing := c.missingInterfaceMethods(iface, src); len(missing) > 0 {
+	_, missing, _ := c.resolveInterfaceImplementations(iface, src)
+	if len(missing) > 0 {
 		d.WithHelp(fmt.Sprintf("missing methods: %s", strings.Join(missing, ", ")))
 	}
 }
@@ -136,26 +141,37 @@ func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
 	if c == nil || target == nil || arg == nil {
 		return false
 	}
-	return typeinfo.SameType(target, arg) || c.assignable(target, arg) || c.assignable(arg, target)
+	return typeinfo.SameType(target, arg) || c.assignable(target, arg, nil) || c.assignable(arg, target, nil)
 }
 
-func (c *checker) lookupMethodType(baseType typeinfo.Type, name string, includeIntrinsics bool) (typeinfo.Type, *symbols.Symbol, bool) {
+type callableMember struct {
+	Type     typeinfo.Type
+	Symbol   *symbols.Symbol
+	OwnerKey string
+}
+
+func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
 	if c == nil || c.module == nil || c.module.Semantics == nil {
-		return nil, nil, false
+		return callableMember{}, false
 	}
 	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
 		for _, method := range iface.Methods {
 			if method.Name != name {
 				continue
 			}
-			return c.boundInterfaceMethodType(method, baseType), nil, true
+			return callableMember{Type: c.boundInterfaceMethodType(method, baseType)}, true
 		}
 	}
-	if includeIntrinsics {
-		intrinsic, ok := intrinsics.Symbol(baseType, name, c.ctx.Target)
-		if ok {
-			return intrinsic.Type, intrinsic, true
-		}
+	intrinsic, ok := intrinsics.Symbol(baseType, name, c.ctx.Target)
+	if ok {
+		return callableMember{Type: intrinsic.Type, Symbol: intrinsic}, true
+	}
+	return c.lookupDeclaredCallableMember(baseType, name)
+}
+
+func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
+	if c == nil || c.module == nil || c.module.Semantics == nil {
+		return callableMember{}, false
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		methods := c.module.Semantics.MethodSets[key]
@@ -165,11 +181,11 @@ func (c *checker) lookupMethodType(baseType typeinfo.Type, name string, includeI
 			}
 			typ, ok := symbols.GetSymbolType(method)
 			if ok && typ != nil {
-				return typ, method, true
+				return callableMember{Type: typ, Symbol: method, OwnerKey: key}, true
 			}
 		}
 	}
-	return nil, nil, false
+	return callableMember{}, false
 }
 
 // availableMethods returns the names of all methods defined on baseType.

@@ -62,7 +62,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			escaped := llvmEscapeString(entry.Value)
 			fmt.Fprintf(&b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Value)+1, escaped, entry.Align)
 		} else {
-			llvmType := emitter.llvmType(entry.Type)
+			llvmType := emitter.layout(entry.Type).Text
 			fmt.Fprintf(&b, "%s = constant %s %s, align %d\n", entry.Name, llvmType, entry.Value, entry.Align)
 		}
 	}
@@ -112,14 +112,14 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					} else {
 						slotName = "null"
 					}
-					slotType, ok := interfaceSlotLLVMType(mod.Types, makeVal.Type, i)
+					slotLayout, ok := interfaceSlotLLVMLayout(mod.Types, makeVal.Type, i)
 					if !ok {
-						slotType = "i8*"
+						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
 					}
 					if slotName == "null" {
 						b.WriteString("i8* null")
 					} else {
-						fmt.Fprintf(&b, "i8* bitcast (%s %s to i8*)", slotType, slotName)
+						fmt.Fprintf(&b, "i8* bitcast (%s %s to i8*)", slotLayout.Text, slotName)
 					}
 				}
 				b.WriteString("], align 8\n")
@@ -149,7 +149,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		}
 		hasDecl = true
 		b.WriteString("declare ")
-		b.WriteString(emitter.llvmType(llvmFunctionReturnType(mod.Types, fn)))
+		b.WriteString(emitter.layout(llvmFunctionReturnType(mod.Types, fn)).Text)
 		b.WriteString(" @")
 		b.WriteString(name)
 		b.WriteString("(")
@@ -157,7 +157,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(emitter.llvmType(param.Type))
+			b.WriteString(emitter.layout(param.Type).Text)
 		}
 		b.WriteString(")\n")
 	}
@@ -171,7 +171,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		b.WriteString("declare void @free(i8*)\n\n")
 	}
 	if allocUsed || allocatorRuntimeUsed {
-		sizeType := emitter.llvmType(mod.Types.IndexType())
+		sizeType := emitter.layout(mod.Types.IndexType()).Text
 		if !mallocDeclared {
 			fmt.Fprintf(&b, "declare i8* @malloc(%s)\n", sizeType)
 		}
@@ -192,7 +192,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			continue
 		}
 		b.WriteString("declare ")
-		b.WriteString(emitter.llvmType(decl.ReturnType))
+		b.WriteString(emitter.layout(decl.ReturnType).Text)
 		b.WriteString(" @")
 		b.WriteString(ir.SanitizeSymbolName(decl.Name))
 		b.WriteString("(")
@@ -200,7 +200,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(emitter.llvmType(param))
+			b.WriteString(emitter.layout(param).Text)
 		}
 		b.WriteString(")\n")
 	}
@@ -239,7 +239,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			debugScopeID = emitter.debug.functionID(fn)
 		}
 		b.WriteString("define ")
-		b.WriteString(emitter.llvmType(llvmFunctionReturnType(mod.Types, fn)))
+		b.WriteString(emitter.layout(llvmFunctionReturnType(mod.Types, fn)).Text)
 		b.WriteString(" @")
 		b.WriteString(ir.SanitizeSymbolName(fn.Name))
 		b.WriteString("(")
@@ -247,7 +247,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(emitter.llvmType(param.Type))
+			b.WriteString(emitter.layout(param.Type).Text)
 			b.WriteString(" %")
 			b.WriteString(param.Name)
 		}
@@ -259,8 +259,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		lb := newLLVMBuilder(&b, emitter, debugScopeID)
 		stackSlots := stackLocalSlots(mod.Types, fn)
 		for _, param := range fn.Params {
-			lb.locals[param.Name] = "%" + param.Name
-			lb.localTypes[param.Name] = param.Type
+			lb.locals[param.Name] = lb.value("%"+param.Name, emitter.layout(param.Type))
 		}
 		for _, block := range fn.Blocks {
 			if block == nil {
@@ -274,15 +273,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				lb.setLocation(mir.InstrLocation(instr))
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					val := emitValueExpr(lb, assign.Value)
-					valueType := mirValueType(assign.Value)
-					if ptr, ok := lb.localPtrs[assign.Name]; ok && ptr != "" {
-						llvmType := lb.emitter.llvmType(lb.localTypes[assign.Name])
-						lb.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, val, llvmType, ptr))
+					if ptr, ok := lb.localPtrs[assign.Name]; ok {
+						lb.store(ptr, val)
 					} else {
 						lb.locals[assign.Name] = val
-						if valueType != ir.InvalidType {
-							lb.localTypes[assign.Name] = valueType
-						}
 					}
 					continue
 				}
@@ -307,24 +301,25 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				}
 			}
 			if block.Term != nil {
+				returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
 				lb.setLocation(mir.TerminatorLocation(block.Term))
 				switch term := block.Term.(type) {
 				case *mir.Jump:
-					lb.line(fmt.Sprintf("br label %%b%d", term.TargetID))
+					lb.branch(fmt.Sprintf("b%d", term.TargetID))
 				case *mir.Branch:
 					cond := emitCondRef(lb, term.Cond)
-					lb.line(fmt.Sprintf("br i1 %s, label %%b%d, label %%b%d", cond, term.ThenID, term.ElseID))
+					lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
 				case *mir.Ret:
 					if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
-						if llvmFunctionReturnType(mod.Types, fn) == mod.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32}) {
-							lb.line("ret i32 0")
+						if returnLayout.Kind != llvmLayoutVoid {
+							lb.ret(lb.value("0", returnLayout), returnLayout)
 						} else {
-							lb.line("ret void")
+							lb.retVoid(returnLayout)
 						}
 						continue
 					}
 					val := emitRef(lb, term.Value)
-					lb.line("ret " + emitter.llvmType(fn.ReturnType) + " " + val)
+					lb.ret(val, returnLayout)
 				}
 			}
 			lb.setLocation(nil)
@@ -524,7 +519,11 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 }
 
 func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
-	sizeType := emitter.llvmType(emitter.mod.Types.IndexType())
+	sizeLayout := emitter.layout(emitter.mod.Types.IndexType())
+	sizeType := sizeLayout.Text
+	i8 := llvmScalarLayout("i8")
+	rawPointer := llvmPointerLayout(i8)
+	void := &llvmLayout{Text: "void", Kind: llvmLayoutVoid}
 	b.WriteString("\n")
 	b.WriteString("@peeper_default_alloc = private constant [3 x i8*] [i8* null, i8* bitcast (i8* (i8*, ")
 	b.WriteString(sizeType)
@@ -533,21 +532,22 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 	b.WriteString(", i32)* @peeper_default_free_fn to i8*)]\n\n")
 
 	fmt.Fprintf(b, "define internal i8* @peeper_default_alloc_fn(i8* %%ctx, %s %%size, i32 %%align) {\n", sizeType)
-	b.WriteString("entry:\n")
-	fmt.Fprintf(b, "  %%ptr = call i8* @malloc(%s %%size)\n", sizeType)
-	b.WriteString("  %isnull = icmp eq i8* %ptr, null\n")
-	b.WriteString("  br i1 %isnull, label %trap, label %done\n")
-	b.WriteString("trap:\n")
-	b.WriteString("  call void @llvm.trap()\n")
-	b.WriteString("  unreachable\n")
-	b.WriteString("done:\n")
-	b.WriteString("  ret i8* %ptr\n")
+	lb := newLLVMBuilder(b, emitter, -1)
+	lb.namedLabel("entry")
+	ptr := lb.call(lb.value("@malloc", llvmFunctionLayout(rawPointer, []*llvmLayout{sizeLayout})), []llvmValue{lb.value("%size", sizeLayout)})
+	isNull := lb.compare("icmp", "eq", ptr, lb.value("null", rawPointer))
+	lb.condBranch(isNull, "trap", "done")
+	lb.namedLabel("trap")
+	lb.trap()
+	lb.namedLabel("done")
+	lb.ret(ptr, rawPointer)
 	b.WriteString("}\n\n")
 
 	fmt.Fprintf(b, "define internal void @peeper_default_free_fn(i8* %%ctx, i8* %%ptr, %s %%size, i32 %%align) {\n", sizeType)
-	b.WriteString("entry:\n")
-	b.WriteString("  call void @free(i8* %ptr)\n")
-	b.WriteString("  ret void\n")
+	lb = newLLVMBuilder(b, emitter, -1)
+	lb.namedLabel("entry")
+	lb.call(lb.value("@free", llvmFunctionLayout(void, []*llvmLayout{rawPointer})), []llvmValue{lb.value("%ptr", rawPointer)})
+	lb.retVoid(void)
 	b.WriteString("}\n\n")
 }
 
@@ -564,7 +564,7 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 	if emitter != nil && len(emitter.externalGlobals) > 0 {
 		b.WriteString("\n; external globals\n")
 		for name, typeID := range emitter.externalGlobals {
-			llvmType := emitter.llvmType(typeID)
+			llvmType := emitter.layout(typeID).Text
 			fmt.Fprintf(b, "%s = external global %s\n", name, llvmType)
 		}
 	}
@@ -674,13 +674,10 @@ func emitStackLocalSlots(b *llvmBuilder, slots []stackLocalSlot) {
 		return
 	}
 	for _, slot := range slots {
-		llvmType := b.emitter.llvmType(slot.Type)
-		ptr := b.nextReg()
-		b.line(fmt.Sprintf("%s = alloca %s", ptr, llvmType))
-		if paramValue, ok := b.locals[slot.Name]; ok && paramValue != "" {
-			b.line(fmt.Sprintf("store %s %s, %s* %s", llvmType, paramValue, llvmType, ptr))
+		ptr := b.alloca(b.emitter.layout(slot.Type))
+		if paramValue, ok := b.locals[slot.Name]; ok {
+			b.store(ptr, paramValue)
 		}
 		b.localPtrs[slot.Name] = ptr
-		b.localTypes[slot.Name] = slot.Type
 	}
 }

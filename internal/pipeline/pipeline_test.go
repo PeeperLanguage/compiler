@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,8 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
+	"compiler/internal/semantics/intrinsics"
+	"compiler/internal/semantics/symbols"
 	"compiler/pkg/peeper"
 )
 
@@ -1486,6 +1489,30 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineValidatesFixedArrayLengthAgainstTargetIndex(t *testing.T) {
+	const max32 = `type MaxArray = [4294967295u64]u8;`
+	const overflow32 = `type TooLarge = [4294967296u64]u8;`
+	config32 := project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: "386"}
+	if diag := buildPipelineTestWithConfig(t, config32, "", max32); diag.HasErrors() {
+		t.Fatalf("32-bit maximum array length rejected:\n%s", diag.EmitAllToString())
+	}
+	for name, src := range map[string]string{
+		"implicit target overflow": strings.ReplaceAll(overflow32, "u64", ""),
+		"explicit wider literal":   overflow32,
+	} {
+		t.Run(name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, config32, "", src)
+			if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "target usize (u32)") {
+				t.Fatalf("expected target-specific array length diagnostic, got:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+	config64 := project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: "amd64"}
+	if diag := buildPipelineTestWithConfig(t, config64, "", overflow32); diag.HasErrors() {
+		t.Fatalf("64-bit array length rejected:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineLowersNestedFieldAssignment(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Inner {
@@ -1532,6 +1559,7 @@ func TestPipelineRejectsNestedFieldAssignmentOnImmutable(t *testing.T) {
 	entrySrc := `struct Inner {
 	value: i32,
 }
+
 struct Outer {
 	inner: Inner,
 }
@@ -1553,5 +1581,106 @@ fn main() -> i32 {
 	}
 	if !found {
 		t.Fatalf("expected ErrInvalidAssignment error, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersEveryRegisteredIntrinsic(t *testing.T) {
+	const src = `fn Identity(value: i32) -> i32 {
+	return value;
+}
+
+fn WriteAt(values: &mut []i32, index: usize, value: i32) {
+	values[index] = value;
+}
+
+fn KeepRef(_: &mut i32) {
+}
+
+fn main() -> i32 {
+	let text: str = "abc";
+	let bytes = text.as_bytes();
+	let chars = text.as_chars();
+	let text_length = text.len();
+	let byte_length = bytes.len();
+	let values = []i32{1};
+	let appended = append(values, 2);
+	let reserved = reserve(appended, 8);
+	let resized = resize(reserved, 4, 0);
+	let mut shrunk = shrink(resized, 2);
+	WriteAt(&mut shrunk, 0, Identity(9));
+	let view = shrunk[0..1];
+	let first = view[0];
+	let mut scalar = first;
+	KeepRef(&mut scalar);
+	let owned = alloc(7);
+	if first != 9 {
+		return 1;
+	}
+	return text_length as i32 + byte_length as i32 + chars.len() as i32 + shrunk.len() as i32 + first;
+}`
+
+	targets := []struct {
+		name string
+		arch string
+	}{
+		{name: "32-bit", arch: "386"},
+		{name: "64-bit", arch: "amd64"},
+	}
+	for _, compilerTarget := range targets {
+		t.Run(compilerTarget.name, func(t *testing.T) {
+			filePath := "intrinsic_completeness_" + compilerTarget.arch + peeper.SourceExt
+			diag := diagnostics.NewDiagnosticBag()
+			diag.AddSourceContent(filePath, src)
+			ctx := project.NewWithConfig(project.Config{
+				RootDir:       ".",
+				Extension:     peeper.SourceExt,
+				TargetBackend: "llvm",
+				TargetOS:      "linux",
+				TargetArch:    compilerTarget.arch,
+			}, diag)
+			entry := parseModuleSource(filePath, src, diag)
+			entry.Origin = project.ModuleOriginLocal
+			if err := New(ctx).Run(entry); err != nil {
+				t.Fatalf("pipeline.Run returned error: %v", err)
+			}
+			if diag.HasErrors() {
+				t.Fatalf("registered intrinsic program failed:\n%s", diag.EmitAllToString())
+			}
+
+			observed := make(map[symbols.CompilerOp]struct{})
+			for _, symbol := range entry.Semantics.ResolvedSymbols {
+				if symbol != nil && symbol.CompilerOp != "" {
+					observed[symbol.CompilerOp] = struct{}{}
+				}
+			}
+			for _, op := range intrinsics.Operations() {
+				if _, ok := observed[op]; !ok {
+					t.Errorf("registered intrinsic %q lacks successful semantic/HIR/MIR/LLVM exercise", op)
+				}
+				delete(observed, op)
+			}
+			for op := range observed {
+				t.Errorf("lowered intrinsic %q is absent from compiler registry", op)
+			}
+			if entry.Phase != project.PhaseBackend || entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
+				t.Fatalf("intrinsic program stopped before backend: phase=%v HIR=%v MIR=%v LLVM=%v", entry.Phase, entry.HIR != nil, entry.MIR != nil, entry.LLVMIR != "")
+			}
+			mirText := entry.MIR.Text()
+			for _, marker := range []string{"call ", "store ", " = addr ", " = load ", " = view ", "cast ", " = alloc ", "drop ", " != ", "ret "} {
+				if !strings.Contains(mirText, marker) {
+					t.Errorf("representative MIR lacks %q:\n%s", marker, mirText)
+				}
+			}
+
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				t.Skip("clang unavailable for LLVM IR validation")
+			}
+			cmd := exec.Command(clang, "-target", ctx.Target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "intrinsic.o"), "-")
+			cmd.Stdin = strings.NewReader(entry.LLVMIR)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s representative LLVM IR is invalid: %v\n%s\n%s", compilerTarget.name, err, out, entry.LLVMIR)
+			}
+		})
 	}
 }

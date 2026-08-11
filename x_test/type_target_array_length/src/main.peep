@@ -1,0 +1,5 @@
+type MaxArray = [4294967295u64]u8;
+
+fn main() -> i32 {
+    return 0;
+}

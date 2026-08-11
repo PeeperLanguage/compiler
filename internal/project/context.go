@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -249,38 +250,10 @@ func predeclaredScope(compilerTarget target.Info) *table.Scope {
 	declarePredeclaredConst(scope, "none")
 	declarePredeclaredType(scope, "Allocator", &typeinfo.AllocatorType{})
 
-	elementType := &typeinfo.NamedType{Name: "T"}
-	arrayType := &typeinfo.ArrayType{Dynamic: true, Elem: elementType}
-	sizeType, ok := typeinfo.NumericTypeFromName("usize", compilerTarget)
-	if !ok {
-		panic("missing builtin usize type")
-	}
-	operations := []struct {
-		op     symbols.CompilerOp
-		params []typeinfo.Type
-	}{
-		{op: symbols.CompilerOpAppend, params: []typeinfo.Type{arrayType, elementType}},
-		{op: symbols.CompilerOpReserve, params: []typeinfo.Type{arrayType, sizeType}},
-		{op: symbols.CompilerOpResize, params: []typeinfo.Type{arrayType, sizeType, elementType}},
-		{op: symbols.CompilerOpShrink, params: []typeinfo.Type{arrayType, sizeType}},
-	}
-	for _, operation := range operations {
-		sym := symbols.New(string(operation.op), symbols.SymbolFunc, nil, nil)
-		sym.CompilerOp = operation.op
-		sym.Type = &typeinfo.FuncType{Params: operation.params, Return: arrayType}
-		sym.IsPub = true
+	for _, sym := range intrinsics.PredeclaredSymbols(compilerTarget) {
 		if err := scope.Declare(sym); err != nil {
 			panic(err)
 		}
-	}
-	valueType := &typeinfo.NamedType{Name: "T"}
-	allocType := &typeinfo.AllocatorType{}
-	allocSym := symbols.New(string(symbols.CompilerOpAlloc), symbols.SymbolFunc, nil, nil)
-	allocSym.CompilerOp = symbols.CompilerOpAlloc
-	allocSym.Type = &typeinfo.FuncType{Params: []typeinfo.Type{valueType, allocType}, Return: &typeinfo.OwnedPtrType{Target: valueType}}
-	allocSym.IsPub = true
-	if err := scope.Declare(allocSym); err != nil {
-		panic(err)
 	}
 	return scope
 }

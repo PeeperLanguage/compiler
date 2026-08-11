@@ -332,10 +332,11 @@ adding vtable metadata. Conversion never allocates or copies payload storage.
 `Concrete -> Interface` and `Concrete -> *Interface` are illegal. Bare interface
 types are also illegal in parameters, returns, globals, and aggregate storage.
 
-All carriers lower as `{ rawptr, vtable }`. Vtable slot zero destroys erased
-payload; remaining slots dispatch methods. Borrowed carriers never invoke
-cleanup. Dropping `*Interface` destroys payload through vtable, then releases
-allocation through selected program allocator.
+Borrowed carriers lower as `{ rawptr, vtable }`; the owning `*Interface` carrier
+also carries allocator provenance. Vtable slot zero destroys erased payload;
+remaining slots dispatch methods. Borrowed carriers never invoke cleanup.
+Dropping `*Interface` destroys payload through vtable, then releases allocation
+through selected program allocator.
 
 Callable receiver set follows carrier:
 

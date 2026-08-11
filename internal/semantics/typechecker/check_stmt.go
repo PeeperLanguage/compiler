@@ -56,7 +56,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		if c.rejectTemporaryBorrowEscape(scope, node.Value, "return") {
 			return
 		}
-		if !c.assignable(returnType, retType) {
+		if !c.assignable(returnType, retType, node.Value) {
 			d := typeMismatchError(node.Value,
 				fmt.Sprintf("cannot return %s from function returning %s",
 					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)))
@@ -115,7 +115,7 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 	if c.rejectTemporaryBorrowEscape(scope, node.Value, "assignment") {
 		return
 	}
-	if !c.assignable(targetType, valueType) {
+	if !c.assignable(targetType, valueType, node.Value) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
@@ -300,7 +300,7 @@ func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitial
 		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
-	if declType != nil && !c.assignable(declType, valType) {
+	if declType != nil && !c.assignable(declType, valType, value) {
 		d := typeMismatchError(value,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valType), typeinfo.TypeText(declType)))
