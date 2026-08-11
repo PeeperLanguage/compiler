@@ -134,8 +134,17 @@ func normalizeLockfileShape(lock *Lockfile) {
 }
 
 func SaveLockfile(projectRoot string, lock *Lockfile) error {
+	data, err := marshalLockfile(lock)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(projectRoot, LockfileName)
+	return writeFileAtomic(path, data, 0o644)
+}
+
+func marshalLockfile(lock *Lockfile) ([]byte, error) {
 	if lock == nil {
-		return fmt.Errorf("nil lockfile")
+		return nil, fmt.Errorf("nil lockfile")
 	}
 	normalizeLockfileShape(lock)
 	lock.GeneratedAt = time.Now().Format(time.RFC3339)
@@ -149,10 +158,9 @@ func SaveLockfile(projectRoot string, lock *Lockfile) error {
 
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal lockfile: %w", err)
+		return nil, fmt.Errorf("marshal lockfile: %w", err)
 	}
-	path := filepath.Join(projectRoot, LockfileName)
-	return writeFileAtomic(path, data, 0o644)
+	return data, nil
 }
 
 // sortEntriesByKey returns a new map whose iteration order is alphabetical by key.

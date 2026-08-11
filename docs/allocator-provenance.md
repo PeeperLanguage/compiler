@@ -29,13 +29,13 @@ Current source model already has correct ownership timing:
   allocator descriptors.
 - dynamic-array allocation, growth, and release use the originating allocator;
   the default descriptor currently bridges to `malloc` and `free`.
-- `*Interface` carries `{data, vtable, allocator}`. Its drop slot destroys the
+- `*Interface` carries `{data, dispatch, allocator}`. Its drop slot destroys the
   erased payload, then its release slot deallocates concrete storage through the
   carried allocator.
 
 `*T` lowers to `{T*, allocator}`, dynamic arrays to `{T*, len, cap, allocator}`,
 strings to `{byte*, len, allocator}`, and owned interfaces to
-`{data, vtable, allocator}`. Borrowed interfaces retain `{data, vtable}`.
+`{data, dispatch, allocator}`. Borrowed interfaces retain `{data, dispatch}`.
 
 ## Decisions
 
@@ -149,14 +149,19 @@ scoped allocator contexts remain later work.
 | `Allocator` | `allocator` |
 | `*T` | `{T* data, allocator}` |
 | `?*T` | same as `*T`; `data == null` means `none` |
-| `[]T` | `{T* data, i64 len, i64 cap, allocator}` |
-| `str` | `{byte* data, i64 len, allocator}` |
-| `*Iface` | `{rawptr data, rawptr vtable, allocator}` |
-| `&T`, `&mut T`, slice views, borrowed interfaces | unchanged non-owning layouts |
+| `[]T` | `{T* data, usize length, usize capacity, allocator}` |
+| `str` | `{byte* data, usize length, allocator}` |
+| `*Iface` | `{rawptr data, rawptr dispatch, allocator}` |
+| `&Iface`, `&mut Iface` | `{rawptr data, rawptr dispatch}` |
+| `&T`, `&mut T`, slice views | unchanged non-owning layouts; view length is target `usize` |
 | `rawptr`, `cstr` | unchanged; no provenance |
 
 `none` for `?*T` zeroes full carrier. Optional presence checks inspect only
 `data`. Valid owners always have non-null data and allocator.
+
+`usize` above is backend `IndexType`: `i32` on supported 32-bit targets and
+`i64` on supported 64-bit targets. Length, capacity, and index operands must
+share that target-sized layout.
 
 Empty dynamic arrays carry chosen allocator even while `data`, length, and
 capacity are zero. This lets later `append` or `reserve` allocate through same

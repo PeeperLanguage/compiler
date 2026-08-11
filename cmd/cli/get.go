@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,22 +16,46 @@ import (
 )
 
 type installContext struct {
-	manifestPath string
-	projectRoot  string
-	cachePath    string
-	file         *manifest.File
-	lockfile     *manifest.Lockfile
-	devConfig    manifest.DevConfig
+	projectRoot string
+	cachePath   string
+	file        *manifest.File
+	lockfile    *manifest.Lockfile
+	devConfig   manifest.DevConfig
 }
 
 func GetCommand(args []string) error {
-	if len(args) == 0 {
-		return installAllDependencies()
+	ctx, err := prepareInstallContext()
+	if err != nil {
+		return err
 	}
+	if len(args) == 0 {
+		return installManifestDependencies(ctx)
+	}
+	errs := make([]error, 0)
+	installed := make([]string, 0, len(args))
 	for _, packageSpec := range args {
-		if err := installPackage(packageSpec); err != nil {
-			return err
+		name, err := installPackage(ctx, packageSpec)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("install %s: %w", packageSpec, err))
+			continue
 		}
+		installed = append(installed, name)
+	}
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	pruned, err := pruneUnusedDependencies(ctx.lockfile)
+	if err != nil {
+		return err
+	}
+	if err := manifest.SaveDependencyState(ctx.projectRoot, ctx.file, ctx.lockfile); err != nil {
+		return err
+	}
+	if err := deletePrunedDependencies(ctx.cachePath, pruned); err != nil {
+		return err
+	}
+	for _, name := range installed {
+		printSuccess(fmt.Sprintf("Installed %s", name))
 	}
 	return nil
 }
@@ -53,7 +78,7 @@ func prepareInstallContext() (*installContext, error) {
 
 	lockfile, err := manifest.LoadLockfile(projectRoot)
 	if err != nil {
-		lockfile = manifest.NewLockfile()
+		return nil, err
 	}
 
 	devConfig := file.Dev
@@ -62,12 +87,11 @@ func prepareInstallContext() (*installContext, error) {
 	}
 
 	return &installContext{
-		manifestPath: manifestPath,
-		projectRoot:  projectRoot,
-		cachePath:    cachePath,
-		file:         file,
-		lockfile:     lockfile,
-		devConfig:    devConfig,
+		projectRoot: projectRoot,
+		cachePath:   cachePath,
+		file:        file,
+		lockfile:    lockfile,
+		devConfig:   devConfig,
 	}, nil
 }
 
@@ -76,6 +100,10 @@ func installAllDependencies() error {
 	if err != nil {
 		return err
 	}
+	return installManifestDependencies(ctx)
+}
+
+func installManifestDependencies(ctx *installContext) error {
 	if len(ctx.file.Dependencies) == 0 {
 		printInfo("No dependencies to install")
 		return nil
@@ -99,10 +127,14 @@ func installAllDependencies() error {
 			ctx.file.Dependencies[name] = dep
 		}
 	}
-	if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
+	pruned, err := pruneUnusedDependencies(ctx.lockfile)
+	if err != nil {
 		return err
 	}
-	if err := manifest.Save(ctx.manifestPath, ctx.file); err != nil {
+	if err := manifest.SaveDependencyState(ctx.projectRoot, ctx.file, ctx.lockfile); err != nil {
+		return err
+	}
+	if err := deletePrunedDependencies(ctx.cachePath, pruned); err != nil {
 		return err
 	}
 	printSuccess("All dependencies installed successfully")
@@ -213,14 +245,10 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 	return nil
 }
 
-func installPackage(packageSpec string) error {
+func installPackage(ctx *installContext, packageSpec string) (string, error) {
 	dep, err := manifest.ParseDependency(packageSpec)
 	if err != nil {
-		return err
-	}
-	ctx, err := prepareInstallContext()
-	if err != nil {
-		return err
+		return "", err
 	}
 
 	depName := dep.Path
@@ -232,10 +260,7 @@ func installPackage(packageSpec string) error {
 	if dep.Type == manifest.DependencyRemote {
 		constraints := map[string][]string{}
 		if err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, depName, "", map[string]bool{}); err != nil {
-			return err
-		}
-		if err := manifest.SaveLockfile(ctx.projectRoot, ctx.lockfile); err != nil {
-			return err
+			return "", err
 		}
 		if resolved, ok := resolvedDirectVersion(ctx.lockfile, depName); ok {
 			dep.Version = resolved
@@ -243,11 +268,7 @@ func installPackage(packageSpec string) error {
 	}
 
 	ctx.file.Dependencies[depName] = dep
-	if err := manifest.Save(ctx.manifestPath, ctx.file); err != nil {
-		return err
-	}
-	printSuccess(fmt.Sprintf("Installed %s", dep.Path))
-	return nil
+	return dep.Path, nil
 }
 
 func findBestLockedPackageID(lockfile *manifest.Lockfile, repoPath string, constraintSet []string) (string, string, bool, error) {

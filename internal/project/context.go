@@ -76,8 +76,6 @@ type Config struct {
 	TargetOS string
 	// Target architecture.
 	TargetArch string
-	// Final backend.
-	TargetBackend string
 	// Emit debug-friendly artifacts.
 	BuildDebug bool
 	// Compile test entry points.
@@ -103,9 +101,6 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	if err != nil {
 		diag.Add(diagnostics.NewError("resolve compiler target: " + err.Error()))
 		compilerTarget = target.Host()
-	}
-	if cfg.TargetBackend == "" {
-		cfg.TargetBackend = "llvm"
 	}
 	cfg.RootDir = filepath.Clean(cfg.RootDir)
 	if !filepath.IsAbs(cfg.RootDir) {

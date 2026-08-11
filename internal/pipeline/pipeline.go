@@ -1,6 +1,11 @@
 package pipeline
 
 import (
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
 	"compiler/internal/graph"
@@ -16,9 +21,6 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/usage"
-	"errors"
-	"strings"
-	"sync"
 )
 
 // Ordered phase execution for one compiler project.
@@ -156,6 +158,14 @@ func (p *Pipeline) Run(entry *project.Module) error {
 			break
 		}
 	}
+	if diag != nil && diag.HasErrors() {
+		return nil
+	}
+	// A scheduler stall without user diagnostics is an internal pipeline failure,
+	// not a successful partial compilation.
+	if err := requireTerminalModules(orderedModules, loader.scheduled); err != nil {
+		return err
+	}
 	mirModules := make([]*mir.Module, 0, len(orderedModules))
 	for _, module := range orderedModules {
 		if module != nil && module.MIR != nil {
@@ -163,6 +173,25 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		}
 	}
 	llvm.ValidateRuntimeSymbols(mirModules, diag, p.ctx.Target)
+	return nil
+}
+
+// requireTerminalModules reports scheduled modules that stopped before backend
+// lowering when user diagnostics did not already explain compilation stopping.
+func requireTerminalModules(modules []*project.Module, scheduled map[string]struct{}) error {
+	for _, module := range modules {
+		if module == nil || module.Phase >= project.PhaseBackend {
+			continue
+		}
+		if _, ok := scheduled[module.Key]; !ok {
+			continue
+		}
+		name := module.Key
+		if name == "" {
+			name = module.FilePath
+		}
+		return fmt.Errorf("pipeline stopped: module %q at %s phase", name, module.Phase)
+	}
 	return nil
 }
 

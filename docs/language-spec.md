@@ -332,9 +332,10 @@ adding vtable metadata. Conversion never allocates or copies payload storage.
 `Concrete -> Interface` and `Concrete -> *Interface` are illegal. Bare interface
 types are also illegal in parameters, returns, globals, and aggregate storage.
 
-Borrowed carriers lower as `{ rawptr, vtable }`; the owning `*Interface` carrier
-also carries allocator provenance. Vtable slot zero destroys erased payload;
-remaining slots dispatch methods. Borrowed carriers never invoke cleanup.
+Borrowed carriers lower as `{ data: rawptr, dispatch: rawptr }`; owning
+`*Interface` lowers as `{ data: rawptr, dispatch: rawptr, allocator: rawptr }`.
+Owned vtables reserve payload-destruction and storage-release slots before
+method slots. Borrowed carriers never invoke cleanup.
 Dropping `*Interface` destroys payload through vtable, then releases allocation
 through selected program allocator.
 
@@ -419,11 +420,12 @@ let empty = []i32{}
 let values = []i32{1, 2, 3}
 ```
 
-Empty literal is `{null, 0, 0}` and performs no allocation. Non-empty literal
-starts with length and capacity equal to element count. Allocation and checked
-size calculation happen before element initializers run; allocation failure
-traps in initial infallible literal model. Category B element initializers move
-into array slots.
+Empty literal is `{null, 0, 0, allocator}` and performs no allocation.
+Non-empty literal starts with length and capacity equal to element count.
+Length and capacity use target `usize`/backend `IndexType`. Allocation and
+checked size calculation happen before element initializers run; allocation
+failure traps in initial infallible literal model. Category B element
+initializers move into array slots.
 
 Dynamic-array owner operations consume old owner and return replacement owner:
 

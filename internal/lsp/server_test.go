@@ -5,6 +5,7 @@ import (
 	"bytes"
 	driver "compiler/internal/driver"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,9 +22,20 @@ import (
 const hoverMarker = "__CURSOR__"
 
 func collectPublishedDiagnostics(t *testing.T, payload []byte) map[string][][]Diagnostic {
+	notifications := collectDiagnosticNotifications(t, payload)
+	out := make(map[string][][]Diagnostic, len(notifications))
+	for uri, params := range notifications {
+		for _, param := range params {
+			out[uri] = append(out[uri], param.Diagnostics)
+		}
+	}
+	return out
+}
+
+func collectDiagnosticNotifications(t *testing.T, payload []byte) map[string][]PublishDiagnosticsParams {
 	t.Helper()
 	reader := bufio.NewReader(bytes.NewReader(payload))
-	out := make(map[string][][]Diagnostic)
+	out := make(map[string][]PublishDiagnosticsParams)
 	for {
 		msg, err := readMessage(reader)
 		if err != nil {
@@ -43,8 +55,102 @@ func collectPublishedDiagnostics(t *testing.T, payload []byte) map[string][][]Di
 		if err := json.Unmarshal(envelope.Params, &params); err != nil {
 			t.Fatalf("unmarshal diagnostics params: %v", err)
 		}
-		out[string(params.URI)] = append(out[string(params.URI)], params.Diagnostics)
+		out[string(params.URI)] = append(out[string(params.URI)], params)
 	}
+}
+
+func runTimedLSPChanges(t *testing.T, root, filePath, initial string, changes []string) []PublishDiagnosticsParams {
+	t.Helper()
+	inputReader, inputWriter := io.Pipe()
+	var output bytes.Buffer
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- Run(inputReader, &output)
+	}()
+
+	send := func(method string, params any) {
+		payload, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", method, err)
+		}
+		if err := writeMessage(inputWriter, Request{JSONRPC: "2.0", Method: method, Params: payload}); err != nil {
+			t.Fatalf("write %s: %v", method, err)
+		}
+	}
+	rootURI := DocumentURI(pathToURI(root))
+	send("initialize", InitializeParams{RootURI: &rootURI})
+	send("initialized", nil)
+	send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+		URI:     DocumentURI(pathToURI(filePath)),
+		Version: 1,
+		Text:    initial,
+	}})
+	for index, text := range changes {
+		send("textDocument/didChange", DidChangeTextDocumentParams{
+			TextDocument: VersionedTextDocumentIdentifier{
+				URI:     DocumentURI(pathToURI(filePath)),
+				Version: index + 2,
+			},
+			ContentChanges: []TextDocumentContentChangeEvent{{Text: text}},
+		})
+		time.Sleep(diagnosticsDebounceDelay + 25*time.Millisecond)
+	}
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close LSP input: %v", err)
+	}
+	if err := <-runDone; err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	return collectDiagnosticNotifications(t, output.Bytes())[pathToURI(filePath)]
+}
+
+func diagnosticForVersion(published []PublishDiagnosticsParams, version int) (PublishDiagnosticsParams, bool) {
+	for _, params := range published {
+		if params.Version != nil && *params.Version == version {
+			return params, true
+		}
+	}
+	return PublishDiagnosticsParams{}, false
+}
+
+func publishCurrentDiagnostics(t *testing.T, state *ServerState, filePath string) PublishDiagnosticsParams {
+	t.Helper()
+	var output bytes.Buffer
+	publishDiagnosticSnapshot(&output, nil, state, state.diagnosticSnapshot(filePath, nil))
+	message, err := readMessage(bufio.NewReader(&output))
+	if err != nil {
+		t.Fatalf("read published diagnostics: %v", err)
+	}
+	var notification struct {
+		Params PublishDiagnosticsParams `json:"params"`
+	}
+	if err := json.Unmarshal(message, &notification); err != nil {
+		t.Fatalf("unmarshal published diagnostics: %v", err)
+	}
+	return notification.Params
+}
+
+func hasErrorDiagnostic(diagnostics []Diagnostic) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+type blockingDiagnosticWriter struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingDiagnosticWriter) Write(data []byte) (int, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release
+	return len(data), nil
 }
 
 func markerPosition(t *testing.T, src string) (string, Position) {
@@ -1305,6 +1411,300 @@ func TestLSPDidChangePublishesSyntaxErrorsAfterDebounce(t *testing.T) {
 	last := filePublished[len(filePublished)-1]
 	if len(last) == 0 {
 		t.Fatalf("expected syntax diagnostics after invalid edit")
+	}
+}
+
+func TestDiagnosticSnapshotDiscardsStaleGenerationAndPublishesVersion(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	first := "fn main() -> i32 { return 0; }\n"
+	second := "fn main() -> i32 { return 1; }\n"
+	firstVersion := 4
+	secondVersion := 5
+	state := NewServerState()
+	state.RootDir = root
+	state.applyDocumentSnapshot(filePath, &first, &firstVersion)
+	stale := state.diagnosticSnapshot(filePath, nil)
+	state.applyDocumentSnapshot(filePath, &second, &secondVersion)
+
+	var output bytes.Buffer
+	publishDiagnosticSnapshot(&output, nil, state, stale)
+	if output.Len() != 0 {
+		t.Fatalf("stale snapshot published %d bytes", output.Len())
+	}
+
+	publishDiagnosticSnapshot(&output, nil, state, state.diagnosticSnapshot(filePath, nil))
+	message, err := readMessage(bufio.NewReader(&output))
+	if err != nil {
+		t.Fatalf("read current diagnostics: %v", err)
+	}
+	var notification struct {
+		Params PublishDiagnosticsParams `json:"params"`
+	}
+	if err := json.Unmarshal(message, &notification); err != nil {
+		t.Fatalf("unmarshal current diagnostics: %v", err)
+	}
+	if notification.Params.Version == nil || *notification.Params.Version != secondVersion {
+		t.Fatalf("diagnostic version = %v, want %d", notification.Params.Version, secondVersion)
+	}
+}
+
+func TestDocumentMutationWaitsForCheckedDiagnosticPublication(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	first := "fn main() -> i32 { return 0; }\n"
+	second := "fn main() -> i32 { return 1; }\n"
+	firstVersion := 1
+	secondVersion := 2
+	state := NewServerState()
+	state.RootDir = root
+	state.applyDocumentSnapshot(filePath, &first, &firstVersion)
+	snapshot := state.diagnosticSnapshot(filePath, nil)
+
+	writer := &blockingDiagnosticWriter{
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	published := make(chan struct{})
+	go func() {
+		publishDiagnosticSnapshot(writer, nil, state, snapshot)
+		close(published)
+	}()
+	select {
+	case <-writer.entered:
+	case <-time.After(time.Second):
+		t.Fatal("diagnostic publication did not reach protocol write")
+	}
+
+	mutated := make(chan struct{})
+	go func() {
+		state.applyDocumentSnapshot(filePath, &second, &secondVersion)
+		close(mutated)
+	}()
+	select {
+	case <-mutated:
+		t.Fatal("document mutation completed while checked diagnostics were writing")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(writer.release)
+	select {
+	case <-published:
+	case <-time.After(time.Second):
+		t.Fatal("diagnostic publication did not complete")
+	}
+	select {
+	case <-mutated:
+	case <-time.After(time.Second):
+		t.Fatal("document mutation did not complete")
+	}
+
+	state.mu.Lock()
+	gotGeneration := state.diagGeneration
+	state.mu.Unlock()
+	if gotGeneration != snapshot.generation+1 {
+		t.Fatalf("generation = %d, want %d", gotGeneration, snapshot.generation+1)
+	}
+}
+
+func TestLSPTypingRecoversDiagnosticsWithoutRestart(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	valid := `struct Point { x: i32, }
+fn main() {
+	let point = .Point{x = 1};
+	print(point.x);
+}
+`
+	tests := []struct {
+		name    string
+		invalid string
+	}{
+		{name: "unterminated string inserted at start", invalid: `"` + valid},
+		{name: "malformed struct literal inserted in middle", invalid: strings.Replace(valid, ".Point{x = 1};", ".Point{x = 1;", 1)},
+		{name: "unclosed parenthesis inserted in middle", invalid: strings.Replace(valid, "print(point.x);", "print((point.x);", 1)},
+		{name: "missing semicolon in middle", invalid: strings.Replace(valid, "print(point.x);", "print(point.x)", 1)},
+		{name: "unclosed block at end", invalid: strings.TrimSuffix(valid, "}\n")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := NewServerState()
+			state.RootDir = root
+			version := 1
+			state.applyDocumentSnapshot(filePath, &valid, &version)
+			if params := publishCurrentDiagnostics(t, state, filePath); hasErrorDiagnostic(params.Diagnostics) {
+				t.Fatalf("valid source diagnostics = %#v", params.Diagnostics)
+			}
+
+			version++
+			state.applyDocumentSnapshot(filePath, &test.invalid, &version)
+			params := publishCurrentDiagnostics(t, state, filePath)
+			if params.Version == nil || *params.Version != version {
+				t.Fatalf("invalid diagnostic version = %v, want %d", params.Version, version)
+			}
+			if !hasErrorDiagnostic(params.Diagnostics) {
+				t.Fatal("expected diagnostics while source is incomplete")
+			}
+
+			version++
+			state.applyDocumentSnapshot(filePath, &valid, &version)
+			params = publishCurrentDiagnostics(t, state, filePath)
+			if params.Version == nil || *params.Version != version {
+				t.Fatalf("recovered diagnostic version = %v, want %d", params.Version, version)
+			}
+			if hasErrorDiagnostic(params.Diagnostics) {
+				t.Fatalf("diagnostics remained after recovery: %#v", params.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestLSPNaturalTypingAndDeletionRefreshDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	filePath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	existing := `fn main() -> i32 {
+	let counter: i32 = 20;
+	return counter;
+}
+`
+	writeWorkspaceFile(t, filePath, existing)
+	typedDeclaration := "struct Player {\n}\n"
+	changes := make([]string, 0, len(typedDeclaration)+1)
+	for index := range typedDeclaration {
+		changes = append(changes, typedDeclaration[:index+1]+existing)
+	}
+	changes = append(changes, existing)
+
+	published := runTimedLSPChanges(t, root, filePath, existing, changes)
+	finalVersion := len(changes) + 1
+	final, ok := diagnosticForVersion(published, finalVersion)
+	if !ok {
+		t.Fatalf("missing diagnostics publish for typed document version %d", finalVersion)
+	}
+	if hasErrorDiagnostic(final.Diagnostics) {
+		t.Fatalf("stale diagnostics after deletion: %#v", final.Diagnostics)
+	}
+}
+
+func TestLSPNaturalStructLiteralTypingRecoversWithoutRestart(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	filePath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	existing := `struct Player {
+	value: i32,
+}
+
+fn main() -> i32 {
+	return 0;
+}
+`
+	writeWorkspaceFile(t, filePath, existing)
+	insertBefore := "\treturn 0;\n"
+	typedLiteral := "\tlet player = .{value = 20};\n"
+	changes := make([]string, 0, len(typedLiteral)+1)
+	for index := range typedLiteral {
+		changes = append(changes, strings.Replace(existing, insertBefore, typedLiteral[:index+1]+insertBefore, 1))
+	}
+	changes = append(changes, existing)
+
+	published := runTimedLSPChanges(t, root, filePath, existing, changes)
+	finalVersion := len(changes) + 1
+	final, ok := diagnosticForVersion(published, finalVersion)
+	if !ok {
+		t.Fatalf("missing diagnostics publish for typed document version %d", finalVersion)
+	}
+	if hasErrorDiagnostic(final.Diagnostics) {
+		t.Fatalf("stale diagnostics after struct literal deletion: %#v", final.Diagnostics)
+	}
+}
+
+func TestLSPRecoversAfterTransientSyntaxEditsWithoutRestart(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	filePath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	valid := `fn main() -> i32 {
+	let value: i32 = 20;
+	return value;
+}
+`
+	writeWorkspaceFile(t, filePath, valid)
+	changes := []string{
+		strings.Replace(valid, "20;", "\"unfinished;", 1),
+		valid,
+		strings.Replace(valid, "value;", "(value;", 1),
+		valid,
+		strings.Replace(valid, "20;", "20", 1),
+		valid,
+	}
+
+	published := runTimedLSPChanges(t, root, filePath, valid, changes)
+	finalVersion := len(changes) + 1
+	final, ok := diagnosticForVersion(published, finalVersion)
+	if !ok {
+		t.Fatalf("missing diagnostics publish for document version %d", finalVersion)
+	}
+	if hasErrorDiagnostic(final.Diagnostics) {
+		t.Fatalf("stale diagnostics after recovery: %#v", final.Diagnostics)
+	}
+}
+
+func TestConcurrentDifferentFileDiagnosticSnapshotsBothPublish(t *testing.T) {
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
+	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
+	first := "fn first() {}\n"
+	second := "fn second() {}\n"
+	version := 1
+	state := NewServerState()
+	state.RootDir = root
+	state.applyDocumentSnapshot(firstPath, &first, &version)
+	state.applyDocumentSnapshot(secondPath, &second, &version)
+	firstSnapshot := state.diagnosticSnapshot(firstPath, []string{firstPath})
+	secondSnapshot := state.diagnosticSnapshot(secondPath, []string{secondPath})
+
+	var output bytes.Buffer
+	var writeMu sync.Mutex
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		publishDiagnosticSnapshot(&output, &writeMu, state, firstSnapshot)
+	}()
+	go func() {
+		defer workers.Done()
+		publishDiagnosticSnapshot(&output, &writeMu, state, secondSnapshot)
+	}()
+	workers.Wait()
+
+	published := collectPublishedDiagnostics(t, output.Bytes())
+	if len(published[pathToURI(firstPath)]) != 1 || len(published[pathToURI(secondPath)]) != 1 {
+		t.Fatalf("published diagnostics = %#v, want one notification per file", published)
+	}
+}
+
+func TestDiagnosticSnapshotCopiesComponentFiles(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	utilPath := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, mainPath, "import \"app/util\";\nfn main() { util::Use(); }\n")
+	writeWorkspaceFile(t, utilPath, "fn Use() {}\n")
+	state := NewServerState()
+	state.RootDir = root
+	snapshot := state.diagnosticSnapshot(mainPath, nil)
+	if len(snapshot.files) != 2 {
+		t.Fatalf("snapshot files = %v, want component pair", snapshot.files)
+	}
+	state.mu.Lock()
+	for index := range state.workspace.components {
+		if len(state.workspace.components[index].files) > 0 {
+			state.workspace.components[index].files[0] = "mutated"
+		}
+	}
+	state.mu.Unlock()
+	if snapshot.files[0] == "mutated" {
+		t.Fatal("snapshot files alias mutable workspace component")
 	}
 }
 

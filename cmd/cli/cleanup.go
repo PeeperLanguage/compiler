@@ -36,25 +36,29 @@ func CleanupCommand(args []string) error {
 	removed := map[string]struct{}{}
 	fmt.Printf("Found %d orphaned dependencies:\n", len(candidates))
 	for _, candidate := range candidates {
+		if candidate.InLock {
+			lockfile.RemoveDependency(candidate.PackageID)
+		}
+	}
+	pruned, err := pruneUnusedDependencies(lockfile)
+	if err != nil {
+		return err
+	}
+	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
 		fmt.Printf("  → Removing %s\n", candidate.PackageID)
 		if err := os.RemoveAll(candidate.Path); err != nil {
 			return fmt.Errorf("remove cached package %q: %w", candidate.PackageID, err)
 		}
 		removed[candidate.PackageID] = struct{}{}
-		if candidate.InLock {
-			lockfile.RemoveDependency(candidate.PackageID)
-		}
 	}
-	pruned, err := pruneUnusedDependencies(lockfile, cachePath)
-	if err != nil {
+	if err := deletePrunedDependencies(cachePath, pruned); err != nil {
 		return err
 	}
-	for _, packageID := range pruned {
-		removed[packageID] = struct{}{}
-	}
-
-	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
-		return err
+	for _, dependency := range pruned {
+		removed[dependency.PackageID] = struct{}{}
 	}
 	printSuccess(fmt.Sprintf("Cleaned up %d orphaned dependencies", len(removed)))
 	return nil

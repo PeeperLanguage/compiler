@@ -635,6 +635,32 @@ fn main() -> i32 {
 	}
 }
 
+func TestGenerateHIRConsumesDistinctDefaultInterfaceEvidence(t *testing.T) {
+	const src = `iface ReadA { fn (&Self) read_a() -> i32 }
+iface ReadB { fn (&Self) read_b() -> i32 }
+struct Counter { value: i32 }
+fn (self: &Counter) read_a() -> i32 { return self.value; }
+fn (self: &Counter) read_b() -> i32 { return self.value + 1; }
+fn use(value: &Counter, first: &ReadA = value, second: &ReadB = value) -> i32 {
+	return first.read_a() + second.read_b();
+}
+fn main() -> i32 {
+	let counter: Counter = .{ value = 20 };
+	return use(&counter);
+}`
+	out := generateTestHIR(t, "hir_default_interface_evidence_test"+peeper.SourceExt, "hir_default_interface_evidence_test", src,
+		func(module *project.Module) { module.Semantics.MethodSets = nil })
+	mainFn := out.Funcs[len(out.Funcs)-1]
+	ret := mainFn.Body.Stmts[1].(*hir.Return)
+	call := ret.Value.(*ir.Call)
+	first, firstOK := call.Args[1].(*ir.InterfaceMake)
+	second, secondOK := call.Args[2].(*ir.InterfaceMake)
+	if !firstOK || !secondOK || len(first.Slots) != 1 || len(second.Slots) != 1 ||
+		first.Slots[0].MethodName != "read_a" || second.Slots[0].MethodName != "read_b" {
+		t.Fatalf("default interface carriers = %#v %#v", call.Args[1], call.Args[2])
+	}
+}
+
 func TestGenerateHIRPreservesTemporaryBorrow(t *testing.T) {
 	const src = `struct Box { value: i32 }
 fn Make() -> Box { return .{ value = 1 }; }

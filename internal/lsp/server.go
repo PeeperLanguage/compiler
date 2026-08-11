@@ -75,9 +75,7 @@ func Run(in io.Reader, out io.Writer) error {
 			var params DidOpenTextDocumentParams
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.TextDocument.URI))
-				state.mu.Lock()
-				state.Cache[path] = params.TextDocument.Text
-				state.mu.Unlock()
+				state.applyDocumentSnapshot(path, &params.TextDocument.Text, &params.TextDocument.Version)
 				publishComponentDiagnostics(out, &outMu, state, path, nil)
 			}
 			continue
@@ -87,9 +85,7 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil && len(params.ContentChanges) > 0 {
 				path := uriToPath(string(params.TextDocument.URI))
 				// Under Full Sync, the first change has the entire file text
-				state.mu.Lock()
-				state.Cache[path] = params.ContentChanges[0].Text
-				state.mu.Unlock()
+				state.applyDocumentSnapshot(path, &params.ContentChanges[0].Text, &params.TextDocument.Version)
 				state.scheduleDiagnosticRefresh(path, diagnosticsDebounceDelay, func() {
 					publishComponentDiagnostics(out, &outMu, state, path, nil)
 				})
@@ -100,9 +96,7 @@ func Run(in io.Reader, out io.Writer) error {
 			var params TextDocumentIdentifier
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				path := uriToPath(string(params.URI))
-				state.mu.Lock()
-				delete(state.Cache, path)
-				state.mu.Unlock()
+				state.applyDocumentSnapshot(path, nil, nil)
 				publishComponentDiagnostics(out, &outMu, state, path, nil)
 			}
 			continue
@@ -179,47 +173,16 @@ func Run(in io.Reader, out io.Writer) error {
 }
 
 func publishWorkspaceDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState) {
-	if state == nil || state.RootDir == "" {
-		return
+	for _, snapshot := range state.workspaceDiagnosticSnapshots() {
+		publishDiagnosticSnapshot(w, writeMu, state, snapshot)
 	}
-	if state.workspace == nil {
-		state.workspace = newWorkspaceIndex(state.RootDir)
-	}
-	if err := state.workspace.rebuild(state.Cache); err != nil {
-		return
-	}
-	for _, component := range state.workspace.components {
-		if len(component.files) == 0 {
-			continue
-		}
-		entry := component.files[0]
-		if len(component.roots) > 0 {
-			entry = component.roots[0]
-		}
-		publishComponentDiagnostics(w, writeMu, state, entry, component.files)
-	}
-}
-
-func componentFilesForPublish(state *ServerState, filePath string) []string {
-	if state == nil || state.workspace == nil {
-		return []string{filePath}
-	}
-	component, ok := state.workspace.componentForFile(filePath)
-	if !ok || len(component.files) == 0 {
-		return []string{filePath}
-	}
-	return append([]string(nil), component.files...)
 }
 
 func publishComponentDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState, entryFile string, files []string) {
 	if state == nil {
 		return
 	}
-	ctx, _ := state.recompile(entryFile)
-	if len(files) == 0 {
-		files = componentFilesForPublish(state, entryFile)
-	}
-	sendDiagnosticsForFiles(w, writeMu, ctx, files)
+	publishDiagnosticSnapshot(w, writeMu, state, state.diagnosticSnapshot(entryFile, files))
 }
 
 func uriToPath(uri string) string {
@@ -241,18 +204,38 @@ func pathToURI(path string) string {
 	return "file://" + clean
 }
 
-func sendDiagnosticsForFiles(w io.Writer, writeMu *sync.Mutex, ctx *project.CompilerContext, files []string) {
-	if ctx == nil || ctx.Diagnostics == nil {
+func publishDiagnosticSnapshot(w io.Writer, writeMu *sync.Mutex, state *ServerState, snapshot *diagnosticSnapshot) {
+	if state == nil || snapshot == nil || snapshot.ctx == nil || snapshot.ctx.Diagnostics == nil {
 		return
 	}
+	notifications := diagnosticNotifications(snapshot)
+	state.publishMu.Lock()
+	defer state.publishMu.Unlock()
+	state.mu.Lock()
+	stale := state.diagGeneration != snapshot.generation
+	state.mu.Unlock()
+	if stale {
+		return
+	}
+	for _, notification := range notifications {
+		if writeMu != nil {
+			writeMu.Lock()
+		}
+		_ = writeMessage(w, notification)
+		if writeMu != nil {
+			writeMu.Unlock()
+		}
+	}
+}
 
-	grouped := make(map[DocumentURI][]Diagnostic, len(files))
-	for _, filePath := range files {
+func diagnosticNotifications(snapshot *diagnosticSnapshot) []Notification {
+	grouped := make(map[DocumentURI][]Diagnostic, len(snapshot.files))
+	for _, filePath := range snapshot.files {
 		uri := DocumentURI(pathToURI(filePath))
 		grouped[uri] = []Diagnostic{}
 	}
 
-	for _, diag := range ctx.Diagnostics.Diagnostics() {
+	for _, diag := range snapshot.ctx.Diagnostics.Diagnostics() {
 		filePath := diag.FilePath
 		if filePath == "" {
 			continue
@@ -318,20 +301,21 @@ func sendDiagnosticsForFiles(w io.Writer, writeMu *sync.Mutex, ctx *project.Comp
 		})
 	}
 
-	for uri, lspDiags := range grouped {
-		if writeMu != nil {
-			writeMu.Lock()
+	notifications := make([]Notification, 0, len(snapshot.files))
+	for _, filePath := range snapshot.files {
+		uri := DocumentURI(pathToURI(filePath))
+		params := PublishDiagnosticsParams{
+			URI:         uri,
+			Diagnostics: grouped[uri],
 		}
-		_ = writeMessage(w, Notification{
+		if version, ok := snapshot.versions[project.CanonicalPath(filePath)]; ok {
+			params.Version = &version
+		}
+		notifications = append(notifications, Notification{
 			JSONRPC: "2.0",
 			Method:  "textDocument/publishDiagnostics",
-			Params: PublishDiagnosticsParams{
-				URI:         uri,
-				Diagnostics: lspDiags,
-			},
+			Params:  params,
 		})
-		if writeMu != nil {
-			writeMu.Unlock()
-		}
 	}
+	return notifications
 }

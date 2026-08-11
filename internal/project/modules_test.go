@@ -66,3 +66,17 @@ func TestModuleResetToPhaseDoesNotMutateSharedCFG(t *testing.T) {
 		t.Fatal("reset clone retained CFG cleanup")
 	}
 }
+
+func TestModulePhaseString(t *testing.T) {
+	for phase, want := range map[ModulePhase]string{
+		PhaseNone: "none", PhaseParsed: "parsed", PhaseTypechecked: "typechecked",
+		PhaseHIR: "HIR", PhaseMIR: "MIR", PhaseBackend: "backend",
+	} {
+		if got := phase.String(); got != want {
+			t.Fatalf("phase %d string = %q, want %q", phase, got, want)
+		}
+	}
+	if got := ModulePhase(255).String(); got != "phase(255)" {
+		t.Fatalf("unknown phase string = %q", got)
+	}
+}

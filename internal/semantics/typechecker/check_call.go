@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -84,10 +85,11 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 }
 
 func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) typeinfo.Type {
-	wantArgs := 2
-	if op == symbols.CompilerOpResize {
-		wantArgs = 3
+	genericSignature, ok := intrinsics.FunctionSignature(op, nil, c.ctx.Target)
+	if !ok {
+		panic(fmt.Sprintf("unsupported dynamic-array compiler operation %q", op))
 	}
+	wantArgs := len(genericSignature.Params)
 	if len(node.Args) != wantArgs {
 		for _, arg := range node.Args {
 			c.typeExpr(scope, arg, nil)
@@ -107,28 +109,16 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 		return &typeinfo.InvalidType{}
 	}
 
-	sizeType, ok := typeinfo.NumericTypeFromName("usize", c.ctx.Target)
+	fnType, ok := intrinsics.FunctionSignature(op, ownerType, c.ctx.Target)
 	if !ok {
-		panic("missing builtin usize type")
-	}
-	params := []typeinfo.Type{ownerType}
-	switch op {
-	case symbols.CompilerOpAppend:
-		params = append(params, array.Elem)
-	case symbols.CompilerOpReserve, symbols.CompilerOpShrink:
-		params = append(params, sizeType)
-	case symbols.CompilerOpResize:
-		params = append(params, sizeType, array.Elem)
-	default:
-		panic(fmt.Sprintf("unsupported dynamic-array compiler operation %q", op))
+		panic(fmt.Sprintf("missing dynamic-array signature for %q", op))
 	}
 
-	fnType := &typeinfo.FuncType{Params: params, Return: ownerType}
 	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
 	argTypes = append(argTypes, ownerType)
 	for i, arg := range node.Args[1:] {
-		argTypes = append(argTypes, c.typeExpr(scope, arg, params[i+1]))
+		argTypes = append(argTypes, c.typeExpr(scope, arg, fnType.Params[i+1]))
 	}
 	c.checkCall(scope, nil, node, fnType, argTypes)
 	if op == symbols.CompilerOpResize && !typeinfo.IsImplicitCopyType(array.Elem) {
@@ -402,9 +392,9 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 			}
 			return true
 		})
-		expanded, clonedIDs := ast.SubstituteExpr(params[i].Default, substitutions)
+		expanded, defaultClones, argumentClones := ast.SubstituteExpr(params[i].Default, substitutions)
 		if declModule != nil && declModule.Semantics != nil {
-			for originalID, clonedID := range clonedIDs {
+			for clonedID, originalID := range defaultClones {
 				if resolved := declModule.Semantics.ResolvedSymbols[originalID]; resolved != nil {
 					c.module.Semantics.ResolvedSymbols[clonedID] = resolved
 					c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
@@ -415,6 +405,20 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 				if implementations := declModule.Semantics.InterfaceImplementations[originalID]; implementations != nil {
 					c.module.Semantics.InterfaceImplementations[clonedID] = implementations
 				}
+			}
+		}
+		for clonedID, originalID := range argumentClones {
+			if resolved := c.module.Semantics.ResolvedSymbols[originalID]; resolved != nil {
+				c.module.Semantics.ResolvedSymbols[clonedID] = resolved
+			}
+			if _, ok := c.module.Semantics.ExpandedDefaultBindings[originalID]; ok {
+				c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
+			}
+			if typ := c.module.Semantics.ExprTypes[originalID]; typ != nil {
+				c.module.Semantics.ExprTypes[clonedID] = typ
+			}
+			if implementations := c.module.Semantics.InterfaceImplementations[originalID]; implementations != nil {
+				c.module.Semantics.InterfaceImplementations[clonedID] = implementations
 			}
 		}
 		call.Args = append(call.Args, expanded)

@@ -36,16 +36,17 @@ func RemoveCommand(args []string) error {
 
 	if dep.Type == manifest.DependencyRemote {
 		lockfile.RemoveDirectDependency(packageName)
-		if _, err := pruneUnusedDependencies(lockfile, cachePath); err != nil {
-			return err
-		}
 	}
 
 	delete(file.Dependencies, packageName)
-	if err := manifest.Save(manifestPath, file); err != nil {
+	pruned, err := pruneUnusedDependencies(lockfile)
+	if err != nil {
 		return err
 	}
-	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
+	if err := manifest.SaveDependencyState(projectRoot, file, lockfile); err != nil {
+		return err
+	}
+	if err := deletePrunedDependencies(cachePath, pruned); err != nil {
 		return err
 	}
 	printSuccess(fmt.Sprintf("Removed %s", packageName))

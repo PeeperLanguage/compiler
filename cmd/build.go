@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compiler/internal/backend"
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
 	"compiler/internal/project"
@@ -16,18 +15,17 @@ import (
 )
 
 // Compile one entry file with a fresh compiler project.
-func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *project.Module) {
+func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *project.Module) {
 	sourceProject, err := manifest.ResolveSourceFileProject(path)
 	rootDir := sourceProject.RootDir
 	projectName := sourceProject.ProjectName
 	cfg := project.Config{
-		RootDir:       rootDir,
-		ProjectName:   projectName,
-		Extension:     peeper.SourceExt,
-		TargetOS:      targetOS,
-		TargetArch:    targetArch,
-		TargetBackend: backendName,
-		BuildDebug:    debugBuild,
+		RootDir:     rootDir,
+		ProjectName: projectName,
+		Extension:   peeper.SourceExt,
+		TargetOS:    targetOS,
+		TargetArch:  targetArch,
+		BuildDebug:  debugBuild,
 	}
 	compilerContext = compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
 	if err != nil {
@@ -41,17 +39,13 @@ func compileEntry(path, backendName string, debugBuild bool, targetOS, targetArc
 }
 
 // Build final output after successful compilation.
-func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string, targetType backend.BackendType) error {
+func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string) error {
 	if ctx != nil && ctx.Diagnostics != nil && ctx.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
 	}
 	if entry == nil {
 		return fmt.Errorf("no entry module produced")
 	}
-	if targetType != backend.BackendLLVM {
-		return fmt.Errorf("unsupported backend: %s", targetType)
-	}
-
 	modules := ctx.Modules()
 	if len(modules) == 0 {
 		return fmt.Errorf("no modules compiled")

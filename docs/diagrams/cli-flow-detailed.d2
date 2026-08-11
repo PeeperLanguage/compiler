@@ -1,61 +1,76 @@
 direction: right
 
-runCommand: {
-  parseCommandArgs
-  resolveRunTarget
-  parsePathWithBackend
-  diagnostics
-  buildExecutable
-  execCommand
+entry: {
+  main: "cmd.main"
+  dispatch: "parseAndRunCommand"
+  lookup: "lookupCommand"
+  registry: "commandRegistry"
+  error: "exitOnCommandError"
 
-  parseCommandArgs -> resolveRunTarget
-  resolveRunTarget -> parsePathWithBackend
-  parsePathWithBackend -> diagnostics
-  diagnostics -> buildExecutable
-  buildExecutable -> execCommand
-
-  resolveRunTarget -> resolveManifestEntryPath: "no path or dir"
-  resolveManifestEntryPath -> manifest.Find
-  resolveManifestEntryPath -> manifest.Load
-  manifest.Load -> "package.entry"
+  main -> dispatch -> lookup -> registry
+  registry -> error: "Handler(args) error"
 }
 
-testCommand: {
-  parseCommandArgs
-  resolveRunTarget
-  parsePathWithTest
-  parseWorkspaceWithConfig
-  collectTestTargets
-  runSingleTest
+compile: {
+  compileEntry: "compileEntry"
+  newContext: "driver.NewContext"
+  parse: "driver.ParseFileWithOverlay"
+  pipeline: "pipeline.Run"
+  phases: "AST -> semantics -> HIR -> CFG -> ownership -> MIR -> LLVM [conceptual]"
 
-  parseCommandArgs -> resolveRunTarget
-  resolveRunTarget -> parsePathWithTest
-  resolveRunTarget -> resolveManifestEntryPath: "no path or dir"
-
-  parsePathWithTest -> parsePathWithConfig
-  parseWorkspaceWithConfig -> project.Load: "missing"
-  parseWorkspaceWithConfig -> compiler.NewWithConfig: "missing"
-  parseWorkspaceWithConfig -> compiler.ParseWorkspace: "missing"
-
-  collectTestTargets -> runSingleTest: "loop"
-  runSingleTest -> parsePathWithTest
-  runSingleTest -> buildExecutable
-  runSingleTest -> execCommand
-  runSingleTest -> parseTestFailureOutput
-  parseTestFailureOutput -> renderTestFailure
+  compileEntry -> newContext -> parse -> pipeline -> phases
 }
 
-checkCommand: {
-  parseCommandArgs
-  parsePathWithBackend
-  diagnostics
+build: {
+  command: "buildCommand"
+  args: "parseBuildArgs"
+  target: "resolveBuildTarget"
+  diagnostics: "emitAndCheckDiagnostics"
+  artifacts: "saveIRs"
+  stage: "moduleArtifactBase / replaceArtifactTree"
+  executable: "buildExecutable"
+  linkerArgs: "clangArgsForBuild"
+  clang: "clang [external]"
 
-  parseCommandArgs -> parsePathWithBackend
-  parsePathWithBackend -> diagnostics: "EmitAll"
-  parsePathWithBackend -> project.Load: "missing"
-  parsePathWithBackend -> compiler.NewWithConfig: "missing"
-  parsePathWithBackend -> compiler.ParseEntry/ParseWorkspace: "missing"
+  command -> args -> target -> compile.compileEntry -> diagnostics
+  diagnostics -> artifacts: "-keep-gen"
+  artifacts -> stage
+  diagnostics -> executable -> linkerArgs -> clang
 }
 
-parsePathWithBackend -> parsePathWithConfig
-parsePathWithTest -> parsePathWithConfig
+run: {
+  command: "runCommand"
+  args: "parseCommandArgs"
+  target: "resolveBuildTarget"
+  executable: "buildExecutable"
+  process: "exec.Command [standard library]"
+
+  command -> args -> target -> compile.compileEntry -> executable -> process
+}
+
+check: {
+  command: "checkCommand"
+  args: "parseCommandArgs"
+  discover: "project.DiscoverSourceFiles"
+  owner: "manifest.ResolveSourceFileProject"
+  context: "driver.NewContext"
+  roots: "driver.ParseFileWithOverlay"
+  diagnostics: "emitAndCheckDiagnostics"
+
+  command -> args -> discover -> owner -> context -> roots -> compile.pipeline -> diagnostics
+}
+
+dependencies: {
+  get: "cli.GetCommand"
+  update: "cli.UpdateCommand"
+  remove: "cli.RemoveCommand"
+  cleanup: "cli.CleanupCommand"
+  state: "manifest.SaveDependencyState"
+  lock: "manifest.SaveLockfile"
+  cache: "deletePrunedDependencies"
+
+  get -> state -> cache
+  update -> state -> cache
+  remove -> state -> cache
+  cleanup -> lock -> cache
+}

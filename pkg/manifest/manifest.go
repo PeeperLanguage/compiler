@@ -328,8 +328,16 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 }
 
 func Save(path string, file *File) error {
+	data, err := marshalManifest(file)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data, 0o644)
+}
+
+func marshalManifest(file *File) ([]byte, error) {
 	if file == nil {
-		return fmt.Errorf("nil manifest")
+		return nil, fmt.Errorf("nil manifest")
 	}
 
 	var builder strings.Builder
@@ -343,7 +351,7 @@ func Save(path string, file *File) error {
 	if !strings.HasSuffix(builder.String(), "\n") {
 		builder.WriteString("\n")
 	}
-	return writeFileAtomic(path, []byte(builder.String()), 0o644)
+	return []byte(builder.String()), nil
 }
 
 func renderPackageSection(builder *strings.Builder, pkg *PackageInfo) {

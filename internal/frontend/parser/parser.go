@@ -57,6 +57,7 @@ func (p *Parser) ParseModule() *ast.Module {
 			continue
 		}
 
+		before := p.pos
 		stmt := p.parseStmt(true)
 		switch node := stmt.(type) {
 		case nil:
@@ -64,12 +65,6 @@ func (p *Parser) ParseModule() *ast.Module {
 				loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
 				p.reportInvalidModuleStmt(loc, "module scope expects declaration", "remove unexpected token")
 				mod.Stmts = append(mod.Stmts, reg(p, &ast.BadStmt{Location: loc}))
-				before := p.pos
-				p.synchronize(token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
-					token.IFACE, token.ENUM, token.TYPE)
-				if p.pos == before && !p.at(token.EOF) {
-					p.advance()
-				}
 			}
 		case ast.Decl:
 			if _, ok := node.(*ast.LetDecl); ok {
@@ -83,6 +78,13 @@ func (p *Parser) ParseModule() *ast.Module {
 			mod.Stmts = append(mod.Stmts, stmt)
 		default:
 			p.reportInvalidModuleStmt(ast.LocOf(node), "module scope expects declaration", "move this statement into a function")
+		}
+		if p.pos == before && !p.at(token.EOF) {
+			p.synchronize(token.IMPORT, token.FN, token.LET, token.CONST, token.STRUCT,
+				token.IFACE, token.ENUM, token.TYPE)
+			if p.pos == before && !p.at(token.EOF) {
+				p.advance()
+			}
 		}
 	}
 
@@ -1312,7 +1314,8 @@ func parseBracedItemList[T any](
 ) ([]T, *token.Token, bool) {
 	lbrace := p.consume(token.LBRACE, openerMsg)
 	if lbrace == nil {
-		return nil, nil, false
+		endPos := p.prev().End
+		return nil, &token.Token{Kind: token.RBRACE, Start: endPos, End: endPos}, false
 	}
 	lbraceStart := lbrace.Start
 	var items []T

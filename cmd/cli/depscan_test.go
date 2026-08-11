@@ -1,12 +1,63 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"compiler/pkg/manifest"
 )
+
+func TestUpdateCommandReturnsRegistryScanFailureWithoutSaving(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, manifest.FileName)
+	lockPath := filepath.Join(root, manifest.LockfileName)
+	mustWriteGetTest(t, manifestPath, `name = "app"
+build = "program"
+
+[dependencies]
+missing = "github.com/acme/missing@v1.0.0"
+
+[dev]
+mock_remote = true
+mock_path = "./mock"
+`)
+	lock := manifest.NewLockfile()
+	packageID := "github.com/acme/missing@v1.0.0"
+	lock.SetDependency(packageID, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: "github.com/acme/missing", Direct: true})
+	lock.SetDirectDependency("missing", packageID)
+	if err := manifest.SaveLockfile(root, lock); err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore, _ := os.ReadFile(manifestPath)
+	lockBefore, _ := os.ReadFile(lockPath)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(wd); chdirErr != nil {
+			t.Fatal(chdirErr)
+		}
+	}()
+	var updateErr error
+	output := captureStdout(t, func() { updateErr = UpdateCommand(nil) })
+	if updateErr == nil {
+		t.Fatal("registry scan failure returned success")
+	}
+	if bytes.Contains([]byte(output), []byte("up to date")) {
+		t.Fatalf("failed update printed success: %s", output)
+	}
+	manifestAfter, _ := os.ReadFile(manifestPath)
+	lockAfter, _ := os.ReadFile(lockPath)
+	if !bytes.Equal(manifestAfter, manifestBefore) || !bytes.Equal(lockAfter, lockBefore) {
+		t.Fatal("failed update scan changed durable dependency state")
+	}
+}
 
 func TestUpdateConstraint(t *testing.T) {
 	tests := []struct {
@@ -124,7 +175,7 @@ func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 	})
 
 	lock.RemoveDependency("github.com/acme/a@v1")
-	removed, err := pruneUnusedDependencies(lock, cachePath)
+	removed, err := pruneUnusedDependencies(lock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +187,7 @@ func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 	}
 
 	lock.RemoveDependency("github.com/acme/e@v1")
-	removed, err = pruneUnusedDependencies(lock, cachePath)
+	removed, err = pruneUnusedDependencies(lock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +205,7 @@ func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 	}
 }
 
-func TestPruneUnusedDependenciesPreservesLockOnDeleteFailure(t *testing.T) {
+func TestCacheDeleteFailureLeavesPrunedMetadataAndRetryableCache(t *testing.T) {
 	lock := manifest.NewLockfile()
 	packageID := "github.com/acme/pkg@../../outside"
 	lock.SetDependency(packageID, manifest.LockfileEntry{
@@ -162,14 +213,17 @@ func TestPruneUnusedDependenciesPreservesLockOnDeleteFailure(t *testing.T) {
 		ResolvedURL: "github.com/acme/pkg",
 	})
 
-	removed, err := pruneUnusedDependencies(lock, t.TempDir())
-	if err == nil {
-		t.Fatal("cache deletion failure was ignored")
+	removed, err := pruneUnusedDependencies(lock)
+	if err != nil {
+		t.Fatalf("prune metadata: %v", err)
 	}
-	if len(removed) != 0 {
-		t.Fatalf("failed cache deletion reported removed packages: %v", removed)
+	if len(removed) != 1 {
+		t.Fatalf("pruned packages = %v, want one", removed)
 	}
-	if _, ok := lock.GetDependency(packageID); !ok {
-		t.Fatal("failed cache deletion removed lock entry")
+	if _, ok := lock.GetDependency(packageID); ok {
+		t.Fatal("pruned metadata retained package")
+	}
+	if err := deletePrunedDependencies(t.TempDir(), removed); err == nil {
+		t.Fatal("invalid cache deletion path succeeded")
 	}
 }

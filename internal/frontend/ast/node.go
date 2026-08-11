@@ -61,12 +61,11 @@ type Expr interface {
 	Node
 	exprNode()
 	// copyExpr clones the expression for call-site expansion.
-	// substitutions map parameter names to their caller-side
-	// argument expressions. newID assigns a fresh NodeID and
-	// records the original→cloned mapping in clonedIDs.
-	// Ident returns the replacement directly when its name
-	// matches a substitution; all other types clone recursively.
-	copyExpr(substitutions map[string]Expr, newID func(NodeID) NodeID, clonedIDs *map[NodeID]NodeID) Expr
+	// substitutions map parameter names to caller-side argument expressions.
+	// newID assigns a fresh NodeID and records whether its source belongs to
+	// the default declaration or caller argument. Ident deep-clones a matching
+	// replacement so each expanded occurrence remains a tree.
+	copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr
 	// exprText returns a stable, source-like text representation.
 	// Payloads such as literal values, operator text, and type
 	// annotations are included so the output is suitable for
