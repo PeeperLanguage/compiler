@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -460,25 +459,12 @@ func (w *workspaceIndex) reverseDependents(filePath string) map[string]struct{} 
 func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 	fileSet := make(map[string]struct{})
 	if rootDir != "" {
-		err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				name := d.Name()
-				if name == ".git" || name == "build" || name == "_builtin_library" || strings.HasPrefix(name, ".tmp") {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if filepath.Ext(path) != peeper.SourceExt {
-				return nil
-			}
-			fileSet[project.CanonicalPath(path)] = struct{}{}
-			return nil
-		})
+		files, err := project.DiscoverSourceFiles([]string{rootDir})
 		if err != nil {
 			return nil, err
+		}
+		for _, path := range files {
+			fileSet[path] = struct{}{}
 		}
 	}
 	for path := range cache {

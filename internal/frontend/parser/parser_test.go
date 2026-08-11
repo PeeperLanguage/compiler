@@ -2038,6 +2038,20 @@ func TestParseUnclosedParenAtEOF(t *testing.T) {
 	}
 }
 
+func TestParseModuleRecoversFromIncompleteTopLevelText(t *testing.T) {
+	_, diag := parseTestModule(`sfn main() -> i32 { return 0; }`)
+	if !diag.HasErrors() {
+		t.Fatal("expected diagnostics for incomplete top-level text")
+	}
+}
+
+func TestParsePartialStructDeclaration(t *testing.T) {
+	_, diag := parseTestModule(`struct Player`)
+	if !diag.HasErrors() {
+		t.Fatal("expected diagnostic for missing struct body")
+	}
+}
+
 func TestParseUnclosedBraceInStruct(t *testing.T) {
 	src := `struct S { x: i32`
 	_, diag := parseTestModule(src)

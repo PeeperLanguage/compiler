@@ -150,7 +150,6 @@ fn main() -> i32 {
 		RootDir:        root,
 		Extension:      peeper.SourceExt,
 		LibraryBaseDir: libraryBase,
-		TargetBackend:  "llvm",
 	}, diag)
 	entry := &project.Module{
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
@@ -256,9 +255,8 @@ fn main() -> i32 {
 	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
 	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
 	ctx := project.NewWithConfig(project.Config{
-		RootDir:       ".",
-		Extension:     peeper.SourceExt,
-		TargetBackend: "llvm",
+		RootDir:   ".",
+		Extension: peeper.SourceExt,
 	}, diag)
 
 	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
@@ -301,9 +299,8 @@ fn main() -> i32 {
 	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
 	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
 	ctx := project.NewWithConfig(project.Config{
-		RootDir:       ".",
-		Extension:     peeper.SourceExt,
-		TargetBackend: "llvm",
+		RootDir:   ".",
+		Extension: peeper.SourceExt,
 	}, diag)
 
 	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
@@ -358,12 +355,11 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 }`
 
 	cfg := project.Config{
-		RootDir:       ".",
-		Extension:     peeper.SourceExt,
-		TargetOS:      "linux",
-		TargetArch:    "amd64",
-		TargetBackend: "llvm",
-		BuildDebug:    true,
+		RootDir:    ".",
+		Extension:  peeper.SourceExt,
+		TargetOS:   "linux",
+		TargetArch: "amd64",
+		BuildDebug: true,
 	}
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
@@ -435,6 +431,45 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRequireTerminalModulesReportsStoppedPhase(t *testing.T) {
+	tests := []struct {
+		name   string
+		module *project.Module
+		want   string
+	}{
+		{name: "blocked prerequisite", module: &project.Module{Key: "local:main", Phase: project.PhaseResolved}, want: "resolved phase"},
+		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: project.PhaseTypechecked}, want: "typechecked phase"},
+		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: project.PhaseUsage}, want: "usage phase"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := requireTerminalModules([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}})
+			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
+			}
+		})
+	}
+	if err := requireTerminalModules([]*project.Module{{Key: "local:main", Phase: project.PhaseBackend}}, map[string]struct{}{"local:main": {}}); err != nil {
+		t.Fatalf("completed module rejected: %v", err)
+	}
+	if err := requireTerminalModules([]*project.Module{{Key: "overlay:stub", Phase: project.PhaseNone}}, map[string]struct{}{"local:main": {}}); err != nil {
+		t.Fatalf("unscheduled overlay rejected: %v", err)
+	}
+}
+
+func TestPipelineDiagnosticStopReturnsNormally(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	entry := parseModuleSource("invalid"+peeper.SourceExt, "fn main() -> Missing { return 0; }", diag)
+	entry.Origin = project.ModuleOriginLocal
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("diagnostic-driven stop returned pipeline error: %v", err)
+	}
+	if !diag.HasErrors() {
+		t.Fatal("invalid program produced no diagnostic")
 	}
 }
 
@@ -1632,11 +1667,10 @@ fn main() -> i32 {
 			diag := diagnostics.NewDiagnosticBag()
 			diag.AddSourceContent(filePath, src)
 			ctx := project.NewWithConfig(project.Config{
-				RootDir:       ".",
-				Extension:     peeper.SourceExt,
-				TargetBackend: "llvm",
-				TargetOS:      "linux",
-				TargetArch:    compilerTarget.arch,
+				RootDir:    ".",
+				Extension:  peeper.SourceExt,
+				TargetOS:   "linux",
+				TargetArch: compilerTarget.arch,
 			}, diag)
 			entry := parseModuleSource(filePath, src, diag)
 			entry.Origin = project.ModuleOriginLocal

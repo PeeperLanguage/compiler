@@ -63,7 +63,7 @@ Old flow had several competing authorities:
 flowchart LR
     AST[AST] --> SEM[Semantic analysis]
 
-    REG[Unified intrinsic registry] --> SEM
+    REG[One intrinsic definition slice] --> SEM
     SEM --> RS[ResolvedSymbols and ExprTypes]
     SEM --> IE[InterfaceImplementations evidence]
     SEM --> TV[Target usize validation]
@@ -119,7 +119,7 @@ flowchart TB
 | Target representation | Type construction | Fixed-array length must fit explicit numeric type and target `usize`. |
 | Physical LLVM representation | LLVM layout descriptors | Rendered type, layout kind, pointee, elements, function signature, and named carrier fields have one authority. |
 | LLVM operands and addresses | Typed builder | Loads, stores, comparisons, arithmetic, casts, GEPs, phis, calls, branches, and returns validate layouts before text emission. |
-| Intrinsic lowerability | End-to-end pipeline test | Every registered operation must survive semantics, HIR, MIR, LLVM generation, and 32/64-bit clang assembly. |
+| Intrinsic lowerability | Definition registry and end-to-end pipeline test | One definition slice drives symbols, method discovery, operations, and signatures; every operation must survive semantics, HIR, MIR, LLVM generation, and 32/64-bit clang assembly. |
 
 Canonical built-in carrier fields:
 
@@ -128,7 +128,8 @@ Canonical built-in carrier fields:
 - dynamic array: `data`, `length`, `capacity`, `allocator`
 - optional: `present`, `value`
 - owned pointer: `data`, `allocator`
-- interface: `data`, `dispatch`, plus `allocator` when owned
+- borrowed interface: `data`, `dispatch`
+- owned interface: `data`, `dispatch`, `allocator`
 
 Phase chain remains unchanged: AST → semantics → HIR → MIR → LLVM. Semantic
 types still describe language meaning; LLVM layouts own physical representation.

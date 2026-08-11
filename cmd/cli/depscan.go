@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -26,13 +27,18 @@ type orphanCandidate struct {
 	InLock    bool
 }
 
+type prunedDependency struct {
+	PackageID string
+	Repo      string
+	Version   string
+}
+
 type updateScanContext struct {
-	manifestPath string
-	projectRoot  string
-	file         *manifest.File
-	lockfile     *manifest.Lockfile
-	devConfig    manifest.DevConfig
-	filter       map[string]bool
+	projectRoot string
+	file        *manifest.File
+	lockfile    *manifest.Lockfile
+	devConfig   manifest.DevConfig
+	filter      map[string]bool
 }
 
 func prepareUpdateScanContext(args []string) (*updateScanContext, error) {
@@ -62,12 +68,11 @@ func prepareUpdateScanContext(args []string) (*updateScanContext, error) {
 	}
 
 	return &updateScanContext{
-		manifestPath: manifestPath,
-		projectRoot:  projectRoot,
-		file:         file,
-		lockfile:     lockfile,
-		devConfig:    devConfig,
-		filter:       filter,
+		projectRoot: projectRoot,
+		file:        file,
+		lockfile:    lockfile,
+		devConfig:   devConfig,
+		filter:      filter,
 	}, nil
 }
 
@@ -76,6 +81,7 @@ func collectUpdatePlans(httpClient *http.Client, file *manifest.File, lockfile *
 		return nil, 0, nil
 	}
 	plans := make([]updatePlan, 0)
+	scanErrors := make([]error, 0)
 	checked := 0
 	for alias, dep := range file.Dependencies {
 		if dep.Type != manifest.DependencyRemote {
@@ -103,7 +109,7 @@ func collectUpdatePlans(httpClient *http.Client, file *manifest.File, lockfile *
 		constraint := updateConstraint(dep.Version)
 		available, err := registry.ListAvailableVersions(httpClient, dep.Path, devConfig)
 		if err != nil {
-			printWarning(fmt.Sprintf("%s: %v", dep.Path, err))
+			scanErrors = append(scanErrors, fmt.Errorf("scan updates for %s: %w", dep.Path, err))
 			continue
 		}
 		target, err := semver.BestMatch(available, constraint)
@@ -123,6 +129,9 @@ func collectUpdatePlans(httpClient *http.Client, file *manifest.File, lockfile *
 		})
 	}
 	sort.Slice(plans, func(i, j int) bool { return plans[i].Alias < plans[j].Alias })
+	if err := errors.Join(scanErrors...); err != nil {
+		return nil, checked, err
+	}
 	return plans, checked, nil
 }
 
@@ -248,11 +257,11 @@ func lockedPackageIdentity(lockfile *manifest.Lockfile, packageID string) (strin
 	return entry.ResolvedURL, entry.Version, true
 }
 
-func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) ([]string, error) {
+func pruneUnusedDependencies(lockfile *manifest.Lockfile) ([]prunedDependency, error) {
 	if lockfile == nil {
 		return nil, nil
 	}
-	removed := make([]string, 0)
+	removed := make([]prunedDependency, 0)
 	seen := make(map[string]struct{})
 	for {
 		unused := lockfile.GetUnusedDependencies()
@@ -267,22 +276,27 @@ func pruneUnusedDependencies(lockfile *manifest.Lockfile, cachePath string) ([]s
 			}
 			repo, version, ok := lockedPackageIdentity(lockfile, packageID)
 			if !ok {
-				sort.Strings(removed)
 				return removed, fmt.Errorf("lockfile package %q has no remote identity", packageID)
-			}
-			if err := registry.DeleteModule(cachePath, repo, version); err != nil {
-				sort.Strings(removed)
-				return removed, fmt.Errorf("delete unused package %q: %w", packageID, err)
 			}
 			lockfile.RemoveDependency(packageID)
 			seen[packageID] = struct{}{}
-			removed = append(removed, packageID)
+			removed = append(removed, prunedDependency{PackageID: packageID, Repo: repo, Version: version})
 			progress = true
 		}
 		if !progress {
 			break
 		}
 	}
-	sort.Strings(removed)
+	sort.Slice(removed, func(i, j int) bool { return removed[i].PackageID < removed[j].PackageID })
 	return removed, nil
+}
+
+func deletePrunedDependencies(cachePath string, dependencies []prunedDependency) error {
+	errs := make([]error, 0)
+	for _, dependency := range dependencies {
+		if err := registry.DeleteModule(cachePath, dependency.Repo, dependency.Version); err != nil {
+			errs = append(errs, fmt.Errorf("delete unused package %q: %w", dependency.PackageID, err))
+		}
+	}
+	return errors.Join(errs...)
 }

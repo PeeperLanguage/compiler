@@ -1,6 +1,7 @@
 package project
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -44,6 +45,39 @@ const (
 	PhaseMIR
 	PhaseBackend
 )
+
+func (phase ModulePhase) String() string {
+	switch phase {
+	case PhaseNone:
+		return "none"
+	case PhaseParsed:
+		return "parsed"
+	case PhaseCollected:
+		return "collected"
+	case PhaseBound:
+		return "bound"
+	case PhaseResolved:
+		return "resolved"
+	case PhaseConstEval:
+		return "const-eval"
+	case PhaseTypechecked:
+		return "typechecked"
+	case PhaseHIR:
+		return "HIR"
+	case PhaseCFG:
+		return "CFG"
+	case PhaseOwnership:
+		return "ownership"
+	case PhaseUsage:
+		return "usage"
+	case PhaseMIR:
+		return "MIR"
+	case PhaseBackend:
+		return "backend"
+	default:
+		return fmt.Sprintf("phase(%d)", uint8(phase))
+	}
+}
 
 const (
 	GraphNodeModule graph.NodeKind = "module"

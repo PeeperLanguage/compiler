@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"errors"
 	"flag"
 	"fmt"
@@ -37,72 +38,55 @@ func parseAndRunCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	commandName, commandBackend, err := parseCommandBackend(args[0])
-	if err != nil {
-		colors.RED.Fprintln(os.Stderr, err)
-		os.Exit(exitCodeUsage)
-	}
-
-	switch commandName {
-	case "build":
-		exitOnCommandError(buildCommand(args[1:], commandBackend))
-	case "lsp":
-		startLSPServer()
-	case "run":
-		exitOnCommandError(runCommand(args[1:], commandBackend))
-	case "check", "lint":
-		exitOnCommandError(checkCommand(args[1:]))
-	default:
-		return runCLISubcommand(commandName, args[1:])
-	}
-	return true
-}
-
-// runCLISubcommand dispatches to a cli.XxxCommand and converts its error into
-// a process exit. Returns true when the name matched a known CLI subcommand.
-func runCLISubcommand(name string, args []string) bool {
-	handler, ok := lookupCLISubcommand(name)
+	command, ok := lookupCommand(args[0])
 	if !ok {
 		return false
 	}
-	exitOnCommandError(handler(args))
+	exitOnCommandError(command.Handler(args[1:]))
 	return true
 }
 
-// cliSubcommand maps a CLI subcommand name to its handler function.
-type cliSubcommand func([]string) error
-
-// lookupCLISubcommand returns the handler for a known CLI subcommand.
-// Add new entries here as new commands are introduced.
-func lookupCLISubcommand(name string) (cliSubcommand, bool) {
-	switch name {
-	case "init":
-		return cli.InitCommand, true
-	case "get":
-		return cli.GetCommand, true
-	case "update":
-		return cli.UpdateCommand, true
-	case "sniff":
-		return cli.SniffCommand, true
-	case "remove", "rm":
-		return cli.RemoveCommand, true
-	case "list", "ls":
-		return cli.ListCommand, true
-	case "clean":
-		return cli.CleanupCommand, true
-	case "orphans":
-		return cli.OrphansCommand, true
-	default:
-		return nil, false
-	}
+type commandDefinition struct {
+	Name        string
+	Aliases     []string
+	Usage       string
+	Description string
+	Handler     func([]string) error
 }
 
-func startLSPServer() {
-	colors.CYAN.Fprintln(os.Stderr, "starting Peeper LSP server...")
-	if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
-		colors.RED.Fprintln(os.Stderr, err)
-		os.Exit(exitCodeError)
+var commandRegistry = []commandDefinition{
+	{Name: "build", Aliases: []string{"build:llvm"}, Usage: "build[:llvm] [path]", Description: fmt.Sprintf("build program or use %s/%s from %s", peeper.SourceDirName, peeper.MainFileName, manifest.FileName), Handler: buildCommand},
+	{Name: "run", Aliases: []string{"run:llvm"}, Usage: "run[:llvm] [path] [args]", Description: "build and run program", Handler: runCommand},
+	{Name: "check", Aliases: []string{"lint"}, Usage: "check|lint [path ...]", Description: fmt.Sprintf("typecheck files or folders recursively (%s only)", peeper.SourceExt), Handler: checkCommand},
+	{Name: "init", Usage: "init [name]", Description: fmt.Sprintf("create project with %s", manifest.FileName), Handler: cli.InitCommand},
+	{Name: "get", Usage: "get [pkg ...]", Description: fmt.Sprintf("install dependencies from %s or named packages", manifest.FileName), Handler: cli.GetCommand},
+	{Name: "update", Usage: "update [pkg ...]", Description: "update locked dependencies", Handler: cli.UpdateCommand},
+	{Name: "sniff", Usage: "sniff [pkg ...]", Description: "preview dependency updates", Handler: cli.SniffCommand},
+	{Name: "remove", Aliases: []string{"rm"}, Usage: "remove|rm <alias>", Description: fmt.Sprintf("remove dependency from %s and %s", manifest.FileName, manifest.LockfileName), Handler: cli.RemoveCommand},
+	{Name: "list", Aliases: []string{"ls"}, Usage: "list|ls", Description: "list direct and transitive dependencies", Handler: cli.ListCommand},
+	{Name: "cleanup", Aliases: []string{"clean"}, Usage: "cleanup|clean", Description: "remove orphaned cached dependencies", Handler: cli.CleanupCommand},
+	{Name: "orphans", Usage: "orphans", Description: "list orphaned cache and lock entries", Handler: cli.OrphansCommand},
+	{Name: "lsp", Usage: "lsp", Description: "start language server", Handler: lspCommand},
+}
+
+func lookupCommand(name string) (commandDefinition, bool) {
+	for _, command := range commandRegistry {
+		if name == command.Name {
+			return command, true
+		}
+		if slices.Contains(command.Aliases, name) {
+			return command, true
+		}
 	}
+	return commandDefinition{}, false
+}
+
+func lspCommand(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("lsp accepts no arguments")
+	}
+	colors.CYAN.Fprintln(os.Stderr, "starting Peeper LSP server...")
+	return lsp.Run(os.Stdin, os.Stdout)
 }
 
 func printUsageAndExit(code int) {
@@ -142,18 +126,9 @@ func printTopLevelUsage() {
 	colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper [command] [args]\n")
 	colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
-	fmt.Fprintf(os.Stderr, "  build[:llvm] [path]     build a program or use %s/%s from %s\n", peeper.SourceDirName, peeper.MainFileName, manifest.FileName)
-	fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
-	fmt.Fprintf(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (%s only)\n", peeper.SourceExt)
-	fmt.Fprintf(os.Stderr, "  init [name]             create a new project with %s\n", manifest.FileName)
-	fmt.Fprintf(os.Stderr, "  get [pkg ...]           install dependencies from %s or specific packages\n", manifest.FileName)
-	fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
-	fmt.Fprintln(os.Stderr, "  sniff [pkg ...]         preview updates that peeper update would apply")
-	fmt.Fprintf(os.Stderr, "  remove|rm <alias>       remove dependency alias from %s and %s\n", manifest.FileName, manifest.LockfileName)
-	fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
-	fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
-	fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-	fmt.Fprintln(os.Stderr, "  lsp                     start the Peeper language server")
+	for _, command := range commandRegistry {
+		fmt.Fprintf(os.Stderr, "  %-28s %s\n", command.Usage, command.Description)
+	}
 	colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper build\n")
 	colors.GREEN.Fprintf(os.Stderr, "  peeper build %s/%s\n", peeper.SourceDirName, peeper.MainFileName)

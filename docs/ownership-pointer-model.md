@@ -345,9 +345,12 @@ iface Reader {
 }
 ```
 
-All carriers use `{ rawptr, vtable }`. Vtable slot zero is
-`drop_value(rawptr)`; method slots follow. Borrowed carriers never clean up.
-Dropping `*Reader` destroys erased payload, then carrier releases allocation.
+Borrowed carriers use `{ data: rawptr, dispatch: rawptr }`. Owned `*Reader`
+uses `{ data: rawptr, dispatch: rawptr, allocator: rawptr }`; allocator field
+preserves allocation provenance. Slot zero is payload-destruction thunk for
+both tables; owned tables add storage-release thunk at slot one before method
+slots. Borrowed carriers invoke neither housekeeping slot. Dropping `*Reader`
+destroys erased payload, then releases allocation through carrier allocator.
 `&Reader` calls shared receivers, `&mut Reader` calls shared or mutable
 receivers, and `*Reader` may also call consuming receivers.
 

@@ -1,0 +1,28 @@
+iface ReadA {
+    fn (&Self) read_a() -> i32
+}
+
+iface ReadB {
+    fn (&Self) read_b() -> i32
+}
+
+struct Counter {
+    value: i32
+}
+
+fn (self: &Counter) read_a() -> i32 {
+    return self.value;
+}
+
+fn (self: &Counter) read_b() -> i32 {
+    return self.value + 1;
+}
+
+fn use(value: &Counter, first: &ReadA = value, second: &ReadB = value) -> i32 {
+    return first.read_a() + second.read_b();
+}
+
+fn main() -> i32 {
+    let counter: Counter = .{value = 20};
+    return use(&counter) - 41;
+}

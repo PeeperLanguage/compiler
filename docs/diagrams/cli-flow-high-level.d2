@@ -1,41 +1,41 @@
 direction: right
 
-main: "cmd/main.go main()"
-parseAndRunCommand: "parseAndRunCommand(args)"
-parseCompilerFlags: "parseCompilerFlags()"
-parsePathWithBackend: "parsePathWithBackend(path, backend, debug)"
+main: "cmd.main"
+dispatch: "parseAndRunCommand"
+registry: "commandRegistry"
+handler: "registered Handler"
 
-diagnostics: "Diagnostics (EmitAll/HasErrors)"
-printAST: "Print AST / module summaries"
-buildExecutable: "buildExecutable (missing)"
-emitKeepGenArtifacts: "emitKeepGenArtifacts (missing)"
-outputBinary: "Executable"
+main -> dispatch: "os.Args"
+dispatch -> registry: "lookupCommand"
+registry -> handler: "func([]string) error"
 
-main -> parseAndRunCommand: "args"
-parseAndRunCommand -> parseCompilerFlags: "returns false"
-parseAndRunCommand -> commandDispatch: "returns true"
+handler -> build: "buildCommand / runCommand"
+handler -> check: "checkCommand"
+handler -> deps: "cli dependency commands"
+handler -> lsp: "lspCommand"
 
-commandDispatch: {
-  "cli.InitCommand"
-  "cli.GetCommand"
-  "cli.UpdateCommand"
-  "cli.SniffCommand"
-  "cli.RemoveCommand"
-  "cli.ListCommand"
-  "cli.CleanupCommand"
-  "cli.OrphansCommand"
-  "runCommand"
-  "testCommand"
-  "checkCommand"
-  "lsp.Run (missing)"
+build: {
+  resolve: "resolveBuildTarget"
+  compile: "compileEntry"
+  driver: "driver.ParseFileWithOverlay"
+  pipeline: "pipeline.Run"
+  artifacts: "saveIRs"
+  link: "buildExecutable"
+  clang: "clang [external]"
+
+  resolve -> compile -> driver -> pipeline
+  pipeline -> artifacts: "-keep-gen"
+  pipeline -> link -> clang
 }
 
-parseCompilerFlags -> parsePathWithBackend
-parsePathWithBackend -> diagnostics
-parsePathWithBackend -> emitKeepGenArtifacts: "-keep-gen"
+check: {
+  discover: "project.DiscoverSourceFiles"
+  owner: "manifest.ResolveSourceFileProject"
+  context: "driver.NewContext"
+  roots: "driver.ParseFileWithOverlay"
 
-diagnostics -> buildExecutable: "-o"
-diagnostics -> printAST: "no -o"
+  discover -> owner -> context -> roots -> pipeline
+}
 
-buildExecutable -> outputBinary
-printAST -> "stdout"
+deps: "GetCommand / UpdateCommand / RemoveCommand / CleanupCommand"
+lsp: "lsp.Run"

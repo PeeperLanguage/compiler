@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,6 +71,81 @@ build = "lib"
 	}
 	if got := loadedManifest.Dependencies["peeper_test_lib"].Version; got != "v0.0.1" {
 		t.Fatalf("expected dependency to be pinned to resolved version, got %q", got)
+	}
+}
+
+func TestPrepareInstallContextPropagatesMalformedLockfile(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, manifest.FileName)
+	lockPath := filepath.Join(root, manifest.LockfileName)
+	mustWriteGetTest(t, manifestPath, "name = \"app\"\nbuild = \"program\"\n")
+	malformed := []byte("{not json")
+	mustWriteGetTest(t, lockPath, string(malformed))
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(wd); chdirErr != nil {
+			t.Fatal(chdirErr)
+		}
+	}()
+	if _, err := prepareInstallContext(); err == nil {
+		t.Fatal("malformed lockfile was replaced with empty state")
+	}
+	after, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, malformed) {
+		t.Fatalf("malformed lockfile changed: %q", after)
+	}
+}
+
+func TestGetMultiplePackagesRollsBackDurableStateOnAnyFailure(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, manifest.FileName)
+	lockPath := filepath.Join(root, manifest.LockfileName)
+	mustWriteGetTest(t, manifestPath, `name = "app"
+build = "program"
+
+[dev]
+mock_remote = true
+mock_path = "./mock"
+`)
+	if err := manifest.SaveLockfile(root, manifest.NewLockfile()); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteGetTest(t, filepath.Join(root, "mock", "acme", "good-v1.0.0", manifest.FileName), "name = \"good\"\nbuild = \"lib\"\n")
+	manifestBefore, _ := os.ReadFile(manifestPath)
+	lockBefore, _ := os.ReadFile(lockPath)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(wd); chdirErr != nil {
+			t.Fatal(chdirErr)
+		}
+	}()
+	err = GetCommand([]string{"github.com/acme/good@v1.0.0", "github.com/acme/missing@v1.0.0"})
+	if err == nil {
+		t.Fatal("multi-package get succeeded despite missing package")
+	}
+	manifestAfter, _ := os.ReadFile(manifestPath)
+	lockAfter, _ := os.ReadFile(lockPath)
+	if !bytes.Equal(manifestAfter, manifestBefore) || !bytes.Equal(lockAfter, lockBefore) {
+		t.Fatal("failed multi-package get changed durable dependency state")
+	}
+	cache := filepath.Join(manifest.CacheModulesDir(root), "github.com", "acme", "good@v1.0.0", manifest.FileName)
+	if _, err := os.Stat(cache); err != nil {
+		t.Fatalf("safe downloaded orphan cache missing: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/target"
 	"compiler/pkg/peeper"
 )
 
@@ -1313,10 +1315,29 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
-	for _, stmt := range fn.Body.Stmts {
+	wantParams := [][]string{
+		{"[]i32", "i32"},
+		{"[]i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
+		{"[]i32", fmt.Sprintf("u%d", target.Host().IndexBits), "i32"},
+		{"[]i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
+	}
+	for i, stmt := range fn.Body.Stmts {
 		binding := stmt.(*ast.LetDecl)
 		if got := typeinfo.TypeText(module.Semantics.ExprTypes[binding.Value.ID()]); got != "[]i32" {
 			t.Fatalf("%s result type = %s, want []i32", binding.Name.Name, got)
+		}
+		call := binding.Value.(*ast.CallExpr)
+		fnType, ok := module.Semantics.ExprTypes[call.Callee.ID()].(*typeinfo.FuncType)
+		if !ok {
+			t.Fatalf("%s callee type = %#v, want function", binding.Name.Name, module.Semantics.ExprTypes[call.Callee.ID()])
+		}
+		if len(fnType.Params) != len(wantParams[i]) {
+			t.Fatalf("%s parameter count = %d, want %d", binding.Name.Name, len(fnType.Params), len(wantParams[i]))
+		}
+		for paramIndex, want := range wantParams[i] {
+			if got := typeinfo.TypeText(fnType.Params[paramIndex]); got != want {
+				t.Fatalf("%s parameter %d = %s, want %s", binding.Name.Name, paramIndex, got, want)
+			}
 		}
 	}
 }
@@ -2510,6 +2531,48 @@ fn main() {
 	if implementation.MethodName != "read" || implementation.Symbol == nil ||
 		implementation.CallableType == nil || implementation.OwnerKey != "Counter" {
 		t.Fatalf("implementation evidence = %#v, want exact Counter.read symbol and type", implementation)
+	}
+}
+
+func TestDefaultExpansionKeepsDistinctInterfaceImplementationEvidence(t *testing.T) {
+	module, diag := checkTypeModule(t, `iface ReadA { fn (&Self) read_a() -> i32 }
+iface ReadB { fn (&Self) read_b() -> i32 }
+struct Counter { value: i32 }
+fn (self: &Counter) read_a() -> i32 { return self.value; }
+fn (self: &Counter) read_b() -> i32 { return self.value + 1; }
+fn use(value: &Counter, first: &ReadA = value, second: &ReadB = value) -> i32 {
+	return first.read_a() + second.read_b();
+}
+fn main() -> i32 {
+	let counter: Counter = .{ value = 20 };
+	return use(&counter);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	var call *ast.CallExpr
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			candidate, ok := node.(*ast.CallExpr)
+			if ok && len(candidate.Args) == 3 {
+				call = candidate
+			}
+			return call == nil
+		})
+		if call != nil {
+			break
+		}
+	}
+	if call == nil {
+		t.Fatal("expanded use call not found")
+	}
+	first := module.Semantics.InterfaceImplementations[call.Args[1].ID()]
+	second := module.Semantics.InterfaceImplementations[call.Args[2].ID()]
+	if call.Args[1].ID() == call.Args[2].ID() || len(first) != 1 || len(second) != 1 {
+		t.Fatalf("default evidence IDs/evidence = %d:%#v %d:%#v", call.Args[1].ID(), first, call.Args[2].ID(), second)
+	}
+	if first[0].MethodName != "read_a" || second[0].MethodName != "read_b" {
+		t.Fatalf("default evidence overwritten: %#v %#v", first, second)
 	}
 }
 

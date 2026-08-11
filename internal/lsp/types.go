@@ -88,6 +88,7 @@ type DidChangeTextDocumentParams struct {
 
 type PublishDiagnosticsParams struct {
 	URI         DocumentURI  `json:"uri"`
+	Version     *int         `json:"version,omitempty"`
 	Diagnostics []Diagnostic `json:"diagnostics"`
 }
 

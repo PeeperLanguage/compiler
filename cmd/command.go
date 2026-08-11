@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
-	"compiler/internal/backend"
+	"compiler/internal/diagnostics"
+	driver "compiler/internal/driver"
 	"compiler/internal/project"
 	"compiler/internal/target"
 	"compiler/pkg/colors"
@@ -110,29 +112,6 @@ func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptio
 	}, nil
 }
 
-func parseCommandBackend(command string) (string, backend.BackendType, error) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return "", "", fmt.Errorf("empty command")
-	}
-	base, suffix, hasSuffix := strings.Cut(command, ":")
-	switch base {
-	case "build", "run":
-		if !hasSuffix || strings.TrimSpace(suffix) == "" {
-			return base, backend.BackendLLVM, nil
-		}
-		target := backend.BackendType(strings.ToLower(strings.TrimSpace(suffix)))
-		switch target {
-		case backend.BackendLLVM:
-			return base, target, nil
-		default:
-			return "", "", fmt.Errorf("invalid %s backend %q (expected llvm)", base, suffix)
-		}
-	default:
-		return command, "", nil
-	}
-}
-
 type buildFlags struct {
 	outputPath string
 	keepGen    bool
@@ -141,7 +120,7 @@ type buildFlags struct {
 	targetArch string
 }
 
-func buildCommand(args []string, backendTarget backend.BackendType) error {
+func buildCommand(args []string) error {
 	opts, positional, err := parseBuildArgs("build", args)
 	if err != nil {
 		return err
@@ -162,16 +141,13 @@ func buildCommand(args []string, backendTarget backend.BackendType) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 
-	if backendTarget == "" {
-		backendTarget = backend.BackendLLVM
-	}
-	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
+	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
 
 	if opts.keepGen {
-		if err := saveIRs(ctx, string(backendTarget), genArtifactsDir); err != nil {
+		if err := saveIRs(ctx, genArtifactsDir); err != nil {
 			return err
 		}
 		colors.GREEN.Fprintln(os.Stdout, "Generated artifacts in "+genArtifactsDir)
@@ -181,7 +157,7 @@ func buildCommand(args []string, backendTarget backend.BackendType) error {
 	if strings.TrimSpace(outputPath) == "" {
 		outputPath = buildInfo.DefaultOutputPath
 	}
-	if err := buildExecutable(ctx, entry, outputPath, backendTarget); err != nil {
+	if err := buildExecutable(ctx, entry, outputPath); err != nil {
 		return err
 	}
 	colors.GREEN.Fprintf(os.Stdout, "Built %s\n", outputPath)
@@ -192,7 +168,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	common := addCommandCommonFlags(fs)
 	outputPath := fs.String("o", "", "compile and link to executable")
-	keepGen := fs.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
+	keepGen := fs.Bool("keep-gen", false, "keep generated HIR, MIR, and LLVM IR in _gen directory")
 	fs.BoolVar(keepGen, "k", false, "alias for -keep-gen")
 	debugBuild := fs.Bool("debug", false, debugBuildUsage)
 	if err := fs.Parse(args); err != nil {
@@ -211,7 +187,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	}, fs.Args(), nil
 }
 
-func runCommand(args []string, backendTarget backend.BackendType) error {
+func runCommand(args []string) error {
 	opts, err := parseCommandArgs("run", args, true)
 	if err != nil {
 		return err
@@ -234,10 +210,7 @@ func runCommand(args []string, backendTarget backend.BackendType) error {
 		return fmt.Errorf("run target %s/%s does not match host %s/%s", opts.targetOS, opts.targetArch, runtime.GOOS, runtime.GOARCH)
 	}
 
-	if backendTarget == "" {
-		backendTarget = backend.BackendLLVM
-	}
-	ctx, entry := compileEntry(resolvedPath, string(backendTarget), opts.debugBuild, opts.targetOS, opts.targetArch)
+	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
 		return err
 	}
@@ -263,7 +236,7 @@ func runCommand(args []string, backendTarget backend.BackendType) error {
 		_ = os.Remove(tempPath)
 	}()
 
-	if err := buildExecutable(ctx, entry, tempPath, backendTarget); err != nil {
+	if err := buildExecutable(ctx, entry, tempPath); err != nil {
 		return err
 	}
 
@@ -367,14 +340,54 @@ func checkCommand(args []string) error {
 		return err
 	}
 
-	path := "."
-	if len(opts.positional) > 0 {
-		path = opts.positional[0]
+	paths := opts.positional
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+	files, err := project.DiscoverSourceFiles(paths)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no %s source files found", peeper.SourceExt)
 	}
 
-	ctx, _ := compileEntry(path, string(backend.BackendLLVM), false, opts.targetOS, opts.targetArch)
-	if err := emitAndCheckDiagnostics(ctx); err != nil {
-		return err
+	groups := make(map[string][]string)
+	owners := make(map[string]manifest.SourceFileProject)
+	for _, filePath := range files {
+		owner, err := manifest.ResolveSourceFileProject(filePath)
+		if err != nil {
+			return err
+		}
+		key := project.CanonicalPath(owner.RootDir) + "\x00" + owner.ProjectName
+		groups[key] = append(groups[key], filePath)
+		owners[key] = owner
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	failed := false
+	for _, key := range keys {
+		owner := owners[key]
+		ctx := driver.NewContext(project.Config{
+			RootDir:     owner.RootDir,
+			ProjectName: owner.ProjectName,
+			Extension:   peeper.SourceExt,
+			TargetOS:    opts.targetOS,
+			TargetArch:  opts.targetArch,
+		}, diagnostics.NewDiagnosticBag())
+		for _, filePath := range groups[key] {
+			driver.ParseFileWithOverlay(ctx, filePath, "")
+		}
+		if err := emitAndCheckDiagnostics(ctx); err != nil {
+			failed = true
+		}
+	}
+	if failed {
+		return errAlreadyReported
 	}
 	return nil
 }

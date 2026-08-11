@@ -14,23 +14,117 @@ import (
 )
 
 type ServerState struct {
-	mu          sync.Mutex
-	diagWG      sync.WaitGroup
-	RootDir     string
-	Cache       map[string]string
-	LastCtx     *project.CompilerContext
-	LastMetrics project.CompileMetrics
-	workspace   *workspaceIndex
-	modules     map[string]*project.Module
-	diagVersion map[string]uint64
+	mu               sync.Mutex
+	publishMu        sync.Mutex
+	diagWG           sync.WaitGroup
+	RootDir          string
+	Cache            map[string]string
+	LastCtx          *project.CompilerContext
+	LastMetrics      project.CompileMetrics
+	workspace        *workspaceIndex
+	modules          map[string]*project.Module
+	diagVersion      map[string]uint64
+	diagGeneration   uint64
+	documentVersions map[string]int
 }
 
 func NewServerState() *ServerState {
 	return &ServerState{
-		Cache:       make(map[string]string),
-		modules:     make(map[string]*project.Module),
-		diagVersion: make(map[string]uint64),
+		Cache:            make(map[string]string),
+		modules:          make(map[string]*project.Module),
+		diagVersion:      make(map[string]uint64),
+		documentVersions: make(map[string]int),
 	}
+}
+
+type diagnosticSnapshot struct {
+	ctx        *project.CompilerContext
+	files      []string
+	generation uint64
+	versions   map[string]int
+}
+
+func (s *ServerState) applyDocumentSnapshot(filePath string, text *string, version *int) {
+	if s == nil {
+		return
+	}
+	filePath = project.CanonicalPath(filePath)
+	// Publication checks generation while holding publishMu. Mutations must use
+	// same boundary so a checked snapshot cannot write after this state is current.
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if text == nil {
+		delete(s.Cache, filePath)
+		delete(s.documentVersions, filePath)
+	} else {
+		s.Cache[filePath] = *text
+		if version != nil {
+			s.documentVersions[filePath] = *version
+		}
+	}
+	s.diagGeneration++
+}
+
+func (s *ServerState) diagnosticSnapshot(entryFile string, files []string) *diagnosticSnapshot {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.diagnosticSnapshotLocked(entryFile, files)
+}
+
+func (s *ServerState) diagnosticSnapshotLocked(entryFile string, files []string) *diagnosticSnapshot {
+	ctx, _ := s.recompileLocked(entryFile)
+	if len(files) == 0 {
+		files = []string{project.CanonicalPath(entryFile)}
+		if s.workspace != nil {
+			if component, ok := s.workspace.componentForFile(entryFile); ok && len(component.files) > 0 {
+				files = component.files
+			}
+		}
+	}
+	files = append([]string(nil), files...)
+	versions := make(map[string]int, len(files))
+	for _, filePath := range files {
+		filePath = project.CanonicalPath(filePath)
+		if version, ok := s.documentVersions[filePath]; ok {
+			versions[filePath] = version
+		}
+	}
+	return &diagnosticSnapshot{ctx: ctx, files: files, generation: s.diagGeneration, versions: versions}
+}
+
+func (s *ServerState) workspaceDiagnosticSnapshots() []*diagnosticSnapshot {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.RootDir == "" {
+		return nil
+	}
+	if s.workspace == nil {
+		s.workspace = newWorkspaceIndex(s.RootDir)
+	}
+	if err := s.workspace.rebuild(s.Cache); err != nil {
+		return nil
+	}
+	components := append([]workspaceComponent(nil), s.workspace.components...)
+	snapshots := make([]*diagnosticSnapshot, 0, len(components))
+	for _, component := range components {
+		if len(component.files) == 0 {
+			continue
+		}
+		entry := component.files[0]
+		if len(component.roots) > 0 {
+			entry = component.roots[0]
+		}
+		snapshots = append(snapshots, s.diagnosticSnapshotLocked(entry, component.files))
+	}
+	return snapshots
 }
 
 func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *project.Module) {
