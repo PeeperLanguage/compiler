@@ -150,7 +150,7 @@ scoped allocator contexts remain later work.
 | `*T` | `{T* data, allocator}` |
 | `?*T` | same as `*T`; `data == null` means `none` |
 | `[]T` | `{T* data, i64 len, i64 cap, allocator}` |
-| `string` | `{byte* data, i64 len, allocator}` |
+| `str` | `{byte* data, i64 len, allocator}` |
 | `*Iface` | `{rawptr data, rawptr vtable, allocator}` |
 | `&T`, `&mut T`, slice views, borrowed interfaces | unchanged non-owning layouts |
 | `rawptr`, `cstr` | unchanged; no provenance |
@@ -167,8 +167,11 @@ same handle, moves elements, then releases old buffer through same handle.
 `shrink` retains allocation and handle. Empty-result normalization must not erase
 handle.
 
-Strings follow dynamic storage rule. `cstr` remains borrowed foreign data and
-must never be deallocated by owner cleanup.
+`str` is an owned immutable text value. String literals may point at permanent
+program storage and require no runtime deallocation; runtime-created strings
+carry their allocator handle and are destroyed through normal owner cleanup.
+`&str` is a borrowed view and never carries allocator provenance. `cstr` remains
+borrowed foreign data and must never be deallocated by owner cleanup.
 
 ## Interface Erasure
 

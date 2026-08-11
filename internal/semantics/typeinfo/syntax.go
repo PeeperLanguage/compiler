@@ -115,7 +115,9 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 					return &InvalidType{}
 				}
 			}
-			if !IsIntegral(lengthType) || !LiteralFitsType(typ.Len.Value, lengthType) {
+			indexType, indexTypeOK := NumericTypeFromName("usize", opts.Target)
+			if !IsIntegral(lengthType) || !LiteralFitsType(typ.Len.Value, lengthType) ||
+				!indexTypeOK || !LiteralFitsType(typ.Len.Value, indexType) {
 				if opts.InvalidArrayLen != nil {
 					return opts.InvalidArrayLen(typ.Len)
 				}

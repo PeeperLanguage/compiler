@@ -1,6 +1,8 @@
 package project
 
 import (
+	"fmt"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
@@ -49,7 +51,8 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 		InvalidArrayLen: func(node *ast.NumberLit) typeinfo.Type {
 			if ctx != nil && ctx.Diagnostics != nil {
 				ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-					"array length must be an integer literal that fits its explicit type", ast.LocOf(node), "invalid array length")
+					fmt.Sprintf("array length must be an integer literal that fits its explicit type and target usize (u%d)", compilerTarget.IndexBits),
+					ast.LocOf(node), "invalid array length")
 			}
 			return &typeinfo.InvalidType{}
 		},

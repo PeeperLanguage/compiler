@@ -270,6 +270,10 @@ For compiler-flow work such as `parser`, `collector`, `resolver`, `typechecker`,
 6. If a request implies future constructs such as multi-function, calls, scopes, loops, arrays, slices, optionals, strings, ownership, allocator provenance, or IR architecture, design touched code to extend without rewrite.
 7. Missing phase work must be tracked as an explicit TODO item in repo docs, issue tracker, or local plan notes with impact statement.
 8. Feature discovery and conformance checks must match downstream lowerability. A compiler-synthesized or intrinsic member may satisfy an interface only when HIR, MIR, and every affected backend can materialize and lower that member; otherwise reject the conformance during semantic analysis.
+9. Semantic analysis owns resolved implementation evidence. Later phases must consume that evidence instead of repeating member or method-set discovery.
+10. Target validation owns representability constraints such as target-sized lengths and indexes. Reject invalid source programs before HIR instead of relying on backend truncation.
+11. Backend layout descriptors own physical representation. Backend values and addresses must carry physical type or pointee evidence, and value-producing instructions must validate operands before emitting text.
+12. Built-in runtime carriers use canonical named layout fields. Numeric field indexes remain valid only for user aggregates whose indexes come from IR.
 
 Do not satisfy compiler requests with temporary shortcut paths that bypass intended phase boundaries.
 

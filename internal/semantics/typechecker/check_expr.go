@@ -276,7 +276,7 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	}
 
 	commonType := typeinfo.CommonNumericType(left, right)
-	if commonType == nil && !c.assignable(left, right) && !c.assignable(right, left) {
+	if commonType == nil && !c.assignable(left, right, node.Right) && !c.assignable(right, left, node.Left) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
 				typeinfo.TypeText(left), typeinfo.TypeText(right))))
@@ -374,11 +374,11 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
 		return field.Type
 	}
-	if methodType, methodSym, ok := c.lookupMethodType(baseType, node.Name.Name, true); ok {
-		if methodSym != nil {
-			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = methodSym
+	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {
+		if method.Symbol != nil {
+			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = method.Symbol
 		}
-		return methodType
+		return method.Type
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
 		WithCode(diagnostics.ErrFieldNotFound).
@@ -607,7 +607,7 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 		if typeinfo.IsInvalidOrUnknown(valueType) {
 			continue
 		}
-		if !c.assignable(targetField.Type, valueType) {
+		if !c.assignable(targetField.Type, valueType, field.Value) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
 					typeinfo.TypeText(valueType), targetField.Name, typeinfo.TypeText(targetField.Type)), ast.LocOf(field.Value), "")
@@ -680,7 +680,7 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		if typeinfo.IsInvalidOrUnknown(valueType) {
 			continue
 		}
-		if !c.assignable(array.Elem, valueType) {
+		if !c.assignable(array.Elem, valueType, value) {
 			c.ctx.Diagnostics.Add(typeMismatchError(value,
 				fmt.Sprintf("cannot assign %s to array element of type %s",
 					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))))

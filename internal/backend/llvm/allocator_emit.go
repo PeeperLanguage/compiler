@@ -7,80 +7,63 @@ import (
 	"compiler/internal/ir/mir"
 )
 
-func emitDefaultAllocatorHandle(b *llvmBuilder) string {
-	handle := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast [3 x i8*]* @peeper_default_alloc to i8*", handle))
-	return handle
+func emitDefaultAllocatorHandle(b *llvmBuilder) llvmValue {
+	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
+	descriptor := &llvmLayout{Text: "[3 x i8*]", Kind: llvmLayoutArray, Element: rawPointer}
+	return b.bitcast(b.value("@peeper_default_alloc", llvmPointerLayout(descriptor)), rawPointer)
 }
 
-func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment string) string {
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
-	desc := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", desc, handle))
-	ctx := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", ctx, desc))
-	allocSlot := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr i8*, i8** %s, i32 1", allocSlot, desc))
-	allocRaw := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", allocRaw, allocSlot))
-	allocFn := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8* (i8*, %s, i32)*", allocFn, allocRaw, sizeType))
-	raw := b.nextReg()
-	b.line(fmt.Sprintf("%s = call i8* %s(i8* %s, %s %s, i32 %s)", raw, allocFn, ctx, sizeType, size, alignment))
-	return raw
+func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment llvmValue) llvmValue {
+	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
+	desc := b.bitcast(handle, llvmPointerLayout(rawPointer))
+	ctx := b.load(b.pointerPlace(desc))
+	allocSlot := b.gep(b.pointerPlace(desc), b.value("1", llvmScalarLayout("i32")), false)
+	allocRaw := b.load(allocSlot)
+	allocLayout := llvmFunctionLayout(rawPointer, []*llvmLayout{rawPointer, size.Layout, alignment.Layout})
+	allocFn := b.bitcast(allocRaw, allocLayout)
+	return b.call(allocFn, []llvmValue{ctx, size, alignment})
 }
 
-func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment string) {
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
-	desc := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to i8**", desc, handle))
-	ctx := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", ctx, desc))
-	deallocSlot := b.nextReg()
-	b.line(fmt.Sprintf("%s = getelementptr i8*, i8** %s, i32 2", deallocSlot, desc))
-	deallocRaw := b.nextReg()
-	b.line(fmt.Sprintf("%s = load i8*, i8** %s", deallocRaw, deallocSlot))
-	deallocFn := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast i8* %s to void (i8*, i8*, %s, i32)*", deallocFn, deallocRaw, sizeType))
-	b.line(fmt.Sprintf("call void %s(i8* %s, i8* %s, %s %s, i32 %s)", deallocFn, ctx, raw, sizeType, size, alignment))
+func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment llvmValue) {
+	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
+	desc := b.bitcast(handle, llvmPointerLayout(rawPointer))
+	ctx := b.load(b.pointerPlace(desc))
+	deallocSlot := b.gep(b.pointerPlace(desc), b.value("2", llvmScalarLayout("i32")), false)
+	deallocRaw := b.load(deallocSlot)
+	deallocLayout := llvmFunctionLayout(&llvmLayout{Text: "void", Kind: llvmLayoutVoid}, []*llvmLayout{rawPointer, rawPointer, size.Layout, alignment.Layout})
+	deallocFn := b.bitcast(deallocRaw, deallocLayout)
+	b.call(deallocFn, []llvmValue{ctx, raw, size, alignment})
 }
 
-func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity string) string {
-	sizeType := b.emitter.llvmType(b.emitter.mod.Types.IndexType())
+func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity llvmValue) llvmValue {
+	sizeLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
 	id := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("allocator_size_fail_%d", id)
 	sizeReadyLabel := fmt.Sprintf("allocator_size_ready_%d", id)
-	elemLLVMType := b.emitter.llvmType(elemType)
-	elemSize := b.nextReg()
-	b.line(fmt.Sprintf("%s = ptrtoint %s* getelementptr (%s, %s* null, i32 1) to %s", elemSize, elemLLVMType, elemLLVMType, elemLLVMType, sizeType))
-	sizeAndOverflow := b.nextReg()
-	b.line(fmt.Sprintf("%s = call { %s, i1 } @llvm.umul.with.overflow.%s(%s %s, %s %s)", sizeAndOverflow, sizeType, sizeType, sizeType, elemSize, sizeType, capacity))
-	size := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue { %s, i1 } %s, 0", size, sizeType, sizeAndOverflow))
-	overflow := b.nextReg()
-	b.line(fmt.Sprintf("%s = extractvalue { %s, i1 } %s, 1", overflow, sizeType, sizeAndOverflow))
-	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", overflow, failLabel, sizeReadyLabel))
+	elemLayout := b.emitter.layout(elemType)
+	elemPtr := b.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 1)", elemLayout.Text, elemLayout.Text), llvmPointerLayout(elemLayout))
+	elemSize := b.cast("ptrtoint", elemPtr, sizeLayout)
+	overflowLayout := llvmAggregateLayout([]*llvmLayout{sizeLayout, llvmScalarLayout("i1")}, nil)
+	overflowFn := b.value("@llvm.umul.with.overflow."+sizeLayout.Text, llvmFunctionLayout(overflowLayout, []*llvmLayout{sizeLayout, sizeLayout}))
+	sizeAndOverflow := b.call(overflowFn, []llvmValue{elemSize, capacity})
+	size := b.extractIndex(sizeAndOverflow, 0)
+	overflow := b.extractIndex(sizeAndOverflow, 1)
+	b.condBranch(overflow, failLabel, sizeReadyLabel)
 	b.namedLabel(failLabel)
-	b.line("call void @llvm.trap()")
-	b.line("unreachable")
+	b.trap()
 	b.namedLabel(sizeReadyLabel)
-	zero := b.nextReg()
-	b.line(fmt.Sprintf("%s = icmp eq %s %s, 0", zero, sizeType, size))
-	normalized := b.nextReg()
-	b.line(fmt.Sprintf("%s = select i1 %s, %s 1, %s %s", normalized, zero, sizeType, sizeType, size))
-	return normalized
+	zero := b.compare("icmp", "eq", size, b.value("0", sizeLayout))
+	return b.selectValue(zero, b.value("1", sizeLayout), size)
 }
 
-func allocatorHandleFromRef(b *llvmBuilder, ref mir.ValueRef) string {
+func allocatorHandleFromRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 	if ref == nil {
 		return emitDefaultAllocatorHandle(b)
 	}
 	handle := emitRef(b, ref)
-	if b.emitter.llvmType(mirRefType(ref)) == "i8*" {
+	if handle.Layout.Text == "i8*" {
 		return handle
 	}
-	cast := b.nextReg()
-	b.line(fmt.Sprintf("%s = bitcast %s %s to i8*", cast, b.emitter.llvmType(mirRefType(ref)), handle))
-	return cast
+	return b.bitcast(handle, llvmPointerLayout(llvmScalarLayout("i8")))
 }

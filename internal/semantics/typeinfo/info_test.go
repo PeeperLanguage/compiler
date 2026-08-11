@@ -340,6 +340,32 @@ func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
 	}
 }
 
+func TestTypeFromSyntaxRequiresArrayLengthToFitTargetIndex(t *testing.T) {
+	target32, err := target.New("linux", "386")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target64, err := target.New("linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	arrayType := func(length string, compilerTarget target.Info) Type {
+		return TypeFromSyntax(&ast.ArrayType{
+			Len:  &ast.NumberLit{Value: length, ExplicitType: "u64"},
+			Elem: &ast.NamedType{Name: "u8"},
+		}, SyntaxOptions{Target: compilerTarget})
+	}
+	if got := TypeText(arrayType("4294967295", target32)); got != "[4294967295]u8" {
+		t.Fatalf("32-bit maximum array type = %s", got)
+	}
+	if got := arrayType("4294967296", target32); !IsInvalidOrUnknown(got) {
+		t.Fatalf("32-bit overflowing array type = %s, want invalid", TypeText(got))
+	}
+	if got := TypeText(arrayType("4294967296", target64)); got != "[4294967296]u8" {
+		t.Fatalf("64-bit array type = %s", got)
+	}
+}
+
 func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
 	owner := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	cases := []struct {

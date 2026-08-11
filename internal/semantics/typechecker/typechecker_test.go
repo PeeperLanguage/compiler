@@ -2475,6 +2475,44 @@ func TestIntrinsicSelectorResolutionStoredForLaterPhases(t *testing.T) {
 	}
 }
 
+func TestInterfaceImplementationEvidenceStoredForLowering(t *testing.T) {
+	module, diag := checkTypeModule(t, `iface Reader { fn (&Self) read() -> i32 }
+struct Counter { value: i32 }
+fn (self: &Counter) read() -> i32 { return self.value; }
+fn main() {
+	let counter: Counter = .{ value = 7 };
+	let reader: &Reader = &counter;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	var conversion ast.Expr
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			binding, ok := node.(*ast.LetDecl)
+			if ok && binding.Name != nil && binding.Name.Name == "reader" {
+				conversion = binding.Value
+			}
+			return conversion == nil
+		})
+		if conversion != nil {
+			break
+		}
+	}
+	if conversion == nil {
+		t.Fatal("reader interface conversion missing from parsed module")
+	}
+	implementations := module.Semantics.InterfaceImplementations[conversion.ID()]
+	if len(implementations) != 1 {
+		t.Fatalf("implementation evidence = %#v, want one method", implementations)
+	}
+	implementation := implementations[0]
+	if implementation.MethodName != "read" || implementation.Symbol == nil ||
+		implementation.CallableType == nil || implementation.OwnerKey != "Counter" {
+		t.Fatalf("implementation evidence = %#v, want exact Counter.read symbol and type", implementation)
+	}
+}
+
 func TestIntrinsicMethodDoesNotSatisfyInterface(t *testing.T) {
 	diag := checkTypeSource(t, `iface Lenner {
 	fn (&Self) len() -> usize

@@ -92,7 +92,7 @@ func mustTestTarget(os, arch string) target.Info {
 	return info
 }
 
-func TestLLVMTypeIDModelTypes(t *testing.T) {
+func TestLLVMLayoutModelTypes(t *testing.T) {
 	types := llvmTypes.table
 	byteType := types.Intern(ir.Type{Kind: ir.TypeByte})
 	interfaceType := types.Intern(ir.Type{Kind: ir.TypeInterface})
@@ -123,14 +123,14 @@ func TestLLVMTypeIDModelTypes(t *testing.T) {
 		{types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "x", Type: types.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.u8, Length: "2"})}}}), "{ [2 x i8] }"},
 	}
 	for _, tt := range cases {
-		got, ok := llvmTypeID(types, tt.id)
-		if !ok || got != tt.want {
-			t.Fatalf("llvmTypeID(%s) = %q, %v; want %q, true", types.Text(tt.id), got, ok, tt.want)
+		got, ok := llvmLayoutID(types, tt.id)
+		if !ok || got.Text != tt.want {
+			t.Fatalf("llvmLayoutID(%s) = %v, %v; want %q, true", types.Text(tt.id), got, ok, tt.want)
 		}
 	}
 }
 
-func TestLLVMTypeIDUsesContextSizedUsize(t *testing.T) {
+func TestLLVMLayoutUsesContextSizedUsize(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		info target.Info
@@ -141,17 +141,107 @@ func TestLLVMTypeIDUsesContextSizedUsize(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			types := newLLVMTypeFixture(tt.info.IndexBits)
-			got, ok := llvmTypeID(types.table, types.usize)
-			if !ok || got != tt.want {
-				t.Fatalf("llvmTypeID(usize) = %q, %v; want %q, true", got, ok, tt.want)
+			got, ok := llvmLayoutID(types.table, types.usize)
+			if !ok || got.Text != tt.want {
+				t.Fatalf("llvmLayoutID(usize) = %v, %v; want %q, true", got, ok, tt.want)
 			}
 			refString := types.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: types.stringType})
-			got, ok = llvmTypeID(types.table, refString)
+			got, ok = llvmLayoutID(types.table, refString)
 			wantRefString := "{ i8*, " + tt.want + " }"
-			if !ok || got != wantRefString {
-				t.Fatalf("llvmTypeID(&str) = %q, %v; want %q, true", got, ok, wantRefString)
+			if !ok || got.Text != wantRefString {
+				t.Fatalf("llvmLayoutID(&str) = %v, %v; want %q, true", got, ok, wantRefString)
 			}
 		})
+	}
+}
+
+func requireLLVMInvariant(t *testing.T, emit func()) {
+	t.Helper()
+	defer func() {
+		if recovered := recover(); recovered == nil || !strings.Contains(recovered.(string), "llvm invariant:") {
+			t.Fatalf("expected LLVM invariant panic, got %#v", recovered)
+		}
+	}()
+	emit()
+}
+
+func TestLLVMLayoutsNameBuiltInCarrierFields(t *testing.T) {
+	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface})
+	ownedInterface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: interfaceType})
+	borrowedString := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: llvmTypes.stringType})
+	for _, tt := range []struct {
+		name   string
+		typeID ir.TypeID
+		fields map[llvmFieldName]int
+	}{
+		{name: "owned string", typeID: llvmTypes.stringType, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1, llvmFieldAllocator: 2}},
+		{name: "borrowed string", typeID: borrowedString, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1}},
+		{name: "borrowed array", typeID: llvmTypes.refDynamicI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1}},
+		{name: "dynamic array", typeID: llvmTypes.dynamicI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1, llvmFieldCapacity: 2, llvmFieldAllocator: 3}},
+		{name: "optional", typeID: llvmTypes.optionalI32, fields: map[llvmFieldName]int{llvmFieldPresent: 0, llvmFieldValue: 1}},
+		{name: "owned pointer", typeID: llvmTypes.ownedI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldAllocator: 1}},
+		{name: "owned interface", typeID: ownedInterface, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldDispatch: 1, llvmFieldAllocator: 2}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			layout, ok := llvmLayoutID(llvmTypes.table, tt.typeID)
+			if !ok {
+				t.Fatalf("layout missing for %s", tt.name)
+			}
+			for field, index := range tt.fields {
+				if layout.Fields[field] != index {
+					t.Fatalf("%s field %q = %d, want %d", tt.name, field, layout.Fields[field], index)
+				}
+			}
+		})
+	}
+}
+
+func TestTypedLLVMBuilderRejectsOperandMismatches(t *testing.T) {
+	i32 := llvmScalarLayout("i32")
+	i64 := llvmScalarLayout("i64")
+	aggregate := llvmAggregateLayout([]*llvmLayout{i32}, nil)
+	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
+	for name, emit := range map[string]func(*llvmBuilder){
+		"comparison width": func(b *llvmBuilder) {
+			b.compare("icmp", "eq", b.value("1", i32), b.value("1", i64))
+		},
+		"aggregate bitcast": func(b *llvmBuilder) {
+			b.bitcast(b.value("zeroinitializer", aggregate), rawPointer)
+		},
+		"call argument width": func(b *llvmBuilder) {
+			callee := b.value("@take", llvmFunctionLayout(&llvmLayout{Text: "void", Kind: llvmLayoutVoid}, []*llvmLayout{i32}))
+			b.call(callee, []llvmValue{b.value("1", i64)})
+		},
+		"store pointee": func(b *llvmBuilder) {
+			b.store(b.place("%ptr", i32), b.value("1", i64))
+		},
+		"return width": func(b *llvmBuilder) {
+			b.ret(b.value("1", i64), i32)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireLLVMInvariant(t, func() {
+				b := newLLVMBuilder(&strings.Builder{}, nil, -1)
+				emit(b)
+			})
+		})
+	}
+}
+
+func TestTypedLLVMBuilderPreservesPointerPlaceOnValidBitcast(t *testing.T) {
+	var out strings.Builder
+	b := newLLVMBuilder(&out, nil, -1)
+	i32 := llvmScalarLayout("i32")
+	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
+	place := b.alloca(i32)
+	b.store(place, b.value("7", i32))
+	loaded := b.load(place)
+	if loaded.Layout.Text != "i32" {
+		t.Fatalf("loaded layout = %s", loaded.Layout.Text)
+	}
+	cast := b.bitcast(b.pointerValue(place), rawPointer)
+	if cast.Layout.Text != "i8*" || !strings.Contains(out.String(), "bitcast i32*") {
+		t.Fatalf("pointer cast = %#v\n%s", cast, out.String())
 	}
 }
 

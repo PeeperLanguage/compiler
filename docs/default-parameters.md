@@ -51,7 +51,7 @@ fn Update(mut count: i32 = 0) {}
 Invalid:
 
 ```peep
-fn Open(path: cstr = "data", flags: i32) {} // required after default
+fn Open(path: cstr = c"data", flags: i32) {} // required after default
 fn Open(path = "data") {}                  // missing explicit type
 ```
 

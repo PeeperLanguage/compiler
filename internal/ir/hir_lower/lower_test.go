@@ -21,7 +21,7 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func generateTestHIR(t *testing.T, filePath, importPath, src string) *hir.Module {
+func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower ...func(*project.Module)) *hir.Module {
 	t.Helper()
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
@@ -40,6 +40,9 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string) *hir.Module
 	typechecker.Check(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	for _, prepare := range beforeLower {
+		prepare(module)
 	}
 	out := GenerateHIR(ctx, module)
 	module.HIR = out
@@ -607,6 +610,28 @@ fn main() -> i32 {
 	consumer, ok := call.Args[0].(*ir.InterfaceMake)
 	if !ok || len(consumer.Slots) != 1 || consumer.Slots[0].SlotType == ir.InvalidType {
 		t.Fatalf("expected interface carrier slot, got %#v", call.Args[0])
+	}
+}
+
+func TestGenerateHIRConsumesRecordedInterfaceImplementations(t *testing.T) {
+	const src = `iface Reader { fn (&Self) read() -> i32 }
+struct Counter { value: i32 }
+fn (self: &Counter) read() -> i32 { return self.value; }
+fn main() -> i32 {
+	let counter: Counter = .{ value = 7 };
+	let reader: &Reader = &counter;
+	return reader.read();
+}`
+	out := generateTestHIR(t, "hir_interface_evidence_test"+peeper.SourceExt, "hir_interface_evidence_test", src,
+		func(module *project.Module) { module.Semantics.MethodSets = nil })
+	mainFn := out.Funcs[len(out.Funcs)-1]
+	binding, ok := mainFn.Body.Stmts[1].(*hir.Binding)
+	if !ok {
+		t.Fatalf("interface binding = %#v, want binding", mainFn.Body.Stmts[1])
+	}
+	carrier, ok := binding.Value.(*ir.InterfaceMake)
+	if !ok || len(carrier.Slots) != 1 || carrier.Slots[0].MethodName != "read" {
+		t.Fatalf("interface carrier = %#v, want recorded read slot", binding.Value)
 	}
 }
 

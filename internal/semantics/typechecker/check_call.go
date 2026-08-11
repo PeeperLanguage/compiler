@@ -167,7 +167,7 @@ func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo
 	allocType := &typeinfo.AllocatorType{}
 	if len(node.Args) > 1 {
 		allocatorValueType := c.typeExpr(scope, node.Args[1], allocType)
-		if allocatorValueType != nil && !c.assignable(allocType, allocatorValueType) {
+		if allocatorValueType != nil && !c.assignable(allocType, allocatorValueType, node.Args[1]) {
 			d := typeMismatchError(node.Args[1],
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(allocatorValueType), typeinfo.TypeText(allocType)))
@@ -184,8 +184,9 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	methodType, methodSym, ok := c.lookupMethodType(baseType, selector.Name.Name, true)
+	method, ok := c.lookupCallableMember(baseType, selector.Name.Name)
 	if ok {
+		methodType, methodSym := method.Type, method.Symbol
 		if methodSym != nil && methodSym.CompilerOp == "" {
 			c.expandCallDefaults(call, methodSym, c.module)
 		}
@@ -293,11 +294,16 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 				}
 			}
 		}
-		if !c.assignable(paramType, argType) {
-			site := ast.Node(callExpr)
-			if i >= argOffset && i-argOffset < len(callExpr.Args) {
-				site = callExpr.Args[i-argOffset]
-			}
+		site := ast.Node(callExpr)
+		var conversion ast.Expr
+		if i == 0 && receiverExpr != nil {
+			conversion = receiverExpr
+		}
+		if i >= argOffset && i-argOffset < len(callExpr.Args) {
+			conversion = callExpr.Args[i-argOffset]
+			site = conversion
+		}
+		if !c.assignable(paramType, argType, conversion) {
 			d := typeMismatchError(site,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
@@ -405,6 +411,9 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 				}
 				if typ := declModule.Semantics.ExprTypes[originalID]; typ != nil {
 					c.module.Semantics.ExprTypes[clonedID] = typ
+				}
+				if implementations := declModule.Semantics.InterfaceImplementations[originalID]; implementations != nil {
+					c.module.Semantics.InterfaceImplementations[clonedID] = implementations
 				}
 			}
 		}

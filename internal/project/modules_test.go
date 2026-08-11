@@ -48,7 +48,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.LLVMIR != "") != test.llvm {
 			t.Fatalf("phase %v reset = %#v", test.phase, module)
 		}
-		cleanup := module.CFG != nil && len(module.CFG) > 0 && module.CFG[0] != nil && module.CFG[0].Cleanup != nil
+		cleanup := len(module.CFG) > 0 && module.CFG[0] != nil && module.CFG[0].Cleanup != nil
 		if cleanup != test.cleanup {
 			t.Fatalf("phase %v cleanup retained=%t, want %t", test.phase, cleanup, test.cleanup)
 		}
