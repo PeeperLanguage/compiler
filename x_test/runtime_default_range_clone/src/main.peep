@@ -1,0 +1,8 @@
+fn First(values: &[]i32, view: &[]i32 = values[..]) -> i32 {
+    return view[0];
+}
+
+fn main() -> i32 {
+    let values = []i32{7};
+    return First(&values) - 7;
+}

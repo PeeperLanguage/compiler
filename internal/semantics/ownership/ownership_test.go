@@ -410,6 +410,17 @@ fn bad(point: Point) {
 	}
 }
 
+func TestOwnershipHandlesByteAndCharLiterals(t *testing.T) {
+	result := checkOwnershipSource(t, `fn main() -> i32 {
+	let byte: byte = b'a';
+	let char: char = 'é';
+	return byte as i32;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
 func TestUserCopyMethodWithValueReceiverConsumesCaller(t *testing.T) {
 	diag := checkOwnershipSource(t, `struct Point { value: i32 }
 	fn (self: Point) copy() -> Point { return self; }

@@ -94,6 +94,19 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	return module, diag
 }
 
+func TestDefaultRangeWithOmittedBoundsClones(t *testing.T) {
+	diag := checkTypeSource(t, `fn First(values: &[]i32, view: &[]i32 = values[..]) -> i32 {
+	return view[0];
+}
+fn main() -> i32 {
+	let values = []i32{7};
+	return First(&values);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "typechecker_test" + peeper.SourceExt

@@ -102,7 +102,7 @@ func (a *analyzer) checkExpr(
 		a.checkExpr(scope, e.Right, st, useRead, loans, false)
 	case *ast.AsExpr:
 		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
-	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
+	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit, *ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
 		return
