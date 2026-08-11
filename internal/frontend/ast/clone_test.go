@@ -64,3 +64,48 @@ func TestSubstituteExprSeparatesDefaultAndArgumentProvenance(t *testing.T) {
 		}
 	}
 }
+
+func TestSubstituteExprClonesOpenEndedRanges(t *testing.T) {
+	tests := []struct {
+		name      string
+		start     Expr
+		end       Expr
+		wantStart bool
+		wantEnd   bool
+	}{
+		{name: "full", wantStart: false, wantEnd: false},
+		{name: "prefix", end: &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: 2}, Value: "2"}, wantStart: false, wantEnd: true},
+		{name: "suffix", start: &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: 2}, Value: "2"}, wantStart: true, wantEnd: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rangeExpr := &RangeExpr{
+				NodeIDHolder: NodeIDHolder{NodeID: 1},
+				Start:        test.start,
+				End:          test.end,
+				EndExclusive: true,
+			}
+			cloned, defaultClones, argumentClones := SubstituteExpr(rangeExpr, nil)
+			out, ok := cloned.(*RangeExpr)
+			if !ok {
+				t.Fatalf("clone = %T, want *RangeExpr", cloned)
+			}
+			if (out.Start != nil) != test.wantStart || (out.End != nil) != test.wantEnd {
+				t.Fatalf("range bounds = start %v, end %v; want start %v, end %v", out.Start != nil, out.End != nil, test.wantStart, test.wantEnd)
+			}
+			if out.ID() == rangeExpr.ID() || (out.Start != nil && out.Start.ID() == test.start.ID()) || (out.End != nil && out.End.ID() == test.end.ID()) {
+				t.Fatal("range clone reused source NodeID")
+			}
+			want := 1
+			if test.wantStart {
+				want++
+			}
+			if test.wantEnd {
+				want++
+			}
+			if len(defaultClones) != want || len(argumentClones) != 0 {
+				t.Fatalf("clone provenance = %d default, %d argument; want %d default, 0 argument", len(defaultClones), len(argumentClones), want)
+			}
+		})
+	}
+}

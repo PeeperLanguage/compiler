@@ -152,7 +152,14 @@ func (e *RangeExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, b
 		return nil
 	}
 	id := newID(e.ID(), fromArgument)
-	return &RangeExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Start: e.Start.copyExpr(substitutions, newID, fromArgument), End: e.End.copyExpr(substitutions, newID, fromArgument), EndExclusive: e.EndExclusive, Location: e.Location}
+	cloned := &RangeExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, EndExclusive: e.EndExclusive, Location: e.Location}
+	if e.Start != nil {
+		cloned.Start = e.Start.copyExpr(substitutions, newID, fromArgument)
+	}
+	if e.End != nil {
+		cloned.End = e.End.copyExpr(substitutions, newID, fromArgument)
+	}
+	return cloned
 }
 
 type StructLitField struct {
