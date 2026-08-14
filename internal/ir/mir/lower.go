@@ -650,16 +650,15 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		if e.Value != nil {
 			value = l.lowerExpr(e.Value, out)
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayOp{
-			Op:       e.Op,
-			Array:    array,
-			Length:   length,
-			Value:    value,
-			Type:     e.TypeID(),
-			Location: e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		l.appendInstr(out, &DynamicArrayOp{
+			Op:        e.Op,
+			Array:     array,
+			Length:    length,
+			Value:     value,
+			ArrayType: e.ArrayType,
+			Location:  e.Origin().Location,
+		})
+		return nil
 	case *ir.AllocExpr:
 		value := l.lowerExpr(e.Value, out)
 		var allocRef ValueRef

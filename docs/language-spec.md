@@ -35,8 +35,8 @@ Core rules:
 | `&mut T` | Mutable exclusive reference to `T` | Implicit transfer; never copyable |
 | `[N]T` | Fixed array value | Implicit move; duplication is user-defined |
 | `[]T` | Dynamic array value | Implicit move; never copyable |
-| `&[]T` | Shared slice view | Copyable temporary view |
-| `&mut []T` | Mutable exclusive slice view | Implicit transfer; never copyable |
+| `&[..]T` | Shared slice view | Copyable temporary view |
+| `&mut [..]T` | Mutable exclusive slice view | Implicit transfer; never copyable |
 
 `str` is a builtin owned immutable text type. Its binding owns the string value,
 but indexing cannot mutate its contents. A mutable binding may be reassigned to
@@ -48,16 +48,24 @@ Literal forms are explicit at the boundary: `"text"` produces owned `str`,
 `c"text"` produces non-owning `cstr`, `b'X'` produces `byte`, and `'X'`
 produces `char`. These forms are not implicitly interchangeable.
 
-`.len()` is a read-only intrinsic for strings, arrays, and their borrowed
-views. The receiver borrow is checked implicitly: `text.len()`,
-`fixed.len()`, or `[]i32{1, 2}.len()`. It returns string byte length or array
-element count. Borrowing a temporary is valid for the call and cannot escape it.
+`len` is a compiler-owned free function for strings, arrays, and borrowed
+views. Pipe syntax adapts argument zero like a method receiver: `text |> len()`,
+`fixed |> len()`, or `[]i32{1, 2} |> len()`. It returns string byte length or
+array element count. A shared borrow of a temporary remains valid for the call
+and cannot escape it.
 
 String indexing unit is explicit. `text[i]` is rejected; use
-`text.as_bytes()[i]` for a byte or `text.as_chars()[i]` for a decoded Unicode
-character. `.as_bytes()` returns a borrowed `&[]byte` view over the string's
-carrier bytes and never allocates. `.as_chars()` returns an owned `[]char`
+`(text |> as_bytes())[i]` for a byte or `(text |> as_chars())[i]` for a decoded
+Unicode character. `as_bytes` returns a borrowed `&[..]byte` view over string
+carrier bytes and never allocates. `as_chars` returns an owned `[]char`
 decoded from UTF-8, and its storage follows normal dynamic-array cleanup.
+
+`value |> function(args)` is a free-function call with `value` as argument
+zero. Argument zero may move or receive an implicit shared/mutable borrow using
+same adaptation rules as method receivers; remaining arguments stay explicit.
+Ordinary `function(value, args)` calls do not gain implicit borrowing. Dot calls
+remain user-declared methods only. LSP completion shows applicable methods and
+free functions after either `.` or `|>` and rewrites selected syntax as needed.
 
 String ranges use byte offsets and return borrowed `&str` views. Start and end
 must be ordered, within the byte length, and on UTF-8 codepoint boundaries.
@@ -223,7 +231,7 @@ shared borrows may occur while reserved when they finish before activation:
 
 ```peep
 update(&mut x, read(&x)) // valid when read returns an owned or copied value
-update(&mut items, items.len()) // mutable borrow activates after len returns
+update(&mut items, items |> len()) // mutable borrow activates after len returns
 ```
 
 Mutation, move, free, destruction, and another mutable call activation remain
@@ -427,39 +435,40 @@ checked size calculation happen before element initializers run; allocation
 failure traps in initial infallible literal model. Category B element
 initializers move into array slots.
 
-Dynamic-array owner operations consume old owner and return replacement owner:
+Dynamic-array owner operations mutate owner header through `&mut []T` and
+return no value. Pipe syntax creates mutable borrow automatically:
 
 ```peep
 let mut values = []i32{1, 2}
-values = append(values, 3)
-values = reserve(values, 16)
-values = resize(values, 8, 0)
-values = shrink(values, 4)
+values |> append(3)
+values |> reserve(16)
+values |> resize(8, 0)
+values |> shrink(4)
 ```
 
-`append(array, value)` moves Category B values into new slot. It writes within
-capacity or grows geometrically with checked arithmetic. `reserve(array,
+`append(&mut array, value)` moves Category B values into new slot. It writes within
+capacity or grows geometrically with checked arithmetic. `reserve(&mut array,
 minimum)` preserves length and relocates elements only when capacity is too
 small. Relocation does not copy or drop moved source slots.
 
-Initial `resize(array, length, fill)` accepts only Category A element types. It
+Initial `resize(&mut array, length, fill)` accepts only Category A element types. It
 reserves when growing, repeats implicitly copyable `fill`, and shortens length
 without element destruction when shrinking. Category B arrays grow through
 `append`.
 
-`shrink(array, length)` accepts every dynamic-array element type. It consumes
-and returns the owner, preserves allocation and capacity, and returns the array
-unchanged when `length` is not smaller. Removed elements are destroyed in
+`shrink(&mut array, length)` accepts every dynamic-array element type. It
+preserves allocation and capacity and performs no change when `length` is not
+smaller. Removed elements are destroyed in
 reverse index order, so Category B arrays shrink without a reusable fill value.
 
-Slice views use reference syntax over dynamic-array element spelling:
+Slice views use explicit slice target syntax:
 
 ```peep
-fn sum(xs: &[]i32) -> i32
-fn fill(xs: &mut []i32, value: i32)
+fn sum(xs: &[..]i32) -> i32
+fn fill(xs: &mut [..]i32, value: i32)
 ```
 
-`&[]T` can read elements but cannot mutate them. `&mut []T` can mutate elements
+`&[..]T` can read elements but cannot mutate them. `&mut [..]T` can mutate elements
 but cannot resize the dynamic array that supplied the view.
 
 Indexed value access follows element copy category:
@@ -492,9 +501,9 @@ place semantics for reading, replacement, and borrowing. Map structural
 mutation while an element reference is live requires reference-origin conflict
 tracking and remains future work.
 
-These reference forms are the language's slice views. There is no separate
-slice type: borrowing dynamic-array elements produces `&[]T` or `&mut []T`,
-and neither form owns or resizes the source array.
+`[..]T` is a distinct non-owning slice target and is not valid bare storage.
+Borrowing array ranges produces `&[..]T` or `&mut [..]T`; neither form owns or
+resizes source array.
 
 ## Ranges
 

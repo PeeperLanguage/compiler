@@ -30,6 +30,7 @@ const (
 	TypeReference
 	TypeOptional
 	TypeArray
+	TypeSlice
 	TypeStruct
 	TypeInterface
 	TypeFunction
@@ -199,6 +200,8 @@ func (t *TypeTable) textLocked(id TypeID) string {
 			return "[]" + t.textLocked(typ.Elem)
 		}
 		return "[" + typ.Length + "]" + t.textLocked(typ.Elem)
+	case TypeSlice:
+		return "[..]" + t.textLocked(typ.Elem)
 	case TypeStruct:
 		return "struct{" + t.fieldsTextLocked(typ.Fields, ';') + "}"
 	case TypeInterface:

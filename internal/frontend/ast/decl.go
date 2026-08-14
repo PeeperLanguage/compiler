@@ -97,10 +97,18 @@ func (t *OptionalType) TypeText() string {
 	return "?" + TypeText(t.Inner)
 }
 
+type ArrayShape uint8
+
+const (
+	ArrayFixed ArrayShape = iota
+	ArrayOwner
+	ArraySlice
+)
+
 type ArrayType struct {
 	NodeIDHolder
 	Len      *NumberLit
-	Dynamic  bool
+	Shape    ArrayShape
 	Elem     TypeExpr
 	Location *source.Location
 }
@@ -111,8 +119,11 @@ func (t *ArrayType) TypeText() string {
 	if t == nil {
 		return ""
 	}
-	if t.Dynamic {
+	switch t.Shape {
+	case ArrayOwner:
 		return "[]" + TypeText(t.Elem)
+	case ArraySlice:
+		return "[..]" + TypeText(t.Elem)
 	}
 	if t.Len == nil {
 		return "[" + TypeText(t.Elem) + "]"

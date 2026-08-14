@@ -14,7 +14,7 @@ This document preserves original findings and reproduction snippets as baseline 
 | LSP diagnostics | Resolved | Compilation snapshots copy context, component files, generation, and versions under state lock. Publication is serialized, rejects stale generations, and writes without state lock. |
 | CLI contract and artifacts | Resolved | One command registry drives dispatch/help/aliases. Compiler APIs are LLVM-only. `check` recursively discovers and groups roots by project. `_gen` publishes completed identity-based staging trees. |
 | Dependency lifecycle | Resolved | Lock corruption propagates. `get`/`update` prepare in memory and publish coordinated manifest/lock state only after all work succeeds. Metadata commits before cache deletion. |
-| Intrinsic and pipeline ownership | Resolved | One intrinsic definition slice drives symbols, methods, operations, and signatures. Diagnostic-free scheduler completion requires every scheduled module at backend before runtime-symbol validation. |
+| Intrinsic and pipeline ownership | Resolved | One intrinsic definition slice drives compiler-owned free-function symbols, contextual discovery, operations, and signatures. Diagnostic-free scheduler completion requires every scheduled module at backend before runtime-symbol validation. |
 | Documentation | Resolved | Interface ownership, target-sized carrier fields, README registry claim, and CLI diagrams now follow live owners. |
 
 This report groups related defects by owning subsystem. Severity reflects impact, not amount of code needed:

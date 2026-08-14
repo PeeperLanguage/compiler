@@ -1,7 +1,7 @@
 import "negative_scalar_shrink_bad_free/hijack";
 
-fn Consume(values: []i32) {
-    let shortened = shrink(values, 0);
+fn Consume(mut values: []i32) {
+    values |> shrink(0);
     hijack::BadFree(0);
 }
 

@@ -15,8 +15,8 @@ Target model:
 - Shallow copy of `*T` is never implicit.
 - `@expr` creates raw pointers; `&expr` creates safe references.
 - `[]T` is the target spelling for dynamic arrays.
-- `&[]T` and `&mut []T` are the target spellings for slice views.
-- Slice views are reference forms, not a separate type family.
+- `[..]T` is the non-owning slice target; `&[..]T` and `&mut [..]T` are views.
+- `&[]T` and `&mut []T` borrow dynamic-array owner headers for structural operations.
 
 Rejected old model:
 
@@ -265,15 +265,15 @@ let dynamic: []i32 = []i32{1, 2, 3}
 Slice views borrow contiguous storage:
 
 ```peep
-fn sum(xs: &[]i32) -> i32
-fn fill(xs: &mut []i32, value: i32)
+fn sum(xs: &[..]i32) -> i32
+fn fill(xs: &mut [..]i32, value: i32)
 ```
 
 Implementation status:
 
 - `&T`, `&mut T`, `&expr`, and `&mut expr` are implemented for current v1 storage boundaries.
 - `[]T` is represented as dynamic-array storage, not a slice view.
-- reference-return contracts and borrow-conflict checks remain future work.
+- `[..]T` is a distinct reference-only slice target.
 
 ## Automatic Destruction
 

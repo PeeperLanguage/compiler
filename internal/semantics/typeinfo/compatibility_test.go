@@ -118,12 +118,12 @@ func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
 	if got := CheckCompatibility(&ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}, &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}); got != Compatible {
 		t.Fatalf("array compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&ArrayType{Dynamic: true, Elem: &StringType{}}, &ArrayType{Dynamic: true, Elem: &StringType{}}); got != Compatible {
+	if got := CheckCompatibility(&ArrayType{Shape: ArrayOwner, Elem: &StringType{}}, &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}); got != Compatible {
 		t.Fatalf("dynamic array compat = %v, want compatible", got)
 	}
 	if got := CheckCompatibility(
-		&RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}},
-		&RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}},
+		&RefType{Target: &ArrayType{Shape: ArraySlice, Elem: &StringType{}}},
+		&RefType{Target: &ArrayType{Shape: ArraySlice, Elem: &StringType{}}},
 	); got != Compatible {
 		t.Fatalf("slice-view ref compat = %v, want compatible", got)
 	}

@@ -119,7 +119,7 @@ flowchart TB
 | Target representation | Type construction | Fixed-array length must fit explicit numeric type and target `usize`. |
 | Physical LLVM representation | LLVM layout descriptors | Rendered type, layout kind, pointee, elements, function signature, and named carrier fields have one authority. |
 | LLVM operands and addresses | Typed builder | Loads, stores, comparisons, arithmetic, casts, GEPs, phis, calls, branches, and returns validate layouts before text emission. |
-| Intrinsic lowerability | Definition registry and end-to-end pipeline test | One definition slice drives symbols, method discovery, operations, and signatures; every operation must survive semantics, HIR, MIR, LLVM generation, and 32/64-bit clang assembly. |
+| Intrinsic lowerability | Definition registry and end-to-end pipeline test | One definition slice drives free-function symbols, contextual operation discovery, operations, and signatures; every operation must survive semantics, HIR, MIR, LLVM generation, and 32/64-bit clang assembly. |
 
 Canonical built-in carrier fields:
 

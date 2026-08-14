@@ -122,6 +122,9 @@ func IsSizedType(t Type) bool {
 			if typ == nil || typ.Elem == nil {
 				return false
 			}
+			if typ.Shape == ArraySlice {
+				return false
+			}
 			return check(typ.Elem)
 		case *StructType:
 			if typ == nil {
@@ -170,7 +173,7 @@ func IsNoCopyType(t Type) bool {
 		case *OptionalType:
 			return typ != nil && check(typ.Inner)
 		case *ArrayType:
-			return typ != nil && (typ.Dynamic || check(typ.Elem))
+			return typ != nil && (typ.Shape == ArrayOwner || check(typ.Elem))
 		case *StructType:
 			if typ == nil {
 				return false
@@ -217,14 +220,14 @@ func IsLowerableType(t Type) bool {
 			if _, nested := Underlying(typ.Target).(*RefType); nested {
 				return false
 			}
-			if target, ok := Underlying(typ.Target).(*ArrayType); ok && target != nil && target.Len == "" && !target.Dynamic {
+			if target, ok := Underlying(typ.Target).(*ArrayType); ok && target != nil && target.Shape == ArraySlice {
 				return target.Elem != nil && check(target.Elem)
 			}
 			return check(typ.Target)
 		case *OptionalType:
 			return typ != nil && typ.Inner != nil && check(typ.Inner)
 		case *ArrayType:
-			return typ != nil && (typ.Dynamic || typ.Len != "") && typ.Elem != nil && check(typ.Elem)
+			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem)
 		case *StructType:
 			if typ == nil {
 				return false
@@ -297,7 +300,7 @@ func NeedsDrop(t Type) bool {
 		case *OptionalType:
 			return typ != nil && check(typ.Inner)
 		case *ArrayType:
-			return typ != nil && (typ.Dynamic || check(typ.Elem))
+			return typ != nil && (typ.Shape == ArrayOwner || check(typ.Elem))
 		case *StructType:
 			if typ == nil {
 				return false

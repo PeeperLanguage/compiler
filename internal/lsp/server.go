@@ -58,7 +58,7 @@ func Run(in io.Reader, out io.Writer) error {
 					DefinitionProvider: true,
 					RenameProvider:     true,
 					CompletionProvider: &CompletionOptions{
-						TriggerCharacters: []string{".", ":", "/", "\""},
+						TriggerCharacters: []string{".", "|", ">", ":", "/", "\""},
 					},
 				},
 				ServerInfo: &ServerInfo{

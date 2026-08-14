@@ -64,13 +64,14 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return &ArrayLit{Values: values, Dynamic: node.Dynamic, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *DynamicArrayOp:
 		return &DynamicArrayOp{
-			Op:       node.Op,
-			Array:    FoldExpr(types, node.Array, env),
-			Length:   FoldExpr(types, node.Length, env),
-			Value:    FoldExpr(types, node.Value, env),
-			Type:     node.Type,
-			NodeID:   node.NodeID,
-			Location: node.Location,
+			Op:        node.Op,
+			Array:     FoldExpr(types, node.Array, env),
+			Length:    FoldExpr(types, node.Length, env),
+			Value:     FoldExpr(types, node.Value, env),
+			ArrayType: node.ArrayType,
+			Type:      node.Type,
+			NodeID:    node.NodeID,
+			Location:  node.Location,
 		}
 	case *StringChars:
 		return &StringChars{

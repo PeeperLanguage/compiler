@@ -413,7 +413,7 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 	}
 	if isStringSequence(baseType) {
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
-			"string indexing requires `.as_bytes()` or `.as_chars()`"))
+			"string indexing requires `value |> as_bytes()` or `value |> as_chars()`"))
 		return &typeinfo.InvalidType{}
 	}
 	elem, shape, ok := indexableSequence(baseType)
@@ -475,7 +475,7 @@ func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, ra
 	}
 	return &typeinfo.RefType{
 		Mutable: mutable,
-		Target:  &typeinfo.ArrayType{Dynamic: true, Elem: elem},
+		Target:  &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: elem},
 	}
 }
 
@@ -510,7 +510,7 @@ func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, 
 		if base == nil || base.Elem == nil {
 			return nil, 0, false
 		}
-		if base.Dynamic {
+		if base.Shape == typeinfo.ArrayOwner {
 			return base.Elem, indexableDynamicArray, true
 		}
 		if base.Len != "" {
@@ -521,7 +521,7 @@ func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, 
 			return nil, 0, false
 		}
 		target, ok := typeinfo.Underlying(base.Target).(*typeinfo.ArrayType)
-		if !ok || target == nil || !target.Dynamic || target.Elem == nil {
+		if !ok || target == nil || (target.Shape != typeinfo.ArrayOwner && target.Shape != typeinfo.ArraySlice) || target.Elem == nil {
 			return nil, 0, false
 		}
 		if base.Mutable {
@@ -657,7 +657,7 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Type, "invalid array literal type"))
 		return &typeinfo.InvalidType{}
 	}
-	if array.Dynamic {
+	if array.Shape == typeinfo.ArrayOwner {
 		if c.rejectReferenceStorage(array.Elem, node.Type, "dynamic arrays", true) ||
 			c.rejectUnsizedType(array.Elem, node.Type, "dynamic array element") {
 			return &typeinfo.InvalidType{}

@@ -1,6 +1,6 @@
 # Dynamic Array Construction Mock Programs
 
-Status: implemented Step 15D construction and consuming owner operations.
+Status: implemented construction and in-place owner operations.
 
 ## Construction
 
@@ -42,50 +42,43 @@ or result without changing literal type.
 
 ## Owner Operations
 
-Slice views cannot resize. `&mut []T` grants mutable element access only and
-does not contain owner capacity. Dynamic-array owner operations therefore take
-and return `[]T` by value:
+Slice views cannot resize. `&mut [..]T` grants mutable element access only and
+does not contain owner capacity. Dynamic-array owner operations take `&mut []T`,
+mutate owner header in place, and return no value:
 
 ```peep
 fn build() {
     let mut values = []i32{1, 2}
-    values = append(values, 3)
-    values = reserve(values, 16)
-    values = resize(values, 8, 0)
-    values = shrink(values, 4)
-}
-
-fn compose() {
-    let one = append([]i32{}, 1)
-    let extended = append(make_values(), 4)
+    values |> append(3)
+    values |> reserve(16)
+    values |> resize(8, 0)
+    values |> shrink(4)
 }
 ```
 
-This uses normal language ownership. Each operation consumes old owner and
-returns replacement owner. Reassignment reinitializes moved source binding.
-Compiler already accepts this move-then-reinitialize control-flow shape for
-ordinary Category B values. Taking owner by value also permits literals and
-other temporary owners to flow directly into an operation; an `&mut` API would
-require an addressable binding and lose this composition.
+Pipe adaptation borrows mutable addressable owner automatically, so user does
+not write `&mut values`. Direct calls remain explicit, for example
+`append(&mut values, 3)`. Immutable bindings, slice views, and temporaries cannot
+receive structural mutation.
 
-`append(array, value)`:
+`append(&mut array, value)`:
 
-- consumes array owner and value according to normal by-value rules
+- mutably borrows array owner and moves value according to normal rules
 - writes within capacity when possible
 - otherwise allocates larger storage, relocates existing elements, releases old
-  storage without dropping relocated elements, and returns new owner
+  storage without dropping relocated elements, and stores updated owner header
 - grows capacity geometrically with checked size arithmetic
 
-`reserve(array, minimum)`:
+`reserve(&mut array, minimum)`:
 
-- consumes array owner
-- returns it unchanged when capacity is sufficient
+- mutably borrows array owner
+- changes nothing when capacity is sufficient
 - otherwise relocates elements into storage with at least `minimum` capacity
 - never changes length
 
-`resize(array, length, fill)`:
+`resize(&mut array, length, fill)`:
 
-- consumes array owner
+- mutably borrows array owner
 - is available only for Category A element types in initial implementation
 - shrinking shortens length; removed scalar slots require no destruction
 - growing reserves space and initializes new slots from `fill`
@@ -94,10 +87,10 @@ require an addressable binding and lose this composition.
 - Category B arrays cannot use this operation because one reusable fill value
   cannot represent repeated moves
 
-`shrink(array, length)`:
+`shrink(&mut array, length)`:
 
-- consumes array owner and accepts every element type
-- returns array unchanged when `length` is not smaller than current length
+- mutably borrows array owner and accepts every element type
+- changes nothing when `length` is not smaller than current length
 - otherwise destroys removed elements in reverse index order
 - preserves data pointer and capacity and never allocates
 - supplies Category B shrinking without pretending a fill value can be reused
@@ -111,14 +104,14 @@ tactical library API that current semantics cannot implement.
 ## Views Stay Non-Owning
 
 ```peep
-fn fill(view: &mut []i32) {
+fn fill(view: &mut [..]i32) {
     view[0] = 9
-    view = append(view, 10) // error: append requires []i32 owner
+    view |> append(10) // error: append requires []i32 owner
 }
 
-fn inspect(view: &[]i32) {
+fn inspect(view: &[..]i32) {
     let value = view[0]
-    view = reserve(view, 32) // error: reserve requires []i32 owner
+    view |> reserve(32) // error: reserve requires []i32 owner
 }
 ```
 
@@ -165,13 +158,13 @@ Required invariants:
 
 ## Rejected Shapes
 
-`append(&mut values, item)` is rejected because `&mut []T` already means mutable
-slice view, not mutable access to owner header. It would also reject useful
-literal and temporary forms such as `append([]i32{}, item)`.
+`append(&mut values, item)` is valid explicit-call syntax. Pipe syntax is the
+ergonomic form and performs same mutable borrow: `values |> append(item)`.
+Temporary owners are rejected because in-place structural mutation requires an
+addressable owner whose updated header remains live.
 
-`values.append(item)` is rejected for initial implementation because it looks
-like an ordinary method while builtins cannot receive user-defined methods and
-generic method instantiation does not exist.
+`values.append(item)` is rejected because compiler-owned operations are free
+functions. Dot syntax remains reserved for user-declared methods.
 
 `allocator.array<T>(...)` is deferred because typed generic allocation and
 allocator-instance provenance are issue #26 work. Requiring it now would make

@@ -126,11 +126,12 @@ type CompletionContext struct {
 }
 
 type CompletionItem struct {
-	Label    string   `json:"label"`
-	Kind     int      `json:"kind,omitempty"`
-	Detail   string   `json:"detail,omitempty"`
-	SortText string   `json:"sortText,omitempty"`
-	TextEdit TextEdit `json:"textEdit"`
+	Label            string   `json:"label"`
+	Kind             int      `json:"kind,omitempty"`
+	Detail           string   `json:"detail,omitempty"`
+	SortText         string   `json:"sortText,omitempty"`
+	InsertTextFormat int      `json:"insertTextFormat,omitempty"`
+	TextEdit         TextEdit `json:"textEdit"`
 }
 
 type RenameParams struct {

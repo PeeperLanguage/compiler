@@ -113,7 +113,7 @@ func addTypeDeclEdges(ctx *project.CompilerContext, module *project.Module, owne
 	case *ast.OptionalType:
 		addTypeDeclEdges(ctx, module, owner, node.Inner, indirect)
 	case *ast.ArrayType:
-		addTypeDeclEdges(ctx, module, owner, node.Elem, indirect || node.Dynamic || node.Len == nil)
+		addTypeDeclEdges(ctx, module, owner, node.Elem, indirect || node.Shape != ast.ArrayFixed || node.Len == nil)
 	case *ast.StructType:
 		for _, field := range node.Fields {
 			addTypeDeclEdges(ctx, module, owner, field.Type, indirect)

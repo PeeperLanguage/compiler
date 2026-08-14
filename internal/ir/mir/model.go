@@ -252,12 +252,12 @@ type DynamicArrayAlloc struct {
 }
 
 type DynamicArrayOp struct {
-	Op       symbols.CompilerOp
-	Array    ValueRef
-	Length   ValueRef
-	Value    ValueRef
-	Type     ir.TypeID
-	Location *source.Location
+	Op        symbols.CompilerOp
+	Array     ValueRef
+	Length    ValueRef
+	Value     ValueRef
+	ArrayType ir.TypeID
+	Location  *source.Location
 }
 
 type Alloc struct {
@@ -339,7 +339,6 @@ func (*Field) valueExprNode()             {}
 func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
 func (*DynamicArrayAlloc) valueExprNode() {}
-func (*DynamicArrayOp) valueExprNode()    {}
 func (*Alloc) valueExprNode()             {}
 func (*ZeroValue) valueExprNode()         {}
 func (*OptionalSome) valueExprNode()      {}
@@ -511,6 +510,8 @@ func InstrLocation(instr Instr) *source.Location {
 		return node.Location
 	case *InterfaceCall:
 		return node.Location
+	case *DynamicArrayOp:
+		return node.Location
 	default:
 		return nil
 	}
@@ -556,8 +557,6 @@ func ValueExprLocation(expr ValueExpr) *source.Location {
 	case *ArrayLit:
 		return node.Location
 	case *DynamicArrayAlloc:
-		return node.Location
-	case *DynamicArrayOp:
 		return node.Location
 	case *ZeroValue:
 		return node.Location

@@ -2,43 +2,53 @@ struct Point {
     x: i32
 }
 
+fn borrowed_owner_index(values: &mut []i32) -> i32 {
+    values[0] = values[0] + 10;
+    return values[0];
+}
+
 fn main() -> i32 {
     let mut values = []i32{};
-    values = append(values, 1);
-    values = append(values, 2);
-    values = append(values, 3);
+    values |> append(1);
+    values |> append(2);
+    values |> append(3);
     if values[0] != 1 || values[1] != 2 || values[2] != 3 {
         return 1;
     }
+    if borrowed_owner_index(&mut values) != 11 || values[0] != 11 {
+        return 7;
+    }
 
-    values = reserve(values, 16);
-    values = append(values, 4);
-    if values[0] != 1 || values[3] != 4 {
+    values |> reserve(16);
+    values |> append(4);
+    if values[0] != 11 || values[3] != 4 {
         return 2;
     }
 
-    values = resize(values, 7, 9);
+    values |> resize(7, 9);
     if values[4] != 9 || values[6] != 9 {
         return 3;
     }
-    values = resize(values, 2, 0);
-    if values[0] != 1 || values[1] != 2 {
+    values |> resize(2, 0);
+    if values[0] != 11 || values[1] != 2 {
         return 4;
     }
 
     let first = .Point{x = 10};
     let second = .Point{x = 20};
-    let mut points = append([]Point{}, first);
-    points = append(points, second);
+    let mut points = []Point{};
+    points |> append(first);
+    points |> append(second);
     if points[0].x != 10 || points[1].x != 20 {
         return 5;
     }
 
     let inner_first = []i32{31};
     let inner_second = []i32{41};
-    let mut nested = append([][]i32{}, inner_first);
-    nested = append(nested, inner_second);
-    nested = reserve(nested, 8);
+    let mut nested = [][]i32{};
+    nested |> append(inner_first);
+    nested |> append(inner_second);
+    nested |> reserve(8);
     if nested[0][0] != 31 || nested[1][0] != 41 {
         return 6;
     }

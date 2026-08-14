@@ -1,0 +1,2 @@
+name = "negative_dynamic_array_immutable_mutation"
+build = "lib"

@@ -34,10 +34,10 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	ownedA := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	ownedB := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	rawPtr := &RawPtrType{}
-	ref := &RefType{Target: &ArrayType{Dynamic: true, Elem: &StringType{}}}
+	ref := &RefType{Target: &ArrayType{Shape: ArraySlice, Elem: &StringType{}}}
 	opt := &OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}
 	array := &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}
-	dynArray := &ArrayType{Dynamic: true, Elem: &StringType{}}
+	dynArray := &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}
 
 	if got := ownedA.Text(); got != "*i32" {
 		t.Fatalf("owned pointer text: got %q want %q", got, "*i32")
@@ -45,8 +45,8 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	if got := rawPtr.Text(); got != "rawptr" {
 		t.Fatalf("raw pointer text: got %q want %q", got, "rawptr")
 	}
-	if got := ref.Text(); got != "&[]str" {
-		t.Fatalf("reference text: got %q want %q", got, "&[]str")
+	if got := ref.Text(); got != "&[..]str" {
+		t.Fatalf("reference text: got %q want %q", got, "&[..]str")
 	}
 	if got := opt.Text(); got != "?i32" {
 		t.Fatalf("optional text: got %q want %q", got, "?i32")
@@ -59,6 +59,16 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	}
 	if !SameType(ownedA, ownedB) {
 		t.Fatalf("owned pointers with equal targets should match")
+	}
+}
+
+func TestSliceIsUnsizedButSliceReferenceIsSized(t *testing.T) {
+	slice := &ArrayType{Shape: ArraySlice, Elem: &IntegerType{Signed: true, Bits: 32}}
+	if IsSizedType(slice) {
+		t.Fatal("bare slice must be unsized")
+	}
+	if !IsSizedType(&RefType{Target: slice}) || !IsLowerableType(&RefType{Target: slice}) {
+		t.Fatal("slice reference must be sized and lowerable")
 	}
 }
 
@@ -76,7 +86,7 @@ func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	if !IsNoCopyType(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}) {
 		t.Fatalf("owned pointer should propagate nocopy through struct")
 	}
-	if !IsNoCopyType(&ArrayType{Dynamic: true, Elem: i32}) {
+	if !IsNoCopyType(&ArrayType{Shape: ArrayOwner, Elem: i32}) {
 		t.Fatalf("dynamic array should be intrinsically nocopy")
 	}
 }
@@ -146,7 +156,7 @@ func TestSizedTypesDistinguishInterfaceCarriers(t *testing.T) {
 	if !IsSizedType(&NamedType{Name: "T"}) {
 		t.Fatalf("generic type parameter must be sized")
 	}
-	if IsSizedType(&ArrayType{Dynamic: true, Elem: iface}) {
+	if IsSizedType(&ArrayType{Shape: ArrayOwner, Elem: iface}) {
 		t.Fatalf("dynamic array cannot contain unsized interface elements")
 	}
 }
@@ -375,7 +385,7 @@ func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
 	}{
 		{name: "owned pointer", typ: owner, want: true},
 		{name: "string", typ: &StringType{}, want: true},
-		{name: "dynamic array", typ: &ArrayType{Dynamic: true, Elem: &IntegerType{Signed: true, Bits: 32}}, want: true},
+		{name: "dynamic array", typ: &ArrayType{Shape: ArrayOwner, Elem: &IntegerType{Signed: true, Bits: 32}}, want: true},
 		{name: "fixed owner array", typ: &ArrayType{Len: "2", Elem: owner}, want: true},
 		{name: "optional owner", typ: &OptionalType{Inner: owner}, want: true},
 		{name: "nested owner", typ: &StructType{Fields: []Field{{Name: "value", Type: owner}}}, want: true},
@@ -394,7 +404,7 @@ func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
 
 func TestDynamicArrayRequiresRecursivelySizedElement(t *testing.T) {
 	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
-	nested := &ArrayType{Dynamic: true, Elem: &ArrayType{Len: "2", Elem: iface}}
+	nested := &ArrayType{Shape: ArrayOwner, Elem: &ArrayType{Len: "2", Elem: iface}}
 	if IsSizedType(nested) {
 		t.Fatalf("dynamic array of fixed arrays containing bare interfaces must be unsized")
 	}

@@ -3,7 +3,6 @@ package lsp
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
-	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -191,11 +190,6 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	}
 	if fieldSym := lookupStructFieldSymbol(baseType, ident.Name, ctx); fieldSym != nil {
 		return fieldSym
-	}
-	for _, method := range intrinsics.Symbols(baseType, ctx.Target) {
-		if method != nil && method.Name == ident.Name {
-			return method
-		}
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		if methods, ok := module.Semantics.MethodSets[key]; ok {

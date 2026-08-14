@@ -107,10 +107,11 @@ func TestGenerateHIRPreservesSourceAndSymbolIdentity(t *testing.T) {
 
 func TestGenerateHIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 	const src = `fn main() {
-	let appended = append([]i32{}, 1);
-	let reserved = reserve(appended, 8);
-	let resized = resize(reserved, 4, 0);
-	let shrunk = shrink(resized, 2);
+	let mut values = []i32{};
+	values |> append(1);
+	values |> reserve(8);
+	values |> resize(4, 0);
+	values |> shrink(2);
 }`
 	out := generateTestHIR(t, "hir_dynamic_array_ops_test"+peeper.SourceExt, "hir_dynamic_array_ops_test", src)
 	want := []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize, symbols.CompilerOpShrink}
@@ -118,21 +119,24 @@ func TestGenerateHIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 		t.Fatalf("operation statements = %d, want at least %d", len(out.Funcs[0].Body.Stmts), len(want))
 	}
 	for i := range want {
-		stmt := out.Funcs[0].Body.Stmts[i]
-		binding, ok := stmt.(*hir.Binding)
+		stmt := out.Funcs[0].Body.Stmts[i+1]
+		exprStmt, ok := stmt.(*hir.ExprStmt)
 		if !ok {
-			t.Fatalf("stmt %d = %#v, want binding", i, stmt)
+			t.Fatalf("stmt %d = %#v, want expression statement", i, stmt)
 		}
-		op, ok := binding.Value.(*ir.DynamicArrayOp)
-		if !ok || op.Op != want[i] || out.Types.Text(op.Type) != "[]i32" {
-			t.Fatalf("stmt %d operation = %#v, want %s []i32", i, binding.Value, want[i])
+		op, ok := exprStmt.Value.(*ir.DynamicArrayOp)
+		if !ok || op.Op != want[i] || out.Types.Text(op.Type) != "void" || out.Types.Text(op.ArrayType) != "[]i32" {
+			t.Fatalf("stmt %d operation = %#v, want %s mutable []i32", i, exprStmt.Value, want[i])
+		}
+		if _, ok := op.Array.(*ir.AddrOf); !ok {
+			t.Fatalf("stmt %d owner = %#v, want semantic mutable borrow", i, op.Array)
 		}
 	}
 }
 
 func TestGenerateHIRLowersSliceViewIndexExpr(t *testing.T) {
 	const filePath = "hir_slice_view_index_test" + peeper.SourceExt
-	src := `fn first(xs: &[]i32, index: usize) -> i32 {
+	src := `fn first(xs: &[..]i32, index: usize) -> i32 {
 	return xs[index];
 }`
 	out := generateTestHIR(t, filePath, "hir_slice_view_index_test", src)
@@ -186,7 +190,7 @@ func TestGenerateHIRLowersFixedArrayRangeAsMutableSliceView(t *testing.T) {
 		t.Fatalf("expected range binding, got %#v", out.Funcs[0].Body.Stmts[0])
 	}
 	view, ok := binding.Value.(*ir.SliceView)
-	if !ok || out.Types.Text(view.Type) != "&mut []i32" || view.EndExclusive {
+	if !ok || out.Types.Text(view.Type) != "&mut [..]i32" || view.EndExclusive {
 		t.Fatalf("expected inclusive mutable SliceView, got %#v", binding.Value)
 	}
 	if view.Source == nil || out.Types.Text(view.Source.Type) != "[4]i32" || len(view.Source.Projections) != 0 {
@@ -202,8 +206,8 @@ func TestGenerateHIRLowersFixedArrayRangeAsMutableSliceView(t *testing.T) {
 func TestGenerateHIRLowersStringCharsIntrinsic(t *testing.T) {
 	src := `fn main() -> i32 {
 	let text: str = "aé";
-	let chars = text.as_chars();
-	return chars.len() as i32;
+	let chars = text |> as_chars();
+	return chars |> len() as i32;
 }`
 	out := generateTestHIR(t, "hir_string_chars_test"+peeper.SourceExt, "hir_string_chars_test", src)
 	var chars *ir.StringChars
@@ -225,8 +229,8 @@ func TestGenerateHIRLowersStringCharsIntrinsic(t *testing.T) {
 func TestGenerateHIRPreservesTemporaryStringViewOwners(t *testing.T) {
 	src := `fn Make() -> str { return "abc"; }
 fn main() -> i32 {
-	let byte = Make().as_bytes()[0];
-	let size = Make()[0..1].len();
+	let byte = (Make() |> as_bytes())[0];
+	let size = Make()[0..1] |> len();
 	return byte as i32 + size as i32;
 }`
 	out := generateTestHIR(t, "hir_temporary_string_views_test"+peeper.SourceExt, "hir_temporary_string_views_test", src)
@@ -240,6 +244,9 @@ fn main() -> i32 {
 	}
 	if !byteOwner.Slice {
 		t.Fatal("temporary as_bytes borrow must use return-safe string view")
+	}
+	if _, ok := byteOwner.Value.(*ir.Call); !ok {
+		t.Fatalf("temporary as_bytes value = %T, want one lowered call", byteOwner.Value)
 	}
 
 	sizeBinding := mainFn.Body.Stmts[1].(*hir.Binding)
@@ -257,7 +264,7 @@ fn main() -> i32 {
 func TestGenerateHIRLowersStringBorrowsAsSliceViews(t *testing.T) {
 	const src = `fn borrow(text: str) {
 	let view = &text;
-	let _ = view.len();
+	let _ = view |> len();
 }`
 	out := generateTestHIR(t, "hir_string_borrow_test"+peeper.SourceExt, "hir_string_borrow_test", src)
 	binding, ok := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
@@ -415,7 +422,7 @@ func TestGenerateHIRLowersDynamicArrayLiteral(t *testing.T) {
 	}
 }
 
-func TestGenerateHIRLowersDynamicArrayBorrowsAsSliceViews(t *testing.T) {
+func TestGenerateHIRLowersDynamicArrayBorrowsAsOwnerReferences(t *testing.T) {
 	const filePath = "hir_slice_view_test" + peeper.SourceExt
 	const src = `struct Bucket {
 	items: []i32
@@ -446,8 +453,8 @@ fn nested(mut bucket: Bucket) {
 	if !ok {
 		t.Fatalf("expected explicit borrow binding, got %#v", explicit.Body.Stmts[0])
 	}
-	if view, ok := binding.Value.(*ir.SliceView); !ok || out.Types.Text(view.Type) != "&[]i32" {
-		t.Fatalf("expected shared SliceView, got %#v", binding.Value)
+	if ref, ok := binding.Value.(*ir.AddrOf); !ok || out.Types.Text(ref.Type) != "&[]i32" {
+		t.Fatalf("expected shared owner reference, got %#v", binding.Value)
 	}
 
 	explicitMutable := funcs["explicit_mutable"]
@@ -458,8 +465,8 @@ fn nested(mut bucket: Bucket) {
 	if !ok {
 		t.Fatalf("expected explicit mutable borrow binding, got %#v", explicitMutable.Body.Stmts[0])
 	}
-	if view, ok := binding.Value.(*ir.SliceView); !ok || out.Types.Text(view.Type) != "&mut []i32" {
-		t.Fatalf("expected mutable SliceView, got %#v", binding.Value)
+	if ref, ok := binding.Value.(*ir.AddrOf); !ok || out.Types.Text(ref.Type) != "&mut []i32" {
+		t.Fatalf("expected mutable owner reference, got %#v", binding.Value)
 	}
 
 	nested := funcs["nested"]
@@ -470,12 +477,12 @@ fn nested(mut bucket: Bucket) {
 	if !ok {
 		t.Fatalf("expected nested borrow binding, got %#v", nested.Body.Stmts[0])
 	}
-	view, ok := binding.Value.(*ir.SliceView)
-	if !ok || out.Types.Text(view.Type) != "&mut []i32" {
-		t.Fatalf("expected nested mutable SliceView, got %#v", binding.Value)
+	ref, ok := binding.Value.(*ir.AddrOf)
+	if !ok || out.Types.Text(ref.Type) != "&mut []i32" {
+		t.Fatalf("expected nested mutable owner reference, got %#v", binding.Value)
 	}
-	if view.Source == nil || len(view.Source.Projections) != 1 || view.Source.Projections[0].Kind != ir.PlaceProjectionField {
-		t.Fatalf("expected nested view from original field place, got %#v", view.Source)
+	if ref.Place == nil || len(ref.Place.Projections) != 1 || ref.Place.Projections[0].Kind != ir.PlaceProjectionField {
+		t.Fatalf("expected nested reference to original field place, got %#v", ref.Place)
 	}
 }
 
@@ -685,6 +692,43 @@ fn main() -> i32 { return Read(&Make()); }`
 	temporary, ok := call.Args[0].(*ir.TempBorrow)
 	if !ok || temporary.Value == nil || out.Types.Text(temporary.Type) != "&struct{value: i32}" || temporary.Slice {
 		t.Fatalf("expected temporary Box borrow, got %#v", call.Args[0])
+	}
+}
+
+func TestGenerateHIRConsumesPipeBorrowEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_pipe_borrow_test"+peeper.SourceExt, "hir_pipe_borrow_test", `fn Read(_: &i32) -> i32 { return 1; }
+fn main() -> i32 {
+	let value = 7;
+	return value |> Read();
+}`)
+	mainFn := out.Funcs[len(out.Funcs)-1]
+	ret := mainFn.Body.Stmts[1].(*hir.Return)
+	call, ok := ret.Value.(*ir.Call)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("pipe call = %#v, want one-argument call", ret.Value)
+	}
+	borrow, ok := call.Args[0].(*ir.AddrOf)
+	if !ok || borrow.Place == nil || out.Types.Text(borrow.Type) != "&i32" {
+		t.Fatalf("pipe argument = %#v, want semantic shared borrow", call.Args[0])
+	}
+}
+
+func TestGenerateHIRConsumesMethodBorrowEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_method_borrow_evidence_test"+peeper.SourceExt, "hir_method_borrow_evidence_test", `struct Counter { value: i32 }
+fn (self: &Counter) Read() -> i32 { return self.value; }
+fn main() -> i32 {
+	let counter: Counter = .{ value = 7 };
+	return counter.Read();
+}`, func(module *project.Module) { module.Semantics.MethodSets = nil })
+	mainFn := out.Funcs[len(out.Funcs)-1]
+	ret := mainFn.Body.Stmts[1].(*hir.Return)
+	call, ok := ret.Value.(*ir.Call)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("method call = %#v, want receiver argument", ret.Value)
+	}
+	borrow, ok := call.Args[0].(*ir.AddrOf)
+	if !ok || borrow.Place == nil || out.Types.Text(borrow.Type) != "&struct{value: i32}" {
+		t.Fatalf("method receiver = %#v, want semantic shared borrow", call.Args[0])
 	}
 }
 

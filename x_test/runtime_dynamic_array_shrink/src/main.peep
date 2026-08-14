@@ -3,23 +3,23 @@ fn main() -> i32 {
     let second = []i32{22};
     let third = []i32{33};
     let mut nested = [][]i32{first, second, third};
-    nested = shrink(nested, 1);
+    nested |> shrink(1);
     if nested[0][0] != 11 {
         return 1;
     }
 
-    nested = shrink(nested, 8);
+    nested |> shrink(8);
     if nested[0][0] != 11 {
         return 2;
     }
 
-    nested = append(nested, []i32{44});
+    nested |> append([]i32{44});
     if nested[1][0] != 44 {
         return 3;
     }
 
     let mut scalar = []i32{1, 2, 3};
-    scalar = shrink(scalar, 2);
+    scalar |> shrink(2);
     if scalar[0] != 1 || scalar[1] != 2 {
         return 4;
     }

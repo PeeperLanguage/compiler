@@ -3,7 +3,6 @@ struct Point {
 }
 
 fn main() {
-    let points = []Point{.Point{x = 1}};
-    let resized = resize(points, 2, .Point{x = 0});
+    let mut points = []Point{.Point{x = 1}};
+    points |> resize(2, .Point{x = 0});
 }
-

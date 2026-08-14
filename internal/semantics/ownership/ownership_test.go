@@ -172,6 +172,26 @@ func TestAllocConsumesOwnedValue(t *testing.T) {
 	}
 }
 
+func TestInvalidAllocAritiesDoNotPanic(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{name: "missing value", src: `fn main() { alloc(); }`, want: "wrong number of arguments: got 0, want 1"},
+		{name: "direct excess", src: `fn main() { alloc(1, 2, 3); }`, want: "wrong number of arguments: got 3, want 2"},
+		{name: "piped excess", src: `fn main() { 1 |> alloc(2, 3); }`, want: "wrong number of arguments: got 2, want 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := checkOwnershipSource(t, tt.src)
+			if out := result.EmitAllToString(); !strings.Contains(out, tt.want) {
+				t.Fatalf("unexpected alloc arity diagnostic:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestRawPointerCopyAllowed(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn main() {
 	let value: i32 = 1;
@@ -480,7 +500,7 @@ func TestMoveOnlyIndexedElementCopyRejected(t *testing.T) {
 }
 
 func TestMoveOnlySliceViewElementCopyRejected(t *testing.T) {
-	diag := checkOwnershipSource(t, `fn first(values: &[]*i32, index: usize) -> *i32 {
+	diag := checkOwnershipSource(t, `fn first(values: &[..]*i32, index: usize) -> *i32 {
 	return values[index];
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrInvalidCopy) {
@@ -1017,7 +1037,7 @@ fn bad(owner: *i32) {
 	free(owner);
 	Read(reference);
 }`,
-		"slice view source": `fn Read(_: &[]i32) {}
+		"slice view source": `fn Read(_: &[..]i32) {}
 fn bad(mut values: [2]i32) {
 	let view = values[..];
 	values[0] = 3;
@@ -1164,38 +1184,39 @@ fn main() {
 	}
 }
 
-func TestDynamicArrayOwnerOperationsConsumeAndReinitializeOwner(t *testing.T) {
+func TestDynamicArrayOwnerOperationsBorrowAndKeepOwnerLive(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn main() {
 	let mut values = []i32{};
-	values = append(values, 1);
-	values = reserve(values, 8);
-	values = resize(values, 4, 0);
-	values = shrink(values, 2);
+	values |> append(1);
+	values |> reserve(8);
+	values |> resize(4, 0);
+	values |> shrink(2);
+	print(values[0]);
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestDynamicArrayShrinkConsumesOwner(t *testing.T) {
+func TestDynamicArrayShrinkDoesNotConsumeOwner(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn main() {
-	let values = []i32{1};
-	let shortened = shrink(values, 0);
-	print(values[0]);
+	let mut values = []i32{1};
+	values |> shrink(0);
+	print(values |> len());
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected moved-owner diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected borrowed-owner diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
-func TestDynamicArrayAppendConsumesOwner(t *testing.T) {
+func TestDynamicArrayAppendDoesNotConsumeOwner(t *testing.T) {
 	diag := checkOwnershipSource(t, `fn main() {
-	let values = []i32{};
-	let extended = append(values, 1);
+	let mut values = []i32{};
+	values |> append(1);
 	print(values[0]);
 }`)
-	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
-		t.Fatalf("expected moved-owner diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected borrowed-owner diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -1204,7 +1225,8 @@ func TestDynamicArrayAppendConsumesCompositeElement(t *testing.T) {
 fn consume(point: Point) {}
 fn main() {
 	let point = .Point{x = 1};
-	let values = append([]Point{}, point);
+	let mut values = []Point{};
+	values |> append(point);
 	consume(point);
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {

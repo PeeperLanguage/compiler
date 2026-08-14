@@ -1,0 +1,36 @@
+fn Read(values: &[..]i32) -> i32 {
+    return values[0];
+}
+
+fn Write(values: &mut [..]i32, value: i32) {
+    values[0] = value;
+}
+
+fn Consume(values: []i32) -> i32 {
+    return values[0];
+}
+
+// factorial using pipe
+fn factorial(value: i32) -> i32 {
+    if value == 0 {
+        return 1;
+    }
+    return value * factorial(value - 1);
+}
+
+fn main() -> i32 {
+    let mut values = []i32{1};
+    values |> Write(7);
+    if values |> Read() != 7 {
+        return 1;
+    }
+
+    println(factorial(5));
+
+    values |> append(2);
+
+    print("Size of values: ");
+    println(values |> len());
+
+    return 0;
+}

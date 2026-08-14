@@ -1,0 +1,8 @@
+fn Read(_: &i32) -> i32 {
+    return 1;
+}
+
+fn main() -> i32 {
+    let value = 7;
+    return Read(value);
+}

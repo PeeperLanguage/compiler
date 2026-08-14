@@ -942,7 +942,21 @@ func (p *Parser) parseBracketTypeExpr() ast.TypeExpr {
 			return nil
 		}
 		return reg(p, &ast.ArrayType{
-			Dynamic:  true,
+			Shape:    ast.ArrayOwner,
+			Elem:     elem,
+			Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
+		})
+	}
+	if p.match(token.DOTDOT) {
+		if p.consume(token.RBRACK, "expected ']' after '..' in slice type") == nil {
+			return nil
+		}
+		elem := p.parseTypeExpr()
+		if elem == nil {
+			return nil
+		}
+		return reg(p, &ast.ArrayType{
+			Shape:    ast.ArraySlice,
 			Elem:     elem,
 			Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
 		})
@@ -951,7 +965,7 @@ func (p *Parser) parseBracketTypeExpr() ast.TypeExpr {
 		tok := p.current()
 		p.diag.Add(diagnostics.NewError("expected array length").
 			WithCode(diagnostics.ErrInvalidTypeInParser).
-			WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), "use `[N]T` for fixed arrays or `[]T` for dynamic arrays"))
+			WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), "use `[N]T` for fixed arrays, `[]T` for dynamic arrays, or `[..]T` for slices"))
 		p.synchronize(token.RBRACK)
 		if p.at(token.RBRACK) {
 			p.advance()

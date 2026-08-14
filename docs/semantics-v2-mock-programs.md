@@ -222,11 +222,11 @@ fn main() {
 }
 ```
 
-Effectiveness: very good. `&[]T` and `&mut []T` are probably the biggest ergonomic win from reintroducing neutered borrows.
+Effectiveness: very good. `&[..]T` and `&mut [..]T` are probably the biggest ergonomic win from reintroducing neutered borrows.
 
-Pressure: grammar can keep slice views visually close to dynamic arrays by using `&[]T` and `&mut []T`.
+Pressure: grammar keeps slice views visually close to dynamic arrays with `&[..]T` and `&mut [..]T`.
 
-Recommendation: use `[]T` for dynamic arrays and `&[]T` / `&mut []T` for slice views.
+Recommendation: use `[]T` for dynamic-array owners and `&[..]T` / `&mut [..]T` for slice views.
 
 ## 9. Method Receiver Story Improves
 

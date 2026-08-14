@@ -14,6 +14,7 @@ import (
 
 const (
 	precLowest uint8 = iota
+	precPipe
 	precLogicalOr
 	precLogicalAnd
 	precBitOr
@@ -111,6 +112,7 @@ func init() {
 	nud(token.LBRACK, func(p *Parser) ast.Expr { return p.parseArrayLiteral() })
 
 	// logical
+	led(token.PIPE_ARROW, precPipe, parsePipeExpr)
 	led(token.OROR, precLogicalOr, parseBinaryExpr)
 	led(token.ANDAND, precLogicalAnd, parseBinaryExpr)
 
@@ -157,6 +159,30 @@ func init() {
 	led(token.DOT, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 		return p.parseSelector(left)
 	})
+}
+
+func parsePipeExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+	op := p.advance()
+	right := p.parseExpr(precPrefix)
+	call, ok := right.(*ast.CallExpr)
+	if !ok || call == nil || call.Piped {
+		loc := source.NewLocation(p.filePath, op.Start, ast.EndOf(right))
+		p.diag.Add(diagnostics.NewError("pipe target must be a free-function call").
+			WithCode(diagnostics.ErrInvalidExpression).
+			WithPrimaryLabel(loc, "write `value |> function(...)`"))
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(right))})
+	}
+	if _, method := call.Callee.(*ast.SelectorExpr); method {
+		loc := ast.LocOf(call.Callee)
+		p.diag.Add(diagnostics.NewError("pipe cannot call a method").
+			WithCode(diagnostics.ErrInvalidExpression).
+			WithPrimaryLabel(loc, "use `value.method(...)`"))
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(right))})
+	}
+	call.Args = append([]ast.Expr{left}, call.Args...)
+	call.Piped = true
+	call.Location = source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(call))
+	return call
 }
 
 func (p *Parser) parseExpr(precedence uint8) ast.Expr {
@@ -437,9 +463,13 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 			Location: source.NewLocation(p.filePath, start.Start, start.End),
 		})
 	}
+	shape := ast.ArrayFixed
+	if dynamic {
+		shape = ast.ArrayOwner
+	}
 	typ := reg(p, &ast.ArrayType{
 		Len:      length,
-		Dynamic:  dynamic,
+		Shape:    shape,
 		Elem:     elem,
 		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
 	})
