@@ -3,6 +3,7 @@ package lsp
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -14,6 +15,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
@@ -38,20 +40,32 @@ type completionContextKind uint8
 const (
 	completionNone completionContextKind = iota
 	completionNames
-	completionSelector
+	completionOperation
 	completionQualified
 	completionImport
 )
 
 type parsedCompletionContext struct {
-	kind      completionContextKind
-	prefix    string
-	qualifier string
-	start     int
-	end       int
-	cursor    int
-	sentinel  string
+	kind         completionContextKind
+	prefix       string
+	qualifier    string
+	start        int
+	end          int
+	rewriteStart int
+	cursor       int
+	pipe         bool
+	sentinel     string
+	sentinelAt   int
+	callSuffix   completionCallSuffixKind
 }
+
+type completionCallSuffixKind uint8
+
+const (
+	completionCallAbsent completionCallSuffixKind = iota
+	completionCallEmpty
+	completionCallArguments
+)
 
 type completionLexicalState uint8
 
@@ -87,12 +101,14 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 		return importCompletionItems(ctx.ImportCandidates(parsed.prefix, filePath), replacement), nil
 	case completionQualified:
 		return qualifiedCompletionItems(ctx, module, parsed.qualifier, parsed.prefix, replacement), nil
-	case completionSelector:
+	case completionOperation:
 		sentinelCtx, sentinelModule := compileCompletionSource(ctx.Config, s.completionOverlays(filePath), filePath, parsed.sentinel)
 		if sentinelCtx == nil || sentinelModule == nil || sentinelModule.Semantics == nil {
 			return []CompletionItem{}, nil
 		}
-		return selectorCompletionItems(sentinelCtx, sentinelModule, parsed.prefix, replacement), nil
+		rewrite := Range{Start: positionAtOffset(sourceText, parsed.rewriteStart), End: replacement.End}
+		sentinelPosition := positionAtOffset(parsed.sentinel, parsed.sentinelAt)
+		return operationCompletionItems(sentinelCtx, sentinelModule, sentinelPosition, parsed.prefix, replacement, rewrite, parsed.pipe, parsed.callSuffix == completionCallArguments), nil
 	case completionNames:
 		semanticCursor := source.NewPosition()
 		semanticCursor.Advance(sourceText[:parsed.cursor])
@@ -155,14 +171,35 @@ func parseCompletionContext(text string, position Position) parsedCompletionCont
 	for start > 0 && isIdentifierByte(text[start-1]) {
 		start--
 	}
-	end := offset
-	for end < len(text) && isIdentifierByte(text[end]) {
-		end++
+	identifierEnd := offset
+	for identifierEnd < len(text) && isIdentifierByte(text[identifierEnd]) {
+		identifierEnd++
 	}
 	prefix := text[start:offset]
+	callSuffix, callEnd := completionCallSuffix(text, identifierEnd)
+	editEnd := identifierEnd
+	if callSuffix == completionCallEmpty {
+		editEnd = callEnd
+	}
 	if start > 0 && text[start-1] == '.' {
-		sentinel := text[:start] + completionSentinel + text[end:]
-		return parsedCompletionContext{kind: completionSelector, prefix: prefix, start: start, end: end, cursor: offset, sentinel: sentinel}
+		sentinel := text[:start] + completionSentinel + text[identifierEnd:]
+		return parsedCompletionContext{kind: completionOperation, prefix: prefix, start: start, end: editEnd, rewriteStart: start - 1, cursor: offset, sentinel: sentinel, sentinelAt: start, callSuffix: callSuffix}
+	}
+	operatorEnd := start
+	for operatorEnd > 0 && (text[operatorEnd-1] == ' ' || text[operatorEnd-1] == '\t') {
+		operatorEnd--
+	}
+	if operatorEnd >= 2 && text[operatorEnd-2:operatorEnd] == "|>" {
+		rewriteStart := operatorEnd - 2
+		for rewriteStart > 0 && (text[rewriteStart-1] == ' ' || text[rewriteStart-1] == '\t') {
+			rewriteStart--
+		}
+		sentinelCall := ""
+		if callSuffix == completionCallAbsent {
+			sentinelCall = "()"
+		}
+		sentinel := text[:start] + completionSentinel + sentinelCall + text[identifierEnd:]
+		return parsedCompletionContext{kind: completionOperation, prefix: prefix, start: start, end: editEnd, rewriteStart: rewriteStart, cursor: offset, pipe: true, sentinel: sentinel, sentinelAt: start, callSuffix: callSuffix}
 	}
 	if start >= 2 && text[start-2:start] == "::" {
 		qualifierEnd := start - 2
@@ -173,60 +210,98 @@ func parseCompletionContext(text string, position Position) parsedCompletionCont
 		if qualifierStart == qualifierEnd {
 			return parsedCompletionContext{}
 		}
-		return parsedCompletionContext{kind: completionQualified, prefix: prefix, qualifier: text[qualifierStart:qualifierEnd], start: start, end: end, cursor: offset}
+		return parsedCompletionContext{kind: completionQualified, prefix: prefix, qualifier: text[qualifierStart:qualifierEnd], start: start, end: identifierEnd, cursor: offset}
 	}
 	if prefix == "" && offset > 0 && !isCompletionBoundary(text[offset-1]) {
 		return parsedCompletionContext{}
 	}
-	return parsedCompletionContext{kind: completionNames, prefix: prefix, start: start, end: end, cursor: offset}
+	return parsedCompletionContext{kind: completionNames, prefix: prefix, start: start, end: identifierEnd, cursor: offset}
 }
 
 func cursorLexicalState(text string, offset int) (completionLexicalState, int) {
 	state := completionLexicalCode
 	quoteStart := -1
-	for i := 0; i < offset; i++ {
-		switch state {
-		case completionLexicalCode:
-			switch {
-			case text[i] == '"':
-				state = completionLexicalString
-				quoteStart = i
-			case text[i] == '\'':
-				state = completionLexicalChar
-				quoteStart = i
-			case i+1 < offset && text[i:i+2] == "//":
-				state = completionLexicalLineComment
-				i++
-			case i+1 < offset && text[i:i+2] == "/*":
-				state = completionLexicalBlockComment
-				i++
-			}
-		case completionLexicalString:
-			if text[i] == '\\' {
-				i++
-			} else if text[i] == '"' {
-				state = completionLexicalCode
-				quoteStart = -1
-			}
-		case completionLexicalChar:
-			if text[i] == '\\' {
-				i++
-			} else if text[i] == '\'' {
-				state = completionLexicalCode
-				quoteStart = -1
-			}
-		case completionLexicalLineComment:
-			if text[i] == '\n' {
-				state = completionLexicalCode
-			}
-		case completionLexicalBlockComment:
-			if i+1 < offset && text[i:i+2] == "*/" {
-				state = completionLexicalCode
-				i++
-			}
+	for i := 0; i < offset; {
+		previous := state
+		state, i = advanceCompletionLexicalState(text, i, offset, state)
+		if previous == completionLexicalCode && (state == completionLexicalString || state == completionLexicalChar) {
+			quoteStart = i - 1
+		} else if (previous == completionLexicalString || previous == completionLexicalChar) && state == completionLexicalCode {
+			quoteStart = -1
 		}
 	}
 	return state, quoteStart
+}
+
+func advanceCompletionLexicalState(text string, index, limit int, state completionLexicalState) (completionLexicalState, int) {
+	next := index + 1
+	switch state {
+	case completionLexicalCode:
+		switch {
+		case text[index] == '"':
+			state = completionLexicalString
+		case text[index] == '\'':
+			state = completionLexicalChar
+		case index+1 < limit && text[index:index+2] == "//":
+			state = completionLexicalLineComment
+			next++
+		case index+1 < limit && text[index:index+2] == "/*":
+			state = completionLexicalBlockComment
+			next++
+		}
+	case completionLexicalString:
+		if text[index] == '\\' && next < limit {
+			next++
+		} else if text[index] == '"' {
+			state = completionLexicalCode
+		}
+	case completionLexicalChar:
+		if text[index] == '\\' && next < limit {
+			next++
+		} else if text[index] == '\'' {
+			state = completionLexicalCode
+		}
+	case completionLexicalLineComment:
+		if text[index] == '\n' {
+			state = completionLexicalCode
+		}
+	case completionLexicalBlockComment:
+		if index+1 < limit && text[index:index+2] == "*/" {
+			state = completionLexicalCode
+			next++
+		}
+	}
+	return state, next
+}
+
+func completionCallSuffix(text string, identifierEnd int) (completionCallSuffixKind, int) {
+	open := identifierEnd
+	for open < len(text) && (text[open] == ' ' || text[open] == '\t') {
+		open++
+	}
+	if open == len(text) || text[open] != '(' {
+		return completionCallAbsent, identifierEnd
+	}
+	depth := 0
+	state := completionLexicalCode
+	for i := open; i < len(text); {
+		if state == completionLexicalCode {
+			switch text[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					if strings.TrimSpace(text[open+1:i]) == "" {
+						return completionCallEmpty, i + 1
+					}
+					return completionCallArguments, i + 1
+				}
+			}
+		}
+		state, i = advanceCompletionLexicalState(text, i, len(text), state)
+	}
+	return completionCallArguments, identifierEnd
 }
 
 func isImportQuote(text string, quoteStart int) bool {
@@ -341,47 +416,62 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 	return sortCompletionItems(items)
 }
 
-func selectorCompletionItems(ctx *project.CompilerContext, module *project.Module, prefix string, replacement Range) []CompletionItem {
+func operationCompletionItems(ctx *project.CompilerContext, module *project.Module, sentinelPosition Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
 	var selector *ast.SelectorExpr
-	parents := make(map[ast.NodeID]ast.Node)
-	walkModuleAST(module, func(node ast.Node, parent ast.Node) bool {
-		if parent != nil {
-			parents[node.ID()] = parent
-		}
-		candidate, ok := node.(*ast.SelectorExpr)
-		if ok && candidate.Name != nil && candidate.Name.Name == completionSentinel {
-			selector = candidate
-		}
-		return true
-	})
-	if selector == nil {
+	var piped *ast.CallExpr
+	cursor := buildCursorContext(ctx, module, sentinelPosition.Line+1, sentinelPosition.Character+1)
+	if cursor == nil {
 		return []CompletionItem{}
 	}
-	baseType, ok := selectorBaseType(selector.Expr, parents, module, ctx)
+	for node := cursor.node; node != nil; node = cursor.parents[node.ID()] {
+		if candidate, ok := node.(*ast.SelectorExpr); ok && candidate.Name != nil && candidate.Name.Name == completionSentinel {
+			selector = candidate
+			break
+		}
+		if call, ok := node.(*ast.CallExpr); ok && call.Piped {
+			callee, identifier := call.Callee.(*ast.Ident)
+			if identifier && callee.Name == completionSentinel {
+				piped = call
+				break
+			}
+		}
+	}
+	var base ast.Expr
+	if selector != nil {
+		base = selector.Expr
+	} else if piped != nil && len(piped.Args) > 0 {
+		base = piped.Args[0]
+	} else {
+		return []CompletionItem{}
+	}
+	baseType, ok := selectorBaseType(base, cursor.parents, module, ctx)
 	if !ok {
 		return []CompletionItem{}
 	}
 
 	seen := make(map[string]struct{})
 	var items []CompletionItem
-	fieldType := baseType
-	if target, ok := typeinfo.PointerTarget(fieldType); ok {
-		fieldType = target
-	} else if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fieldType)); ok {
-		fieldType = target
-	}
-	if strct, ok := typeinfo.Underlying(fieldType).(*typeinfo.StructType); ok && strct != nil {
-		for _, field := range strct.Fields {
-			if !strings.HasPrefix(field.Name, prefix) {
-				continue
+	if !pipe {
+		fieldType := baseType
+		if target, ok := typeinfo.PointerTarget(fieldType); ok {
+			fieldType = target
+		} else if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fieldType)); ok {
+			fieldType = target
+		}
+		if strct, ok := typeinfo.Underlying(fieldType).(*typeinfo.StructType); ok && strct != nil {
+			for _, field := range strct.Fields {
+				if !strings.HasPrefix(field.Name, prefix) {
+					continue
+				}
+				fieldSymbol := &symbols.Symbol{Name: field.Name, Kind: symbols.SymbolField, Type: field.Type}
+				items = append(items, CompletionItem{
+					Label:    field.Name,
+					Kind:     completionKindField,
+					Detail:   renderSymbol(fieldSymbol, symbolRenderContext{}),
+					SortText: "0" + field.Name,
+					TextEdit: TextEdit{Range: replacement, NewText: field.Name},
+				})
 			}
-			seen[field.Name] = struct{}{}
-			items = append(items, CompletionItem{
-				Label:    field.Name,
-				Kind:     completionKindField,
-				Detail:   fmt.Sprintf("(field) %s: %s", field.Name, typeinfo.TypeText(field.Type)),
-				TextEdit: TextEdit{Range: replacement, NewText: field.Name},
-			})
 		}
 	}
 	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
@@ -389,35 +479,120 @@ func selectorCompletionItems(ctx *project.CompilerContext, module *project.Modul
 			if method.Name == "" || !strings.HasPrefix(method.Name, prefix) {
 				continue
 			}
-			seen[method.Name] = struct{}{}
-			items = append(items, CompletionItem{
-				Label:    method.Name,
-				Kind:     completionKindMethod,
-				Detail:   fmt.Sprintf("(method) %s: %s", method.Name, typeinfo.TypeText(method.CallableType())),
-				TextEdit: TextEdit{Range: replacement, NewText: method.Name},
-			})
+			fnType, _ := typeinfo.ReplaceAbstractSelf(method.CallableType(), baseType).(*typeinfo.FuncType)
+			methodSymbol := &symbols.Symbol{Name: method.Name, Kind: symbols.SymbolMethod, Type: fnType}
+			items = appendOperationCompletion(items, seen, methodSymbol, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
 		}
-	}
-	for _, method := range intrinsics.Symbols(baseType, ctx.Target) {
-		if method == nil || !strings.HasPrefix(method.Name, prefix) {
-			continue
-		}
-		seen[method.Name] = struct{}{}
-		items = append(items, symbolCompletionItem(method, replacement))
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
 		for _, method := range module.Semantics.MethodSets[key] {
-			if method == nil || !strings.HasPrefix(method.Name, prefix) {
+			if method == nil {
 				continue
 			}
-			if _, exists := seen[method.Name]; exists {
+			fnType, callable := method.Type.(*typeinfo.FuncType)
+			if callable && strings.HasPrefix(method.Name, prefix) {
+				items = appendOperationCompletion(items, seen, method, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+			}
+		}
+	}
+
+	for _, function := range intrinsics.ApplicableFunctionSymbols(baseType, ctx.Target) {
+		fnType, callable := function.Type.(*typeinfo.FuncType)
+		if callable && strings.HasPrefix(function.Name, prefix) {
+			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+		}
+	}
+	for _, function := range operationFunctionsWithPrefix(module.Semantics.OperationFunctions, prefix) {
+		fnType, callable := function.Type.(*typeinfo.FuncType)
+		if !callable {
+			continue
+		}
+		if typechecker.CanAdaptFirstCallArgument(ctx, module, fnType.Params[0], baseType) {
+			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+		}
+	}
+	for alias, resolved := range module.Imports {
+		if resolved.DependencyAlias != "" {
+			continue
+		}
+		imported, found := ctx.ModuleByKey(resolved.Key)
+		if !found || imported == nil || imported.Semantics == nil {
+			continue
+		}
+		for _, function := range operationFunctionsWithPrefix(imported.Semantics.OperationFunctions, prefix) {
+			fnType, callable := function.Type.(*typeinfo.FuncType)
+			if !function.IsPub || !callable {
 				continue
 			}
-			seen[method.Name] = struct{}{}
-			items = append(items, symbolCompletionItem(method, replacement))
+			if typechecker.CanAdaptFirstCallArgument(ctx, module, fnType.Params[0], baseType) {
+				name := alias + "::" + function.Name
+				items = appendOperationCompletion(items, seen, function, name, fnType, replacement, rewrite, pipe, preserveArguments)
+			}
 		}
 	}
 	return sortCompletionItems(items)
+}
+
+func operationFunctionsWithPrefix(functions []*symbols.Symbol, prefix string) []*symbols.Symbol {
+	start := sort.Search(len(functions), func(i int) bool {
+		return functions[i].Name >= prefix
+	})
+	end := start
+	for end < len(functions) && strings.HasPrefix(functions[end].Name, prefix) {
+		end++
+	}
+	return functions[start:end]
+}
+
+func appendOperationCompletion(items []CompletionItem, seen map[string]struct{}, sym *symbols.Symbol, name string, fnType *typeinfo.FuncType, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
+	if fnType == nil || len(fnType.Params) == 0 {
+		return items
+	}
+	kind := completionItemKind(sym.Kind)
+	key := fmt.Sprintf("%d|%s|%s", kind, name, typeinfo.TypeText(fnType))
+	if _, duplicate := seen[key]; duplicate {
+		return items
+	}
+	seen[key] = struct{}{}
+	call := name
+	if !preserveArguments {
+		call = completionCallText(name, fnType)
+	}
+	editRange := replacement
+	newText := call
+	function := sym.Kind == symbols.SymbolFunc
+	preferred := pipe == function
+	if pipe && !function {
+		editRange = rewrite
+		newText = "." + call
+	} else if !pipe && function {
+		editRange = rewrite
+		newText = " |> " + call
+	}
+	sortPrefix := "1"
+	if preferred {
+		sortPrefix = "0"
+	}
+	return append(items, CompletionItem{
+		Label:            name,
+		Kind:             kind,
+		Detail:           renderSymbol(sym, symbolRenderContext{Name: name, Type: fnType}),
+		SortText:         sortPrefix + name,
+		InsertTextFormat: 2,
+		TextEdit:         TextEdit{Range: editRange, NewText: newText},
+	})
+}
+
+func completionCallText(name string, fnType *typeinfo.FuncType) string {
+	var arguments []string
+	for i := 1; i < len(fnType.Params); i++ {
+		parameter := "arg"
+		if i < len(fnType.ParamNames) && fnType.ParamNames[i] != "" {
+			parameter = fnType.ParamNames[i]
+		}
+		arguments = append(arguments, fmt.Sprintf("${%d:%s}", i, parameter))
+	}
+	return name + "(" + strings.Join(arguments, ", ") + ")"
 }
 
 func importCompletionItems(candidates []project.ImportCandidate, replacement Range) []CompletionItem {
@@ -444,11 +619,8 @@ func symbolCompletionItem(sym *symbols.Symbol, replacement Range) CompletionItem
 	item := CompletionItem{
 		Label:    sym.Name,
 		Kind:     completionItemKind(sym.Kind),
-		Detail:   "(" + string(sym.Kind) + ") " + sym.Name,
+		Detail:   renderSymbol(sym, symbolRenderContext{}),
 		TextEdit: TextEdit{Range: replacement, NewText: sym.Name},
-	}
-	if typ, ok := symbols.GetSymbolType(sym); ok && typ != nil && !typeinfo.IsInvalidOrUnknown(typ) {
-		item.Detail += ": " + typeinfo.TypeText(typ)
 	}
 	return item
 }
@@ -476,6 +648,9 @@ func completionItemKind(kind symbols.Kind) int {
 
 func sortCompletionItems(items []CompletionItem) []CompletionItem {
 	slices.SortFunc(items, func(a, b CompletionItem) int {
+		if cmp := strings.Compare(a.SortText, b.SortText); cmp != 0 && (a.SortText != "" || b.SortText != "") {
+			return cmp
+		}
 		if cmp := strings.Compare(a.Label, b.Label); cmp != 0 {
 			return cmp
 		}

@@ -61,10 +61,21 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	}
 	if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
 		if sym := c.module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
-			if sym.CompilerOp == symbols.CompilerOpAlloc {
-				return c.typeAllocCall(scope, node)
+			definition, found := intrinsics.LookupFunction(sym.CompilerOp)
+			if !found {
+				panic(fmt.Sprintf("missing intrinsic definition for compiler operation %q", sym.CompilerOp))
 			}
-			return c.typeDynamicArrayOwnerCall(scope, node, sym.CompilerOp)
+			c.module.Semantics.CompilerCalls[node.ID()] = project.CompilerCall{Operation: definition.Operation, Kind: definition.Kind}
+			switch definition.Kind {
+			case intrinsics.FunctionAlloc:
+				return c.typeAllocCall(scope, node)
+			case intrinsics.FunctionCollection:
+				return c.typeCollectionCall(scope, node, definition)
+			case intrinsics.FunctionDynamicArrayOwner:
+				return c.typeDynamicArrayOwnerCall(scope, node, definition)
+			default:
+				panic(fmt.Sprintf("unsupported intrinsic function kind %d for %q", definition.Kind, definition.Operation))
+			}
 		}
 	}
 	calleeType := c.typeExpr(scope, node.Callee, expected)
@@ -84,23 +95,60 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	return c.callReturnType(node, calleeType)
 }
 
-func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) typeinfo.Type {
-	genericSignature, ok := intrinsics.FunctionSignature(op, nil, c.ctx.Target)
-	if !ok {
-		panic(fmt.Sprintf("unsupported dynamic-array compiler operation %q", op))
+func (c *checker) typeCollectionCall(scope *table.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
+	if len(node.Args) != 1 {
+		for _, arg := range node.Args {
+			c.typeExpr(scope, arg, nil)
+		}
+		displayArgs := len(node.Args)
+		displayWant := 1
+		if node.Piped {
+			displayArgs--
+			displayWant--
+		}
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, displayArgs, displayWant))
+		return &typeinfo.InvalidType{}
+	}
+
+	baseType := c.typeExpr(scope, node.Args[0], nil)
+	fnType := definition.Signature(baseType, c.ctx.Target)
+	if fnType == nil {
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
+			fmt.Sprintf("`%s` does not support %s", definition.Operation, typeinfo.TypeText(baseType))))
+		return &typeinfo.InvalidType{}
+	}
+	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
+	c.checkCall(scope, nil, node, fnType, []typeinfo.Type{baseType})
+	return c.callReturnType(node, fnType)
+}
+
+func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
+	op := definition.Operation
+	genericSignature := definition.Signature(nil, c.ctx.Target)
+	if genericSignature == nil {
+		panic(fmt.Sprintf("missing generic dynamic-array signature for %q", op))
 	}
 	wantArgs := len(genericSignature.Params)
 	if len(node.Args) != wantArgs {
 		for _, arg := range node.Args {
 			c.typeExpr(scope, arg, nil)
 		}
-		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, len(node.Args), wantArgs))
+		displayArgs, displayWant := len(node.Args), wantArgs
+		if node.Piped {
+			displayArgs--
+			displayWant--
+		}
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, displayArgs, displayWant))
 		return &typeinfo.InvalidType{}
 	}
 
-	ownerType := c.typeExpr(scope, node.Args[0], nil)
+	firstArgType := c.typeExpr(scope, node.Args[0], nil)
+	ownerType := firstArgType
+	if targetType, _, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(firstArgType)); referenced {
+		ownerType = targetType
+	}
 	array, ok := typeinfo.Underlying(ownerType).(*typeinfo.ArrayType)
-	if !ok || array == nil || !array.Dynamic || array.Elem == nil {
+	if !ok || array == nil || array.Shape != typeinfo.ArrayOwner || array.Elem == nil {
 		for _, arg := range node.Args[1:] {
 			c.typeExpr(scope, arg, nil)
 		}
@@ -109,14 +157,14 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 		return &typeinfo.InvalidType{}
 	}
 
-	fnType, ok := intrinsics.FunctionSignature(op, ownerType, c.ctx.Target)
-	if !ok {
+	fnType := definition.Signature(ownerType, c.ctx.Target)
+	if fnType == nil {
 		panic(fmt.Sprintf("missing dynamic-array signature for %q", op))
 	}
 
 	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
-	argTypes = append(argTypes, ownerType)
+	argTypes = append(argTypes, firstArgType)
 	for i, arg := range node.Args[1:] {
 		argTypes = append(argTypes, c.typeExpr(scope, arg, fnType.Params[i+1]))
 	}
@@ -126,16 +174,25 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 			"resize requires implicitly copyable elements; grow Category B arrays with append",
 			ast.LocOf(node), "")
 	}
-	return ownerType
+	return nil
 }
 
 func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo.Type {
-	wantArgs := 2
-	if len(node.Args) < 1 || len(node.Args) > wantArgs {
+	const minArgs, maxArgs = 1, 2
+	argCount := len(node.Args)
+	if argCount < minArgs || argCount > maxArgs {
 		for _, arg := range node.Args {
 			c.typeExpr(scope, arg, nil)
 		}
-		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, len(node.Args), wantArgs))
+		wantArgs := maxArgs
+		if argCount < minArgs {
+			wantArgs = minArgs
+		}
+		if node.Piped {
+			argCount--
+			wantArgs--
+		}
+		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, argCount, wantArgs))
 		return &typeinfo.InvalidType{}
 	}
 
@@ -233,15 +290,19 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 		}
 		return
 	}
-	argOffset := 0
+	callArgOffset := 0
 	if receiverExpr != nil {
-		argOffset = 1
+		callArgOffset = 1
+	}
+	displayOffset := callArgOffset
+	if callExpr.Piped {
+		displayOffset = 1
 	}
 	if len(args) != len(fnType.Params) {
-		d := wrongArgumentCountError(callExpr, len(args)-argOffset, len(fnType.Params)-argOffset)
+		d := wrongArgumentCountError(callExpr, len(args)-displayOffset, len(fnType.Params)-displayOffset)
 		if receiverExpr == nil {
-			paramDescs := make([]string, len(fnType.Params))
-			for i, p := range fnType.Params {
+			paramDescs := make([]string, len(fnType.Params)-displayOffset)
+			for i, p := range fnType.Params[displayOffset:] {
 				paramDescs[i] = typeinfo.TypeText(p)
 			}
 			d.WithHelp(fmt.Sprintf("expected parameters: (%s)", strings.Join(paramDescs, ", ")))
@@ -250,9 +311,17 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 		return
 	}
 	for i, argType := range args {
+		var implicitExpr ast.Expr
+		if i == 0 {
+			if receiverExpr != nil {
+				implicitExpr = receiverExpr
+			} else if callExpr.Piped && len(callExpr.Args) > 0 {
+				implicitExpr = callExpr.Args[0]
+			}
+		}
 		if argType == nil {
-			if i >= argOffset {
-				c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i-argOffset],
+			if i >= callArgOffset {
+				c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i-callArgOffset],
 					"argument requires a value-producing expression"))
 			}
 			continue
@@ -261,36 +330,17 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 		if paramType == nil {
 			continue
 		}
-		if i == 0 && receiverExpr != nil {
-			if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType)); ok && c.matchesReceiverTarget(refTarget, argType) {
-				addressable := place.Addressable(scope, receiverExpr, func(e ast.Expr) typeinfo.Type {
-					return c.typeExpr(scope, e, nil)
-				}, c.expandedDefaultBinding)
-				if mutable {
-					addressable, _ = c.mutableAddressableExpr(scope, receiverExpr)
-				}
-				if addressable {
-					continue
-				}
-				if mutable {
-					if site, msg, ok := c.mutableReceiverDiagnostic(scope, receiverExpr); ok {
-						c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
-						continue
-					}
-				} else {
-					// Shared receivers may borrow a temporary for this full expression;
-					// HIR materializes and cleans that temporary after the call.
-					continue
-				}
-			}
+		if implicitExpr != nil && c.acceptImplicitCallArgument(scope, implicitExpr, argType, paramType) {
+			c.module.Semantics.ImplicitCallArguments[implicitExpr.ID()] = paramType
+			continue
 		}
 		site := ast.Node(callExpr)
 		var conversion ast.Expr
-		if i == 0 && receiverExpr != nil {
-			conversion = receiverExpr
+		if implicitExpr != nil {
+			conversion = implicitExpr
 		}
-		if i >= argOffset && i-argOffset < len(callExpr.Args) {
-			conversion = callExpr.Args[i-argOffset]
+		if i >= callArgOffset && i-callArgOffset < len(callExpr.Args) {
+			conversion = callExpr.Args[i-callArgOffset]
 			site = conversion
 		}
 		if !c.assignable(paramType, argType, conversion) {
@@ -302,6 +352,44 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 			continue
 		}
 	}
+}
+
+// acceptImplicitCallArgument is the single semantic gate for method receivers
+// and piped argument zero. Ordinary call arguments remain explicit.
+func (c *checker) acceptImplicitCallArgument(scope *table.Scope, expr ast.Expr, argType, paramType typeinfo.Type) bool {
+	refTarget, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
+	if !reference || !c.matchesImplicitCallTarget(refTarget, argType) {
+		return false
+	}
+	addressable := place.Addressable(scope, expr, func(e ast.Expr) typeinfo.Type {
+		return c.typeExpr(scope, e, nil)
+	}, c.expandedDefaultBinding)
+	if mutable {
+		addressable, _ = c.mutableAddressableExpr(scope, expr)
+	}
+	if addressable {
+		return true
+	}
+	if mutable {
+		if site, msg, ok := c.mutableImplicitArgumentDiagnostic(scope, expr); ok {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
+			return true
+		}
+		return false
+	}
+	// Shared implicit arguments may borrow a temporary for this full expression.
+	return true
+}
+
+func (c *checker) matchesImplicitCallTarget(target, arg typeinfo.Type) bool {
+	if c.matchesReceiverTarget(target, arg) {
+		return true
+	}
+	slice, sliceTarget := typeinfo.Underlying(target).(*typeinfo.ArrayType)
+	array, arrayArg := typeinfo.Underlying(arg).(*typeinfo.ArrayType)
+	return sliceTarget && arrayArg && slice != nil && array != nil &&
+		slice.Shape == typeinfo.ArraySlice && array.Shape != typeinfo.ArraySlice &&
+		typeinfo.SameType(slice.Elem, array.Elem)
 }
 
 func (c *checker) callableSymbol(callee ast.Expr) *symbols.Symbol {

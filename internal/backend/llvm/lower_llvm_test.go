@@ -28,14 +28,15 @@ var (
 )
 
 type llvmTypeFixture struct {
-	table                                                          *ir.TypeTable
-	void, boolType, cstr, stringType, rawptr, i32                  ir.TypeID
-	i8, u8, u128, usize, ownedI32, optionalI32, optionalOwnedI32   ir.TypeID
-	dynamicI32, dynamicDynamicI32, fixed3I32, fixed4I32            ir.TypeID
-	refI32, mutRefI32, refDynamicI32                               ir.TypeID
-	mutRefDynamicI32, mutRefFixed4I32, valueStruct, refValueStruct ir.TypeID
-	ownedValueStruct, fnI32, fnVoid, fnBoolVoid                    ir.TypeID
-	fnRawptrI32                                                    ir.TypeID
+	table                                                        *ir.TypeTable
+	void, boolType, cstr, stringType, rawptr, i32                ir.TypeID
+	i8, u8, u128, usize, ownedI32, optionalI32, optionalOwnedI32 ir.TypeID
+	dynamicI32, dynamicDynamicI32, fixed3I32, fixed4I32          ir.TypeID
+	refI32, mutRefI32, refDynamicI32, mutRefDynamicI32           ir.TypeID
+	refSliceI32, mutRefSliceI32, mutRefFixed4I32                 ir.TypeID
+	valueStruct, refValueStruct                                  ir.TypeID
+	ownedValueStruct, fnI32, fnVoid, fnBoolVoid                  ir.TypeID
+	fnRawptrI32                                                  ir.TypeID
 }
 
 var llvmTypes = newLLVMTypeFixture(target.Bits64)
@@ -49,6 +50,7 @@ func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 	boolType := table.Intern(ir.Type{Kind: ir.TypeBool})
 	rawptr := table.Intern(ir.Type{Kind: ir.TypeRawPtr})
 	dynamicI32 := table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
+	sliceI32 := table.Intern(ir.Type{Kind: ir.TypeSlice, Elem: i32})
 	valueStruct := table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}}})
 	return llvmTypeFixture{
 		table:             table,
@@ -73,6 +75,8 @@ func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 		mutRefI32:         table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: i32}),
 		refDynamicI32:     table.Intern(ir.Type{Kind: ir.TypeReference, Elem: dynamicI32}),
 		mutRefDynamicI32:  table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: dynamicI32}),
+		refSliceI32:       table.Intern(ir.Type{Kind: ir.TypeReference, Elem: sliceI32}),
+		mutRefSliceI32:    table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: sliceI32}),
 		mutRefFixed4I32:   table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"})}),
 		valueStruct:       valueStruct,
 		refValueStruct:    table.Intern(ir.Type{Kind: ir.TypeReference, Elem: valueStruct}),
@@ -116,8 +120,10 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 		{llvmTypes.dynamicI32, "{ i32*, i64, i64, i8* }"},
 		{llvmTypes.refI32, "i32*"},
 		{llvmTypes.mutRefI32, "i32*"},
-		{llvmTypes.refDynamicI32, "{ i32*, i64 }"},
-		{llvmTypes.mutRefDynamicI32, "{ i32*, i64 }"},
+		{llvmTypes.refDynamicI32, "{ i32*, i64, i64, i8* }*"},
+		{llvmTypes.mutRefDynamicI32, "{ i32*, i64, i64, i8* }*"},
+		{llvmTypes.refSliceI32, "{ i32*, i64 }"},
+		{llvmTypes.mutRefSliceI32, "{ i32*, i64 }"},
 		{types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: llvmTypes.stringType}), "{ { i8*, i64, i8* }*, i8* }"},
 		{types.Intern(ir.Type{Kind: ir.TypeArray, Elem: types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.stringType})}), "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }"},
 		{types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "x", Type: types.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.u8, Length: "2"})}}}), "{ [2 x i8] }"},
@@ -176,7 +182,7 @@ func TestLLVMLayoutsNameBuiltInCarrierFields(t *testing.T) {
 	}{
 		{name: "owned string", typeID: llvmTypes.stringType, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1, llvmFieldAllocator: 2}},
 		{name: "borrowed string", typeID: borrowedString, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1}},
-		{name: "borrowed array", typeID: llvmTypes.refDynamicI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1}},
+		{name: "borrowed array", typeID: llvmTypes.refSliceI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1}},
 		{name: "dynamic array", typeID: llvmTypes.dynamicI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldLength: 1, llvmFieldCapacity: 2, llvmFieldAllocator: 3}},
 		{name: "optional", typeID: llvmTypes.optionalI32, fields: map[llvmFieldName]int{llvmFieldPresent: 0, llvmFieldValue: 1}},
 		{name: "owned pointer", typeID: llvmTypes.ownedI32, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldAllocator: 1}},
@@ -559,7 +565,9 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mod := dynamicArrayOperationModule(llvmTypes, tt.name, llvmTypes.dynamicI32, tt.op, tt.length, tt.value)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
-			for _, expected := range append([]string{"declare i8* @malloc(i64)", "declare void @free(i8*)"}, tt.expected...) {
+			for _, expected := range append([]string{
+				"declare i8* @malloc(i64)", "declare void @free(i8*)", "store { i32*, i64, i64, i8* }",
+			}, tt.expected...) {
 				if !strings.Contains(out, expected) {
 					t.Fatalf("expected %q in %s IR:\n%s", expected, tt.name, out)
 				}
@@ -641,7 +649,8 @@ func TestGenerateLLVMIRLowersDynamicArrayShrinkFor32BitTarget(t *testing.T) {
 }
 
 func dynamicArrayOperationModule(types llvmTypeFixture, name string, arrayType ir.TypeID, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
-	params := []ir.Param{{Name: "values", Type: arrayType}}
+	ownerRefType := types.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: arrayType})
+	params := []ir.Param{{Name: "values", Type: ownerRefType}}
 	if length != nil {
 		params = append(params, ir.Param{Name: "size", Type: types.usize})
 	}
@@ -649,12 +658,12 @@ func dynamicArrayOperationModule(types llvmTypeFixture, name string, arrayType i
 		params = append(params, ir.Param{Name: "value", Type: types.i32})
 	}
 	return &mir.Module{Name: "test", Types: types.table, Funcs: []*mir.Function{{
-		Name: name, Params: params, ReturnType: arrayType, Blocks: []*mir.Block{{
+		Name: name, Params: params, ReturnType: types.void, Blocks: []*mir.Block{{
 			ID: 0,
-			Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.DynamicArrayOp{
-				Op: op, Array: &mir.RefName{Name: "values", Type: arrayType}, Length: length, Value: value, Type: arrayType,
-			}}},
-			Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: arrayType}},
+			Instrs: []mir.Instr{&mir.DynamicArrayOp{
+				Op: op, Array: &mir.RefName{Name: "values", Type: ownerRefType}, Length: length, Value: value, ArrayType: arrayType,
+			}},
+			Term: &mir.Ret{},
 		}},
 	}}}
 }
@@ -851,7 +860,7 @@ func TestGenerateLLVMIRNoDescriptorWithoutOwnedPointers(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRPassThroughArrayDoesNotReserveAllocatorRuntime(t *testing.T) {
+func TestGenerateLLVMIRBorrowedScalarShrinkDoesNotReserveAllocatorRuntime(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
@@ -862,20 +871,17 @@ func TestGenerateLLVMIRPassThroughArrayDoesNotReserveAllocatorRuntime(t *testing
 			},
 			{
 				Name:       "shorten",
-				Params:     []ir.Param{{Name: "values", Type: llvmTypes.dynamicI32}},
-				ReturnType: llvmTypes.dynamicI32,
+				Params:     []ir.Param{{Name: "values", Type: llvmTypes.mutRefDynamicI32}, {Name: "size", Type: llvmTypes.usize}},
+				ReturnType: llvmTypes.void,
 				Blocks: []*mir.Block{{
 					ID: 0,
-					Instrs: []mir.Instr{&mir.Assign{
-						Name: "result",
-						Value: &mir.DynamicArrayOp{
-							Op:     symbols.CompilerOpShrink,
-							Array:  &mir.RefName{Name: "values", Type: llvmTypes.dynamicI32},
-							Length: &mir.RefName{Name: "size", Type: llvmTypes.usize},
-							Type:   llvmTypes.dynamicI32,
-						},
+					Instrs: []mir.Instr{&mir.DynamicArrayOp{
+						Op:        symbols.CompilerOpShrink,
+						Array:     &mir.RefName{Name: "values", Type: llvmTypes.mutRefDynamicI32},
+						Length:    &mir.RefName{Name: "size", Type: llvmTypes.usize},
+						ArrayType: llvmTypes.dynamicI32,
 					}},
-					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: llvmTypes.dynamicI32}},
+					Term: &mir.Ret{},
 				}},
 			},
 		},
@@ -1285,7 +1291,7 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
 					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.dynamicI32}, Type: llvmTypes.dynamicI32},
-					Type:   llvmTypes.refDynamicI32,
+					Type:   llvmTypes.refSliceI32,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
@@ -1315,6 +1321,60 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersBorrowedDynamicArraySliceViewAcrossTargets(t *testing.T) {
+	targets := []struct {
+		name string
+		info target.Info
+		bits int
+	}{
+		{name: "amd64", info: testLinuxAMD64, bits: target.Bits64},
+		{name: "386", info: testLinux386, bits: target.Bits32},
+	}
+	for _, compilerTarget := range targets {
+		t.Run(compilerTarget.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(compilerTarget.bits)
+			indexType := "i64"
+			if compilerTarget.bits == target.Bits32 {
+				indexType = "i32"
+			}
+			header := "{ i32*, " + indexType + ", " + indexType + ", i8* }"
+			for _, sourceType := range []ir.TypeID{types.refDynamicI32, types.mutRefDynamicI32} {
+				mod := &mir.Module{
+					Name: "test", Types: types.table, FilePath: unixTestPath,
+					Funcs: []*mir.Function{{
+						Name: "borrow", Params: []ir.Param{{Name: "xs", Type: sourceType}}, ReturnType: types.i32,
+						Blocks: []*mir.Block{{
+							ID: 0,
+							Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
+								Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: sourceType}, Type: sourceType},
+								Type:   types.refSliceI32,
+							}}},
+							Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: types.i32}},
+						}},
+					}},
+				}
+				irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget.info, false)
+				load := "load " + header + ", " + header + "* %xs"
+				loadAt := strings.Index(irText, load)
+				extractAt := strings.Index(irText, "extractvalue "+header)
+				if loadAt < 0 || extractAt < loadAt {
+					t.Fatalf("borrowed owner header must load before field extraction, got:\n%s", irText)
+				}
+
+				clang, err := exec.LookPath("clang")
+				if err != nil {
+					continue
+				}
+				cmd := exec.Command(clang, "-target", compilerTarget.info.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "slice.o"), "-")
+				cmd.Stdin = strings.NewReader(irText)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("borrowed owner slice LLVM IR is invalid: %v\n%s\n%s", err, out, irText)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 	mod := &mir.Module{
 		Name:     "test",
@@ -1331,7 +1391,7 @@ func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.mutRefFixed4I32}, Type: llvmTypes.mutRefFixed4I32},
 					Start:  &mir.RefConst{Value: "1", Type: llvmTypes.i32},
 					End:    &mir.RefConst{Value: "2", Type: llvmTypes.i32},
-					Type:   llvmTypes.mutRefDynamicI32,
+					Type:   llvmTypes.mutRefSliceI32,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
@@ -1358,15 +1418,15 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
 			Name:       "slice",
-			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.refDynamicI32}},
+			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.refSliceI32}},
 			ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:       &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refDynamicI32}, Type: llvmTypes.refDynamicI32},
+					Source:       &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refSliceI32}, Type: llvmTypes.refSliceI32},
 					End:          &mir.RefConst{Value: "2", Type: llvmTypes.u8},
 					EndExclusive: true,
-					Type:         llvmTypes.refDynamicI32,
+					Type:         llvmTypes.refSliceI32,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
@@ -2201,6 +2261,16 @@ func TestGenerateLLVMIRLowersDynamicArrayIndexRead(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersBorrowedDynamicArrayIndexRead(t *testing.T) {
+	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.refDynamicI32, &mir.RefConst{Value: "0", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if !strings.Contains(irText, "load { i32*, i64, i64, i8* }, { i32*, i64, i64, i8* }* %xs") {
+		t.Fatalf("expected borrowed dynamic owner to load header before field extraction, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* }") || !strings.Contains(irText, "getelementptr i32, i32*") {
+		t.Fatalf("expected borrowed dynamic owner data extraction and indexing, got:\n%s", irText)
+	}
+}
+
 func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.dynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
@@ -2238,7 +2308,7 @@ func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
 
 func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.refDynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.refSliceI32, &mir.RefName{Name: "i", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected slice-view data and length extraction, got:\n%s", irText)
@@ -2265,7 +2335,7 @@ func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 
 func TestGenerateLLVMIRLowersMutableSliceViewIndexStore(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	irText := GenerateLLVMIR(indexStoreMIRModule(llvmTypes.mutRefDynamicI32, &mir.RefConst{Value: "0", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	irText := GenerateLLVMIR(indexStoreMIRModule(llvmTypes.mutRefSliceI32, &mir.RefConst{Value: "0", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
 		t.Fatalf("expected mutable slice-view data and length extraction, got:\n%s", irText)

@@ -199,7 +199,7 @@ func checkArrayCompatibility(dst, src Type) Compatibility {
 		if !ok || right == nil {
 			return Incompatible
 		}
-		if left.Len == right.Len && left.Dynamic == right.Dynamic && SameType(left.Elem, right.Elem) {
+		if left.Len == right.Len && left.Shape == right.Shape && SameType(left.Elem, right.Elem) {
 			return Compatible
 		}
 	}

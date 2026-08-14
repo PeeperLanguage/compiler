@@ -292,6 +292,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					emitDrop(lb, dropInstr)
 					continue
 				}
+				if operation, ok := instr.(*mir.DynamicArrayOp); ok && operation != nil {
+					emitDynamicArrayOp(lb, operation)
+					continue
+				}
 				if call, ok := instr.(*mir.Call); ok && call != nil {
 					emitDiscardedCall(lb, call)
 					continue
@@ -468,6 +472,21 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 					dropUsed = true
 					allocatorRuntimeUsed = true
 				}
+				if operation, ok := instr.(*mir.DynamicArrayOp); ok && operation != nil {
+					if operation.Op == symbols.CompilerOpShrink {
+						elem, ok := dynamicArrayElementType(mod.Types, operation.ArrayType)
+						dropUsed = dropUsed || (ok && typeNeedsDrop(mod.Types, elem))
+						allocUsed = allocUsed || (ok && typeCarriesAllocatorID(mod.Types, elem))
+						allocatorRuntimeUsed = allocatorRuntimeUsed || (ok && typeCarriesAllocatorID(mod.Types, elem))
+						freeRuntimeUsed = freeRuntimeUsed || (ok && typeNeedsRawFreeID(mod.Types, elem))
+					} else {
+						allocUsed = true
+						dropUsed = true
+						allocatorRuntimeUsed = true
+						freeRuntimeUsed = true
+					}
+					continue
+				}
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					if _, ok := assign.Value.(*mir.Alloc); ok {
 						allocatorRuntimeUsed = true
@@ -479,20 +498,6 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 						allocatorRuntimeUsed = true
 					} else if _, ok := assign.Value.(*mir.DynamicArrayAlloc); ok {
 						allocatorRuntimeUsed = true
-					}
-					if operation, ok := assign.Value.(*mir.DynamicArrayOp); ok {
-						if operation.Op == symbols.CompilerOpShrink {
-							elem, ok := dynamicArrayElementType(mod.Types, operation.Type)
-							dropUsed = dropUsed || (ok && typeNeedsDrop(mod.Types, elem))
-							allocUsed = allocUsed || (ok && typeCarriesAllocatorID(mod.Types, elem))
-							allocatorRuntimeUsed = allocatorRuntimeUsed || (ok && typeCarriesAllocatorID(mod.Types, elem))
-							freeRuntimeUsed = freeRuntimeUsed || (ok && typeNeedsRawFreeID(mod.Types, elem))
-						} else {
-							allocUsed = true
-							dropUsed = true
-							allocatorRuntimeUsed = true
-							freeRuntimeUsed = true
-						}
 					}
 					if makeVal, ok := assign.Value.(*mir.InterfaceMake); ok && makeVal != nil {
 						if isOwnedInterfaceType(mod.Types, makeVal.Type) {

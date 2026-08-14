@@ -234,13 +234,13 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) llvmValue {
 	if ok && targetType.Kind == ir.TypeString {
 		return emitStringSliceView(b, view)
 	}
-	if !ok || targetType.Kind != ir.TypeArray {
+	if !ok || (targetType.Kind != ir.TypeArray && targetType.Kind != ir.TypeSlice) {
 		b.emitter.markInvalid("slice view source shape is not lowerable in current compiler stage")
 		return b.zero(resultLayout)
 	}
 	var data, length llvmValue
 	var fixedArrayPlace llvmPlace
-	if targetType.Length == "" {
+	if targetType.Kind == ir.TypeSlice || targetType.Length == "" {
 		var source llvmValue
 		if sliceViewUsesPlacePtr(b.emitter.mod.Types, view.Source) {
 			ptr, ok := emitPlacePtr(b, view.Source)
@@ -250,6 +250,11 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) llvmValue {
 			source = b.load(ptr)
 		} else {
 			source = emitRef(b, view.Source.Root)
+			// Dynamic-owner references are pointers to carrier headers. Slice
+			// references are already carrier aggregates and must stay unloaded.
+			if source.Layout.Kind == llvmLayoutPointer {
+				source = b.load(b.pointerPlace(source))
+			}
 		}
 		data = b.extractField(source, llvmFieldData)
 		length = b.extractField(source, llvmFieldLength)
@@ -693,6 +698,9 @@ func emitLen(b *llvmBuilder, value mir.ValueRef) llvmValue {
 			}
 			return b.value(target.Length, indexLayout)
 		}
+		ownerRef := emitRef(b, value)
+		return b.extractField(b.load(b.pointerPlace(ownerRef)), llvmFieldLength)
+	case ir.TypeSlice:
 		return b.extractField(emitRef(b, value), llvmFieldLength)
 	default:
 		b.emitter.markInvalid("len requires a string or array reference")
@@ -847,34 +855,37 @@ func emitDynamicArrayReserve(b *llvmBuilder, array llvmValue, typeID ir.TypeID, 
 	return b.phi(array.Layout, llvmIncoming{Value: array, Label: reuseLabel}, llvmIncoming{Value: resized, Label: releaseDoneLabel})
 }
 
-func emitDynamicArrayOp(b *llvmBuilder, op *mir.DynamicArrayOp) llvmValue {
+func emitDynamicArrayOp(b *llvmBuilder, op *mir.DynamicArrayOp) {
 	if b == nil || op == nil || op.Array == nil {
-		return llvmValue{}
+		return
 	}
-	elemTypeID, ok := dynamicArrayElementType(b.emitter.mod.Types, op.Type)
+	elemTypeID, ok := dynamicArrayElementType(b.emitter.mod.Types, op.ArrayType)
 	if !ok {
 		b.emitter.markInvalid("dynamic array operation has invalid type")
-		return b.zero(b.emitter.layout(op.Type))
+		return
 	}
-	array := emitRef(b, op.Array)
+	arrayPlace := b.pointerPlace(emitRef(b, op.Array))
+	array := b.load(arrayPlace)
+	var updated llvmValue
 	switch op.Op {
 	case symbols.CompilerOpReserve:
 		if op.Length == nil {
 			b.emitter.markInvalid("reserve requires a minimum capacity")
-			return array
+			return
 		}
 		minimum := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType()})
-		return emitDynamicArrayReserve(b, array, op.Type, minimum)
+		updated = emitDynamicArrayReserve(b, array, op.ArrayType, minimum)
 	case symbols.CompilerOpAppend:
-		return emitDynamicArrayAppend(b, op, array)
+		updated = emitDynamicArrayAppend(b, op, array)
 	case symbols.CompilerOpResize:
-		return emitDynamicArrayResize(b, op, array)
+		updated = emitDynamicArrayResize(b, op, array)
 	case symbols.CompilerOpShrink:
-		return emitDynamicArrayShrink(b, op, array, elemTypeID)
+		updated = emitDynamicArrayShrink(b, op, array, elemTypeID)
 	default:
 		b.emitter.markInvalid("unknown dynamic array operation " + string(op.Op))
-		return array
+		return
 	}
+	b.store(arrayPlace, updated)
 }
 
 func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array llvmValue, elemTypeID ir.TypeID) llvmValue {
@@ -898,7 +909,7 @@ func emitDynamicArrayShrink(b *llvmBuilder, op *mir.DynamicArrayOp, array llvmVa
 	b.branch(doneLabel)
 	b.namedLabel(shrinkLabel)
 	emitDynamicArrayElementRangeDrop(b, data, elemTypeID, newLength, oldLength)
-	shrunk := emitDynamicArrayHeader(b, op.Type, data, newLength, capacity, allocator)
+	shrunk := emitDynamicArrayHeader(b, op.ArrayType, data, newLength, capacity, allocator)
 	shrinkDoneLabel := b.currentLabel
 	b.branch(doneLabel)
 	b.namedLabel(doneLabel)
@@ -943,12 +954,12 @@ func emitDynamicArrayAppend(b *llvmBuilder, op *mir.DynamicArrayOp, array llvmVa
 	b.branch(readyLabel)
 	b.namedLabel(readyLabel)
 	desiredCapacity := b.phi(capacity.Layout, llvmIncoming{Value: capacity, Label: keepLabel}, llvmIncoming{Value: grownCapacity, Label: growReadyLabel})
-	reserved := emitDynamicArrayReserve(b, array, op.Type, desiredCapacity)
+	reserved := emitDynamicArrayReserve(b, array, op.ArrayType, desiredCapacity)
 	data := b.extractField(reserved, llvmFieldData)
 	finalCapacity := b.extractField(reserved, llvmFieldCapacity)
 	b.store(b.gep(b.pointerPlace(data), length, false), emitRef(b, op.Value))
 	allocator := b.extractField(reserved, llvmFieldAllocator)
-	return emitDynamicArrayHeader(b, op.Type, data, newLength, finalCapacity, allocator)
+	return emitDynamicArrayHeader(b, op.ArrayType, data, newLength, finalCapacity, allocator)
 }
 
 func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array llvmValue) llvmValue {
@@ -958,7 +969,7 @@ func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array llvmVa
 	}
 	oldLength := b.extractField(array, llvmFieldLength)
 	newLength := emitCast(b, &mir.Cast{Arg: op.Length, Type: b.emitter.mod.Types.IndexType()})
-	resized := emitDynamicArrayReserve(b, array, op.Type, newLength)
+	resized := emitDynamicArrayReserve(b, array, op.ArrayType, newLength)
 	data := b.extractField(resized, llvmFieldData)
 	capacity := b.extractField(resized, llvmFieldCapacity)
 	allocator := b.extractField(resized, llvmFieldAllocator)
@@ -982,7 +993,7 @@ func emitDynamicArrayResize(b *llvmBuilder, op *mir.DynamicArrayOp, array llvmVa
 	b.defineArithmetic(nextIndex, "add", index, b.value("1", index.Layout))
 	b.branch(loopLabel)
 	b.namedLabel(doneLabel)
-	return emitDynamicArrayHeader(b, op.Type, data, newLength, capacity, allocator)
+	return emitDynamicArrayHeader(b, op.ArrayType, data, newLength, capacity, allocator)
 }
 
 func emitIndexPtr(b *llvmBuilder, base llvmValue, baseType ir.TypeID, addressed bool, indexRef mir.ValueRef) (llvmPlace, bool) {
@@ -1001,12 +1012,14 @@ func emitIndexPtr(b *llvmBuilder, base llvmValue, baseType ir.TypeID, addressed 
 		}
 	}
 	target, ok := b.emitter.mod.Types.Type(targetID)
-	if !ok || target.Kind != ir.TypeArray {
+	if !ok || (target.Kind != ir.TypeArray && target.Kind != ir.TypeSlice) {
 		return llvmPlace{}, false
 	}
-	if target.Length == "" {
+	if target.Kind == ir.TypeSlice || target.Length == "" {
 		header := base
-		if addressed || pointed {
+		// Dynamic-owner references lower as pointers to their carrier header;
+		// slice references lower as the carrier aggregate itself.
+		if addressed || pointed || referenced && base.Layout.Kind == llvmLayoutPointer {
 			header = b.load(b.pointerPlace(base))
 		}
 		data := b.extractField(header, llvmFieldData)
@@ -1469,8 +1482,6 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			return current
 		case *mir.DynamicArrayAlloc:
 			return emitDynamicArrayAlloc(b, e)
-		case *mir.DynamicArrayOp:
-			return emitDynamicArrayOp(b, e)
 		case *mir.Alloc:
 			return emitAlloc(b, e)
 		case *mir.ZeroValue:

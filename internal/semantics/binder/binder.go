@@ -1,6 +1,9 @@
 package binder
 
 import (
+	"cmp"
+	"slices"
+
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/deps"
@@ -37,6 +40,9 @@ func (b *binder) bindModule() {
 		}
 		return true
 	})
+	slices.SortFunc(b.module.Semantics.OperationFunctions, func(left, right *symbols.Symbol) int {
+		return cmp.Compare(left.Name, right.Name)
+	})
 	deps.ValidateTypeDeclCycles(b.ctx, b.module)
 }
 
@@ -52,7 +58,12 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 		}
 		return
 	}
-	b.bindModuleScopeType(fn.Name.Name, fnType)
+	if sym := b.moduleScopeSymbol(fn.Name.Name); sym != nil {
+		sym.BindType(fnType)
+		if len(fnType.Params) > 0 {
+			b.module.Semantics.OperationFunctions = append(b.module.Semantics.OperationFunctions, sym)
+		}
+	}
 }
 
 // Bind top-level value declarations. Explicit types win; otherwise keep

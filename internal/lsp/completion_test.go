@@ -36,6 +36,27 @@ func completionLabels(items []CompletionItem) []string {
 	return labels
 }
 
+func completionItemByKind(t *testing.T, items []CompletionItem, label string, kind int) CompletionItem {
+	t.Helper()
+	for _, item := range items {
+		if item.Label == label && item.Kind == kind {
+			return item
+		}
+	}
+	t.Fatalf("completion items = %#v, want %q with kind %d", items, label, kind)
+	return CompletionItem{}
+}
+
+func applyCompletionTextEdit(t *testing.T, text string, edit TextEdit) string {
+	t.Helper()
+	start, startOK := offsetAtPosition(text, edit.Range.Start)
+	end, endOK := offsetAtPosition(text, edit.Range.End)
+	if !startOK || !endOK || start > end {
+		t.Fatalf("invalid completion edit range: %#v", edit.Range)
+	}
+	return text[:start] + edit.NewText + text[end:]
+}
+
 func TestCompletionAdvertisesTriggersAndDispatchesRequest(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
@@ -96,7 +117,7 @@ func TestCompletionAdvertisesTriggersAndDispatchesRequest(t *testing.T) {
 	if err := json.Unmarshal(responses["1"], &initialized); err != nil {
 		t.Fatalf("unmarshal initialize result: %v", err)
 	}
-	wantTriggers := []string{".", ":", "/", "\""}
+	wantTriggers := []string{".", "|", ">", ":", "/", "\""}
 	if initialized.Capabilities.CompletionProvider == nil || !slices.Equal(initialized.Capabilities.CompletionProvider.TriggerCharacters, wantTriggers) {
 		t.Fatalf("completion triggers = %#v, want %#v", initialized.Capabilities.CompletionProvider, wantTriggers)
 	}
@@ -143,6 +164,25 @@ func TestCompletionLexicalScopeAndDeclarationOrder(t *testing.T) {
 	}
 }
 
+func TestCompletionAndHoverUseSameFunctionHeader(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	source := "fn factorial(value: i32) -> i32 {\n\tif value == 0 { return 1; }\n\treturn value * factorial(value - 1);\n}\n"
+	state := NewServerState()
+	state.RootDir = root
+
+	items := completionAtSource(t, state, filePath, source+"fn use() { fact__CURSOR__ }\n")
+	completion := completionItemByKind(t, items, "factorial", completionKindFunction)
+	want := "(func) fn factorial(value: i32) -> i32"
+	if completion.Detail != want {
+		t.Fatalf("completion detail = %q, want %q", completion.Detail, want)
+	}
+	hover := hoverAtSource(t, state, filePath, strings.Replace(source, "factorial(value - 1)", "__CURSOR__factorial(value - 1)", 1))
+	if hover == nil || !strings.Contains(hover.Contents.Value, completion.Detail) {
+		t.Fatalf("hover = %#v, want shared header %q", hover, completion.Detail)
+	}
+}
+
 func TestCompletionSelectorUsesFieldsMethodsAndFullIdentifierRange(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
@@ -160,7 +200,7 @@ func TestCompletionSelectorUsesFieldsMethodsAndFullIdentifierRange(t *testing.T)
 	}
 
 	items = completionAtSource(t, state, filePath, strings.Replace(source, "Na__CURSOR__me", "__CURSOR__", 1))
-	if got := completionLabels(items); !slices.Equal(got, []string{"Name", "Normalize", "Number"}) {
+	if got := completionLabels(items); !slices.Equal(got, []string{"Name", "Normalize", "Number", "alloc", "inspect"}) {
 		t.Fatalf("selector completion labels = %v", got)
 	}
 	seen := make(map[string]struct{}, len(items))
@@ -172,18 +212,22 @@ func TestCompletionSelectorUsesFieldsMethodsAndFullIdentifierRange(t *testing.T)
 	}
 }
 
-func TestCompletionSelectorIncludesStringIntrinsics(t *testing.T) {
+func TestCompletionDotOffersCompilerFunctionsWithConcreteTypes(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
 	source := "fn main() {\n\tlet text: str = \"a\";\n\ttext.__CURSOR__;\n}\n"
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, filePath, source)
-	labels := completionLabels(items)
-	for _, want := range []string{"as_bytes", "as_chars", "len"} {
-		if !slices.Contains(labels, want) {
-			t.Fatalf("string completion labels = %v, missing %q", labels, want)
-		}
+	if got := completionLabels(items); !slices.Equal(got, []string{"alloc", "as_bytes", "as_chars", "len"}) {
+		t.Fatalf("string completion labels = %v", got)
+	}
+	item := completionItemByKind(t, items, "len", completionKindFunction)
+	if strings.Contains(item.Detail, "T") || !strings.Contains(item.Detail, "&str") {
+		t.Fatalf("len completion detail = %q, want concrete string type", item.Detail)
+	}
+	if item.TextEdit.NewText != " |> len()" || item.InsertTextFormat != 2 {
+		t.Fatalf("len completion edit = %#v, format = %d", item.TextEdit, item.InsertTextFormat)
 	}
 }
 
@@ -195,11 +239,162 @@ func TestCompletionSelectorIncludesInterfaceMethods(t *testing.T) {
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, filePath, source)
-	if got := completionLabels(items); !slices.Equal(got, []string{"write"}) {
-		t.Fatalf("interface completion labels = %v", got)
+	if !slices.Contains(completionLabels(items), "write") {
+		t.Fatalf("interface completion labels = %v", completionLabels(items))
 	}
-	if items[0].Kind != completionKindMethod {
-		t.Fatalf("interface completion kind = %d, want method", items[0].Kind)
+	if item := completionItemByKind(t, items, "write", completionKindMethod); item.TextEdit.NewText != "write(${1:value})" {
+		t.Fatalf("interface method edit = %#v", item.TextEdit)
+	}
+}
+
+func TestCompletionPipeOffersMethodsAndFunctionsWithSyntaxEdits(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	source := "struct Counter { value: i32, }\n" +
+		"fn (self: &Counter) Read(delta: i32) -> i32 { return self.value + delta; }\n" +
+		"fn Inspect(value: &Counter, fallback: i32) -> i32 { return value.value + fallback; }\n" +
+		"fn use(counter: Counter) -> i32 { return counter |> __CURSOR__; }\n"
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, filePath, source)
+
+	method := completionItemByKind(t, items, "Read", completionKindMethod)
+	if method.TextEdit.NewText != ".Read(${1:delta})" || method.SortText != "1Read" || method.InsertTextFormat != 2 {
+		t.Fatalf("method completion = %#v", method)
+	}
+	function := completionItemByKind(t, items, "Inspect", completionKindFunction)
+	if function.TextEdit.NewText != "Inspect(${1:fallback})" || function.SortText != "0Inspect" || function.InsertTextFormat != 2 {
+		t.Fatalf("function completion = %#v", function)
+	}
+	if method.TextEdit.Range.Start.Character != 48 || function.TextEdit.Range.Start.Character != 52 {
+		t.Fatalf("method/function rewrite starts = %d/%d", method.TextEdit.Range.Start.Character, function.TextEdit.Range.Start.Character)
+	}
+	if slices.Contains(completionLabels(items), "value") {
+		t.Fatalf("pipe completion exposed field: %v", completionLabels(items))
+	}
+}
+
+func TestCompletionPreservesExistingCallArguments(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	declarations := "struct Counter { value: i32, }\n" +
+		"fn (self: &Counter) Read(delta: i32) -> i32 { return self.value + delta; }\n" +
+		"fn Inspect(value: &Counter, fallback: i32) -> i32 { return value.value + fallback; }\n"
+	tests := []struct {
+		name       string
+		expression string
+		label      string
+		kind       int
+		want       string
+	}{
+		{name: "pipe function empty", expression: "counter |> Ins__CURSOR__( \t )", label: "Inspect", kind: completionKindFunction, want: "counter |> Inspect(${1:fallback})"},
+		{name: "pipe function arguments", expression: "counter |> Ins__CURSOR__(3)", label: "Inspect", kind: completionKindFunction, want: "counter |> Inspect(3)"},
+		{name: "pipe method empty", expression: "counter |> Re__CURSOR__()", label: "Read", kind: completionKindMethod, want: "counter.Read(${1:delta})"},
+		{name: "pipe method arguments", expression: "counter |> Re__CURSOR__(3)", label: "Read", kind: completionKindMethod, want: "counter.Read(3)"},
+		{name: "dot function empty", expression: "counter.Ins__CURSOR__()", label: "Inspect", kind: completionKindFunction, want: "counter |> Inspect(${1:fallback})"},
+		{name: "dot function arguments", expression: "counter.Ins__CURSOR__(3)", label: "Inspect", kind: completionKindFunction, want: "counter |> Inspect(3)"},
+		{name: "dot method empty after non BMP", expression: "counter.Re__CURSOR__()", label: "Read", kind: completionKindMethod, want: "counter.Read(${1:delta})"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prefix := declarations + "fn use(counter: Counter) -> i32 { let text: cstr = \"🙂\"; return "
+			source := prefix + test.expression + "; }\n"
+			state := NewServerState()
+			state.RootDir = root
+			items := completionAtSource(t, state, filePath, source)
+			item := completionItemByKind(t, items, test.label, test.kind)
+			clean, _ := markerPosition(t, source)
+			got := applyCompletionTextEdit(t, clean, item.TextEdit)
+			if !strings.Contains(got, test.want) {
+				t.Fatalf("applied completion = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCompletionCallSuffixBalancesNestedLexicalContent(t *testing.T) {
+	text := `Inspect(other(")"), /* ) */ nested(1))`
+	kind, end := completionCallSuffix(text, len("Inspect"))
+	if kind != completionCallArguments || end != len(text) {
+		t.Fatalf("call suffix = %d, %d, want arguments ending at %d", kind, end, len(text))
+	}
+	kind, end = completionCallSuffix("Inspect( \t )", len("Inspect"))
+	if kind != completionCallEmpty || end != len("Inspect( \t )") {
+		t.Fatalf("empty call suffix = %d, %d", kind, end)
+	}
+}
+
+func TestCompletionPipeIncludesApplicableImportedFunctions(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, "fn Measure(value: &i32, scale: i32) -> i32 { return *value * scale; }\nfn Wrong(value: bool) {}\n")
+	source := "import \"app/external\";\nfn main() -> i32 { let value: i32 = 2; return value |> M__CURSOR__; }\n"
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, mainPath, source)
+	item := completionItemByKind(t, items, "external::Measure", completionKindFunction)
+	if item.TextEdit.NewText != "external::Measure(${1:scale})" {
+		t.Fatalf("imported function completion = %#v", item)
+	}
+	if slices.Contains(completionLabels(items), "external::Wrong") {
+		t.Fatalf("inapplicable imported function exposed: %v", completionLabels(items))
+	}
+}
+
+func TestCompletionDoesNotLeakImportedMethodsWithSameReceiverName(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	externalPath := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, externalPath, `struct Value {}
+fn (self: &Value) Foreign() {}
+fn (self: &Value) privateForeign() {}
+fn Inspect(value: &Value) {}
+`)
+	source := `import "app/external";
+struct Value {}
+fn (self: &Value) Local() {}
+fn use(value: Value) { value |> __CURSOR__; }
+`
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, mainPath, source)
+	labels := completionLabels(items)
+	if !slices.Contains(labels, "Local") || !slices.Contains(labels, "external::Inspect") {
+		t.Fatalf("completion labels = %v, want current method and imported function", labels)
+	}
+	if slices.Contains(labels, "Foreign") || slices.Contains(labels, "privateForeign") {
+		t.Fatalf("imported method leaked into completion: %v", labels)
+	}
+}
+
+func TestCompletionPreservesMethodFunctionNameCollision(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	source := "struct Value {}\n" +
+		"fn (self: &Value) Act(amount: i32) {}\n" +
+		"fn Act(value: &Value, amount: i32) {}\n" +
+		"fn use(value: Value) { value |> Act__CURSOR__; }\n"
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, filePath, source)
+	completionItemByKind(t, items, "Act", completionKindMethod)
+	completionItemByKind(t, items, "Act", completionKindFunction)
+}
+
+func TestParseCompletionContextDuringNaturalPipeTyping(t *testing.T) {
+	for _, source := range []string{
+		"fn use(value: i32) { value |> __CURSOR__; }",
+		"fn use(value: i32) { value |> le__CURSOR__; }",
+		"fn use(value: i32) { value|>le__CURSOR__(); }",
+	} {
+		clean, position := markerPosition(t, source)
+		parsed := parseCompletionContext(clean, position)
+		if parsed.kind != completionOperation || !parsed.pipe || !strings.Contains(parsed.sentinel, completionSentinel+"(") {
+			t.Fatalf("pipe context for %q = %#v", source, parsed)
+		}
 	}
 }
 

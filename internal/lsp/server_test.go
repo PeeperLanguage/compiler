@@ -835,7 +835,7 @@ func TestHoverShowsSelectorMethodSignature(t *testing.T) {
 	}
 }
 
-func TestHoverShowsStringIntrinsicSignature(t *testing.T) {
+func TestHoverRejectsCompilerOwnedFunctionAsMethod(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
 	src := "fn main() {\n\tlet text: str = \"a\";\n\ttext.__CURSOR__len();\n}\n"
@@ -843,15 +843,12 @@ func TestHoverShowsStringIntrinsicSignature(t *testing.T) {
 	state := NewServerState()
 	state.RootDir = root
 	hover := hoverAtSource(t, state, mainPath, src)
-	if hover == nil {
-		t.Fatalf("expected hover result, got nil")
-	}
-	if !strings.Contains(hover.Contents.Value, "(method) fn (self: &str) len() -> u64") {
-		t.Fatalf("unexpected string intrinsic hover: %q", hover.Contents.Value)
+	if hover != nil {
+		t.Fatalf("compiler function selector hover = %#v, want nil", hover)
 	}
 }
 
-func TestHoverShowsStringIntrinsicsOnType(t *testing.T) {
+func TestHoverDoesNotShowCompilerFunctionsAsTypeMethods(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
 	src := "fn use(value: __CURSOR__str) {}\n"
@@ -862,13 +859,13 @@ func TestHoverShowsStringIntrinsicsOnType(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	for _, signature := range []string{
-		"fn (self: &str) len() -> u64",
-		"fn (self: &str) as_bytes() -> &[]byte from self",
-		"fn (self: &str) as_chars() -> []char",
+	for _, excluded := range []string{
+		" len(",
+		" as_bytes(",
+		" as_chars(",
 	} {
-		if !strings.Contains(hover.Contents.Value, signature) {
-			t.Fatalf("expected %q in string type hover, got %q", signature, hover.Contents.Value)
+		if strings.Contains(hover.Contents.Value, excluded) {
+			t.Fatalf("unexpected compiler function %q in type hover: %q", excluded, hover.Contents.Value)
 		}
 	}
 }
@@ -884,7 +881,7 @@ func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
 		Return:     &typeinfo.BoolType{},
 	}
 
-	got := hoverSymbolFunctionSignature(sym).text()
+	got := renderSymbol(sym, symbolRenderContext{Embedded: true})
 	want := "fn (self: &str) contains(needle: byte) -> bool"
 	if got != want {
 		t.Fatalf("synthetic method hover = %q, want %q", got, want)

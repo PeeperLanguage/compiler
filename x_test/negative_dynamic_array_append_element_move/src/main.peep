@@ -7,7 +7,7 @@ fn consume(_: Point) {
 
 fn main() {
     let point = .Point{x = 1};
-    let values = append([]Point{}, point);
+    let mut values = []Point{};
+    values |> append(point);
     consume(point);
 }
-

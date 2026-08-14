@@ -3,19 +3,19 @@ fn main() -> i32 {
     let fixed = [3]i32{1, 2, 3};
     let dynamic = []i32{4, 5};
 
-    if text.len() != 5 {
+    if len(&text) != 5 {
         return 1;
     }
-    if "ok".len() != 2 {
+    if "ok" |> len() != 2 {
         return 2;
     }
-    if "é".len() != 2 {
+    if "é" |> len() != 2 {
         return 3;
     }
-    if fixed.len() != 3 {
+    if fixed |> len() != 3 {
         return 4;
     }
-    if dynamic.len() != 2 {
+    if dynamic |> len() != 2 {
         return 5;
     }
     return 0;

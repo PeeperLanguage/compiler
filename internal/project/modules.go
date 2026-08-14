@@ -11,6 +11,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/cfg"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -139,6 +140,15 @@ type SemanticInfo struct {
 	MethodSets               map[string][]*symbols.Symbol
 	MethodSymbol             map[ast.NodeID]*symbols.Symbol
 	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
+	ImplicitCallArguments    map[ast.NodeID]typeinfo.Type
+	CompilerCalls            map[ast.NodeID]CompilerCall
+	OperationFunctions       []*symbols.Symbol
+}
+
+// CompilerCall is typechecker-owned dispatch evidence consumed by HIR.
+type CompilerCall struct {
+	Operation symbols.CompilerOp
+	Kind      intrinsics.FunctionKind
 }
 
 // InterfaceImplementation is typechecker proof that one declared method can
@@ -161,6 +171,9 @@ func NewSemanticInfo() *SemanticInfo {
 		MethodSets:               make(map[string][]*symbols.Symbol),
 		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
 		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
+		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
+		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
+		OperationFunctions:       make([]*symbols.Symbol, 0),
 	}
 }
 

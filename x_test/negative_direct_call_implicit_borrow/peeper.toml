@@ -1,0 +1,2 @@
+name = "negative_direct_call_implicit_borrow"
+build = "lib"

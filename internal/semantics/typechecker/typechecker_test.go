@@ -12,6 +12,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -95,15 +96,68 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 }
 
 func TestDefaultRangeWithOmittedBoundsClones(t *testing.T) {
-	diag := checkTypeSource(t, `fn First(values: &[]i32, view: &[]i32 = values[..]) -> i32 {
+	diag := checkTypeSource(t, `fn First(values: &[..]i32, view: &[..]i32 = values[..]) -> i32 {
 	return view[0];
 }
 fn main() -> i32 {
 	let values = []i32{7};
-	return First(&values);
+	return First(values[..]);
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipeAdaptsFirstArgumentOnly(t *testing.T) {
+	diag := checkTypeSource(t, `fn Read(values: &[..]i32) -> i32 { return values[0]; }
+fn Write(values: &mut [..]i32, value: i32) { values[0] = value; }
+fn Consume(value: []i32) -> usize { return value |> len(); }
+fn main() -> i32 {
+	let mut values = []i32{1};
+	values |> Write(2);
+	let first = values |> Read();
+	let count = values |> Consume();
+	return first + count as i32;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected pipe diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDirectCallDoesNotImplicitlyBorrowFirstArgument(t *testing.T) {
+	diag := checkTypeSource(t, `fn Read(values: &[..]i32) {}
+fn main() { let values = []i32{1}; Read(values); }`)
+	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
+		t.Fatalf("expected explicit direct-borrow diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipeArityCountsOnlyExplicitArguments(t *testing.T) {
+	diag := checkTypeSource(t, `fn Write(value: &mut i32, replacement: i32) {}
+fn main() { let mut value = 1; value |> Write(); }`)
+	if out := diag.EmitAllToString(); !strings.Contains(out, "wrong number of arguments: got 0, want 1") ||
+		!strings.Contains(out, "expected parameters: (i32)") {
+		t.Fatalf("unexpected pipe arity diagnostic:\n%s", out)
+	}
+}
+
+func TestAllocArityReportsSourceArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{name: "missing value", src: `fn main() { alloc(); }`, want: "wrong number of arguments: got 0, want 1"},
+		{name: "direct excess", src: `fn main() { alloc(1, 2, 3); }`, want: "wrong number of arguments: got 3, want 2"},
+		{name: "piped excess", src: `fn main() { 1 |> alloc(2, 3); }`, want: "wrong number of arguments: got 2, want 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := checkTypeSource(t, tt.src)
+			if out := diag.EmitAllToString(); !strings.Contains(out, tt.want) {
+				t.Fatalf("unexpected alloc arity diagnostic:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -1034,7 +1088,7 @@ func TestBorrowedViewComparisonsRejectedBeforeLowering(t *testing.T) {
 		typeText string
 		message  string
 	}{
-		{name: "slice", typeText: "&[]i32", message: "slice-view comparison is not supported"},
+		{name: "slice", typeText: "&[..]i32", message: "slice-view comparison is not supported"},
 		{name: "string", typeText: "&str", message: "string-view comparison is not supported"},
 	} {
 		for _, op := range []string{"==", "!=", "<", "<=", ">", ">="} {
@@ -1075,7 +1129,7 @@ fn aliased(value: &mut Shared) -> i32 {
 }
 
 func TestSliceViewIndexExprReturnsElementType(t *testing.T) {
-	src := `fn first(xs: &[]i32, i: usize) -> i32 {
+	src := `fn first(xs: &[..]i32, i: usize) -> i32 {
 	return xs[i];
 }`
 	diag := checkTypeSource(t, src)
@@ -1085,7 +1139,7 @@ func TestSliceViewIndexExprReturnsElementType(t *testing.T) {
 }
 
 func TestMutableSliceViewIndexAssignmentAccepted(t *testing.T) {
-	src := `fn fill(xs: &mut []i32, i: usize) {
+	src := `fn fill(xs: &mut [..]i32, i: usize) {
 	xs[i] = 1;
 }`
 	diag := checkTypeSource(t, src)
@@ -1113,7 +1167,7 @@ fn use(mut values: []Token) {
 
 func TestSharedSliceViewRejectsMutableIndexedReference(t *testing.T) {
 	src := `struct Token { value: i32 }
-fn invalid(values: &[]Token) {
+fn invalid(values: &[..]Token) {
 	let reference = &mut values[0];
 }`
 	diag := checkTypeSource(t, src)
@@ -1140,7 +1194,7 @@ fn invalid(values: []i32) {
 }
 
 func TestSharedSliceViewRejectsIndexAssignment(t *testing.T) {
-	src := `fn fill(xs: &[]i32, i: usize) {
+	src := `fn fill(xs: &[..]i32, i: usize) {
 	xs[i] = 1;
 }`
 	diag := checkTypeSource(t, src)
@@ -1153,7 +1207,7 @@ func TestSharedSliceViewRejectsIndexAssignment(t *testing.T) {
 }
 
 func TestRangeExprCreatesSliceViews(t *testing.T) {
-	src := `fn ranges(fixed: [4]i32, owner: []i32, shared: &[]i32, mutable: &mut []i32) {
+	src := `fn ranges(fixed: [4]i32, owner: []i32, shared: &[..]i32, mutable: &mut [..]i32) {
 	let prefix = fixed[..2];
 	let suffix = owner[1..];
 	let full = shared[..];
@@ -1185,7 +1239,7 @@ func TestRangeExprRejectsNonAddressableFixedArray(t *testing.T) {
 }
 
 func TestRangeExprRejectsNonIntegerBounds(t *testing.T) {
-	src := `fn first(xs: [4]i32, flag: bool) -> &[]i32 {
+	src := `fn first(xs: [4]i32, flag: bool) -> &[..]i32 {
 	return xs[flag..3];
 }`
 	diag := checkTypeSource(t, src)
@@ -1318,10 +1372,11 @@ func TestArrayLiteralTypechecksDynamicArray(t *testing.T) {
 
 func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	src := `fn main() {
-	let appended = append([]i32{}, 1);
-	let reserved = reserve(appended, 8);
-	let resized = resize(reserved, 4, 0);
-	let shrunk = shrink(resized, 2);
+	let mut values = []i32{};
+	append(&mut values, 1);
+	values |> reserve(8);
+	values |> resize(4, 0);
+	values |> shrink(2);
 }`
 	module, diag := checkTypeModule(t, src)
 	if diag.HasErrors() {
@@ -1329,27 +1384,26 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	wantParams := [][]string{
-		{"[]i32", "i32"},
-		{"[]i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
-		{"[]i32", fmt.Sprintf("u%d", target.Host().IndexBits), "i32"},
-		{"[]i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
+		{"&mut []i32", "i32"},
+		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
+		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits), "i32"},
+		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
 	}
-	for i, stmt := range fn.Body.Stmts {
-		binding := stmt.(*ast.LetDecl)
-		if got := typeinfo.TypeText(module.Semantics.ExprTypes[binding.Value.ID()]); got != "[]i32" {
-			t.Fatalf("%s result type = %s, want []i32", binding.Name.Name, got)
-		}
-		call := binding.Value.(*ast.CallExpr)
+	for i, stmt := range fn.Body.Stmts[1:] {
+		call := stmt.(*ast.ExprStmt).Expr.(*ast.CallExpr)
 		fnType, ok := module.Semantics.ExprTypes[call.Callee.ID()].(*typeinfo.FuncType)
 		if !ok {
-			t.Fatalf("%s callee type = %#v, want function", binding.Name.Name, module.Semantics.ExprTypes[call.Callee.ID()])
+			t.Fatalf("operation %d callee type = %#v, want function", i, module.Semantics.ExprTypes[call.Callee.ID()])
+		}
+		if fnType.Return != nil {
+			t.Fatalf("operation %d return = %s, want void", i, typeinfo.TypeText(fnType.Return))
 		}
 		if len(fnType.Params) != len(wantParams[i]) {
-			t.Fatalf("%s parameter count = %d, want %d", binding.Name.Name, len(fnType.Params), len(wantParams[i]))
+			t.Fatalf("operation %d parameter count = %d, want %d", i, len(fnType.Params), len(wantParams[i]))
 		}
 		for paramIndex, want := range wantParams[i] {
 			if got := typeinfo.TypeText(fnType.Params[paramIndex]); got != want {
-				t.Fatalf("%s parameter %d = %s, want %s", binding.Name.Name, paramIndex, got, want)
+				t.Fatalf("operation %d parameter %d = %s, want %s", i, paramIndex, got, want)
 			}
 		}
 	}
@@ -1358,8 +1412,8 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 func TestDynamicArrayShrinkAcceptsMoveOnlyElements(t *testing.T) {
 	diag := checkTypeSource(t, `struct Point { x: i32 }
 fn main() {
-	let points = []Point{.Point{x = 1}};
-	let shrunk = shrink(points, 0);
+	let mut points = []Point{.Point{x = 1}};
+	points |> shrink(0);
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected move-only shrink diagnostics:\n%s", diag.EmitAllToString())
@@ -1367,7 +1421,7 @@ fn main() {
 }
 
 func TestDynamicArrayOwnerOperationRequiresOwner(t *testing.T) {
-	diag := checkTypeSource(t, `fn extend(values: &[]i32) {
+	diag := checkTypeSource(t, `fn extend(values: &[..]i32) {
 	append(values, 1);
 }`)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
@@ -1376,10 +1430,31 @@ func TestDynamicArrayOwnerOperationRequiresOwner(t *testing.T) {
 	}
 }
 
+func TestDynamicArrayOwnerOperationRequiresMutableBinding(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() {
+	let values = []i32{};
+	values |> append(1);
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidAssignment) {
+		t.Fatalf("expected immutable-owner diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDynamicArrayOwnerOperationDoesNotProduceValue(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() {
+	let mut values = []i32{};
+	let result = values |> append(1);
+}`)
+	if !strings.Contains(diag.EmitAllToString(), "initializer requires a value-producing expression") {
+		t.Fatalf("expected void-operation diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestDynamicArrayResizeRejectsMoveOnlyElements(t *testing.T) {
 	diag := checkTypeSource(t, `struct Point { x: i32 }
 fn main() {
-	resize([]Point{}, 2, .Point{x = 0});
+	let mut points = []Point{};
+	points |> resize(2, .Point{x = 0});
 }`)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidCopy) ||
 		!strings.Contains(diag.EmitAllToString(), "grow Category B arrays with append") {
@@ -1400,7 +1475,7 @@ fn main() -> i32 {
 }
 
 func TestDynamicArrayShrinkRequiresOwner(t *testing.T) {
-	diag := checkTypeSource(t, `fn shorten(values: &[]i32) {
+	diag := checkTypeSource(t, `fn shorten(values: &[..]i32) {
 	shrink(values, 1);
 }`)
 	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
@@ -2464,14 +2539,14 @@ fn Maybe(value: ?&Box) -> ?&Box from value { return value; }
 func TestTemporaryStringViewEscapeRejected(t *testing.T) {
 	diag := checkTypeSource(t, `fn MakeText() -> str { return "abc"; }
 fn binding() {
-	let bytes = MakeText().as_bytes();
+	let bytes = MakeText() |> as_bytes();
 }
-fn assignment(seed: &[]byte) {
+fn assignment(seed: &[..]byte) {
 	let mut bytes = seed;
-	bytes = MakeText().as_bytes();
+	bytes = MakeText() |> as_bytes();
 }
-fn returning(seed: &str) -> &[]byte from seed {
-	return MakeText().as_bytes();
+fn returning(seed: &str) -> &[..]byte from seed {
+	return MakeText() |> as_bytes();
 }`)
 	out := diag.EmitAllToString()
 	if strings.Count(out, "reference to temporary cannot escape") != 3 {
@@ -2479,33 +2554,49 @@ fn returning(seed: &str) -> &[]byte from seed {
 	}
 }
 
-func TestIntrinsicSelectorResolutionStoredForLaterPhases(t *testing.T) {
+func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	module, diag := checkTypeModule(t, `fn main() -> usize {
 	let text: str = "hello";
-	return text.len();
+	return text |> len();
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	var selector *ast.SelectorExpr
+	var call *ast.CallExpr
+	var callee *ast.Ident
 	for _, stmt := range module.AST.Stmts {
 		ast.Inspect(stmt, func(node ast.Node) bool {
-			candidate, ok := node.(*ast.SelectorExpr)
-			if ok && candidate.Name != nil && candidate.Name.Name == "len" {
-				selector = candidate
+			candidate, ok := node.(*ast.CallExpr)
+			if ok && candidate.Piped {
+				call = candidate
+				callee, _ = candidate.Callee.(*ast.Ident)
 			}
-			return selector == nil
+			return callee == nil
 		})
-		if selector != nil {
+		if callee != nil {
 			break
 		}
 	}
-	if selector == nil {
-		t.Fatal("len selector missing from parsed module")
+	if callee == nil || callee.Name != "len" {
+		t.Fatal("len function missing from parsed module")
 	}
-	resolved := module.Semantics.ResolvedSymbols[selector.Name.ID()]
+	resolved := module.Semantics.ResolvedSymbols[callee.ID()]
 	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
-		t.Fatalf("resolved selector = %#v, want len intrinsic", resolved)
+		t.Fatalf("resolved function = %#v, want len intrinsic", resolved)
+	}
+	evidence, ok := module.Semantics.CompilerCalls[call.ID()]
+	if !ok || evidence.Operation != symbols.CompilerOpLen || evidence.Kind != intrinsics.FunctionCollection {
+		t.Fatalf("compiler call evidence = %#v, want collection len", evidence)
+	}
+}
+
+func TestCompilerOwnedFunctionsAreNotMethods(t *testing.T) {
+	diag := checkTypeSource(t, `fn main() -> usize {
+	let text: str = "hello";
+	return text.len();
+}`)
+	if !hasTypeCode(diag, diagnostics.ErrMethodNotFound) {
+		t.Fatalf("expected builtin selector rejection:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -2597,7 +2688,7 @@ func TestIntrinsicMethodDoesNotSatisfyInterface(t *testing.T) {
 fn main() -> i32 {
 	let text: str = "abc";
 	let value: &Lenner = &text;
-	return value.len() as i32;
+	return value |> len() as i32;
 }`)
 	if !hasTypeCode(diag, diagnostics.ErrTypeMismatch) {
 		t.Fatalf("expected intrinsic interface conformance rejection, got:\n%s", diag.EmitAllToString())
@@ -2616,5 +2707,26 @@ fn valid() -> i32 {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected scalar projection diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestCanAdaptFirstCallArgumentUsesCallConversionRules(t *testing.T) {
+	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
+	module := &project.Module{Semantics: project.NewSemanticInfo()}
+	element, ok := typeinfo.NumericTypeFromName("i32", ctx.Target)
+	if !ok {
+		t.Fatal("missing i32 type")
+	}
+	owner := &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: element}
+	mutableOwner := &typeinfo.RefType{Target: owner, Mutable: true}
+	if !CanAdaptFirstCallArgument(ctx, module, mutableOwner, owner) {
+		t.Fatal("owner should adapt to mutable owner reference")
+	}
+	slice := &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: element}
+	if CanAdaptFirstCallArgument(ctx, module, mutableOwner, slice) {
+		t.Fatal("slice must not adapt to mutable owner reference")
+	}
+	if CanAdaptFirstCallArgument(ctx, module, &typeinfo.BoolType{}, element) {
+		t.Fatal("numeric value must not adapt to bool")
 	}
 }

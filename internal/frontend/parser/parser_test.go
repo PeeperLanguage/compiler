@@ -738,8 +738,8 @@ func TestParseOptionalPointerArrayAndReferenceArrayTypes(t *testing.T) {
 const b: rawptr = value;
 const c: [4]i32 = value;
 const d: []string = value;
-const e: &[]string = value;
-const f: &mut []string = value;`
+const e: &[..]string = value;
+const f: &mut [..]string = value;`
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
@@ -765,7 +765,7 @@ const f: &mut []string = value;`
 	}
 	dynDecl := mod.Stmts[3].(*ast.ConstDecl)
 	dyn, ok := dynDecl.Type.(*ast.ArrayType)
-	if !ok || !dyn.Dynamic {
+	if !ok || dyn.Shape != ast.ArrayOwner {
 		t.Fatalf("expected dynamic array type, got %#v", dynDecl.Type)
 	}
 	sharedRefDecl := mod.Stmts[4].(*ast.ConstDecl)
@@ -773,13 +773,73 @@ const f: &mut []string = value;`
 	if !ok || sharedRef.Mutable {
 		t.Fatalf("expected shared reference type, got %#v", sharedRefDecl.Type)
 	}
-	if target, ok := sharedRef.Target.(*ast.ArrayType); !ok || !target.Dynamic {
-		t.Fatalf("expected dynamic array target, got %#v", sharedRef.Target)
+	if target, ok := sharedRef.Target.(*ast.ArrayType); !ok || target.Shape != ast.ArraySlice {
+		t.Fatalf("expected slice target, got %#v", sharedRef.Target)
 	}
 	mutRefDecl := mod.Stmts[5].(*ast.ConstDecl)
 	mutRef, ok := mutRefDecl.Type.(*ast.RefType)
 	if !ok || !mutRef.Mutable {
 		t.Fatalf("expected mutable reference type, got %#v", mutRefDecl.Type)
+	}
+}
+
+func TestParseSliceTypeSpelling(t *testing.T) {
+	mod, diag := parseTestModule(`fn read(values: &[..]i32) {}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	ref := fn.Params[0].Type.(*ast.RefType)
+	slice := ref.Target.(*ast.ArrayType)
+	if slice.Shape != ast.ArraySlice || ast.TypeText(ref) != "&[..]i32" {
+		t.Fatalf("unexpected slice type: %#v (%s)", ref, ast.TypeText(ref))
+	}
+}
+
+func TestParsePipeCallPrependsValueAndChainsLeft(t *testing.T) {
+	mod, diag := parseTestModule(`fn main() { value |> first(1) |> second(); }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	stmt := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ExprStmt)
+	outer, ok := stmt.Expr.(*ast.CallExpr)
+	if !ok || !outer.Piped || len(outer.Args) != 1 {
+		t.Fatalf("unexpected outer pipe: %#v", stmt.Expr)
+	}
+	inner, ok := outer.Args[0].(*ast.CallExpr)
+	if !ok || !inner.Piped || len(inner.Args) != 2 {
+		t.Fatalf("unexpected inner pipe: %#v", outer.Args[0])
+	}
+	if got := ast.ExprText(outer); got != "value |> first(1) |> second()" {
+		t.Fatalf("pipe text = %q", got)
+	}
+}
+
+func TestParsePipeCompletesBeforeSurroundingBinaryExpression(t *testing.T) {
+	mod, diag := parseTestModule(`fn main() { value |> read() != 7; }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %s", diag.EmitAllToString())
+	}
+	stmt := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ExprStmt)
+	binary, ok := stmt.Expr.(*ast.BinaryExpr)
+	if !ok || binary.Op != "!=" {
+		t.Fatalf("expression = %#v, want comparison", stmt.Expr)
+	}
+	call, ok := binary.Left.(*ast.CallExpr)
+	if !ok || !call.Piped || len(call.Args) != 1 {
+		t.Fatalf("comparison left = %#v, want completed pipe call", binary.Left)
+	}
+}
+
+func TestParsePipeRejectsNonCallAndMethodTarget(t *testing.T) {
+	for _, src := range []string{
+		`fn main() { value |> function; }`,
+		`fn main() { value |> object.method(); }`,
+	} {
+		_, diag := parseTestModule(src)
+		if !diag.HasErrors() {
+			t.Fatalf("expected pipe diagnostic for %q", src)
+		}
 	}
 }
 
@@ -1339,7 +1399,7 @@ func TestParseDynamicArrayLiteral(t *testing.T) {
 		t.Fatalf("expected dynamic array literal, got %#v", letDecl.Value)
 	}
 	arrayType, ok := lit.Type.(*ast.ArrayType)
-	if !ok || !arrayType.Dynamic || arrayType.Len != nil {
+	if !ok || arrayType.Shape != ast.ArrayOwner || arrayType.Len != nil {
 		t.Fatalf("unexpected dynamic array type: %#v", lit.Type)
 	}
 }
@@ -1757,9 +1817,9 @@ func TestParseFuncTypeParam(t *testing.T) {
 
 func TestParseReferenceReturnOrigins(t *testing.T) {
 	src := `
-fn first(xs: &[]i32) -> &i32 from xs { return &xs[0]; }
+fn first(xs: &[..]i32) -> &i32 from xs { return &xs[0]; }
 iface Reader { fn (&Self) current(fallback: &i32) -> &i32 from(self, fallback) }
-const callback: fn(xs: &[]i32) -> &i32 from xs = first;
+const callback: fn(xs: &[..]i32) -> &i32 from xs = first;
 `
 	mod, diag := parseTestModule(src)
 	if diag.HasErrors() {

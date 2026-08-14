@@ -174,11 +174,11 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineScalarShrinkLocalDropReservesForeignFree(t *testing.T) {
+func TestPipelineScalarShrinkOwnedParameterReservesForeignFree(t *testing.T) {
 	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
 
-fn shorten(values: []i32) {
-	let shortened = shrink(values, 0);
+fn shorten(mut values: []i32) {
+	values |> shrink(0);
 }`, `type Word = i32;
 
 #[extern("free")]
@@ -188,17 +188,17 @@ fn BadFree(value: Word);`)
 	}
 }
 
-func TestPipelineScalarShrinkReturnDoesNotReserveForeignFree(t *testing.T) {
+func TestPipelineScalarShrinkBorrowDoesNotReserveForeignFree(t *testing.T) {
 	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
 
-fn shorten(values: []i32) -> []i32 {
-	return shrink(values, 0);
+fn shorten(values: &mut []i32) {
+	shrink(values, 0);
 }`, `type Word = i32;
 
 #[extern("free")]
 fn BadFree(value: Word);`)
 	if diag.HasErrors() {
-		t.Fatalf("scalar shrink pass-through must not reserve free:\n%s", diag.EmitAllToString())
+		t.Fatalf("borrowed scalar shrink must not reserve free:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -207,8 +207,8 @@ func TestPipelineOwnerShrinkReservesForeignFree(t *testing.T) {
 
 struct Resource { value: *i32 }
 
-fn shorten(values: []Resource) -> []Resource {
-	return shrink(values, 0);
+fn shorten(values: &mut []Resource) {
+	shrink(values, 0);
 }`, `type Word = i32;
 
 #[extern("free")]
@@ -1267,17 +1267,37 @@ fn main() -> i32 {
 
 func TestPipelineLowersSliceViewIndexReadAndWrite(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `fn read_at(xs: &[]i32, index: usize) -> i32 {
+	entrySrc := `fn read_at(xs: &[..]i32, index: usize) -> i32 {
 	return xs[index];
 }
 
-fn write_at(xs: &mut []i32, index: usize, value: i32) {
+fn write_at(xs: &mut [..]i32, index: usize, value: i32) {
 	xs[index] = value;
 }`
 
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, preludeSrc, entrySrc)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsInvalidAllocAritiesWithoutPanic(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{name: "missing value", src: `fn main() { alloc(); }`, want: "wrong number of arguments: got 0, want 1"},
+		{name: "direct excess", src: `fn main() { alloc(1, 2, 3); }`, want: "wrong number of arguments: got 3, want 2"},
+		{name: "piped excess", src: `fn main() { 1 |> alloc(2, 3); }`, want: "wrong number of arguments: got 2, want 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", tt.src)
+			if out := diag.EmitAllToString(); !strings.Contains(out, tt.want) {
+				t.Fatalf("unexpected alloc arity diagnostic:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -1507,7 +1527,7 @@ func TestPipelineRejectsIntrinsicInterfaceConformance(t *testing.T) {
 fn main() -> i32 {
 	let text: str = "abc";
 	let value: &Lenner = &text;
-	return value.len() as i32;
+	return value |> len() as i32;
 }`
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", entrySrc)
 	if !diag.HasErrors() {
@@ -1624,7 +1644,7 @@ func TestPipelineLowersEveryRegisteredIntrinsic(t *testing.T) {
 	return value;
 }
 
-fn WriteAt(values: &mut []i32, index: usize, value: i32) {
+fn WriteAt(values: &mut [..]i32, index: usize, value: i32) {
 	values[index] = value;
 }
 
@@ -1633,17 +1653,17 @@ fn KeepRef(_: &mut i32) {
 
 fn main() -> i32 {
 	let text: str = "abc";
-	let bytes = text.as_bytes();
-	let chars = text.as_chars();
-	let text_length = text.len();
-	let byte_length = bytes.len();
-	let values = []i32{1};
-	let appended = append(values, 2);
-	let reserved = reserve(appended, 8);
-	let resized = resize(reserved, 4, 0);
-	let mut shrunk = shrink(resized, 2);
-	WriteAt(&mut shrunk, 0, Identity(9));
-	let view = shrunk[0..1];
+	let bytes = text |> as_bytes();
+	let chars = text |> as_chars();
+	let text_length = text |> len();
+	let byte_length = bytes |> len();
+	let mut values = []i32{1};
+	values |> append(2);
+	values |> reserve(8);
+	values |> resize(4, 0);
+	values |> shrink(2);
+	WriteAt(values[..], 0, Identity(9));
+	let view = values[0..1];
 	let first = view[0];
 	let mut scalar = first;
 	KeepRef(&mut scalar);
@@ -1651,7 +1671,7 @@ fn main() -> i32 {
 	if first != 9 {
 		return 1;
 	}
-	return text_length as i32 + byte_length as i32 + chars.len() as i32 + shrunk.len() as i32 + first;
+	return text_length as i32 + byte_length as i32 + (chars |> len()) as i32 + (values |> len()) as i32 + scalar;
 }`
 
 	targets := []struct {

@@ -1,0 +1,30 @@
+fn SharedSlice(values: &[]i32) -> i32 {
+    let view = values[1..];
+    if view |> len() != 2 {
+        return -1;
+    }
+    return view[0];
+}
+
+fn MutableSlice(values: &mut []i32) -> i32 {
+    let view = values[1..];
+    if view |> len() != 2 {
+        return -1;
+    }
+    view[0] = 9;
+    return view[1];
+}
+
+fn main() -> i32 {
+    let mut values = []i32{1, 2, 3};
+    if SharedSlice(&values) != 2 {
+        return 1;
+    }
+    if MutableSlice(&mut values) != 3 {
+        return 2;
+    }
+    if values[1] != 9 {
+        return 3;
+    }
+    return 0;
+}

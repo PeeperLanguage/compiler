@@ -114,3 +114,18 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 	}
 	(&checker{ctx: ctx, module: module}).checkModule()
 }
+
+// CanAdaptFirstCallArgument reports whether argType can occupy a function's
+// first parameter through ordinary assignment or method/pipe adaptation.
+// Addressability and mutability remain call-site checks, not discovery filters.
+func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *project.Module, paramType, argType typeinfo.Type) bool {
+	if ctx == nil || module == nil || paramType == nil || argType == nil {
+		return false
+	}
+	checker := &checker{ctx: ctx, module: module}
+	if checker.assignable(paramType, argType, nil) {
+		return true
+	}
+	target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
+	return reference && checker.matchesImplicitCallTarget(target, argType)
+}

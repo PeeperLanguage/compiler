@@ -10,6 +10,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -333,7 +334,7 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	case *typeinfo.StringType:
 		borrowAsView = true
 	case *typeinfo.ArrayType:
-		borrowAsView = runtimeTarget.Dynamic
+		borrowAsView = runtimeTarget.Shape == typeinfo.ArraySlice
 	}
 	exprType := func(node ast.Expr) typeinfo.Type {
 		return exprResolvedType(module, node)
@@ -579,18 +580,19 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t, Location: loc}
 
 	case *ast.CallExpr:
-		if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
-			if sym := module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
-				if sym.CompilerOp == symbols.CompilerOpAlloc {
-					return lowerAllocCall(ctx, module, scope, node)
-				}
-				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, sym.CompilerOp)
+		if compilerCall, ok := module.Semantics.CompilerCalls[node.ID()]; ok {
+			switch compilerCall.Kind {
+			case intrinsics.FunctionAlloc:
+				return lowerAllocCall(ctx, module, scope, node)
+			case intrinsics.FunctionCollection:
+				return lowerCollectionCall(ctx, module, scope, node, compilerCall.Operation)
+			case intrinsics.FunctionDynamicArrayOwner:
+				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, compilerCall.Operation)
+			default:
+				panic(fmt.Sprintf("unsupported intrinsic function kind %d for %q", compilerCall.Kind, compilerCall.Operation))
 			}
 		}
 		if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
-			if sym := module.Semantics.ResolvedSymbols[selector.Name.ID()]; sym != nil && sym.CompilerOp != "" {
-				return lowerIntrinsicMethodCall(ctx, module, scope, selector, node, sym.CompilerOp)
-			}
 			return lowerSelectorMethodCall(ctx, module, scope, selector, node)
 		}
 		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, nil)
@@ -604,7 +606,11 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 			if fnType != nil && len(args) < len(fnType.Params) {
 				paramExpected = fnType.Params[len(args)]
 			}
-			args = append(args, lowerASTExpr(ctx, module, scope, arg, paramExpected))
+			if implicit := module.Semantics.ImplicitCallArguments[arg.ID()]; implicit != nil {
+				args = append(args, lowerImplicitReferenceValue(ctx, module, scope, arg, implicit))
+			} else {
+				args = append(args, lowerASTExpr(ctx, module, scope, arg, paramExpected))
+			}
 		}
 		t := resolvedTypeID
 		if t == ir.InvalidType {
@@ -658,18 +664,24 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	}
 }
 
-func lowerIntrinsicMethodCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
-	fnType, _ := exprResolvedType(module, selector).(*typeinfo.FuncType)
+func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+	fnType, _ := exprResolvedType(module, call.Callee).(*typeinfo.FuncType)
 	if fnType == nil || len(fnType.Params) != 1 {
-		return &ir.InvalidExpr{Message: "intrinsic method type missing", Type: ir.InvalidType, Location: ast.LocOf(call)}
+		return &ir.InvalidExpr{Message: "collection function type missing", Type: ir.InvalidType, Location: ast.LocOf(call)}
 	}
-	receiver := lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, fnType.Params[0])
+	value := call.Args[0]
+	var receiver ir.Expr
+	if implicit := module.Semantics.ImplicitCallArguments[value.ID()]; implicit != nil {
+		receiver = lowerImplicitReferenceValue(ctx, module, scope, value, implicit)
+	} else {
+		receiver = lowerASTExpr(ctx, module, scope, value, fnType.Params[0])
+	}
 	switch op {
 	case symbols.CompilerOpLen:
 		return &ir.Len{Value: receiver, Type: loweredReturnTypeID(ctx, module, fnType.Return), Location: ast.LocOf(call)}
 	case symbols.CompilerOpAsBytes:
 		return &ir.SliceView{
-			Source:   &ir.Place{Root: receiver, Type: receiver.TypeID(), Location: ast.LocOf(selector.Expr)},
+			Source:   &ir.Place{Root: receiver, Type: receiver.TypeID(), Location: ast.LocOf(value)},
 			Type:     loweredReturnTypeID(ctx, module, fnType.Return),
 			Location: ast.LocOf(call),
 		}
@@ -680,7 +692,7 @@ func lowerIntrinsicMethodCall(ctx *project.CompilerContext, module *project.Modu
 			Location: ast.LocOf(call),
 		}
 	default:
-		return &ir.InvalidExpr{Message: "unsupported intrinsic method lowering", Type: ir.InvalidType, Location: ast.LocOf(call)}
+		return &ir.InvalidExpr{Message: "unsupported collection function lowering", Type: ir.InvalidType, Location: ast.LocOf(call)}
 	}
 }
 
@@ -756,10 +768,9 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	}
 	methodOwnerKey := typeinfo.TypeText(methodOwner)
 	var baseExpr ir.Expr
-	switch receiverAddressKindFor(module, scope, fnType, baseType, selector.Expr) {
-	case receiverAddressReference:
-		baseExpr = lowerReferenceValue(ctx, module, scope, selector.Expr, fnType.Params[0], loweredTypeID(ctx, module, fnType.Params[0]))
-	default:
+	if implicit := module.Semantics.ImplicitCallArguments[selector.Expr.ID()]; implicit != nil {
+		baseExpr = lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, implicit)
+	} else {
 		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, nil)
 	}
 	args := make([]ir.Expr, 0, len(call.Args)+1)
@@ -782,38 +793,6 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 		Type:     loweredReturnTypeID(ctx, module, fnType.Return),
 		Location: ast.LocOf(call),
 	}
-}
-
-type receiverAddressKind uint8
-
-const (
-	receiverAddressNone receiverAddressKind = iota
-	receiverAddressReference
-)
-
-func receiverAddressKindFor(module *project.Module, scope *table.Scope, fnType *typeinfo.FuncType, baseType typeinfo.Type, receiver ast.Expr) receiverAddressKind {
-	if scope == nil || fnType == nil || len(fnType.Params) == 0 || receiver == nil {
-		return receiverAddressNone
-	}
-	exprType := func(e ast.Expr) typeinfo.Type {
-		return exprResolvedType(module, e)
-	}
-	refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0]))
-	if !ok || !typeinfo.SameType(refTarget, baseType) {
-		return receiverAddressNone
-	}
-	resolveBinding := expandedDefaultBindingResolver(module)
-	if mutable {
-		addressable, _ := place.MutableAddressable(scope, receiver, exprType, resolveBinding)
-		if addressable {
-			return receiverAddressReference
-		}
-		return receiverAddressNone
-	}
-	if place.Addressable(scope, receiver, exprType, resolveBinding) {
-		return receiverAddressReference
-	}
-	return receiverAddressNone
 }
 
 func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
@@ -921,7 +900,7 @@ func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module,
 	}
 	return &ir.ArrayLit{
 		Values:   values,
-		Dynamic:  array.Dynamic,
+		Dynamic:  array.Shape == typeinfo.ArrayOwner,
 		Type:     loweredTypeID(ctx, module, resolved),
 		Location: ast.LocOf(node),
 	}
@@ -934,13 +913,22 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 	}
 	args := make([]ir.Expr, 0, len(node.Args))
 	for i, arg := range node.Args {
-		args = append(args, lowerASTExpr(ctx, module, scope, arg, fnType.Params[i]))
+		if implicit := module.Semantics.ImplicitCallArguments[arg.ID()]; implicit != nil {
+			args = append(args, lowerImplicitReferenceValue(ctx, module, scope, arg, implicit))
+		} else {
+			args = append(args, lowerASTExpr(ctx, module, scope, arg, fnType.Params[i]))
+		}
+	}
+	ownerType, _, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0]))
+	if !referenced {
+		return &ir.InvalidExpr{Message: "dynamic-array owner reference missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
 	}
 	out := &ir.DynamicArrayOp{
-		Op:       op,
-		Array:    args[0],
-		Type:     loweredTypeID(ctx, module, exprResolvedType(module, node)),
-		Location: ast.LocOf(node),
+		Op:        op,
+		Array:     args[0],
+		ArrayType: loweredTypeID(ctx, module, ownerType),
+		Type:      loweredReturnTypeID(ctx, module, nil),
+		Location:  ast.LocOf(node),
 	}
 	switch op {
 	case symbols.CompilerOpAppend:
@@ -1262,11 +1250,10 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 		if typ == nil {
 			return ir.InvalidType
 		}
-		length := typ.Len
-		if typ.Dynamic {
-			length = ""
+		if typ.Shape == typeinfo.ArraySlice {
+			return types.Intern(ir.Type{Kind: ir.TypeSlice, Elem: internRuntimeType(types, typ.Elem)})
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeArray, Length: length, Elem: internRuntimeType(types, typ.Elem)})
+		return types.Intern(ir.Type{Kind: ir.TypeArray, Length: typ.Len, Elem: internRuntimeType(types, typ.Elem)})
 	case *typeinfo.StructType:
 		if typ == nil {
 			return ir.InvalidType
@@ -1385,7 +1372,7 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.ArrayType{Len: typ.Len, Dynamic: typ.Dynamic, Elem: loweredRuntimeType(module, typ.Elem, seen)}
+		return &typeinfo.ArrayType{Len: typ.Len, Shape: typ.Shape, Elem: loweredRuntimeType(module, typ.Elem, seen)}
 	case *typeinfo.StructType:
 		if typ == nil {
 			return nil

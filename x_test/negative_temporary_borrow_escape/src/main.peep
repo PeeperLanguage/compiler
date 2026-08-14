@@ -23,7 +23,7 @@ fn StringBindingEscape() {
 }
 
 fn StringByteViewEscape() {
-    let bytes = MakeText().as_bytes();
+    let bytes = MakeText() |> as_bytes();
 }
 
 fn StringRangeEscape() {

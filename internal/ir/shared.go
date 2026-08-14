@@ -242,13 +242,14 @@ type ArrayLit struct {
 }
 
 type DynamicArrayOp struct {
-	Op       symbols.CompilerOp
-	Array    Expr
-	Length   Expr
-	Value    Expr
-	Type     TypeID
-	NodeID   NodeID
-	Location *source.Location
+	Op        symbols.CompilerOp
+	Array     Expr
+	Length    Expr
+	Value     Expr
+	ArrayType TypeID
+	Type      TypeID
+	NodeID    NodeID
+	Location  *source.Location
 }
 
 type AllocExpr struct {

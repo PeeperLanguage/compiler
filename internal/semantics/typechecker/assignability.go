@@ -7,7 +7,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
-	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -162,10 +161,6 @@ func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (cal
 			return callableMember{Type: c.boundInterfaceMethodType(method, baseType)}, true
 		}
 	}
-	intrinsic, ok := intrinsics.Symbol(baseType, name, c.ctx.Target)
-	if ok {
-		return callableMember{Type: intrinsic.Type, Symbol: intrinsic}, true
-	}
 	return c.lookupDeclaredCallableMember(baseType, name)
 }
 
@@ -194,11 +189,6 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 		return nil
 	}
 	var names []string
-	for _, method := range intrinsics.Symbols(baseType, c.ctx.Target) {
-		if method != nil {
-			names = append(names, method.Name)
-		}
-	}
 	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
 		for _, m := range iface.Methods {
 			names = append(names, m.Name)
@@ -253,7 +243,7 @@ func (c *checker) mutableAddressableExpr(scope *table.Scope, expr ast.Expr) (boo
 	}, c.expandedDefaultBinding)
 }
 
-func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {
+func (c *checker) mutableImplicitArgumentDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {
 	if c == nil || scope == nil || expr == nil {
 		return nil, "", false
 	}
@@ -275,10 +265,10 @@ func (c *checker) mutableReceiverDiagnostic(scope *table.Scope, expr ast.Expr) (
 	}
 	switch sym.Kind {
 	case symbols.SymbolConst:
-		return expr, "mutable receiver method requires a mutable binding; `" + ident.Name + "` is const", true
+		return expr, "implicit mutable borrow requires a mutable binding; `" + ident.Name + "` is const", true
 	case symbols.SymbolVar, symbols.SymbolParam:
 		if !sym.IsMutable() {
-			return expr, "mutable receiver method requires a mutable binding; `" + ident.Name + "` is immutable", true
+			return expr, "implicit mutable borrow requires a mutable binding; `" + ident.Name + "` is immutable", true
 		}
 	}
 	return nil, "", false

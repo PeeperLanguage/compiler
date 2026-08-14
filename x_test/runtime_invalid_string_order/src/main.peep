@@ -1,5 +1,5 @@
 fn main() -> i32 {
     let text: str = "abc";
     let invalid = text[2..1];
-    return invalid.len() as i32;
+    return invalid |> len() as i32;
 }

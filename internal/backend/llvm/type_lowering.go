@@ -170,7 +170,7 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 				llvmFieldData: 0, llvmFieldLength: 1,
 			}), true
 		}
-		if elemType.Kind == ir.TypeArray && elemType.Length == "" {
+		if elemType.Kind == ir.TypeSlice {
 			elem, ok := llvmLayoutID(types, elemType.Elem)
 			if !ok {
 				return nil, false
@@ -211,6 +211,8 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 			}), true
 		}
 		return &llvmLayout{Text: "[" + typ.Length + " x " + elem.Text + "]", Kind: llvmLayoutArray, Element: elem}, true
+	case ir.TypeSlice:
+		return nil, false
 	case ir.TypeStruct:
 		fields := make([]*llvmLayout, 0, len(typ.Fields))
 		for _, field := range typ.Fields {
@@ -426,8 +428,6 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 	case *mir.ArrayLit:
 		return v.Type
 	case *mir.DynamicArrayAlloc:
-		return v.Type
-	case *mir.DynamicArrayOp:
 		return v.Type
 	case *mir.ZeroValue:
 		return v.Type

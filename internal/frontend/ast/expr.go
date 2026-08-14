@@ -499,6 +499,7 @@ type CallExpr struct {
 	NodeIDHolder
 	Callee   Expr
 	Args     []Expr
+	Piped    bool
 	Location *source.Location
 }
 
@@ -509,9 +510,17 @@ func (e *CallExpr) exprText() string {
 		return ""
 	}
 	var b strings.Builder
+	if e.Piped && len(e.Args) > 0 {
+		b.WriteString(ExprText(e.Args[0]))
+		b.WriteString(" |> ")
+	}
 	b.WriteString(ExprText(e.Callee))
 	b.WriteByte('(')
-	for i, arg := range e.Args {
+	start := 0
+	if e.Piped {
+		start = 1
+	}
+	for i, arg := range e.Args[start:] {
 		if i > 0 {
 			b.WriteString(", ")
 		}
@@ -530,7 +539,7 @@ func (e *CallExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bo
 	for i, arg := range e.Args {
 		args[i] = arg.copyExpr(substitutions, newID, fromArgument)
 	}
-	return &CallExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Callee: e.Callee.copyExpr(substitutions, newID, fromArgument), Args: args, Location: e.Location}
+	return &CallExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Callee: e.Callee.copyExpr(substitutions, newID, fromArgument), Args: args, Piped: e.Piped, Location: e.Location}
 }
 
 type FreeExpr struct {

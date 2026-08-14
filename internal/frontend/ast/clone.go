@@ -69,7 +69,7 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 		if typ.Len != nil {
 			length = typ.Len.copyExpr(nil, newID, fromArgument).(*NumberLit)
 		}
-		return &ArrayType{NodeIDHolder: id, Len: length, Dynamic: typ.Dynamic, Elem: cloneTypeExpr(typ.Elem, newID, fromArgument), Location: typ.Location}
+		return &ArrayType{NodeIDHolder: id, Len: length, Shape: typ.Shape, Elem: cloneTypeExpr(typ.Elem, newID, fromArgument), Location: typ.Location}
 	case *FuncType:
 		params := make([]Param, len(typ.Params))
 		for index, param := range typ.Params {

@@ -16,7 +16,7 @@ fn main() -> i32 {
     print("Size of: ");
     print(greet);
     print(" -> ");
-    println(greet.len());
+    println(greet |> len());
     if sum == 5 {
         return 0;
     }

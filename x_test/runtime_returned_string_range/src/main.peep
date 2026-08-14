@@ -13,10 +13,10 @@ fn main() -> i32 {
     let text: str = "hello";
     let prefix = Prefix(&text);
     Clobber();
-    if prefix.len() != 1 {
+    if prefix |> len() != 1 {
         return 1;
     }
-    if prefix.as_bytes()[0] != b'h' {
+    if (prefix |> as_bytes())[0] != b'h' {
         return 2;
     }
     return 0;

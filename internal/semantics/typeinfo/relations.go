@@ -63,7 +63,7 @@ func SameType(left, right Type) bool {
 		return ok && r != nil && SameType(l.Inner, r.Inner)
 	case *ArrayType:
 		r, ok := right.(*ArrayType)
-		return ok && r != nil && l.Len == r.Len && l.Dynamic == r.Dynamic && SameType(l.Elem, r.Elem)
+		return ok && r != nil && l.Len == r.Len && l.Shape == r.Shape && SameType(l.Elem, r.Elem)
 	case *FuncType:
 		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
@@ -301,7 +301,7 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		if typ == nil {
 			return nil
 		}
-		return &ArrayType{Len: typ.Len, Dynamic: typ.Dynamic, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
+		return &ArrayType{Len: typ.Len, Shape: typ.Shape, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
 	case *FuncType:
 		if typ == nil {
 			return nil

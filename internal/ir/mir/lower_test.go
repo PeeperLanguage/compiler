@@ -786,11 +786,12 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 	for _, op := range []symbols.CompilerOp{symbols.CompilerOpAppend, symbols.CompilerOpReserve, symbols.CompilerOpResize, symbols.CompilerOpShrink} {
 		t.Run(string(op), func(t *testing.T) {
 			expr := &ir.DynamicArrayOp{
-				Op:     op,
-				Array:  &ir.Ident{Name: "values", Type: mirTypes.dynamicI32},
-				Length: &ir.IntLit{Value: "8", Type: mirTypes.usize},
-				Value:  &ir.IntLit{Value: "1", Type: mirTypes.i32},
-				Type:   mirTypes.dynamicI32,
+				Op:        op,
+				Array:     &ir.Ident{Name: "values", Type: mirTypes.mutRefDynamicI32},
+				Length:    &ir.IntLit{Value: "8", Type: mirTypes.usize},
+				Value:     &ir.IntLit{Value: "1", Type: mirTypes.i32},
+				ArrayType: mirTypes.dynamicI32,
+				Type:      mirTypes.void,
 			}
 			if op == symbols.CompilerOpAppend {
 				expr.Length = nil
@@ -802,19 +803,15 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 				Name: "test", Types: mirTypes.table,
 				Funcs: []*hir.Function{{
 					Name:       "grow",
-					Params:     []ir.Param{{Name: "values", Type: mirTypes.dynamicI32}},
-					ReturnType: mirTypes.dynamicI32,
-					Body:       &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: expr}}},
+					Params:     []ir.Param{{Name: "values", Type: mirTypes.mutRefDynamicI32}},
+					ReturnType: mirTypes.void,
+					Body:       &hir.Block{Stmts: []hir.Stmt{&hir.ExprStmt{Value: expr}}},
 				}},
 			}
 			out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
-			assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
-			if !ok {
-				t.Fatalf("expected operation assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
-			}
-			got, ok := assign.Value.(*DynamicArrayOp)
-			if !ok || got.Op != op || got.Type != mirTypes.dynamicI32 {
-				t.Fatalf("operation = %#v, want %s []i32", assign.Value, op)
+			got, ok := out.Funcs[0].Blocks[0].Instrs[0].(*DynamicArrayOp)
+			if !ok || got.Op != op || got.ArrayType != mirTypes.dynamicI32 {
+				t.Fatalf("operation = %#v, want %s []i32 mutation", out.Funcs[0].Blocks[0].Instrs, op)
 			}
 		})
 	}

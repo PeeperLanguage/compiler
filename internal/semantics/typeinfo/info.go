@@ -61,10 +61,18 @@ type OptionalType struct {
 	Inner Type
 }
 
+type ArrayShape uint8
+
+const (
+	ArrayFixed ArrayShape = iota
+	ArrayOwner
+	ArraySlice
+)
+
 type ArrayType struct {
-	Len     string
-	Dynamic bool
-	Elem    Type
+	Len   string
+	Shape ArrayShape
+	Elem  Type
 }
 
 type FuncType struct {
@@ -234,8 +242,11 @@ func (t *ArrayType) Text() string {
 	if t == nil {
 		return ""
 	}
-	if t.Dynamic {
+	switch t.Shape {
+	case ArrayOwner:
 		return "[]" + TypeText(t.Elem)
+	case ArraySlice:
+		return "[..]" + TypeText(t.Elem)
 	}
 	if t.Len == "" {
 		return "[" + TypeText(t.Elem) + "]"

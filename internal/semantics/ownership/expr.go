@@ -245,11 +245,12 @@ func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, l
 	if ident, ok := call.Callee.(*ast.Ident); ok && ident != nil {
 		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
 		if sym != nil && sym.CompilerOp == symbols.CompilerOpAlloc {
-			if len(call.Args) > 0 {
-				a.checkExpr(scope, call.Args[0], st, useConsume, loans, false)
-			}
-			for _, arg := range call.Args[1:] {
-				a.checkExpr(scope, arg, st, useRead, loans, false)
+			for i, arg := range call.Args {
+				use := useRead
+				if i == 0 {
+					use = useConsume
+				}
+				a.checkExpr(scope, arg, st, use, loans, false)
 			}
 			return
 		}

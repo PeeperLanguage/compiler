@@ -132,7 +132,14 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 			length = canonical
 		}
-		return &ArrayType{Len: length, Dynamic: typ.Dynamic, Elem: TypeFromSyntax(typ.Elem, opts)}
+		shape := ArrayFixed
+		switch typ.Shape {
+		case ast.ArrayOwner:
+			shape = ArrayOwner
+		case ast.ArraySlice:
+			shape = ArraySlice
+		}
+		return &ArrayType{Len: length, Shape: shape, Elem: TypeFromSyntax(typ.Elem, opts)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
