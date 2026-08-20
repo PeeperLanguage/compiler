@@ -370,6 +370,33 @@ func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRGuardsMixedShiftCountBeforeCast(t *testing.T) {
+	u16 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 16})
+	result := &mir.RefName{Name: "result", Type: llvmTypes.u8}
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "apply",
+			Params:     []ir.Param{{Name: "left", Type: llvmTypes.u8}, {Name: "right", Type: u16}},
+			ReturnType: llvmTypes.u8,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+					Op: ">>", Left: &mir.RefName{Name: "left", Type: llvmTypes.u8}, Right: &mir.RefName{Name: "right", Type: u16}, Type: llvmTypes.u8,
+				}}},
+				Term: &mir.Ret{Value: result},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	guard := strings.Index(out, "icmp uge i16 %right, 8")
+	cast := strings.Index(out, "trunc i16 %right to i8")
+	shift := strings.Index(out, " = lshr i8 %left,")
+	if guard < 0 || cast < guard || shift < cast {
+		t.Fatalf("mixed shift count must guard before cast and shift, got:\n%s", out)
+	}
+}
+
 func TestGenerateLLVMIRLowersIntegerComplement(t *testing.T) {
 	result := &mir.RefName{Name: "result", Type: llvmTypes.u8}
 	mod := &mir.Module{

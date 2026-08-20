@@ -538,7 +538,9 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 		rightExpected := expectedType
 		leftType := exprResolvedType(module, node.Left)
 		rightType := exprResolvedType(module, node.Right)
-		if common := typeinfo.CommonNumericType(leftType, rightType); common != nil {
+		if node.Op == "<<" || node.Op == ">>" {
+			rightExpected = rightType
+		} else if common := typeinfo.CommonNumericType(leftType, rightType); common != nil {
 			leftExpected = common
 			rightExpected = common
 		}

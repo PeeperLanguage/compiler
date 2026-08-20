@@ -233,6 +233,8 @@ func TestBitwiseOperatorsRequireIntegralOperands(t *testing.T) {
 	let signed: i8 = -8i8;
 	let right: i8 = signed >> 2i8;
 	let wrapped_count: u8 = 1u8 << (255u8 + 1u8);
+	let mixed_left: i64 = 1i64 << 3u8;
+	let mixed_right: u8 = 128u8 >> 2u16;
 	return 0;
 }`)
 	if valid.HasErrors() {
@@ -243,12 +245,15 @@ func TestBitwiseOperatorsRequireIntegralOperands(t *testing.T) {
 	let float_and = 1.0 & 2.0;
 	let bool_or = true | false;
 	let bool_not = ~true;
+	let float_shift = 1i8 << 1.0;
+	let bool_shift = 1i8 >> true;
 	return 0;
 }`)
 	out := invalid.EmitAllToString()
 	if !invalid.HasErrors() || !strings.Contains(out, "unsupported operand type for operator `&`") ||
 		!strings.Contains(out, "unsupported operand type for operator `|`") ||
-		!strings.Contains(out, "unsupported unary operand type for operator `~`") {
+		!strings.Contains(out, "unsupported unary operand type for operator `~`") ||
+		strings.Count(out, "shift count must be integral") != 2 {
 		t.Fatalf("expected integral-only diagnostics, got:\n%s", out)
 	}
 }

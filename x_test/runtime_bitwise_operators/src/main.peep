@@ -1,7 +1,7 @@
 type Flags = u8;
 
 const Mask: Flags = ~0;
-const WrappedShift: Flags = 1 << (255 + 1);
+const WrappedShift: Flags = 1 << (255u8 + 1u8);
 
 fn bit_and(left: u8, right: u8) -> u8 {
     return left & right;
@@ -28,6 +28,14 @@ fn shift_right_signed(value: i8, count: i8) -> i8 {
 }
 
 fn shift_right_unsigned(value: u8, count: u8) -> u8 {
+    return value >> count;
+}
+
+fn shift_left_mixed(value: i64, count: u8) -> i64 {
+    return value << count;
+}
+
+fn shift_right_mixed(value: u8, count: u16) -> u8 {
     return value >> count;
 }
 
@@ -65,6 +73,12 @@ fn main() -> i32 {
     }
     if WrappedShift != 1u8 {
         return 10;
+    }
+    if shift_left_mixed(1i64, 3u8) != 8i64 {
+        return 11;
+    }
+    if shift_right_mixed(128u8, 2u16) != 32u8 {
+        return 12;
     }
     return 0;
 }
