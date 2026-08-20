@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
+	"compiler/pkg/ascii"
 )
 
 // NodeID identifies source syntax without retaining an AST object in IR.
@@ -957,20 +958,17 @@ func SignatureText(types *TypeTable, params []Param, returnType TypeID) string {
 	return b.String()
 }
 
+// ir/shared.go
 func SanitizeSymbolName(text string) string {
 	if text == "" {
 		return "unknown"
 	}
+
 	var b strings.Builder
 	for _, r := range text {
-		switch {
-		case r >= 'a' && r <= 'z':
+		if ascii.IsAlnum(r) {
 			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
+		} else {
 			b.WriteByte('_')
 		}
 	}

@@ -48,7 +48,7 @@ func CleanupCommand(args []string) error {
 		return err
 	}
 	for _, candidate := range candidates {
-		fmt.Printf("  → Removing %s\n", candidate.PackageID)
+		fmt.Printf("  -> Removing %s\n", candidate.PackageID)
 		if err := os.RemoveAll(candidate.Path); err != nil {
 			return fmt.Errorf("remove cached package %q: %w", candidate.PackageID, err)
 		}

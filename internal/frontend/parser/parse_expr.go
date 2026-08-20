@@ -1,4 +1,10 @@
-// Using pratt parser for expressions
+// Pratt parser for expressions.
+//
+// Prefix handlers parse values that can begin an expression. Infix and
+// postfix handlers parse operators, calls, selectors, indexes, and casts.
+// Binding power decides whether the current operator belongs to the current
+// expression or to an outer expression, which keeps precedence and
+// associativity in one table instead of nesting grammar-specific functions.
 
 package parser
 

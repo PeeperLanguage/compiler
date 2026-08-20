@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	pathpkg "path"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -493,8 +493,8 @@ func archiveTarget(destPath, name string) (string, string, bool, error) {
 	if strings.ContainsRune(name, '\x00') || strings.ContainsRune(name, '\\') {
 		return "", "", false, fmt.Errorf("unsafe archive path %q", name)
 	}
-	cleaned := pathpkg.Clean(name)
-	if pathpkg.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+	cleaned := path.Clean(name)
+	if path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", "", false, fmt.Errorf("archive path escapes destination: %q", name)
 	}
 	root, relative, ok := strings.Cut(cleaned, "/")
@@ -504,7 +504,7 @@ func archiveTarget(destPath, name string) (string, string, bool, error) {
 	if !ok || relative == "." {
 		return "", root, false, nil
 	}
-	if pathpkg.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
+	if path.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
 		return "", "", false, fmt.Errorf("archive path escapes destination: %q", name)
 	}
 	target := filepath.Join(destPath, filepath.FromSlash(relative))

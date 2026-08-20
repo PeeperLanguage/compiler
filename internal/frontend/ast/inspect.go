@@ -187,13 +187,13 @@ func Inspect(node Node, f func(Node) bool) {
 			Inspect(v.Name, f)
 		}
 	case *BadExpr:
-		// Leaf — no children
+		// Leaf - no children
 	case *BadStmt:
-		// Leaf — no children
+		// Leaf - no children
 	case *BadDecl:
-		// Leaf — no children
+		// Leaf - no children
 	case *NamedType, *RawPtrType, *NumberLit, *StringLit, *ByteLit, *CharLit, *BoolLit, *NoneLit:
-		// Leaf — no children
+		// Leaf - no children
 	default:
 		panic(fmt.Sprintf("unhandled node type %T in ast.Inspect", node))
 	}

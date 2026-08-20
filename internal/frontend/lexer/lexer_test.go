@@ -106,3 +106,19 @@ func TestLexLiteralKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestLexRejectsMalformedHexEscape(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	stream := New(
+		"hex_escape"+peeper.SourceExt,
+		`"\x4Z"`,
+		diag,
+	).Tokenize()
+
+	if !diag.HasErrors() {
+		t.Fatalf(
+			"expected malformed hex escape to produce a diagnostic, got tokens: %#v",
+			stream,
+		)
+	}
+}

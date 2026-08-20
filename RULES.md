@@ -13,7 +13,7 @@ If files conflict, use this order:
 
 ---
 
-## 1) Core principle — no pass-through wrappers, no duplicated logic, no stale aliases
+## 1) Core principle - no pass-through wrappers, no duplicated logic, no stale aliases
 
 Before creating, renaming, replacing, removing, or simplifying any function, search for existing similar code first.
 

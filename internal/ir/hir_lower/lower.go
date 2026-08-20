@@ -1108,7 +1108,7 @@ func lowerNumberLit(ctx *project.CompilerContext, module *project.Module, node *
 		}
 	}
 	if expectedType == nil || typeinfo.IsInvalidOrUnknown(expectedType) {
-		// No expected type — use language default.
+		// No expected type - use language default.
 		if numeric.IsFloat(node.Value) {
 			return &ir.FloatLit{Value: node.Value, Type: loweredTypeID(ctx, module, typeinfo.DefaultNumberType(node.Value)), Location: loc}
 		}

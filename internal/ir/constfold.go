@@ -5,7 +5,7 @@ import (
 )
 
 // FoldExpr recursively folds value-bearing expressions.
-// It can replace an entire expression with a constant (e.g., "40 + 2" → IntLit{42}).
+// It can replace an entire expression with a constant (e.g., "40 + 2" -> IntLit{42}).
 //
 // Use FoldExpr for sub-expressions that carry values: operands, arguments,
 // struct fields, array elements.
@@ -81,7 +81,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			Location: node.Location,
 		}
 	case *AllocExpr:
-		// alloc(value, allocator) — fold the value and allocator sub-expressions.
+		// alloc(value, allocator) - fold the value and allocator sub-expressions.
 		// The Type and Location are identity-bearing, not foldable.
 		var foldedAlloc Expr
 		if node.Allocator != nil {

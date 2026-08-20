@@ -34,7 +34,7 @@ This report groups related defects by owning subsystem. Severity reflects impact
 
 These defects belong together because they define command behavior and mutation of user-owned project state.
 
-### 1.1 `check` and `lint` do not implement their advertised input contract — P1
+### 1.1 `check` and `lint` do not implement their advertised input contract - P1
 
 Help text says these commands typecheck a file or recursively check a folder. Actual command handling defaults to `.` and passes one path to the single-entry compiler path:
 
@@ -84,7 +84,7 @@ Acceptance criteria:
 - Any failed requested input produces nonzero exit status.
 - Help and argument validation derive from same command definition.
 
-### 1.2 Corrupt lockfiles are treated as missing lockfiles — P1
+### 1.2 Corrupt lockfiles are treated as missing lockfiles - P1
 
 `manifest.LoadLockfile` already distinguishes a missing file from other read or parse failures. `get` discards that distinction:
 
@@ -114,9 +114,9 @@ if err != nil {
 }
 ```
 
-If explicit repair is desired, it should be a separately named operation with clear user intent—not normal `get` behavior.
+If explicit repair is desired, it should be a separately named operation with clear user intent-not normal `get` behavior.
 
-### 1.3 `update` reports success after dependency installation failures — P1
+### 1.3 `update` reports success after dependency installation failures - P1
 
 Current loop prints an error and continues:
 
@@ -132,7 +132,7 @@ Command can then print an up-to-date message and exit successfully. A partially 
 Why wrong:
 
 - Process status contradicts emitted diagnostics.
-- “No updates available” and “all updates failed” collapse into same result.
+- "No updates available" and "all updates failed" collapse into same result.
 - CI and automation cannot safely consume command result.
 
 What should replace it:
@@ -157,7 +157,7 @@ if len(failures) != 0 {
 
 Summary output must separately represent updated, unchanged, and failed counts.
 
-### 1.4 Dependency mutations are not transactional — P1
+### 1.4 Dependency mutations are not transactional - P1
 
 `get`, `remove`, and `update` modify several related resources:
 
@@ -195,7 +195,7 @@ func ApplyDependencyPlan(plan DependencyPlan) error {
 
 Exact disk mechanism can vary, but invariant cannot: before commit, old state remains usable; after commit, both metadata files describe same dependency graph.
 
-### 1.5 Command metadata has multiple authorities — P2
+### 1.5 Command metadata has multiple authorities - P2
 
 Command names, aliases, handlers, help, and backend policy are spread across separate switches and text blocks. Adding one command requires synchronized edits in several files. Alias and help drift already demonstrate this is not theoretical.
 
@@ -220,7 +220,7 @@ var commands = []CommandDefinition{
 
 Lookup, help generation, alias handling, and validation should derive from this registry. Do not add another wrapper around existing switches; remove split authorities when migrating.
 
-### 1.6 Generated IR artifacts can collide or remain stale — P2
+### 1.6 Generated IR artifacts can collide or remain stale - P2
 
 `-keep-gen` uses source basename for generated files. Different modules named `main.peep` can overwrite the same `main.hir`, `main.mir`, or `main.ll`. Old artifacts can also survive and appear current.
 
@@ -244,7 +244,7 @@ build/generated/
 
 These issues concern semantic facts that later compiler phases trust. Such facts need one owner and identity matching the operation they describe.
 
-### 2.1 Interface-conversion evidence is keyed by expression, not conversion occurrence — P1
+### 2.1 Interface-conversion evidence is keyed by expression, not conversion occurrence - P1
 
 Typechecker stores interface implementation evidence using source expression `NodeID`:
 
@@ -319,7 +319,7 @@ use(&c)
 
 Fixture must compile and execute through bundled `build/bin/peeper`, not stop at Go unit coverage.
 
-### 2.2 Predeclared intrinsic registry still has two authorities — P2
+### 2.2 Predeclared intrinsic registry still has two authorities - P2
 
 One list says which operations are predeclared:
 
@@ -378,7 +378,7 @@ var intrinsicDefinitions = []intrinsicDefinition{
 
 These problems concern phase scheduling and ownership after semantic analysis.
 
-### 3.1 Pipeline scheduler can stop without reporting incomplete modules — P2
+### 3.1 Pipeline scheduler can stop without reporting incomplete modules - P2
 
 Scheduler breaks when no module is ready or no phase advances. It can then return without proving every requested module reached backend completion.
 
@@ -426,7 +426,7 @@ for _, module := range orderedModules {
 
 Production diagnostic should include unmet prerequisite or blocking diagnostic when available. Generic invariant error is fallback, not preferred user message.
 
-### 3.2 Backend abstraction is declared but not owned at one boundary — P2
+### 3.2 Backend abstraction is declared but not owned at one boundary - P2
 
 Project state defines LLVM and WASM backend identities, but pipeline imports LLVM directly, module state stores `LLVMIR`, CLI rejects non-LLVM backends, and build consumes LLVM-specific output.
 
@@ -488,7 +488,7 @@ Each arrow is a typed contract. Later phases should not recover facts that an ea
 
 ## 4. LSP state and concurrency
 
-### 4.1 Diagnostic workers read workspace state outside its lock — P1
+### 4.1 Diagnostic workers read workspace state outside its lock - P1
 
 Each changed file can schedule a diagnostic goroutine. Recompile locks shared state only while compilation runs. After unlock, worker computes component files from `state.workspace`. Another worker can rebuild or replace that workspace concurrently.
 
@@ -549,7 +549,7 @@ Acceptance criteria:
 
 Documentation defects are grouped because each describes a contract maintainers may use when extending compiler.
 
-### 5.1 Interface layout documentation is stale — P2
+### 5.1 Interface layout documentation is stale - P2
 
 Ownership documentation says all interface carriers use `{rawptr, vtable}`. Backend layout for owned interfaces includes allocator/provenance state and is effectively `{data, dispatch, allocator}`.
 
@@ -567,7 +567,7 @@ owned interface:    { data pointer, dispatch table, allocator/provenance }
 
 Field names and exact LLVM types should be copied from canonical type-lowering owner, not maintained as an independent guessed ABI.
 
-### 5.2 Length/index documentation hardcodes `i64` — P2
+### 5.2 Length/index documentation hardcodes `i64` - P2
 
 Allocator documentation describes dynamic array and string lengths as `i64`. Live lowering uses target `IndexType`, so width follows target pointer/index width.
 
@@ -579,11 +579,11 @@ length, capacity, and index fields use target usize/IndexType
 
 This matters on 32-bit targets. ABI documentation must state target-sized intent and validation must cover both 32-bit and 64-bit layouts.
 
-### 5.3 Intrinsic registry documentation overstates unification — P2
+### 5.3 Intrinsic registry documentation overstates unification - P2
 
 README describes a unified intrinsic registry, while predeclared membership and signature construction remain separate declarations. Documentation should not claim architectural work is complete until all consumers derive from one definition.
 
-### 5.4 CLI flow diagrams reference removed functions — P2
+### 5.4 CLI flow diagrams reference removed functions - P2
 
 CLI diagrams still reference old parser and test-command functions. This makes code-flow navigation actively misleading.
 

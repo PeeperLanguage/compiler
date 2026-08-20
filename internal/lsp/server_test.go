@@ -332,13 +332,13 @@ func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	writeWorkspaceProjectConfig(t, root, "app")
 	writeWorkspaceFile(t, globalPath, "const stdout: i32 = 1;\n")
 
-	ctx := driver.NewContext(project.Config{
+	ctx := driver.NewCompilerContext(project.Config{
 		RootDir:        root,
 		ProjectName:    "app",
 		Extension:      peeper.SourceExt,
 		LibraryBaseDir: libraryBase,
 	}, nil)
-	mod := driver.ParseFileWithOverlay(ctx, globalPath, "const stdout: i32 = 1;\n")
+	mod := driver.CompileFile(ctx, globalPath, "const stdout: i32 = 1;\n")
 	if mod == nil {
 		t.Fatalf("expected compiled bundled library module")
 	}

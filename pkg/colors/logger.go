@@ -1,3 +1,5 @@
+// We are using HTML log format so in future we can use it on direct html pages.
+
 package colors
 
 import (

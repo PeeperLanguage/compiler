@@ -7,7 +7,7 @@ import (
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "byte", "char", "str", "usize", "isize", "f32", "f64":
+	case "bool", "byte", "char", "str", "usize", "isize", "f32", "f64": // fN not supported yet. So f32 and f64 is put here.
 		return true
 	default:
 		_, _, ok := numeric.ParseIntegerTypeName(name)

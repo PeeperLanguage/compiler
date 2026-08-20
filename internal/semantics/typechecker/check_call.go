@@ -259,7 +259,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	if field, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable,
 			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "").
-			WithHelp(fmt.Sprintf("field `%s` has type %s — access it without `()`", selector.Name.Name, typeinfo.TypeText(field.Type)))
+			WithHelp(fmt.Sprintf("field `%s` has type %s - access it without `()`", selector.Name.Name, typeinfo.TypeText(field.Type)))
 		return &typeinfo.InvalidType{}
 	}
 	methods := c.availableMethods(baseType)

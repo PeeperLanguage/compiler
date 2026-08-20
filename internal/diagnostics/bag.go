@@ -46,7 +46,7 @@ func (db *DiagnosticBag) GetSourceCache() *SourceCache {
 }
 
 // Add adds a diagnostic to the bag. Error diagnostics at the same
-// (file, line, column) are deduplicated — only the first is kept.
+// (file, line, column) are deduplicated - only the first is kept.
 func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	db.mu.Lock()
 	defer db.mu.Unlock()

@@ -9,7 +9,7 @@ This note explains:
 - what must be updated today for cases like:
   - new data type
   - new expression/operator such as pipe
-- proposal to reduce “many places to remember”
+- proposal to reduce "many places to remember"
 - proposed future flow
 
 This is design/proposal only.
@@ -36,7 +36,7 @@ Important distinction:
 - **multiple semantic phases are good**
 - **multiple manual cross-cutting lists are the real problem**
 
-So goal should **not** be “merge phases”.
+So goal should **not** be "merge phases".
 
 Goal should be:
 
@@ -66,7 +66,7 @@ These are legitimate places to update because each phase answers a different que
 
 ### 2.2 Mechanical cross-cutting wiring
 
-These are where most “forgot to add it” bugs come from:
+These are where most "forgot to add it" bugs come from:
 
 - AST inspection recursion
 - LSP traversal
@@ -268,7 +268,7 @@ Likely touchpoints:
 
 ## 5. Why Forgetting Happens
 
-Current “new construct” rollout looks like this:
+Current "new construct" rollout looks like this:
 
 ```mermaid
 flowchart TD
@@ -291,7 +291,7 @@ The risky part is:
 - `Inspect` is manual
 - phase switches are manual
 - LSP special handling is manual
-- there is no single “extension checklist” encoded in repo structure
+- there is no single "extension checklist" encoded in repo structure
 
 Most dangerous current omission point:
 
@@ -376,7 +376,7 @@ Long-term best improvement:
 - reduce direct ad hoc tree walking
 - push consumers through shared traversal helpers
 
-This reduces “forgot to descend into child node X”.
+This reduces "forgot to descend into child node X".
 
 Concrete existing debt:
 
@@ -433,7 +433,7 @@ Good use of central tables:
 
 Bad use:
 
-- collapsing resolver/typechecker/lowering into one mega “node handler registry”
+- collapsing resolver/typechecker/lowering into one mega "node handler registry"
 
 Reason:
 
@@ -451,7 +451,7 @@ Where it should live:
 
 ---
 
-## 6.5 Proposal E: Add “full pipeline construct tests”
+## 6.5 Proposal E: Add "full pipeline construct tests"
 
 For every new construct, add at least:
 
@@ -463,7 +463,7 @@ Optional:
 
 4. LSP hover test
 
-This ensures construct is not “parsed only”.
+This ensures construct is not "parsed only".
 
 ---
 
@@ -560,7 +560,7 @@ That is not duplication.
 
 That is legitimate multi-phase meaning.
 
-So for types, best improvement is not “merge logic”.
+So for types, best improvement is not "merge logic".
 
 Best improvement is:
 
@@ -589,7 +589,7 @@ I would recommend:
 
 Your concern is valid.
 
-But root issue is not “too many phases”.
+But root issue is not "too many phases".
 
 Root issue is:
 

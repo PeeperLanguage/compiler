@@ -372,7 +372,7 @@ func checkCommand(args []string) error {
 	failed := false
 	for _, key := range keys {
 		owner := owners[key]
-		ctx := driver.NewContext(project.Config{
+		ctx := driver.NewCompilerContext(project.Config{
 			RootDir:     owner.RootDir,
 			ProjectName: owner.ProjectName,
 			Extension:   peeper.SourceExt,
@@ -380,7 +380,7 @@ func checkCommand(args []string) error {
 			TargetArch:  opts.targetArch,
 		}, diagnostics.NewDiagnosticBag())
 		for _, filePath := range groups[key] {
-			driver.ParseFileWithOverlay(ctx, filePath, "")
+			driver.CompileFile(ctx, filePath, "")
 		}
 		if err := emitAndCheckDiagnostics(ctx); err != nil {
 			failed = true

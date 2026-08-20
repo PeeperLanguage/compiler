@@ -27,7 +27,7 @@ If a design is copied, there must be a concrete reason for it.
 Do not ship placeholder architecture for core compiler subsystems.
 
 - parsing, manifests, module resolution, dependency loading, semantic analysis, IR, and codegen must be designed for real compiler growth
-- avoid “basic for now” implementations that will need to be thrown away once the compiler handles real projects
+- avoid "basic for now" implementations that will need to be thrown away once the compiler handles real projects
 - when a subsystem is important, implement the correct boundary and data model first, even if some features inside that boundary remain incomplete
 - small scope is acceptable; toy structure is not
 
@@ -281,7 +281,7 @@ Incremental behavior must be explicit and testable.
 - unchanged modules should be reusable
 - dependency changes must invalidate correctly
 
-Do not build a “smart cache” that nobody can reason about.
+Do not build a "smart cache" that nobody can reason about.
 
 ## 9. Diagnostics Rules
 
@@ -290,7 +290,7 @@ Diagnostics are a product feature, not a side effect.
 - every syntax error should point to a concrete span
 - messages should say what is wrong and what was expected
 - error codes should remain stable once exposed
-- avoid generic “unexpected token” if a better message is easy to give
+- avoid generic "unexpected token" if a better message is easy to give
 
 Prefer a smaller number of accurate diagnostics over a flood of cascading noise.
 
@@ -326,7 +326,7 @@ Avoid these:
 - parser code that depends on semantic facts
 - token kinds that encode typechecker assumptions
 - architecture copied from another compiler without current need
-- one-file “temporary” logic that becomes permanent
+- one-file "temporary" logic that becomes permanent
 - hidden ownership rules
 - silent implicit behavior that the language spec does not justify
 
@@ -341,7 +341,7 @@ Prefer:
 - tests next to the behavior they protect
 
 If a simpler design solves the problem cleanly and preserves the right long-term structure, prefer it over ornamental complexity.
-Do not confuse “simple” with “throwaway” or “underdesigned”.
+Do not confuse "simple" with "throwaway" or "underdesigned".
 
 ## 14. Workflow Rule
 

@@ -10,10 +10,10 @@ import (
 	"compiler/internal/project"
 )
 
-const COMPILER_VERSION = "0.0.1"
+const COMPILER_VERSION = "0.1.0"
 
-// NewContext configures shared compiler state and loads the prelude.
-func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {
+// NewCompilerContext configures shared compiler state and loads the prelude.
+func NewCompilerContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {
 	ctx := project.NewWithConfig(cfg, diag)
 	if err := prelude.Load(ctx); err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
@@ -21,8 +21,8 @@ func NewContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.Co
 	return ctx
 }
 
-// ParseFileWithOverlay compiles the entry file using in-memory content instead of reading from disk if content is provided.
-func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content string) *project.Module {
+// CompileFile compiles the entry file using in-memory content instead of reading from disk if content is provided.
+func CompileFile(ctx *project.CompilerContext, path string, content string) *project.Module {
 	if ctx == nil {
 		return nil
 	}
@@ -63,8 +63,8 @@ func ParseFileWithOverlay(ctx *project.CompilerContext, path string, content str
 	return module
 }
 
-// AddOverlay registers a virtual/in-memory module in the compiler context.
-func AddOverlay(ctx *project.CompilerContext, path string, content string) {
+// AddSource registers a virtual/in-memory module in the compiler context.
+func AddSource(ctx *project.CompilerContext, path string, content string) {
 	if ctx == nil {
 		return
 	}

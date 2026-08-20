@@ -131,7 +131,7 @@ Canonical built-in carrier fields:
 - borrowed interface: `data`, `dispatch`
 - owned interface: `data`, `dispatch`, `allocator`
 
-Phase chain remains unchanged: AST → semantics → HIR → MIR → LLVM. Semantic
+Phase chain remains unchanged: AST -> semantics -> HIR -> MIR -> LLVM. Semantic
 types still describe language meaning; LLVM layouts own physical representation.
 User struct projections still use field indexes supplied by IR. Labels, symbol
 names, and textual constants may remain strings; emitted values and addresses

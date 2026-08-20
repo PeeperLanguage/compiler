@@ -32,7 +32,7 @@ func UpdateCommand(args []string) error {
 	updated := 0
 	installErrors := make([]error, 0)
 	for _, plan := range plans {
-		printUpdate(fmt.Sprintf("%s: %s → %s", plan.RepoPath, plan.CurrentVersion, plan.TargetVersion))
+		printUpdate(fmt.Sprintf("%s: %s -> %s", plan.RepoPath, plan.CurrentVersion, plan.TargetVersion))
 		constraints := map[string][]string{
 			plan.RepoPath: []string{">" + plan.CurrentVersion, "<=" + plan.TargetVersion},
 		}

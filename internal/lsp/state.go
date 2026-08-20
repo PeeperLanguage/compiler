@@ -145,7 +145,7 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 		RootDir:     rootDir,
 		ProjectName: projectName,
 	}
-	ctx := driver.NewContext(cfg, diagBag)
+	ctx := driver.NewCompilerContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
 	if err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(
@@ -166,10 +166,10 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			s.seedReusableModules(ctx, dirtyFiles)
 			for cachedPath, cachedContent := range s.Cache {
-				driver.AddOverlay(ctx, cachedPath, cachedContent)
+				driver.AddSource(ctx, cachedPath, cachedContent)
 			}
 			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
-				if driver.ParseFileWithOverlay(ctx, virtualPath, content) != nil {
+				if driver.CompileFile(ctx, virtualPath, content) != nil {
 					s.LastCtx = ctx
 					s.LastMetrics = ctx.Metrics.Snapshot()
 					s.captureModules(ctx)
@@ -187,11 +187,11 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 		if err2 != nil || (err == nil && absCached == absEntry) {
 			continue
 		}
-		driver.AddOverlay(ctx, cachedPath, cachedContent)
+		driver.AddSource(ctx, cachedPath, cachedContent)
 	}
 
 	content := s.Cache[entryFile]
-	mod := driver.ParseFileWithOverlay(ctx, entryFile, content)
+	mod := driver.CompileFile(ctx, entryFile, content)
 	s.LastCtx = ctx
 	s.LastMetrics = ctx.Metrics.Snapshot()
 	s.captureModules(ctx)

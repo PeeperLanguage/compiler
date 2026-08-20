@@ -1,3 +1,5 @@
+// Computes stable declaration and module surfaces for incremental invalidation.
+
 package parser
 
 import (

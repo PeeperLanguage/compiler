@@ -3,6 +3,7 @@ package lexer
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -32,12 +33,14 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 	if diag == nil {
 		diag = diagnostics.NewDiagnosticBag()
 	}
+
 	l := &Lexer{
 		file:  file,
 		input: input,
 		pos:   source.NewPosition(),
 		diag:  diag,
 	}
+
 	l.patterns = []regexPattern{
 		{regexp.MustCompile(`\s+`), skipHandler},
 		{regexp.MustCompile(`///[^\n\r]*`), docHandler},
@@ -100,6 +103,7 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 		{regexp.MustCompile(`\[`), defaultHandler(token.LBRACK)},
 		{regexp.MustCompile(`\]`), defaultHandler(token.RBRACK)},
 	}
+
 	return l
 }
 
@@ -107,8 +111,14 @@ func defaultHandler(kind token.Kind) regexHandler {
 	return func(l *Lexer, re *regexp.Regexp) {
 		match := re.FindString(l.remainder())
 		start := l.pos
+
 		l.advanceBy(match)
-		l.push(token.Token{Kind: kind, Literal: match, Start: start, End: l.pos})
+		l.push(token.Token{
+			Kind:    kind,
+			Literal: match,
+			Start:   start,
+			End:     l.pos,
+		})
 	}
 }
 
@@ -120,65 +130,129 @@ func skipHandler(l *Lexer, re *regexp.Regexp) {
 func identifierHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
+
 	l.advanceBy(match)
-	l.push(token.Token{Kind: token.LookupIdent(match), Literal: match, Start: start, End: l.pos})
+	l.push(token.Token{
+		Kind:    token.LookupIdent(match),
+		Literal: match,
+		Start:   start,
+		End:     l.pos,
+	})
 }
 
 func docHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	text := strings.TrimSpace(strings.TrimPrefix(match, "///"))
+
 	l.advanceBy(match)
-	l.push(token.Token{Kind: token.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
+	l.push(token.Token{
+		Kind:    token.DOC_COMMENT,
+		Literal: text,
+		Start:   start,
+		End:     l.pos,
+	})
 }
 
 func numberHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
+
 	l.advanceBy(match)
-	l.push(token.Token{Kind: token.NUMBER, Literal: match, Start: start, End: l.pos})
+	l.push(token.Token{
+		Kind:    token.NUMBER,
+		Literal: match,
+		Start:   start,
+		End:     l.pos,
+	})
 }
 
 func stringHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
+
 	l.advanceBy(match)
+
 	inner := match[1 : len(match)-1]
-	l.push(token.Token{Kind: token.STRING, Literal: unescapeQuoted(inner, '"'), Start: start, End: l.pos})
+	value, err := unescapeQuoted(inner, '"')
+	if err != nil {
+		l.reportEscapeError(start, err)
+		return
+	}
+
+	l.push(token.Token{
+		Kind:    token.STRING,
+		Literal: value,
+		Start:   start,
+		End:     l.pos,
+	})
 }
 
 func cstringHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
+
 	l.advanceBy(match)
+
 	inner := match[2 : len(match)-1]
-	l.push(token.Token{Kind: token.CSTRING, Literal: unescapeQuoted(inner, '"'), Start: start, End: l.pos})
+	value, err := unescapeQuoted(inner, '"')
+	if err != nil {
+		l.reportEscapeError(start, err)
+		return
+	}
+
+	l.push(token.Token{
+		Kind:    token.CSTRING,
+		Literal: value,
+		Start:   start,
+		End:     l.pos,
+	})
 }
 
 func charHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
+
 	l.advanceBy(match)
+
 	inner := match[1 : len(match)-1]
-	value := unescapeQuoted(inner, '\'')
-	if utf8.RuneCountInString(value) != 1 {
+	value, err := unescapeQuoted(inner, '\'')
+	if err != nil {
+		l.reportEscapeError(start, err)
+		return
+	}
+
+	if !utf8.ValidString(value) || utf8.RuneCountInString(value) != 1 {
 		loc := source.NewLocation(l.file, start, l.pos)
 		l.diag.Add(
 			diagnostics.NewError("character literal must contain exactly one character").
 				WithCode(diagnostics.ErrUnexpectedCharacter).
-				WithPrimaryLabel(loc, "use exactly one character between single quotes"),
+				WithPrimaryLabel(loc, "use exactly one valid UTF-8 character between single quotes"),
 		)
 		return
 	}
-	l.push(token.Token{Kind: token.CHAR, Literal: value, Start: start, End: l.pos})
+
+	l.push(token.Token{
+		Kind:    token.CHAR,
+		Literal: value,
+		Start:   start,
+		End:     l.pos,
+	})
 }
 
 func byteCharHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
+
 	l.advanceBy(match)
+
 	inner := match[2 : len(match)-1]
-	value := unescapeQuoted(inner, '\'')
+	value, err := unescapeQuoted(inner, '\'')
+	if err != nil {
+		l.reportEscapeError(start, err)
+		return
+	}
+
 	if len(value) != 1 {
 		loc := source.NewLocation(l.file, start, l.pos)
 		l.diag.Add(
@@ -188,13 +262,30 @@ func byteCharHandler(l *Lexer, re *regexp.Regexp) {
 		)
 		return
 	}
-	l.push(token.Token{Kind: token.BYTE_CHAR, Literal: value, Start: start, End: l.pos})
+
+	l.push(token.Token{
+		Kind:    token.BYTE_CHAR,
+		Literal: value,
+		Start:   start,
+		End:     l.pos,
+	})
+}
+
+func (l *Lexer) reportEscapeError(start source.Position, err error) {
+	loc := source.NewLocation(l.file, start, l.pos)
+
+	l.diag.Add(
+		diagnostics.NewError(err.Error()).
+			WithCode(diagnostics.ErrUnexpectedCharacter).
+			WithPrimaryLabel(loc, "fix this escape sequence"),
+	)
 }
 
 func (l *Lexer) Tokenize() []token.Token {
 	for !l.atEOF() {
 		matched := false
 		rem := l.remainder()
+
 		for _, p := range l.patterns {
 			loc := p.regex.FindStringIndex(rem)
 			if loc != nil && loc[0] == 0 {
@@ -203,16 +294,21 @@ func (l *Lexer) Tokenize() []token.Token {
 				break
 			}
 		}
+
 		if matched {
 			continue
 		}
+
 		start := l.pos
+
 		_, width := utf8.DecodeRuneInString(rem)
 		if width < 1 {
 			width = 1
 		}
+
 		bad := rem[:width]
 		l.advanceBy(bad)
+
 		loc := source.NewLocation(l.file, start, l.pos)
 		l.diag.Add(
 			diagnostics.NewError(fmt.Sprintf("illegal character %q", bad)).
@@ -220,7 +316,13 @@ func (l *Lexer) Tokenize() []token.Token {
 				WithPrimaryLabel(loc, "remove or replace this character"),
 		)
 	}
-	l.push(token.Token{Kind: token.EOF, Start: l.pos, End: l.pos})
+
+	l.push(token.Token{
+		Kind:  token.EOF,
+		Start: l.pos,
+		End:   l.pos,
+	})
+
 	return append([]token.Token(nil), l.toks...)
 }
 
@@ -236,6 +338,7 @@ func (l *Lexer) remainder() string {
 	if l.pos.Index >= len(l.input) {
 		return ""
 	}
+
 	return l.input[l.pos.Index:]
 }
 
@@ -243,57 +346,78 @@ func (l *Lexer) atEOF() bool {
 	return l.pos.Index >= len(l.input)
 }
 
-func unescapeQuoted(s string, quote byte) string {
+func unescapeQuoted(s string, quote byte) (string, error) {
 	var out []byte
-	i := 0
-	for i < len(s) {
-		if s[i] != '\\' || i+1 >= len(s) {
+
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
 			out = append(out, s[i])
 			i++
 			continue
 		}
+
+		if i+1 >= len(s) {
+			return "", fmt.Errorf("unterminated escape sequence")
+		}
+
 		switch s[i+1] {
 		case 'n':
 			out = append(out, '\n')
+			i += 2
+
 		case 'r':
 			out = append(out, '\r')
+			i += 2
+
 		case 't':
 			out = append(out, '\t')
+			i += 2
+
 		case '0':
 			out = append(out, 0)
+			i += 2
+
 		case '\\':
 			out = append(out, '\\')
+			i += 2
+
 		case '"':
-			if quote == '"' {
-				out = append(out, '"')
-			} else {
-				out = append(out, '\\', '"')
+			if quote != '"' {
+				return "", fmt.Errorf(`invalid escape sequence \"`)
 			}
+
+			out = append(out, '"')
+			i += 2
+
 		case '\'':
-			if quote == '\'' {
-				out = append(out, '\'')
-			} else {
-				out = append(out, '\\', '\'')
+			if quote != '\'' {
+				return "", fmt.Errorf(`invalid escape sequence \'`)
 			}
+
+			out = append(out, '\'')
+			i += 2
+
 		case 'x':
-			if i+3 < len(s) {
-				h := s[i+2 : i+4]
-				var v byte
-				if _, err := fmt.Sscanf(h, "%02x", &v); err == nil {
-					out = append(out, v)
-					i += 4
-					continue
-				}
+			if i+3 >= len(s) {
+				return "", fmt.Errorf(`hex escape \x requires exactly two hexadecimal digits`)
 			}
-			out = append(out, s[i])
-			i++
-			continue
+
+			hex := s[i+2 : i+4]
+			value, err := strconv.ParseUint(hex, 16, 8)
+			if err != nil {
+				return "", fmt.Errorf("invalid hex escape %q", `\x`+hex)
+			}
+
+			out = append(out, byte(value))
+			i += 4
+
 		default:
-			out = append(out, s[i])
-			i++
-			continue
+			return "", fmt.Errorf(
+				"unknown escape sequence %q",
+				s[i:i+2],
+			)
 		}
-		i += 2
 	}
-	return string(out)
+
+	return string(out), nil
 }

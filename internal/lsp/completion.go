@@ -18,6 +18,7 @@ import (
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
+	"compiler/pkg/ascii"
 )
 
 const completionSentinel = "__peeper_completion__"
@@ -137,11 +138,11 @@ func (s *ServerState) completionOverlays(currentFile string) map[string]string {
 }
 
 func compileCompletionSource(cfg project.Config, overlays map[string]string, filePath, content string) (*project.CompilerContext, *project.Module) {
-	ctx := driver.NewContext(cfg, diagnostics.NewDiagnosticBag())
+	ctx := driver.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
 	for overlayPath, overlayContent := range overlays {
-		driver.AddOverlay(ctx, overlayPath, overlayContent)
+		driver.AddSource(ctx, overlayPath, overlayContent)
 	}
-	return ctx, driver.ParseFileWithOverlay(ctx, filePath, content)
+	return ctx, driver.CompileFile(ctx, filePath, content)
 }
 
 func parseCompletionContext(text string, position Position) parsedCompletionContext {
@@ -331,7 +332,7 @@ func importContentEnd(text string, offset int) int {
 }
 
 func isIdentifierByte(ch byte) bool {
-	return ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+	return ascii.IsAlnum(rune(ch)) || ch == '_'
 }
 
 func isCompletionBoundary(ch byte) bool {

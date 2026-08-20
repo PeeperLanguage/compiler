@@ -27,14 +27,14 @@ func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (co
 		TargetArch:  targetArch,
 		BuildDebug:  debugBuild,
 	}
-	compilerContext = compiler.NewContext(cfg, diagnostics.NewDiagnosticBag())
+	compilerContext = compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
 	if err != nil {
 		compilerContext.Diagnostics.Add(diagnostics.NewError(
 			err.Error(),
 		))
 		return compilerContext, nil
 	}
-	program = compiler.ParseFileWithOverlay(compilerContext, path, "")
+	program = compiler.CompileFile(compilerContext, path, "")
 	return compilerContext, program
 }
 
