@@ -200,7 +200,7 @@ func FoldBinary(op string, left, right Value) (Value, bool) {
 	switch lv := left.(type) {
 	case *IntConst:
 		rv, ok := right.(*IntConst)
-		if !ok || lv.TypeText() != rv.TypeText() {
+		if !ok || (op != "<<" && op != ">>" && lv.TypeText() != rv.TypeText()) {
 			return nil, false
 		}
 		return foldIntBinary(op, lv, rv)

@@ -1410,7 +1410,11 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 						opcode = "lshr"
 					}
 				}
-				return b.arithmetic(opcode, left, right)
+				shiftCount := right
+				if mirRefType(e.Right) != mirRefType(e.Left) {
+					shiftCount = emitCast(b, &mir.Cast{Arg: e.Right, Type: mirRefType(e.Left), Location: mir.ValueRefLocation(e.Right)})
+				}
+				return b.arithmetic(opcode, left, shiftCount)
 			case "==", "!=", "<", "<=", ">", ">=":
 				if result, ok := emitOptionalNoneCompare(b, e.Op, e.Left, e.Right, left, right); ok {
 					return result

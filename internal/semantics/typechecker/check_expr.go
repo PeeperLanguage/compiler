@@ -16,6 +16,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/pkg/numeric"
 )
 
 // typeExpr computes the type of an expression using scope lookup, records it in the
@@ -233,7 +234,14 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	}
 
 	var left, right typeinfo.Type
-	if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
+	if node.Op == "<<" || node.Op == ">>" {
+		left = c.typeExpr(scope, node.Left, operandExpected)
+		rightExpected := typeinfo.Type(nil)
+		if rightNumber, ok := node.Right.(*ast.NumberLit); ok && rightNumber.ExplicitType == "" && !numeric.IsFloat(rightNumber.Value) {
+			rightExpected = left
+		}
+		right = c.typeExpr(scope, node.Right, rightExpected)
+	} else if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
 		right = c.typeExpr(scope, node.Right, operandExpected)
 		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
 	} else if leftNumber, leftLiteral := node.Left.(*ast.NumberLit); leftLiteral {
@@ -272,6 +280,32 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"optional equality currently requires `none` on one side"))
 		return &typeinfo.InvalidType{}
+	}
+
+	if node.Op == "<<" || node.Op == ">>" {
+		if !typeinfo.IsIntegral(left) {
+			c.ctx.Diagnostics.Add(invalidOperationError(node.Left,
+				"shift left operand must be integral"))
+			return &typeinfo.InvalidType{}
+		}
+		if !typeinfo.IsIntegral(right) {
+			c.ctx.Diagnostics.Add(invalidOperationError(node.Right,
+				"shift count must be integral"))
+			return &typeinfo.InvalidType{}
+		}
+		if value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Right, right); ok {
+			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
+				_, bits, _ := typeinfo.NumericInfo(left)
+				normalized, normalizedOK := constvalue.NormalizeInteger(count.Int(),
+					typeinfo.TypeText(typeinfo.Underlying(right)))
+				if normalizedOK && (normalized.Sign() < 0 || normalized.Cmp(big.NewInt(int64(bits))) >= 0) {
+					c.ctx.Diagnostics.Add(invalidOperationError(node.Right,
+						fmt.Sprintf("shift count must be between 0 and %d", bits-1)))
+					return &typeinfo.InvalidType{}
+				}
+			}
+		}
+		return left
 	}
 
 	commonType := typeinfo.CommonNumericType(left, right)
@@ -315,20 +349,6 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported operand type for operator `"+node.Op+"`"))
 		return nil
-	}
-	if node.Op == "<<" || node.Op == ">>" {
-		if value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Right, exprType); ok {
-			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
-				_, bits, _ := typeinfo.NumericInfo(exprType)
-				normalized, normalizedOK := constvalue.NormalizeInteger(count.Int(),
-					typeinfo.TypeText(typeinfo.Underlying(exprType)))
-				if normalizedOK && (normalized.Sign() < 0 || normalized.Cmp(big.NewInt(int64(bits))) >= 0) {
-					c.ctx.Diagnostics.Add(invalidOperationError(node.Right,
-						fmt.Sprintf("shift count must be between 0 and %d", bits-1)))
-					return &typeinfo.InvalidType{}
-				}
-			}
-		}
 	}
 	return exprType
 }

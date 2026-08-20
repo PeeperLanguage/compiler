@@ -1,5 +1,7 @@
 fn main() -> i32 {
     1i8 << -1i8;
     1u8 >> 8u8;
+    1i8 << 1.0;
+    1i8 >> true;
     return 0;
 }

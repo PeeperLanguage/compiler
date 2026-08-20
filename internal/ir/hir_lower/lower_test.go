@@ -310,6 +310,20 @@ func TestGenerateHIRMaterializesNumericWidening(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRPreservesMixedShiftCountType(t *testing.T) {
+	out := generateTestHIR(t, "hir_mixed_shift_test"+peeper.SourceExt, "hir_mixed_shift_test", `fn shift(value: u8, count: u16) -> u8 {
+	return value << count;
+}`)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	binary, ok := ret.Value.(*ir.Binary)
+	if !ok || binary.Op != "<<" || out.Types.Text(binary.TypeID()) != "u8" {
+		t.Fatalf("shift return = %#v, want u8 binary shift", ret.Value)
+	}
+	if out.Types.Text(binary.Right.TypeID()) != "u16" {
+		t.Fatalf("shift count type = %s, want preserved u16", out.Types.Text(binary.Right.TypeID()))
+	}
+}
+
 func TestGenerateHIRLowersFreeAsDrop(t *testing.T) {
 	out := generateTestHIR(t, "hir_free_test"+peeper.SourceExt, "hir_free_test", `fn destroy(value: *i32) {
 	free(value);

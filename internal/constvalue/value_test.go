@@ -87,6 +87,8 @@ func TestFoldIntegerBitwiseOperatorsUseFiniteWidth(t *testing.T) {
 		{name: "left shift wraps", op: "<<", left: mustIntConst(t, "127", "i8"), right: mustIntConst(t, "1", "i8"), want: "-2"},
 		{name: "signed right shift", op: ">>", left: mustIntConst(t, "-8", "i8"), right: mustIntConst(t, "2", "i8"), want: "-2"},
 		{name: "unsigned right shift", op: ">>", left: mustIntConst(t, "128", "u8"), right: mustIntConst(t, "2", "u8"), want: "32"},
+		{name: "mixed left shift count type", op: "<<", left: mustIntConst(t, "1", "i64"), right: mustIntConst(t, "3", "u8"), want: "8"},
+		{name: "mixed right shift count type", op: ">>", left: mustIntConst(t, "128", "u8"), right: mustIntConst(t, "2", "u16"), want: "32"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,6 +181,7 @@ func TestFoldIntegerShiftRejectsInvalidCount(t *testing.T) {
 	for _, right := range []*IntConst{
 		mustIntConst(t, "-1", "u8"),
 		mustIntConst(t, "8", "u8"),
+		mustIntConst(t, "8", "u16"),
 		mustIntConst(t, "999999999999999999999", "u8"),
 	} {
 		if got, ok := FoldBinary("<<", left, right); ok || got != nil {
