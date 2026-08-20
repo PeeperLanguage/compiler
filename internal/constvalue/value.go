@@ -9,27 +9,27 @@ import (
 
 type Value interface {
 	constValueNode()
-	Truthy() (bool, bool)
+	Truthy() bool
 	TypeText() string
 }
 
 type IntConst struct {
-	Value  string
-	TypeID string
+	value  *big.Int
+	typeID string
 }
 
 type FloatConst struct {
-	Value  string
-	TypeID string
+	value  float64
+	typeID string
 }
 
 type BoolConst struct {
-	Value bool
+	value bool
 }
 
 type StringConst struct {
-	Value  string
-	TypeID string
+	value  string
+	typeID string
 }
 
 func (*IntConst) constValueNode()    {}
@@ -37,104 +37,160 @@ func (*FloatConst) constValueNode()  {}
 func (*BoolConst) constValueNode()   {}
 func (*StringConst) constValueNode() {}
 
-func (v *IntConst) Truthy() (bool, bool) {
-	if v == nil {
-		return false, false
+func NewInt(value *big.Int, typeID string) (*IntConst, bool) {
+	out, ok := NormalizeInteger(value, typeID)
+	if !ok {
+		return nil, false
 	}
-	n, err := numeric.StringToBigInt(v.Value)
+	return &IntConst{value: out, typeID: typeID}, true
+}
+
+func NewIntText(text, typeID string) (*IntConst, bool) {
+	value, err := numeric.StringToBigInt(text)
 	if err != nil {
-		return false, false
+		return nil, false
 	}
-	return n.Sign() != 0, true
+	return NewInt(value, typeID)
 }
 
-func (v *FloatConst) Truthy() (bool, bool) {
-	if v == nil {
-		return false, false
+func NewFloat(value float64, typeID string) (*FloatConst, bool) {
+	switch typeID {
+	case "f32":
+		return &FloatConst{value: float64(float32(value)), typeID: typeID}, true
+	case "f64":
+		return &FloatConst{value: value, typeID: typeID}, true
+	default:
+		return nil, false
 	}
-	f, err := numeric.StringToFloat(v.Value)
+}
+
+func NewFloatText(text, typeID string) (*FloatConst, bool) {
+	value, err := numeric.StringToFloat(text)
 	if err != nil {
-		return false, false
+		return nil, false
 	}
-	return f != 0, true
+	return NewFloat(value, typeID)
 }
 
-func (v *BoolConst) Truthy() (bool, bool) {
-	if v == nil {
-		return false, false
-	}
-	return v.Value, true
+func NewBool(value bool) *BoolConst {
+	return &BoolConst{value: value}
 }
 
-func (v *StringConst) Truthy() (bool, bool) {
-	if v == nil {
-		return false, false
+func NewString(value, typeID string) (*StringConst, bool) {
+	switch typeID {
+	case "str", "cstr":
+		return &StringConst{value: value, typeID: typeID}, true
+	default:
+		return nil, false
 	}
-	return v.Value != "", true
+}
+
+func (v *IntConst) Int() *big.Int {
+	if v == nil || v.value == nil {
+		return nil
+	}
+	return new(big.Int).Set(v.value)
+}
+
+func (v *IntConst) Text() string {
+	if v == nil || v.value == nil {
+		return ""
+	}
+	return v.value.String()
+}
+
+func (v *FloatConst) Float() float64 {
+	if v == nil {
+		return 0
+	}
+	return v.value
+}
+
+func (v *FloatConst) Text() string {
+	if v == nil {
+		return ""
+	}
+	return formatFloatResult(v.value, v.typeID)
+}
+
+func (v *BoolConst) Bool() bool {
+	return v != nil && v.value
+}
+
+func (v *StringConst) Text() string {
+	if v == nil {
+		return ""
+	}
+	return v.value
+}
+
+func (v *IntConst) Truthy() bool {
+	return v != nil && v.value != nil && v.value.Sign() != 0
+}
+
+func (v *FloatConst) Truthy() bool {
+	return v != nil && v.value != 0
+}
+
+func (v *BoolConst) Truthy() bool {
+	return v != nil && v.value
+}
+
+func (v *StringConst) Truthy() bool {
+	return v != nil && v.value != ""
 }
 
 func (v *IntConst) TypeText() string {
-	if v == nil || v.TypeID == "" {
-		return "i32"
+	if v == nil {
+		return ""
 	}
-	return v.TypeID
+	return v.typeID
 }
 
 func (v *FloatConst) TypeText() string {
-	if v == nil || v.TypeID == "" {
-		return "f64"
+	if v == nil {
+		return ""
 	}
-	return v.TypeID
+	return v.typeID
 }
 
 func (v *BoolConst) TypeText() string { return "bool" }
 
 func (v *StringConst) TypeText() string {
-	if v == nil || v.TypeID == "" {
-		return "cstr"
+	if v == nil {
+		return ""
 	}
-	return v.TypeID
+	return v.typeID
 }
 
 func FoldUnary(op string, value Value) (Value, bool) {
 	switch v := value.(type) {
 	case *IntConst:
-		n, err := numeric.StringToBigInt(v.Value)
-		if err != nil {
+		n := v.Int()
+		if n == nil {
 			return nil, false
 		}
 		switch op {
 		case "-":
 			n.Neg(n)
-			n, ok := NormalizeInteger(n, v.TypeText())
-			if !ok {
-				return nil, false
-			}
-			return &IntConst{Value: n.String(), TypeID: v.TypeID}, true
+			return NewInt(n, v.TypeText())
 		case "~":
 			n.Not(n)
-			n, ok := NormalizeInteger(n, v.TypeText())
-			if !ok {
-				return nil, false
-			}
-			return &IntConst{Value: n.String(), TypeID: v.TypeID}, true
+			return NewInt(n, v.TypeText())
 		case "!":
-			return &BoolConst{Value: n.Sign() == 0}, true
+			return NewBool(n.Sign() == 0), true
 		}
 	case *FloatConst:
-		f, err := numeric.StringToFloat(v.Value)
-		if err != nil {
-			return nil, false
-		}
+		f := v.Float()
 		switch op {
 		case "-":
-			return &FloatConst{Value: formatFloatResult(-f, v.TypeText()), TypeID: v.TypeID}, true
+			return NewFloat(-f, v.TypeText())
 		case "!":
-			return &BoolConst{Value: f == 0}, true
+			return NewBool(f == 0), true
 		}
 	case *BoolConst:
 		if op == "!" {
-			return &BoolConst{Value: !v.Value}, true
+			return NewBool(!v.Bool()), true
 		}
 	}
 	return nil, false
@@ -166,12 +222,12 @@ func FoldBinary(op string, left, right Value) (Value, bool) {
 }
 
 func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
-	lv, err := numeric.StringToBigInt(left.Value)
-	if err != nil {
+	lv := left.Int()
+	if lv == nil {
 		return nil, false
 	}
-	rv, err := numeric.StringToBigInt(right.Value)
-	if err != nil {
+	rv := right.Int()
+	if rv == nil {
 		return nil, false
 	}
 	out := new(big.Int)
@@ -211,29 +267,25 @@ func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
 			out.Rsh(lv, count)
 		}
 	case "==":
-		return &BoolConst{Value: lv.Cmp(rv) == 0}, true
+		return NewBool(lv.Cmp(rv) == 0), true
 	case "!=":
-		return &BoolConst{Value: lv.Cmp(rv) != 0}, true
+		return NewBool(lv.Cmp(rv) != 0), true
 	case "<":
-		return &BoolConst{Value: lv.Cmp(rv) < 0}, true
+		return NewBool(lv.Cmp(rv) < 0), true
 	case "<=":
-		return &BoolConst{Value: lv.Cmp(rv) <= 0}, true
+		return NewBool(lv.Cmp(rv) <= 0), true
 	case ">":
-		return &BoolConst{Value: lv.Cmp(rv) > 0}, true
+		return NewBool(lv.Cmp(rv) > 0), true
 	case ">=":
-		return &BoolConst{Value: lv.Cmp(rv) >= 0}, true
+		return NewBool(lv.Cmp(rv) >= 0), true
 	case "&&":
-		return &BoolConst{Value: lv.Sign() != 0 && rv.Sign() != 0}, true
+		return NewBool(lv.Sign() != 0 && rv.Sign() != 0), true
 	case "||":
-		return &BoolConst{Value: lv.Sign() != 0 || rv.Sign() != 0}, true
+		return NewBool(lv.Sign() != 0 || rv.Sign() != 0), true
 	default:
 		return nil, false
 	}
-	out, ok := NormalizeInteger(out, left.TypeText())
-	if !ok {
-		return nil, false
-	}
-	return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
+	return NewInt(out, left.TypeText())
 }
 
 func integerConstantType(typeID string) (signed bool, bits int, ok bool) {
@@ -259,39 +311,33 @@ func NormalizeInteger(value *big.Int, typeID string) (*big.Int, bool) {
 }
 
 func foldFloatBinary(op string, left, right *FloatConst) (Value, bool) {
-	lv, err := numeric.StringToFloat(left.Value)
-	if err != nil {
-		return nil, false
-	}
-	rv, err := numeric.StringToFloat(right.Value)
-	if err != nil {
-		return nil, false
-	}
+	lv := left.Float()
+	rv := right.Float()
 	switch op {
 	case "+":
-		return &FloatConst{Value: formatFloatResult(lv+rv, left.TypeText()), TypeID: left.TypeID}, true
+		return NewFloat(lv+rv, left.TypeText())
 	case "-":
-		return &FloatConst{Value: formatFloatResult(lv-rv, left.TypeText()), TypeID: left.TypeID}, true
+		return NewFloat(lv-rv, left.TypeText())
 	case "*":
-		return &FloatConst{Value: formatFloatResult(lv*rv, left.TypeText()), TypeID: left.TypeID}, true
+		return NewFloat(lv*rv, left.TypeText())
 	case "/":
-		return &FloatConst{Value: formatFloatResult(lv/rv, left.TypeText()), TypeID: left.TypeID}, true
+		return NewFloat(lv/rv, left.TypeText())
 	case "==":
-		return &BoolConst{Value: lv == rv}, true
+		return NewBool(lv == rv), true
 	case "!=":
-		return &BoolConst{Value: lv != rv}, true
+		return NewBool(lv != rv), true
 	case "<":
-		return &BoolConst{Value: lv < rv}, true
+		return NewBool(lv < rv), true
 	case "<=":
-		return &BoolConst{Value: lv <= rv}, true
+		return NewBool(lv <= rv), true
 	case ">":
-		return &BoolConst{Value: lv > rv}, true
+		return NewBool(lv > rv), true
 	case ">=":
-		return &BoolConst{Value: lv >= rv}, true
+		return NewBool(lv >= rv), true
 	case "&&":
-		return &BoolConst{Value: lv != 0 && rv != 0}, true
+		return NewBool(lv != 0 && rv != 0), true
 	case "||":
-		return &BoolConst{Value: lv != 0 || rv != 0}, true
+		return NewBool(lv != 0 || rv != 0), true
 	default:
 		return nil, false
 	}
@@ -307,13 +353,13 @@ func formatFloatResult(value float64, typeID string) string {
 func foldBoolBinary(op string, left, right *BoolConst) (Value, bool) {
 	switch op {
 	case "==":
-		return &BoolConst{Value: left.Value == right.Value}, true
+		return NewBool(left.Bool() == right.Bool()), true
 	case "!=":
-		return &BoolConst{Value: left.Value != right.Value}, true
+		return NewBool(left.Bool() != right.Bool()), true
 	case "&&":
-		return &BoolConst{Value: left.Value && right.Value}, true
+		return NewBool(left.Bool() && right.Bool()), true
 	case "||":
-		return &BoolConst{Value: left.Value || right.Value}, true
+		return NewBool(left.Bool() || right.Bool()), true
 	default:
 		return nil, false
 	}

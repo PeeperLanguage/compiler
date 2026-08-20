@@ -91,20 +91,18 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		}
 		cond := ir.FoldExpr(types, node.Cond, env)
 		if value, ok := ir.ConstValueOf(types, cond); ok {
-			if truthy, ok := value.Truthy(); ok && truthy {
+			if value.Truthy() {
 				addConstantConditionWarning(diag, node.Location, true)
 				if thenBlock == nil {
 					return nil
 				}
 				return []hir.Stmt{thenBlock}
 			}
-			if _, ok := value.Truthy(); ok {
-				addConstantConditionWarning(diag, node.Location, false)
-				if elseStmt == nil {
-					return nil
-				}
-				return []hir.Stmt{elseStmt}
+			addConstantConditionWarning(diag, node.Location, false)
+			if elseStmt == nil {
+				return nil
 			}
+			return []hir.Stmt{elseStmt}
 		}
 		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, NodeID: node.NodeID, Location: node.Location}}
 	case *hir.For:

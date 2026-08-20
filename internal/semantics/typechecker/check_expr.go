@@ -16,7 +16,6 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
-	"compiler/pkg/numeric"
 )
 
 // typeExpr computes the type of an expression using scope lookup, records it in the
@@ -320,16 +319,13 @@ func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expec
 	if node.Op == "<<" || node.Op == ">>" {
 		if value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Right, exprType); ok {
 			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
-				parsed, err := numeric.StringToBigInt(count.Value)
 				_, bits, _ := typeinfo.NumericInfo(exprType)
-				if err == nil {
-					normalized, normalizedOK := constvalue.NormalizeInteger(parsed,
-						typeinfo.TypeText(typeinfo.Underlying(exprType)))
-					if normalizedOK && (normalized.Sign() < 0 || normalized.Cmp(big.NewInt(int64(bits))) >= 0) {
-						c.ctx.Diagnostics.Add(invalidOperationError(node.Right,
-							fmt.Sprintf("shift count must be between 0 and %d", bits-1)))
-						return &typeinfo.InvalidType{}
-					}
+				normalized, normalizedOK := constvalue.NormalizeInteger(count.Int(),
+					typeinfo.TypeText(typeinfo.Underlying(exprType)))
+				if normalizedOK && (normalized.Sign() < 0 || normalized.Cmp(big.NewInt(int64(bits))) >= 0) {
+					c.ctx.Diagnostics.Add(invalidOperationError(node.Right,
+						fmt.Sprintf("shift count must be between 0 and %d", bits-1)))
+					return &typeinfo.InvalidType{}
 				}
 			}
 		}
@@ -435,9 +431,10 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 		return elem
 	}
 	length, lengthErr := strconv.Atoi(array.Len)
-	indexValue, indexErr := strconv.Atoi(indexConst.Value)
+	indexText := indexConst.Text()
+	indexValue, indexErr := strconv.Atoi(indexText)
 	if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
-		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, array.Len, ast.LocOf(node.Index)))
+		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexText, array.Len, ast.LocOf(node.Index)))
 	}
 	return elem
 }

@@ -174,7 +174,7 @@ func TestEvaluateStringConst(t *testing.T) {
 		t.Fatalf("missing symbol Name")
 	}
 	got, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.StringConst)
-	if !ok || got == nil || got.Value != "puts" || got.TypeText() != "cstr" {
+	if !ok || got == nil || got.Text() != "puts" || got.TypeText() != "cstr" {
 		t.Fatalf("Name = %#v, want str puts cstr", module.Semantics.ConstValues[sym.ID])
 	}
 }
@@ -186,7 +186,7 @@ func assertIntConst(t *testing.T, module *project.Module, name, want, wantType s
 		t.Fatalf("missing symbol %s", name)
 	}
 	got, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.IntConst)
-	if !ok || got == nil || got.Value != want || (wantType != "" && got.TypeText() != wantType) {
+	if !ok || got == nil || got.Text() != want || (wantType != "" && got.TypeText() != wantType) {
 		t.Fatalf("%s = %#v, want int %s %s", name, module.Semantics.ConstValues[sym.ID], want, wantType)
 	}
 }
@@ -198,7 +198,7 @@ func assertBoolConst(t *testing.T, module *project.Module, name string, want boo
 		t.Fatalf("missing symbol %s", name)
 	}
 	got, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.BoolConst)
-	if !ok || got == nil || got.Value != want {
+	if !ok || got == nil || got.Bool() != want {
 		t.Fatalf("%s = %#v, want bool %v", name, module.Semantics.ConstValues[sym.ID], want)
 	}
 }

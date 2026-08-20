@@ -205,8 +205,13 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 		t.Fatalf("declare const: %v", err)
 	}
 
+	value, ok := constvalue.NewString("puts", "cstr")
+	if !ok {
+		t.Fatal("NewString failed")
+	}
+
 	out := GenerateMIR(mod, cfg.BuildModule(mod), scope, map[symbols.SymbolID]constvalue.Value{
-		sym.ID: &constvalue.StringConst{Value: "puts", TypeID: "cstr"},
+		sym.ID: value,
 	})
 	if out == nil || len(out.StaticData) != 1 {
 		t.Fatalf("expected one static entry, got %#v", out)
@@ -226,8 +231,13 @@ func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 		t.Fatalf("declare const: %v", err)
 	}
 
+	value, ok := constvalue.NewFloatText("3", "f64")
+	if !ok {
+		t.Fatal("NewFloatText failed")
+	}
+
 	out := GenerateMIR(mod, cfg.BuildModule(mod), scope, map[symbols.SymbolID]constvalue.Value{
-		sym.ID: &constvalue.FloatConst{Value: "3", TypeID: "f64"},
+		sym.ID: value,
 	})
 	if out == nil || len(out.StaticData) != 1 {
 		t.Fatalf("expected one static entry, got %#v", out)

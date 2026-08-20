@@ -303,9 +303,9 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *tab
 			indexExpr := lowerASTExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType())
 			if value, ok := consteval.EvaluateExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType()); ok {
 				if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
-					indexType, ok := ctx.Types.LookupText(intConst.TypeID)
+					indexType, ok := ctx.Types.LookupText(intConst.TypeText())
 					if ok {
-						indexExpr = &ir.IntLit{Value: intConst.Value, Type: indexType, Location: ast.LocOf(index.Index)}
+						indexExpr = &ir.IntLit{Value: intConst.Text(), Type: indexType, Location: ast.LocOf(index.Index)}
 					}
 				}
 			}

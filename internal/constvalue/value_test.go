@@ -1,6 +1,77 @@
 package constvalue
 
-import "testing"
+import (
+	"math/big"
+	"testing"
+)
+
+func mustIntConst(t *testing.T, value, typeID string) *IntConst {
+	t.Helper()
+	out, ok := NewIntText(value, typeID)
+	if !ok {
+		t.Fatalf("NewIntText(%q, %q) failed", value, typeID)
+	}
+	return out
+}
+
+func mustFloatConst(t *testing.T, value, typeID string) *FloatConst {
+	t.Helper()
+	out, ok := NewFloatText(value, typeID)
+	if !ok {
+		t.Fatalf("NewFloatText(%q, %q) failed", value, typeID)
+	}
+	return out
+}
+
+func TestNewIntNormalizesAndClonesValue(t *testing.T) {
+	input := big.NewInt(300)
+	value, ok := NewInt(input, "u8")
+	if !ok || value.Text() != "44" || value.TypeText() != "u8" {
+		t.Fatalf("NewInt(300, u8) = %#v, want 44 u8", value)
+	}
+
+	input.SetInt64(1)
+	if value.Text() != "44" {
+		t.Fatalf("NewInt kept mutable input pointer, got %s", value.Text())
+	}
+
+	copy := value.Int()
+	copy.SetInt64(2)
+	if value.Text() != "44" {
+		t.Fatalf("Int exposed mutable stored pointer, got %s", value.Text())
+	}
+}
+
+func TestConstConstructorsRejectInvalidTypeIDs(t *testing.T) {
+	if value, ok := NewInt(big.NewInt(1), ""); ok || value != nil {
+		t.Fatalf("NewInt accepted empty type: %#v", value)
+	}
+	if value, ok := NewFloat(1, "i32"); ok || value != nil {
+		t.Fatalf("NewFloat accepted non-float type: %#v", value)
+	}
+	if value, ok := NewString("x", "i32"); ok || value != nil {
+		t.Fatalf("NewString accepted non-string type: %#v", value)
+	}
+}
+
+func TestNewFloatRoundsF32(t *testing.T) {
+	value, ok := NewFloat(16777217, "f32")
+	if !ok || value.Float() != float64(float32(16777217)) || value.Text() != "1.6777216e+07" {
+		t.Fatalf("NewFloat f32 = %#v, want rounded f32", value)
+	}
+}
+
+func TestTypeTextDoesNotDefaultBrokenIntegerState(t *testing.T) {
+	var nilInt *IntConst
+	if nilInt.TypeText() != "" {
+		t.Fatalf("nil IntConst TypeText = %q, want empty", nilInt.TypeText())
+	}
+
+	broken := &IntConst{value: big.NewInt(500)}
+	if broken.TypeText() != "" {
+		t.Fatalf("broken IntConst TypeText = %q, want empty", broken.TypeText())
+	}
+}
 
 func TestFoldIntegerBitwiseOperatorsUseFiniteWidth(t *testing.T) {
 	tests := []struct {
@@ -10,12 +81,12 @@ func TestFoldIntegerBitwiseOperatorsUseFiniteWidth(t *testing.T) {
 		right *IntConst
 		want  string
 	}{
-		{name: "and", op: "&", left: &IntConst{Value: "12", TypeID: "u8"}, right: &IntConst{Value: "10", TypeID: "u8"}, want: "8"},
-		{name: "or", op: "|", left: &IntConst{Value: "12", TypeID: "u8"}, right: &IntConst{Value: "10", TypeID: "u8"}, want: "14"},
-		{name: "xor", op: "^", left: &IntConst{Value: "12", TypeID: "u8"}, right: &IntConst{Value: "10", TypeID: "u8"}, want: "6"},
-		{name: "left shift wraps", op: "<<", left: &IntConst{Value: "127", TypeID: "i8"}, right: &IntConst{Value: "1", TypeID: "i8"}, want: "-2"},
-		{name: "signed right shift", op: ">>", left: &IntConst{Value: "-8", TypeID: "i8"}, right: &IntConst{Value: "2", TypeID: "i8"}, want: "-2"},
-		{name: "unsigned right shift", op: ">>", left: &IntConst{Value: "128", TypeID: "u8"}, right: &IntConst{Value: "2", TypeID: "u8"}, want: "32"},
+		{name: "and", op: "&", left: mustIntConst(t, "12", "u8"), right: mustIntConst(t, "10", "u8"), want: "8"},
+		{name: "or", op: "|", left: mustIntConst(t, "12", "u8"), right: mustIntConst(t, "10", "u8"), want: "14"},
+		{name: "xor", op: "^", left: mustIntConst(t, "12", "u8"), right: mustIntConst(t, "10", "u8"), want: "6"},
+		{name: "left shift wraps", op: "<<", left: mustIntConst(t, "127", "i8"), right: mustIntConst(t, "1", "i8"), want: "-2"},
+		{name: "signed right shift", op: ">>", left: mustIntConst(t, "-8", "i8"), right: mustIntConst(t, "2", "i8"), want: "-2"},
+		{name: "unsigned right shift", op: ">>", left: mustIntConst(t, "128", "u8"), right: mustIntConst(t, "2", "u8"), want: "32"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -24,7 +95,7 @@ func TestFoldIntegerBitwiseOperatorsUseFiniteWidth(t *testing.T) {
 				t.Fatalf("FoldBinary(%q) failed", tt.op)
 			}
 			value, ok := got.(*IntConst)
-			if !ok || value.Value != tt.want || value.TypeText() != tt.left.TypeText() {
+			if !ok || value.Text() != tt.want || value.TypeText() != tt.left.TypeText() {
 				t.Fatalf("FoldBinary(%q) = %#v, want %s %s", tt.op, got, tt.want, tt.left.TypeText())
 			}
 		})
@@ -36,10 +107,10 @@ func TestFoldIntegerComplementUsesFiniteWidth(t *testing.T) {
 		value *IntConst
 		want  string
 	}{
-		{value: &IntConst{Value: "0", TypeID: "u8"}, want: "255"},
-		{value: &IntConst{Value: "0", TypeID: "i8"}, want: "-1"},
-		{value: &IntConst{Value: "127", TypeID: "i8"}, want: "-128"},
-		{value: &IntConst{Value: "0", TypeID: "byte"}, want: "255"},
+		{value: mustIntConst(t, "0", "u8"), want: "255"},
+		{value: mustIntConst(t, "0", "i8"), want: "-1"},
+		{value: mustIntConst(t, "127", "i8"), want: "-128"},
+		{value: mustIntConst(t, "0", "byte"), want: "255"},
 	}
 	for _, tt := range tests {
 		got, ok := FoldUnary("~", tt.value)
@@ -47,7 +118,7 @@ func TestFoldIntegerComplementUsesFiniteWidth(t *testing.T) {
 			t.Fatalf("FoldUnary(~%s) failed", tt.value.TypeText())
 		}
 		value, ok := got.(*IntConst)
-		if !ok || value.Value != tt.want || value.TypeText() != tt.value.TypeText() {
+		if !ok || value.Text() != tt.want || value.TypeText() != tt.value.TypeText() {
 			t.Fatalf("FoldUnary(~%s) = %#v, want %s", tt.value.TypeText(), got, tt.want)
 		}
 	}
@@ -61,9 +132,9 @@ func TestFoldIntegerArithmeticUsesFiniteWidth(t *testing.T) {
 		right *IntConst
 		want  string
 	}{
-		{name: "add wraps", op: "+", left: &IntConst{Value: "127", TypeID: "i8"}, right: &IntConst{Value: "1", TypeID: "i8"}, want: "-128"},
-		{name: "sub wraps", op: "-", left: &IntConst{Value: "-128", TypeID: "i8"}, right: &IntConst{Value: "1", TypeID: "i8"}, want: "127"},
-		{name: "mul wraps", op: "*", left: &IntConst{Value: "64", TypeID: "i8"}, right: &IntConst{Value: "2", TypeID: "i8"}, want: "-128"},
+		{name: "add wraps", op: "+", left: mustIntConst(t, "127", "i8"), right: mustIntConst(t, "1", "i8"), want: "-128"},
+		{name: "sub wraps", op: "-", left: mustIntConst(t, "-128", "i8"), right: mustIntConst(t, "1", "i8"), want: "127"},
+		{name: "mul wraps", op: "*", left: mustIntConst(t, "64", "i8"), right: mustIntConst(t, "2", "i8"), want: "-128"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,7 +143,7 @@ func TestFoldIntegerArithmeticUsesFiniteWidth(t *testing.T) {
 				t.Fatalf("FoldBinary(%q) failed", tt.op)
 			}
 			value, ok := got.(*IntConst)
-			if !ok || value.Value != tt.want || value.TypeText() != tt.left.TypeText() {
+			if !ok || value.Text() != tt.want || value.TypeText() != tt.left.TypeText() {
 				t.Fatalf("FoldBinary(%q) = %#v, want %s %s", tt.op, got, tt.want, tt.left.TypeText())
 			}
 		})
@@ -80,48 +151,48 @@ func TestFoldIntegerArithmeticUsesFiniteWidth(t *testing.T) {
 }
 
 func TestFoldUnaryMinusUsesFiniteWidth(t *testing.T) {
-	got, ok := FoldUnary("-", &IntConst{Value: "-128", TypeID: "i8"})
+	got, ok := FoldUnary("-", mustIntConst(t, "-128", "i8"))
 	value, valueOK := got.(*IntConst)
-	if !ok || !valueOK || value.Value != "-128" || value.TypeText() != "i8" {
+	if !ok || !valueOK || value.Text() != "-128" || value.TypeText() != "i8" {
 		t.Fatalf("FoldUnary(-i8 min) = %#v, want -128 i8", got)
 	}
 }
 
 func TestFoldIntegerDivisionUsesTruncTowardZero(t *testing.T) {
-	got, ok := FoldBinary("/", &IntConst{Value: "-7", TypeID: "i32"}, &IntConst{Value: "3", TypeID: "i32"})
+	got, ok := FoldBinary("/", mustIntConst(t, "-7", "i32"), mustIntConst(t, "3", "i32"))
 	value, valueOK := got.(*IntConst)
-	if !ok || !valueOK || value.Value != "-2" || value.TypeText() != "i32" {
+	if !ok || !valueOK || value.Text() != "-2" || value.TypeText() != "i32" {
 		t.Fatalf("FoldBinary(-7 / 3) = %#v, want -2 i32", got)
 	}
 }
 
 func TestFoldFloatBinaryRoundsF32(t *testing.T) {
-	got, ok := FoldBinary("+", &FloatConst{Value: "16777216", TypeID: "f32"}, &FloatConst{Value: "1", TypeID: "f32"})
+	got, ok := FoldBinary("+", mustFloatConst(t, "16777216", "f32"), mustFloatConst(t, "1", "f32"))
 	value, valueOK := got.(*FloatConst)
-	if !ok || !valueOK || value.Value != "1.6777216e+07" || value.TypeText() != "f32" {
+	if !ok || !valueOK || value.Text() != "1.6777216e+07" || value.TypeText() != "f32" {
 		t.Fatalf("FoldBinary(f32 add) = %#v, want 1.6777216e+07 f32", got)
 	}
 }
 
 func TestFoldIntegerShiftRejectsInvalidCount(t *testing.T) {
-	left := &IntConst{Value: "1", TypeID: "u8"}
+	left := mustIntConst(t, "1", "u8")
 	for _, right := range []*IntConst{
-		{Value: "-1", TypeID: "u8"},
-		{Value: "8", TypeID: "u8"},
-		{Value: "999999999999999999999", TypeID: "u8"},
+		mustIntConst(t, "-1", "u8"),
+		mustIntConst(t, "8", "u8"),
+		mustIntConst(t, "999999999999999999999", "u8"),
 	} {
 		if got, ok := FoldBinary("<<", left, right); ok || got != nil {
-			t.Fatalf("FoldBinary accepted invalid shift %s: %#v", right.Value, got)
+			t.Fatalf("FoldBinary accepted invalid shift %s: %#v", right.Text(), got)
 		}
 	}
 }
 
 func TestFoldIntegerShiftNormalizesCountToFiniteWidth(t *testing.T) {
-	left := &IntConst{Value: "1", TypeID: "u8"}
-	right := &IntConst{Value: "256", TypeID: "u8"}
+	left := mustIntConst(t, "1", "u8")
+	right := mustIntConst(t, "256", "u8")
 	got, ok := FoldBinary("<<", left, right)
 	value, valueOK := got.(*IntConst)
-	if !ok || !valueOK || value.Value != "1" {
+	if !ok || !valueOK || value.Text() != "1" {
 		t.Fatalf("FoldBinary did not normalize u8 shift count: %#v", got)
 	}
 }

@@ -1,8 +1,12 @@
+type Tiny = i8;
+
 const AddWrap: i8 = 127i8 + 1i8;
 const SubWrap: i8 = -128i8 - 1i8;
 const MulWrap: i8 = 64i8 * 2i8;
 const NegWrap: i8 = -(-128i8);
 const Quotient: i32 = -7i32 / 3i32;
+const AliasAddWrap: Tiny = 127i8 + 1i8;
+const AliasSubWrap: Tiny = -128i8 - 1i8;
 
 fn main() -> i32 {
     if AddWrap != -128i8 {
@@ -19,6 +23,12 @@ fn main() -> i32 {
     }
     if Quotient != -2i32 {
         return 5;
+    }
+    if AliasAddWrap != -128i8 {
+        return 6;
+    }
+    if AliasSubWrap != 127i8 {
+        return 7;
     }
     return 0;
 }

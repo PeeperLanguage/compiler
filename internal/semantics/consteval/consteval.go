@@ -116,7 +116,7 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 		case *typeinfo.CStrType, *typeinfo.StringType:
 			typText = typeinfo.TypeText(expected)
 		}
-		return &constvalue.StringConst{Value: node.Value, TypeID: typText}, true
+		return constvalue.NewString(node.Value, typText)
 	}
 	_, _, numericExpected := typeinfo.NumericInfo(expected)
 	if expected != nil && !numericExpected {
@@ -137,15 +137,15 @@ func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinf
 		typText := typeinfo.TypeText(typeinfo.Underlying(typ))
 		family, _, _ := typeinfo.NumericInfo(typ)
 		if family == typeinfo.NumericFloat {
-			return &constvalue.FloatConst{Value: node.Value, TypeID: typText}, true
+			return constvalue.NewFloatText(node.Value, typText)
 		}
 		value, err := numeric.CanonicalizeIntegerLiteral(node.Value)
 		if err != nil {
 			return nil, false
 		}
-		return &constvalue.IntConst{Value: value, TypeID: typText}, true
+		return constvalue.NewIntText(value, typText)
 	case *ast.BoolLit:
-		return &constvalue.BoolConst{Value: node.Value}, true
+		return constvalue.NewBool(node.Value), true
 	case *ast.Ident:
 		lookup := scope
 		if lookup == nil {
@@ -208,15 +208,15 @@ func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (
 			return nil, false
 		}
 		if family == typeinfo.NumericFloat {
-			return &constvalue.FloatConst{Value: v.Value, TypeID: typeText}, true
+			return constvalue.NewFloatText(v.Text(), typeText)
 		}
-		return &constvalue.IntConst{Value: v.Value, TypeID: typeText}, true
+		return constvalue.NewInt(v.Int(), typeText)
 	case *constvalue.FloatConst:
 		if v == nil {
 			return nil, false
 		}
 		if family == typeinfo.NumericFloat {
-			return &constvalue.FloatConst{Value: v.Value, TypeID: typeText}, true
+			return constvalue.NewFloat(v.Float(), typeText)
 		}
 		return nil, false
 	default:

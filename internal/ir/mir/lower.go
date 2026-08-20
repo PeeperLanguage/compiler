@@ -187,17 +187,17 @@ func constStaticValueText(value constvalue.Value) (string, bool) {
 		if v == nil {
 			return "", false
 		}
-		return v.Value, true
+		return v.Text(), true
 	case *constvalue.FloatConst:
 		if v == nil {
 			return "", false
 		}
-		return llvmFloatConstText(v.Value), true
+		return llvmFloatConstText(v.Text()), true
 	case *constvalue.BoolConst:
 		if v == nil {
 			return "", false
 		}
-		if v.Value {
+		if v.Bool() {
 			return "true", true
 		}
 		return "false", true
@@ -205,7 +205,7 @@ func constStaticValueText(value constvalue.Value) (string, bool) {
 		if v == nil {
 			return "", false
 		}
-		return v.Value, true
+		return v.Text(), true
 	default:
 		return "", false
 	}

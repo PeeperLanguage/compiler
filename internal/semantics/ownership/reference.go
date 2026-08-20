@@ -376,7 +376,7 @@ func (a *analyzer) originsForExpr(scope *table.Scope, expr ast.Expr, st state) [
 			if !evaluated || !integral || integer == nil {
 				return "", false
 			}
-			return integer.Value, true
+			return integer.Text(), true
 		},
 	})
 }

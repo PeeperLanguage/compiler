@@ -69,8 +69,12 @@ func TestFoldExprConstEnv(t *testing.T) {
 		Right: &IntLit{Value: "5", Type: i32},
 		Type:  i32,
 	}
+	value, ok := constvalue.NewIntText("2", "i32")
+	if !ok {
+		t.Fatal("NewIntText failed")
+	}
 	folded := FoldExpr(types, expr, map[string]constvalue.Value{
-		"a$1": &constvalue.IntConst{Value: "2", TypeID: "i32"},
+		"a$1": value,
 	})
 	lit, ok := folded.(*IntLit)
 	if !ok || lit.Value != "7" {

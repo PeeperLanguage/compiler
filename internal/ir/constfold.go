@@ -123,14 +123,14 @@ func constValueExprAt(value constvalue.Value, typ TypeID, origin SourceInfo) Exp
 		if node == nil {
 			return &IntLit{Value: "0", Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 		}
-		return &IntLit{Value: node.Value, Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+		return &IntLit{Value: node.Text(), Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 	case *constvalue.FloatConst:
 		if node == nil {
 			return &FloatLit{Value: "0.0", Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 		}
-		return &FloatLit{Value: node.Value, Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+		return &FloatLit{Value: node.Text(), Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 	case *constvalue.BoolConst:
-		return &BoolLit{Value: node != nil && node.Value, Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+		return &BoolLit{Value: node != nil && node.Bool(), Type: typ, NodeID: origin.NodeID, Location: origin.Location}
 	default:
 		return &InvalidExpr{Message: "unknown constant", Type: InvalidType, NodeID: origin.NodeID, Location: origin.Location}
 	}
@@ -143,13 +143,13 @@ func ConstValueOf(types *TypeTable, expr Expr) (constvalue.Value, bool) {
 	switch node := expr.(type) {
 	case *IntLit:
 		if types.Text(node.Type) == "bool" {
-			return &constvalue.BoolConst{Value: node.Value != "0"}, true
+			return constvalue.NewBool(node.Value != "0"), true
 		}
-		return &constvalue.IntConst{Value: node.Value, TypeID: types.Text(node.TypeID())}, true
+		return constvalue.NewIntText(node.Value, types.Text(node.TypeID()))
 	case *FloatLit:
-		return &constvalue.FloatConst{Value: node.Value, TypeID: types.Text(node.TypeID())}, true
+		return constvalue.NewFloatText(node.Value, types.Text(node.TypeID()))
 	case *BoolLit:
-		return &constvalue.BoolConst{Value: node.Value}, true
+		return constvalue.NewBool(node.Value), true
 	default:
 		return nil, false
 	}
