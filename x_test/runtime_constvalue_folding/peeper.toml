@@ -1,0 +1,2 @@
+name = "runtime_constvalue_folding"
+build = "program"

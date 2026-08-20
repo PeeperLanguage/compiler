@@ -1,0 +1,24 @@
+const AddWrap: i8 = 127i8 + 1i8;
+const SubWrap: i8 = -128i8 - 1i8;
+const MulWrap: i8 = 64i8 * 2i8;
+const NegWrap: i8 = -(-128i8);
+const Quotient: i32 = -7i32 / 3i32;
+
+fn main() -> i32 {
+    if AddWrap != -128i8 {
+        return 1;
+    }
+    if SubWrap != 127i8 {
+        return 2;
+    }
+    if MulWrap != -128i8 {
+        return 3;
+    }
+    if NegWrap != -128i8 {
+        return 4;
+    }
+    if Quotient != -2i32 {
+        return 5;
+    }
+    return 0;
+}

@@ -53,6 +53,56 @@ func TestFoldIntegerComplementUsesFiniteWidth(t *testing.T) {
 	}
 }
 
+func TestFoldIntegerArithmeticUsesFiniteWidth(t *testing.T) {
+	tests := []struct {
+		name  string
+		op    string
+		left  *IntConst
+		right *IntConst
+		want  string
+	}{
+		{name: "add wraps", op: "+", left: &IntConst{Value: "127", TypeID: "i8"}, right: &IntConst{Value: "1", TypeID: "i8"}, want: "-128"},
+		{name: "sub wraps", op: "-", left: &IntConst{Value: "-128", TypeID: "i8"}, right: &IntConst{Value: "1", TypeID: "i8"}, want: "127"},
+		{name: "mul wraps", op: "*", left: &IntConst{Value: "64", TypeID: "i8"}, right: &IntConst{Value: "2", TypeID: "i8"}, want: "-128"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := FoldBinary(tt.op, tt.left, tt.right)
+			if !ok {
+				t.Fatalf("FoldBinary(%q) failed", tt.op)
+			}
+			value, ok := got.(*IntConst)
+			if !ok || value.Value != tt.want || value.TypeText() != tt.left.TypeText() {
+				t.Fatalf("FoldBinary(%q) = %#v, want %s %s", tt.op, got, tt.want, tt.left.TypeText())
+			}
+		})
+	}
+}
+
+func TestFoldUnaryMinusUsesFiniteWidth(t *testing.T) {
+	got, ok := FoldUnary("-", &IntConst{Value: "-128", TypeID: "i8"})
+	value, valueOK := got.(*IntConst)
+	if !ok || !valueOK || value.Value != "-128" || value.TypeText() != "i8" {
+		t.Fatalf("FoldUnary(-i8 min) = %#v, want -128 i8", got)
+	}
+}
+
+func TestFoldIntegerDivisionUsesTruncTowardZero(t *testing.T) {
+	got, ok := FoldBinary("/", &IntConst{Value: "-7", TypeID: "i32"}, &IntConst{Value: "3", TypeID: "i32"})
+	value, valueOK := got.(*IntConst)
+	if !ok || !valueOK || value.Value != "-2" || value.TypeText() != "i32" {
+		t.Fatalf("FoldBinary(-7 / 3) = %#v, want -2 i32", got)
+	}
+}
+
+func TestFoldFloatBinaryRoundsF32(t *testing.T) {
+	got, ok := FoldBinary("+", &FloatConst{Value: "16777216", TypeID: "f32"}, &FloatConst{Value: "1", TypeID: "f32"})
+	value, valueOK := got.(*FloatConst)
+	if !ok || !valueOK || value.Value != "1.6777216e+07" || value.TypeText() != "f32" {
+		t.Fatalf("FoldBinary(f32 add) = %#v, want 1.6777216e+07 f32", got)
+	}
+}
+
 func TestFoldIntegerShiftRejectsInvalidCount(t *testing.T) {
 	left := &IntConst{Value: "1", TypeID: "u8"}
 	for _, right := range []*IntConst{

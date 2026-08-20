@@ -106,6 +106,10 @@ func FoldUnary(op string, value Value) (Value, bool) {
 		switch op {
 		case "-":
 			n.Neg(n)
+			n, ok := NormalizeInteger(n, v.TypeText())
+			if !ok {
+				return nil, false
+			}
 			return &IntConst{Value: n.String(), TypeID: v.TypeID}, true
 		case "~":
 			n.Not(n)
@@ -124,7 +128,7 @@ func FoldUnary(op string, value Value) (Value, bool) {
 		}
 		switch op {
 		case "-":
-			return &FloatConst{Value: strconv.FormatFloat(-f, 'g', -1, 64), TypeID: v.TypeID}, true
+			return &FloatConst{Value: formatFloatResult(-f, v.TypeText()), TypeID: v.TypeID}, true
 		case "!":
 			return &BoolConst{Value: f == 0}, true
 		}
@@ -174,25 +178,20 @@ func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
 	switch op {
 	case "+":
 		out.Add(lv, rv)
-		return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
 	case "-":
 		out.Sub(lv, rv)
-		return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
 	case "*":
 		out.Mul(lv, rv)
-		return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
 	case "/":
 		if rv.Sign() == 0 {
 			return nil, false
 		}
-		out.Div(lv, rv)
-		return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
+		out.Quo(lv, rv)
 	case "%":
 		if rv.Sign() == 0 {
 			return nil, false
 		}
 		out.Rem(lv, rv)
-		return &IntConst{Value: out.String(), TypeID: left.TypeID}, true
 	case "&":
 		out.And(lv, rv)
 	case "|":
@@ -270,13 +269,13 @@ func foldFloatBinary(op string, left, right *FloatConst) (Value, bool) {
 	}
 	switch op {
 	case "+":
-		return &FloatConst{Value: strconv.FormatFloat(lv+rv, 'g', -1, 64), TypeID: left.TypeID}, true
+		return &FloatConst{Value: formatFloatResult(lv+rv, left.TypeText()), TypeID: left.TypeID}, true
 	case "-":
-		return &FloatConst{Value: strconv.FormatFloat(lv-rv, 'g', -1, 64), TypeID: left.TypeID}, true
+		return &FloatConst{Value: formatFloatResult(lv-rv, left.TypeText()), TypeID: left.TypeID}, true
 	case "*":
-		return &FloatConst{Value: strconv.FormatFloat(lv*rv, 'g', -1, 64), TypeID: left.TypeID}, true
+		return &FloatConst{Value: formatFloatResult(lv*rv, left.TypeText()), TypeID: left.TypeID}, true
 	case "/":
-		return &FloatConst{Value: strconv.FormatFloat(lv/rv, 'g', -1, 64), TypeID: left.TypeID}, true
+		return &FloatConst{Value: formatFloatResult(lv/rv, left.TypeText()), TypeID: left.TypeID}, true
 	case "==":
 		return &BoolConst{Value: lv == rv}, true
 	case "!=":
@@ -296,6 +295,13 @@ func foldFloatBinary(op string, left, right *FloatConst) (Value, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func formatFloatResult(value float64, typeID string) string {
+	if typeID == "f32" {
+		return strconv.FormatFloat(float64(float32(value)), 'g', -1, 32)
+	}
+	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
 func foldBoolBinary(op string, left, right *BoolConst) (Value, bool) {
