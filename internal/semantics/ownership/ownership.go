@@ -330,12 +330,8 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (s
 	}
 	if mismatch && !a.reportedJoin[nodeID] {
 		a.reportedJoin[nodeID] = true
-		var site ast.Node
-		if node != nil {
-			site = node.stmt
-		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"ownership state differs across control-flow paths", ast.LocOf(site), "").
+			"ownership state differs across control-flow paths", ast.LocOf(node.stmt), "").
 			WithHelp("move or reinitialize ownership-tracked values on every path")
 	}
 	for sym, site := range src.moved {
