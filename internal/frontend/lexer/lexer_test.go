@@ -122,3 +122,16 @@ func TestLexRejectsMalformedHexEscape(t *testing.T) {
 		)
 	}
 }
+
+func BenchmarkTokenize(b *testing.B) {
+	const src = `import "math" as m;
+const x: i32 = 1 + 2 * 3;
+let mut y: i32 = x;
+fn add(a: i32, b: i32): i32 {
+	return a + b;
+}`
+
+	for b.Loop() {
+		New("benchmark"+peeper.SourceExt, src, nil).Tokenize()
+	}
+}
