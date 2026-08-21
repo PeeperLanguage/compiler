@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -69,14 +70,19 @@ func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
 
 func TestInitializationRejectsContinuingUninitializedBranch(t *testing.T) {
 	_, diag := analyzeInitializationBody(t, func(i32, boolType ir.TypeID) []hir.Stmt {
+		binding := uninitializedValueBinding(i32)
+		binding.Name = "value$28993"
 		return []hir.Stmt{
-			uninitializedValueBinding(i32),
+			binding,
 			&hir.If{Cond: &ir.Ident{Name: "flag", Type: boolType, SymbolID: flagSymbol}, Then: &hir.Block{Stmts: []hir.Stmt{valueAssignment(i32, "7")}}},
-			valueReturn(i32),
+			&hir.Return{Value: &ir.Ident{Name: "value$28993", Type: i32, SymbolID: valueSymbol}},
 		}
 	})
 	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
 		t.Fatalf("expected uninitialized diagnostic:\n%s", diag.EmitAllToString())
+	}
+	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `value` used before it's initialized") || strings.Contains(got, "value$28993") {
+		t.Fatalf("diagnostic leaked lowered symbol name:\n%s", got)
 	}
 }
 

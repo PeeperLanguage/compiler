@@ -165,6 +165,7 @@ func checkReads(node *site, state State, tracked map[symbols.SymbolID]string, di
 			if name == "" {
 				name = ident.Name
 			}
+			name = ir.StripSymbolInstance(name)
 			msg := "symbol `" + name + "` used before it's initialized"
 			diag.Add(diagnostics.NewError(msg).
 				WithCode(diagnostics.ErrUninitializedVariable).
