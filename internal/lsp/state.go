@@ -262,6 +262,11 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 	if s == nil || ctx == nil || len(s.modules) == 0 {
 		return
 	}
+	for _, module := range s.modules {
+		if module != nil {
+			ctx.SetSemanticExportBaseline(module.Key, module.SemanticExportFingerprint)
+		}
+	}
 	reusePhases := map[string]project.ModulePhase{}
 	if s.workspace != nil {
 		reusePhases = s.workspace.reusePhases(firstDirtyFile(dirtyFiles), s.modules)

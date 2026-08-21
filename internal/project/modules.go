@@ -117,6 +117,8 @@ type Module struct {
 	ImportFingerprint string
 	// Stable syntax-derived export surface for invalidation.
 	ExportFingerprint string
+	// Stable compiler-visible export surface finalized after semantic typing.
+	SemanticExportFingerprint string
 	// Last completed compiler phase for this module snapshot.
 	Phase ModulePhase
 	// Parsed syntax tree.
@@ -206,6 +208,9 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 	if phase <= PhaseParsed {
 		m.ModuleScope = nil
 		m.Semantics = nil
+	}
+	if phase < PhaseTypechecked {
+		m.SemanticExportFingerprint = ""
 	}
 	if phase < PhaseHIR {
 		m.HIR = nil
@@ -299,6 +304,27 @@ func (ctx *CompilerContext) ModuleByKey(key string) (*Module, bool) {
 	defer ctx.mu.RUnlock()
 	module, ok := ctx.modules[key]
 	return module, ok
+}
+
+// SetSemanticExportBaseline records prior semantic API state for incremental comparison.
+func (ctx *CompilerContext) SetSemanticExportBaseline(key, fingerprint string) {
+	if ctx == nil || key == "" || fingerprint == "" {
+		return
+	}
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.semanticExportBaselines[key] = fingerprint
+}
+
+// SemanticExportBaseline returns prior semantic API state when supplied by a client.
+func (ctx *CompilerContext) SemanticExportBaseline(key string) (string, bool) {
+	if ctx == nil || key == "" {
+		return "", false
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
+	fingerprint, ok := ctx.semanticExportBaselines[key]
+	return fingerprint, ok
 }
 
 // Lookup by source path.

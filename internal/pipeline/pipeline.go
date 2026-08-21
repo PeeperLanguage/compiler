@@ -17,6 +17,7 @@ import (
 	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
+	"compiler/internal/semantics/exportapi"
 	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
@@ -155,6 +156,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		for ok := range progress {
 			advanced = advanced || ok
 		}
+		p.invalidateSemanticDependents(ready)
 		if !advanced {
 			break
 		}
@@ -269,8 +271,10 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 		return project.PhaseParsed
 	case project.PhaseBound:
 		return project.PhaseBound
-	case project.PhaseConstEval, project.PhaseTypechecked:
+	case project.PhaseConstEval:
 		return project.PhaseConstEval
+	case project.PhaseTypechecked:
+		return project.PhaseTypechecked
 	case project.PhaseResolved:
 		return project.PhaseCollected
 	case project.PhaseHIR:
@@ -324,6 +328,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	}
 	if module.Phase < project.PhaseTypechecked {
 		typechecker.Check(p.ctx, module)
+		module.SemanticExportFingerprint = exportapi.Fingerprint(module)
 		module.Phase = project.PhaseTypechecked
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -392,4 +397,43 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	module.Phase = project.PhaseBackend
 	p.ctx.Metrics.AddPhaseAdvance()
 	return true
+}
+
+// invalidateSemanticDependents applies semantic API changes only between
+// parallel scheduler batches, after dependency type information is final.
+func (p *Pipeline) invalidateSemanticDependents(advanced []*project.Module) {
+	if p == nil || p.ctx == nil || p.ctx.Graph == nil {
+		return
+	}
+	queue := make([]graph.NodeID, 0)
+	seen := make(map[graph.NodeID]struct{})
+	for _, module := range advanced {
+		if module == nil || module.Phase != project.PhaseTypechecked {
+			continue
+		}
+		baseline, ok := p.ctx.SemanticExportBaseline(module.Key)
+		if !ok || baseline == module.SemanticExportFingerprint {
+			continue
+		}
+		id := graph.NodeID(module.Key)
+		queue = append(queue, id)
+		seen[id] = struct{}{}
+	}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, dependentID := range p.ctx.Graph.Predecessors(current) {
+			if _, found := seen[dependentID]; found {
+				continue
+			}
+			seen[dependentID] = struct{}{}
+			queue = append(queue, dependentID)
+			dependent, found := p.ctx.ModuleByKey(string(dependentID))
+			if !found || dependent == nil || dependent.Phase < project.PhaseTypechecked {
+				continue
+			}
+			dependent.ResetToPhase(project.PhaseParsed)
+			p.ctx.Metrics.AddDowngradedModule()
+		}
+	}
 }

@@ -89,6 +89,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		if module.Phase < project.PhaseParsed {
 			module.ResetToPhase(project.PhaseParsed)
 		}
+		l.resolveImports(module)
 		return
 	}
 	if !module.ContentProvided && module.Content == "" && module.FilePath != "" {

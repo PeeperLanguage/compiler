@@ -42,6 +42,8 @@ type CompilerContext struct {
 	modules map[string]*Module
 	// Canonical file path -> module key.
 	fileIndex map[string]string
+	// Prior semantic API fingerprints supplied by incremental clients.
+	semanticExportBaselines map[string]string
 	// Shared compiler dependency graph.
 	Graph *graph.Graph
 
@@ -156,8 +158,9 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		GlobalScope: globalScope,
 		Graph:       graph.New(GraphNodeModule, GraphEdgeImport),
 
-		modules:   make(map[string]*Module),
-		fileIndex: make(map[string]string),
+		modules:                 make(map[string]*Module),
+		fileIndex:               make(map[string]string),
+		semanticExportBaselines: make(map[string]string),
 	}
 }
 

@@ -255,6 +255,64 @@ func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 	}
 }
 
+func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() {}\n")
+	writeWorkspaceFile(t, fileUtil, "const Value = 1i32;\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(fileMain); mod == nil {
+		t.Fatalf("initial compile returned nil module")
+	}
+
+	before := state.modules[project.CanonicalPath(fileMain)]
+	if before == nil {
+		t.Fatal("missing cached dependent module")
+	}
+	beforeUtil := state.modules[project.CanonicalPath(fileUtil)]
+	if beforeUtil == nil || beforeUtil.ModuleScope == nil {
+		t.Fatal("missing cached export module")
+	}
+	beforeSyntaxFingerprint := beforeUtil.ExportFingerprint
+	beforeFingerprint := beforeUtil.SemanticExportFingerprint
+	beforeType, found := beforeUtil.ModuleScope.Lookup("Value")
+	if !found || beforeType == nil || beforeType.Type == nil {
+		t.Fatal("missing cached exported const type")
+	}
+	state.Cache[fileUtil] = "const Value = 1i64;\n"
+	if _, mod := state.recompile(fileUtil); mod == nil {
+		t.Fatalf("recompile returned nil module")
+	}
+
+	afterUtil := state.modules[project.CanonicalPath(fileUtil)]
+	if afterUtil == nil || afterUtil.ModuleScope == nil {
+		t.Fatal("missing recompiled export module")
+	}
+	if afterUtil.ExportFingerprint != beforeSyntaxFingerprint {
+		t.Fatalf("syntax fingerprint changed across inferred type edit: %q -> %q",
+			beforeSyntaxFingerprint, afterUtil.ExportFingerprint)
+	}
+	afterType, found := afterUtil.ModuleScope.Lookup("Value")
+	if !found || afterType == nil || afterType.Type == nil {
+		t.Fatal("missing recompiled exported const type")
+	}
+	if state.LastMetrics.ModulesDowngraded == 0 {
+		t.Fatalf("dependent retained compiled phases after inferred export type changed: semantic %q -> %q, type %s -> %s",
+			beforeFingerprint, afterUtil.SemanticExportFingerprint, beforeType.Type.Text(), afterType.Type.Text())
+	}
+	after := state.modules[project.CanonicalPath(fileMain)]
+	if after == nil {
+		t.Fatal("dependent missing after semantic invalidation")
+	}
+	if after.Phase != project.PhaseBackend {
+		t.Fatalf("dependent phase = %v, want completed backend after invalidation", after.Phase)
+	}
+}
+
 func TestServerStateRecompileReturnsRequestedWorkspaceModule(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
