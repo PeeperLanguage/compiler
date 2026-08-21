@@ -39,7 +39,10 @@ const (
 	PhaseCollected
 	PhaseBound
 	PhaseResolved
+	// PhaseConstEval completes eager semantic evaluation. Expected-type queries
+	// may refine facts while typechecking.
 	PhaseConstEval
+	// PhaseTypechecked includes final module const values and semantic API identity.
 	PhaseTypechecked
 	PhaseHIR
 	PhaseCFG

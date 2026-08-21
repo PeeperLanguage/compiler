@@ -207,8 +207,14 @@ Phase ownership must stay explicit.
   - be unwind-aware once `panic` / `defer` lowering is implemented
   - distinguish normal edges from panic-unwind cleanup edges
 - `const evaluation`
-  - fold and propagate only after types are known
-  - may inform CFG simplification, but should not replace CFG-based correctness checks
+  - run an eager semantic prepass after name resolution for declarations, array
+    lengths, and other const-dependent typing facts
+  - allow typechecking to query constant values with an expected type, then
+    finalize cached module constants once symbol types are final
+  - keep typed HIR expression folding separate; it may fold values after types
+    are known but must preserve source control flow through mandatory semantic checks
+  - defer branch elimination and dead-code removal until after definite
+    initialization, ownership, and borrow checking
 - `layout`
   - compute physical size, alignment, and field offsets
   - may reorder struct fields physically for packing/alignment if the language permits it

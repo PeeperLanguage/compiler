@@ -7,6 +7,8 @@ const NegWrap: i8 = -(-128i8);
 const Quotient: i32 = -7i32 / 3i32;
 const AliasAddWrap: Tiny = 127i8 + 1i8;
 const AliasSubWrap: Tiny = -128i8 - 1i8;
+const Wide: i64 = 2147483648;
+const InferredWide = Wide + 1;
 
 fn main() -> i32 {
     if AddWrap != -128i8 {
@@ -29,6 +31,9 @@ fn main() -> i32 {
     }
     if AliasSubWrap != 127i8 {
         return 7;
+    }
+    if InferredWide != 2147483649i64 {
+        return 8;
     }
     return 0;
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
@@ -452,6 +453,39 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestTypecheckedPhaseFinalizesModuleConstValues(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `const Value = 1;
+fn main() -> i32 { return Value; }
+`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = project.PhaseParsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+	pipeline := New(ctx)
+	for entry.Phase < project.PhaseConstEval {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
+		}
+	}
+	sym, found := entry.ModuleScope.LookupLocal("Value")
+	if !found || sym == nil {
+		t.Fatal("missing const symbol Value")
+	}
+	stale, ok := constvalue.NewIntText("1", "i64")
+	if !ok {
+		t.Fatal("failed to construct stale const value")
+	}
+	entry.Semantics.ConstValues[sym.ID] = stale
+	if !pipeline.advanceModulePhase(entry, diag) || entry.Phase != project.PhaseTypechecked {
+		t.Fatalf("phase = %v, want typechecked", entry.Phase)
+	}
+	if got := entry.Semantics.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+		t.Fatalf("final const value = %#v, want i32", got)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"maps"
 )
 
+// ApplyTypedExpressionFolding folds typed HIR expressions without simplifying
+// source-written control-flow structure needed by mandatory semantic analyses.
 func ApplyTypedExpressionFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
 	if mod == nil {
 		return nil

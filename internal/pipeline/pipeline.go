@@ -328,6 +328,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	}
 	if module.Phase < project.PhaseTypechecked {
 		typechecker.Check(p.ctx, module)
+		consteval.FinalizeValues(p.ctx, module)
 		module.SemanticExportFingerprint = exportapi.Fingerprint(module)
 		module.Phase = project.PhaseTypechecked
 		p.ctx.Metrics.AddPhaseAdvance()

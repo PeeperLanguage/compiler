@@ -17,9 +17,9 @@ type evaluator struct {
 	inProgress map[symbols.SymbolID]struct{}
 }
 
-// Evaluate fills semantic const values after names resolve and before
-// typechecking consumes const-dependent facts. Arithmetic itself is shared with
-// HIR folding through constvalue, so diagnostics and optimization never fork.
+// Evaluate performs the eager semantic const prepass after name resolution.
+// Typechecking may still request expected-type-sensitive values through
+// EvaluateExpr before final symbol types are known.
 func Evaluate(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
@@ -42,6 +42,22 @@ func Evaluate(ctx *project.CompilerContext, module *project.Module) {
 	}
 }
 
+// FinalizeValues recomputes module constants after typechecking assigns final
+// symbol types. Local const cache entries remain available to later queries.
+func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
+	if ctx == nil || module == nil || module.ModuleScope == nil || module.Semantics == nil {
+		return
+	}
+	for _, sym := range module.ModuleScope.Symbols() {
+		if sym != nil && sym.Kind == symbols.SymbolConst {
+			delete(module.Semantics.ConstValues, sym.ID)
+		}
+	}
+	Evaluate(ctx, module)
+}
+
+// EvaluateExpr computes one semantic constant using expected type information
+// available at the query site. It is valid during and after typechecking.
 func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if ctx == nil || module == nil || expr == nil {
 		return nil, false
