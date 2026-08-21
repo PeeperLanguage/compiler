@@ -1,2 +1,7 @@
 name = "negative_numeric_conversion"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

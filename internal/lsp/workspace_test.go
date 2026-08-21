@@ -499,6 +499,80 @@ func TestServerStateKeepsWorkspaceIndexAcrossRecompile(t *testing.T) {
 	}
 }
 
+func TestRecompileUsesEmptyDocumentOverlay(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, "main"+peeper.SourceExt)
+	disk := "fn DiskOnly() -> i32 { return 7; }\n"
+	writeWorkspaceFile(t, entry, disk)
+
+	state := NewServerState()
+	state.RootDir = root
+	empty := ""
+	state.applyDocumentSnapshot(entry, &empty, nil)
+	_, mod := state.recompile(entry)
+	if mod == nil {
+		t.Fatalf("empty overlay compile returned nil module")
+	}
+	if mod.ContentHash != ast.HashText("") {
+		t.Fatalf("empty overlay hash = %q, want empty source hash", mod.ContentHash)
+	}
+
+	state.applyDocumentSnapshot(entry, nil, nil)
+	_, mod = state.recompile(entry)
+	if mod == nil {
+		t.Fatalf("disk compile returned nil module")
+	}
+	if mod.ContentHash != ast.HashText(disk) {
+		t.Fatalf("closed overlay hash = %q, want disk source hash", mod.ContentHash)
+	}
+}
+
+func TestNavigationRangesUseUTF16AfterNonBMPText(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, "main"+peeper.SourceExt)
+	marked := "fn main() -> i32 { let text: cstr = \"🙂\"; let x = 1; return " + hoverMarker + "x; }\n"
+	content, position := markerPosition(t, marked)
+	writeWorkspaceFile(t, entry, content)
+
+	state := NewServerState()
+	state.RootDir = root
+	state.Cache[entry] = content
+	if _, mod := state.recompile(entry); mod == nil {
+		t.Fatalf("expected compiled module")
+	}
+
+	definition, err := state.HandleDefinition(DefinitionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(entry))},
+		Position:     position,
+	}})
+	if err != nil || len(definition) != 1 {
+		t.Fatalf("definition = %#v, err = %v", definition, err)
+	}
+	start, startOK := offsetAtPosition(content, definition[0].Range.Start)
+	end, endOK := offsetAtPosition(content, definition[0].Range.End)
+	if !startOK || !endOK || content[start:end] != "x" {
+		t.Fatalf("definition range maps to %q, want x", content[start:end])
+	}
+
+	edit, err := state.HandleRename(RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(entry))},
+		Position:     position,
+		NewName:      "renamed",
+	})
+	if err != nil || edit == nil {
+		t.Fatalf("rename = %#v, err = %v", edit, err)
+	}
+	for _, textEdit := range edit.Changes[DocumentURI(pathToURI(entry))] {
+		start, startOK := offsetAtPosition(content, textEdit.Range.Start)
+		end, endOK := offsetAtPosition(content, textEdit.Range.End)
+		if !startOK || !endOK || content[start:end] != "x" {
+			t.Fatalf("rename range maps to %q, want x", content[start:end])
+		}
+	}
+}
+
 func writeWorkspaceFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

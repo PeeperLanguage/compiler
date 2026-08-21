@@ -1,3 +1,8 @@
 name = "negative_receiver_target"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

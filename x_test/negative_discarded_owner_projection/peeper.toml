@@ -1,2 +1,7 @@
 name = "negative_discarded_owner_projection"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

@@ -9,8 +9,8 @@ import (
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
 	"compiler/internal/graph"
-	"compiler/internal/ir/hir_fold"
-	"compiler/internal/ir/hir_lower"
+	"compiler/internal/ir/hir/fold"
+	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -324,11 +324,11 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		return true
 	}
 	if module.Phase < project.PhaseHIR {
-		modhir := hir_lower.GenerateHIR(p.ctx, module)
+		modhir := lower.GenerateHIR(p.ctx, module)
 		if modhir == nil {
 			return false
 		}
-		modhir = hir_fold.ApplyConstantFolding(modhir, diag)
+		modhir = fold.ApplyConstantFolding(modhir, diag)
 		module.HIR = modhir
 		module.Phase = project.PhaseHIR
 		p.ctx.Metrics.AddPhaseAdvance()

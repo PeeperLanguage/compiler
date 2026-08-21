@@ -1,2 +1,6 @@
 name = "type_generics_angle"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

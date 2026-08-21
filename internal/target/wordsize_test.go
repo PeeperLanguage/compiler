@@ -72,8 +72,8 @@ func TestInfoUsesArchitectureWidthAndTriple(t *testing.T) {
 
 func TestInfoRejectsUnsupportedTarget(t *testing.T) {
 	_, err := New("linux", "mystery")
-	if err == nil || !strings.Contains(err.Error(), "unsupported target architecture") {
-		t.Fatalf("New returned %v, want unsupported architecture", err)
+	if err == nil || !strings.Contains(err.Error(), "unsupported target combination") {
+		t.Fatalf("New returned %v, want unsupported target combination", err)
 	}
 }
 

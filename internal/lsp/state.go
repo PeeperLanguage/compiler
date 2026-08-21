@@ -1,13 +1,12 @@
 package lsp
 
 import (
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"compiler/internal/diagnostics"
-	driver "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
@@ -137,6 +136,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 }
 
 func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContext, *project.Module) {
+	canonicalEntry := project.CanonicalPath(entryFile)
 	diagBag := diagnostics.NewDiagnosticBag()
 	sourceProject, err := manifest.ResolveSourceFileProject(entryFile)
 	rootDir := sourceProject.RootDir
@@ -145,7 +145,7 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 		RootDir:     rootDir,
 		ProjectName: projectName,
 	}
-	ctx := driver.NewCompilerContext(cfg, diagBag)
+	ctx := compiler.NewCompilerContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
 	if err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(
@@ -166,10 +166,10 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			s.seedReusableModules(ctx, dirtyFiles)
 			for cachedPath, cachedContent := range s.Cache {
-				driver.AddSource(ctx, cachedPath, cachedContent)
+				compiler.AddSource(ctx, cachedPath, cachedContent)
 			}
 			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
-				if driver.CompileFile(ctx, virtualPath, content) != nil {
+				if compiler.CompileFile(ctx, virtualPath, &content) != nil {
 					s.LastCtx = ctx
 					s.LastMetrics = ctx.Metrics.Snapshot()
 					s.captureModules(ctx)
@@ -181,17 +181,18 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 		}
 	}
 
-	absEntry, err := filepath.Abs(entryFile)
 	for cachedPath, cachedContent := range s.Cache {
-		absCached, err2 := filepath.Abs(cachedPath)
-		if err2 != nil || (err == nil && absCached == absEntry) {
+		if project.CanonicalPath(cachedPath) == canonicalEntry {
 			continue
 		}
-		driver.AddSource(ctx, cachedPath, cachedContent)
+		compiler.AddSource(ctx, cachedPath, cachedContent)
 	}
 
-	content := s.Cache[entryFile]
-	mod := driver.CompileFile(ctx, entryFile, content)
+	var overlay *string
+	if content, ok := s.Cache[canonicalEntry]; ok {
+		overlay = &content
+	}
+	mod := compiler.CompileFile(ctx, entryFile, overlay)
 	s.LastCtx = ctx
 	s.LastMetrics = ctx.Metrics.Snapshot()
 	s.captureModules(ctx)

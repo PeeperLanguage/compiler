@@ -1,2 +1,6 @@
 name = "copy_move_semantics"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

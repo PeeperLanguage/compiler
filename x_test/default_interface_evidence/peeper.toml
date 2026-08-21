@@ -1,2 +1,6 @@
 name = "default_interface_evidence"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

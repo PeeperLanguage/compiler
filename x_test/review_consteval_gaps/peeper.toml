@@ -1,2 +1,7 @@
 name = "review_consteval_gaps"
 build = "bin"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0009"]

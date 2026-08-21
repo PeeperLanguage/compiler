@@ -1,2 +1,7 @@
 name = "negative_shared_index_borrow"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

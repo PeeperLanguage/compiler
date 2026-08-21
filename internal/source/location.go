@@ -47,24 +47,25 @@ func (l *Location) GetText(cache SourceCache) string {
 		return ""
 	}
 	if l.Start.Line == l.End.Line {
-		line := lines[0]
+		line := []rune(lines[0])
 		if l.Start.Column < 1 || l.End.Column < l.Start.Column || l.End.Column > len(line)+1 {
 			return ""
 		}
-		return line[l.Start.Column-1 : l.End.Column-1]
+		return string(line[l.Start.Column-1 : l.End.Column-1])
 	}
 	var result strings.Builder
 	for i, line := range lines {
+		runes := []rune(line)
 		lineNum := l.Start.Line + i
 		switch lineNum {
 		case l.Start.Line:
-			if l.Start.Column >= 1 && l.Start.Column <= len(line)+1 {
-				result.WriteString(line[l.Start.Column-1:])
+			if l.Start.Column >= 1 && l.Start.Column <= len(runes)+1 {
+				result.WriteString(string(runes[l.Start.Column-1:]))
 			}
 		case l.End.Line:
-			if l.End.Column >= 1 && l.End.Column <= len(line)+1 {
+			if l.End.Column >= 1 && l.End.Column <= len(runes)+1 {
 				result.WriteString("\n")
-				result.WriteString(line[:l.End.Column-1])
+				result.WriteString(string(runes[:l.End.Column-1]))
 			}
 		default:
 			result.WriteString("\n")

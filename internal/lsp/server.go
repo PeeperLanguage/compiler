@@ -247,12 +247,10 @@ func diagnosticNotifications(snapshot *diagnosticSnapshot) []Notification {
 
 		var r Range
 		hasRange := false
+		text, hasText := sourceTextForFile(snapshot.ctx, filePath)
 		for _, label := range diag.Labels {
-			if label.Location != nil && label.Location.Start != nil && label.Location.End != nil {
-				r = Range{
-					Start: Position{Line: label.Location.Start.Line - 1, Character: label.Location.Start.Column - 1},
-					End:   Position{Line: label.Location.End.Line - 1, Character: label.Location.End.Column - 1},
-				}
+			if labelRange, ok := rangeAtLocation(text, label.Location); hasText && ok {
+				r = labelRange
 				hasRange = true
 				break
 			}

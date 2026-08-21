@@ -1,14 +1,14 @@
 package main
 
 import (
-	"slices"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 
 	"compiler/cmd/cli"
-	compiler "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/lsp"
 	"compiler/pkg/colors"
 	"compiler/pkg/manifest"
@@ -21,6 +21,12 @@ const (
 	exitCodeUsage = 2
 )
 
+type programExitStatus int
+
+func (status programExitStatus) Error() string {
+	return fmt.Sprintf("program exited with status %d", status)
+}
+
 // exitOnCommandError prints err to stderr in red (unless it is
 // errAlreadyReported, which the caller has already reported) and exits.
 func exitOnCommandError(err error) {
@@ -29,6 +35,9 @@ func exitOnCommandError(err error) {
 	}
 	if errors.Is(err, errAlreadyReported) {
 		os.Exit(exitCodeError)
+	}
+	if status, ok := errors.AsType[programExitStatus](err); ok {
+		os.Exit(int(status))
 	}
 	colors.RED.Fprintln(os.Stderr, err)
 	os.Exit(exitCodeError)

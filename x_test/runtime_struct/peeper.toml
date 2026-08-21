@@ -1,2 +1,8 @@
 name = "runtime_struct"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 10
+stdout_contains = ["struct ok"]

@@ -1,2 +1,6 @@
 name = "runtime_bitwise_operators"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

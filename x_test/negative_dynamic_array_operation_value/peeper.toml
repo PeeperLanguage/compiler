@@ -1,2 +1,7 @@
 name = "negative_dynamic_array_operation_value"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

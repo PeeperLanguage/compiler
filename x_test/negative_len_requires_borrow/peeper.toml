@@ -1,2 +1,7 @@
 name = "negative_len_requires_borrow"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

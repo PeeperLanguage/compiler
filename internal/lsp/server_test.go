@@ -3,7 +3,6 @@ package lsp
 import (
 	"bufio"
 	"bytes"
-	driver "compiler/internal/driver"
 	"encoding/json"
 	"io"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"compiler/internal/driver"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -332,13 +332,14 @@ func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	writeWorkspaceProjectConfig(t, root, "app")
 	writeWorkspaceFile(t, globalPath, "const stdout: i32 = 1;\n")
 
-	ctx := driver.NewCompilerContext(project.Config{
+	ctx := compiler.NewCompilerContext(project.Config{
 		RootDir:        root,
 		ProjectName:    "app",
 		Extension:      peeper.SourceExt,
 		LibraryBaseDir: libraryBase,
 	}, nil)
-	mod := driver.CompileFile(ctx, globalPath, "const stdout: i32 = 1;\n")
+	content := "const stdout: i32 = 1;\n"
+	mod := compiler.CompileFile(ctx, globalPath, &content)
 	if mod == nil {
 		t.Fatalf("expected compiled bundled library module")
 	}
@@ -540,7 +541,7 @@ func TestHoverReusesFreshCompiledSnapshot(t *testing.T) {
 	hover, err := state.HandleHover(HoverParams{
 		TextDocumentPositionParams: TextDocumentPositionParams{
 			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
-			Position:     Position{Line: 2, Character: 9},
+			Position:     Position{Line: 2, Character: 8},
 		},
 	})
 	if err != nil {

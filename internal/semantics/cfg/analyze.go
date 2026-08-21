@@ -4,6 +4,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/problems"
 	"compiler/internal/source"
 )
 
@@ -41,12 +42,7 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 			continue
 		}
 		loc := unreachableBlockLoc(block)
-		diag.Add(
-			diagnostics.NewWarning("unreachable code").
-				WithCode(diagnostics.WarnUnreachableCode).
-				WithPrimaryLabel(loc, "this code is unreachable").
-				WithHelp("remove this code or restructure control flow"),
-		)
+		diag.Add(problems.UnreachableCode(loc))
 	}
 
 	returnType, hasReturnType := fn.Types.Type(fn.ReturnType)

@@ -1,2 +1,6 @@
 name = "type_slice_views"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

@@ -1,2 +1,7 @@
 name = "negative_literal_kinds"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

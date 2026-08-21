@@ -1,0 +1,7 @@
+fn divide(left: i32, right: i32) -> i32 {
+    return left / right;
+}
+
+fn main() -> i32 {
+    return divide(1i32, 0i32);
+}

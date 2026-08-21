@@ -1,10 +1,11 @@
-package hir_fold
+package fold
 
 import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
+	"compiler/internal/problems"
 	"compiler/internal/source"
 	"maps"
 )
@@ -38,7 +39,9 @@ func foldBlock(types *ir.TypeTable, block *hir.Block, diag *diagnostics.Diagnost
 			continue
 		}
 		if terminated {
-			addUnreachableWarning(diag, hir.LocOf(stmt))
+			if diag != nil {
+				diag.Add(problems.UnreachableCode(hir.LocOf(stmt)))
+			}
 			continue
 		}
 		folded := foldStmt(types, stmt, diag, env)
@@ -160,17 +163,5 @@ func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc *source.Lo
 		diagnostics.NewWarning(msg).
 			WithCode(code).
 			WithPrimaryLabel(loc, msg),
-	)
-}
-
-func addUnreachableWarning(diag *diagnostics.DiagnosticBag, loc *source.Location) {
-	if diag == nil {
-		return
-	}
-	diag.Add(
-		diagnostics.NewWarning("unreachable code").
-			WithCode(diagnostics.WarnUnreachableCode).
-			WithPrimaryLabel(loc, "this code is unreachable").
-			WithHelp("remove this code or restructure control flow"),
 	)
 }

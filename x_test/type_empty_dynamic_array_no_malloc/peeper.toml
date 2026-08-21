@@ -1,3 +1,7 @@
 name = "type_empty_dynamic_array_no_malloc"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "success"

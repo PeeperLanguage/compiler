@@ -1,3 +1,6 @@
 name = "runtime_dynamic_array_growth"
 build = "program"
 
+[test]
+mode = "run"
+outcome = "success"

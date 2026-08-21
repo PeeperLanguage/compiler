@@ -1,3 +1,8 @@
 name = "negative_dynamic_array_element_move"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

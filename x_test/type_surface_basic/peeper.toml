@@ -1,2 +1,6 @@
 name = "type_surface_basic"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

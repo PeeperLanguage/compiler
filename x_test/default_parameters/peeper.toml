@@ -1,2 +1,6 @@
 name = "default_parameters"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

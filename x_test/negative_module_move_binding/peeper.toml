@@ -1,2 +1,7 @@
 name = "negative_module_move_binding"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

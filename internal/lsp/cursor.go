@@ -28,7 +28,7 @@ func locContains(loc *source.Location, line, col int) bool {
 	if line < loc.Start.Line || (line == loc.Start.Line && col < loc.Start.Column) {
 		return false
 	}
-	if line > loc.End.Line || (line == loc.End.Line && col > loc.End.Column) {
+	if line > loc.End.Line || (line == loc.End.Line && col >= loc.End.Column) {
 		return false
 	}
 	return true
@@ -64,22 +64,22 @@ func walkModuleAST(module *project.Module, visit func(ast.Node, ast.Node) bool) 
 	}
 }
 
-func buildCursorContext(ctx *project.CompilerContext, module *project.Module, line, col int) *cursorContext {
+func buildCursorContext(ctx *project.CompilerContext, module *project.Module, position source.Position) *cursorContext {
 	if ctx == nil || module == nil || module.AST == nil {
 		return nil
 	}
 	cc := &cursorContext{
 		ctx:     ctx,
 		module:  module,
-		line:    line,
-		col:     col,
+		line:    position.Line,
+		col:     position.Column,
 		parents: make(map[ast.NodeID]ast.Node),
 	}
 	walkModuleAST(module, func(n ast.Node, parent ast.Node) bool {
 		if parent != nil {
 			cc.parents[n.ID()] = parent
 		}
-		if locContains(ast.LocOf(n), line, col) {
+		if locContains(ast.LocOf(n), position.Line, position.Column) {
 			cc.node = n
 			return true
 		}

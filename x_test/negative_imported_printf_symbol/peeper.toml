@@ -1,2 +1,7 @@
 name = "negative_imported_printf_symbol"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

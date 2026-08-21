@@ -166,7 +166,7 @@ Always if type has real semantics:
 
 If runtime representation matters:
 
-- `internal/ir/hir_lower/lower.go`
+- `internal/ir/hir/lower/module_lower.go`
 - maybe `internal/ir/mir/model.go`
 - maybe backend lowering
 
@@ -224,7 +224,7 @@ If name binding/desugaring changes:
 
 ### HIR lowering
 
-- `internal/ir/hir_lower/lower.go`
+- `internal/ir/hir/lower/module_lower.go`
 
 ### MIR / backend
 

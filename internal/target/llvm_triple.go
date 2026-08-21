@@ -6,17 +6,65 @@ import (
 	"strings"
 )
 
+type targetKey struct {
+	OS   string
+	Arch string
+}
+
+var llvmTriples = map[targetKey]string{
+	{OS: "aix", Arch: "ppc64"}:       "powerpc64-ibm-aix",
+	{OS: "android", Arch: "386"}:     "i386-linux-android",
+	{OS: "android", Arch: "amd64"}:   "x86_64-linux-android",
+	{OS: "android", Arch: "arm"}:     "arm-linux-android",
+	{OS: "android", Arch: "arm64"}:   "aarch64-linux-android",
+	{OS: "darwin", Arch: "amd64"}:    "x86_64-apple-darwin",
+	{OS: "darwin", Arch: "arm64"}:    "aarch64-apple-darwin",
+	{OS: "dragonfly", Arch: "amd64"}: "x86_64-unknown-dragonfly",
+	{OS: "freebsd", Arch: "386"}:     "i386-unknown-freebsd",
+	{OS: "freebsd", Arch: "amd64"}:   "x86_64-unknown-freebsd",
+	{OS: "freebsd", Arch: "arm"}:     "arm-unknown-freebsd",
+	{OS: "freebsd", Arch: "arm64"}:   "aarch64-unknown-freebsd",
+	{OS: "illumos", Arch: "amd64"}:   "x86_64-unknown-illumos",
+	{OS: "ios", Arch: "amd64"}:       "x86_64-apple-ios",
+	{OS: "ios", Arch: "arm64"}:       "aarch64-apple-ios",
+	{OS: "linux", Arch: "386"}:       "i386-unknown-linux-gnu",
+	{OS: "linux", Arch: "amd64"}:     "x86_64-unknown-linux-gnu",
+	{OS: "linux", Arch: "arm"}:       "arm-unknown-linux-gnu",
+	{OS: "linux", Arch: "arm64"}:     "aarch64-unknown-linux-gnu",
+	{OS: "linux", Arch: "loong64"}:   "loongarch64-unknown-linux-gnu",
+	{OS: "linux", Arch: "mips"}:      "mips-unknown-linux-gnu",
+	{OS: "linux", Arch: "mips64"}:    "mips64-unknown-linux-gnu",
+	{OS: "linux", Arch: "mips64le"}:  "mips64el-unknown-linux-gnu",
+	{OS: "linux", Arch: "mipsle"}:    "mipsel-unknown-linux-gnu",
+	{OS: "linux", Arch: "ppc64"}:     "powerpc64-unknown-linux-gnu",
+	{OS: "linux", Arch: "ppc64le"}:   "powerpc64le-unknown-linux-gnu",
+	{OS: "linux", Arch: "riscv64"}:   "riscv64-unknown-linux-gnu",
+	{OS: "linux", Arch: "s390x"}:     "s390x-unknown-linux-gnu",
+	{OS: "netbsd", Arch: "386"}:      "i386-unknown-netbsd",
+	{OS: "netbsd", Arch: "amd64"}:    "x86_64-unknown-netbsd",
+	{OS: "netbsd", Arch: "arm"}:      "arm-unknown-netbsd",
+	{OS: "netbsd", Arch: "arm64"}:    "aarch64-unknown-netbsd",
+	{OS: "openbsd", Arch: "386"}:     "i386-unknown-openbsd",
+	{OS: "openbsd", Arch: "amd64"}:   "x86_64-unknown-openbsd",
+	{OS: "openbsd", Arch: "arm"}:     "arm-unknown-openbsd",
+	{OS: "openbsd", Arch: "arm64"}:   "aarch64-unknown-openbsd",
+	{OS: "openbsd", Arch: "ppc64"}:   "powerpc64-unknown-openbsd",
+	{OS: "openbsd", Arch: "riscv64"}: "riscv64-unknown-openbsd",
+	{OS: "solaris", Arch: "amd64"}:   "x86_64-sun-solaris",
+	{OS: "wasip1", Arch: "wasm"}:     "wasm32-unknown-wasi",
+	{OS: "windows", Arch: "386"}:     "i386-pc-windows-msvc",
+	{OS: "windows", Arch: "amd64"}:   "x86_64-pc-windows-msvc",
+	{OS: "windows", Arch: "arm64"}:   "aarch64-pc-windows-msvc",
+}
+
 // LLVMTriple returns the canonical LLVM target triple for a normalized GOOS/GOARCH pair.
 func LLVMTriple(targetOS, targetArch string) (string, error) {
-	arch, err := llvmArch(targetArch)
-	if err != nil {
-		return "", err
+	targetOS = NormalizeOS(targetOS)
+	targetArch = NormalizeArch(targetArch)
+	if triple, ok := llvmTriples[targetKey{OS: targetOS, Arch: targetArch}]; ok {
+		return triple, nil
 	}
-	platform, err := llvmPlatform(targetOS)
-	if err != nil {
-		return "", err
-	}
-	return arch + "-" + platform, nil
+	return "", fmt.Errorf("unsupported target combination %q", targetOS+"/"+targetArch)
 }
 
 // NormalizeOS trims and lowercases a target OS, defaulting to host when empty.
@@ -48,72 +96,4 @@ func ExecutableExt(targetOS string) string {
 // IsHostTarget reports whether the target matches current host OS/arch.
 func IsHostTarget(targetOS, targetArch string) bool {
 	return NormalizeOS(targetOS) == runtime.GOOS && NormalizeArch(targetArch) == runtime.GOARCH
-}
-
-func llvmArch(targetArch string) (string, error) {
-	switch arch := NormalizeArch(targetArch); arch {
-	case "386":
-		return "i386", nil
-	case "amd64":
-		return "x86_64", nil
-	case "arm":
-		return "arm", nil
-	case "arm64":
-		return "aarch64", nil
-	case "loong64":
-		return "loongarch64", nil
-	case "mips":
-		return "mips", nil
-	case "mips64":
-		return "mips64", nil
-	case "mips64le":
-		return "mips64el", nil
-	case "mipsle":
-		return "mipsel", nil
-	case "ppc64":
-		return "powerpc64", nil
-	case "ppc64le":
-		return "powerpc64le", nil
-	case "riscv64":
-		return "riscv64", nil
-	case "s390x":
-		return "s390x", nil
-	case "wasm":
-		return "wasm32", nil
-	default:
-		return "", fmt.Errorf("unsupported target architecture %q", targetArch)
-	}
-}
-
-func llvmPlatform(targetOS string) (string, error) {
-	switch os := NormalizeOS(targetOS); os {
-	case "aix":
-		return "ibm-aix", nil
-	case "android":
-		return "linux-android", nil
-	case "darwin":
-		return "apple-darwin", nil
-	case "dragonfly":
-		return "unknown-dragonfly", nil
-	case "freebsd":
-		return "unknown-freebsd", nil
-	case "illumos":
-		return "unknown-illumos", nil
-	case "ios":
-		return "apple-ios", nil
-	case "linux":
-		return "unknown-linux-gnu", nil
-	case "netbsd":
-		return "unknown-netbsd", nil
-	case "openbsd":
-		return "unknown-openbsd", nil
-	case "solaris":
-		return "sun-solaris", nil
-	case "wasip1":
-		return "unknown-wasi", nil
-	case "windows":
-		return "pc-windows-msvc", nil
-	default:
-		return "", fmt.Errorf("unsupported target operating system %q", targetOS)
-	}
 }

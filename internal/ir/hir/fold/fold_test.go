@@ -1,4 +1,4 @@
-package hir_fold
+package fold
 
 import (
 	"testing"

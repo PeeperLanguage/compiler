@@ -1,2 +1,6 @@
 name = "import_void_call"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

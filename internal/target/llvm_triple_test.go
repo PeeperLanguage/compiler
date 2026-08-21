@@ -35,20 +35,34 @@ func TestLLVMTriple(t *testing.T) {
 }
 
 func TestLLVMTripleRejectsUnknownTarget(t *testing.T) {
-	_, err := LLVMTriple("linux", "mystery")
-	if err == nil {
-		t.Fatal("LLVMTriple returned nil error for unknown arch")
+	for _, pair := range [][2]string{{"linux", "mystery"}, {"mystery", "amd64"}, {"linux", "wasm"}, {"wasip1", "amd64"}, {"darwin", "386"}, {"aix", "amd64"}, {"windows", "mips"}} {
+		_, err := LLVMTriple(pair[0], pair[1])
+		want := "unsupported target combination \"" + pair[0] + "/" + pair[1] + "\""
+		if err == nil || err.Error() != want {
+			t.Fatalf("LLVMTriple(%q, %q) error = %v, want %q", pair[0], pair[1], err, want)
+		}
 	}
-	if !strings.Contains(err.Error(), "unsupported target architecture") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+}
 
-	_, err = LLVMTriple("mystery", "amd64")
-	if err == nil {
-		t.Fatal("LLVMTriple returned nil error for unknown os")
+func TestLLVMTripleAcceptsGoTargetIntersection(t *testing.T) {
+	allowed := map[string][]string{
+		"aix": {"ppc64"}, "android": {"386", "amd64", "arm", "arm64"}, "darwin": {"amd64", "arm64"},
+		"dragonfly": {"amd64"}, "freebsd": {"386", "amd64", "arm", "arm64"}, "illumos": {"amd64"},
+		"ios": {"amd64", "arm64"}, "linux": {"386", "amd64", "arm", "arm64", "loong64", "mips", "mips64", "mips64le", "mipsle", "ppc64", "ppc64le", "riscv64", "s390x"},
+		"netbsd": {"386", "amd64", "arm", "arm64"}, "openbsd": {"386", "amd64", "arm", "arm64", "ppc64", "riscv64"},
+		"solaris": {"amd64"}, "wasip1": {"wasm"}, "windows": {"386", "amd64", "arm64"},
 	}
-	if !strings.Contains(err.Error(), "unsupported target operating system") {
-		t.Fatalf("unexpected error: %v", err)
+	count := 0
+	for targetOS, architectures := range allowed {
+		for _, targetArch := range architectures {
+			count++
+			if triple, err := LLVMTriple(targetOS, targetArch); err != nil || triple == "" {
+				t.Fatalf("LLVMTriple(%q, %q) = %q, %v", targetOS, targetArch, triple, err)
+			}
+		}
+	}
+	if count != len(llvmTriples) {
+		t.Fatalf("accepted pair count = %d, implementation count = %d", count, len(llvmTriples))
 	}
 }
 

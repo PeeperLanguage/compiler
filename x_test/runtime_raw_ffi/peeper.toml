@@ -1,3 +1,7 @@
 name = "runtime_raw_ffi"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "run"
+outcome = "success"

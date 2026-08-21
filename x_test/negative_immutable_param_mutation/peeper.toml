@@ -1,2 +1,7 @@
 name = "negative_immutable_param_mutation"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

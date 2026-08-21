@@ -958,7 +958,7 @@ func SignatureText(types *TypeTable, params []Param, returnType TypeID) string {
 	return b.String()
 }
 
-// ir/shared.go
+// ir/nodes.go
 func SanitizeSymbolName(text string) string {
 	if text == "" {
 		return "unknown"

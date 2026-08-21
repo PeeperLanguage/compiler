@@ -1,2 +1,6 @@
 name = "runtime_returned_string_range"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

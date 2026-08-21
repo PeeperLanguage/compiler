@@ -1,2 +1,6 @@
 name = "runtime_default_range_clone"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

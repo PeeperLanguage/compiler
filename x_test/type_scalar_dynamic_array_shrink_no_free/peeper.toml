@@ -1,3 +1,7 @@
 name = "type_scalar_dynamic_array_shrink_no_free"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "success"

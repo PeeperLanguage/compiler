@@ -1,2 +1,6 @@
 name = "smoke_basic"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

@@ -1,2 +1,6 @@
 name = "type_arrays"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

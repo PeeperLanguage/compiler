@@ -1,3 +1,8 @@
 name = "negative_fixed_array_constant_oob"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

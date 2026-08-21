@@ -1,0 +1,62 @@
+fn div_i8(left: i8, right: i8) -> i8 {
+    return left / right;
+}
+
+fn rem_i8(left: i8, right: i8) -> i8 {
+    return left % right;
+}
+
+fn div_i16(left: i16, right: i16) -> i16 {
+    return left / right;
+}
+
+fn rem_i16(left: i16, right: i16) -> i16 {
+    return left % right;
+}
+
+fn div_i32(left: i32, right: i32) -> i32 {
+    return left / right;
+}
+
+fn rem_i32(left: i32, right: i32) -> i32 {
+    return left % right;
+}
+
+fn div_i64(left: i64, right: i64) -> i64 {
+    return left / right;
+}
+
+fn rem_i64(left: i64, right: i64) -> i64 {
+    return left % right;
+}
+
+fn main() -> i32 {
+    if (-128i8 / -1i8) != div_i8(-128i8, -1i8) || div_i8(-128i8, -1i8) != -128i8 {
+        return 1;
+    }
+    if (-128i8 % -1i8) != rem_i8(-128i8, -1i8) || rem_i8(-128i8, -1i8) != 0i8 {
+        return 2;
+    }
+    if (-32768i16 / -1i16) != div_i16(-32768i16, -1i16) || div_i16(-32768i16, -1i16) != -32768i16 {
+        return 3;
+    }
+    if (-32768i16 % -1i16) != rem_i16(-32768i16, -1i16) || rem_i16(-32768i16, -1i16) != 0i16 {
+        return 4;
+    }
+    if (-2147483648i32 / -1i32) != div_i32(-2147483648i32, -1i32) || div_i32(-2147483648i32, -1i32) != -2147483648i32 {
+        return 5;
+    }
+    if (-2147483648i32 % -1i32) != rem_i32(-2147483648i32, -1i32) || rem_i32(-2147483648i32, -1i32) != 0i32 {
+        return 6;
+    }
+    if (-9223372036854775808i64 / -1i64) != div_i64(-9223372036854775808i64, -1i64) || div_i64(-9223372036854775808i64, -1i64) != -9223372036854775808i64 {
+        return 7;
+    }
+    if (-9223372036854775808i64 % -1i64) != rem_i64(-9223372036854775808i64, -1i64) || rem_i64(-9223372036854775808i64, -1i64) != 0i64 {
+        return 8;
+    }
+    if div_i32(-7i32, 3i32) != -2i32 || rem_i32(-7i32, 3i32) != -1i32 {
+        return 9;
+    }
+    return 0;
+}

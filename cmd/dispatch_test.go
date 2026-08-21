@@ -2,9 +2,24 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+func TestExitOnCommandErrorPreservesProgramStatus(t *testing.T) {
+	if os.Getenv("PEEPER_TEST_PROGRAM_EXIT") == "1" {
+		exitOnCommandError(programExitStatus(10))
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestExitOnCommandErrorPreservesProgramStatus")
+	cmd.Env = append(os.Environ(), "PEEPER_TEST_PROGRAM_EXIT=1")
+	err := cmd.Run()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 10 {
+		t.Fatalf("subprocess error = %v, want exit status 10", err)
+	}
+}
 
 func TestCommandRegistryHasUniqueNamesAndRequiredAliases(t *testing.T) {
 	seen := make(map[string]string)

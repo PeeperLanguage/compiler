@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
-	driver "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/project"
 	"compiler/internal/target"
 	"compiler/pkg/colors"
@@ -246,7 +246,7 @@ func runCommand(args []string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			return programExitStatus(exitErr.ExitCode())
 		}
 		return fmt.Errorf("run program: %w", err)
 	}
@@ -372,7 +372,7 @@ func checkCommand(args []string) error {
 	failed := false
 	for _, key := range keys {
 		owner := owners[key]
-		ctx := driver.NewCompilerContext(project.Config{
+		ctx := compiler.NewCompilerContext(project.Config{
 			RootDir:     owner.RootDir,
 			ProjectName: owner.ProjectName,
 			Extension:   peeper.SourceExt,
@@ -380,7 +380,7 @@ func checkCommand(args []string) error {
 			TargetArch:  opts.targetArch,
 		}, diagnostics.NewDiagnosticBag())
 		for _, filePath := range groups[key] {
-			driver.CompileFile(ctx, filePath, "")
+			compiler.CompileFile(ctx, filePath, nil)
 		}
 		if err := emitAndCheckDiagnostics(ctx); err != nil {
 			failed = true

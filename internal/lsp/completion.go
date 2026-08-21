@@ -5,11 +5,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"compiler/internal/diagnostics"
-	driver "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
@@ -109,7 +107,11 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 		}
 		rewrite := Range{Start: positionAtOffset(sourceText, parsed.rewriteStart), End: replacement.End}
 		sentinelPosition := positionAtOffset(parsed.sentinel, parsed.sentinelAt)
-		return operationCompletionItems(sentinelCtx, sentinelModule, sentinelPosition, parsed.prefix, replacement, rewrite, parsed.pipe, parsed.callSuffix == completionCallArguments), nil
+		semanticPosition, ok := sourcePositionAt(parsed.sentinel, sentinelPosition)
+		if !ok {
+			return []CompletionItem{}, nil
+		}
+		return operationCompletionItems(sentinelCtx, sentinelModule, semanticPosition, parsed.prefix, replacement, rewrite, parsed.pipe, parsed.callSuffix == completionCallArguments), nil
 	case completionNames:
 		semanticCursor := source.NewPosition()
 		semanticCursor.Advance(sourceText[:parsed.cursor])
@@ -138,11 +140,11 @@ func (s *ServerState) completionOverlays(currentFile string) map[string]string {
 }
 
 func compileCompletionSource(cfg project.Config, overlays map[string]string, filePath, content string) (*project.CompilerContext, *project.Module) {
-	ctx := driver.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
+	ctx := compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
 	for overlayPath, overlayContent := range overlays {
-		driver.AddSource(ctx, overlayPath, overlayContent)
+		compiler.AddSource(ctx, overlayPath, overlayContent)
 	}
-	return ctx, driver.CompileFile(ctx, filePath, content)
+	return ctx, compiler.CompileFile(ctx, filePath, &content)
 }
 
 func parseCompletionContext(text string, position Position) parsedCompletionContext {
@@ -417,10 +419,10 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 	return sortCompletionItems(items)
 }
 
-func operationCompletionItems(ctx *project.CompilerContext, module *project.Module, sentinelPosition Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
+func operationCompletionItems(ctx *project.CompilerContext, module *project.Module, cursorPosition source.Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
 	var selector *ast.SelectorExpr
 	var piped *ast.CallExpr
-	cursor := buildCursorContext(ctx, module, sentinelPosition.Line+1, sentinelPosition.Character+1)
+	cursor := buildCursorContext(ctx, module, cursorPosition)
 	if cursor == nil {
 		return []CompletionItem{}
 	}
@@ -658,56 +660,4 @@ func sortCompletionItems(items []CompletionItem) []CompletionItem {
 		return a.Kind - b.Kind
 	})
 	return items
-}
-
-func offsetAtPosition(text string, position Position) (int, bool) {
-	if position.Line < 0 || position.Character < 0 {
-		return 0, false
-	}
-	lineStart := 0
-	for range position.Line {
-		newline := strings.IndexByte(text[lineStart:], '\n')
-		if newline < 0 {
-			return 0, false
-		}
-		lineStart += newline + 1
-	}
-	lineEnd := len(text)
-	if newline := strings.IndexByte(text[lineStart:], '\n'); newline >= 0 {
-		lineEnd = lineStart + newline
-	}
-	units := 0
-	for offset := lineStart; offset < lineEnd; {
-		if units == position.Character {
-			return offset, true
-		}
-		r, size := utf8.DecodeRuneInString(text[offset:lineEnd])
-		runeUnits := 1
-		if r > 0xffff {
-			runeUnits = 2
-		}
-		if units+runeUnits > position.Character {
-			return 0, false
-		}
-		units += runeUnits
-		offset += size
-	}
-	if units == position.Character {
-		return lineEnd, true
-	}
-	return 0, false
-}
-
-func positionAtOffset(text string, offset int) Position {
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(text) {
-		offset = len(text)
-	}
-	lineStart := strings.LastIndexByte(text[:offset], '\n') + 1
-	return Position{
-		Line:      strings.Count(text[:lineStart], "\n"),
-		Character: len(utf16.Encode([]rune(text[lineStart:offset]))),
-	}
 }
