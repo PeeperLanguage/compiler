@@ -339,11 +339,15 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	}
 	if module.Phase < project.PhaseCFG {
 		module.CFG = cfg.BuildModule(module.HIR)
+		module.CFGValid = cfg.Analyze(module.CFG, diag)
 		module.Phase = project.PhaseCFG
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.CFG == nil {
+		return false
+	}
+	if !module.CFGValid {
 		return false
 	}
 	if module.Phase < project.PhaseOwnership {
@@ -359,7 +363,6 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		return true
 	}
 	if module.Phase < project.PhaseMIR {
-		cfg.Analyze(module.CFG, diag)
 		if diag != nil && diag.HasErrors() {
 			return false
 		}

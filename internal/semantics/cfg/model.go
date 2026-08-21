@@ -35,6 +35,22 @@ type SiteID struct {
 	Index int
 }
 
+type EdgeKind uint8
+
+const (
+	EdgeNormal EdgeKind = iota
+	EdgeTrue
+	EdgeFalse
+	EdgeReturn
+)
+
+// Edge preserves branch meaning independently from adjacency ordering.
+type Edge struct {
+	From SiteID
+	To   SiteID
+	Kind EdgeKind
+}
+
 type SiteKind uint8
 
 const (
@@ -51,8 +67,8 @@ type Site struct {
 	ID           SiteID
 	Kind         SiteKind
 	NodeID       ir.NodeID
-	Successors   []SiteID
-	Predecessors []SiteID
+	Successors   []Edge
+	Predecessors []Edge
 }
 
 type Block struct {

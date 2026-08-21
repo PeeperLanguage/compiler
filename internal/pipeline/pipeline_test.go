@@ -454,6 +454,36 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
+func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `fn choose(cond: bool) -> i32 {
+	if cond {
+		return 7;
+	}
+}`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = project.PhaseParsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	pipeline := New(ctx)
+	for entry.Phase < project.PhaseCFG {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	if entry.Phase != project.PhaseCFG {
+		t.Fatalf("phase = %v, want CFG", entry.Phase)
+	}
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrMissingReturn {
+			return
+		}
+	}
+	t.Fatalf("missing-return diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
+}
+
 func TestRequireTerminalModulesReportsStoppedPhase(t *testing.T) {
 	tests := []struct {
 		name   string

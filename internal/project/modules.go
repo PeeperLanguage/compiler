@@ -117,10 +117,13 @@ type Module struct {
 	// Parsed syntax tree.
 	AST *ast.Module
 	// Canonical IR slots.
-	HIR    *hir.Module
-	CFG    []*cfg.Graph
-	MIR    *mir.Module
-	LLVMIR string
+	HIR *hir.Module
+	CFG []*cfg.Graph
+	// CFGValid records mandatory CFG analysis independently from diagnostics
+	// emitted by earlier phases.
+	CFGValid bool
+	MIR      *mir.Module
+	LLVMIR   string
 	// Top-level names visible in module.
 	ModuleScope *table.Scope
 	// Grouped semantic analysis metadata.
@@ -203,6 +206,7 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 	}
 	if phase < PhaseCFG {
 		m.CFG = nil
+		m.CFGValid = false
 	} else if phase < PhaseOwnership {
 		graphs := make([]*cfg.Graph, len(m.CFG))
 		for index, graph := range m.CFG {

@@ -5,7 +5,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
-	"compiler/internal/problems"
 	"compiler/internal/source"
 	"maps"
 )
@@ -33,23 +32,12 @@ func foldBlock(types *ir.TypeTable, block *hir.Block, diag *diagnostics.Diagnost
 		Location: block.Location,
 	}
 	env := cloneConstEnv(parentEnv)
-	terminated := false
 	for _, stmt := range block.Stmts {
 		if stmt == nil {
 			continue
 		}
-		if terminated {
-			if diag != nil {
-				diag.Add(problems.UnreachableCode(hir.LocOf(stmt)))
-			}
-		}
 		folded := foldStmt(types, stmt, diag, env)
-		for _, item := range folded {
-			out.Stmts = append(out.Stmts, item)
-			if stmtTerminates(item) {
-				terminated = true
-			}
-		}
+		out.Stmts = append(out.Stmts, folded...)
 	}
 	return out
 }
@@ -114,27 +102,6 @@ func cloneConstEnv(src map[string]constvalue.Value) map[string]constvalue.Value 
 	out := make(map[string]constvalue.Value, len(src))
 	maps.Copy(out, src)
 	return out
-}
-
-func stmtTerminates(stmt hir.Stmt) bool {
-	switch node := stmt.(type) {
-	case *hir.Return:
-		return true
-	case *hir.Block:
-		if node == nil || len(node.Stmts) == 0 {
-			return false
-		}
-		return stmtTerminates(node.Stmts[len(node.Stmts)-1])
-	case *hir.If:
-		if node == nil || node.Else == nil {
-			return false
-		}
-		return stmtTerminates(node.Then) && stmtTerminates(node.Else)
-	case *hir.For:
-		return false
-	default:
-		return false
-	}
 }
 
 func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc *source.Location, value bool) {

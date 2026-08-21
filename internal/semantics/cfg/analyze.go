@@ -16,44 +16,52 @@ func BuildModule(hirMod *hir.Module) []*Graph {
 	graphs := make([]*Graph, 0, len(hirMod.Funcs))
 	for _, fn := range hirMod.Funcs {
 		graph := buildCFGFunction(hirMod.Types, fn)
-		prepareGraph(graph)
+		finalizeGraph(graph)
 		graphs = append(graphs, graph)
 	}
 	return graphs
 }
 
-// Analyze emits flow diagnostics from an already-built CFG artifact.
-func Analyze(graphs []*Graph, diag *diagnostics.DiagnosticBag) {
+// Analyze emits flow diagnostics from an already-built CFG artifact and reports
+// whether every graph satisfies required control-flow invariants.
+func Analyze(graphs []*Graph, diag *diagnostics.DiagnosticBag) bool {
+	valid := true
 	for _, fn := range graphs {
 		if fn != nil {
-			analyzeFunction(fn, diag)
+			valid = analyzeFunction(fn, diag) && valid
 		}
 	}
+	return valid
 }
 
-func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
+func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) bool {
 	if fn == nil || fn.Entry == nil {
-		return
+		return true
 	}
-	prepareGraph(fn)
 
-	for _, block := range fn.Blocks {
-		if block == nil || block.Reachable || len(block.Stmts) == 0 {
-			continue
+	if diag != nil {
+		for _, block := range fn.Blocks {
+			if block == nil || block.Reachable || len(block.Stmts) == 0 {
+				continue
+			}
+			for _, stmt := range block.Stmts {
+				if stmt != nil {
+					diag.Add(problems.UnreachableCode(hir.LocOf(stmt)))
+				}
+			}
 		}
-		loc := unreachableBlockLoc(block)
-		diag.Add(problems.UnreachableCode(loc))
 	}
 
 	returnType, hasReturnType := fn.Types.Type(fn.ReturnType)
 	if fn.Exit != nil && fn.Exit.Reachable && hasReturnType && returnType.Kind != ir.TypeVoid {
 		reportMissingReturnCFG(fn, diag)
+		return false
 	}
+	return true
 }
 
-// prepareGraph establishes structural facts every CFG consumer relies on.
-// Analysis may call it again after a graph mutation before issuing diagnostics.
-func prepareGraph(fn *Graph) {
+// finalizeGraph establishes immutable structural facts every CFG consumer uses.
+func finalizeGraph(fn *Graph) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
@@ -102,39 +110,40 @@ func rebuildSites(fn *Graph) {
 			continue
 		}
 		for index := 0; index+1 < len(block.Sites); index++ {
-			connectSites(block.Sites[index], block.Sites[index+1])
+			connectSites(block.Sites[index], block.Sites[index+1], EdgeNormal)
 		}
 		last := block.Sites[len(block.Sites)-1]
 		switch term := block.Terminator.(type) {
 		case *Jump:
-			connectBlockSite(last, term.Target)
+			connectBlockSite(last, term.Target, EdgeNormal)
 		case *Branch:
-			connectBlockSite(last, term.TrueTarget)
-			connectBlockSite(last, term.FalseTarget)
+			connectBlockSite(last, term.TrueTarget, EdgeTrue)
+			connectBlockSite(last, term.FalseTarget, EdgeFalse)
 		case *Return:
-			connectBlockSite(last, fn.Exit)
+			connectBlockSite(last, fn.Exit, EdgeReturn)
 		}
 	}
 }
 
-func connectBlockSite(from *Site, target *Block) {
+func connectBlockSite(from *Site, target *Block, kind EdgeKind) {
 	if target == nil || len(target.Sites) == 0 {
 		return
 	}
-	connectSites(from, target.Sites[0])
+	connectSites(from, target.Sites[0], kind)
 }
 
-func connectSites(from, to *Site) {
+func connectSites(from, to *Site, kind EdgeKind) {
 	if from == nil || to == nil {
 		return
 	}
 	for _, existing := range from.Successors {
-		if existing == to.ID {
+		if existing.To == to.ID && existing.Kind == kind {
 			return
 		}
 	}
-	from.Successors = append(from.Successors, to.ID)
-	to.Predecessors = append(to.Predecessors, from.ID)
+	edge := Edge{From: from.ID, To: to.ID, Kind: kind}
+	from.Successors = append(from.Successors, edge)
+	to.Predecessors = append(to.Predecessors, edge)
 }
 
 func markReachable(block *Block, seen map[int]bool) {
@@ -169,40 +178,6 @@ func rebuildPredecessors(fn *Graph) {
 				succ.Predecessors = append(succ.Predecessors, block)
 			}
 		}
-	}
-}
-
-func unreachableBlockLoc(block *Block) *source.Location {
-	if block == nil || len(block.Stmts) == 0 {
-		return block.Location
-	}
-	first := block.Stmts[0]
-	if first == nil {
-		return block.Location
-	}
-	loc := firstLoc(first)
-	if loc != nil {
-		return loc
-	}
-	return block.Location
-}
-
-func firstLoc(stmt hir.Stmt) *source.Location {
-	switch s := stmt.(type) {
-	case *hir.Binding:
-		return s.Location
-	case *hir.Return:
-		return s.Location
-	case *hir.ExprStmt:
-		return s.Location
-	case *hir.If:
-		return s.Location
-	case *hir.Block:
-		return s.Location
-	case *hir.Invalid:
-		return s.Location
-	default:
-		return nil
 	}
 }
 

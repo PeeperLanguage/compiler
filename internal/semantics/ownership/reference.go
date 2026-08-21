@@ -573,8 +573,8 @@ func (a *analyzer) computeReferenceLiveness() {
 		if node == nil || node.flow == nil {
 			continue
 		}
-		for _, succ := range node.flow.Successors {
-			mergeReferenceLiveSets(out, a.referenceLiveIn[succ])
+		for _, edge := range node.flow.Successors {
+			mergeReferenceLiveSets(out, a.referenceLiveIn[edge.To])
 		}
 		uses, definitions := a.referenceUsesAndDefinitions(node)
 		in := maps.Clone(out)
@@ -588,7 +588,8 @@ func (a *analyzer) computeReferenceLiveness() {
 		}
 		a.referenceLiveIn[id] = in
 		a.referenceLiveOut[id] = out
-		for _, pred := range node.flow.Predecessors {
+		for _, edge := range node.flow.Predecessors {
+			pred := edge.From
 			if !queued[pred] {
 				queue = append(queue, pred)
 				queued[pred] = true

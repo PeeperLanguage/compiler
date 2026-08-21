@@ -16,6 +16,7 @@ func moduleWithArtifacts() *Module {
 		Semantics:   NewSemanticInfo(),
 		HIR:         &hir.Module{},
 		CFG:         []*cfg.Graph{{Cleanup: &cfg.CleanupPlan{}}},
+		CFGValid:    true,
 		MIR:         &mir.Module{},
 		LLVMIR:      "stale IR",
 	}
@@ -47,6 +48,9 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.CFG != nil) != test.cfg || (module.MIR != nil) != test.mir ||
 			(module.LLVMIR != "") != test.llvm {
 			t.Fatalf("phase %v reset = %#v", test.phase, module)
+		}
+		if module.CFGValid != test.cfg {
+			t.Fatalf("phase %v CFG validity = %t, want %t", test.phase, module.CFGValid, test.cfg)
 		}
 		cleanup := len(module.CFG) > 0 && module.CFG[0] != nil && module.CFG[0].Cleanup != nil
 		if cleanup != test.cleanup {

@@ -54,7 +54,8 @@ func (b *builder) buildBlock(block *hir.Block, current *Block) *Block {
 	next := current
 	for _, stmt := range block.Stmts {
 		if next == nil {
-			return nil
+			next = b.newBlock()
+			next.Location = hir.LocOf(stmt)
 		}
 		next = b.buildStmt(stmt, next)
 	}

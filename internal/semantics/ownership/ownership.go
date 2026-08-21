@@ -265,7 +265,8 @@ func (a *analyzer) run() {
 				a.applyBlockExit(node, next, a.newLoanContext(node, next))
 			}
 		}
-		for _, succ := range node.flow.Successors {
+		for _, edge := range node.flow.Successors {
+			succ := edge.To
 			if a.sites[succ] == nil {
 				continue
 			}
