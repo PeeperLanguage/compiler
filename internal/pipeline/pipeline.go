@@ -362,7 +362,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		return true
 	}
 	if module.Phase < project.PhaseOwnership {
-		ownership.Check(p.ctx, module)
+		module.Ownership = ownership.Check(p.ctx, module)
 		module.Phase = project.PhaseOwnership
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -377,7 +377,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.ModuleScope, module.Semantics.ConstValues)
+		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Semantics.ConstValues)
 		module.Phase = project.PhaseMIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true

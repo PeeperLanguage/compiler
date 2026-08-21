@@ -26,6 +26,12 @@ func TestGraphCreation(t *testing.T) {
 	}
 }
 
+func TestGraphContainsOnlyControlFlowArtifacts(t *testing.T) {
+	if _, found := reflect.TypeOf(Graph{}).FieldByName("Cleanup"); found {
+		t.Fatal("CFG graph retains ownership cleanup output")
+	}
+}
+
 func TestBuildModulePreservesLexicalScopeExits(t *testing.T) {
 	types := ir.NewTypeTable()
 	void := types.Intern(ir.Type{Kind: ir.TypeVoid})

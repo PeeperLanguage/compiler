@@ -3,19 +3,8 @@ package cfg
 import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
-	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
-
-// CleanupPlan records ownership effects at stable CFG/HIR source sites. Symbol
-// IDs keep semantic ownership decisions independent from emitted storage names.
-type CleanupPlan struct {
-	AfterScope     map[ir.NodeID][]symbols.SymbolID
-	BeforeReturn   map[ir.NodeID][]symbols.SymbolID
-	BeforeAssign   map[ir.NodeID]struct{}
-	DiscardedValue map[ir.NodeID]struct{}
-	ProjectionBase map[ir.NodeID]struct{}
-}
 
 type Graph struct {
 	Name       string
@@ -25,7 +14,6 @@ type Graph struct {
 	Entry      *Block
 	Exit       *Block
 	Blocks     []*Block
-	Cleanup    *CleanupPlan
 }
 
 // SiteID identifies one ordered ownership-analysis point within a CFG block.

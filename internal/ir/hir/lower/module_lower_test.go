@@ -11,9 +11,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
@@ -45,9 +43,6 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 		prepare(module)
 	}
 	out := GenerateHIR(ctx, module)
-	module.HIR = out
-	module.CFG = cfg.BuildModule(out)
-	ownership.Check(ctx, module)
 	return out
 }
 

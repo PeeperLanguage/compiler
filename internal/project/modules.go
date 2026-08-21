@@ -13,6 +13,7 @@ import (
 	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/intrinsics"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -125,10 +126,11 @@ type Module struct {
 	CFG []*cfg.Graph
 	// CFGValid records mandatory CFG analysis independently from diagnostics
 	// emitted by earlier phases.
-	CFGValid bool
-	Flow     flow.Result
-	MIR      *mir.Module
-	LLVMIR   string
+	CFGValid  bool
+	Flow      flow.Result
+	Ownership ownershipresult.Result
+	MIR       *mir.Module
+	LLVMIR    string
 	// Top-level names visible in module.
 	ModuleScope *table.Scope
 	// Grouped semantic analysis metadata.
@@ -195,8 +197,7 @@ func (m *Module) ResetSemanticData() {
 	m.Semantics = NewSemanticInfo()
 }
 
-// ResetToPhase invalidates every artifact produced after phase. CFG cleanup
-// belongs to ownership, so retaining a CFG alone never retains a stale plan.
+// ResetToPhase invalidates every artifact produced after phase.
 func (m *Module) ResetToPhase(phase ModulePhase) {
 	if m == nil {
 		return
@@ -212,19 +213,12 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 	if phase < PhaseCFG {
 		m.CFG = nil
 		m.CFGValid = false
-	} else if phase < PhaseOwnership {
-		graphs := make([]*cfg.Graph, len(m.CFG))
-		for index, graph := range m.CFG {
-			if graph != nil {
-				cloned := *graph
-				cloned.Cleanup = nil
-				graphs[index] = &cloned
-			}
-		}
-		m.CFG = graphs
 	}
 	if phase < PhaseFlow {
 		m.Flow = nil
+	}
+	if phase < PhaseOwnership {
+		m.Ownership = nil
 	}
 	if phase < PhaseMIR {
 		m.MIR = nil

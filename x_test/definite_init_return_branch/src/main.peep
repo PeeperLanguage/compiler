@@ -3,7 +3,7 @@ fn choose(cond: bool) -> i32 {
 	if cond {
 		value = 7;
 	} else {
-		//return 3;
+		return 3;
 	}
 	return value;
 }

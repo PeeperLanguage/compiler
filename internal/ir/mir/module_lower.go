@@ -8,6 +8,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/cfg"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -22,7 +23,7 @@ type lowerer struct {
 	current        *Block
 	location       *source.Location
 	temporaryDrops []ValueRef
-	cleanup        *cfg.CleanupPlan
+	cleanup        *ownershipresult.CleanupPlan
 	symbolValues   map[symbols.SymbolID]*RefName
 }
 
@@ -34,7 +35,7 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
-func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, ownership ownershipresult.Result, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil {
 		return nil
 	}
@@ -81,7 +82,7 @@ func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constV
 		if graph == nil {
 			return nil
 		}
-		fn, ok := lowerCFGFunction(out, graph)
+		fn, ok := lowerCFGFunction(out, graph, ownership[hirFn.NodeID])
 		if !ok {
 			return nil
 		}
@@ -92,7 +93,7 @@ func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constV
 
 // lowerCFGFunction converts one normalized CFG into MIR without rebuilding
 // branches or loops from structured HIR.
-func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
+func lowerCFGFunction(mod *Module, graph *cfg.Graph, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
 	if mod == nil || graph == nil || graph.Source == nil || graph.Entry == nil {
 		return nil, false
 	}
@@ -103,7 +104,7 @@ func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
 		Blocks:     make([]*Block, 0, len(graph.Blocks)),
 		Location:   graph.Source.Location,
 	}
-	l := &lowerer{module: mod, fn: fn, cleanup: graph.Cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
+	l := &lowerer{module: mod, fn: fn, cleanup: cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
 	for _, param := range fn.Params {
 		if param.SymbolID != 0 {
 			l.symbolValues[param.SymbolID] = &RefName{Name: param.Name, Type: param.Type}

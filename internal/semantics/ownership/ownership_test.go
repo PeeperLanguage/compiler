@@ -15,6 +15,7 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
@@ -51,7 +52,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	typechecker.Check(ctx, module)
 	module.HIR = lower.GenerateHIR(ctx, module)
 	module.CFG = cfg.BuildModule(module.HIR)
-	Check(ctx, module)
+	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
 }
 
@@ -70,9 +71,10 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		t.Fatalf("function %q scope missing", name)
 	}
 	cfgFn := cfgForFunction(result.module, fn)
-	if cfgFn == nil || cfgFn.Cleanup == nil {
+	if cfgFn == nil {
 		t.Fatalf("function %q cleanup plan missing", name)
 	}
+	cleanup := cleanupPlanForFunction(t, result, fn)
 	sites, order := indexSites(result.module, cfgFn, fn.Body, scope)
 	analysis := &analyzer{
 		ctx:           result.ctx,
@@ -80,7 +82,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		cleanup:       cfgFn.Cleanup,
+		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
 		reportedJoin:  make(map[cfg.SiteID]bool),
@@ -113,13 +115,13 @@ func hasOwnershipCode(result *ownershipResult, code string) bool {
 	return false
 }
 
-func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDecl) *cfg.CleanupPlan {
+func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDecl) *ownershipresult.CleanupPlan {
 	t.Helper()
-	plan := cfgForFunction(result.module, fn)
-	if plan == nil || plan.Cleanup == nil {
+	plan := result.module.Ownership[ir.NodeID(fn.ID())]
+	if plan == nil {
 		t.Fatalf("cleanup plan for %q missing", fn.Name.Name)
 	}
-	return plan.Cleanup
+	return plan
 }
 
 func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []string {
@@ -220,7 +222,7 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.DiscardedValue[staleID] = struct{}{}
 	plan.ProjectionBase[staleID] = struct{}{}
 
-	Check(result.ctx, result.module)
+	result.module.Ownership = Check(result.ctx, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
 		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 {

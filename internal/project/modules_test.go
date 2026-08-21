@@ -7,6 +7,7 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/flow"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/table"
 )
 
@@ -16,9 +17,10 @@ func moduleWithArtifacts() *Module {
 		ModuleScope: table.New(nil),
 		Semantics:   NewSemanticInfo(),
 		HIR:         &hir.Module{},
-		CFG:         []*cfg.Graph{{Cleanup: &cfg.CleanupPlan{}}},
+		CFG:         []*cfg.Graph{{}},
 		CFGValid:    true,
 		Flow:        flow.Result{},
+		Ownership:   ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
 		MIR:         &mir.Module{},
 		LLVMIR:      "stale IR",
 	}
@@ -32,7 +34,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		hir       bool
 		cfg       bool
 		flow      bool
-		cleanup   bool
+		ownership bool
 		mir       bool
 		llvm      bool
 	}{
@@ -40,9 +42,9 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		{phase: PhaseTypechecked, scope: true, semantics: true},
 		{phase: PhaseCFG, scope: true, semantics: true, hir: true, cfg: true},
 		{phase: PhaseFlow, scope: true, semantics: true, hir: true, cfg: true, flow: true},
-		{phase: PhaseOwnership, scope: true, semantics: true, hir: true, cfg: true, flow: true, cleanup: true},
-		{phase: PhaseMIR, scope: true, semantics: true, hir: true, cfg: true, flow: true, cleanup: true, mir: true},
-		{phase: PhaseBackend, scope: true, semantics: true, hir: true, cfg: true, flow: true, cleanup: true, mir: true, llvm: true},
+		{phase: PhaseOwnership, scope: true, semantics: true, hir: true, cfg: true, flow: true, ownership: true},
+		{phase: PhaseMIR, scope: true, semantics: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
+		{phase: PhaseBackend, scope: true, semantics: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
@@ -50,6 +52,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.Semantics != nil) != test.semantics || (module.HIR != nil) != test.hir ||
 			(module.CFG != nil) != test.cfg || (module.Flow != nil) != test.flow ||
+			(module.Ownership != nil) != test.ownership ||
 			(module.MIR != nil) != test.mir ||
 			(module.LLVMIR != "") != test.llvm {
 			t.Fatalf("phase %v reset = %#v", test.phase, module)
@@ -57,22 +60,18 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		if module.CFGValid != test.cfg {
 			t.Fatalf("phase %v CFG validity = %t, want %t", test.phase, module.CFGValid, test.cfg)
 		}
-		cleanup := len(module.CFG) > 0 && module.CFG[0] != nil && module.CFG[0].Cleanup != nil
-		if cleanup != test.cleanup {
-			t.Fatalf("phase %v cleanup retained=%t, want %t", test.phase, cleanup, test.cleanup)
-		}
 	}
 }
 
-func TestModuleResetToPhaseDoesNotMutateSharedCFG(t *testing.T) {
-	original := moduleWithArtifacts()
-	cloned := *original
-	cloned.ResetToPhase(PhaseCFG)
-	if original.CFG[0].Cleanup == nil {
-		t.Fatal("reset clone cleared original CFG cleanup")
+func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
+	module := moduleWithArtifacts()
+	graph := module.CFG[0]
+	module.ResetToPhase(PhaseCFG)
+	if module.CFG[0] != graph {
+		t.Fatal("phase reset cloned immutable CFG")
 	}
-	if cloned.CFG[0].Cleanup != nil {
-		t.Fatal("reset clone retained CFG cleanup")
+	if module.Ownership != nil {
+		t.Fatal("phase reset retained ownership result")
 	}
 }
 

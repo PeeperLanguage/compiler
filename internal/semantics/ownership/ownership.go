@@ -10,6 +10,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/cfg"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -29,7 +30,7 @@ type analyzer struct {
 	graph            *cfg.Graph
 	sites            map[cfg.SiteID]*site
 	order            []cfg.SiteID
-	cleanup          *cfg.CleanupPlan
+	cleanup          *ownershipresult.CleanupPlan
 	function         *ast.FnDecl
 	functionScope    *table.Scope
 	reportedJoin     map[cfg.SiteID]bool
@@ -53,15 +54,16 @@ type state struct {
 // Check runs flow-sensitive ownership checks after typechecking has populated
 // expression types and scopes. Keeping this phase outside the checker prevents
 // value-flow rules from becoming ad hoc type rules.
-func Check(ctx *project.CompilerContext, module *project.Module) {
+func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult.Result {
+	result := make(ownershipresult.Result)
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil {
-		return
+		return result
 	}
 	for _, graph := range module.CFG {
-		if graph == nil {
+		if graph == nil || graph.Source == nil {
 			continue
 		}
-		graph.Cleanup = &cfg.CleanupPlan{
+		result[graph.Source.NodeID] = &ownershipresult.CleanupPlan{
 			AfterScope:     make(map[ir.NodeID][]symbols.SymbolID),
 			BeforeReturn:   make(map[ir.NodeID][]symbols.SymbolID),
 			BeforeAssign:   make(map[ir.NodeID]struct{}),
@@ -91,13 +93,17 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			scope, _ := sym.Scope.(*table.Scope)
-			checkFunction(ctx, module, node, scope, cfgForFunction(module, node))
+			graph := cfgForFunction(module, node)
+			if graph != nil && graph.Source != nil {
+				checkFunction(ctx, module, node, scope, graph, result[graph.Source.NodeID])
+			}
 		}
 	}
+	return result
 }
 
-func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope, cfgFn *cfg.Graph) {
-	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cfgFn.Cleanup == nil {
+func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope, cfgFn *cfg.Graph, cleanup *ownershipresult.CleanupPlan) {
+	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
 	sites, order := indexSites(module, cfgFn, fn.Body, scope)
@@ -107,7 +113,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		cleanup:       cfgFn.Cleanup,
+		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
 		reportedJoin:  make(map[cfg.SiteID]bool),
