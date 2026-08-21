@@ -99,6 +99,37 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRDoesNotAssignUninitializedBinding(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{{
+			Name:       "main",
+			ReturnType: mirTypes.i32,
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Binding{Name: "value", Type: mirTypes.i32},
+				&hir.Assign{
+					Target: &ir.Place{Root: &ir.Ident{Name: "value", Type: mirTypes.i32}, Type: mirTypes.i32},
+					Value:  &ir.IntLit{Value: "7", Type: mirTypes.i32},
+				},
+				&hir.Return{Value: &ir.Ident{Name: "value", Type: mirTypes.i32}},
+			}},
+		}},
+	}
+
+	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 1 {
+		t.Fatalf("instructions = %#v, want assignment only", instrs)
+	}
+	assign, ok := instrs[0].(*Assign)
+	if !ok || assign.Name != "value" {
+		t.Fatalf("instruction = %#v, want value assignment", instrs[0])
+	}
+}
+
 func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,

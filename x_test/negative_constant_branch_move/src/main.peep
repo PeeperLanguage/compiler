@@ -1,0 +1,12 @@
+struct Point {
+    value: i32
+}
+
+fn consume(_: Point) {}
+
+fn invalid(point: Point) {
+    if false {
+        let moved = point;
+        consume(point);
+    }
+}

@@ -105,6 +105,24 @@ func TestGenerateHIRPreservesSourceAndSymbolIdentity(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRRepresentsUninitializedBindingWithoutInvalidExpr(t *testing.T) {
+	out := generateTestHIR(t, "hir_uninitialized_binding_test"+peeper.SourceExt, "hir_uninitialized_binding_test", `fn main() -> i32 {
+	let mut value: i32;
+	value = 7;
+	return value;
+}`)
+	binding, ok := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
+	if !ok {
+		t.Fatalf("first statement = %#v, want binding", out.Funcs[0].Body.Stmts[0])
+	}
+	if binding.Value != nil {
+		t.Fatalf("uninitialized binding value = %#v, want nil", binding.Value)
+	}
+	if got := out.Types.Text(binding.Type); got != "i32" {
+		t.Fatalf("uninitialized binding type = %q, want i32", got)
+	}
+}
+
 func TestGenerateHIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 	const src = `fn main() {
 	let mut values = []i32{};

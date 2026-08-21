@@ -69,6 +69,7 @@ type Block struct {
 type Binding struct {
 	Name     string
 	Constant bool
+	Type     ir.TypeID
 	Value    ir.Expr
 	NodeID   NodeID
 	SymbolID symbols.SymbolID
@@ -217,8 +218,10 @@ func (s *Binding) appendText(b *strings.Builder, indent int) {
 		b.WriteString("let ")
 	}
 	b.WriteString(s.Name)
-	b.WriteString(" = ")
-	b.WriteString(s.Value.String())
+	if s.Value != nil {
+		b.WriteString(" = ")
+		b.WriteString(s.Value.String())
+	}
 	b.WriteString("\n")
 }
 

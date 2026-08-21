@@ -328,7 +328,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		if modhir == nil {
 			return false
 		}
-		modhir = fold.ApplyConstantFolding(modhir, diag)
+		modhir = fold.ApplyTypedExpressionFolding(modhir, diag)
 		module.HIR = modhir
 		module.Phase = project.PhaseHIR
 		p.ctx.Metrics.AddPhaseAdvance()

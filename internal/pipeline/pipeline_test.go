@@ -119,6 +119,26 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 	}
 }
 
+func TestPipelineChecksOwnershipInsideConstantFalseBranch(t *testing.T) {
+	entrySrc := `struct Point { value: i32 }
+
+fn consume(_: Point) {}
+
+fn invalid(point: Point) {
+	if false {
+		let moved = point;
+		consume(point);
+	}
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", entrySrc)
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrUseAfterMove {
+			return
+		}
+	}
+	t.Fatalf("expected use-after-move diagnostic from constant false branch, got:\n%s", diag.EmitAllToString())
+}
+
 func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")

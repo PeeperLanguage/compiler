@@ -115,8 +115,8 @@ func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
 			continue
 		}
 		for _, stmt := range source.Stmts {
-			if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 && binding.Value != nil {
-				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Value.TypeID(), Location: binding.Location}
+			if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 {
+				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Type, Location: binding.Location}
 			}
 		}
 		block := &Block{ID: source.ID, Instrs: make([]Instr, 0)}
@@ -229,6 +229,9 @@ func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 	}()
 	switch node := stmt.(type) {
 	case *hir.Binding:
+		if node.Value == nil {
+			return true
+		}
 		temporaryMark := len(l.temporaryDrops)
 		ref := l.lowerExpr(node.Value, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {

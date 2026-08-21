@@ -18,3 +18,11 @@ func TestSourceInfoOfStatement(t *testing.T) {
 		t.Fatalf("nil source info = %#v, want zero value", got)
 	}
 }
+
+func TestUninitializedBindingTextOmitsInitializer(t *testing.T) {
+	module := &Module{Name: "test", Types: ir.NewTypeTable(), Funcs: []*Function{{Name: "main", Body: &Block{Stmts: []Stmt{&Binding{Name: "value"}}}}}}
+	want := "; hir module test\nfn main() {\n  let value\n}\n"
+	if got := module.Text(); got != want {
+		t.Fatalf("module text = %q, want %q", got, want)
+	}
+}

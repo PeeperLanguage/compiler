@@ -10,7 +10,7 @@ import (
 	"maps"
 )
 
-func ApplyConstantFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
+func ApplyTypedExpressionFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
 	if mod == nil {
 		return nil
 	}
@@ -42,7 +42,6 @@ func foldBlock(types *ir.TypeTable, block *hir.Block, diag *diagnostics.Diagnost
 			if diag != nil {
 				diag.Add(problems.UnreachableCode(hir.LocOf(stmt)))
 			}
-			continue
 		}
 		folded := foldStmt(types, stmt, diag, env)
 		for _, item := range folded {
@@ -61,7 +60,7 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		return []hir.Stmt{foldBlock(types, node, diag, env)}
 	case *hir.Binding:
 		value := ir.FoldExpr(types, node.Value, env)
-		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Value: value, NodeID: node.NodeID, SymbolID: node.SymbolID, Location: node.Location}
+		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Type: node.Type, Value: value, NodeID: node.NodeID, SymbolID: node.SymbolID, Location: node.Location}
 		if node.Constant {
 			if folded, ok := ir.ConstValueOf(types, value); ok {
 				env[node.Name] = folded
@@ -94,18 +93,7 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		}
 		cond := ir.FoldExpr(types, node.Cond, env)
 		if value, ok := ir.ConstValueOf(types, cond); ok {
-			if value.Truthy() {
-				addConstantConditionWarning(diag, node.Location, true)
-				if thenBlock == nil {
-					return nil
-				}
-				return []hir.Stmt{thenBlock}
-			}
-			addConstantConditionWarning(diag, node.Location, false)
-			if elseStmt == nil {
-				return nil
-			}
-			return []hir.Stmt{elseStmt}
+			addConstantConditionWarning(diag, node.Location, value.Truthy())
 		}
 		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, NodeID: node.NodeID, Location: node.Location}}
 	case *hir.For:

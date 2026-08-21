@@ -3,12 +3,60 @@ package fold
 import (
 	"testing"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/symbols"
 )
 
-func TestApplyConstantFoldingPreservesReturnCleanup(t *testing.T) {
+func TestApplyTypedExpressionFoldingPreservesConstantBranches(t *testing.T) {
+	types := ir.NewTypeTable()
+	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
+	diag := diagnostics.NewDiagnosticBag()
+	mod := &hir.Module{Funcs: []*hir.Function{{
+		Name: "main",
+		Body: &hir.Block{Stmts: []hir.Stmt{&hir.If{
+			Cond:   &ir.BoolLit{Value: false, Type: boolType},
+			Then:   &hir.Block{NodeID: 11, Stmts: []hir.Stmt{&hir.Return{NodeID: 12}}},
+			Else:   &hir.Block{NodeID: 13, Stmts: []hir.Stmt{&hir.Return{NodeID: 14}}},
+			NodeID: 10,
+		}}},
+	}}, Types: types}
+
+	out := ApplyTypedExpressionFolding(mod, diag)
+	if len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("folded statements = %#v, want one if", out.Funcs[0].Body.Stmts)
+	}
+	branch, ok := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	if !ok || branch.NodeID != 10 || branch.Then == nil || branch.Then.NodeID != 11 || branch.Else == nil || hir.NodeIDOf(branch.Else) != 13 {
+		t.Fatalf("folded branch = %#v, want preserved true and false branches", out.Funcs[0].Body.Stmts[0])
+	}
+	if cond, ok := branch.Cond.(*ir.BoolLit); !ok || cond.Value {
+		t.Fatalf("folded condition = %#v, want false literal", branch.Cond)
+	}
+	if diag.WarningCount() != 1 || diag.Diagnostics()[0].Code != diagnostics.WarnConstantConditionFalse {
+		t.Fatalf("constant-condition diagnostics = %#v", diag.Diagnostics())
+	}
+}
+
+func TestApplyTypedExpressionFoldingPreservesStatementsAfterReturn(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	mod := &hir.Module{Funcs: []*hir.Function{{
+		Name: "main",
+		Body: &hir.Block{Stmts: []hir.Stmt{
+			&hir.Return{Value: &ir.IntLit{Value: "0", Type: i32}, NodeID: 20},
+			&hir.ExprStmt{Value: &ir.IntLit{Value: "1", Type: i32}, NodeID: 21},
+		}},
+	}}, Types: types}
+
+	out := ApplyTypedExpressionFolding(mod, diagnostics.NewDiagnosticBag())
+	if len(out.Funcs[0].Body.Stmts) != 2 || hir.NodeIDOf(out.Funcs[0].Body.Stmts[1]) != 21 {
+		t.Fatalf("folded statements = %#v, want source statement after return preserved", out.Funcs[0].Body.Stmts)
+	}
+}
+
+func TestApplyTypedExpressionFoldingPreservesReturnCleanup(t *testing.T) {
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
 	ownedI32 := types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32})
@@ -23,7 +71,7 @@ func TestApplyConstantFoldingPreservesReturnCleanup(t *testing.T) {
 		}}},
 	}}, Types: types}
 
-	out := ApplyConstantFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod, nil)
 	ret, ok := out.Funcs[0].Body.Stmts[0].(*hir.Return)
 	if !ok || len(ret.Cleanup) != 1 {
 		t.Fatalf("folded return cleanup = %#v, want one expression", ret)
@@ -33,7 +81,7 @@ func TestApplyConstantFoldingPreservesReturnCleanup(t *testing.T) {
 	}
 }
 
-func TestApplyConstantFoldingPreservesPlaceRootAndFoldsIndexes(t *testing.T) {
+func TestApplyTypedExpressionFoldingPreservesPlaceRootAndFoldsIndexes(t *testing.T) {
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
 	arrayI32 := types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "2"})
@@ -57,7 +105,7 @@ func TestApplyConstantFoldingPreservesPlaceRootAndFoldsIndexes(t *testing.T) {
 		}},
 	}}, Types: types}
 
-	out := ApplyConstantFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod, nil)
 	address := out.Funcs[0].Body.Stmts[2].(*hir.Binding).Value.(*ir.AddrOf)
 	root, ok := address.Place.Root.(*ir.Ident)
 	if !ok || root.Name != "value" {
@@ -70,7 +118,7 @@ func TestApplyConstantFoldingPreservesPlaceRootAndFoldsIndexes(t *testing.T) {
 	}
 }
 
-func TestApplyConstantFoldingPreservesHIRIdentity(t *testing.T) {
+func TestApplyTypedExpressionFoldingPreservesHIRIdentity(t *testing.T) {
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
 	mod := &hir.Module{Funcs: []*hir.Function{{
@@ -78,16 +126,16 @@ func TestApplyConstantFoldingPreservesHIRIdentity(t *testing.T) {
 		NodeID:   11,
 		SymbolID: symbols.SymbolID(12),
 		Body: &hir.Block{NodeID: 13, Stmts: []hir.Stmt{
-			&hir.Binding{Name: "value", Constant: true, Value: &ir.IntLit{Value: "7", Type: i32}, NodeID: 14, SymbolID: symbols.SymbolID(15)},
+			&hir.Binding{Name: "value", Constant: true, Type: i32, Value: &ir.IntLit{Value: "7", Type: i32}, NodeID: 14, SymbolID: symbols.SymbolID(15)},
 			&hir.ExprStmt{Value: &ir.IntLit{Value: "7", Type: i32}, NodeID: 16, ValueNodeID: 17},
 		}},
 	}}, Types: types}
 
-	out := ApplyConstantFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod, nil)
 	fn := out.Funcs[0]
 	binding := fn.Body.Stmts[0].(*hir.Binding)
 	discarded := fn.Body.Stmts[1].(*hir.ExprStmt)
-	if fn.NodeID != 11 || fn.SymbolID != 12 || fn.Body.NodeID != 13 || binding.NodeID != 14 || binding.SymbolID != 15 ||
+	if fn.NodeID != 11 || fn.SymbolID != 12 || fn.Body.NodeID != 13 || binding.NodeID != 14 || binding.SymbolID != 15 || binding.Type != i32 ||
 		discarded.NodeID != 16 || discarded.ValueNodeID != 17 {
 		t.Fatalf("folded identity = %#v / %#v, want all origin fields preserved", fn, binding)
 	}
