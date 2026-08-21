@@ -1,0 +1,7 @@
+name = "definite_init_return_branch"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 7

@@ -17,6 +17,7 @@ import (
 	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
+	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
@@ -248,6 +249,8 @@ func nextModulePhase(current project.ModulePhase) project.ModulePhase {
 	case project.PhaseHIR:
 		return project.PhaseCFG
 	case project.PhaseCFG:
+		return project.PhaseFlow
+	case project.PhaseFlow:
 		return project.PhaseOwnership
 	case project.PhaseOwnership:
 		return project.PhaseUsage
@@ -274,8 +277,10 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 		return project.PhaseTypechecked
 	case project.PhaseCFG:
 		return project.PhaseHIR
-	case project.PhaseOwnership:
+	case project.PhaseFlow:
 		return project.PhaseCFG
+	case project.PhaseOwnership:
+		return project.PhaseFlow
 	case project.PhaseUsage:
 		return project.PhaseOwnership
 	default:
@@ -349,6 +354,12 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	}
 	if !module.CFGValid {
 		return false
+	}
+	if module.Phase < project.PhaseFlow {
+		module.Flow = flow.Analyze(module.HIR, module.CFG, diag)
+		module.Phase = project.PhaseFlow
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
 	}
 	if module.Phase < project.PhaseOwnership {
 		ownership.Check(p.ctx, module)

@@ -6,6 +6,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/cfg"
+	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/table"
 )
 
@@ -17,6 +18,7 @@ func moduleWithArtifacts() *Module {
 		HIR:         &hir.Module{},
 		CFG:         []*cfg.Graph{{Cleanup: &cfg.CleanupPlan{}}},
 		CFGValid:    true,
+		Flow:        flow.Result{},
 		MIR:         &mir.Module{},
 		LLVMIR:      "stale IR",
 	}
@@ -29,6 +31,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		semantics bool
 		hir       bool
 		cfg       bool
+		flow      bool
 		cleanup   bool
 		mir       bool
 		llvm      bool
@@ -36,16 +39,18 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		{phase: PhaseParsed},
 		{phase: PhaseTypechecked, scope: true, semantics: true},
 		{phase: PhaseCFG, scope: true, semantics: true, hir: true, cfg: true},
-		{phase: PhaseOwnership, scope: true, semantics: true, hir: true, cfg: true, cleanup: true},
-		{phase: PhaseMIR, scope: true, semantics: true, hir: true, cfg: true, cleanup: true, mir: true},
-		{phase: PhaseBackend, scope: true, semantics: true, hir: true, cfg: true, cleanup: true, mir: true, llvm: true},
+		{phase: PhaseFlow, scope: true, semantics: true, hir: true, cfg: true, flow: true},
+		{phase: PhaseOwnership, scope: true, semantics: true, hir: true, cfg: true, flow: true, cleanup: true},
+		{phase: PhaseMIR, scope: true, semantics: true, hir: true, cfg: true, flow: true, cleanup: true, mir: true},
+		{phase: PhaseBackend, scope: true, semantics: true, hir: true, cfg: true, flow: true, cleanup: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
 		module.ResetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.Semantics != nil) != test.semantics || (module.HIR != nil) != test.hir ||
-			(module.CFG != nil) != test.cfg || (module.MIR != nil) != test.mir ||
+			(module.CFG != nil) != test.cfg || (module.Flow != nil) != test.flow ||
+			(module.MIR != nil) != test.mir ||
 			(module.LLVMIR != "") != test.llvm {
 			t.Fatalf("phase %v reset = %#v", test.phase, module)
 		}
@@ -74,7 +79,8 @@ func TestModuleResetToPhaseDoesNotMutateSharedCFG(t *testing.T) {
 func TestModulePhaseString(t *testing.T) {
 	for phase, want := range map[ModulePhase]string{
 		PhaseNone: "none", PhaseParsed: "parsed", PhaseTypechecked: "typechecked",
-		PhaseHIR: "HIR", PhaseMIR: "MIR", PhaseBackend: "backend",
+		PhaseHIR: "HIR", PhaseCFG: "CFG", PhaseFlow: "flow", PhaseOwnership: "ownership",
+		PhaseMIR: "MIR", PhaseBackend: "backend",
 	} {
 		if got := phase.String(); got != want {
 			t.Fatalf("phase %d string = %q, want %q", phase, got, want)

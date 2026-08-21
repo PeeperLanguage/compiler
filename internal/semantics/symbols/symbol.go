@@ -57,7 +57,6 @@ type Symbol struct {
 	Mutable      bool
 	IsReceiver   bool
 	Initializing bool
-	Initialized  bool
 	Used         bool
 	CompilerOp   CompilerOp
 	Location     *source.Location
@@ -103,15 +102,6 @@ func (s *Symbol) IsMutable() bool {
 	}
 	decl, ok := s.ASTNode.(*ast.LetDecl)
 	return ok && decl != nil && decl.IsMutable
-}
-
-func RequiresInitialization(kind Kind) bool {
-	switch kind {
-	case SymbolVar, SymbolConst:
-		return true
-	default:
-		return false
-	}
 }
 
 func IsPubName(name string) bool {

@@ -430,6 +430,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseTypechecked,
 		project.PhaseHIR,
 		project.PhaseCFG,
+		project.PhaseFlow,
 		project.PhaseOwnership,
 		project.PhaseUsage,
 		project.PhaseMIR,
@@ -482,6 +483,21 @@ func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 		}
 	}
 	t.Fatalf("missing-return diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
+}
+
+func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn choose(cond: bool) -> i32 {
+	let mut value: i32;
+	if cond {
+		value = 7;
+	} else {
+		return 3;
+	}
+	return value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
 }
 
 func TestRequireTerminalModulesReportsStoppedPhase(t *testing.T) {
