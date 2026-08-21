@@ -112,6 +112,12 @@ arithmetic for signed integers and logical for unsigned integers and `byte`.
 Shift count must be non-negative and smaller than operand width. Invalid
 constant counts are compile errors; invalid runtime counts trap before shift.
 
+Integer addition, subtraction, multiplication, division, and remainder use the
+same finite-width representation. Signed division truncates toward zero. The
+unrepresentable signed case `MIN / -1` wraps to `MIN`, and `MIN % -1` is zero.
+Integer division or remainder by zero traps at runtime. Floating-point division
+and remainder keep IEEE behavior.
+
 Expression precedence, highest to lowest, is:
 
 1. call, index, and selector

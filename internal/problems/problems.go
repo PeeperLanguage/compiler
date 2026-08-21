@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/project"
 	"compiler/internal/semantics/table"
 	"compiler/internal/source"
 )
@@ -18,16 +17,33 @@ func ArrayIndexOutOfBounds(index, length string, loc *source.Location) *diagnost
 	return d
 }
 
-func ReportRedeclaration(ctx *project.CompilerContext, scope *table.Scope, err string, name string, loc *source.Location) {
-	if ctx == nil || ctx.Diagnostics == nil {
+func UnreachableCode(loc *source.Location) *diagnostics.Diagnostic {
+	return diagnostics.NewWarning("unreachable code").
+		WithCode(diagnostics.WarnUnreachableCode).
+		WithPrimaryLabel(loc, "this code is unreachable").
+		WithHelp("remove this code or restructure control flow")
+}
+
+func Redeclaration(message string, current, previous *source.Location) *diagnostics.Diagnostic {
+	d := diagnostics.NewError(message).
+		WithCode(diagnostics.ErrRedeclaredSymbol).
+		WithPrimaryLabel(current, "redeclared here")
+	if previous != nil {
+		d.WithSecondaryLabel(previous, "first declared here")
+	}
+	return d
+}
+
+func ReportRedeclaration(diag *diagnostics.DiagnosticBag, scope *table.Scope, err string, name string, loc *source.Location) {
+	if diag == nil {
 		return
 	}
-	d := ctx.Diagnostics.AddError(diagnostics.ErrRedeclaredSymbol, err, loc, "redeclared here")
-	if scope == nil {
-		return
+	var previous *source.Location
+	if scope != nil {
+		oldSym, _ := scope.LookupLocal(name)
+		if oldSym != nil {
+			previous = oldSym.Location
+		}
 	}
-	oldSym, _ := scope.LookupLocal(name)
-	if oldSym != nil && oldSym.Location != nil {
-		d.WithSecondaryLabel(oldSym.Location, "first declared here")
-	}
+	diag.Add(Redeclaration(err, loc, previous))
 }

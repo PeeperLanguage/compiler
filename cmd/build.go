@@ -34,7 +34,7 @@ func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (co
 		))
 		return compilerContext, nil
 	}
-	program = compiler.CompileFile(compilerContext, path, "")
+	program = compiler.CompileFile(compilerContext, path, nil)
 	return compilerContext, program
 }
 

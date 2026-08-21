@@ -14,10 +14,13 @@ type fakeCache struct {
 }
 
 func (f fakeCache) GetLinesRange(_ string, startLine, endLine int) ([]string, bool) {
-	if !f.ok || startLine < 1 || endLine < startLine {
+	if !f.ok || startLine < 1 || endLine < startLine || startLine > len(f.lines) {
 		return nil, false
 	}
-	return f.lines, true
+	if endLine > len(f.lines) {
+		endLine = len(f.lines)
+	}
+	return f.lines[startLine-1 : endLine], true
 }
 
 func TestPositionAdvance(t *testing.T) {
@@ -50,6 +53,27 @@ func TestLocationGetTextAndRange(t *testing.T) {
 	}
 	if len(lines) != 1 || lines[0] != "second line" {
 		t.Fatalf("unexpected lines: %#v", lines)
+	}
+}
+
+func TestLocationGetTextUsesRuneColumns(t *testing.T) {
+	cache := fakeCache{ok: true, lines: []string{"🙂abc", "𝄞def"}}
+	tests := []struct {
+		name       string
+		start, end Position
+		want       string
+	}{
+		{name: "after emoji", start: Position{Line: 1, Column: 2}, end: Position{Line: 1, Column: 5}, want: "abc"},
+		{name: "supplementary rune", start: Position{Line: 2, Column: 1}, end: Position{Line: 2, Column: 2}, want: "𝄞"},
+		{name: "multiline", start: Position{Line: 1, Column: 2}, end: Position{Line: 2, Column: 3}, want: "abc\n𝄞d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			location := NewLocation("ignored", tt.start, tt.end)
+			if got := location.GetText(cache); got != tt.want {
+				t.Fatalf("GetText = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

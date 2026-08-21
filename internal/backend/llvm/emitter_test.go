@@ -370,6 +370,83 @@ func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRGuardsIntegerDivisionAndRemainder(t *testing.T) {
+	tests := []struct {
+		name       string
+		op         string
+		typeID     ir.TypeID
+		operation  string
+		overflow   string
+		unexpected string
+	}{
+		{name: "signed division", op: "/", typeID: llvmTypes.i8, operation: "sdiv", overflow: "-128"},
+		{name: "signed remainder", op: "%", typeID: llvmTypes.i8, operation: "srem", overflow: "0"},
+		{name: "unsigned division", op: "/", typeID: llvmTypes.u8, operation: "udiv", unexpected: "icmp eq i8 %right, -1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &mir.RefName{Name: "result", Type: tt.typeID}
+			mod := &mir.Module{
+				Name: "test", Types: llvmTypes.table,
+				Funcs: []*mir.Function{{
+					Name:       "apply",
+					Params:     []ir.Param{{Name: "left", Type: tt.typeID}, {Name: "right", Type: tt.typeID}},
+					ReturnType: tt.typeID,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+							Op: tt.op, Left: &mir.RefName{Name: "left", Type: tt.typeID}, Right: &mir.RefName{Name: "right", Type: tt.typeID}, Type: tt.typeID,
+						}}},
+						Term: &mir.Ret{Value: result},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+			zeroGuard := strings.Index(out, "icmp eq i8 %right, 0")
+			trap := strings.Index(out, "call void @llvm.trap()")
+			operation := strings.Index(out, " = "+tt.operation+" i8 %left, %right")
+			if zeroGuard < 0 || trap < zeroGuard || operation < trap {
+				t.Fatalf("zero-divisor guard must dominate %s, got:\n%s", tt.operation, out)
+			}
+			if tt.overflow != "" {
+				leftGuard := strings.Index(out, "icmp eq i8 %left, -128")
+				rightGuard := strings.Index(out, "icmp eq i8 %right, -1")
+				merge := strings.Index(out, " = phi i8 [ "+tt.overflow+", %")
+				if leftGuard < trap || rightGuard < leftGuard || operation < rightGuard || merge < operation {
+					t.Fatalf("signed overflow guard must bypass %s and merge %s, got:\n%s", tt.operation, tt.overflow, out)
+				}
+			}
+			if tt.unexpected != "" && strings.Contains(out, tt.unexpected) {
+				t.Fatalf("unsigned division emitted signed overflow guard, got:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRLeavesFloatDivisionUnguarded(t *testing.T) {
+	f32 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeFloat, Bits: 32})
+	result := &mir.RefName{Name: "result", Type: f32}
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "apply",
+			Params:     []ir.Param{{Name: "left", Type: f32}, {Name: "right", Type: f32}},
+			ReturnType: f32,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+					Op: "/", Left: &mir.RefName{Name: "left", Type: f32}, Right: &mir.RefName{Name: "right", Type: f32}, Type: f32,
+				}}},
+				Term: &mir.Ret{Value: result},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if !strings.Contains(out, " = fdiv float %left, %right") || strings.Contains(out, "call void @llvm.trap()") {
+		t.Fatalf("float division must retain direct IEEE lowering, got:\n%s", out)
+	}
+}
+
 func TestGenerateLLVMIRGuardsMixedShiftCountBeforeCast(t *testing.T) {
 	u16 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 16})
 	result := &mir.RefName{Name: "result", Type: llvmTypes.u8}

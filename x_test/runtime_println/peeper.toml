@@ -1,2 +1,6 @@
 name = "runtime_println"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

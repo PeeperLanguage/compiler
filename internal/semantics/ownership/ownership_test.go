@@ -10,7 +10,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
-	"compiler/internal/ir/hir_lower"
+	"compiler/internal/ir/hir/lower"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/cfg"
@@ -49,7 +49,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.HIR = hir_lower.GenerateHIR(ctx, module)
+	module.HIR = lower.GenerateHIR(ctx, module)
 	module.CFG = cfg.BuildModule(module.HIR)
 	Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}

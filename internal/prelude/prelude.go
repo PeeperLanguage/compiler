@@ -34,12 +34,13 @@ func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*pro
 		return nil, false
 	}
 	return &project.Module{
-		Key:        "core:prelude/global",
-		ImportPath: "prelude/global",
-		FilePath:   preludePath,
-		Namespace:  "core",
-		Origin:     project.ModuleOriginStdlib,
-		Content:    content,
+		Key:             "core:prelude/global",
+		ImportPath:      "prelude/global",
+		FilePath:        preludePath,
+		Namespace:       "core",
+		Origin:          project.ModuleOriginStdlib,
+		Content:         content,
+		ContentProvided: true,
 	}, true
 }
 

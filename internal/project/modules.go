@@ -103,6 +103,9 @@ type Module struct {
 	Dependency string
 	// Loaded source text.
 	Content string
+	// ContentProvided distinguishes an explicit empty source from a module that
+	// still needs to load its source from FilePath.
+	ContentProvided bool
 	// Reserved for incremental builds.
 	ContentHash string
 	// Stable syntax-derived import surface for invalidation.
@@ -251,11 +254,12 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	}
 	origin, namespace := ctx.ModuleOriginForFile(filePath)
 	module := &Module{
-		Key:       ModuleKeyFor(origin, filePath),
-		FilePath:  filePath,
-		Namespace: namespace,
-		Origin:    origin,
-		Content:   content,
+		Key:             ModuleKeyFor(origin, filePath),
+		FilePath:        filePath,
+		Namespace:       namespace,
+		Origin:          origin,
+		Content:         content,
+		ContentProvided: true,
 	}
 	if importPath, err := ctx.ImportPathForFile(origin, namespace, filePath); err == nil {
 		module.ImportPath = importPath

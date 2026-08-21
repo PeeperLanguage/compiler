@@ -1,4 +1,4 @@
-package hir_lower
+package lower
 
 import (
 	"testing"

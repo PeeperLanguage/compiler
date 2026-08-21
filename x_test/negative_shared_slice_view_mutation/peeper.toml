@@ -1,2 +1,7 @@
 name = "negative_shared_slice_view_mutation"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

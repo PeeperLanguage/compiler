@@ -1,4 +1,4 @@
-fn First(values: &[]i32, view: &[]i32 = values[..]) -> i32 {
+fn First(values: &[]i32, view: &[..]i32 = values[..]) -> i32 {
     return view[0];
 }
 

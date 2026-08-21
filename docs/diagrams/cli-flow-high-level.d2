@@ -17,7 +17,7 @@ handler -> lsp: "lspCommand"
 build: {
   resolve: "resolveBuildTarget"
   compile: "compileEntry"
-  driver: "driver.ParseFileWithOverlay"
+  driver: "compiler.ParseFileWithOverlay"
   pipeline: "pipeline.Run"
   artifacts: "saveIRs"
   link: "buildExecutable"
@@ -31,8 +31,8 @@ build: {
 check: {
   discover: "project.DiscoverSourceFiles"
   owner: "manifest.ResolveSourceFileProject"
-  context: "driver.NewContext"
-  roots: "driver.ParseFileWithOverlay"
+  context: "compiler.NewContext"
+  roots: "compiler.ParseFileWithOverlay"
 
   discover -> owner -> context -> roots -> pipeline
 }

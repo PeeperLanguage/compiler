@@ -1,2 +1,7 @@
 name = "negative_slice_view_comparison"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

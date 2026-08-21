@@ -27,7 +27,7 @@ const (
 type hoverSubject struct {
 	Kind           hoverSubjectKind
 	Node           ast.Node
-	Range          Range
+	Location       *source.Location
 	Symbol         *symbols.Symbol
 	ExprType       typeinfo.Type
 	ResolvedType   typeinfo.Type
@@ -37,24 +37,9 @@ type hoverSubject struct {
 	MethodSymbols  []*symbols.Symbol
 }
 
-func hoverRange(node ast.Node) Range {
-	loc := ast.LocOf(node)
-	return locationRange(loc)
-}
-
-func locationRange(loc *source.Location) Range {
-	if loc == nil || loc.Start == nil || loc.End == nil {
-		return Range{}
-	}
-	return Range{
-		Start: Position{Line: loc.Start.Line - 1, Character: loc.Start.Column - 1},
-		End:   Position{Line: loc.End.Line - 1, Character: loc.End.Column - 1},
-	}
-}
-
-func (s *ServerState) resolveHoverSubject(filePath string, line, col int) *hoverSubject {
+func (s *ServerState) resolveHoverSubject(filePath string, position source.Position) *hoverSubject {
 	ctx, mod := s.currentCompiledModule(filePath)
-	cc := buildCursorContext(ctx, mod, line, col)
+	cc := buildCursorContext(ctx, mod, position)
 	if cc == nil {
 		return nil
 	}
@@ -100,7 +85,7 @@ func attributeHoverSubject(node ast.Node, cc *cursorContext) *hoverSubject {
 		return &hoverSubject{
 			Kind:      hoverSubjectAttribute,
 			Node:      node,
-			Range:     locationRange(attr.Location),
+			Location:  attr.Location,
 			Attribute: &hoverAttr,
 		}
 	}
@@ -122,7 +107,7 @@ func resolveImportHoverSubject(cc *cursorContext) *hoverSubject {
 		return &hoverSubject{
 			Kind:           hoverSubjectImport,
 			Node:           ident,
-			Range:          hoverRange(ident),
+			Location:       ast.LocOf(ident),
 			ResolvedImport: &hoverImp,
 		}
 	}
@@ -142,7 +127,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	return &hoverSubject{
 		Kind:          hoverSubjectType,
 		Node:          cc.node,
-		Range:         hoverRange(cc.node),
+		Location:      ast.LocOf(cc.node),
 		ResolvedType:  resolved,
 		MethodSymbols: lookupMethodSet(cc.ctx, resolved, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
 	}
@@ -301,10 +286,10 @@ func resolveDeclHoverSubject(cc *cursorContext) *hoverSubject {
 
 func declHoverSubject(cc *cursorContext, decl ast.Node, name *ast.Ident) *hoverSubject {
 	subject := &hoverSubject{
-		Kind:  hoverSubjectDecl,
-		Node:  decl,
-		Decl:  decl,
-		Range: hoverRange(decl),
+		Kind:     hoverSubjectDecl,
+		Node:     decl,
+		Decl:     decl,
+		Location: ast.LocOf(decl),
 	}
 	if name != nil {
 		subject.Symbol = resolveIdentSymbol(name, cc.parents, cc.module, cc.ctx)
@@ -329,11 +314,11 @@ func resolveSelectorHoverSubject(cc *cursorContext) *hoverSubject {
 	}
 	if sym := resolveSelectorMemberSymbol(sel, ident, cc.parents, cc.module, cc.ctx); sym != nil {
 		return &hoverSubject{
-			Kind:   hoverSubjectSymbol,
-			Node:   ident,
-			Decl:   documentedDeclAncestor(ident, cc.parents),
-			Range:  hoverRange(ident),
-			Symbol: sym,
+			Kind:     hoverSubjectSymbol,
+			Node:     ident,
+			Decl:     documentedDeclAncestor(ident, cc.parents),
+			Location: ast.LocOf(ident),
+			Symbol:   sym,
 		}
 	}
 	if subject := resolveInterfaceSelectorMethodHoverSubject(cc, sel, ident); subject != nil {
@@ -343,7 +328,7 @@ func resolveSelectorHoverSubject(cc *cursorContext) *hoverSubject {
 		return &hoverSubject{
 			Kind:     hoverSubjectExpr,
 			Node:     ident,
-			Range:    hoverRange(ident),
+			Location: ast.LocOf(ident),
 			ExprType: exprType,
 		}
 	}
@@ -365,10 +350,10 @@ func resolveInterfaceSelectorMethodHoverSubject(cc *cursorContext, sel *ast.Sele
 			continue
 		}
 		return &hoverSubject{
-			Kind:   hoverSubjectSymbol,
-			Node:   ident,
-			Range:  hoverRange(ident),
-			Symbol: interfaceMethodSymbol(ident, method),
+			Kind:     hoverSubjectSymbol,
+			Node:     ident,
+			Location: ast.LocOf(ident),
+			Symbol:   interfaceMethodSymbol(ident, method),
 		}
 	}
 	return nil
@@ -390,11 +375,11 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 		return nil
 	}
 	subject := &hoverSubject{
-		Kind:   hoverSubjectSymbol,
-		Node:   ident,
-		Decl:   documentedDeclAncestor(ident, cc.parents),
-		Range:  hoverRange(ident),
-		Symbol: sym,
+		Kind:     hoverSubjectSymbol,
+		Node:     ident,
+		Decl:     documentedDeclAncestor(ident, cc.parents),
+		Location: ast.LocOf(ident),
+		Symbol:   sym,
 	}
 	if sym.Kind == symbols.SymbolType {
 		if typ, ok := symbols.GetSymbolType(sym); ok {
@@ -514,7 +499,7 @@ func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
 	return &hoverSubject{
 		Kind:     hoverSubjectExpr,
 		Node:     cc.node,
-		Range:    hoverRange(cc.node),
+		Location: ast.LocOf(cc.node),
 		ExprType: exprType,
 	}
 }
@@ -721,7 +706,15 @@ func hoverDocComment(subject *hoverSubject) string {
 
 func (s *ServerState) HandleHover(params HoverParams) (*Hover, error) {
 	path := uriToPath(string(params.TextDocument.URI))
-	subject := s.resolveHoverSubject(path, params.Position.Line+1, params.Position.Character+1)
+	text, err := s.completionSource(path)
+	if err != nil {
+		return nil, nil
+	}
+	position, ok := sourcePositionAt(text, params.Position)
+	if !ok {
+		return nil, nil
+	}
+	subject := s.resolveHoverSubject(path, position)
 	if subject == nil {
 		return nil, nil
 	}
@@ -730,11 +723,15 @@ func (s *ServerState) HandleHover(params HoverParams) (*Hover, error) {
 		return nil, nil
 	}
 
+	hoverRange, ok := rangeAtLocation(text, subject.Location)
+	if !ok {
+		return nil, nil
+	}
 	return &Hover{
 		Contents: MarkupContent{
 			Kind:  "markdown",
 			Value: value,
 		},
-		Range: &subject.Range,
+		Range: &hoverRange,
 	}, nil
 }

@@ -1,2 +1,7 @@
 name = "negative_default_parameter_move"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

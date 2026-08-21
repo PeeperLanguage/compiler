@@ -13,8 +13,8 @@ entry: {
 
 compile: {
   compileEntry: "compileEntry"
-  newContext: "driver.NewContext"
-  parse: "driver.ParseFileWithOverlay"
+  newContext: "compiler.NewContext"
+  parse: "compiler.ParseFileWithOverlay"
   pipeline: "pipeline.Run"
   phases: "AST -> semantics -> HIR -> CFG -> ownership -> MIR -> LLVM [conceptual]"
 
@@ -53,8 +53,8 @@ check: {
   args: "parseCommandArgs"
   discover: "project.DiscoverSourceFiles"
   owner: "manifest.ResolveSourceFileProject"
-  context: "driver.NewContext"
-  roots: "driver.ParseFileWithOverlay"
+  context: "compiler.NewContext"
+  roots: "compiler.ParseFileWithOverlay"
   diagnostics: "emitAndCheckDiagnostics"
 
   command -> args -> discover -> owner -> context -> roots -> compile.pipeline -> diagnostics

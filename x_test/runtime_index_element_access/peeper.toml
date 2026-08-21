@@ -1,2 +1,6 @@
 name = "runtime_index_element_access"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

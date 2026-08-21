@@ -1,2 +1,6 @@
 name = "runtime_fixed_array_index_oob"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "failure"

@@ -1,2 +1,6 @@
 name = "runtime_dynamic_array_reference_slice"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

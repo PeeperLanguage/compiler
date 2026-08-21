@@ -13,4 +13,4 @@ struct View {
 type MaybeInt = ?i32;
 type Name = string;
 
-const Fallback: ?i32 = none;
+const Fallback: i32 = 0;

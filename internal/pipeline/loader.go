@@ -91,13 +91,14 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		}
 		return
 	}
-	if module.Content == "" && module.FilePath != "" {
+	if !module.ContentProvided && module.Content == "" && module.FilePath != "" {
 		content, err := os.ReadFile(module.FilePath)
 		if err != nil {
 			l.addImportError(nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
 			return
 		}
 		module.Content = string(content)
+		module.ContentProvided = true
 	}
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)

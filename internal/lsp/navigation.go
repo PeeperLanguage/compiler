@@ -26,7 +26,12 @@ func symLocationsMatch(l1, l2 *source.Location) bool {
 func (s *ServerState) HandleDefinition(params DefinitionParams) ([]Location, error) {
 	path := uriToPath(string(params.TextDocument.URI))
 	ctx, mod := s.currentCompiledModule(path)
-	cc := buildCursorContext(ctx, mod, params.Position.Line+1, params.Position.Character+1)
+	text, ok := sourceTextForFile(ctx, path)
+	position, positionOK := sourcePositionAt(text, params.Position)
+	if !ok || !positionOK {
+		return nil, nil
+	}
+	cc := buildCursorContext(ctx, mod, position)
 	if cc == nil {
 		return nil, nil
 	}
@@ -39,13 +44,15 @@ func (s *ServerState) HandleDefinition(params DefinitionParams) ([]Location, err
 		return nil, nil
 	}
 
+	targetText, ok := sourceTextForFile(ctx, *sym.Location.Filename)
+	targetRange, rangeOK := rangeAtLocation(targetText, sym.Location)
+	if !ok || !rangeOK {
+		return nil, nil
+	}
 	return []Location{
 		{
-			URI: DocumentURI(pathToURI(*sym.Location.Filename)),
-			Range: Range{
-				Start: Position{Line: sym.Location.Start.Line - 1, Character: sym.Location.Start.Column - 1},
-				End:   Position{Line: sym.Location.End.Line - 1, Character: sym.Location.End.Column - 1},
-			},
+			URI:   DocumentURI(pathToURI(*sym.Location.Filename)),
+			Range: targetRange,
 		},
 	}, nil
 }
@@ -53,7 +60,12 @@ func (s *ServerState) HandleDefinition(params DefinitionParams) ([]Location, err
 func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) {
 	path := uriToPath(string(params.TextDocument.URI))
 	ctx, mod := s.currentCompiledModule(path)
-	cc := buildCursorContext(ctx, mod, params.Position.Line+1, params.Position.Character+1)
+	text, ok := sourceTextForFile(ctx, path)
+	position, positionOK := sourcePositionAt(text, params.Position)
+	if !ok || !positionOK {
+		return nil, nil
+	}
+	cc := buildCursorContext(ctx, mod, position)
 	if cc == nil {
 		return nil, nil
 	}
@@ -83,6 +95,7 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 		if mod != cc.module {
 			parents = make(map[ast.NodeID]ast.Node)
 		}
+		moduleText, hasModuleText := sourceTextForFile(s.LastCtx, mod.FilePath)
 		walkModuleAST(mod, func(n ast.Node, parent ast.Node) bool {
 			if parent != nil {
 				parents[n.ID()] = parent
@@ -104,12 +117,9 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 				return true
 			}
 			uri := DocumentURI(pathToURI(mod.FilePath))
-			if loc != nil && loc.Start != nil && loc.End != nil {
+			if editRange, ok := rangeAtLocation(moduleText, loc); hasModuleText && ok {
 				changes[uri] = append(changes[uri], TextEdit{
-					Range: Range{
-						Start: Position{Line: loc.Start.Line - 1, Character: loc.Start.Column - 1},
-						End:   Position{Line: loc.End.Line - 1, Character: loc.End.Column - 1},
-					},
+					Range:   editRange,
 					NewText: params.NewName,
 				})
 			}

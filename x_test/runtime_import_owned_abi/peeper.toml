@@ -1,3 +1,7 @@
 name = "runtime_import_owned_abi"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "run"
+outcome = "success"

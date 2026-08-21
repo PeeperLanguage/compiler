@@ -1,2 +1,6 @@
 name = "ownership_flow_basic"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

@@ -83,13 +83,8 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 			}
 		}
 		if previous != nil {
-			d := diagnostics.NewError("method `"+fn.Name.Name+"` already declared for `"+targetKey+"`").
-				WithCode(diagnostics.ErrRedeclaredSymbol).
-				WithPrimaryLabel(fn.Name.Location, "redeclared here")
-			if previous.Location != nil {
-				d.WithSecondaryLabel(previous.Location, "first declared here")
-			}
-			c.ctx.Diagnostics.Add(d)
+			message := "method `" + fn.Name.Name + "` already declared for `" + targetKey + "`"
+			c.ctx.Diagnostics.Add(problems.Redeclaration(message, fn.Name.Location, previous.Location))
 			return
 		}
 		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
@@ -101,7 +96,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
 	sym.Scope = table.New(c.module.ModuleScope)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
+		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return
 	}
 }
@@ -120,7 +115,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 		// Underlying is filled by binder.
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
+		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
 }
@@ -132,7 +127,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	sym.Type = &typeinfo.UnknownType{} // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
-		problems.ReportRedeclaration(c.ctx, c.module.ModuleScope, err.Error(), name.Name, name.Location)
+		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 	}
 }
 

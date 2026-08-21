@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,28 @@ func TestParseCommandArgsRunDebug(t *testing.T) {
 	}
 	if len(opts.positional) != 1 || opts.positional[0] != "demo"+peeper.SourceExt {
 		t.Fatalf("positional = %#v", opts.positional)
+	}
+}
+
+func TestRunCommandReturnsProgramStatusAfterCleanup(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "exit"+peeper.SourceExt)
+	if err := os.WriteFile(sourcePath, []byte("fn main() -> i32 { return 10; }\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+	err := runCommand([]string{sourcePath})
+	var status programExitStatus
+	if !errors.As(err, &status) || status != 10 {
+		t.Fatalf("runCommand error = %v, want program status 10", err)
+	}
+	entries, readErr := os.ReadDir(tempDir)
+	if readErr != nil {
+		t.Fatalf("read temp directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("runCommand leaked temporary files: %v", entries)
 	}
 }
 

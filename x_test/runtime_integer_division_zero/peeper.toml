@@ -1,0 +1,6 @@
+name = "runtime_integer_division_zero"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "failure"

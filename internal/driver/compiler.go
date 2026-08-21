@@ -21,8 +21,9 @@ func NewCompilerContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *pr
 	return ctx
 }
 
-// CompileFile compiles the entry file using in-memory content instead of reading from disk if content is provided.
-func CompileFile(ctx *project.CompilerContext, path string, content string) *project.Module {
+// CompileFile compiles the entry file from overlay when non-nil, otherwise it
+// reads the source from disk.
+func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *project.Module {
 	if ctx == nil {
 		return nil
 	}
@@ -36,13 +37,16 @@ func CompileFile(ctx *project.CompilerContext, path string, content string) *pro
 		diag.Add(diagnostics.NewError("resolve input path: " + err.Error()))
 		return nil
 	}
-	if content == "" {
+	content := ""
+	if overlay == nil {
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			diag.Add(diagnostics.NewError("read input file: " + err.Error()))
 			return nil
 		}
 		content = string(data)
+	} else {
+		content = *overlay
 	}
 	if module, ok := prelude.ModuleForFile(ctx, absPath, content); ok {
 		module.IsEntry = true

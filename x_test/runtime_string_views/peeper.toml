@@ -1,2 +1,6 @@
 name = "runtime_string_views"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

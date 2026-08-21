@@ -1,2 +1,6 @@
 [project]
 name = "owned_pointer_carrier"
+
+[test]
+mode = "check"
+outcome = "success"

@@ -1,3 +1,9 @@
 name = "negative_target_array_length"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "failure"
+compiler_args = ["-target-os", "linux", "-target-arch", "386"]
+stderr_contains = ["Compilation failed"]

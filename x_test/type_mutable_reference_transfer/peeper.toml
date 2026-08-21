@@ -1,0 +1,6 @@
+name = "type_mutable_reference_transfer"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

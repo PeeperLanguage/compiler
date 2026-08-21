@@ -1,2 +1,7 @@
 name = "negative_interface_method_default"
 build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

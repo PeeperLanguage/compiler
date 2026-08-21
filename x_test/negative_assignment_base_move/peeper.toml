@@ -1,2 +1,7 @@
 name = "negative_assignment_base_move"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

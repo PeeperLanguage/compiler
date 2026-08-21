@@ -1,2 +1,6 @@
 name = "type_reference_callbacks"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

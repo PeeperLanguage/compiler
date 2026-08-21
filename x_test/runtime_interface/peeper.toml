@@ -1,2 +1,6 @@
 name = "runtime_interface"
 build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

@@ -27,4 +27,7 @@ graphify-out
 clean.md
 .*/
 !.gitignore
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
 x_test/owned_pointer_carrier/main

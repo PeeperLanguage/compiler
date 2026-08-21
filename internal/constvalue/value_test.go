@@ -168,6 +168,42 @@ func TestFoldIntegerDivisionUsesTruncTowardZero(t *testing.T) {
 	}
 }
 
+func TestFoldSignedIntegerDivisionOverflowUsesFiniteWidth(t *testing.T) {
+	tests := []struct {
+		typeID string
+		min    string
+	}{
+		{typeID: "i8", min: "-128"},
+		{typeID: "i16", min: "-32768"},
+		{typeID: "i32", min: "-2147483648"},
+		{typeID: "i64", min: "-9223372036854775808"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.typeID, func(t *testing.T) {
+			for _, op := range []string{"/", "%"} {
+				got, ok := FoldBinary(op, mustIntConst(t, tt.min, tt.typeID), mustIntConst(t, "-1", tt.typeID))
+				value, valueOK := got.(*IntConst)
+				want := tt.min
+				if op == "%" {
+					want = "0"
+				}
+				if !ok || !valueOK || value.Text() != want || value.TypeText() != tt.typeID {
+					t.Fatalf("FoldBinary(%s %s -1) = %#v, want %s %s", tt.min, op, got, want, tt.typeID)
+				}
+			}
+		})
+	}
+}
+
+func TestFoldIntegerDivisionByZeroIsNotConstant(t *testing.T) {
+	for _, op := range []string{"/", "%"} {
+		got, ok := FoldBinary(op, mustIntConst(t, "1", "i32"), mustIntConst(t, "0", "i32"))
+		if ok || got != nil {
+			t.Fatalf("FoldBinary(1 %s 0) = %#v, want no constant", op, got)
+		}
+	}
+}
+
 func TestFoldFloatBinaryRoundsF32(t *testing.T) {
 	got, ok := FoldBinary("+", mustFloatConst(t, "16777216", "f32"), mustFloatConst(t, "1", "f32"))
 	value, valueOK := got.(*FloatConst)

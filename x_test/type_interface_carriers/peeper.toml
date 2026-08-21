@@ -1,3 +1,7 @@
 name = "type_interface_carriers"
 build = "program"
 entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "success"

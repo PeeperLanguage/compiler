@@ -1,2 +1,7 @@
 name = "negative_borrow_conflict"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

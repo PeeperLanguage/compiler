@@ -1,2 +1,6 @@
 name = "type_reference_return_contracts"
 build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"
