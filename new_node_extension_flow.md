@@ -99,15 +99,22 @@ Important note:
 flowchart LR
     A[Lexer] --> B[Parser AST]
     B --> C[Collector]
-    C --> D[Resolver]
-    D --> E[Typechecker]
-    E --> F[HIR Lowering]
-    F --> G[CFG Analysis]
-    F --> H[MIR Lowering]
-    H --> I[LLVM Backend]
+    C --> D[Binder]
+    D --> E[Resolver]
+    E --> F[Semantic Const Prepass]
+    F --> G[Typechecker and Final Const Values]
+    G --> H[CFG Build and Checks]
+    H --> I[Definite Initialization]
+    I --> J[Ownership]
+    J --> K{Project Clean?}
+    K -- No --> L[Stop Before Lowering]
+    K -- Yes --> M[Usage Audit]
+    M --> N[HIR Lowering and Typed Folding]
+    N --> O[MIR Lowering]
+    O --> P[LLVM Backend]
 
-    B --> J[LSP AST Traversal]
-    E --> J
+    B --> Q[LSP AST Traversal]
+    G --> Q
 ```
 
 This phase chain is correct and should stay explicit.

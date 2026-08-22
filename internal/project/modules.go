@@ -43,8 +43,11 @@ const (
 	PhaseConstEval
 	// PhaseTypechecked includes final module const values and semantic API identity.
 	PhaseTypechecked
+	// PhaseCFG includes finalized topology and CFG diagnostics.
 	PhaseCFG
+	// PhaseDefiniteInit records completion of diagnostic-only initialization checks.
 	PhaseDefiniteInit
+	// PhaseOwnership includes the ownership cleanup result.
 	PhaseOwnership
 	PhaseHIR
 	PhaseMIR
@@ -196,7 +199,8 @@ func (m *Module) ResetSemanticData() {
 	m.Semantics = NewSemanticInfo()
 }
 
-// ResetToPhase invalidates every artifact produced after phase.
+// ResetToPhase retains artifacts through phase and invalidates downstream data.
+// It does not replay diagnostics produced by retained analysis phases.
 func (m *Module) ResetToPhase(phase ModulePhase) {
 	if m == nil {
 		return
