@@ -12,9 +12,9 @@ type Ident struct {
 	Location *source.Location
 }
 
-func (*Ident) exprNode()                  {}
-func (*Ident) inspectChildren(func(Node)) {}
-func (e *Ident) loc() *source.Location    { return e.Location }
+func (*Ident) exprNode()               {}
+func (*Ident) forEachChild(func(Node)) {}
+func (e *Ident) loc() *source.Location { return e.Location }
 
 func (e *Ident) exprText() string {
 	if e == nil {
@@ -43,7 +43,7 @@ type ScopeResolution struct {
 
 func (*ScopeResolution) exprNode() {}
 func (*ScopeResolution) typeNode() {}
-func (e *ScopeResolution) inspectChildren(visit func(Node)) {
+func (e *ScopeResolution) forEachChild(visit func(Node)) {
 	visit(e.Module)
 	visit(e.Name)
 }
@@ -91,7 +91,7 @@ type SelectorExpr struct {
 }
 
 func (*SelectorExpr) exprNode() {}
-func (e *SelectorExpr) inspectChildren(visit func(Node)) {
+func (e *SelectorExpr) forEachChild(visit func(Node)) {
 	visit(e.Expr)
 	visit(e.Name)
 }
@@ -119,7 +119,7 @@ type IndexExpr struct {
 }
 
 func (*IndexExpr) exprNode() {}
-func (e *IndexExpr) inspectChildren(visit func(Node)) {
+func (e *IndexExpr) forEachChild(visit func(Node)) {
 	visit(e.Expr)
 	visit(e.Index)
 }
@@ -148,7 +148,7 @@ type RangeExpr struct {
 }
 
 func (*RangeExpr) exprNode() {}
-func (e *RangeExpr) inspectChildren(visit func(Node)) {
+func (e *RangeExpr) forEachChild(visit func(Node)) {
 	visit(e.Start)
 	visit(e.End)
 }
@@ -193,7 +193,7 @@ type StructLit struct {
 }
 
 func (*StructLit) exprNode() {}
-func (e *StructLit) inspectChildren(visit func(Node)) {
+func (e *StructLit) forEachChild(visit func(Node)) {
 	visit(e.Type)
 	for _, field := range e.Fields {
 		visit(field.Name)
@@ -244,7 +244,7 @@ type ArrayLit struct {
 }
 
 func (*ArrayLit) exprNode() {}
-func (e *ArrayLit) inspectChildren(visit func(Node)) {
+func (e *ArrayLit) forEachChild(visit func(Node)) {
 	visit(e.Type)
 	for _, value := range e.Values {
 		visit(value)
@@ -285,10 +285,10 @@ type BadExpr struct {
 	Location *source.Location
 }
 
-func (*BadExpr) exprNode()                  {}
-func (*BadExpr) inspectChildren(func(Node)) {}
-func (e *BadExpr) loc() *source.Location    { return e.Location }
-func (e *BadExpr) exprText() string         { return "<bad-expr>" }
+func (*BadExpr) exprNode()               {}
+func (*BadExpr) forEachChild(func(Node)) {}
+func (e *BadExpr) loc() *source.Location { return e.Location }
+func (e *BadExpr) exprText() string      { return "<bad-expr>" }
 
 func (e *BadExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
 	if e == nil {
@@ -305,9 +305,9 @@ type NumberLit struct {
 	Location     *source.Location
 }
 
-func (*NumberLit) exprNode()                  {}
-func (*NumberLit) inspectChildren(func(Node)) {}
-func (e *NumberLit) loc() *source.Location    { return e.Location }
+func (*NumberLit) exprNode()               {}
+func (*NumberLit) forEachChild(func(Node)) {}
+func (e *NumberLit) loc() *source.Location { return e.Location }
 func (e *NumberLit) exprText() string {
 	if e == nil {
 		return ""
@@ -330,9 +330,9 @@ type StringLit struct {
 	Location *source.Location
 }
 
-func (*StringLit) exprNode()                  {}
-func (*StringLit) inspectChildren(func(Node)) {}
-func (e *StringLit) loc() *source.Location    { return e.Location }
+func (*StringLit) exprNode()               {}
+func (*StringLit) forEachChild(func(Node)) {}
+func (e *StringLit) loc() *source.Location { return e.Location }
 func (e *StringLit) exprText() string {
 	if e == nil {
 		return ""
@@ -357,9 +357,9 @@ type ByteLit struct {
 	Location *source.Location
 }
 
-func (*ByteLit) exprNode()                  {}
-func (*ByteLit) inspectChildren(func(Node)) {}
-func (e *ByteLit) loc() *source.Location    { return e.Location }
+func (*ByteLit) exprNode()               {}
+func (*ByteLit) forEachChild(func(Node)) {}
+func (e *ByteLit) loc() *source.Location { return e.Location }
 func (e *ByteLit) exprText() string {
 	if e == nil {
 		return ""
@@ -381,9 +381,9 @@ type CharLit struct {
 	Location *source.Location
 }
 
-func (*CharLit) exprNode()                  {}
-func (*CharLit) inspectChildren(func(Node)) {}
-func (e *CharLit) loc() *source.Location    { return e.Location }
+func (*CharLit) exprNode()               {}
+func (*CharLit) forEachChild(func(Node)) {}
+func (e *CharLit) loc() *source.Location { return e.Location }
 func (e *CharLit) exprText() string {
 	if e == nil {
 		return ""
@@ -405,9 +405,9 @@ type BoolLit struct {
 	Location *source.Location
 }
 
-func (*BoolLit) exprNode()                  {}
-func (*BoolLit) inspectChildren(func(Node)) {}
-func (e *BoolLit) loc() *source.Location    { return e.Location }
+func (*BoolLit) exprNode()               {}
+func (*BoolLit) forEachChild(func(Node)) {}
+func (e *BoolLit) loc() *source.Location { return e.Location }
 func (e *BoolLit) exprText() string {
 	if e == nil {
 		return ""
@@ -431,10 +431,10 @@ type NoneLit struct {
 	Location *source.Location
 }
 
-func (*NoneLit) exprNode()                  {}
-func (*NoneLit) inspectChildren(func(Node)) {}
-func (e *NoneLit) loc() *source.Location    { return e.Location }
-func (e *NoneLit) exprText() string         { return "none" }
+func (*NoneLit) exprNode()               {}
+func (*NoneLit) forEachChild(func(Node)) {}
+func (e *NoneLit) loc() *source.Location { return e.Location }
+func (e *NoneLit) exprText() string      { return "none" }
 
 func (e *NoneLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
 	if e == nil {
@@ -459,9 +459,9 @@ type AddressExpr struct {
 	Location *source.Location
 }
 
-func (*AddressExpr) exprNode()                          {}
-func (e *AddressExpr) inspectChildren(visit func(Node)) { visit(e.Expr) }
-func (e *AddressExpr) loc() *source.Location            { return e.Location }
+func (*AddressExpr) exprNode()                       {}
+func (e *AddressExpr) forEachChild(visit func(Node)) { visit(e.Expr) }
+func (e *AddressExpr) loc() *source.Location         { return e.Location }
 func (e *AddressExpr) exprText() string {
 	if e == nil {
 		return ""
@@ -491,9 +491,9 @@ type UnaryExpr struct {
 	Location *source.Location
 }
 
-func (*UnaryExpr) exprNode()                          {}
-func (e *UnaryExpr) inspectChildren(visit func(Node)) { visit(e.Expr) }
-func (e *UnaryExpr) loc() *source.Location            { return e.Location }
+func (*UnaryExpr) exprNode()                       {}
+func (e *UnaryExpr) forEachChild(visit func(Node)) { visit(e.Expr) }
+func (e *UnaryExpr) loc() *source.Location         { return e.Location }
 func (e *UnaryExpr) exprText() string {
 	if e == nil {
 		return ""
@@ -518,7 +518,7 @@ type BinaryExpr struct {
 }
 
 func (*BinaryExpr) exprNode() {}
-func (e *BinaryExpr) inspectChildren(visit func(Node)) {
+func (e *BinaryExpr) forEachChild(visit func(Node)) {
 	visit(e.Left)
 	visit(e.Right)
 }
@@ -547,7 +547,7 @@ type CallExpr struct {
 }
 
 func (*CallExpr) exprNode() {}
-func (e *CallExpr) inspectChildren(visit func(Node)) {
+func (e *CallExpr) forEachChild(visit func(Node)) {
 	visit(e.Callee)
 	for _, arg := range e.Args {
 		visit(arg)
@@ -597,9 +597,9 @@ type FreeExpr struct {
 	Location *source.Location
 }
 
-func (*FreeExpr) exprNode()                          {}
-func (e *FreeExpr) inspectChildren(visit func(Node)) { visit(e.Expr) }
-func (e *FreeExpr) loc() *source.Location            { return e.Location }
+func (*FreeExpr) exprNode()                       {}
+func (e *FreeExpr) forEachChild(visit func(Node)) { visit(e.Expr) }
+func (e *FreeExpr) loc() *source.Location         { return e.Location }
 func (e *FreeExpr) exprText() string {
 	if e == nil {
 		return ""
@@ -622,9 +622,9 @@ type PrintExpr struct {
 	Location *source.Location
 }
 
-func (*PrintExpr) exprNode()                          {}
-func (e *PrintExpr) inspectChildren(visit func(Node)) { visit(e.Expr) }
-func (e *PrintExpr) loc() *source.Location            { return e.Location }
+func (*PrintExpr) exprNode()                       {}
+func (e *PrintExpr) forEachChild(visit func(Node)) { visit(e.Expr) }
+func (e *PrintExpr) loc() *source.Location         { return e.Location }
 func (e *PrintExpr) exprText() string {
 	if e == nil {
 		return ""
@@ -652,7 +652,7 @@ type AsExpr struct {
 }
 
 func (*AsExpr) exprNode() {}
-func (e *AsExpr) inspectChildren(visit func(Node)) {
+func (e *AsExpr) forEachChild(visit func(Node)) {
 	visit(e.Expr)
 	visit(e.TypeExpr)
 }

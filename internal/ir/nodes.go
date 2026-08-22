@@ -32,7 +32,7 @@ type Module interface {
 
 type Expr interface {
 	exprNode()
-	inspectChildren(func(Expr))
+	forEachChild(func(Expr))
 	String() string
 	TypeID() TypeID
 	Origin() SourceInfo
@@ -282,94 +282,94 @@ type Drop struct {
 	Location *source.Location
 }
 
-func (*InvalidExpr) exprNode()                           {}
-func (*InvalidExpr) inspectChildren(func(Expr))          {}
-func (*IntLit) exprNode()                                {}
-func (*IntLit) inspectChildren(func(Expr))               {}
-func (*FloatLit) exprNode()                              {}
-func (*FloatLit) inspectChildren(func(Expr))             {}
-func (*StringLit) exprNode()                             {}
-func (*StringLit) inspectChildren(func(Expr))            {}
-func (*BoolLit) exprNode()                               {}
-func (*BoolLit) inspectChildren(func(Expr))              {}
-func (*ZeroValue) exprNode()                             {}
-func (*ZeroValue) inspectChildren(func(Expr))            {}
-func (*OptionalSome) exprNode()                          {}
-func (e *OptionalSome) inspectChildren(visit func(Expr)) { visit(e.Value) }
-func (*Ident) exprNode()                                 {}
-func (*Ident) inspectChildren(func(Expr))                {}
-func (*Unary) exprNode()                                 {}
-func (e *Unary) inspectChildren(visit func(Expr))        { visit(e.Arg) }
-func (*Binary) exprNode()                                {}
-func (e *Binary) inspectChildren(visit func(Expr)) {
+func (*InvalidExpr) exprNode()                        {}
+func (*InvalidExpr) forEachChild(func(Expr))          {}
+func (*IntLit) exprNode()                             {}
+func (*IntLit) forEachChild(func(Expr))               {}
+func (*FloatLit) exprNode()                           {}
+func (*FloatLit) forEachChild(func(Expr))             {}
+func (*StringLit) exprNode()                          {}
+func (*StringLit) forEachChild(func(Expr))            {}
+func (*BoolLit) exprNode()                            {}
+func (*BoolLit) forEachChild(func(Expr))              {}
+func (*ZeroValue) exprNode()                          {}
+func (*ZeroValue) forEachChild(func(Expr))            {}
+func (*OptionalSome) exprNode()                       {}
+func (e *OptionalSome) forEachChild(visit func(Expr)) { visit(e.Value) }
+func (*Ident) exprNode()                              {}
+func (*Ident) forEachChild(func(Expr))                {}
+func (*Unary) exprNode()                              {}
+func (e *Unary) forEachChild(visit func(Expr))        { visit(e.Arg) }
+func (*Binary) exprNode()                             {}
+func (e *Binary) forEachChild(visit func(Expr)) {
 	visit(e.Left)
 	visit(e.Right)
 }
 func (*Call) exprNode() {}
-func (e *Call) inspectChildren(visit func(Expr)) {
+func (e *Call) forEachChild(visit func(Expr)) {
 	visit(e.Callee)
 	for _, arg := range e.Args {
 		visit(arg)
 	}
 }
-func (*Load) exprNode()                                 {}
-func (e *Load) inspectChildren(visit func(Expr))        { e.Place.inspectChildren(visit) }
-func (*AddrOf) exprNode()                               {}
-func (e *AddrOf) inspectChildren(visit func(Expr))      { e.Place.inspectChildren(visit) }
-func (*TempBorrow) exprNode()                           {}
-func (e *TempBorrow) inspectChildren(visit func(Expr))  { visit(e.Value) }
-func (*Len) exprNode()                                  {}
-func (e *Len) inspectChildren(visit func(Expr))         { visit(e.Value) }
-func (*StringChars) exprNode()                          {}
-func (e *StringChars) inspectChildren(visit func(Expr)) { visit(e.Value) }
-func (*SliceView) exprNode()                            {}
-func (e *SliceView) inspectChildren(visit func(Expr)) {
-	e.Source.inspectChildren(visit)
+func (*Load) exprNode()                              {}
+func (e *Load) forEachChild(visit func(Expr))        { e.Place.forEachChild(visit) }
+func (*AddrOf) exprNode()                            {}
+func (e *AddrOf) forEachChild(visit func(Expr))      { e.Place.forEachChild(visit) }
+func (*TempBorrow) exprNode()                        {}
+func (e *TempBorrow) forEachChild(visit func(Expr))  { visit(e.Value) }
+func (*Len) exprNode()                               {}
+func (e *Len) forEachChild(visit func(Expr))         { visit(e.Value) }
+func (*StringChars) exprNode()                       {}
+func (e *StringChars) forEachChild(visit func(Expr)) { visit(e.Value) }
+func (*SliceView) exprNode()                         {}
+func (e *SliceView) forEachChild(visit func(Expr)) {
+	e.Source.forEachChild(visit)
 	visit(e.Start)
 	visit(e.End)
 }
-func (*InterfaceMake) exprNode()                          {}
-func (e *InterfaceMake) inspectChildren(visit func(Expr)) { visit(e.Value) }
-func (*InterfaceCall) exprNode()                          {}
-func (e *InterfaceCall) inspectChildren(visit func(Expr)) {
+func (*InterfaceMake) exprNode()                       {}
+func (e *InterfaceMake) forEachChild(visit func(Expr)) { visit(e.Value) }
+func (*InterfaceCall) exprNode()                       {}
+func (e *InterfaceCall) forEachChild(visit func(Expr)) {
 	visit(e.Base)
 	for _, arg := range e.Args {
 		visit(arg)
 	}
 }
-func (*Field) exprNode()                          {}
-func (e *Field) inspectChildren(visit func(Expr)) { visit(e.Base) }
-func (*StructLit) exprNode()                      {}
-func (e *StructLit) inspectChildren(visit func(Expr)) {
+func (*Field) exprNode()                       {}
+func (e *Field) forEachChild(visit func(Expr)) { visit(e.Base) }
+func (*StructLit) exprNode()                   {}
+func (e *StructLit) forEachChild(visit func(Expr)) {
 	for _, field := range e.Fields {
 		visit(field)
 	}
 }
 func (*ArrayLit) exprNode() {}
-func (e *ArrayLit) inspectChildren(visit func(Expr)) {
+func (e *ArrayLit) forEachChild(visit func(Expr)) {
 	for _, value := range e.Values {
 		visit(value)
 	}
 }
 func (*DynamicArrayOp) exprNode() {}
-func (e *DynamicArrayOp) inspectChildren(visit func(Expr)) {
+func (e *DynamicArrayOp) forEachChild(visit func(Expr)) {
 	visit(e.Array)
 	visit(e.Length)
 	visit(e.Value)
 }
 func (*AllocExpr) exprNode() {}
-func (e *AllocExpr) inspectChildren(visit func(Expr)) {
+func (e *AllocExpr) forEachChild(visit func(Expr)) {
 	visit(e.Value)
 	visit(e.Allocator)
 }
-func (*Cast) exprNode()                           {}
-func (e *Cast) inspectChildren(visit func(Expr))  { visit(e.Expr) }
-func (*Print) exprNode()                          {}
-func (e *Print) inspectChildren(visit func(Expr)) { visit(e.Value) }
-func (*Drop) exprNode()                           {}
-func (e *Drop) inspectChildren(visit func(Expr))  { visit(e.Value) }
+func (*Cast) exprNode()                        {}
+func (e *Cast) forEachChild(visit func(Expr))  { visit(e.Expr) }
+func (*Print) exprNode()                       {}
+func (e *Print) forEachChild(visit func(Expr)) { visit(e.Value) }
+func (*Drop) exprNode()                        {}
+func (e *Drop) forEachChild(visit func(Expr))  { visit(e.Value) }
 
-func (p *Place) inspectChildren(visit func(Expr)) {
+func (p *Place) forEachChild(visit func(Expr)) {
 	if p == nil {
 		return
 	}

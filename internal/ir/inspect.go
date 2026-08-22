@@ -6,7 +6,7 @@ func InspectExpr(expr Expr, visit func(Expr) bool) {
 	if expr == nil || !visit(expr) {
 		return
 	}
-	expr.inspectChildren(func(child Expr) { InspectExpr(child, visit) })
+	expr.forEachChild(func(child Expr) { InspectExpr(child, visit) })
 }
 
 // InspectPlace traverses expressions that determine a place: root first, then
@@ -15,5 +15,5 @@ func InspectPlace(place *Place, visit func(Expr) bool) {
 	if place == nil {
 		return
 	}
-	place.inspectChildren(func(child Expr) { InspectExpr(child, visit) })
+	place.forEachChild(func(child Expr) { InspectExpr(child, visit) })
 }

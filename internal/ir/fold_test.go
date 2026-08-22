@@ -10,12 +10,12 @@ import (
 
 type unhandledFoldExpr struct{}
 
-func (*unhandledFoldExpr) exprNode()                  {}
-func (*unhandledFoldExpr) inspectChildren(func(Expr)) {}
-func (*unhandledFoldExpr) String() string             { return "unhandled" }
-func (*unhandledFoldExpr) TypeID() TypeID             { return InvalidType }
-func (*unhandledFoldExpr) Origin() SourceInfo         { return SourceInfo{} }
-func (*unhandledFoldExpr) setOrigin(SourceInfo)       {}
+func (*unhandledFoldExpr) exprNode()               {}
+func (*unhandledFoldExpr) forEachChild(func(Expr)) {}
+func (*unhandledFoldExpr) String() string          { return "unhandled" }
+func (*unhandledFoldExpr) TypeID() TypeID          { return InvalidType }
+func (*unhandledFoldExpr) Origin() SourceInfo      { return SourceInfo{} }
+func (*unhandledFoldExpr) setOrigin(SourceInfo)    {}
 
 func TestFoldExprConstantArithmetic(t *testing.T) {
 	types := NewTypeTable()

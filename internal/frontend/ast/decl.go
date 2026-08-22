@@ -16,7 +16,7 @@ type ImportDecl struct {
 
 func (*ImportDecl) declNode() {}
 func (*ImportDecl) stmtNode() {}
-func (d *ImportDecl) inspectChildren(visit func(Node)) {
+func (d *ImportDecl) forEachChild(visit func(Node)) {
 	visit(d.Path)
 	visit(d.Alias)
 }
@@ -28,9 +28,9 @@ type NamedType struct {
 	Location *source.Location
 }
 
-func (*NamedType) typeNode()                  {}
-func (*NamedType) inspectChildren(func(Node)) {}
-func (t *NamedType) loc() *source.Location    { return t.Location }
+func (*NamedType) typeNode()               {}
+func (*NamedType) forEachChild(func(Node)) {}
+func (t *NamedType) loc() *source.Location { return t.Location }
 func (t *NamedType) TypeText() string {
 	if t == nil {
 		return ""
@@ -44,9 +44,9 @@ type OwnedPtrType struct {
 	Location *source.Location
 }
 
-func (*OwnedPtrType) typeNode()                          {}
-func (t *OwnedPtrType) inspectChildren(visit func(Node)) { visit(t.Target) }
-func (t *OwnedPtrType) loc() *source.Location            { return t.Location }
+func (*OwnedPtrType) typeNode()                       {}
+func (t *OwnedPtrType) forEachChild(visit func(Node)) { visit(t.Target) }
+func (t *OwnedPtrType) loc() *source.Location         { return t.Location }
 func (t *OwnedPtrType) TypeText() string {
 	if t == nil {
 		return ""
@@ -59,9 +59,9 @@ type RawPtrType struct {
 	Location *source.Location
 }
 
-func (*RawPtrType) typeNode()                  {}
-func (*RawPtrType) inspectChildren(func(Node)) {}
-func (t *RawPtrType) loc() *source.Location    { return t.Location }
+func (*RawPtrType) typeNode()               {}
+func (*RawPtrType) forEachChild(func(Node)) {}
+func (t *RawPtrType) loc() *source.Location { return t.Location }
 func (t *RawPtrType) TypeText() string {
 	if t == nil {
 		return ""
@@ -76,9 +76,9 @@ type RefType struct {
 	Location *source.Location
 }
 
-func (*RefType) typeNode()                          {}
-func (t *RefType) inspectChildren(visit func(Node)) { visit(t.Target) }
-func (t *RefType) loc() *source.Location            { return t.Location }
+func (*RefType) typeNode()                       {}
+func (t *RefType) forEachChild(visit func(Node)) { visit(t.Target) }
+func (t *RefType) loc() *source.Location         { return t.Location }
 func (t *RefType) TypeText() string {
 	if t == nil {
 		return ""
@@ -96,9 +96,9 @@ type OptionalType struct {
 	Location *source.Location
 }
 
-func (*OptionalType) typeNode()                          {}
-func (t *OptionalType) inspectChildren(visit func(Node)) { visit(t.Inner) }
-func (t *OptionalType) loc() *source.Location            { return t.Location }
+func (*OptionalType) typeNode()                       {}
+func (t *OptionalType) forEachChild(visit func(Node)) { visit(t.Inner) }
+func (t *OptionalType) loc() *source.Location         { return t.Location }
 func (t *OptionalType) TypeText() string {
 	if t == nil {
 		return ""
@@ -123,7 +123,7 @@ type ArrayType struct {
 }
 
 func (*ArrayType) typeNode() {}
-func (t *ArrayType) inspectChildren(visit func(Node)) {
+func (t *ArrayType) forEachChild(visit func(Node)) {
 	visit(t.Len)
 	visit(t.Elem)
 }
@@ -153,7 +153,7 @@ type FuncType struct {
 }
 
 func (*FuncType) typeNode() {}
-func (t *FuncType) inspectChildren(visit func(Node)) {
+func (t *FuncType) forEachChild(visit func(Node)) {
 	inspectParams(t.Params, visit)
 	visit(t.Return)
 	inspectReturnOrigins(t.ReturnOrigins, visit)
@@ -217,7 +217,7 @@ type StructType struct {
 }
 
 func (*StructType) typeNode() {}
-func (t *StructType) inspectChildren(visit func(Node)) {
+func (t *StructType) forEachChild(visit func(Node)) {
 	for _, field := range t.Fields {
 		visit(field.Name)
 		visit(field.Type)
@@ -251,7 +251,7 @@ type InterfaceType struct {
 }
 
 func (*InterfaceType) typeNode() {}
-func (t *InterfaceType) inspectChildren(visit func(Node)) {
+func (t *InterfaceType) forEachChild(visit func(Node)) {
 	for _, method := range t.Methods {
 		visit(method.Name)
 		if method.Receiver != nil {
@@ -311,7 +311,7 @@ type EnumType struct {
 }
 
 func (*EnumType) typeNode() {}
-func (t *EnumType) inspectChildren(visit func(Node)) {
+func (t *EnumType) forEachChild(visit func(Node)) {
 	for _, variant := range t.Variants {
 		visit(variant.Name)
 	}
@@ -383,7 +383,7 @@ type LetDecl struct {
 func (*LetDecl) declNode()               {}
 func (d *LetDecl) loc() *source.Location { return d.Location }
 func (*LetDecl) stmtNode()               {}
-func (d *LetDecl) inspectChildren(visit func(Node)) {
+func (d *LetDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	visit(d.Type)
 	visit(d.Value)
@@ -402,7 +402,7 @@ type ConstDecl struct {
 func (*ConstDecl) declNode()               {}
 func (d *ConstDecl) loc() *source.Location { return d.Location }
 func (*ConstDecl) stmtNode()               {}
-func (d *ConstDecl) inspectChildren(visit func(Node)) {
+func (d *ConstDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	visit(d.Type)
 	visit(d.Value)
@@ -424,7 +424,7 @@ type FnDecl struct {
 
 func (*FnDecl) declNode() {}
 func (*FnDecl) stmtNode() {}
-func (d *FnDecl) inspectChildren(visit func(Node)) {
+func (d *FnDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	if d.Receiver != nil {
 		inspectParam(*d.Receiver, visit)
@@ -460,7 +460,7 @@ type TypeAliasDecl struct {
 
 func (*TypeAliasDecl) declNode() {}
 func (*TypeAliasDecl) stmtNode() {}
-func (d *TypeAliasDecl) inspectChildren(visit func(Node)) {
+func (d *TypeAliasDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -486,7 +486,7 @@ type StructDecl struct {
 
 func (*StructDecl) declNode() {}
 func (*StructDecl) stmtNode() {}
-func (d *StructDecl) inspectChildren(visit func(Node)) {
+func (d *StructDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -511,7 +511,7 @@ type InterfaceDecl struct {
 
 func (*InterfaceDecl) declNode() {}
 func (*InterfaceDecl) stmtNode() {}
-func (d *InterfaceDecl) inspectChildren(visit func(Node)) {
+func (d *InterfaceDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -536,7 +536,7 @@ type EnumDecl struct {
 
 func (*EnumDecl) declNode() {}
 func (*EnumDecl) stmtNode() {}
-func (d *EnumDecl) inspectChildren(visit func(Node)) {
+func (d *EnumDecl) forEachChild(visit func(Node)) {
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -553,10 +553,10 @@ type BadDecl struct {
 	Location *source.Location
 }
 
-func (*BadDecl) declNode()                  {}
-func (*BadDecl) stmtNode()                  {}
-func (*BadDecl) inspectChildren(func(Node)) {}
-func (d *BadDecl) loc() *source.Location    { return d.Location }
+func (*BadDecl) declNode()               {}
+func (*BadDecl) stmtNode()               {}
+func (*BadDecl) forEachChild(func(Node)) {}
+func (d *BadDecl) loc() *source.Location { return d.Location }
 
 func inspectParam(param Param, visit func(Node)) {
 	visit(param.Name)

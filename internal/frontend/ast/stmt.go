@@ -10,7 +10,7 @@ type BlockStmt struct {
 }
 
 func (*BlockStmt) stmtNode() {}
-func (s *BlockStmt) inspectChildren(visit func(Node)) {
+func (s *BlockStmt) forEachChild(visit func(Node)) {
 	for _, stmt := range s.Stmts {
 		visit(stmt)
 	}
@@ -24,9 +24,9 @@ type ExprStmt struct {
 	Location *source.Location
 }
 
-func (*ExprStmt) stmtNode()                          {}
-func (s *ExprStmt) inspectChildren(visit func(Node)) { visit(s.Expr) }
-func (s *ExprStmt) loc() *source.Location            { return s.Location }
+func (*ExprStmt) stmtNode()                       {}
+func (s *ExprStmt) forEachChild(visit func(Node)) { visit(s.Expr) }
+func (s *ExprStmt) loc() *source.Location         { return s.Location }
 
 type AssignStmt struct {
 	NodeIDHolder
@@ -37,7 +37,7 @@ type AssignStmt struct {
 }
 
 func (*AssignStmt) stmtNode() {}
-func (s *AssignStmt) inspectChildren(visit func(Node)) {
+func (s *AssignStmt) forEachChild(visit func(Node)) {
 	visit(s.Target)
 	visit(s.Value)
 }
@@ -50,18 +50,18 @@ type ReturnStmt struct {
 	Location *source.Location
 }
 
-func (*ReturnStmt) stmtNode()                          {}
-func (s *ReturnStmt) inspectChildren(visit func(Node)) { visit(s.Value) }
-func (s *ReturnStmt) loc() *source.Location            { return s.Location }
+func (*ReturnStmt) stmtNode()                       {}
+func (s *ReturnStmt) forEachChild(visit func(Node)) { visit(s.Value) }
+func (s *ReturnStmt) loc() *source.Location         { return s.Location }
 
 type BadStmt struct {
 	NodeIDHolder
 	Location *source.Location
 }
 
-func (*BadStmt) stmtNode()                  {}
-func (*BadStmt) inspectChildren(func(Node)) {}
-func (s *BadStmt) loc() *source.Location    { return s.Location }
+func (*BadStmt) stmtNode()               {}
+func (*BadStmt) forEachChild(func(Node)) {}
+func (s *BadStmt) loc() *source.Location { return s.Location }
 
 type IfStmt struct {
 	NodeIDHolder
@@ -73,7 +73,7 @@ type IfStmt struct {
 }
 
 func (*IfStmt) stmtNode() {}
-func (s *IfStmt) inspectChildren(visit func(Node)) {
+func (s *IfStmt) forEachChild(visit func(Node)) {
 	visit(s.Cond)
 	visit(s.Then)
 	visit(s.Else)
@@ -89,7 +89,7 @@ type ForStmt struct {
 }
 
 func (*ForStmt) stmtNode() {}
-func (s *ForStmt) inspectChildren(visit func(Node)) {
+func (s *ForStmt) forEachChild(visit func(Node)) {
 	visit(s.Cond)
 	visit(s.Body)
 }

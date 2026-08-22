@@ -11,7 +11,7 @@ func Inspect(node Node, f func(Node) bool) {
 		return
 	}
 
-	node.inspectChildren(func(child Node) { Inspect(child, f) })
+	node.forEachChild(func(child Node) { Inspect(child, f) })
 
 	f(nil)
 }
