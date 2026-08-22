@@ -1,37 +1,36 @@
-package exportapi
+package project
 
 import (
 	"testing"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func fingerprintModule(t *testing.T, exported *symbols.Symbol, semantics *project.SemanticInfo) *project.Module {
+func fingerprintModule(t *testing.T, exported *symbols.Symbol, semantics *SemanticInfo) *Module {
 	t.Helper()
 	scope := table.New(nil)
 	if err := scope.Declare(exported); err != nil {
 		t.Fatalf("declare export: %v", err)
 	}
 	if semantics == nil {
-		semantics = project.NewSemanticInfo()
+		semantics = NewSemanticInfo()
 	}
-	return &project.Module{ModuleScope: scope, Semantics: semantics}
+	return &Module{ModuleScope: scope, Semantics: semantics}
 }
 
-func TestFingerprintChangesWithInferredExportTypeAndValue(t *testing.T) {
+func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) {
 	makeConst := func(typ typeinfo.Type, value string) string {
 		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
 		decl.SetDeclSurface("const:Value::number")
 		sym := symbols.New("Value", symbols.SymbolConst, decl, nil)
 		sym.Type = typ
-		semantic := project.NewSemanticInfo()
+		semantic := NewSemanticInfo()
 		semantic.ConstValues[sym.ID], _ = constvalue.NewIntText(value, typeinfo.TypeText(typ))
-		return Fingerprint(fingerprintModule(t, sym, semantic))
+		return SemanticExportFingerprint(fingerprintModule(t, sym, semantic))
 	}
 
 	i32One := makeConst(&typeinfo.IntegerType{Signed: true, Bits: 32}, "1")
@@ -45,13 +44,13 @@ func TestFingerprintChangesWithInferredExportTypeAndValue(t *testing.T) {
 	}
 }
 
-func TestFingerprintIgnoresFunctionBodyChanges(t *testing.T) {
+func TestSemanticExportFingerprintIgnoresFunctionBodyChanges(t *testing.T) {
 	makeFunction := func(body *ast.BlockStmt) string {
 		decl := &ast.FnDecl{Name: &ast.Ident{Name: "Read"}, Body: body}
 		decl.SetDeclSurface("fn::Read:::")
 		sym := symbols.New("Read", symbols.SymbolFunc, decl, nil)
 		sym.Type = &typeinfo.FuncType{Return: &typeinfo.IntegerType{Signed: true, Bits: 32}}
-		return Fingerprint(fingerprintModule(t, sym, nil))
+		return SemanticExportFingerprint(fingerprintModule(t, sym, nil))
 	}
 	first := makeFunction(&ast.BlockStmt{})
 	second := makeFunction(&ast.BlockStmt{Stmts: []ast.Stmt{&ast.ReturnStmt{Value: &ast.NumberLit{Value: "1"}}}})
@@ -60,7 +59,7 @@ func TestFingerprintIgnoresFunctionBodyChanges(t *testing.T) {
 	}
 }
 
-func TestFingerprintIncludesPrivateFactsUsedByPublicDefault(t *testing.T) {
+func TestSemanticExportFingerprintIncludesPrivateFactsUsedByPublicDefault(t *testing.T) {
 	makeFunction := func(value string) string {
 		defaultIdent := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 20}, Name: "limit"}
 		decl := &ast.FnDecl{
@@ -73,23 +72,23 @@ func TestFingerprintIncludesPrivateFactsUsedByPublicDefault(t *testing.T) {
 		fn.Type = &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}}
 		private := symbols.New("limit", symbols.SymbolConst, nil, nil)
 		private.Type = i32
-		semantic := project.NewSemanticInfo()
+		semantic := NewSemanticInfo()
 		semantic.ResolvedSymbols[defaultIdent.ID()] = private
 		semantic.ConstValues[private.ID], _ = constvalue.NewIntText(value, "i32")
-		return Fingerprint(fingerprintModule(t, fn, semantic))
+		return SemanticExportFingerprint(fingerprintModule(t, fn, semantic))
 	}
 	if makeFunction("1") == makeFunction("2") {
 		t.Fatal("private const used by public default did not change fingerprint")
 	}
 }
 
-func TestFingerprintChangesWithPublicMethodSignature(t *testing.T) {
+func TestSemanticExportFingerprintChangesWithPublicMethodSignature(t *testing.T) {
 	makeMethod := func(returnType typeinfo.Type) string {
 		method := symbols.New("Read", symbols.SymbolMethod, nil, nil)
 		method.Type = &typeinfo.FuncType{Return: returnType}
-		semantics := project.NewSemanticInfo()
+		semantics := NewSemanticInfo()
 		semantics.MethodSets["Buffer"] = []*symbols.Symbol{method}
-		return Fingerprint(fingerprintModule(t,
+		return SemanticExportFingerprint(fingerprintModule(t,
 			symbols.New("Buffer", symbols.SymbolType, nil, nil), semantics))
 	}
 	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
@@ -99,7 +98,7 @@ func TestFingerprintChangesWithPublicMethodSignature(t *testing.T) {
 	}
 }
 
-func TestFingerprintHandlesRecursiveExportTypesDeterministically(t *testing.T) {
+func TestSemanticExportFingerprintHandlesRecursiveTypesDeterministically(t *testing.T) {
 	makeType := func() string {
 		defined := &typeinfo.DefinedType{Name: "Node"}
 		defined.Underlying = &typeinfo.StructType{Fields: []typeinfo.Field{{
@@ -110,9 +109,46 @@ func TestFingerprintHandlesRecursiveExportTypesDeterministically(t *testing.T) {
 		decl.SetDeclSurface("type:Node:recursive")
 		sym := symbols.New("Node", symbols.SymbolType, decl, nil)
 		sym.Type = defined
-		return Fingerprint(fingerprintModule(t, sym, nil))
+		return SemanticExportFingerprint(fingerprintModule(t, sym, nil))
 	}
 	if first, second := makeType(), makeType(); first == "" || first != second {
 		t.Fatalf("recursive fingerprints unstable: %q, %q", first, second)
+	}
+}
+
+func TestSemanticTypeKeyIncludesCallableMetadata(t *testing.T) {
+	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	left := &typeinfo.FuncType{
+		Params:        []typeinfo.Type{i32},
+		ParamNames:    []string{"left"},
+		Return:        i32,
+		ReturnOrigins: &typeinfo.ReturnOriginContract{Sources: []int{0}},
+	}
+	right := &typeinfo.FuncType{
+		Params:        []typeinfo.Type{i32},
+		ParamNames:    []string{"right"},
+		Return:        i32,
+		ReturnOrigins: &typeinfo.ReturnOriginContract{Sources: []int{0}},
+	}
+	withoutOrigin := &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"left"}, Return: i32}
+
+	if semanticTypeKey(left, make(map[typeinfo.Type]bool)) == semanticTypeKey(right, make(map[typeinfo.Type]bool)) {
+		t.Fatal("parameter name did not change semantic type key")
+	}
+	if semanticTypeKey(left, make(map[typeinfo.Type]bool)) == semanticTypeKey(withoutOrigin, make(map[typeinfo.Type]bool)) {
+		t.Fatal("return-origin contract did not change semantic type key")
+	}
+}
+
+func TestConstantKeyIncludesTypeAndValue(t *testing.T) {
+	i32, _ := constvalue.NewIntText("1", "i32")
+	i64, _ := constvalue.NewIntText("1", "i64")
+	text, _ := constvalue.NewString("a:b", "str")
+
+	if constantKey(i32) == constantKey(i64) {
+		t.Fatal("integer type did not change constant key")
+	}
+	if got := constantKey(text); got != `str:"a:b"` {
+		t.Fatalf("string constant key = %q", got)
 	}
 }

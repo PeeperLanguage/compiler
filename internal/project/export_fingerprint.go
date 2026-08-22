@@ -1,4 +1,4 @@
-package exportapi
+package project
 
 import (
 	"fmt"
@@ -6,13 +6,12 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
-// Fingerprint identifies compiler-visible semantic facts exported by module.
-func Fingerprint(module *project.Module) string {
+// SemanticExportFingerprint identifies compiler-visible semantic facts exported by module.
+func SemanticExportFingerprint(module *Module) string {
 	if module == nil || module.ModuleScope == nil {
 		return ast.FingerprintParts(nil)
 	}
@@ -21,13 +20,13 @@ func Fingerprint(module *project.Module) string {
 		if sym == nil || !sym.IsPub {
 			continue
 		}
-		part := string(sym.Kind) + ":" + sym.Name + ":" + semanticTypeText(sym.Type, make(map[typeinfo.Type]bool))
+		part := string(sym.Kind) + ":" + sym.Name + ":" + semanticTypeKey(sym.Type, make(map[typeinfo.Type]bool))
 		if sym.Kind == symbols.SymbolVar {
 			part += fmt.Sprintf(":mutable=%t", sym.IsMutable())
 		}
-		part += declarationMetadata(module, sym)
+		part += semanticExportMetadata(module, sym)
 		if sym.Kind == symbols.SymbolConst && module.Semantics != nil {
-			part += ":value=" + constText(module.Semantics.ConstValues[sym.ID])
+			part += ":value=" + constantKey(module.Semantics.ConstValues[sym.ID])
 		}
 		parts = append(parts, part)
 	}
@@ -38,14 +37,14 @@ func Fingerprint(module *project.Module) string {
 					continue
 				}
 				parts = append(parts, "method:"+receiver+":"+method.Name+":"+
-					semanticTypeText(method.Type, make(map[typeinfo.Type]bool))+declarationMetadata(module, method))
+					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(module, method))
 			}
 		}
 	}
 	return ast.FingerprintParts(parts)
 }
 
-func declarationMetadata(module *project.Module, sym *symbols.Symbol) string {
+func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
 	decl, ok := sym.ASTNode.(ast.Decl)
 	if !ok || decl == nil {
 		return ""
@@ -84,9 +83,9 @@ func declarationMetadata(module *project.Module, sym *symbols.Symbol) string {
 			if resolved == nil {
 				return true
 			}
-			fact := resolved.Name + ":" + semanticTypeText(resolved.Type, make(map[typeinfo.Type]bool))
+			fact := resolved.Name + ":" + semanticTypeKey(resolved.Type, make(map[typeinfo.Type]bool))
 			if resolved.Kind == symbols.SymbolConst {
-				fact += "=" + constText(module.Semantics.ConstValues[resolved.ID])
+				fact += "=" + constantKey(module.Semantics.ConstValues[resolved.ID])
 			}
 			facts = append(facts, fact)
 			return true
@@ -96,7 +95,7 @@ func declarationMetadata(module *project.Module, sym *symbols.Symbol) string {
 	return metadata
 }
 
-func semanticTypeText(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
+func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 	semantic, ok := typ.(typeinfo.Type)
 	if !ok || semantic == nil {
 		return ""
@@ -109,15 +108,15 @@ func semanticTypeText(typ symbols.Type, visiting map[typeinfo.Type]bool) string 
 
 	switch node := semantic.(type) {
 	case *typeinfo.DefinedType:
-		return "defined(" + node.Name + ":" + semanticTypeText(node.Underlying, visiting) + ")"
+		return "defined(" + node.Name + ":" + semanticTypeKey(node.Underlying, visiting) + ")"
 	case *typeinfo.OwnedPtrType:
-		return "owned(" + semanticTypeText(node.Target, visiting) + ")"
+		return "owned(" + semanticTypeKey(node.Target, visiting) + ")"
 	case *typeinfo.RefType:
-		return fmt.Sprintf("ref(%t:%s)", node.Mutable, semanticTypeText(node.Target, visiting))
+		return fmt.Sprintf("ref(%t:%s)", node.Mutable, semanticTypeKey(node.Target, visiting))
 	case *typeinfo.OptionalType:
-		return "optional(" + semanticTypeText(node.Inner, visiting) + ")"
+		return "optional(" + semanticTypeKey(node.Inner, visiting) + ")"
 	case *typeinfo.ArrayType:
-		return fmt.Sprintf("array(%d:%s:%s)", node.Shape, node.Len, semanticTypeText(node.Elem, visiting))
+		return fmt.Sprintf("array(%d:%s:%s)", node.Shape, node.Len, semanticTypeKey(node.Elem, visiting))
 	case *typeinfo.FuncType:
 		params := make([]string, len(node.Params))
 		for index, param := range node.Params {
@@ -125,23 +124,23 @@ func semanticTypeText(typ symbols.Type, visiting map[typeinfo.Type]bool) string 
 			if index < len(node.ParamNames) {
 				name = node.ParamNames[index]
 			}
-			params[index] = name + ":" + semanticTypeText(param, visiting)
+			params[index] = name + ":" + semanticTypeKey(param, visiting)
 		}
 		origins := ""
 		if node.ReturnOrigins != nil {
 			origins = fmt.Sprint(node.ReturnOrigins.Sources)
 		}
-		return "fn(" + strings.Join(params, ",") + ")->" + semanticTypeText(node.Return, visiting) + ":from=" + origins
+		return "fn(" + strings.Join(params, ",") + ")->" + semanticTypeKey(node.Return, visiting) + ":from=" + origins
 	case *typeinfo.StructType:
 		fields := make([]string, len(node.Fields))
 		for index, field := range node.Fields {
-			fields[index] = field.Name + ":" + semanticTypeText(field.Type, visiting)
+			fields[index] = field.Name + ":" + semanticTypeKey(field.Type, visiting)
 		}
 		return "struct(" + strings.Join(fields, ",") + ")"
 	case *typeinfo.InterfaceType:
 		methods := make([]string, len(node.Methods))
 		for index, method := range node.Methods {
-			methods[index] = method.Name + ":" + semanticTypeText(method.CallableType(), visiting)
+			methods[index] = method.Name + ":" + semanticTypeKey(method.CallableType(), visiting)
 		}
 		return "interface(" + strings.Join(methods, ";") + ")"
 	case *typeinfo.EnumType:
@@ -151,7 +150,7 @@ func semanticTypeText(typ symbols.Type, visiting map[typeinfo.Type]bool) string 
 	}
 }
 
-func constText(value constvalue.Value) string {
+func constantKey(value constvalue.Value) string {
 	if value == nil {
 		return ""
 	}

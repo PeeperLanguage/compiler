@@ -17,7 +17,6 @@ import (
 	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
-	"compiler/internal/semantics/exportapi"
 	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
@@ -329,7 +328,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase < project.PhaseTypechecked {
 		typechecker.Check(p.ctx, module)
 		consteval.FinalizeValues(p.ctx, module)
-		module.SemanticExportFingerprint = exportapi.Fingerprint(module)
+		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
 		module.Phase = project.PhaseTypechecked
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
