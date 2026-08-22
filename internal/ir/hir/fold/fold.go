@@ -1,6 +1,8 @@
 package fold
 
 import (
+	"fmt"
+
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
@@ -59,6 +61,14 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		return []hir.Stmt{out}
 	case *hir.ExprStmt:
 		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(types, node.Value, env), NodeID: node.NodeID, ValueNodeID: node.ValueNodeID, Location: node.Location}}
+	case *hir.Assign:
+		return []hir.Stmt{&hir.Assign{
+			Target:     ir.FoldPlace(types, node.Target, env),
+			Value:      ir.FoldExpr(types, node.Value, env),
+			DropTarget: node.DropTarget,
+			NodeID:     node.NodeID,
+			Location:   node.Location,
+		}}
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:
@@ -93,7 +103,7 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		}
 		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(types, node.Body, diag, cloneConstEnv(env)), NodeID: node.NodeID, Location: node.Location}}
 	default:
-		return []hir.Stmt{stmt}
+		panic(fmt.Sprintf("unhandled HIR statement %T in typed folding", stmt))
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 // Use FoldExpr for sub-expressions that carry values: operands, arguments,
 // struct fields, array elements.
 //
-// Use foldPlace for l-value projections: the root is storage identity
+// Use FoldPlace for l-value projections: the root is storage identity
 // (not foldable), only index sub-expressions inside are folded.
 func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr {
 	switch node := expr.(type) {
@@ -57,9 +57,9 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			Location: node.Location,
 		}
 	case *Load:
-		return &Load{Place: foldPlace(types, node.Place, env), DropRoot: node.DropRoot, NodeID: node.NodeID, Location: node.Location}
+		return &Load{Place: FoldPlace(types, node.Place, env), DropRoot: node.DropRoot, NodeID: node.NodeID, Location: node.Location}
 	case *AddrOf:
-		return &AddrOf{Place: foldPlace(types, node.Place, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &AddrOf{Place: FoldPlace(types, node.Place, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *TempBorrow:
 		return &TempBorrow{Value: FoldExpr(types, node.Value, env), Slice: node.Slice, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *Len:
@@ -68,7 +68,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return &StringChars{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *SliceView:
 		return &SliceView{
-			Source:       foldPlace(types, node.Source, env),
+			Source:       FoldPlace(types, node.Source, env),
 			Start:        FoldExpr(types, node.Start, env),
 			End:          FoldExpr(types, node.End, env),
 			EndExclusive: node.EndExclusive,
@@ -148,7 +148,8 @@ func foldExprs(types *TypeTable, expressions []Expr, env map[string]constvalue.V
 	return folded
 }
 
-func foldPlace(types *TypeTable, place *Place, env map[string]constvalue.Value) *Place {
+// FoldPlace folds projection operands while preserving root storage identity.
+func FoldPlace(types *TypeTable, place *Place, env map[string]constvalue.Value) *Place {
 	if place == nil {
 		return nil
 	}

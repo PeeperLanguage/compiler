@@ -118,6 +118,40 @@ func TestApplyTypedExpressionFoldingPreservesPlaceRootAndFoldsIndexes(t *testing
 	}
 }
 
+func TestApplyTypedExpressionFoldingFoldsAssignments(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	arrayI32 := types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "2"})
+	mod := &hir.Module{Funcs: []*hir.Function{{
+		Name: "main",
+		Body: &hir.Block{Stmts: []hir.Stmt{
+			&hir.Binding{Name: "index", Constant: true, Value: &ir.IntLit{Value: "1", Type: i32}},
+			&hir.Assign{
+				Target: &ir.Place{
+					Root: &ir.Ident{Name: "items", Type: arrayI32},
+					Projections: []ir.PlaceProjection{{
+						Kind: ir.PlaceProjectionIndex, Index: &ir.Ident{Name: "index", Type: i32}, Type: i32,
+					}},
+					Type: i32,
+				},
+				Value:      &ir.Binary{Op: "+", Left: &ir.IntLit{Value: "20", Type: i32}, Right: &ir.IntLit{Value: "22", Type: i32}, Type: i32},
+				DropTarget: true,
+				NodeID:     31,
+			},
+		}},
+	}}, Types: types}
+
+	out := ApplyTypedExpressionFolding(mod, nil)
+	assignment := out.Funcs[0].Body.Stmts[1].(*hir.Assign)
+	root, rootOK := assignment.Target.Root.(*ir.Ident)
+	index, indexOK := assignment.Target.Projections[0].Index.(*ir.IntLit)
+	value, valueOK := assignment.Value.(*ir.IntLit)
+	if !rootOK || root.Name != "items" || !indexOK || index.Value != "1" || !valueOK || value.Value != "42" ||
+		!assignment.DropTarget || assignment.NodeID != 31 {
+		t.Fatalf("folded assignment = %#v, want preserved target with folded index and value", assignment)
+	}
+}
+
 func TestApplyTypedExpressionFoldingPreservesHIRIdentity(t *testing.T) {
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
