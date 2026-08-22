@@ -6,7 +6,6 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
-	"compiler/internal/semantics/deps"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -43,7 +42,7 @@ func (b *binder) bindModule() {
 	slices.SortFunc(b.module.Semantics.OperationFunctions, func(left, right *symbols.Symbol) int {
 		return cmp.Compare(left.Name, right.Name)
 	})
-	deps.ValidateTypeDeclCycles(b.ctx, b.module)
+	b.validateTypeDeclCycles()
 }
 
 // Bind function and top-level declaration signatures into module scope.
@@ -103,14 +102,13 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
 		// Reuse same shell so self-references keep same type identity.
 		defined.Name = name.Name
 		defined.Underlying = underlying
-		deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
-		return
+	} else {
+		sym.BindType(&typeinfo.DefinedType{
+			Name:       name.Name,
+			Underlying: underlying,
+		})
 	}
-	sym.BindType(&typeinfo.DefinedType{
-		Name:       name.Name,
-		Underlying: underlying,
-	})
-	deps.RegisterTypeDecl(b.ctx, b.module, name.Name, typ)
+	b.registerTypeDecl(name.Name, typ)
 }
 
 func (b *binder) moduleScopeSymbol(name string) *symbols.Symbol {
