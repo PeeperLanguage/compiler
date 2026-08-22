@@ -386,8 +386,10 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	switch node := instr.(type) {
 	case *Assign:
 		node.Location = l.location
-		if exprLoc := ValueExprLocation(node.Value); exprLoc != nil {
-			node.Location = exprLoc
+		if node.Value != nil {
+			if location := node.Value.SourceLocation(); location != nil {
+				node.Location = location
+			}
 		}
 	case *Store:
 		node.Location = l.location

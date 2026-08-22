@@ -270,7 +270,10 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				emitStackLocalSlots(lb, stackSlots)
 			}
 			for _, instr := range block.Instrs {
-				lb.setLocation(mir.InstrLocation(instr))
+				if instr == nil {
+					continue
+				}
+				lb.setLocation(instr.SourceLocation())
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
 					val := emitValueExpr(lb, assign.Value)
 					if ptr, ok := lb.localPtrs[assign.Name]; ok {
@@ -306,7 +309,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			}
 			if block.Term != nil {
 				returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
-				lb.setLocation(mir.TerminatorLocation(block.Term))
+				lb.setLocation(block.Term.SourceLocation())
 				switch term := block.Term.(type) {
 				case *mir.Jump:
 					lb.branch(fmt.Sprintf("b%d", term.TargetID))
