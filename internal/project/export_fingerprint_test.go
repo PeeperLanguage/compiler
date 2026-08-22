@@ -10,6 +10,11 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
+type unexpectedSemanticType struct{}
+
+func (*unexpectedSemanticType) TypeNode()    {}
+func (*unexpectedSemanticType) Text() string { return "unexpected" }
+
 func fingerprintModule(t *testing.T, exported *symbols.Symbol, semantics *SemanticInfo) *Module {
 	t.Helper()
 	scope := table.New(nil)
@@ -138,6 +143,15 @@ func TestSemanticTypeKeyIncludesCallableMetadata(t *testing.T) {
 	if semanticTypeKey(left, make(map[typeinfo.Type]bool)) == semanticTypeKey(withoutOrigin, make(map[typeinfo.Type]bool)) {
 		t.Fatal("return-origin contract did not change semantic type key")
 	}
+}
+
+func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("semanticTypeKey accepted unknown semantic type")
+		}
+	}()
+	semanticTypeKey(&unexpectedSemanticType{}, make(map[typeinfo.Type]bool))
 }
 
 func TestConstantKeyIncludesTypeAndValue(t *testing.T) {

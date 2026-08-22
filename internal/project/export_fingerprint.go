@@ -145,8 +145,13 @@ func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 		return "interface(" + strings.Join(methods, ";") + ")"
 	case *typeinfo.EnumType:
 		return "enum(" + strings.Join(node.Variants, ",") + ")"
-	default:
+	case *typeinfo.InvalidType, *typeinfo.UnknownType, *typeinfo.IntegerType,
+		*typeinfo.ByteType, *typeinfo.CharType, *typeinfo.FloatType, *typeinfo.BoolType,
+		*typeinfo.CStrType, *typeinfo.StringType, *typeinfo.NoneType, *typeinfo.AllocatorType,
+		*typeinfo.NamedType, *typeinfo.RawPtrType:
 		return typeinfo.TypeText(semantic)
+	default:
+		panic(fmt.Sprintf("export fingerprint: unhandled semantic type %T", semantic))
 	}
 }
 
@@ -164,6 +169,6 @@ func constantKey(value constvalue.Value) string {
 	case *constvalue.StringConst:
 		return node.TypeText() + ":" + fmt.Sprintf("%q", node.Text())
 	default:
-		return value.TypeText()
+		panic(fmt.Sprintf("export fingerprint: unhandled constant %T", value))
 	}
 }

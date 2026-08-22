@@ -496,6 +496,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 		case *mir.Unary:
 			arg := emitRef(b, e.Arg)
 			switch e.Op {
+			case "+":
+				return arg
 			case "-":
 				if isFloatType(b.emitter.mod.Types, e.Type) {
 					return b.arithmetic("fsub", b.value("0.0", arg.Layout), arg)
@@ -506,7 +508,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			case "~":
 				return b.arithmetic("xor", arg, b.value("-1", arg.Layout))
 			default:
-				return arg
+				b.invariant("unsupported MIR unary operator %q", e.Op)
+				return llvmValue{}
 			}
 		case *mir.Binary:
 			left := emitRef(b, e.Left)
@@ -594,7 +597,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				}
 				return b.arithmetic("or", lc, rc)
 			default:
-				return left
+				b.invariant("unsupported MIR binary operator %q", e.Op)
+				return llvmValue{}
 			}
 			return b.arithmetic(opcode, left, right)
 		case *mir.Call:

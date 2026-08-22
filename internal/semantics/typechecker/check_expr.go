@@ -126,8 +126,11 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.AsExpr:
 		return c.typeAsExpr(scope, node)
 
-	default:
+	case *ast.BadExpr:
 		return nil // resolver already diagnosed unsupported expressions
+
+	default:
+		panic(fmt.Sprintf("typechecker: unhandled expression %T", expr))
 	}
 }
 

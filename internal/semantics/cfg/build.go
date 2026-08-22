@@ -1,6 +1,8 @@
 package cfg
 
 import (
+	"fmt"
+
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 )
@@ -85,13 +87,7 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		continuation := b.newBlock()
 		end.Terminator = &Jump{Target: continuation}
 		return continuation
-	case *hir.Binding:
-		current.Stmts = append(current.Stmts, s)
-		return current
-	case *hir.ExprStmt:
-		current.Stmts = append(current.Stmts, s)
-		return current
-	case *hir.Invalid:
+	case *hir.Binding, *hir.ExprStmt, *hir.Assign, *hir.Invalid:
 		current.Stmts = append(current.Stmts, s)
 		return current
 	case *hir.Return:
@@ -160,7 +156,6 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *Block) *Block {
 		}
 		return exit
 	default:
-		current.Stmts = append(current.Stmts, stmt)
-		return current
+		panic(fmt.Sprintf("CFG lowering: unhandled HIR statement %T", stmt))
 	}
 }

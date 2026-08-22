@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"fmt"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/problems"
@@ -176,8 +178,11 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.AssignStmt:
 		r.resolveAssignTarget(scope, node.Target)
 		r.resolveExpr(scope, node.Value)
-	default:
+	case *ast.BadStmt, *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl,
+		*ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
+	default:
+		panic(fmt.Sprintf("resolver: unhandled statement %T", stmt))
 	}
 }
 
@@ -277,8 +282,10 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AsExpr:
 		r.resolveExpr(scope, node.Expr)
-	default:
+	case *ast.BadExpr:
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", ast.LocOf(node), "")
+	default:
+		panic(fmt.Sprintf("resolver: unhandled expression %T", expr))
 	}
 }
 

@@ -1,6 +1,8 @@
 package cfg
 
 import (
+	"fmt"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
@@ -95,6 +97,9 @@ func rebuildSites(fn *Graph) {
 		switch term := block.Terminator.(type) {
 		case *Branch:
 			block.Sites = append(block.Sites, &Site{Kind: SiteTerminator, NodeID: term.NodeID})
+		case nil, *Jump, *Return:
+		default:
+			panic(fmt.Sprintf("CFG finalization: unhandled terminator %T", block.Terminator))
 		}
 		if len(block.Sites) == 0 {
 			block.Sites = append(block.Sites, &Site{Kind: SiteJoin})
@@ -121,6 +126,9 @@ func rebuildSites(fn *Graph) {
 			connectBlockSite(last, term.FalseTarget, EdgeFalse)
 		case *Return:
 			connectBlockSite(last, fn.Exit, EdgeReturn)
+		case nil:
+		default:
+			panic(fmt.Sprintf("CFG finalization: unhandled terminator %T", block.Terminator))
 		}
 	}
 }

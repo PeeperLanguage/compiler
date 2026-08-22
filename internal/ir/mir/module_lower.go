@@ -296,7 +296,7 @@ func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 	case *hir.Invalid:
 		return false
 	default:
-		return false
+		panic(fmt.Sprintf("MIR lowering: unhandled HIR statement %T", stmt))
 	}
 }
 
@@ -375,7 +375,7 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		l.setBlockTerm(l.current, &Ret{})
 		return true
 	default:
-		return false
+		panic(fmt.Sprintf("MIR lowering: unhandled CFG terminator %T", source.Terminator))
 	}
 }
 
@@ -453,6 +453,10 @@ func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 
 func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
+	case nil:
+		return nil
+	case *ir.InvalidExpr:
+		return &RefConst{Value: "0", Type: ir.InvalidType, Location: e.Origin().Location}
 	case *ir.IntLit:
 		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.FloatLit:
@@ -715,7 +719,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	default:
-		return &RefConst{Value: "0", Type: ir.InvalidType}
+		panic(fmt.Sprintf("MIR lowering: unhandled IR expression %T", expr))
 	}
 }
 
@@ -789,6 +793,6 @@ func asValueExpr(ref ValueRef) ValueExpr {
 	case *RefName:
 		return &Move{Src: ref, Type: node.Type}
 	default:
-		return &Move{Src: ref, Type: ir.InvalidType}
+		panic(fmt.Sprintf("MIR lowering: unhandled value reference %T", ref))
 	}
 }
