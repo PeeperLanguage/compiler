@@ -10,7 +10,6 @@ package parser
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -766,18 +765,8 @@ func (p *Parser) nextID() ast.NodeID {
 	return p.nodeID
 }
 
-// isNilNode handles the Go interface nil trap: a non-nil interface holding a
-// nil pointer is not equal to nil, so a plain `n == nil` check is insufficient.
-func isNilNode(n ast.Node) bool {
-	if n == nil {
-		return true
-	}
-	v := reflect.ValueOf(n)
-	return v.Kind() == reflect.Pointer && v.IsNil()
-}
-
 func reg[T ast.Node](p *Parser, n T) T {
-	if !isNilNode(n) {
+	if !ast.IsNilNode(n) {
 		n.SetID(p.nextID())
 	}
 	return n

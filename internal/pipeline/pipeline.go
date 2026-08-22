@@ -16,6 +16,7 @@ import (
 	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/phase"
+	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -172,9 +173,7 @@ func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelu
 			// Inject prelude as soon as its module scope exists. Other modules can
 			// then resolve global prelude names while later binding updates the same
 			// symbol objects in place.
-			for _, sym := range prelude.ModuleScope.Symbols() {
-				_ = p.ctx.GlobalScope.Declare(sym)
-			}
+			p.injectPreludeSymbols(prelude, diag)
 			preludeInjected = true
 		}
 
@@ -210,6 +209,25 @@ func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelu
 		}
 	}
 	return preludeInjected
+}
+
+// injectPreludeSymbols keeps repeated pipeline runs idempotent while exposing
+// a real collision between compiler-owned globals and prelude declarations.
+func (p *Pipeline) injectPreludeSymbols(prelude *project.Module, diag *diagnostics.DiagnosticBag) {
+	if p == nil || p.ctx == nil || p.ctx.GlobalScope == nil || prelude == nil || prelude.ModuleScope == nil {
+		return
+	}
+	preludeDiag := diag.AppendPhase(phase.Collected, prelude.Key)
+	for _, sym := range prelude.ModuleScope.Symbols() {
+		if err := p.ctx.GlobalScope.Declare(sym); err == nil {
+			continue
+		}
+		existing, found := p.ctx.GlobalScope.LookupLocal(sym.Name)
+		if found && existing != nil && existing.ID == sym.ID {
+			continue
+		}
+		problems.ReportRedeclaration(preludeDiag, p.ctx.GlobalScope, fmt.Sprintf("prelude declaration %q conflicts with an existing global", sym.Name), sym.Name, sym.Location)
+	}
 }
 
 // requireScheduledModulesAtLeast reports scheduled modules that stalled before

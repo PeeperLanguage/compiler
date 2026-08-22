@@ -26,10 +26,6 @@ type Param struct {
 	SymbolID symbols.SymbolID
 }
 
-type Module interface {
-	Text() string
-}
-
 type Expr interface {
 	exprNode()
 	forEachChild(func(Expr))

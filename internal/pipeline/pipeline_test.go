@@ -390,6 +390,21 @@ fn main() -> i32 { return 0; }`, diag)
 	}
 }
 
+func TestPipelineReportsPreludeGlobalCollision(t *testing.T) {
+	diag := buildPipelineTestWithConfig(
+		t,
+		project.Config{RootDir: ".", Extension: peeper.SourceExt},
+		`fn len(value: i32) -> i32 { return value; }`,
+		`fn main() -> i32 { return 0; }`,
+	)
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrRedeclaredSymbol && strings.Contains(item.Message, "len") {
+			return
+		}
+	}
+	t.Fatalf("expected prelude/global collision diagnostic, got:\n%s", diag.EmitAllToString())
+}
+
 func TestPipelineRunReplacesStaleFinalizeDiagnostics(t *testing.T) {
 	const filePath = "stale_finalize" + peeper.SourceExt
 	const sourceText = "fn main() -> i32 { return 0; }"

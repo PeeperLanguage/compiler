@@ -249,6 +249,20 @@ func TestLLVMEmitterRejectsUnknownMIROperators(t *testing.T) {
 	}
 }
 
+func TestLLVMEmitterRejectsInvalidMIRReferences(t *testing.T) {
+	emitter := &llvmEmitter{mod: &mir.Module{Types: llvmTypes.table}}
+	for name, ref := range map[string]mir.ValueRef{
+		"unknown constant type": &mir.RefConst{Value: "0", Type: ir.TypeID(999999)},
+		"unresolved name":       &mir.RefName{Name: "missing", Type: llvmTypes.i32},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireLLVMInvariant(t, func() {
+				emitRef(newLLVMBuilder(&strings.Builder{}, emitter, -1), ref)
+			})
+		})
+	}
+}
+
 func TestTypedLLVMBuilderPreservesPointerPlaceOnValidBitcast(t *testing.T) {
 	var out strings.Builder
 	b := newLLVMBuilder(&out, nil, -1)

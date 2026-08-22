@@ -751,16 +751,20 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 		b.invariant("reference emission requires MIR value")
 	}
 	return withLLVMLocation(b, ref.SourceLocation(), func() llvmValue {
-		layout := b.emitter.layout(mirRefType(ref))
+		refType := mirRefType(ref)
+		layout := b.emitter.layout(refType)
 		if layout == nil {
-			b.invariant("reference has unsupported type %s", b.emitter.mod.Types.Text(mirRefType(ref)))
+			b.invariant("reference has unsupported type %s", b.emitter.mod.Types.Text(refType))
+		}
+		typ, ok := b.emitter.mod.Types.Type(refType)
+		if !ok {
+			if refType == ir.InvalidType {
+				return b.value("0", layout)
+			}
+			b.invariant("reference has unknown type %d", refType)
 		}
 		switch v := ref.(type) {
 		case *mir.RefConst:
-			typ, ok := b.emitter.mod.Types.Type(v.Type)
-			if !ok {
-				return b.value("0", layout)
-			}
 			if typ.Kind == ir.TypeBool && v.Value != "false" && v.Value != "true" {
 				if b.emitter != nil {
 					b.emitter.markInvalid("invalid boolean constant: " + v.Value)
@@ -775,7 +779,6 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 			}
 			return b.value(v.Value, layout)
 		case *mir.RefName:
-			typ, _ := b.emitter.mod.Types.Type(v.Type)
 			isFunc := typ.Kind == ir.TypeFunction
 			if ptr, ok := b.localPtrs[v.Name]; ok {
 				return b.load(ptr)
@@ -823,7 +826,11 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 			if strings.HasPrefix(v.Name, "@") {
 				return b.value(v.Name, layout)
 			}
-			return b.value("0", layout)
+			if refType == ir.InvalidType {
+				return b.value("0", layout)
+			}
+			b.invariant("unresolved MIR reference %q", v.Name)
+			return llvmValue{}
 		default:
 			b.invariant("unsupported MIR reference %T", ref)
 			return llvmValue{}
