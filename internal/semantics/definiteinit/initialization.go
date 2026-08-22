@@ -2,10 +2,11 @@ package definiteinit
 
 import (
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
-	"compiler/internal/ir/hir"
-	"compiler/internal/semantics/cfg"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
 )
 
 type state map[symbols.SymbolID]struct{}
@@ -16,35 +17,62 @@ type functionResult struct {
 }
 
 type site struct {
-	cfgSite *cfg.Site
-	stmt    hir.Stmt
-	term    cfg.Terminator
+	cfgSite   *cfg.Site
+	stmt      ast.Stmt
+	condition ast.Expr
+	scope     *table.Scope
 }
 
 // Check diagnoses reads not initialized on every reachable CFG predecessor.
-func Check(module *hir.Module, graphs []*cfg.Graph, diag *diagnostics.DiagnosticBag) {
-	if module == nil {
+func Check(
+	graphs *cfg.Module,
+	nodes map[ast.NodeID]ast.Node,
+	blockScopes map[ast.NodeID]*table.Scope,
+	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
+	diag *diagnostics.DiagnosticBag,
+) {
+	if graphs == nil {
 		return
 	}
-	for index, fn := range module.Funcs {
-		if fn == nil || index >= len(graphs) || graphs[index] == nil {
+	for _, graph := range graphs.Functions {
+		if graph == nil {
 			continue
 		}
-		analyzeFunction(fn, graphs[index], diag)
+		fn, _ := nodes[ast.NodeID(graph.NodeID)].(*ast.FnDecl)
+		if fn == nil {
+			continue
+		}
+		analyzeFunction(fn, graph, nodes, blockScopes, resolvedSymbols, diag)
 	}
 }
 
-func analyzeFunction(fn *hir.Function, graph *cfg.Graph, diag *diagnostics.DiagnosticBag) *functionResult {
-	nodes, order, tracked := indexSites(fn, graph)
+func analyzeFunction(
+	fn *ast.FnDecl,
+	graph *cfg.Graph,
+	nodes map[ast.NodeID]ast.Node,
+	blockScopes map[ast.NodeID]*table.Scope,
+	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
+	diag *diagnostics.DiagnosticBag,
+) *functionResult {
+	sites, order, tracked := indexSites(fn, graph, nodes, blockScopes)
 	result := &functionResult{In: make(map[cfg.SiteID]state), Out: make(map[cfg.SiteID]state)}
 	if graph == nil || graph.Entry == nil || len(graph.Entry.Sites) == 0 {
 		return result
 	}
 	entry := graph.Entry.Sites[0].ID
 	entryState := make(state)
-	for _, param := range fn.Params {
-		if param.SymbolID != 0 {
-			entryState[param.SymbolID] = struct{}{}
+	if fn != nil && fn.Body != nil {
+		functionScope := blockScopes[fn.Body.ID()]
+		for _, param := range fn.ParamsWithReceiver() {
+			if param.Name == nil {
+				continue
+			}
+			symbol, found := functionScope.Lookup(param.Name.Name)
+			if !found || symbol == nil {
+				continue
+			}
+			entryState[symbol.ID] = struct{}{}
+			tracked[symbol.ID] = symbol.Name
 		}
 	}
 	result.In[entry] = entryState
@@ -54,14 +82,14 @@ func analyzeFunction(fn *hir.Function, graph *cfg.Graph, diag *diagnostics.Diagn
 		id := queue[0]
 		queue = queue[1:]
 		queued[id] = false
-		node := nodes[id]
+		node := sites[id]
 		if node == nil {
 			continue
 		}
 		out := transfer(node, result.In[id])
 		result.Out[id] = out
 		for _, edge := range node.cfgSite.Successors {
-			if nodes[edge.To] == nil {
+			if sites[edge.To] == nil {
 				continue
 			}
 			current, exists := result.In[edge.To]
@@ -80,124 +108,147 @@ func analyzeFunction(fn *hir.Function, graph *cfg.Graph, diag *diagnostics.Diagn
 		}
 	}
 	for _, id := range order {
-		if state, reachable := result.In[id]; reachable {
-			checkReads(nodes[id], state, tracked, diag)
+		if initialized, reachable := result.In[id]; reachable {
+			checkReads(sites[id], initialized, tracked, resolvedSymbols, diag)
 		}
 	}
 	return result
 }
 
-func indexSites(fn *hir.Function, graph *cfg.Graph) (map[cfg.SiteID]*site, []cfg.SiteID, map[symbols.SymbolID]string) {
-	nodes := make(map[cfg.SiteID]*site)
+func indexSites(
+	fn *ast.FnDecl,
+	graph *cfg.Graph,
+	nodes map[ast.NodeID]ast.Node,
+	blockScopes map[ast.NodeID]*table.Scope,
+) (map[cfg.SiteID]*site, []cfg.SiteID, map[symbols.SymbolID]string) {
+	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
 	tracked := make(map[symbols.SymbolID]string)
-	for _, param := range fn.Params {
-		if param.SymbolID != 0 {
-			tracked[param.SymbolID] = param.Name
-		}
+	if fn == nil || graph == nil {
+		return sites, order, tracked
 	}
 	for _, block := range graph.Blocks {
 		if block == nil || !block.Reachable {
 			continue
 		}
-		statementIndex := 0
-		for _, flowSite := range block.Sites {
-			if flowSite == nil {
+		for _, cfgSite := range block.Sites {
+			if cfgSite == nil {
 				continue
 			}
-			node := &site{cfgSite: flowSite}
-			switch flowSite.Kind {
-			case cfg.SiteStatement:
-				if statementIndex < len(block.Stmts) {
-					node.stmt = block.Stmts[statementIndex]
-					if binding, ok := node.stmt.(*hir.Binding); ok && binding.SymbolID != 0 {
-						tracked[binding.SymbolID] = binding.Name
+			indexed := &site{
+				cfgSite: cfgSite,
+				scope:   blockScopes[ast.NodeID(cfgSite.ScopeID)],
+			}
+			if stmt, ok := nodes[ast.NodeID(cfgSite.NodeID)].(ast.Stmt); ok {
+				indexed.stmt = stmt
+			}
+			if branch, ok := block.Terminator.(*cfg.Branch); ok && cfgSite.Kind == cfg.SiteTerminator {
+				indexed.condition, _ = nodes[ast.NodeID(branch.ConditionID)].(ast.Expr)
+			}
+			switch binding := indexed.stmt.(type) {
+			case *ast.LetDecl:
+				if indexed.scope != nil {
+					if symbol, found := indexed.scope.LookupNode(binding); found && symbol != nil {
+						tracked[symbol.ID] = symbol.Name
 					}
 				}
-				statementIndex++
-			case cfg.SiteTerminator:
-				node.term = block.Terminator
+			case *ast.ConstDecl:
+				if indexed.scope != nil {
+					if symbol, found := indexed.scope.LookupNode(binding); found && symbol != nil {
+						tracked[symbol.ID] = symbol.Name
+					}
+				}
 			}
-			nodes[flowSite.ID] = node
-			order = append(order, flowSite.ID)
+			sites[cfgSite.ID] = indexed
+			order = append(order, cfgSite.ID)
 		}
 	}
-	return nodes, order, tracked
+	return sites, order, tracked
 }
 
 func transfer(node *site, in state) state {
 	out := copyState(in)
-	if node == nil {
+	if node == nil || node.scope == nil {
 		return out
 	}
 	switch stmt := node.stmt.(type) {
-	case *hir.Binding:
-		if stmt.Value != nil && stmt.SymbolID != 0 {
-			out[stmt.SymbolID] = struct{}{}
+	case *ast.LetDecl:
+		if stmt.Value != nil {
+			if symbol, found := node.scope.LookupNode(stmt); found && symbol != nil {
+				out[symbol.ID] = struct{}{}
+			}
 		}
-	case *hir.Assign:
-		if ident, direct := directAssignedIdent(stmt.Target); direct && ident.SymbolID != 0 {
-			out[ident.SymbolID] = struct{}{}
+	case *ast.ConstDecl:
+		if stmt.Value != nil {
+			if symbol, found := node.scope.LookupNode(stmt); found && symbol != nil {
+				out[symbol.ID] = struct{}{}
+			}
+		}
+	case *ast.AssignStmt:
+		if ident, direct := stmt.Target.(*ast.Ident); direct && ident != nil {
+			if symbol, found := node.scope.Lookup(ident.Name); found && symbol != nil {
+				out[symbol.ID] = struct{}{}
+			}
 		}
 	}
 	return out
 }
 
-func checkReads(node *site, initialized state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+func checkReads(
+	node *site,
+	initialized state,
+	tracked map[symbols.SymbolID]string,
+	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
+	diag *diagnostics.DiagnosticBag,
+) {
 	if node == nil || diag == nil {
 		return
 	}
-	checkRead := func(expr ir.Expr) bool {
-		ident, ok := expr.(*ir.Ident)
-		if !ok {
+	checkExpr := func(expr ast.Expr) {
+		ast.Inspect(expr, func(node ast.Node) bool {
+			ident, ok := node.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			symbol := resolvedSymbols[ident.ID()]
+			if symbol == nil {
+				return true
+			}
+			name, local := tracked[symbol.ID]
+			if !local {
+				return true
+			}
+			if _, present := initialized[symbol.ID]; present {
+				return true
+			}
+			if name == "" {
+				name = ident.Name
+			}
+			name = ir.StripSymbolInstance(name)
+			msg := "symbol `" + name + "` used before it's initialized"
+			diag.Add(diagnostics.NewError(msg).
+				WithCode(diagnostics.ErrUninitializedVariable).
+				WithPrimaryLabel(ast.LocOf(ident), msg).
+				WithHelp("assign a value before reading this symbol"))
 			return true
-		}
-		name, local := tracked[ident.SymbolID]
-		if !local {
-			return true
-		}
-		if _, present := initialized[ident.SymbolID]; present {
-			return true
-		}
-		if name == "" {
-			name = ident.Name
-		}
-		name = ir.StripSymbolInstance(name)
-		msg := "symbol `" + name + "` used before it's initialized"
-		diag.Add(diagnostics.NewError(msg).
-			WithCode(diagnostics.ErrUninitializedVariable).
-			WithPrimaryLabel(ident.Location, msg).
-			WithHelp("assign a value before reading this symbol"))
-		return true
+		})
 	}
-	checkExpr := func(expr ir.Expr) { ir.InspectExpr(expr, checkRead) }
 	switch stmt := node.stmt.(type) {
-	case *hir.Binding:
+	case *ast.LetDecl:
 		checkExpr(stmt.Value)
-	case *hir.Assign:
+	case *ast.ConstDecl:
 		checkExpr(stmt.Value)
-		if _, direct := directAssignedIdent(stmt.Target); !direct {
-			ir.InspectPlace(stmt.Target, checkRead)
+	case *ast.AssignStmt:
+		checkExpr(stmt.Value)
+		if _, direct := stmt.Target.(*ast.Ident); !direct {
+			checkExpr(stmt.Target)
 		}
-	case *hir.ExprStmt:
+	case *ast.ExprStmt:
+		checkExpr(stmt.Expr)
+	case *ast.ReturnStmt:
 		checkExpr(stmt.Value)
-	case *hir.Return:
-		checkExpr(stmt.Value)
-		for _, cleanup := range stmt.Cleanup {
-			checkExpr(cleanup)
-		}
 	}
-	if branch, ok := node.term.(*cfg.Branch); ok {
-		checkExpr(branch.Cond)
-	}
-}
-
-func directAssignedIdent(place *ir.Place) (*ir.Ident, bool) {
-	if place == nil || len(place.Projections) != 0 {
-		return nil, false
-	}
-	ident, ok := place.Root.(*ir.Ident)
-	return ident, ok && ident != nil
+	checkExpr(node.condition)
 }
 
 func copyState(current state) state {

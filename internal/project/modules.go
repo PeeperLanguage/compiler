@@ -8,9 +8,9 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
@@ -128,11 +128,8 @@ type Module struct {
 	// TypedASTNodes indexes final AST after semantic expansion.
 	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
-	HIR *hir.Module
-	CFG []*cfg.Graph
-	// CFGValid records mandatory CFG analysis independently from diagnostics
-	// emitted by earlier phases.
-	CFGValid  bool
+	HIR       *hir.Module
+	CFG       *cfg.Module
 	Ownership ownershipresult.Result
 	MIR       *mir.Module
 	LLVMIR    string
@@ -221,7 +218,6 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 	}
 	if phase < PhaseCFG {
 		m.CFG = nil
-		m.CFGValid = false
 	}
 	if phase < PhaseOwnership {
 		m.Ownership = nil

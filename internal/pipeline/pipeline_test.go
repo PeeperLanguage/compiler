@@ -351,7 +351,7 @@ fn main() -> i32 {
 	if entry.HIR == nil {
 		t.Fatalf("expected HIR despite extern definition error")
 	}
-	if len(entry.CFG) == 0 {
+	if entry.CFG == nil || len(entry.CFG.Functions) == 0 {
 		t.Fatal("expected canonical CFG despite extern definition error")
 	}
 	if len(entry.HIR.Externs) != 0 {
@@ -444,7 +444,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		if entry.Phase != phase {
 			t.Fatalf("phase = %v, want %v", entry.Phase, phase)
 		}
-		if phase == project.PhaseCFG && len(entry.CFG) == 0 {
+		if phase == project.PhaseCFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
 		}
 	}

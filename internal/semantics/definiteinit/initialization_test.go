@@ -5,61 +5,73 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
-	"compiler/internal/ir/hir"
-	"compiler/internal/semantics/cfg"
-	"compiler/internal/semantics/symbols"
+	"compiler/internal/ir/cfg"
+	"compiler/internal/project"
+	"compiler/internal/semantics/binder"
+	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/typechecker"
+	"compiler/pkg/peeper"
 )
 
-const (
-	valueSymbol symbols.SymbolID = 1
-	flagSymbol  symbols.SymbolID = 2
-)
-
-func analyzeInitializationBody(t *testing.T, build func(i32, boolType ir.TypeID) []hir.Stmt) (*functionResult, *diagnostics.DiagnosticBag) {
+func analyzeInitializationSource(t *testing.T, source string) (*functionResult, *diagnostics.DiagnosticBag) {
 	t.Helper()
-	types := ir.NewTypeTable()
-	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
-	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
-	fn := &hir.Function{
-		Name:       "choose",
-		NodeID:     100,
-		Params:     []ir.Param{{Name: "flag", Type: boolType, SymbolID: flagSymbol}},
-		ReturnType: i32,
-		Body:       &hir.Block{NodeID: 101, Stmts: build(i32, boolType)},
-	}
+	const filePath = "definite_init_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
-	module := &hir.Module{Types: types, Funcs: []*hir.Function{fn}}
-	return analyzeFunction(fn, cfg.BuildModule(module)[0], diag), diag
-}
-
-func uninitializedValueBinding(i32 ir.TypeID) *hir.Binding {
-	return &hir.Binding{Name: "value", Type: i32, SymbolID: valueSymbol, NodeID: 1}
-}
-
-func valueAssignment(i32 ir.TypeID, value string) *hir.Assign {
-	return &hir.Assign{
-		Target: &ir.Place{Root: &ir.Ident{Name: "value", Type: i32, SymbolID: valueSymbol}, Type: i32},
-		Value:  &ir.IntLit{Value: value, Type: i32},
+	diag.AddSourceContent(filePath, source)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ImportPath: "definite_init_test",
+		FilePath:   filePath,
+		Content:    source,
+		AST:        parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
+		Imports:    make(map[string]project.ResolvedImport),
 	}
-}
-
-func valueReturn(i32 ir.TypeID) *hir.Return {
-	return &hir.Return{Value: &ir.Ident{Name: "value", Type: i32, SymbolID: valueSymbol}}
+	ctx.AddModule(module)
+	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
+	resolver.Resolve(ctx, module)
+	typechecker.Check(ctx, module)
+	module.TypedASTNodes = ast.Index(module.AST)
+	module.CFG = cfg.BuildModule(module.AST)
+	symbol, found := module.ModuleScope.Lookup("choose")
+	if !found || symbol == nil {
+		t.Fatal("choose function symbol missing")
+	}
+	fn, ok := symbol.ASTNode.(*ast.FnDecl)
+	if !ok || fn == nil {
+		t.Fatal("choose function AST missing")
+	}
+	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+	if graph == nil {
+		t.Fatal("choose function CFG missing")
+	}
+	result := analyzeFunction(
+		fn,
+		graph,
+		module.TypedASTNodes,
+		module.Semantics.BlockScopes,
+		module.Semantics.ResolvedSymbols,
+		diag,
+	)
+	return result, diag
 }
 
 func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
-	result, diag := analyzeInitializationBody(t, func(i32, boolType ir.TypeID) []hir.Stmt {
-		return []hir.Stmt{
-			uninitializedValueBinding(i32),
-			&hir.If{
-				Cond: &ir.Ident{Name: "flag", Type: boolType, SymbolID: flagSymbol},
-				Then: &hir.Block{Stmts: []hir.Stmt{valueAssignment(i32, "7")}},
-				Else: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.IntLit{Value: "3", Type: i32}}}},
-			},
-			valueReturn(i32),
-		}
-	})
+	result, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut value: i32;
+	if flag {
+		value = 7;
+	} else {
+		return 3;
+	}
+	return value;
+}`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -69,57 +81,55 @@ func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
 }
 
 func TestInitializationRejectsContinuingUninitializedBranch(t *testing.T) {
-	_, diag := analyzeInitializationBody(t, func(i32, boolType ir.TypeID) []hir.Stmt {
-		binding := uninitializedValueBinding(i32)
-		binding.Name = "value$28993"
-		return []hir.Stmt{
-			binding,
-			&hir.If{Cond: &ir.Ident{Name: "flag", Type: boolType, SymbolID: flagSymbol}, Then: &hir.Block{Stmts: []hir.Stmt{valueAssignment(i32, "7")}}},
-			&hir.Return{Value: &ir.Ident{Name: "value$28993", Type: i32, SymbolID: valueSymbol}},
-		}
-	})
+	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut value: i32;
+	if flag {
+		value = 7;
+	}
+	return value;
+}`)
 	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
 		t.Fatalf("expected uninitialized diagnostic:\n%s", diag.EmitAllToString())
 	}
-	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `value` used before it's initialized") || strings.Contains(got, "value$28993") {
-		t.Fatalf("diagnostic leaked lowered symbol name:\n%s", got)
+	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `value` used before it's initialized") || strings.Contains(got, "value$") {
+		t.Fatalf("diagnostic does not use source symbol name:\n%s", got)
 	}
 }
 
 func TestInitializationAcceptsAssignmentOnBothBranches(t *testing.T) {
-	_, diag := analyzeInitializationBody(t, func(i32, boolType ir.TypeID) []hir.Stmt {
-		return []hir.Stmt{
-			uninitializedValueBinding(i32),
-			&hir.If{
-				Cond: &ir.Ident{Name: "flag", Type: boolType, SymbolID: flagSymbol},
-				Then: &hir.Block{Stmts: []hir.Stmt{valueAssignment(i32, "7")}},
-				Else: &hir.Block{Stmts: []hir.Stmt{valueAssignment(i32, "3")}},
-			},
-			valueReturn(i32),
-		}
-	})
+	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut value: i32;
+	if flag {
+		value = 7;
+	} else {
+		value = 3;
+	}
+	return value;
+}`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestInitializationLoopMayExecuteZeroTimes(t *testing.T) {
-	_, diag := analyzeInitializationBody(t, func(i32, boolType ir.TypeID) []hir.Stmt {
-		return []hir.Stmt{
-			uninitializedValueBinding(i32),
-			&hir.For{Cond: &ir.Ident{Name: "flag", Type: boolType, SymbolID: flagSymbol}, Body: &hir.Block{Stmts: []hir.Stmt{valueAssignment(i32, "7")}}},
-			valueReturn(i32),
-		}
-	})
+	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut value: i32;
+	for flag {
+		value = 7;
+	}
+	return value;
+}`)
 	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
 		t.Fatalf("expected uninitialized diagnostic:\n%s", diag.EmitAllToString())
 	}
 }
 
 func TestInitializationAcceptsDirectAssignment(t *testing.T) {
-	_, diag := analyzeInitializationBody(t, func(i32, _ ir.TypeID) []hir.Stmt {
-		return []hir.Stmt{uninitializedValueBinding(i32), valueAssignment(i32, "7"), valueReturn(i32)}
-	})
+	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut value: i32;
+	value = 7;
+	return value;
+}`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}

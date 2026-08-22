@@ -6,8 +6,8 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -35,8 +35,8 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
-func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, ownership ownershipresult.Result, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
-	if in == nil {
+func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+	if in == nil || graphs == nil {
 		return nil
 	}
 	out := &Module{
@@ -71,18 +71,17 @@ func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, ownership ownershipresult.
 			Location:   ex.Location,
 		})
 	}
-	graphForFunction := make(map[*hir.Function]*cfg.Graph, len(graphs))
-	for _, graph := range graphs {
-		if graph != nil && graph.Source != nil {
-			graphForFunction[graph.Source] = graph
-		}
-	}
 	for _, hirFn := range in.Funcs {
-		graph := graphForFunction[hirFn]
+		graph := graphs.Function(hirFn.NodeID)
 		if graph == nil {
 			return nil
 		}
-		fn, ok := lowerCFGFunction(out, graph, ownership[hirFn.NodeID])
+		statements := make(map[ir.NodeID]hir.Stmt)
+		hir.InspectStmt(hirFn.Body, func(stmt hir.Stmt) bool {
+			statements[hir.NodeIDOf(stmt)] = stmt
+			return true
+		})
+		fn, ok := lowerCFGFunction(out, hirFn, graph, statements, ownership[hirFn.NodeID])
 		if !ok {
 			return nil
 		}
@@ -93,16 +92,16 @@ func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, ownership ownershipresult.
 
 // lowerCFGFunction converts one normalized CFG into MIR without rebuilding
 // branches or loops from structured HIR.
-func lowerCFGFunction(mod *Module, graph *cfg.Graph, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
-	if mod == nil || graph == nil || graph.Source == nil || graph.Entry == nil {
+func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, statements map[ir.NodeID]hir.Stmt, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
+	if mod == nil || sourceFn == nil || graph == nil || graph.Entry == nil {
 		return nil, false
 	}
 	fn := &Function{
-		Name:       graph.Name,
-		Params:     append([]ir.Param(nil), graph.Source.Params...),
-		ReturnType: graph.ReturnType,
+		Name:       sourceFn.Name,
+		Params:     append([]ir.Param(nil), sourceFn.Params...),
+		ReturnType: sourceFn.ReturnType,
 		Blocks:     make([]*Block, 0, len(graph.Blocks)),
-		Location:   graph.Source.Location,
+		Location:   sourceFn.Location,
 	}
 	l := &lowerer{module: mod, fn: fn, cleanup: cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
 	for _, param := range fn.Params {
@@ -115,8 +114,8 @@ func lowerCFGFunction(mod *Module, graph *cfg.Graph, cleanup *ownershipresult.Cl
 		if source == nil || source == graph.Exit || !source.Reachable {
 			continue
 		}
-		for _, stmt := range source.Stmts {
-			if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 {
+		for _, site := range source.Sites {
+			if binding, ok := statements[site.NodeID].(*hir.Binding); ok && binding.SymbolID != 0 {
 				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Type, Location: binding.Location}
 			}
 		}
@@ -137,17 +136,20 @@ func lowerCFGFunction(mod *Module, graph *cfg.Graph, cleanup *ownershipresult.Cl
 		}
 		l.current = block
 		l.location = source.Location
-		for _, stmt := range source.Stmts {
-			if !l.lowerCFGStmt(stmt) {
-				return nil, false
+		for _, site := range source.Sites {
+			switch site.Kind {
+			case cfg.SiteStatement:
+				if !l.lowerCFGStmt(statements[site.NodeID]) {
+					return nil, false
+				}
+			case cfg.SiteScopeExit:
+				if l.cleanup != nil {
+					l.location = site.Location
+					l.appendPlannedDrops(l.cleanup.AfterScope[site.NodeID], &block.Instrs)
+				}
 			}
 		}
-		if l.cleanup != nil {
-			for _, scopeID := range source.ScopeExits {
-				l.appendPlannedDrops(l.cleanup.AfterScope[scopeID], &block.Instrs)
-			}
-		}
-		if !l.lowerCFGTerminator(source, graph.Exit, blocks) {
+		if !l.lowerCFGTerminator(source, graph.Exit, blocks, statements) {
 			return nil, false
 		}
 	}
@@ -323,7 +325,7 @@ func (l *lowerer) flushTemporaryDrops(out *[]Instr, mark int) {
 	l.temporaryDrops = l.temporaryDrops[:mark]
 }
 
-func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Block]*Block) bool {
+func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Block]*Block, statements map[ir.NodeID]hir.Stmt) bool {
 	if l == nil || source == nil || l.current == nil {
 		return false
 	}
@@ -347,21 +349,33 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		if thenBlock == nil || elseBlock == nil {
 			return false
 		}
+		var cond ir.Expr
+		switch stmt := statements[term.NodeID].(type) {
+		case *hir.If:
+			cond = stmt.Cond
+			l.location = stmt.Location
+		case *hir.For:
+			cond = stmt.Cond
+			l.location = stmt.Location
+		default:
+			return false
+		}
 		temporaryMark := len(l.temporaryDrops)
-		cond := l.lowerExpr(term.Cond, &l.current.Instrs)
+		lowered := l.lowerExpr(cond, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		l.setBlockTerm(l.current, &Branch{Cond: cond, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
+		l.setBlockTerm(l.current, &Branch{Cond: lowered, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
 		return true
 	case *cfg.Return:
+		ret, ok := statements[term.NodeID].(*hir.Return)
+		if !ok || ret == nil {
+			return false
+		}
+		l.location = ret.Location
 		temporaryMark := len(l.temporaryDrops)
-		value := l.lowerExpr(term.Value, &l.current.Instrs)
+		value := l.lowerExpr(ret.Value, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		for _, stmt := range source.Stmts {
-			if ret, ok := stmt.(*hir.Return); ok {
-				for _, cleanup := range ret.Cleanup {
-					l.lowerExpr(cleanup, &l.current.Instrs)
-				}
-			}
+		for _, cleanup := range ret.Cleanup {
+			l.lowerExpr(cleanup, &l.current.Instrs)
 		}
 		if l.cleanup != nil {
 			l.appendPlannedDrops(l.cleanup.BeforeReturn[term.NodeID], &l.current.Instrs)

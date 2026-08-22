@@ -41,6 +41,7 @@ type Function struct {
 
 type Stmt interface {
 	stmtNode()
+	forEachChild(func(Stmt))
 	appendText(*strings.Builder, int)
 	sourceInfo() ir.SourceInfo
 }
@@ -127,6 +128,30 @@ func (*Invalid) stmtNode()  {}
 func (*Return) stmtNode()   {}
 func (*If) stmtNode()       {}
 func (*For) stmtNode()      {}
+
+func (s *Block) forEachChild(visit func(Stmt)) {
+	for _, stmt := range s.Stmts {
+		visit(stmt)
+	}
+}
+func (*Binding) forEachChild(func(Stmt))  {}
+func (*ExprStmt) forEachChild(func(Stmt)) {}
+func (*Assign) forEachChild(func(Stmt))   {}
+func (*Invalid) forEachChild(func(Stmt))  {}
+func (*Return) forEachChild(func(Stmt))   {}
+func (s *If) forEachChild(visit func(Stmt)) {
+	visit(s.Then)
+	visit(s.Else)
+}
+func (s *For) forEachChild(visit func(Stmt)) { visit(s.Body) }
+
+// InspectStmt traverses structured HIR in depth-first preorder.
+func InspectStmt(stmt Stmt, visit func(Stmt) bool) {
+	if stmt == nil || !visit(stmt) {
+		return
+	}
+	stmt.forEachChild(func(child Stmt) { InspectStmt(child, visit) })
+}
 
 func (b *Block) sourceInfo() ir.SourceInfo {
 	return ir.SourceInfo{NodeID: b.NodeID, Location: b.Location}

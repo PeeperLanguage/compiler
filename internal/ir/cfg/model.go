@@ -2,22 +2,35 @@ package cfg
 
 import (
 	"compiler/internal/ir"
-	"compiler/internal/ir/hir"
 	"compiler/internal/source"
 )
 
-type Graph struct {
-	Name       string
-	ReturnType ir.TypeID
-	Types      *ir.TypeTable
-	Source     *hir.Function
-	Entry      *Block
-	Exit       *Block
-	Blocks     []*Block
+// Module owns canonical function CFG identity for one source module.
+type Module struct {
+	Functions []*Graph
+	byNodeID  map[ir.NodeID]*Graph
 }
 
-// SiteID identifies one ordered ownership-analysis point within a CFG block.
-// It remains stable while the CFG artifact is unchanged.
+// Function returns one graph by source function identity.
+func (m *Module) Function(id ir.NodeID) *Graph {
+	if m == nil {
+		return nil
+	}
+	return m.byNodeID[id]
+}
+
+type Graph struct {
+	NodeID         ir.NodeID
+	Name           string
+	Location       *source.Location
+	ReturnTypeText string
+	ReturnsValue   bool
+	Entry          *Block
+	Exit           *Block
+	Blocks         []*Block
+}
+
+// SiteID identifies one ordered semantic program point within a CFG block.
 type SiteID struct {
 	Block int
 	Index int
@@ -48,30 +61,35 @@ const (
 	SiteJoin
 )
 
-// Site records statement-granular control flow derived from a CFG block. It
-// lets ownership analyses retain statement ordering without rebuilding a
-// second graph from syntax.
+// Site records source identity and lexical scope at one CFG program point.
 type Site struct {
 	ID           SiteID
 	Kind         SiteKind
 	NodeID       ir.NodeID
+	ScopeID      ir.NodeID
+	Location     *source.Location
 	Successors   []Edge
 	Predecessors []Edge
 }
 
+type BlockOrigin uint8
+
+const (
+	BlockNormal BlockOrigin = iota
+	BlockThen
+	BlockElse
+	BlockLoop
+	BlockLoopBody
+)
+
 type Block struct {
-	ID         int
-	Location   *source.Location
-	BranchKind string
-	Stmts      []hir.Stmt
-	// ScopeExits is inner-to-outer lexical HIR block identity. Each listed
-	// scope completes immediately before this block's terminator.
-	ScopeExits   []hir.NodeID
+	ID           int
+	Origin       BlockOrigin
+	Location     *source.Location
 	Sites        []*Site
 	Terminator   Terminator
 	Predecessors []*Block
 	Reachable    bool
-	Returns      bool
 }
 
 type Terminator interface {
@@ -84,15 +102,16 @@ type Jump struct {
 }
 
 type Branch struct {
-	Cond        ir.Expr
+	NodeID      ir.NodeID
+	ConditionID ir.NodeID
+	ScopeID     ir.NodeID
+	Location    *source.Location
 	TrueTarget  *Block
 	FalseTarget *Block
-	NodeID      hir.NodeID
 }
 
 type Return struct {
-	Value  ir.Expr
-	NodeID hir.NodeID
+	NodeID ir.NodeID
 }
 
 func (*Jump) termNode()   {}

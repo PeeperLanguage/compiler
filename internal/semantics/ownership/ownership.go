@@ -7,9 +7,8 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
-	"compiler/internal/ir/hir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -18,10 +17,10 @@ import (
 )
 
 type site struct {
-	flow  *cfg.Site
-	stmt  ast.Stmt
-	block *ast.BlockStmt
-	scope *table.Scope
+	cfgSite *cfg.Site
+	stmt    ast.Stmt
+	block   *ast.BlockStmt
+	scope   *table.Scope
 }
 
 type analyzer struct {
@@ -56,14 +55,14 @@ type state struct {
 // value-flow rules from becoming ad hoc type rules.
 func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil {
+	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil || module.CFG == nil {
 		return result
 	}
-	for _, graph := range module.CFG {
-		if graph == nil || graph.Source == nil {
+	for _, graph := range module.CFG.Functions {
+		if graph == nil {
 			continue
 		}
-		result[graph.Source.NodeID] = &ownershipresult.CleanupPlan{
+		result[graph.NodeID] = &ownershipresult.CleanupPlan{
 			AfterScope:     make(map[ir.NodeID][]symbols.SymbolID),
 			BeforeReturn:   make(map[ir.NodeID][]symbols.SymbolID),
 			BeforeAssign:   make(map[ir.NodeID]struct{}),
@@ -93,9 +92,9 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 				continue
 			}
 			scope, _ := sym.Scope.(*table.Scope)
-			graph := cfgForFunction(module, node)
-			if graph != nil && graph.Source != nil {
-				checkFunction(ctx, module, node, scope, graph, result[graph.Source.NodeID])
+			graph := module.CFG.Function(ir.NodeID(node.ID()))
+			if graph != nil {
+				checkFunction(ctx, module, node, scope, graph, result[graph.NodeID])
 			}
 		}
 	}
@@ -106,7 +105,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
-	sites, order := indexSites(module, cfgFn, fn.Body, scope)
+	sites, order := indexSites(module, cfgFn, scope)
 	(&analyzer{
 		ctx:           ctx,
 		module:        module,
@@ -120,51 +119,34 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 	}).run()
 }
 
-func cfgForFunction(module *project.Module, fn *ast.FnDecl) *cfg.Graph {
-	if module == nil || fn == nil {
-		return nil
-	}
-	for _, graph := range module.CFG {
-		if graph != nil && graph.Source != nil && graph.Source.NodeID == hir.NodeID(fn.ID()) {
-			return graph
-		}
-	}
-	return nil
-}
-
-func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, scope *table.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *table.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
-	if module == nil || cfgFn == nil || body == nil || scope == nil {
+	if module == nil || module.Semantics == nil || cfgFn == nil || scope == nil {
 		return sites, order
 	}
 	nodes := module.TypedASTNodes
-	scopes := sourceScopes(module, body, scope)
 	for _, block := range cfgFn.Blocks {
 		if block == nil || !block.Reachable {
 			continue
 		}
-		currentScope := scope
 		for _, flowSite := range block.Sites {
 			if flowSite == nil {
 				continue
 			}
-			indexed := &site{flow: flowSite, scope: currentScope}
+			resolvedScope := module.Semantics.BlockScopes[ast.NodeID(flowSite.ScopeID)]
+			if resolvedScope == nil {
+				resolvedScope = scope
+			}
+			indexed := &site{cfgSite: flowSite, scope: resolvedScope}
 			switch flowSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
 				if stmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(ast.Stmt); ok && stmt != nil {
 					indexed.stmt = stmt
-					if resolved := scopes[hir.NodeID(flowSite.NodeID)]; resolved != nil {
-						currentScope = resolved
-						indexed.scope = resolved
-					}
 				}
 			case cfg.SiteScopeExit:
 				if blockStmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(*ast.BlockStmt); ok && blockStmt != nil {
 					indexed.block = blockStmt
-					if resolved := scopes[hir.NodeID(flowSite.NodeID)]; resolved != nil {
-						indexed.scope = resolved
-					}
 				}
 			}
 			sites[flowSite.ID] = indexed
@@ -172,45 +154,6 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, s
 		}
 	}
 	return sites, order
-}
-
-func sourceScopes(module *project.Module, body *ast.BlockStmt, root *table.Scope) map[hir.NodeID]*table.Scope {
-	indexed := make(map[hir.NodeID]*table.Scope)
-	if module == nil || module.Semantics == nil || body == nil || root == nil {
-		return indexed
-	}
-	var indexStmt func(ast.Stmt, *table.Scope)
-	var indexBlock func(*ast.BlockStmt, *table.Scope)
-	indexBlock = func(block *ast.BlockStmt, parent *table.Scope) {
-		if block == nil {
-			return
-		}
-		scope := parent
-		if resolved := module.Semantics.BlockScopes[block.ID()]; resolved != nil {
-			scope = resolved
-		}
-		indexed[hir.NodeID(block.ID())] = scope
-		for _, stmt := range block.Stmts {
-			indexStmt(stmt, scope)
-		}
-	}
-	indexStmt = func(stmt ast.Stmt, scope *table.Scope) {
-		if stmt == nil {
-			return
-		}
-		indexed[hir.NodeID(stmt.ID())] = scope
-		switch node := stmt.(type) {
-		case *ast.BlockStmt:
-			indexBlock(node, scope)
-		case *ast.IfStmt:
-			indexBlock(node.Then, scope)
-			indexStmt(node.Else, scope)
-		case *ast.ForStmt:
-			indexBlock(node.Body, scope)
-		}
-	}
-	indexBlock(body, root)
-	return indexed
 }
 
 func (a *analyzer) run() {
@@ -246,7 +189,7 @@ func (a *analyzer) run() {
 		node := a.sites[id]
 		next := copyState(a.inStates[id])
 		if node != nil {
-			switch node.flow.Kind {
+			switch node.cfgSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
 				if node.stmt != nil {
 					a.applyStmt(node, next)
@@ -255,7 +198,7 @@ func (a *analyzer) run() {
 				a.applyBlockExit(node, next, a.newLoanContext(node, next))
 			}
 		}
-		for _, edge := range node.flow.Successors {
+		for _, edge := range node.cfgSite.Successors {
 			succ := edge.To
 			if a.sites[succ] == nil {
 				continue
@@ -290,7 +233,7 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (s
 		return copyState(src), true
 	}
 	node := a.sites[nodeID]
-	if node == nil || node.flow == nil || len(node.flow.Predecessors) <= 1 {
+	if node == nil || node.cfgSite == nil || len(node.cfgSite.Predecessors) <= 1 {
 		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) &&
 			sameReferenceValues(dst.references, src.references) {
 			return dst, false

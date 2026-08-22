@@ -7,8 +7,8 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -69,17 +69,17 @@ func (access storageAccess) requiresExclusiveAccess() bool {
 }
 
 func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
-	if node == nil || node.flow == nil {
+	if node == nil || node.cfgSite == nil {
 		return &loanContext{remaining: make(map[*symbols.Symbol]int)}
 	}
 	ctx := &loanContext{
 		remaining: make(map[*symbols.Symbol]int),
-		liveOut:   a.referenceLiveOut[node.flow.ID],
+		liveOut:   a.referenceLiveOut[node.cfgSite.ID],
 	}
 	for _, use := range a.referenceUseSequence(node) {
 		ctx.remaining[use.symbol]++
 	}
-	for sym, keepingAlive := range a.referenceLiveIn[node.flow.ID] {
+	for sym, keepingAlive := range a.referenceLiveIn[node.cfgSite.ID] {
 		value, tracked := st.references[sym]
 		if !tracked {
 			continue
@@ -570,10 +570,10 @@ func (a *analyzer) computeReferenceLiveness() {
 
 		out := make(map[*symbols.Symbol]ast.Node)
 		node := a.sites[id]
-		if node == nil || node.flow == nil {
+		if node == nil || node.cfgSite == nil {
 			continue
 		}
-		for _, edge := range node.flow.Successors {
+		for _, edge := range node.cfgSite.Successors {
 			mergeReferenceLiveSets(out, a.referenceLiveIn[edge.To])
 		}
 		uses, definitions := a.referenceUsesAndDefinitions(node)
@@ -588,7 +588,7 @@ func (a *analyzer) computeReferenceLiveness() {
 		}
 		a.referenceLiveIn[id] = in
 		a.referenceLiveOut[id] = out
-		for _, edge := range node.flow.Predecessors {
+		for _, edge := range node.cfgSite.Predecessors {
 			pred := edge.From
 			if !queued[pred] {
 				queue = append(queue, pred)
@@ -601,8 +601,8 @@ func (a *analyzer) computeReferenceLiveness() {
 func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
 	uses := make(map[*symbols.Symbol]ast.Node)
 	definitions := make(map[*symbols.Symbol]struct{})
-	if a == nil || node == nil || node.flow == nil ||
-		(node.flow.Kind != cfg.SiteStatement && node.flow.Kind != cfg.SiteTerminator) || node.stmt == nil {
+	if a == nil || node == nil || node.cfgSite == nil ||
+		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil {
 		return uses, definitions
 	}
 	addDefinition := func(binding ast.Node) {
@@ -641,8 +641,8 @@ func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]
 }
 
 func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
-	if a == nil || node == nil || node.flow == nil ||
-		(node.flow.Kind != cfg.SiteStatement && node.flow.Kind != cfg.SiteTerminator) || node.stmt == nil ||
+	if a == nil || node == nil || node.cfgSite == nil ||
+		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil ||
 		a.module == nil || a.module.Semantics == nil {
 		return nil
 	}

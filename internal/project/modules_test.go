@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/table"
 )
@@ -19,8 +19,7 @@ func moduleWithArtifacts() *Module {
 		Semantics:                 NewSemanticInfo(),
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		HIR:                       &hir.Module{},
-		CFG:                       []*cfg.Graph{{}},
-		CFGValid:                  true,
+		CFG:                       &cfg.Module{Functions: []*cfg.Graph{{}}},
 		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
@@ -61,17 +60,14 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.LLVMIR != "") != test.llvm {
 			t.Fatalf("phase %v reset = %#v", test.phase, module)
 		}
-		if module.CFGValid != test.cfg {
-			t.Fatalf("phase %v CFG validity = %t, want %t", test.phase, module.CFGValid, test.cfg)
-		}
 	}
 }
 
 func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 	module := moduleWithArtifacts()
-	graph := module.CFG[0]
+	graph := module.CFG.Functions[0]
 	module.ResetToPhase(PhaseCFG)
-	if module.CFG[0] != graph {
+	if module.CFG.Functions[0] != graph {
 		t.Fatal("phase reset cloned immutable CFG")
 	}
 	if module.Ownership != nil {

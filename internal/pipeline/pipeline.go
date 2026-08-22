@@ -10,12 +10,12 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/definiteinit"
@@ -350,8 +350,8 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		return false
 	}
 	if module.Phase < project.PhaseCFG {
-		module.CFG = cfg.BuildModule(module.HIR)
-		module.CFGValid = cfg.Analyze(module.CFG, diag)
+		module.CFG = cfg.BuildModule(module.AST)
+		cfg.Analyze(module.CFG, diag)
 		module.Phase = project.PhaseCFG
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -359,11 +359,14 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.CFG == nil {
 		return false
 	}
-	if !module.CFGValid {
-		return false
-	}
 	if module.Phase < project.PhaseDefiniteInit {
-		definiteinit.Check(module.HIR, module.CFG, diag)
+		definiteinit.Check(
+			module.CFG,
+			module.TypedASTNodes,
+			module.Semantics.BlockScopes,
+			module.Semantics.ResolvedSymbols,
+			diag,
+		)
 		module.Phase = project.PhaseDefiniteInit
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
