@@ -1,6 +1,8 @@
 package ir
 
 import (
+	"fmt"
+
 	"compiler/internal/constvalue"
 )
 
@@ -14,8 +16,12 @@ import (
 // (not foldable), only index sub-expressions inside are folded.
 func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr {
 	switch node := expr.(type) {
-	case *IntLit, *FloatLit, *BoolLit:
+	case nil:
+		return nil
+	case *InvalidExpr, *IntLit, *FloatLit, *StringLit, *BoolLit, *ZeroValue:
 		return expr
+	case *OptionalSome:
+		return &OptionalSome{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {
@@ -42,10 +48,24 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			}
 		}
 		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *Call:
+		return &Call{
+			Callee:   FoldExpr(types, node.Callee, env),
+			Args:     foldExprs(types, node.Args, env),
+			Type:     node.Type,
+			NodeID:   node.NodeID,
+			Location: node.Location,
+		}
 	case *Load:
 		return &Load{Place: foldPlace(types, node.Place, env), DropRoot: node.DropRoot, NodeID: node.NodeID, Location: node.Location}
 	case *AddrOf:
 		return &AddrOf{Place: foldPlace(types, node.Place, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *TempBorrow:
+		return &TempBorrow{Value: FoldExpr(types, node.Value, env), Slice: node.Slice, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *Len:
+		return &Len{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *StringChars:
+		return &StringChars{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *SliceView:
 		return &SliceView{
 			Source:       foldPlace(types, node.Source, env),
@@ -56,12 +76,37 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			NodeID:       node.NodeID,
 			Location:     node.Location,
 		}
-	case *ArrayLit:
-		values := make([]Expr, 0, len(node.Values))
-		for _, value := range node.Values {
-			values = append(values, FoldExpr(types, value, env))
+	case *InterfaceMake:
+		return &InterfaceMake{
+			Value:    FoldExpr(types, node.Value, env),
+			Slots:    node.Slots,
+			Type:     node.Type,
+			NodeID:   node.NodeID,
+			Location: node.Location,
 		}
-		return &ArrayLit{Values: values, Dynamic: node.Dynamic, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *InterfaceCall:
+		return &InterfaceCall{
+			Base:     FoldExpr(types, node.Base, env),
+			Slot:     node.Slot,
+			Args:     foldExprs(types, node.Args, env),
+			Consumes: node.Consumes,
+			Type:     node.Type,
+			NodeID:   node.NodeID,
+			Location: node.Location,
+		}
+	case *Field:
+		return &Field{
+			Base:     FoldExpr(types, node.Base, env),
+			Index:    node.Index,
+			DropBase: node.DropBase,
+			Type:     node.Type,
+			NodeID:   node.NodeID,
+			Location: node.Location,
+		}
+	case *StructLit:
+		return &StructLit{Fields: foldExprs(types, node.Fields, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *ArrayLit:
+		return &ArrayLit{Values: foldExprs(types, node.Values, env), Dynamic: node.Dynamic, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
 	case *DynamicArrayOp:
 		return &DynamicArrayOp{
 			Op:        node.Op,
@@ -73,30 +118,34 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			NodeID:    node.NodeID,
 			Location:  node.Location,
 		}
-	case *StringChars:
-		return &StringChars{
-			Value:    FoldExpr(types, node.Value, env),
-			Type:     node.Type,
-			NodeID:   node.NodeID,
-			Location: node.Location,
-		}
 	case *AllocExpr:
-		// alloc(value, allocator) - fold the value and allocator sub-expressions.
-		// The Type and Location are identity-bearing, not foldable.
-		var foldedAlloc Expr
-		if node.Allocator != nil {
-			foldedAlloc = FoldExpr(types, node.Allocator, env)
-		}
 		return &AllocExpr{
 			Value:     FoldExpr(types, node.Value, env),
-			Allocator: foldedAlloc,
+			Allocator: FoldExpr(types, node.Allocator, env),
 			Type:      node.Type,
 			NodeID:    node.NodeID,
 			Location:  node.Location,
 		}
+	case *Cast:
+		return &Cast{Expr: FoldExpr(types, node.Expr, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+	case *Print:
+		return &Print{Value: FoldExpr(types, node.Value, env), Newline: node.Newline, NodeID: node.NodeID, Location: node.Location}
+	case *Drop:
+		return &Drop{Value: FoldExpr(types, node.Value, env), NodeID: node.NodeID, Location: node.Location}
 	default:
-		return expr
+		panic(fmt.Sprintf("unhandled IR expression %T in constant folding", expr))
 	}
+}
+
+func foldExprs(types *TypeTable, expressions []Expr, env map[string]constvalue.Value) []Expr {
+	if expressions == nil {
+		return nil
+	}
+	folded := make([]Expr, len(expressions))
+	for index, expr := range expressions {
+		folded[index] = FoldExpr(types, expr, env)
+	}
+	return folded
 }
 
 func foldPlace(types *TypeTable, place *Place, env map[string]constvalue.Value) *Place {
