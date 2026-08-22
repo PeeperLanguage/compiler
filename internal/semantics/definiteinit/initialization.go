@@ -1,8 +1,6 @@
-package flow
+package definiteinit
 
 import (
-	"fmt"
-
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
@@ -10,44 +8,40 @@ import (
 	"compiler/internal/semantics/symbols"
 )
 
-type State map[symbols.SymbolID]struct{}
+type state map[symbols.SymbolID]struct{}
 
-type FunctionResult struct {
-	In  map[cfg.SiteID]State
-	Out map[cfg.SiteID]State
+type functionResult struct {
+	In  map[cfg.SiteID]state
+	Out map[cfg.SiteID]state
 }
-
-type Result map[ir.NodeID]*FunctionResult
 
 type site struct {
-	flow *cfg.Site
-	stmt hir.Stmt
-	term cfg.Terminator
+	cfgSite *cfg.Site
+	stmt    hir.Stmt
+	term    cfg.Terminator
 }
 
-// Analyze computes definite initialization over finalized CFG sites.
-func Analyze(module *hir.Module, graphs []*cfg.Graph, diag *diagnostics.DiagnosticBag) Result {
-	result := make(Result)
+// Check diagnoses reads not initialized on every reachable CFG predecessor.
+func Check(module *hir.Module, graphs []*cfg.Graph, diag *diagnostics.DiagnosticBag) {
 	if module == nil {
-		return result
+		return
 	}
 	for index, fn := range module.Funcs {
 		if fn == nil || index >= len(graphs) || graphs[index] == nil {
 			continue
 		}
-		result[fn.NodeID] = analyzeFunction(fn, graphs[index], diag)
+		analyzeFunction(fn, graphs[index], diag)
 	}
-	return result
 }
 
-func analyzeFunction(fn *hir.Function, graph *cfg.Graph, diag *diagnostics.DiagnosticBag) *FunctionResult {
+func analyzeFunction(fn *hir.Function, graph *cfg.Graph, diag *diagnostics.DiagnosticBag) *functionResult {
 	nodes, order, tracked := indexSites(fn, graph)
-	result := &FunctionResult{In: make(map[cfg.SiteID]State), Out: make(map[cfg.SiteID]State)}
+	result := &functionResult{In: make(map[cfg.SiteID]state), Out: make(map[cfg.SiteID]state)}
 	if graph == nil || graph.Entry == nil || len(graph.Entry.Sites) == 0 {
 		return result
 	}
 	entry := graph.Entry.Sites[0].ID
-	entryState := make(State)
+	entryState := make(state)
 	for _, param := range fn.Params {
 		if param.SymbolID != 0 {
 			entryState[param.SymbolID] = struct{}{}
@@ -66,7 +60,7 @@ func analyzeFunction(fn *hir.Function, graph *cfg.Graph, diag *diagnostics.Diagn
 		}
 		out := transfer(node, result.In[id])
 		result.Out[id] = out
-		for _, edge := range node.flow.Successors {
+		for _, edge := range node.cfgSite.Successors {
 			if nodes[edge.To] == nil {
 				continue
 			}
@@ -111,7 +105,7 @@ func indexSites(fn *hir.Function, graph *cfg.Graph) (map[cfg.SiteID]*site, []cfg
 			if flowSite == nil {
 				continue
 			}
-			node := &site{flow: flowSite}
+			node := &site{cfgSite: flowSite}
 			switch flowSite.Kind {
 			case cfg.SiteStatement:
 				if statementIndex < len(block.Stmts) {
@@ -131,7 +125,7 @@ func indexSites(fn *hir.Function, graph *cfg.Graph) (map[cfg.SiteID]*site, []cfg
 	return nodes, order, tracked
 }
 
-func transfer(node *site, in State) State {
+func transfer(node *site, in state) state {
 	out := copyState(in)
 	if node == nil {
 		return out
@@ -149,37 +143,41 @@ func transfer(node *site, in State) State {
 	return out
 }
 
-func checkReads(node *site, state State, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+func checkReads(node *site, initialized state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
 	if node == nil || diag == nil {
 		return
 	}
-	checkExpr := func(expr ir.Expr) {
-		walkExpr(expr, func(ident *ir.Ident) {
-			name, local := tracked[ident.SymbolID]
-			if !local {
-				return
-			}
-			if _, initialized := state[ident.SymbolID]; initialized {
-				return
-			}
-			if name == "" {
-				name = ident.Name
-			}
-			name = ir.StripSymbolInstance(name)
-			msg := "symbol `" + name + "` used before it's initialized"
-			diag.Add(diagnostics.NewError(msg).
-				WithCode(diagnostics.ErrUninitializedVariable).
-				WithPrimaryLabel(ident.Location, msg).
-				WithHelp("assign a value before reading this symbol"))
-		})
+	checkRead := func(expr ir.Expr) bool {
+		ident, ok := expr.(*ir.Ident)
+		if !ok {
+			return true
+		}
+		name, local := tracked[ident.SymbolID]
+		if !local {
+			return true
+		}
+		if _, present := initialized[ident.SymbolID]; present {
+			return true
+		}
+		if name == "" {
+			name = ident.Name
+		}
+		name = ir.StripSymbolInstance(name)
+		msg := "symbol `" + name + "` used before it's initialized"
+		diag.Add(diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrUninitializedVariable).
+			WithPrimaryLabel(ident.Location, msg).
+			WithHelp("assign a value before reading this symbol"))
+		return true
 	}
+	checkExpr := func(expr ir.Expr) { ir.InspectExpr(expr, checkRead) }
 	switch stmt := node.stmt.(type) {
 	case *hir.Binding:
 		checkExpr(stmt.Value)
 	case *hir.Assign:
 		checkExpr(stmt.Value)
 		if _, direct := directAssignedIdent(stmt.Target); !direct {
-			walkPlace(stmt.Target, checkExpr)
+			ir.InspectPlace(stmt.Target, checkRead)
 		}
 	case *hir.ExprStmt:
 		checkExpr(stmt.Value)
@@ -202,96 +200,16 @@ func directAssignedIdent(place *ir.Place) (*ir.Ident, bool) {
 	return ident, ok && ident != nil
 }
 
-func walkPlace(place *ir.Place, visit func(ir.Expr)) {
-	if place == nil {
-		return
-	}
-	visit(place.Root)
-	for _, projection := range place.Projections {
-		visit(projection.Index)
-	}
-}
-
-func walkExpr(expr ir.Expr, visit func(*ir.Ident)) {
-	if expr == nil {
-		return
-	}
-	switch node := expr.(type) {
-	case *ir.InvalidExpr, *ir.IntLit, *ir.FloatLit, *ir.StringLit, *ir.BoolLit, *ir.ZeroValue:
-		return
-	case *ir.Ident:
-		visit(node)
-	case *ir.OptionalSome:
-		walkExpr(node.Value, visit)
-	case *ir.Unary:
-		walkExpr(node.Arg, visit)
-	case *ir.Binary:
-		walkExpr(node.Left, visit)
-		walkExpr(node.Right, visit)
-	case *ir.Call:
-		walkExpr(node.Callee, visit)
-		for _, arg := range node.Args {
-			walkExpr(arg, visit)
-		}
-	case *ir.Load:
-		walkPlace(node.Place, func(value ir.Expr) { walkExpr(value, visit) })
-	case *ir.AddrOf:
-		walkPlace(node.Place, func(value ir.Expr) { walkExpr(value, visit) })
-	case *ir.TempBorrow:
-		walkExpr(node.Value, visit)
-	case *ir.Len:
-		walkExpr(node.Value, visit)
-	case *ir.StringChars:
-		walkExpr(node.Value, visit)
-	case *ir.SliceView:
-		walkPlace(node.Source, func(value ir.Expr) { walkExpr(value, visit) })
-		walkExpr(node.Start, visit)
-		walkExpr(node.End, visit)
-	case *ir.InterfaceMake:
-		walkExpr(node.Value, visit)
-	case *ir.InterfaceCall:
-		walkExpr(node.Base, visit)
-		for _, arg := range node.Args {
-			walkExpr(arg, visit)
-		}
-	case *ir.Field:
-		walkExpr(node.Base, visit)
-	case *ir.StructLit:
-		for _, field := range node.Fields {
-			walkExpr(field, visit)
-		}
-	case *ir.ArrayLit:
-		for _, value := range node.Values {
-			walkExpr(value, visit)
-		}
-	case *ir.DynamicArrayOp:
-		walkExpr(node.Array, visit)
-		walkExpr(node.Length, visit)
-		walkExpr(node.Value, visit)
-	case *ir.AllocExpr:
-		walkExpr(node.Value, visit)
-		walkExpr(node.Allocator, visit)
-	case *ir.Cast:
-		walkExpr(node.Expr, visit)
-	case *ir.Print:
-		walkExpr(node.Value, visit)
-	case *ir.Drop:
-		walkExpr(node.Value, visit)
-	default:
-		panic(fmt.Sprintf("unhandled HIR expression %T in definite initialization", expr))
-	}
-}
-
-func copyState(state State) State {
-	copy := make(State, len(state))
-	for symbol := range state {
+func copyState(current state) state {
+	copy := make(state, len(current))
+	for symbol := range current {
 		copy[symbol] = struct{}{}
 	}
 	return copy
 }
 
-func intersectState(left, right State) State {
-	intersection := make(State)
+func intersectState(left, right state) state {
+	intersection := make(state)
 	for symbol := range left {
 		if _, present := right[symbol]; present {
 			intersection[symbol] = struct{}{}
@@ -300,7 +218,7 @@ func intersectState(left, right State) State {
 	return intersection
 }
 
-func equalState(left, right State) bool {
+func equalState(left, right state) bool {
 	if len(left) != len(right) {
 		return false
 	}

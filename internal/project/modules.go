@@ -11,7 +11,6 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/cfg"
-	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
@@ -46,7 +45,7 @@ const (
 	PhaseTypechecked
 	PhaseHIR
 	PhaseCFG
-	PhaseFlow
+	PhaseDefiniteInit
 	PhaseOwnership
 	PhaseUsage
 	PhaseMIR
@@ -73,8 +72,8 @@ func (phase ModulePhase) String() string {
 		return "HIR"
 	case PhaseCFG:
 		return "CFG"
-	case PhaseFlow:
-		return "flow"
+	case PhaseDefiniteInit:
+		return "definite-init"
 	case PhaseOwnership:
 		return "ownership"
 	case PhaseUsage:
@@ -132,7 +131,6 @@ type Module struct {
 	// CFGValid records mandatory CFG analysis independently from diagnostics
 	// emitted by earlier phases.
 	CFGValid  bool
-	Flow      flow.Result
 	Ownership ownershipresult.Result
 	MIR       *mir.Module
 	LLVMIR    string
@@ -221,9 +219,6 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 	if phase < PhaseCFG {
 		m.CFG = nil
 		m.CFGValid = false
-	}
-	if phase < PhaseFlow {
-		m.Flow = nil
 	}
 	if phase < PhaseOwnership {
 		m.Ownership = nil

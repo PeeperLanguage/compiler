@@ -6,7 +6,6 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/semantics/cfg"
-	"compiler/internal/semantics/flow"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/table"
 )
@@ -20,7 +19,6 @@ func moduleWithArtifacts() *Module {
 		HIR:                       &hir.Module{},
 		CFG:                       []*cfg.Graph{{}},
 		CFGValid:                  true,
-		Flow:                      flow.Result{},
 		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
@@ -35,7 +33,6 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		exportAPI bool
 		hir       bool
 		cfg       bool
-		flow      bool
 		ownership bool
 		mir       bool
 		llvm      bool
@@ -43,10 +40,10 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		{phase: PhaseParsed},
 		{phase: PhaseTypechecked, scope: true, semantics: true, exportAPI: true},
 		{phase: PhaseCFG, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true},
-		{phase: PhaseFlow, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, flow: true},
-		{phase: PhaseOwnership, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, flow: true, ownership: true},
-		{phase: PhaseMIR, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
-		{phase: PhaseBackend, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
+		{phase: PhaseDefiniteInit, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true},
+		{phase: PhaseOwnership, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, ownership: true},
+		{phase: PhaseMIR, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, ownership: true, mir: true},
+		{phase: PhaseBackend, scope: true, semantics: true, exportAPI: true, hir: true, cfg: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
@@ -54,7 +51,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.Semantics != nil) != test.semantics || (module.HIR != nil) != test.hir ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
-			(module.CFG != nil) != test.cfg || (module.Flow != nil) != test.flow ||
+			(module.CFG != nil) != test.cfg ||
 			(module.Ownership != nil) != test.ownership ||
 			(module.MIR != nil) != test.mir ||
 			(module.LLVMIR != "") != test.llvm {
@@ -81,7 +78,7 @@ func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 func TestModulePhaseString(t *testing.T) {
 	for phase, want := range map[ModulePhase]string{
 		PhaseNone: "none", PhaseParsed: "parsed", PhaseTypechecked: "typechecked",
-		PhaseHIR: "HIR", PhaseCFG: "CFG", PhaseFlow: "flow", PhaseOwnership: "ownership",
+		PhaseHIR: "HIR", PhaseCFG: "CFG", PhaseDefiniteInit: "definite-init", PhaseOwnership: "ownership",
 		PhaseMIR: "MIR", PhaseBackend: "backend",
 	} {
 		if got := phase.String(); got != want {

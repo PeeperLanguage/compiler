@@ -431,7 +431,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseTypechecked,
 		project.PhaseHIR,
 		project.PhaseCFG,
-		project.PhaseFlow,
+		project.PhaseDefiniteInit,
 		project.PhaseOwnership,
 		project.PhaseUsage,
 		project.PhaseMIR,

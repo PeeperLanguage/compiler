@@ -1,4 +1,4 @@
-package flow
+package definiteinit
 
 import (
 	"strings"
@@ -16,7 +16,7 @@ const (
 	flagSymbol  symbols.SymbolID = 2
 )
 
-func analyzeInitializationBody(t *testing.T, build func(i32, boolType ir.TypeID) []hir.Stmt) (Result, *diagnostics.DiagnosticBag) {
+func analyzeInitializationBody(t *testing.T, build func(i32, boolType ir.TypeID) []hir.Stmt) (*functionResult, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
@@ -28,9 +28,9 @@ func analyzeInitializationBody(t *testing.T, build func(i32, boolType ir.TypeID)
 		ReturnType: i32,
 		Body:       &hir.Block{NodeID: 101, Stmts: build(i32, boolType)},
 	}
-	module := &hir.Module{Types: types, Funcs: []*hir.Function{fn}}
 	diag := diagnostics.NewDiagnosticBag()
-	return Analyze(module, cfg.BuildModule(module), diag), diag
+	module := &hir.Module{Types: types, Funcs: []*hir.Function{fn}}
+	return analyzeFunction(fn, cfg.BuildModule(module)[0], diag), diag
 }
 
 func uninitializedValueBinding(i32 ir.TypeID) *hir.Binding {
@@ -63,7 +63,7 @@ func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if function := result[100]; function == nil || len(function.In) == 0 || len(function.Out) == 0 {
+	if result == nil || len(result.In) == 0 || len(result.Out) == 0 {
 		t.Fatalf("initialization result = %#v, want per-site states", result)
 	}
 }
