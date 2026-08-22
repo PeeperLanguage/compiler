@@ -50,6 +50,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
+	module.TypedASTNodes = ast.Index(module.AST)
 	module.HIR = lower.GenerateHIR(ctx, module)
 	module.CFG = cfg.BuildModule(module.HIR)
 	module.Ownership = Check(ctx, module)

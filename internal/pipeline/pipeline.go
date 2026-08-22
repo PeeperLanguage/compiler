@@ -8,6 +8,7 @@ import (
 
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
@@ -328,6 +329,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase < project.PhaseTypechecked {
 		typechecker.Check(p.ctx, module)
 		consteval.FinalizeValues(p.ctx, module)
+		module.TypedASTNodes = ast.Index(module.AST)
 		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
 		module.Phase = project.PhaseTypechecked
 		p.ctx.Metrics.AddPhaseAdvance()

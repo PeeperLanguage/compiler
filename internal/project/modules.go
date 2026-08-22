@@ -125,6 +125,8 @@ type Module struct {
 	Phase ModulePhase
 	// Parsed syntax tree.
 	AST *ast.Module
+	// TypedASTNodes indexes final AST after semantic expansion.
+	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
 	HIR *hir.Module
 	CFG []*cfg.Graph
@@ -212,6 +214,7 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 	}
 	if phase < PhaseTypechecked {
 		m.SemanticExportFingerprint = ""
+		m.TypedASTNodes = nil
 	}
 	if phase < PhaseHIR {
 		m.HIR = nil

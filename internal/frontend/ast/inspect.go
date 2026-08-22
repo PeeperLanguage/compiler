@@ -15,3 +15,20 @@ func Inspect(node Node, f func(Node) bool) {
 
 	f(nil)
 }
+
+// Index returns every source node by its stable parser-assigned identity.
+func Index(module *Module) map[NodeID]Node {
+	nodes := make(map[NodeID]Node)
+	if module == nil {
+		return nodes
+	}
+	for _, stmt := range module.Stmts {
+		Inspect(stmt, func(node Node) bool {
+			if node != nil {
+				nodes[node.ID()] = node
+			}
+			return true
+		})
+	}
+	return nodes
+}

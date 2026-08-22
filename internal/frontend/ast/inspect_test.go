@@ -48,3 +48,18 @@ func TestInspectPreservesExitAndPruningSemantics(t *testing.T) {
 		t.Fatalf("inspect events = %q, want %q", got, want)
 	}
 }
+
+func TestIndexIncludesNestedNodes(t *testing.T) {
+	name := &Ident{NodeIDHolder: NodeIDHolder{NodeID: 2}, Name: "main"}
+	result := &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: 5}, Value: "0"}
+	ret := &ReturnStmt{NodeIDHolder: NodeIDHolder{NodeID: 4}, Value: result}
+	body := &BlockStmt{NodeIDHolder: NodeIDHolder{NodeID: 3}, Stmts: []Stmt{ret}}
+	fn := &FnDecl{NodeIDHolder: NodeIDHolder{NodeID: 1}, Name: name, Body: body}
+
+	nodes := Index(&Module{Stmts: []Stmt{fn}})
+	for id, want := range map[NodeID]Node{1: fn, 2: name, 3: body, 4: ret, 5: result} {
+		if nodes[id] != want {
+			t.Fatalf("node %d = %#v, want %#v", id, nodes[id], want)
+		}
+	}
+}

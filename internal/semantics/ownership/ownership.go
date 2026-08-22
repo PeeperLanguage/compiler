@@ -138,7 +138,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, s
 	if module == nil || cfgFn == nil || body == nil || scope == nil {
 		return sites, order
 	}
-	nodes := sourceNodes(module)
+	nodes := module.TypedASTNodes
 	scopes := sourceScopes(module, body, scope)
 	for _, block := range cfgFn.Blocks {
 		if block == nil || !block.Reachable {
@@ -152,7 +152,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, s
 			indexed := &site{flow: flowSite, scope: currentScope}
 			switch flowSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
-				if stmt, ok := nodes[hir.NodeID(flowSite.NodeID)].(ast.Stmt); ok && stmt != nil {
+				if stmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(ast.Stmt); ok && stmt != nil {
 					indexed.stmt = stmt
 					if resolved := scopes[hir.NodeID(flowSite.NodeID)]; resolved != nil {
 						currentScope = resolved
@@ -160,7 +160,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, s
 					}
 				}
 			case cfg.SiteScopeExit:
-				if blockStmt, ok := nodes[hir.NodeID(flowSite.NodeID)].(*ast.BlockStmt); ok && blockStmt != nil {
+				if blockStmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(*ast.BlockStmt); ok && blockStmt != nil {
 					indexed.block = blockStmt
 					if resolved := scopes[hir.NodeID(flowSite.NodeID)]; resolved != nil {
 						indexed.scope = resolved
@@ -172,22 +172,6 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, body *ast.BlockStmt, s
 		}
 	}
 	return sites, order
-}
-
-func sourceNodes(module *project.Module) map[hir.NodeID]ast.Node {
-	nodes := make(map[hir.NodeID]ast.Node)
-	if module == nil || module.AST == nil {
-		return nodes
-	}
-	for _, stmt := range module.AST.Stmts {
-		ast.Inspect(stmt, func(node ast.Node) bool {
-			if node != nil {
-				nodes[hir.NodeID(node.ID())] = node
-			}
-			return true
-		})
-	}
-	return nodes
 }
 
 func sourceScopes(module *project.Module, body *ast.BlockStmt, root *table.Scope) map[hir.NodeID]*table.Scope {
