@@ -1,7 +1,6 @@
 package project
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
@@ -29,63 +29,6 @@ const (
 	// Package dependency source file.
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
-
-type ModulePhase uint8
-
-const (
-	PhaseNone ModulePhase = iota
-	PhaseParsed
-	PhaseCollected
-	PhaseBound
-	PhaseResolved
-	// PhaseConstEval completes eager semantic evaluation. Expected-type queries
-	// may refine facts while typechecking.
-	PhaseConstEval
-	// PhaseTypechecked includes final module const values and semantic API identity.
-	PhaseTypechecked
-	// PhaseCFG includes finalized topology and CFG diagnostics.
-	PhaseCFG
-	// PhaseDefiniteInit records completion of diagnostic-only initialization checks.
-	PhaseDefiniteInit
-	// PhaseOwnership includes the ownership cleanup result.
-	PhaseOwnership
-	PhaseHIR
-	PhaseMIR
-	PhaseBackend
-)
-
-func (phase ModulePhase) String() string {
-	switch phase {
-	case PhaseNone:
-		return "none"
-	case PhaseParsed:
-		return "parsed"
-	case PhaseCollected:
-		return "collected"
-	case PhaseBound:
-		return "bound"
-	case PhaseResolved:
-		return "resolved"
-	case PhaseConstEval:
-		return "const-eval"
-	case PhaseTypechecked:
-		return "typechecked"
-	case PhaseCFG:
-		return "CFG"
-	case PhaseDefiniteInit:
-		return "definite-init"
-	case PhaseOwnership:
-		return "ownership"
-	case PhaseHIR:
-		return "HIR"
-	case PhaseMIR:
-		return "MIR"
-	case PhaseBackend:
-		return "backend"
-	default:
-		return fmt.Sprintf("phase(%d)", uint8(phase))
-	}
-}
 
 const (
 	GraphNodeModule graph.NodeKind = "module"
@@ -122,7 +65,7 @@ type Module struct {
 	// Stable compiler-visible export surface finalized after semantic typing.
 	SemanticExportFingerprint string
 	// Last completed compiler phase for this module snapshot.
-	Phase ModulePhase
+	Phase phase.Phase
 	// Parsed syntax tree.
 	AST *ast.Module
 	// TypedASTNodes indexes final AST after semantic expansion.
@@ -199,34 +142,33 @@ func (m *Module) ResetSemanticData() {
 	m.Semantics = NewSemanticInfo()
 }
 
-// ResetToPhase retains artifacts through phase and invalidates downstream data.
-// It does not replay diagnostics produced by retained analysis phases.
-func (m *Module) ResetToPhase(phase ModulePhase) {
+// resetToPhase retains artifacts through phase and invalidates downstream data.
+func (m *Module) resetToPhase(retained phase.Phase) {
 	if m == nil {
 		return
 	}
-	m.Phase = phase
-	if phase <= PhaseParsed {
+	m.Phase = retained
+	if retained <= phase.Parsed {
 		m.ModuleScope = nil
 		m.Semantics = nil
 	}
-	if phase < PhaseTypechecked {
+	if retained < phase.Typechecked {
 		m.SemanticExportFingerprint = ""
 		m.TypedASTNodes = nil
 	}
-	if phase < PhaseCFG {
+	if retained < phase.CFG {
 		m.CFG = nil
 	}
-	if phase < PhaseOwnership {
+	if retained < phase.Ownership {
 		m.Ownership = nil
 	}
-	if phase < PhaseHIR {
+	if retained < phase.HIR {
 		m.HIR = nil
 	}
-	if phase < PhaseMIR {
+	if retained < phase.MIR {
 		m.MIR = nil
 	}
-	if phase < PhaseBackend {
+	if retained < phase.Backend {
 		m.LLVMIR = ""
 	}
 }

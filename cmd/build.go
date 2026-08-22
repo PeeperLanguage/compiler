@@ -9,6 +9,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
+	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -29,7 +30,7 @@ func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (co
 	}
 	compilerContext = compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
 	if err != nil {
-		compilerContext.Diagnostics.Add(diagnostics.NewError(
+		compilerContext.Diagnostics.BeginPhase(phase.Load, "").Add(diagnostics.NewError(
 			err.Error(),
 		))
 		return compilerContext, nil

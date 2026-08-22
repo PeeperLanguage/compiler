@@ -3,17 +3,19 @@ package project
 import (
 	"testing"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/phase"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/table"
 )
 
 func moduleWithArtifacts() *Module {
 	return &Module{
-		Phase:                     PhaseBackend,
+		Phase:                     phase.Backend,
 		SemanticExportFingerprint: "semantic API",
 		ModuleScope:               table.New(nil),
 		Semantics:                 NewSemanticInfo(),
@@ -28,7 +30,7 @@ func moduleWithArtifacts() *Module {
 
 func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 	tests := []struct {
-		phase     ModulePhase
+		phase     phase.Phase
 		scope     bool
 		semantics bool
 		exportAPI bool
@@ -39,18 +41,19 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		mir       bool
 		llvm      bool
 	}{
-		{phase: PhaseParsed},
-		{phase: PhaseTypechecked, scope: true, semantics: true, exportAPI: true, astNodes: true},
-		{phase: PhaseCFG, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: PhaseDefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: PhaseOwnership, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, ownership: true},
-		{phase: PhaseHIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true},
-		{phase: PhaseMIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true},
-		{phase: PhaseBackend, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Parsed},
+		{phase: phase.Typechecked, scope: true, semantics: true, exportAPI: true, astNodes: true},
+		{phase: phase.CFG, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
+		{phase: phase.DefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
+		{phase: phase.Ownership, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, ownership: true},
+		{phase: phase.Usage, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, ownership: true},
+		{phase: phase.HIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true},
+		{phase: phase.MIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
-		module.ResetToPhase(test.phase)
+		module.resetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.Semantics != nil) != test.semantics || (module.HIR != nil) != test.hir ||
 			(module.TypedASTNodes != nil) != test.astNodes ||
@@ -67,7 +70,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 	module := moduleWithArtifacts()
 	graph := module.CFG.Functions[0]
-	module.ResetToPhase(PhaseCFG)
+	module.resetToPhase(phase.CFG)
 	if module.CFG.Functions[0] != graph {
 		t.Fatal("phase reset cloned immutable CFG")
 	}
@@ -76,17 +79,22 @@ func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 	}
 }
 
-func TestModulePhaseString(t *testing.T) {
-	for phase, want := range map[ModulePhase]string{
-		PhaseNone: "none", PhaseParsed: "parsed", PhaseTypechecked: "typechecked",
-		PhaseHIR: "HIR", PhaseCFG: "CFG", PhaseDefiniteInit: "definite-init", PhaseOwnership: "ownership",
-		PhaseMIR: "MIR", PhaseBackend: "backend",
-	} {
-		if got := phase.String(); got != want {
-			t.Fatalf("phase %d string = %q, want %q", phase, got, want)
-		}
+func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.T) {
+	bag := diagnostics.NewDiagnosticBag()
+	bag.BeginPhase(phase.Parsed, "a").Add(diagnostics.NewWarning("a parse"))
+	bag.BeginPhase(phase.Typechecked, "a").Add(diagnostics.NewError("a type"))
+	bag.BeginPhase(phase.Typechecked, "b").Add(diagnostics.NewError("b type"))
+	ctx := New(".", ".peep", bag)
+	module := moduleWithArtifacts()
+	module.Key = "a"
+
+	ctx.ResetModule(module, phase.Parsed)
+
+	got := bag.Diagnostics()
+	if len(got) != 2 || got[0].Message != "a parse" || got[1].Message != "b type" {
+		t.Fatalf("diagnostics after context reset = %#v", got)
 	}
-	if got := ModulePhase(255).String(); got != "phase(255)" {
-		t.Fatalf("unknown phase string = %q", got)
+	if module.Phase != phase.Parsed || module.CFG != nil || module.HIR != nil {
+		t.Fatalf("module artifacts after reset = %#v", module)
 	}
 }

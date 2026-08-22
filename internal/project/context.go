@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -33,6 +34,9 @@ type CompilerContext struct {
 	Types *ir.TypeTable
 	// Shared diagnostic stream.
 	Diagnostics *diagnostics.DiagnosticBag
+	// Highest project-wide checkpoint completed by the current pipeline run.
+	// Module.Phase separately records reusable per-module artifact availability.
+	CompletedProjectPhase phase.Phase
 	// Optional per-run metrics for benchmarks and incremental validation.
 	Metrics *CompileMetrics
 	// Predeclared symbols visible before user/prelude code.
@@ -48,7 +52,7 @@ type CompilerContext struct {
 	Graph *graph.Graph
 
 	// Guards module indexes.
-	mu sync.RWMutex
+	mu *sync.RWMutex
 }
 
 // Context constructor for simple root/extension call sites.
@@ -91,6 +95,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	if diag == nil {
 		diag = diagnostics.NewDiagnosticBag()
 	}
+	setupDiag := diag.BeginPhase(phase.Setup, "")
 	if cfg.Extension == "" {
 		cfg.Extension = peeper.SourceExt
 	}
@@ -101,7 +106,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	cfg.TargetArch = target.NormalizeArch(cfg.TargetArch)
 	compilerTarget, err := target.New(cfg.TargetOS, cfg.TargetArch)
 	if err != nil {
-		diag.Add(diagnostics.NewError("resolve compiler target: " + err.Error()))
+		setupDiag.Add(diagnostics.NewError("resolve compiler target: " + err.Error()))
 		compilerTarget = target.Host()
 	}
 	cfg.RootDir = filepath.Clean(cfg.RootDir)
@@ -133,7 +138,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	}
 	if cfg.LibraryBaseDir != "" {
 		if _, err := os.Stat(cfg.LibraryBaseDir); err != nil && !os.IsNotExist(err) {
-			diag.Add(diagnostics.NewWarning("failed to access packaged libraries root: " + err.Error()))
+			setupDiag.Add(diagnostics.NewWarning("failed to access packaged libraries root: " + err.Error()))
 		}
 	}
 	for namespace, root := range cfg.LibraryRoots {
@@ -141,7 +146,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 			continue
 		}
 		if _, err := os.Stat(root); err != nil && !os.IsNotExist(err) {
-			diag.Add(diagnostics.NewWarning("failed to access library root for " + namespace + ": " + err.Error()))
+			setupDiag.Add(diagnostics.NewWarning("failed to access library root for " + namespace + ": " + err.Error()))
 		}
 	}
 	if cfg.DependencyRoots == nil {
@@ -151,16 +156,39 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	types := ir.NewTypeTable()
 	types.SetIndexType(types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: compilerTarget.IndexBits}))
 	return &CompilerContext{
-		Config:      cfg,
-		Target:      compilerTarget,
-		Types:       types,
-		Diagnostics: diag,
-		GlobalScope: globalScope,
-		Graph:       graph.New(GraphNodeModule, GraphEdgeImport),
+		Config:                cfg,
+		Target:                compilerTarget,
+		Types:                 types,
+		Diagnostics:           diag,
+		CompletedProjectPhase: phase.Setup,
+		GlobalScope:           globalScope,
+		Graph:                 graph.New(GraphNodeModule, GraphEdgeImport),
+		mu:                    &sync.RWMutex{},
 
 		modules:                 make(map[string]*Module),
 		fileIndex:               make(map[string]string),
 		semanticExportBaselines: make(map[string]string),
+	}
+}
+
+// WithDiagnostics creates a phase-scoped context view sharing compiler state.
+func (ctx *CompilerContext) WithDiagnostics(diag *diagnostics.DiagnosticBag) *CompilerContext {
+	if ctx == nil {
+		return nil
+	}
+	scoped := *ctx
+	scoped.Diagnostics = diag
+	return &scoped
+}
+
+// ResetModule invalidates module artifacts and downstream diagnostics together.
+func (ctx *CompilerContext) ResetModule(module *Module, retained phase.Phase) {
+	if ctx == nil || module == nil {
+		return
+	}
+	module.resetToPhase(retained)
+	if ctx.Diagnostics != nil && module.Key != "" {
+		ctx.Diagnostics.DiscardModuleAfter(module.Key, retained)
 	}
 }
 

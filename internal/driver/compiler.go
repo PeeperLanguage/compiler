@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/phase"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"
 	"compiler/internal/project"
@@ -16,7 +17,7 @@ const COMPILER_VERSION = "0.1.0"
 func NewCompilerContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {
 	ctx := project.NewWithConfig(cfg, diag)
 	if err := prelude.Load(ctx); err != nil {
-		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+		ctx.Diagnostics.AppendPhase(phase.Setup, "").Add(diagnostics.NewError(err.Error()))
 	}
 	return ctx
 }
@@ -32,16 +33,17 @@ func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *pr
 		diag = diagnostics.NewDiagnosticBag()
 		ctx.Diagnostics = diag
 	}
+	loadDiag := diag.BeginPhase(phase.Load, "")
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		diag.Add(diagnostics.NewError("resolve input path: " + err.Error()))
+		loadDiag.Add(diagnostics.NewError("resolve input path: " + err.Error()))
 		return nil
 	}
 	content := ""
 	if overlay == nil {
 		data, err := os.ReadFile(absPath)
 		if err != nil {
-			diag.Add(diagnostics.NewError("read input file: " + err.Error()))
+			loadDiag.Add(diagnostics.NewError("read input file: " + err.Error()))
 			return nil
 		}
 		content = string(data)
@@ -51,7 +53,7 @@ func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *pr
 	if module, ok := prelude.ModuleForFile(ctx, absPath, content); ok {
 		module.IsEntry = true
 		if err := pipeline.New(ctx).Run(module); err != nil {
-			diag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
+			loadDiag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
 			return nil
 		}
 		return module
@@ -61,7 +63,7 @@ func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *pr
 		module.IsEntry = true
 	}
 	if err := pipeline.New(ctx).Run(module); err != nil {
-		diag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
+		loadDiag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
 		return nil
 	}
 	return module

@@ -2,12 +2,13 @@ package diagnostics
 
 import (
 	"bytes"
+	"compiler/internal/phase"
 	"compiler/internal/source"
 	"compiler/pkg/colors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -20,18 +21,122 @@ const (
 
 // DiagnosticBag collects diagnostics during compilation
 type DiagnosticBag struct {
-	diagnostics []*Diagnostic
-	mu          sync.Mutex
-	errorCount  int
-	warnCount   int
+	groups      map[phase.Phase]map[string]diagnosticGroup
+	mu          *sync.Mutex
 	sourceCache *SourceCache
+	phase       phase.Phase
+	moduleKey   string
+}
+
+type diagnosticGroup struct {
+	diagnostics []*Diagnostic
+	active      bool
 }
 
 // NewDiagnosticBag creates a new diagnostic bag.
 func NewDiagnosticBag() *DiagnosticBag {
 	return &DiagnosticBag{
-		diagnostics: make([]*Diagnostic, 0),
+		groups:      make(map[phase.Phase]map[string]diagnosticGroup),
+		mu:          &sync.Mutex{},
 		sourceCache: NewSourceCache(),
+	}
+}
+
+// BeginPhase replaces one producing phase/module group and returns its writer.
+func (db *DiagnosticBag) BeginPhase(producingPhase phase.Phase, moduleKey string) *DiagnosticBag {
+	scoped := db.AppendPhase(producingPhase, moduleKey)
+	db.mu.Lock()
+	if db.groups[producingPhase] == nil {
+		db.groups[producingPhase] = make(map[string]diagnosticGroup)
+	}
+	db.groups[producingPhase][moduleKey] = diagnosticGroup{active: true}
+	db.mu.Unlock()
+	return scoped
+}
+
+// AppendPhase returns a writer that continues one producing phase/module group.
+func (db *DiagnosticBag) AppendPhase(producingPhase phase.Phase, moduleKey string) *DiagnosticBag {
+	return &DiagnosticBag{
+		groups:      db.groups,
+		mu:          db.mu,
+		sourceCache: db.sourceCache,
+		phase:       producingPhase,
+		moduleKey:   moduleKey,
+	}
+}
+
+// DiscardModuleAfter removes diagnostics invalidated by a module phase reset.
+func (db *DiagnosticBag) DiscardModuleAfter(moduleKey string, retained phase.Phase) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for producingPhase, modules := range db.groups {
+		if producingPhase <= retained {
+			continue
+		}
+		delete(modules, moduleKey)
+		if len(modules) == 0 {
+			delete(db.groups, producingPhase)
+		}
+	}
+}
+
+// CopyModuleRange replaces one module's destination groups inside an inclusive
+// phase range. Inactive groups remain reusable but do not affect compilation or output.
+func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleKey string, first, last phase.Phase, active bool) {
+	if source == nil || db.mu == source.mu || first > last {
+		return
+	}
+	copiedGroups := make(map[phase.Phase]diagnosticGroup)
+	source.mu.Lock()
+	for producingPhase, modules := range source.groups {
+		if producingPhase < first || producingPhase > last {
+			continue
+		}
+		if group, ok := modules[moduleKey]; ok {
+			copiedGroups[producingPhase] = diagnosticGroup{
+				diagnostics: append([]*Diagnostic(nil), group.diagnostics...),
+				active:      active,
+			}
+		}
+	}
+	source.mu.Unlock()
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for producingPhase, modules := range db.groups {
+		if producingPhase < first || producingPhase > last {
+			continue
+		}
+		delete(modules, moduleKey)
+		if len(modules) == 0 {
+			delete(db.groups, producingPhase)
+		}
+	}
+	for producingPhase, group := range copiedGroups {
+		if db.groups[producingPhase] == nil {
+			db.groups[producingPhase] = make(map[string]diagnosticGroup)
+		}
+		db.groups[producingPhase][moduleKey] = group
+	}
+}
+
+// ActivateModuleRange publishes retained groups after their project barrier succeeds.
+func (db *DiagnosticBag) ActivateModuleRange(moduleKey string, first, last phase.Phase) {
+	if first > last {
+		return
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for producingPhase, modules := range db.groups {
+		if producingPhase < first || producingPhase > last {
+			continue
+		}
+		group, ok := modules[moduleKey]
+		if !ok {
+			continue
+		}
+		group.active = true
+		modules[moduleKey] = group
 	}
 }
 
@@ -54,31 +159,37 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	if diag.Severity == Error && len(diag.Labels) > 0 {
 		newLoc := diag.Labels[0].Location
 		if newLoc != nil && newLoc.Start != nil {
-			for _, existing := range db.diagnostics {
-				if existing.Severity != Error || len(existing.Labels) == 0 {
-					continue
-				}
-				exLoc := existing.Labels[0].Location
-				if exLoc == nil || exLoc.Start == nil {
-					continue
-				}
-				sameFile := (newLoc.Filename == nil && exLoc.Filename == nil) ||
-					(newLoc.Filename != nil && exLoc.Filename != nil && *newLoc.Filename == *exLoc.Filename)
-				if sameFile && newLoc.Start.Line == exLoc.Start.Line && newLoc.Start.Column == exLoc.Start.Column {
-					return
+			for _, modules := range db.groups {
+				for _, group := range modules {
+					if !group.active {
+						continue
+					}
+					for _, existing := range group.diagnostics {
+						if existing.Severity != Error || len(existing.Labels) == 0 {
+							continue
+						}
+						exLoc := existing.Labels[0].Location
+						if exLoc == nil || exLoc.Start == nil {
+							continue
+						}
+						sameFile := (newLoc.Filename == nil && exLoc.Filename == nil) ||
+							(newLoc.Filename != nil && exLoc.Filename != nil && *newLoc.Filename == *exLoc.Filename)
+						if sameFile && newLoc.Start.Line == exLoc.Start.Line && newLoc.Start.Column == exLoc.Start.Column {
+							return
+						}
+					}
 				}
 			}
 		}
 	}
 
-	db.diagnostics = append(db.diagnostics, diag)
-
-	switch diag.Severity {
-	case Error:
-		db.errorCount++
-	case Warning:
-		db.warnCount++
+	if db.groups[db.phase] == nil {
+		db.groups[db.phase] = make(map[string]diagnosticGroup)
 	}
+	group := db.groups[db.phase][db.moduleKey]
+	group.diagnostics = append(group.diagnostics, diag)
+	group.active = true
+	db.groups[db.phase][db.moduleKey] = group
 }
 
 // AddError adds an error diagnostic to the bag and returns it for chaining/customization.
@@ -103,32 +214,64 @@ func (db *DiagnosticBag) AddWarning(code, msg string, loc *source.Location, labe
 
 // HasErrors returns true if there are any errors
 func (db *DiagnosticBag) HasErrors() bool {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	return db.errorCount > 0
+	return db.ErrorCount() > 0
 }
 
 // ErrorCount returns the number of errors
 func (db *DiagnosticBag) ErrorCount() int {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	return db.errorCount
+	return db.countLocked(Error)
 }
 
 // WarningCount returns the number of warnings
 func (db *DiagnosticBag) WarningCount() int {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	return db.warnCount
+	return db.countLocked(Warning)
+}
+
+func (db *DiagnosticBag) countLocked(severity Severity) int {
+	count := 0
+	for _, modules := range db.groups {
+		for _, group := range modules {
+			if !group.active {
+				continue
+			}
+			for _, diagnostic := range group.diagnostics {
+				if diagnostic != nil && diagnostic.Severity == severity {
+					count++
+				}
+			}
+		}
+	}
+	return count
 }
 
 // Diagnostics returns a copy of all diagnostics (thread-safe)
 func (db *DiagnosticBag) Diagnostics() []*Diagnostic {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	// Return a copy to prevent races if caller iterates while other goroutines append
-	result := make([]*Diagnostic, len(db.diagnostics))
-	copy(result, db.diagnostics)
+	phases := make([]phase.Phase, 0, len(db.groups))
+	for producingPhase := range db.groups {
+		phases = append(phases, producingPhase)
+	}
+	slices.Sort(phases)
+	result := make([]*Diagnostic, 0)
+	for _, producingPhase := range phases {
+		modules := db.groups[producingPhase]
+		moduleKeys := make([]string, 0, len(modules))
+		for moduleKey := range modules {
+			moduleKeys = append(moduleKeys, moduleKey)
+		}
+		slices.Sort(moduleKeys)
+		for _, moduleKey := range moduleKeys {
+			group := modules[moduleKey]
+			if group.active {
+				result = append(result, group.diagnostics...)
+			}
+		}
+	}
 	return result
 }
 
@@ -193,11 +336,7 @@ func (db *DiagnosticBag) EmitErrors() {
 }
 
 func (db *DiagnosticBag) emitFiltered(emitter *Emitter, w io.Writer, keep func(*Diagnostic) bool) {
-	db.mu.Lock()
-
-	diagnostics := make([]*Diagnostic, len(db.diagnostics))
-	copy(diagnostics, db.diagnostics)
-	db.mu.Unlock()
+	diagnostics := db.Diagnostics()
 
 	filtered := diagnostics[:0]
 	var errors, warnings int
@@ -267,63 +406,5 @@ func printSummary(w io.Writer, errorCount, warnCount int) {
 func (db *DiagnosticBag) Clear() {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	db.diagnostics = make([]*Diagnostic, 0)
-	db.errorCount = 0
-	db.warnCount = 0
-}
-
-// ClearForFiles removes diagnostics whose primary file matches the provided set.
-func (db *DiagnosticBag) ClearForFiles(files map[string]struct{}) {
-	if len(files) == 0 {
-		return
-	}
-
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	kept := db.diagnostics[:0]
-	var errors, warnings int
-	for _, diag := range db.diagnostics {
-		filePath := diagnosticFilePath(diag)
-		if filePath != "" {
-			filePath = filepath.ToSlash(filePath)
-		}
-		if filePath != "" {
-			if _, ok := files[filePath]; ok {
-				continue
-			}
-		}
-		kept = append(kept, diag)
-		switch diag.Severity {
-		case Error:
-			errors++
-		case Warning:
-			warnings++
-		}
-	}
-
-	db.diagnostics = kept
-	db.errorCount = errors
-	db.warnCount = warnings
-}
-
-func diagnosticFilePath(diag *Diagnostic) string {
-	if diag == nil {
-		return ""
-	}
-	if diag.FilePath != "" {
-		return diag.FilePath
-	}
-	for _, label := range diag.Labels {
-		if label.Style == Primary && label.Location != nil && label.Location.Filename != nil {
-			return *label.Location.Filename
-		}
-	}
-	if len(diag.Labels) > 0 {
-		loc := diag.Labels[0].Location
-		if loc != nil && loc.Filename != nil {
-			return *loc.Filename
-		}
-	}
-	return ""
+	db.groups = make(map[phase.Phase]map[string]diagnosticGroup)
 }

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -142,6 +144,122 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 	}
 	if before != after {
 		t.Fatalf("expected unrelated component module reuse")
+	}
+}
+
+func TestServerStateReplaysDiagnosticsForUnchangedModule(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	writeWorkspaceFile(t, entry, `#[target_os("linux")]
+fn unused() {}
+fn main() -> i32 {
+	if true { return 0; }
+	return 1;
+}
+`)
+
+	state := NewServerState()
+	state.RootDir = root
+	first, mod := state.recompile(entry)
+	if mod == nil || first == nil || first.Diagnostics == nil {
+		t.Fatal("initial compile returned no module diagnostics")
+	}
+	second, mod := state.recompile(entry)
+	if mod == nil || second == nil || second.Diagnostics == nil {
+		t.Fatal("reused compile returned no module diagnostics")
+	}
+
+	want := map[string]bool{
+		diagnostics.WarnIgnoredTargetOS:       false,
+		diagnostics.WarnConstantConditionTrue: false,
+		diagnostics.WarnUnusedPrivateFunction: false,
+	}
+	for _, item := range second.Diagnostics.Diagnostics() {
+		if _, tracked := want[item.Code]; tracked {
+			want[item.Code] = true
+		}
+	}
+	for code, found := range want {
+		if !found {
+			t.Errorf("reused diagnostics missing %s", code)
+		}
+	}
+}
+
+func TestServerStateReplaysErrorsBeforeLowering(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	writeWorkspaceFile(t, entry, "fn main() -> i32 { return missing; }\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	first, mod := state.recompile(entry)
+	if mod == nil || first == nil || !first.Diagnostics.HasErrors() {
+		t.Fatal("initial compile did not report semantic error")
+	}
+	second, mod := state.recompile(entry)
+	if mod == nil || second == nil || !second.Diagnostics.HasErrors() {
+		t.Fatal("reused compile lost semantic error")
+	}
+	if mod.HIR != nil || mod.MIR != nil || mod.LLVMIR != "" {
+		t.Fatal("reused erroneous module continued into lowering")
+	}
+}
+
+func TestServerStateDoesNotReplayUsageDiagnosticsBeforeBarrier(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	util := filepath.Join(root, peeper.SourceDirName, "lib", "util"+peeper.SourceExt)
+	goodSource := "import \"app/lib/util\";\nfn main() -> i32 { return util::Value(); }\n"
+	badSource := "import \"app/lib/util\";\nfn main() -> i32 { return missing; }\n"
+	writeWorkspaceFile(t, entry, goodSource)
+	writeWorkspaceFile(t, util, "fn Value() -> i32 { return 1; }\nfn unused() {}\n")
+	hasCode := func(ctx *project.CompilerContext, code string) bool {
+		for _, item := range ctx.Diagnostics.Diagnostics() {
+			if item.Code == code {
+				return true
+			}
+		}
+		return false
+	}
+
+	state := NewServerState()
+	state.RootDir = root
+	first, mod := state.recompile(entry)
+	if mod == nil || first == nil || !hasCode(first, diagnostics.WarnUnusedPrivateFunction) {
+		t.Fatal("initial compile missing usage warning")
+	}
+
+	state.Cache[project.CanonicalPath(entry)] = badSource
+	incremental, mod := state.recompile(entry)
+	if mod == nil || incremental == nil || !incremental.Diagnostics.HasErrors() {
+		t.Fatal("incremental compile missing semantic error")
+	}
+	if hasCode(incremental, diagnostics.WarnUnusedPrivateFunction) {
+		t.Fatal("incremental compile replayed usage warning before project Usage barrier")
+	}
+
+	freshState := NewServerState()
+	freshState.RootDir = root
+	freshState.Cache[project.CanonicalPath(entry)] = badSource
+	fresh, freshMod := freshState.recompile(entry)
+	if freshMod == nil || fresh == nil || !fresh.Diagnostics.HasErrors() {
+		t.Fatal("fresh compile missing semantic error")
+	}
+	if hasCode(fresh, diagnostics.WarnUnusedPrivateFunction) {
+		t.Fatal("fresh compile unexpectedly produced usage warning")
+	}
+
+	state.Cache[project.CanonicalPath(entry)] = goodSource
+	repaired, mod := state.recompile(entry)
+	if mod == nil || repaired == nil || repaired.Diagnostics.HasErrors() {
+		t.Fatal("repaired incremental compile failed")
+	}
+	if !hasCode(repaired, diagnostics.WarnUnusedPrivateFunction) {
+		t.Fatal("repaired incremental compile lost reusable usage warning")
 	}
 }
 
@@ -308,7 +426,7 @@ func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing
 	if after == nil {
 		t.Fatal("dependent missing after semantic invalidation")
 	}
-	if after.Phase != project.PhaseBackend {
+	if after.Phase != phase.Backend {
 		t.Fatalf("dependent phase = %v, want completed backend after invalidation", after.Phase)
 	}
 }
@@ -402,8 +520,8 @@ func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
 	if _, ok := phases[utilPath]; ok {
 		t.Fatalf("changed source module should not be reused")
 	}
-	if got := phases[mainPath]; got != project.PhaseParsed {
-		t.Fatalf("dependent reuse phase = %v, want %v", got, project.PhaseParsed)
+	if got := phases[mainPath]; got != phase.Parsed {
+		t.Fatalf("dependent reuse phase = %v, want %v", got, phase.Parsed)
 	}
 }
 
