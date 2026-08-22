@@ -1,116 +1,113 @@
-# Coding Rules
+# Contributing to Peeper
 
-This file defines mandatory engineering rules for the `compiler` repository.
+Peeper is an experimental compiler with strict correctness and phase-boundary
+requirements. Small, focused changes with executable evidence are easiest to
+review.
 
-## 1) Core Principle
+## Before starting
 
-### Rule: no pass-through wrappers, no duplicated logic
+1. Search [open issues](https://github.com/PeeperLanguage/compiler/issues) and
+   existing pull requests for related work.
+2. Discuss substantial language, ownership, IR, ABI, or package-model changes
+   before implementation.
+3. Keep security reports private according to [`SECURITY.md`](SECURITY.md).
+4. Follow [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) in every project space.
 
-Use existing functions directly. If behavior is identical, do not add a new function that only forwards arguments/returns results.
+## Development setup
 
-Why:
-- Increases maintenance cost
-- Creates multiple sources of truth
-- Causes inconsistent behavior across modules/backends
+Required tools:
 
-Good:
-```go
-result := calculateTotal(items)
+- Go version declared in [`go.mod`](go.mod).
+- LLVM Clang available as `clang` for native compilation and runtime fixtures.
+- Git.
+
+Build compiler and bundled library:
+
+```bash
+go run ./scripts/bundle.go
+build/bin/peeper -version
 ```
 
-```go
-func formatPrice(p float64) string {
-	return fmt.Sprintf("$%.2f", p)
-}
-display1 := formatPrice(100)
-display2 := formatPrice(200)
+## Project rules
+
+These files are canonical; do not copy their rules into new documents:
+
+- [`RULES.md`](RULES.md): mandatory architecture, code-quality, testing, branch,
+  and commit rules.
+- [`go-style.md`](go-style.md): Go-specific style and lint guidance.
+- [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler phase,
+  representation, traversal, and incremental-analysis guidance.
+
+`AGENTS.md` contains automation workflow, not additional human-facing code
+policy.
+
+## Change workflow
+
+1. Start from current `main`.
+2. Use a focused branch such as `feature/<name>` or `fix/<name>`.
+3. Inspect existing implementations before adding a helper, abstraction, node
+   walk, type serializer, or phase result.
+4. Add focused regressions before fixing compiler behavior when practical.
+5. Keep unrelated cleanup out of the change.
+6. Run validation appropriate to every affected boundary.
+7. Open a pull request with summary, validation commands, behavior changes, and
+   explicit follow-up work.
+
+## Tests and fixtures
+
+Run focused package tests while developing. Before requesting merge, match CI:
+
+```bash
+gofmt -w path/to/touched.go
+go vet ./...
+go test ./...
+go test -race ./...
+go run ./scripts/bundle.go
+PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
 ```
 
-Bad:
-```go
-func getTotal(items []Item) int {
-	return calculateTotal(items)
-}
-```
+Do not run `gofmt` over untouched files solely to create unrelated churn.
 
-```go
-display1 := fmt.Sprintf("$%.2f", price1)
-display2 := fmt.Sprintf("$%.2f", price2)
-```
+Language features and behavior changes require Peeper source coverage under
+`x_test/`:
 
-## 2) When a new helper is allowed
+- add a positive type or runtime fixture;
+- add negative fixtures for rejected semantics when applicable;
+- validate fixtures with bundled `build/bin/peeper`;
+- retain focused Go tests near affected compiler packages.
 
-A new helper is allowed only if at least one is true:
-- It removes repeated logic used in 2+ places.
-- It centralizes domain logic that must stay consistent (mangling, symbol lookup, receiver shaping, type formatting, ABI decisions).
-- It is needed to cross a real boundary (public API, interface contract, backend abstraction).
+Backend or ABI changes need coverage for every affected target width. Semantic
+acceptance changes must prove downstream HIR, MIR, and backend lowerability.
 
-A new helper is not allowed when:
-- It only renames an existing function.
-- It only forwards params/return unchanged.
-- It is used once and does not clarify complex logic.
+## Commits
 
-## 3) Reuse and centralization rules
+- Use imperative, specific subjects under 72 characters.
+- Keep one logical change per commit.
+- Do not commit generated binaries, LLVM output, temporary repros, caches, or
+  local plans.
+- Do not bypass signing, checks, or review requirements.
 
-- Prefer existing shared modules before adding new code.
-- If multiple backends (or multiple phases) share identical logic, move it to a common utility.
-- Keep one canonical implementation for:
-  - type text formatting
-  - symbol/mangle decisions
-  - receiver/parameter shape conversion
-  - repeated diagnostics text
+## Pull requests
 
-## 4) Change scope discipline
+A useful pull request explains:
 
-- Keep diffs minimal and task-focused.
-- Do not refactor unrelated areas in the same change.
-- Do not add temporary workaround code in multiple places; fix at the source layer when possible.
-- Remove dead code immediately after migration.
+- what changed and why;
+- which phase or representation owns the behavior;
+- what previous behavior was preserved or intentionally changed;
+- exact validation commands and results;
+- remaining risks or linked follow-up issues.
 
-## 5) Naming and structure
+Reviews prioritize correctness, one canonical implementation, honest compiler
+artifacts, clear ownership, and regression resistance over minimizing edited
+call sites.
 
-- Name functions by behavior, not by location or temporary intent.
-- Avoid vague names (`handle`, `processData`, `helper2`).
-- Keep functions short and single-purpose.
-- Prefer data-driven logic over repeated `if/switch` blocks copied across files.
+## Documentation changes
 
-## 6) Error handling and diagnostics
+Keep commands, supported behavior, release status, and architecture claims tied
+to live source or CI. Describe current contracts, not one refactor's history.
 
-- Preserve root-cause context in error messages.
-- Do not hide failures with generic wrappers.
-- Reuse shared diagnostic phrasing/constants where available.
+## Getting help
 
-## 7) Testing requirements
-
-For behavior changes:
-- Add or update focused tests near the changed subsystem.
-- Add regression tests for bugs that previously failed.
-- Validate both relevant backends when backend behavior is affected.
-
-Minimum validation before commit:
-- `gofmt` on touched Go files
-- `go test` for touched packages
-- targeted smoke/repro if language/runtime behavior changed
-
-## 8) Commit hygiene
-
-- Commit only relevant source/test/docs.
-- Do not commit generated binaries or temporary repro executables.
-- Keep commit message specific to real behavior change.
-
-## 9) Agent-specific requirements
-
-Agents must:
-- Search for existing implementations before writing new logic.
-- Reuse existing function directly when possible.
-- Justify any new helper in code review notes/commit rationale.
-- Avoid creating compatibility wrappers unless explicitly requested.
-
-## 10) Human review checklist
-
-Before merge, verify:
-- No pass-through wrappers were introduced.
-- No duplicated logic remains in touched areas.
-- Shared logic was centralized when repeated.
-- Tests cover the changed behavior and previous failure mode.
-- No unrelated files/artifacts were included.
+Use a GitHub issue for reproducible bugs, scoped feature proposals, or questions
+that benefit from public discussion. Include compiler revision, host/target,
+minimal source, actual output, and expected behavior.
