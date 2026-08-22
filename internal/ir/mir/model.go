@@ -67,10 +67,12 @@ type Block struct {
 
 type Instr interface {
 	Text() string
+	SourceLocation() *source.Location
 }
 
 type Terminator interface {
 	Text() string
+	SourceLocation() *source.Location
 }
 
 type Assign struct {
@@ -116,11 +118,13 @@ type Drop struct {
 type ValueExpr interface {
 	valueExprNode()
 	Text() string
+	SourceLocation() *source.Location
 }
 
 type ValueRef interface {
 	valueRefNode()
 	Text() string
+	SourceLocation() *source.Location
 }
 
 type RefConst struct {
@@ -348,6 +352,36 @@ func (*StringLiteral) valueExprNode()     {}
 func (*RefConst) valueRefNode()           {}
 func (*RefName) valueRefNode()            {}
 
+func (i *Assign) SourceLocation() *source.Location            { return i.Location }
+func (i *Store) SourceLocation() *source.Location             { return i.Location }
+func (i *Print) SourceLocation() *source.Location             { return i.Location }
+func (i *Drop) SourceLocation() *source.Location              { return i.Location }
+func (i *Jump) SourceLocation() *source.Location              { return i.Location }
+func (i *Branch) SourceLocation() *source.Location            { return i.Location }
+func (i *Ret) SourceLocation() *source.Location               { return i.Location }
+func (r *RefConst) SourceLocation() *source.Location          { return r.Location }
+func (r *RefName) SourceLocation() *source.Location           { return r.Location }
+func (v *StringLiteral) SourceLocation() *source.Location     { return v.Location }
+func (v *Unary) SourceLocation() *source.Location             { return v.Location }
+func (v *Binary) SourceLocation() *source.Location            { return v.Location }
+func (v *Move) SourceLocation() *source.Location              { return v.Location }
+func (v *Cast) SourceLocation() *source.Location              { return v.Location }
+func (v *AddrOf) SourceLocation() *source.Location            { return v.Location }
+func (v *SliceView) SourceLocation() *source.Location         { return v.Location }
+func (v *Load) SourceLocation() *source.Location              { return v.Location }
+func (v *Len) SourceLocation() *source.Location               { return v.Location }
+func (v *StringChars) SourceLocation() *source.Location       { return v.Location }
+func (v *Field) SourceLocation() *source.Location             { return v.Location }
+func (v *StructLit) SourceLocation() *source.Location         { return v.Location }
+func (v *ArrayLit) SourceLocation() *source.Location          { return v.Location }
+func (v *DynamicArrayAlloc) SourceLocation() *source.Location { return v.Location }
+func (v *DynamicArrayOp) SourceLocation() *source.Location    { return v.Location }
+func (v *Alloc) SourceLocation() *source.Location             { return v.Location }
+func (v *ZeroValue) SourceLocation() *source.Location         { return v.Location }
+func (v *OptionalSome) SourceLocation() *source.Location      { return v.Location }
+func (v *InterfaceMake) SourceLocation() *source.Location     { return v.Location }
+func (v *InterfaceCall) SourceLocation() *source.Location     { return v.Location }
+
 func (r *RefConst) Text() string { return r.Value }
 func (r *RefName) Text() string  { return r.Name }
 func (v *StringLiteral) Text() string {
@@ -496,96 +530,6 @@ func (v *InterfaceCall) Text() string {
 	return b.String()
 }
 
-func InstrLocation(instr Instr) *source.Location {
-	switch node := instr.(type) {
-	case *Assign:
-		return node.Location
-	case *Store:
-		return node.Location
-	case *Print:
-		return node.Location
-	case *Drop:
-		return node.Location
-	case *Call:
-		return node.Location
-	case *InterfaceCall:
-		return node.Location
-	case *DynamicArrayOp:
-		return node.Location
-	default:
-		return nil
-	}
-}
-
-func TerminatorLocation(term Terminator) *source.Location {
-	switch node := term.(type) {
-	case *Ret:
-		return node.Location
-	case *Branch:
-		return node.Location
-	case *Jump:
-		return node.Location
-	default:
-		return nil
-	}
-}
-
-func ValueExprLocation(expr ValueExpr) *source.Location {
-	switch node := expr.(type) {
-	case *Unary:
-		return node.Location
-	case *Binary:
-		return node.Location
-	case *Move:
-		return node.Location
-	case *Cast:
-		return node.Location
-	case *AddrOf:
-		return node.Location
-	case *SliceView:
-		return node.Location
-	case *Load:
-		return node.Location
-	case *Len:
-		return node.Location
-	case *StringChars:
-		return node.Location
-	case *Field:
-		return node.Location
-	case *StructLit:
-		return node.Location
-	case *ArrayLit:
-		return node.Location
-	case *DynamicArrayAlloc:
-		return node.Location
-	case *ZeroValue:
-		return node.Location
-	case *OptionalSome:
-		return node.Location
-	case *InterfaceMake:
-		return node.Location
-	case *InterfaceCall:
-		return node.Location
-	case *StringLiteral:
-		return node.Location
-	case *Call:
-		return node.Location
-	default:
-		return nil
-	}
-}
-
-func ValueRefLocation(ref ValueRef) *source.Location {
-	switch node := ref.(type) {
-	case *RefConst:
-		return node.Location
-	case *RefName:
-		return node.Location
-	default:
-		return nil
-	}
-}
-
 // Call represents a function call in MIR
 type Call struct {
 	Callee   ValueRef
@@ -594,7 +538,8 @@ type Call struct {
 	Location *source.Location
 }
 
-func (c *Call) valueExprNode() {}
+func (c *Call) valueExprNode()                   {}
+func (c *Call) SourceLocation() *source.Location { return c.Location }
 func (c *Call) Text() string {
 	var b strings.Builder
 	b.WriteString("call ")

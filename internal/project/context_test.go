@@ -5,10 +5,28 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/diagnostics"
+	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
+
+func TestWithDiagnosticsSharesCompilerStateAndLock(t *testing.T) {
+	ctx := New(".", ".peep", diagnostics.NewDiagnosticBag())
+	scopedBag := ctx.Diagnostics.BeginPhase(phase.Typechecked, "main")
+	scoped := ctx.WithDiagnostics(scopedBag)
+	module := &Module{Key: "main"}
+	scoped.AddModule(module)
+	scoped.Diagnostics.Add(diagnostics.NewError("typed"))
+
+	if got, ok := ctx.ModuleByKey("main"); !ok || got != module {
+		t.Fatal("scoped context did not share module index")
+	}
+	if got := ctx.Diagnostics.Diagnostics(); len(got) != 1 || got[0].Message != "typed" {
+		t.Fatalf("shared diagnostics = %#v", got)
+	}
+}
 
 func TestPackagedLibraryBaseForExecutableUsesSiblingLibsDir(t *testing.T) {
 	exePath := filepath.Join("/tmp", "peeper", "build", "bin", "peeper")

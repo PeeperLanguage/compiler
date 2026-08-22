@@ -8,18 +8,23 @@ import (
 
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
+	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
+	"compiler/internal/semantics/definiteinit"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/usage"
 )
 
@@ -40,7 +45,10 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	}
 
 	p.ctx.AddModule(entry)
+	p.ctx.CompletedProjectPhase = phase.Load
 	diag := p.ctx.Diagnostics
+	loadDiag := diag.BeginPhase(phase.Load, "")
+	finalDiag := diag.BeginPhase(phase.Finalize, "")
 
 	loader := &moduleLoader{
 		ctx:       p.ctx,
@@ -88,7 +96,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if p.ctx.Graph != nil {
 		orderedIDs, cycles = p.ctx.Graph.TopoSort(moduleIDs)
 	}
-	if len(cycles) > 0 && diag != nil {
+	if len(cycles) > 0 {
 		for _, cycle := range cycles {
 			msg := "cyclic import detected"
 			if len(cycle) > 0 {
@@ -100,7 +108,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 				}
 				msg = "cyclic import detected: " + strings.Join(parts, " -> ")
 			}
-			diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrCyclicImport))
+			loadDiag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrCyclicImport))
 		}
 		return nil
 	}
@@ -116,9 +124,51 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if preludeKey != "" {
 		prelude = moduleIndex[graph.NodeID(preludeKey)]
 	}
-	preludeInjected := prelude == nil
+	preludeInjected := p.advanceModulesThrough(orderedModules, prelude, prelude == nil, phase.Ownership, diag)
+	p.ctx.CompletedProjectPhase = phase.Ownership
+	if diag != nil && diag.HasErrors() {
+		return nil
+	}
+	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Ownership); err != nil {
+		return err
+	}
+	for _, module := range orderedModules {
+		if module == nil || module.Phase < phase.Ownership || module.Phase >= phase.Usage {
+			continue
+		}
+		usageDiag := diag.BeginPhase(phase.Usage, module.Key)
+		usage.Analyze(p.ctx.WithDiagnostics(usageDiag), module)
+		module.Phase = phase.Usage
+		p.ctx.Metrics.AddPhaseAdvance()
+	}
+	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Usage); err != nil {
+		return err
+	}
+	p.ctx.CompletedProjectPhase = phase.Usage
+	p.advanceModulesThrough(orderedModules, prelude, preludeInjected, phase.Backend, diag)
+	if diag != nil && diag.HasErrors() {
+		return nil
+	}
+	// A scheduler stall without user diagnostics is an internal pipeline failure,
+	// not a successful partial compilation.
+	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Backend); err != nil {
+		return err
+	}
+	p.ctx.CompletedProjectPhase = phase.Backend
+	mirModules := make([]*mir.Module, 0, len(orderedModules))
+	for _, module := range orderedModules {
+		if module != nil && module.MIR != nil {
+			mirModules = append(mirModules, module.MIR)
+		}
+	}
+	llvm.ValidateRuntimeSymbols(mirModules, finalDiag, p.ctx.Target)
+	p.ctx.CompletedProjectPhase = phase.Finalize
+	return nil
+}
+
+func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelude *project.Module, preludeInjected bool, lastPhase phase.Phase, diag *diagnostics.DiagnosticBag) bool {
 	for {
-		if !preludeInjected && prelude != nil && prelude.ModuleScope != nil && prelude.Phase >= project.PhaseCollected {
+		if !preludeInjected && prelude != nil && prelude.ModuleScope != nil && prelude.Phase >= phase.Collected {
 			// Inject prelude as soon as its module scope exists. Other modules can
 			// then resolve global prelude names while later binding updates the same
 			// symbol objects in place.
@@ -130,7 +180,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 
 		ready := make([]*project.Module, 0, len(orderedModules))
 		for _, module := range orderedModules {
-			if p.moduleReadyForNextPhase(module, prelude, preludeInjected) {
+			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && p.moduleReadyForNextPhase(module, prelude, preludeInjected) {
 				ready = append(ready, module)
 			}
 		}
@@ -154,33 +204,19 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		for ok := range progress {
 			advanced = advanced || ok
 		}
+		p.invalidateSemanticDependents(ready)
 		if !advanced {
 			break
 		}
 	}
-	if diag != nil && diag.HasErrors() {
-		return nil
-	}
-	// A scheduler stall without user diagnostics is an internal pipeline failure,
-	// not a successful partial compilation.
-	if err := requireTerminalModules(orderedModules, loader.scheduled); err != nil {
-		return err
-	}
-	mirModules := make([]*mir.Module, 0, len(orderedModules))
-	for _, module := range orderedModules {
-		if module != nil && module.MIR != nil {
-			mirModules = append(mirModules, module.MIR)
-		}
-	}
-	llvm.ValidateRuntimeSymbols(mirModules, diag, p.ctx.Target)
-	return nil
+	return preludeInjected
 }
 
-// requireTerminalModules reports scheduled modules that stopped before backend
-// lowering when user diagnostics did not already explain compilation stopping.
-func requireTerminalModules(modules []*project.Module, scheduled map[string]struct{}) error {
+// requireScheduledModulesAtLeast reports scheduled modules that stalled before
+// a required project-wide phase barrier without user diagnostics.
+func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[string]struct{}, phase phase.Phase) error {
 	for _, module := range modules {
-		if module == nil || module.Phase >= project.PhaseBackend {
+		if module == nil || module.Phase >= phase {
 			continue
 		}
 		if _, ok := scheduled[module.Key]; !ok {
@@ -196,18 +232,18 @@ func requireTerminalModules(modules []*project.Module, scheduled map[string]stru
 }
 
 func (p *Pipeline) moduleReadyForNextPhase(module, prelude *project.Module, preludeInjected bool) bool {
-	if p == nil || module == nil || module.AST == nil || module.Phase >= project.PhaseBackend {
+	if p == nil || module == nil || module.AST == nil || module.Phase >= phase.Backend {
 		return false
 	}
 	next := nextModulePhase(module.Phase)
-	if next == project.PhaseNone {
+	if next == phase.None {
 		return false
 	}
 	if !preludeReadyForPhase(module, prelude, preludeInjected, next) {
 		return false
 	}
 	required := importPrerequisitePhase(next)
-	if required == project.PhaseNone {
+	if required == phase.None {
 		return true
 	}
 	for _, imp := range module.Imports {
@@ -219,67 +255,73 @@ func (p *Pipeline) moduleReadyForNextPhase(module, prelude *project.Module, prel
 	return true
 }
 
-func preludeReadyForPhase(module, prelude *project.Module, preludeInjected bool, next project.ModulePhase) bool {
+func preludeReadyForPhase(module, prelude *project.Module, preludeInjected bool, next phase.Phase) bool {
 	if module == nil || prelude == nil || module.Key == prelude.Key {
 		return true
 	}
 	switch next {
-	case project.PhaseCollected, project.PhaseBound:
+	case phase.Collected, phase.Bound:
 		return true
 	default:
-		return preludeInjected && prelude.Phase >= project.PhaseResolved
+		return preludeInjected && prelude.Phase >= phase.Resolved
 	}
 }
 
-func nextModulePhase(current project.ModulePhase) project.ModulePhase {
+func nextModulePhase(current phase.Phase) phase.Phase {
 	switch current {
-	case project.PhaseParsed:
-		return project.PhaseCollected
-	case project.PhaseCollected:
-		return project.PhaseBound
-	case project.PhaseBound:
-		return project.PhaseResolved
-	case project.PhaseResolved:
-		return project.PhaseConstEval
-	case project.PhaseConstEval:
-		return project.PhaseTypechecked
-	case project.PhaseTypechecked:
-		return project.PhaseHIR
-	case project.PhaseHIR:
-		return project.PhaseCFG
-	case project.PhaseCFG:
-		return project.PhaseOwnership
-	case project.PhaseOwnership:
-		return project.PhaseUsage
-	case project.PhaseUsage:
-		return project.PhaseMIR
-	case project.PhaseMIR:
-		return project.PhaseBackend
+	case phase.Parsed:
+		return phase.Collected
+	case phase.Collected:
+		return phase.Bound
+	case phase.Bound:
+		return phase.Resolved
+	case phase.Resolved:
+		return phase.ConstEval
+	case phase.ConstEval:
+		return phase.Typechecked
+	case phase.Typechecked:
+		return phase.CFG
+	case phase.CFG:
+		return phase.DefiniteInit
+	case phase.DefiniteInit:
+		return phase.Ownership
+	case phase.Ownership:
+		return phase.Usage
+	case phase.Usage:
+		return phase.HIR
+	case phase.HIR:
+		return phase.MIR
+	case phase.MIR:
+		return phase.Backend
 	default:
-		return project.PhaseNone
+		return phase.None
 	}
 }
 
-func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
+func importPrerequisitePhase(next phase.Phase) phase.Phase {
 	switch next {
-	case project.PhaseCollected:
-		return project.PhaseParsed
-	case project.PhaseBound:
-		return project.PhaseBound
-	case project.PhaseConstEval, project.PhaseTypechecked:
-		return project.PhaseConstEval
-	case project.PhaseResolved:
-		return project.PhaseCollected
-	case project.PhaseHIR:
-		return project.PhaseTypechecked
-	case project.PhaseCFG:
-		return project.PhaseHIR
-	case project.PhaseOwnership:
-		return project.PhaseCFG
-	case project.PhaseUsage:
-		return project.PhaseOwnership
+	case phase.Collected:
+		return phase.Parsed
+	case phase.Bound:
+		return phase.Bound
+	case phase.ConstEval:
+		return phase.ConstEval
+	case phase.Typechecked:
+		return phase.Typechecked
+	case phase.Resolved:
+		return phase.Collected
+	case phase.CFG:
+		return phase.Typechecked
+	case phase.DefiniteInit:
+		return phase.CFG
+	case phase.Ownership:
+		return phase.DefiniteInit
+	case phase.Usage:
+		return phase.Ownership
+	case phase.HIR:
+		return phase.Usage
 	default:
-		return project.PhaseNone
+		return phase.None
 	}
 }
 
@@ -290,92 +332,165 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if p == nil || module == nil || module.AST == nil {
 		return false
 	}
-	if module.Phase >= project.PhaseBackend {
+	if module.Phase >= phase.Backend {
 		return false
 	}
-	if module.Phase < project.PhaseCollected {
-		collector.Collect(p.ctx, module)
-		module.Phase = project.PhaseCollected
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseBound {
-		binder.Bind(p.ctx, module)
-		module.Phase = project.PhaseBound
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseResolved {
-		resolver.Resolve(p.ctx, module)
-		module.Phase = project.PhaseResolved
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseConstEval {
-		consteval.Evaluate(p.ctx, module)
-		module.Phase = project.PhaseConstEval
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseTypechecked {
-		typechecker.Check(p.ctx, module)
-		module.Phase = project.PhaseTypechecked
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < project.PhaseHIR {
-		modhir := lower.GenerateHIR(p.ctx, module)
-		if modhir == nil {
-			return false
-		}
-		modhir = fold.ApplyConstantFolding(modhir, diag)
-		module.HIR = modhir
-		module.Phase = project.PhaseHIR
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.HIR == nil {
+	next := nextModulePhase(module.Phase)
+	if next == phase.None || next == phase.Usage {
 		return false
 	}
-	if module.Phase < project.PhaseCFG {
-		module.CFG = cfg.BuildModule(module.HIR)
-		module.Phase = project.PhaseCFG
+	phaseDiag := diag.BeginPhase(next, module.Key)
+	phaseCtx := p.ctx.WithDiagnostics(phaseDiag)
+	if module.Phase < phase.Collected {
+		collector.Collect(phaseCtx, module)
+		module.Phase = phase.Collected
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < phase.Bound {
+		binder.Bind(phaseCtx, module)
+		module.Phase = phase.Bound
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < phase.Resolved {
+		resolver.Resolve(phaseCtx, module)
+		module.Phase = phase.Resolved
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < phase.ConstEval {
+		consteval.Evaluate(phaseCtx, module)
+		module.Phase = phase.ConstEval
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < phase.Typechecked {
+		typechecker.Check(phaseCtx, module)
+		consteval.FinalizeValues(phaseCtx, module)
+		module.TypedASTNodes = ast.Index(module.AST)
+		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
+		module.Phase = phase.Typechecked
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < phase.CFG {
+		module.CFG = cfg.BuildModule(module.AST)
+		cfg.Analyze(module.CFG, phaseDiag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
+			node := module.TypedASTNodes[ast.NodeID(conditionID)]
+			expr, ok := node.(ast.Expr)
+			if !ok {
+				return false, false
+			}
+			value, ok := consteval.EvaluateExpr(
+				phaseCtx,
+				module,
+				module.Semantics.BlockScopes[ast.NodeID(scopeID)],
+				expr,
+				&typeinfo.BoolType{},
+			)
+			return value != nil && value.Truthy(), ok
+		})
+		module.Phase = phase.CFG
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.CFG == nil {
 		return false
 	}
-	if module.Phase < project.PhaseOwnership {
-		ownership.Check(p.ctx, module)
-		module.Phase = project.PhaseOwnership
+	if module.Phase < phase.DefiniteInit {
+		definiteinit.Check(
+			module.CFG,
+			module.TypedASTNodes,
+			module.Semantics.BlockScopes,
+			module.Semantics.ResolvedSymbols,
+			phaseDiag,
+		)
+		module.Phase = phase.DefiniteInit
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
-	if module.Phase < project.PhaseUsage {
-		usage.Analyze(p.ctx, module)
-		module.Phase = project.PhaseUsage
+	if module.Phase < phase.Ownership {
+		module.Ownership = ownership.Check(phaseCtx, module)
+		module.Phase = phase.Ownership
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
-	if module.Phase < project.PhaseMIR {
-		cfg.Analyze(module.CFG, diag)
+	if module.Phase < phase.Usage {
+		return false
+	}
+	if module.Phase < phase.HIR {
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.ModuleScope, module.Semantics.ConstValues)
-		module.Phase = project.PhaseMIR
+		modhir := lower.GenerateHIR(phaseCtx, module)
+		if modhir == nil {
+			return false
+		}
+		module.HIR = fold.ApplyTypedExpressionFolding(modhir)
+		module.Phase = phase.HIR
+		p.ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.HIR == nil {
+		return false
+	}
+	if module.Phase < phase.MIR {
+		if diag != nil && diag.HasErrors() {
+			return false
+		}
+		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Semantics.ConstValues)
+		module.Phase = phase.MIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.MIR == nil {
 		return false
 	}
-	if module.Phase >= project.PhaseBackend {
+	if module.Phase >= phase.Backend {
 		return false
 	}
-	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, diag, p.ctx.Target, p.ctx.Config.BuildDebug)
-	module.Phase = project.PhaseBackend
+	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, p.ctx.Target, p.ctx.Config.BuildDebug)
+	module.Phase = phase.Backend
 	p.ctx.Metrics.AddPhaseAdvance()
 	return true
+}
+
+// invalidateSemanticDependents applies semantic API changes only between
+// parallel scheduler batches, after dependency type information is final.
+func (p *Pipeline) invalidateSemanticDependents(advanced []*project.Module) {
+	if p == nil || p.ctx == nil || p.ctx.Graph == nil {
+		return
+	}
+	queue := make([]graph.NodeID, 0)
+	seen := make(map[graph.NodeID]struct{})
+	for _, module := range advanced {
+		if module == nil || module.Phase != phase.Typechecked {
+			continue
+		}
+		baseline, ok := p.ctx.SemanticExportBaseline(module.Key)
+		if !ok || baseline == module.SemanticExportFingerprint {
+			continue
+		}
+		id := graph.NodeID(module.Key)
+		queue = append(queue, id)
+		seen[id] = struct{}{}
+	}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, dependentID := range p.ctx.Graph.Predecessors(current) {
+			if _, found := seen[dependentID]; found {
+				continue
+			}
+			seen[dependentID] = struct{}{}
+			queue = append(queue, dependentID)
+			dependent, found := p.ctx.ModuleByKey(string(dependentID))
+			if !found || dependent == nil || dependent.Phase < phase.Typechecked {
+				continue
+			}
+			p.ctx.ResetModule(dependent, phase.Parsed)
+			p.ctx.Metrics.AddDowngradedModule()
+		}
+	}
 }

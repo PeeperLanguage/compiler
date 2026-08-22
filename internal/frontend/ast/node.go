@@ -13,6 +13,7 @@ func (h *NodeIDHolder) SetID(id NodeID) { h.NodeID = id }
 
 type Node interface {
 	loc() *source.Location
+	forEachChild(func(Node))
 	ID() NodeID
 	SetID(NodeID)
 }

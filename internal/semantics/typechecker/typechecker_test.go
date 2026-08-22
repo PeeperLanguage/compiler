@@ -902,16 +902,16 @@ const answer: i32 = 42;`
 
 func TestStructFieldAccessResolves(t *testing.T) {
 	src := `struct Point {
-		x: i32,
+		x: i32
 	}
 
 	fn main() -> i32 {
-		let p: Point;
+		let p: Point = .{ x = 1 };
 		return p.x;
 	}`
 	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrUninitializedVariable) {
-		t.Fatalf("expected uninitialized variable diagnostic, got:\n%s", diag.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -943,59 +943,6 @@ func TestUnknownMemberSuppressesAmbiguousSuggestion(t *testing.T) {
 	out := diag.EmitAllToString()
 	if strings.Contains(out, "did you mean") {
 		t.Fatalf("expected ambiguous member suggestion to be suppressed, got:\n%s", out)
-	}
-}
-
-func TestUninitializedLocalReadIsRejected(t *testing.T) {
-	src := `fn main() -> i32 {
-	let x: i32;
-	return x;
-}`
-	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrUninitializedVariable) {
-		t.Fatalf("expected uninitialized variable diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestAssignmentInitializesLocal(t *testing.T) {
-	src := `fn main() -> i32 {
-	let mut x: i32;
-	x = 1;
-	return x;
-}`
-	diag := checkTypeSource(t, src)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestIfSingleBranchAssignmentDoesNotDefinitelyInitialize(t *testing.T) {
-	src := `fn main(flag: bool) -> i32 {
-	let mut x: i32;
-	if flag {
-		x = 1;
-	}
-	return x;
-}`
-	diag := checkTypeSource(t, src)
-	if !hasTypeCode(diag, diagnostics.ErrUninitializedVariable) {
-		t.Fatalf("expected uninitialized variable diagnostic, got:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestIfBothBranchesAssignmentDefinitelyInitializes(t *testing.T) {
-	src := `fn main(flag: bool) -> i32 {
-	let mut x: i32;
-	if flag {
-		x = 1;
-	} else {
-		x = 2;
-	}
-	return x;
-}`
-	diag := checkTypeSource(t, src)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 

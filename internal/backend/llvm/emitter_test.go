@@ -234,6 +234,21 @@ func TestTypedLLVMBuilderRejectsOperandMismatches(t *testing.T) {
 	}
 }
 
+func TestLLVMEmitterRejectsUnknownMIROperators(t *testing.T) {
+	emitter := &llvmEmitter{mod: &mir.Module{Types: llvmTypes.table}}
+	operand := &mir.RefConst{Value: "1", Type: llvmTypes.i32}
+	for name, expr := range map[string]mir.ValueExpr{
+		"unary":  &mir.Unary{Op: "?", Arg: operand, Type: llvmTypes.i32},
+		"binary": &mir.Binary{Op: "?", Left: operand, Right: operand, Type: llvmTypes.i32},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireLLVMInvariant(t, func() {
+				emitValueExpr(newLLVMBuilder(&strings.Builder{}, emitter, -1), expr)
+			})
+		})
+	}
+}
+
 func TestTypedLLVMBuilderPreservesPointerPlaceOnValidBitcast(t *testing.T) {
 	var out strings.Builder
 	b := newLLVMBuilder(&out, nil, -1)

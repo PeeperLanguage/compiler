@@ -94,8 +94,11 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 		c.typeExpr(scope, node.Expr, nil)
 	case *ast.AssignStmt:
 		c.checkAssign(scope, node)
-	default:
+	case *ast.BadStmt, *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl,
+		*ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
 		return // resolver already diagnosed unsupported statements
+	default:
+		panic(fmt.Sprintf("typechecker: unhandled statement %T", stmt))
 	}
 }
 

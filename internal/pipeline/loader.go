@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/phase"
 	"compiler/internal/project"
 )
 
@@ -79,6 +80,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	if module == nil || l == nil {
 		return
 	}
+	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.Key)
 	if module.AST != nil {
 		if module.ImportFingerprint == "" {
 			module.ImportFingerprint = module.AST.ImportFingerprint
@@ -86,15 +88,16 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		if module.ExportFingerprint == "" {
 			module.ExportFingerprint = module.AST.ExportFingerprint
 		}
-		if module.Phase < project.PhaseParsed {
-			module.ResetToPhase(project.PhaseParsed)
+		if module.Phase < phase.Parsed {
+			l.ctx.ResetModule(module, phase.Parsed)
 		}
+		l.resolveImports(module, loadDiag)
 		return
 	}
 	if !module.ContentProvided && module.Content == "" && module.FilePath != "" {
 		content, err := os.ReadFile(module.FilePath)
 		if err != nil {
-			l.addImportError(nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
+			l.addImportError(loadDiag, nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
 			return
 		}
 		module.Content = string(content)
@@ -104,18 +107,19 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
 	module.ContentHash = ast.HashText(module.Content)
-	toks := lexer.New(module.FilePath, module.Content, l.ctx.Diagnostics).Tokenize()
+	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.Key)
+	toks := lexer.New(module.FilePath, module.Content, parseDiag).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
-	module.AST = parser.New(module.FilePath, toks, l.ctx.Diagnostics).ParseModule()
+	module.AST = parser.New(module.FilePath, toks, parseDiag).ParseModule()
 	l.ctx.Metrics.AddParsedModule()
 	module.ImportFingerprint = module.AST.ImportFingerprint
 	module.ExportFingerprint = module.AST.ExportFingerprint
-	module.ResetToPhase(project.PhaseParsed)
-	l.resolveImports(module)
+	l.ctx.ResetModule(module, phase.Parsed)
+	l.resolveImports(module, loadDiag)
 }
 
-func (l *moduleLoader) resolveImports(module *project.Module) {
+func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.DiagnosticBag) {
 	if module == nil || module.AST == nil {
 		return
 	}
@@ -125,21 +129,21 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 	for _, imp := range module.AST.Imports {
 		rawPath, ok := ast.ImportPathFromDecl(imp)
 		if !ok {
-			l.addImportError(imp, diagnostics.ErrInvalidImportPath, "invalid import path")
+			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "invalid import path")
 			continue
 		}
 		resolved, err := l.ctx.ResolveImportPath(module, rawPath)
 		if err != nil {
-			l.addImportResolveError(imp, err)
+			l.addImportResolveError(diag, imp, err)
 			continue
 		}
 		alias := importAlias(imp, resolved.ImportPath)
 		if alias == "" {
-			l.addImportError(imp, diagnostics.ErrInvalidImportPath, "missing import alias")
+			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "missing import alias")
 			continue
 		}
 		if existing, ok := module.Imports[alias]; ok && existing.Key != resolved.Key {
-			l.addImportError(imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
+			l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
 		}
 		resolvedImport := *resolved
@@ -163,7 +167,7 @@ func (l *moduleLoader) resolveImports(module *project.Module) {
 	}
 }
 
-func (l *moduleLoader) addImportResolveError(imp *ast.ImportDecl, err error) {
+func (l *moduleLoader) addImportResolveError(diag *diagnostics.DiagnosticBag, imp *ast.ImportDecl, err error) {
 	if l == nil {
 		return
 	}
@@ -178,11 +182,11 @@ func (l *moduleLoader) addImportResolveError(imp *ast.ImportDecl, err error) {
 			msg = impErr.Msg
 		}
 	}
-	l.addImportError(imp, code, msg)
+	l.addImportError(diag, imp, code, msg)
 }
 
-func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
-	if l == nil || l.ctx == nil || l.ctx.Diagnostics == nil {
+func (l *moduleLoader) addImportError(diag *diagnostics.DiagnosticBag, imp *ast.ImportDecl, code, msg string) {
+	if l == nil || diag == nil {
 		return
 	}
 	d := diagnostics.NewError(msg).WithCode(code)
@@ -191,7 +195,7 @@ func (l *moduleLoader) addImportError(imp *ast.ImportDecl, code, msg string) {
 			d.WithPrimaryLabel(loc, msg)
 		}
 	}
-	l.ctx.Diagnostics.Add(d)
+	diag.Add(d)
 }
 
 func importAlias(imp *ast.ImportDecl, importPath string) string {

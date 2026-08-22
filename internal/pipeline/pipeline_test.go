@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/mir"
+	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
@@ -117,6 +119,26 @@ fn write(fd: i32, buf: cstr, n: i32) -> i32;
 			t.Fatalf("unexpected undefined prelude symbol 'stdout': %s", diag.EmitAllToString())
 		}
 	}
+}
+
+func TestPipelineChecksOwnershipInsideConstantFalseBranch(t *testing.T) {
+	entrySrc := `struct Point { value: i32 }
+
+fn consume(_: Point) {}
+
+fn invalid(point: Point) {
+	if false {
+		let moved = point;
+		consume(point);
+	}
+}`
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", entrySrc)
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrUseAfterMove {
+			return
+		}
+	}
+	t.Fatalf("expected use-after-move diagnostic from constant false branch, got:\n%s", diag.EmitAllToString())
 }
 
 func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
@@ -284,12 +306,14 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineExternDefinitionStaysLocalAfterError(t *testing.T) {
+func TestPipelineSemanticErrorStopsBeforeUsageAndHIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `#[extern("puts")]
 fn puts(msg: cstr) -> i32 {
 	return 0;
 }
+
+fn unused() {}
 
 fn main() -> i32 {
 	return puts("hi");
@@ -324,27 +348,68 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != project.PhaseUsage {
-		t.Fatalf("expected pipeline to run CFG ownership/usage and stop before MIR, got phase %v", entry.Phase)
+	if entry.Phase != phase.Ownership {
+		t.Fatalf("expected pipeline to finish mandatory semantics and stop before Usage/HIR, got phase %v", entry.Phase)
 	}
-	if entry.HIR == nil {
-		t.Fatalf("expected HIR despite extern definition error")
+	if ctx.CompletedProjectPhase != phase.Ownership {
+		t.Fatalf("completed project phase = %v, want Ownership", ctx.CompletedProjectPhase)
 	}
-	if len(entry.CFG) == 0 {
+	if entry.HIR != nil {
+		t.Fatalf("semantic error produced HIR: %#v", entry.HIR)
+	}
+	if entry.CFG == nil || len(entry.CFG.Functions) == 0 {
 		t.Fatal("expected canonical CFG despite extern definition error")
 	}
-	if len(entry.HIR.Externs) != 0 {
-		t.Fatalf("extern definition should not lower as import, got externs %#v", entry.HIR.Externs)
-	}
-	foundPuts := false
-	for _, fn := range entry.HIR.Funcs {
-		if fn != nil && fn.Name == "puts" {
-			foundPuts = true
-			break
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnUnusedPrivateFunction {
+			t.Fatalf("Usage ran on project with semantic errors: %#v", item)
 		}
 	}
-	if !foundPuts {
-		t.Fatalf("expected local lowered function for puts, got funcs %#v", entry.HIR.Funcs)
+}
+
+func TestPipelineRunDoesNotRepeatUsageWarnings(t *testing.T) {
+	const filePath = "repeated_usage" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, `fn unused() {}
+fn main() -> i32 { return 0; }`)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	entry := parseModuleSource(filePath, `fn unused() {}
+fn main() -> i32 { return 0; }`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	pipeline := New(ctx)
+
+	if err := pipeline.Run(entry); err != nil {
+		t.Fatalf("first Pipeline.Run: %v", err)
+	}
+	first := diag.WarningCount()
+	if err := pipeline.Run(entry); err != nil {
+		t.Fatalf("second Pipeline.Run: %v", err)
+	}
+	if second := diag.WarningCount(); second != first {
+		t.Fatalf("warning count after repeated run = %d, want %d", second, first)
+	}
+}
+
+func TestPipelineRunReplacesStaleFinalizeDiagnostics(t *testing.T) {
+	const filePath = "stale_finalize" + peeper.SourceExt
+	const sourceText = "fn main() -> i32 { return 0; }"
+	diag := diagnostics.NewDiagnosticBag()
+	diag.BeginPhase(phase.Finalize, "").Add(diagnostics.NewWarning("stale finalize"))
+	diag.AddSourceContent(filePath, sourceText)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	entry := parseModuleSource(filePath, sourceText, diag)
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := New(ctx).Run(entry); err != nil {
+		t.Fatalf("Pipeline.Run: %v", err)
+	}
+	if ctx.CompletedProjectPhase != phase.Finalize {
+		t.Fatalf("completed project phase = %v, want Finalize", ctx.CompletedProjectPhase)
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Message == "stale finalize" {
+			t.Fatal("pipeline retained stale finalize diagnostic")
+		}
 	}
 }
 
@@ -398,32 +463,48 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
-	entry.Phase = project.PhaseParsed
+	entry.Phase = phase.Parsed
 	ctx.AddModule(entry)
 
 	pipeline := New(ctx)
-	want := []project.ModulePhase{
-		project.PhaseCollected,
-		project.PhaseBound,
-		project.PhaseResolved,
-		project.PhaseConstEval,
-		project.PhaseTypechecked,
-		project.PhaseHIR,
-		project.PhaseCFG,
-		project.PhaseOwnership,
-		project.PhaseUsage,
-		project.PhaseMIR,
-		project.PhaseBackend,
+	want := []phase.Phase{
+		phase.Collected,
+		phase.Bound,
+		phase.Resolved,
+		phase.ConstEval,
+		phase.Typechecked,
+		phase.CFG,
+		phase.DefiniteInit,
+		phase.Ownership,
 	}
-	for _, phase := range want {
+	for _, wantPhase := range want {
 		if !pipeline.advanceModulePhase(entry, diag) {
-			t.Fatalf("advanceModulePhase() stopped at %v, want %v", entry.Phase, phase)
+			t.Fatalf("advanceModulePhase() stopped at %v, want %v", entry.Phase, wantPhase)
 		}
-		if entry.Phase != phase {
-			t.Fatalf("phase = %v, want %v", entry.Phase, phase)
+		if entry.Phase != wantPhase {
+			t.Fatalf("phase = %v, want %v", entry.Phase, wantPhase)
 		}
-		if phase == project.PhaseCFG && len(entry.CFG) == 0 {
+		if wantPhase == phase.CFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
+		}
+		if wantPhase < phase.HIR && entry.HIR != nil {
+			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)
+		}
+	}
+	if pipeline.advanceModulePhase(entry, diag) {
+		t.Fatal("per-module scheduler crossed project-wide Usage barrier")
+	}
+	entry.Phase = phase.Usage
+	for _, wantPhase := range []phase.Phase{
+		phase.HIR,
+		phase.MIR,
+		phase.Backend,
+	} {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v, want %v", entry.Phase, wantPhase)
+		}
+		if entry.Phase != wantPhase {
+			t.Fatalf("phase = %v, want %v", entry.Phase, wantPhase)
 		}
 	}
 	if pipeline.advanceModulePhase(entry, diag) {
@@ -434,28 +515,137 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
-func TestRequireTerminalModulesReportsStoppedPhase(t *testing.T) {
+func TestTypecheckedPhaseFinalizesModuleConstValues(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `const Value = 1;
+fn main() -> i32 { return Value; }
+`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+	pipeline := New(ctx)
+	for entry.Phase < phase.ConstEval {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
+		}
+	}
+	sym, found := entry.ModuleScope.LookupLocal("Value")
+	if !found || sym == nil {
+		t.Fatal("missing const symbol Value")
+	}
+	stale, ok := constvalue.NewIntText("1", "i64")
+	if !ok {
+		t.Fatal("failed to construct stale const value")
+	}
+	entry.Semantics.ConstValues[sym.ID] = stale
+	if !pipeline.advanceModulePhase(entry, diag) || entry.Phase != phase.Typechecked {
+		t.Fatalf("phase = %v, want typechecked", entry.Phase)
+	}
+	if got := entry.Semantics.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+		t.Fatalf("final const value = %#v, want i32", got)
+	}
+}
+
+func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `fn choose(cond: bool) -> i32 {
+	if cond {
+		return 7;
+	}
+}`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	pipeline := New(ctx)
+	for entry.Phase < phase.CFG {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	if entry.Phase != phase.CFG {
+		t.Fatalf("phase = %v, want CFG", entry.Phase)
+	}
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrMissingReturn {
+			return
+		}
+	}
+	t.Fatalf("missing-return diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
+}
+
+func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `fn main() -> i32 {
+	if false {
+		return 1;
+	}
+	return 0;
+}`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	pipeline := New(ctx)
+	for entry.Phase < phase.CFG {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	if entry.HIR != nil {
+		t.Fatalf("CFG phase produced HIR: %#v", entry.HIR)
+	}
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
+			return
+		}
+	}
+	t.Fatalf("constant-condition diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
+}
+
+func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn choose(cond: bool) -> i32 {
+	let mut value: i32;
+	if cond {
+		value = 7;
+	} else {
+		return 3;
+	}
+	return value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	tests := []struct {
 		name   string
 		module *project.Module
 		want   string
 	}{
-		{name: "blocked prerequisite", module: &project.Module{Key: "local:main", Phase: project.PhaseResolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: project.PhaseTypechecked}, want: "typechecked phase"},
-		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: project.PhaseUsage}, want: "usage phase"},
+		{name: "blocked prerequisite", module: &project.Module{Key: "local:main", Phase: phase.Resolved}, want: "resolved phase"},
+		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: phase.Ownership}, want: "ownership phase"},
+		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: phase.HIR}, want: "HIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireTerminalModules([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}})
+			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}}, phase.Backend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireTerminalModules([]*project.Module{{Key: "local:main", Phase: project.PhaseBackend}}, map[string]struct{}{"local:main": {}}); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "local:main", Phase: phase.Backend}}, map[string]struct{}{"local:main": {}}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireTerminalModules([]*project.Module{{Key: "overlay:stub", Phase: project.PhaseNone}}, map[string]struct{}{"local:main": {}}); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "overlay:stub", Phase: phase.None}}, map[string]struct{}{"local:main": {}}, phase.Backend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }
@@ -562,12 +752,12 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	imported := parseModuleSource("util"+peeper.SourceExt, "fn Helper() -> i32 { return 1; }", diag)
 	imported.Origin = project.ModuleOriginLocal
-	imported.Phase = project.PhaseParsed
+	imported.Phase = phase.Parsed
 	ctx.AddModule(imported)
 
 	entry := parseModuleSource("main"+peeper.SourceExt, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
 	entry.Origin = project.ModuleOriginLocal
-	entry.Phase = project.PhaseParsed
+	entry.Phase = phase.Parsed
 	entry.Imports = map[string]project.ResolvedImport{
 		"util": {
 			Key:        imported.Key,
@@ -582,33 +772,33 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 		t.Fatalf("parsed importer should be ready for collector when import is parsed")
 	}
 
-	entry.Phase = project.PhaseCollected
+	entry.Phase = phase.Collected
 	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
 		t.Fatalf("collected importer should wait for bound import before binder")
 	}
 
-	imported.Phase = project.PhaseBound
+	imported.Phase = phase.Bound
 	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
 		t.Fatalf("collected importer should be ready for binder when import is bound")
 	}
 
-	entry.Phase = project.PhaseBound
-	imported.Phase = project.PhaseParsed
+	entry.Phase = phase.Bound
+	imported.Phase = phase.Parsed
 	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
 		t.Fatalf("bound importer should wait for collected import before resolver")
 	}
 
-	imported.Phase = project.PhaseCollected
+	imported.Phase = phase.Collected
 	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
 		t.Fatalf("bound importer should be ready for resolver when import is collected")
 	}
 
-	entry.Phase = project.PhaseResolved
+	entry.Phase = phase.Resolved
 	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
 		t.Fatalf("resolved importer should wait for const-evaluated import before consteval")
 	}
 
-	imported.Phase = project.PhaseConstEval
+	imported.Phase = phase.ConstEval
 	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
 		t.Fatalf("resolved importer should be ready for consteval when import is const-evaluated")
 	}
@@ -658,11 +848,11 @@ fn main() -> i32 {
 	if !ok || util == nil {
 		t.Fatalf("expected imported module to be loaded")
 	}
-	if util.Phase != project.PhaseBackend {
-		t.Fatalf("imported module phase = %v, want %v", util.Phase, project.PhaseBackend)
+	if util.Phase != phase.Backend {
+		t.Fatalf("imported module phase = %v, want %v", util.Phase, phase.Backend)
 	}
-	if entry.Phase != project.PhaseBackend {
-		t.Fatalf("entry phase = %v, want %v", entry.Phase, project.PhaseBackend)
+	if entry.Phase != phase.Backend {
+		t.Fatalf("entry phase = %v, want %v", entry.Phase, phase.Backend)
 	}
 }
 
@@ -718,7 +908,7 @@ fn Value() -> i32 {
 	}
 	for _, name := range []string{"left", "right"} {
 		module, ok := ctx.ModuleByFile(filepath.Join(srcDir, name+peeper.SourceExt))
-		if !ok || module.Phase != project.PhaseBackend {
+		if !ok || module.Phase != phase.Backend {
 			t.Fatalf("%s module = %#v, want backend phase", name, module)
 		}
 	}
@@ -1716,7 +1906,7 @@ fn main() -> i32 {
 			for op := range observed {
 				t.Errorf("lowered intrinsic %q is absent from compiler registry", op)
 			}
-			if entry.Phase != project.PhaseBackend || entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
+			if entry.Phase != phase.Backend || entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
 				t.Fatalf("intrinsic program stopped before backend: phase=%v HIR=%v MIR=%v LLVM=%v", entry.Phase, entry.HIR != nil, entry.MIR != nil, entry.LLVMIR != "")
 			}
 			mirText := entry.MIR.Text()

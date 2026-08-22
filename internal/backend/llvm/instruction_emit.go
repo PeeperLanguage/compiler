@@ -477,7 +477,10 @@ func emitIntegerDivRem(b *llvmBuilder, op string, typeID ir.TypeID, left, right 
 }
 
 func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
-	return withLLVMLocation(b, mir.ValueExprLocation(expr), func() llvmValue {
+	if expr == nil {
+		b.invariant("value expression emission requires MIR value")
+	}
+	return withLLVMLocation(b, expr.SourceLocation(), func() llvmValue {
 		switch e := expr.(type) {
 		case *mir.Move:
 			return emitRef(b, e.Src)
@@ -496,6 +499,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 		case *mir.Unary:
 			arg := emitRef(b, e.Arg)
 			switch e.Op {
+			case "+":
+				return arg
 			case "-":
 				if isFloatType(b.emitter.mod.Types, e.Type) {
 					return b.arithmetic("fsub", b.value("0.0", arg.Layout), arg)
@@ -506,7 +511,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			case "~":
 				return b.arithmetic("xor", arg, b.value("-1", arg.Layout))
 			default:
-				return arg
+				b.invariant("unsupported MIR unary operator %q", e.Op)
+				return llvmValue{}
 			}
 		case *mir.Binary:
 			left := emitRef(b, e.Left)
@@ -574,7 +580,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				}
 				shiftCount := right
 				if mirRefType(e.Right) != mirRefType(e.Left) {
-					shiftCount = emitCast(b, &mir.Cast{Arg: e.Right, Type: mirRefType(e.Left), Location: mir.ValueRefLocation(e.Right)})
+					shiftCount = emitCast(b, &mir.Cast{Arg: e.Right, Type: mirRefType(e.Left), Location: e.Right.SourceLocation()})
 				}
 				return b.arithmetic(opcode, left, shiftCount)
 			case "==", "!=", "<", "<=", ">", ">=":
@@ -594,7 +600,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				}
 				return b.arithmetic("or", lc, rc)
 			default:
-				return left
+				b.invariant("unsupported MIR binary operator %q", e.Op)
+				return llvmValue{}
 			}
 			return b.arithmetic(opcode, left, right)
 		case *mir.Call:
@@ -740,10 +747,10 @@ func emitOptionalNoneCompare(b *llvmBuilder, op string, leftRef, rightRef mir.Va
 }
 
 func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
-	return withLLVMLocation(b, mir.ValueRefLocation(ref), func() llvmValue {
-		if ref == nil {
-			b.invariant("reference emission requires MIR value")
-		}
+	if ref == nil {
+		b.invariant("reference emission requires MIR value")
+	}
+	return withLLVMLocation(b, ref.SourceLocation(), func() llvmValue {
 		layout := b.emitter.layout(mirRefType(ref))
 		if layout == nil {
 			b.invariant("reference has unsupported type %s", b.emitter.mod.Types.Text(mirRefType(ref)))
@@ -853,7 +860,10 @@ func llvmFloatConst(value string, bits int) string {
 }
 
 func emitCondRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
-	return withLLVMLocation(b, mir.ValueRefLocation(ref), func() llvmValue {
+	if ref == nil {
+		b.invariant("condition emission requires MIR value")
+	}
+	return withLLVMLocation(b, ref.SourceLocation(), func() llvmValue {
 		val := emitRef(b, ref)
 		refType := mirRefType(ref)
 		if typ, ok := b.emitter.mod.Types.Type(refType); ok && typ.Kind == ir.TypeBool {

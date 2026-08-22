@@ -1,0 +1,5 @@
+fn main() -> i32 {
+	let mut value: i32;
+	value = 7;
+	return value;
+}

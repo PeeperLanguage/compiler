@@ -172,6 +172,8 @@ func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Bloc
 
 func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
 	switch node := stmt.(type) {
+	case nil:
+		return
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)}
 		appendBlock(module, scope, block, node, returnType, ctx)
@@ -187,7 +189,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		valueExpr := ir.Expr(&ir.InvalidExpr{Message: "missing initializer", Type: ir.InvalidType})
+		var valueExpr ir.Expr
 		if node.Value != nil {
 			valueExpr = lowerASTExpr(ctx, module, scope, node.Value, sym.Type)
 		}
@@ -195,7 +197,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Type: loweredTypeID(ctx, module, sym.Type), Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
 
 	case *ast.ConstDecl:
 		if node.Name == nil {
@@ -215,7 +217,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Type: loweredTypeID(ctx, module, sym.Type), Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
 
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: ir.InvalidType})
@@ -271,6 +273,11 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
 		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+	case *ast.BadStmt, *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl,
+		*ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
+		out.Stmts = append(out.Stmts, &hir.Invalid{Message: "unsupported statement", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+	default:
+		panic(fmt.Sprintf("HIR lowering: unhandled statement %T", stmt))
 	}
 }
 
@@ -384,8 +391,14 @@ func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, return
 			out.Else = lowerElse(module, scope, node.Else, returnType, ctx)
 		}
 		return out
-	default:
+	case *ast.BadStmt, *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl,
+		*ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl,
+		*ast.LetDecl, *ast.ConstDecl, *ast.ReturnStmt, *ast.ExprStmt, *ast.AssignStmt, *ast.ForStmt:
 		return &hir.Invalid{Message: "unsupported else branch", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)}
+	case nil:
+		return &hir.Invalid{Message: "unsupported else branch"}
+	default:
+		panic(fmt.Sprintf("HIR lowering: unhandled else statement %T", stmt))
 	}
 }
 
@@ -661,8 +674,11 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	case *ast.ArrayLit:
 		return lowerArrayLiteralExpr(ctx, module, scope, node)
 
-	default:
+	case *ast.BadExpr:
 		return &ir.InvalidExpr{Message: "unsupported expression", Type: ir.InvalidType, Location: loc}
+
+	default:
+		panic(fmt.Sprintf("HIR lowering: unhandled expression %T", expr))
 	}
 }
 

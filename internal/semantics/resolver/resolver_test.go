@@ -50,3 +50,16 @@ fn main(foo: i32) -> i32 {
 		t.Fatalf("unexpected outer-scope suggestion, got:\n%s", out)
 	}
 }
+
+func TestResolveRejectsLexicalSelfInitialization(t *testing.T) {
+	diag := checkResolveSource(t, `fn main() -> i32 {
+	let value: i32 = value;
+	return 0;
+}`)
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrUseBeforeDecl {
+			return
+		}
+	}
+	t.Fatalf("expected use-before-declaration diagnostic:\n%s", diag.EmitAllToString())
+}

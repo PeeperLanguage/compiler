@@ -1,376 +1,227 @@
-# Compiler Guidelines
+# Compiler Engineering Guidelines
 
-This file exists to keep the compiler implementation coherent over time. Peeper shares some concepts with Rust. But it doesn't mean Peeper is a direct copy of Rust.
+This document defines durable principles for implementing Peeper compiler code.
+It does not define language syntax, language semantics, package layout, or phase
+order.
 
-Current ownership, pointer, copy, and optional design lives in [docs/ownership-pointer-model.md](docs/ownership-pointer-model.md).
+Repository authority is split deliberately:
 
-The goal is not to copy Rust or any other compiler blindly. The goal is to build a compiler that is:
+- [RULES.md](RULES.md) defines mandatory code quality, architecture, testing,
+  branch, and commit rules.
+- [AGENTS.md](AGENTS.md) defines agent workflow and review gates.
+- [docs/language-spec.md](docs/language-spec.md) and focused design documents
+  define language behavior.
+- Current source, verified dependencies, and approved design plans determine
+  pipeline order.
 
-- correct
-- easy to extend
-- easy to reason about
-- organized around clear phase boundaries
+When this document conflicts with verified compiler correctness or an approved
+design, do not follow it silently. Report conflict and evidence so maintainer can
+decide whether guideline or design must change.
 
-## 1. Core Rule
+Current ownership, pointer, copy, and optional design lives in
+[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md).
 
-Do not cargo-cult architecture.
+## 1. Priorities
 
-When reusing ideas from Rust, Zig or any other compiler:
-
-- copy the idea only if it fits this language
-- simplify when the full design is not needed yet
-- avoid premature generalization
-- keep room for later semantic and codegen phases
-
-If a design is copied, there must be a concrete reason for it.
-
-Do not ship placeholder architecture for core compiler subsystems.
-
-- parsing, manifests, module resolution, dependency loading, semantic analysis, IR, and codegen must be designed for real compiler growth
-- avoid "basic for now" implementations that will need to be thrown away once the compiler handles real projects
-- when a subsystem is important, implement the correct boundary and data model first, even if some features inside that boundary remain incomplete
-- small scope is acceptable; toy structure is not
-
-## 2. Project Priorities
-
-In order:
+Use this order when trade-offs are real:
 
 1. correctness
-2. clarity of semantics
+2. clear semantics and invariants
 3. maintainability
 4. diagnostic quality
 5. performance
 
-Do not trade away 1-4 for micro-optimizations.
+Do not copy architecture from another compiler without a Peeper-specific need.
+Small scope is acceptable. Fake boundaries, placeholder artifacts, and designs
+known to require replacement are not.
 
-For critical infrastructure, prefer durability over short-term speed of implementation.
+## 2. Establish Ownership Before Implementation
 
-- a smaller but structurally correct subsystem is acceptable
-- a quick implementation that bakes in the wrong model is not
+Every compiler responsibility needs one canonical owner. Before changing code,
+identify:
 
-## 3. Language Context To Preserve
+- input artifact;
+- output artifact or observable effect;
+- invariants established;
+- diagnostics emitted;
+- consumers;
+- invalidation and lifetime rules.
 
-These decisions are already part of the language design and should not drift accidentally:
+A package, phase, result, or helper is justified by owned behavior, not by a
+possible future use. Do not create generic `common`, `results`, `flow`, or
+`analysis` containers without multiple concrete consumers and a stable shared
+contract.
 
-- `::` is used for imported names, enum variants, and static members
-- imports are package-root-relative, never relative
-- `core` is reserved for the standard library
-- dependency imports are resolved by manifest alias on the first path segment
-- a non-aliased import binds the last path segment in source, for example `import "util/build"` binds `build`
-- Zig-style literals are used: `.{ ... }`
-- methods are declared outside types using attached-method syntax with receivers.
-- `defer` and `panic` are part of the core control-flow model
-- builtin functions are declared in `global.peep` within the core library source tree
-- stdlib source modules are declared within the core library source tree
-- external declarations use `#[extern(\"...\")]` and may omit a body. extern can contain the external linking function name as parameter or keep empty for default behavior.
-- error unions are explicit value-level control flow and are not exceptions
+Package names should describe current responsibility. Exact directory layout may
+change as ownership becomes clearer; this document does not freeze it.
 
-If implementation changes conflict with this, update the language spec first.
+## 3. Preserve Representation Boundaries
 
-## 4. Architecture Rules
+Each representation should contain facts appropriate to its layer:
 
-The compiler should be split into clear layers.
+- lexer produces tokens;
+- parser and AST preserve source syntax and locations;
+- semantic analysis resolves names, types, and language rules;
+- control-flow representation preserves topology and semantic edge meaning;
+- lowering preserves established facts while changing representation;
+- backend layout and code generation own physical representation.
 
-- `lexer`: tokenization only
-- `parser`: syntax only
-- `context`: module table, dependency graph, caches, shared compiler state
-- `pipeline`: phase orchestration
-- `hir`: all HIR data structures and HIR-local transforms
-- `mir`: MIR and MIR-local transforms
-- `semantics`: name resolution, type checking, ownership checks
+Do not put semantic conclusions into syntax nodes for convenience. Prefer
+explicit semantic artifacts or side tables keyed by stable identity.
 
-No package should mix all of these concerns.
+Later stages must consume evidence already established by an earlier owner.
+They must not rescan source to rediscover method selection, symbol identity,
+type decisions, ownership facts, or other resolved semantics.
 
-HIR-specific rule:
+Semantic identity and physical layout are separate. Source-visible field order,
+symbol identity, and diagnostic mapping remain stable even when backend layout
+uses different slots or offsets. Layout must provide explicit mapping rather
+than mutating semantic order.
 
-- do not split HIR model, HIR generation, and HIR lowering across unrelated top-level packages
-- keep HIR-related code under `hir`
-- if HIR grows, prefer subpackages under `hir/...` over creating parallel top-level `hir*` packages again
+## 4. Derive Phase Order From Dependencies
 
-## 5. Parser Rules
+Do not treat a phase list in documentation as proof of correct order. For each
+analysis or transform, determine required inputs and guarantees from inspected
+code and tests.
 
-The parser should build syntax, not interpretation.
-
-- keep it single-responsibility
-- keep it readable without helper noise
-- avoid wrapper functions whose only job is to rename token checks
-- recovery should exist, but not at the cost of unreadable control flow
-
-Parser code should answer:
-
-- what syntactic form is being parsed
-- what tokens are consumed
-- what AST node is produced
-
-If a function makes that hard to see, rewrite it.
-
-## 6. AST Rules
-
-AST nodes represent source structure, not semantic conclusions.
-
-- avoid embedding semantic state in frontend AST nodes
-- keep locations on all user-visible nodes
-- choose names that match syntax, not later implementation details
-
-Examples:
-
-- `NumberLit` is better than `IntLit` if the lexer accepts non-integer numerics
-- `ImportDecl` should exist if imports are part of module syntax
-
-## 7. Context And Pipeline Rules
-
-Use a central compiler context for shared state.
-
-The context owns:
-
-- modules
-- file/import mapping
-- dependency graph
-- source cache
-- diagnostics
-- incremental state
-
-Module identity inside the compiler must be stronger than raw source import text.
-
-- use origin-qualified module keys internally
-- do not let local, stdlib, and dependency modules collide in one string namespace
-- reject relative imports at resolution time
-
-Manifest and package-resolution logic should stay outside `context` and `pipeline`.
-
-- manifest parsing belongs in a dedicated package
-- project/workspace loading may feed config into the compiler context
-- fetching/downloading is a separate concern from parsing and import-graph construction
-
-The pipeline owns:
-
-- phase order
-- loading modules
-- traversing imports
-- cache reuse decisions
-- cycle detection
-
-Do not hide pipeline behavior inside parser or lexer code.
-
-## 7.1 Phase Responsibilities
-
-Phase ownership must stay explicit.
-
-- `collector`
-  - create module scopes
-  - collect top-level names
-  - collect method sets by receiver
-  - no name lookup beyond local declaration registration
-- `resolver`
-  - resolve imports
-  - resolve local and nested names
-  - resolve `::` paths
-  - enforce cross-module visibility for imported names
-  - bind named-type members that are syntactically addressable without type inference, such as enum variants and static fields
-  - bind labeled control-flow targets
-  - no type inference or data-flow reasoning
-- `typechecker`
-  - type expressions and statements
-  - validate assignment compatibility
-  - validate return statement value types against function result types
-  - perform call-site method lookup once receiver types are known
-  - validate pointer, optional, and error-union rules
-  - do local, type-directed checks only
-  - do not do full path-sensitive return completeness here
-- `usage analysis`
-  - run as a final whole-compilation pass after ownership on clean modules
-  - warn about unused imports
-  - warn about unused private module symbols such as private functions, types, and module bindings
-  - warn about unused locals and parameters where the language wants those diagnostics
-  - treat public API surface differently from private/internal declarations
-  - do not own type layout or backend-specific liveness decisions
-- `ownership analysis`
-  - run after typechecking once expression types and scopes are populated
-  - validate moves and raw-pointer escape rules
-  - own use-after-move diagnostics and ownership-state transitions
-  - consume CFG liveness once CFG exists instead of ad hoc recursion
-  - use typed place provenance from the current semantic model
-  - handle path-sensitive and flow-sensitive reasoning
-  - stay separate from the basic typechecker
-- `HIR`
-  - preserve typed semantics while removing parser-only surface noise
-  - represent control constructs in a form suitable for CFG construction
-- `HIR lowering`
-  - desugar frontend sugar
-  - normalize constructs before CFG
-- `CFG analysis`
-  - build per-function control-flow graphs
-  - do reachability and return-path analysis
-  - decide whether non-void functions return on all paths
-  - handle nested conditionals and loops through graph analysis, not ad hoc AST recursion
-  - own unreachable-code diagnostics once CFG exists
-  - be unwind-aware once `panic` / `defer` lowering is implemented
-  - distinguish normal edges from panic-unwind cleanup edges
-- `const evaluation`
-  - fold and propagate only after types are known
-  - may inform CFG simplification, but should not replace CFG-based correctness checks
-- `layout`
-  - compute physical size, alignment, and field offsets
-  - may reorder struct fields physically for packing/alignment if the language permits it
-  - must not mutate semantic/source field order used by parser, typechecker, HIR, ownership, or diagnostics
-  - must produce a stable mapping from semantic field index to physical slot/offset
-  - must own ABI-facing layout decisions, not the typechecker or MIR builder
-
-Return-path analysis belongs to CFG analysis, not the basic typechecker.
-
-Reason:
-
-- it is fundamentally a control-flow problem
-- nested loops and branching make AST-local reasoning brittle
-- CFG gives one place to handle `if`, `switch`, loops, `break`, `continue`, and labels coherently
-
-Ownership and raw-pointer safety checking should not be treated as part of the basic typechecker contract.
-
-Reason:
-
-- it needs flow-sensitive state transitions
-- it interacts with control flow, reinitialization, and escapes
-- keeping it separate makes the typechecker simpler and keeps ownership logic aligned with later CFG/data-flow work
-
-## 7.2 Unwind And Error Model
-
-Do not conflate `panic` with `E!T`.
-
-- `E!T` is explicit value-level control flow
-- `!!` lowers to ordinary control flow
-- `panic` is non-local control flow
-- `defer` runs on both normal exit and panic unwind
-- `recover` is not current surface syntax; if reintroduced later it must fit the unwind/cleanup model cleanly
-
-This implies:
-
-- CFG and MIR must eventually support cleanup/unwind edges
-- MIR terminators must remain extensible; do not hard-code the assumption that only normal branch/jump/return exist forever
-- cleanup execution order must be explicit in IR, not reconstructed from source text late in codegen
+Useful dependency principles:
 
-Do not fake panic semantics by lowering it to an ordinary call and hoping codegen reconstructs unwind behavior later.
+- name-dependent work requires resolved identities;
+- type-dependent work requires necessary semantic types;
+- path-sensitive work requires control-flow topology that preserves relevant
+  source paths and edge meaning;
+- lowering consumes semantic evidence instead of recreating it;
+- optimization runs only after every mandatory analysis that needs preserved
+  source structure.
 
-## 7.3 Semantic Order vs Physical Layout
-
-Semantic field order and physical field layout are different concepts.
-
-- semantic order is the declared/source order
-- semantic field indices in HIR/MIR should remain stable for diagnostics, ownership, and language semantics
-- physical layout is computed later by a dedicated layout phase
-
-If field reordering is allowed for packing/alignment:
-
-- keep semantic field index stable
-- compute a separate semantic-index -> physical-slot/offset mapping
-- do not rewrite HIR/MIR/ownership to use physical order directly
-
-This avoids breaking:
-
-- dumps
-- diagnostics
-- source mapping
-- ownership/partial-move reasoning on fields
-- cross-phase reproducibility
-
-## 8. Incremental And Cache Rules
-
-Incremental behavior must be explicit and testable.
-
-- cache keys must be obvious
-- module invalidation rules must be local and understandable
-- unchanged modules should be reusable
-- dependency changes must invalidate correctly
-
-Do not build a "smart cache" that nobody can reason about.
-
-## 9. Diagnostics Rules
-
-Diagnostics are a product feature, not a side effect.
-
-- every syntax error should point to a concrete span
-- messages should say what is wrong and what was expected
-- error codes should remain stable once exposed
-- avoid generic "unexpected token" if a better message is easy to give
-
-Prefer a smaller number of accurate diagnostics over a flood of cascading noise.
-
-## 10. Testing Rules
-
-Every non-trivial frontend change should come with tests.
-
-Minimum expectations:
-
-- lexer tests for new token forms
-- parser tests for new syntax forms
-- pipeline tests for multi-file behavior
-- regression tests for previously broken cases
-
-Do not rely on one example file as proof that the compiler works.
-
-## 11. Change Discipline
-
-Before changing code, ask:
-
-1. Is this syntax, parsing, semantics, or orchestration?
-2. Which package should own it?
-3. Will this decision still make sense after type checking exists?
-4. Am I encoding a shortcut that will become a bug later?
-
-If the answer to 4 is yes, do not do it.
-
-## 12. Anti-Patterns
-
-Avoid these:
-
-- helper layers that only rename obvious operations
-- parser code that depends on semantic facts
-- token kinds that encode typechecker assumptions
-- architecture copied from another compiler without current need
-- one-file "temporary" logic that becomes permanent
-- hidden ownership rules
-- silent implicit behavior that the language spec does not justify
-
-## 13. Preferred Style
-
-Prefer:
-
-- small focused packages
-- direct names
-- explicit data flow
-- phase-local responsibilities
-- tests next to the behavior they protect
-
-If a simpler design solves the problem cleanly and preserves the right long-term structure, prefer it over ornamental complexity.
-Do not confuse "simple" with "throwaway" or "underdesigned".
-
-## 14. Workflow Rule
-
-When implementing new compiler work:
-
-1. check this file
-2. decide which layer owns the change
-3. choose a design that will survive analyzer/codegen stages
-4. implement the smallest structurally correct version
-5. add tests
-6. only then generalize if there is real pressure
-
-## Extras
-Migration to import syntax
-instead of
-```go
-import "core:io";
-import "github.com/raysan5/raylib/ui";
-```
-```rs
-import core::io; 
-import raylib::ui; // can alias inline with `as`
-```
-
-config file will contain dependencies
-```toml
-[dependencies]
-raylib = { url = "https://github.com/raysan5/raylib", version = "4.0.0" }
-local_project = { path = "../local_project" }
-```
-
-lockfile will contain the transitive dependencies and hashes of the dependencies
+An optimization must not remove source-reachable structure solely because a
+condition is constant before mandatory semantic checks finish. Typed expression
+folding and control-flow simplification are distinct operations with distinct
+scheduling requirements.
+
+If two analyses depend on each other, make cooperation explicit through a
+well-defined query, staged artifact, or fixed-point contract. Do not invent an
+arbitrary total order to hide dependency.
+
+## 5. Make Control Flow Explicit
+
+Control-flow-sensitive rules belong on a representation that understands
+reachability and predecessors. Examples include return completeness, definite
+initialization, ownership state, and future narrowing.
+
+Control-flow edges must carry semantic kinds when analyses depend on branch
+meaning. Consumers must not infer true/false, return, unwind, or cleanup meaning
+from successor order.
+
+Terminating paths must not contribute facts to continuation joins. Unreachable
+paths must not corrupt facts for reachable paths.
+
+CFG topology should remain a control-flow artifact. Analysis outputs such as
+cleanup plans or narrowing facts belong to their analyses unless they are part
+of graph topology itself.
+
+## 6. Centralize Structural Traversal
+
+Do not duplicate exhaustive AST, HIR, MIR, expression, place, type, or member
+walks for analyses that only need traversal.
+
+Node-owning packages should expose canonical traversal so adding a node has one
+structural update point. Prefer designs that make missing child coverage fail
+compilation or a focused completeness test. Unknown sealed node kinds should
+fail clearly rather than be skipped silently.
+
+Semantic switches remain appropriate when each node kind requires distinct
+behavior. Centralize structural recursion, not semantic decisions.
+
+Before adding a walker or lookup:
+
+1. search all existing implementations;
+2. identify canonical owner;
+3. reuse it directly when contract matches;
+4. extend canonical implementation when behavior is shared;
+5. keep local logic only when semantics genuinely differ.
+
+Do not introduce a generic dataflow framework from similar-looking worklists
+alone. Extract one only after several analyses demonstrate stable shared solver
+mechanics without hiding their state, join, direction, edge, or diagnostic rules.
+
+## 7. Preserve Behavior During Refactors
+
+Before replacing or moving code, audit everything old path owns:
+
+- diagnostics and spans;
+- validation and invariant checks;
+- mutation and cached state;
+- normalization and fallback behavior;
+- target or backend differences;
+- incremental invalidation;
+- debug or dump output relied on by tests.
+
+Moving code is incomplete until old owner and stale access path are removed.
+Do not preserve obsolete names through pass-through wrappers or aliases. Follow
+replacement and helper rules in `RULES.md`.
+
+## 8. Define Incremental Artifacts Honestly
+
+Every reusable artifact needs explicit production, consumption, invalidation,
+and reset rules. A scheduler state is not automatically a safe cache boundary.
+
+Support only checkpoints compiler can reconstruct correctly. If one object mixes
+facts from multiple stages, either split ownership or document which checkpoints
+can safely retain it.
+
+Fingerprint equality must imply equality of interface visible to dependent
+compilation. Syntax fingerprints may support early conservative invalidation;
+semantic fingerprints must use canonical semantic identity for exported API.
+LSP is one consumer of incremental results, not architectural owner of compiler
+invalidation.
+
+Cache behavior must remain understandable through focused tests. Avoid caches
+whose keys, retained facts, or invalidation propagation cannot be stated plainly.
+
+## 9. Diagnostics And Failures
+
+User errors produce diagnostics with concrete source spans and stable codes where
+exposed. Prefer root-cause diagnostics over cascades.
+
+Broken compiler invariants must fail clearly. Do not turn internal corruption or
+an unhandled sealed node kind into a misleading user diagnostic or silent skip.
+
+When moving a check between stages, preserve diagnostic text, source identity,
+ordering where observable, and deduplication unless change is intentional and
+tested.
+
+## 10. Verification
+
+Use `RULES.md` for mandatory commands and fixture requirements. Compiler changes
+also need evidence proportional to boundary crossed:
+
+- bug fixes begin with focused regression reproducing old failure;
+- language behavior uses positive and applicable negative `x_test/` fixtures;
+- traversal changes test completeness and newly reachable child nodes;
+- flow changes test branches, joins, loops, termination, and unreachable paths;
+- incremental changes test unchanged reuse and dependent invalidation;
+- lowering changes prove accepted semantics remain lowerable through affected
+  backends;
+- representation changes verify dumps, diagnostics, and source identity where
+  relevant.
+
+Passing unit tests do not prove phase ownership is correct. Review actual inputs,
+outputs, consumers, and invalidation paths after change.
+
+## 11. Decision Checklist
+
+Before implementation:
+
+1. What compiler concept changes?
+2. Which existing owner already implements part of it?
+3. What evidence does change require from earlier stages?
+4. Which later stages consume its result?
+5. Does change repeat traversal, lookup, formatting, or semantic discovery?
+6. Can unsupported cases fail early and clearly?
+7. What cache, diagnostic, source-map, or backend behavior can regress?
+8. Which focused test proves boundary and failure mode?
+
+If guideline suggests one design but inspected evidence supports another, record
+conflict and present options. Maintainer decides policy; implementation must not
+silently encode disputed assumption.

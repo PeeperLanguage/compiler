@@ -37,3 +37,62 @@ fn Alpha(value: Value, extra: i32) {}`
 		t.Fatalf("operation functions = %#v, want [Alpha Zebra]", functions)
 	}
 }
+
+func TestBindValidatesTypeDeclarationCycles(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wantCycle bool
+	}{
+		{
+			name: "direct value cycle",
+			source: `struct A { b: B }
+struct B { a: A }`,
+			wantCycle: true,
+		},
+		{
+			name:      "self value cycle",
+			source:    `struct Node { next: Node }`,
+			wantCycle: true,
+		},
+		{
+			name:   "pointer recursion",
+			source: `struct Node { next: *Node }`,
+		},
+		{
+			name:   "raw pointer leaf",
+			source: `type Address = rawptr;`,
+		},
+		{
+			name:   "enum leaf",
+			source: `enum State { Ready }`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const filePath = "binder_type_cycle_test" + peeper.SourceExt
+			diag := diagnostics.NewDiagnosticBag()
+			ctx := project.New(".", peeper.SourceExt, diag)
+			module := &project.Module{
+				Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+				FilePath: filePath,
+				Content:  test.source,
+				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
+				Imports:  make(map[string]project.ResolvedImport),
+			}
+			collector.Collect(ctx, module)
+			Bind(ctx, module)
+
+			foundCycle := false
+			for _, item := range diag.Diagnostics() {
+				if item != nil && item.Code == diagnostics.ErrCircularDependency {
+					foundCycle = true
+					break
+				}
+			}
+			if foundCycle != test.wantCycle {
+				t.Fatalf("cycle diagnostic = %v, want %v:\n%s", foundCycle, test.wantCycle, diag.EmitAllToString())
+			}
+		})
+	}
+}

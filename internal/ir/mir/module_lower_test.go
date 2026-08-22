@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"compiler/internal/constvalue"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
-	"compiler/internal/semantics/cfg"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -69,6 +71,118 @@ var mirTypes = func() mirTypeFixture {
 	}
 }()
 
+// cfgForHIR gives synthetic HIR unit fixtures source-shaped control flow.
+// Production always builds CFG from typed AST before HIR exists.
+func cfgForHIR(module *hir.Module) *cfg.Module {
+	if module == nil {
+		return nil
+	}
+	nextID := ir.NodeID(1)
+	for _, fn := range module.Funcs {
+		if fn == nil {
+			continue
+		}
+		if fn.NodeID >= nextID {
+			nextID = fn.NodeID + 1
+		}
+		hir.InspectStmt(fn.Body, func(stmt hir.Stmt) bool {
+			if id := hir.NodeIDOf(stmt); id >= nextID {
+				nextID = id + 1
+			}
+			return true
+		})
+	}
+	assignID := func(id ir.NodeID) ir.NodeID {
+		if id != 0 {
+			return id
+		}
+		id = nextID
+		nextID++
+		return id
+	}
+	var sourceStmt func(hir.Stmt) ast.Stmt
+	var sourceBlock func(*hir.Block) *ast.BlockStmt
+	sourceBlock = func(block *hir.Block) *ast.BlockStmt {
+		if block == nil {
+			return nil
+		}
+		block.NodeID = assignID(block.NodeID)
+		out := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(block.NodeID)}, Location: block.Location}
+		out.Stmts = make([]ast.Stmt, 0, len(block.Stmts))
+		for _, stmt := range block.Stmts {
+			out.Stmts = append(out.Stmts, sourceStmt(stmt))
+		}
+		return out
+	}
+	sourceStmt = func(stmt hir.Stmt) ast.Stmt {
+		switch node := stmt.(type) {
+		case nil:
+			return nil
+		case *hir.Block:
+			return sourceBlock(node)
+		case *hir.Binding:
+			node.NodeID = assignID(node.NodeID)
+			return &ast.BadStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)}, Location: node.Location}
+		case *hir.ExprStmt:
+			node.NodeID = assignID(node.NodeID)
+			return &ast.BadStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)}, Location: node.Location}
+		case *hir.Assign:
+			node.NodeID = assignID(node.NodeID)
+			return &ast.BadStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)}, Location: node.Location}
+		case *hir.Invalid:
+			node.NodeID = assignID(node.NodeID)
+			return &ast.BadStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)}, Location: node.Location}
+		case *hir.Return:
+			node.NodeID = assignID(node.NodeID)
+			return &ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)}, Location: node.Location}
+		case *hir.If:
+			node.NodeID = assignID(node.NodeID)
+			conditionID := assignID(0)
+			return &ast.IfStmt{
+				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)},
+				Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(conditionID)}, Value: true, Location: node.Location},
+				Then:         sourceBlock(node.Then),
+				Else:         sourceStmt(node.Else),
+				Location:     node.Location,
+			}
+		case *hir.For:
+			node.NodeID = assignID(node.NodeID)
+			var condition ast.Expr
+			if node.Cond != nil {
+				conditionID := assignID(0)
+				condition = &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(conditionID)}, Value: true, Location: node.Location}
+			}
+			return &ast.ForStmt{
+				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(node.NodeID)},
+				Cond:         condition,
+				Body:         sourceBlock(node.Body),
+				Location:     node.Location,
+			}
+		default:
+			panic(fmt.Sprintf("MIR test CFG fixture: unhandled HIR statement %T", stmt))
+		}
+	}
+	source := &ast.Module{Stmts: make([]ast.Stmt, 0, len(module.Funcs))}
+	for _, fn := range module.Funcs {
+		if fn == nil {
+			continue
+		}
+		fn.NodeID = assignID(fn.NodeID)
+		var returnType ast.TypeExpr
+		if typ, ok := module.Types.Type(fn.ReturnType); !ok || typ.Kind != ir.TypeVoid {
+			returnType = &ast.NamedType{Name: module.Types.Text(fn.ReturnType)}
+		}
+		source.Stmts = append(source.Stmts, &ast.FnDecl{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NodeID(fn.NodeID)},
+			Name:         &ast.Ident{Name: fn.Name},
+			ReturnType:   returnType,
+			Body:         sourceBlock(fn.Body),
+			Location:     fn.Location,
+		})
+	}
+	return cfg.BuildModule(source)
+}
+
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
@@ -85,8 +199,8 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 		},
 	}
 
-	graphs := cfg.BuildModule(mod)
-	out := GenerateMIR(mod, graphs, nil, nil)
+	graphs := cfgForHIR(mod)
+	out := GenerateMIR(mod, graphs, nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -96,6 +210,37 @@ func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
 	}
 	if _, ok := fn.Blocks[0].Term.(*Ret); !ok {
 		t.Fatalf("expected implicit ret terminator, got %#v", fn.Blocks[0].Term)
+	}
+}
+
+func TestGenerateMIRDoesNotAssignUninitializedBinding(t *testing.T) {
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{{
+			Name:       "main",
+			ReturnType: mirTypes.i32,
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Binding{Name: "value", Type: mirTypes.i32},
+				&hir.Assign{
+					Target: &ir.Place{Root: &ir.Ident{Name: "value", Type: mirTypes.i32}, Type: mirTypes.i32},
+					Value:  &ir.IntLit{Value: "7", Type: mirTypes.i32},
+				},
+				&hir.Return{Value: &ir.Ident{Name: "value", Type: mirTypes.i32}},
+			}},
+		}},
+	}
+
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
+		t.Fatalf("unexpected MIR shape: %#v", out)
+	}
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) != 1 {
+		t.Fatalf("instructions = %#v, want assignment only", instrs)
+	}
+	assign, ok := instrs[0].(*Assign)
+	if !ok || assign.Name != "value" {
+		t.Fatalf("instruction = %#v, want value assignment", instrs[0])
 	}
 }
 
@@ -111,7 +256,7 @@ func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
 			}}},
 		}},
 	}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	block := out.Funcs[0].Blocks[0]
 	if len(block.Instrs) != 1 {
 		t.Fatalf("expected one cleanup instruction, got %#v", block.Instrs)
@@ -125,23 +270,23 @@ func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRAppliesCFGCleanupPlan(t *testing.T) {
+func TestGenerateMIRAppliesOwnershipCleanupPlan(t *testing.T) {
 	tests := []struct {
 		name string
 		body *hir.Block
-		plan *cfg.CleanupPlan
+		plan *ownershipresult.CleanupPlan
 		want int
 	}{
 		{
 			name: "scope exit",
 			body: &hir.Block{NodeID: 10},
-			plan: &cfg.CleanupPlan{AfterScope: map[ir.NodeID][]symbols.SymbolID{10: {1}}},
+			plan: &ownershipresult.CleanupPlan{AfterScope: map[ir.NodeID][]symbols.SymbolID{10: {1}}},
 			want: 1,
 		},
 		{
 			name: "return",
 			body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{NodeID: 20}}},
-			plan: &cfg.CleanupPlan{BeforeReturn: map[ir.NodeID][]symbols.SymbolID{20: {1}}},
+			plan: &ownershipresult.CleanupPlan{BeforeReturn: map[ir.NodeID][]symbols.SymbolID{20: {1}}},
 			want: 1,
 		},
 		{
@@ -151,7 +296,7 @@ func TestGenerateMIRAppliesCFGCleanupPlan(t *testing.T) {
 				Target: &ir.Place{Root: &ir.Ident{Name: "owner", Type: mirTypes.ownedI32}, Type: mirTypes.ownedI32},
 				Value:  &ir.ZeroValue{Type: mirTypes.ownedI32},
 			}}},
-			plan: &cfg.CleanupPlan{BeforeAssign: map[ir.NodeID]struct{}{30: {}}},
+			plan: &ownershipresult.CleanupPlan{BeforeAssign: map[ir.NodeID]struct{}{30: {}}},
 			want: 3,
 		},
 		{
@@ -160,7 +305,7 @@ func TestGenerateMIRAppliesCFGCleanupPlan(t *testing.T) {
 				ValueNodeID: 40,
 				Value:       &ir.Call{Callee: &ir.Ident{Name: "acquire", Type: mirTypes.fnOwner}, Type: mirTypes.ownedI32},
 			}}},
-			plan: &cfg.CleanupPlan{DiscardedValue: map[ir.NodeID]struct{}{40: {}}},
+			plan: &ownershipresult.CleanupPlan{DiscardedValue: map[ir.NodeID]struct{}{40: {}}},
 			want: 2,
 		},
 	}
@@ -172,9 +317,9 @@ func TestGenerateMIRAppliesCFGCleanupPlan(t *testing.T) {
 				ReturnType: mirTypes.void,
 				Body:       tt.body,
 			}}}
-			graphs := cfg.BuildModule(mod)
-			graphs[0].Cleanup = tt.plan
-			out := GenerateMIR(mod, graphs, nil, nil)
+			graphs := cfgForHIR(mod)
+			plans := ownershipresult.Result{mod.Funcs[0].NodeID: tt.plan}
+			out := GenerateMIR(mod, graphs, plans, nil, nil)
 			if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) == 0 {
 				t.Fatalf("MIR = %#v", out)
 			}
@@ -210,7 +355,7 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 		t.Fatal("NewString failed")
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), scope, map[symbols.SymbolID]constvalue.Value{
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{
 		sym.ID: value,
 	})
 	if out == nil || len(out.StaticData) != 1 {
@@ -236,7 +381,7 @@ func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 		t.Fatal("NewFloatText failed")
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), scope, map[symbols.SymbolID]constvalue.Value{
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{
 		sym.ID: value,
 	})
 	if out == nil || len(out.StaticData) != 1 {
@@ -270,8 +415,8 @@ func TestGenerateMIRLowersDiscardedValueCallAsPlainCall(t *testing.T) {
 		},
 	}
 
-	graphs := cfg.BuildModule(mod)
-	out := GenerateMIR(mod, graphs, nil, nil)
+	graphs := cfgForHIR(mod)
+	out := GenerateMIR(mod, graphs, nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -307,7 +452,7 @@ func TestGenerateMIRLowersZeroValue(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -341,7 +486,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -389,7 +534,7 @@ func TestGenerateMIRLowersProjectedRawAddressDirectly(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -441,7 +586,7 @@ func TestGenerateMIRLowersIndexedRawAddressDirectly(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -481,7 +626,7 @@ func TestGenerateMIRLowersSliceView(t *testing.T) {
 		}},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 2 {
 		t.Fatalf("expected slice-view and binding assignments, got %#v", instrs)
@@ -515,7 +660,7 @@ func TestGenerateMIRLowersStringChars(t *testing.T) {
 			}},
 		}},
 	}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("expected StringChars assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
@@ -545,7 +690,7 @@ func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 		}},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	assign := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
 	view, ok := assign.Value.(*SliceView)
 	if !ok || !view.EndExclusive || view.Start.Text() != "1" || view.End.Text() != "3" {
@@ -577,7 +722,7 @@ func TestGenerateMIRLowersIndexReadAsPlaceLoad(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -602,7 +747,7 @@ func TestGenerateMIRDropsOwnerBearingTemporaryAfterFieldProjection(t *testing.T)
 			Index: 0, DropBase: true, Type: mirTypes.i32,
 		}}}},
 	}}}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 3 {
 		t.Fatalf("expected call, projection, and drop, got %#v", instrs)
@@ -630,7 +775,7 @@ func TestGenerateMIRLowersSliceViewIndexReadAsPlaceLoad(t *testing.T) {
 		Name: "first", Params: []ir.Param{{Name: "xs", Type: mirTypes.refDynamicI32}}, ReturnType: mirTypes.i32,
 		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Load{Place: place}}}},
 	}}}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 1 {
 		t.Fatalf("expected one place load instruction, got %#v", instrs)
@@ -673,7 +818,7 @@ func TestGenerateMIRLowersIndexAssignmentAsPlaceStore(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -701,7 +846,7 @@ func TestGenerateMIRLowersMutableSliceViewIndexAssignmentAsPlaceStore(t *testing
 			Value: &ir.Ident{Name: "value", Type: mirTypes.i32},
 		}}},
 	}}}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 1 {
 		t.Fatalf("expected one place store instruction, got %#v", instrs)
@@ -735,7 +880,7 @@ func TestGenerateMIRLowersArrayLiteral(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 1 {
 		t.Fatalf("expected array literal assign, got %#v", instrs)
@@ -771,7 +916,7 @@ func TestGenerateMIRAllocatesDynamicArrayBeforeInitializers(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	block := out.Funcs[0].Blocks[0]
 	if len(block.Instrs) != 3 {
 		t.Fatalf("expected allocation and two indexed stores, got %#v", block.Instrs)
@@ -818,7 +963,7 @@ func TestGenerateMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 					Body:       &hir.Block{Stmts: []hir.Stmt{&hir.ExprStmt{Value: expr}}},
 				}},
 			}
-			out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+			out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 			got, ok := out.Funcs[0].Blocks[0].Instrs[0].(*DynamicArrayOp)
 			if !ok || got.Op != op || got.ArrayType != mirTypes.dynamicI32 {
 				t.Fatalf("operation = %#v, want %s []i32 mutation", out.Funcs[0].Blocks[0].Instrs, op)
@@ -859,7 +1004,7 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) != 1 {
 		t.Fatalf("unexpected MIR shape: %#v", out)
 	}
@@ -905,8 +1050,8 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 		},
 	}
 
-	graphs := cfg.BuildModule(mod)
-	out := GenerateMIR(mod, graphs, nil, nil)
+	graphs := cfgForHIR(mod)
+	out := GenerateMIR(mod, graphs, nil, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
@@ -915,8 +1060,8 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 		t.Fatalf("expected four blocks for loop, got %#v", fn.Blocks)
 	}
 	index := 0
-	for _, block := range graphs[0].Blocks {
-		if block == nil || block == graphs[0].Exit || !block.Reachable {
+	for _, block := range graphs.Functions[0].Blocks {
+		if block == nil || block == graphs.Functions[0].Exit || !block.Reachable {
 			continue
 		}
 		if fn.Blocks[index].ID != block.ID {
@@ -964,7 +1109,7 @@ func TestGenerateMIRDropsBorrowedTemporariesAfterCallInReverseOrder(t *testing.T
 			},
 		}},
 	}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 7 {
 		t.Fatalf("temporary borrow instructions = %d, want 7: %#v", len(instrs), instrs)
@@ -1005,7 +1150,7 @@ func TestGenerateMIRDropsTemporaryStringOwnerAfterViewUse(t *testing.T) {
 			}}}},
 		}},
 	}
-	out := GenerateMIR(mod, cfg.BuildModule(mod), nil, nil)
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
 	instrs := out.Funcs[0].Blocks[0].Instrs
 	if len(instrs) != 5 {
 		t.Fatalf("temporary string view instructions = %d, want 5: %#v", len(instrs), instrs)

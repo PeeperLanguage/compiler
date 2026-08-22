@@ -1,0 +1,7 @@
+name = "negative_constant_branch_move"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["Compilation failed"]

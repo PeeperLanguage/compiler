@@ -10,11 +10,11 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
-	"compiler/internal/ir/hir/lower"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
-	"compiler/internal/semantics/cfg"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
@@ -49,9 +49,9 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.HIR = lower.GenerateHIR(ctx, module)
-	module.CFG = cfg.BuildModule(module.HIR)
-	Check(ctx, module)
+	module.TypedASTNodes = ast.Index(module.AST)
+	module.CFG = cfg.BuildModule(module.AST)
+	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
 }
 
@@ -69,18 +69,19 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 	if !ok || scope == nil {
 		t.Fatalf("function %q scope missing", name)
 	}
-	cfgFn := cfgForFunction(result.module, fn)
-	if cfgFn == nil || cfgFn.Cleanup == nil {
+	cfgFn := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	if cfgFn == nil {
 		t.Fatalf("function %q cleanup plan missing", name)
 	}
-	sites, order := indexSites(result.module, cfgFn, fn.Body, scope)
+	cleanup := cleanupPlanForFunction(t, result, fn)
+	sites, order := indexSites(result.module, cfgFn, scope)
 	analysis := &analyzer{
 		ctx:           result.ctx,
 		module:        result.module,
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		cleanup:       cfgFn.Cleanup,
+		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
 		reportedJoin:  make(map[cfg.SiteID]bool),
@@ -92,8 +93,8 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 func analysisNodeForStmt(t *testing.T, analysis *analyzer, stmt ast.Stmt) *site {
 	t.Helper()
 	for _, node := range analysis.sites {
-		if node != nil && node.flow != nil &&
-			(node.flow.Kind == cfg.SiteStatement || node.flow.Kind == cfg.SiteTerminator) && node.stmt == stmt {
+		if node != nil && node.cfgSite != nil &&
+			(node.cfgSite.Kind == cfg.SiteStatement || node.cfgSite.Kind == cfg.SiteTerminator) && node.stmt == stmt {
 			return node
 		}
 	}
@@ -113,13 +114,13 @@ func hasOwnershipCode(result *ownershipResult, code string) bool {
 	return false
 }
 
-func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDecl) *cfg.CleanupPlan {
+func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDecl) *ownershipresult.CleanupPlan {
 	t.Helper()
-	plan := cfgForFunction(result.module, fn)
-	if plan == nil || plan.Cleanup == nil {
+	plan := result.module.Ownership[ir.NodeID(fn.ID())]
+	if plan == nil {
 		t.Fatalf("cleanup plan for %q missing", fn.Name.Name)
 	}
-	return plan.Cleanup
+	return plan
 }
 
 func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []string {
@@ -220,7 +221,7 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.DiscardedValue[staleID] = struct{}{}
 	plan.ProjectionBase[staleID] = struct{}{}
 
-	Check(result.ctx, result.module)
+	result.module.Ownership = Check(result.ctx, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
 		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 {
@@ -603,7 +604,7 @@ fn inspect(mut holder: Holder) {
 		{Kind: place.OriginField, Field: "values"},
 		{Kind: place.OriginIndex, Index: "1"},
 	}}}
-	if got := referenceOrigins(analysis.inStates[finalNode.flow.ID].references[second]); !place.SameOrigins(got, want) {
+	if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[second]); !place.SameOrigins(got, want) {
 		t.Fatalf("second origins = %#v, want %#v", got, want)
 	}
 }
@@ -625,7 +626,7 @@ func TestReferenceOriginsCanonicalizeEquivalentConstantIndexes(t *testing.T) {
 	want := []place.Origin{{Root: values, Projections: []place.OriginProjection{{Kind: place.OriginIndex, Index: "1"}}}}
 	for _, name := range []string{"decimal", "padded", "hexadecimal"} {
 		sym, _ := analysis.functionScope.Lookup(name)
-		if got := referenceOrigins(analysis.inStates[finalNode.flow.ID].references[sym]); !place.SameOrigins(got, want) {
+		if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[sym]); !place.SameOrigins(got, want) {
 			t.Fatalf("%s origins = %#v, want %#v", name, got, want)
 		}
 	}
@@ -662,10 +663,10 @@ fn parameter(maybe: ?&i32) {
 	value, _ := local.functionScope.Lookup("value")
 	copied, _ := local.functionScope.Lookup("copied")
 	want := []place.Origin{{Root: value}}
-	if got := referenceOrigins(local.inStates[localUse.flow.ID].references[copied]); !place.SameOrigins(got, want) {
+	if got := referenceOrigins(local.inStates[localUse.cfgSite.ID].references[copied]); !place.SameOrigins(got, want) {
 		t.Fatalf("copied optional origins = %#v, want %#v", got, want)
 	}
-	if _, live := local.referenceLiveIn[localUse.flow.ID][copied]; !live {
+	if _, live := local.referenceLiveIn[localUse.cfgSite.ID][copied]; !live {
 		t.Fatalf("optional reference not live at none comparison")
 	}
 
@@ -673,7 +674,7 @@ fn parameter(maybe: ?&i32) {
 	mutableFn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	mutableUse := analysisNodeForStmt(t, mutable, mutableFn.Body.Stmts[1])
 	maybeMutable, _ := mutable.functionScope.Lookup("maybe")
-	if tracked := mutable.inStates[mutableUse.flow.ID].references[maybeMutable]; len(tracked) != 1 || !tracked[0].mutable {
+	if tracked := mutable.inStates[mutableUse.cfgSite.ID].references[maybeMutable]; len(tracked) != 1 || !tracked[0].mutable {
 		t.Fatalf("optional mutable reference lost mutable loan kind")
 	}
 
@@ -681,7 +682,7 @@ fn parameter(maybe: ?&i32) {
 	clearFn := result.module.AST.Stmts[2].(*ast.FnDecl)
 	marker := analysisNodeForStmt(t, clear, clearFn.Body.Stmts[2])
 	maybeCleared, _ := clear.functionScope.Lookup("maybe")
-	if _, tracked := clear.inStates[marker.flow.ID].references[maybeCleared]; tracked {
+	if _, tracked := clear.inStates[marker.cfgSite.ID].references[maybeCleared]; tracked {
 		t.Fatalf("none assignment retained optional reference origins")
 	}
 
@@ -689,11 +690,11 @@ fn parameter(maybe: ?&i32) {
 	parameterFn := result.module.AST.Stmts[3].(*ast.FnDecl)
 	parameterUse := analysisNodeForStmt(t, parameter, parameterFn.Body.Stmts[0])
 	maybeParameter, _ := parameter.functionScope.Lookup("maybe")
-	parameterValue := parameter.inStates[parameterUse.flow.ID].references[maybeParameter]
+	parameterValue := parameter.inStates[parameterUse.cfgSite.ID].references[maybeParameter]
 	if !place.SameOrigins(referenceOrigins(parameterValue), []place.Origin{{Root: maybeParameter}}) {
 		t.Fatalf("optional reference parameter origins = %#v", referenceOrigins(parameterValue))
 	}
-	if _, live := parameter.referenceLiveIn[parameterUse.flow.ID][maybeParameter]; !live {
+	if _, live := parameter.referenceLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
 		t.Fatalf("optional reference parameter not live at none comparison")
 	}
 }
@@ -716,7 +717,7 @@ func TestReferenceOriginsUnionAtConditionalJoin(t *testing.T) {
 	left, _ := analysis.functionScope.Lookup("left")
 	right, _ := analysis.functionScope.Lookup("right")
 	want := []place.Origin{{Root: left}, {Root: right}}
-	selectedValue := analysis.inStates[copyNode.flow.ID].references[selected]
+	selectedValue := analysis.inStates[copyNode.cfgSite.ID].references[selected]
 	if got := referenceOrigins(selectedValue); !place.SameOrigins(got, want) {
 		t.Fatalf("joined origins = %#v, want %#v", got, want)
 	}
@@ -740,13 +741,13 @@ fn inspect(mut value: i32) {
 	callNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	assignNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[2])
 	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.referenceLiveIn[callNode.flow.ID][reference]; !live {
+	if _, live := analysis.referenceLiveIn[callNode.cfgSite.ID][reference]; !live {
 		t.Fatalf("reference not live at its final use")
 	}
-	if _, live := analysis.referenceLiveOut[callNode.flow.ID][reference]; live {
+	if _, live := analysis.referenceLiveOut[callNode.cfgSite.ID][reference]; live {
 		t.Fatalf("reference remains live after final use")
 	}
-	if _, live := analysis.referenceLiveIn[assignNode.flow.ID][reference]; live {
+	if _, live := analysis.referenceLiveIn[assignNode.cfgSite.ID][reference]; live {
 		t.Fatalf("reference remains live at following assignment")
 	}
 }
@@ -771,16 +772,16 @@ func TestReferenceLivenessEndsAfterConditionalUse(t *testing.T) {
 	elseBlock := conditional.Else.(*ast.BlockStmt)
 	elseNode := analysisNodeForStmt(t, analysis, elseBlock.Stmts[0])
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[conditionNode.flow.ID][maybe]; !live {
+	if _, live := analysis.referenceLiveIn[conditionNode.cfgSite.ID][maybe]; !live {
 		t.Fatalf("reference not live at conditional use")
 	}
-	if _, live := analysis.referenceLiveOut[conditionNode.flow.ID][maybe]; live {
+	if _, live := analysis.referenceLiveOut[conditionNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live after conditional use")
 	}
-	if _, live := analysis.referenceLiveIn[thenNode.flow.ID][maybe]; live {
+	if _, live := analysis.referenceLiveIn[thenNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live in then branch")
 	}
-	if _, live := analysis.referenceLiveIn[elseNode.flow.ID][maybe]; live {
+	if _, live := analysis.referenceLiveIn[elseNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live in else branch")
 	}
 }
@@ -800,7 +801,7 @@ fn inspect(cond: bool, value: i32) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	loopNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.referenceLiveIn[loopNode.flow.ID][reference]; !live {
+	if _, live := analysis.referenceLiveIn[loopNode.cfgSite.ID][reference]; !live {
 		t.Fatalf("loop body reference use did not propagate through header")
 	}
 }
@@ -817,7 +818,7 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	var exit *site
 	for _, node := range analysis.sites {
-		if node != nil && node.flow != nil && node.flow.Kind == cfg.SiteScopeExit && node.block == fn.Body {
+		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block == fn.Body {
 			exit = node
 			break
 		}
@@ -826,7 +827,7 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 		t.Fatalf("loop exit continuation not found")
 	}
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[exit.flow.ID][maybe]; live {
+	if _, live := analysis.referenceLiveIn[exit.cfgSite.ID][maybe]; live {
 		t.Fatalf("loop exit continuation repeats condition use")
 	}
 }

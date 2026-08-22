@@ -77,9 +77,6 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name), ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
 		}
-		if sym.Initializing || (!sym.Initialized && symbols.RequiresInitialization(sym.Kind)) {
-			return &typeinfo.InvalidType{}
-		}
 		if sym.CompilerOp != "" {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node,
 				fmt.Sprintf("compiler operation `%s` must be called directly", node.Name)))
@@ -129,8 +126,11 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	case *ast.AsExpr:
 		return c.typeAsExpr(scope, node)
 
-	default:
+	case *ast.BadExpr:
 		return nil // resolver already diagnosed unsupported expressions
+
+	default:
+		panic(fmt.Sprintf("typechecker: unhandled expression %T", expr))
 	}
 }
 

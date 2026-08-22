@@ -11,6 +11,7 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -151,6 +152,21 @@ const B = A + W;
 	}
 	assertIntConst(t, module, "A", "1", "i32")
 	assertIntConst(t, module, "B", "3", "i64")
+}
+
+func TestFinalizeValuesRecomputesConstantsWithFinalSymbolTypes(t *testing.T) {
+	module, diag := constevalModule(t, `const Value = 1;
+`)
+	assertIntConst(t, module, "Value", "1", "i32")
+	sym, ok := module.ModuleScope.LookupLocal("Value")
+	if !ok || sym == nil {
+		t.Fatal("missing symbol Value")
+	}
+	sym.BindType(&typeinfo.IntegerType{Signed: true, Bits: 64})
+	ctx := project.New(".", peeper.SourceExt, diag)
+	ctx.AddModule(module)
+	FinalizeValues(ctx, module)
+	assertIntConst(t, module, "Value", "1", "i64")
 }
 
 func TestEvaluateUsesConstOperandTypeForNestedArithmetic(t *testing.T) {

@@ -1,0 +1,7 @@
+fn choose(cond: bool) -> i32 {
+	let mut value: i32;
+	if cond {
+		value = 7;
+	}
+	return value;
+}

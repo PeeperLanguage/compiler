@@ -6,8 +6,9 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
-	"compiler/internal/semantics/cfg"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -22,7 +23,7 @@ type lowerer struct {
 	current        *Block
 	location       *source.Location
 	temporaryDrops []ValueRef
-	cleanup        *cfg.CleanupPlan
+	cleanup        *ownershipresult.CleanupPlan
 	symbolValues   map[symbols.SymbolID]*RefName
 }
 
@@ -34,8 +35,8 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
-func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
-	if in == nil {
+func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+	if in == nil || graphs == nil {
 		return nil
 	}
 	out := &Module{
@@ -70,18 +71,17 @@ func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constV
 			Location:   ex.Location,
 		})
 	}
-	graphForFunction := make(map[*hir.Function]*cfg.Graph, len(graphs))
-	for _, graph := range graphs {
-		if graph != nil && graph.Source != nil {
-			graphForFunction[graph.Source] = graph
-		}
-	}
 	for _, hirFn := range in.Funcs {
-		graph := graphForFunction[hirFn]
+		graph := graphs.Function(hirFn.NodeID)
 		if graph == nil {
 			return nil
 		}
-		fn, ok := lowerCFGFunction(out, graph)
+		statements := make(map[ir.NodeID]hir.Stmt)
+		hir.InspectStmt(hirFn.Body, func(stmt hir.Stmt) bool {
+			statements[hir.NodeIDOf(stmt)] = stmt
+			return true
+		})
+		fn, ok := lowerCFGFunction(out, hirFn, graph, statements, ownership[hirFn.NodeID])
 		if !ok {
 			return nil
 		}
@@ -92,18 +92,18 @@ func GenerateMIR(in *hir.Module, graphs []*cfg.Graph, scope *table.Scope, constV
 
 // lowerCFGFunction converts one normalized CFG into MIR without rebuilding
 // branches or loops from structured HIR.
-func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
-	if mod == nil || graph == nil || graph.Source == nil || graph.Entry == nil {
+func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, statements map[ir.NodeID]hir.Stmt, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
+	if mod == nil || sourceFn == nil || graph == nil || graph.Entry == nil {
 		return nil, false
 	}
 	fn := &Function{
-		Name:       graph.Name,
-		Params:     append([]ir.Param(nil), graph.Source.Params...),
-		ReturnType: graph.ReturnType,
+		Name:       sourceFn.Name,
+		Params:     append([]ir.Param(nil), sourceFn.Params...),
+		ReturnType: sourceFn.ReturnType,
 		Blocks:     make([]*Block, 0, len(graph.Blocks)),
-		Location:   graph.Source.Location,
+		Location:   sourceFn.Location,
 	}
-	l := &lowerer{module: mod, fn: fn, cleanup: graph.Cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
+	l := &lowerer{module: mod, fn: fn, cleanup: cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
 	for _, param := range fn.Params {
 		if param.SymbolID != 0 {
 			l.symbolValues[param.SymbolID] = &RefName{Name: param.Name, Type: param.Type}
@@ -114,9 +114,9 @@ func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
 		if source == nil || source == graph.Exit || !source.Reachable {
 			continue
 		}
-		for _, stmt := range source.Stmts {
-			if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 && binding.Value != nil {
-				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Value.TypeID(), Location: binding.Location}
+		for _, site := range source.Sites {
+			if binding, ok := statements[site.NodeID].(*hir.Binding); ok && binding.SymbolID != 0 {
+				l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Type, Location: binding.Location}
 			}
 		}
 		block := &Block{ID: source.ID, Instrs: make([]Instr, 0)}
@@ -136,17 +136,20 @@ func lowerCFGFunction(mod *Module, graph *cfg.Graph) (*Function, bool) {
 		}
 		l.current = block
 		l.location = source.Location
-		for _, stmt := range source.Stmts {
-			if !l.lowerCFGStmt(stmt) {
-				return nil, false
+		for _, site := range source.Sites {
+			switch site.Kind {
+			case cfg.SiteStatement:
+				if !l.lowerCFGStmt(statements[site.NodeID]) {
+					return nil, false
+				}
+			case cfg.SiteScopeExit:
+				if l.cleanup != nil {
+					l.location = site.Location
+					l.appendPlannedDrops(l.cleanup.AfterScope[site.NodeID], &block.Instrs)
+				}
 			}
 		}
-		if l.cleanup != nil {
-			for _, scopeID := range source.ScopeExits {
-				l.appendPlannedDrops(l.cleanup.AfterScope[scopeID], &block.Instrs)
-			}
-		}
-		if !l.lowerCFGTerminator(source, graph.Exit, blocks) {
+		if !l.lowerCFGTerminator(source, graph.Exit, blocks, statements) {
 			return nil, false
 		}
 	}
@@ -229,6 +232,9 @@ func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 	}()
 	switch node := stmt.(type) {
 	case *hir.Binding:
+		if node.Value == nil {
+			return true
+		}
 		temporaryMark := len(l.temporaryDrops)
 		ref := l.lowerExpr(node.Value, &l.current.Instrs)
 		if refName, ok := ref.(*RefName); ok && refName.Name == node.Name {
@@ -292,7 +298,7 @@ func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 	case *hir.Invalid:
 		return false
 	default:
-		return false
+		panic(fmt.Sprintf("MIR lowering: unhandled HIR statement %T", stmt))
 	}
 }
 
@@ -319,7 +325,7 @@ func (l *lowerer) flushTemporaryDrops(out *[]Instr, mark int) {
 	l.temporaryDrops = l.temporaryDrops[:mark]
 }
 
-func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Block]*Block) bool {
+func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Block]*Block, statements map[ir.NodeID]hir.Stmt) bool {
 	if l == nil || source == nil || l.current == nil {
 		return false
 	}
@@ -343,21 +349,33 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		if thenBlock == nil || elseBlock == nil {
 			return false
 		}
+		var cond ir.Expr
+		switch stmt := statements[term.NodeID].(type) {
+		case *hir.If:
+			cond = stmt.Cond
+			l.location = stmt.Location
+		case *hir.For:
+			cond = stmt.Cond
+			l.location = stmt.Location
+		default:
+			return false
+		}
 		temporaryMark := len(l.temporaryDrops)
-		cond := l.lowerExpr(term.Cond, &l.current.Instrs)
+		lowered := l.lowerExpr(cond, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		l.setBlockTerm(l.current, &Branch{Cond: cond, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
+		l.setBlockTerm(l.current, &Branch{Cond: lowered, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
 		return true
 	case *cfg.Return:
+		ret, ok := statements[term.NodeID].(*hir.Return)
+		if !ok || ret == nil {
+			return false
+		}
+		l.location = ret.Location
 		temporaryMark := len(l.temporaryDrops)
-		value := l.lowerExpr(term.Value, &l.current.Instrs)
+		value := l.lowerExpr(ret.Value, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		for _, stmt := range source.Stmts {
-			if ret, ok := stmt.(*hir.Return); ok {
-				for _, cleanup := range ret.Cleanup {
-					l.lowerExpr(cleanup, &l.current.Instrs)
-				}
-			}
+		for _, cleanup := range ret.Cleanup {
+			l.lowerExpr(cleanup, &l.current.Instrs)
 		}
 		if l.cleanup != nil {
 			l.appendPlannedDrops(l.cleanup.BeforeReturn[term.NodeID], &l.current.Instrs)
@@ -371,7 +389,7 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		l.setBlockTerm(l.current, &Ret{})
 		return true
 	default:
-		return false
+		panic(fmt.Sprintf("MIR lowering: unhandled CFG terminator %T", source.Terminator))
 	}
 }
 
@@ -382,8 +400,10 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 	switch node := instr.(type) {
 	case *Assign:
 		node.Location = l.location
-		if exprLoc := ValueExprLocation(node.Value); exprLoc != nil {
-			node.Location = exprLoc
+		if node.Value != nil {
+			if location := node.Value.SourceLocation(); location != nil {
+				node.Location = location
+			}
 		}
 	case *Store:
 		node.Location = l.location
@@ -449,6 +469,10 @@ func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 
 func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	switch e := expr.(type) {
+	case nil:
+		return nil
+	case *ir.InvalidExpr:
+		return &RefConst{Value: "0", Type: ir.InvalidType, Location: e.Origin().Location}
 	case *ir.IntLit:
 		return &RefConst{Value: e.Value, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.FloatLit:
@@ -711,7 +735,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	default:
-		return &RefConst{Value: "0", Type: ir.InvalidType}
+		panic(fmt.Sprintf("MIR lowering: unhandled IR expression %T", expr))
 	}
 }
 
@@ -785,6 +809,6 @@ func asValueExpr(ref ValueRef) ValueExpr {
 	case *RefName:
 		return &Move{Src: ref, Type: node.Type}
 	default:
-		return &Move{Src: ref, Type: ir.InvalidType}
+		panic(fmt.Sprintf("MIR lowering: unhandled value reference %T", ref))
 	}
 }

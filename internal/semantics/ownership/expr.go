@@ -1,6 +1,8 @@
 package ownership
 
 import (
+	"fmt"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
@@ -105,7 +107,7 @@ func (a *analyzer) checkExpr(
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit, *ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
-		return
+		panic(fmt.Sprintf("ownership: unhandled expression %T", expr))
 	}
 }
 

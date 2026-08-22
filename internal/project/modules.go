@@ -1,17 +1,18 @@
 package project
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
-	"compiler/internal/semantics/cfg"
+	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
+	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
@@ -28,57 +29,6 @@ const (
 	// Package dependency source file.
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
-
-type ModulePhase uint8
-
-const (
-	PhaseNone ModulePhase = iota
-	PhaseParsed
-	PhaseCollected
-	PhaseBound
-	PhaseResolved
-	PhaseConstEval
-	PhaseTypechecked
-	PhaseHIR
-	PhaseCFG
-	PhaseOwnership
-	PhaseUsage
-	PhaseMIR
-	PhaseBackend
-)
-
-func (phase ModulePhase) String() string {
-	switch phase {
-	case PhaseNone:
-		return "none"
-	case PhaseParsed:
-		return "parsed"
-	case PhaseCollected:
-		return "collected"
-	case PhaseBound:
-		return "bound"
-	case PhaseResolved:
-		return "resolved"
-	case PhaseConstEval:
-		return "const-eval"
-	case PhaseTypechecked:
-		return "typechecked"
-	case PhaseHIR:
-		return "HIR"
-	case PhaseCFG:
-		return "CFG"
-	case PhaseOwnership:
-		return "ownership"
-	case PhaseUsage:
-		return "usage"
-	case PhaseMIR:
-		return "MIR"
-	case PhaseBackend:
-		return "backend"
-	default:
-		return fmt.Sprintf("phase(%d)", uint8(phase))
-	}
-}
 
 const (
 	GraphNodeModule graph.NodeKind = "module"
@@ -112,15 +62,20 @@ type Module struct {
 	ImportFingerprint string
 	// Stable syntax-derived export surface for invalidation.
 	ExportFingerprint string
+	// Stable compiler-visible export surface finalized after semantic typing.
+	SemanticExportFingerprint string
 	// Last completed compiler phase for this module snapshot.
-	Phase ModulePhase
+	Phase phase.Phase
 	// Parsed syntax tree.
 	AST *ast.Module
+	// TypedASTNodes indexes final AST after semantic expansion.
+	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
-	HIR    *hir.Module
-	CFG    []*cfg.Graph
-	MIR    *mir.Module
-	LLVMIR string
+	HIR       *hir.Module
+	CFG       *cfg.Module
+	Ownership ownershipresult.Result
+	MIR       *mir.Module
+	LLVMIR    string
 	// Top-level names visible in module.
 	ModuleScope *table.Scope
 	// Grouped semantic analysis metadata.
@@ -187,37 +142,33 @@ func (m *Module) ResetSemanticData() {
 	m.Semantics = NewSemanticInfo()
 }
 
-// ResetToPhase invalidates every artifact produced after phase. CFG cleanup
-// belongs to ownership, so retaining a CFG alone never retains a stale plan.
-func (m *Module) ResetToPhase(phase ModulePhase) {
+// resetToPhase retains artifacts through phase and invalidates downstream data.
+func (m *Module) resetToPhase(retained phase.Phase) {
 	if m == nil {
 		return
 	}
-	m.Phase = phase
-	if phase <= PhaseParsed {
+	m.Phase = retained
+	if retained <= phase.Parsed {
 		m.ModuleScope = nil
 		m.Semantics = nil
 	}
-	if phase < PhaseHIR {
+	if retained < phase.Typechecked {
+		m.SemanticExportFingerprint = ""
+		m.TypedASTNodes = nil
+	}
+	if retained < phase.CFG {
+		m.CFG = nil
+	}
+	if retained < phase.Ownership {
+		m.Ownership = nil
+	}
+	if retained < phase.HIR {
 		m.HIR = nil
 	}
-	if phase < PhaseCFG {
-		m.CFG = nil
-	} else if phase < PhaseOwnership {
-		graphs := make([]*cfg.Graph, len(m.CFG))
-		for index, graph := range m.CFG {
-			if graph != nil {
-				cloned := *graph
-				cloned.Cleanup = nil
-				graphs[index] = &cloned
-			}
-		}
-		m.CFG = graphs
-	}
-	if phase < PhaseMIR {
+	if retained < phase.MIR {
 		m.MIR = nil
 	}
-	if phase < PhaseBackend {
+	if retained < phase.Backend {
 		m.LLVMIR = ""
 	}
 }
@@ -293,6 +244,27 @@ func (ctx *CompilerContext) ModuleByKey(key string) (*Module, bool) {
 	defer ctx.mu.RUnlock()
 	module, ok := ctx.modules[key]
 	return module, ok
+}
+
+// SetSemanticExportBaseline records prior semantic API state for incremental comparison.
+func (ctx *CompilerContext) SetSemanticExportBaseline(key, fingerprint string) {
+	if ctx == nil || key == "" || fingerprint == "" {
+		return
+	}
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.semanticExportBaselines[key] = fingerprint
+}
+
+// SemanticExportBaseline returns prior semantic API state when supplied by a client.
+func (ctx *CompilerContext) SemanticExportBaseline(key string) (string, bool) {
+	if ctx == nil || key == "" {
+		return "", false
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
+	fingerprint, ok := ctx.semanticExportBaselines[key]
+	return fingerprint, ok
 }
 
 // Lookup by source path.

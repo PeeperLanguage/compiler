@@ -13,6 +13,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -313,8 +314,8 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 	return dirty
 }
 
-func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project.Module) map[string]project.ModulePhase {
-	phases := make(map[string]project.ModulePhase)
+func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project.Module) map[string]phase.Phase {
+	phases := make(map[string]phase.Phase)
 	if w == nil || len(cached) == 0 {
 		return phases
 	}
@@ -370,7 +371,7 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project
 			}
 			// Dependents with unchanged text can skip reparsing, but they must
 			// rerun semantic/lowering phases because upstream module surface moved.
-			phases[dependent] = project.PhaseParsed
+			phases[dependent] = phase.Parsed
 			propagate = append(propagate, dependent)
 		}
 	}
