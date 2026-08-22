@@ -41,9 +41,10 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 	}{
 		{phase: PhaseParsed},
 		{phase: PhaseTypechecked, scope: true, semantics: true, exportAPI: true, astNodes: true},
-		{phase: PhaseCFG, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true},
-		{phase: PhaseDefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true},
-		{phase: PhaseOwnership, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true},
+		{phase: PhaseCFG, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
+		{phase: PhaseDefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
+		{phase: PhaseOwnership, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, ownership: true},
+		{phase: PhaseHIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true},
 		{phase: PhaseMIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true},
 		{phase: PhaseBackend, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true, llvm: true},
 	}

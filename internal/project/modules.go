@@ -43,11 +43,10 @@ const (
 	PhaseConstEval
 	// PhaseTypechecked includes final module const values and semantic API identity.
 	PhaseTypechecked
-	PhaseHIR
 	PhaseCFG
 	PhaseDefiniteInit
 	PhaseOwnership
-	PhaseUsage
+	PhaseHIR
 	PhaseMIR
 	PhaseBackend
 )
@@ -68,16 +67,14 @@ func (phase ModulePhase) String() string {
 		return "const-eval"
 	case PhaseTypechecked:
 		return "typechecked"
-	case PhaseHIR:
-		return "HIR"
 	case PhaseCFG:
 		return "CFG"
 	case PhaseDefiniteInit:
 		return "definite-init"
 	case PhaseOwnership:
 		return "ownership"
-	case PhaseUsage:
-		return "usage"
+	case PhaseHIR:
+		return "HIR"
 	case PhaseMIR:
 		return "MIR"
 	case PhaseBackend:
@@ -213,14 +210,14 @@ func (m *Module) ResetToPhase(phase ModulePhase) {
 		m.SemanticExportFingerprint = ""
 		m.TypedASTNodes = nil
 	}
-	if phase < PhaseHIR {
-		m.HIR = nil
-	}
 	if phase < PhaseCFG {
 		m.CFG = nil
 	}
 	if phase < PhaseOwnership {
 		m.Ownership = nil
+	}
+	if phase < PhaseHIR {
+		m.HIR = nil
 	}
 	if phase < PhaseMIR {
 		m.MIR = nil

@@ -2,27 +2,36 @@ package cfg
 
 import (
 	"compiler/internal/diagnostics"
+	"compiler/internal/ir"
 	"compiler/internal/problems"
 	"compiler/internal/source"
 )
 
 // Analyze emits control-flow diagnostics without mutating finalized topology.
-func Analyze(module *Module, diag *diagnostics.DiagnosticBag) {
+func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
 	if module == nil {
 		return
 	}
 	for _, fn := range module.Functions {
-		analyzeFunction(fn, diag)
+		analyzeFunction(fn, diag, constantCondition)
 	}
 }
 
-func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
+func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
 	if diag != nil {
 		for _, block := range fn.Blocks {
-			if block == nil || block.Reachable {
+			if block == nil {
+				continue
+			}
+			if branch, ok := block.Terminator.(*Branch); ok && block.Origin != BlockLoop && constantCondition != nil {
+				if value, found := constantCondition(branch.ConditionID, branch.ScopeID); found {
+					reportConstantCondition(branch, value, diag)
+				}
+			}
+			if block.Reachable {
 				continue
 			}
 			for _, site := range block.Sites {
@@ -35,6 +44,19 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	if fn.Exit != nil && fn.Exit.Reachable && fn.ReturnsValue {
 		reportMissingReturn(fn, diag)
 	}
+}
+
+func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.DiagnosticBag) {
+	if branch == nil || diag == nil {
+		return
+	}
+	msg := "condition is always false"
+	code := diagnostics.WarnConstantConditionFalse
+	if value {
+		msg = "condition is always true"
+		code = diagnostics.WarnConstantConditionTrue
+	}
+	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(branch.Location, msg))
 }
 
 func reportMissingReturn(fn *Graph, diag *diagnostics.DiagnosticBag) {

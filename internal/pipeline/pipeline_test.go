@@ -305,12 +305,14 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineExternDefinitionStaysLocalAfterError(t *testing.T) {
+func TestPipelineSemanticErrorStopsBeforeUsageAndHIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `#[extern("puts")]
 fn puts(msg: cstr) -> i32 {
 	return 0;
 }
+
+fn unused() {}
 
 fn main() -> i32 {
 	return puts("hi");
@@ -345,27 +347,19 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != project.PhaseUsage {
-		t.Fatalf("expected pipeline to run CFG ownership/usage and stop before MIR, got phase %v", entry.Phase)
+	if entry.Phase != project.PhaseOwnership {
+		t.Fatalf("expected pipeline to finish mandatory semantics and stop before Usage/HIR, got phase %v", entry.Phase)
 	}
-	if entry.HIR == nil {
-		t.Fatalf("expected HIR despite extern definition error")
+	if entry.HIR != nil {
+		t.Fatalf("semantic error produced HIR: %#v", entry.HIR)
 	}
 	if entry.CFG == nil || len(entry.CFG.Functions) == 0 {
 		t.Fatal("expected canonical CFG despite extern definition error")
 	}
-	if len(entry.HIR.Externs) != 0 {
-		t.Fatalf("extern definition should not lower as import, got externs %#v", entry.HIR.Externs)
-	}
-	foundPuts := false
-	for _, fn := range entry.HIR.Funcs {
-		if fn != nil && fn.Name == "puts" {
-			foundPuts = true
-			break
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnUnusedPrivateFunction {
+			t.Fatalf("Usage ran on project with semantic errors: %#v", item)
 		}
-	}
-	if !foundPuts {
-		t.Fatalf("expected local lowered function for puts, got funcs %#v", entry.HIR.Funcs)
 	}
 }
 
@@ -429,11 +423,10 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		project.PhaseResolved,
 		project.PhaseConstEval,
 		project.PhaseTypechecked,
-		project.PhaseHIR,
 		project.PhaseCFG,
 		project.PhaseDefiniteInit,
 		project.PhaseOwnership,
-		project.PhaseUsage,
+		project.PhaseHIR,
 		project.PhaseMIR,
 		project.PhaseBackend,
 	}
@@ -446,6 +439,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		}
 		if phase == project.PhaseCFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
+		}
+		if phase < project.PhaseHIR && entry.HIR != nil {
+			t.Fatalf("phase %v produced HIR before mandatory semantics completed", phase)
 		}
 	}
 	if pipeline.advanceModulePhase(entry, diag) {
@@ -519,6 +515,37 @@ func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 	t.Fatalf("missing-return diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
 }
 
+func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `fn main() -> i32 {
+	if false {
+		return 1;
+	}
+	return 0;
+}`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = project.PhaseParsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	pipeline := New(ctx)
+	for entry.Phase < project.PhaseCFG {
+		if !pipeline.advanceModulePhase(entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	if entry.HIR != nil {
+		t.Fatalf("CFG phase produced HIR: %#v", entry.HIR)
+	}
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
+			return
+		}
+	}
+	t.Fatalf("constant-condition diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
+}
+
 func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.T) {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn choose(cond: bool) -> i32 {
 	let mut value: i32;
@@ -534,28 +561,28 @@ func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.
 	}
 }
 
-func TestRequireTerminalModulesReportsStoppedPhase(t *testing.T) {
+func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	tests := []struct {
 		name   string
 		module *project.Module
 		want   string
 	}{
 		{name: "blocked prerequisite", module: &project.Module{Key: "local:main", Phase: project.PhaseResolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: project.PhaseTypechecked}, want: "typechecked phase"},
-		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: project.PhaseUsage}, want: "usage phase"},
+		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: project.PhaseOwnership}, want: "ownership phase"},
+		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: project.PhaseHIR}, want: "HIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireTerminalModules([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}})
+			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}}, project.PhaseBackend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireTerminalModules([]*project.Module{{Key: "local:main", Phase: project.PhaseBackend}}, map[string]struct{}{"local:main": {}}); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "local:main", Phase: project.PhaseBackend}}, map[string]struct{}{"local:main": {}}, project.PhaseBackend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireTerminalModules([]*project.Module{{Key: "overlay:stub", Phase: project.PhaseNone}}, map[string]struct{}{"local:main": {}}); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "overlay:stub", Phase: project.PhaseNone}}, map[string]struct{}{"local:main": {}}, project.PhaseBackend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }

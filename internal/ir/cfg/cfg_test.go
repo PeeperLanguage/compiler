@@ -124,7 +124,7 @@ func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 		t.Fatalf("CFG blocks = %#v, want disconnected statement after return", graph.Blocks)
 	}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(module, diag)
+	Analyze(module, diag, nil)
 	if !hasDiagnosticCode(diag, diagnostics.WarnUnreachableCode) {
 		t.Fatalf("diagnostics = %#v, want unreachable warning", diag.Diagnostics())
 	}
@@ -136,7 +136,7 @@ func TestAnalyzeDoesNotRebuildFinalizedTopology(t *testing.T) {
 	graph := module.Functions[0]
 	before := append([]*Block(nil), graph.Entry.Predecessors...)
 	graph.Entry.Sites = nil
-	Analyze(module, diagnostics.NewDiagnosticBag())
+	Analyze(module, diagnostics.NewDiagnosticBag(), nil)
 	if graph.Entry.Sites != nil || !reflect.DeepEqual(graph.Entry.Predecessors, before) {
 		t.Fatalf("Analyze mutated finalized topology: entry = %#v", graph.Entry)
 	}
@@ -146,9 +146,48 @@ func TestAnalyzeReportsMissingReturn(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
 	returnType := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: 11}, Name: "i32"}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(BuildModule(testModule(body, returnType)), diag)
+	Analyze(BuildModule(testModule(body, returnType)), diag, nil)
 	if !hasDiagnosticCode(diag, diagnostics.ErrMissingReturn) {
 		t.Fatalf("diagnostics = %#v, want missing return", diag.Diagnostics())
+	}
+}
+
+func TestAnalyzeReportsConstantIfCondition(t *testing.T) {
+	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 4, Column: 2})
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{&ast.IfStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: false, Location: location},
+		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+		Location:     location,
+	}}}
+	diag := diagnostics.NewDiagnosticBag()
+	Analyze(BuildModule(testModule(body, nil)), diag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
+		if conditionID != 31 || scopeID != 10 {
+			t.Fatalf("constant condition query = (%d, %d), want (31, 10)", conditionID, scopeID)
+		}
+		return false, true
+	})
+	if !hasDiagnosticCode(diag, diagnostics.WarnConstantConditionFalse) {
+		t.Fatalf("diagnostics = %#v, want constant-false warning", diag.Diagnostics())
+	}
+}
+
+func TestAnalyzeDoesNotReportConstantLoopCondition(t *testing.T) {
+	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 4, Column: 2})
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{&ast.ForStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: false, Location: location},
+		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+		Location:     location,
+	}}}
+	diag := diagnostics.NewDiagnosticBag()
+	queries := 0
+	Analyze(BuildModule(testModule(body, nil)), diag, func(ir.NodeID, ir.NodeID) (bool, bool) {
+		queries++
+		return false, true
+	})
+	if queries != 0 || hasDiagnosticCode(diag, diagnostics.WarnConstantConditionFalse) {
+		t.Fatalf("loop condition produced if-only diagnostic: queries=%d diagnostics=%#v", queries, diag.Diagnostics())
 	}
 }
 

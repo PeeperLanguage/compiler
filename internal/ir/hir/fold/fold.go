@@ -4,16 +4,14 @@ import (
 	"fmt"
 
 	"compiler/internal/constvalue"
-	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
-	"compiler/internal/source"
 	"maps"
 )
 
 // ApplyTypedExpressionFolding folds typed HIR expressions without simplifying
-// source-written control-flow structure needed by mandatory semantic analyses.
-func ApplyTypedExpressionFolding(mod *hir.Module, diag *diagnostics.DiagnosticBag) *hir.Module {
+// source-written control-flow structure.
+func ApplyTypedExpressionFolding(mod *hir.Module) *hir.Module {
 	if mod == nil {
 		return nil
 	}
@@ -21,12 +19,12 @@ func ApplyTypedExpressionFolding(mod *hir.Module, diag *diagnostics.DiagnosticBa
 		if fn == nil || fn.Body == nil {
 			continue
 		}
-		fn.Body = foldBlock(mod.Types, fn.Body, diag, nil)
+		fn.Body = foldBlock(mod.Types, fn.Body, nil)
 	}
 	return mod
 }
 
-func foldBlock(types *ir.TypeTable, block *hir.Block, diag *diagnostics.DiagnosticBag, parentEnv map[string]constvalue.Value) *hir.Block {
+func foldBlock(types *ir.TypeTable, block *hir.Block, parentEnv map[string]constvalue.Value) *hir.Block {
 	if block == nil {
 		return nil
 	}
@@ -40,16 +38,16 @@ func foldBlock(types *ir.TypeTable, block *hir.Block, diag *diagnostics.Diagnost
 		if stmt == nil {
 			continue
 		}
-		folded := foldStmt(types, stmt, diag, env)
+		folded := foldStmt(types, stmt, env)
 		out.Stmts = append(out.Stmts, folded...)
 	}
 	return out
 }
 
-func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBag, env map[string]constvalue.Value) []hir.Stmt {
+func foldStmt(types *ir.TypeTable, stmt hir.Stmt, env map[string]constvalue.Value) []hir.Stmt {
 	switch node := stmt.(type) {
 	case *hir.Block:
-		return []hir.Stmt{foldBlock(types, node, diag, env)}
+		return []hir.Stmt{foldBlock(types, node, env)}
 	case *hir.Binding:
 		value := ir.FoldExpr(types, node.Value, env)
 		out := &hir.Binding{Name: node.Name, Constant: node.Constant, Type: node.Type, Value: value, NodeID: node.NodeID, SymbolID: node.SymbolID, Location: node.Location}
@@ -81,10 +79,10 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 		}
 		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(types, node.Value, env), Cleanup: cleanup, NodeID: node.NodeID, Location: node.Location}}
 	case *hir.If:
-		thenBlock := foldBlock(types, node.Then, diag, env)
+		thenBlock := foldBlock(types, node.Then, env)
 		var elseStmt hir.Stmt
 		if node.Else != nil {
-			foldedElse := foldStmt(types, node.Else, diag, cloneConstEnv(env))
+			foldedElse := foldStmt(types, node.Else, cloneConstEnv(env))
 			if len(foldedElse) == 1 {
 				elseStmt = foldedElse[0]
 			} else if len(foldedElse) > 1 {
@@ -92,16 +90,13 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, diag *diagnostics.DiagnosticBa
 			}
 		}
 		cond := ir.FoldExpr(types, node.Cond, env)
-		if value, ok := ir.ConstValueOf(types, cond); ok {
-			addConstantConditionWarning(diag, node.Location, value.Truthy())
-		}
 		return []hir.Stmt{&hir.If{Cond: cond, Then: thenBlock, Else: elseStmt, NodeID: node.NodeID, Location: node.Location}}
 	case *hir.For:
 		var cond ir.Expr
 		if node.Cond != nil {
 			cond = ir.FoldExpr(types, node.Cond, env)
 		}
-		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(types, node.Body, diag, cloneConstEnv(env)), NodeID: node.NodeID, Location: node.Location}}
+		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(types, node.Body, cloneConstEnv(env)), NodeID: node.NodeID, Location: node.Location}}
 	default:
 		panic(fmt.Sprintf("unhandled HIR statement %T in typed folding", stmt))
 	}
@@ -114,21 +109,4 @@ func cloneConstEnv(src map[string]constvalue.Value) map[string]constvalue.Value 
 	out := make(map[string]constvalue.Value, len(src))
 	maps.Copy(out, src)
 	return out
-}
-
-func addConstantConditionWarning(diag *diagnostics.DiagnosticBag, loc *source.Location, value bool) {
-	if diag == nil {
-		return
-	}
-	msg := "condition is always false"
-	code := diagnostics.WarnConstantConditionFalse
-	if value {
-		msg = "condition is always true"
-		code = diagnostics.WarnConstantConditionTrue
-	}
-	diag.Add(
-		diagnostics.NewWarning(msg).
-			WithCode(code).
-			WithPrimaryLabel(loc, msg),
-	)
 }

@@ -10,6 +10,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
@@ -22,6 +23,7 @@ import (
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/usage"
 )
 
@@ -118,7 +120,36 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if preludeKey != "" {
 		prelude = moduleIndex[graph.NodeID(preludeKey)]
 	}
-	preludeInjected := prelude == nil
+	preludeInjected := p.advanceModulesThrough(orderedModules, prelude, prelude == nil, project.PhaseOwnership, diag)
+	if diag != nil && diag.HasErrors() {
+		return nil
+	}
+	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, project.PhaseOwnership); err != nil {
+		return err
+	}
+	for _, module := range orderedModules {
+		usage.Analyze(p.ctx, module)
+	}
+	p.advanceModulesThrough(orderedModules, prelude, preludeInjected, project.PhaseBackend, diag)
+	if diag != nil && diag.HasErrors() {
+		return nil
+	}
+	// A scheduler stall without user diagnostics is an internal pipeline failure,
+	// not a successful partial compilation.
+	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, project.PhaseBackend); err != nil {
+		return err
+	}
+	mirModules := make([]*mir.Module, 0, len(orderedModules))
+	for _, module := range orderedModules {
+		if module != nil && module.MIR != nil {
+			mirModules = append(mirModules, module.MIR)
+		}
+	}
+	llvm.ValidateRuntimeSymbols(mirModules, diag, p.ctx.Target)
+	return nil
+}
+
+func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelude *project.Module, preludeInjected bool, lastPhase project.ModulePhase, diag *diagnostics.DiagnosticBag) bool {
 	for {
 		if !preludeInjected && prelude != nil && prelude.ModuleScope != nil && prelude.Phase >= project.PhaseCollected {
 			// Inject prelude as soon as its module scope exists. Other modules can
@@ -132,7 +163,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 
 		ready := make([]*project.Module, 0, len(orderedModules))
 		for _, module := range orderedModules {
-			if p.moduleReadyForNextPhase(module, prelude, preludeInjected) {
+			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && p.moduleReadyForNextPhase(module, prelude, preludeInjected) {
 				ready = append(ready, module)
 			}
 		}
@@ -161,29 +192,14 @@ func (p *Pipeline) Run(entry *project.Module) error {
 			break
 		}
 	}
-	if diag != nil && diag.HasErrors() {
-		return nil
-	}
-	// A scheduler stall without user diagnostics is an internal pipeline failure,
-	// not a successful partial compilation.
-	if err := requireTerminalModules(orderedModules, loader.scheduled); err != nil {
-		return err
-	}
-	mirModules := make([]*mir.Module, 0, len(orderedModules))
-	for _, module := range orderedModules {
-		if module != nil && module.MIR != nil {
-			mirModules = append(mirModules, module.MIR)
-		}
-	}
-	llvm.ValidateRuntimeSymbols(mirModules, diag, p.ctx.Target)
-	return nil
+	return preludeInjected
 }
 
-// requireTerminalModules reports scheduled modules that stopped before backend
-// lowering when user diagnostics did not already explain compilation stopping.
-func requireTerminalModules(modules []*project.Module, scheduled map[string]struct{}) error {
+// requireScheduledModulesAtLeast reports scheduled modules that stalled before
+// a required project-wide phase barrier without user diagnostics.
+func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[string]struct{}, phase project.ModulePhase) error {
 	for _, module := range modules {
-		if module == nil || module.Phase >= project.PhaseBackend {
+		if module == nil || module.Phase >= phase {
 			continue
 		}
 		if _, ok := scheduled[module.Key]; !ok {
@@ -247,16 +263,14 @@ func nextModulePhase(current project.ModulePhase) project.ModulePhase {
 	case project.PhaseConstEval:
 		return project.PhaseTypechecked
 	case project.PhaseTypechecked:
-		return project.PhaseHIR
-	case project.PhaseHIR:
 		return project.PhaseCFG
 	case project.PhaseCFG:
 		return project.PhaseDefiniteInit
 	case project.PhaseDefiniteInit:
 		return project.PhaseOwnership
 	case project.PhaseOwnership:
-		return project.PhaseUsage
-	case project.PhaseUsage:
+		return project.PhaseHIR
+	case project.PhaseHIR:
 		return project.PhaseMIR
 	case project.PhaseMIR:
 		return project.PhaseBackend
@@ -277,15 +291,13 @@ func importPrerequisitePhase(next project.ModulePhase) project.ModulePhase {
 		return project.PhaseTypechecked
 	case project.PhaseResolved:
 		return project.PhaseCollected
-	case project.PhaseHIR:
-		return project.PhaseTypechecked
 	case project.PhaseCFG:
-		return project.PhaseHIR
+		return project.PhaseTypechecked
 	case project.PhaseDefiniteInit:
 		return project.PhaseCFG
 	case project.PhaseOwnership:
 		return project.PhaseDefiniteInit
-	case project.PhaseUsage:
+	case project.PhaseHIR:
 		return project.PhaseOwnership
 	default:
 		return project.PhaseNone
@@ -335,23 +347,23 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
-	if module.Phase < project.PhaseHIR {
-		modhir := lower.GenerateHIR(p.ctx, module)
-		if modhir == nil {
-			return false
-		}
-		modhir = fold.ApplyTypedExpressionFolding(modhir, diag)
-		module.HIR = modhir
-		module.Phase = project.PhaseHIR
-		p.ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.HIR == nil {
-		return false
-	}
 	if module.Phase < project.PhaseCFG {
 		module.CFG = cfg.BuildModule(module.AST)
-		cfg.Analyze(module.CFG, diag)
+		cfg.Analyze(module.CFG, diag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
+			node := module.TypedASTNodes[ast.NodeID(conditionID)]
+			expr, ok := node.(ast.Expr)
+			if !ok {
+				return false, false
+			}
+			value, ok := consteval.EvaluateExpr(
+				p.ctx,
+				module,
+				module.Semantics.BlockScopes[ast.NodeID(scopeID)],
+				expr,
+				&typeinfo.BoolType{},
+			)
+			return value != nil && value.Truthy(), ok
+		})
 		module.Phase = project.PhaseCFG
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -377,11 +389,21 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
-	if module.Phase < project.PhaseUsage {
-		usage.Analyze(p.ctx, module)
-		module.Phase = project.PhaseUsage
+	if module.Phase < project.PhaseHIR {
+		if diag != nil && diag.HasErrors() {
+			return false
+		}
+		modhir := lower.GenerateHIR(p.ctx, module)
+		if modhir == nil {
+			return false
+		}
+		module.HIR = fold.ApplyTypedExpressionFolding(modhir)
+		module.Phase = project.PhaseHIR
 		p.ctx.Metrics.AddPhaseAdvance()
 		return true
+	}
+	if module.HIR == nil {
+		return false
 	}
 	if module.Phase < project.PhaseMIR {
 		if diag != nil && diag.HasErrors() {

@@ -3,7 +3,6 @@ package fold
 import (
 	"testing"
 
-	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/symbols"
@@ -12,7 +11,6 @@ import (
 func TestApplyTypedExpressionFoldingPreservesConstantBranches(t *testing.T) {
 	types := ir.NewTypeTable()
 	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
-	diag := diagnostics.NewDiagnosticBag()
 	mod := &hir.Module{Funcs: []*hir.Function{{
 		Name: "main",
 		Body: &hir.Block{Stmts: []hir.Stmt{&hir.If{
@@ -23,7 +21,7 @@ func TestApplyTypedExpressionFoldingPreservesConstantBranches(t *testing.T) {
 		}}},
 	}}, Types: types}
 
-	out := ApplyTypedExpressionFolding(mod, diag)
+	out := ApplyTypedExpressionFolding(mod)
 	if len(out.Funcs[0].Body.Stmts) != 1 {
 		t.Fatalf("folded statements = %#v, want one if", out.Funcs[0].Body.Stmts)
 	}
@@ -33,9 +31,6 @@ func TestApplyTypedExpressionFoldingPreservesConstantBranches(t *testing.T) {
 	}
 	if cond, ok := branch.Cond.(*ir.BoolLit); !ok || cond.Value {
 		t.Fatalf("folded condition = %#v, want false literal", branch.Cond)
-	}
-	if diag.WarningCount() != 1 || diag.Diagnostics()[0].Code != diagnostics.WarnConstantConditionFalse {
-		t.Fatalf("constant-condition diagnostics = %#v", diag.Diagnostics())
 	}
 }
 
@@ -50,7 +45,7 @@ func TestApplyTypedExpressionFoldingPreservesStatementsAfterReturn(t *testing.T)
 		}},
 	}}, Types: types}
 
-	out := ApplyTypedExpressionFolding(mod, diagnostics.NewDiagnosticBag())
+	out := ApplyTypedExpressionFolding(mod)
 	if len(out.Funcs[0].Body.Stmts) != 2 || hir.NodeIDOf(out.Funcs[0].Body.Stmts[1]) != 21 {
 		t.Fatalf("folded statements = %#v, want source statement after return preserved", out.Funcs[0].Body.Stmts)
 	}
@@ -71,7 +66,7 @@ func TestApplyTypedExpressionFoldingPreservesReturnCleanup(t *testing.T) {
 		}}},
 	}}, Types: types}
 
-	out := ApplyTypedExpressionFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod)
 	ret, ok := out.Funcs[0].Body.Stmts[0].(*hir.Return)
 	if !ok || len(ret.Cleanup) != 1 {
 		t.Fatalf("folded return cleanup = %#v, want one expression", ret)
@@ -105,7 +100,7 @@ func TestApplyTypedExpressionFoldingPreservesPlaceRootAndFoldsIndexes(t *testing
 		}},
 	}}, Types: types}
 
-	out := ApplyTypedExpressionFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod)
 	address := out.Funcs[0].Body.Stmts[2].(*hir.Binding).Value.(*ir.AddrOf)
 	root, ok := address.Place.Root.(*ir.Ident)
 	if !ok || root.Name != "value" {
@@ -141,7 +136,7 @@ func TestApplyTypedExpressionFoldingFoldsAssignments(t *testing.T) {
 		}},
 	}}, Types: types}
 
-	out := ApplyTypedExpressionFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod)
 	assignment := out.Funcs[0].Body.Stmts[1].(*hir.Assign)
 	root, rootOK := assignment.Target.Root.(*ir.Ident)
 	index, indexOK := assignment.Target.Projections[0].Index.(*ir.IntLit)
@@ -165,7 +160,7 @@ func TestApplyTypedExpressionFoldingPreservesHIRIdentity(t *testing.T) {
 		}},
 	}}, Types: types}
 
-	out := ApplyTypedExpressionFolding(mod, nil)
+	out := ApplyTypedExpressionFolding(mod)
 	fn := out.Funcs[0]
 	binding := fn.Body.Stmts[0].(*hir.Binding)
 	discarded := fn.Body.Stmts[1].(*hir.ExprStmt)
