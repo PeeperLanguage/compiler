@@ -50,7 +50,7 @@ func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *pr
 	}
 	if module, ok := prelude.ModuleForFile(ctx, absPath, content); ok {
 		module.IsEntry = true
-		if err := pipeline.New(ctx).Run(module); err != nil {
+		if err := pipeline.Run(ctx, module); err != nil {
 			loadDiag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
 			return nil
 		}
@@ -60,7 +60,7 @@ func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *pr
 	if module != nil {
 		module.IsEntry = true
 	}
-	if err := pipeline.New(ctx).Run(module); err != nil {
+	if err := pipeline.Run(ctx, module); err != nil {
 		loadDiag.Add(diagnostics.NewError("pipeline run: " + err.Error()))
 		return nil
 	}
