@@ -700,7 +700,7 @@ func TestRunReturnsSynchronousDiagnosticWriteFailure(t *testing.T) {
 	}
 	want := errors.New("diagnostic header failed")
 	output := &failingProtocolOutput{failAt: 1, err: want}
-	if err := Run(&input, output); !errors.Is(err, want) {
+	if err := Run(io.NopCloser(&input), output); !errors.Is(err, want) {
 		t.Fatalf("Run error = %v, want %v", err, want)
 	}
 }
@@ -747,10 +747,51 @@ func TestRunReturnsDebouncedDiagnosticWriteFailureOnProtocolEnd(t *testing.T) {
 			}
 			want := errors.New("debounced diagnostic header failed")
 			output := &failingProtocolOutput{failAt: 3, err: want}
-			if err := Run(&input, output); !errors.Is(err, want) {
+			if err := Run(io.NopCloser(&input), output); !errors.Is(err, want) {
 				t.Fatalf("Run error = %v, want %v", err, want)
 			}
 		})
+	}
+}
+
+func TestRunReturnsDebouncedDiagnosticWriteFailureWithInputOpen(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	changeParams, err := json.Marshal(DidChangeTextDocumentParams{
+		TextDocument: VersionedTextDocumentIdentifier{
+			URI:     DocumentURI(pathToURI(filePath)),
+			Version: 1,
+		},
+		ContentChanges: []TextDocumentContentChangeEvent{{Text: "fn main() {}\n"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal change params: %v", err)
+	}
+
+	inputReader, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	want := errors.New("debounced diagnostic write failed")
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- Run(inputReader, &failingProtocolOutput{failAt: 1, err: want})
+	}()
+	if err := writeMessage(inputWriter, Request{
+		JSONRPC: "2.0",
+		Method:  "textDocument/didChange",
+		Params:  changeParams,
+	}); err != nil {
+		t.Fatalf("write change request: %v", err)
+	}
+
+	select {
+	case err := <-runDone:
+		if !errors.Is(err, want) {
+			t.Fatalf("Run error = %v, want %v", err, want)
+		}
+	case <-time.After(diagnosticsDebounceDelay + time.Second):
+		_ = inputWriter.Close()
+		err := <-runDone
+		t.Fatalf("Run remained blocked with input open; after close error = %v", err)
 	}
 }
 
@@ -1358,7 +1399,7 @@ func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.
 	}
 
 	var output bytes.Buffer
-	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+	if err := Run(io.NopCloser(bytes.NewReader(input.Bytes())), &output); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -1453,7 +1494,7 @@ func TestLSPDidChangeClearsDiagnosticsForFixedComponentFile(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+	if err := Run(io.NopCloser(bytes.NewReader(input.Bytes())), &output); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -1514,7 +1555,7 @@ func TestLSPDidChangePublishesSyntaxErrorsAfterDebounce(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+	if err := Run(io.NopCloser(bytes.NewReader(input.Bytes())), &output); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -1880,7 +1921,7 @@ func TestLSPDidChangePublishesInterfaceSeparatorErrorsAfterDebounce(t *testing.T
 	}
 
 	var output bytes.Buffer
-	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+	if err := Run(io.NopCloser(bytes.NewReader(input.Bytes())), &output); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 

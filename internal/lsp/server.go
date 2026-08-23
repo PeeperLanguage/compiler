@@ -18,10 +18,19 @@ import (
 const LSP_VERSION = "0.0.1"
 const diagnosticsDebounceDelay = 150 * time.Millisecond
 
-func Run(in io.Reader, out io.Writer) error {
+func Run(in io.ReadCloser, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	state := NewServerState()
 	writer := newProtocolWriter(out)
+	sessionDone := make(chan struct{})
+	defer close(sessionDone)
+	go func() {
+		select {
+		case <-writer.failureCh:
+			_ = in.Close()
+		case <-sessionDone:
+		}
+	}()
 
 	for {
 		if err := writer.writeError(); err != nil {

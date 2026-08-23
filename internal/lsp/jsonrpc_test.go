@@ -101,7 +101,7 @@ func TestServerResponseResultAndErrorExclusivity(t *testing.T) {
 				t.Fatalf("write request: %v", err)
 			}
 			var output bytes.Buffer
-			if err := Run(&input, &output); err != nil {
+			if err := Run(io.NopCloser(&input), &output); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			message, err := readMessage(bufio.NewReader(&output))
@@ -150,7 +150,7 @@ func TestRunReturnsResponseWriteFailure(t *testing.T) {
 			}
 			want := errors.New(tt.name + " write failed")
 			output := &failingProtocolOutput{failAt: tt.failAt, err: want}
-			if err := Run(&input, output); !errors.Is(err, want) {
+			if err := Run(io.NopCloser(&input), output); !errors.Is(err, want) {
 				t.Fatalf("Run error = %v, want %v", err, want)
 			}
 		})

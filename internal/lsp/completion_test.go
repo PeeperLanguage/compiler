@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -94,7 +95,7 @@ func TestCompletionAdvertisesTriggersAndDispatchesRequest(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := Run(bytes.NewReader(input.Bytes()), &output); err != nil {
+	if err := Run(io.NopCloser(bytes.NewReader(input.Bytes())), &output); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 	reader := bufio.NewReader(bytes.NewReader(output.Bytes()))

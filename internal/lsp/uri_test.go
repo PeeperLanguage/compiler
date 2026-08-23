@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 )
 
@@ -113,7 +114,7 @@ func TestMalformedRequestURIMapsToInvalidParams(t *testing.T) {
 				t.Fatalf("write request: %v", err)
 			}
 			var output bytes.Buffer
-			if err := Run(&input, &output); err != nil {
+			if err := Run(io.NopCloser(&input), &output); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			message, err := readMessage(bufio.NewReader(&output))
@@ -160,7 +161,7 @@ func TestMalformedNotificationURIDoesNotPublishOrMutateProtocolState(t *testing.
 		}
 	}
 	var output bytes.Buffer
-	if err := Run(&input, &output); err != nil {
+	if err := Run(io.NopCloser(&input), &output); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	reader := bufio.NewReader(&output)
