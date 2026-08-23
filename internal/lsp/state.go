@@ -17,6 +17,7 @@ type ServerState struct {
 	mu               sync.Mutex
 	publishMu        sync.Mutex
 	diagWG           sync.WaitGroup
+	diagErr          error
 	RootDir          string
 	Cache            map[string]string
 	LastCtx          *project.CompilerContext
@@ -231,7 +232,7 @@ func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerC
 	return s.recompileLocked(filePath)
 }
 
-func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Duration, publish func()) {
+func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Duration, publish func() error) {
 	if s == nil || publish == nil {
 		return
 	}
@@ -246,20 +247,29 @@ func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Dura
 		// burst of keystrokes collapses into one recompile instead of one per edit.
 		time.Sleep(delay)
 		s.mu.Lock()
-		if s.diagVersion[filePath] != version {
+		if s.diagVersion[filePath] != version || s.diagErr != nil {
 			s.mu.Unlock()
 			return
 		}
 		s.mu.Unlock()
-		publish()
+		if err := publish(); err != nil {
+			s.mu.Lock()
+			if s.diagErr == nil {
+				s.diagErr = err
+			}
+			s.mu.Unlock()
+		}
 	})
 }
 
-func (s *ServerState) waitForScheduledDiagnostics() {
+func (s *ServerState) waitForScheduledDiagnostics() error {
 	if s == nil {
-		return
+		return nil
 	}
 	s.diagWG.Wait()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.diagErr
 }
 
 func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFiles map[string]struct{}) map[string]phase.Phase {

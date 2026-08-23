@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync"
 	"time"
 
 	"compiler/internal/diagnostics"
@@ -22,15 +21,26 @@ const diagnosticsDebounceDelay = 150 * time.Millisecond
 func Run(in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	state := NewServerState()
-	var outMu sync.Mutex
+	writer := newProtocolWriter(out)
 
 	for {
+		if err := writer.writeError(); err != nil {
+			return err
+		}
 		bytes, err := readMessage(reader)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				state.waitForScheduledDiagnostics()
-				return nil
+			if writeErr := writer.writeError(); writeErr != nil {
+				return writeErr
 			}
+			if errors.Is(err, io.EOF) {
+				if err := state.waitForScheduledDiagnostics(); err != nil {
+					return err
+				}
+				return writer.writeError()
+			}
+			return err
+		}
+		if err := writer.writeError(); err != nil {
 			return err
 		}
 
@@ -78,7 +88,9 @@ func Run(in io.Reader, out io.Writer) error {
 			}
 
 		case "initialized":
-			publishWorkspaceDiagnostics(out, &outMu, state)
+			if err := publishWorkspaceDiagnostics(writer, state); err != nil {
+				return err
+			}
 			continue
 
 		case "textDocument/didOpen":
@@ -89,7 +101,9 @@ func Run(in io.Reader, out io.Writer) error {
 					continue
 				}
 				state.applyDocumentSnapshot(filePath, &params.TextDocument.Text, &params.TextDocument.Version)
-				publishComponentDiagnostics(out, &outMu, state, filePath, nil)
+				if err := publishComponentDiagnostics(writer, state, filePath, nil); err != nil {
+					return err
+				}
 			}
 			continue
 
@@ -102,8 +116,8 @@ func Run(in io.Reader, out io.Writer) error {
 				}
 				// Under Full Sync, the first change has the entire file text
 				state.applyDocumentSnapshot(filePath, &params.ContentChanges[0].Text, &params.TextDocument.Version)
-				state.scheduleDiagnosticRefresh(filePath, diagnosticsDebounceDelay, func() {
-					publishComponentDiagnostics(out, &outMu, state, filePath, nil)
+				state.scheduleDiagnosticRefresh(filePath, diagnosticsDebounceDelay, func() error {
+					return publishComponentDiagnostics(writer, state, filePath, nil)
 				})
 			}
 			continue
@@ -116,7 +130,9 @@ func Run(in io.Reader, out io.Writer) error {
 					continue
 				}
 				state.applyDocumentSnapshot(filePath, nil, nil)
-				publishComponentDiagnostics(out, &outMu, state, filePath, nil)
+				if err := publishComponentDiagnostics(writer, state, filePath, nil); err != nil {
+					return err
+				}
 			}
 			continue
 
@@ -168,8 +184,10 @@ func Run(in io.Reader, out io.Writer) error {
 			result = nil
 
 		case "exit":
-			state.waitForScheduledDiagnostics()
-			return nil
+			if err := state.waitForScheduledDiagnostics(); err != nil {
+				return err
+			}
+			return writer.writeError()
 
 		default:
 			if req.ID != nil {
@@ -186,24 +204,27 @@ func Run(in io.Reader, out io.Writer) error {
 			if respErr == nil {
 				resp.Result = &result
 			}
-			outMu.Lock()
-			_ = writeMessage(out, resp)
-			outMu.Unlock()
+			if err := writer.write(resp); err != nil {
+				return err
+			}
 		}
 	}
 }
 
-func publishWorkspaceDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState) {
+func publishWorkspaceDiagnostics(writer *protocolWriter, state *ServerState) error {
 	for _, snapshot := range state.workspaceDiagnosticSnapshots() {
-		publishDiagnosticSnapshot(w, writeMu, state, snapshot)
+		if err := publishDiagnosticSnapshot(writer, state, snapshot); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func publishComponentDiagnostics(w io.Writer, writeMu *sync.Mutex, state *ServerState, entryFile string, files []string) {
+func publishComponentDiagnostics(writer *protocolWriter, state *ServerState, entryFile string, files []string) error {
 	if state == nil {
-		return
+		return nil
 	}
-	publishDiagnosticSnapshot(w, writeMu, state, state.diagnosticSnapshot(entryFile, files))
+	return publishDiagnosticSnapshot(writer, state, state.diagnosticSnapshot(entryFile, files))
 }
 
 func uriToPath(rawURI string) (string, error) {
@@ -260,9 +281,9 @@ func isWindowsDrivePath(filePath string) bool {
 	return drive >= 'A' && drive <= 'Z' || drive >= 'a' && drive <= 'z'
 }
 
-func publishDiagnosticSnapshot(w io.Writer, writeMu *sync.Mutex, state *ServerState, snapshot *diagnosticSnapshot) {
+func publishDiagnosticSnapshot(writer *protocolWriter, state *ServerState, snapshot *diagnosticSnapshot) error {
 	if state == nil || snapshot == nil || snapshot.ctx == nil || snapshot.ctx.Diagnostics == nil {
-		return
+		return nil
 	}
 	notifications := diagnosticNotifications(snapshot)
 	state.publishMu.Lock()
@@ -271,17 +292,14 @@ func publishDiagnosticSnapshot(w io.Writer, writeMu *sync.Mutex, state *ServerSt
 	stale := state.diagGeneration != snapshot.generation
 	state.mu.Unlock()
 	if stale {
-		return
+		return nil
 	}
 	for _, notification := range notifications {
-		if writeMu != nil {
-			writeMu.Lock()
-		}
-		_ = writeMessage(w, notification)
-		if writeMu != nil {
-			writeMu.Unlock()
+		if err := writer.write(notification); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 func diagnosticNotifications(snapshot *diagnosticSnapshot) []Notification {

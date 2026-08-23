@@ -15,6 +15,20 @@ type rejectedBodyReader struct {
 	reads int
 }
 
+type failingProtocolOutput struct {
+	failAt int
+	writes int
+	err    error
+}
+
+func (w *failingProtocolOutput) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failAt {
+		return 0, w.err
+	}
+	return len(p), nil
+}
+
 func (r *rejectedBodyReader) Read([]byte) (int, error) {
 	r.reads++
 	return 0, errors.New("body must not be read")
@@ -116,5 +130,44 @@ func TestServerResponseResultAndErrorExclusivity(t *testing.T) {
 				t.Fatalf("result = %s, want object", result)
 			}
 		})
+	}
+}
+
+func TestRunReturnsResponseWriteFailure(t *testing.T) {
+	tests := []struct {
+		name   string
+		failAt int
+	}{
+		{name: "header", failAt: 1},
+		{name: "body", failAt: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := json.RawMessage("1")
+			var input bytes.Buffer
+			if err := writeMessage(&input, Request{JSONRPC: "2.0", ID: &id, Method: "shutdown"}); err != nil {
+				t.Fatalf("write request: %v", err)
+			}
+			want := errors.New(tt.name + " write failed")
+			output := &failingProtocolOutput{failAt: tt.failAt, err: want}
+			if err := Run(&input, output); !errors.Is(err, want) {
+				t.Fatalf("Run error = %v, want %v", err, want)
+			}
+		})
+	}
+}
+
+func TestProtocolWriterStopsAfterFirstFailure(t *testing.T) {
+	want := errors.New("header write failed")
+	output := &failingProtocolOutput{failAt: 1, err: want}
+	writer := newProtocolWriter(output)
+	if err := writer.write(Notification{JSONRPC: "2.0", Method: "first"}); !errors.Is(err, want) {
+		t.Fatalf("first write error = %v, want %v", err, want)
+	}
+	if err := writer.write(Notification{JSONRPC: "2.0", Method: "second"}); !errors.Is(err, want) {
+		t.Fatalf("second write error = %v, want %v", err, want)
+	}
+	if output.writes != 1 {
+		t.Fatalf("underlying writes = %d, want 1", output.writes)
 	}
 }

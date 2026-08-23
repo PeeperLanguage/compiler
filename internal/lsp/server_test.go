@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"path/filepath"
 	"strconv"
@@ -117,7 +118,9 @@ func diagnosticForVersion(published []PublishDiagnosticsParams, version int) (Pu
 func publishCurrentDiagnostics(t *testing.T, state *ServerState, filePath string) PublishDiagnosticsParams {
 	t.Helper()
 	var output bytes.Buffer
-	publishDiagnosticSnapshot(&output, nil, state, state.diagnosticSnapshot(filePath, nil))
+	if err := publishDiagnosticSnapshot(newProtocolWriter(&output), state, state.diagnosticSnapshot(filePath, nil)); err != nil {
+		t.Fatalf("publish diagnostics: %v", err)
+	}
 	message, err := readMessage(bufio.NewReader(&output))
 	if err != nil {
 		t.Fatalf("read published diagnostics: %v", err)
@@ -646,11 +649,12 @@ func TestScheduleDiagnosticRefreshCoalescesRapidChanges(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
 	done := make(chan struct{}, 2)
-	publish := func() {
+	publish := func() error {
 		mu.Lock()
 		calls++
 		mu.Unlock()
 		done <- struct{}{}
+		return nil
 	}
 
 	state.scheduleDiagnosticRefresh(filePath, 20*time.Millisecond, publish)
@@ -668,6 +672,85 @@ func TestScheduleDiagnosticRefreshCoalescesRapidChanges(t *testing.T) {
 	mu.Unlock()
 	if got != 1 {
 		t.Fatalf("debounced publish count = %d, want 1", got)
+	}
+}
+
+func TestScheduledDiagnosticFailureIsReturned(t *testing.T) {
+	state := NewServerState()
+	want := errors.New("diagnostic write failed")
+	state.scheduleDiagnosticRefresh("/tmp/main.peep", 0, func() error { return want })
+	if err := state.waitForScheduledDiagnostics(); !errors.Is(err, want) {
+		t.Fatalf("scheduled diagnostic error = %v, want %v", err, want)
+	}
+}
+
+func TestRunReturnsSynchronousDiagnosticWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	openParams, err := json.Marshal(DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+		URI:  DocumentURI(pathToURI(filePath)),
+		Text: "fn main() {}\n",
+	}})
+	if err != nil {
+		t.Fatalf("marshal open params: %v", err)
+	}
+	var input bytes.Buffer
+	if err := writeMessage(&input, Request{JSONRPC: "2.0", Method: "textDocument/didOpen", Params: openParams}); err != nil {
+		t.Fatalf("write open request: %v", err)
+	}
+	want := errors.New("diagnostic header failed")
+	output := &failingProtocolOutput{failAt: 1, err: want}
+	if err := Run(&input, output); !errors.Is(err, want) {
+		t.Fatalf("Run error = %v, want %v", err, want)
+	}
+}
+
+func TestRunReturnsDebouncedDiagnosticWriteFailureOnProtocolEnd(t *testing.T) {
+	tests := []struct {
+		name string
+		exit bool
+	}{
+		{name: "EOF"},
+		{name: "exit", exit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			filePath := filepath.Join(root, "main"+peeper.SourceExt)
+			openParams, err := json.Marshal(DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+				URI:  DocumentURI(pathToURI(filePath)),
+				Text: "fn main() {}\n",
+			}})
+			if err != nil {
+				t.Fatalf("marshal open params: %v", err)
+			}
+			changeParams, err := json.Marshal(DidChangeTextDocumentParams{
+				TextDocument:   VersionedTextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath)), Version: 2},
+				ContentChanges: []TextDocumentContentChangeEvent{{Text: "fn main() -> i32 { return 0; }\n"}},
+			})
+			if err != nil {
+				t.Fatalf("marshal change params: %v", err)
+			}
+			var input bytes.Buffer
+			for _, request := range []Request{
+				{JSONRPC: "2.0", Method: "textDocument/didOpen", Params: openParams},
+				{JSONRPC: "2.0", Method: "textDocument/didChange", Params: changeParams},
+			} {
+				if err := writeMessage(&input, request); err != nil {
+					t.Fatalf("write %s request: %v", request.Method, err)
+				}
+			}
+			if tt.exit {
+				if err := writeMessage(&input, Request{JSONRPC: "2.0", Method: "exit"}); err != nil {
+					t.Fatalf("write exit request: %v", err)
+				}
+			}
+			want := errors.New("debounced diagnostic header failed")
+			output := &failingProtocolOutput{failAt: 3, err: want}
+			if err := Run(&input, output); !errors.Is(err, want) {
+				t.Fatalf("Run error = %v, want %v", err, want)
+			}
+		})
 	}
 }
 
@@ -1460,12 +1543,17 @@ func TestDiagnosticSnapshotDiscardsStaleGenerationAndPublishesVersion(t *testing
 	state.applyDocumentSnapshot(filePath, &second, &secondVersion)
 
 	var output bytes.Buffer
-	publishDiagnosticSnapshot(&output, nil, state, stale)
+	writer := newProtocolWriter(&output)
+	if err := publishDiagnosticSnapshot(writer, state, stale); err != nil {
+		t.Fatalf("publish stale diagnostics: %v", err)
+	}
 	if output.Len() != 0 {
 		t.Fatalf("stale snapshot published %d bytes", output.Len())
 	}
 
-	publishDiagnosticSnapshot(&output, nil, state, state.diagnosticSnapshot(filePath, nil))
+	if err := publishDiagnosticSnapshot(writer, state, state.diagnosticSnapshot(filePath, nil)); err != nil {
+		t.Fatalf("publish current diagnostics: %v", err)
+	}
 	message, err := readMessage(bufio.NewReader(&output))
 	if err != nil {
 		t.Fatalf("read current diagnostics: %v", err)
@@ -1497,10 +1585,9 @@ func TestDocumentMutationWaitsForCheckedDiagnosticPublication(t *testing.T) {
 		entered: make(chan struct{}, 1),
 		release: make(chan struct{}),
 	}
-	published := make(chan struct{})
+	published := make(chan error, 1)
 	go func() {
-		publishDiagnosticSnapshot(writer, nil, state, snapshot)
-		close(published)
+		published <- publishDiagnosticSnapshot(newProtocolWriter(writer), state, snapshot)
 	}()
 	select {
 	case <-writer.entered:
@@ -1521,7 +1608,10 @@ func TestDocumentMutationWaitsForCheckedDiagnosticPublication(t *testing.T) {
 
 	close(writer.release)
 	select {
-	case <-published:
+	case err := <-published:
+		if err != nil {
+			t.Fatalf("publish diagnostics: %v", err)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("diagnostic publication did not complete")
 	}
@@ -1696,18 +1786,25 @@ func TestConcurrentDifferentFileDiagnosticSnapshotsBothPublish(t *testing.T) {
 	secondSnapshot := state.diagnosticSnapshot(secondPath, []string{secondPath})
 
 	var output bytes.Buffer
-	var writeMu sync.Mutex
+	writer := newProtocolWriter(&output)
 	var workers sync.WaitGroup
+	errs := make(chan error, 2)
 	workers.Add(2)
 	go func() {
 		defer workers.Done()
-		publishDiagnosticSnapshot(&output, &writeMu, state, firstSnapshot)
+		errs <- publishDiagnosticSnapshot(writer, state, firstSnapshot)
 	}()
 	go func() {
 		defer workers.Done()
-		publishDiagnosticSnapshot(&output, &writeMu, state, secondSnapshot)
+		errs <- publishDiagnosticSnapshot(writer, state, secondSnapshot)
 	}()
 	workers.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("publish diagnostics: %v", err)
+		}
+	}
 
 	published := collectPublishedDiagnostics(t, output.Bytes())
 	if len(published[pathToURI(firstPath)]) != 1 || len(published[pathToURI(secondPath)]) != 1 {

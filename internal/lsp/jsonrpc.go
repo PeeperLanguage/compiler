@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Maximum JSON-RPC message body accepted by the language server: 16 MiB.
@@ -56,6 +57,42 @@ type Notification struct {
 	JSONRPC string `json:"jsonrpc"`
 	Method  string `json:"method"`
 	Params  any    `json:"params,omitempty"`
+}
+
+type protocolWriter struct {
+	out       io.Writer
+	mu        sync.Mutex
+	firstErr  error
+	failureCh chan struct{}
+}
+
+func newProtocolWriter(out io.Writer) *protocolWriter {
+	return &protocolWriter{out: out, failureCh: make(chan struct{})}
+}
+
+func (w *protocolWriter) write(payload any) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.firstErr != nil {
+		return w.firstErr
+	}
+	if err := writeMessage(w.out, payload); err != nil {
+		w.firstErr = err
+		close(w.failureCh)
+		return err
+	}
+	return nil
+}
+
+func (w *protocolWriter) writeError() error {
+	select {
+	case <-w.failureCh:
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.firstErr
+	default:
+		return nil
+	}
 }
 
 func readMessage(r *bufio.Reader) ([]byte, error) {
