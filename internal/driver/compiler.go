@@ -11,8 +11,6 @@ import (
 	"compiler/internal/project"
 )
 
-const COMPILER_VERSION = "0.1.0"
-
 // NewCompilerContext configures shared compiler state and loads the prelude.
 func NewCompilerContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *project.CompilerContext {
 	ctx := project.NewWithConfig(cfg, diag)

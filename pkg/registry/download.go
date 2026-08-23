@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,21 +32,25 @@ const (
 	archiveRequestTimeout    = 5 * time.Minute
 )
 
-func DownloadRemotePackage(httpClient *http.Client, cachePath, repoName, version string, devConfig *manifest.DevConfig) error {
+func DownloadRemotePackage(httpClient *http.Client, cachePath, repoName, version, expectedChecksum string, devConfig *manifest.DevConfig) (string, error) {
 	version = strings.TrimSpace(version)
 	if _, err := semver.Parse(version); err != nil {
-		return fmt.Errorf("invalid package version %q: %w", version, err)
+		return "", fmt.Errorf("invalid package version %q: %w", version, err)
 	}
+	if err := manifest.ValidateLockfileChecksum(expectedChecksum); err != nil {
+		return "", fmt.Errorf("invalid expected package checksum: %w", err)
+	}
+	expectedChecksum = strings.ToLower(expectedChecksum)
 	modulePath, err := GetModulePath(cachePath, repoName, version)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if devConfig != nil && devConfig.MockRemote && devConfig.MockPath != "" {
-		return downloadFromMock(modulePath, repoName, version, devConfig.MockPath)
+		return downloadFromMock(modulePath, repoName, version, expectedChecksum, devConfig.MockPath)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), archiveRequestTimeout)
 	defer cancel()
-	return downloadFromGit(ctx, httpClient, modulePath, repoName, version)
+	return downloadFromGit(ctx, httpClient, modulePath, repoName, version, expectedChecksum)
 }
 
 func ListAvailableVersions(httpClient *http.Client, repoName string, devConfig *manifest.DevConfig) ([]string, error) {
@@ -71,12 +76,12 @@ func ListAvailableVersions(httpClient *http.Client, repoName string, devConfig *
 	}
 }
 
-func downloadFromGit(ctx context.Context, httpClient *http.Client, modulePath, repoName, version string) error {
+func downloadFromGit(ctx context.Context, httpClient *http.Client, modulePath, repoName, version, expectedChecksum string) (string, error) {
 	archiveURL, err := packageArchiveURL(repoName, version)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return stageModule(modulePath, func(dest string) error {
+	return stageModule(modulePath, expectedChecksum, func(dest string) error {
 		archivePath, err := downloadFile(ctx, httpClient, archiveURL)
 		if err != nil {
 			return err
@@ -86,37 +91,69 @@ func downloadFromGit(ctx context.Context, httpClient *http.Client, modulePath, r
 	})
 }
 
-func stageModule(dest string, populate func(string) error) error {
-	if isModuleCached(dest) {
-		return nil
-	}
-	if _, err := os.Lstat(dest); err == nil {
-		if err := os.RemoveAll(dest); err != nil {
-			return fmt.Errorf("remove incomplete module cache: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect module cache: %w", err)
-	}
+func stageModule(dest, expectedChecksum string, populate func(string) error) (string, error) {
 	parent := filepath.Dir(dest)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return fmt.Errorf("create module cache parent: %w", err)
+		return "", fmt.Errorf("create module cache parent: %w", err)
 	}
 	temp, err := os.MkdirTemp(parent, "."+filepath.Base(dest)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temporary module cache: %w", err)
+		return "", fmt.Errorf("create temporary module cache: %w", err)
 	}
 	defer os.RemoveAll(temp)
 	if err := populate(temp); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := manifest.Load(filepath.Join(temp, manifest.FileName)); err != nil {
-		return fmt.Errorf("invalid package manifest: %w", err)
+		return "", fmt.Errorf("invalid package manifest: %w", err)
 	}
-	if err := os.Rename(temp, dest); err != nil {
-		if isModuleCached(dest) {
-			return nil
+	checksum, err := ModuleChecksum(temp)
+	if err != nil {
+		return "", err
+	}
+	if expectedChecksum != "" && checksum != expectedChecksum {
+		return "", fmt.Errorf("package checksum mismatch: expected %s, got %s", expectedChecksum, checksum)
+	}
+	if err := replaceModuleCache(temp, dest); err != nil {
+		return "", err
+	}
+	return checksum, nil
+}
+
+func replaceModuleCache(staged, dest string) error {
+	if _, err := os.Lstat(dest); os.IsNotExist(err) {
+		if err := os.Rename(staged, dest); err != nil {
+			return fmt.Errorf("publish module cache: %w", err)
 		}
-		return fmt.Errorf("publish module cache: %w", err)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect module cache: %w", err)
+	}
+
+	backupFile, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".backup-*")
+	if err != nil {
+		return fmt.Errorf("reserve module cache backup: %w", err)
+	}
+	backup := backupFile.Name()
+	if err := backupFile.Close(); err != nil {
+		_ = os.Remove(backup)
+		return fmt.Errorf("close module cache backup: %w", err)
+	}
+	if err := os.Remove(backup); err != nil {
+		return fmt.Errorf("prepare module cache backup: %w", err)
+	}
+	if err := os.Rename(dest, backup); err != nil {
+		return fmt.Errorf("backup module cache: %w", err)
+	}
+	if err := os.Rename(staged, dest); err != nil {
+		publishErr := fmt.Errorf("publish module cache: %w", err)
+		if rollbackErr := os.Rename(backup, dest); rollbackErr != nil {
+			return errors.Join(publishErr, fmt.Errorf("restore module cache: %w", rollbackErr))
+		}
+		return publishErr
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("remove module cache backup: %w", err)
 	}
 	return nil
 }
@@ -139,10 +176,10 @@ func packageArchiveURL(repoName, version string) (string, error) {
 	}
 }
 
-func downloadFromMock(modulePath, repoName, version, mockBasePath string) error {
+func downloadFromMock(modulePath, repoName, version, expectedChecksum, mockBasePath string) (string, error) {
 	mockBasePath, err := filepath.Abs(mockBasePath)
 	if err != nil {
-		return fmt.Errorf("resolve mock path: %w", err)
+		return "", fmt.Errorf("resolve mock path: %w", err)
 	}
 	repoPath := remotes.StripProviderPrefix(repoName)
 	packageName := filepath.Base(repoPath)
@@ -157,9 +194,9 @@ func downloadFromMock(modulePath, repoName, version, mockBasePath string) error 
 		source = filepath.Join(mockBasePath, repoPath)
 	}
 	if _, err := os.Stat(source); err != nil {
-		return fmt.Errorf("mock package not found for %s", repoName)
+		return "", fmt.Errorf("mock package not found for %s", repoName)
 	}
-	return stageModule(modulePath, func(dest string) error {
+	return stageModule(modulePath, expectedChecksum, func(dest string) error {
 		return copyDir(source, dest)
 	})
 }
@@ -519,9 +556,12 @@ func archiveTarget(destPath, name string) (string, string, bool, error) {
 }
 
 func copyDir(src, dst string) error {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("mock package path %q is not a directory", src)
 	}
 	if err := os.MkdirAll(dst, info.Mode()); err != nil {
 		return err
@@ -533,11 +573,18 @@ func copyDir(src, dst string) error {
 	for _, entry := range entries {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
-		if entry.IsDir() {
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {
 				return err
 			}
 			continue
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("mock package contains unsupported file %q", srcPath)
 		}
 		if err := copyFile(srcPath, dstPath); err != nil {
 			return err

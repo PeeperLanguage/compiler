@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"compiler/pkg/manifest"
+	"compiler/pkg/registry"
 )
 
 func TestInstallAllDependenciesRestoresMissingLockedCache(t *testing.T) {
@@ -71,6 +73,216 @@ build = "lib"
 	}
 	if got := loadedManifest.Dependencies["peeper_test_lib"].Version; got != "v0.0.1" {
 		t.Fatalf("expected dependency to be pinned to resolved version, got %q", got)
+	}
+	lock, err := manifest.LoadLockfile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lock.GetDependency("github.com/itsfuad/peeper_test_lib@v0.0.1")
+	if !ok || entry.Checksum == "" {
+		t.Fatalf("legacy dependency was not checksum-pinned: %#v", entry)
+	}
+}
+
+func TestInstallDependencyPinsReusesAndRepairsCache(t *testing.T) {
+	root := t.TempDir()
+	mockPackage := filepath.Join(root, "mock", "acme", "pkg-v1.0.0")
+	cachePackage := filepath.Join(manifest.CacheModulesDir(root), "github.com", "acme", "pkg@v1.0.0")
+	mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `name = "app"
+build = "program"
+
+[dependencies]
+pkg = "github.com/acme/pkg"
+
+[dev]
+mock_remote = true
+mock_path = "./mock"
+`)
+	mustWriteGetTest(t, filepath.Join(mockPackage, manifest.FileName), "name = \"pkg\"\nbuild = \"lib\"\n")
+	mustWriteGetTest(t, filepath.Join(mockPackage, "src", "pkg.peep"), "original")
+	mustWriteGetTest(t, filepath.Join(cachePackage, manifest.FileName), "name = \"stale\"\nbuild = \"lib\"\n")
+	mustWriteGetTest(t, filepath.Join(cachePackage, "src", "pkg.peep"), "unlocked-cache")
+	t.Chdir(root)
+
+	if err := installAllDependencies(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := manifest.LoadLockfile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lock.GetDependency("github.com/acme/pkg@v1.0.0")
+	if !ok || entry.Checksum == "" {
+		t.Fatalf("initial install entry = %#v", entry)
+	}
+	if checksum, err := registry.ModuleChecksum(cachePackage); err != nil || checksum != entry.Checksum {
+		t.Fatalf("cache checksum = %q, err=%v, want %q", checksum, err, entry.Checksum)
+	}
+	if data, err := os.ReadFile(filepath.Join(cachePackage, "src", "pkg.peep")); err != nil || string(data) != "original" {
+		t.Fatalf("new resolution reused unpinned cache: %q, err=%v", data, err)
+	}
+
+	offlineMock := mockPackage + ".offline"
+	if err := os.Rename(mockPackage, offlineMock); err != nil {
+		t.Fatal(err)
+	}
+	if err := installAllDependencies(); err != nil {
+		t.Fatalf("valid cache triggered refetch: %v", err)
+	}
+	if err := os.Rename(offlineMock, mockPackage); err != nil {
+		t.Fatal(err)
+	}
+
+	cacheSource := filepath.Join(cachePackage, "src", "pkg.peep")
+	if err := os.WriteFile(cacheSource, []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := installAllDependencies(); err != nil {
+		t.Fatalf("tampered cache was not repaired: %v", err)
+	}
+	if data, err := os.ReadFile(cacheSource); err != nil || string(data) != "original" {
+		t.Fatalf("repaired source = %q, err=%v", data, err)
+	}
+
+	if err := os.WriteFile(cacheSource, []byte("tampered-again"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mockPackage, "src", "pkg.peep"), []byte("moved-tag"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockBefore, err := os.ReadFile(filepath.Join(root, manifest.LockfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installAllDependencies(); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("moved tag error = %v", err)
+	}
+	lockAfter, err := os.ReadFile(filepath.Join(root, manifest.LockfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(lockAfter, lockBefore) {
+		t.Fatal("moved tag changed lockfile")
+	}
+	if data, err := os.ReadFile(cacheSource); err != nil || string(data) != "tampered-again" {
+		t.Fatalf("moved tag replaced prior cache: %q, err=%v", data, err)
+	}
+}
+
+func TestInstallDependencyPinsTransitivePackages(t *testing.T) {
+	root := t.TempDir()
+	mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `name = "app"
+build = "program"
+
+[dependencies]
+parent = "github.com/acme/parent"
+
+[dev]
+mock_remote = true
+mock_path = "./mock"
+`)
+	mustWriteGetTest(t, filepath.Join(root, "mock", "acme", "parent-v1.0.0", manifest.FileName), `name = "parent"
+build = "lib"
+
+[dependencies]
+child = "github.com/acme/child"
+`)
+	mustWriteGetTest(t, filepath.Join(root, "mock", "acme", "child-v1.0.0", manifest.FileName), "name = \"child\"\nbuild = \"lib\"\n")
+	t.Chdir(root)
+
+	if err := installAllDependencies(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := manifest.LoadLockfile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, packageID := range []string{"github.com/acme/parent@v1.0.0", "github.com/acme/child@v1.0.0"} {
+		entry, ok := lock.GetDependency(packageID)
+		if !ok || entry.Checksum == "" {
+			t.Fatalf("package %s entry = %#v", packageID, entry)
+		}
+	}
+}
+
+func TestLegacyChecksumMigrationRequiresMatchingRemote(t *testing.T) {
+	tests := []struct {
+		name          string
+		remoteContent string
+		wantError     bool
+	}{
+		{name: "matching", remoteContent: "cached"},
+		{name: "disagreement", remoteContent: "moved", wantError: true},
+		{name: "offline", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			cachePackage := filepath.Join(manifest.CacheModulesDir(root), "github.com", "acme", "pkg@v1.0.0")
+			mustWriteGetTest(t, filepath.Join(root, manifest.FileName), `name = "app"
+build = "program"
+
+[dependencies]
+pkg = "github.com/acme/pkg@v1.0.0"
+
+[dev]
+mock_remote = true
+mock_path = "./mock"
+`)
+			mustWriteGetTest(t, filepath.Join(cachePackage, manifest.FileName), "name = \"pkg\"\nbuild = \"lib\"\n")
+			mustWriteGetTest(t, filepath.Join(cachePackage, "src", "pkg.peep"), "cached")
+			if test.remoteContent != "" {
+				mockPackage := filepath.Join(root, "mock", "acme", "pkg-v1.0.0")
+				mustWriteGetTest(t, filepath.Join(mockPackage, manifest.FileName), "name = \"pkg\"\nbuild = \"lib\"\n")
+				mustWriteGetTest(t, filepath.Join(mockPackage, "src", "pkg.peep"), test.remoteContent)
+			}
+			lock := manifest.NewLockfile()
+			packageID := "github.com/acme/pkg@v1.0.0"
+			lock.SetDependency(packageID, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: "github.com/acme/pkg", Direct: true})
+			lock.SetDirectDependency("pkg", packageID)
+			if err := manifest.SaveLockfile(root, lock); err != nil {
+				t.Fatal(err)
+			}
+			lockBefore, err := os.ReadFile(filepath.Join(root, manifest.LockfileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cacheBefore, err := registry.ModuleChecksum(cachePackage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(root)
+
+			err = installAllDependencies()
+			if test.wantError {
+				if err == nil {
+					t.Fatal("legacy migration succeeded")
+				}
+				lockAfter, readErr := os.ReadFile(filepath.Join(root, manifest.LockfileName))
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if !bytes.Equal(lockAfter, lockBefore) {
+					t.Fatal("failed legacy migration changed lockfile")
+				}
+				cacheAfter, hashErr := registry.ModuleChecksum(cachePackage)
+				if hashErr != nil || cacheAfter != cacheBefore {
+					t.Fatalf("failed legacy migration changed cache: %q, err=%v", cacheAfter, hashErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			migrated, err := manifest.LoadLockfile(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, ok := migrated.GetDependency(packageID)
+			if !ok || entry.Checksum != cacheBefore {
+				t.Fatalf("migrated entry = %#v, want checksum %q", entry, cacheBefore)
+			}
+		})
 	}
 }
 

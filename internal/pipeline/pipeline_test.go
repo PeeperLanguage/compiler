@@ -256,11 +256,14 @@ fn BadMalloc(size: Word) -> rawptr;
 #[extern("free")]
 fn BadFree(value: Word);`)
 	out := diag.EmitAllToString()
-	for _, symbol := range []string{"printf", "malloc", "free"} {
+	for _, symbol := range []string{"malloc", "free"} {
 		message := "runtime symbol `" + symbol + "`"
 		if count := strings.Count(out, message); count != 1 {
 			t.Fatalf("expected one %s reservation diagnostic, got %d:\n%s", symbol, count, out)
 		}
+	}
+	if strings.Contains(out, "runtime symbol `printf`") {
+		t.Fatalf("module-mangled printf must not conflict with runtime symbol:\n%s", out)
 	}
 }
 

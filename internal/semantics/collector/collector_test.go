@@ -8,8 +8,45 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
+	"compiler/internal/semantics/symbols"
 	"compiler/pkg/peeper"
 )
+
+func TestCallableSymbolsKeepDefiningModuleKey(t *testing.T) {
+	const filePath = "collector_callable_module_test" + peeper.SourceExt
+	const src = `struct Counter { value: i32 }
+fn Value() -> i32 { return 1; }
+fn (self: Counter) Read() -> i32 { return self.value; }`
+	diag := diagnostics.NewDiagnosticBag()
+	module := &project.Module{
+		Key:        project.ModuleKeyFor(project.ModuleOriginDependency, filePath),
+		ImportPath: "math/counter",
+		FilePath:   filePath,
+		Namespace:  "vendor",
+		Origin:     project.ModuleOriginDependency,
+		Dependency: "mathlib",
+		Content:    src,
+		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:    make(map[string]project.ResolvedImport),
+	}
+	ctx := project.New(".", peeper.SourceExt, diag)
+	Collect(ctx, module)
+
+	want := symbols.DefiningModuleKey{
+		Origin:     string(project.ModuleOriginDependency),
+		Namespace:  "vendor",
+		Dependency: "mathlib",
+		ImportPath: "math/counter",
+	}
+	function, ok := module.ModuleScope.LookupLocal("Value")
+	if !ok || function == nil || function.DefiningModule != want {
+		t.Fatalf("function defining module = %#v, want %#v", function, want)
+	}
+	methods := module.Semantics.MethodSets["Counter"]
+	if len(methods) != 1 || methods[0] == nil || methods[0].DefiningModule != want {
+		t.Fatalf("method defining module = %#v, want %#v", methods, want)
+	}
+}
 
 func TestImportSymbolsKeepSourceLocation(t *testing.T) {
 	const filePath = "collector_import_test" + peeper.SourceExt

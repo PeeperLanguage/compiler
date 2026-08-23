@@ -45,6 +45,7 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		return errors.New("empty pipeline")
 	}
 
+	entry.IsEntry = true
 	p.ctx.AddModule(entry)
 	p.ctx.CompletedProjectPhase = phase.Load
 	diag := p.ctx.Diagnostics

@@ -298,7 +298,10 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 func resolveManifestBuildTarget(commandName, startPath string, targetOS string) (buildTarget, error) {
 	loadedProject, err := manifest.LoadProject(startPath)
 	if err != nil {
-		return buildTarget{}, fmt.Errorf("%s requires an input file or %s", commandName, manifest.FileName)
+		if errors.Is(err, manifest.ErrManifestNotFound) {
+			return buildTarget{}, fmt.Errorf("%s requires an input file or %s", commandName, manifest.FileName)
+		}
+		return buildTarget{}, err
 	}
 	if loadedProject.File.Package.Build != manifest.BuildProgram {
 		return buildTarget{}, fmt.Errorf("%s: `peeper %s` requires build = %q", loadedProject.ManifestPath, commandName, manifest.BuildProgram)

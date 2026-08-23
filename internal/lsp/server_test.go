@@ -16,6 +16,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
@@ -1282,6 +1283,39 @@ func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.
 	utilPublished := published[pathToURI(utilPath)]
 	if len(utilPublished) == 0 || len(utilPublished[0]) == 0 {
 		t.Fatalf("expected diagnostics publish for unopened workspace file %s", utilPath)
+	}
+}
+
+func TestManifestLoadFailuresPublishOnSourceURI(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		want     string
+	}{
+		{name: "malformed", manifest: "not valid toml", want: "parse manifest"},
+		{name: "incompatible", manifest: "name = \"app\"\ncompiler = \">=0.2.0\"\nbuild = \"program\"\n", want: "requires compiler"},
+		{name: "compatible", manifest: "name = \"app\"\ncompiler = \"<=0.1.0\"\nbuild = \"program\"\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+			writeWorkspaceFile(t, filepath.Join(root, manifest.FileName), test.manifest)
+			writeWorkspaceFile(t, mainPath, "fn main() {}\n")
+
+			state := NewServerState()
+			state.RootDir = root
+			published := publishCurrentDiagnostics(t, state, mainPath)
+			if string(published.URI) != pathToURI(mainPath) {
+				t.Fatalf("diagnostic URI = %q, want %q", published.URI, pathToURI(mainPath))
+			}
+			if test.want == "" && len(published.Diagnostics) != 0 {
+				t.Fatalf("compatible manifest diagnostics = %#v, want none", published.Diagnostics)
+			}
+			if test.want != "" && (len(published.Diagnostics) != 1 || !strings.Contains(published.Diagnostics[0].Message, test.want)) {
+				t.Fatalf("diagnostics = %#v, want one containing %q", published.Diagnostics, test.want)
+			}
+		})
 	}
 }
 

@@ -162,31 +162,18 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 		packageID = manifest.PackageID(repoPath, version)
 	}
 	printPackage(repoPath, version)
-	if !registry.IsModuleCached(cachePath, repoPath, version) {
-		printDownload(fmt.Sprintf("Downloading %s@%s...", repoPath, version))
-		if err := registry.DownloadRemotePackage(httpClient, cachePath, repoPath, version, devConfig); err != nil {
-			return fmt.Errorf("download %s@%s: %w", repoPath, version, err)
-		}
-	}
-	printCached()
-
-	modulePath, err := registry.GetModulePath(cachePath, repoPath, version)
+	entry, exists := lockfile.GetDependency(packageID)
+	modulePath, checksum, err := ensurePackageContent(httpClient, cachePath, repoPath, version, devConfig, entry, exists)
 	if err != nil {
 		return err
 	}
+	printCached()
+
 	packageManifest, err := manifest.Load(filepath.Join(modulePath, manifest.FileName))
 	if err != nil {
 		return fmt.Errorf("load package manifest for %s: %w", repoPath, err)
 	}
 
-	transitiveDeps := make([]string, 0)
-	for _, dep := range packageManifest.Dependencies {
-		if dep.Type == manifest.DependencyRemote {
-			transitiveDeps = append(transitiveDeps, dep.Path)
-		}
-	}
-
-	entry, exists := lockfile.GetDependency(packageID)
 	usedBy := []string{}
 	existingDependencies := []string{}
 	if exists {
@@ -196,6 +183,7 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 	newEntry := manifest.LockfileEntry{
 		Version:      version,
 		ResolvedURL:  repoPath,
+		Checksum:     checksum,
 		Direct:       directAlias != "",
 		Description:  packageManifest.Package.Name,
 		Dependencies: existingDependencies,
@@ -243,6 +231,37 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 	sort.Strings(resolvedTransitive)
 	lockfile.UpdateDependencyEdges(packageID, resolvedTransitive)
 	return nil
+}
+
+func ensurePackageContent(httpClient *http.Client, cachePath, repoPath, version string, devConfig *manifest.DevConfig, entry manifest.LockfileEntry, locked bool) (string, string, error) {
+	modulePath, err := registry.GetModulePath(cachePath, repoPath, version)
+	if err != nil {
+		return "", "", err
+	}
+	expectedChecksum := ""
+	if locked && entry.Checksum != "" {
+		checksum, hashErr := registry.ModuleChecksum(modulePath)
+		if hashErr == nil && checksum == entry.Checksum {
+			return modulePath, checksum, nil
+		}
+		expectedChecksum = entry.Checksum
+	} else if locked {
+		if _, statErr := os.Lstat(modulePath); statErr == nil {
+			expectedChecksum, err = registry.ModuleChecksum(modulePath)
+			if err != nil {
+				return "", "", fmt.Errorf("hash legacy cache for %s@%s: %w", repoPath, version, err)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return "", "", fmt.Errorf("inspect legacy cache for %s@%s: %w", repoPath, version, statErr)
+		}
+	}
+
+	printDownload(fmt.Sprintf("Downloading %s@%s...", repoPath, version))
+	checksum, err := registry.DownloadRemotePackage(httpClient, cachePath, repoPath, version, expectedChecksum, devConfig)
+	if err != nil {
+		return "", "", fmt.Errorf("download %s@%s: %w", repoPath, version, err)
+	}
+	return modulePath, checksum, nil
 }
 
 func installPackage(ctx *installContext, packageSpec string) (string, error) {

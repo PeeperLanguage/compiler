@@ -1,5 +1,8 @@
 package peeper
 
+// CompilerVersion is canonical current Peeper compiler version.
+const CompilerVersion = "0.1.0"
+
 // SourceExt is canonical source file extension shared across compiler layers.
 const SourceExt = ".peep"
 

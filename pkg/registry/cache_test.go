@@ -4,11 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"compiler/pkg/manifest"
 )
 
-func TestModuleCacheHelpers(t *testing.T) {
+func TestModuleCachePathAndDelete(t *testing.T) {
 	cache := t.TempDir()
 	repo := "github.com/acme/math"
 	ver := "1.2.3"
@@ -17,21 +15,11 @@ func TestModuleCacheHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if IsModuleCached(cache, repo, ver) {
-		t.Fatalf("module should not be cached yet")
-	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if IsModuleCached(cache, repo, ver) {
-		t.Fatalf("empty module directory must not be cached")
-	}
-	manifestText := "name = \"math\"\nbuild = \"lib\"\n"
-	if err := os.WriteFile(filepath.Join(path, manifest.FileName), []byte(manifestText), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "content"), []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if !IsModuleCached(cache, repo, ver) {
-		t.Fatalf("module should be cached")
 	}
 	if err := DeleteModule(cache, repo, ver); err != nil {
 		t.Fatalf("DeleteModule failed: %v", err)
@@ -54,54 +42,9 @@ func TestModuleCacheRejectsInvalidIdentity(t *testing.T) {
 		if _, err := GetModulePath(t.TempDir(), test.repo, test.version); err == nil {
 			t.Fatalf("GetModulePath(%q, %q) accepted invalid identity", test.repo, test.version)
 		}
-		if IsModuleCached(t.TempDir(), test.repo, test.version) {
-			t.Fatalf("invalid identity reported as cached")
-		}
 		if err := DeleteModule(t.TempDir(), test.repo, test.version); err == nil {
 			t.Fatalf("DeleteModule(%q, %q) accepted invalid identity", test.repo, test.version)
 		}
-	}
-}
-
-func TestModuleCacheRejectsSymlinks(t *testing.T) {
-	cache := t.TempDir()
-	repo := "github.com/acme/math"
-	version := "1.2.3"
-	modulePath, err := GetModulePath(cache, repo, version)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	externalModule := t.TempDir()
-	manifestText := "name = \"math\"\nbuild = \"lib\"\n"
-	if err := os.WriteFile(filepath.Join(externalModule, manifest.FileName), []byte(manifestText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(externalModule, modulePath); err != nil {
-		t.Skipf("module symlink unsupported: %v", err)
-	}
-	if IsModuleCached(cache, repo, version) {
-		t.Fatal("symlinked module directory reported as cached")
-	}
-	if err := os.Remove(modulePath); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.MkdirAll(modulePath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	externalManifest := filepath.Join(t.TempDir(), manifest.FileName)
-	if err := os.WriteFile(externalManifest, []byte(manifestText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(externalManifest, filepath.Join(modulePath, manifest.FileName)); err != nil {
-		t.Skipf("manifest symlink unsupported: %v", err)
-	}
-	if IsModuleCached(cache, repo, version) {
-		t.Fatal("symlinked manifest reported as cached")
 	}
 }
 

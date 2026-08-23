@@ -49,7 +49,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 			InterfaceType: loweredTypeID(ctx, module, expectedType),
 			MethodName:    method.Name,
 			SlotType:      slotType,
-			FuncName:      methodSymbolRefName(implementation.OwnerKey, implementation.Symbol),
+			FuncName:      symbolName(module, implementation.Symbol),
 			FuncType:      loweredTypeID(ctx, module, implementation.CallableType),
 			DataType:      loweredTypeID(ctx, module, dataType),
 		})

@@ -119,6 +119,18 @@ type InterfaceImplementation struct {
 	OwnerKey     string
 }
 
+func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
+	if m == nil {
+		return symbols.DefiningModuleKey{}
+	}
+	return symbols.DefiningModuleKey{
+		Origin:     string(m.Origin),
+		Namespace:  m.Namespace,
+		Dependency: m.Dependency,
+		ImportPath: m.ImportPath,
+	}
+}
+
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
 		BlockScopes:              make(map[ast.NodeID]*table.Scope),

@@ -48,20 +48,28 @@ type Type interface {
 	Text() string
 }
 
+type DefiningModuleKey struct {
+	Origin     string
+	Namespace  string
+	Dependency string
+	ImportPath string
+}
+
 type Symbol struct {
-	ID           SymbolID
-	Name         string
-	Kind         Kind
-	Type         Type
-	IsPub        bool
-	Mutable      bool
-	IsReceiver   bool
-	Initializing bool
-	Used         bool
-	CompilerOp   CompilerOp
-	Location     *source.Location
-	ASTNode      ast.Node
-	Scope        any // Pointer to table.Scope (only if Kind == SymbolFunc)
+	ID             SymbolID
+	Name           string
+	Kind           Kind
+	Type           Type
+	IsPub          bool
+	Mutable        bool
+	IsReceiver     bool
+	Initializing   bool
+	Used           bool
+	CompilerOp     CompilerOp
+	DefiningModule DefiningModuleKey
+	Location       *source.Location
+	ASTNode        ast.Node
+	Scope          any // Pointer to table.Scope (only if Kind == SymbolFunc)
 }
 
 func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {

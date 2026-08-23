@@ -1,16 +1,35 @@
 package manifest
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestLoadLockfileMigratesV1Shape(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, LockfileName)
-	content := `{
+func TestLoadLockfileMigratesLegacyShapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		alias   string
+	}{
+		{
+			name: "missing version with dependencies",
+			content: `{
+  "direct_deps": ["github.com/acme/json"],
+  "dependencies": {
+    "github.com/acme/json": {
+      "version": "v1.2.3",
+      "direct": true
+    }
+  }
+}`,
+			alias: "github.com/acme/json",
+		},
+		{
+			name: "version 1 with dependencies",
+			content: `{
   "version": "1.0",
   "direct_deps": ["github.com/acme/json"],
   "dependencies": {
@@ -19,20 +38,48 @@ func TestLoadLockfileMigratesV1Shape(t *testing.T) {
       "direct": true
     }
   }
-}`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+}`,
+			alias: "github.com/acme/json",
+		},
+		{
+			name: "mislabelled version 1 with packages",
+			content: `{
+  "version": "1.0",
+  "direct_deps": {
+    "json": "github.com/acme/json@v1.2.3"
+  },
+  "packages": {
+    "github.com/acme/json@v1.2.3": {
+      "version": "v1.2.3",
+      "direct": true
+    }
+  }
+}`,
+			alias: "json",
+		},
 	}
 
-	lock, err := LoadLockfile(root)
-	if err != nil {
-		t.Fatalf("load lockfile: %v", err)
-	}
-	if got := lock.DirectDeps["github.com/acme/json"]; got != "github.com/acme/json@v1.2.3" {
-		t.Fatalf("expected migrated direct dep mapping, got %q", got)
-	}
-	if _, ok := lock.Packages["github.com/acme/json@v1.2.3"]; !ok {
-		t.Fatalf("expected migrated package entry")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, LockfileName), []byte(test.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			lock, err := LoadLockfile(root)
+			if err != nil {
+				t.Fatalf("load lockfile: %v", err)
+			}
+			if lock.Version != "2.0" {
+				t.Fatalf("migrated version = %q, want 2.0", lock.Version)
+			}
+			if got := lock.DirectDeps[test.alias]; got != "github.com/acme/json@v1.2.3" {
+				t.Fatalf("migrated direct dep = %q", got)
+			}
+			if _, ok := lock.Packages["github.com/acme/json@v1.2.3"]; !ok {
+				t.Fatal("expected migrated package entry")
+			}
+		})
 	}
 }
 
@@ -85,11 +132,87 @@ func TestSaveLockfileOmitsLegacyDependenciesField(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
+	if !strings.Contains(text, `"version": "2.0"`) {
+		t.Fatalf("expected v2 lockfile:\n%s", text)
+	}
 	if strings.Contains(text, `"dependencies"`) {
 		t.Fatalf("expected saved lockfile to omit legacy dependencies field:\n%s", text)
 	}
 	if !strings.Contains(text, `"packages"`) {
 		t.Fatalf("expected saved lockfile to include packages field:\n%s", text)
+	}
+}
+
+func TestLoadLockfileRejectsUnsupportedVersionWithoutRewrite(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, LockfileName)
+	content := []byte(`{"version":"3.0","packages":{}}`)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadLockfile(root); err == nil || !strings.Contains(err.Error(), "unsupported lockfile version") {
+		t.Fatalf("LoadLockfile error = %v, want unsupported version", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, content) {
+		t.Fatalf("unsupported lockfile changed: %q", after)
+	}
+}
+
+func TestLoadLockfileRejectsInvalidSupportedSchemas(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "null document", content: `null`},
+		{name: "v2 legacy fields", content: `{"version":"2.0","direct_deps":[],"dependencies":{}}`},
+		{name: "v2 top-level unknown field", content: `{"version":"2.0","packages":{},"extra":true}`},
+		{name: "v2 package unknown field", content: `{"version":"2.0","packages":{"repo@v1":{"version":"v1","extra":true}}}`},
+		{name: "v1 top-level unknown field", content: `{"version":"1.0","dependencies":{},"extra":true}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, LockfileName), []byte(test.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadLockfile(root); err == nil {
+				t.Fatal("LoadLockfile accepted invalid schema")
+			}
+		})
+	}
+}
+
+func TestLoadLockfileRejectsInvalidChecksum(t *testing.T) {
+	root := t.TempDir()
+	content := `{"version":"2.0","packages":{"repo@v1":{"version":"v1","checksum":"sha256:not-hex"}}}`
+	if err := os.WriteFile(filepath.Join(root, LockfileName), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLockfile(root); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("LoadLockfile checksum error = %v", err)
+	}
+}
+
+func TestLoadLockfileNormalizesUppercaseChecksumHex(t *testing.T) {
+	root := t.TempDir()
+	checksum := "sha256:" + strings.Repeat("A", 64)
+	content := `{"version":"2.0","packages":{"repo@v1":{"version":"v1","checksum":"` + checksum + `"}}}`
+	if err := os.WriteFile(filepath.Join(root, LockfileName), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := LoadLockfile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lock.GetDependency("repo@v1")
+	if !ok || entry.Checksum != strings.ToLower(checksum) {
+		t.Fatalf("normalized checksum = %q", entry.Checksum)
 	}
 }
 
@@ -353,11 +476,26 @@ func TestFilterOutNoMatch(t *testing.T) {
 	}
 }
 
-func TestSortedKeysDeterministicOrder(t *testing.T) {
-	m := map[string]int{"c": 3, "a": 1, "b": 2}
-	got := sortedKeys(m)
-	if !stringSlicesEqual(got, []string{"a", "b", "c"}) {
-		t.Errorf("sortedKeys() = %v, want [a b c]", got)
+func TestMarshalLockfileOrdersMapKeysDeterministically(t *testing.T) {
+	lock := NewLockfile()
+	lock.DirectDeps = map[string]string{"z": "z@v1", "a": "a@v1"}
+	lock.SetDependency("z@v1", LockfileEntry{Version: "v1"})
+	lock.SetDependency("a@v1", LockfileEntry{Version: "v1"})
+
+	data, err := marshalLockfile(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	directA := strings.Index(text, `"a": "a@v1"`)
+	directZ := strings.Index(text, `"z": "z@v1"`)
+	if directA < 0 || directZ < 0 || directA > directZ {
+		t.Fatalf("direct dependency keys are not sorted:\n%s", text)
+	}
+	packageA := strings.Index(text, `"a@v1": {`)
+	packageZ := strings.Index(text, `"z@v1": {`)
+	if packageA < 0 || packageZ < 0 || packageA > packageZ {
+		t.Fatalf("package keys are not sorted:\n%s", text)
 	}
 }
 

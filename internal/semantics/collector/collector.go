@@ -88,12 +88,14 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 			return
 		}
 		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
+		sym.DefiningModule = c.module.DefiningModuleKey()
 		sym.Scope = table.New(c.module.ModuleScope)
 		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
 		c.module.Semantics.MethodSymbol[fn.ID()] = sym
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
+	sym.DefiningModule = c.module.DefiningModuleKey()
 	sym.Scope = table.New(c.module.ModuleScope)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"compiler/pkg/manifest"
 )
 
 type archiveEntry struct {
@@ -365,8 +367,57 @@ func TestListAvailableVersionsRejectsTagWithoutName(t *testing.T) {
 }
 
 func TestDownloadRemotePackageRejectsNonStableVersion(t *testing.T) {
-	if err := DownloadRemotePackage(http.DefaultClient, t.TempDir(), "github.com/acme/pkg", "tag?redirect", nil); err == nil {
+	if _, err := DownloadRemotePackage(http.DefaultClient, t.TempDir(), "github.com/acme/pkg", "tag?redirect", "", nil); err == nil {
 		t.Fatal("non-stable package version accepted")
+	}
+}
+
+func TestDownloadRemotePackageVerifiesBeforeReplacingCache(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "cache")
+	mock := filepath.Join(root, "mock")
+	dest, err := GetModulePath(cache, "github.com/acme/pkg", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackageTree(t, dest, "old")
+	oldChecksum, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(mock, "github.com", "acme", "pkg-v1.0.0")
+	writePackageTree(t, source, "new")
+	newChecksum, err := ModuleChecksum(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := &manifest.DevConfig{MockRemote: true, MockPath: mock}
+
+	if _, err := DownloadRemotePackage(http.DefaultClient, cache, "github.com/acme/pkg", "v1.0.0", oldChecksum, dev); err == nil {
+		t.Fatal("moved package matched old checksum")
+	}
+	afterMismatch, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterMismatch != oldChecksum {
+		t.Fatalf("mismatch replaced cache: %q", afterMismatch)
+	}
+
+	uppercaseExpected := "sha256:" + strings.ToUpper(strings.TrimPrefix(newChecksum, "sha256:"))
+	actual, err := DownloadRemotePackage(http.DefaultClient, cache, "github.com/acme/pkg", "v1.0.0", uppercaseExpected, dev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != newChecksum {
+		t.Fatalf("download checksum = %q, want %q", actual, newChecksum)
+	}
+	afterReplace, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterReplace != newChecksum {
+		t.Fatalf("replacement checksum = %q, want %q", afterReplace, newChecksum)
 	}
 }
 
@@ -379,13 +430,21 @@ func TestStageModulePublishesOnlyValidPackage(t *testing.T) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := stageModule(dest, func(temp string) error {
+	checksum, err := stageModule(dest, "", func(temp string) error {
 		return os.WriteFile(filepath.Join(temp, "peeper.toml"), []byte("name = \"pkg\"\nbuild = \"lib\"\n"), 0o644)
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !isModuleCached(dest) {
-		t.Fatal("valid staged package not published")
+	if checksum == "" {
+		t.Fatal("stageModule returned empty checksum")
+	}
+	published, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published != checksum {
+		t.Fatalf("published checksum = %q, want %q", published, checksum)
 	}
 }
 
@@ -414,7 +473,7 @@ func TestStageModuleCleansFailedPublication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := stageModule(dest, test.populate); err == nil {
+			if _, err := stageModule(dest, "", test.populate); err == nil {
 				t.Fatal("invalid package published")
 			}
 			if _, err := os.Stat(dest); !os.IsNotExist(err) {
@@ -428,5 +487,58 @@ func TestStageModuleCleansFailedPublication(t *testing.T) {
 				t.Fatalf("temporary modules remain: %v", temps)
 			}
 		})
+	}
+}
+
+func TestStageModulePreservesExistingCacheOnPopulateFailure(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "cache", "module")
+	writePackageTree(t, dest, "old")
+	before, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageModule(dest, "", func(string) error { return errors.New("download failed") }); err == nil {
+		t.Fatal("stageModule ignored populate failure")
+	}
+	after, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("populate failure changed cache: %q != %q", after, before)
+	}
+}
+
+func TestReplaceModuleCacheRollsBackFailedPublish(t *testing.T) {
+	root := t.TempDir()
+	dest := filepath.Join(root, "cache", "module")
+	writePackageTree(t, dest, "old")
+	before, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceModuleCache(filepath.Join(root, "missing-stage"), dest); err == nil {
+		t.Fatal("replaceModuleCache accepted missing stage")
+	}
+	after, err := ModuleChecksum(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("failed publish changed cache: %q != %q", after, before)
+	}
+}
+
+func writePackageTree(t *testing.T, root, source string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "peeper.toml"), []byte("name = \"pkg\"\nbuild = \"lib\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "pkg.peep"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

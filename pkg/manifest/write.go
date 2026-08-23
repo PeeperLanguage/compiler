@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 )
 
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+// WriteFileAtomic stages, syncs, and atomically replaces one file.
+func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()

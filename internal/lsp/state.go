@@ -149,9 +149,9 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 	ctx := compiler.NewCompilerContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
 	if err != nil {
-		ctx.Diagnostics.BeginPhase(phase.Load, "").Add(diagnostics.NewError(
-			err.Error(),
-		))
+		diagnostic := diagnostics.NewError(err.Error())
+		diagnostic.FilePath = canonicalEntry
+		ctx.Diagnostics.BeginPhase(phase.Load, "").Add(diagnostic)
 		s.LastCtx = ctx
 		s.LastMetrics = ctx.Metrics.Snapshot()
 		return ctx, nil

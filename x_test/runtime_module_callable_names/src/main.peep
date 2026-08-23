@@ -1,0 +1,6 @@
+import "runtime_module_callable_names/alpha";
+import "runtime_module_callable_names/beta";
+
+fn main() -> i32 {
+    return alpha::Run() + beta::Run() - 33;
+}

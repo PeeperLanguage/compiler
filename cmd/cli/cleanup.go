@@ -8,7 +8,7 @@ import (
 	"compiler/pkg/manifest"
 )
 
-func CleanupCommand(args []string) error {
+func CleanupCommand(_ []string) error {
 	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return err

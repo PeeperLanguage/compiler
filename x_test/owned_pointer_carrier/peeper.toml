@@ -1,5 +1,5 @@
-[project]
 name = "owned_pointer_carrier"
+build = "program"
 
 [test]
 mode = "check"

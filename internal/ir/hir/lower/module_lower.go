@@ -1,7 +1,9 @@
 package lower
 
 import (
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"compiler/internal/constvalue"
@@ -47,20 +49,9 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		}
 		fnType, _ := symbols.GetSymbolType(sym)
 		resolvedFnType, _ := fnType.(*typeinfo.FuncType)
-		emittedName := sym.Name
-		if fn.Receiver != nil && resolvedFnType != nil && len(resolvedFnType.Params) > 0 {
-			if target, ok := typeinfo.ReceiverTarget(resolvedFnType.Params[0]); ok {
-				emittedName = methodFunctionName(typeinfo.TypeText(target), fn.Name.Name)
-			}
-		}
+		emittedName, _ := callableName(module, sym)
 		if fn.Body == nil {
-			if fn.Receiver == nil {
-				emittedName = symbolName(sym)
-			}
 			params, returnType := lowerExternSignature(ctx, module, sym.Scope.(*table.Scope), fn.ParamsWithReceiver(), fn.ReturnType, resolvedFnType)
-			if externName, ok := externSymbolName(sym, emittedName); ok {
-				emittedName = externName
-			}
 			out.Externs = append(out.Externs, hir.Extern{
 				Name:       emittedName,
 				Params:     params,
@@ -138,7 +129,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		if param.Name != nil {
 			sym, ok := funcScope.LookupNode(param.Name)
 			if ok && sym != nil {
-				name = symbolName(sym)
+				name = symbolName(module, sym)
 				symbolID = sym.ID
 				if t, ok := symbols.GetSymbolType(sym); ok {
 					paramType = t
@@ -197,7 +188,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: false, Type: loweredTypeID(ctx, module, sym.Type), Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(module, sym), Constant: false, Type: loweredTypeID(ctx, module, sym.Type), Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
 
 	case *ast.ConstDecl:
 		if node.Name == nil {
@@ -217,7 +208,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 			out.Stmts = append(out.Stmts, &hir.ExprStmt{Value: valueExpr, NodeID: hir.NodeID(node.ID()), ValueNodeID: hir.NodeID(node.Value.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(sym), Constant: true, Type: loweredTypeID(ctx, module, sym.Type), Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
+		out.Stmts = append(out.Stmts, &hir.Binding{Name: symbolName(module, sym), Constant: true, Type: loweredTypeID(ctx, module, sym.Type), Value: valueExpr, NodeID: hir.NodeID(node.ID()), SymbolID: sym.ID, Location: ast.LocOf(node)})
 
 	case *ast.IfStmt:
 		condExpr := ir.Expr(&ir.InvalidExpr{Message: "invalid condition", Type: ir.InvalidType})
@@ -492,7 +483,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 				t = ir.InvalidType
 			}
 		}
-		return &ir.Ident{Name: symbolName(sym), Type: t, SymbolID: sym.ID, Location: loc}
+		return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, Location: loc}
 
 	case *ast.ScopeResolution:
 		var sym *symbols.Symbol
@@ -513,7 +504,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 					t = ir.InvalidType
 				}
 			}
-			return &ir.Ident{Name: symbolName(sym), Type: t, SymbolID: sym.ID, Location: loc}
+			return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, Location: loc}
 		}
 		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.Module.Name + "::" + node.Name.Name, Type: ir.InvalidType, Location: loc}
 
@@ -780,11 +771,9 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	if methodSym == nil || fnType == nil || len(fnType.Params) == 0 {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: ir.InvalidType}
 	}
-	methodOwner, ok := typeinfo.ReceiverTarget(fnType.Params[0])
-	if !ok {
+	if _, ok := typeinfo.ReceiverTarget(fnType.Params[0]); !ok {
 		return &ir.InvalidExpr{Message: "selector method receiver missing", Type: ir.InvalidType}
 	}
-	methodOwnerKey := typeinfo.TypeText(methodOwner)
 	var baseExpr ir.Expr
 	if implicit := module.Semantics.ImplicitCallArguments[selector.Expr.ID()]; implicit != nil {
 		baseExpr = lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, implicit)
@@ -802,7 +791,7 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	}
 	return &ir.Call{
 		Callee: &ir.Ident{
-			Name:     methodSymbolRefName(methodOwnerKey, methodSym),
+			Name:     symbolName(module, methodSym),
 			Type:     loweredTypeID(ctx, module, fnType),
 			SymbolID: methodSym.ID,
 			Location: ast.LocOf(selector.Name),
@@ -990,22 +979,6 @@ func exprResolvedType(module *project.Module, expr ast.Expr) typeinfo.Type {
 	return module.Semantics.ExprTypes[expr.ID()]
 }
 
-func methodFunctionName(targetText, methodName string) string {
-	var b strings.Builder
-	b.WriteString("__impl__")
-	b.WriteString(ir.SanitizeSymbolName(targetText))
-	b.WriteString("__")
-	b.WriteString(methodName)
-	return b.String()
-}
-
-func methodSymbolRefName(targetText string, sym *symbols.Symbol) string {
-	if sym == nil {
-		return ""
-	}
-	return fmt.Sprintf("%s$%d", methodFunctionName(targetText, sym.Name), sym.ID)
-}
-
 func lowerNumberLit(ctx *project.CompilerContext, module *project.Module, node *ast.NumberLit, expectedType typeinfo.Type, loc *source.Location) ir.Expr {
 	if node == nil {
 		return &ir.InvalidExpr{Message: "nil number literal", Type: ir.InvalidType}
@@ -1034,14 +1007,60 @@ func lowerNumberLit(ctx *project.CompilerContext, module *project.Module, node *
 	return &ir.IntLit{Value: integerValue, Type: loweredTypeID(ctx, module, expectedType), Location: loc}
 }
 
-func symbolName(sym *symbols.Symbol) string {
+func symbolName(module *project.Module, sym *symbols.Symbol) string {
 	if sym == nil {
 		return ""
 	}
-	if name, ok := externSymbolName(sym, sym.Name); ok {
-		return name
+	if sym.CompilerOp == "" && (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) {
+		name, external := callableName(module, sym)
+		if external {
+			return name
+		}
+		return fmt.Sprintf("%s$%d", name, sym.ID)
 	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
+}
+
+func callableName(module *project.Module, sym *symbols.Symbol) (string, bool) {
+	if sym == nil || (sym.Kind != symbols.SymbolFunc && sym.Kind != symbols.SymbolMethod) {
+		return "", false
+	}
+	if fn, ok := sym.ASTNode.(*ast.FnDecl); ok {
+		if name, external := ast.FunctionLinkName(fn, sym.Name); external {
+			return name, true
+		}
+	}
+	if module != nil && module.IsEntry && sym.Kind == symbols.SymbolFunc && sym.Name == "main" && sym.DefiningModule == module.DefiningModuleKey() {
+		return "main", false
+	}
+	receiver := ""
+	if sym.Kind == symbols.SymbolMethod {
+		if typ, ok := symbols.GetSymbolType(sym); ok {
+			if fnType, ok := typ.(*typeinfo.FuncType); ok && fnType != nil && len(fnType.Params) > 0 {
+				if target, ok := typeinfo.ReceiverTarget(fnType.Params[0]); ok {
+					receiver = typeinfo.TypeText(target)
+				}
+			}
+		}
+	}
+	components := [...]string{
+		sym.DefiningModule.Origin,
+		sym.DefiningModule.Namespace,
+		sym.DefiningModule.Dependency,
+		sym.DefiningModule.ImportPath,
+		string(sym.Kind),
+		sym.Name,
+		receiver,
+	}
+	var b strings.Builder
+	b.WriteString("__peeper_callable_")
+	for _, component := range components {
+		b.WriteString(strconv.Itoa(len(component)))
+		b.WriteByte('_')
+		b.WriteString(hex.EncodeToString([]byte(component)))
+		b.WriteByte('_')
+	}
+	return b.String(), false
 }
 
 func expandedDefaultBindingResolver(module *project.Module) place.BindingResolver {
@@ -1054,17 +1073,6 @@ func expandedDefaultBindingResolver(module *project.Module) place.BindingResolve
 		}
 		return place.Binding{Symbol: module.Semantics.ResolvedSymbols[ident.ID()]}, true
 	}
-}
-
-func externSymbolName(sym *symbols.Symbol, defaultName string) (string, bool) {
-	if sym == nil {
-		return "", false
-	}
-	fn, ok := sym.ASTNode.(*ast.FnDecl)
-	if !ok {
-		return "", false
-	}
-	return ast.FunctionLinkName(fn, defaultName)
 }
 
 func shouldDiscardBindingValue(sym *symbols.Symbol) bool {
