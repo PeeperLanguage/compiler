@@ -1213,7 +1213,7 @@ func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
 func TestHoverShowsEnumTypeWithMultilineVariants(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "__CURSOR__enum Color {\n\tRed,\n\tGreen,\n\tBlue,\n}\n"
+	src := "__CURSOR__enum Color {\n\tRgb: { red: u8, green: u8, blue: u8 },\n\tTransparent,\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -1221,7 +1221,7 @@ func TestHoverShowsEnumTypeWithMultilineVariants(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "enum {\n  Red,\n  Green,\n  Blue,\n}") {
+	if !strings.Contains(hover.Contents.Value, "enum {\n  Rgb: {red: u8, green: u8, blue: u8},\n  Transparent,\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }

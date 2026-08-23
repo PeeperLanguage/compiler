@@ -103,7 +103,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return t
 
 	case *ast.ScopeResolution:
-		return c.qualifiedScopeType(node)
+		return c.qualifiedScopeType(scope, node)
 
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
@@ -118,6 +118,9 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.StructLit:
 		return c.typeStructLit(scope, node, expected)
+
+	case *ast.VariantLit:
+		return c.typeVariantConstruction(scope, node, node.Case, node.Fields, true)
 
 	case *ast.ArrayLit:
 		return c.typeArrayLit(scope, node)
@@ -603,11 +606,13 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 				"composite literal type must be struct", ast.LocOf(node.Type), "")
 			return &typeinfo.InvalidType{}
 		}
-		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)
+		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		return targetType
 	}
 	targetStruct, targetType := c.expectedStructType(expected)
 	if targetStruct != nil {
-		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)
+		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		return targetType
 	}
 	return c.typeStructLitAnonymous(scope, node)
 }
@@ -622,47 +627,113 @@ func (c *checker) expectedStructType(expected typeinfo.Type) (*typeinfo.StructTy
 	return nil, nil
 }
 
-func (c *checker) typeStructLitWithExpected(scope *symbols.Scope, node *ast.StructLit, targetStruct *typeinfo.StructType, targetType typeinfo.Type) typeinfo.Type {
+func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields []ast.StructLitField, targetStruct *typeinfo.StructType, literal string) ([]ast.Expr, bool) {
 	if targetStruct == nil {
-		return &typeinfo.InvalidType{}
+		return nil, false
 	}
-	fieldsByName := make(map[string]ast.StructLitField, len(node.Fields))
-	for _, field := range node.Fields {
+	valid := true
+	fieldsByName := make(map[string]ast.StructLitField, len(fields))
+	for _, field := range fields {
 		if field.Name == nil || field.Name.Name == "" {
 			continue
 		}
 		if _, exists := fieldsByName[field.Name.Name]; exists {
+			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrDuplicateField,
-				"duplicate struct literal field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
+				"duplicate "+literal+" field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
 			continue
 		}
 		fieldsByName[field.Name.Name] = field
 	}
-	for _, targetField := range targetStruct.Fields {
+	ordered := make([]ast.Expr, len(targetStruct.Fields))
+	required := availableFields(targetStruct)
+	for index, targetField := range targetStruct.Fields {
 		field, ok := fieldsByName[targetField.Name]
 		if !ok {
+			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-				"missing struct literal field `"+targetField.Name+"`", ast.LocOf(node), "").
-				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(availableFields(targetType), ", ")))
+				"missing "+literal+" field `"+targetField.Name+"`", ast.LocOf(site), "").
+				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(required, ", ")))
 			continue
 		}
+		ordered[index] = field.Value
+		delete(fieldsByName, targetField.Name)
 		valueType := c.typeExpr(scope, field.Value, targetField.Type)
-		valueType = c.requireValueType(field.Value, valueType, "struct field initializer")
+		valueType = c.requireValueType(field.Value, valueType, literal+" field initializer")
 		if typeinfo.IsInvalidOrUnknown(valueType) {
+			valid = false
 			continue
 		}
 		if !c.assignable(targetField.Type, valueType, field.Value) {
+			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
 					typeinfo.TypeText(valueType), targetField.Name, typeinfo.TypeText(targetField.Type)), ast.LocOf(field.Value), "")
 		}
-		delete(fieldsByName, targetField.Name)
 	}
 	for name, field := range fieldsByName {
+		valid = false
 		c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-			"unknown struct literal field `"+name+"`", ast.LocOf(field.Name), "")
+			"unknown "+literal+" field `"+name+"`", ast.LocOf(field.Name), "")
 	}
-	return targetType
+	return ordered, valid
+}
+
+func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, path *ast.ScopeResolution, fields []ast.StructLitField, braced bool) typeinfo.Type {
+	typePath, caseName, ok := path.EnumVariantMember()
+	if !ok || caseName == nil {
+		return &typeinfo.InvalidType{}
+	}
+	resolved := c.module.Semantics.ResolvedSymbols[path.ID()]
+	if resolved == nil || resolved.Kind != symbols.SymbolVariant || resolved.Name != caseName.Name {
+		return &typeinfo.InvalidType{}
+	}
+	enumType := typeinfo.TypeFromSyntax(typePath, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
+	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return &typeinfo.InvalidType{}
+	}
+
+	caseIndex := -1
+	for index, variant := range descriptor.Cases {
+		if variant.Name == caseName.Name {
+			caseIndex = index
+			break
+		}
+	}
+	if caseIndex < 0 {
+		return &typeinfo.InvalidType{}
+	}
+	selected := descriptor.Cases[caseIndex]
+	if selected.Payload == nil {
+		if braced {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+				"payloadless enum variant `"+caseName.Name+"` does not accept braces", ast.LocOf(site), "remove the braces")
+			return &typeinfo.InvalidType{}
+		}
+		c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{EnumType: enumType, Case: caseIndex}
+		return enumType
+	}
+	if !braced {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
+			"data enum variant `"+caseName.Name+"` requires a braced field initializer", ast.LocOf(site), "initialize its named fields with `{ ... }`")
+		return &typeinfo.InvalidType{}
+	}
+	payload, ok := typeinfo.Underlying(selected.Payload).(*typeinfo.StructType)
+	if !ok || payload == nil {
+		panic("named enum data case does not carry struct payload")
+	}
+	ordered, valid := c.typeLiteralFields(scope, site, fields, payload, "enum variant literal")
+	if !valid {
+		return &typeinfo.InvalidType{}
+	}
+	c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{
+		EnumType: enumType,
+		Case:     caseIndex,
+		Payload:  payload,
+		Fields:   ordered,
+	}
+	return enumType
 }
 
 func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructLit) typeinfo.Type {

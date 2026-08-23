@@ -183,6 +183,80 @@ func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	return module, diag
 }
 
+func TestEnumDeclarationValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "empty enum", source: `enum Empty {}`, want: "enum requires at least one variant"},
+		{name: "lowercase variant", source: `enum Status { ready }`, want: "variant name must be PascalCase"},
+		{name: "duplicate field", source: `enum Result { Ok: { value: i32, value: i64 } }`, want: "variant field `value` already declared"},
+		{name: "unsized field", source: `iface Reader { fn (&Self) read() -> i32 } enum Event { Read: { reader: Reader } }`, want: "enum variant field requires a sized type"},
+		{name: "method field collision", source: `enum Result { Ok: { value: i32 } } fn (self: Result) value() {}`, want: "method `value` conflicts with enum variant data field"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
+	}
+}
+
+func TestEnumConstructorsRecordOrderedSemanticEvidence(t *testing.T) {
+	module, diag := checkTypeModule(t, `enum Result<T> {
+	Ok: { value: T, code: i32 },
+	Pending,
+}
+fn main() {
+	let ok = Result<i32>::Ok{ code = 7, value = 42 };
+	let pending = Result<i32>::Pending;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	ok := fn.Body.Stmts[0].(*ast.LetDecl).Value
+	pending := fn.Body.Stmts[1].(*ast.LetDecl).Value
+	okEvidence, found := module.Semantics.VariantConstructions[ok.ID()]
+	if !found || typeinfo.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
+		okEvidence.Payload == nil || len(okEvidence.Fields) != 2 || ast.ExprText(okEvidence.Fields[0]) != "42" || ast.ExprText(okEvidence.Fields[1]) != "7" {
+		t.Fatalf("Ok construction evidence = %#v", okEvidence)
+	}
+	pendingEvidence, found := module.Semantics.VariantConstructions[pending.ID()]
+	if !found || typeinfo.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
+		pendingEvidence.Payload != nil || len(pendingEvidence.Fields) != 0 {
+		t.Fatalf("Pending construction evidence = %#v", pendingEvidence)
+	}
+}
+
+func TestEnumConstructorDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{}; }`, want: "missing enum variant literal field `value`"},
+		{name: "duplicate field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ value = 1, value = 2 }; }`, want: "duplicate enum variant literal field `value`"},
+		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ item = 1 }; }`, want: "unknown enum variant literal field `item`"},
+		{name: "payloadless braces", source: `enum Result { Pending } fn main() { let value = Result::Pending{}; }`, want: "payloadless enum variant `Pending` does not accept braces"},
+		{name: "data without braces", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok; }`, want: "data enum variant `Ok` requires a braced field initializer"},
+		{name: "missing generic arguments", source: `enum Result<T> { Pending } fn main() { let value = Result::Pending; }`, want: "expects 1 type argument, got 0"},
+		{name: "variant call", source: `enum Result { Pending } fn main() { Result::Pending(); }`, want: "enum variants are not callable"},
+		{name: "variant type", source: `enum Result { Pending } fn Read(value: Result::Pending) {}`, want: "not lowerable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
+	}
+}
+
 func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	if diag == nil {
 		return false

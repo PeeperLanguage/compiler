@@ -155,7 +155,11 @@ func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 		}
 		return "interface(" + strings.Join(methods, ";") + ")"
 	case *typeinfo.EnumType:
-		return "enum(" + strings.Join(node.Variants, ",") + ")"
+		cases := make([]string, len(node.Cases))
+		for index, variant := range node.Cases {
+			cases[index] = variant.Name + ":" + semanticTypeKey(variant.Payload, visiting)
+		}
+		return "enum(" + strings.Join(cases, ",") + ")"
 	case *typeinfo.InvalidType, *typeinfo.UnknownType, *typeinfo.IntegerType,
 		*typeinfo.ByteType, *typeinfo.CharType, *typeinfo.FloatType, *typeinfo.BoolType,
 		*typeinfo.CStrType, *typeinfo.StringType, *typeinfo.NoneType, *typeinfo.AllocatorType,

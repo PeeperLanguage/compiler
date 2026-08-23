@@ -195,7 +195,7 @@ func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
 	consumer := &project.Module{Key: "local:consumer.peep", ModuleScope: symbols.NewScope(nil)}
 	typ := &typeinfo.DefinedType{
 		Name:       "Status",
-		Underlying: &typeinfo.EnumType{Variants: []string{"Ready"}},
+		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}}},
 	}
 	lowered, ok := loweredRuntimeType(consumer, typ, nil).(*typeinfo.DefinedType)
 	if !ok || lowered == nil {
@@ -973,11 +973,39 @@ func TestInternRuntimeTypeUsesSharedVariantDescriptor(t *testing.T) {
 	}
 	enumID := internRuntimeType(types, &typeinfo.DefinedType{
 		Name:       "Status",
-		Underlying: &typeinfo.EnumType{Variants: []string{"Ready", "Waiting"}},
+		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
 	})
 	variant, ok := types.Type(enumID)
 	if !ok || variant.Kind != ir.TypeVariant || variant.Family != ir.VariantFamilyNamed ||
 		variant.Identity != "Status" || len(variant.Cases) != 2 || variant.Cases[0].Name != "Ready" {
 		t.Fatalf("enum runtime type = %#v", variant)
+	}
+}
+
+func TestGenerateHIRLowersEnumConstructorsFromSemanticEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_construction_test"+peeper.SourceExt, "hir_enum_construction_test", `enum Result<T> {
+	Ok: { value: T, code: i32 },
+	Pending,
+}
+fn main() {
+	let ok = Result<i32>::Ok{ code = 7, value = 42 };
+	let pending = Result<i32>::Pending;
+}`)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 2 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	okBinding := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
+	okValue, ok := okBinding.Value.(*ir.VariantMake)
+	if !ok || okValue.Case != 0 {
+		t.Fatalf("Ok value = %#v, want case 0", okBinding.Value)
+	}
+	payload, ok := okValue.Payload.(*ir.StructLit)
+	if !ok || len(payload.Fields) != 2 || payload.Fields[0].String() != "42" || payload.Fields[1].String() != "7" {
+		t.Fatalf("Ok payload = %#v, want declaration-ordered [42, 7]", okValue.Payload)
+	}
+	pendingBinding := out.Funcs[0].Body.Stmts[1].(*hir.Binding)
+	pendingValue, ok := pendingBinding.Value.(*ir.VariantMake)
+	if !ok || pendingValue.Case != 1 || pendingValue.Payload != nil {
+		t.Fatalf("Pending value = %#v, want payloadless case 1", pendingBinding.Value)
 	}
 }

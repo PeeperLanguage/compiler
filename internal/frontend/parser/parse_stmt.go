@@ -60,6 +60,8 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 		stmt = p.parseIfStmt()
 	case token.FOR:
 		stmt = p.parseForStmt()
+	case token.MATCH:
+		stmt = p.parseMatchStmt()
 	case token.RETURN:
 		stmt = p.parseReturnStmt()
 	default:
@@ -117,7 +119,7 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	if start == nil {
 		return nil
 	}
-	cond := p.parseExpr(precLowest)
+	cond := p.parseExprWithControlHeader(precLowest, true)
 	if cond == nil {
 		cond = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 	}
@@ -180,7 +182,7 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	}
 	var cond ast.Expr
 	if !p.at(token.LBRACE) {
-		cond = p.parseExpr(precLowest)
+		cond = p.parseExprWithControlHeader(precLowest, true)
 	}
 	var body *ast.BlockStmt
 	if p.at(token.LBRACE) {
@@ -206,6 +208,102 @@ func (p *Parser) parseForStmt() ast.Stmt {
 		Body:     body,
 		Location: source.NewLocation(p.filePath, start.Start, endTok.End),
 	})
+}
+
+func (p *Parser) parseMatchStmt() ast.Stmt {
+	start := p.consume(token.MATCH, "expected match")
+	if start == nil {
+		return nil
+	}
+	subject := p.parseExprWithControlHeader(precLowest, true)
+	open := p.consume(token.LBRACE, "expected '{' after match subject")
+	if open == nil {
+		return reg(p, &ast.MatchStmt{Subject: subject, Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(subject))})
+	}
+	var arms []*ast.MatchArm
+	for !p.at(token.RBRACE) && !p.at(token.EOF) {
+		for p.at(token.DOC_COMMENT) {
+			p.advance()
+		}
+		casePath := p.parseVariantCasePath()
+		if casePath == nil {
+			p.synchronize(token.FATARROW, token.RBRACE)
+			if !p.at(token.RBRACE) && !p.at(token.EOF) {
+				p.advance()
+			}
+			continue
+		}
+		var fields []ast.MatchPatternField
+		hasData := p.at(token.LBRACE)
+		endPos := ast.EndOf(casePath)
+		if hasData {
+			var end *token.Token
+			fields, end, _ = p.parseMatchPatternFields()
+			endPos = end.End
+		}
+		if p.consume(token.FATARROW, "expected '=>' after match pattern") == nil {
+			p.synchronize(token.LBRACE, token.RBRACE)
+		}
+		body := p.parseBlock()
+		if body != nil {
+			endPos = ast.EndOf(body)
+		}
+		arms = append(arms, reg(p, &ast.MatchArm{
+			Case:     casePath,
+			Fields:   fields,
+			HasData:  hasData,
+			Body:     body,
+			Location: source.NewLocation(p.filePath, ast.StartOf(casePath), endPos),
+		}))
+		if p.match(token.COMMA) {
+			comma := p.prev()
+			p.diag.Add(diagnostics.NewError("match arms do not use commas").
+				WithCode(diagnostics.ErrExpectedToken).
+				WithPrimaryLabel(source.NewLocation(p.filePath, comma.Start, comma.End), "remove this comma"))
+		}
+	}
+	end := p.expectClose(open.Start, token.RBRACE, "{")
+	endPos := open.End
+	if end != nil {
+		endPos = end.End
+	} else if len(arms) > 0 {
+		endPos = ast.EndOf(arms[len(arms)-1])
+	}
+	return reg(p, &ast.MatchStmt{
+		Subject:  subject,
+		Arms:     arms,
+		Location: source.NewLocation(p.filePath, start.Start, endPos),
+	})
+}
+
+func (p *Parser) parseMatchPatternFields() ([]ast.MatchPatternField, *token.Token, bool) {
+	return parseBracedItemList(p, "expected '{' after enum case", "expected '}' after match pattern fields",
+		func() (ast.MatchPatternField, bool) {
+			name := p.parseIdent()
+			if name == nil {
+				return ast.MatchPatternField{}, false
+			}
+			if p.consume(token.ASSIGN, "expected '=' after match pattern field") == nil {
+				return ast.MatchPatternField{}, false
+			}
+			if p.current().Kind == token.IDENT && p.current().Literal == "_" {
+				discard := p.advance()
+				return ast.MatchPatternField{
+					Name:     name,
+					Discard:  true,
+					Location: source.NewLocation(p.filePath, ast.StartOf(name), discard.End),
+				}, true
+			}
+			binding := p.parseIdent()
+			if binding == nil {
+				return ast.MatchPatternField{}, false
+			}
+			return ast.MatchPatternField{
+				Name:     name,
+				Binding:  binding,
+				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(binding)),
+			}, true
+		})
 }
 
 func (p *Parser) parseReturnStmt() ast.Stmt {

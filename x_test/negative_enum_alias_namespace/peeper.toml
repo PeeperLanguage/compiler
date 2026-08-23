@@ -1,0 +1,7 @@
+name = "negative_enum_alias_namespace"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["only enum declarations can qualify variants"]

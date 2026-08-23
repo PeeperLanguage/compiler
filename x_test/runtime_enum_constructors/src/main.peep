@@ -1,0 +1,9 @@
+import "runtime_enum_constructors/result";
+
+fn main() -> i32 {
+    let value = result::Result<i32>::Ok{
+        value = 42,
+    };
+    let _ = result::Result<i32>::Pending;
+    return result::Accept(value);
+}

@@ -94,3 +94,46 @@ func (s *ForStmt) forEachChild(visit func(Node)) {
 	visit(s.Body)
 }
 func (s *ForStmt) loc() *source.Location { return s.Location }
+
+type MatchPatternField struct {
+	Name     *Ident
+	Binding  *Ident
+	Discard  bool
+	Location *source.Location
+}
+
+type MatchArm struct {
+	NodeIDHolder
+	Case     *ScopeResolution
+	Fields   []MatchPatternField
+	HasData  bool
+	Body     *BlockStmt
+	Location *source.Location
+}
+
+func (a *MatchArm) forEachChild(visit func(Node)) {
+	visit(a.Case)
+	for _, field := range a.Fields {
+		visit(field.Name)
+		visit(field.Binding)
+	}
+	visit(a.Body)
+}
+func (a *MatchArm) loc() *source.Location { return a.Location }
+
+type MatchStmt struct {
+	NodeIDHolder
+	Documented
+	Subject  Expr
+	Arms     []*MatchArm
+	Location *source.Location
+}
+
+func (*MatchStmt) stmtNode() {}
+func (s *MatchStmt) forEachChild(visit func(Node)) {
+	visit(s.Subject)
+	for _, arm := range s.Arms {
+		visit(arm)
+	}
+}
+func (s *MatchStmt) loc() *source.Location { return s.Location }

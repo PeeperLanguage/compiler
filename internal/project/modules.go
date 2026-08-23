@@ -99,7 +99,17 @@ type SemanticInfo struct {
 	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
 	ImplicitCallArguments    map[ast.NodeID]typeinfo.Type
 	CompilerCalls            map[ast.NodeID]CompilerCall
+	VariantConstructions     map[ast.NodeID]VariantConstruction
 	OperationFunctions       []*symbols.Symbol
+}
+
+// VariantConstruction is typechecker proof consumed by HIR without resolving
+// source paths or revalidating constructor fields.
+type VariantConstruction struct {
+	EnumType typeinfo.Type
+	Case     int
+	Payload  *typeinfo.StructType
+	Fields   []ast.Expr
 }
 
 // CompilerCall is typechecker-owned dispatch evidence consumed by HIR.
@@ -151,6 +161,7 @@ func NewSemanticInfo() *SemanticInfo {
 		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
 		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
 		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
+		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
 		OperationFunctions:       make([]*symbols.Symbol, 0),
 	}
 }

@@ -1,0 +1,9 @@
+enum Result {
+    Pending,
+}
+
+type Alias = Result;
+
+fn main() {
+    let value = Alias::Pending;
+}

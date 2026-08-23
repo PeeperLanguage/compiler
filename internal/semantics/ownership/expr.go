@@ -88,9 +88,9 @@ func (a *analyzer) checkExpr(
 		a.checkExpr(scope, e.Start, st, useRead, loans, false)
 		a.checkExpr(scope, e.End, st, useRead, loans, false)
 	case *ast.StructLit:
-		for _, field := range e.Fields {
-			a.checkExpr(scope, field.Value, st, useConsume, loans, false)
-		}
+		a.checkLiteralFields(scope, e.Fields, st, loans)
+	case *ast.VariantLit:
+		a.checkLiteralFields(scope, e.Fields, st, loans)
 	case *ast.ArrayLit:
 		for _, value := range e.Values {
 			a.checkExpr(scope, value, st, useConsume, loans, false)
@@ -112,6 +112,12 @@ func (a *analyzer) checkExpr(
 		return
 	default:
 		panic(fmt.Sprintf("ownership: unhandled expression %T", expr))
+	}
+}
+
+func (a *analyzer) checkLiteralFields(scope *symbols.Scope, fields []ast.StructLitField, st state, loans *loanContext) {
+	for _, field := range fields {
+		a.checkExpr(scope, field.Value, st, useConsume, loans, false)
 	}
 }
 
@@ -402,9 +408,15 @@ func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr ast.Expr, st st
 	}
 	switch e := expr.(type) {
 	case *ast.StructLit:
-		for _, field := range e.Fields {
-			a.checkPointerEscape(scope, field.Value, st)
-		}
+		a.checkLiteralPointerEscapes(scope, e.Fields, st)
+	case *ast.VariantLit:
+		a.checkLiteralPointerEscapes(scope, e.Fields, st)
+	}
+}
+
+func (a *analyzer) checkLiteralPointerEscapes(scope *symbols.Scope, fields []ast.StructLitField, st state) {
+	for _, field := range fields {
+		a.checkPointerEscape(scope, field.Value, st)
 	}
 }
 

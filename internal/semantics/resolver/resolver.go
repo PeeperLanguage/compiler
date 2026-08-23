@@ -238,6 +238,9 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		}
 		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
 	case *ast.ScopeResolution:
+		if r.resolveVariantPath(scope, node) {
+			return
+		}
 		if r.resolveScopeResolution(node, false) {
 			return
 		}
@@ -252,6 +255,13 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.StructLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
 			r.resolveScopeResolution(scopedType, true)
+		}
+		for _, field := range node.Fields {
+			r.resolveExpr(scope, field.Value)
+		}
+	case *ast.VariantLit:
+		if !r.resolveVariantPath(scope, node.Case) {
+			r.resolveScopeResolution(node.Case, false)
 		}
 		for _, field := range node.Fields {
 			r.resolveExpr(scope, field.Value)
@@ -325,27 +335,88 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution, allowTypeAr
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "type arguments are not allowed on value paths", ast.LocOf(node), "generic functions and values are not supported")
 		return false
 	}
+	resolved, ok := r.lookupImportedMember(qualifierNode, memberNode, node)
+	if !ok {
+		return false
+	}
+	r.module.Semantics.ResolvedSymbols[node.ID()] = resolved
+	return true
+}
+
+func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResolution) bool {
+	typePath, caseName, variantPath := path.EnumVariantMember()
+	if !variantPath {
+		return false
+	}
+
+	var enumSymbol *symbols.Symbol
+	var enumName *ast.Ident
+	switch enumPath := typePath.(type) {
+	case *ast.NamedType:
+		enumName = path.Segments[0].Name
+		resolved, ok := scope.Lookup(enumPath.Name)
+		if !ok || resolved == nil || resolved.Kind != symbols.SymbolType {
+			return false
+		}
+		enumSymbol = resolved
+	case *ast.AppliedType:
+		enumName = enumPath.Name
+		resolved, ok := scope.Lookup(enumPath.Name.Name)
+		if !ok || resolved == nil || resolved.Kind != symbols.SymbolType {
+			return false
+		}
+		enumSymbol = resolved
+	case *ast.ScopeResolution:
+		qualifier, member, ok := enumPath.ImportMember()
+		if !ok {
+			return false
+		}
+		enumName = member
+		resolved, found := r.lookupImportedMember(qualifier, member, path)
+		if !found {
+			return true
+		}
+		enumSymbol = resolved
+	default:
+		return false
+	}
+
+	if _, declaredEnum := enumSymbol.ASTNode.(*ast.EnumDecl); !declaredEnum || enumSymbol.Scope == nil {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "only enum declarations can qualify variants", ast.LocOf(enumName), "use the enum declaration name directly")
+		return true
+	}
+	variant, ok := enumSymbol.Scope.LookupLocal(caseName.Name)
+	if !ok || variant == nil || variant.Kind != symbols.SymbolVariant {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown variant `"+caseName.Name+"` in enum `"+enumSymbol.Name+"`", ast.LocOf(caseName), "")
+		return true
+	}
+	enumSymbol.Used = true
+	variant.Used = true
+	r.module.Semantics.ResolvedSymbols[enumName.ID()] = enumSymbol
+	r.module.Semantics.ResolvedSymbols[path.ID()] = variant
+	r.module.Semantics.ResolvedSymbols[caseName.ID()] = variant
+	return true
+}
+
+func (r *resolver) lookupImportedMember(qualifierNode, memberNode *ast.Ident, site ast.Node) (*symbols.Symbol, bool) {
 	qualifier := qualifierNode.Name
 	member := memberNode.Name
 	resolved, ok := project.LookupImportedSymbol(r.ctx, r.module, qualifier, member)
 	if !ok || resolved.Symbol == nil {
-		if r.ctx != nil {
-			if _, exists := r.module.Imports[qualifier]; !exists {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(node), "")
-			} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(node), "")
-			} else {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(node), "")
-			}
+		if _, exists := r.module.Imports[qualifier]; !exists {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(site), "")
+		} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(site), "")
+		} else {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(site), "")
 		}
-		return false
+		return nil, false
 	}
 	if !resolved.Symbol.IsPub {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "use of unexported symbol").
+		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(site), "use of unexported symbol").
 			WithSecondaryLabel(resolved.Symbol.Location, "defined here").
 			WithNote("symbols with uppercase are exported otherwise private")
-		return false
+		return nil, false
 	}
-	r.module.Semantics.ResolvedSymbols[node.ID()] = resolved.Symbol
-	return true
+	return resolved.Symbol, true
 }

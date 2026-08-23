@@ -1,0 +1,13 @@
+enum Result {
+    Ok: {
+        value: i32,
+    },
+    Pending,
+}
+
+fn Check(value: Result) -> bool {
+    if value == Result::Ok{ value = 1 } {
+        return true;
+    }
+    return false;
+}

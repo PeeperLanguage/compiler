@@ -143,6 +143,24 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
+	if enumDecl, ok := decl.(*ast.EnumDecl); ok {
+		sym.Scope = symbols.NewScope(nil)
+		if enumType, ok := enumDecl.Type.(*ast.EnumType); ok && enumType != nil {
+			for _, variant := range enumType.Variants {
+				if variant.Name == nil || variant.Name.Name == "" {
+					continue
+				}
+				variantSymbol := symbols.New(variant.Name.Name, symbols.SymbolVariant, variant.Name, variant.Name.Location)
+				variantSymbol.Type = defined
+				variantSymbol.DefiningModule = c.module.DefiningModuleKey()
+				if err := sym.Scope.Declare(variantSymbol); err != nil {
+					problems.ReportRedeclaration(c.ctx.Diagnostics, sym.Scope, err.Error(), variant.Name.Name, variant.Name.Location)
+					continue
+				}
+				c.module.Semantics.ResolvedSymbols[variant.Name.ID()] = variantSymbol
+			}
+		}
+	}
 	c.ctx.RegisterTypeDeclaration(c.module, decl, defined)
 }
 

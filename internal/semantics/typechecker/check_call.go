@@ -55,6 +55,16 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 }
 
 func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
+	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil {
+		if sym := c.module.Semantics.ResolvedSymbols[path.ID()]; sym != nil && sym.Kind == symbols.SymbolVariant {
+			for _, arg := range node.Args {
+				c.typeExpr(scope, arg, nil)
+			}
+			c.ctx.Diagnostics.Add(notCallableError(node.Callee,
+				"enum variants are not callable; use braces for data variants"))
+			return &typeinfo.InvalidType{}
+		}
+	}
 	if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
 		return c.typeSelectorCall(scope, selector, node)
 	}

@@ -476,6 +476,23 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		value := lowerASTExpr(ctx, module, scope, expr, nil)
 		return &ir.Cast{Expr: value, Type: loweredTypeID(ctx, module, expectedType), SourceInfo: ir.SourceInfo{Location: loc}}
 	}
+	if construction, ok := module.Semantics.VariantConstructions[expr.ID()]; ok {
+		variant := &ir.VariantMake{
+			Case: construction.Case,
+			Type: loweredTypeID(ctx, module, construction.EnumType),
+		}
+		if construction.Payload != nil {
+			fields := make([]ir.Expr, len(construction.Fields))
+			for index, field := range construction.Fields {
+				fields[index] = lowerASTExpr(ctx, module, scope, field, construction.Payload.Fields[index].Type)
+			}
+			variant.Payload = &ir.StructLit{
+				Fields: fields,
+				Type:   loweredTypeID(ctx, module, construction.Payload),
+			}
+		}
+		return variant
+	}
 	expectedTypeID := loweredTypeID(ctx, module, expectedType)
 
 	switch node := expr.(type) {
@@ -680,6 +697,9 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 
 	case *ast.StructLit:
 		return lowerStructLiteralExpr(ctx, module, scope, node)
+
+	case *ast.VariantLit:
+		return &ir.InvalidExpr{Message: "enum variant construction evidence missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.ArrayLit:
 		return lowerArrayLiteralExpr(ctx, module, scope, node)

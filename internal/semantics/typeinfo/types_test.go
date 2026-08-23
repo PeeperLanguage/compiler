@@ -428,7 +428,7 @@ func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
 
 	named, ok := VariantDescriptorOf(&DefinedType{
 		Name:       "Status",
-		Underlying: &EnumType{Variants: []string{"Ready", "Waiting"}},
+		Underlying: &EnumType{Cases: []VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
 	})
 	if !ok || named.Family != VariantFamilyNamed || named.Identity != "Status" || len(named.Cases) != 2 ||
 		named.Cases[0].Name != "Ready" || named.Cases[1].Name != "Waiting" {
@@ -436,19 +436,59 @@ func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
 	}
 }
 
+func TestNamedEnumPayloadCapabilitiesFollowEveryCaseField(t *testing.T) {
+	i32 := &IntegerType{Signed: true, Bits: 32}
+	owner := &OwnedPtrType{Target: i32}
+	copyable := &EnumType{Cases: []VariantCase{
+		{Name: "Ready", Payload: &StructType{Fields: []Field{{Name: "value", Type: i32}}}},
+		{Name: "Pending"},
+	}}
+	owned := &EnumType{Cases: []VariantCase{
+		{Name: "Ready", Payload: &StructType{Fields: []Field{{Name: "value", Type: owner}}}},
+		{Name: "Pending"},
+	}}
+	unsized := &EnumType{Cases: []VariantCase{{
+		Name: "Ready",
+		Payload: &StructType{Fields: []Field{{
+			Name: "reader",
+			Type: &InterfaceType{Methods: []Method{{Name: "read"}}},
+		}}},
+	}}}
+	reference := &EnumType{Cases: []VariantCase{{
+		Name: "Borrowed",
+		Payload: &StructType{Fields: []Field{{
+			Name: "value",
+			Type: &RefType{Target: i32},
+		}}},
+	}}}
+
+	if !IsImplicitCopyType(copyable) || IsNoCopyType(copyable) || NeedsDrop(copyable) {
+		t.Fatal("scalar enum payload should remain copyable and require no drop")
+	}
+	if IsImplicitCopyType(owned) || !IsNoCopyType(owned) || !NeedsDrop(owned) {
+		t.Fatal("owned enum payload should be move-only and require drop")
+	}
+	if IsSizedType(unsized) || IsLowerableType(unsized) {
+		t.Fatal("enum payload capabilities must reject unsized cases")
+	}
+	if !ContainsReference(reference) || !ContainsStoredReference(reference) {
+		t.Fatal("enum payload traversal must find stored references")
+	}
+}
+
 func TestNamedEnumCompatibilityUsesDeclarationAndArguments(t *testing.T) {
-	variants := []string{"Ready", "Waiting"}
+	cases := []VariantCase{{Name: "Ready"}, {Name: "Waiting"}}
 	left := &DefinedType{
 		Name: "Status", Identity: "left::Status", Kind: DefinedKindEnum,
-		Underlying: &EnumType{Variants: variants},
+		Underlying: &EnumType{Cases: cases},
 	}
 	right := &DefinedType{
 		Name: "Status", Identity: "right::Status", Kind: DefinedKindEnum,
-		Underlying: &EnumType{Variants: variants},
+		Underlying: &EnumType{Cases: cases},
 	}
 	leftAgain := &DefinedType{
 		Name: "Status", Identity: "left::Status", Kind: DefinedKindEnum,
-		Underlying: &EnumType{Variants: variants},
+		Underlying: &EnumType{Cases: cases},
 	}
 	if SameType(left, right) || Assignable(left, right) {
 		t.Fatal("different enum declarations must remain nominally distinct")
@@ -461,7 +501,7 @@ func TestNamedEnumCompatibilityUsesDeclarationAndArguments(t *testing.T) {
 func TestVariantDescriptorUsesEnumIdentityThroughTransparentAlias(t *testing.T) {
 	status := &DefinedType{
 		Name: "Status", Identity: "module::Status", Kind: DefinedKindEnum,
-		Underlying: &EnumType{Variants: []string{"Ready", "Waiting"}},
+		Underlying: &EnumType{Cases: []VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
 	}
 	alias := &DefinedType{
 		Name: "State", Identity: "module::State", Kind: DefinedKindAlias,

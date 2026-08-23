@@ -144,6 +144,27 @@ func TestSemanticTypeKeyIncludesCallableMetadata(t *testing.T) {
 	}
 }
 
+func TestSemanticTypeKeyIncludesEnumCaseSchemas(t *testing.T) {
+	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	i64 := &typeinfo.IntegerType{Signed: true, Bits: 64}
+	makeEnum := func(fieldName string, fieldType typeinfo.Type) *typeinfo.EnumType {
+		return &typeinfo.EnumType{Cases: []typeinfo.VariantCase{
+			{Name: "Ready", Payload: &typeinfo.StructType{Fields: []typeinfo.Field{{Name: fieldName, Type: fieldType}}}},
+			{Name: "Pending"},
+		}}
+	}
+	base := semanticTypeKey(makeEnum("value", i32), make(map[typeinfo.Type]bool))
+	if base == semanticTypeKey(makeEnum("code", i32), make(map[typeinfo.Type]bool)) {
+		t.Fatal("enum payload field name did not change semantic type key")
+	}
+	if base == semanticTypeKey(makeEnum("value", i64), make(map[typeinfo.Type]bool)) {
+		t.Fatal("enum payload field type did not change semantic type key")
+	}
+	if base == semanticTypeKey(&typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Waiting"}}}, make(map[typeinfo.Type]bool)) {
+		t.Fatal("enum case name did not change semantic type key")
+	}
+}
+
 func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
 	defer func() {
 		if recover() == nil {

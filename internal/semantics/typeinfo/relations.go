@@ -289,6 +289,15 @@ func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool
 					return true
 				}
 			}
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if visit(variant.Payload, true) {
+					return true
+				}
+			}
 		case *InterfaceType:
 			if typ == nil || !traversal.followCallable {
 				return false

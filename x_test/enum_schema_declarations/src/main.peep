@@ -1,0 +1,16 @@
+enum Result<T> {
+    Ok: {
+        value: T,
+    },
+    Error: {
+        message: str,
+    },
+    Pending,
+}
+
+enum Node {
+    Next: {
+        value: *Node,
+    },
+    End,
+}

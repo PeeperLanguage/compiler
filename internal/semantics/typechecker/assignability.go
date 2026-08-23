@@ -277,7 +277,7 @@ func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr a
 // expression. Imported values such as functions must keep their bound type so
 // call analysis can derive argument and return types from the same canonical
 // symbol state used elsewhere in the pipeline.
-func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
+func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolution) typeinfo.Type {
 	if c == nil || node == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -295,6 +295,9 @@ func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 			return &typeinfo.InvalidType{}
 		}
 		sym = resolved.Symbol
+	}
+	if sym.Kind == symbols.SymbolVariant {
+		return c.typeVariantConstruction(scope, node, node, nil, false)
 	}
 	t, ok := symbols.GetSymbolType(sym)
 	if !ok || t == nil {

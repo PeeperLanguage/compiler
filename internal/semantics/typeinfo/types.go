@@ -161,7 +161,7 @@ type InterfaceType struct {
 }
 
 type EnumType struct {
-	Variants []string
+	Cases []VariantCase
 }
 
 func (*InvalidType) TypeNode()       {}
@@ -312,16 +312,13 @@ func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 			},
 		}, true
 	case *EnumType:
-		if variant == nil || len(variant.Variants) == 0 {
+		if variant == nil || len(variant.Cases) == 0 {
 			return VariantDescriptor{}, false
 		}
 		if identity == "" {
 			identity = variant.Text()
 		}
-		cases := make([]VariantCase, len(variant.Variants))
-		for i, name := range variant.Variants {
-			cases[i].Name = name
-		}
+		cases := append([]VariantCase(nil), variant.Cases...)
 		return VariantDescriptor{Family: VariantFamilyNamed, Identity: identity, Cases: cases}, true
 	default:
 		return VariantDescriptor{}, false
@@ -476,7 +473,14 @@ func (t *EnumType) Text() string {
 	if t == nil {
 		return ""
 	}
-	return "enum{" + strings.Join(t.Variants, ", ") + "}"
+	cases := make([]string, len(t.Cases))
+	for index, variant := range t.Cases {
+		cases[index] = variant.Name
+		if variant.Payload != nil {
+			cases[index] += ": " + TypeText(variant.Payload)
+		}
+	}
+	return "enum{" + strings.Join(cases, ", ") + "}"
 }
 
 func TypeText(typ Type) string {

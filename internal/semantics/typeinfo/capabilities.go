@@ -79,16 +79,49 @@ func IsCondition(t Type) bool {
 }
 
 func IsImplicitCopyType(t Type) bool {
-	switch typ := Underlying(t).(type) {
-	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
-		return true
-	case *RefType:
-		return typ != nil && !typ.Mutable
-	case *OptionalType:
-		return typ != nil && IsImplicitCopyType(typ.Inner)
-	default:
-		return false
+	visiting := make(map[*DefinedType]bool)
+	var check func(Type, bool) bool
+	check = func(current Type, enumPayload bool) bool {
+		if defined, ok := current.(*DefinedType); ok {
+			if defined == nil || visiting[defined] {
+				return false
+			}
+			visiting[defined] = true
+			defer delete(visiting, defined)
+			return check(defined.Underlying, enumPayload)
+		}
+		switch typ := Underlying(current).(type) {
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
+			return true
+		case *RefType:
+			return typ != nil && !typ.Mutable
+		case *OptionalType:
+			return typ != nil && check(typ.Inner, false)
+		case *StructType:
+			if typ == nil || !enumPayload {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if !check(field.Type, false) {
+					return false
+				}
+			}
+			return true
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && !check(variant.Payload, true) {
+					return false
+				}
+			}
+			return true
+		default:
+			return false
+		}
 	}
+	return check(t, false)
 }
 
 func IsSizedType(t Type) bool {
@@ -109,7 +142,7 @@ func IsSizedType(t Type) bool {
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
 			return false
-		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *TypeParameterType, *EnumType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *TypeParameterType, *AllocatorType:
 			return true
 		case *OwnedPtrType:
 			return typ != nil && typ.Target != nil
@@ -133,6 +166,16 @@ func IsSizedType(t Type) bool {
 			}
 			for _, field := range typ.Fields {
 				if !check(field.Type) {
+					return false
+				}
+			}
+			return true
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && !check(variant.Payload) {
 					return false
 				}
 			}
@@ -181,6 +224,15 @@ func IsNoCopyType(t Type) bool {
 			}
 			for _, field := range typ.Fields {
 				if check(field.Type) {
+					return true
+				}
+			}
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && check(variant.Payload) {
 					return true
 				}
 			}
@@ -271,7 +323,15 @@ func IsLowerableType(t Type) bool {
 			}
 			return typ.Return == nil || check(typ.Return)
 		case *EnumType:
-			return typ != nil
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && !check(variant.Payload) {
+					return false
+				}
+			}
+			return true
 		default:
 			return false
 		}
@@ -308,6 +368,15 @@ func NeedsDrop(t Type) bool {
 			}
 			for _, field := range typ.Fields {
 				if check(field.Type) {
+					return true
+				}
+			}
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && check(variant.Payload) {
 					return true
 				}
 			}
