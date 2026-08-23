@@ -26,7 +26,7 @@ func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 		LibraryBaseDir: libraryBase,
 	}, nil)
 
-	resolved, err := ctx.ResolveImportPath(nil, "vendor:json")
+	resolved, err := ctx.ResolveImportPath("vendor:json")
 	if err != nil {
 		t.Fatalf("ResolveImportPath() error = %v", err)
 	}
@@ -48,7 +48,7 @@ func TestResolveImportPathRequiresProjectConfigForLocalImports(t *testing.T) {
 		Extension: peeper.SourceExt,
 	}, nil)
 
-	_, err := ctx.ResolveImportPath(nil, "app/util")
+	_, err := ctx.ResolveImportPath("app/util")
 	if err == nil {
 		t.Fatal("expected local import error without project config")
 	}
@@ -73,7 +73,7 @@ func TestResolveImportPathStripsProjectPrefix(t *testing.T) {
 		Extension:   peeper.SourceExt,
 	}, nil)
 
-	resolved, err := ctx.ResolveImportPath(nil, "app/util")
+	resolved, err := ctx.ResolveImportPath("app/util")
 	if err != nil {
 		t.Fatalf("ResolveImportPath() error = %v", err)
 	}

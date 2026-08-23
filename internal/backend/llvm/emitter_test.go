@@ -27,6 +27,8 @@ var (
 	testWindowsAMD64 = mustTestTarget("windows", "amd64")
 )
 
+var _ func([]*mir.Module, *diagnostics.DiagnosticBag) bool = ValidateRuntimeSymbols
+
 type llvmTypeFixture struct {
 	table                                                        *ir.TypeTable
 	void, boolType, cstr, stringType, rawptr, i32                ir.TypeID

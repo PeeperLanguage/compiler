@@ -5,12 +5,16 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/pkg/peeper"
 )
+
+var _ func(*collector, *ast.Ident, ast.Node) = (*collector).collectConcreteTypeDecl
+var _ func(*collector, *ast.Ident, symbols.Kind, ast.Node) = (*collector).collectModuleBinding
 
 func TestCallableSymbolsKeepDefiningModuleKey(t *testing.T) {
 	const filePath = "collector_callable_module_test" + peeper.SourceExt

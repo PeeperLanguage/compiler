@@ -160,7 +160,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 			mirModules = append(mirModules, module.MIR)
 		}
 	}
-	llvm.ValidateRuntimeSymbols(mirModules, finalDiag, ctx.Target)
+	llvm.ValidateRuntimeSymbols(mirModules, finalDiag)
 	ctx.CompletedProjectPhase = phase.Finalize
 	return nil
 }

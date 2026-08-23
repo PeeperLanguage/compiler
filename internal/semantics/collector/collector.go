@@ -42,8 +42,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 func (c *collector) collectNode(node ast.Node) {
 	if decl, ok := node.(ast.TypeDecl); ok {
 		if name := decl.DeclName(); name != nil {
-			typ := decl.UnderlyingType()
-			c.collectConcreteTypeDecl(name, typ, node)
+			c.collectConcreteTypeDecl(name, node)
 			return
 		}
 	}
@@ -51,9 +50,9 @@ func (c *collector) collectNode(node ast.Node) {
 	case *ast.FnDecl:
 		c.collectFnDecl(n)
 	case *ast.LetDecl:
-		c.collectModuleBinding(n.Name, symbols.SymbolVar, n.Type, n)
+		c.collectModuleBinding(n.Name, symbols.SymbolVar, n)
 	case *ast.ConstDecl:
-		c.collectModuleBinding(n.Name, symbols.SymbolConst, n.Type, n)
+		c.collectModuleBinding(n.Name, symbols.SymbolConst, n)
 	default:
 		return
 	}
@@ -102,7 +101,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	}
 }
 
-func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, node ast.Node) {
+func (c *collector) collectConcreteTypeDecl(name *ast.Ident, node ast.Node) {
 	if c == nil || c.module == nil || node == nil {
 		return
 	}
@@ -121,7 +120,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 	}
 }
 
-func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ ast.TypeExpr, node ast.Node) {
+func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, node ast.Node) {
 	if c == nil || c.module == nil || name == nil || name.Name == "" {
 		return
 	}
