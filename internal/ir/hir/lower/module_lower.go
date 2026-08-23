@@ -15,7 +15,6 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/numeric"
@@ -51,7 +50,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 		emittedName, _ := callableName(module, sym)
 		if fn.Body == nil {
-			params, returnType := lowerExternSignature(ctx, module, sym.Scope.(*table.Scope), fn.ParamsWithReceiver(), fn.ReturnType, resolvedFnType)
+			params, returnType := lowerExternSignature(ctx, module, sym.Scope, fn.ParamsWithReceiver(), fn.ReturnType, resolvedFnType)
 			out.Externs = append(out.Externs, hir.Extern{
 				Name:       emittedName,
 				Params:     params,
@@ -71,7 +70,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 	return out
 }
 
-func lowerExternSignature(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, params []ast.Param, fallbackReturnType ast.TypeExpr, resolvedFnType *typeinfo.FuncType) ([]ir.Param, ir.TypeID) {
+func lowerExternSignature(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, params []ast.Param, fallbackReturnType ast.TypeExpr, resolvedFnType *typeinfo.FuncType) ([]ir.Param, ir.TypeID) {
 	loweredParams := make([]ir.Param, 0, len(params))
 	for i, param := range params {
 		name := ""
@@ -102,7 +101,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 	if sym == nil || fn == nil || fn.Body == nil || sym.Scope == nil {
 		return nil
 	}
-	funcScope := sym.Scope.(*table.Scope)
+	funcScope := sym.Scope
 	retType, ok := symbols.GetSymbolType(sym)
 	if ok {
 		if fnType, ok := retType.(*typeinfo.FuncType); ok && fnType != nil {
@@ -144,7 +143,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 	return hirFn
 }
 
-func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Block, block *ast.BlockStmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
+func appendBlock(module *project.Module, parentScope *symbols.Scope, out *hir.Block, block *ast.BlockStmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
 	if out == nil || block == nil {
 		return
 	}
@@ -161,7 +160,7 @@ func appendBlock(module *project.Module, parentScope *table.Scope, out *hir.Bloc
 	}
 }
 
-func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
+func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) {
 	switch node := stmt.(type) {
 	case nil:
 		return
@@ -272,7 +271,7 @@ func appendStmt(module *project.Module, scope *table.Scope, out *hir.Block, stmt
 	}
 }
 
-func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr) *ir.Place {
+func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr) *ir.Place {
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil && selector.Expr != nil && selector.Name != nil {
 		baseType := exprResolvedType(module, selector.Expr)
 		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
@@ -322,7 +321,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *tab
 	}
 }
 
-func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, resultType typeinfo.Type, typeID ir.TypeID) ir.Expr {
+func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, resultType typeinfo.Type, typeID ir.TypeID) ir.Expr {
 	target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
 	if !reference {
 		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: ir.InvalidType, Location: ast.LocOf(expr)}
@@ -352,7 +351,7 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	return &ir.AddrOf{Place: value, Type: typeID, Location: ast.LocOf(expr)}
 }
 
-func lowerImplicitReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, resultType typeinfo.Type) ir.Expr {
+func lowerImplicitReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, resultType typeinfo.Type) ir.Expr {
 	typeID := loweredTypeID(ctx, module, resultType)
 	if _, _, borrowed := typeinfo.ReferenceTarget(typeinfo.Underlying(exprResolvedType(module, expr))); borrowed {
 		return lowerASTExpr(ctx, module, scope, expr, nil)
@@ -360,7 +359,7 @@ func lowerImplicitReferenceValue(ctx *project.CompilerContext, module *project.M
 	return lowerReferenceValue(ctx, module, scope, expr, resultType, typeID)
 }
 
-func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
+func lowerElse(module *project.Module, scope *symbols.Scope, stmt ast.Stmt, returnType typeinfo.Type, ctx *project.CompilerContext) hir.Stmt {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		block := &hir.Block{Stmts: make([]hir.Stmt, 0), NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)}
@@ -395,7 +394,7 @@ func lowerElse(module *project.Module, scope *table.Scope, stmt ast.Stmt, return
 
 // lowerASTExpr directly lowers an AST expression to an IR expression using
 // the module context's resolved expression types side-table.
-func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expectedType typeinfo.Type) (result ir.Expr) {
+func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, expectedType typeinfo.Type) (result ir.Expr) {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
@@ -673,7 +672,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	}
 }
 
-func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
 	fnType, _ := exprResolvedType(module, call.Callee).(*typeinfo.FuncType)
 	if fnType == nil || len(fnType.Params) != 1 {
 		return &ir.InvalidExpr{Message: "collection function type missing", Type: ir.InvalidType, Location: ast.LocOf(call)}
@@ -738,7 +737,7 @@ func optionalSomeInnerType(module *project.Module, expectedType, resolvedType ty
 	}
 }
 
-func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {
+func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {
 	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
 		return &ir.InvalidExpr{Message: "invalid selector call", Type: ir.InvalidType}
 	}
@@ -802,7 +801,7 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	}
 }
 
-func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, selector *ast.SelectorExpr) ir.Expr {
+func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, selector *ast.SelectorExpr) ir.Expr {
 	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
 		return &ir.InvalidExpr{Message: "invalid selector", Type: ir.InvalidType}
 	}
@@ -829,7 +828,7 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: ir.InvalidType, Location: ast.LocOf(selector)}
 }
 
-func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.IndexExpr) ir.Expr {
+func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.IndexExpr) ir.Expr {
 	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
 		return &ir.InvalidExpr{Message: "invalid index", Type: ir.InvalidType, Location: ast.LocOf(node)}
 	}
@@ -861,7 +860,7 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 	return &ir.Load{Place: lowerPlace(ctx, module, scope, node), NodeID: ir.NodeID(node.ID()), Location: ast.LocOf(node)}
 }
 
-func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.StructLit) ir.Expr {
+func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.StructLit) ir.Expr {
 	if module == nil || node == nil {
 		return &ir.InvalidExpr{Message: "invalid struct literal", Type: ir.InvalidType, Location: ast.LocOf(node)}
 	}
@@ -892,7 +891,7 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 	}
 }
 
-func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.ArrayLit) ir.Expr {
+func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.ArrayLit) ir.Expr {
 	if module == nil || node == nil {
 		return &ir.InvalidExpr{Message: "invalid array literal", Type: ir.InvalidType, Location: ast.LocOf(node)}
 	}
@@ -913,7 +912,7 @@ func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module,
 	}
 }
 
-func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
 	fnType, _ := typeinfo.Underlying(exprResolvedType(module, node.Callee)).(*typeinfo.FuncType)
 	if fnType == nil || len(fnType.Params) != len(node.Args) || len(node.Args) < 2 {
 		return &ir.InvalidExpr{Message: "dynamic-array operation type missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
@@ -954,7 +953,7 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 	return out
 }
 
-func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, node *ast.CallExpr) ir.Expr {
+func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr) ir.Expr {
 	if len(node.Args) < 1 || len(node.Args) > 2 {
 		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 arguments", Type: ir.InvalidType, Location: ast.LocOf(node)}
 	}

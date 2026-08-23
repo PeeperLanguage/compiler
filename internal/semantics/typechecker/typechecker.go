@@ -5,7 +5,6 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -20,7 +19,7 @@ const allowImplicitInterfaceConversion = true
 
 // enclosingFnDecl walks up the scope chain and returns the FnDecl of the
 // enclosing function, or nil if not inside a function body.
-func (c *checker) enclosingFnDecl(scope *table.Scope) *ast.FnDecl {
+func (c *checker) enclosingFnDecl(scope *symbols.Scope) *ast.FnDecl {
 	if c == nil || c.module == nil || c.module.ModuleScope == nil {
 		return nil
 	}

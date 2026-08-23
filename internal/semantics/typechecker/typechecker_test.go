@@ -15,7 +15,6 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/target"
 	"compiler/pkg/peeper"
@@ -832,7 +831,7 @@ fn main() -> i32 {
 	if !ok || sym == nil || sym.Scope == nil {
 		t.Fatalf("expected main function scope")
 	}
-	funcScope := sym.Scope.(*table.Scope)
+	funcScope := sym.Scope
 	myval, ok := funcScope.LookupLocal("myval")
 	if !ok || myval == nil {
 		t.Fatalf("expected myval local symbol")
@@ -861,7 +860,7 @@ fn main() -> i32 {
 	if !ok || sym == nil || sym.Scope == nil {
 		t.Fatalf("expected main function scope")
 	}
-	funcScope := sym.Scope.(*table.Scope)
+	funcScope := sym.Scope
 	myval, ok := funcScope.LookupLocal("myval")
 	if !ok || myval == nil {
 		t.Fatalf("expected myval local symbol")

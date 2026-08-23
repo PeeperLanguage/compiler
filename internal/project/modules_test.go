@@ -10,14 +10,14 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/ownershipresult"
-	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/symbols"
 )
 
 func moduleWithArtifacts() *Module {
 	return &Module{
 		Phase:                     phase.Backend,
 		SemanticExportFingerprint: "semantic API",
-		ModuleScope:               table.New(nil),
+		ModuleScope:               symbols.NewScope(nil),
 		Semantics:                 NewSemanticInfo(),
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		HIR:                       &hir.Module{},

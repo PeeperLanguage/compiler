@@ -12,7 +12,6 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -378,7 +377,7 @@ func lexicalCompletionItems(module *project.Module, cursor source.Position, pref
 	return sortCompletionItems(items)
 }
 
-func completionScope(module *project.Module, line, col int) *table.Scope {
+func completionScope(module *project.Module, line, col int) *symbols.Scope {
 	scope := module.ModuleScope
 	walkModuleAST(module, func(node ast.Node, _ ast.Node) bool {
 		block, ok := node.(*ast.BlockStmt)

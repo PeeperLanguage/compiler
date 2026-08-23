@@ -17,3 +17,11 @@ func TestNewHandlesTypedNilNode(t *testing.T) {
 		t.Fatalf("expected nil location for typed nil node, got %#v", sym.Location)
 	}
 }
+
+func TestFunctionScopeHasConcreteType(t *testing.T) {
+	sym := New("main", SymbolFunc, nil, nil)
+	var scope *Scope = sym.Scope
+	if scope != nil {
+		t.Fatalf("new function scope = %v, want nil", scope)
+	}
+}

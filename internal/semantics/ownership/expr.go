@@ -8,7 +8,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -21,7 +20,7 @@ const (
 )
 
 func (a *analyzer) checkExpr(
-	scope *table.Scope,
+	scope *symbols.Scope,
 	expr ast.Expr,
 	st state,
 	use useKind,
@@ -122,7 +121,7 @@ func (a *analyzer) expandedDefaultBinding(ident *ast.Ident) (place.Binding, bool
 }
 
 func (a *analyzer) checkAddressExpr(
-	scope *table.Scope,
+	scope *symbols.Scope,
 	expr *ast.AddressExpr,
 	st state,
 	loans *loanContext,
@@ -144,7 +143,7 @@ func storageAccessForUse(typ typeinfo.Type, use useKind) storageAccess {
 	return storageRead
 }
 
-func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, use useKind) {
+func (a *analyzer) checkIdent(scope *symbols.Scope, ident *ast.Ident, st state, use useKind) {
 	if scope == nil || ident == nil {
 		return
 	}
@@ -189,7 +188,7 @@ func (a *analyzer) checkIdent(scope *table.Scope, ident *ast.Ident, st state, us
 }
 
 func (a *analyzer) checkSelector(
-	scope *table.Scope,
+	scope *symbols.Scope,
 	selector *ast.SelectorExpr,
 	st state,
 	use useKind,
@@ -227,7 +226,7 @@ func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
 	return false
 }
 
-func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, loans *loanContext) {
+func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state, loans *loanContext) {
 	if call == nil {
 		return
 	}
@@ -271,7 +270,7 @@ func (a *analyzer) checkCall(scope *table.Scope, call *ast.CallExpr, st state, l
 }
 
 func (a *analyzer) checkMethodCall(
-	scope *table.Scope,
+	scope *symbols.Scope,
 	selector *ast.SelectorExpr,
 	call *ast.CallExpr,
 	st state,
@@ -301,7 +300,7 @@ func (a *analyzer) checkMethodCall(
 }
 
 func (a *analyzer) checkCallArgument(
-	scope *table.Scope,
+	scope *symbols.Scope,
 	arg ast.Expr,
 	paramType typeinfo.Type,
 	call *ast.CallExpr,
@@ -355,7 +354,7 @@ func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
 	return a.module.Semantics.ExprTypes[expr.ID()]
 }
 
-func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *table.Scope, value ast.Expr, st state) {
+func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value ast.Expr, st state) {
 	if sym == nil || st.pointers == nil {
 		return
 	}
@@ -375,7 +374,7 @@ func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *table.Scope, 
 	delete(st.pointers, sym)
 }
 
-func (a *analyzer) checkPointerEscape(scope *table.Scope, expr ast.Expr, st state) {
+func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr ast.Expr, st state) {
 	if expr == nil {
 		return
 	}
@@ -391,7 +390,7 @@ func (a *analyzer) checkPointerEscape(scope *table.Scope, expr ast.Expr, st stat
 	}
 }
 
-func (a *analyzer) pointerOrigin(scope *table.Scope, expr ast.Expr, st state) (pointerOrigin, bool) {
+func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) (pointerOrigin, bool) {
 	switch e := expr.(type) {
 	case *ast.AddressExpr:
 		if e.Mode != ast.AddressRaw {

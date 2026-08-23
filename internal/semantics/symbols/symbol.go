@@ -69,7 +69,7 @@ type Symbol struct {
 	DefiningModule DefiningModuleKey
 	Location       *source.Location
 	ASTNode        ast.Node
-	Scope          any // Pointer to table.Scope (only if Kind == SymbolFunc)
+	Scope          *Scope
 }
 
 func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {

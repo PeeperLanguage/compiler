@@ -3,7 +3,6 @@ package place
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -37,7 +36,7 @@ type OriginOptions struct {
 
 // Origins resolves safe-reference dereferences eagerly. Canonical origins never
 // retain a reference binding as storage identity when its referent is known.
-func Origins(scope *table.Scope, expr ast.Expr, opts OriginOptions) []Origin {
+func Origins(scope *symbols.Scope, expr ast.Expr, opts OriginOptions) []Origin {
 	if scope == nil || expr == nil {
 		return nil
 	}

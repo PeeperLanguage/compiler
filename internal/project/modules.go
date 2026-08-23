@@ -14,7 +14,6 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -77,7 +76,7 @@ type Module struct {
 	MIR       *mir.Module
 	LLVMIR    string
 	// Top-level names visible in module.
-	ModuleScope *table.Scope
+	ModuleScope *symbols.Scope
 	// Grouped semantic analysis metadata.
 	Semantics *SemanticInfo
 	// Import alias -> resolved module import.
@@ -85,7 +84,7 @@ type Module struct {
 }
 
 type SemanticInfo struct {
-	BlockScopes     map[ast.NodeID]*table.Scope
+	BlockScopes     map[ast.NodeID]*symbols.Scope
 	ResolvedSymbols map[ast.NodeID]*symbols.Symbol
 	// ExpandedDefaultBindings marks cloned NodeIDs injected by
 	// call-site default expansion. These idents must resolve
@@ -133,7 +132,7 @@ func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
 
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
-		BlockScopes:              make(map[ast.NodeID]*table.Scope),
+		BlockScopes:              make(map[ast.NodeID]*symbols.Scope),
 		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
 		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),

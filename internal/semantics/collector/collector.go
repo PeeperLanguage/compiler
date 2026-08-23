@@ -7,7 +7,6 @@ import (
 	"compiler/internal/project"
 
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -20,7 +19,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 	if c == nil || c.ctx == nil || c.module == nil || mod == nil {
 		return
 	}
-	c.module.ModuleScope = table.New(c.ctx.GlobalScope)
+	c.module.ModuleScope = symbols.NewScope(c.ctx.GlobalScope)
 	c.module.ResetSemanticData()
 	for alias := range c.module.Imports {
 		if alias == "" {
@@ -89,14 +88,14 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		}
 		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
 		sym.DefiningModule = c.module.DefiningModuleKey()
-		sym.Scope = table.New(c.module.ModuleScope)
+		sym.Scope = symbols.NewScope(c.module.ModuleScope)
 		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
 		c.module.Semantics.MethodSymbol[fn.ID()] = sym
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
 	sym.DefiningModule = c.module.DefiningModuleKey()
-	sym.Scope = table.New(c.module.ModuleScope)
+	sym.Scope = symbols.NewScope(c.module.ModuleScope)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return

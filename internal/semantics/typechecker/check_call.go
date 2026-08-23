@@ -10,11 +10,10 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func (c *checker) typeFreeExpr(scope *table.Scope, node *ast.FreeExpr) typeinfo.Type {
+func (c *checker) typeFreeExpr(scope *symbols.Scope, node *ast.FreeExpr) typeinfo.Type {
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -30,7 +29,7 @@ func (c *checker) typeFreeExpr(scope *table.Scope, node *ast.FreeExpr) typeinfo.
 	return nil
 }
 
-func (c *checker) typePrintExpr(scope *table.Scope, node *ast.PrintExpr) typeinfo.Type {
+func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typeinfo.Type {
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -55,7 +54,7 @@ func (c *checker) typePrintExpr(scope *table.Scope, node *ast.PrintExpr) typeinf
 	}
 }
 
-func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
 	if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
 		return c.typeSelectorCall(scope, selector, node)
 	}
@@ -95,7 +94,7 @@ func (c *checker) typeCallExpr(scope *table.Scope, node *ast.CallExpr, expected 
 	return c.callReturnType(node, calleeType)
 }
 
-func (c *checker) typeCollectionCall(scope *table.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
+func (c *checker) typeCollectionCall(scope *symbols.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
 	if len(node.Args) != 1 {
 		for _, arg := range node.Args {
 			c.typeExpr(scope, arg, nil)
@@ -122,7 +121,7 @@ func (c *checker) typeCollectionCall(scope *table.Scope, node *ast.CallExpr, def
 	return c.callReturnType(node, fnType)
 }
 
-func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
+func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
 	op := definition.Operation
 	genericSignature := definition.Signature(nil, c.ctx.Target)
 	if genericSignature == nil {
@@ -177,7 +176,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *table.Scope, node *ast.CallEx
 	return nil
 }
 
-func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo.Type {
+func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
 	const minArgs, maxArgs = 1, 2
 	argCount := len(node.Args)
 	if argCount < minArgs || argCount > maxArgs {
@@ -226,7 +225,7 @@ func (c *checker) typeAllocCall(scope *table.Scope, node *ast.CallExpr) typeinfo
 	return &typeinfo.OwnedPtrType{Target: valueType}
 }
 
-func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
+func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
 	baseType := c.typeExpr(scope, selector.Expr, nil)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
@@ -275,7 +274,7 @@ func (c *checker) typeSelectorCall(scope *table.Scope, selector *ast.SelectorExp
 	return &typeinfo.InvalidType{}
 }
 
-func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
+func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
 	if c == nil || callExpr == nil || calleeType == nil {
 		return
 	}
@@ -356,7 +355,7 @@ func (c *checker) checkCall(scope *table.Scope, receiverExpr ast.Expr, callExpr 
 
 // acceptImplicitCallArgument is the single semantic gate for method receivers
 // and piped argument zero. Ordinary call arguments remain explicit.
-func (c *checker) acceptImplicitCallArgument(scope *table.Scope, expr ast.Expr, argType, paramType typeinfo.Type) bool {
+func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr, argType, paramType typeinfo.Type) bool {
 	refTarget, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
 	if !reference || !c.matchesImplicitCallTarget(refTarget, argType) {
 		return false

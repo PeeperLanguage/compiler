@@ -11,7 +11,6 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/peeper"
@@ -343,7 +342,7 @@ func TestGenerateMIRAppliesOwnershipCleanupPlan(t *testing.T) {
 
 func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 	mod := &hir.Module{Name: "test", Types: mirTypes.table}
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	sym := symbols.New("Name", symbols.SymbolConst, nil, nil)
 	sym.BindType(&typeinfo.CStrType{})
 	if err := scope.Declare(sym); err != nil {
@@ -369,7 +368,7 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 
 func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 	mod := &hir.Module{Name: "test", Types: mirTypes.table}
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	sym := symbols.New("X", symbols.SymbolConst, nil, nil)
 	sym.BindType(&typeinfo.FloatType{Bits: 64})
 	if err := scope.Declare(sym); err != nil {

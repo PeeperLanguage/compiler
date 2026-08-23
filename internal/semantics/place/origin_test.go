@@ -5,7 +5,6 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -49,7 +48,7 @@ func TestPlaceExpressionProjectionGrammar(t *testing.T) {
 }
 
 func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	scopeValue := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := scope.Declare(scopeValue); err != nil {
 		t.Fatal(err)
@@ -72,7 +71,7 @@ func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
 }
 
 func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	base := &ast.Ident{Name: "value"}
 	projection := &ast.SelectorExpr{Expr: base, Name: &ast.Ident{Name: "field"}}
 	tests := []struct {
@@ -125,8 +124,8 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 }
 
 func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
-	moduleScope := table.New(nil)
-	scope := table.New(moduleScope)
+	moduleScope := symbols.NewScope(nil)
+	scope := symbols.NewScope(moduleScope)
 	local := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := scope.Declare(local); err != nil {
 		t.Fatal(err)
@@ -165,7 +164,7 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 }
 
 func TestOriginsPreferResolvedBindingOverShadowingScope(t *testing.T) {
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	callerValue := symbols.New("value", symbols.SymbolVar, nil, nil)
 	declarationValue := symbols.New("value", symbols.SymbolConst, nil, nil)
 	if err := scope.Declare(callerValue); err != nil {
@@ -184,7 +183,7 @@ func TestOriginsPreferResolvedBindingOverShadowingScope(t *testing.T) {
 }
 
 func TestOriginsNormalizeReferenceRootsAndProjections(t *testing.T) {
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	value := symbols.New("value", symbols.SymbolVar, nil, nil)
 	value.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{Name: "items", Type: &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}}}})
 	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
@@ -223,7 +222,7 @@ func TestOriginsNormalizeReferenceRootsAndProjections(t *testing.T) {
 }
 
 func TestOriginsPreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T) {
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
 	inner := &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}
 	owner.BindType(&typeinfo.OwnedPtrType{Target: &typeinfo.ArrayType{Len: "2", Elem: inner}})

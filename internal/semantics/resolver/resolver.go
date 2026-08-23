@@ -8,7 +8,6 @@ import (
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/source"
 )
 
@@ -85,7 +84,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if sym == nil || sym.Scope == nil {
 		return
 	}
-	funcScope := sym.Scope.(*table.Scope)
+	funcScope := sym.Scope
 	params := fn.ParamsWithReceiver()
 	for i, param := range params {
 		if param.Name == nil || param.Name.Name == "" {
@@ -129,7 +128,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	}
 }
 
-func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {
+func (r *resolver) resolveBlock(scope *symbols.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
@@ -139,13 +138,13 @@ func (r *resolver) resolveBlock(scope *table.Scope, block *ast.BlockStmt) {
 	}
 }
 
-func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
+func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 	if stmt == nil {
 		return
 	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		r.resolveBlock(table.New(scope), node)
+		r.resolveBlock(symbols.NewScope(scope), node)
 	case *ast.LetDecl:
 		r.resolveLocalBinding(scope, node.Name, symbols.SymbolVar, node.Value, node, node.Location)
 	case *ast.ConstDecl:
@@ -160,9 +159,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			return
 		}
 		r.resolveExpr(scope, node.Cond)
-		r.resolveBlock(table.New(scope), node.Then)
+		r.resolveBlock(symbols.NewScope(scope), node.Then)
 		if elseBlock, ok := node.Else.(*ast.BlockStmt); ok {
-			r.resolveBlock(table.New(scope), elseBlock)
+			r.resolveBlock(symbols.NewScope(scope), elseBlock)
 			return
 		}
 		if node.Else != nil {
@@ -172,7 +171,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		if node.Cond != nil {
 			r.resolveExpr(scope, node.Cond)
 		}
-		r.resolveBlock(table.New(scope), node.Body)
+		r.resolveBlock(symbols.NewScope(scope), node.Body)
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:
@@ -186,7 +185,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	}
 }
 
-func (r *resolver) resolveLocalBinding(scope *table.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
+func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	sym.Initializing = true
 	if err := scope.Declare(sym); err != nil {
@@ -199,7 +198,7 @@ func (r *resolver) resolveLocalBinding(scope *table.Scope, name *ast.Ident, kind
 	sym.Initializing = false
 }
 
-func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
+func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	if expr == nil {
 		return
 	}
@@ -297,7 +296,7 @@ func Resolve(ctx *project.CompilerContext, module *project.Module) {
 	r.resolveModule()
 }
 
-func (r *resolver) resolveAssignTarget(scope *table.Scope, expr ast.Expr) {
+func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 	switch node := expr.(type) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)

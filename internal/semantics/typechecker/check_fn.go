@@ -7,7 +7,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -19,7 +18,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if sym.Scope == nil {
 		return
 	}
-	funcScope := sym.Scope.(*table.Scope)
+	funcScope := sym.Scope
 	for _, param := range fn.ParamsWithReceiver() {
 		if param.Name == nil {
 			continue
@@ -39,7 +38,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	c.checkBlock(funcScope, fn.Body, returnType)
 }
 
-func (c *checker) checkDefaultParameters(scope *table.Scope, fn *ast.FnDecl) {
+func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl) {
 	if c == nil || scope == nil || fn == nil {
 		return
 	}
@@ -74,7 +73,7 @@ func (c *checker) checkDefaultParameters(scope *table.Scope, fn *ast.FnDecl) {
 	}
 }
 
-func (c *checker) rejectOwnedParameterReferences(scope *table.Scope, fn *ast.FnDecl, current int, expr ast.Expr) {
+func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, current int, expr ast.Expr) {
 	if c == nil || c.module == nil || c.module.Semantics == nil || fn == nil || expr == nil {
 		return
 	}

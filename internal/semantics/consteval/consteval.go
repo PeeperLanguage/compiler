@@ -6,7 +6,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
 )
@@ -58,7 +57,7 @@ func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
 
 // EvaluateExpr computes one semantic constant using expected type information
 // available at the query site. It is valid during and after typechecking.
-func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if ctx == nil || module == nil || expr == nil {
 		return nil, false
 	}
@@ -79,7 +78,7 @@ func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *t
 	return e.evalExpr(scope, expr, expected)
 }
 
-func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *table.Scope) (constvalue.Value, bool) {
+func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (constvalue.Value, bool) {
 	if e == nil || e.module == nil || e.module.Semantics == nil || sym == nil {
 		return nil, false
 	}
@@ -122,7 +121,7 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *table.Scope) (co
 	return value, true
 }
 
-func (e *evaluator) evalExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if node, ok := expr.(*ast.StringLit); ok {
 		typText := "str"
 		if node.CString {

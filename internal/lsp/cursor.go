@@ -4,7 +4,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
@@ -140,7 +139,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	}
 
 	// 4. Resolve in local block/function scopes
-	var scope *table.Scope
+	var scope *symbols.Scope
 	curr := parent
 	for curr != nil {
 		if block, ok := curr.(*ast.BlockStmt); ok {
@@ -163,9 +162,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 		}
 		if containingFn != nil {
 			if sym, ok := module.ModuleScope.Lookup(containingFn.Name.Name); ok && sym != nil && sym.Scope != nil {
-				if fs, ok := sym.Scope.(*table.Scope); ok {
-					scope = fs
-				}
+				scope = sym.Scope
 			}
 		}
 	}

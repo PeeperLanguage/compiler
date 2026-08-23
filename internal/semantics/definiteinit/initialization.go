@@ -6,7 +6,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 )
 
 type state map[symbols.SymbolID]struct{}
@@ -20,14 +19,14 @@ type site struct {
 	cfgSite   *cfg.Site
 	stmt      ast.Stmt
 	condition ast.Expr
-	scope     *table.Scope
+	scope     *symbols.Scope
 }
 
 // Check diagnoses reads not initialized on every reachable CFG predecessor.
 func Check(
 	graphs *cfg.Module,
 	nodes map[ast.NodeID]ast.Node,
-	blockScopes map[ast.NodeID]*table.Scope,
+	blockScopes map[ast.NodeID]*symbols.Scope,
 	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
 	diag *diagnostics.DiagnosticBag,
 ) {
@@ -50,7 +49,7 @@ func analyzeFunction(
 	fn *ast.FnDecl,
 	graph *cfg.Graph,
 	nodes map[ast.NodeID]ast.Node,
-	blockScopes map[ast.NodeID]*table.Scope,
+	blockScopes map[ast.NodeID]*symbols.Scope,
 	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
 	diag *diagnostics.DiagnosticBag,
 ) *functionResult {
@@ -119,7 +118,7 @@ func indexSites(
 	fn *ast.FnDecl,
 	graph *cfg.Graph,
 	nodes map[ast.NodeID]ast.Node,
-	blockScopes map[ast.NodeID]*table.Scope,
+	blockScopes map[ast.NodeID]*symbols.Scope,
 ) (map[cfg.SiteID]*site, []cfg.SiteID, map[symbols.SymbolID]string) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)

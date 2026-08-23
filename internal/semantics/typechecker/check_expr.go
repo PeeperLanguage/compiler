@@ -14,14 +14,13 @@ import (
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
 )
 
 // typeExpr computes the type of an expression using scope lookup, records it in the
 // module's ExprTypes side table for downstream phases, and returns it.
-func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.Type) (resolved typeinfo.Type) {
+func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (resolved typeinfo.Type) {
 	if expr == nil {
 		return nil
 	}
@@ -134,7 +133,7 @@ func (c *checker) typeExpr(scope *table.Scope, expr ast.Expr, expected typeinfo.
 	}
 }
 
-func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeUnaryExpr(scope *symbols.Scope, node *ast.UnaryExpr, expected typeinfo.Type) typeinfo.Type {
 	if node.Op != "+" && node.Op != "-" && node.Op != "!" && node.Op != "~" {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported unary operator `"+node.Op+"`"))
@@ -182,7 +181,7 @@ func (c *checker) typeUnaryExpr(scope *table.Scope, node *ast.UnaryExpr, expecte
 	return argType
 }
 
-func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, expected typeinfo.Type) typeinfo.Type {
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -227,7 +226,7 @@ func (c *checker) typeAddressExpr(scope *table.Scope, node *ast.AddressExpr, exp
 	return &typeinfo.RawPtrType{}
 }
 
-func (c *checker) typeBinaryExpr(scope *table.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
 	operandExpected := expected
 	if binaryResultIsBool(node.Op) {
 		operandExpected = nil
@@ -379,7 +378,7 @@ func isOptionalType(typ typeinfo.Type) bool {
 	return ok
 }
 
-func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) typeinfo.Type {
+func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr) typeinfo.Type {
 	if node == nil || node.Expr == nil || node.Name == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -406,7 +405,7 @@ func (c *checker) typeSelectorExpr(scope *table.Scope, node *ast.SelectorExpr) t
 	return &typeinfo.InvalidType{}
 }
 
-func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinfo.Type {
+func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typeinfo.Type {
 	if node == nil || node.Expr == nil || node.Index == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -459,7 +458,7 @@ func (c *checker) typeIndexExpr(scope *table.Scope, node *ast.IndexExpr) typeinf
 	return elem
 }
 
-func (c *checker) typeRangeIndexExpr(scope *table.Scope, node *ast.IndexExpr, rangeIndex *ast.RangeExpr, baseType typeinfo.Type) typeinfo.Type {
+func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, rangeIndex *ast.RangeExpr, baseType typeinfo.Type) typeinfo.Type {
 	if c == nil || node == nil || rangeIndex == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -549,7 +548,7 @@ func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, 
 	return nil, 0, false
 }
 
-func (c *checker) checkRangeBound(scope *table.Scope, expr ast.Expr) {
+func (c *checker) checkRangeBound(scope *symbols.Scope, expr ast.Expr) {
 	if c == nil || expr == nil {
 		return
 	}
@@ -564,7 +563,7 @@ func (c *checker) checkRangeBound(scope *table.Scope, expr ast.Expr) {
 	}
 }
 
-func (c *checker) typeStructLit(scope *table.Scope, node *ast.StructLit, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expected typeinfo.Type) typeinfo.Type {
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -595,7 +594,7 @@ func (c *checker) expectedStructType(expected typeinfo.Type) (*typeinfo.StructTy
 	return nil, nil
 }
 
-func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.StructLit, targetStruct *typeinfo.StructType, targetType typeinfo.Type) typeinfo.Type {
+func (c *checker) typeStructLitWithExpected(scope *symbols.Scope, node *ast.StructLit, targetStruct *typeinfo.StructType, targetType typeinfo.Type) typeinfo.Type {
 	if targetStruct == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -638,7 +637,7 @@ func (c *checker) typeStructLitWithExpected(scope *table.Scope, node *ast.Struct
 	return targetType
 }
 
-func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit) typeinfo.Type {
+func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructLit) typeinfo.Type {
 	fields := make([]typeinfo.Field, 0, len(node.Fields))
 	seen := make(map[string]struct{}, len(node.Fields))
 	for _, field := range node.Fields {
@@ -661,7 +660,7 @@ func (c *checker) typeStructLitAnonymous(scope *table.Scope, node *ast.StructLit
 	return &typeinfo.StructType{Fields: fields}
 }
 
-func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.Type {
+func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinfo.Type {
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
@@ -706,7 +705,7 @@ func (c *checker) typeArrayLit(scope *table.Scope, node *ast.ArrayLit) typeinfo.
 	return arrayType
 }
 
-func (c *checker) typeAsExpr(scope *table.Scope, node *ast.AsExpr) typeinfo.Type {
+func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Type {
 	if c == nil || node == nil {
 		return nil
 	}
