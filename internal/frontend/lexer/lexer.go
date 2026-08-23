@@ -31,7 +31,7 @@ var regexPatterns = [...]regexPattern{
 	{regexp.MustCompile(`b'(?:\\.|[^'\\])*'`), byteCharHandler},
 	{regexp.MustCompile(`'(?:\\.|[^'\\])*'`), charHandler},
 	{regexp.MustCompile(numeric.NumberTokenPattern), numberHandler},
-	{regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`), identifierHandler},
+	{regexp.MustCompile(token.IdentifierPattern), identifierHandler},
 	{regexp.MustCompile(`::`), defaultHandler(token.DCOLON)},
 	{regexp.MustCompile(`==`), defaultHandler(token.EQ)},
 	{regexp.MustCompile(`!=`), defaultHandler(token.NEQ)},

@@ -80,7 +80,10 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 	if s == nil {
 		return []CompletionItem{}, nil
 	}
-	filePath := uriToPath(string(params.TextDocument.URI))
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return nil, invalidParams(err.Error())
+	}
 	sourceText, err := s.completionSource(filePath)
 	if err != nil {
 		return []CompletionItem{}, nil

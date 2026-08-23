@@ -40,6 +40,19 @@ func TestLookupIdentAndKeywordHelpers(t *testing.T) {
 	}
 }
 
+func TestValidSymbolName(t *testing.T) {
+	for _, name := range []string{"name", "Name2", "snake_case"} {
+		if !IsValidSymbolName(name) {
+			t.Fatalf("valid symbol name %q rejected", name)
+		}
+	}
+	for _, name := range []string{"", "_", "2name", "two words", "éclair", "fn", "let"} {
+		if IsValidSymbolName(name) {
+			t.Fatalf("invalid symbol name %q accepted", name)
+		}
+	}
+}
+
 func TestBuiltinTypeAndStringer(t *testing.T) {
 	if !IsBuiltinType("i32") || IsBuiltinType("Point") {
 		t.Fatalf("IsBuiltinType results unexpected")

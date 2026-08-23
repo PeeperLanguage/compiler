@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
-	"path/filepath"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -43,14 +45,22 @@ func Run(in io.Reader, out io.Writer) error {
 		switch req.Method {
 		case "initialize":
 			var params InitializeParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				if params.RootURI != nil {
-					state.RootDir = uriToPath(string(*params.RootURI))
-				} else if params.RootPath != nil {
-					state.RootDir = *params.RootPath
-				}
-				state.workspace = newWorkspaceIndex(state.RootDir)
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				respErr = invalidParams("Invalid params")
+				break
 			}
+			rootDir := state.RootDir
+			if params.RootURI != nil {
+				rootDir, err = uriToPath(string(*params.RootURI))
+				if err != nil {
+					respErr = invalidParams(err.Error())
+					break
+				}
+			} else if params.RootPath != nil {
+				rootDir = *params.RootPath
+			}
+			state.RootDir = rootDir
+			state.workspace = newWorkspaceIndex(state.RootDir)
 			result = InitializeResult{
 				Capabilities: ServerCapabilities{
 					TextDocumentSync:   1, // Full Sync
@@ -74,20 +84,26 @@ func Run(in io.Reader, out io.Writer) error {
 		case "textDocument/didOpen":
 			var params DidOpenTextDocumentParams
 			if err := json.Unmarshal(req.Params, &params); err == nil {
-				path := uriToPath(string(params.TextDocument.URI))
-				state.applyDocumentSnapshot(path, &params.TextDocument.Text, &params.TextDocument.Version)
-				publishComponentDiagnostics(out, &outMu, state, path, nil)
+				filePath, uriErr := uriToPath(string(params.TextDocument.URI))
+				if uriErr != nil {
+					continue
+				}
+				state.applyDocumentSnapshot(filePath, &params.TextDocument.Text, &params.TextDocument.Version)
+				publishComponentDiagnostics(out, &outMu, state, filePath, nil)
 			}
 			continue
 
 		case "textDocument/didChange":
 			var params DidChangeTextDocumentParams
 			if err := json.Unmarshal(req.Params, &params); err == nil && len(params.ContentChanges) > 0 {
-				path := uriToPath(string(params.TextDocument.URI))
+				filePath, uriErr := uriToPath(string(params.TextDocument.URI))
+				if uriErr != nil {
+					continue
+				}
 				// Under Full Sync, the first change has the entire file text
-				state.applyDocumentSnapshot(path, &params.ContentChanges[0].Text, &params.TextDocument.Version)
-				state.scheduleDiagnosticRefresh(path, diagnosticsDebounceDelay, func() {
-					publishComponentDiagnostics(out, &outMu, state, path, nil)
+				state.applyDocumentSnapshot(filePath, &params.ContentChanges[0].Text, &params.TextDocument.Version)
+				state.scheduleDiagnosticRefresh(filePath, diagnosticsDebounceDelay, func() {
+					publishComponentDiagnostics(out, &outMu, state, filePath, nil)
 				})
 			}
 			continue
@@ -95,9 +111,12 @@ func Run(in io.Reader, out io.Writer) error {
 		case "textDocument/didClose":
 			var params TextDocumentIdentifier
 			if err := json.Unmarshal(req.Params, &params); err == nil {
-				path := uriToPath(string(params.URI))
-				state.applyDocumentSnapshot(path, nil, nil)
-				publishComponentDiagnostics(out, &outMu, state, path, nil)
+				filePath, uriErr := uriToPath(string(params.URI))
+				if uriErr != nil {
+					continue
+				}
+				state.applyDocumentSnapshot(filePath, nil, nil)
+				publishComponentDiagnostics(out, &outMu, state, filePath, nil)
 			}
 			continue
 
@@ -106,10 +125,10 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				result, err = state.HandleHover(params)
 				if err != nil {
-					respErr = &ResponseError{Code: -32603, Message: err.Error()}
+					respErr = responseErrorFrom(err)
 				}
 			} else {
-				respErr = &ResponseError{Code: -32602, Message: "Invalid params"}
+				respErr = invalidParams("Invalid params")
 			}
 
 		case "textDocument/definition":
@@ -117,10 +136,10 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				result, err = state.HandleDefinition(params)
 				if err != nil {
-					respErr = &ResponseError{Code: -32603, Message: err.Error()}
+					respErr = responseErrorFrom(err)
 				}
 			} else {
-				respErr = &ResponseError{Code: -32602, Message: "Invalid params"}
+				respErr = invalidParams("Invalid params")
 			}
 
 		case "textDocument/completion":
@@ -128,10 +147,10 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				result, err = state.HandleCompletion(params)
 				if err != nil {
-					respErr = &ResponseError{Code: -32603, Message: err.Error()}
+					respErr = responseErrorFrom(err)
 				}
 			} else {
-				respErr = &ResponseError{Code: -32602, Message: "Invalid params"}
+				respErr = invalidParams("Invalid params")
 			}
 
 		case "textDocument/rename":
@@ -139,10 +158,10 @@ func Run(in io.Reader, out io.Writer) error {
 			if err := json.Unmarshal(req.Params, &params); err == nil {
 				result, err = state.HandleRename(params)
 				if err != nil {
-					respErr = &ResponseError{Code: -32603, Message: err.Error()}
+					respErr = responseErrorFrom(err)
 				}
 			} else {
-				respErr = &ResponseError{Code: -32602, Message: "Invalid params"}
+				respErr = invalidParams("Invalid params")
 			}
 
 		case "shutdown":
@@ -187,23 +206,58 @@ func publishComponentDiagnostics(w io.Writer, writeMu *sync.Mutex, state *Server
 	publishDiagnosticSnapshot(w, writeMu, state, state.diagnosticSnapshot(entryFile, files))
 }
 
-func uriToPath(uri string) string {
-	if after, ok := strings.CutPrefix(uri, "file://"); ok {
-		path := after
-		if len(path) > 2 && path[0] == '/' && path[2] == ':' {
-			path = path[1:]
-		}
-		return filepath.Clean(filepath.ToSlash(path))
+func uriToPath(rawURI string) (string, error) {
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return "", fmt.Errorf("invalid file URI: %w", err)
 	}
-	return uri
+	if !strings.EqualFold(parsed.Scheme, "file") || parsed.Opaque != "" {
+		return "", fmt.Errorf("invalid file URI scheme %q", parsed.Scheme)
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(rawURI, "#") {
+		return "", fmt.Errorf("file URI must not contain query or fragment")
+	}
+	escapedPath := parsed.EscapedPath()
+	if escapedPath == "" {
+		return "", fmt.Errorf("file URI path is empty")
+	}
+	decodedPath, err := url.PathUnescape(escapedPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid file URI path: %w", err)
+	}
+	if strings.ContainsRune(decodedPath, '\x00') {
+		return "", fmt.Errorf("file URI path contains NUL")
+	}
+	decodedPath = strings.ReplaceAll(decodedPath, `\`, "/")
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		return "//" + parsed.Host + path.Clean("/"+strings.TrimPrefix(decodedPath, "/")), nil
+	}
+	clean := path.Clean(decodedPath)
+	if len(clean) >= 3 && clean[0] == '/' && isWindowsDrivePath(clean[1:]) {
+		clean = clean[1:]
+	}
+	return clean, nil
 }
 
-func pathToURI(path string) string {
-	clean := filepath.ToSlash(filepath.Clean(path))
-	if len(clean) > 0 && clean[0] != '/' {
-		return "file:///" + clean
+func pathToURI(filePath string) string {
+	slashPath := strings.ReplaceAll(filePath, `\`, "/")
+	if strings.HasPrefix(slashPath, "//") {
+		authority, rest, _ := strings.Cut(strings.TrimPrefix(slashPath, "//"), "/")
+		return (&url.URL{Scheme: "file", Host: authority, Path: path.Clean("/" + rest)}).String()
 	}
-	return "file://" + clean
+	clean := path.Clean(slashPath)
+	if isWindowsDrivePath(clean) || !strings.HasPrefix(clean, "/") {
+		clean = "/" + clean
+	}
+	return (&url.URL{Scheme: "file", Path: clean}).String()
+}
+
+func isWindowsDrivePath(filePath string) bool {
+	if len(filePath) < 3 || filePath[1] != ':' || filePath[2] != '/' {
+		return false
+	}
+	drive := filePath[0]
+	return drive >= 'A' && drive <= 'Z' || drive >= 'a' && drive <= 'z'
 }
 
 func publishDiagnosticSnapshot(w io.Writer, writeMu *sync.Mutex, state *ServerState, snapshot *diagnosticSnapshot) {

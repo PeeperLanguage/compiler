@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/token"
 	"compiler/internal/source"
 )
 
@@ -24,9 +25,12 @@ func symLocationsMatch(l1, l2 *source.Location) bool {
 }
 
 func (s *ServerState) HandleDefinition(params DefinitionParams) ([]Location, error) {
-	path := uriToPath(string(params.TextDocument.URI))
-	ctx, mod := s.currentCompiledModule(path)
-	text, ok := sourceTextForFile(ctx, path)
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return nil, invalidParams(err.Error())
+	}
+	ctx, mod := s.currentCompiledModule(filePath)
+	text, ok := sourceTextForFile(ctx, filePath)
 	position, positionOK := sourcePositionAt(text, params.Position)
 	if !ok || !positionOK {
 		return nil, nil
@@ -58,9 +62,15 @@ func (s *ServerState) HandleDefinition(params DefinitionParams) ([]Location, err
 }
 
 func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) {
-	path := uriToPath(string(params.TextDocument.URI))
-	ctx, mod := s.currentCompiledModule(path)
-	text, ok := sourceTextForFile(ctx, path)
+	if !token.IsValidSymbolName(params.NewName) {
+		return nil, invalidParams("invalid rename target")
+	}
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return nil, invalidParams(err.Error())
+	}
+	ctx, mod := s.currentCompiledModule(filePath)
+	text, ok := sourceTextForFile(ctx, filePath)
 	position, positionOK := sourcePositionAt(text, params.Position)
 	if !ok || !positionOK {
 		return nil, nil

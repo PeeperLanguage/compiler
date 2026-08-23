@@ -3,6 +3,7 @@ package lsp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -30,6 +31,25 @@ type ResponseError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
+}
+
+func (e *ResponseError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func invalidParams(message string) *ResponseError {
+	return &ResponseError{Code: -32602, Message: message}
+}
+
+func responseErrorFrom(err error) *ResponseError {
+	var protocolErr *ResponseError
+	if errors.As(err, &protocolErr) {
+		return protocolErr
+	}
+	return &ResponseError{Code: -32603, Message: err.Error()}
 }
 
 type Notification struct {

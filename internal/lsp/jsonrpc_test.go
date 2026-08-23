@@ -78,8 +78,12 @@ func TestServerResponseResultAndErrorExclusivity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			id := json.RawMessage("1")
+			params := json.RawMessage(nil)
+			if tt.method == "initialize" {
+				params = json.RawMessage(`{}`)
+			}
 			var input bytes.Buffer
-			if err := writeMessage(&input, Request{JSONRPC: "2.0", ID: &id, Method: tt.method}); err != nil {
+			if err := writeMessage(&input, Request{JSONRPC: "2.0", ID: &id, Method: tt.method, Params: params}); err != nil {
 				t.Fatalf("write request: %v", err)
 			}
 			var output bytes.Buffer
