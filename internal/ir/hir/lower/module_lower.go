@@ -302,7 +302,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 				if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
 					indexType, ok := ctx.Types.LookupText(intConst.TypeText())
 					if ok {
-						indexExpr = &ir.IntLit{Value: intConst.Text(), Type: indexType, Location: ast.LocOf(index.Index)}
+						indexExpr = &ir.IntLit{Value: intConst.Text(), Type: indexType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(index.Index)}}
 					}
 				}
 			}
@@ -324,7 +324,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, resultType typeinfo.Type, typeID ir.TypeID) ir.Expr {
 	target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType))
 	if !reference {
-		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: ir.InvalidType, Location: ast.LocOf(expr)}
+		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 	}
 	borrowAsView := false
 	switch runtimeTarget := loweredRuntimeType(module, target, nil).(type) {
@@ -338,17 +338,17 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	}
 	if !place.Addressable(scope, expr, exprType, expandedDefaultBindingResolver(module)) {
 		return &ir.TempBorrow{
-			Value:    lowerASTExpr(ctx, module, scope, expr, target),
-			Slice:    borrowAsView,
-			Type:     typeID,
-			Location: ast.LocOf(expr),
+			Value:      lowerASTExpr(ctx, module, scope, expr, target),
+			Slice:      borrowAsView,
+			Type:       typeID,
+			SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)},
 		}
 	}
 	value := lowerPlace(ctx, module, scope, expr)
 	if borrowAsView {
-		return &ir.SliceView{Source: value, Type: typeID, Location: ast.LocOf(expr)}
+		return &ir.SliceView{Source: value, Type: typeID, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 	}
-	return &ir.AddrOf{Place: value, Type: typeID, Location: ast.LocOf(expr)}
+	return &ir.AddrOf{Place: value, Type: typeID, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 }
 
 func lowerImplicitReferenceValue(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, resultType typeinfo.Type) ir.Expr {
@@ -411,9 +411,9 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	}
 	if innerExpected := optionalSomeInnerType(module, expectedType, resolvedType, expr); innerExpected != nil {
 		return &ir.OptionalSome{
-			Value:    lowerASTExpr(ctx, module, scope, expr, innerExpected),
-			Type:     loweredTypeID(ctx, module, expectedType),
-			Location: loc,
+			Value:      lowerASTExpr(ctx, module, scope, expr, innerExpected),
+			Type:       loweredTypeID(ctx, module, expectedType),
+			SourceInfo: ir.SourceInfo{Location: loc},
 		}
 	}
 	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
@@ -422,7 +422,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	if expectedType != nil && resolvedType != nil && !typeinfo.SameType(expectedType, resolvedType) &&
 		typeinfo.CheckNumericCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
 		value := lowerASTExpr(ctx, module, scope, expr, nil)
-		return &ir.Cast{Expr: value, Type: loweredTypeID(ctx, module, expectedType), Location: loc}
+		return &ir.Cast{Expr: value, Type: loweredTypeID(ctx, module, expectedType), SourceInfo: ir.SourceInfo{Location: loc}}
 	}
 	expectedTypeID := loweredTypeID(ctx, module, expectedType)
 
@@ -443,23 +443,23 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 				t = loweredTypeID(ctx, module, &typeinfo.StringType{})
 			}
 		}
-		return &ir.StringLit{Value: node.Value, Type: t, Location: loc}
+		return &ir.StringLit{Value: node.Value, Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.ByteLit:
-		return &ir.IntLit{Value: fmt.Sprintf("%d", node.Value[0]), Type: loweredTypeID(ctx, module, &typeinfo.ByteType{}), Location: loc}
+		return &ir.IntLit{Value: fmt.Sprintf("%d", node.Value[0]), Type: loweredTypeID(ctx, module, &typeinfo.ByteType{}), SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.CharLit:
 		runeValue, _ := utf8.DecodeRuneInString(node.Value)
-		return &ir.IntLit{Value: fmt.Sprintf("%d", runeValue), Type: loweredTypeID(ctx, module, &typeinfo.CharType{}), Location: loc}
+		return &ir.IntLit{Value: fmt.Sprintf("%d", runeValue), Type: loweredTypeID(ctx, module, &typeinfo.CharType{}), SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.BoolLit:
-		return &ir.BoolLit{Value: node.Value, Type: loweredTypeID(ctx, module, &typeinfo.BoolType{}), Location: loc}
+		return &ir.BoolLit{Value: node.Value, Type: loweredTypeID(ctx, module, &typeinfo.BoolType{}), SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.NoneLit:
 		if none := lowerOptionalNone(ctx, expectedTypeID, loc); none != nil {
 			return none
 		}
-		return &ir.InvalidExpr{Message: "`none` requires optional context", Type: ir.InvalidType, Location: loc}
+		return &ir.InvalidExpr{Message: "`none` requires optional context", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.Ident:
 		var sym *symbols.Symbol
@@ -472,7 +472,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			sym, ok = scope.Lookup(node.Name)
 		}
 		if !ok || sym == nil {
-			return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: ir.InvalidType, Location: loc}
+			return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 		}
 		t := resolvedTypeID
 		if t == ir.InvalidType {
@@ -482,7 +482,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 				t = ir.InvalidType
 			}
 		}
-		return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, Location: loc}
+		return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.ScopeResolution:
 		var sym *symbols.Symbol
@@ -503,9 +503,9 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 					t = ir.InvalidType
 				}
 			}
-			return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, Location: loc}
+			return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, SourceInfo: ir.SourceInfo{Location: loc}}
 		}
-		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.Module.Name + "::" + node.Name.Name, Type: ir.InvalidType, Location: loc}
+		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.Module.Name + "::" + node.Name.Name, Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.UnaryExpr:
 		arg := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
@@ -516,7 +516,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 				t = loweredTypeID(ctx, module, &typeinfo.BoolType{})
 			}
 		}
-		return &ir.Unary{Op: node.Op, Arg: arg, Type: t, Location: loc}
+		return &ir.Unary{Op: node.Op, Arg: arg, Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.AddressExpr:
 		t := resolvedTypeID
@@ -534,7 +534,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		if node.Mode == ast.AddressShared || node.Mode == ast.AddressMutable {
 			return lowerReferenceValue(ctx, module, scope, node.Expr, resolvedType, t)
 		}
-		return &ir.AddrOf{Place: lowerPlace(ctx, module, scope, node.Expr), Type: t, Location: loc}
+		return &ir.AddrOf{Place: lowerPlace(ctx, module, scope, node.Expr), Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.BinaryExpr:
 		leftExpected := expectedType
@@ -582,7 +582,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 				t = loweredTypeID(ctx, module, &typeinfo.BoolType{})
 			}
 		}
-		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t, Location: loc}
+		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.CallExpr:
 		if compilerCall, ok := module.Semantics.CompilerCalls[node.ID()]; ok {
@@ -636,13 +636,13 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 				}
 			}
 		}
-		return &ir.Call{Callee: calleeExpr, Args: args, Type: t, Location: loc}
+		return &ir.Call{Callee: calleeExpr, Args: args, Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.PrintExpr:
-		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Newline: node.Newline, Location: loc}
+		return &ir.Print{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Newline: node.Newline, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.FreeExpr:
-		return &ir.Drop{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), Location: loc}
+		return &ir.Drop{Value: lowerASTExpr(ctx, module, scope, node.Expr, nil), SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.AsExpr:
 		t := resolvedTypeID
@@ -650,7 +650,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			t = loweredTypeID(ctx, module, typeinfo.TypeFromSyntax(node.TypeExpr, typeinfo.SyntaxOptions{Target: ctx.Target, AllowAbstractSelf: true}))
 		}
 		subExpr := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
-		return &ir.Cast{Expr: subExpr, Type: t, Location: loc}
+		return &ir.Cast{Expr: subExpr, Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.SelectorExpr:
 		return lowerSelectorExpr(ctx, module, scope, node)
@@ -665,7 +665,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return lowerArrayLiteralExpr(ctx, module, scope, node)
 
 	case *ast.BadExpr:
-		return &ir.InvalidExpr{Message: "unsupported expression", Type: ir.InvalidType, Location: loc}
+		return &ir.InvalidExpr{Message: "unsupported expression", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	default:
 		panic(fmt.Sprintf("HIR lowering: unhandled expression %T", expr))
@@ -675,7 +675,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
 	fnType, _ := exprResolvedType(module, call.Callee).(*typeinfo.FuncType)
 	if fnType == nil || len(fnType.Params) != 1 {
-		return &ir.InvalidExpr{Message: "collection function type missing", Type: ir.InvalidType, Location: ast.LocOf(call)}
+		return &ir.InvalidExpr{Message: "collection function type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)}}
 	}
 	value := call.Args[0]
 	var receiver ir.Expr
@@ -686,21 +686,21 @@ func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, s
 	}
 	switch op {
 	case symbols.CompilerOpLen:
-		return &ir.Len{Value: receiver, Type: loweredReturnTypeID(ctx, module, fnType.Return), Location: ast.LocOf(call)}
+		return &ir.Len{Value: receiver, Type: loweredReturnTypeID(ctx, module, fnType.Return), SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)}}
 	case symbols.CompilerOpAsBytes:
 		return &ir.SliceView{
-			Source:   &ir.Place{Root: receiver, Type: receiver.TypeID(), Location: ast.LocOf(value)},
-			Type:     loweredReturnTypeID(ctx, module, fnType.Return),
-			Location: ast.LocOf(call),
+			Source:     &ir.Place{Root: receiver, Type: receiver.TypeID(), Location: ast.LocOf(value)},
+			Type:       loweredReturnTypeID(ctx, module, fnType.Return),
+			SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 		}
 	case symbols.CompilerOpAsChars:
 		return &ir.StringChars{
-			Value:    receiver,
-			Type:     loweredReturnTypeID(ctx, module, fnType.Return),
-			Location: ast.LocOf(call),
+			Value:      receiver,
+			Type:       loweredReturnTypeID(ctx, module, fnType.Return),
+			SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 		}
 	default:
-		return &ir.InvalidExpr{Message: "unsupported collection function lowering", Type: ir.InvalidType, Location: ast.LocOf(call)}
+		return &ir.InvalidExpr{Message: "unsupported collection function lowering", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)}}
 	}
 }
 
@@ -712,7 +712,7 @@ func lowerOptionalNone(ctx *project.CompilerContext, typeID ir.TypeID, loc *sour
 	if !ok || typ.Kind != ir.TypeOptional {
 		return nil
 	}
-	return &ir.ZeroValue{Type: typeID, Location: loc}
+	return &ir.ZeroValue{Type: typeID, SourceInfo: ir.SourceInfo{Location: loc}}
 }
 
 func optionalSomeInnerType(module *project.Module, expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
@@ -757,12 +757,12 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 			consumes = !borrowedReceiver
 		}
 		return &ir.InterfaceCall{
-			Base:     lowerASTExpr(ctx, module, scope, selector.Expr, nil),
-			Slot:     slot,
-			Args:     args,
-			Consumes: consumes,
-			Type:     loweredReturnTypeID(ctx, module, iface.Return),
-			Location: ast.LocOf(call),
+			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+			Slot:       slot,
+			Args:       args,
+			Consumes:   consumes,
+			Type:       loweredReturnTypeID(ctx, module, iface.Return),
+			SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 		}
 	}
 	methodSym := module.Semantics.ResolvedSymbols[selector.Name.ID()]
@@ -790,14 +790,14 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	}
 	return &ir.Call{
 		Callee: &ir.Ident{
-			Name:     symbolName(module, methodSym),
-			Type:     loweredTypeID(ctx, module, fnType),
-			SymbolID: methodSym.ID,
-			Location: ast.LocOf(selector.Name),
+			Name:       symbolName(module, methodSym),
+			Type:       loweredTypeID(ctx, module, fnType),
+			SymbolID:   methodSym.ID,
+			SourceInfo: ir.SourceInfo{Location: ast.LocOf(selector.Name)},
 		},
-		Args:     args,
-		Type:     loweredReturnTypeID(ctx, module, fnType.Return),
-		Location: ast.LocOf(call),
+		Args:       args,
+		Type:       loweredReturnTypeID(ctx, module, fnType.Return),
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 	}
 }
 
@@ -815,22 +815,21 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 			return exprResolvedType(module, expr)
 		}
 		if throughPtr || place.Addressable(scope, selector.Expr, exprType, expandedDefaultBindingResolver(module)) {
-			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}
+			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
 		}
 		return &ir.Field{
-			Base:     lowerASTExpr(ctx, module, scope, selector.Expr, nil),
-			Index:    fieldIndex,
-			NodeID:   ir.NodeID(selector.ID()),
-			Type:     loweredTypeID(ctx, module, field.Type),
-			Location: ast.LocOf(selector),
+			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+			Index:      fieldIndex,
+			SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)},
+			Type:       loweredTypeID(ctx, module, field.Type),
 		}
 	}
-	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: ir.InvalidType, Location: ast.LocOf(selector)}
+	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(selector)}}
 }
 
 func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.IndexExpr) ir.Expr {
 	if module == nil || node == nil || node.Expr == nil || node.Index == nil {
-		return &ir.InvalidExpr{Message: "invalid index", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "invalid index", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	if rangeIndex, ok := node.Index.(*ast.RangeExpr); ok && rangeIndex != nil {
 		var start, end ir.Expr
@@ -854,20 +853,20 @@ func lowerIndexExpr(ctx *project.CompilerContext, module *project.Module, scope 
 			End:          end,
 			EndExclusive: rangeIndex.EndExclusive,
 			Type:         loweredTypeID(ctx, module, resultType),
-			Location:     ast.LocOf(node),
+			SourceInfo:   ir.SourceInfo{Location: ast.LocOf(node)},
 		}
 	}
-	return &ir.Load{Place: lowerPlace(ctx, module, scope, node), NodeID: ir.NodeID(node.ID()), Location: ast.LocOf(node)}
+	return &ir.Load{Place: lowerPlace(ctx, module, scope, node), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(node.ID()), Location: ast.LocOf(node)}}
 }
 
 func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.StructLit) ir.Expr {
 	if module == nil || node == nil {
-		return &ir.InvalidExpr{Message: "invalid struct literal", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "invalid struct literal", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	resolved := exprResolvedType(module, node)
 	strct, ok := loweredRuntimeType(module, resolved, nil).(*typeinfo.StructType)
 	if !ok || strct == nil {
-		return &ir.InvalidExpr{Message: "struct literal type missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "struct literal type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	fieldsByName := make(map[string]ast.Expr, len(node.Fields))
 	for _, field := range node.Fields {
@@ -880,42 +879,42 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 	for _, field := range strct.Fields {
 		value, ok := fieldsByName[field.Name]
 		if !ok {
-			return &ir.InvalidExpr{Message: "struct literal field missing during lowering", Type: ir.InvalidType, Location: ast.LocOf(node)}
+			return &ir.InvalidExpr{Message: "struct literal field missing during lowering", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 		}
 		values = append(values, lowerASTExpr(ctx, module, scope, value, field.Type))
 	}
 	return &ir.StructLit{
-		Fields:   values,
-		Type:     loweredTypeID(ctx, module, resolved),
-		Location: ast.LocOf(node),
+		Fields:     values,
+		Type:       loweredTypeID(ctx, module, resolved),
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)},
 	}
 }
 
 func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.ArrayLit) ir.Expr {
 	if module == nil || node == nil {
-		return &ir.InvalidExpr{Message: "invalid array literal", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "invalid array literal", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	resolved := exprResolvedType(module, node)
 	array, ok := loweredRuntimeType(module, resolved, nil).(*typeinfo.ArrayType)
 	if !ok || array == nil || array.Elem == nil {
-		return &ir.InvalidExpr{Message: "array literal type missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "array literal type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	values := make([]ir.Expr, 0, len(node.Values))
 	for _, value := range node.Values {
 		values = append(values, lowerASTExpr(ctx, module, scope, value, array.Elem))
 	}
 	return &ir.ArrayLit{
-		Values:   values,
-		Dynamic:  array.Shape == typeinfo.ArrayOwner,
-		Type:     loweredTypeID(ctx, module, resolved),
-		Location: ast.LocOf(node),
+		Values:     values,
+		Dynamic:    array.Shape == typeinfo.ArrayOwner,
+		Type:       loweredTypeID(ctx, module, resolved),
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)},
 	}
 }
 
 func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
 	fnType, _ := typeinfo.Underlying(exprResolvedType(module, node.Callee)).(*typeinfo.FuncType)
 	if fnType == nil || len(fnType.Params) != len(node.Args) || len(node.Args) < 2 {
-		return &ir.InvalidExpr{Message: "dynamic-array operation type missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "dynamic-array operation type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	args := make([]ir.Expr, 0, len(node.Args))
 	for i, arg := range node.Args {
@@ -927,14 +926,14 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 	}
 	ownerType, _, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0]))
 	if !referenced {
-		return &ir.InvalidExpr{Message: "dynamic-array owner reference missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "dynamic-array owner reference missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	out := &ir.DynamicArrayOp{
-		Op:        op,
-		Array:     args[0],
-		ArrayType: loweredTypeID(ctx, module, ownerType),
-		Type:      loweredReturnTypeID(ctx, module, nil),
-		Location:  ast.LocOf(node),
+		Op:         op,
+		Array:      args[0],
+		ArrayType:  loweredTypeID(ctx, module, ownerType),
+		Type:       loweredReturnTypeID(ctx, module, nil),
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)},
 	}
 	switch op {
 	case symbols.CompilerOpAppend:
@@ -943,7 +942,7 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 		out.Length = args[1]
 	case symbols.CompilerOpResize:
 		if len(args) != 3 {
-			return &ir.InvalidExpr{Message: "resize operation arguments missing", Type: ir.InvalidType, Location: ast.LocOf(node)}
+			return &ir.InvalidExpr{Message: "resize operation arguments missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 		}
 		out.Length = args[1]
 		out.Value = args[2]
@@ -955,7 +954,7 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 
 func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr) ir.Expr {
 	if len(node.Args) < 1 || len(node.Args) > 2 {
-		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 arguments", Type: ir.InvalidType, Location: ast.LocOf(node)}
+		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 arguments", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
 	value := lowerASTExpr(ctx, module, scope, node.Args[0], nil)
 	var allocator ir.Expr
@@ -964,10 +963,10 @@ func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope 
 	}
 	resultType := loweredTypeID(ctx, module, exprResolvedType(module, node))
 	return &ir.AllocExpr{
-		Value:     value,
-		Allocator: allocator,
-		Type:      resultType,
-		Location:  ast.LocOf(node),
+		Value:      value,
+		Allocator:  allocator,
+		Type:       resultType,
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)},
 	}
 }
 
@@ -991,9 +990,9 @@ func lowerNumberLit(ctx *project.CompilerContext, module *project.Module, node *
 	if expectedType == nil || typeinfo.IsInvalidOrUnknown(expectedType) {
 		// No expected type - use language default.
 		if numeric.IsFloat(node.Value) {
-			return &ir.FloatLit{Value: node.Value, Type: loweredTypeID(ctx, module, typeinfo.DefaultNumberType(node.Value)), Location: loc}
+			return &ir.FloatLit{Value: node.Value, Type: loweredTypeID(ctx, module, typeinfo.DefaultNumberType(node.Value)), SourceInfo: ir.SourceInfo{Location: loc}}
 		}
-		return &ir.IntLit{Value: integerValue, Type: loweredTypeID(ctx, module, typeinfo.DefaultNumberType(node.Value)), Location: loc}
+		return &ir.IntLit{Value: integerValue, Type: loweredTypeID(ctx, module, typeinfo.DefaultNumberType(node.Value)), SourceInfo: ir.SourceInfo{Location: loc}}
 	}
 	family, _, numericType := typeinfo.NumericInfo(expectedType)
 	if numericType && family == typeinfo.NumericFloat {
@@ -1001,9 +1000,9 @@ func lowerNumberLit(ctx *project.CompilerContext, module *project.Module, node *
 		if !numeric.IsFloat(node.Value) {
 			v = integerValue + ".0"
 		}
-		return &ir.FloatLit{Value: v, Type: loweredTypeID(ctx, module, expectedType), Location: loc}
+		return &ir.FloatLit{Value: v, Type: loweredTypeID(ctx, module, expectedType), SourceInfo: ir.SourceInfo{Location: loc}}
 	}
-	return &ir.IntLit{Value: integerValue, Type: loweredTypeID(ctx, module, expectedType), Location: loc}
+	return &ir.IntLit{Value: integerValue, Type: loweredTypeID(ctx, module, expectedType), SourceInfo: ir.SourceInfo{Location: loc}}
 }
 
 func symbolName(module *project.Module, sym *symbols.Symbol) string {

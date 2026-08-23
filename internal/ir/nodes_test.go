@@ -2,7 +2,37 @@ package ir
 
 import (
 	"testing"
+
+	"compiler/internal/source"
 )
+
+func TestSourceInfoOwnsExpressionOrigin(t *testing.T) {
+	location := &source.Location{}
+	expr := &IntLit{
+		Value:      "1",
+		SourceInfo: SourceInfo{NodeID: 7, Location: location},
+	}
+
+	if expr.NodeID != 7 || expr.Location != location {
+		t.Fatalf("promoted source fields = (%d, %p), want (7, %p)", expr.NodeID, expr.Location, location)
+	}
+	if got := expr.Origin(); got != expr.SourceInfo {
+		t.Fatalf("origin = %#v, want %#v", got, expr.SourceInfo)
+	}
+
+	replacement := SourceInfo{NodeID: 9}
+	expr.setOrigin(replacement)
+	if expr.SourceInfo != replacement {
+		t.Fatalf("updated origin = %#v, want %#v", expr.SourceInfo, replacement)
+	}
+}
+
+func TestWithOriginPreservesTypedNilExpression(t *testing.T) {
+	var expr Expr = (*IntLit)(nil)
+	if got := WithOrigin(expr, SourceInfo{NodeID: 9}); got != expr {
+		t.Fatalf("WithOrigin(typed nil) = %#v, want original typed nil", got)
+	}
+}
 
 func TestSignatureText(t *testing.T) {
 	types := NewTypeTable()

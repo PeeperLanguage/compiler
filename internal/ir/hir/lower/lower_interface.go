@@ -34,16 +34,16 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
 	implementations := module.Semantics.InterfaceImplementations[expr.ID()]
 	if len(implementations) != len(iface.Methods) {
-		return &ir.InvalidExpr{Message: "missing interface implementation evidence", Type: ir.InvalidType, Location: ast.LocOf(expr)}
+		return &ir.InvalidExpr{Message: "missing interface implementation evidence", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 	}
 	for index, method := range iface.Methods {
 		implementation := implementations[index]
 		if implementation.MethodName != method.Name || implementation.CallableType == nil || implementation.Symbol == nil || implementation.OwnerKey == "" {
-			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: ir.InvalidType, Location: ast.LocOf(expr)}
+			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 		}
 		slotType, ok := interfaceSlotTypeID(ctx, module, method)
 		if !ok {
-			return &ir.InvalidExpr{Message: "unsupported interface method shape", Type: ir.InvalidType, Location: ast.LocOf(expr)}
+			return &ir.InvalidExpr{Message: "unsupported interface method shape", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 		}
 		slots = append(slots, ir.InterfaceSlot{
 			InterfaceType: loweredTypeID(ctx, module, expectedType),
@@ -55,10 +55,10 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 		})
 	}
 	return &ir.InterfaceMake{
-		Value:    lowerASTExpr(ctx, module, scope, expr, nil),
-		Slots:    slots,
-		Type:     loweredTypeID(ctx, module, expectedType),
-		Location: ast.LocOf(expr),
+		Value:      lowerASTExpr(ctx, module, scope, expr, nil),
+		Slots:      slots,
+		Type:       loweredTypeID(ctx, module, expectedType),
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)},
 	}
 }
 
