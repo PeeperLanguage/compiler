@@ -141,6 +141,68 @@ fn invalid(point: Point) {
 	t.Fatalf("expected use-after-move diagnostic from constant false branch, got:\n%s", diag.EmitAllToString())
 }
 
+func TestPipelineRequiresBuildEntrypoint(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "missing", src: `fn helper() {}`},
+		{name: "parameter", src: `fn main(value: i32) {}`},
+		{name: "wrong return", src: `fn main() -> bool { return true; }`},
+		{name: "aliased return", src: `type ExitCode = i32;
+fn main() -> ExitCode { return 0; }`},
+		{name: "extern", src: `#[extern]
+fn main();`},
+		{name: "generic", src: `fn main<T>() {}`},
+		{name: "method", src: `struct App {}
+fn (self: App) main() {}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir:           ".",
+				Extension:         peeper.SourceExt,
+				RequireEntrypoint: true,
+			}, "", tt.src)
+			for _, item := range diag.Diagnostics() {
+				if item != nil && item.Code == diagnostics.ErrInvalidEntrypoint {
+					return
+				}
+			}
+			t.Fatalf("expected invalid entrypoint diagnostic, got:\n%s", diag.EmitAllToString())
+		})
+	}
+}
+
+func TestPipelineAcceptsBuildEntrypointReturns(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "void", src: `fn main() {}`},
+		{name: "i32", src: `fn main() -> i32 { return 0; }`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir:           ".",
+				Extension:         peeper.SourceExt,
+				RequireEntrypoint: true,
+			}, "", tt.src)
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestPipelineCheckAllowsMissingEntrypoint(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn helper() {}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")

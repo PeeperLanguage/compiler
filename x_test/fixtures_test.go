@@ -25,6 +25,7 @@ type fixtureExpectation struct {
 	ProgramArgs    []string
 	StdoutContains []string
 	StderrContains []string
+	StderrExcludes []string
 }
 
 func TestFixtureContracts(t *testing.T) {
@@ -76,6 +77,7 @@ func readFixtureExpectation(t *testing.T, manifestPath string) fixtureExpectatio
 	expectation.ProgramArgs = optionalFixtureValue[[]string](t, section, manifestPath, "program_args")
 	expectation.StdoutContains = optionalFixtureValue[[]string](t, section, manifestPath, "stdout_contains")
 	expectation.StderrContains = optionalFixtureValue[[]string](t, section, manifestPath, "stderr_contains")
+	expectation.StderrExcludes = optionalFixtureValue[[]string](t, section, manifestPath, "stderr_excludes")
 	if !slices.Contains([]string{"check", "build", "run"}, expectation.Mode) {
 		t.Fatalf("%s has invalid mode %q", manifestPath, expectation.Mode)
 	}
@@ -179,6 +181,11 @@ func checkFixtureOutcome(t *testing.T, expectation fixtureExpectation, stdout, s
 	for _, text := range expectation.StderrContains {
 		if !strings.Contains(stderr, text) {
 			t.Fatalf("stderr missing %q:\n%s", text, stderr)
+		}
+	}
+	for _, text := range expectation.StderrExcludes {
+		if strings.Contains(stderr, text) {
+			t.Fatalf("stderr unexpectedly contains %q:\n%s", text, stderr)
 		}
 	}
 }

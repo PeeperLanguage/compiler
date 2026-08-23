@@ -84,6 +84,8 @@ type Config struct {
 	TargetArch string
 	// Emit debug-friendly artifacts.
 	BuildDebug bool
+	// Require an executable program entrypoint before backend lowering.
+	RequireEntrypoint bool
 	// Compile test entry points.
 	TestMode bool
 	// Optional single test name.

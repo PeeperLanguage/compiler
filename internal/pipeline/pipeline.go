@@ -24,6 +24,7 @@ import (
 	"compiler/internal/semantics/definiteinit"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/usage"
@@ -147,6 +148,12 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		return err
 	}
 	p.ctx.CompletedProjectPhase = phase.Usage
+	if p.ctx.Config.RequireEntrypoint {
+		validateProgramEntrypoint(entry, diag.AppendPhase(phase.Usage, entry.Key))
+		if diag.HasErrors() {
+			return nil
+		}
+	}
 	p.advanceModulesThrough(orderedModules, prelude, preludeInjected, phase.Backend, diag)
 	if diag != nil && diag.HasErrors() {
 		return nil
@@ -166,6 +173,30 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	llvm.ValidateRuntimeSymbols(mirModules, finalDiag, p.ctx.Target)
 	p.ctx.CompletedProjectPhase = phase.Finalize
 	return nil
+}
+
+func validateProgramEntrypoint(entry *project.Module, diag *diagnostics.DiagnosticBag) {
+	const message = "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`"
+	if entry == nil || entry.ModuleScope == nil {
+		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, nil, "")
+		return
+	}
+
+	sym, found := entry.ModuleScope.LookupLocal("main")
+	if !found || sym == nil || sym.Kind != symbols.SymbolFunc {
+		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, nil, "")
+		return
+	}
+	decl, declOK := sym.ASTNode.(*ast.FnDecl)
+	fnType, typeOK := sym.Type.(*typeinfo.FuncType)
+	validReturn := typeOK && fnType.Return == nil
+	if typeOK && fnType.Return != nil {
+		integer, ok := fnType.Return.(*typeinfo.IntegerType)
+		validReturn = ok && integer.Signed && integer.Bits == 32
+	}
+	if !declOK || decl == nil || decl.Receiver != nil || decl.Body == nil || len(decl.TypeParams) != 0 || !typeOK || len(fnType.Params) != 0 || !validReturn {
+		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, sym.Location, "invalid program entrypoint")
+	}
 }
 
 func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelude *project.Module, preludeInjected bool, lastPhase phase.Phase, diag *diagnostics.DiagnosticBag) bool {

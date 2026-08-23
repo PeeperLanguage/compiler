@@ -2,10 +2,25 @@ package main
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 
 	"compiler/internal/project"
 )
+
+func TestValidateNativeLinkTarget(t *testing.T) {
+	if err := validateNativeLinkTarget(runtime.GOOS, runtime.GOARCH); err != nil {
+		t.Fatalf("host target rejected: %v", err)
+	}
+
+	targetOS := "linux"
+	if runtime.GOOS == targetOS {
+		targetOS = "windows"
+	}
+	if err := validateNativeLinkTarget(targetOS, runtime.GOARCH); err == nil {
+		t.Fatalf("non-host target %s/%s accepted", targetOS, runtime.GOARCH)
+	}
+}
 
 func TestClangArgsForBuildRelease(t *testing.T) {
 	args := clangArgsForBuild(project.Config{TargetOS: "linux"}, "x86_64-unknown-linux-gnu", []string{"a.ll", "b.ll"}, "demo")
