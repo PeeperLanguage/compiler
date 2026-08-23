@@ -158,6 +158,7 @@ type Emitter struct {
 	cache               *SourceCache
 	writer              io.Writer
 	currentLineNumWidth int
+	logger              *colors.Logger
 	highlighter         *SyntaxHighlighter
 }
 
@@ -175,10 +176,12 @@ type labelContext struct {
 }
 
 func NewEmitter(w io.Writer) *Emitter {
+	logger := colors.NewLogger(colors.CurrentLogFormat())
 	return &Emitter{
 		cache:       NewSourceCache(),
 		writer:      w,
-		highlighter: NewSyntaxHighlighter(true),
+		logger:      logger,
+		highlighter: NewSyntaxHighlighter(true, logger),
 	}
 }
 
@@ -205,29 +208,29 @@ func (e *Emitter) SetSyntaxHighlighting(enabled bool) {
 
 // printGutter prints " <line> | " with consistent width/color.
 func (e *Emitter) printGutter(line int) {
-	colors.GREY.Fprintf(e.writer, GUTTER_FMT, e.currentLineNumWidth, line)
+	e.logger.Fprintf(e.writer, colors.GREY, GUTTER_FMT, e.currentLineNumWidth, line)
 }
 
 func (e *Emitter) printCurrentGutter(line int) {
-	colors.WHITE.Fprintf(e.writer, GUTTER_FMT, e.currentLineNumWidth, line)
+	e.logger.Fprintf(e.writer, colors.WHITE, GUTTER_FMT, e.currentLineNumWidth, line)
 }
 
 func (e *Emitter) printBlankGutter() {
-	colors.GREY.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "")
+	e.logger.Fprintf(e.writer, colors.GREY, GUTTER_BLANK, e.currentLineNumWidth, "")
 }
 
 func (e *Emitter) printAddedGutter(color colors.COLOR) {
 	if color == "" {
 		color = colors.GREEN
 	}
-	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "+")
+	e.logger.Fprintf(e.writer, color, GUTTER_BLANK, e.currentLineNumWidth, "+")
 }
 
 func (e *Emitter) printRemovedGutter(color colors.COLOR) {
 	if color == "" {
 		color = colors.RED
 	}
-	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "-")
+	e.logger.Fprintf(e.writer, color, GUTTER_BLANK, e.currentLineNumWidth, "-")
 }
 
 func (e *Emitter) printPipeOnly() {
@@ -258,7 +261,7 @@ func (e *Emitter) printPrevNonEmptyLine(filepath string, line int) {
 
 func (e *Emitter) printLocationHeader(filepath string, line int, col int) {
 	indent := e.currentLineNumWidth + 1
-	colors.BLUE.Fprintf(e.writer, "%*s--> %s:%d:%d\n", indent, "", filepath, line, col)
+	e.logger.Fprintf(e.writer, colors.BLUE, "%*s--> %s:%d:%d\n", indent, "", filepath, line, col)
 }
 
 func (e *Emitter) printSideNotePrefix() {
@@ -356,7 +359,7 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 			} else if line > lastLine+1 {
 				// CASE 2: Same file, skip in lines -> Print aligned '...' without the pipe
 				// This aligns the dots perfectly with where the line numbers sit
-				colors.GREY.Fprintf(e.writer, "%*s\n", e.currentLineNumWidth, "...")
+				e.logger.Fprintf(e.writer, colors.GREY, "%*s\n", e.currentLineNumWidth, "...")
 			}
 
 			// Clean context code block with customizable tilde/caret markings
@@ -444,10 +447,10 @@ func (e *Emitter) printPeeperSnippetBlock(filepath string, label Label, severity
 		}
 
 		fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-		underlineColor.Fprint(e.writer, strings.Repeat(underlineChar, length))
+		e.logger.Fprint(e.writer, underlineColor, strings.Repeat(underlineChar, length))
 
 		if l == endLine && label.Message != "" {
-			underlineColor.Fprintf(e.writer, " %s", label.Message)
+			e.logger.Fprintf(e.writer, underlineColor, " %s", label.Message)
 		}
 		fmt.Fprintln(e.writer)
 	}
@@ -521,9 +524,9 @@ func (e *Emitter) printDiagnosticHeader(diag *Diagnostic) {
 		color = colors.BOLD_PURPLE
 	}
 
-	color.Fprintf(e.writer, "[%s]", diag.Code)
+	e.logger.Fprintf(e.writer, color, "[%s]", diag.Code)
 	fmt.Fprint(e.writer, ": ")
-	color.Fprintln(e.writer, diag.Message)
+	e.logger.Fprintln(e.writer, color, diag.Message)
 }
 
 func (e *Emitter) printCodeHint(ctx labelContext) {
@@ -638,19 +641,19 @@ func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) b
 
 	relPath := e.diffDisplayPath(ctx.filepath)
 	e.printBlankGutter()
-	colors.RED.Fprintf(e.writer, "  --- a/%s\n", relPath)
+	e.logger.Fprintf(e.writer, colors.RED, "  --- a/%s\n", relPath)
 	e.printBlankGutter()
-	colors.GREEN.Fprintf(e.writer, "  +++ b/%s\n", relPath)
+	e.logger.Fprintf(e.writer, colors.GREEN, "  +++ b/%s\n", relPath)
 	e.printBlankGutter()
-	colors.GREY.Fprintf(e.writer, "  @@ line %d @@\n", ctx.line)
+	e.logger.Fprintf(e.writer, colors.GREY, "  @@ line %d @@\n", ctx.line)
 
 	e.printBlankGutter()
-	colors.RED.Fprint(e.writer, "- ")
+	e.logger.Fprint(e.writer, colors.RED, "- ")
 	e.printLineWithColoredSpan(expandedSourceLine, oldAbsStart, oldDiffLen, colors.RED)
 	fmt.Fprintln(e.writer)
 
 	e.printBlankGutter()
-	colors.GREEN.Fprint(e.writer, "+ ")
+	e.logger.Fprint(e.writer, colors.GREEN, "+ ")
 	e.printLineWithColoredSpan(replacementLine, newAbsStart, newDiffLen, colors.GREEN)
 	fmt.Fprintln(e.writer)
 
@@ -692,7 +695,7 @@ func (e *Emitter) printLineWithColoredSpan(line string, start, length int, spanC
 	}
 
 	e.highlighter.HighlightWithColor(line[:start], e.writer)
-	spanColor.Fprint(e.writer, line[start:end])
+	e.logger.Fprint(e.writer, spanColor, line[start:end])
 	e.highlighter.HighlightWithColor(line[end:], e.writer)
 }
 
@@ -755,9 +758,9 @@ func (e *Emitter) printCodeHintLabelLine(label CodeHintLabel, severity Severity)
 		color = colors.BLUE
 	}
 
-	color.Fprint(e.writer, strings.Repeat("~", length))
+	e.logger.Fprint(e.writer, color, strings.Repeat("~", length))
 	if label.Message != "" {
-		color.Fprintf(e.writer, " %s", label.Message)
+		e.logger.Fprintf(e.writer, color, " %s", label.Message)
 	}
 	fmt.Fprintln(e.writer)
 }
@@ -773,16 +776,16 @@ func (e *Emitter) printText(text DiagnosticText) {
 
 	e.printSideNotePrefix()
 	if text.Kind != "" {
-		color.Fprintf(e.writer, "= %s: ", text.Kind)
+		e.logger.Fprintf(e.writer, color, "= %s: ", text.Kind)
 	} else {
-		color.Fprintf(e.writer, "= ")
+		e.logger.Fprintf(e.writer, color, "= ")
 	}
 	fmt.Fprintln(e.writer, text.Message)
 }
 
 func (e *Emitter) printSuggestionHeader() {
 	e.printSideNotePrefix()
-	colors.GREEN.Fprint(e.writer, "= suggestion:")
+	e.logger.Fprint(e.writer, colors.GREEN, "= suggestion:")
 	fmt.Fprintln(e.writer)
 }
 

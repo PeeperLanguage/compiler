@@ -41,11 +41,12 @@ var highlightNumberPattern = regexp.MustCompile("^" + numeric.NumberTokenPattern
 // SyntaxHighlighter provides syntax highlighting for Peeper code snippets
 type SyntaxHighlighter struct {
 	enabled bool
+	logger  *colors.Logger
 }
 
 // NewSyntaxHighlighter creates a new syntax highlighter
-func NewSyntaxHighlighter(enabled bool) *SyntaxHighlighter {
-	return &SyntaxHighlighter{enabled: enabled}
+func NewSyntaxHighlighter(enabled bool, logger *colors.Logger) *SyntaxHighlighter {
+	return &SyntaxHighlighter{enabled: enabled, logger: logger}
 }
 
 // Enable turns on syntax highlighting
@@ -204,7 +205,7 @@ func (sh *SyntaxHighlighter) HighlightLine(line string) string {
 	var result strings.Builder
 
 	for _, token := range tokens {
-		token.Color.Fprint(&result, token.Text)
+		sh.logger.Fprint(&result, token.Color, token.Text)
 	}
 
 	return result.String()
@@ -220,7 +221,7 @@ func (sh *SyntaxHighlighter) HighlightWithColor(line string, writer io.Writer) {
 
 	tokens := sh.Highlight(line)
 	for _, token := range tokens {
-		token.Color.Fprint(writer, token.Text)
+		sh.logger.Fprint(writer, token.Color, token.Text)
 	}
 }
 
@@ -229,7 +230,7 @@ func (sh *SyntaxHighlighter) HighlightWithColor(line string, writer io.Writer) {
 func (sh *SyntaxHighlighter) HighlightWithBaseColor(line string, writer io.Writer, base colors.COLOR) {
 	if !sh.enabled {
 		if base != "" {
-			base.Fprint(writer, line)
+			sh.logger.Fprint(writer, base, line)
 		} else {
 			fmt.Fprint(writer, line)
 		}
@@ -242,6 +243,6 @@ func (sh *SyntaxHighlighter) HighlightWithBaseColor(line string, writer io.Write
 		if base != "" && color == colors.WHITE {
 			color = base
 		}
-		color.Fprint(writer, token.Text)
+		sh.logger.Fprint(writer, color, token.Text)
 	}
 }

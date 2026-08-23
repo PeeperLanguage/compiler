@@ -324,18 +324,18 @@ func sortDiagnostics(diagnostics []*Diagnostic) {
 
 func (db *DiagnosticBag) EmitAll() {
 	emitter := NewEmitter(os.Stderr)
-	db.emitFiltered(emitter, os.Stderr, func(*Diagnostic) bool { return true })
+	db.emitFiltered(emitter, func(*Diagnostic) bool { return true })
 }
 
 // EmitErrors prints only error diagnostics and an error-only summary.
 func (db *DiagnosticBag) EmitErrors() {
 	emitter := NewEmitter(os.Stderr)
-	db.emitFiltered(emitter, os.Stderr, func(diag *Diagnostic) bool {
+	db.emitFiltered(emitter, func(diag *Diagnostic) bool {
 		return diag != nil && diag.Severity == Error
 	})
 }
 
-func (db *DiagnosticBag) emitFiltered(emitter *Emitter, w io.Writer, keep func(*Diagnostic) bool) {
+func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) bool) {
 	diagnostics := db.Diagnostics()
 
 	filtered := diagnostics[:0]
@@ -360,7 +360,7 @@ func (db *DiagnosticBag) emitFiltered(emitter *Emitter, w io.Writer, keep func(*
 		emitter.Emit(diag)
 	}
 
-	printSummary(w, errors, warnings)
+	printSummary(emitter.writer, emitter.logger, errors, warnings)
 }
 
 // EmitAllToString emits all diagnostics to a string with ANSI codes, using provided source cache
@@ -374,31 +374,29 @@ func (db *DiagnosticBag) EmitAllToHTML() string {
 }
 
 func (db *DiagnosticBag) emitAllToStringWithFormat(format colors.LogFormat) string {
-	prevFormat := colors.CurrentLogFormat()
-	colors.SetLogFormat(format)
-	defer colors.SetLogFormat(prevFormat)
-
 	var buf bytes.Buffer
+	logger := colors.NewLogger(format)
 	emitter := &Emitter{
 		cache:       db.sourceCache,
 		writer:      &buf,
-		highlighter: NewSyntaxHighlighter(true),
+		logger:      logger,
+		highlighter: NewSyntaxHighlighter(true, logger),
 	}
 
-	db.emitFiltered(emitter, &buf, func(*Diagnostic) bool { return true })
+	db.emitFiltered(emitter, func(*Diagnostic) bool { return true })
 
 	return buf.String()
 }
 
-func printSummary(w io.Writer, errorCount, warnCount int) {
+func printSummary(w io.Writer, logger *colors.Logger, errorCount, warnCount int) {
 	if errorCount > 0 {
-		colors.RED.Fprintf(w, compileFailedMsg, errorCount)
+		logger.Fprintf(w, colors.RED, compileFailedMsg, errorCount)
 		if warnCount > 0 {
-			colors.RED.Fprintf(w, andWarningMsg, warnCount)
+			logger.Fprintf(w, colors.RED, andWarningMsg, warnCount)
 		}
 		fmt.Fprintln(w)
 	} else if warnCount > 0 {
-		colors.ORANGE.Fprintf(w, compileSuccessWithWarning, warnCount)
+		logger.Fprintf(w, colors.ORANGE, compileSuccessWithWarning, warnCount)
 	}
 }
 

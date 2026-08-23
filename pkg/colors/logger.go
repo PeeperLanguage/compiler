@@ -5,6 +5,7 @@ package colors
 import (
 	"fmt"
 	"html"
+	"io"
 	"strings"
 	"sync"
 )
@@ -77,6 +78,12 @@ func ParseLogFormat(raw string) (LogFormat, error) {
 	}
 }
 
+func NewLogger(format LogFormat) *Logger {
+	logger := &Logger{}
+	logger.SetFormat(format)
+	return logger
+}
+
 func SetLogFormat(format LogFormat) {
 	defaultLogger.SetFormat(format)
 }
@@ -131,6 +138,18 @@ func (l *Logger) Render(color COLOR, text string) string {
 		}
 		return string(color) + text + string(RESET)
 	}
+}
+
+func (l *Logger) Fprintf(w io.Writer, color COLOR, format string, args ...any) {
+	fmt.Fprint(w, l.Render(color, fmt.Sprintf(format, args...)))
+}
+
+func (l *Logger) Fprintln(w io.Writer, color COLOR, args ...any) {
+	fmt.Fprint(w, l.Render(color, fmt.Sprintln(args...)))
+}
+
+func (l *Logger) Fprint(w io.Writer, color COLOR, args ...any) {
+	fmt.Fprint(w, l.Render(color, fmt.Sprint(args...)))
 }
 
 func renderHTML(color COLOR, text string) string {
