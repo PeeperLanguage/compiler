@@ -9,8 +9,10 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 )
 
 func moduleWithArtifacts() *Module {
@@ -22,6 +24,7 @@ func moduleWithArtifacts() *Module {
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		HIR:                       &hir.Module{},
 		CFG:                       &cfg.Module{Functions: []*cfg.Graph{{}}},
+		Flow:                      &flowresult.Result{ExprTypes: map[ast.NodeID]typeinfo.Type{1: typeinfo.DefaultIntegerType()}},
 		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
@@ -37,6 +40,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		astNodes  bool
 		hir       bool
 		cfg       bool
+		flow      bool
 		ownership bool
 		mir       bool
 		llvm      bool
@@ -44,12 +48,13 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		{phase: phase.Parsed},
 		{phase: phase.Typechecked, scope: true, semantics: true, exportAPI: true, astNodes: true},
 		{phase: phase.CFG, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: phase.DefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: phase.Ownership, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, ownership: true},
-		{phase: phase.Usage, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, ownership: true},
-		{phase: phase.HIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true},
-		{phase: phase.MIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.FlowTyped, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
+		{phase: phase.DefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
+		{phase: phase.Ownership, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.Usage, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.HIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.MIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
@@ -59,6 +64,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.TypedASTNodes != nil) != test.astNodes ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
+			(module.Flow != nil) != test.flow ||
 			(module.Ownership != nil) != test.ownership ||
 			(module.MIR != nil) != test.mir ||
 			(module.LLVMIR != "") != test.llvm {

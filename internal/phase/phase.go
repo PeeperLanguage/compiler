@@ -21,6 +21,8 @@ const (
 	Typechecked
 	// CFG includes finalized topology and CFG diagnostics.
 	CFG
+	// FlowTyped includes CFG-refined expression types and place origins.
+	FlowTyped
 	// DefiniteInit records completion of diagnostic-only initialization checks.
 	DefiniteInit
 	// Ownership includes ownership cleanup results.
@@ -56,6 +58,8 @@ func (phase Phase) String() string {
 		return "typechecked"
 	case CFG:
 		return "CFG"
+	case FlowTyped:
+		return "flow-typed"
 	case DefiniteInit:
 		return "definite-init"
 	case Ownership:

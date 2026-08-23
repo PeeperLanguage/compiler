@@ -1,0 +1,7 @@
+name = "negative_optional_unstable_index"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0042", "stable place"]

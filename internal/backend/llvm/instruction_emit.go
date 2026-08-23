@@ -181,6 +181,8 @@ func placeNeedsRootAddr(types *ir.TypeTable, place *mir.Place) bool {
 		return false
 	case mir.PlaceProjectionField:
 		return true
+	case mir.PlaceProjectionOptionalPayload:
+		return true
 	case mir.PlaceProjectionIndex:
 		rootType, ok := types.Type(mirRefType(place.Root))
 		if !ok {
@@ -260,6 +262,12 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 			}
 			hasCurrent = true
 			addressed = true
+		case mir.PlaceProjectionOptionalPayload:
+			if !hasCurrent {
+				b.emitter.markInvalid("optional payload place requires addressable storage")
+				return llvmPlace{}, false
+			}
+			current = b.namedFieldPlace(current, llvmFieldValue)
 		default:
 			b.emitter.markInvalid(fmt.Sprintf("unsupported MIR place projection %d", projection.Kind))
 			return llvmPlace{}, false
@@ -584,9 +592,6 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				}
 				return b.arithmetic(opcode, left, shiftCount)
 			case "==", "!=", "<", "<=", ">", ">=":
-				if result, ok := emitOptionalNoneCompare(b, e.Op, e.Left, e.Right, left, right); ok {
-					return result
-				}
 				if isFloatType(b.emitter.mod.Types, leftType) {
 					pred := map[string]string{"==": "oeq", "!=": "one", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
 					return b.compare("fcmp", pred, left, right)
@@ -666,6 +671,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			}
 			value := b.insertField(b.zero(b.emitter.layout(e.Type)), b.value("true", llvmScalarLayout("i1")), llvmFieldPresent)
 			return b.insertField(value, emitRef(b, e.Value), llvmFieldValue)
+		case *mir.OptionalPresent:
+			return b.extractField(emitRef(b, e.Value), llvmFieldPresent)
 		case *mir.InterfaceMake:
 			value := emitRef(b, e.Value)
 			dataPtr := value
@@ -706,44 +713,6 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			return llvmValue{}
 		}
 	})
-}
-
-func emitOptionalNoneCompare(b *llvmBuilder, op string, leftRef, rightRef mir.ValueRef, leftValue, rightValue llvmValue) (llvmValue, bool) {
-	if op != "==" && op != "!=" {
-		return llvmValue{}, false
-	}
-	leftType, leftOK := b.emitter.mod.Types.Type(mirRefType(leftRef))
-	rightType, rightOK := b.emitter.mod.Types.Type(mirRefType(rightRef))
-	leftOptional := leftOK && leftType.Kind == ir.TypeOptional
-	rightOptional := rightOK && rightType.Kind == ir.TypeOptional
-	if !leftOptional && !rightOptional {
-		return llvmValue{}, false
-	}
-	leftNone := leftValue.Text == "zeroinitializer"
-	rightNone := rightValue.Text == "zeroinitializer"
-	if leftNone && rightNone {
-		if op == "==" {
-			return b.value("true", llvmScalarLayout("i1")), true
-		}
-		return b.value("false", llvmScalarLayout("i1")), true
-	}
-	var value llvmValue
-	if leftNone {
-		value = rightValue
-	} else if rightNone {
-		value = leftValue
-	} else {
-		if b != nil && b.emitter != nil {
-			b.emitter.markInvalid("optional equality currently requires `none` on one side")
-		}
-		return b.value("false", llvmScalarLayout("i1")), true
-	}
-	tag := b.extractField(value, llvmFieldPresent)
-	pred := "eq"
-	if op == "!=" {
-		pred = "ne"
-	}
-	return b.compare("icmp", pred, tag, b.value("false", tag.Layout)), true
 }
 
 func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {

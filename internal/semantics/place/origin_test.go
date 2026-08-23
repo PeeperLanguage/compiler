@@ -163,7 +163,7 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 	}
 }
 
-func TestOriginsPreferResolvedBindingOverShadowingScope(t *testing.T) {
+func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 	scope := symbols.NewScope(nil)
 	callerValue := symbols.New("value", symbols.SymbolVar, nil, nil)
 	declarationValue := symbols.New("value", symbols.SymbolConst, nil, nil)
@@ -172,17 +172,18 @@ func TestOriginsPreferResolvedBindingOverShadowingScope(t *testing.T) {
 	}
 
 	ident := &ast.Ident{Name: "value"}
-	origins := Origins(scope, ident, OriginOptions{
+	resolved := Resolve(scope, ident, ResolveOptions{
 		ResolveBinding: func(*ast.Ident) (Binding, bool) {
 			return Binding{Symbol: declarationValue}, true
 		},
 	})
-	if !SameOrigins(origins, []Origin{{Root: declarationValue}}) {
-		t.Fatalf("origins = %#v, want declaration binding", origins)
+	want := []Origin{{Root: declarationValue}}
+	if !SameOrigins(resolved.StorageOrigins, want) || !SameOrigins(resolved.ValueOrigins, want) || !resolved.Stable {
+		t.Fatalf("resolution = %#v, want stable declaration binding", resolved)
 	}
 }
 
-func TestOriginsNormalizeReferenceRootsAndProjections(t *testing.T) {
+func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	scope := symbols.NewScope(nil)
 	value := symbols.New("value", symbols.SymbolVar, nil, nil)
 	value.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{Name: "items", Type: &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}}}})
@@ -202,7 +203,7 @@ func TestOriginsNormalizeReferenceRootsAndProjections(t *testing.T) {
 		base:  reference.Type,
 		field: value.Type.(*typeinfo.StructType).Fields[0].Type,
 	}
-	origins := Origins(scope, index, OriginOptions{
+	resolved := Resolve(scope, index, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
 		ReferenceOrigins: func(sym *symbols.Symbol) []Origin {
 			if sym == reference {
@@ -216,12 +217,17 @@ func TestOriginsNormalizeReferenceRootsAndProjections(t *testing.T) {
 		{Kind: OriginField, Field: "items"},
 		{Kind: OriginIndex, Index: "1"},
 	}}}
-	if !SameOrigins(origins, want) {
-		t.Fatalf("origins = %#v, want %#v", origins, want)
+	if !SameOrigins(resolved.ValueOrigins, want) || !resolved.Stable {
+		t.Fatalf("resolution = %#v, want stable value origins %#v", resolved, want)
+	}
+	if !SameOrigins(Resolve(scope, base, ResolveOptions{
+		ReferenceOrigins: func(*symbols.Symbol) []Origin { return []Origin{{Root: value}} },
+	}).StorageOrigins, []Origin{{Root: reference}}) {
+		t.Fatal("reference carrier storage did not retain binding identity")
 	}
 }
 
-func TestOriginsPreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T) {
+func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T) {
 	scope := symbols.NewScope(nil)
 	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
 	inner := &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}
@@ -238,7 +244,7 @@ func TestOriginsPreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T)
 		base:  owner.Type,
 		first: inner,
 	}
-	origins := Origins(scope, second, OriginOptions{
+	resolved := Resolve(scope, second, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
 		ConstantIndex: func(expr ast.Expr) (string, bool) {
 			literal, ok := expr.(*ast.NumberLit)
@@ -252,8 +258,31 @@ func TestOriginsPreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T)
 		{Kind: OriginPointee},
 		{Kind: OriginWildcard},
 	}}}
-	if !SameOrigins(origins, want) {
-		t.Fatalf("origins = %#v, want %#v", origins, want)
+	if !SameOrigins(resolved.ValueOrigins, want) || resolved.Stable {
+		t.Fatalf("resolution = %#v, want unstable origins %#v", resolved, want)
+	}
+}
+
+func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
+	scope := symbols.NewScope(nil)
+	values := symbols.New("values", symbols.SymbolParam, nil, nil)
+	values.BindType(&typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()})
+	index := symbols.New("index", symbols.SymbolParam, nil, nil)
+	index.BindType(typeinfo.DefaultIntegerType())
+	if err := scope.Declare(values); err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.Declare(index); err != nil {
+		t.Fatal(err)
+	}
+	expr := &ast.IndexExpr{Expr: &ast.Ident{Name: "values"}, Index: &ast.Ident{Name: "index"}}
+	resolved := Resolve(scope, expr, ResolveOptions{
+		ConstantIndex: func(ast.Expr) (string, bool) { return "", false },
+	})
+	want := []Origin{{Root: values, Projections: []OriginProjection{{Kind: OriginBindingIndex, Binding: index}}}}
+	if !resolved.Stable || !SameOrigins(resolved.StorageOrigins, want) ||
+		len(resolved.Dependencies) != 1 || resolved.Dependencies[0] != index {
+		t.Fatalf("resolution = %#v, want binding-dependent stable index", resolved)
 	}
 }
 
@@ -281,7 +310,12 @@ func TestOriginsOverlap(t *testing.T) {
 	other := symbols.New("other", symbols.SymbolVar, nil, nil)
 	field := func(name string) OriginProjection { return OriginProjection{Kind: OriginField, Field: name} }
 	index := func(value string) OriginProjection { return OriginProjection{Kind: OriginIndex, Index: value} }
+	bindingIndex := func(binding *symbols.Symbol) OriginProjection {
+		return OriginProjection{Kind: OriginBindingIndex, Binding: binding}
+	}
 	wildcard := OriginProjection{Kind: OriginWildcard}
+	leftIndex := symbols.New("leftIndex", symbols.SymbolVar, nil, nil)
+	rightIndex := symbols.New("rightIndex", symbols.SymbolVar, nil, nil)
 
 	tests := []struct {
 		name    string
@@ -295,6 +329,9 @@ func TestOriginsOverlap(t *testing.T) {
 		{name: "same field", left: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, overlap: true},
 		{name: "different fields", left: []Origin{{Root: root, Projections: []OriginProjection{field("left")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("right")}}}},
 		{name: "different fixed indexes", left: []Origin{{Root: root, Projections: []OriginProjection{index("0")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("1")}}}},
+		{name: "same binding index", left: []Origin{{Root: root, Projections: []OriginProjection{bindingIndex(leftIndex)}}}, right: []Origin{{Root: root, Projections: []OriginProjection{bindingIndex(leftIndex)}}}, overlap: true},
+		{name: "different binding indexes may alias", left: []Origin{{Root: root, Projections: []OriginProjection{bindingIndex(leftIndex)}}}, right: []Origin{{Root: root, Projections: []OriginProjection{bindingIndex(rightIndex)}}}, overlap: true},
+		{name: "binding and fixed indexes may alias", left: []Origin{{Root: root, Projections: []OriginProjection{bindingIndex(leftIndex)}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("1")}}}, overlap: true},
 		{name: "wildcard index", left: []Origin{{Root: root, Projections: []OriginProjection{wildcard}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("1")}}}, overlap: true},
 		{name: "different projection kinds", left: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{index("0")}}}, overlap: true},
 		{name: "any origin pair", left: []Origin{{Root: other}, {Root: root, Projections: []OriginProjection{field("value")}}}, right: []Origin{{Root: root, Projections: []OriginProjection{field("value")}}}, overlap: true},

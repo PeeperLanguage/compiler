@@ -18,19 +18,34 @@ import (
 	"compiler/pkg/numeric"
 )
 
-// typeExpr computes the type of an expression using scope lookup, records it in the
-// module's ExprTypes side table for downstream phases, and returns it.
-func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (resolved typeinfo.Type) {
+// typeExpr records canonical base typing, then applies per-use flow refinement.
+// Recursive typing stays in typeExprBase so both passes use one AST switch.
+func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	base := c.typeExprBase(scope, expr, expected)
+	if call, ok := expr.(*ast.CallExpr); ok && c.flow != nil && c.flow.analyzer != nil {
+		c.flow.analyzer.invalidateCall(c, scope, call, c.flow.state)
+		if c.flow.events != nil {
+			c.flow.events.next++
+			c.flow.events.calls = append(c.flow.events.calls, flowCallEvent{order: c.flow.events.next, call: call})
+		}
+	}
+	if base == nil || expr == nil {
+		return base
+	}
+	if c.module != nil && c.module.Semantics != nil && c.flow == nil {
+		c.module.Semantics.ExprTypes[expr.ID()] = base
+	}
+	resolved := c.effectiveExpressionType(scope, expr, base, expected)
+	if c.flow != nil && resolved != nil {
+		c.flow.result.ExprTypes[expr.ID()] = resolved
+	}
+	return resolved
+}
+
+func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	if expr == nil {
 		return nil
 	}
-	defer func() {
-		if resolved != nil {
-			if c.module != nil && c.module.Semantics != nil {
-				c.module.Semantics.ExprTypes[expr.ID()] = resolved
-			}
-		}
-	}()
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		return c.typeNumber(node, expected)
@@ -153,7 +168,7 @@ func (c *checker) typeUnaryExpr(scope *symbols.Scope, node *ast.UnaryExpr, expec
 		}
 	}
 
-	argType := c.typeExpr(scope, node.Expr, argExpected)
+	argType := c.typePayloadExpr(scope, node.Expr, argExpected)
 	argType = c.requireValueType(node.Expr, argType, "unary operand")
 	if typeinfo.IsInvalidOrUnknown(argType) {
 		return &typeinfo.InvalidType{}
@@ -185,7 +200,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
-	valueType := c.typeExpr(scope, node.Expr, nil)
+	valueType := c.typePayloadExpr(scope, node.Expr, nil)
 	valueType = c.requireValueType(node.Expr, valueType, "address operand")
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
@@ -227,6 +242,11 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 }
 
 func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
+	optionalTest := (node.Op == "==" || node.Op == "!=") && isNoneExpr(node.Left) != isNoneExpr(node.Right)
+	if !optionalTest {
+		c.payloadContext++
+		defer func() { c.payloadContext-- }()
+	}
 	operandExpected := expected
 	if binaryResultIsBool(node.Op) {
 		operandExpected = nil
@@ -241,7 +261,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 		right = c.typeExpr(scope, node.Right, rightExpected)
 	} else if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
-		right = c.typeExpr(scope, node.Right, operandExpected)
+		right = c.typeOptionalTestExpr(scope, node.Right, operandExpected)
 		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
 	} else if leftNumber, leftLiteral := node.Left.(*ast.NumberLit); leftLiteral {
 		if rightNumber, rightLiteral := node.Right.(*ast.NumberLit); !rightLiteral {
@@ -261,12 +281,13 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		left = c.typeExpr(scope, node.Left, operandExpected)
 		right = c.typeExpr(scope, node.Right, left)
 	} else {
-		left = c.typeExpr(scope, node.Left, operandExpected)
-		rightExpected := operandExpected
 		if isNoneExpr(node.Right) {
-			rightExpected = optionalOperandExpected(left)
+			left = c.typeOptionalTestExpr(scope, node.Left, operandExpected)
+			right = c.typeExpr(scope, node.Right, optionalOperandExpected(left))
+		} else {
+			left = c.typeExpr(scope, node.Left, operandExpected)
+			right = c.typeExpr(scope, node.Right, operandExpected)
 		}
-		right = c.typeExpr(scope, node.Right, rightExpected)
 	}
 	left = c.requireValueType(node.Left, left, "left operand")
 	right = c.requireValueType(node.Right, right, "right operand")
@@ -279,6 +300,13 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"optional equality currently requires `none` on one side"))
 		return &typeinfo.InvalidType{}
+	}
+	if optionalTest {
+		subject := node.Left
+		if isNoneExpr(subject) {
+			subject = node.Right
+		}
+		c.recordOptionalTest(node, subject)
 	}
 
 	if node.Op == "<<" || node.Op == ">>" {
@@ -382,7 +410,7 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 	if node == nil || node.Expr == nil || node.Name == nil {
 		return &typeinfo.InvalidType{}
 	}
-	baseType := c.typeExpr(scope, node.Expr, nil)
+	baseType := c.typePayloadExpr(scope, node.Expr, nil)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -409,7 +437,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 	if node == nil || node.Expr == nil || node.Index == nil {
 		return &typeinfo.InvalidType{}
 	}
-	baseType := c.typeExpr(scope, node.Expr, nil)
+	baseType := c.typePayloadExpr(scope, node.Expr, nil)
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -720,7 +748,7 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	if node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
-	exprType := c.typeExpr(scope, node.Expr, nil)
+	exprType := c.typePayloadExpr(scope, node.Expr, nil)
 	exprType = c.requireValueType(node.Expr, exprType, "cast")
 	if typeinfo.IsInvalidOrUnknown(exprType) {
 		return &typeinfo.InvalidType{}

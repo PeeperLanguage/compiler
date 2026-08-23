@@ -39,7 +39,7 @@ func (a *analyzer) checkExpr(
 			return
 		}
 		if !projectionBase {
-			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
+			a.checkStorageAccess(e, loans, storageAccessForUse(a.exprType(e), use))
 		}
 	case *ast.AddressExpr:
 		access := storageSharedBorrow
@@ -50,7 +50,7 @@ func (a *analyzer) checkExpr(
 	case *ast.SelectorExpr:
 		a.checkSelector(scope, e, st, use, loans)
 		if !projectionBase {
-			a.checkStorageAccess(scope, e, st, loans, storageAccessForUse(a.exprType(e), use))
+			a.checkStorageAccess(e, loans, storageAccessForUse(a.exprType(e), use))
 		}
 	case *ast.IndexExpr:
 		if typeinfo.IsInvalidOrUnknown(a.exprType(e)) {
@@ -67,7 +67,7 @@ func (a *analyzer) checkExpr(
 					access = storageMutableBorrow
 				}
 			}
-			a.checkStorageAccess(scope, e, st, loans, access)
+			a.checkStorageAccess(e, loans, access)
 		}
 		if slicing {
 			return
@@ -76,6 +76,11 @@ func (a *analyzer) checkExpr(
 			return
 		}
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {
+			if a.partialOptionalPayloadMove(e) {
+				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+					"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
+				return
+			}
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 				"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", ast.LocOf(e), "")
 		}
@@ -132,7 +137,7 @@ func (a *analyzer) checkAddressExpr(
 	}
 	a.checkExpr(scope, expr.Expr, st, useRead, loans, true)
 	if expr.Mode != ast.AddressRaw {
-		a.checkStorageAccess(scope, expr.Expr, st, loans, access)
+		a.checkStorageAccess(expr.Expr, loans, access)
 	}
 }
 
@@ -205,6 +210,11 @@ func (a *analyzer) checkSelector(
 		return
 	}
 	if ownershipTrackedType(a.exprType(selector)) {
+		if a.partialOptionalPayloadMove(selector) {
+			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+				"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(selector), "")
+			return
+		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"move-only subexpression must be bound before it can be consumed", ast.LocOf(selector), "")
 	}
@@ -324,9 +334,9 @@ func (a *analyzer) checkCallArgument(
 		a.checkAddressExpr(scope, explicitBorrow, st, loans, access)
 	} else {
 		a.checkExpr(scope, arg, st, useRead, loans, true)
-		a.checkStorageAccess(scope, arg, st, loans, access)
+		a.checkStorageAccess(arg, loans, access)
 	}
-	origins := a.originsForExpr(scope, arg, st)
+	origins := a.originsForExpr(arg)
 	if len(origins) == 0 {
 		return
 	}
@@ -348,10 +358,18 @@ func (a *analyzer) checkCallArgument(
 }
 
 func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
-	if a == nil || a.module == nil || a.module.Semantics == nil || expr == nil {
+	if a == nil || a.module == nil || expr == nil {
 		return nil
 	}
-	return a.module.Semantics.ExprTypes[expr.ID()]
+	return a.module.EffectiveExprType(expr.ID())
+}
+
+func (a *analyzer) partialOptionalPayloadMove(expr ast.Expr) bool {
+	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
+		return false
+	}
+	payload, ok := a.module.Flow.Payloads[expr.ID()]
+	return ok && payload.Depth > 0 && !payload.Direct
 }
 
 func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value ast.Expr, st state) {

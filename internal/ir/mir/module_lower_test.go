@@ -503,6 +503,48 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersOptionalFlowOperations(t *testing.T) {
+	payloadPlace := &ir.Place{
+		Root: &ir.Ident{Name: "value", Type: mirTypes.optionalI32},
+		Projections: []ir.PlaceProjection{
+			{Kind: ir.PlaceProjectionOptionalPayload, Type: mirTypes.i32},
+		},
+		Type: mirTypes.i32,
+	}
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{
+			{
+				Name: "present", Params: []ir.Param{{Name: "value", Type: mirTypes.optionalI32}}, ReturnType: mirTypes.boolType,
+				Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.OptionalPresent{
+					Value: &ir.Ident{Name: "value", Type: mirTypes.optionalI32}, Type: mirTypes.boolType,
+				}}}},
+			},
+			{
+				Name: "payload", Params: []ir.Param{{Name: "value", Type: mirTypes.optionalI32}}, ReturnType: mirTypes.i32,
+				Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.Load{Place: payloadPlace}}}},
+			},
+		},
+	}
+
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
+	presentAssign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("presence instruction = %T, want Assign", out.Funcs[0].Blocks[0].Instrs[0])
+	}
+	if _, ok := presentAssign.Value.(*OptionalPresent); !ok {
+		t.Fatalf("presence value = %T, want OptionalPresent", presentAssign.Value)
+	}
+	payloadAssign, ok := out.Funcs[1].Blocks[0].Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("payload instruction = %T, want Assign", out.Funcs[1].Blocks[0].Instrs[0])
+	}
+	load, ok := payloadAssign.Value.(*Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 || load.Place.Projections[0].Kind != PlaceProjectionOptionalPayload {
+		t.Fatalf("payload value = %#v, want optional payload place load", payloadAssign.Value)
+	}
+}
+
 func TestGenerateMIRLowersProjectedRawAddressDirectly(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,

@@ -17,7 +17,7 @@ func (c *checker) typeFreeExpr(scope *symbols.Scope, node *ast.FreeExpr) typeinf
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
-	operandType := c.typeExpr(scope, node.Expr, nil)
+	operandType := c.typePayloadExpr(scope, node.Expr, nil)
 	if typeinfo.IsInvalidOrUnknown(operandType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -33,7 +33,7 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
-	operandType := c.typeExpr(scope, node.Expr, nil)
+	operandType := c.typePayloadExpr(scope, node.Expr, nil)
 	if typeinfo.IsInvalidOrUnknown(operandType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -77,7 +77,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr, expecte
 			}
 		}
 	}
-	calleeType := c.typeExpr(scope, node.Callee, expected)
+	calleeType := c.typePayloadExpr(scope, node.Callee, expected)
 	if sym := c.callableSymbol(node.Callee); sym != nil {
 		c.expandCallDefaults(node, sym, c.callableModule(node.Callee))
 	}

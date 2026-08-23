@@ -204,7 +204,7 @@ func selectorBaseType(expr ast.Expr, parents map[ast.NodeID]ast.Node, module *pr
 	if expr == nil || module == nil || module.Semantics == nil {
 		return nil, false
 	}
-	baseType, ok := normalizedSelectorBaseType(module.Semantics.ExprTypes[expr.ID()])
+	baseType, ok := normalizedSelectorBaseType(module.EffectiveExprType(expr.ID()))
 	if ok {
 		return baseType, true
 	}

@@ -73,6 +73,8 @@ const (
 	ErrBorrowConflict          = "T0037"
 	ErrUnknownIdentifier       = "T0038"
 	ErrUninitializedVariable   = "T0039"
+	ErrOptionalPayloadProof    = "T0041"
+	ErrUnstableNarrowing       = "T0042"
 
 	// Module/Import errors (M prefix)
 	ErrModuleNotFound    = "M0001"

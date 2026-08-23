@@ -148,7 +148,7 @@ scoped allocator contexts remain later work.
 | --- | --- |
 | `Allocator` | `allocator` |
 | `*T` | `{T* data, allocator}` |
-| `?*T` | same as `*T`; `data == null` means `none` |
+| `?*T` | `{i1 present, {T* data, allocator} value}` |
 | `[]T` | `{T* data, usize length, usize capacity, allocator}` |
 | `str` | `{byte* data, usize length, allocator}` |
 | `*Iface` | `{rawptr data, rawptr dispatch, allocator}` |
@@ -156,8 +156,15 @@ scoped allocator contexts remain later work.
 | `&T`, `&mut T`, slice views | unchanged non-owning layouts; view length is target `usize` |
 | `rawptr`, `cstr` | unchanged; no provenance |
 
-`none` for `?*T` zeroes full carrier. Optional presence checks inspect only
-`data`. Valid owners always have non-null data and allocator.
+`none` for `?*T` clears the tagged carrier. Optional presence checks inspect the
+`present` field; proven payload access projects `value`. A present owned payload
+retains its allocator provenance through moves and optional wrapping.
+
+Flow typing runs after CFG construction and records payload-access and resolved
+origin evidence before ownership. Ownership consumes that evidence. HIR and MIR
+represent presence tests and payload projections explicitly; backend lowering
+does not rediscover `none` comparisons or infer optional layout from emitted
+text.
 
 `usize` above is backend `IndexType`: `i32` on supported 32-bit targets and
 `i64` on supported 64-bit targets. Length, capacity, and index operands must
@@ -346,7 +353,7 @@ Each behavior step requires Go tests plus bundled `x_test/` fixtures.
   declarations fail before LLVM; imported Peeper owner ABI remains valid
 - runtime: allocator counters prove allocation/deallocation pair and exactly-once
   release; two allocator descriptors prove each owner routes to origin
-- backend: 64-bit and 32-bit layout/object checks; pointer niche, dynamic header,
+- backend: 64-bit and 32-bit layout/object checks; tagged optional owner, dynamic header,
   vtable slots, size/alignment forwarding
 - regression: existing ownership, array, slice, interface, borrow, runtime-symbol,
   and cleanup fixtures

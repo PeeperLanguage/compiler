@@ -438,6 +438,8 @@ func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
 		case ir.PlaceProjectionIndex:
 			lowered.Kind = PlaceProjectionIndex
 			lowered.Index = l.lowerExpr(projection.Index, out)
+		case ir.PlaceProjectionOptionalPayload:
+			lowered.Kind = PlaceProjectionOptionalPayload
 		default:
 			panic(fmt.Sprintf("unsupported HIR place projection %d", projection.Kind))
 		}
@@ -501,6 +503,11 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		value := l.lowerExpr(e.Value, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeID(), Location: e.Origin().Location}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+	case *ir.OptionalPresent:
+		value := l.lowerExpr(e.Value, out)
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &OptionalPresent{Value: value, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Ident:
 		return &RefName{Name: e.Name, Type: e.TypeID(), Location: e.Origin().Location}

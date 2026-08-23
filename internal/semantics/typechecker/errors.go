@@ -46,6 +46,20 @@ func typeMismatchError(node ast.Node, message string) *diagnostics.Diagnostic {
 		WithCode(diagnostics.ErrTypeMismatch)
 }
 
+func optionalPayloadProofError(node ast.Node) *diagnostics.Diagnostic {
+	return diagnostics.NewError("optional payload use requires a presence proof").
+		WithPrimaryLabel(ast.LocOf(node), "payload is not proven present here").
+		WithCode(diagnostics.ErrOptionalPayloadProof).
+		WithHelp("guard this stable place with `value != none` or return after `value == none`")
+}
+
+func unstableOptionalNarrowingError(node ast.Node) *diagnostics.Diagnostic {
+	return diagnostics.NewError("optional narrowing subject is not a stable place").
+		WithPrimaryLabel(ast.LocOf(node), "this expression can change between the test and use").
+		WithCode(diagnostics.ErrUnstableNarrowing).
+		WithHelp("bind the expression or index to a direct local before testing it")
+}
+
 func notCallableError(node ast.Node, message string) *diagnostics.Diagnostic {
 	return diagnostics.NewError(message).
 		WithPrimaryLabel(ast.LocOf(node), "").

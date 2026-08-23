@@ -1,0 +1,6 @@
+fn Unstable(values: [2]?i32, index: usize) -> i32 {
+    if values[index + 1] != none {
+        return values[index + 1];
+    }
+    return 0;
+}

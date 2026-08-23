@@ -378,12 +378,12 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	case *ast.ConstDecl:
 		a.applyBinding(scope, s, s.Value, st, loans)
 	case *ast.AssignStmt:
-		reference, hasReference := a.referenceValueForExpr(scope, s.Value, st)
+		reference, hasReference := a.referenceValueForExpr(s.Value)
 		delete(a.cleanup.BeforeAssign, ir.NodeID(s.ID()))
 		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
 		if _, ok := s.Target.(*ast.Ident); !ok {
 			a.checkExpr(scope, s.Target, st, useRead, loans, true)
-			a.checkStorageAccess(scope, s.Target, st, loans, storageMutate)
+			a.checkStorageAccess(s.Target, loans, storageMutate)
 			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
 				a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 			}
@@ -391,7 +391,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
 			if sym, found := scope.Lookup(target.Name); found {
 				if _, referenceTarget := referenceMutability(sym); !referenceTarget {
-					a.checkStorageAccess(scope, target, st, loans, storageMutate)
+					a.checkStorageAccess(target, loans, storageMutate)
 				}
 				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
 					if _, live := st.live[sym]; live {
@@ -408,7 +408,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		}
 	case *ast.ReturnStmt:
 		a.checkPointerEscape(scope, s.Value, st)
-		a.validateReferenceReturn(scope, s, st)
+		a.validateReferenceReturn(scope, s)
 		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
@@ -437,7 +437,7 @@ func (a *analyzer) applyBinding(scope *symbols.Scope, stmt ast.Stmt, value ast.E
 	if scope == nil || stmt == nil {
 		return
 	}
-	reference, hasReference := a.referenceValueForExpr(scope, value, st)
+	reference, hasReference := a.referenceValueForExpr(value)
 	a.checkExpr(scope, value, st, useConsume, loans, false)
 	sym, found := scope.LookupNode(stmt)
 	if !found || sym == nil {

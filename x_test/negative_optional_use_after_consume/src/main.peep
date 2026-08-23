@@ -1,0 +1,13 @@
+struct Token {
+    value: i32
+}
+
+fn Consume(_: Token) {}
+
+fn UseAfterConsume(value: ?Token) {
+    if value == none {
+        return;
+    }
+    Consume(value);
+    Consume(value);
+}

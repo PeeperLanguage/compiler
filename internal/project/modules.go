@@ -11,6 +11,7 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
@@ -69,6 +70,7 @@ type Module struct {
 	// Canonical IR slots.
 	HIR       *hir.Module
 	CFG       *cfg.Module
+	Flow      *flowresult.Result
 	Ownership ownershipresult.Result
 	MIR       *mir.Module
 	LLVMIR    string
@@ -90,6 +92,7 @@ type SemanticInfo struct {
 	// misclassification.
 	ExpandedDefaultBindings  map[ast.NodeID]struct{}
 	ExprTypes                map[ast.NodeID]typeinfo.Type
+	OptionalTests            map[ast.NodeID]flowresult.OptionalTest
 	ConstValues              map[symbols.SymbolID]constvalue.Value
 	MethodSets               map[string][]*symbols.Symbol
 	MethodSymbol             map[ast.NodeID]*symbols.Symbol
@@ -133,6 +136,7 @@ func NewSemanticInfo() *SemanticInfo {
 		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
 		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
+		OptionalTests:            make(map[ast.NodeID]flowresult.OptionalTest),
 		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
 		MethodSets:               make(map[string][]*symbols.Symbol),
 		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
@@ -148,6 +152,23 @@ func (m *Module) ResetSemanticData() {
 		return
 	}
 	m.Semantics = NewSemanticInfo()
+}
+
+// EffectiveExprType returns per-use flow refinement when available and falls
+// back to the canonical base typechecker result.
+func (m *Module) EffectiveExprType(id ast.NodeID) typeinfo.Type {
+	if m == nil {
+		return nil
+	}
+	if m.Flow != nil {
+		if typ := m.Flow.ExprTypes[id]; typ != nil {
+			return typ
+		}
+	}
+	if m.Semantics == nil {
+		return nil
+	}
+	return m.Semantics.ExprTypes[id]
 }
 
 // resetToPhase retains artifacts through phase and invalidates downstream data.
@@ -166,6 +187,9 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 	}
 	if retained < phase.CFG {
 		m.CFG = nil
+	}
+	if retained < phase.FlowTyped {
+		m.Flow = nil
 	}
 	if retained < phase.Ownership {
 		m.Ownership = nil

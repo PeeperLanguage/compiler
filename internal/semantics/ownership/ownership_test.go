@@ -50,6 +50,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
 	module.CFG = cfg.BuildModule(module.AST)
+	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
 }
@@ -530,6 +531,100 @@ func TestCopyableIndexedElementReadAllowed(t *testing.T) {
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestCopyableOptionalPayloadCanBeReadRepeatedly(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn sum(value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	return value + value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyOptionalPayloadConsumesNamedCarrier(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Token { value: i32 }
+fn Consume(_: Token) {}
+fn bad(value: ?Token) {
+	if value == none {
+		return;
+	}
+	Consume(value);
+	Consume(value);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected optional carrier use-after-move, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyOptionalCarrierCanBeReinitialized(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Token { value: i32 }
+fn Consume(_: Token) {}
+fn valid(mut value: ?Token) {
+	if value == none {
+		return;
+	}
+	Consume(value);
+	value = .Token{value = 2};
+	if value == none {
+		return;
+	}
+	Consume(value);
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyOptionalPartialPlacesAreRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `struct Token { value: i32 }
+struct Holder { field: ?Token, items: [1]?Token }
+fn Consume(_: Token) {}
+fn bad(holder: Holder) {
+	if holder.field != none {
+		Consume(holder.field);
+	}
+	if holder.items[0] != none {
+		Consume(holder.items[0]);
+	}
+}`)
+	out := diag.EmitAllToString()
+	if count := strings.Count(out, "move-only optional payload"); count != 2 {
+		t.Fatalf("expected two optional partial-move diagnostics, got %d:\n%s", count, out)
+	}
+}
+
+func TestFlowResolvesBorrowedOptionalPayloadStorage(t *testing.T) {
+	result := checkOwnershipSource(t, `struct Token { value: i32 }
+fn inspect(value: ?Token) {
+	if value == none {
+		return;
+	}
+	let reference = &value;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	binding := fn.Body.Stmts[1].(*ast.LetDecl)
+	address := binding.Value.(*ast.AddressExpr)
+	valueUse := address.Expr.(*ast.Ident)
+	function, _ := result.module.ModuleScope.Lookup("inspect")
+	value, _ := function.Scope.Lookup("value")
+	storage := []place.Origin{{Root: value}}
+	payload := []place.Origin{{
+		Root:        value,
+		Projections: []place.OriginProjection{{Kind: place.OriginOptionalPayload}},
+	}}
+	if got := result.module.Flow.ResolvedStorageOrigins[valueUse.ID()]; !place.SameOrigins(got, storage) {
+		t.Fatalf("payload storage origins = %#v, want carrier %#v", got, storage)
+	}
+	if got := result.module.Flow.ResolvedValueOrigins[valueUse.ID()]; !place.SameOrigins(got, payload) {
+		t.Fatalf("payload value origins = %#v, want %#v", got, payload)
 	}
 }
 

@@ -108,11 +108,20 @@ Implementation status:
 
 - `none` lowers in expected optional contexts.
 - `T` can lower to `?T` as `some(T)`.
-- `?*T` should use pointer niche layout.
-- other optionals currently use tagged layout.
+- every optional uses tagged `{present, value}` layout, including `?*T`.
 - `rawptr` is nullable by default, so `?rawptr` is not part of target model.
 
-Future layout work may add niche detection for more types.
+CFG flow typing narrows stable optional variables, fields, nested projections,
+constant-folded indexes, and direct integral binding indexes after semantic
+`none` tests. Joins intersect presence facts, loops run to a fixed point, and
+carrier, alias, index-dependency, call, global, and scope invalidation remove
+facts when their proof may no longer hold.
+
+An optional copies only when its payload copies. Reading a proven copyable or
+shared-reference payload preserves the carrier. Moving a move-only payload from
+a direct named optional consumes the whole carrier; moving one from a field,
+index, pointee, or other partial place is rejected. Presence checks never
+consume. Pointer niche layout remains future issue #30 work.
 
 ## Strings
 
@@ -132,8 +141,9 @@ permanent literal storage, but never owns or frees its backing bytes.
 ## Copy And Move
 
 Integer/float scalars, bool, byte, char, raw pointers, and cstr copy implicitly.
-Shared references duplicate their borrow header. Every other value moves on a
-by-value use.
+Shared references duplicate their borrow header. Optionals follow their payload:
+`?T` copies when `T` copies and moves otherwise. Every remaining value moves on
+a by-value use.
 
 ```peep
 struct Buffer {
@@ -398,6 +408,8 @@ struct Node {
 - `@expr` produces a non-owning raw pointer to addressable storage.
 - `?T` is optional for non-raw values.
 - `?*T` is nullable heap-handle storage.
+- an optional copies only when its payload copies; otherwise it moves.
+- move-only payload extraction consumes a direct named carrier and is rejected from partial places.
 - `str` is an owned immutable text value; `&str` is its borrowed view.
 - allocator returns `*T`.
 - `free` consumes allocator-created `*T`.
@@ -405,7 +417,7 @@ struct Node {
 - safe code cannot forget or leak an owned value.
 - reference returns declare parameter or receiver origins with `from`.
 - borrowed rvalue temporaries live through one full expression only.
-- every composite moves implicitly on by-value use.
+- every non-optional composite moves implicitly on by-value use.
 - `*T`, `*Interface`, dynamic arrays/strings, and mutable references never duplicate implicitly.
 - `rawptr` copy is shallow address-bit copy because it owns nothing.
 - bare interfaces are unsized contracts; runtime values require `&`, `&mut`, or `*`.

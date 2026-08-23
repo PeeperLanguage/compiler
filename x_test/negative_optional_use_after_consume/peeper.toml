@@ -1,0 +1,7 @@
+name = "negative_optional_use_after_consume"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0034", "moved"]

@@ -322,6 +322,8 @@ func nextModulePhase(current phase.Phase) phase.Phase {
 	case phase.Typechecked:
 		return phase.CFG
 	case phase.CFG:
+		return phase.FlowTyped
+	case phase.FlowTyped:
 		return phase.DefiniteInit
 	case phase.DefiniteInit:
 		return phase.Ownership
@@ -352,8 +354,10 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 		return phase.Collected
 	case phase.CFG:
 		return phase.Typechecked
-	case phase.DefiniteInit:
+	case phase.FlowTyped:
 		return phase.CFG
+	case phase.DefiniteInit:
+		return phase.FlowTyped
 	case phase.Ownership:
 		return phase.DefiniteInit
 	case phase.Usage:
@@ -437,6 +441,12 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	}
 	if module.CFG == nil {
 		return false
+	}
+	if module.Phase < phase.FlowTyped {
+		module.Flow = typechecker.CheckFlow(phaseCtx, module)
+		module.Phase = phase.FlowTyped
+		ctx.Metrics.AddPhaseAdvance()
+		return true
 	}
 	if module.Phase < phase.DefiniteInit {
 		definiteinit.Check(
