@@ -345,3 +345,15 @@ func TestOriginsOverlap(t *testing.T) {
 		})
 	}
 }
+
+func TestVariantPayloadOriginsPreserveExactCasePath(t *testing.T) {
+	root := symbols.New("value", symbols.SymbolVar, nil, nil)
+	origins := VariantPayloadOrigins([]Origin{{Root: root}}, []int{2, 1})
+	want := []Origin{{Root: root, Projections: []OriginProjection{
+		{Kind: OriginVariantPayload, Case: 2},
+		{Kind: OriginVariantPayload, Case: 1},
+	}}}
+	if !SameOrigins(origins, want) {
+		t.Fatalf("variant payload origins = %#v, want %#v", origins, want)
+	}
+}

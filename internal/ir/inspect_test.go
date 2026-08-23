@@ -22,7 +22,7 @@ func TestInspectExprVisitsCompositeChildrenInOrder(t *testing.T) {
 		expr Expr
 		want string
 	}{
-		{name: "optional", expr: &OptionalSome{Value: ident("value")}, want: "value"},
+		{name: "variant", expr: &VariantMake{Case: OptionalPresentCase, Payload: ident("value")}, want: "value"},
 		{name: "unary", expr: &Unary{Arg: ident("arg")}, want: "arg"},
 		{name: "binary", expr: &Binary{Left: ident("left"), Right: ident("right")}, want: "left,right"},
 		{name: "call", expr: &Call{Callee: ident("callee"), Args: []Expr{ident("first"), ident("second")}}, want: "callee,first,second"},

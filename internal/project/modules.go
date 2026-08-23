@@ -130,6 +130,14 @@ func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
 	}
 }
 
+// TypeDeclarationIdentity anchors nominal type identity at its declaring module.
+func (m *Module) TypeDeclarationIdentity(name string) string {
+	if m == nil || m.Key == "" || name == "" {
+		return name
+	}
+	return m.Key + "::" + name
+}
+
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
 		BlockScopes:              make(map[ast.NodeID]*symbols.Scope),

@@ -111,7 +111,8 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, node ast.Node) {
 	}
 	sym := symbols.New(name.Name, symbols.SymbolType, node, ast.LocOf(name))
 	sym.Type = &typeinfo.DefinedType{
-		Name: name.Name,
+		Name:     name.Name,
+		Identity: c.module.TypeDeclarationIdentity(name.Name),
 		// Underlying is filled by binder.
 	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {

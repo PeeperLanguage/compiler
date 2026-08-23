@@ -11,35 +11,45 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-type PresenceFact struct {
+type VariantFact struct {
 	CarrierOrigins []place.Origin
-	Depth          int
+	Cases          []int
+	CaseCount      int
 	Dependencies   []symbols.SymbolID
 }
 
 type Facts struct {
-	Presence          []PresenceFact
+	Variants          []VariantFact
 	ReferenceOrigins  map[symbols.SymbolID][]place.Origin
 	RawPointerOrigins map[symbols.SymbolID][]place.Origin
 }
 
 type PayloadAccess struct {
 	CarrierOrigins []place.Origin
-	Depth          int
+	Cases          []int
 	Direct         bool
 }
 
+// OptionalTest is base typechecker evidence for source `none` comparisons.
+// Flow converts it into case-based VariantTest evidence.
 type OptionalTest struct {
 	SubjectID       ast.NodeID
 	PresentWhenTrue bool
-	Depth           int
+}
+
+type VariantTest struct {
+	SubjectID    ast.NodeID
+	Case         int
+	CaseWhenTrue bool
+	CaseCount    int
+	PayloadPath  []int
 }
 
 type Result struct {
 	SiteFacts              map[ir.NodeID]map[cfg.SiteID]Facts
 	ExprTypes              map[ast.NodeID]typeinfo.Type
 	Payloads               map[ast.NodeID]PayloadAccess
-	OptionalTests          map[ast.NodeID]OptionalTest
+	VariantTests           map[ast.NodeID]VariantTest
 	ResolvedStorageOrigins map[ast.NodeID][]place.Origin
 	ResolvedValueOrigins   map[ast.NodeID][]place.Origin
 }

@@ -33,6 +33,32 @@ fn TakeOptional(value: ?Token) -> i32 {
     return Take(value);
 }
 
+fn Clear(holder: &mut Holder) -> bool {
+    holder.field = none;
+    return true;
+}
+
+fn KeepProofAcrossImpossibleEdge(value: ?i32, other: ?i32) -> i32 {
+    if value != none {
+        if other != none && other == none {
+            let ignored = 0;
+        }
+        return value;
+    }
+    return 0;
+}
+
+fn KeepEagerMutationOrder(value: ?i32, other: Holder) -> i32 {
+    if value == none {
+        return 0;
+    }
+    let mut holder = other;
+    if holder.field != none && Clear(&mut holder) && holder.field == none {
+        return value;
+    }
+    return 0;
+}
+
 fn main() -> i32 {
     let maybe = Some(7);
     if maybe == none {
@@ -103,6 +129,14 @@ fn main() -> i32 {
     let ownerResult = TakeOptional(.Token{value = 23});
     if ownerResult != 23 {
         return 8;
+    }
+
+    if KeepProofAcrossImpossibleEdge(Some(29), Some(1)) != 29 {
+        return 9;
+    }
+    let eagerHolder = .Holder{field = Some(1), items = [2]?i32{none, none}};
+    if KeepEagerMutationOrder(Some(31), eagerHolder) != 31 {
+        return 10;
     }
 
     return Guard(Some(17)) - 17;

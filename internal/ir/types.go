@@ -28,7 +28,7 @@ const (
 	TypeRawPtr
 	TypeOwnedPtr
 	TypeReference
-	TypeOptional
+	TypeVariant
 	TypeArray
 	TypeSlice
 	TypeStruct
@@ -48,20 +48,68 @@ type TypeMethod struct {
 	Return TypeID
 }
 
+type VariantFamily uint8
+
+const (
+	VariantFamilyInvalid VariantFamily = iota
+	VariantFamilyOptional
+	VariantFamilyNamed
+)
+
+const (
+	OptionalAbsentCase = iota
+	OptionalPresentCase
+)
+
+type VariantCase struct {
+	Name    string
+	Payload TypeID
+}
+
 // Type is a backend-independent runtime descriptor. Source-only aliases are
 // resolved before interning, so every child directly describes its ABI shape.
 type Type struct {
-	Kind    TypeKind
-	Signed  bool
-	Bits    int
-	Mutable bool
-	Length  string
-	Elem    TypeID
-	Fields  []TypeField
-	Methods []TypeMethod
-	Params  []TypeID
-	Return  TypeID
-	Name    string
+	Kind     TypeKind
+	Signed   bool
+	Bits     int
+	Mutable  bool
+	Length   string
+	Elem     TypeID
+	Fields   []TypeField
+	Methods  []TypeMethod
+	Params   []TypeID
+	Return   TypeID
+	Name     string
+	Family   VariantFamily
+	Identity string
+	Cases    []VariantCase
+}
+
+// OptionalVariant owns optional's fixed case order. Flow facts, lowering, and
+// backends use these case indexes instead of rebuilding optional conventions.
+func OptionalVariant(payload TypeID) Type {
+	return Type{
+		Kind: TypeVariant, Family: VariantFamilyOptional,
+		Cases: []VariantCase{{Name: "Absent"}, {Name: "Present", Payload: payload}},
+	}
+}
+
+func (t Type) VariantCase(index int) (VariantCase, bool) {
+	if t.Kind != TypeVariant || index < 0 || index >= len(t.Cases) {
+		return VariantCase{}, false
+	}
+	return t.Cases[index], true
+}
+
+func (t Type) OptionalPayload() (TypeID, bool) {
+	if t.Kind != TypeVariant || t.Family != VariantFamilyOptional || len(t.Cases) != 2 {
+		return InvalidType, false
+	}
+	present := t.Cases[OptionalPresentCase]
+	if t.Cases[OptionalAbsentCase].Payload != InvalidType || present.Payload == InvalidType {
+		return InvalidType, false
+	}
+	return present.Payload, true
 }
 
 // TypeTable is owned by one CompilerContext. It is canonical storage for IR
@@ -193,8 +241,14 @@ func (t *TypeTable) textLocked(id TypeID) string {
 			prefix = "&mut "
 		}
 		return prefix + t.textLocked(typ.Elem)
-	case TypeOptional:
-		return "?" + t.textLocked(typ.Elem)
+	case TypeVariant:
+		if payload, optional := typ.OptionalPayload(); optional {
+			return "?" + t.textLocked(payload)
+		}
+		if typ.Family == VariantFamilyNamed && typ.Name != "" {
+			return typ.Name
+		}
+		return "<invalid>"
 	case TypeArray:
 		if typ.Length == "" {
 			return "[]" + t.textLocked(typ.Elem)
@@ -237,11 +291,28 @@ func (t *TypeTable) textLocked(id TypeID) string {
 
 // ABIKey is stable only inside the compiler ABI model. Backends may use it for
 // symbol identity, never raw TypeID values.
-func (t *TypeTable) ABIKey(id TypeID) string { return t.Text(id) }
+func (t *TypeTable) ABIKey(id TypeID) string {
+	if t == nil {
+		return "<invalid>"
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if id == InvalidType || int(id) >= len(t.types) {
+		return "<invalid>"
+	}
+	typ := t.types[id]
+	if typ.Kind == TypeVariant && typ.Family == VariantFamilyNamed {
+		return "variant:" + typ.Identity
+	}
+	return t.textLocked(id)
+}
 
 func (t *TypeTable) key(typ Type) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q", typ.Kind, typ.Signed, typ.Bits, typ.Mutable, typ.Length, typ.Elem, typ.Return, typ.Name)
+	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q|%d|%q", typ.Kind, typ.Signed, typ.Bits, typ.Mutable, typ.Length, typ.Elem, typ.Return, typ.Name, typ.Family, typ.Identity)
+	for _, variant := range typ.Cases {
+		fmt.Fprintf(&b, "|v:%q:%d", variant.Name, variant.Payload)
+	}
 	for _, field := range typ.Fields {
 		fmt.Fprintf(&b, "|f:%q:%d", field.Name, field.Type)
 	}
@@ -268,6 +339,7 @@ func (t *TypeTable) fieldsTextLocked(fields []TypeField, separator byte) string 
 func cloneType(typ Type) Type {
 	typ.Fields = append([]TypeField(nil), typ.Fields...)
 	typ.Params = append([]TypeID(nil), typ.Params...)
+	typ.Cases = append([]VariantCase(nil), typ.Cases...)
 	if len(typ.Methods) == 0 {
 		return typ
 	}

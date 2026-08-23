@@ -20,10 +20,10 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return nil
 	case *InvalidExpr, *IntLit, *FloatLit, *StringLit, *BoolLit, *ZeroValue:
 		return expr
-	case *OptionalSome:
-		return &OptionalSome{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
-	case *OptionalPresent:
-		return &OptionalPresent{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
+	case *VariantMake:
+		return &VariantMake{Case: node.Case, Payload: FoldExpr(types, node.Payload, env), Type: node.Type, SourceInfo: node.SourceInfo}
+	case *VariantIs:
+		return &VariantIs{Value: FoldExpr(types, node.Value, env), Case: node.Case, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {

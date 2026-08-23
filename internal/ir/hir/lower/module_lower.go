@@ -292,7 +292,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 			})
 			out.Type = loweredTypeID(ctx, module, field.Type)
 			out.Location = ast.LocOf(selector)
-			return appendOptionalPayloadPlace(ctx, module, selector, out)
+			return appendVariantPayloadPlace(ctx, module, selector, out)
 		}
 	}
 	if index, ok := expr.(*ast.IndexExpr); ok && index != nil && index.Expr != nil && index.Index != nil {
@@ -320,7 +320,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 			out.Projections = append(out.Projections, ir.PlaceProjection{
 				Kind: ir.PlaceProjectionIndex, Index: indexExpr, Type: out.Type, Location: ast.LocOf(index),
 			})
-			return appendOptionalPayloadPlace(ctx, module, index, out)
+			return appendVariantPayloadPlace(ctx, module, index, out)
 		}
 	}
 	ident, ok := expr.(*ast.Ident)
@@ -332,22 +332,24 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 	out := &ir.Place{
 		Root: root, Type: root.TypeID(), Location: ast.LocOf(expr),
 	}
-	return appendOptionalPayloadPlace(ctx, module, expr, out)
+	return appendVariantPayloadPlace(ctx, module, expr, out)
 }
 
-func appendOptionalPayloadPlace(ctx *project.CompilerContext, module *project.Module, expr ast.Expr, out *ir.Place) *ir.Place {
+func appendVariantPayloadPlace(ctx *project.CompilerContext, module *project.Module, expr ast.Expr, out *ir.Place) *ir.Place {
 	if ctx == nil || module == nil || module.Flow == nil || expr == nil || out == nil {
 		return out
 	}
 	payload := module.Flow.Payloads[expr.ID()]
-	for range payload.Depth {
-		optional, ok := ctx.Types.Type(out.Type)
-		if !ok || optional.Kind != ir.TypeOptional || optional.Elem == ir.InvalidType {
+	for _, caseIndex := range payload.Cases {
+		variant, ok := ctx.Types.Type(out.Type)
+		variantCase, caseOK := variant.VariantCase(caseIndex)
+		if !ok || !caseOK || variantCase.Payload == ir.InvalidType {
 			break
 		}
-		out.Type = optional.Elem
+		out.Type = variantCase.Payload
 		out.Projections = append(out.Projections, ir.PlaceProjection{
-			Kind: ir.PlaceProjectionOptionalPayload, Type: out.Type, Location: ast.LocOf(expr),
+			Kind: ir.PlaceProjectionVariantPayload, Case: caseIndex,
+			Type: out.Type, Location: ast.LocOf(expr),
 		})
 	}
 	return out
@@ -442,24 +444,26 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		resolvedTypeID = loweredTypeID(ctx, module, resolvedType)
 	}
 	if module != nil && module.Flow != nil {
-		if test, ok := module.Flow.OptionalTests[expr.ID()]; ok {
+		if test, ok := module.Flow.VariantTests[expr.ID()]; ok {
 			subject, _ := module.TypedASTNodes[test.SubjectID].(ast.Expr)
-			present := &ir.OptionalPresent{
+			present := &ir.VariantIs{
 				Value: lowerASTExpr(ctx, module, scope, subject, nil),
+				Case:  test.Case,
 				Type:  loweredTypeID(ctx, module, &typeinfo.BoolType{}),
 			}
-			if test.PresentWhenTrue {
+			if test.CaseWhenTrue {
 				return present
 			}
 			return &ir.Unary{Op: "!", Arg: present, Type: present.Type}
 		}
-		if payload := module.Flow.Payloads[expr.ID()]; payload.Depth > 0 && place.IsPlaceExpr(expr) {
+		if payload := module.Flow.Payloads[expr.ID()]; len(payload.Cases) > 0 && place.IsPlaceExpr(expr) {
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, expr)}
 		}
 	}
-	if innerExpected := optionalSomeInnerType(module, expectedType, resolvedType, expr); innerExpected != nil {
-		return &ir.OptionalSome{
-			Value:      lowerASTExpr(ctx, module, scope, expr, innerExpected),
+	if innerExpected := optionalPromotionInnerType(module, expectedType, resolvedType, expr); innerExpected != nil {
+		return &ir.VariantMake{
+			Case:       ir.OptionalPresentCase,
+			Payload:    lowerASTExpr(ctx, module, scope, expr, innerExpected),
 			Type:       loweredTypeID(ctx, module, expectedType),
 			SourceInfo: ir.SourceInfo{Location: loc},
 		}
@@ -504,7 +508,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.BoolLit{Value: node.Value, Type: loweredTypeID(ctx, module, &typeinfo.BoolType{}), SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.NoneLit:
-		if none := lowerOptionalNone(ctx, expectedTypeID, loc); none != nil {
+		if none := lowerOptionalAbsent(ctx, expectedTypeID, loc); none != nil {
 			return none
 		}
 		return &ir.InvalidExpr{Message: "`none` requires optional context", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
@@ -716,18 +720,18 @@ func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, s
 	}
 }
 
-func lowerOptionalNone(ctx *project.CompilerContext, typeID ir.TypeID, loc *source.Location) ir.Expr {
+func lowerOptionalAbsent(ctx *project.CompilerContext, typeID ir.TypeID, loc *source.Location) ir.Expr {
 	if ctx == nil || ctx.Types == nil {
 		return nil
 	}
 	typ, ok := ctx.Types.Type(typeID)
-	if !ok || typ.Kind != ir.TypeOptional {
+	if _, optional := typ.OptionalPayload(); !ok || !optional {
 		return nil
 	}
-	return &ir.ZeroValue{Type: typeID, SourceInfo: ir.SourceInfo{Location: loc}}
+	return &ir.VariantMake{Case: ir.OptionalAbsentCase, Type: typeID, SourceInfo: ir.SourceInfo{Location: loc}}
 }
 
-func optionalSomeInnerType(module *project.Module, expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
+func optionalPromotionInnerType(module *project.Module, expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
 	if expectedType == nil || resolvedType == nil || expr == nil {
 		return nil
 	}

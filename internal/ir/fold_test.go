@@ -160,7 +160,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		name string
 		expr Expr
 	}{
-		{name: "optional", expr: &OptionalSome{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "variant", expr: &VariantMake{Case: OptionalPresentCase, Payload: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "unary", expr: &Unary{Op: "opaque", Arg: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "binary", expr: &Binary{Op: "opaque", Left: foldable(), Right: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "call", expr: &Call{Callee: foldable(), Args: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},

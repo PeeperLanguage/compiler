@@ -27,6 +27,7 @@ const (
 	llvmFieldLength    llvmFieldName = "length"
 	llvmFieldCapacity  llvmFieldName = "capacity"
 	llvmFieldAllocator llvmFieldName = "allocator"
+	llvmFieldTag       llvmFieldName = "tag"
 	llvmFieldPresent   llvmFieldName = "present"
 	llvmFieldValue     llvmFieldName = "value"
 	llvmFieldDispatch  llvmFieldName = "dispatch"
@@ -35,14 +36,16 @@ const (
 // llvmLayout is backend-owned physical type evidence. Named carrier fields
 // keep ABI field knowledge out of lowering and drop emitters.
 type llvmLayout struct {
-	Text       string
-	Kind       llvmLayoutKind
-	Pointee    *llvmLayout
-	Element    *llvmLayout
-	Elements   []*llvmLayout
-	Fields     map[llvmFieldName]int
-	Return     *llvmLayout
-	Parameters []*llvmLayout
+	Text            string
+	Kind            llvmLayoutKind
+	Pointee         *llvmLayout
+	Element         *llvmLayout
+	Elements        []*llvmLayout
+	Fields          map[llvmFieldName]int
+	VariantTag      int
+	VariantPayloads map[int]int
+	Return          *llvmLayout
+	Parameters      []*llvmLayout
 }
 
 func llvmScalarLayout(text string) *llvmLayout {
@@ -188,14 +191,8 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 			return nil, false
 		}
 		return llvmPointerLayout(elem), true
-	case ir.TypeOptional:
-		inner, ok := llvmLayoutID(types, typ.Elem)
-		if !ok {
-			return nil, false
-		}
-		return llvmAggregateLayout([]*llvmLayout{llvmScalarLayout("i1"), inner}, map[llvmFieldName]int{
-			llvmFieldPresent: 0, llvmFieldValue: 1,
-		}), true
+	case ir.TypeVariant:
+		return llvmVariantLayout(types, typ)
 	case ir.TypeArray:
 		elem, ok := llvmLayoutID(types, typ.Elem)
 		if !ok {
@@ -244,6 +241,51 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func llvmVariantLayout(types *ir.TypeTable, typ ir.Type) (*llvmLayout, bool) {
+	if len(typ.Cases) == 0 {
+		return nil, false
+	}
+	if payload, optional := typ.OptionalPayload(); optional {
+		payloadLayout, ok := llvmLayoutID(types, payload)
+		if !ok {
+			return nil, false
+		}
+		layout := llvmAggregateLayout([]*llvmLayout{llvmScalarLayout("i1"), payloadLayout}, map[llvmFieldName]int{
+			llvmFieldPresent: 0, llvmFieldValue: 1,
+		})
+		layout.VariantTag = 0
+		layout.VariantPayloads = map[int]int{ir.OptionalPresentCase: 1}
+		return layout, true
+	}
+	if typ.Family != ir.VariantFamilyNamed || typ.Identity == "" {
+		return nil, false
+	}
+	tag := llvmScalarLayout("i32")
+	switch {
+	case len(typ.Cases) <= 256:
+		tag = llvmScalarLayout("i8")
+	case len(typ.Cases) <= 65536:
+		tag = llvmScalarLayout("i16")
+	}
+	elements := []*llvmLayout{tag}
+	payloads := make(map[int]int)
+	for caseIndex, variant := range typ.Cases {
+		if variant.Payload == ir.InvalidType {
+			continue
+		}
+		payload, ok := llvmLayoutID(types, variant.Payload)
+		if !ok {
+			return nil, false
+		}
+		payloads[caseIndex] = len(elements)
+		elements = append(elements, payload)
+	}
+	layout := llvmAggregateLayout(elements, map[llvmFieldName]int{llvmFieldTag: 0})
+	layout.VariantTag = 0
+	layout.VariantPayloads = payloads
+	return layout, true
 }
 
 func isInterfaceType(types *ir.TypeTable, id ir.TypeID) bool {
@@ -431,9 +473,9 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 		return v.Type
 	case *mir.ZeroValue:
 		return v.Type
-	case *mir.OptionalSome:
+	case *mir.VariantMake:
 		return v.Type
-	case *mir.OptionalPresent:
+	case *mir.VariantIs:
 		return v.Type
 	case *mir.InterfaceMake:
 		return v.Type

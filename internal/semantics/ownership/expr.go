@@ -76,7 +76,7 @@ func (a *analyzer) checkExpr(
 			return
 		}
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {
-			if a.partialOptionalPayloadMove(e) {
+			if a.partialVariantPayloadMove(e) {
 				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 					"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
 				return
@@ -210,7 +210,7 @@ func (a *analyzer) checkSelector(
 		return
 	}
 	if ownershipTrackedType(a.exprType(selector)) {
-		if a.partialOptionalPayloadMove(selector) {
+		if a.partialVariantPayloadMove(selector) {
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 				"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(selector), "")
 			return
@@ -364,12 +364,12 @@ func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
 	return a.module.EffectiveExprType(expr.ID())
 }
 
-func (a *analyzer) partialOptionalPayloadMove(expr ast.Expr) bool {
+func (a *analyzer) partialVariantPayloadMove(expr ast.Expr) bool {
 	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
 		return false
 	}
 	payload, ok := a.module.Flow.Payloads[expr.ID()]
-	return ok && payload.Depth > 0 && !payload.Direct
+	return ok && len(payload.Cases) > 0 && !payload.Direct
 }
 
 func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value ast.Expr, st state) {

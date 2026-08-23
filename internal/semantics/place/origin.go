@@ -13,7 +13,7 @@ const (
 	OriginField
 	OriginIndex
 	OriginBindingIndex
-	OriginOptionalPayload
+	OriginVariantPayload
 	OriginWildcard
 )
 
@@ -22,6 +22,7 @@ type OriginProjection struct {
 	Field   string
 	Index   string
 	Binding *symbols.Symbol
+	Case    int
 }
 
 type Origin struct {
@@ -36,7 +37,7 @@ type ResolveOptions struct {
 	RawPointerOrigins func(*symbols.Symbol) []Origin
 	CallOrigins       func(*ast.CallExpr) []Origin
 	ConstantIndex     func(ast.Expr) (string, bool)
-	PayloadDepth      func(ast.Expr) int
+	PayloadCases      func(ast.Expr) []int
 }
 
 // Resolution keeps carrier storage distinct from referenced value storage.
@@ -86,7 +87,7 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 		}
 		base := Resolve(scope, node.Expr, opts)
 		origins := appendIndirectProjection(base.ValueOrigins, node.Expr, opts.ExprType)
-		origins = appendOptionalPayloadProjections(origins, node.Expr, opts.PayloadDepth)
+		origins = appendVariantPayloadProjections(origins, node.Expr, opts.PayloadCases)
 		origins = appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: node.Name.Name})
 		return Resolution{
 			StorageOrigins: origins,
@@ -97,7 +98,7 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 	case *ast.IndexExpr:
 		base := Resolve(scope, node.Expr, opts)
 		origins := appendIndirectProjection(base.ValueOrigins, node.Expr, opts.ExprType)
-		origins = appendOptionalPayloadProjections(origins, node.Expr, opts.PayloadDepth)
+		origins = appendVariantPayloadProjections(origins, node.Expr, opts.PayloadCases)
 		dependencies := append([]*symbols.Symbol(nil), base.Dependencies...)
 		if _, rangeIndex := node.Index.(*ast.RangeExpr); rangeIndex {
 			origins = appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
@@ -223,18 +224,18 @@ func appendIndirectProjection(origins []Origin, base ast.Expr, exprType ExprType
 	return appendOriginProjection(origins, OriginProjection{Kind: OriginPointee})
 }
 
-func appendOptionalPayloadProjections(origins []Origin, base ast.Expr, payloadDepth func(ast.Expr) int) []Origin {
-	if payloadDepth == nil {
+func appendVariantPayloadProjections(origins []Origin, base ast.Expr, payloadCases func(ast.Expr) []int) []Origin {
+	if payloadCases == nil {
 		return origins
 	}
-	return PayloadOrigins(origins, payloadDepth(base))
+	return VariantPayloadOrigins(origins, payloadCases(base))
 }
 
-// PayloadOrigins projects carrier storage through exact proven optional layers.
-func PayloadOrigins(origins []Origin, depth int) []Origin {
+// VariantPayloadOrigins projects carrier storage through exact proven cases.
+func VariantPayloadOrigins(origins []Origin, cases []int) []Origin {
 	out := CloneOrigins(origins)
-	for range depth {
-		out = appendOriginProjection(out, OriginProjection{Kind: OriginOptionalPayload})
+	for _, caseIndex := range cases {
+		out = appendOriginProjection(out, OriginProjection{Kind: OriginVariantPayload, Case: caseIndex})
 	}
 	return out
 }

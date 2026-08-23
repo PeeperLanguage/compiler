@@ -68,8 +68,8 @@ func emitDropValue(b *llvmBuilder, value llvmValue, typeID ir.TypeID) {
 		emitOwnedPointerFree(b, value, typ.Elem)
 		return
 	}
-	if typ.Kind == ir.TypeOptional {
-		emitOptionalDrop(b, value, typ.Elem)
+	if typ.Kind == ir.TypeVariant {
+		emitVariantDrop(b, value, typ)
 		return
 	}
 	if typ.Kind == ir.TypeArray && typ.Length == "" {
@@ -161,24 +161,34 @@ func emitInterfaceStorageRelease(b *llvmBuilder, interfaceType ir.TypeID, interf
 	b.call(releaseFn, []llvmValue{allocator, data})
 }
 
-func emitOptionalDrop(b *llvmBuilder, value llvmValue, inner ir.TypeID) {
-	if !typeNeedsDrop(b.emitter.mod.Types, inner) {
+func emitVariantDrop(b *llvmBuilder, value llvmValue, variant ir.Type) {
+	dropCases := make([]int, 0, len(variant.Cases))
+	for caseIndex, variantCase := range variant.Cases {
+		if variantCase.Payload != ir.InvalidType && typeNeedsDrop(b.emitter.mod.Types, variantCase.Payload) {
+			dropCases = append(dropCases, caseIndex)
+		}
+	}
+	if len(dropCases) == 0 {
 		return
 	}
-	present := b.extractField(value, llvmFieldPresent)
-	payload := b.extractField(value, llvmFieldValue)
-	emitConditionalDrop(b, present, payload, inner)
-}
-
-func emitConditionalDrop(b *llvmBuilder, condition, value llvmValue, typeID ir.TypeID) {
 	id := b.nextID
 	b.nextID++
-	dropLabel := fmt.Sprintf("drop_some_%d", id)
-	doneLabel := fmt.Sprintf("drop_done_%d", id)
-	b.condBranch(condition, dropLabel, doneLabel)
-	b.namedLabel(dropLabel)
-	emitDropValue(b, value, typeID)
-	b.branch(doneLabel)
+	tag := b.variantTag(value)
+	doneLabel := fmt.Sprintf("drop_variant_done_%d", id)
+	switchCases := make([]llvmSwitchCase, len(dropCases))
+	for i, caseIndex := range dropCases {
+		switchCases[i] = llvmSwitchCase{
+			Value: b.variantCaseTag(caseIndex, tag.Layout),
+			Label: fmt.Sprintf("drop_variant_%d_case_%d", id, caseIndex),
+		}
+	}
+	b.switchBranch(tag, doneLabel, switchCases)
+	for i, caseIndex := range dropCases {
+		b.namedLabel(switchCases[i].Label)
+		variantCase := variant.Cases[caseIndex]
+		emitDropValue(b, b.variantPayload(value, caseIndex), variantCase.Payload)
+		b.branch(doneLabel)
+	}
 	b.namedLabel(doneLabel)
 }
 
@@ -249,8 +259,12 @@ func typeNeedsDrop(types *ir.TypeTable, id ir.TypeID) bool {
 	switch typ.Kind {
 	case ir.TypeOwnedPtr, ir.TypeString:
 		return true
-	case ir.TypeOptional:
-		return typeNeedsDrop(types, typ.Elem)
+	case ir.TypeVariant:
+		for _, variantCase := range typ.Cases {
+			if variantCase.Payload != ir.InvalidType && typeNeedsDrop(types, variantCase.Payload) {
+				return true
+			}
+		}
 	case ir.TypeArray:
 		return typ.Length == "" || typeNeedsDrop(types, typ.Elem)
 	case ir.TypeStruct:
@@ -273,8 +287,12 @@ func typeCarriesAllocatorID(types *ir.TypeTable, id ir.TypeID) bool {
 		return true
 	case ir.TypeOwnedPtr:
 		return !isInterfaceType(types, typ.Elem)
-	case ir.TypeOptional:
-		return typeCarriesAllocatorID(types, typ.Elem)
+	case ir.TypeVariant:
+		for _, variantCase := range typ.Cases {
+			if variantCase.Payload != ir.InvalidType && typeCarriesAllocatorID(types, variantCase.Payload) {
+				return true
+			}
+		}
 	case ir.TypeArray:
 		return typ.Length == "" || typeCarriesAllocatorID(types, typ.Elem)
 	case ir.TypeStruct:
@@ -295,8 +313,12 @@ func typeNeedsRawFreeID(types *ir.TypeTable, id ir.TypeID) bool {
 	switch typ.Kind {
 	case ir.TypeOwnedPtr:
 		return !isInterfaceType(types, typ.Elem) && typeNeedsRawFreeID(types, typ.Elem)
-	case ir.TypeOptional:
-		return typeNeedsRawFreeID(types, typ.Elem)
+	case ir.TypeVariant:
+		for _, variantCase := range typ.Cases {
+			if variantCase.Payload != ir.InvalidType && typeNeedsRawFreeID(types, variantCase.Payload) {
+				return true
+			}
+		}
 	case ir.TypeArray:
 		return typ.Length == "" || typeNeedsRawFreeID(types, typ.Elem)
 	case ir.TypeStruct:

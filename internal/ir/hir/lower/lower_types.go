@@ -27,6 +27,22 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 	if types == nil || t == nil {
 		return ir.InvalidType
 	}
+	if descriptor, ok := typeinfo.VariantDescriptorOf(t); ok {
+		cases := make([]ir.VariantCase, len(descriptor.Cases))
+		for i, variantCase := range descriptor.Cases {
+			cases[i].Name = variantCase.Name
+			if variantCase.Payload != nil {
+				cases[i].Payload = internRuntimeType(types, variantCase.Payload)
+			}
+		}
+		if descriptor.Family == typeinfo.VariantFamilyOptional {
+			return types.Intern(ir.OptionalVariant(cases[ir.OptionalPresentCase].Payload))
+		}
+		return types.Intern(ir.Type{
+			Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: t.Text(),
+			Identity: descriptor.Identity, Cases: cases,
+		})
+	}
 	switch typ := typeinfo.Underlying(t).(type) {
 	case *typeinfo.InvalidType, *typeinfo.UnknownType:
 		return ir.InvalidType
@@ -71,11 +87,6 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 			return ir.InvalidType
 		}
 		return types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: typ.Mutable, Elem: internRuntimeType(types, typ.Target)})
-	case *typeinfo.OptionalType:
-		if typ == nil {
-			return ir.InvalidType
-		}
-		return types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: internRuntimeType(types, typ.Inner)})
 	case *typeinfo.ArrayType:
 		if typ == nil {
 			return ir.InvalidType
@@ -123,11 +134,6 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 			returnType = types.Intern(ir.Type{Kind: ir.TypeVoid})
 		}
 		return types.Intern(ir.Type{Kind: ir.TypeFunction, Params: params, Return: returnType})
-	case *typeinfo.EnumType:
-		if typ == nil {
-			return ir.InvalidType
-		}
-		return types.Intern(ir.Type{Kind: ir.TypeNamed, Name: typ.Text()})
 	default:
 		return ir.InvalidType
 	}
@@ -177,6 +183,9 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		}
 		seen[typ] = struct{}{}
 		defer delete(seen, typ)
+		if enum, ok := typeinfo.Underlying(typ.Underlying).(*typeinfo.EnumType); ok {
+			return &typeinfo.DefinedType{Name: typ.Name, Identity: typ.Identity, Underlying: enum}
+		}
 		return loweredRuntimeType(module, typ.Underlying, seen)
 	case *typeinfo.OwnedPtrType:
 		if typ == nil {

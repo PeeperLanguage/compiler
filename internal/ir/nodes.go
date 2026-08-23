@@ -79,15 +79,17 @@ type ZeroValue struct {
 	Type TypeID
 }
 
-type OptionalSome struct {
+type VariantMake struct {
 	SourceInfo
-	Value Expr
-	Type  TypeID
+	Case    int
+	Payload Expr
+	Type    TypeID
 }
 
-type OptionalPresent struct {
+type VariantIs struct {
 	SourceInfo
 	Value Expr
+	Case  int
 	Type  TypeID
 }
 
@@ -126,13 +128,14 @@ const (
 	PlaceProjectionDeref PlaceProjectionKind = iota
 	PlaceProjectionField
 	PlaceProjectionIndex
-	PlaceProjectionOptionalPayload
+	PlaceProjectionVariantPayload
 )
 
 type PlaceProjection struct {
 	Kind       PlaceProjectionKind
 	FieldIndex int
 	Index      Expr
+	Case       int
 	Type       TypeID
 	Location   *source.Location
 }
@@ -274,8 +277,8 @@ var (
 	_ Expr = (*StringLit)(nil)
 	_ Expr = (*BoolLit)(nil)
 	_ Expr = (*ZeroValue)(nil)
-	_ Expr = (*OptionalSome)(nil)
-	_ Expr = (*OptionalPresent)(nil)
+	_ Expr = (*VariantMake)(nil)
+	_ Expr = (*VariantIs)(nil)
 	_ Expr = (*Ident)(nil)
 	_ Expr = (*Unary)(nil)
 	_ Expr = (*Binary)(nil)
@@ -298,27 +301,31 @@ var (
 	_ Expr = (*Drop)(nil)
 )
 
-func (*InvalidExpr) exprNode()                           {}
-func (*InvalidExpr) forEachChild(func(Expr))             {}
-func (*IntLit) exprNode()                                {}
-func (*IntLit) forEachChild(func(Expr))                  {}
-func (*FloatLit) exprNode()                              {}
-func (*FloatLit) forEachChild(func(Expr))                {}
-func (*StringLit) exprNode()                             {}
-func (*StringLit) forEachChild(func(Expr))               {}
-func (*BoolLit) exprNode()                               {}
-func (*BoolLit) forEachChild(func(Expr))                 {}
-func (*ZeroValue) exprNode()                             {}
-func (*ZeroValue) forEachChild(func(Expr))               {}
-func (*OptionalSome) exprNode()                          {}
-func (e *OptionalSome) forEachChild(visit func(Expr))    { visit(e.Value) }
-func (*OptionalPresent) exprNode()                       {}
-func (e *OptionalPresent) forEachChild(visit func(Expr)) { visit(e.Value) }
-func (*Ident) exprNode()                                 {}
-func (*Ident) forEachChild(func(Expr))                   {}
-func (*Unary) exprNode()                                 {}
-func (e *Unary) forEachChild(visit func(Expr))           { visit(e.Arg) }
-func (*Binary) exprNode()                                {}
+func (*InvalidExpr) exprNode()               {}
+func (*InvalidExpr) forEachChild(func(Expr)) {}
+func (*IntLit) exprNode()                    {}
+func (*IntLit) forEachChild(func(Expr))      {}
+func (*FloatLit) exprNode()                  {}
+func (*FloatLit) forEachChild(func(Expr))    {}
+func (*StringLit) exprNode()                 {}
+func (*StringLit) forEachChild(func(Expr))   {}
+func (*BoolLit) exprNode()                   {}
+func (*BoolLit) forEachChild(func(Expr))     {}
+func (*ZeroValue) exprNode()                 {}
+func (*ZeroValue) forEachChild(func(Expr))   {}
+func (*VariantMake) exprNode()               {}
+func (e *VariantMake) forEachChild(visit func(Expr)) {
+	if e.Payload != nil {
+		visit(e.Payload)
+	}
+}
+func (*VariantIs) exprNode()                       {}
+func (e *VariantIs) forEachChild(visit func(Expr)) { visit(e.Value) }
+func (*Ident) exprNode()                           {}
+func (*Ident) forEachChild(func(Expr))             {}
+func (*Unary) exprNode()                           {}
+func (e *Unary) forEachChild(visit func(Expr))     { visit(e.Arg) }
+func (*Binary) exprNode()                          {}
 func (e *Binary) forEachChild(visit func(Expr)) {
 	visit(e.Left)
 	visit(e.Right)
@@ -484,25 +491,28 @@ func (e *ZeroValue) TypeID() TypeID {
 	}
 	return e.Type
 }
-func (e *OptionalSome) String() string {
-	if e == nil || e.Value == nil {
-		return "some(<nil>)"
+func (e *VariantMake) String() string {
+	if e == nil {
+		return "variant(<nil>)"
 	}
-	return "some(" + e.Value.String() + ")"
+	if e.Payload == nil {
+		return fmt.Sprintf("variant(%d)", e.Case)
+	}
+	return fmt.Sprintf("variant(%d, %s)", e.Case, e.Payload.String())
 }
-func (e *OptionalSome) TypeID() TypeID {
+func (e *VariantMake) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
 	}
 	return e.Type
 }
-func (e *OptionalPresent) String() string {
+func (e *VariantIs) String() string {
 	if e == nil || e.Value == nil {
-		return "present(<nil>)"
+		return "is-variant(<nil>)"
 	}
-	return "present(" + e.Value.String() + ")"
+	return fmt.Sprintf("is-variant(%s, %d)", e.Value.String(), e.Case)
 }
-func (e *OptionalPresent) TypeID() TypeID {
+func (e *VariantIs) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
 	}
@@ -605,8 +615,8 @@ func (p *Place) String() string {
 				b.WriteString(projection.Index.String())
 			}
 			b.WriteString("]")
-		case PlaceProjectionOptionalPayload:
-			b.WriteString(".value")
+		case PlaceProjectionVariantPayload:
+			fmt.Fprintf(&b, ".variant%d", projection.Case)
 		}
 	}
 	return b.String()

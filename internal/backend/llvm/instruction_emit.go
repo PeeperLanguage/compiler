@@ -181,7 +181,7 @@ func placeNeedsRootAddr(types *ir.TypeTable, place *mir.Place) bool {
 		return false
 	case mir.PlaceProjectionField:
 		return true
-	case mir.PlaceProjectionOptionalPayload:
+	case mir.PlaceProjectionVariantPayload:
 		return true
 	case mir.PlaceProjectionIndex:
 		rootType, ok := types.Type(mirRefType(place.Root))
@@ -262,12 +262,17 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 			}
 			hasCurrent = true
 			addressed = true
-		case mir.PlaceProjectionOptionalPayload:
+		case mir.PlaceProjectionVariantPayload:
 			if !hasCurrent {
-				b.emitter.markInvalid("optional payload place requires addressable storage")
+				b.emitter.markInvalid("variant payload place requires addressable storage")
 				return llvmPlace{}, false
 			}
-			current = b.namedFieldPlace(current, llvmFieldValue)
+			index, ok := current.Pointee.VariantPayloads[projection.Case]
+			if !ok {
+				b.emitter.markInvalid(fmt.Sprintf("variant case %d has no payload", projection.Case))
+				return llvmPlace{}, false
+			}
+			current = b.fieldPlace(current, index)
 		default:
 			b.emitter.markInvalid(fmt.Sprintf("unsupported MIR place projection %d", projection.Kind))
 			return llvmPlace{}, false
@@ -664,15 +669,40 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			return emitAlloc(b, e)
 		case *mir.ZeroValue:
 			return b.zero(b.emitter.layout(e.Type))
-		case *mir.OptionalSome:
-			optional, ok := b.emitter.mod.Types.Type(e.Type)
-			if !ok || optional.Kind != ir.TypeOptional {
+		case *mir.VariantMake:
+			variant, ok := b.emitter.mod.Types.Type(e.Type)
+			variantCase, caseOK := variant.VariantCase(e.Case)
+			if !ok || variant.Kind != ir.TypeVariant || !caseOK {
+				b.emitter.markInvalid("variant construction has invalid type or case")
 				return b.value("0", b.emitter.layout(e.Type))
 			}
-			value := b.insertField(b.zero(b.emitter.layout(e.Type)), b.value("true", llvmScalarLayout("i1")), llvmFieldPresent)
-			return b.insertField(value, emitRef(b, e.Value), llvmFieldValue)
-		case *mir.OptionalPresent:
-			return b.extractField(emitRef(b, e.Value), llvmFieldPresent)
+			layout := b.emitter.layout(e.Type)
+			value := b.zero(layout)
+			tagLayout := layout.Elements[layout.VariantTag]
+			value = b.insertIndex(value, b.variantCaseTag(e.Case, tagLayout), layout.VariantTag)
+			if variantCase.Payload == ir.InvalidType {
+				if e.Payload != nil {
+					b.emitter.markInvalid("payloadless variant case has payload")
+				}
+				return value
+			}
+			if e.Payload == nil {
+				b.emitter.markInvalid("variant data case requires payload")
+				return value
+			}
+			return b.insertVariantPayload(value, emitRef(b, e.Payload), e.Case)
+		case *mir.VariantIs:
+			value := emitRef(b, e.Value)
+			variant, ok := b.emitter.mod.Types.Type(mirRefType(e.Value))
+			if _, caseOK := variant.VariantCase(e.Case); !ok || variant.Kind != ir.TypeVariant || !caseOK {
+				b.emitter.markInvalid("variant test has invalid type or case")
+				return b.value("false", llvmScalarLayout("i1"))
+			}
+			tag := b.variantTag(value)
+			if tag.Layout.Text == "i1" && e.Case == ir.OptionalPresentCase {
+				return tag
+			}
+			return b.compare("icmp", "eq", tag, b.variantCaseTag(e.Case, tag.Layout))
 		case *mir.InterfaceMake:
 			value := emitRef(b, e.Value)
 			dataPtr := value

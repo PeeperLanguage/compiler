@@ -138,9 +138,12 @@ func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
 	if !ok {
 		t.Fatalf("first statement = %T, want If", out.Funcs[0].Body.Stmts[0])
 	}
-	present, ok := branch.Cond.(*ir.OptionalPresent)
+	present, ok := branch.Cond.(*ir.VariantIs)
 	if !ok || out.Types.Text(present.Value.TypeID()) != "?i32" || out.Types.Text(present.TypeID()) != "bool" {
-		t.Fatalf("condition = %#v, want OptionalPresent(?i32) -> bool", branch.Cond)
+		t.Fatalf("condition = %#v, want VariantIs(?i32, Present) -> bool", branch.Cond)
+	}
+	if present.Case != ir.OptionalPresentCase {
+		t.Fatalf("condition case = %d, want Present", present.Case)
 	}
 	ret, ok := branch.Then.Stmts[0].(*hir.Return)
 	if !ok {
@@ -148,8 +151,58 @@ func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
 	}
 	load, ok := ret.Value.(*ir.Load)
 	if !ok || load.Place == nil || len(load.Place.Projections) != 1 ||
-		load.Place.Projections[0].Kind != ir.PlaceProjectionOptionalPayload || out.Types.Text(load.TypeID()) != "i32" {
+		load.Place.Projections[0].Kind != ir.PlaceProjectionVariantPayload ||
+		load.Place.Projections[0].Case != ir.OptionalPresentCase || out.Types.Text(load.TypeID()) != "i32" {
 		t.Fatalf("proven value = %#v, want i32 optional payload load", ret.Value)
+	}
+}
+
+func TestGenerateHIRKeepsProofAcrossImpossibleVariantEdge(t *testing.T) {
+	generateTestHIR(t, "hir_impossible_variant_edge_test"+peeper.SourceExt, "hir_impossible_variant_edge_test", `fn read(value: ?i32, other: ?i32) -> i32 {
+	if value != none {
+		if other != none && other == none {
+			let ignored = 0;
+		}
+		return value;
+	}
+	return 0;
+}`)
+}
+
+func TestGenerateHIRKeepsEagerConditionMutationOrdering(t *testing.T) {
+	generateTestHIR(t, "hir_eager_variant_mutation_test"+peeper.SourceExt, "hir_eager_variant_mutation_test", `struct Holder {
+	field: ?i32
+}
+
+fn Clear(holder: &mut Holder) -> bool {
+	holder.field = none;
+	return true;
+}
+
+fn read(value: ?i32, other: Holder) -> i32 {
+	if value == none {
+		return 0;
+	}
+	let mut holder = other;
+	if holder.field != none && Clear(&mut holder) && holder.field == none {
+		return value;
+	}
+	return 0;
+}`)
+}
+
+func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
+	consumer := &project.Module{Key: "local:consumer.peep", ModuleScope: symbols.NewScope(nil)}
+	typ := &typeinfo.DefinedType{
+		Name:       "Status",
+		Underlying: &typeinfo.EnumType{Variants: []string{"Ready"}},
+	}
+	lowered, ok := loweredRuntimeType(consumer, typ, nil).(*typeinfo.DefinedType)
+	if !ok || lowered == nil {
+		t.Fatalf("lowered type = %T, want DefinedType", lowered)
+	}
+	if lowered.Identity != "" {
+		t.Fatalf("lowered type invented use-site identity %q", lowered.Identity)
 	}
 }
 
@@ -171,7 +224,7 @@ func TestGenerateHIRKeepsOptionalIndexCarrierBeforePayloadProjection(t *testing.
 	index := load.Place.Projections[0]
 	payload := load.Place.Projections[1]
 	if index.Kind != ir.PlaceProjectionIndex || out.Types.Text(index.Type) != "?i32" ||
-		payload.Kind != ir.PlaceProjectionOptionalPayload || out.Types.Text(payload.Type) != "i32" {
+		payload.Kind != ir.PlaceProjectionVariantPayload || payload.Case != ir.OptionalPresentCase || out.Types.Text(payload.Type) != "i32" {
 		t.Fatalf("projections = %#v, want index:?i32 then optional-payload:i32", load.Place.Projections)
 	}
 }
@@ -908,5 +961,23 @@ fn main() { let ignored = make(); }`)
 	}
 	if _, ok := stmt.Value.(*ir.Call); !ok {
 		t.Fatalf("discarded value = %T, want call", stmt.Value)
+	}
+}
+
+func TestInternRuntimeTypeUsesSharedVariantDescriptor(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	optionalID := internRuntimeType(types, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	if direct := types.Intern(ir.OptionalVariant(i32)); optionalID != direct {
+		t.Fatalf("semantic optional ID = %d, direct optional ID = %d", optionalID, direct)
+	}
+	enumID := internRuntimeType(types, &typeinfo.DefinedType{
+		Name:       "Status",
+		Underlying: &typeinfo.EnumType{Variants: []string{"Ready", "Waiting"}},
+	})
+	variant, ok := types.Type(enumID)
+	if !ok || variant.Kind != ir.TypeVariant || variant.Family != ir.VariantFamilyNamed ||
+		variant.Identity != "Status" || len(variant.Cases) != 2 || variant.Cases[0].Name != "Ready" {
+		t.Fatalf("enum runtime type = %#v", variant)
 	}
 }

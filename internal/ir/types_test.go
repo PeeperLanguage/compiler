@@ -70,3 +70,45 @@ func TestTypeTableUsesLanguageNamesForStringTypes(t *testing.T) {
 		t.Fatalf("string type text = %q, want str", got)
 	}
 }
+
+func TestTypeTableInternsTaggedVariantIdentityAndCases(t *testing.T) {
+	types := NewTypeTable()
+	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	str := types.Intern(Type{Kind: TypeString})
+
+	optionalID := types.Intern(OptionalVariant(i32))
+	optional, ok := types.Type(optionalID)
+	if !ok || optional.Kind != TypeVariant || optional.Family != VariantFamilyOptional {
+		t.Fatalf("optional variant = (%#v, %t)", optional, ok)
+	}
+	if len(optional.Cases) != 2 || optional.Cases[OptionalAbsentCase].Payload != InvalidType ||
+		optional.Cases[OptionalPresentCase].Payload != i32 {
+		t.Fatalf("optional cases = %#v", optional.Cases)
+	}
+	if got := types.Text(optionalID); got != "?i32" {
+		t.Fatalf("optional text = %q, want ?i32", got)
+	}
+
+	result := Type{
+		Kind: TypeVariant, Family: VariantFamilyNamed, Name: "Result<i32>", Identity: "app::Result<i32>",
+		Cases: []VariantCase{
+			{Name: "Ok", Payload: i32},
+			{Name: "Error", Payload: str},
+			{Name: "Pending"},
+		},
+	}
+	resultID := types.Intern(result)
+	otherID := types.Intern(Type{
+		Kind: TypeVariant, Family: VariantFamilyNamed, Name: "Result<i32>", Identity: "other::Result<i32>",
+		Cases: result.Cases,
+	})
+	if resultID == otherID {
+		t.Fatal("nominally distinct variants shared one TypeID")
+	}
+	if types.Text(resultID) != "Result<i32>" || types.Text(otherID) != "Result<i32>" {
+		t.Fatalf("named variant text = %q and %q", types.Text(resultID), types.Text(otherID))
+	}
+	if types.ABIKey(resultID) == types.ABIKey(otherID) {
+		t.Fatal("nominally distinct variants shared one ABI key")
+	}
+}

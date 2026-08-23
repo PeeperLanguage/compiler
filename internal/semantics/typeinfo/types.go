@@ -43,6 +43,7 @@ type NamedType struct {
 
 type DefinedType struct {
 	Name       string
+	Identity   string
 	Underlying Type
 }
 
@@ -59,6 +60,25 @@ type RefType struct {
 
 type OptionalType struct {
 	Inner Type
+}
+
+type VariantFamily uint8
+
+const (
+	VariantFamilyInvalid VariantFamily = iota
+	VariantFamilyOptional
+	VariantFamilyNamed
+)
+
+type VariantCase struct {
+	Name    string
+	Payload Type
+}
+
+type VariantDescriptor struct {
+	Family   VariantFamily
+	Identity string
+	Cases    []VariantCase
 }
 
 type ArrayShape uint8
@@ -203,6 +223,47 @@ func Underlying(t Type) Type {
 			return t
 		}
 		t = defined.Underlying
+	}
+}
+
+// VariantDescriptorOf is source semantics' canonical variant classification.
+// It preserves nominal identity before inspecting a defined enum's underlying
+// representation, while optionals remain structural source types.
+func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
+	identity := ""
+	if defined, ok := t.(*DefinedType); ok && defined != nil {
+		identity = defined.Identity
+		if identity == "" {
+			identity = defined.Name
+		}
+		t = defined.Underlying
+	}
+	switch variant := t.(type) {
+	case *OptionalType:
+		if variant == nil || variant.Inner == nil {
+			return VariantDescriptor{}, false
+		}
+		return VariantDescriptor{
+			Family: VariantFamilyOptional,
+			Cases: []VariantCase{
+				{Name: "Absent"},
+				{Name: "Present", Payload: variant.Inner},
+			},
+		}, true
+	case *EnumType:
+		if variant == nil || len(variant.Variants) == 0 {
+			return VariantDescriptor{}, false
+		}
+		if identity == "" {
+			identity = variant.Text()
+		}
+		cases := make([]VariantCase, len(variant.Variants))
+		for i, name := range variant.Variants {
+			cases[i].Name = name
+		}
+		return VariantDescriptor{Family: VariantFamilyNamed, Identity: identity, Cases: cases}, true
+	default:
+		return VariantDescriptor{}, false
 	}
 }
 

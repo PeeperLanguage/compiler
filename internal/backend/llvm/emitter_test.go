@@ -67,8 +67,8 @@ func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 		u128:              table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 128}),
 		usize:             usize,
 		ownedI32:          table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32}),
-		optionalI32:       table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: i32}),
-		optionalOwnedI32:  table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32})}),
+		optionalI32:       table.Intern(ir.OptionalVariant(i32)),
+		optionalOwnedI32:  table.Intern(ir.OptionalVariant(table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32}))),
 		dynamicI32:        dynamicI32,
 		dynamicDynamicI32: table.Intern(ir.Type{Kind: ir.TypeArray, Elem: dynamicI32}),
 		fixed3I32:         table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "3"}),
@@ -112,9 +112,9 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 		{types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 8388608}), "i8388608"},
 		{llvmTypes.stringType, "{ i8*, i64, i8* }"},
 		{llvmTypes.optionalI32, "{ i1, i32 }"},
-		{types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.stringType}), "{ i1, { i8*, i64, i8* } }"},
+		{types.Intern(ir.OptionalVariant(llvmTypes.stringType)), "{ i1, { i8*, i64, i8* } }"},
 		{llvmTypes.optionalOwnedI32, "{ i1, { i32*, i8* } }"},
-		{types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: ownedInterface}), "{ i1, { i8*, i8*, i8* } }"},
+		{types.Intern(ir.OptionalVariant(ownedInterface)), "{ i1, { i8*, i8*, i8* } }"},
 		{llvmTypes.ownedI32, "{ i32*, i8* }"},
 		{ownedInterface, "{ i8*, i8*, i8* }"},
 		{llvmTypes.rawptr, "i8*"},
@@ -127,7 +127,7 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 		{llvmTypes.refSliceI32, "{ i32*, i64 }"},
 		{llvmTypes.mutRefSliceI32, "{ i32*, i64 }"},
 		{types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: llvmTypes.stringType}), "{ { i8*, i64, i8* }*, i8* }"},
-		{types.Intern(ir.Type{Kind: ir.TypeArray, Elem: types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.stringType})}), "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }"},
+		{types.Intern(ir.Type{Kind: ir.TypeArray, Elem: types.Intern(ir.OptionalVariant(llvmTypes.stringType))}), "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }"},
 		{types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "x", Type: types.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.u8, Length: "2"})}}}), "{ [2 x i8] }"},
 	}
 	for _, tt := range cases {
@@ -135,6 +135,30 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 		if !ok || got.Text != tt.want {
 			t.Fatalf("llvmLayoutID(%s) = %v, %v; want %q, true", types.Text(tt.id), got, ok, tt.want)
 		}
+	}
+}
+
+func TestLLVMLayoutUsesTypedVariantCaseSlots(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	str := types.Intern(ir.Type{Kind: ir.TypeString})
+	index := types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
+	types.SetIndexType(index)
+	result := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result<i32>", Identity: "test::Result<i32>",
+		Cases: []ir.VariantCase{
+			{Name: "Ok", Payload: i32},
+			{Name: "Error", Payload: str},
+			{Name: "Pending"},
+		},
+	})
+
+	layout, ok := llvmLayoutID(types, result)
+	if !ok || layout.Text != "{ i8, i32, { i8*, i64, i8* } }" {
+		t.Fatalf("variant layout = (%v, %t)", layout, ok)
+	}
+	if layout.VariantTag != 0 || layout.VariantPayloads[0] != 1 || layout.VariantPayloads[1] != 2 {
+		t.Fatalf("variant physical fields = tag %d, payloads %#v", layout.VariantTag, layout.VariantPayloads)
 	}
 }
 
@@ -935,7 +959,7 @@ func TestGenerateLLVMIRLowersOwnedPointerStructLayout(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersOptionalOwnedPointerAsTagged(t *testing.T) {
-	optionalOwnedI32 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: llvmTypes.ownedI32})
+	optionalOwnedI32 := llvmTypes.table.Intern(ir.OptionalVariant(llvmTypes.ownedI32))
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
@@ -1124,7 +1148,7 @@ func TestGenerateLLVMIRAcceptsRawExternBoundaries(t *testing.T) {
 func TestGenerateLLVMIRUsesCarriedAllocatorForInterfaceDrops(t *testing.T) {
 	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.valueStruct}}, Return: llvmTypes.void}}})
 	ownedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
-	optionalOwnedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: ownedIface})
+	optionalOwnedIface := llvmTypes.table.Intern(ir.OptionalVariant(ownedIface))
 	for _, tt := range []struct {
 		name   string
 		typeID ir.TypeID
@@ -1680,7 +1704,7 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
+func TestGenerateLLVMIRLowersVariantMake(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
@@ -1694,7 +1718,7 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
+						&mir.Assign{Name: "x", Value: &mir.VariantMake{Case: ir.OptionalPresentCase, Payload: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
 					},
 					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalI32}},
 				}},
@@ -1707,7 +1731,7 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefName{Name: "p", Type: llvmTypes.ownedI32}, Type: llvmTypes.optionalOwnedI32}},
+						&mir.Assign{Name: "x", Value: &mir.VariantMake{Case: ir.OptionalPresentCase, Payload: &mir.RefName{Name: "p", Type: llvmTypes.ownedI32}, Type: llvmTypes.optionalOwnedI32}},
 					},
 					Term: &mir.Ret{Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalOwnedI32}},
 				}},
@@ -1744,9 +1768,10 @@ func TestGenerateLLVMIRReadsTaggedOptionalPresence(t *testing.T) {
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
-						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
-						&mir.Assign{Name: "present", Value: &mir.OptionalPresent{
+						&mir.Assign{Name: "x", Value: &mir.VariantMake{Case: ir.OptionalPresentCase, Payload: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
+						&mir.Assign{Name: "present", Value: &mir.VariantIs{
 							Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalI32},
+							Case:  ir.OptionalPresentCase,
 							Type:  llvmTypes.boolType,
 						}},
 					},
@@ -1776,7 +1801,7 @@ func TestGenerateLLVMIRLoadsTaggedOptionalPayload(t *testing.T) {
 					Place: &mir.Place{
 						Root: &mir.RefName{Name: "value", Type: llvmTypes.optionalI32},
 						Projections: []mir.PlaceProjection{
-							{Kind: mir.PlaceProjectionOptionalPayload, Type: llvmTypes.i32},
+							{Kind: mir.PlaceProjectionVariantPayload, Case: ir.OptionalPresentCase, Type: llvmTypes.i32},
 						},
 						Type: llvmTypes.i32,
 					},
@@ -2686,5 +2711,137 @@ func TestGenerateLLVMIRLowersAlloc(t *testing.T) {
 	}
 	if !strings.Contains(out, "icmp eq i8*") {
 		t.Fatalf("expected null check for allocation, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRLowersSwitchVariant(t *testing.T) {
+	status := llvmTypes.table.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Status", Identity: "test::Status",
+		Cases: []ir.VariantCase{{Name: "Ready"}, {Name: "Waiting"}},
+	})
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name: "select", Params: []ir.Param{{Name: "status", Type: status}}, ReturnType: llvmTypes.i32, EntryID: 0,
+			Blocks: []*mir.Block{
+				{ID: 0, Term: &mir.SwitchVariant{Value: &mir.RefName{Name: "status", Type: status}, Targets: []mir.VariantTarget{{Case: 0, TargetID: 1}, {Case: 1, TargetID: 2}}}},
+				{ID: 1, Term: &mir.Ret{Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}},
+				{ID: 2, Term: &mir.Ret{Value: &mir.RefConst{Value: "2", Type: llvmTypes.i32}}},
+			},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if !strings.Contains(out, "switch i8") || !strings.Contains(out, "i8 0, label %b1") ||
+		!strings.Contains(out, "i8 1, label %b2") || !strings.Contains(out, "call void @llvm.trap()") {
+		t.Fatalf("expected tagged switch with invalid-tag trap, got:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRRejectsIncompleteVariantSwitch(t *testing.T) {
+	status := llvmTypes.table.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Status", Identity: "test::IncompleteStatus",
+		Cases: []ir.VariantCase{{Name: "Ready"}, {Name: "Waiting"}},
+	})
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name: "select", Params: []ir.Param{{Name: "status", Type: status}}, ReturnType: llvmTypes.i32, EntryID: 0,
+			Blocks: []*mir.Block{
+				{ID: 0, Term: &mir.SwitchVariant{Value: &mir.RefName{Name: "status", Type: status}, Targets: []mir.VariantTarget{{Case: 0, TargetID: 1}}}},
+				{ID: 1, Term: &mir.Ret{Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}},
+			},
+		}},
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	if out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false); out != "" {
+		t.Fatalf("incomplete variant switch must suppress LLVM output, got:\n%s", out)
+	}
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "cover every case") {
+		t.Fatalf("incomplete variant switch diagnostic missing:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestLLVMVariantTagWidthsAndEmptyRejection(t *testing.T) {
+	types := ir.NewTypeTable()
+	for _, test := range []struct {
+		name  string
+		count int
+		want  string
+	}{
+		{name: "i8 maximum", count: 256, want: "i8"},
+		{name: "i16 minimum", count: 257, want: "i16"},
+		{name: "i16 maximum", count: 65536, want: "i16"},
+		{name: "i32 minimum", count: 65537, want: "i32"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			variant := ir.Type{
+				Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Many", Identity: "test::Many",
+				Cases: make([]ir.VariantCase, test.count),
+			}
+			layout, ok := llvmVariantLayout(types, variant)
+			if !ok || layout.Elements[layout.VariantTag].Text != test.want {
+				t.Fatalf("tag layout for %d cases = %#v, want %s", test.count, layout, test.want)
+			}
+		})
+	}
+	if layout, ok := llvmVariantLayout(types, ir.Type{Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Identity: "test::Empty"}); ok || layout != nil {
+		t.Fatalf("empty variant layout = %#v, %v; want rejection", layout, ok)
+	}
+}
+
+func TestGenerateLLVMIRLowersNamedVariantOperationsAndDrop(t *testing.T) {
+	result := llvmTypes.table.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result", Identity: "test::Result",
+		Cases: []ir.VariantCase{
+			{Name: "Value", Payload: llvmTypes.i32},
+			{Name: "Owned", Payload: llvmTypes.ownedI32},
+			{Name: "Pending"},
+		},
+	})
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{
+			{
+				Name: "make_owned", Params: []ir.Param{{Name: "payload", Type: llvmTypes.ownedI32}}, ReturnType: result,
+				Blocks: []*mir.Block{{ID: 0, Instrs: []mir.Instr{&mir.Assign{
+					Name: "result", Value: &mir.VariantMake{Case: 1, Payload: &mir.RefName{Name: "payload", Type: llvmTypes.ownedI32}, Type: result},
+				}}, Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: result}}}},
+			},
+			{
+				Name: "is_owned", Params: []ir.Param{{Name: "result", Type: result}}, ReturnType: llvmTypes.boolType,
+				Blocks: []*mir.Block{{ID: 0, Instrs: []mir.Instr{&mir.Assign{
+					Name: "owned", Value: &mir.VariantIs{Value: &mir.RefName{Name: "result", Type: result}, Case: 1, Type: llvmTypes.boolType},
+				}}, Term: &mir.Ret{Value: &mir.RefName{Name: "owned", Type: llvmTypes.boolType}}}},
+			},
+			{
+				Name: "owned_payload", Params: []ir.Param{{Name: "result", Type: result}}, ReturnType: llvmTypes.ownedI32,
+				Blocks: []*mir.Block{{ID: 0, Instrs: []mir.Instr{&mir.Assign{
+					Name: "payload", Value: &mir.Load{Place: &mir.Place{
+						Root:        &mir.RefName{Name: "result", Type: result},
+						Projections: []mir.PlaceProjection{{Kind: mir.PlaceProjectionVariantPayload, Case: 1, Type: llvmTypes.ownedI32}},
+						Type:        llvmTypes.ownedI32,
+					}, Type: llvmTypes.ownedI32},
+				}}, Term: &mir.Ret{Value: &mir.RefName{Name: "payload", Type: llvmTypes.ownedI32}}}},
+			},
+			{
+				Name: "release", Params: []ir.Param{{Name: "result", Type: result}}, ReturnType: llvmTypes.void,
+				Blocks: []*mir.Block{{ID: 0, Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "result", Type: result}}}, Term: &mir.Ret{}}},
+			},
+		},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	for _, expected := range []string{
+		"insertvalue { i8, i32, { i32*, i8* } } zeroinitializer, i8 1, 0",
+		"insertvalue { i8, i32, { i32*, i8* } }",
+		"extractvalue { i8, i32, { i32*, i8* } } %result, 0",
+		"icmp eq i8",
+		"getelementptr inbounds { i8, i32, { i32*, i8* } }, { i8, i32, { i32*, i8* } }*",
+		"i32 0, i32 2",
+		"switch i8",
+		"extractvalue { i8, i32, { i32*, i8* } } %result, 2",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("missing %q in named variant LLVM:\n%s", expected, out)
+		}
 	}
 }

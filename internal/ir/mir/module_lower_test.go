@@ -50,7 +50,7 @@ var mirTypes = func() mirTypeFixture {
 		rawptr:           rawptr,
 		usize:            usize,
 		ownedI32:         table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32}),
-		optionalI32:      table.Intern(ir.Type{Kind: ir.TypeOptional, Elem: i32}),
+		optionalI32:      table.Intern(ir.OptionalVariant(i32)),
 		valueStruct:      valueStruct,
 		ownerStruct:      ownerStruct,
 		ownedValueStruct: table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: valueStruct}),
@@ -469,7 +469,7 @@ func TestGenerateMIRLowersZeroValue(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersOptionalSome(t *testing.T) {
+func TestGenerateMIRLowersVariantMake(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{
@@ -478,7 +478,7 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 				ReturnType: mirTypes.optionalI32,
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
-						&hir.Return{Value: &ir.OptionalSome{Value: &ir.IntLit{Value: "7", Type: mirTypes.i32}, Type: mirTypes.optionalI32}},
+						&hir.Return{Value: &ir.VariantMake{Case: ir.OptionalPresentCase, Payload: &ir.IntLit{Value: "7", Type: mirTypes.i32}, Type: mirTypes.optionalI32}},
 					},
 				},
 			},
@@ -497,9 +497,9 @@ func TestGenerateMIRLowersOptionalSome(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected assign, got %#v", block.Instrs[0])
 	}
-	some, ok := assign.Value.(*OptionalSome)
-	if !ok || some.Type != mirTypes.optionalI32 {
-		t.Fatalf("expected ?i32 optional some, got %#v", assign.Value)
+	variant, ok := assign.Value.(*VariantMake)
+	if !ok || variant.Type != mirTypes.optionalI32 || variant.Case != ir.OptionalPresentCase {
+		t.Fatalf("expected ?i32 present variant, got %#v", assign.Value)
 	}
 }
 
@@ -507,7 +507,7 @@ func TestGenerateMIRLowersOptionalFlowOperations(t *testing.T) {
 	payloadPlace := &ir.Place{
 		Root: &ir.Ident{Name: "value", Type: mirTypes.optionalI32},
 		Projections: []ir.PlaceProjection{
-			{Kind: ir.PlaceProjectionOptionalPayload, Type: mirTypes.i32},
+			{Kind: ir.PlaceProjectionVariantPayload, Case: ir.OptionalPresentCase, Type: mirTypes.i32},
 		},
 		Type: mirTypes.i32,
 	}
@@ -516,8 +516,8 @@ func TestGenerateMIRLowersOptionalFlowOperations(t *testing.T) {
 		Funcs: []*hir.Function{
 			{
 				Name: "present", Params: []ir.Param{{Name: "value", Type: mirTypes.optionalI32}}, ReturnType: mirTypes.boolType,
-				Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.OptionalPresent{
-					Value: &ir.Ident{Name: "value", Type: mirTypes.optionalI32}, Type: mirTypes.boolType,
+				Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{Value: &ir.VariantIs{
+					Value: &ir.Ident{Name: "value", Type: mirTypes.optionalI32}, Case: ir.OptionalPresentCase, Type: mirTypes.boolType,
 				}}}},
 			},
 			{
@@ -532,16 +532,71 @@ func TestGenerateMIRLowersOptionalFlowOperations(t *testing.T) {
 	if !ok {
 		t.Fatalf("presence instruction = %T, want Assign", out.Funcs[0].Blocks[0].Instrs[0])
 	}
-	if _, ok := presentAssign.Value.(*OptionalPresent); !ok {
-		t.Fatalf("presence value = %T, want OptionalPresent", presentAssign.Value)
+	if present, ok := presentAssign.Value.(*VariantIs); !ok || present.Case != ir.OptionalPresentCase {
+		t.Fatalf("presence value = %#v, want VariantIs Present", presentAssign.Value)
 	}
 	payloadAssign, ok := out.Funcs[1].Blocks[0].Instrs[0].(*Assign)
 	if !ok {
 		t.Fatalf("payload instruction = %T, want Assign", out.Funcs[1].Blocks[0].Instrs[0])
 	}
 	load, ok := payloadAssign.Value.(*Load)
-	if !ok || load.Place == nil || len(load.Place.Projections) != 1 || load.Place.Projections[0].Kind != PlaceProjectionOptionalPayload {
-		t.Fatalf("payload value = %#v, want optional payload place load", payloadAssign.Value)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 ||
+		load.Place.Projections[0].Kind != PlaceProjectionVariantPayload || load.Place.Projections[0].Case != ir.OptionalPresentCase {
+		t.Fatalf("payload value = %#v, want present variant payload place load", payloadAssign.Value)
+	}
+}
+
+func TestSwitchVariantTerminatorText(t *testing.T) {
+	term := &SwitchVariant{
+		Value: &RefName{Name: "status", Type: mirTypes.optionalI32},
+		Targets: []VariantTarget{
+			{Case: ir.OptionalAbsentCase, TargetID: 1},
+			{Case: ir.OptionalPresentCase, TargetID: 2},
+		},
+	}
+	if got := term.Text(); got != "switch-variant status, case 0: b1, case 1: b2" {
+		t.Fatalf("switch terminator text = %q", got)
+	}
+}
+
+func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
+	ifStmt := &hir.If{
+		Cond: &ir.BoolLit{Value: true, Type: mirTypes.boolType},
+		Then: &hir.Block{},
+		Else: &hir.Block{},
+	}
+	fn := &hir.Function{
+		Name: "select", Params: []ir.Param{{Name: "value", Type: mirTypes.optionalI32}}, ReturnType: mirTypes.void,
+		Body: &hir.Block{Stmts: []hir.Stmt{ifStmt}},
+	}
+	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{fn}}
+	graphs := cfgForHIR(mod)
+	graph := graphs.Function(fn.NodeID)
+	branch, ok := graph.Entry.Terminator.(*cfg.Branch)
+	if !ok {
+		t.Fatalf("fixture entry = %#v, want branch", graph.Entry.Terminator)
+	}
+	switchStmt := &hir.SwitchVariant{
+		Value:  &ir.Ident{Name: "value", Type: mirTypes.optionalI32},
+		Cases:  []hir.VariantCaseBlock{{Case: ir.OptionalAbsentCase, Body: ifStmt.Then}, {Case: ir.OptionalPresentCase, Body: ifStmt.Else.(*hir.Block)}},
+		NodeID: ifStmt.NodeID,
+	}
+	fn.Body.Stmts[0] = switchStmt
+	graph.Entry.Terminator = &cfg.SwitchVariant{
+		NodeID: switchStmt.NodeID,
+		Targets: []cfg.VariantTarget{
+			{Case: ir.OptionalAbsentCase, Target: branch.TrueTarget},
+			{Case: ir.OptionalPresentCase, Target: branch.FalseTarget},
+		},
+	}
+
+	out := GenerateMIR(mod, graphs, nil, nil, nil)
+	if out == nil || len(out.Funcs) != 1 {
+		t.Fatalf("MIR = %#v", out)
+	}
+	term, ok := out.Funcs[0].Blocks[0].Term.(*SwitchVariant)
+	if !ok || len(term.Targets) != 2 || term.Targets[0].Case != ir.OptionalAbsentCase || term.Targets[1].Case != ir.OptionalPresentCase {
+		t.Fatalf("MIR switch = %#v", out.Funcs[0].Blocks[0].Term)
 	}
 }
 

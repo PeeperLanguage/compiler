@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -49,6 +50,34 @@ fn (self: Counter) Read() -> i32 { return self.value; }`
 	methods := module.Semantics.MethodSets["Counter"]
 	if len(methods) != 1 || methods[0] == nil || methods[0].DefiningModule != want {
 		t.Fatalf("method defining module = %#v, want %#v", methods, want)
+	}
+}
+
+func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
+	const filePath = "collector_type_identity_test" + peeper.SourceExt
+	const src = `enum Status { Ready }`
+	diag := diagnostics.NewDiagnosticBag()
+	module := &project.Module{
+		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		FilePath: filePath,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	ctx := project.New(".", peeper.SourceExt, diag)
+	Collect(ctx, module)
+
+	sym, ok := module.ModuleScope.LookupLocal("Status")
+	if !ok || sym == nil {
+		t.Fatal("collected enum type missing")
+	}
+	defined, ok := sym.Type.(*typeinfo.DefinedType)
+	if !ok || defined == nil {
+		t.Fatalf("collected enum type = %T, want DefinedType", sym.Type)
+	}
+	want := module.Key + "::Status"
+	if defined.Identity != want {
+		t.Fatalf("collected enum identity = %q, want %q", defined.Identity, want)
 	}
 }
 

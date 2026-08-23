@@ -208,12 +208,20 @@ func finalizeSites(fn *Graph) {
 		if block == nil {
 			continue
 		}
-		if branch, ok := block.Terminator.(*Branch); ok {
+		switch term := block.Terminator.(type) {
+		case *Branch:
 			block.Sites = append(block.Sites, &Site{
 				Kind:     SiteTerminator,
-				NodeID:   branch.NodeID,
-				ScopeID:  branch.ScopeID,
-				Location: branch.Location,
+				NodeID:   term.NodeID,
+				ScopeID:  term.ScopeID,
+				Location: term.Location,
+			})
+		case *SwitchVariant:
+			block.Sites = append(block.Sites, &Site{
+				Kind:     SiteTerminator,
+				NodeID:   term.NodeID,
+				ScopeID:  term.ScopeID,
+				Location: term.Location,
 			})
 		}
 		if len(block.Sites) == 0 {
@@ -230,17 +238,21 @@ func finalizeSites(fn *Graph) {
 			continue
 		}
 		for index := 0; index+1 < len(block.Sites); index++ {
-			connectSites(block.Sites[index], block.Sites[index+1], EdgeNormal)
+			connectSites(block.Sites[index], block.Sites[index+1], EdgeNormal, 0)
 		}
 		last := block.Sites[len(block.Sites)-1]
 		switch term := block.Terminator.(type) {
 		case *Jump:
-			connectBlockSite(last, term.Target, EdgeNormal)
+			connectBlockSite(last, term.Target, EdgeNormal, 0)
 		case *Branch:
-			connectBlockSite(last, term.TrueTarget, EdgeTrue)
-			connectBlockSite(last, term.FalseTarget, EdgeFalse)
+			connectBlockSite(last, term.TrueTarget, EdgeTrue, 0)
+			connectBlockSite(last, term.FalseTarget, EdgeFalse, 0)
 		case *Return:
-			connectBlockSite(last, fn.Exit, EdgeReturn)
+			connectBlockSite(last, fn.Exit, EdgeReturn, 0)
+		case *SwitchVariant:
+			for _, target := range term.Targets {
+				connectBlockSite(last, target.Target, EdgeVariantCase, target.Case)
+			}
 		case nil:
 		default:
 			panic(fmt.Sprintf("CFG finalization: unhandled terminator %T", block.Terminator))
@@ -248,23 +260,23 @@ func finalizeSites(fn *Graph) {
 	}
 }
 
-func connectBlockSite(from *Site, target *Block, kind EdgeKind) {
+func connectBlockSite(from *Site, target *Block, kind EdgeKind, caseIndex int) {
 	if target == nil || len(target.Sites) == 0 {
 		return
 	}
-	connectSites(from, target.Sites[0], kind)
+	connectSites(from, target.Sites[0], kind, caseIndex)
 }
 
-func connectSites(from, to *Site, kind EdgeKind) {
+func connectSites(from, to *Site, kind EdgeKind, caseIndex int) {
 	if from == nil || to == nil {
 		return
 	}
 	for _, existing := range from.Successors {
-		if existing.To == to.ID && existing.Kind == kind {
+		if existing.To == to.ID && existing.Kind == kind && existing.Case == caseIndex {
 			return
 		}
 	}
-	edge := Edge{From: from.ID, To: to.ID, Kind: kind}
+	edge := Edge{From: from.ID, To: to.ID, Kind: kind, Case: caseIndex}
 	from.Successors = append(from.Successors, edge)
 	to.Predecessors = append(to.Predecessors, edge)
 }
