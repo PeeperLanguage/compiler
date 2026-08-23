@@ -104,3 +104,25 @@ func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.
 		t.Fatalf("module artifacts after reset = %#v", module)
 	}
 }
+
+func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
+	ctx := New(".", ".peep", nil)
+	module := &Module{Key: "owner"}
+	ctx.typeInstances["owner::Box<i32>"] = namedTypeInstance{
+		ownerModuleKey: module.Key,
+		typ:            &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
+	}
+	ctx.typeInstances["other::Box<i32>"] = namedTypeInstance{
+		ownerModuleKey: "other",
+		typ:            &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
+	}
+
+	ctx.ResetModule(module, phase.Parsed)
+
+	if _, found := ctx.typeInstances["owner::Box<i32>"]; found {
+		t.Fatal("reset retained instance owned by reset module")
+	}
+	if _, found := ctx.typeInstances["other::Box<i32>"]; !found {
+		t.Fatal("reset removed instance owned by another module")
+	}
+}

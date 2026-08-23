@@ -47,6 +47,10 @@ type CompilerContext struct {
 	fileIndex map[string]string
 	// Prior semantic API fingerprints supplied by incremental clients.
 	semanticExportBaselines map[string]string
+	// Named declaration identity -> declaration syntax and owning module.
+	typeDeclarations map[string]namedTypeDeclaration
+	// Concrete semantic application identity -> canonical instance.
+	typeInstances map[string]namedTypeInstance
 	// Shared compiler dependency graph.
 	Graph *graph.Graph
 
@@ -169,6 +173,8 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		modules:                 make(map[string]*Module),
 		fileIndex:               make(map[string]string),
 		semanticExportBaselines: make(map[string]string),
+		typeDeclarations:        make(map[string]namedTypeDeclaration),
+		typeInstances:           make(map[string]namedTypeInstance),
 	}
 }
 
@@ -188,6 +194,20 @@ func (ctx *CompilerContext) ResetModule(module *Module, retained phase.Phase) {
 		return
 	}
 	module.resetToPhase(retained)
+	ctx.mu.Lock()
+	for identity, instance := range ctx.typeInstances {
+		if instance.ownerModuleKey == module.Key {
+			delete(ctx.typeInstances, identity)
+		}
+	}
+	if retained < phase.Collected {
+		for identity, declaration := range ctx.typeDeclarations {
+			if declaration.module == module {
+				delete(ctx.typeDeclarations, identity)
+			}
+		}
+	}
+	ctx.mu.Unlock()
 	if ctx.Diagnostics != nil && module.Key != "" {
 		ctx.Diagnostics.DiscardModuleAfter(module.Key, retained)
 	}

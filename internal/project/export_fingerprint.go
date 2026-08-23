@@ -108,7 +108,18 @@ func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 
 	switch node := semantic.(type) {
 	case *typeinfo.DefinedType:
-		return "defined(" + node.Name + ":" + semanticTypeKey(node.Underlying, visiting) + ")"
+		parameters := make([]string, len(node.TypeParameters))
+		for index, parameter := range node.TypeParameters {
+			parameters[index] = semanticTypeKey(parameter, visiting)
+		}
+		arguments := make([]string, len(node.TypeArguments))
+		for index, argument := range node.TypeArguments {
+			arguments[index] = semanticTypeKey(argument, visiting)
+		}
+		return fmt.Sprintf("defined(%d:%s<%s>[%s]:%s)", node.Kind, node.Name,
+			strings.Join(parameters, ","), strings.Join(arguments, ","), semanticTypeKey(node.Underlying, visiting))
+	case *typeinfo.TypeParameterType:
+		return fmt.Sprintf("parameter(%s:%d:%s)", node.OwnerIdentity, node.Index, node.Name)
 	case *typeinfo.OwnedPtrType:
 		return "owned(" + semanticTypeKey(node.Target, visiting) + ")"
 	case *typeinfo.RefType:

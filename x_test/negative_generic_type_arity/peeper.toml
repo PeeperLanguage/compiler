@@ -1,0 +1,7 @@
+name = "negative_generic_type_arity"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0021", "expects 1 type argument, got 0"]

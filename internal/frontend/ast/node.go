@@ -50,6 +50,7 @@ type TypeDecl interface {
 	Decl
 	AttributedNode
 	DeclName() *Ident
+	DeclarationTypeParams() []TypeParam
 	UnderlyingType() TypeExpr
 }
 

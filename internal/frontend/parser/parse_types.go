@@ -37,23 +37,21 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	case token.ENUM:
 		return p.parseEnumTypeExpr()
 	case token.IDENT:
-		p.advance()
-		id := reg(p, &ast.Ident{Name: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
-		if p.match(token.DCOLON) {
-			next := p.current()
-			if next.Kind != token.IDENT {
-				p.diag.Add(diagnostics.NewError("expected type segment after '::'").WithCode(diagnostics.ErrInvalidTypeInParser).WithPrimaryLabel(source.NewLocation(p.filePath, next.Start, next.End), fmt.Sprintf("found %s", next.Kind)))
+		first, ok := p.parsePathSegment()
+		if !ok {
+			return nil
+		}
+		if p.at(token.DCOLON) {
+			path := p.parseScopeResolution(first)
+			if path == nil {
 				return nil
 			}
-			p.advance()
-			member := reg(p, &ast.Ident{Name: next.Literal, Location: source.NewLocation(p.filePath, next.Start, next.End)})
-			return reg(p, &ast.ScopeResolution{
-				Module:   id,
-				Name:     member,
-				Location: source.NewLocation(p.filePath, tok.Start, next.End),
-			})
+			return path
 		}
-		return reg(p, &ast.NamedType{Name: id.Name, Location: id.Location})
+		if len(first.TypeArgs) > 0 {
+			return reg(p, &ast.AppliedType{Name: first.Name, TypeArgs: first.TypeArgs, Location: first.Location})
+		}
+		return reg(p, &ast.NamedType{Name: first.Name.Name, Location: first.Location})
 	default:
 		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
 		d := diagnostics.NewError("expected type").
@@ -62,6 +60,73 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		p.diag.Add(d)
 		return nil
 	}
+}
+
+func (p *Parser) parsePathSegment() (ast.PathSegment, bool) {
+	name := p.parseIdent()
+	if name == nil {
+		return ast.PathSegment{}, false
+	}
+	segment := ast.PathSegment{Name: name, Location: name.Location}
+	if p.at(token.LT) {
+		args, close, ok := p.parseTypeArguments()
+		if !ok {
+			return ast.PathSegment{}, false
+		}
+		segment.TypeArgs = args
+		segment.Location = source.NewLocation(p.filePath, ast.StartOf(name), close.End)
+	}
+	return segment, true
+}
+
+func (p *Parser) parseScopeResolution(first ast.PathSegment) *ast.ScopeResolution {
+	segments := []ast.PathSegment{first}
+	for p.match(token.DCOLON) {
+		segment, ok := p.parsePathSegment()
+		if !ok {
+			return nil
+		}
+		segments = append(segments, segment)
+	}
+	return reg(p, &ast.ScopeResolution{
+		Segments: segments,
+		Location: source.NewLocation(p.filePath, ast.StartOf(first.Name), *segments[len(segments)-1].Location.End),
+	})
+}
+
+func (p *Parser) parseTypeArguments() ([]ast.TypeExpr, *token.Token, bool) {
+	open := p.consume(token.LT, "expected '<' before type arguments")
+	if open == nil {
+		return nil, nil, false
+	}
+	args := make([]ast.TypeExpr, 0, 1)
+	for {
+		arg := p.parseTypeExpr()
+		if arg == nil {
+			return nil, nil, false
+		}
+		args = append(args, arg)
+		if !p.match(token.COMMA) {
+			break
+		}
+	}
+	close := p.consumeTypeArgumentClose(open.Start)
+	return args, close, close != nil
+}
+
+func (p *Parser) consumeTypeArgumentClose(open source.Position) *token.Token {
+	if p.at(token.GT) {
+		return p.advance()
+	}
+	if p.at(token.SHR) {
+		combined := p.current()
+		middle := combined.Start
+		middle.Advance(">")
+		first := token.Token{Kind: token.GT, Literal: ">", Start: combined.Start, End: middle}
+		p.stream[p.pos] = token.Token{Kind: token.GT, Literal: ">", Start: middle, End: combined.End}
+		return &first
+	}
+	return p.expectClose(open, token.GT, "<")
 }
 
 func (p *Parser) parseRefTypeExpr() ast.TypeExpr {

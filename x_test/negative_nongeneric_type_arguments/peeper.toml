@@ -1,0 +1,7 @@
+name = "negative_nongeneric_type_arguments"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0021", "expects 0 type arguments, got 1"]

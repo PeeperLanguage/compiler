@@ -109,7 +109,7 @@ func IsSizedType(t Type) bool {
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
 			return false
-		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *EnumType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *TypeParameterType, *EnumType, *AllocatorType:
 			return true
 		case *OwnedPtrType:
 			return typ != nil && typ.Target != nil

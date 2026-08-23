@@ -286,7 +286,11 @@ func (c *checker) qualifiedScopeType(node *ast.ScopeResolution) typeinfo.Type {
 		sym = c.module.Semantics.ResolvedSymbols[node.ID()]
 	}
 	if sym == nil {
-		resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name)
+		qualifier, member, imported := node.ImportValueMember()
+		if !imported {
+			return &typeinfo.InvalidType{}
+		}
+		resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name)
 		if !ok || resolved.Symbol == nil {
 			return &typeinfo.InvalidType{}
 		}

@@ -10,6 +10,9 @@ func SameType(left, right Type) bool {
 	if left == right {
 		return true
 	}
+	if same, nominal := sameNominalEnum(left, right); nominal {
+		return same
+	}
 	left = Underlying(left)
 	right = Underlying(right)
 	switch l := left.(type) {
@@ -49,6 +52,9 @@ func SameType(left, right Type) bool {
 	case *NamedType:
 		r, ok := right.(*NamedType)
 		return ok && r != nil && l.Name == r.Name
+	case *TypeParameterType:
+		r, ok := right.(*TypeParameterType)
+		return ok && r != nil && l.OwnerIdentity == r.OwnerIdentity && l.Index == r.Index
 	case *OwnedPtrType:
 		r, ok := right.(*OwnedPtrType)
 		return ok && r != nil && SameType(l.Target, r.Target)
@@ -74,6 +80,32 @@ func SameType(left, right Type) bool {
 		return checkEnumCompatibility(l, right) == Compatible
 	default:
 		return left == nil && right == nil
+	}
+}
+
+func sameNominalEnum(left, right Type) (same, nominal bool) {
+	leftIdentity, leftNominal := nominalEnumIdentity(left)
+	rightIdentity, rightNominal := nominalEnumIdentity(right)
+	if !leftNominal && !rightNominal {
+		return false, false
+	}
+	return leftNominal && rightNominal && leftIdentity != "" && leftIdentity == rightIdentity, true
+}
+
+func nominalEnumIdentity(typ Type) (string, bool) {
+	for {
+		defined, ok := typ.(*DefinedType)
+		if !ok || defined == nil {
+			return "", false
+		}
+		switch defined.Kind {
+		case DefinedKindAlias:
+			typ = defined.Underlying
+		case DefinedKindEnum:
+			return defined.Identity, true
+		default:
+			return "", false
+		}
 	}
 }
 
@@ -178,6 +210,13 @@ func ContainsAbstractSelf(t Type) bool {
 	return containsType(t, typeTraversal{followCallable: true}, func(candidate Type, _ bool) bool {
 		named, ok := candidate.(*NamedType)
 		return ok && named != nil && named.Name == "Self"
+	})
+}
+
+func ContainsTypeParameter(t Type) bool {
+	return containsType(t, typeTraversal{followDefined: true, followCallable: true}, func(candidate Type, _ bool) bool {
+		_, ok := candidate.(*TypeParameterType)
+		return ok
 	})
 }
 

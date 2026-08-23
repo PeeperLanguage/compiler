@@ -401,8 +401,11 @@ func (c *checker) callableSymbol(callee ast.Expr) *symbols.Symbol {
 			return c.module.Semantics.ResolvedSymbols[node.ID()]
 		}
 	case *ast.ScopeResolution:
-		if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name); ok {
-			return resolved.Symbol
+		qualifier, member, imported := node.ImportValueMember()
+		if imported {
+			if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name); ok {
+				return resolved.Symbol
+			}
 		}
 	}
 	return nil
@@ -413,8 +416,10 @@ func (c *checker) callableModule(callee ast.Expr) *project.Module {
 		return nil
 	}
 	if node, ok := callee.(*ast.ScopeResolution); ok && node != nil {
-		if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, node.Module.Name, node.Name.Name); ok && resolved.Module != nil {
-			return resolved.Module
+		if qualifier, member, imported := node.ImportValueMember(); imported {
+			if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name); ok && resolved.Module != nil {
+				return resolved.Module
+			}
 		}
 	}
 	return c.module

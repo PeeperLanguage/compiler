@@ -1,0 +1,5 @@
+import "negative_imported_value_type_arguments/runtime";
+
+fn main() -> i32 {
+    return runtime::Make<i32>();
+}

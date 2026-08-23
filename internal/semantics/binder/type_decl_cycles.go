@@ -83,6 +83,10 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 	switch node := typ.(type) {
 	case *ast.NamedType:
 		b.addTypeDeclEdge(owner, b.lookupTypeDeclNodeID(node.Name), indirect)
+	case *ast.AppliedType:
+		if node.Name != nil {
+			b.addTypeDeclEdge(owner, b.lookupTypeDeclNodeID(node.Name.Name), indirect)
+		}
 	case *ast.ScopeResolution:
 		b.addTypeDeclEdge(owner, b.lookupQualifiedTypeDeclNodeID(node), indirect)
 	case *ast.RawPtrType, *ast.EnumType:
@@ -141,10 +145,14 @@ func (b *binder) lookupTypeDeclNodeID(name string) graph.NodeID {
 }
 
 func (b *binder) lookupQualifiedTypeDeclNodeID(node *ast.ScopeResolution) graph.NodeID {
-	if b == nil || b.ctx == nil || b.module == nil || node == nil || node.Module == nil || node.Name == nil {
+	if b == nil || b.ctx == nil || b.module == nil || node == nil {
 		return ""
 	}
-	resolved, ok := project.LookupImportedSymbol(b.ctx, b.module, node.Module.Name, node.Name.Name)
+	qualifier, member, imported := node.ImportMember()
+	if !imported {
+		return ""
+	}
+	resolved, ok := project.LookupImportedSymbol(b.ctx, b.module, qualifier.Name, member.Name)
 	if !ok || resolved.Module == nil || resolved.Symbol == nil || resolved.Symbol.Kind != symbols.SymbolType {
 		return ""
 	}

@@ -97,19 +97,21 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
 	if sym == nil {
 		return
 	}
-	underlying := typeinfo.TypeFromSyntax(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, true))
-	if defined, ok := sym.Type.(*typeinfo.DefinedType); ok && defined != nil {
+	defined, ok := sym.Type.(*typeinfo.DefinedType)
+	if ok && defined != nil {
 		// Reuse same shell so self-references keep same type identity.
 		defined.Name = name.Name
 		defined.Identity = b.module.TypeDeclarationIdentity(name.Name)
-		defined.Underlying = underlying
 	} else {
-		sym.BindType(&typeinfo.DefinedType{
-			Name:       name.Name,
-			Identity:   b.module.TypeDeclarationIdentity(name.Name),
-			Underlying: underlying,
-		})
+		defined = &typeinfo.DefinedType{
+			Name:     name.Name,
+			Identity: b.module.TypeDeclarationIdentity(name.Name),
+		}
+		sym.BindType(defined)
 	}
+	opts := project.TypeSyntaxOptions(b.ctx, b.module, nil, true)
+	opts.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
+	defined.Underlying = typeinfo.TypeFromSyntax(typ, opts)
 	b.registerTypeDecl(name.Name, typ)
 }
 

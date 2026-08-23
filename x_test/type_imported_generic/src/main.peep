@@ -1,0 +1,10 @@
+import "type_imported_generic/container";
+
+fn Read(box: &container::Box<i32>) -> i32 {
+    return box.value;
+}
+
+fn main() -> i32 {
+    let box: container::Box<i32> = .{ value = 9 };
+    return Read(&box);
+}

@@ -2265,6 +2265,23 @@ fn main() -> i32 {
 	}
 }
 
+func TestGenericNamedTypesReachConcreteTypechecking(t *testing.T) {
+	src := `struct Box<T> { value: T }
+type Maybe<T> = ?T;
+iface Reader<T> { fn (&Self) read() -> T }
+
+fn Read(box: &Box<i32>) -> i32 { return box.value; }
+fn main() -> i32 {
+	let box: Box<i32> = .{ value = 42 };
+	let maybe: Maybe<i32> = box.value;
+	return Read(&box);
+}`
+	diag := checkTypeSource(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected generic type diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestTypedStructLiteralInfersNamedStruct(t *testing.T) {
 	src := `struct Point {
 	x: i32,

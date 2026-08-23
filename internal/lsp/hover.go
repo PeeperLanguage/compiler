@@ -98,7 +98,7 @@ func resolveImportHoverSubject(cc *cursorContext) *hoverSubject {
 		return nil
 	}
 	parent := cc.parents[ident.ID()]
-	if sr, ok := parent.(*ast.ScopeResolution); ok && sr.Module == ident {
+	if sr, ok := parent.(*ast.ScopeResolution); ok && len(sr.Segments) > 1 && sr.Segments[0].Name == ident {
 		imp, ok := cc.module.Imports[ident.Name]
 		if !ok {
 			return nil
@@ -160,13 +160,17 @@ func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr
 	top := node
 	for top != nil {
 		switch top.(type) {
-		case *ast.Ident, *ast.ScopeResolution:
+		case *ast.Ident, *ast.AppliedType, *ast.ScopeResolution:
 			parent := parents[top.ID()]
 			if parent == nil {
 				top = nil
 				break
 			}
 			if _, ok := parent.(*ast.ScopeResolution); ok {
+				top = parent
+				continue
+			}
+			if _, ok := parent.(*ast.AppliedType); ok {
 				top = parent
 				continue
 			}
@@ -213,6 +217,20 @@ func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
 		return p.TypeExpr == typeNode
 	case *ast.StructLit:
 		return p.Type == typeNode
+	case *ast.AppliedType:
+		for _, arg := range p.TypeArgs {
+			if arg == typeNode {
+				return true
+			}
+		}
+	case *ast.ScopeResolution:
+		for _, segment := range p.Segments {
+			for _, arg := range segment.TypeArgs {
+				if arg == typeNode {
+					return true
+				}
+			}
+		}
 	case *ast.OwnedPtrType:
 		return p.Target == typeNode
 	case *ast.RefType:
@@ -671,7 +689,7 @@ func hoverTypeLabel(typ typeinfo.Type) (string, bool) {
 		if t == nil {
 			return "", false
 		}
-		return t.Name, true
+		return t.Text(), true
 	case *typeinfo.StructType, *typeinfo.InterfaceType, *typeinfo.EnumType:
 		return "", false
 	default:
