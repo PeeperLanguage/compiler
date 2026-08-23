@@ -29,10 +29,7 @@ const (
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
 
-const (
-	GraphNodeModule graph.NodeKind = "module"
-	GraphEdgeImport graph.EdgeKind = "import"
-)
+const GraphEdgeImport graph.EdgeKind = "import"
 
 // Source unit shared by every compiler phase.
 type Module struct {
@@ -229,7 +226,7 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	return module
 }
 
-// Register a module in the shared graph.
+// Register a module in shared compiler state.
 func (ctx *CompilerContext) AddModule(module *Module) {
 	if ctx == nil || module == nil || module.Key == "" {
 		return
@@ -240,9 +237,6 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	ctx.modules[module.Key] = module
 	if module.FilePath != "" {
 		ctx.fileIndex[CanonicalPath(module.FilePath)] = module.Key
-	}
-	if ctx.Graph != nil {
-		ctx.Graph.AddNode(graph.NodeID(module.Key))
 	}
 }
 

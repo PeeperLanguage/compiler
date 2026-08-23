@@ -173,10 +173,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		delete(w.modules, filePath)
 	}
 
-	g := graph.New(project.GraphNodeModule, project.GraphEdgeImport)
-	for filePath := range w.modules {
-		g.AddNode(graph.NodeID(filePath))
-	}
+	g := graph.New(project.GraphEdgeImport)
 	for _, module := range w.modules {
 		for _, target := range module.importTargets {
 			if _, ok := w.modules[target]; !ok {

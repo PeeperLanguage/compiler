@@ -163,7 +163,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Diagnostics:           diag,
 		CompletedProjectPhase: phase.Setup,
 		GlobalScope:           globalScope,
-		Graph:                 graph.New(GraphNodeModule, GraphEdgeImport),
+		Graph:                 graph.New(GraphEdgeImport),
 		mu:                    &sync.RWMutex{},
 
 		modules:                 make(map[string]*Module),
