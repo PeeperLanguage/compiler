@@ -162,8 +162,10 @@ func Run(in io.Reader, out io.Writer) error {
 			resp := Response{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result:  result,
 				Error:   respErr,
+			}
+			if respErr == nil {
+				resp.Result = &result
 			}
 			outMu.Lock()
 			_ = writeMessage(out, resp)

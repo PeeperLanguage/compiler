@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// Maximum JSON-RPC message body accepted by the language server: 16 MiB.
+const maxJSONRPCBodySize = 16 << 20
+
 type Request struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
@@ -19,7 +22,7 @@ type Request struct {
 type Response struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id"`
-	Result  any              `json:"result,omitempty"`
+	Result  *any             `json:"result,omitempty"`
 	Error   *ResponseError   `json:"error,omitempty"`
 }
 
@@ -52,6 +55,9 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 			cl, err := strconv.Atoi(val)
 			if err != nil {
 				return nil, fmt.Errorf("invalid Content-Length: %w", err)
+			}
+			if cl > maxJSONRPCBodySize {
+				return nil, fmt.Errorf("Content-Length %d exceeds %d-byte limit", cl, maxJSONRPCBodySize)
 			}
 			contentLength = cl
 		}
