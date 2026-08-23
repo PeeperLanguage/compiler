@@ -7,7 +7,7 @@ import (
 	"compiler/pkg/manifest"
 )
 
-func ListCommand(args []string) error {
+func ListCommand(_ []string) error {
 	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return err
@@ -18,8 +18,10 @@ func ListCommand(args []string) error {
 	}
 
 	projectRoot := filepath.Dir(manifestPath)
-	lockfile, lockErr := manifest.LoadLockfile(projectRoot)
-	hasLockfile := lockErr == nil
+	lockfile, err := manifest.LoadLockfile(projectRoot)
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("%s v%s\n", file.Package.Name, file.Package.Version)
 	if len(file.Dependencies) == 0 {
@@ -37,35 +39,31 @@ func ListCommand(args []string) error {
 			fmt.Printf("  %s (remote)\n", name)
 			fmt.Printf("    URL: %s\n", dep.Path)
 			fmt.Printf("    Constraint: %s\n", dep.Version)
-			if hasLockfile {
-				if packageID, ok := lockfile.GetDirectDependency(name); ok {
-					if entry, found := lockfile.GetDependency(packageID); found {
-						fmt.Printf("    Locked: %s (%s)\n", entry.Version, packageID)
-					}
+			if packageID, ok := lockfile.GetDirectDependency(name); ok {
+				if entry, found := lockfile.GetDependency(packageID); found {
+					fmt.Printf("    Locked: %s (%s)\n", entry.Version, packageID)
 				}
 			}
 		}
 	}
 
-	if hasLockfile {
-		transitiveCount := 0
-		entries := lockfile.Packages
-		if len(entries) == 0 {
-			entries = lockfile.Dependencies
+	transitiveCount := 0
+	entries := lockfile.Packages
+	if len(entries) == 0 {
+		entries = lockfile.Dependencies
+	}
+	for _, entry := range entries {
+		if !entry.Direct {
+			transitiveCount++
 		}
-		for _, entry := range entries {
+	}
+	if transitiveCount > 0 {
+		fmt.Printf("\nTransitive dependencies (%d):\n", transitiveCount)
+		for depName, entry := range entries {
 			if !entry.Direct {
-				transitiveCount++
-			}
-		}
-		if transitiveCount > 0 {
-			fmt.Printf("\nTransitive dependencies (%d):\n", transitiveCount)
-			for depName, entry := range entries {
-				if !entry.Direct {
-					fmt.Printf("  %s @ %s\n", depName, entry.Version)
-					if len(entry.UsedBy) > 0 {
-						fmt.Printf("    Used by: %v\n", entry.UsedBy)
-					}
+				fmt.Printf("  %s @ %s\n", depName, entry.Version)
+				if len(entry.UsedBy) > 0 {
+					fmt.Printf("    Used by: %v\n", entry.UsedBy)
 				}
 			}
 		}

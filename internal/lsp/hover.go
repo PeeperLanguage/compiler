@@ -705,8 +705,11 @@ func hoverDocComment(subject *hoverSubject) string {
 }
 
 func (s *ServerState) HandleHover(params HoverParams) (*Hover, error) {
-	path := uriToPath(string(params.TextDocument.URI))
-	text, err := s.completionSource(path)
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return nil, invalidParams(err.Error())
+	}
+	text, err := s.completionSource(filePath)
 	if err != nil {
 		return nil, nil
 	}
@@ -714,7 +717,7 @@ func (s *ServerState) HandleHover(params HoverParams) (*Hover, error) {
 	if !ok {
 		return nil, nil
 	}
-	subject := s.resolveHoverSubject(path, position)
+	subject := s.resolveHoverSubject(filePath, position)
 	if subject == nil {
 		return nil, nil
 	}

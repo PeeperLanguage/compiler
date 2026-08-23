@@ -7,7 +7,6 @@ import (
 	"compiler/internal/project"
 
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -20,7 +19,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 	if c == nil || c.ctx == nil || c.module == nil || mod == nil {
 		return
 	}
-	c.module.ModuleScope = table.New(c.ctx.GlobalScope)
+	c.module.ModuleScope = symbols.NewScope(c.ctx.GlobalScope)
 	c.module.ResetSemanticData()
 	for alias := range c.module.Imports {
 		if alias == "" {
@@ -43,8 +42,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 func (c *collector) collectNode(node ast.Node) {
 	if decl, ok := node.(ast.TypeDecl); ok {
 		if name := decl.DeclName(); name != nil {
-			typ := decl.UnderlyingType()
-			c.collectConcreteTypeDecl(name, typ, node)
+			c.collectConcreteTypeDecl(name, node)
 			return
 		}
 	}
@@ -52,9 +50,9 @@ func (c *collector) collectNode(node ast.Node) {
 	case *ast.FnDecl:
 		c.collectFnDecl(n)
 	case *ast.LetDecl:
-		c.collectModuleBinding(n.Name, symbols.SymbolVar, n.Type, n)
+		c.collectModuleBinding(n.Name, symbols.SymbolVar, n)
 	case *ast.ConstDecl:
-		c.collectModuleBinding(n.Name, symbols.SymbolConst, n.Type, n)
+		c.collectModuleBinding(n.Name, symbols.SymbolConst, n)
 	default:
 		return
 	}
@@ -88,20 +86,22 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 			return
 		}
 		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
-		sym.Scope = table.New(c.module.ModuleScope)
+		sym.DefiningModule = c.module.DefiningModuleKey()
+		sym.Scope = symbols.NewScope(c.module.ModuleScope)
 		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
 		c.module.Semantics.MethodSymbol[fn.ID()] = sym
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
-	sym.Scope = table.New(c.module.ModuleScope)
+	sym.DefiningModule = c.module.DefiningModuleKey()
+	sym.Scope = symbols.NewScope(c.module.ModuleScope)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return
 	}
 }
 
-func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, node ast.Node) {
+func (c *collector) collectConcreteTypeDecl(name *ast.Ident, node ast.Node) {
 	if c == nil || c.module == nil || node == nil {
 		return
 	}
@@ -120,7 +120,7 @@ func (c *collector) collectConcreteTypeDecl(name *ast.Ident, typ ast.TypeExpr, n
 	}
 }
 
-func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, typ ast.TypeExpr, node ast.Node) {
+func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, node ast.Node) {
 	if c == nil || c.module == nil || name == nil || name.Name == "" {
 		return
 	}

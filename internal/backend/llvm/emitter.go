@@ -25,7 +25,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		}
 		return ""
 	}
-	if !ValidateRuntimeSymbols([]*mir.Module{mod}, diag, targetInfo) {
+	if !ValidateRuntimeSymbols([]*mir.Module{mod}, diag) {
 		return ""
 	}
 
@@ -338,7 +338,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 
 // ValidateRuntimeSymbols checks runtime ABI reservations after ownership and
 // lowering have made actual print, allocation, and destruction use explicit.
-func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info) bool {
+func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticBag) bool {
 	printUsed := false
 	dropUsed := false
 	allocUsed := false

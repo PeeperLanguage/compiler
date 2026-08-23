@@ -8,7 +8,7 @@ import (
 	"compiler/pkg/manifest"
 )
 
-func OrphansCommand(args []string) error {
+func OrphansCommand(_ []string) error {
 	manifestPath, err := manifest.FindManifestPath(".")
 	if err != nil {
 		return err

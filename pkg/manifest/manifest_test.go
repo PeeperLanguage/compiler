@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,92 @@ import (
 
 	"compiler/pkg/peeper"
 )
+
+func TestFindManifestPathClassifiesOnlyAbsence(t *testing.T) {
+	root := t.TempDir()
+	if _, err := FindManifestPath(root); !errors.Is(err, ErrManifestNotFound) {
+		t.Fatalf("FindManifestPath missing error = %v, want ErrManifestNotFound", err)
+	}
+
+	manifestPath := filepath.Join(root, FileName)
+	if err := os.Symlink(FileName, manifestPath); err != nil {
+		t.Skipf("create symlink loop: %v", err)
+	}
+	if _, err := FindManifestPath(root); err == nil || errors.Is(err, ErrManifestNotFound) {
+		t.Fatalf("FindManifestPath stat error = %v, want propagated filesystem error", err)
+	}
+}
+
+func TestResolveSourceFileProjectPropagatesMalformedManifest(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src", "main"+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("fn main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, FileName), []byte("not valid toml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ResolveSourceFileProject(src); err == nil || !strings.Contains(err.Error(), "parse manifest") {
+		t.Fatalf("ResolveSourceFileProject error = %v, want parse manifest error", err)
+	}
+}
+
+func TestLoadValidatesCompilerConstraint(t *testing.T) {
+	tests := []struct {
+		name       string
+		constraint string
+		wantError  string
+	}{
+		{name: "missing"},
+		{name: "compatible", constraint: "<=0.1.0"},
+		{name: "malformed", constraint: "^0.1", wantError: "invalid compiler constraint"},
+		{name: "incompatible", constraint: ">=0.2.0", wantError: "requires compiler"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			compilerLine := ""
+			if test.constraint != "" {
+				compilerLine = fmt.Sprintf("compiler = %q\n", test.constraint)
+			}
+			path := filepath.Join(root, FileName)
+			if err := os.WriteFile(path, []byte("name = \"app\"\n"+compilerLine+"build = \"program\"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			file, err := Load(path)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("Load compatible manifest: %v", err)
+				}
+				if file.Package.CompilerVersion != test.constraint {
+					t.Fatalf("compiler constraint = %q, want %q", file.Package.CompilerVersion, test.constraint)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("Load error = %v, want text %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestValidatePackageName(t *testing.T) {
+	for _, name := range []string{"app", "hello_peeper", "A1"} {
+		if err := ValidatePackageName(name); err != nil {
+			t.Fatalf("ValidatePackageName(%q): %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "_", "1app", "hello-peeper", "hello peeper", "বাংলা"} {
+		if err := ValidatePackageName(name); err == nil {
+			t.Fatalf("ValidatePackageName(%q) succeeded", name)
+		}
+	}
+}
 
 func TestLoadSupportsDependencyTableSyntax(t *testing.T) {
 	dir := t.TempDir()
@@ -134,7 +221,7 @@ func TestWriteFileAtomicReplacesFileAndCleansFailedTemp(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(path, []byte("new"), 0o644); err != nil {
+	if err := WriteFileAtomic(path, []byte("new"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -156,7 +243,7 @@ func TestWriteFileAtomicReplacesFileAndCleansFailedTemp(t *testing.T) {
 	if err := os.Mkdir(blocked, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(blocked, []byte("data"), 0o644); err == nil {
+	if err := WriteFileAtomic(blocked, []byte("data"), 0o644); err == nil {
 		t.Fatal("replacement of directory succeeded")
 	}
 	temps, err := filepath.Glob(filepath.Join(dir, ".blocked.tmp-*"))

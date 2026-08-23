@@ -1,0 +1,6 @@
+name = "entrypoint_void"
+build = "program"
+
+[test]
+mode = "build"
+outcome = "success"

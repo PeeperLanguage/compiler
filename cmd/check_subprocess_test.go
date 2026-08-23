@@ -12,11 +12,7 @@ import (
 
 func TestCheckCommandSupportsRecursiveAndMultipleTargetsWithFailureStatus(t *testing.T) {
 	root := t.TempDir()
-	binary := filepath.Join(root, "peeper")
-	build := exec.Command("go", "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	binary := buildTestCLI(t)
 	validDir := filepath.Join(root, "valid")
 	invalidOneDir := filepath.Join(root, "invalid-one")
 	invalidTwoDir := filepath.Join(root, "invalid-two")

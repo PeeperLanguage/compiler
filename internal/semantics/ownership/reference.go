@@ -12,7 +12,6 @@ import (
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -132,7 +131,7 @@ func (ctx *loanContext) addTemporary(value []referenceLoan, call ast.Node) {
 }
 
 func (a *analyzer) checkStorageAccess(
-	scope *table.Scope,
+	scope *symbols.Scope,
 	expr ast.Expr,
 	st state,
 	loans *loanContext,
@@ -327,7 +326,7 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	}
 }
 
-func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st state) ([]referenceLoan, bool) {
+func (a *analyzer) referenceValueForExpr(scope *symbols.Scope, expr ast.Expr, st state) ([]referenceLoan, bool) {
 	if a == nil || scope == nil || expr == nil {
 		return []referenceLoan{}, false
 	}
@@ -353,7 +352,7 @@ func (a *analyzer) referenceValueForExpr(scope *table.Scope, expr ast.Expr, st s
 	}}, true
 }
 
-func (a *analyzer) originsForExpr(scope *table.Scope, expr ast.Expr, st state) []place.Origin {
+func (a *analyzer) originsForExpr(scope *symbols.Scope, expr ast.Expr, st state) []place.Origin {
 	if a == nil || scope == nil || expr == nil {
 		return nil
 	}
@@ -381,7 +380,7 @@ func (a *analyzer) originsForExpr(scope *table.Scope, expr ast.Expr, st state) [
 	})
 }
 
-func (a *analyzer) callReturnOrigins(scope *table.Scope, call *ast.CallExpr, st state) []place.Origin {
+func (a *analyzer) callReturnOrigins(scope *symbols.Scope, call *ast.CallExpr, st state) []place.Origin {
 	if a == nil || call == nil || call.Callee == nil {
 		return nil
 	}
@@ -396,7 +395,7 @@ func (a *analyzer) callReturnOrigins(scope *table.Scope, call *ast.CallExpr, st 
 	return origins
 }
 
-func (a *analyzer) validateReferenceReturn(scope *table.Scope, stmt *ast.ReturnStmt, st state) {
+func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state) {
 	if a == nil || a.function == nil || scope == nil || stmt == nil || stmt.Value == nil {
 		return
 	}

@@ -1,15 +1,14 @@
-package table
+package symbols
 
 import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/semantics/symbols"
 )
 
 func TestScopeDeclareAndLookup(t *testing.T) {
-	global := New(nil)
-	sx := symbols.New("x", symbols.SymbolVar, nil, ast.LocOf(nil))
+	global := NewScope(nil)
+	sx := New("x", SymbolVar, nil, ast.LocOf(nil))
 	if err := global.Declare(sx); err != nil {
 		t.Fatalf("declare x failed: %v", err)
 	}
@@ -20,7 +19,7 @@ func TestScopeDeclareAndLookup(t *testing.T) {
 		t.Fatalf("lookup local x failed")
 	}
 
-	child := New(global)
+	child := NewScope(global)
 	if got, ok := child.Lookup("x"); !ok || got != sx {
 		t.Fatalf("child should resolve parent symbol")
 	}
@@ -30,9 +29,9 @@ func TestScopeDeclareAndLookup(t *testing.T) {
 }
 
 func TestScopeSymbolsOrder(t *testing.T) {
-	s := New(nil)
-	a := symbols.New("a", symbols.SymbolVar, nil, ast.LocOf(nil))
-	b := symbols.New("b", symbols.SymbolVar, nil, ast.LocOf(nil))
+	s := NewScope(nil)
+	a := New("a", SymbolVar, nil, ast.LocOf(nil))
+	b := New("b", SymbolVar, nil, ast.LocOf(nil))
 	if err := s.Declare(a); err != nil {
 		t.Fatalf("declare a failed: %v", err)
 	}
@@ -46,11 +45,11 @@ func TestScopeSymbolsOrder(t *testing.T) {
 }
 
 func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
-	s := New(nil)
+	s := NewScope(nil)
 	firstNode := &ast.LetDecl{}
 	secondNode := &ast.LetDecl{}
-	first := symbols.New("_", symbols.SymbolVar, firstNode, ast.LocOf(nil))
-	second := symbols.New("_", symbols.SymbolVar, secondNode, ast.LocOf(nil))
+	first := New("_", SymbolVar, firstNode, ast.LocOf(nil))
+	second := New("_", SymbolVar, secondNode, ast.LocOf(nil))
 	if err := s.Declare(first); err != nil {
 		t.Fatalf("declare first discard failed: %v", err)
 	}
@@ -70,8 +69,8 @@ func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 }
 
 func TestScopeMutableBindingIncludesParameters(t *testing.T) {
-	s := New(nil)
-	param := symbols.New("value", symbols.SymbolParam, nil, ast.LocOf(nil))
+	s := NewScope(nil)
+	param := New("value", SymbolParam, nil, ast.LocOf(nil))
 	param.Mutable = true
 	if err := s.Declare(param); err != nil {
 		t.Fatalf("declare mutable param failed: %v", err)

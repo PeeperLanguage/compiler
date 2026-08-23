@@ -80,6 +80,7 @@ const (
 	ErrInvalidImportPath = "M0003"
 	ErrSymbolNotExported = "M0004"
 	ErrAmbiguousImport   = "M0005"
+	ErrInvalidEntrypoint = "M0006"
 
 	// Style/Info codes (S prefix)
 	InfoTrailingComma        = "S0001"

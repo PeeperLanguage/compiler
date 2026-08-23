@@ -251,7 +251,7 @@ func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, namespace, fi
 }
 
 // ResolveImportPath resolves an import path to a module file.
-func (ctx *CompilerContext) ResolveImportPath(from *Module, rawPath string) (*ResolvedImport, error) {
+func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, error) {
 	if ctx == nil {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "nil compiler context"}
 	}

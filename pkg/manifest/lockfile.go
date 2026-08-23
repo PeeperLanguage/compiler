@@ -1,8 +1,12 @@
 package manifest
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -13,9 +17,9 @@ import (
 )
 
 const (
-	LockfileName       = "peeper.lock"
-	lockfileVersion    = "1.0"
-	lockfileCurrentVer = lockfileVersion
+	LockfileName           = "peeper.lock"
+	lockfileLegacyVersion  = "1.0"
+	lockfileCurrentVersion = "2.0"
 )
 
 type LockfileEntry struct {
@@ -39,7 +43,7 @@ type Lockfile struct {
 
 func NewLockfile() *Lockfile {
 	return &Lockfile{
-		Version:      lockfileCurrentVer,
+		Version:      lockfileCurrentVersion,
 		DirectDeps:   map[string]string{},
 		Packages:     map[string]LockfileEntry{},
 		Dependencies: map[string]LockfileEntry{},
@@ -57,63 +61,126 @@ func LoadLockfile(projectRoot string) (*Lockfile, error) {
 		return nil, fmt.Errorf("read lockfile: %w", err)
 	}
 
-	raw, err := parseRawLockfile(data)
+	lock, err := parseLockfile(data)
 	if err != nil {
 		return nil, err
 	}
-
-	lock := &Lockfile{
-		Version:      raw.Version,
-		DirectDeps:   raw.DirectDeps,
-		Packages:     normalizePackageEntries(raw.Packages),
-		Dependencies: normalizePackageEntries(raw.Dependencies),
-		GeneratedAt:  raw.GeneratedAt,
+	if err := validateLockfileChecksums(lock); err != nil {
+		return nil, err
 	}
 	normalizeLockfileShape(lock)
 	return lock, nil
 }
 
-// parseRawLockfile reads a lockfile from disk and decodes its raw structure.
-func parseRawLockfile(data []byte) (*rawLockfile, error) {
-	type rawLockfileJSON struct {
+func ValidateLockfileChecksum(checksum string) error {
+	if checksum == "" {
+		return nil
+	}
+	const prefix = "sha256:"
+	encoded, ok := strings.CutPrefix(checksum, prefix)
+	if !ok || len(encoded) != sha256.Size*2 {
+		return fmt.Errorf("expected sha256:<64 hex characters>")
+	}
+	if _, err := hex.DecodeString(encoded); err != nil {
+		return fmt.Errorf("expected sha256:<64 hex characters>: %w", err)
+	}
+	return nil
+}
+
+func validateLockfileChecksums(lock *Lockfile) error {
+	for _, entries := range []map[string]LockfileEntry{lock.Packages, lock.Dependencies} {
+		for packageID, entry := range entries {
+			if err := ValidateLockfileChecksum(entry.Checksum); err != nil {
+				return fmt.Errorf("lockfile package %q checksum: %w", packageID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func parseLockfile(data []byte) (*Lockfile, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("parse lockfile: %w", err)
+	}
+	if envelope == nil {
+		return nil, fmt.Errorf("parse lockfile: expected object")
+	}
+	version := ""
+	if rawVersion, ok := envelope["version"]; ok {
+		if err := json.Unmarshal(rawVersion, &version); err != nil {
+			return nil, fmt.Errorf("parse lockfile version: %w", err)
+		}
+		if bytes.Equal(bytes.TrimSpace(rawVersion), []byte("null")) {
+			return nil, fmt.Errorf("parse lockfile version: expected string")
+		}
+	}
+	if version != "" && version != lockfileLegacyVersion && version != lockfileCurrentVersion {
+		return nil, fmt.Errorf("unsupported lockfile version %q", version)
+	}
+
+	type legacyLockfile struct {
 		Version      string                   `json:"version"`
-		DirectDeps   json.RawMessage          `json:"direct_deps"`
-		Packages     map[string]LockfileEntry `json:"packages"`
+		DirectDeps   []string                 `json:"direct_deps"`
 		Dependencies map[string]LockfileEntry `json:"dependencies"`
 		GeneratedAt  string                   `json:"generated_at,omitempty"`
 	}
-	var raw rawLockfileJSON
-	if err := json.Unmarshal(data, &raw); err != nil {
+	type currentLockfile struct {
+		Version     string                   `json:"version"`
+		DirectDeps  map[string]string        `json:"direct_deps"`
+		Packages    map[string]LockfileEntry `json:"packages"`
+		GeneratedAt string                   `json:"generated_at,omitempty"`
+	}
+
+	_, hasPackages := envelope["packages"]
+	if version == lockfileCurrentVersion || (version == lockfileLegacyVersion && hasPackages) {
+		var raw currentLockfile
+		if err := decodeStrictJSON(data, &raw); err != nil {
+			return nil, fmt.Errorf("parse lockfile: %w", err)
+		}
+		return &Lockfile{
+			Version:     lockfileCurrentVersion,
+			DirectDeps:  raw.DirectDeps,
+			Packages:    normalizePackageEntries(raw.Packages),
+			GeneratedAt: raw.GeneratedAt,
+		}, nil
+	}
+
+	var raw legacyLockfile
+	if err := decodeStrictJSON(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse lockfile: %w", err)
 	}
-	directDeps, err := decodeDirectDeps(raw.DirectDeps)
-	if err != nil {
-		return nil, fmt.Errorf("parse lockfile direct_deps: %w", err)
+	directDeps := make(map[string]string, len(raw.DirectDeps))
+	for _, dependency := range raw.DirectDeps {
+		directDeps[dependency] = dependency
 	}
-	return &rawLockfile{
-		Version:      raw.Version,
+	return &Lockfile{
+		Version:      lockfileCurrentVersion,
 		DirectDeps:   directDeps,
-		Packages:     raw.Packages,
-		Dependencies: raw.Dependencies,
+		Dependencies: normalizePackageEntries(raw.Dependencies),
 		GeneratedAt:  raw.GeneratedAt,
 	}, nil
 }
 
-// rawLockfile holds the decoded lockfile data before normalization.
-type rawLockfile struct {
-	Version      string
-	DirectDeps   map[string]string
-	Packages     map[string]LockfileEntry
-	Dependencies map[string]LockfileEntry
-	GeneratedAt  string
+func decodeStrictJSON(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
-// normalizeLockfileShape applies version defaults, map-nil guards,
+// normalizeLockfileShape applies the current version, map-nil guards,
 // and the Packages/Dependencies sync rules used by both Load and Save.
 func normalizeLockfileShape(lock *Lockfile) {
-	if lock.Version == "" || lock.Version == lockfileVersion {
-		lock.Version = lockfileCurrentVer
-	}
+	lock.Version = lockfileCurrentVersion
 	if lock.Packages == nil {
 		lock.Packages = map[string]LockfileEntry{}
 	}
@@ -139,7 +206,7 @@ func SaveLockfile(projectRoot string, lock *Lockfile) error {
 		return err
 	}
 	path := filepath.Join(projectRoot, LockfileName)
-	return writeFileAtomic(path, data, 0o644)
+	return WriteFileAtomic(path, data, 0o644)
 }
 
 func marshalLockfile(lock *Lockfile) ([]byte, error) {
@@ -150,9 +217,9 @@ func marshalLockfile(lock *Lockfile) ([]byte, error) {
 	lock.GeneratedAt = time.Now().Format(time.RFC3339)
 
 	out := &Lockfile{
-		Version:     lock.Version,
-		DirectDeps:  sortStringMap(lock.DirectDeps),
-		Packages:    sortEntriesByKey(lock.Packages),
+		Version:     lockfileCurrentVersion,
+		DirectDeps:  lock.DirectDeps,
+		Packages:    lock.Packages,
 		GeneratedAt: lock.GeneratedAt,
 	}
 
@@ -161,36 +228,6 @@ func marshalLockfile(lock *Lockfile) ([]byte, error) {
 		return nil, fmt.Errorf("marshal lockfile: %w", err)
 	}
 	return data, nil
-}
-
-// sortEntriesByKey returns a new map whose iteration order is alphabetical by key.
-// Used for deterministic JSON output.
-func sortEntriesByKey(entries map[string]LockfileEntry) map[string]LockfileEntry {
-	keys := sortedKeys(entries)
-	sorted := make(map[string]LockfileEntry, len(entries))
-	for _, key := range keys {
-		sorted[key] = entries[key]
-	}
-	return sorted
-}
-
-// sortStringMap returns a new map whose iteration order is alphabetical by key.
-func sortStringMap(m map[string]string) map[string]string {
-	keys := sortedKeys(m)
-	sorted := make(map[string]string, len(m))
-	for _, key := range keys {
-		sorted[key] = m[key]
-	}
-	return sorted
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func (l *Lockfile) SetDependency(key string, entry LockfileEntry) {
@@ -440,27 +477,6 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-func decodeDirectDeps(raw json.RawMessage) (map[string]string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return map[string]string{}, nil
-	}
-
-	var byAlias map[string]string
-	if err := json.Unmarshal(raw, &byAlias); err == nil {
-		return byAlias, nil
-	}
-
-	var asList []string
-	if err := json.Unmarshal(raw, &asList); err == nil {
-		converted := make(map[string]string, len(asList))
-		for _, dep := range asList {
-			converted[dep] = dep
-		}
-		return converted, nil
-	}
-	return nil, fmt.Errorf("expected object or array")
-}
-
 func copyEntries(src map[string]LockfileEntry) map[string]LockfileEntry {
 	if src == nil {
 		return nil
@@ -488,6 +504,9 @@ func normalizePackageEntries(src map[string]LockfileEntry) map[string]LockfileEn
 		}
 		if entry.ResolvedURL == "" {
 			entry.ResolvedURL = repoFromPackageKey(normalizedKey)
+		}
+		if encoded, ok := strings.CutPrefix(entry.Checksum, "sha256:"); ok {
+			entry.Checksum = "sha256:" + strings.ToLower(encoded)
 		}
 		dst[normalizedKey] = entry
 	}

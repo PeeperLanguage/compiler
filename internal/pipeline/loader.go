@@ -132,7 +132,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "invalid import path")
 			continue
 		}
-		resolved, err := l.ctx.ResolveImportPath(module, rawPath)
+		resolved, err := l.ctx.ResolveImportPath(rawPath)
 		if err != nil {
 			l.addImportResolveError(diag, imp, err)
 			continue

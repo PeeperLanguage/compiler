@@ -4,7 +4,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -138,7 +137,7 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 // lowerer can collapse source-level aliases before runtime layout work.
 // Called only from loweredRuntimeType; lives here to avoid importing table
 // from the leaf typeinfo package.
-func resolveNamedType(scope *table.Scope, t typeinfo.Type) typeinfo.Type {
+func resolveNamedType(scope *symbols.Scope, t typeinfo.Type) typeinfo.Type {
 	if scope == nil || t == nil {
 		return t
 	}

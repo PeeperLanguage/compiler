@@ -50,7 +50,7 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	return diag
@@ -84,7 +84,7 @@ func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string)
 		FilePath:   entryPath,
 		Origin:     project.ModuleOriginLocal,
 	}
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	return diag
@@ -141,6 +141,68 @@ fn invalid(point: Point) {
 	t.Fatalf("expected use-after-move diagnostic from constant false branch, got:\n%s", diag.EmitAllToString())
 }
 
+func TestPipelineRequiresBuildEntrypoint(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "missing", src: `fn helper() {}`},
+		{name: "parameter", src: `fn main(value: i32) {}`},
+		{name: "wrong return", src: `fn main() -> bool { return true; }`},
+		{name: "aliased return", src: `type ExitCode = i32;
+fn main() -> ExitCode { return 0; }`},
+		{name: "extern", src: `#[extern]
+fn main();`},
+		{name: "generic", src: `fn main<T>() {}`},
+		{name: "method", src: `struct App {}
+fn (self: App) main() {}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir:           ".",
+				Extension:         peeper.SourceExt,
+				RequireEntrypoint: true,
+			}, "", tt.src)
+			for _, item := range diag.Diagnostics() {
+				if item != nil && item.Code == diagnostics.ErrInvalidEntrypoint {
+					return
+				}
+			}
+			t.Fatalf("expected invalid entrypoint diagnostic, got:\n%s", diag.EmitAllToString())
+		})
+	}
+}
+
+func TestPipelineAcceptsBuildEntrypointReturns(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "void", src: `fn main() {}`},
+		{name: "i32", src: `fn main() -> i32 { return 0; }`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir:           ".",
+				Extension:         peeper.SourceExt,
+				RequireEntrypoint: true,
+			}, "", tt.src)
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestPipelineCheckAllowsMissingEntrypoint(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn helper() {}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")
@@ -182,7 +244,7 @@ fn main() -> i32 {
 		Imports:    make(map[string]project.ResolvedImport),
 	}
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -256,11 +318,14 @@ fn BadMalloc(size: Word) -> rawptr;
 #[extern("free")]
 fn BadFree(value: Word);`)
 	out := diag.EmitAllToString()
-	for _, symbol := range []string{"printf", "malloc", "free"} {
+	for _, symbol := range []string{"malloc", "free"} {
 		message := "runtime symbol `" + symbol + "`"
 		if count := strings.Count(out, message); count != 1 {
 			t.Fatalf("expected one %s reservation diagnostic, got %d:\n%s", symbol, count, out)
 		}
+	}
+	if strings.Contains(out, "runtime symbol `printf`") {
+		t.Fatalf("module-mangled printf must not conflict with runtime symbol:\n%s", out)
 	}
 }
 
@@ -292,7 +357,7 @@ fn main() -> i32 {
 	entry.ImportPath = "entry"
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -338,7 +403,7 @@ fn main() -> i32 {
 	entry.ImportPath = "entry"
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if !diag.HasErrors() {
@@ -376,13 +441,12 @@ fn main() -> i32 { return 0; }`)
 	entry := parseModuleSource(filePath, `fn unused() {}
 fn main() -> i32 { return 0; }`, diag)
 	entry.Origin = project.ModuleOriginLocal
-	pipeline := New(ctx)
 
-	if err := pipeline.Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("first Pipeline.Run: %v", err)
 	}
 	first := diag.WarningCount()
-	if err := pipeline.Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("second Pipeline.Run: %v", err)
 	}
 	if second := diag.WarningCount(); second != first {
@@ -415,7 +479,7 @@ func TestPipelineRunReplacesStaleFinalizeDiagnostics(t *testing.T) {
 	entry := parseModuleSource(filePath, sourceText, diag)
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("Pipeline.Run: %v", err)
 	}
 	if ctx.CompletedProjectPhase != phase.Finalize {
@@ -457,7 +521,7 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	entry.ImportPath = "entry"
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -481,7 +545,6 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	entry.Phase = phase.Parsed
 	ctx.AddModule(entry)
 
-	pipeline := New(ctx)
 	want := []phase.Phase{
 		phase.Collected,
 		phase.Bound,
@@ -493,7 +556,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.Ownership,
 	}
 	for _, wantPhase := range want {
-		if !pipeline.advanceModulePhase(entry, diag) {
+		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase() stopped at %v, want %v", entry.Phase, wantPhase)
 		}
 		if entry.Phase != wantPhase {
@@ -506,7 +569,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)
 		}
 	}
-	if pipeline.advanceModulePhase(entry, diag) {
+	if advanceModulePhase(ctx, entry, diag) {
 		t.Fatal("per-module scheduler crossed project-wide Usage barrier")
 	}
 	entry.Phase = phase.Usage
@@ -515,14 +578,14 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.MIR,
 		phase.Backend,
 	} {
-		if !pipeline.advanceModulePhase(entry, diag) {
+		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase() stopped at %v, want %v", entry.Phase, wantPhase)
 		}
 		if entry.Phase != wantPhase {
 			t.Fatalf("phase = %v, want %v", entry.Phase, wantPhase)
 		}
 	}
-	if pipeline.advanceModulePhase(entry, diag) {
+	if advanceModulePhase(ctx, entry, diag) {
 		t.Fatalf("advanceModulePhase() reported progress after backend phase")
 	}
 	if diag.HasErrors() {
@@ -540,9 +603,8 @@ fn main() -> i32 { return Value; }
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
-	pipeline := New(ctx)
 	for entry.Phase < phase.ConstEval {
-		if !pipeline.advanceModulePhase(entry, diag) {
+		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
 		}
 	}
@@ -555,7 +617,7 @@ fn main() -> i32 { return Value; }
 		t.Fatal("failed to construct stale const value")
 	}
 	entry.Semantics.ConstValues[sym.ID] = stale
-	if !pipeline.advanceModulePhase(entry, diag) || entry.Phase != phase.Typechecked {
+	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
 	if got := entry.Semantics.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
@@ -576,9 +638,8 @@ func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
 
-	pipeline := New(ctx)
 	for entry.Phase < phase.CFG {
-		if !pipeline.advanceModulePhase(entry, diag) {
+		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
 		}
 	}
@@ -607,9 +668,8 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
 
-	pipeline := New(ctx)
 	for entry.Phase < phase.CFG {
-		if !pipeline.advanceModulePhase(entry, diag) {
+		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
 		}
 	}
@@ -670,7 +730,7 @@ func TestPipelineDiagnosticStopReturnsNormally(t *testing.T) {
 	entry := parseModuleSource("invalid"+peeper.SourceExt, "fn main() -> Missing { return 0; }", diag)
 	entry.Origin = project.ModuleOriginLocal
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("diagnostic-driven stop returned pipeline error: %v", err)
 	}
 	if !diag.HasErrors() {
@@ -743,7 +803,7 @@ fn main() -> i32 {
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -763,7 +823,6 @@ fn main() -> i32 {
 func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)
-	pipeline := New(ctx)
 
 	imported := parseModuleSource("util"+peeper.SourceExt, "fn Helper() -> i32 { return 1; }", diag)
 	imported.Origin = project.ModuleOriginLocal
@@ -783,38 +842,38 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	}
 	ctx.AddModule(entry)
 
-	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("parsed importer should be ready for collector when import is parsed")
 	}
 
 	entry.Phase = phase.Collected
-	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("collected importer should wait for bound import before binder")
 	}
 
 	imported.Phase = phase.Bound
-	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("collected importer should be ready for binder when import is bound")
 	}
 
 	entry.Phase = phase.Bound
 	imported.Phase = phase.Parsed
-	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("bound importer should wait for collected import before resolver")
 	}
 
 	imported.Phase = phase.Collected
-	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("bound importer should be ready for resolver when import is collected")
 	}
 
 	entry.Phase = phase.Resolved
-	if pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("resolved importer should wait for const-evaluated import before consteval")
 	}
 
 	imported.Phase = phase.ConstEval
-	if !pipeline.moduleReadyForNextPhase(entry, nil, true) {
+	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("resolved importer should be ready for consteval when import is const-evaluated")
 	}
 }
@@ -852,7 +911,7 @@ fn main() -> i32 {
 		t.Fatalf("write main: %v", err)
 	}
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -915,7 +974,7 @@ fn Value() -> i32 {
 		FilePath:   mainPath,
 		Origin:     project.ModuleOriginLocal,
 	}
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -1268,7 +1327,7 @@ fn main() -> i32 {
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -1436,7 +1495,7 @@ fn main() -> i32 {
 	entry := parseModuleSource(entryPath, entrySrc, diag)
 	entry.Origin = project.ModuleOriginLocal
 
-	if err := New(ctx).Run(entry); err != nil {
+	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
 	if diag.HasErrors() {
@@ -1899,7 +1958,7 @@ fn main() -> i32 {
 			}, diag)
 			entry := parseModuleSource(filePath, src, diag)
 			entry.Origin = project.ModuleOriginLocal
-			if err := New(ctx).Run(entry); err != nil {
+			if err := Run(ctx, entry); err != nil {
 				t.Fatalf("pipeline.Run returned error: %v", err)
 			}
 			if diag.HasErrors() {

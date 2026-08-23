@@ -14,7 +14,6 @@ import (
 	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
@@ -40,7 +39,7 @@ type CompilerContext struct {
 	// Optional per-run metrics for benchmarks and incremental validation.
 	Metrics *CompileMetrics
 	// Predeclared symbols visible before user/prelude code.
-	GlobalScope *table.Scope
+	GlobalScope *symbols.Scope
 
 	// Module key -> module.
 	modules map[string]*Module
@@ -84,6 +83,8 @@ type Config struct {
 	TargetArch string
 	// Emit debug-friendly artifacts.
 	BuildDebug bool
+	// Require an executable program entrypoint before backend lowering.
+	RequireEntrypoint bool
 	// Compile test entry points.
 	TestMode bool
 	// Optional single test name.
@@ -162,7 +163,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Diagnostics:           diag,
 		CompletedProjectPhase: phase.Setup,
 		GlobalScope:           globalScope,
-		Graph:                 graph.New(GraphNodeModule, GraphEdgeImport),
+		Graph:                 graph.New(GraphEdgeImport),
 		mu:                    &sync.RWMutex{},
 
 		modules:                 make(map[string]*Module),
@@ -269,8 +270,8 @@ func (ctx *CompilerContext) ModuleOriginForFile(filePath string) (ModuleOrigin, 
 }
 
 // Compiler-owned names available before prelude parsing.
-func predeclaredScope(compilerTarget target.Info) *table.Scope {
-	scope := table.New(nil)
+func predeclaredScope(compilerTarget target.Info) *symbols.Scope {
+	scope := symbols.NewScope(nil)
 	declarePredeclaredConst(scope, "true")
 	declarePredeclaredConst(scope, "false")
 	declarePredeclaredConst(scope, "none")
@@ -285,7 +286,7 @@ func predeclaredScope(compilerTarget target.Info) *table.Scope {
 }
 
 // Add one compiler-defined constant to the root scope.
-func declarePredeclaredConst(scope *table.Scope, name string) {
+func declarePredeclaredConst(scope *symbols.Scope, name string) {
 	if scope == nil || name == "" {
 		return
 	}
@@ -305,7 +306,7 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 	}
 }
 
-func declarePredeclaredType(scope *table.Scope, name string, typ typeinfo.Type) {
+func declarePredeclaredType(scope *symbols.Scope, name string, typ typeinfo.Type) {
 	if scope == nil || name == "" || typ == nil {
 		return
 	}

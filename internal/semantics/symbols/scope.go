@@ -1,25 +1,25 @@
-package table
+package symbols
 
 import (
-	"compiler/internal/frontend/ast"
-	"compiler/internal/semantics/symbols"
 	"errors"
 	"fmt"
+
+	"compiler/internal/frontend/ast"
 )
 
 type Scope struct {
 	parent *Scope
-	byName map[string]symbols.SymbolID
-	byID   map[symbols.SymbolID]*symbols.Symbol
-	order  []symbols.SymbolID
+	byName map[string]SymbolID
+	byID   map[SymbolID]*Symbol
+	order  []SymbolID
 }
 
-func New(parent *Scope) *Scope {
+func NewScope(parent *Scope) *Scope {
 	return &Scope{
 		parent: parent,
-		byName: make(map[string]symbols.SymbolID),
-		byID:   make(map[symbols.SymbolID]*symbols.Symbol),
-		order:  make([]symbols.SymbolID, 0),
+		byName: make(map[string]SymbolID),
+		byID:   make(map[SymbolID]*Symbol),
+		order:  make([]SymbolID, 0),
 	}
 }
 
@@ -30,7 +30,7 @@ func (s *Scope) Parent() *Scope {
 	return s.parent
 }
 
-func (s *Scope) Declare(sym *symbols.Symbol) error {
+func (s *Scope) Declare(sym *Symbol) error {
 	if s == nil || sym == nil {
 		return errors.New("invalid symbol or scope")
 	}
@@ -45,7 +45,7 @@ func (s *Scope) Declare(sym *symbols.Symbol) error {
 	return nil
 }
 
-func (s *Scope) LookupLocal(name string) (*symbols.Symbol, bool) {
+func (s *Scope) LookupLocal(name string) (*Symbol, bool) {
 	if s == nil {
 		return nil, false
 	}
@@ -57,7 +57,7 @@ func (s *Scope) LookupLocal(name string) (*symbols.Symbol, bool) {
 	return sym, sym != nil
 }
 
-func (s *Scope) Lookup(name string) (*symbols.Symbol, bool) {
+func (s *Scope) Lookup(name string) (*Symbol, bool) {
 	for scope := s; scope != nil; scope = scope.parent {
 		if id, ok := scope.byName[name]; ok {
 			sym := scope.byID[id]
@@ -70,7 +70,7 @@ func (s *Scope) Lookup(name string) (*symbols.Symbol, bool) {
 	return nil, false
 }
 
-func (s *Scope) LookupNode(node ast.Node) (*symbols.Symbol, bool) {
+func (s *Scope) LookupNode(node ast.Node) (*Symbol, bool) {
 	if s == nil || node == nil {
 		return nil, false
 	}
@@ -83,11 +83,11 @@ func (s *Scope) LookupNode(node ast.Node) (*symbols.Symbol, bool) {
 	return nil, false
 }
 
-func (s *Scope) Symbols() []*symbols.Symbol {
+func (s *Scope) Symbols() []*Symbol {
 	if s == nil {
 		return nil
 	}
-	out := make([]*symbols.Symbol, 0, len(s.order))
+	out := make([]*Symbol, 0, len(s.order))
 	for _, id := range s.order {
 		if sym := s.byID[id]; sym != nil {
 			out = append(out, sym)
@@ -98,5 +98,5 @@ func (s *Scope) Symbols() []*symbols.Symbol {
 
 func (s *Scope) IsMutableBinding(name string) bool {
 	sym, found := s.Lookup(name)
-	return found && sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable()
+	return found && sym != nil && (sym.Kind == SymbolVar || sym.Kind == SymbolParam) && sym.IsMutable()
 }

@@ -9,7 +9,6 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -234,7 +233,7 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 	return fnType
 }
 
-func (c *checker) mutableAddressableExpr(scope *table.Scope, expr ast.Expr) (bool, typeinfo.Type) {
+func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (bool, typeinfo.Type) {
 	if c == nil {
 		return false, nil
 	}
@@ -243,7 +242,7 @@ func (c *checker) mutableAddressableExpr(scope *table.Scope, expr ast.Expr) (boo
 	}, c.expandedDefaultBinding)
 }
 
-func (c *checker) mutableImplicitArgumentDiagnostic(scope *table.Scope, expr ast.Expr) (ast.Node, string, bool) {
+func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr ast.Expr) (ast.Node, string, bool) {
 	if c == nil || scope == nil || expr == nil {
 		return nil, "", false
 	}

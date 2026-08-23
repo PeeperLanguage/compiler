@@ -143,18 +143,13 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 			ProjectName: module.projectName,
 			Extension:   peeper.SourceExt,
 		}, diagnostics.NewDiagnosticBag())
-		from := &project.Module{
-			FilePath:   filePath,
-			ImportPath: module.importPath,
-			Origin:     project.ModuleOriginLocal,
-		}
 		seen := make(map[string]struct{})
 		for _, imp := range parsed.Imports {
 			rawPath, ok := ast.ImportPathFromDecl(imp)
 			if !ok {
 				continue
 			}
-			resolved, err := ctx.ResolveImportPath(from, rawPath)
+			resolved, err := ctx.ResolveImportPath(rawPath)
 			if err != nil || resolved == nil || resolved.Origin != project.ModuleOriginLocal {
 				continue
 			}
@@ -178,10 +173,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		delete(w.modules, filePath)
 	}
 
-	g := graph.New(project.GraphNodeModule, project.GraphEdgeImport)
-	for filePath := range w.modules {
-		g.AddNode(graph.NodeID(filePath))
-	}
+	g := graph.New(project.GraphEdgeImport)
 	for _, module := range w.modules {
 		for _, target := range module.importTargets {
 			if _, ok := w.modules[target]; !ok {

@@ -6,7 +6,6 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -17,7 +16,7 @@ func (*unexpectedSemanticType) Text() string { return "unexpected" }
 
 func fingerprintModule(t *testing.T, exported *symbols.Symbol, semantics *SemanticInfo) *Module {
 	t.Helper()
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	if err := scope.Declare(exported); err != nil {
 		t.Fatalf("declare export: %v", err)
 	}

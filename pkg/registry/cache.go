@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compiler/pkg/manifest"
 	"compiler/pkg/remotes"
 )
 
@@ -21,28 +20,6 @@ func GetModulePath(cachePath, repoName, version string) (string, error) {
 	}
 	moduleID := string(provider) + "/" + repoPath + "@" + version
 	return filepath.Join(cachePath, filepath.FromSlash(moduleID)), nil
-}
-
-func IsModuleCached(cachePath, repoName, version string) bool {
-	modulePath, err := GetModulePath(cachePath, repoName, version)
-	if err != nil {
-		return false
-	}
-	return isModuleCached(modulePath)
-}
-
-func isModuleCached(modulePath string) bool {
-	info, err := os.Lstat(modulePath)
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	manifestPath := filepath.Join(modulePath, manifest.FileName)
-	info, err = os.Lstat(manifestPath)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	_, err = manifest.Load(manifestPath)
-	return err == nil
 }
 
 func DeleteModule(cachePath, repoName, version string) error {

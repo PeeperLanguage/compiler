@@ -1,6 +1,8 @@
 package lower
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -27,6 +29,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
 		ImportPath: importPath,
 		FilePath:   filePath,
+		IsEntry:    true,
 		Content:    src,
 		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
 		Imports:    make(map[string]project.ResolvedImport),
@@ -44,6 +47,58 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	}
 	out := GenerateHIR(ctx, module)
 	return out
+}
+
+func TestGenerateHIRCallableNamesAreStableAndModuleAware(t *testing.T) {
+	const src = `struct Counter { value: i32 }
+fn Value() -> i32 { return 1; }
+fn (self: Counter) Read() -> i32 { return self.value; }`
+	first := generateTestHIR(t, "first"+peeper.SourceExt, "sample/first", src)
+	repeated := generateTestHIR(t, "first"+peeper.SourceExt, "sample/first", src)
+	second := generateTestHIR(t, "second"+peeper.SourceExt, "sample/second", src)
+	if len(first.Funcs) != 2 || len(repeated.Funcs) != 2 || len(second.Funcs) != 2 {
+		t.Fatalf("unexpected function counts: %d, %d, %d", len(first.Funcs), len(repeated.Funcs), len(second.Funcs))
+	}
+	for index := range first.Funcs {
+		if first.Funcs[index].Name != repeated.Funcs[index].Name {
+			t.Fatalf("callable name is not deterministic: %q != %q", first.Funcs[index].Name, repeated.Funcs[index].Name)
+		}
+		if first.Funcs[index].Name == second.Funcs[index].Name {
+			t.Fatalf("module callables collide at index %d: %q", index, first.Funcs[index].Name)
+		}
+		if strings.Contains(first.Funcs[index].Name, "$") {
+			t.Fatalf("callable linker name uses local instance delimiter: %q", first.Funcs[index].Name)
+		}
+	}
+}
+
+func TestCallableNameFramesModuleIdentityComponents(t *testing.T) {
+	first := symbols.New("Value", symbols.SymbolFunc, nil, nil)
+	first.DefiningModule = symbols.DefiningModuleKey{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "sample/value"}
+	second := symbols.New("Value", symbols.SymbolFunc, nil, nil)
+	second.DefiningModule = symbols.DefiningModuleKey{Origin: "local", Namespace: "a", Dependency: "bc", ImportPath: "sample/value"}
+	firstName, _ := callableName(nil, first)
+	secondName, _ := callableName(nil, second)
+	if firstName == secondName {
+		t.Fatalf("length-ambiguous module identities collide: %q", firstName)
+	}
+}
+
+func TestSymbolNameLeavesCompilerOwnedFunctionUnmangled(t *testing.T) {
+	sym := symbols.New("alloc", symbols.SymbolFunc, nil, nil)
+	sym.CompilerOp = symbols.CompilerOpAlloc
+	want := fmt.Sprintf("alloc$%d", sym.ID)
+	if got := symbolName(nil, sym); got != want {
+		t.Fatalf("compiler-owned symbol name = %q, want %q", got, want)
+	}
+}
+
+func TestGenerateHIRPreservesExternLinkName(t *testing.T) {
+	out := generateTestHIR(t, "extern_name"+peeper.SourceExt, "sample/extern", `#[extern("native_ping")]
+fn ping() -> i32;`)
+	if len(out.Externs) != 1 || out.Externs[0].Name != "native_ping" {
+		t.Fatalf("extern name = %#v, want native_ping", out.Externs)
+	}
 }
 
 func TestGenerateHIRLowersIndexExpr(t *testing.T) {
@@ -467,12 +522,11 @@ fn nested(mut bucket: Bucket) {
 	let _ = &mut bucket.items;
 }`
 	out := generateTestHIR(t, filePath, "hir_slice_view_test", src)
-	funcs := make(map[string]*hir.Function, len(out.Funcs))
-	for _, fn := range out.Funcs {
-		funcs[fn.Name] = fn
+	if len(out.Funcs) != 3 {
+		t.Fatalf("unexpected function count: %d", len(out.Funcs))
 	}
 
-	explicit := funcs["explicit"]
+	explicit := out.Funcs[0]
 	if explicit == nil || explicit.Body == nil || len(explicit.Body.Stmts) < 1 {
 		t.Fatalf("unexpected explicit borrow HIR: %#v", explicit)
 	}
@@ -484,7 +538,7 @@ fn nested(mut bucket: Bucket) {
 		t.Fatalf("expected shared owner reference, got %#v", binding.Value)
 	}
 
-	explicitMutable := funcs["explicit_mutable"]
+	explicitMutable := out.Funcs[1]
 	if explicitMutable == nil || explicitMutable.Body == nil || len(explicitMutable.Body.Stmts) < 1 {
 		t.Fatalf("unexpected explicit mutable borrow HIR: %#v", explicitMutable)
 	}
@@ -496,7 +550,7 @@ fn nested(mut bucket: Bucket) {
 		t.Fatalf("expected mutable owner reference, got %#v", binding.Value)
 	}
 
-	nested := funcs["nested"]
+	nested := out.Funcs[2]
 	if nested == nil || nested.Body == nil || len(nested.Body.Stmts) < 1 {
 		t.Fatalf("unexpected nested mutable borrow HIR: %#v", nested)
 	}
@@ -519,12 +573,11 @@ func TestGenerateHIRLowersAddressAsOpaqueRawPointer(t *testing.T) {
 	let _ = @value;
 }`
 	out := generateTestHIR(t, filePath, "hir_raw_pointer_address_test", src)
-	funcs := make(map[string]*hir.Function, len(out.Funcs))
-	for _, fn := range out.Funcs {
-		funcs[fn.Name] = fn
+	if len(out.Funcs) != 1 {
+		t.Fatalf("unexpected function count: %d", len(out.Funcs))
 	}
 
-	explicit := funcs["explicit"]
+	explicit := out.Funcs[0]
 	if explicit == nil || explicit.Body == nil || len(explicit.Body.Stmts) != 1 {
 		t.Fatalf("unexpected explicit raw pointer HIR: %#v", explicit)
 	}
@@ -589,13 +642,10 @@ fn consume(counter: *Counter) -> i32 {
 	return consumer.take();
 }`
 	out := generateTestHIR(t, "hir_consuming_interface_test"+peeper.SourceExt, "hir_consuming_interface_test", src)
-	var consume *hir.Function
-	for _, fn := range out.Funcs {
-		if fn.Name == "consume" {
-			consume = fn
-			break
-		}
+	if len(out.Funcs) != 2 {
+		t.Fatalf("unexpected function count: %d", len(out.Funcs))
 	}
+	consume := out.Funcs[1]
 	if consume == nil || consume.Body == nil || len(consume.Body.Stmts) != 2 {
 		t.Fatalf("unexpected consuming interface HIR: %#v", consume)
 	}
@@ -666,6 +716,9 @@ fn main() -> i32 {
 	carrier, ok := binding.Value.(*ir.InterfaceMake)
 	if !ok || len(carrier.Slots) != 1 || carrier.Slots[0].MethodName != "read" {
 		t.Fatalf("interface carrier = %#v, want recorded read slot", binding.Value)
+	}
+	if ir.StripSymbolInstance(carrier.Slots[0].FuncName) != out.Funcs[0].Name {
+		t.Fatalf("interface slot target %q does not name method definition %q", carrier.Slots[0].FuncName, out.Funcs[0].Name)
 	}
 }
 

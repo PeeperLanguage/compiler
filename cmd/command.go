@@ -140,6 +140,9 @@ func buildCommand(args []string) error {
 	if buildInfo.SelectedByDiscovery {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
+	if err := validateNativeLinkTarget(opts.targetOS, opts.targetArch); err != nil {
+		return err
+	}
 
 	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
 	if err := emitAndCheckDiagnostics(ctx); err != nil {
@@ -206,8 +209,8 @@ func runCommand(args []string) error {
 	if buildInfo.SelectedByDiscovery {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
-	if !target.IsHostTarget(opts.targetOS, opts.targetArch) {
-		return fmt.Errorf("run target %s/%s does not match host %s/%s", opts.targetOS, opts.targetArch, runtime.GOOS, runtime.GOARCH)
+	if err := validateNativeLinkTarget(opts.targetOS, opts.targetArch); err != nil {
+		return err
 	}
 
 	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
@@ -251,6 +254,13 @@ func runCommand(args []string) error {
 		return fmt.Errorf("run program: %w", err)
 	}
 	return nil
+}
+
+func validateNativeLinkTarget(targetOS, targetArch string) error {
+	if target.IsHostTarget(targetOS, targetArch) {
+		return nil
+	}
+	return fmt.Errorf("native linking target %s/%s does not match host %s/%s", targetOS, targetArch, runtime.GOOS, runtime.GOARCH)
 }
 
 type buildTarget struct {
@@ -298,7 +308,10 @@ func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath
 func resolveManifestBuildTarget(commandName, startPath string, targetOS string) (buildTarget, error) {
 	loadedProject, err := manifest.LoadProject(startPath)
 	if err != nil {
-		return buildTarget{}, fmt.Errorf("%s requires an input file or %s", commandName, manifest.FileName)
+		if errors.Is(err, manifest.ErrManifestNotFound) {
+			return buildTarget{}, fmt.Errorf("%s requires an input file or %s", commandName, manifest.FileName)
+		}
+		return buildTarget{}, err
 	}
 	if loadedProject.File.Package.Build != manifest.BuildProgram {
 		return buildTarget{}, fmt.Errorf("%s: `peeper %s` requires build = %q", loadedProject.ManifestPath, commandName, manifest.BuildProgram)

@@ -1,0 +1,6 @@
+name = "entrypoint_i32"
+build = "program"
+
+[test]
+mode = "build"
+outcome = "success"

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"compiler/pkg/manifest"
@@ -122,6 +123,61 @@ build = "program"
 
 	if _, _, err := resolveBuildTarget("build", entryPath, "linux"); err == nil {
 		t.Fatal("expected source-root error")
+	}
+}
+
+func TestResolveBuildTargetPropagatesMalformedManifest(t *testing.T) {
+	root := t.TempDir()
+	entryPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	if err := os.MkdirAll(filepath.Dir(entryPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte("not valid toml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{root, entryPath} {
+		if _, _, err := resolveBuildTarget("build", path, "linux"); err == nil || !strings.Contains(err.Error(), "parse manifest") {
+			t.Fatalf("resolveBuildTarget(%q) error = %v, want parse manifest error", path, err)
+		}
+	}
+}
+
+func TestResolveBuildTargetValidatesCompilerConstraint(t *testing.T) {
+	tests := []struct {
+		name       string
+		constraint string
+		wantError  string
+	}{
+		{name: "compatible", constraint: "<=0.1.0"},
+		{name: "incompatible", constraint: ">=0.2.0", wantError: "requires compiler"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			entryPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+			if err := os.MkdirAll(filepath.Dir(entryPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(entryPath, []byte("fn main() {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			content := "name = \"app\"\ncompiler = \"" + test.constraint + "\"\nbuild = \"program\"\n"
+			if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err := resolveBuildTarget("build", root, "linux")
+			if test.wantError == "" && err != nil {
+				t.Fatalf("resolveBuildTarget compatible manifest: %v", err)
+			}
+			if test.wantError != "" && (err == nil || !strings.Contains(err.Error(), test.wantError)) {
+				t.Fatalf("resolveBuildTarget error = %v, want text %q", err, test.wantError)
+			}
+		})
 	}
 }
 

@@ -21,12 +21,13 @@ func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (co
 	rootDir := sourceProject.RootDir
 	projectName := sourceProject.ProjectName
 	cfg := project.Config{
-		RootDir:     rootDir,
-		ProjectName: projectName,
-		Extension:   peeper.SourceExt,
-		TargetOS:    targetOS,
-		TargetArch:  targetArch,
-		BuildDebug:  debugBuild,
+		RootDir:           rootDir,
+		ProjectName:       projectName,
+		Extension:         peeper.SourceExt,
+		TargetOS:          targetOS,
+		TargetArch:        targetArch,
+		BuildDebug:        debugBuild,
+		RequireEntrypoint: true,
 	}
 	compilerContext = compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
 	if err != nil {

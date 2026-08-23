@@ -54,7 +54,7 @@ Generated source starts with:
 
 ```peeper
 fn main() {
-    println("Hello from Peeper!")
+    println("Hello from Peeper!");
 }
 ```
 

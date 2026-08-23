@@ -24,39 +24,31 @@ import (
 	"compiler/internal/semantics/definiteinit"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/usage"
 )
 
-// Ordered phase execution for one compiler project.
-type Pipeline struct {
-	ctx *project.CompilerContext
-}
-
-// Bind a pipeline to shared compiler state.
-func New(ctx *project.CompilerContext) *Pipeline {
-	return &Pipeline{ctx: ctx}
-}
-
 // Run the central lex -> parse -> analyze -> HIR -> MIR -> LLVM flow.
-func (p *Pipeline) Run(entry *project.Module) error {
-	if p == nil || p.ctx == nil || entry == nil {
+func Run(ctx *project.CompilerContext, entry *project.Module) error {
+	if ctx == nil || entry == nil {
 		return errors.New("empty pipeline")
 	}
 
-	p.ctx.AddModule(entry)
-	p.ctx.CompletedProjectPhase = phase.Load
-	diag := p.ctx.Diagnostics
+	entry.IsEntry = true
+	ctx.AddModule(entry)
+	ctx.CompletedProjectPhase = phase.Load
+	diag := ctx.Diagnostics
 	loadDiag := diag.BeginPhase(phase.Load, "")
 	finalDiag := diag.BeginPhase(phase.Finalize, "")
 
 	loader := &moduleLoader{
-		ctx:       p.ctx,
+		ctx:       ctx,
 		scheduled: make(map[string]struct{}),
 	}
 	preludeKey := ""
-	if preludeMod, ok := p.ctx.ModuleByKey("core:prelude/global"); ok {
+	if preludeMod, ok := ctx.ModuleByKey("core:prelude/global"); ok {
 		if err := loader.Load(preludeMod); err != nil {
 			return err
 		}
@@ -69,16 +61,16 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	// Ensure topo-sort puts prelude first by making all non-prelude modules
 	// depend on it. This removes the need for any special-case ordering logic.
 	if preludeKey != "" {
-		for _, mod := range p.ctx.Modules() {
+		for _, mod := range ctx.Modules() {
 			if mod != nil && mod.Key != preludeKey {
-				if p.ctx.Graph != nil {
-					p.ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey))
+				if ctx.Graph != nil {
+					ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey))
 				}
 			}
 		}
 	}
 
-	modules := p.ctx.Modules()
+	modules := ctx.Modules()
 	moduleIndex := make(map[graph.NodeID]*project.Module, len(modules))
 	moduleIDs := make([]graph.NodeID, 0, len(modules))
 	for _, mod := range modules {
@@ -94,8 +86,8 @@ func (p *Pipeline) Run(entry *project.Module) error {
 		orderedIDs []graph.NodeID
 		cycles     [][]graph.NodeID
 	)
-	if p.ctx.Graph != nil {
-		orderedIDs, cycles = p.ctx.Graph.TopoSort(moduleIDs)
+	if ctx.Graph != nil {
+		orderedIDs, cycles = ctx.Graph.TopoSort(moduleIDs)
 	}
 	if len(cycles) > 0 {
 		for _, cycle := range cycles {
@@ -125,8 +117,8 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if preludeKey != "" {
 		prelude = moduleIndex[graph.NodeID(preludeKey)]
 	}
-	preludeInjected := p.advanceModulesThrough(orderedModules, prelude, prelude == nil, phase.Ownership, diag)
-	p.ctx.CompletedProjectPhase = phase.Ownership
+	preludeInjected := advanceModulesThrough(ctx, orderedModules, prelude, prelude == nil, phase.Ownership, diag)
+	ctx.CompletedProjectPhase = phase.Ownership
 	if diag != nil && diag.HasErrors() {
 		return nil
 	}
@@ -138,15 +130,21 @@ func (p *Pipeline) Run(entry *project.Module) error {
 			continue
 		}
 		usageDiag := diag.BeginPhase(phase.Usage, module.Key)
-		usage.Analyze(p.ctx.WithDiagnostics(usageDiag), module)
+		usage.Analyze(ctx.WithDiagnostics(usageDiag), module)
 		module.Phase = phase.Usage
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 	}
 	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Usage); err != nil {
 		return err
 	}
-	p.ctx.CompletedProjectPhase = phase.Usage
-	p.advanceModulesThrough(orderedModules, prelude, preludeInjected, phase.Backend, diag)
+	ctx.CompletedProjectPhase = phase.Usage
+	if ctx.Config.RequireEntrypoint {
+		validateProgramEntrypoint(entry, diag.AppendPhase(phase.Usage, entry.Key))
+		if diag.HasErrors() {
+			return nil
+		}
+	}
+	advanceModulesThrough(ctx, orderedModules, prelude, preludeInjected, phase.Backend, diag)
 	if diag != nil && diag.HasErrors() {
 		return nil
 	}
@@ -155,31 +153,55 @@ func (p *Pipeline) Run(entry *project.Module) error {
 	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Backend); err != nil {
 		return err
 	}
-	p.ctx.CompletedProjectPhase = phase.Backend
+	ctx.CompletedProjectPhase = phase.Backend
 	mirModules := make([]*mir.Module, 0, len(orderedModules))
 	for _, module := range orderedModules {
 		if module != nil && module.MIR != nil {
 			mirModules = append(mirModules, module.MIR)
 		}
 	}
-	llvm.ValidateRuntimeSymbols(mirModules, finalDiag, p.ctx.Target)
-	p.ctx.CompletedProjectPhase = phase.Finalize
+	llvm.ValidateRuntimeSymbols(mirModules, finalDiag)
+	ctx.CompletedProjectPhase = phase.Finalize
 	return nil
 }
 
-func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelude *project.Module, preludeInjected bool, lastPhase phase.Phase, diag *diagnostics.DiagnosticBag) bool {
+func validateProgramEntrypoint(entry *project.Module, diag *diagnostics.DiagnosticBag) {
+	const message = "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`"
+	if entry == nil || entry.ModuleScope == nil {
+		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, nil, "")
+		return
+	}
+
+	sym, found := entry.ModuleScope.LookupLocal("main")
+	if !found || sym == nil || sym.Kind != symbols.SymbolFunc {
+		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, nil, "")
+		return
+	}
+	decl, declOK := sym.ASTNode.(*ast.FnDecl)
+	fnType, typeOK := sym.Type.(*typeinfo.FuncType)
+	validReturn := typeOK && fnType.Return == nil
+	if typeOK && fnType.Return != nil {
+		integer, ok := fnType.Return.(*typeinfo.IntegerType)
+		validReturn = ok && integer.Signed && integer.Bits == 32
+	}
+	if !declOK || decl == nil || decl.Receiver != nil || decl.Body == nil || len(decl.TypeParams) != 0 || !typeOK || len(fnType.Params) != 0 || !validReturn {
+		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, sym.Location, "invalid program entrypoint")
+	}
+}
+
+func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*project.Module, prelude *project.Module, preludeInjected bool, lastPhase phase.Phase, diag *diagnostics.DiagnosticBag) bool {
 	for {
 		if !preludeInjected && prelude != nil && prelude.ModuleScope != nil && prelude.Phase >= phase.Collected {
 			// Inject prelude as soon as its module scope exists. Other modules can
 			// then resolve global prelude names while later binding updates the same
 			// symbol objects in place.
-			p.injectPreludeSymbols(prelude, diag)
+			injectPreludeSymbols(ctx, prelude, diag)
 			preludeInjected = true
 		}
 
 		ready := make([]*project.Module, 0, len(orderedModules))
 		for _, module := range orderedModules {
-			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && p.moduleReadyForNextPhase(module, prelude, preludeInjected) {
+			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && moduleReadyForNextPhase(ctx, module, prelude, preludeInjected) {
 				ready = append(ready, module)
 			}
 		}
@@ -193,7 +215,7 @@ func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelu
 			wg.Add(1)
 			go func(module *project.Module) {
 				defer wg.Done()
-				progress <- p.advanceModulePhase(module, diag)
+				progress <- advanceModulePhase(ctx, module, diag)
 			}(module)
 		}
 		wg.Wait()
@@ -203,7 +225,7 @@ func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelu
 		for ok := range progress {
 			advanced = advanced || ok
 		}
-		p.invalidateSemanticDependents(ready)
+		invalidateSemanticDependents(ctx, ready)
 		if !advanced {
 			break
 		}
@@ -213,20 +235,20 @@ func (p *Pipeline) advanceModulesThrough(orderedModules []*project.Module, prelu
 
 // injectPreludeSymbols keeps repeated pipeline runs idempotent while exposing
 // a real collision between compiler-owned globals and prelude declarations.
-func (p *Pipeline) injectPreludeSymbols(prelude *project.Module, diag *diagnostics.DiagnosticBag) {
-	if p == nil || p.ctx == nil || p.ctx.GlobalScope == nil || prelude == nil || prelude.ModuleScope == nil {
+func injectPreludeSymbols(ctx *project.CompilerContext, prelude *project.Module, diag *diagnostics.DiagnosticBag) {
+	if ctx == nil || ctx.GlobalScope == nil || prelude == nil || prelude.ModuleScope == nil {
 		return
 	}
 	preludeDiag := diag.AppendPhase(phase.Collected, prelude.Key)
 	for _, sym := range prelude.ModuleScope.Symbols() {
-		if err := p.ctx.GlobalScope.Declare(sym); err == nil {
+		if err := ctx.GlobalScope.Declare(sym); err == nil {
 			continue
 		}
-		existing, found := p.ctx.GlobalScope.LookupLocal(sym.Name)
+		existing, found := ctx.GlobalScope.LookupLocal(sym.Name)
 		if found && existing != nil && existing.ID == sym.ID {
 			continue
 		}
-		problems.ReportRedeclaration(preludeDiag, p.ctx.GlobalScope, fmt.Sprintf("prelude declaration %q conflicts with an existing global", sym.Name), sym.Name, sym.Location)
+		problems.ReportRedeclaration(preludeDiag, ctx.GlobalScope, fmt.Sprintf("prelude declaration %q conflicts with an existing global", sym.Name), sym.Name, sym.Location)
 	}
 }
 
@@ -249,8 +271,8 @@ func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[str
 	return nil
 }
 
-func (p *Pipeline) moduleReadyForNextPhase(module, prelude *project.Module, preludeInjected bool) bool {
-	if p == nil || module == nil || module.AST == nil || module.Phase >= phase.Backend {
+func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *project.Module, preludeInjected bool) bool {
+	if ctx == nil || module == nil || module.AST == nil || module.Phase >= phase.Backend {
 		return false
 	}
 	next := nextModulePhase(module.Phase)
@@ -265,7 +287,7 @@ func (p *Pipeline) moduleReadyForNextPhase(module, prelude *project.Module, prel
 		return true
 	}
 	for _, imp := range module.Imports {
-		imported, ok := p.ctx.ModuleByKey(imp.Key)
+		imported, ok := ctx.ModuleByKey(imp.Key)
 		if !ok || imported == nil || imported.Phase < required {
 			return false
 		}
@@ -346,8 +368,8 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 // advanceModulePhase moves one module exactly one phase forward. Serial Run uses
 // same kernel that future dependency-aware scheduling will reuse, so phase
 // prerequisites stay centralized in one place.
-func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.DiagnosticBag) bool {
-	if p == nil || module == nil || module.AST == nil {
+func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, diag *diagnostics.DiagnosticBag) bool {
+	if ctx == nil || module == nil || module.AST == nil {
 		return false
 	}
 	if module.Phase >= phase.Backend {
@@ -358,29 +380,29 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		return false
 	}
 	phaseDiag := diag.BeginPhase(next, module.Key)
-	phaseCtx := p.ctx.WithDiagnostics(phaseDiag)
+	phaseCtx := ctx.WithDiagnostics(phaseDiag)
 	if module.Phase < phase.Collected {
 		collector.Collect(phaseCtx, module)
 		module.Phase = phase.Collected
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.Bound {
 		binder.Bind(phaseCtx, module)
 		module.Phase = phase.Bound
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.Resolved {
 		resolver.Resolve(phaseCtx, module)
 		module.Phase = phase.Resolved
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.ConstEval {
 		consteval.Evaluate(phaseCtx, module)
 		module.Phase = phase.ConstEval
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.Typechecked {
@@ -389,7 +411,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		module.TypedASTNodes = ast.Index(module.AST)
 		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
 		module.Phase = phase.Typechecked
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.CFG {
@@ -410,7 +432,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 			return value != nil && value.Truthy(), ok
 		})
 		module.Phase = phase.CFG
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.CFG == nil {
@@ -425,13 +447,13 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 			phaseDiag,
 		)
 		module.Phase = phase.DefiniteInit
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.Ownership {
 		module.Ownership = ownership.Check(phaseCtx, module)
 		module.Phase = phase.Ownership
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.Usage {
@@ -447,7 +469,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		}
 		module.HIR = fold.ApplyTypedExpressionFolding(modhir)
 		module.Phase = phase.HIR
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.HIR == nil {
@@ -459,7 +481,7 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 		}
 		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Semantics.ConstValues)
 		module.Phase = phase.MIR
-		p.ctx.Metrics.AddPhaseAdvance()
+		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.MIR == nil {
@@ -468,16 +490,16 @@ func (p *Pipeline) advanceModulePhase(module *project.Module, diag *diagnostics.
 	if module.Phase >= phase.Backend {
 		return false
 	}
-	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, p.ctx.Target, p.ctx.Config.BuildDebug)
+	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, ctx.Target, ctx.Config.BuildDebug)
 	module.Phase = phase.Backend
-	p.ctx.Metrics.AddPhaseAdvance()
+	ctx.Metrics.AddPhaseAdvance()
 	return true
 }
 
 // invalidateSemanticDependents applies semantic API changes only between
 // parallel scheduler batches, after dependency type information is final.
-func (p *Pipeline) invalidateSemanticDependents(advanced []*project.Module) {
-	if p == nil || p.ctx == nil || p.ctx.Graph == nil {
+func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*project.Module) {
+	if ctx == nil || ctx.Graph == nil {
 		return
 	}
 	queue := make([]graph.NodeID, 0)
@@ -486,7 +508,7 @@ func (p *Pipeline) invalidateSemanticDependents(advanced []*project.Module) {
 		if module == nil || module.Phase != phase.Typechecked {
 			continue
 		}
-		baseline, ok := p.ctx.SemanticExportBaseline(module.Key)
+		baseline, ok := ctx.SemanticExportBaseline(module.Key)
 		if !ok || baseline == module.SemanticExportFingerprint {
 			continue
 		}
@@ -497,18 +519,18 @@ func (p *Pipeline) invalidateSemanticDependents(advanced []*project.Module) {
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		for _, dependentID := range p.ctx.Graph.Predecessors(current) {
+		for _, dependentID := range ctx.Graph.Predecessors(current) {
 			if _, found := seen[dependentID]; found {
 				continue
 			}
 			seen[dependentID] = struct{}{}
 			queue = append(queue, dependentID)
-			dependent, found := p.ctx.ModuleByKey(string(dependentID))
+			dependent, found := ctx.ModuleByKey(string(dependentID))
 			if !found || dependent == nil || dependent.Phase < phase.Typechecked {
 				continue
 			}
-			p.ctx.ResetModule(dependent, phase.Parsed)
-			p.ctx.Metrics.AddDowngradedModule()
+			ctx.ResetModule(dependent, phase.Parsed)
+			ctx.Metrics.AddDowngradedModule()
 		}
 	}
 }

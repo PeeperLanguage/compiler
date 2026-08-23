@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"compiler/internal/phase"
+	"compiler/pkg/colors"
 )
 
 func TestBeginPhaseReplacesOnlySelectedGroup(t *testing.T) {
@@ -171,14 +172,55 @@ func TestEmitAllToHTMLRendersDirectHTML(t *testing.T) {
 	}
 }
 
+func TestConcurrentStringFormatsRemainIsolated(t *testing.T) {
+	bag := NewDiagnosticBag()
+	bag.Add(NewError("<broken>"))
+
+	const iterations = 500
+	start := make(chan struct{})
+	errs := make(chan string, 2)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		for range iterations {
+			out := bag.EmitAllToString()
+			if !strings.Contains(out, "\033[") || strings.Contains(out, "<span") || strings.Contains(out, "&lt;broken&gt;") {
+				errs <- "ANSI output contaminated: " + out
+				return
+			}
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		for range iterations {
+			out := bag.EmitAllToHTML()
+			if strings.Contains(out, "\033[") || !strings.Contains(out, "<span") || !strings.Contains(out, "&lt;broken&gt;") {
+				errs <- "HTML output contaminated: " + out
+				return
+			}
+		}
+	}()
+	close(start)
+	workers.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
 func captureEmitErrors(bag *DiagnosticBag) string {
 	var sb strings.Builder
+	logger := colors.NewLogger(colors.CurrentLogFormat())
 	emitter := &Emitter{
 		cache:       bag.sourceCache,
 		writer:      &sb,
-		highlighter: NewSyntaxHighlighter(true),
+		logger:      logger,
+		highlighter: NewSyntaxHighlighter(true, logger),
 	}
-	bag.emitFiltered(emitter, &sb, func(diag *Diagnostic) bool {
+	bag.emitFiltered(emitter, func(diag *Diagnostic) bool {
 		return diag != nil && diag.Severity == Error
 	})
 	return sb.String()

@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,9 @@ const (
 	cacheModulesSubdir = "modules"
 	reservedStdAlias   = "core"
 )
+
+// ErrManifestNotFound identifies manifest discovery ending without a manifest.
+var ErrManifestNotFound = errors.New("no peeper.toml found")
 
 func CacheModulesDir(projectRoot string) string {
 	return filepath.Join(projectRoot, cacheDirName, cacheModulesSubdir)
@@ -84,19 +88,27 @@ var (
 func FindManifestPath(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve manifest search path %q: %w", startDir, err)
 	}
 	if info, statErr := os.Stat(dir); statErr == nil && !info.IsDir() {
 		dir = filepath.Dir(dir)
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("stat manifest search path %q: %w", dir, statErr)
 	}
 	for {
 		manifestPath := filepath.Join(dir, FileName)
-		if _, err := os.Stat(manifestPath); err == nil {
+		if _, statErr := os.Stat(manifestPath); statErr == nil {
 			return manifestPath, nil
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("stat manifest %q: %w", manifestPath, statErr)
+		} else if _, linkErr := os.Lstat(manifestPath); linkErr == nil {
+			return "", fmt.Errorf("stat manifest %q: %w", manifestPath, statErr)
+		} else if !errors.Is(linkErr, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect manifest %q: %w", manifestPath, linkErr)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("no %s found", FileName)
+			return "", fmt.Errorf("%w from %q", ErrManifestNotFound, startDir)
 		}
 		dir = parent
 	}
@@ -134,7 +146,7 @@ func LoadProject(startPath string) (*Project, error) {
 	}
 	file, err := Load(manifestPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	return &Project{
 		RootDir:      filepath.Dir(manifestPath),
@@ -150,7 +162,10 @@ func ResolveSourceFileProject(path string) (SourceFileProject, error) {
 
 	loadedProject, err := LoadProject(path)
 	if err != nil {
-		return ctx, nil
+		if errors.Is(err, ErrManifestNotFound) {
+			return ctx, nil
+		}
+		return ctx, err
 	}
 
 	ctx.RootDir = loadedProject.RootDir
@@ -179,8 +194,8 @@ func Load(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !identifierPattern.MatchString(name) {
-		return nil, fmt.Errorf("invalid package.name %q", name)
+	if err := ValidatePackageName(name); err != nil {
+		return nil, err
 	}
 	manifest.Package.Name = name
 	if version, ok, err := toml.LookupKey[string](pkg, "version"); err != nil {
@@ -194,6 +209,15 @@ func Load(path string) (*File, error) {
 	if compilerVersion, ok, err := toml.LookupKey[string](pkg, "compiler"); err != nil {
 		return nil, fmt.Errorf("compiler: %w", err)
 	} else if ok {
+		if strings.TrimSpace(compilerVersion) != "" {
+			matches, err := semver.Match(peeper.CompilerVersion, compilerVersion)
+			if err != nil {
+				return nil, fmt.Errorf("invalid compiler constraint %q: %w", compilerVersion, err)
+			}
+			if !matches {
+				return nil, fmt.Errorf("manifest requires compiler %q, current compiler is %s", compilerVersion, peeper.CompilerVersion)
+			}
+		}
 		manifest.Package.CompilerVersion = compilerVersion
 	}
 	build, ok, err := toml.LookupKey[string](pkg, "build")
@@ -236,6 +260,14 @@ func Load(path string) (*File, error) {
 		}
 	}
 	return manifest, nil
+}
+
+// ValidatePackageName applies package identifier rules shared by manifest loading and project creation.
+func ValidatePackageName(name string) error {
+	if !identifierPattern.MatchString(name) {
+		return fmt.Errorf("invalid package.name %q", name)
+	}
+	return nil
 }
 
 func ParseDependency(raw toml.Value) (Dependency, error) {
@@ -332,7 +364,7 @@ func Save(path string, file *File) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, data, 0o644)
+	return WriteFileAtomic(path, data, 0o644)
 }
 
 func marshalManifest(file *File) ([]byte, error) {

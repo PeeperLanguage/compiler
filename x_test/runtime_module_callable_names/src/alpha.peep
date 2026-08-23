@@ -1,0 +1,16 @@
+struct Counter {
+    value: i32
+}
+
+fn Value() -> i32 {
+    return 10;
+}
+
+fn (self: Counter) Read() -> i32 {
+    return self.value;
+}
+
+fn Run() -> i32 {
+    let counter: Counter = .{ value = 1 };
+    return Value() + counter.Read();
+}

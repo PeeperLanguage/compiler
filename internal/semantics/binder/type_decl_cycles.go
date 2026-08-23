@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	graphNodeTypeDecl        graph.NodeKind = "type_decl"
 	graphEdgeTypeValueRef    graph.EdgeKind = "type_value_ref"
 	graphEdgeTypeIndirectRef graph.EdgeKind = "type_indirect_ref"
 )
@@ -22,7 +21,6 @@ func (b *binder) registerTypeDecl(name string, typ ast.TypeExpr) {
 		return
 	}
 	owner := typeDeclNodeID(b.module.Key, name)
-	b.ctx.Graph.AddNode(owner, graphNodeTypeDecl)
 	// Value edges require full layout; indirect references do not force target expansion.
 	b.addTypeDeclEdges(owner, typ, false)
 }

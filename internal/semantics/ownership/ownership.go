@@ -12,7 +12,6 @@ import (
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -20,7 +19,7 @@ type site struct {
 	cfgSite *cfg.Site
 	stmt    ast.Stmt
 	block   *ast.BlockStmt
-	scope   *table.Scope
+	scope   *symbols.Scope
 }
 
 type analyzer struct {
@@ -31,7 +30,7 @@ type analyzer struct {
 	order            []cfg.SiteID
 	cleanup          *ownershipresult.CleanupPlan
 	function         *ast.FnDecl
-	functionScope    *table.Scope
+	functionScope    *symbols.Scope
 	reportedJoin     map[cfg.SiteID]bool
 	inStates         map[cfg.SiteID]state
 	referenceLiveIn  map[cfg.SiteID]map[*symbols.Symbol]ast.Node
@@ -91,7 +90,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			if sym == nil {
 				continue
 			}
-			scope, _ := sym.Scope.(*table.Scope)
+			scope := sym.Scope
 			graph := module.CFG.Function(ir.NodeID(node.ID()))
 			if graph != nil {
 				checkFunction(ctx, module, node, scope, graph, result[graph.NodeID])
@@ -101,7 +100,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 	return result
 }
 
-func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *table.Scope, cfgFn *cfg.Graph, cleanup *ownershipresult.CleanupPlan) {
+func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.Graph, cleanup *ownershipresult.CleanupPlan) {
 	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
@@ -119,7 +118,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 	}).run()
 }
 
-func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *table.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
 	if module == nil || module.Semantics == nil || cfgFn == nil || scope == nil {
@@ -303,7 +302,7 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	clearScopeOwnership(node.scope, st)
 }
 
-func clearScopeOwnership(scope *table.Scope, st state) {
+func clearScopeOwnership(scope *symbols.Scope, st state) {
 	if scope == nil {
 		return
 	}
@@ -315,7 +314,7 @@ func clearScopeOwnership(scope *table.Scope, st state) {
 	}
 }
 
-func cleanupSymbols(scope *table.Scope, st state) []*symbols.Symbol {
+func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
 	if scope == nil {
 		return nil
 	}
@@ -336,7 +335,7 @@ func cleanupSymbols(scope *table.Scope, st state) []*symbols.Symbol {
 	return cleanup
 }
 
-func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt, st state, loans *loanContext) {
+func (a *analyzer) cleanupBeforeReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state, loans *loanContext) {
 	if a == nil || stmt == nil {
 		return
 	}
@@ -352,7 +351,7 @@ func (a *analyzer) cleanupBeforeReturn(scope *table.Scope, stmt *ast.ReturnStmt,
 	}
 }
 
-func (a *analyzer) checkScopeDestruction(scope *table.Scope, site ast.Node, loans *loanContext) {
+func (a *analyzer) checkScopeDestruction(scope *symbols.Scope, site ast.Node, loans *loanContext) {
 	if a == nil || scope == nil || loans == nil {
 		return
 	}
@@ -434,7 +433,7 @@ func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
 	return ids
 }
 
-func (a *analyzer) applyBinding(scope *table.Scope, stmt ast.Stmt, value ast.Expr, st state, loans *loanContext) {
+func (a *analyzer) applyBinding(scope *symbols.Scope, stmt ast.Stmt, value ast.Expr, st state, loans *loanContext) {
 	if scope == nil || stmt == nil {
 		return
 	}

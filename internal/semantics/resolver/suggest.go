@@ -4,11 +4,11 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
-	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/symbols"
 	"compiler/pkg/colors"
 )
 
-func reportUnresolved(module *project.Module, scope *table.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
+func reportUnresolved(module *project.Module, scope *symbols.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
 	if module == nil || node == nil || diag == nil {
 		return false
 	}
@@ -26,7 +26,7 @@ func reportUnresolved(module *project.Module, scope *table.Scope, node *ast.Iden
 	return false
 }
 
-func nearestSymbolName(name string, scope *table.Scope) (string, bool) {
+func nearestSymbolName(name string, scope *symbols.Scope) (string, bool) {
 	candidates := make([]diagnostics.NameCandidate, 0)
 	seen := make(map[string]struct{})
 	scopeDepth := 0

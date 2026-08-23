@@ -11,7 +11,6 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/peeper"
@@ -343,7 +342,7 @@ func TestGenerateMIRAppliesOwnershipCleanupPlan(t *testing.T) {
 
 func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 	mod := &hir.Module{Name: "test", Types: mirTypes.table}
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	sym := symbols.New("Name", symbols.SymbolConst, nil, nil)
 	sym.BindType(&typeinfo.CStrType{})
 	if err := scope.Declare(sym); err != nil {
@@ -369,7 +368,7 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 
 func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 	mod := &hir.Module{Name: "test", Types: mirTypes.table}
-	scope := table.New(nil)
+	scope := symbols.NewScope(nil)
 	sym := symbols.New("X", symbols.SymbolConst, nil, nil)
 	sym.BindType(&typeinfo.FloatType{Bits: 64})
 	if err := scope.Declare(sym); err != nil {
@@ -986,15 +985,15 @@ func TestGenerateMIRPreservesNestedExpressionLocations(t *testing.T) {
 							Value: &ir.Binary{
 								Op: "*",
 								Left: &ir.Binary{
-									Op:       "+",
-									Left:     &ir.IntLit{Value: "1", Type: mirTypes.i32, Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})},
-									Right:    &ir.IntLit{Value: "2", Type: mirTypes.i32, Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})},
-									Type:     mirTypes.i32,
-									Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7}),
+									Op:         "+",
+									Left:       &ir.IntLit{Value: "1", Type: mirTypes.i32, SourceInfo: ir.SourceInfo{Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 3})}},
+									Right:      &ir.IntLit{Value: "2", Type: mirTypes.i32, SourceInfo: ir.SourceInfo{Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 6}, source.Position{Line: 2, Column: 7})}},
+									Type:       mirTypes.i32,
+									SourceInfo: ir.SourceInfo{Location: source.NewLocation(testPath, source.Position{Line: 2, Column: 2}, source.Position{Line: 2, Column: 7})},
 								},
-								Right:    &ir.IntLit{Value: "3", Type: mirTypes.i32, Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})},
-								Type:     mirTypes.i32,
-								Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7}),
+								Right:      &ir.IntLit{Value: "3", Type: mirTypes.i32, SourceInfo: ir.SourceInfo{Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 3})}},
+								Type:       mirTypes.i32,
+								SourceInfo: ir.SourceInfo{Location: source.NewLocation(testPath, source.Position{Line: 3, Column: 2}, source.Position{Line: 3, Column: 7})},
 							},
 							Location: source.NewLocation(testPath, source.Position{Line: 4, Column: 2}, source.Position{Line: 4, Column: 8}),
 						},

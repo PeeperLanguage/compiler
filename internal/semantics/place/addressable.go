@@ -3,7 +3,6 @@ package place
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -36,7 +35,7 @@ func IsPlaceExpr(expr ast.Expr) bool {
 	return ok && IsPlaceExpr(base)
 }
 
-func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
+func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
@@ -67,7 +66,7 @@ func Addressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resol
 	return Addressable(scope, base, exprType, resolve)
 }
 
-func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type) {
+func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type) {
 	if scope == nil || expr == nil {
 		return false, nil
 	}
@@ -101,7 +100,7 @@ func MutableAddressable(scope *table.Scope, expr ast.Expr, exprType ExprTypeFunc
 	return MutableAddressable(scope, base, exprType, resolve)
 }
 
-func LocalRoot(scope, moduleScope *table.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (*symbols.Symbol, bool) {
+func LocalRoot(scope, moduleScope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (*symbols.Symbol, bool) {
 	if scope == nil || moduleScope == nil || expr == nil {
 		return nil, false
 	}

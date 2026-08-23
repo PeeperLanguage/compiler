@@ -10,7 +10,6 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
@@ -35,7 +34,7 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
-func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *table.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *symbols.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil || graphs == nil {
 		return nil
 	}

@@ -8,9 +8,6 @@ import (
 )
 
 func RemoveCommand(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: peeper remove <package-name>")
-	}
 	packageName := args[0]
 
 	manifestPath, err := manifest.FindManifestPath(".")

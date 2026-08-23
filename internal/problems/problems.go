@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
 
@@ -34,7 +34,7 @@ func Redeclaration(message string, current, previous *source.Location) *diagnost
 	return d
 }
 
-func ReportRedeclaration(diag *diagnostics.DiagnosticBag, scope *table.Scope, err string, name string, loc *source.Location) {
+func ReportRedeclaration(diag *diagnostics.DiagnosticBag, scope *symbols.Scope, err string, name string, loc *source.Location) {
 	if diag == nil {
 		return
 	}

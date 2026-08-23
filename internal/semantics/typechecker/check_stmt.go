@@ -8,11 +8,10 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
+func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
 	if block == nil {
 		return
 	}
@@ -27,7 +26,7 @@ func (c *checker) checkBlock(parentScope *table.Scope, block *ast.BlockStmt, ret
 	}
 }
 
-func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typeinfo.Type) {
+func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType typeinfo.Type) {
 	if stmt == nil {
 		return
 	}
@@ -102,7 +101,7 @@ func (c *checker) checkStmt(scope *table.Scope, stmt ast.Stmt, returnType typein
 	}
 }
 
-func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
+func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	if c == nil || scope == nil || node == nil || node.Target == nil || node.Value == nil {
 		return
 	}
@@ -191,7 +190,7 @@ func (c *checker) checkAssign(scope *table.Scope, node *ast.AssignStmt) {
 	}
 }
 
-func (c *checker) checkIndexAssignmentTarget(scope *table.Scope, target *ast.IndexExpr, targetType typeinfo.Type) bool {
+func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.IndexExpr, targetType typeinfo.Type) bool {
 	if c == nil || target == nil || target.Expr == nil {
 		return false
 	}
@@ -224,7 +223,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *table.Scope, target *ast.Ind
 	return false
 }
 
-func (c *checker) checkBinding(scope *table.Scope, node ast.Stmt, requireInitializer bool) {
+func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireInitializer bool) {
 	if c == nil || node == nil {
 		return
 	}
@@ -340,7 +339,7 @@ func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context st
 	return true
 }
 
-func (c *checker) rejectBindingReferenceStorage(scope *table.Scope, typ typeinfo.Type, site ast.Node) bool {
+func (c *checker) rejectBindingReferenceStorage(scope *symbols.Scope, typ typeinfo.Type, site ast.Node) bool {
 	moduleBinding := c != nil && c.module != nil && scope == c.module.ModuleScope
 	context := "array or heap-owned values"
 	if moduleBinding {
@@ -362,7 +361,7 @@ func (c *checker) rejectReferenceStorage(typ typeinfo.Type, site ast.Node, conte
 	return true
 }
 
-func (c *checker) rejectTemporaryBorrowEscape(scope *table.Scope, expr ast.Expr, context string) bool {
+func (c *checker) rejectTemporaryBorrowEscape(scope *symbols.Scope, expr ast.Expr, context string) bool {
 	if c.module == nil || c.module.Semantics == nil {
 		return false
 	}
@@ -379,7 +378,7 @@ func (c *checker) rejectTemporaryBorrowEscape(scope *table.Scope, expr ast.Expr,
 	return true
 }
 
-func (c *checker) temporaryBorrowSource(scope *table.Scope, expr ast.Expr) ast.Expr {
+func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast.Expr {
 	if c == nil || c.module == nil || c.module.Semantics == nil || expr == nil {
 		return nil
 	}

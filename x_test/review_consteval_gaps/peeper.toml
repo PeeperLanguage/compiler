@@ -1,5 +1,5 @@
 name = "review_consteval_gaps"
-build = "bin"
+build = "program"
 
 [test]
 mode = "check"

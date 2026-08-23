@@ -7,7 +7,7 @@ import (
 )
 
 func TestSyntaxHighlighterKeepsPrefixedAndScientificNumbersTogether(t *testing.T) {
-	sh := NewSyntaxHighlighter(true)
+	sh := NewSyntaxHighlighter(true, colors.NewLogger(colors.LogFormatANSI))
 	tokens := sh.Highlight(`0b4234 0x1f 0o7 1.5e2`)
 	wantText := []string{"0b4234", " ", "0x1f", " ", "0o7", " ", "1.5e2"}
 	wantColor := []colors.COLOR{

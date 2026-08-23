@@ -18,7 +18,6 @@ import (
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
@@ -65,8 +64,8 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 	if !ok || fn == nil || fn.Body == nil {
 		t.Fatalf("symbol %q does not have function body", name)
 	}
-	scope, ok := sym.Scope.(*table.Scope)
-	if !ok || scope == nil {
+	scope := sym.Scope
+	if scope == nil {
 		t.Fatalf("function %q scope missing", name)
 	}
 	cfgFn := result.module.CFG.Function(ir.NodeID(fn.ID()))

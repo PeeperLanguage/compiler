@@ -14,7 +14,6 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -30,10 +29,7 @@ const (
 	ModuleOriginDependency ModuleOrigin = "dependency"
 )
 
-const (
-	GraphNodeModule graph.NodeKind = "module"
-	GraphEdgeImport graph.EdgeKind = "import"
-)
+const GraphEdgeImport graph.EdgeKind = "import"
 
 // Source unit shared by every compiler phase.
 type Module struct {
@@ -77,7 +73,7 @@ type Module struct {
 	MIR       *mir.Module
 	LLVMIR    string
 	// Top-level names visible in module.
-	ModuleScope *table.Scope
+	ModuleScope *symbols.Scope
 	// Grouped semantic analysis metadata.
 	Semantics *SemanticInfo
 	// Import alias -> resolved module import.
@@ -85,7 +81,7 @@ type Module struct {
 }
 
 type SemanticInfo struct {
-	BlockScopes     map[ast.NodeID]*table.Scope
+	BlockScopes     map[ast.NodeID]*symbols.Scope
 	ResolvedSymbols map[ast.NodeID]*symbols.Symbol
 	// ExpandedDefaultBindings marks cloned NodeIDs injected by
 	// call-site default expansion. These idents must resolve
@@ -119,9 +115,21 @@ type InterfaceImplementation struct {
 	OwnerKey     string
 }
 
+func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
+	if m == nil {
+		return symbols.DefiningModuleKey{}
+	}
+	return symbols.DefiningModuleKey{
+		Origin:     string(m.Origin),
+		Namespace:  m.Namespace,
+		Dependency: m.Dependency,
+		ImportPath: m.ImportPath,
+	}
+}
+
 func NewSemanticInfo() *SemanticInfo {
 	return &SemanticInfo{
-		BlockScopes:              make(map[ast.NodeID]*table.Scope),
+		BlockScopes:              make(map[ast.NodeID]*symbols.Scope),
 		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
 		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
@@ -218,7 +226,7 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	return module
 }
 
-// Register a module in the shared graph.
+// Register a module in shared compiler state.
 func (ctx *CompilerContext) AddModule(module *Module) {
 	if ctx == nil || module == nil || module.Key == "" {
 		return
@@ -229,9 +237,6 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	ctx.modules[module.Key] = module
 	if module.FilePath != "" {
 		ctx.fileIndex[CanonicalPath(module.FilePath)] = module.Key
-	}
-	if ctx.Graph != nil {
-		ctx.Graph.AddNode(graph.NodeID(module.Key))
 	}
 }
 

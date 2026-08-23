@@ -21,7 +21,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 	case *InvalidExpr, *IntLit, *FloatLit, *StringLit, *BoolLit, *ZeroValue:
 		return expr
 	case *OptionalSome:
-		return &OptionalSome{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &OptionalSome{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {
@@ -36,7 +36,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 				return constValueExprAt(folded, node.Type, node.Origin())
 			}
 		}
-		return &Unary{Op: node.Op, Arg: arg, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &Unary{Op: node.Op, Arg: arg, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Binary:
 		left := FoldExpr(types, node.Left, env)
 		right := FoldExpr(types, node.Right, env)
@@ -47,25 +47,24 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 				return constValueExprAt(folded, node.Type, node.Origin())
 			}
 		}
-		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Call:
 		return &Call{
-			Callee:   FoldExpr(types, node.Callee, env),
-			Args:     foldExprs(types, node.Args, env),
-			Type:     node.Type,
-			NodeID:   node.NodeID,
-			Location: node.Location,
+			Callee:     FoldExpr(types, node.Callee, env),
+			Args:       foldExprs(types, node.Args, env),
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
 		}
 	case *Load:
-		return &Load{Place: FoldPlace(types, node.Place, env), DropRoot: node.DropRoot, NodeID: node.NodeID, Location: node.Location}
+		return &Load{Place: FoldPlace(types, node.Place, env), DropRoot: node.DropRoot, SourceInfo: node.SourceInfo}
 	case *AddrOf:
-		return &AddrOf{Place: FoldPlace(types, node.Place, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &AddrOf{Place: FoldPlace(types, node.Place, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *TempBorrow:
-		return &TempBorrow{Value: FoldExpr(types, node.Value, env), Slice: node.Slice, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &TempBorrow{Value: FoldExpr(types, node.Value, env), Slice: node.Slice, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Len:
-		return &Len{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &Len{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *StringChars:
-		return &StringChars{Value: FoldExpr(types, node.Value, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &StringChars{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *SliceView:
 		return &SliceView{
 			Source:       FoldPlace(types, node.Source, env),
@@ -73,65 +72,59 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			End:          FoldExpr(types, node.End, env),
 			EndExclusive: node.EndExclusive,
 			Type:         node.Type,
-			NodeID:       node.NodeID,
-			Location:     node.Location,
+			SourceInfo:   node.SourceInfo,
 		}
 	case *InterfaceMake:
 		return &InterfaceMake{
-			Value:    FoldExpr(types, node.Value, env),
-			Slots:    node.Slots,
-			Type:     node.Type,
-			NodeID:   node.NodeID,
-			Location: node.Location,
+			Value:      FoldExpr(types, node.Value, env),
+			Slots:      node.Slots,
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
 		}
 	case *InterfaceCall:
 		return &InterfaceCall{
-			Base:     FoldExpr(types, node.Base, env),
-			Slot:     node.Slot,
-			Args:     foldExprs(types, node.Args, env),
-			Consumes: node.Consumes,
-			Type:     node.Type,
-			NodeID:   node.NodeID,
-			Location: node.Location,
+			Base:       FoldExpr(types, node.Base, env),
+			Slot:       node.Slot,
+			Args:       foldExprs(types, node.Args, env),
+			Consumes:   node.Consumes,
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
 		}
 	case *Field:
 		return &Field{
-			Base:     FoldExpr(types, node.Base, env),
-			Index:    node.Index,
-			DropBase: node.DropBase,
-			Type:     node.Type,
-			NodeID:   node.NodeID,
-			Location: node.Location,
+			Base:       FoldExpr(types, node.Base, env),
+			Index:      node.Index,
+			DropBase:   node.DropBase,
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
 		}
 	case *StructLit:
-		return &StructLit{Fields: foldExprs(types, node.Fields, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &StructLit{Fields: foldExprs(types, node.Fields, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *ArrayLit:
-		return &ArrayLit{Values: foldExprs(types, node.Values, env), Dynamic: node.Dynamic, Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &ArrayLit{Values: foldExprs(types, node.Values, env), Dynamic: node.Dynamic, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *DynamicArrayOp:
 		return &DynamicArrayOp{
-			Op:        node.Op,
-			Array:     FoldExpr(types, node.Array, env),
-			Length:    FoldExpr(types, node.Length, env),
-			Value:     FoldExpr(types, node.Value, env),
-			ArrayType: node.ArrayType,
-			Type:      node.Type,
-			NodeID:    node.NodeID,
-			Location:  node.Location,
+			Op:         node.Op,
+			Array:      FoldExpr(types, node.Array, env),
+			Length:     FoldExpr(types, node.Length, env),
+			Value:      FoldExpr(types, node.Value, env),
+			ArrayType:  node.ArrayType,
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
 		}
 	case *AllocExpr:
 		return &AllocExpr{
-			Value:     FoldExpr(types, node.Value, env),
-			Allocator: FoldExpr(types, node.Allocator, env),
-			Type:      node.Type,
-			NodeID:    node.NodeID,
-			Location:  node.Location,
+			Value:      FoldExpr(types, node.Value, env),
+			Allocator:  FoldExpr(types, node.Allocator, env),
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
 		}
 	case *Cast:
-		return &Cast{Expr: FoldExpr(types, node.Expr, env), Type: node.Type, NodeID: node.NodeID, Location: node.Location}
+		return &Cast{Expr: FoldExpr(types, node.Expr, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Print:
-		return &Print{Value: FoldExpr(types, node.Value, env), Newline: node.Newline, NodeID: node.NodeID, Location: node.Location}
+		return &Print{Value: FoldExpr(types, node.Value, env), Newline: node.Newline, SourceInfo: node.SourceInfo}
 	case *Drop:
-		return &Drop{Value: FoldExpr(types, node.Value, env), NodeID: node.NodeID, Location: node.Location}
+		return &Drop{Value: FoldExpr(types, node.Value, env), SourceInfo: node.SourceInfo}
 	default:
 		panic(fmt.Sprintf("unhandled IR expression %T in constant folding", expr))
 	}
@@ -171,18 +164,18 @@ func constValueExprAt(value constvalue.Value, typ TypeID, origin SourceInfo) Exp
 	switch node := value.(type) {
 	case *constvalue.IntConst:
 		if node == nil {
-			return &IntLit{Value: "0", Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+			return &IntLit{Value: "0", Type: typ, SourceInfo: origin}
 		}
-		return &IntLit{Value: node.Text(), Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+		return &IntLit{Value: node.Text(), Type: typ, SourceInfo: origin}
 	case *constvalue.FloatConst:
 		if node == nil {
-			return &FloatLit{Value: "0.0", Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+			return &FloatLit{Value: "0.0", Type: typ, SourceInfo: origin}
 		}
-		return &FloatLit{Value: node.Text(), Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+		return &FloatLit{Value: node.Text(), Type: typ, SourceInfo: origin}
 	case *constvalue.BoolConst:
-		return &BoolLit{Value: node != nil && node.Bool(), Type: typ, NodeID: origin.NodeID, Location: origin.Location}
+		return &BoolLit{Value: node != nil && node.Bool(), Type: typ, SourceInfo: origin}
 	default:
-		return &InvalidExpr{Message: "unknown constant", Type: InvalidType, NodeID: origin.NodeID, Location: origin.Location}
+		return &InvalidExpr{Message: "unknown constant", Type: InvalidType, SourceInfo: origin}
 	}
 }
 

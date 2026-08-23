@@ -7,43 +7,21 @@ import (
 
 type NodeID string
 
-type NodeKind string
 type EdgeKind string
-
-type Node struct {
-	Kind NodeKind
-}
 
 type Graph struct {
 	mu       sync.RWMutex
-	nodeKind NodeKind
 	edgeKind EdgeKind
-	nodes    map[NodeID]Node
 	out      map[NodeID]map[EdgeKind]map[NodeID]struct{}
 	in       map[NodeID]map[EdgeKind]map[NodeID]struct{}
 }
 
-func New(nodeKind NodeKind, edgeKind EdgeKind) *Graph {
+func New(edgeKind EdgeKind) *Graph {
 	return &Graph{
-		nodeKind: nodeKind,
 		edgeKind: edgeKind,
-		nodes:    make(map[NodeID]Node),
 		out:      make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
 		in:       make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
 	}
-}
-
-func (g *Graph) AddNode(id NodeID, kinds ...NodeKind) {
-	if g == nil || id == "" {
-		return
-	}
-	kind := g.nodeKind
-	if len(kinds) > 0 {
-		kind = kinds[0]
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.nodes[id] = Node{Kind: kind}
 }
 
 func (g *Graph) AddEdge(from, to NodeID, kinds ...EdgeKind) {
