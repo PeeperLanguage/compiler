@@ -13,6 +13,7 @@ const Selected: Result = Result::Ok{
     value = 42,
     enabled = true,
 };
+const Unreferenced: Result = Result::Pending;
 const SelectedIsOk: bool = Selected is Result::Ok;
 
 fn main() -> i32 {

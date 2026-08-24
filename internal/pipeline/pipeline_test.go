@@ -669,6 +669,39 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	assertPipelineBoolConst(t, entry, "WaitingIsReady", false)
 }
 
+func TestPipelineEmitsStaticForFunctionUnreferencedVariantConstant(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `enum Status {
+	Ready,
+	Waiting,
+}
+const Selected: Status = Status::Ready;
+
+fn main() -> i32 {
+	return 0;
+}
+`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:           ".",
+		Extension:         peeper.SourceExt,
+		RequireEntrypoint: true,
+	}, diag)
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if entry.MIR == nil || len(entry.MIR.StaticData) != 1 {
+		t.Fatalf("static data = %#v, want Selected variant constant", entry.MIR)
+	}
+	if _, ok := entry.MIR.StaticData[0].Constant.(*constvalue.VariantConst); !ok {
+		t.Fatalf("static constant = %#v, want typed variant", entry.MIR.StaticData[0].Constant)
+	}
+}
+
 func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, want bool) {
 	t.Helper()
 	sym, found := module.ModuleScope.LookupLocal(name)

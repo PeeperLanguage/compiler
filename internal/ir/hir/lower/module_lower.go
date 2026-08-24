@@ -32,6 +32,15 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		Externs:  make([]hir.Extern, 0),
 		Funcs:    make([]*hir.Function, 0),
 	}
+	for _, sym := range module.ModuleScope.Symbols() {
+		if sym == nil || sym.Kind != symbols.SymbolConst {
+			continue
+		}
+		constantType, ok := symbols.GetSymbolType(sym)
+		if !ok || loweredTypeID(ctx, module, constantType) == ir.InvalidType {
+			return nil
+		}
+	}
 	ast.ForEachDecl(module.AST, func(decl ast.Decl) bool {
 		fn, ok := decl.(*ast.FnDecl)
 		if !ok || fn == nil || fn.Name == nil {
