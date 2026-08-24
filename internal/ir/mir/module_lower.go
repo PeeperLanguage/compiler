@@ -202,25 +202,46 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 	if subject == nil {
 		return false
 	}
-	if len(entry.caseBlock.Bindings) == 0 {
+	var drops []int
+	if l.cleanup != nil && entry.caseBlock.Body != nil {
+		drops = l.cleanup.MatchFieldDrops[entry.caseBlock.Body.NodeID]
+	}
+	if len(entry.caseBlock.Bindings) == 0 && len(drops) == 0 {
 		return true
 	}
 	if entry.caseBlock.PayloadType == ir.InvalidType {
 		return false
 	}
 	for _, binding := range entry.caseBlock.Bindings {
-		place := &Place{
-			Root: subject,
-			Projections: []PlaceProjection{
-				{Kind: PlaceProjectionVariantPayload, Case: entry.caseBlock.Case, Type: entry.caseBlock.PayloadType, Location: entry.caseBlock.Body.Location},
-				{Kind: PlaceProjectionField, FieldIndex: binding.FieldIndex, Type: binding.Type, Location: entry.caseBlock.Body.Location},
-			},
-			Type: binding.Type, Location: entry.caseBlock.Body.Location,
-		}
+		place := variantFieldPlace(subject, entry.caseBlock, binding.FieldIndex, binding.Type)
 		value := l.load(&l.current.Instrs, place, binding.Type, entry.caseBlock.Body.Location)
 		l.appendInstr(&l.current.Instrs, &Assign{Name: binding.Name, Value: asValueExpr(value)})
 	}
+	payload, ok := l.module.Types.Type(entry.caseBlock.PayloadType)
+	if !ok || payload.Kind != ir.TypeStruct {
+		return false
+	}
+	for _, fieldIndex := range drops {
+		if fieldIndex < 0 || fieldIndex >= len(payload.Fields) {
+			return false
+		}
+		fieldType := payload.Fields[fieldIndex].Type
+		place := variantFieldPlace(subject, entry.caseBlock, fieldIndex, fieldType)
+		value := l.load(&l.current.Instrs, place, fieldType, entry.caseBlock.Body.Location)
+		l.appendInstr(&l.current.Instrs, &Drop{Value: value})
+	}
 	return true
+}
+
+func variantFieldPlace(subject ValueRef, block hir.VariantCaseBlock, fieldIndex int, fieldType ir.TypeID) *Place {
+	return &Place{
+		Root: subject,
+		Projections: []PlaceProjection{
+			{Kind: PlaceProjectionVariantPayload, Case: block.Case, Type: block.PayloadType, Location: block.Body.Location},
+			{Kind: PlaceProjectionField, FieldIndex: fieldIndex, Type: fieldType, Location: block.Body.Location},
+		},
+		Type: fieldType, Location: block.Body.Location,
+	}
 }
 
 func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {

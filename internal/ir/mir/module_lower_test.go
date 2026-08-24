@@ -562,13 +562,14 @@ func TestSwitchVariantTerminatorText(t *testing.T) {
 func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 	variantType := mirTypes.table.Intern(ir.Type{
 		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Identity: "Result",
-		Cases: []ir.VariantCase{{Name: "Pending"}, {Name: "Ready", Payload: mirTypes.valueStruct}},
+		Cases: []ir.VariantCase{{Name: "Pending"}, {Name: "Ready", Payload: mirTypes.ownerStruct}},
 	})
 	ifStmt := &hir.If{
 		Cond: &ir.BoolLit{Value: true, Type: mirTypes.boolType},
 		Then: &hir.Block{},
 		Else: &hir.Block{},
 	}
+	ifStmt.Else.(*hir.Block).NodeID = 88
 	fn := &hir.Function{
 		Name: "select", Params: []ir.Param{{Name: "value", Type: variantType}}, ReturnType: mirTypes.void,
 		Body: &hir.Block{Stmts: []hir.Stmt{ifStmt}},
@@ -585,7 +586,7 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 		Cases: []hir.VariantCaseBlock{
 			{Case: ir.OptionalAbsentCase, Body: ifStmt.Then},
 			{
-				Case: ir.OptionalPresentCase, PayloadType: mirTypes.valueStruct,
+				Case: ir.OptionalPresentCase, PayloadType: mirTypes.ownerStruct,
 				Bindings: []hir.VariantBinding{{FieldIndex: 0, Name: "payload", Type: mirTypes.i32, SymbolID: 91}},
 				Body:     ifStmt.Else.(*hir.Block),
 			},
@@ -601,7 +602,10 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, graphs, nil, nil, nil)
+	ownership := ownershipresult.Result{fn.NodeID: &ownershipresult.CleanupPlan{
+		MatchFieldDrops: map[ir.NodeID][]int{88: {1}},
+	}}
+	out := GenerateMIR(mod, graphs, ownership, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("MIR = %#v", out)
 	}
@@ -616,8 +620,8 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 			break
 		}
 	}
-	if ready == nil || len(ready.Instrs) != 2 {
-		t.Fatalf("ready block = %#v, want payload load and binding assignment", ready)
+	if ready == nil || len(ready.Instrs) != 4 {
+		t.Fatalf("ready block = %#v, want binding load/assignment and planned field load/drop", ready)
 	}
 	loadAssign, loadOK := ready.Instrs[0].(*Assign)
 	bindingAssign, bindingOK := ready.Instrs[1].(*Assign)
@@ -626,6 +630,14 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 		load.Place.Projections[0].Kind != PlaceProjectionVariantPayload || load.Place.Projections[0].Case != ir.OptionalPresentCase ||
 		load.Place.Projections[1].Kind != PlaceProjectionField || load.Place.Projections[1].FieldIndex != 0 {
 		t.Fatalf("ready instructions = %#v", ready.Instrs)
+	}
+	dropLoadAssign, dropLoadOK := ready.Instrs[2].(*Assign)
+	drop, dropOK := ready.Instrs[3].(*Drop)
+	dropLoad, dropLoadOK := dropLoadAssign.Value.(*Load)
+	if !dropLoadOK || !dropOK || drop.Value.Text() != dropLoadAssign.Name || len(dropLoad.Place.Projections) != 2 ||
+		dropLoad.Place.Projections[0].Kind != PlaceProjectionVariantPayload || dropLoad.Place.Projections[0].Case != ir.OptionalPresentCase ||
+		dropLoad.Place.Projections[1].Kind != PlaceProjectionField || dropLoad.Place.Projections[1].FieldIndex != 1 {
+		t.Fatalf("planned field drop instructions = %#v", ready.Instrs[2:])
 	}
 }
 

@@ -1,0 +1,7 @@
+name = "negative_enum_match_use_after_move"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0034", "moved"]

@@ -481,6 +481,22 @@ func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context st
 
 func (c *checker) rejectBindingReferenceStorage(scope *symbols.Scope, typ typeinfo.Type, site ast.Node) bool {
 	moduleBinding := c != nil && c.module != nil && scope == c.module.ModuleScope
+	if !moduleBinding {
+		if descriptor, variant := typeinfo.VariantDescriptorOf(typ); variant && descriptor.Family == typeinfo.VariantFamilyNamed {
+			for _, variantCase := range descriptor.Cases {
+				payload, _ := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
+				if payload == nil {
+					continue
+				}
+				for _, field := range payload.Fields {
+					if c.rejectReferenceStorage(field.Type, site, "named enum payloads", false) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+	}
 	context := "array or heap-owned values"
 	if moduleBinding {
 		context = "module bindings"

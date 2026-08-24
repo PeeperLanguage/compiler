@@ -41,6 +41,9 @@ func (a *analyzer) checkExpr(
 		if !projectionBase {
 			a.checkStorageAccess(e, loans, storageAccessForUse(a.exprType(e), use))
 		}
+		if referenceHoldingSymbol(sym) {
+			loans.useReference(sym)
+		}
 	case *ast.AddressExpr:
 		access := storageSharedBorrow
 		if e.Mode == ast.AddressMutable {
@@ -436,6 +439,25 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 	case *ast.Ident:
 		if scope == nil {
 			return pointerOrigin{}, false
+		}
+		if _, raw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !raw {
+			return pointerOrigin{}, false
+		}
+		if a.module != nil && a.module.Flow != nil {
+			if origins, resolved := a.module.Flow.ResolvedValueOrigins[e.ID()]; resolved {
+				for _, origin := range origins {
+					if origin.Root == nil {
+						continue
+					}
+					for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+						local, found := current.LookupLocal(origin.Root.Name)
+						if found && local == origin.Root {
+							return pointerOrigin{root: origin.Root, site: e}, true
+						}
+					}
+				}
+				return pointerOrigin{}, false
+			}
 		}
 		var sym *symbols.Symbol
 		var found bool

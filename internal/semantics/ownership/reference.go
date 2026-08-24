@@ -322,24 +322,43 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	}
 }
 
-func (a *analyzer) referenceValueForExpr(expr ast.Expr) ([]referenceLoan, bool) {
+func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLoan, bool) {
 	if a == nil || expr == nil {
 		return []referenceLoan{}, false
 	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+		if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.ContainsStoredReference(typ) {
+			if value, found := st.references[sym]; found {
+				return copyReferenceLoans(value), true
+			}
+		}
+	}
 	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
-	if !ok {
+	if ok {
+		origins := a.originsForExpr(expr)
+		if len(origins) == 0 {
+			return []referenceLoan{}, false
+		}
+		return []referenceLoan{{
+			id:      loanID{node: expr},
+			origins: origins,
+			mutable: mutable,
+			site:    expr,
+		}}, true
+	}
+	construction, constructed := a.module.Semantics.VariantConstructions[expr.ID()]
+	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}
-	origins := a.originsForExpr(expr)
-	if len(origins) == 0 {
-		return []referenceLoan{}, false
+	var loans []referenceLoan
+	for _, field := range construction.Fields {
+		fieldLoans, found := a.referenceValueForExpr(field, st)
+		if found {
+			loans = append(loans, fieldLoans...)
+		}
 	}
-	return []referenceLoan{{
-		id:      loanID{node: expr},
-		origins: origins,
-		mutable: mutable,
-		site:    expr,
-	}}, true
+	return loans, len(loans) > 0
 }
 
 func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
@@ -349,14 +368,14 @@ func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
 	return place.CloneOrigins(a.module.Flow.ResolvedValueOrigins[expr.ID()])
 }
 
-func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt) {
+func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state) {
 	if a == nil || a.function == nil || scope == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
 	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !reference {
 		return
 	}
-	value, found := a.referenceValueForExpr(stmt.Value)
+	value, found := a.referenceValueForExpr(stmt.Value, st)
 	if !found {
 		return
 	}
@@ -399,13 +418,15 @@ func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value []referenceL
 		return
 	}
 	mutable, reference := referenceMutability(sym)
-	if !reference || !hasValue {
+	if (!reference && !referenceHoldingSymbol(sym)) || !hasValue {
 		delete(st.references, sym)
 		return
 	}
 	value = copyReferenceLoans(value)
-	for i := range value {
-		value[i].mutable = mutable
+	if reference {
+		for i := range value {
+			value[i].mutable = mutable
+		}
 	}
 	st.references[sym] = value
 }
@@ -417,6 +438,11 @@ func referenceMutability(sym *symbols.Symbol) (bool, bool) {
 	}
 	_, mutable, reference := typeinfo.ReferenceValueTarget(typ)
 	return mutable, reference
+}
+
+func referenceHoldingSymbol(sym *symbols.Symbol) bool {
+	typ, ok := symbols.GetSymbolType(sym)
+	return ok && typeinfo.ContainsReference(typ)
 }
 
 func copyReferenceLoans(value []referenceLoan) []referenceLoan {
@@ -562,10 +588,8 @@ func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]
 		if node.scope == nil || binding == nil {
 			return
 		}
-		if sym, found := node.scope.LookupNode(binding); found {
-			if _, reference := referenceMutability(sym); reference {
-				definitions[sym] = struct{}{}
-			}
+		if sym, found := node.scope.LookupNode(binding); found && referenceHoldingSymbol(sym) {
+			definitions[sym] = struct{}{}
 		}
 	}
 
@@ -576,10 +600,8 @@ func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]
 		addDefinition(stmt)
 	case *ast.AssignStmt:
 		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
-			if sym, found := node.scope.Lookup(target.Name); found {
-				if _, reference := referenceMutability(sym); reference {
-					definitions[sym] = struct{}{}
-				}
+			if sym, found := node.scope.Lookup(target.Name); found && referenceHoldingSymbol(sym) {
+				definitions[sym] = struct{}{}
 			}
 		}
 	}
@@ -618,6 +640,8 @@ func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
 		expressions = append(expressions, stmt.Cond)
 	case *ast.ForStmt:
 		expressions = append(expressions, stmt.Cond)
+	case *ast.MatchStmt:
+		expressions = append(expressions, stmt.Subject)
 	}
 
 	var uses []referenceUse
@@ -631,7 +655,7 @@ func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
 				return true
 			}
 			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
-			if _, reference := referenceMutability(sym); reference {
+			if referenceHoldingSymbol(sym) {
 				uses = append(uses, referenceUse{symbol: sym, site: ident})
 			}
 			return true

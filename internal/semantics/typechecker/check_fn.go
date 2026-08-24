@@ -378,6 +378,9 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			if c.rejectUnsizedType(fieldType, field.Type, "enum variant field") {
 				continue
 			}
+			if c.rejectReferenceStorage(fieldType, field.Type, "enum variant fields", false) {
+				continue
+			}
 			if !typeinfo.IsLowerableType(fieldType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(fieldType)) {
 				c.ctx.Diagnostics.Add(invalidTypeError(field.Type,
 					"enum variant field type is not lowerable in current compiler stage"))

@@ -98,10 +98,7 @@ func analyzeFunction(
 			if edge.Kind == cfg.EdgeVariantCase {
 				match, found := matches[ast.NodeID(node.cfgSite.NodeID)]
 				if found {
-					for _, arm := range match.Arms {
-						if arm.Case != edge.Case {
-							continue
-						}
+					if arm, armFound := match.Arm(edge.Case); armFound {
 						for _, field := range arm.Fields {
 							if field.Binding == nil {
 								continue
@@ -109,7 +106,6 @@ func analyzeFunction(
 							edgeState[field.Binding.ID] = struct{}{}
 							tracked[field.Binding.ID] = field.Binding.Name
 						}
-						break
 					}
 				}
 			}

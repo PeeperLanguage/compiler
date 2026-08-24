@@ -1,0 +1,7 @@
+name = "negative_enum_match_stored_borrow"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0037", "borrowed"]

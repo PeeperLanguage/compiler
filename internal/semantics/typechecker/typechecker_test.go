@@ -193,6 +193,7 @@ func TestEnumDeclarationValidation(t *testing.T) {
 		{name: "lowercase variant", source: `enum Status { ready }`, want: "variant name must be PascalCase"},
 		{name: "duplicate field", source: `enum Result { Ok: { value: i32, value: i64 } }`, want: "variant field `value` already declared"},
 		{name: "unsized field", source: `iface Reader { fn (&Self) read() -> i32 } enum Event { Read: { reader: Reader } }`, want: "enum variant field requires a sized type"},
+		{name: "nested reference storage", source: `enum Resource { Borrowed: { values: [1]&i32 } }`, want: "references cannot be stored in enum variant fields in v1"},
 		{name: "method field collision", source: `enum Result { Ok: { value: i32 } } fn (self: Result) value() {}`, want: "method `value` conflicts with enum variant data field"},
 	}
 	for _, test := range tests {
@@ -2297,6 +2298,42 @@ fn StoreReferences(_: []&Box) {
 	}
 	if strings.Count(diag.EmitAllToString(), "references cannot be stored") < 4 {
 		t.Fatalf("expected alias, global, parameter, and local storage diagnostics, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNamedEnumReferenceStorageKeepsNarrowLocalBoundary(t *testing.T) {
+	accepted := checkTypeSource(t, `enum Resource { Borrowed: { value: &i32 } }
+fn valid(source: &i32) {
+	let resource = Resource::Borrowed{ value = source };
+}`)
+	if accepted.HasErrors() {
+		t.Fatalf("unexpected local enum reference diagnostics:\n%s", accepted.EmitAllToString())
+	}
+	generic := checkTypeSource(t, `enum Resource<T> { Borrowed: { value: T } }
+fn invalid(source: &i32) {
+	let resource = Resource<[1]&i32>::Borrowed{ value = [_]&i32{source} };
+}`)
+	if emitted := generic.EmitAllToString(); !strings.Contains(emitted, "references cannot be stored in named enum payloads in v1") {
+		t.Fatalf("expected substituted nested reference-storage diagnostic, got:\n%s", emitted)
+	}
+
+	rejected := checkTypeSource(t, `enum Resource { Borrowed: { value: &i32 } }
+const Global: Resource = none;
+fn Parameter(_: Resource) {}
+fn Return() -> Resource;
+fn Heap(source: &i32) {
+	let resource = Resource::Borrowed{ value = source };
+	let stored = alloc(resource);
+}`)
+	emitted := rejected.EmitAllToString()
+	if count := strings.Count(emitted, "references cannot be stored"); count < 3 {
+		t.Fatalf("expected module, parameter, and heap reference-storage diagnostics, got %d:\n%s", count, emitted)
+	}
+	if !strings.Contains(emitted, "reference return must be a direct reference or optional reference value") {
+		t.Fatalf("expected aggregate reference-return diagnostic, got:\n%s", emitted)
+	}
+	if !strings.Contains(emitted, "alloc cannot store value containing a reference") {
+		t.Fatalf("expected owned heap-storage diagnostic, got:\n%s", emitted)
 	}
 }
 

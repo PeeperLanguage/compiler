@@ -82,6 +82,16 @@ type MatchField struct {
 	Discard bool
 }
 
+// Arm returns resolved evidence for one case-labelled CFG edge.
+func (m Match) Arm(caseIndex int) (MatchArm, bool) {
+	for _, arm := range m.Arms {
+		if arm.Case == caseIndex {
+			return arm, true
+		}
+	}
+	return MatchArm{}, false
+}
+
 type Result struct {
 	SiteFacts              map[ir.NodeID]map[cfg.SiteID]Facts
 	ExprTypes              map[ast.NodeID]typeinfo.Type

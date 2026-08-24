@@ -1,0 +1,15 @@
+enum Resource {
+    Owned: { value: *i32 }
+}
+
+struct Holder {
+    resource: Resource
+}
+
+fn Invalid(holder: Holder) {
+    match holder.resource {
+        Resource::Owned{ value = value } => {
+            free(value);
+        }
+    }
+}

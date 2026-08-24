@@ -1,0 +1,37 @@
+enum Resource {
+    Owned: { selected: *i32, omitted: *i32 },
+    Pending
+}
+
+fn Consume(resource: Resource) {
+    match resource {
+        Resource::Owned{ selected = selected } => {
+            free(selected);
+            return;
+        }
+        Resource::Pending => {
+            return;
+        }
+    }
+}
+
+fn ResetAndConsume(mut resource: Resource) {
+    match resource {
+        Resource::Owned{ selected = selected } => {
+            free(selected);
+            resource = Resource::Pending;
+        }
+        Resource::Pending => {}
+    }
+    Consume(resource);
+}
+
+fn main() -> i32 {
+    let resource = Resource::Owned{
+        selected = alloc(1),
+        omitted = alloc(2),
+    };
+    ResetAndConsume(resource);
+    Consume(Resource::Pending);
+    return 0;
+}

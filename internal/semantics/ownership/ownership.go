@@ -62,11 +62,13 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			continue
 		}
 		result[graph.NodeID] = &ownershipresult.CleanupPlan{
-			AfterScope:     make(map[ir.NodeID][]symbols.SymbolID),
-			BeforeReturn:   make(map[ir.NodeID][]symbols.SymbolID),
-			BeforeAssign:   make(map[ir.NodeID]struct{}),
-			DiscardedValue: make(map[ir.NodeID]struct{}),
-			ProjectionBase: make(map[ir.NodeID]struct{}),
+			AfterScope:        make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeReturn:      make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeAssign:      make(map[ir.NodeID]struct{}),
+			DiscardedValue:    make(map[ir.NodeID]struct{}),
+			ProjectionBase:    make(map[ir.NodeID]struct{}),
+			MatchCarrierMoves: make(map[ir.NodeID]symbols.SymbolID),
+			MatchFieldDrops:   make(map[ir.NodeID][]int),
 		}
 	}
 	for _, stmt := range module.AST.Stmts {
@@ -202,8 +204,12 @@ func (a *analyzer) run() {
 			if a.sites[succ] == nil {
 				continue
 			}
+			edgeState := copyState(next)
+			if edge.Kind == cfg.EdgeVariantCase {
+				a.applyMatchEdge(node, edge, edgeState)
+			}
 			current, exists := a.inStates[succ]
-			merged, changed := a.mergeState(succ, current, next, exists)
+			merged, changed := a.mergeState(succ, current, edgeState, exists)
 			if !changed {
 				continue
 			}
@@ -378,7 +384,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	case *ast.ConstDecl:
 		a.applyBinding(scope, s, s.Value, st, loans)
 	case *ast.AssignStmt:
-		reference, hasReference := a.referenceValueForExpr(s.Value)
+		reference, hasReference := a.referenceValueForExpr(s.Value, st)
 		delete(a.cleanup.BeforeAssign, ir.NodeID(s.ID()))
 		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
 		if _, ok := s.Target.(*ast.Ident); !ok {
@@ -408,7 +414,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		}
 	case *ast.ReturnStmt:
 		a.checkPointerEscape(scope, s.Value, st)
-		a.validateReferenceReturn(scope, s)
+		a.validateReferenceReturn(scope, s, st)
 		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
@@ -420,6 +426,85 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 	case *ast.ForStmt:
 		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
+	case *ast.MatchStmt:
+		a.checkExpr(scope, s.Subject, st, useRead, loans, false)
+	}
+}
+
+func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
+	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
+		return
+	}
+	match, found := a.module.Semantics.Matches[ast.NodeID(node.cfgSite.NodeID)]
+	if !found {
+		return
+	}
+	arm, found := match.Arm(edge.Case)
+	if !found || arm.Payload == nil {
+		return
+	}
+	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
+	if subject == nil {
+		return
+	}
+	movesCarrier := false
+	listed := make(map[int]bool, len(arm.Fields))
+	for _, field := range arm.Fields {
+		listed[field.Field] = field.Discard
+		if !typeinfo.IsImplicitCopyType(field.Type) {
+			movesCarrier = true
+		}
+	}
+	ident, direct := subject.(*ast.Ident)
+	var carrier *symbols.Symbol
+	if direct {
+		carrier = a.module.Semantics.ResolvedSymbols[ident.ID()]
+		direct = carrier != nil && (carrier.Kind == symbols.SymbolVar || carrier.Kind == symbols.SymbolConst || carrier.Kind == symbols.SymbolParam)
+	}
+	if movesCarrier && !direct {
+		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(subject), "")
+	}
+	if movesCarrier && direct {
+		moveSite, _ := a.module.TypedASTNodes[arm.ArmID].(ast.Node)
+		if moveSite == nil {
+			moveSite = subject
+		}
+		a.reportLoanConflict(a.originsForExpr(subject), nil, storageConsume, moveSite, a.newLoanContext(node, st))
+		st.moved[carrier] = moveSite
+		delete(st.live, carrier)
+		delete(st.references, carrier)
+		a.cleanup.MatchCarrierMoves[ir.NodeID(arm.BodyID)] = carrier.ID
+		drops := make([]int, 0)
+		for fieldIndex := len(arm.Payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
+			field := arm.Payload.Fields[fieldIndex]
+			discarded, selected := listed[fieldIndex]
+			if typeinfo.NeedsDrop(field.Type) && (!selected || discarded) {
+				drops = append(drops, fieldIndex)
+			}
+		}
+		if len(drops) > 0 {
+			a.cleanup.MatchFieldDrops[ir.NodeID(arm.BodyID)] = drops
+		}
+	}
+	for _, field := range arm.Fields {
+		binding := field.Binding
+		if binding == nil {
+			continue
+		}
+		if ownershipTrackedSymbol(binding) {
+			delete(st.moved, binding)
+			st.live[binding] = struct{}{}
+		}
+		if binding.ASTNode == nil || a.module.Flow == nil {
+			continue
+		}
+		origins := place.CloneOrigins(a.module.Flow.ResolvedValueOrigins[binding.ASTNode.ID()])
+		if mutable, reference := referenceMutability(binding); reference && len(origins) > 0 {
+			st.references[binding] = []referenceLoan{{
+				id: loanID{node: binding.ASTNode}, origins: origins, mutable: mutable, site: binding.ASTNode,
+			}}
+		}
 	}
 }
 
@@ -437,7 +522,7 @@ func (a *analyzer) applyBinding(scope *symbols.Scope, stmt ast.Stmt, value ast.E
 	if scope == nil || stmt == nil {
 		return
 	}
-	reference, hasReference := a.referenceValueForExpr(value)
+	reference, hasReference := a.referenceValueForExpr(value, st)
 	a.checkExpr(scope, value, st, useConsume, loans, false)
 	sym, found := scope.LookupNode(stmt)
 	if !found || sym == nil {

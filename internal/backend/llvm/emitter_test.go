@@ -2845,3 +2845,61 @@ func TestGenerateLLVMIRLowersNamedVariantOperationsAndDrop(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateLLVMIRDropsNamedVariantPayloadFieldAcrossTargetWidths(t *testing.T) {
+	for _, compilerTarget := range []struct {
+		name      string
+		info      target.Info
+		bits      int
+		indexType string
+	}{
+		{name: "amd64", info: testLinuxAMD64, bits: target.Bits64, indexType: "i64"},
+		{name: "386", info: testLinux386, bits: target.Bits32, indexType: "i32"},
+	} {
+		t.Run(compilerTarget.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(compilerTarget.bits)
+			payload := types.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: types.ownedI32}}})
+			resource := types.table.Intern(ir.Type{
+				Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Resource", Identity: "test::Resource",
+				Cases: []ir.VariantCase{{Name: "Owned", Payload: payload}, {Name: "Pending"}},
+			})
+			mod := &mir.Module{
+				Name: "test", Types: types.table, FilePath: unixTestPath,
+				Funcs: []*mir.Function{{
+					Name: "release_field", Params: []ir.Param{{Name: "resource", Type: resource}}, ReturnType: types.void,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Assign{Name: "owned", Value: &mir.Load{Place: &mir.Place{
+								Root: &mir.RefName{Name: "resource", Type: resource},
+								Projections: []mir.PlaceProjection{
+									{Kind: mir.PlaceProjectionVariantPayload, Case: 0, Type: payload},
+									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: types.ownedI32},
+								},
+								Type: types.ownedI32,
+							}, Type: types.ownedI32}},
+							&mir.Drop{Value: &mir.RefName{Name: "owned", Type: types.ownedI32}},
+						},
+						Term: &mir.Ret{},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget.info, false)
+			if !strings.Contains(out, "getelementptr inbounds { i8, { { i32*, i8* } } }") ||
+				!strings.Contains(out, "i32 0, i32 1") || !strings.Contains(out, "i32 0, i32 0") ||
+				!strings.Contains(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to "+compilerTarget.indexType) {
+				t.Fatalf("expected named variant payload field drop using %s target width, got:\n%s", compilerTarget.indexType, out)
+			}
+
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				return
+			}
+			cmd := exec.Command(clang, "-target", compilerTarget.info.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "variant-field.o"), "-")
+			cmd.Stdin = strings.NewReader(out)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s named variant payload field drop LLVM is invalid: %v\n%s\n%s", compilerTarget.name, err, output, out)
+			}
+		})
+	}
+}

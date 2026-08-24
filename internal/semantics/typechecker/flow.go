@@ -475,33 +475,37 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
 		})
 	}
-	for _, arm := range match.Arms {
-		if arm.Case != edge.Case || arm.Payload == nil {
+	arm, found := match.Arm(edge.Case)
+	if !found || arm.Payload == nil {
+		return
+	}
+	payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
+	for _, field := range arm.Fields {
+		if field.Binding == nil || field.Field < 0 || field.Field >= len(arm.Payload.Fields) {
 			continue
 		}
-		payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
-		for _, field := range arm.Fields {
-			if field.Binding == nil || field.Field < 0 || field.Field >= len(arm.Payload.Fields) {
-				continue
+		fieldOrigins := place.FieldOrigins(payloadOrigins, arm.Payload.Fields[field.Field].Name)
+		bindingOrigins := []place.Origin{{Root: field.Binding}}
+		valueOrigins := fieldOrigins
+		if _, _, reference := typeinfo.ReferenceValueTarget(field.Type); reference {
+			valueOrigins = originValues(st.references, fieldOrigins)
+			if len(valueOrigins) == 0 {
+				valueOrigins = fieldOrigins
 			}
-			fieldOrigins := place.FieldOrigins(payloadOrigins, arm.Payload.Fields[field.Field].Name)
-			bindingOrigins := []place.Origin{{Root: field.Binding}}
-			if _, _, reference := typeinfo.ReferenceValueTarget(field.Type); reference {
-				valueOrigins := originValues(st.references, fieldOrigins)
-				if len(valueOrigins) == 0 {
-					valueOrigins = fieldOrigins
-				}
-				st.references = setOriginFact(st.references, bindingOrigins, valueOrigins)
-			}
-			if _, raw := typeinfo.Underlying(field.Type).(*typeinfo.RawPtrType); raw {
-				valueOrigins := originValues(st.rawPointers, fieldOrigins)
-				if len(valueOrigins) == 0 {
-					valueOrigins = fieldOrigins
-				}
-				st.rawPointers = setOriginFact(st.rawPointers, bindingOrigins, valueOrigins)
-			}
+			st.references = setOriginFact(st.references, bindingOrigins, valueOrigins)
 		}
-		return
+		if _, raw := typeinfo.Underlying(field.Type).(*typeinfo.RawPtrType); raw {
+			valueOrigins = originValues(st.rawPointers, fieldOrigins)
+			if len(valueOrigins) == 0 {
+				valueOrigins = fieldOrigins
+			}
+			st.rawPointers = setOriginFact(st.rawPointers, bindingOrigins, valueOrigins)
+		}
+		if field.Binding.ASTNode != nil {
+			id := field.Binding.ASTNode.ID()
+			a.result.ResolvedStorageOrigins[id] = place.MergeOrigins(a.result.ResolvedStorageOrigins[id], bindingOrigins)
+			a.result.ResolvedValueOrigins[id] = place.MergeOrigins(a.result.ResolvedValueOrigins[id], valueOrigins)
+		}
 	}
 }
 
@@ -592,21 +596,22 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 	case *ast.LetDecl:
 		if sym, found := scope.LookupNode(node); found {
 			typ, _ := symbols.GetSymbolType(sym)
-			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, st)
+			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
 	case *ast.ConstDecl:
 		if sym, found := scope.LookupNode(node); found {
 			typ, _ := symbols.GetSymbolType(sym)
-			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, st)
+			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
 	case *ast.AssignStmt:
+		sourceState := copyFlowState(*st)
 		resolution := c.resolveFlowPlace(scope, node.Target, *st)
 		invalidateVariantOrigins(st, resolution.StorageOrigins)
 		typ := a.result.ExprTypes[node.Target.ID()]
 		if typ == nil {
 			typ = a.module.Semantics.ExprTypes[node.Target.ID()]
 		}
-		a.updateOriginPlace(c, scope, resolution.StorageOrigins, typ, node.Value, st)
+		a.updateOriginPlace(c, scope, resolution.StorageOrigins, typ, node.Value, sourceState, st)
 		if sym := a.assignedSymbol(scope, node.Target); sym != nil {
 			invalidateVariantDependency(st, sym)
 		}
@@ -625,18 +630,82 @@ func (a *flowAnalyzer) assignedSymbol(scope *symbols.Scope, expr ast.Expr) *symb
 	return sym
 }
 
-func (a *flowAnalyzer) updateOriginPlace(c *checker, scope *symbols.Scope, storage []place.Origin, typ typeinfo.Type, value ast.Expr, st *flowState) {
+func (a *flowAnalyzer) updateOriginPlace(
+	c *checker,
+	scope *symbols.Scope,
+	storage []place.Origin,
+	typ typeinfo.Type,
+	value ast.Expr,
+	sourceState flowState,
+	st *flowState,
+) {
 	if st == nil || len(storage) == 0 {
 		return
 	}
 	st.references = invalidateOriginFacts(st.references, storage)
 	st.rawPointers = invalidateOriginFacts(st.rawPointers, storage)
 	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
-		st.references = setOriginFact(st.references, storage, c.resolveFlowPlace(scope, value, *st).ValueOrigins)
+		st.references = setOriginFact(st.references, storage, c.resolveFlowPlace(scope, value, sourceState).ValueOrigins)
 	}
 	if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
-		if origins, known := a.rawPointerOrigins(c, scope, value, *st); known {
+		if origins, known := a.rawPointerOrigins(c, scope, value, sourceState); known {
 			st.rawPointers = setOriginFact(st.rawPointers, storage, origins)
+		}
+	}
+	if value == nil {
+		return
+	}
+	construction, constructed := a.module.Semantics.VariantConstructions[value.ID()]
+	if !constructed || construction.Payload == nil || construction.Case < 0 {
+		source := c.resolveFlowPlace(scope, value, sourceState)
+		a.copyStoredOriginPlace(storage, source.ValueOrigins, typ, sourceState, st)
+		return
+	}
+	payloadStorage := place.VariantPayloadOrigins(storage, []int{construction.Case})
+	for fieldIndex, fieldValue := range construction.Fields {
+		if fieldIndex >= len(construction.Payload.Fields) {
+			return
+		}
+		field := construction.Payload.Fields[fieldIndex]
+		a.updateOriginPlace(c, scope, place.FieldOrigins(payloadStorage, field.Name), field.Type, fieldValue, sourceState, st)
+	}
+}
+
+func (a *flowAnalyzer) copyStoredOriginPlace(destination, source []place.Origin, typ typeinfo.Type, sourceState flowState, st *flowState) {
+	if a == nil || st == nil || len(destination) == 0 || len(source) == 0 {
+		return
+	}
+	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
+		if value := originValues(sourceState.references, source); len(value) > 0 {
+			st.references = setOriginFact(st.references, destination, value)
+		}
+		return
+	}
+	if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
+		if value := originValues(sourceState.rawPointers, source); len(value) > 0 {
+			st.rawPointers = setOriginFact(st.rawPointers, destination, value)
+		}
+		return
+	}
+	descriptor, variant := typeinfo.VariantDescriptorOf(typ)
+	if !variant || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return
+	}
+	for caseIndex, variantCase := range descriptor.Cases {
+		payload, payloadFound := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
+		if !payloadFound || payload == nil {
+			continue
+		}
+		destinationPayload := place.VariantPayloadOrigins(destination, []int{caseIndex})
+		sourcePayload := place.VariantPayloadOrigins(source, []int{caseIndex})
+		for _, field := range payload.Fields {
+			a.copyStoredOriginPlace(
+				place.FieldOrigins(destinationPayload, field.Name),
+				place.FieldOrigins(sourcePayload, field.Name),
+				field.Type,
+				sourceState,
+				st,
+			)
 		}
 	}
 }
