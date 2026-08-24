@@ -404,7 +404,8 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		return false
 	}
 
-	enumSymbol, declaredEnum := project.CanonicalEnumDeclaration(r.ctx, qualifierSymbol)
+	qualifierType, _ := symbols.GetSymbolType(qualifierSymbol)
+	_, enumSymbol, declaredEnum := project.CanonicalEnumDeclaration(r.ctx, qualifierType)
 	if !declaredEnum {
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "variant qualifier must resolve to a named enum", ast.LocOf(enumName), "use an enum declaration or transparent enum alias")
 		return true

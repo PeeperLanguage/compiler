@@ -484,7 +484,14 @@ func completionEnumSymbol(ctx *project.CompilerContext, module *project.Module, 
 	} else if resolved, ok := project.LookupImportedSymbol(ctx, module, segments[0], typeName); ok {
 		sym = resolved.Symbol
 	}
-	enumSymbol, ok := project.CanonicalEnumDeclaration(ctx, sym)
+	if sym == nil || sym.Kind != symbols.SymbolType {
+		return nil
+	}
+	typ, ok := symbols.GetSymbolType(sym)
+	if !ok {
+		return nil
+	}
+	_, enumSymbol, ok := project.CanonicalEnumDeclaration(ctx, typ)
 	if !ok {
 		return nil
 	}
@@ -545,15 +552,28 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Modul
 	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return nil, false
 	}
+	owner, enumSymbol, ok := project.CanonicalEnumDeclaration(ctx, subjectType)
+	if !ok {
+		return nil, false
+	}
 	qualifier := typeinfo.TypeText(subjectType)
+	if owner != module {
+		aliases := make([]string, 0)
+		for alias, imported := range module.Imports {
+			if imported.Key == owner.Key {
+				aliases = append(aliases, alias)
+			}
+		}
+		if len(aliases) == 0 {
+			return nil, false
+		}
+		slices.Sort(aliases)
+		qualifier = aliases[0] + "::" + qualifier
+	}
 	if len(match.Arms) > 0 && match.Arms[0] != nil && match.Arms[0].Case != nil {
 		if typePath, _, valid := match.Arms[0].Case.EnumVariantMember(); valid {
 			qualifier = ast.TypeText(typePath)
 		}
-	}
-	enumSymbol := completionEnumSymbol(ctx, module, qualifier)
-	if enumSymbol == nil {
-		return nil, false
 	}
 	seen := make(map[string]struct{}, len(match.Arms))
 	for _, arm := range match.Arms {

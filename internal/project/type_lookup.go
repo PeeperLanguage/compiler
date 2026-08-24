@@ -44,39 +44,45 @@ func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedM
 	return out, true
 }
 
-// CanonicalEnumDeclaration resolves a type qualifier through transparent
-// aliases while retaining the original declaration-owned variant scope.
-func CanonicalEnumDeclaration(ctx *CompilerContext, qualifier *symbols.Symbol) (*symbols.Symbol, bool) {
-	if ctx == nil || qualifier == nil || qualifier.Kind != symbols.SymbolType {
-		return nil, false
+// CanonicalEnumDeclaration resolves a semantic type through transparent
+// aliases while retaining the qualifier's owner and declaration-owned variant
+// scope. The separate owners preserve alias spelling without copying cases.
+func CanonicalEnumDeclaration(ctx *CompilerContext, typ typeinfo.Type) (*Module, *symbols.Symbol, bool) {
+	if ctx == nil || typ == nil {
+		return nil, nil, false
 	}
-	typ, ok := symbols.GetSymbolType(qualifier)
-	if !ok {
-		return nil, false
+	qualified, ok := typ.(*typeinfo.DefinedType)
+	if !ok || qualified == nil || qualified.Identity == "" {
+		return nil, nil, false
 	}
 	canonical, ok := typeinfo.Unalias(typ).(*typeinfo.DefinedType)
 	if !ok || canonical == nil || canonical.Kind != typeinfo.DefinedKindEnum || canonical.Identity == "" {
-		return nil, false
+		return nil, nil, false
 	}
 
 	ctx.mu.RLock()
-	owner := ctx.typeDeclarations[canonical.Identity]
-	if owner == nil {
-		instance, found := ctx.typeInstances[canonical.Identity]
-		if found && instance.typ == canonical && instance.complete {
-			owner = ctx.modules[instance.ownerModuleKey]
+	ownerOf := func(defined *typeinfo.DefinedType) *Module {
+		owner := ctx.typeDeclarations[defined.Identity]
+		if owner == nil {
+			instance, found := ctx.typeInstances[defined.Identity]
+			if found && instance.typ == defined && instance.complete {
+				owner = ctx.modules[instance.ownerModuleKey]
+			}
 		}
+		return owner
 	}
+	qualifierOwner := ownerOf(qualified)
+	declarationOwner := ownerOf(canonical)
 	ctx.mu.RUnlock()
-	if owner == nil || owner.ModuleScope == nil {
-		return nil, false
+	if qualifierOwner == nil || declarationOwner == nil || declarationOwner.ModuleScope == nil {
+		return nil, nil, false
 	}
-	declaration, found := owner.ModuleScope.LookupLocal(canonical.Name)
+	declaration, found := declarationOwner.ModuleScope.LookupLocal(canonical.Name)
 	if !found || declaration == nil || declaration.Scope == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if _, enum := declaration.ASTNode.(*ast.EnumDecl); !enum {
-		return nil, false
+		return nil, nil, false
 	}
-	return declaration, true
+	return qualifierOwner, declaration, true
 }

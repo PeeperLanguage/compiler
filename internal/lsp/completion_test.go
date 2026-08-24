@@ -540,6 +540,26 @@ fn inspect(value: Result) {
 	}
 }
 
+func TestCompletionImportedEmptyMatchUsesSourceQualifier(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
+	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: { value: T }, Pending }\ntype Alias<T> = Result<T>;\n")
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, mainPath, `import "app/result";
+fn inspect(value: result::Alias<i32>) {
+	match value {
+		__CURSOR__
+	}
+}
+`)
+	if got := completionLabels(items); !slices.Equal(got, []string{"result::Alias<i32>::Ok", "result::Alias<i32>::Pending"}) {
+		t.Fatalf("imported empty-match completion labels = %v", got)
+	}
+}
+
 func TestCompletionMatchDeclinesNonInsertionPositions(t *testing.T) {
 	for _, test := range []struct {
 		name   string
