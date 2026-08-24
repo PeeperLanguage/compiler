@@ -1,0 +1,18 @@
+struct Holder {
+    maybe: ?i32,
+    other: i32
+}
+
+fn Touch(_: rawptr) {}
+
+fn UnknownRawJoin(mut holder: Holder, pointer: rawptr, choose: bool) -> i32 {
+    let mut target: rawptr = @holder.other;
+    if choose {
+        target = pointer;
+    }
+    if holder.maybe == none {
+        return 0;
+    }
+    Touch(target);
+    return holder.maybe;
+}

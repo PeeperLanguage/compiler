@@ -114,12 +114,6 @@ func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected 
 	return c.typeExpr(scope, expr, expected)
 }
 
-func (c *checker) typeOptionalTestExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
-	c.optionalTestContext++
-	defer func() { c.optionalTestContext-- }()
-	return c.typeExpr(scope, expr, expected)
-}
-
 func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	previous := c.wholeCarrierExpr
 	c.wholeCarrierExpr = expr
@@ -133,6 +127,7 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 	}
 	resolution := place.Resolution{}
 	if c.flow != nil {
+		delete(c.flow.result.Payloads, expr.ID())
 		resolution = c.resolveFlowPlace(scope, expr, *c.flow.state)
 	}
 	if c.wholeCarrierExpr == expr {
@@ -143,12 +138,13 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 		c.recordFlowResolution(expr, resolution)
 		return base
 	}
+	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
 	required := payloadDepthForExpected(base, expected)
-	if c.payloadContext > 0 && required == 0 {
+	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
 		required = optionalLayerCount(base)
 	}
 	if c.flow == nil {
-		if c.optionalTestContext > 0 || required == 0 {
+		if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
 			return base
 		}
 		return unwrapOptionalLayers(base, required)
@@ -158,11 +154,9 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 	resolved := unwrapOptionalLayers(base, len(payloadCases))
 	applied := optionalLayerCount(base) - optionalLayerCount(resolved)
 	payloadCases = payloadCases[:applied]
-	if c.optionalTestContext == 0 {
-		if _, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType); explicitCarrier {
-			c.recordFlowResolution(expr, resolution)
-			return base
-		}
+	if c.optionalTestContext == 0 && explicitCarrier {
+		c.recordFlowResolution(expr, resolution)
+		return base
 	}
 	if applied > 0 {
 		c.recordPayloadAccess(expr, resolution, payloadCases)
@@ -367,7 +361,12 @@ func (a *flowAnalyzer) run() {
 		}
 		if typ, ok := symbols.GetSymbolType(sym); ok {
 			if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
-				entryState.references[sym] = []place.Origin{{Root: sym}}
+				carrier := []place.Origin{{Root: sym}}
+				cases := make([]int, optionalLayerCount(typ))
+				for index := range cases {
+					cases[index] = ir.OptionalPresentCase
+				}
+				entryState.references[sym] = place.VariantPayloadOrigins(carrier, cases)
 			}
 		}
 	}
@@ -547,7 +546,6 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 		resolution := c.resolveFlowPlace(scope, node.Target, *st)
 		invalidateVariantOrigins(st, resolution.StorageOrigins)
 		if sym := a.assignedSymbol(scope, node.Target); sym != nil {
-			invalidateVariantDependency(st, sym)
 			a.updateOriginBinding(c, scope, sym, node.Value, st)
 		}
 	}
@@ -926,17 +924,21 @@ func mergeFlowStates(left, right flowState) flowState {
 	}
 	merged := newFlowState()
 	merged.variants = mergeVariantFacts(left.variants, right.variants)
-	for sym, origins := range left.references {
-		merged.references[sym] = place.CloneOrigins(origins)
-	}
-	for sym, origins := range right.references {
-		merged.references[sym] = place.MergeOrigins(merged.references[sym], origins)
-	}
-	for sym, origins := range left.rawPointers {
-		merged.rawPointers[sym] = place.CloneOrigins(origins)
-	}
-	for sym, origins := range right.rawPointers {
-		merged.rawPointers[sym] = place.MergeOrigins(merged.rawPointers[sym], origins)
+	merged.references = mergeKnownOriginMaps(left.references, right.references)
+	merged.rawPointers = mergeKnownOriginMaps(left.rawPointers, right.rawPointers)
+	return merged
+}
+
+func mergeKnownOriginMaps(
+	left, right map[*symbols.Symbol][]place.Origin,
+) map[*symbols.Symbol][]place.Origin {
+	merged := make(map[*symbols.Symbol][]place.Origin)
+	for sym, leftOrigins := range left {
+		rightOrigins, known := right[sym]
+		if !known {
+			continue
+		}
+		merged[sym] = place.MergeOrigins(leftOrigins, rightOrigins)
 	}
 	return merged
 }
@@ -1036,32 +1038,22 @@ func mergeDependencies(left, right []*symbols.Symbol) []*symbols.Symbol {
 	return merged
 }
 
-func invalidateVariantDependency(st *flowState, assigned *symbols.Symbol) {
-	if st == nil || assigned == nil {
-		return
-	}
-	kept := st.variants[:0]
-	for _, fact := range st.variants {
-		dependent := false
-		for _, dependency := range fact.dependencies {
-			if dependency == assigned {
-				dependent = true
-				break
-			}
-		}
-		if !dependent {
-			kept = append(kept, fact)
-		}
-	}
-	st.variants = kept
-}
-
 func invalidateVariantOrigins(st *flowState, mutated []place.Origin) {
 	if st == nil || len(mutated) == 0 {
 		return
 	}
 	kept := st.variants[:0]
 	for _, fact := range st.variants {
+		dependencyMutated := false
+		for _, dependency := range fact.dependencies {
+			if dependency != nil && place.OriginsOverlap([]place.Origin{{Root: dependency}}, mutated) {
+				dependencyMutated = true
+				break
+			}
+		}
+		if dependencyMutated {
+			continue
+		}
 		if !place.OriginsOverlap(fact.origins, mutated) {
 			kept = append(kept, fact)
 			continue
@@ -1103,7 +1095,6 @@ func clearFlowScope(scope *symbols.Scope, st *flowState) {
 	for _, sym := range scope.Symbols() {
 		delete(st.references, sym)
 		delete(st.rawPointers, sym)
-		invalidateVariantDependency(st, sym)
 		invalidateVariantOrigins(st, []place.Origin{{Root: sym}})
 	}
 }

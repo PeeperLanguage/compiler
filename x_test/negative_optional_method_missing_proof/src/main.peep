@@ -1,0 +1,11 @@
+struct Holder {
+    value: i32
+}
+
+fn (self: &Holder) Get() -> i32 {
+    return self.value;
+}
+
+fn MissingReceiverProof(value: ?Holder) -> i32 {
+    return value.Get();
+}

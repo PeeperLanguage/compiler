@@ -1,0 +1,6 @@
+name = "type_optional_callable_narrowing"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"
