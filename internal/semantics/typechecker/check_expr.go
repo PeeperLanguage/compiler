@@ -438,27 +438,98 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 		c.recordCaseTest(node, node.Value, test.Case, test.CaseCount, test.CaseWhenTrue, test.Family)
 		return &typeinfo.BoolType{}
 	}
-	typePath, caseName, pathOK := node.Case.EnumVariantMember()
-	resolved := c.module.Semantics.ResolvedSymbols[node.Case.ID()]
-	if !pathOK || caseName == nil || resolved == nil || resolved.Kind != symbols.SymbolVariant {
+	resolved, ok := c.resolveNamedVariant(node.Case)
+	if !ok {
 		return &typeinfo.InvalidType{}
 	}
-	testedType := typeinfo.TypeFromSyntax(typePath, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-	descriptor, variant := typeinfo.VariantDescriptorOf(testedType)
-	if !variant || descriptor.Family != typeinfo.VariantFamilyNamed {
-		return &typeinfo.InvalidType{}
-	}
-	if !typeinfo.SameType(valueType, testedType) {
+	if !typeinfo.SameType(valueType, resolved.EnumType) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
-			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(testedType), typeinfo.TypeText(valueType))))
+			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(resolved.EnumType), typeinfo.TypeText(valueType))))
 		return &typeinfo.InvalidType{}
 	}
-	_, caseIndex, found := typeinfo.LookupVariantCase(descriptor, caseName.Name)
-	if !found {
-		return &typeinfo.InvalidType{}
-	}
-	c.recordCaseTest(node, node.Value, caseIndex, len(descriptor.Cases), true, typeinfo.VariantFamilyNamed)
+	c.recordCaseTest(node, node.Value, resolved.CaseIndex, len(resolved.Descriptor.Cases), true, typeinfo.VariantFamilyNamed)
 	return &typeinfo.BoolType{}
+}
+
+type resolvedNamedVariant struct {
+	EnumType   typeinfo.Type
+	Descriptor typeinfo.VariantDescriptor
+	Case       typeinfo.VariantCase
+	CaseName   *ast.Ident
+	CaseIndex  int
+}
+
+// resolveNamedVariant keeps variant type syntax bound to resolver-owned symbol
+// identity. Expanded defaults retain declaration-module symbols even when their
+// cloned syntax is typechecked inside a caller module.
+func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedVariant, bool) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || path == nil {
+		return resolvedNamedVariant{}, false
+	}
+	typePath, caseName, ok := path.EnumVariantMember()
+	caseSymbol := c.module.Semantics.ResolvedSymbols[path.ID()]
+	if !ok || caseName == nil || caseSymbol == nil || caseSymbol.Kind != symbols.SymbolVariant || caseSymbol.Name != caseName.Name {
+		return resolvedNamedVariant{}, false
+	}
+	qualifierSymbol := c.module.Semantics.ResolvedSymbols[typePath.ID()]
+	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
+		return resolvedNamedVariant{}, false
+	}
+	qualifierType, ok := symbols.GetSymbolType(qualifierSymbol)
+	if !ok || qualifierType == nil {
+		return resolvedNamedVariant{}, false
+	}
+
+	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+	switch node := typePath.(type) {
+	case *ast.NamedType:
+		resolveNamed := opts.ResolveNamed
+		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
+			if name == node.Name {
+				return qualifierType, true
+			}
+			return resolveNamed(name)
+		}
+	case *ast.AppliedType:
+		if node.Name == nil {
+			return resolvedNamedVariant{}, false
+		}
+		resolveNamed := opts.ResolveNamed
+		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
+			if name == node.Name.Name {
+				return qualifierType, true
+			}
+			return resolveNamed(name)
+		}
+	case *ast.ScopeResolution:
+		qualifier, member, imported := node.ImportMember()
+		if !imported {
+			return resolvedNamedVariant{}, false
+		}
+		resolveQualified := opts.ResolveQualified
+		opts.ResolveQualified = func(moduleName, memberName string) (typeinfo.Type, bool) {
+			if moduleName == qualifier.Name && memberName == member.Name {
+				return qualifierType, true
+			}
+			return resolveQualified(moduleName, memberName)
+		}
+	default:
+		return resolvedNamedVariant{}, false
+	}
+
+	enumType := typeinfo.TypeFromSyntax(typePath, opts)
+	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
+	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return resolvedNamedVariant{}, false
+	}
+	selected, caseIndex, ok := typeinfo.LookupVariantCase(descriptor, caseName.Name)
+	if !ok {
+		return resolvedNamedVariant{}, false
+	}
+	return resolvedNamedVariant{
+		EnumType: enumType, Descriptor: descriptor, Case: selected,
+		CaseName: caseName, CaseIndex: caseIndex,
+	}, true
 }
 
 func binaryResultIsBool(op string) bool {
@@ -797,39 +868,25 @@ func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields 
 }
 
 func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, path *ast.ScopeResolution, fields []ast.StructLitField, braced bool) typeinfo.Type {
-	typePath, caseName, ok := path.EnumVariantMember()
-	if !ok || caseName == nil {
+	resolved, ok := c.resolveNamedVariant(path)
+	if !ok {
 		return &typeinfo.InvalidType{}
 	}
-	resolved := c.module.Semantics.ResolvedSymbols[path.ID()]
-	if resolved == nil || resolved.Kind != symbols.SymbolVariant || resolved.Name != caseName.Name {
-		return &typeinfo.InvalidType{}
-	}
-	enumType := typeinfo.TypeFromSyntax(typePath, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
-	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
-		return &typeinfo.InvalidType{}
-	}
-
-	selected, caseIndex, found := typeinfo.LookupVariantCase(descriptor, caseName.Name)
-	if !found {
-		return &typeinfo.InvalidType{}
-	}
-	if selected.Payload == nil {
+	if resolved.Case.Payload == nil {
 		if braced {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-				"payloadless enum variant `"+caseName.Name+"` does not accept braces", ast.LocOf(site), "remove the braces")
+				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept braces", ast.LocOf(site), "remove the braces")
 			return &typeinfo.InvalidType{}
 		}
-		c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{EnumType: enumType, Case: caseIndex}
-		return enumType
+		c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
+		return resolved.EnumType
 	}
 	if !braced {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-			"data enum variant `"+caseName.Name+"` requires a braced field initializer", ast.LocOf(site), "initialize its named fields with `{ ... }`")
+			"data enum variant `"+resolved.CaseName.Name+"` requires a braced field initializer", ast.LocOf(site), "initialize its named fields with `{ ... }`")
 		return &typeinfo.InvalidType{}
 	}
-	payload, ok := typeinfo.Underlying(selected.Payload).(*typeinfo.StructType)
+	payload, ok := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
 	if !ok || payload == nil {
 		panic("named enum data case does not carry struct payload")
 	}
@@ -838,12 +895,12 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 		return &typeinfo.InvalidType{}
 	}
 	c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{
-		EnumType: enumType,
-		Case:     caseIndex,
+		EnumType: resolved.EnumType,
+		Case:     resolved.CaseIndex,
 		Payload:  payload,
 		Fields:   ordered,
 	}
-	return enumType
+	return resolved.EnumType
 }
 
 func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructLit) typeinfo.Type {

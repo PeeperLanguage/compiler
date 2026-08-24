@@ -146,55 +146,47 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		if arm.Body != nil {
 			armEvidence.BodyID = arm.Body.ID()
 		}
-		typePath, caseName, pathOK := arm.Case.EnumVariantMember()
-		resolved := c.module.Semantics.ResolvedSymbols[arm.Case.ID()]
-		if !pathOK || caseName == nil || resolved == nil || resolved.Kind != symbols.SymbolVariant {
+		resolved, pathOK := c.resolveNamedVariant(arm.Case)
+		if !pathOK {
 			evidenceComplete = false
 			c.checkBlock(scope, arm.Body, returnType)
 			continue
 		}
-		armType := typeinfo.TypeFromSyntax(typePath, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-		if typeinfo.IsInvalidOrUnknown(armType) {
+		if typeinfo.IsInvalidOrUnknown(resolved.EnumType) {
 			evidenceComplete = false
 			c.checkBlock(scope, arm.Body, returnType)
 			continue
 		}
-		if !typeinfo.SameType(subjectType, armType) {
+		if !typeinfo.SameType(subjectType, resolved.EnumType) {
 			evidenceComplete = false
 			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
-				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(armType))))
+				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(resolved.EnumType))))
 			c.checkBlock(scope, arm.Body, returnType)
 			continue
 		}
-		selected, caseIndex, found := typeinfo.LookupVariantCase(descriptor, caseName.Name)
-		if !found {
-			evidenceComplete = false
-			c.checkBlock(scope, arm.Body, returnType)
-			continue
-		}
-		armEvidence.Case = caseIndex
-		if previous := seenCases[caseIndex]; previous != nil {
-			c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match arm for `"+caseName.Name+"`").
+		armEvidence.Case = resolved.CaseIndex
+		if previous := seenCases[resolved.CaseIndex]; previous != nil {
+			c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match arm for `"+resolved.CaseName.Name+"`").
 				WithCode(diagnostics.ErrInvalidStatement).
 				WithPrimaryLabel(ast.LocOf(arm.Case), "duplicate case").
 				WithSecondaryLabel(ast.LocOf(previous), "first matched here"))
 		} else {
-			seenCases[caseIndex] = arm.Case
+			seenCases[resolved.CaseIndex] = arm.Case
 		}
-		if selected.Payload == nil {
+		if resolved.Case.Payload == nil {
 			if arm.HasData {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
-					"payloadless match case `"+caseName.Name+"` does not accept braces", ast.LocOf(arm), "remove the braces")
+					"payloadless match case `"+resolved.CaseName.Name+"` does not accept braces", ast.LocOf(arm), "remove the braces")
 			}
 		} else {
-			payload, payloadOK := typeinfo.Underlying(selected.Payload).(*typeinfo.StructType)
+			payload, payloadOK := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
 			if !payloadOK || payload == nil {
 				panic("named enum data case does not carry struct payload")
 			}
 			armEvidence.Payload = payload
 			if !arm.HasData {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-					"data match case `"+caseName.Name+"` requires braces", ast.LocOf(arm), "use `{ ... }` after the case name")
+					"data match case `"+resolved.CaseName.Name+"` requires braces", ast.LocOf(arm), "use `{ ... }` after the case name")
 			}
 			seenFields := make(map[string]ast.Node, len(arm.Fields))
 			for _, pattern := range arm.Fields {

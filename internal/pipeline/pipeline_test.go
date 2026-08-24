@@ -1561,6 +1561,36 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineExpandsImportedNamedEnumDefault(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn main() -> i32 {
+	if !(runtime::IsPending()) {
+		return 1;
+	}
+	return runtime::Read();
+}`, `enum Status<T> {
+	Ready: { value: T },
+	Pending,
+}
+
+type State<T> = Status<T>;
+
+fn Read(status: State<i32> = State<i32>::Ready{ value = 42 }) -> i32 {
+	match status {
+		State<i32>::Ready{ value = value } => { return value; }
+		State<i32>::Pending => { return 0; }
+	}
+}
+
+fn IsPending(pending: bool = State<i32>::Pending is State<i32>::Pending) -> bool {
+	return pending;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected imported enum default diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineRejectsTypeArgumentsOnImportedValuePath(t *testing.T) {
 	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
 
