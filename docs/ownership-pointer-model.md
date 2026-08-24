@@ -405,6 +405,9 @@ lowering reserves one identity for each named recursive composite before
 lowering its children. LLVM emits identified aggregate declarations and one
 reusable private drop function per owning named composite, so recursive
 destruction calls the existing function instead of recursively expanding IR.
+Generic recursive links must repeat same canonical type arguments. Exact
+`Node<T> -> *Node<T>` recursion reuses one semantic and runtime shell;
+argument-expanding recursion is rejected before lowering.
 
 ## Final Rules
 

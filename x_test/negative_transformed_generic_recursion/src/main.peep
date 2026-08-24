@@ -1,0 +1,5 @@
+struct Swap<A, B> {
+    next: *Swap<B, A>
+}
+
+fn Use(value: &Swap<i32, str>) {}

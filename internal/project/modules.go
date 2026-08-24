@@ -76,6 +76,9 @@ type Module struct {
 	LLVMIR    string
 	// Top-level names visible in module.
 	ModuleScope *symbols.Scope
+	// Generic declaration syntax and semantic shells produced by collection.
+	// Fresh incremental contexts reindex this immutable phase artifact.
+	namedTypeDeclarations map[string]namedTypeDeclaration
 	// Grouped semantic analysis metadata.
 	Semantics *SemanticInfo
 	// Import alias -> resolved module import.
@@ -189,6 +192,9 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 		m.ModuleScope = nil
 		m.Semantics = nil
 	}
+	if retained < phase.Collected {
+		m.namedTypeDeclarations = nil
+	}
 	if retained < phase.Typechecked {
 		m.SemanticExportFingerprint = ""
 		m.TypedASTNodes = nil
@@ -269,6 +275,11 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	ctx.modules[module.Key] = module
 	if module.FilePath != "" {
 		ctx.fileIndex[CanonicalPath(module.FilePath)] = module.Key
+	}
+	if module.Phase >= phase.Collected {
+		for identity := range module.namedTypeDeclarations {
+			ctx.typeDeclarations[identity] = module
+		}
 	}
 }
 

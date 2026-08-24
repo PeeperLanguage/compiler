@@ -275,6 +275,23 @@ func TypeParameterBindings(parameters []*TypeParameterType, arguments []Type) ma
 	return bindings
 }
 
+// Unalias returns canonical transparent-alias storage without erasing nominal
+// structs, interfaces, or enums. Invalid alias cycles terminate as invalid.
+func Unalias(t Type) Type {
+	seen := make(map[*DefinedType]struct{})
+	for {
+		defined, ok := t.(*DefinedType)
+		if !ok || defined == nil || defined.Kind != DefinedKindAlias || defined.Underlying == nil {
+			return t
+		}
+		if _, found := seen[defined]; found {
+			return &InvalidType{}
+		}
+		seen[defined] = struct{}{}
+		t = defined.Underlying
+	}
+}
+
 func Underlying(t Type) Type {
 	for {
 		defined, ok := t.(*DefinedType)
