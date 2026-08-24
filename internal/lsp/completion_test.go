@@ -637,6 +637,28 @@ func TestCompletionRecompilesChangedEnumSchema(t *testing.T) {
 	}
 }
 
+func TestCompletionRecompilesChangedImportedEnumSchema(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	statusPath := filepath.Join(root, peeper.SourceDirName, "status"+peeper.SourceExt)
+	writeWorkspaceFile(t, statusPath, "enum Status { Ready }\n")
+	state := NewServerState()
+	state.RootDir = root
+	main := `import "app/status";
+fn main() { let value = status::Status::__CURSOR__; }
+`
+	if got := completionLabels(completionAtSource(t, state, mainPath, main)); !slices.Equal(got, []string{"Ready"}) {
+		t.Fatalf("initial imported enum completion labels = %v", got)
+	}
+	updated := "enum Status { Waiting }\n"
+	version := 2
+	state.applyDocumentSnapshot(statusPath, &updated, &version)
+	if got := completionLabels(completionAtSource(t, state, mainPath, main)); !slices.Equal(got, []string{"Waiting"}) {
+		t.Fatalf("updated imported enum completion labels = %v", got)
+	}
+}
+
 func TestCompletionImportPathsAndReplacementRanges(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
