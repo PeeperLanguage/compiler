@@ -44,6 +44,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	b.WriteString("target triple = \"")
 	b.WriteString(targetInfo.LLVMTriple)
 	b.WriteString("\"\n\n")
+	if !emitter.emitNamedTypeDefinitions(&b) {
+		return ""
+	}
 	printUsed, _, allocUsed, allocatorRuntimeUsed, freeRuntimeUsed := moduleRuntimeOperations(mod)
 	if printUsed {
 		b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
@@ -112,7 +115,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					} else {
 						slotName = "null"
 					}
-					slotLayout, ok := interfaceSlotLLVMLayout(mod.Types, makeVal.Type, i)
+					slotLayout, ok := emitter.interfaceSlotLayout(makeVal.Type, i)
 					if !ok {
 						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
 					}
@@ -218,6 +221,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	if !hasDefine {
 		return finalLLVMText(&b, emitter)
 	}
+	emitter.emitNamedDropHelpers(&b)
 	for _, thunk := range mod.InterfaceThunks {
 		emitInterfaceThunk(&b, emitter, thunk)
 	}

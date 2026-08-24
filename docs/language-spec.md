@@ -113,6 +113,11 @@ including pointer payloads. Optional-to-optional equality, fallback operators,
 explicit unwrap syntax, optional chaining, and optional patterns are not part of
 current language surface. Niche layout remains separate future work.
 
+Named structs and enums may refer to themselves through fixed-size pointer or
+reference storage. A direct by-value cycle has infinite size and is rejected;
+use indirection such as `*T`, `&T`, or `&mut T`. Owned recursive links commonly
+use `?*T` so termination is explicit with `none`.
+
 ## Numeric Literals And Conversions
 
 Numeric literals may carry an attached explicit source type:

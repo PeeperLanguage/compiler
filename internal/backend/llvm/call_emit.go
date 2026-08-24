@@ -85,7 +85,7 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (llvmV
 	baseValue := emitRef(b, base)
 	data := b.extractField(baseValue, llvmFieldData)
 	itab := b.extractField(baseValue, llvmFieldDispatch)
-	slotLayout, ok := interfaceSlotLLVMLayout(b.emitter.mod.Types, mirRefType(base), slot)
+	slotLayout, ok := b.emitter.interfaceSlotLayout(mirRefType(base), slot)
 	if !ok {
 		return llvmValue{}, llvmValue{}, false
 	}

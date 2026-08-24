@@ -1033,6 +1033,20 @@ fn count(node: Node) -> i32 {
 	}
 }
 
+func TestByValueRecursiveStructRejectedAsUnsized(t *testing.T) {
+	src := `struct Node {
+	next: Node
+}
+
+fn consume(node: Node) -> i32 {
+	return 0;
+}`
+	diag := checkTypeSource(t, src)
+	if !hasTypeCode(diag, diagnostics.ErrInvalidType) || !strings.Contains(diag.EmitAllToString(), "requires a sized type") {
+		t.Fatalf("expected recursive sizedness diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestBorrowedViewComparisonsRejectedBeforeLowering(t *testing.T) {
 	for _, view := range []struct {
 		name     string

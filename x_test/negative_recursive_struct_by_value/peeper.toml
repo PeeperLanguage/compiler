@@ -1,0 +1,7 @@
+name = "negative_recursive_struct_by_value"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0013", "type declaration cycle", "break the cycle with indirection"]

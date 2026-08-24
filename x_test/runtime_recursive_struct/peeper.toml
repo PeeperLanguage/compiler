@@ -1,0 +1,7 @@
+name = "runtime_recursive_struct"
+build = "program"
+entry = "src/main.peep"
+
+[test]
+mode = "run"
+outcome = "success"
