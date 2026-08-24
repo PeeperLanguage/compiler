@@ -206,6 +206,45 @@ func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRCompletesRecursiveNamedStructType(t *testing.T) {
+	out := generateTestHIR(t, "hir_recursive_struct_test"+peeper.SourceExt, "hir_recursive_struct_test", `struct Node {
+	value: i32,
+	next: ?*Node
+}
+
+fn Read(value: &Node) -> i32 {
+	return value.value;
+}`)
+
+	if len(out.Funcs) != 1 || len(out.Funcs[0].Params) != 1 {
+		t.Fatalf("recursive struct HIR = %#v", out.Funcs)
+	}
+	reference, ok := out.Types.Type(out.Funcs[0].Params[0].Type)
+	if !ok || reference.Kind != ir.TypeReference {
+		t.Fatalf("recursive struct parameter type = %#v", reference)
+	}
+	nodeID := reference.Elem
+	node, ok := out.Types.Type(nodeID)
+	if !ok || node.Kind != ir.TypeStruct || node.Name != "Node" || node.Identity == "" || len(node.Fields) != 2 {
+		t.Fatalf("recursive struct descriptor = %#v", node)
+	}
+	optional, ok := out.Types.Type(node.Fields[1].Type)
+	if !ok {
+		t.Fatalf("recursive optional descriptor missing")
+	}
+	payload, ok := optional.OptionalPayload()
+	if !ok {
+		t.Fatalf("recursive field type = %#v, want optional", optional)
+	}
+	owned, ok := out.Types.Type(payload)
+	if !ok || owned.Kind != ir.TypeOwnedPtr || owned.Elem != nodeID {
+		t.Fatalf("recursive optional payload = %#v, want owned pointer to TypeID %d", owned, nodeID)
+	}
+	if got := out.Types.Text(nodeID); got != "Node" {
+		t.Fatalf("recursive struct text = %q, want Node", got)
+	}
+}
+
 func TestGenerateHIRKeepsOptionalIndexCarrierBeforePayloadProjection(t *testing.T) {
 	out := generateTestHIR(t, "hir_optional_index_flow_test"+peeper.SourceExt, "hir_optional_index_flow_test", `fn read(values: [1]?i32) -> i32 {
 	if values[0] == none {
@@ -361,10 +400,10 @@ fn update(mut holder: Holder) {
 		t.Fatalf("expected reference binding, got %#v", out.Funcs[0].Body.Stmts[0])
 	}
 	address, ok := binding.Value.(*ir.AddrOf)
-	if !ok || out.Types.Text(address.Type) != "&mut struct{value: i32}" {
+	if !ok || out.Types.Text(address.Type) != "&mut Token" {
 		t.Fatalf("expected mutable element address, got %#v", binding.Value)
 	}
-	if address.Place == nil || out.Types.Text(address.Place.Root.TypeID()) != "struct{tokens: [1]struct{value: i32}}" {
+	if address.Place == nil || out.Types.Text(address.Place.Root.TypeID()) != "Holder" {
 		t.Fatalf("expected Holder place root, got %#v", address.Place)
 	}
 	if len(address.Place.Projections) != 2 {
@@ -898,7 +937,7 @@ fn main() -> i32 { return Read(&Make()); }`
 		t.Fatalf("expected Read call, got %#v", ret.Value)
 	}
 	temporary, ok := call.Args[0].(*ir.TempBorrow)
-	if !ok || temporary.Value == nil || out.Types.Text(temporary.Type) != "&struct{value: i32}" || temporary.Slice {
+	if !ok || temporary.Value == nil || out.Types.Text(temporary.Type) != "&Box" || temporary.Slice {
 		t.Fatalf("expected temporary Box borrow, got %#v", call.Args[0])
 	}
 }
@@ -935,7 +974,7 @@ fn main() -> i32 {
 		t.Fatalf("method call = %#v, want receiver argument", ret.Value)
 	}
 	borrow, ok := call.Args[0].(*ir.AddrOf)
-	if !ok || borrow.Place == nil || out.Types.Text(borrow.Type) != "&struct{value: i32}" {
+	if !ok || borrow.Place == nil || out.Types.Text(borrow.Type) != "&Counter" {
 		t.Fatalf("method receiver = %#v, want semantic shared borrow", call.Args[0])
 	}
 }
@@ -964,14 +1003,15 @@ fn main() { let ignored = make(); }`)
 	}
 }
 
-func TestInternRuntimeTypeUsesSharedVariantDescriptor(t *testing.T) {
+func TestLoweredTypeIDUsesSharedVariantDescriptor(t *testing.T) {
 	types := ir.NewTypeTable()
+	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
-	optionalID := internRuntimeType(types, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	optionalID := loweredTypeID(ctx, nil, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
 	if direct := types.Intern(ir.OptionalVariant(i32)); optionalID != direct {
 		t.Fatalf("semantic optional ID = %d, direct optional ID = %d", optionalID, direct)
 	}
-	enumID := internRuntimeType(types, &typeinfo.DefinedType{
+	enumID := loweredTypeID(ctx, nil, &typeinfo.DefinedType{
 		Name:       "Status",
 		Underlying: &typeinfo.EnumType{Variants: []string{"Ready", "Waiting"}},
 	})
@@ -979,5 +1019,25 @@ func TestInternRuntimeTypeUsesSharedVariantDescriptor(t *testing.T) {
 	if !ok || variant.Kind != ir.TypeVariant || variant.Family != ir.VariantFamilyNamed ||
 		variant.Identity != "Status" || len(variant.Cases) != 2 || variant.Cases[0].Name != "Ready" {
 		t.Fatalf("enum runtime type = %#v", variant)
+	}
+}
+
+func TestLoweredTypeIDDoesNotPublishNamedTypeWithInvalidChild(t *testing.T) {
+	types := ir.NewTypeTable()
+	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
+	broken := &typeinfo.DefinedType{
+		Name: "Broken", Identity: "test::Broken",
+		Underlying: &typeinfo.StructType{Fields: []typeinfo.Field{{
+			Name: "missing", Type: &typeinfo.NamedType{Name: "Missing"},
+		}}},
+	}
+	if id := loweredTypeID(ctx, nil, broken); id != ir.InvalidType {
+		t.Fatalf("invalid named descriptor lowered as TypeID %d", id)
+	}
+	if ids := types.NamedTypeIDs(); len(ids) != 0 {
+		t.Fatalf("invalid named descriptor published as %#v", ids)
+	}
+	if !ctx.Diagnostics.HasErrors() || !strings.Contains(ctx.Diagnostics.EmitAllToString(), "unresolved named type reached IR lowering") {
+		t.Fatalf("invalid child diagnostic missing:\n%s", ctx.Diagnostics.EmitAllToString())
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -224,6 +225,85 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 		ReferenceOrigins: func(*symbols.Symbol) []Origin { return []Origin{{Root: value}} },
 	}).StorageOrigins, []Origin{{Root: reference}}) {
 		t.Fatal("reference carrier storage did not retain binding identity")
+	}
+}
+
+func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
+	scope := symbols.NewScope(nil)
+	carrier := symbols.New("value", symbols.SymbolVar, nil, nil)
+	carrier.BindType(&typeinfo.OptionalType{Inner: typeinfo.DefaultIntegerType()})
+	if err := scope.Declare(carrier); err != nil {
+		t.Fatal(err)
+	}
+
+	ident := &ast.Ident{Name: "value"}
+	resolved := Resolve(scope, &ast.AddressExpr{Expr: ident}, ResolveOptions{
+		PayloadCases: func(expr ast.Expr) []int {
+			if expr == ident {
+				return []int{ir.OptionalPresentCase}
+			}
+			return nil
+		},
+	})
+	storage := []Origin{{Root: carrier}}
+	payload := VariantPayloadOrigins(storage, []int{ir.OptionalPresentCase})
+	if !SameOrigins(resolved.StorageOrigins, storage) || !SameOrigins(resolved.ValueOrigins, payload) {
+		t.Fatalf("address resolution = %#v, want carrier storage and payload value %#v", resolved, payload)
+	}
+}
+
+func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t *testing.T) {
+	scope := symbols.NewScope(nil)
+	valueType := &typeinfo.StructType{Fields: []typeinfo.Field{{Name: "value", Type: typeinfo.DefaultIntegerType()}}}
+	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
+	owner.BindType(&typeinfo.OptionalType{Inner: &typeinfo.OwnedPtrType{Target: valueType}})
+	referent := symbols.New("referent", symbols.SymbolVar, nil, nil)
+	referent.BindType(valueType)
+	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
+	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{Mutable: true, Target: valueType}})
+	for _, sym := range []*symbols.Symbol{owner, referent, reference} {
+		if err := scope.Declare(sym); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ownerBase := &ast.Ident{Name: "owner"}
+	ownerField := &ast.SelectorExpr{Expr: ownerBase, Name: &ast.Ident{Name: "value"}}
+	ownerResolution := Resolve(scope, ownerField, ResolveOptions{
+		ExprType: func(ast.Expr) typeinfo.Type { return &typeinfo.OwnedPtrType{Target: valueType} },
+		PayloadCases: func(expr ast.Expr) []int {
+			if expr == ownerBase {
+				return []int{ir.OptionalPresentCase}
+			}
+			return nil
+		},
+	})
+	wantOwner := []Origin{{Root: owner, Projections: []OriginProjection{
+		{Kind: OriginVariantPayload, Case: ir.OptionalPresentCase},
+		{Kind: OriginPointee},
+		{Kind: OriginField, Field: "value"},
+	}}}
+	if !SameOrigins(ownerResolution.ValueOrigins, wantOwner) {
+		t.Fatalf("owned optional resolution = %#v, want %#v", ownerResolution, wantOwner)
+	}
+
+	referenceBase := &ast.Ident{Name: "reference"}
+	referenceField := &ast.SelectorExpr{Expr: referenceBase, Name: &ast.Ident{Name: "value"}}
+	referenceResolution := Resolve(scope, referenceField, ResolveOptions{
+		ExprType: func(ast.Expr) typeinfo.Type { return &typeinfo.RefType{Mutable: true, Target: valueType} },
+		ReferenceOrigins: func(*symbols.Symbol) []Origin {
+			return []Origin{{Root: referent}}
+		},
+		PayloadCases: func(expr ast.Expr) []int {
+			if expr == referenceBase {
+				return []int{ir.OptionalPresentCase}
+			}
+			return nil
+		},
+	})
+	wantReference := []Origin{{Root: referent, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
+	if !SameOrigins(referenceResolution.ValueOrigins, wantReference) {
+		t.Fatalf("optional reference resolution = %#v, want %#v", referenceResolution, wantReference)
 	}
 }
 

@@ -1,0 +1,14 @@
+struct Node {
+    value: i32,
+    next: ?*Node
+}
+
+fn main() -> i32 {
+    let node = alloc(.Node{
+        value = 42,
+        next = none
+    });
+    let result = node.value;
+    free(node);
+    return result - 42;
+}

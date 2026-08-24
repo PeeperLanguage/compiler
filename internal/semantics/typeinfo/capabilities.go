@@ -190,8 +190,9 @@ func IsNoCopyType(t Type) bool {
 	return check(t)
 }
 
-// IsLowerableType reports whether type can be represented by current backend
-// lowering without recursive runtime shells or abstract self parameters.
+// IsLowerableType reports whether current backend lowering can represent type.
+// Owned pointers close recursive named composites without expanding storage;
+// abstract Self parameters remain semantic-only interface metadata.
 func IsLowerableType(t Type) bool {
 	visiting := make(map[Type]struct{})
 	var check func(Type) bool

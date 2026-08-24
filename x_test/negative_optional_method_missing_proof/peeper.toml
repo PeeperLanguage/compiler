@@ -1,0 +1,7 @@
+name = "negative_optional_method_missing_proof"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0041", "optional payload use requires a presence proof"]

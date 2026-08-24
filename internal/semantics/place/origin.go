@@ -57,7 +57,13 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 	}
 	switch node := expr.(type) {
 	case *ast.AddressExpr:
-		return Resolve(scope, node.Expr, opts)
+		resolved := Resolve(scope, node.Expr, opts)
+		if opts.PayloadCases != nil {
+			if cases := opts.PayloadCases(node.Expr); len(cases) > 0 {
+				resolved.ValueOrigins = VariantPayloadOrigins(resolved.StorageOrigins, cases)
+			}
+		}
+		return resolved
 	case *ast.Ident:
 		sym, found := resolveSymbol(scope, node, opts.ResolveBinding)
 		if !found || sym == nil {
@@ -86,8 +92,8 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 			return Resolution{}
 		}
 		base := Resolve(scope, node.Expr, opts)
-		origins := appendIndirectProjection(base.ValueOrigins, node.Expr, opts.ExprType)
-		origins = appendVariantPayloadProjections(origins, node.Expr, opts.PayloadCases)
+		origins := appendVariantPayloadProjections(base.ValueOrigins, node.Expr, opts.ExprType, opts.PayloadCases)
+		origins = appendIndirectProjection(origins, node.Expr, opts.ExprType)
 		origins = appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: node.Name.Name})
 		return Resolution{
 			StorageOrigins: origins,
@@ -97,8 +103,8 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 		}
 	case *ast.IndexExpr:
 		base := Resolve(scope, node.Expr, opts)
-		origins := appendIndirectProjection(base.ValueOrigins, node.Expr, opts.ExprType)
-		origins = appendVariantPayloadProjections(origins, node.Expr, opts.PayloadCases)
+		origins := appendVariantPayloadProjections(base.ValueOrigins, node.Expr, opts.ExprType, opts.PayloadCases)
+		origins = appendIndirectProjection(origins, node.Expr, opts.ExprType)
 		dependencies := append([]*symbols.Symbol(nil), base.Dependencies...)
 		if _, rangeIndex := node.Index.(*ast.RangeExpr); rangeIndex {
 			origins = appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
@@ -224,9 +230,19 @@ func appendIndirectProjection(origins []Origin, base ast.Expr, exprType ExprType
 	return appendOriginProjection(origins, OriginProjection{Kind: OriginPointee})
 }
 
-func appendVariantPayloadProjections(origins []Origin, base ast.Expr, payloadCases func(ast.Expr) []int) []Origin {
+func appendVariantPayloadProjections(
+	origins []Origin,
+	base ast.Expr,
+	exprType ExprTypeFunc,
+	payloadCases func(ast.Expr) []int,
+) []Origin {
 	if payloadCases == nil {
 		return origins
+	}
+	if exprType != nil {
+		if _, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(base))); reference {
+			return origins
+		}
 	}
 	return VariantPayloadOrigins(origins, payloadCases(base))
 }

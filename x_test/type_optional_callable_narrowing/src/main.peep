@@ -1,0 +1,7 @@
+fn CallOptional(callable: ?fn() -> i32) -> ?i32 {
+    if callable == none {
+        return none;
+    }
+    let result: ?i32 = callable();
+    return result;
+}

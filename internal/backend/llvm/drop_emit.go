@@ -20,6 +20,16 @@ func emitDropValue(b *llvmBuilder, value llvmValue, typeID ir.TypeID) {
 	if b == nil || b.emitter == nil || b.emitter.mod == nil {
 		return
 	}
+	if name := b.emitter.dropHelpers[typeID]; name != "" {
+		void := &llvmLayout{Text: "void", Kind: llvmLayoutVoid}
+		function := llvmFunctionLayout(void, []*llvmLayout{value.Layout})
+		b.call(b.value(name, function), []llvmValue{value})
+		return
+	}
+	emitDropValueInline(b, value, typeID)
+}
+
+func emitDropValueInline(b *llvmBuilder, value llvmValue, typeID ir.TypeID) {
 	typ, ok := b.emitter.mod.Types.Type(typeID)
 	if !ok {
 		return
@@ -101,6 +111,37 @@ func emitDropValue(b *llvmBuilder, value llvmValue, typeID ir.TypeID) {
 			emitDropValue(b, field, fieldType)
 		}
 	}
+}
+
+func (e *llvmEmitter) emitNamedDropHelpers(out *strings.Builder) {
+	if e == nil || e.mod == nil || e.mod.Types == nil || out == nil {
+		return
+	}
+	e.dropHelpers = make(map[ir.TypeID]string)
+	ids := e.mod.Types.NamedTypeIDs()
+	for _, id := range ids {
+		if typeNeedsDrop(e.mod.Types, id) {
+			e.dropHelpers[id] = "@peeper_drop_" + strings.TrimPrefix(e.layout(id).Text, "%peeper.type.")
+		}
+	}
+	if len(e.dropHelpers) == 0 {
+		return
+	}
+	void := &llvmLayout{Text: "void", Kind: llvmLayoutVoid}
+	for _, id := range ids {
+		name := e.dropHelpers[id]
+		if name == "" {
+			continue
+		}
+		layout := e.layout(id)
+		fmt.Fprintf(out, "define private void %s(%s %%value) {\n", name, layout.Text)
+		builder := newLLVMBuilder(out, e, -1)
+		builder.namedLabel("entry")
+		emitDropValueInline(builder, builder.value("%value", layout), id)
+		builder.retVoid(void)
+		out.WriteString("}\n")
+	}
+	out.WriteString("\n")
 }
 
 func emitInterfacePayloadDropThunk(out *strings.Builder, emitter *llvmEmitter, makeVal *mir.InterfaceMake) {
@@ -251,79 +292,79 @@ func emitOwnedPointerFree(b *llvmBuilder, value llvmValue, targetType ir.TypeID)
 	emitAllocatorDeallocate(b, desc, rawData, size, b.value("8", llvmScalarLayout("i32")))
 }
 
+type runtimeTypeProperty uint8
+
+const (
+	typePropertyNeedsDrop runtimeTypeProperty = iota
+	typePropertyCarriesAllocator
+	typePropertyNeedsRawFree
+)
+
 func typeNeedsDrop(types *ir.TypeTable, id ir.TypeID) bool {
-	typ, ok := types.Type(id)
-	if !ok {
-		return false
-	}
-	switch typ.Kind {
-	case ir.TypeOwnedPtr, ir.TypeString:
-		return true
-	case ir.TypeVariant:
-		for _, variantCase := range typ.Cases {
-			if variantCase.Payload != ir.InvalidType && typeNeedsDrop(types, variantCase.Payload) {
-				return true
-			}
-		}
-	case ir.TypeArray:
-		return typ.Length == "" || typeNeedsDrop(types, typ.Elem)
-	case ir.TypeStruct:
-		for _, field := range typ.Fields {
-			if typeNeedsDrop(types, field.Type) {
-				return true
-			}
-		}
-	}
-	return false
+	return typeHasRuntimeProperty(types, id, typePropertyNeedsDrop, make(map[ir.TypeID]bool))
 }
 
 func typeCarriesAllocatorID(types *ir.TypeTable, id ir.TypeID) bool {
-	typ, ok := types.Type(id)
-	if !ok {
-		return false
-	}
-	switch typ.Kind {
-	case ir.TypeString:
-		return true
-	case ir.TypeOwnedPtr:
-		return !isInterfaceType(types, typ.Elem)
-	case ir.TypeVariant:
-		for _, variantCase := range typ.Cases {
-			if variantCase.Payload != ir.InvalidType && typeCarriesAllocatorID(types, variantCase.Payload) {
-				return true
-			}
-		}
-	case ir.TypeArray:
-		return typ.Length == "" || typeCarriesAllocatorID(types, typ.Elem)
-	case ir.TypeStruct:
-		for _, field := range typ.Fields {
-			if typeCarriesAllocatorID(types, field.Type) {
-				return true
-			}
-		}
-	}
-	return false
+	return typeHasRuntimeProperty(types, id, typePropertyCarriesAllocator, make(map[ir.TypeID]bool))
 }
 
 func typeNeedsRawFreeID(types *ir.TypeTable, id ir.TypeID) bool {
+	return typeHasRuntimeProperty(types, id, typePropertyNeedsRawFree, make(map[ir.TypeID]bool))
+}
+
+func typeHasRuntimeProperty(
+	types *ir.TypeTable,
+	id ir.TypeID,
+	property runtimeTypeProperty,
+	visiting map[ir.TypeID]bool,
+) bool {
+	if types == nil || id == ir.InvalidType || visiting[id] {
+		return false
+	}
 	typ, ok := types.Type(id)
 	if !ok {
 		return false
 	}
+	visiting[id] = true
+	defer delete(visiting, id)
+
+	switch property {
+	case typePropertyNeedsDrop:
+		if typ.Kind == ir.TypeOwnedPtr || typ.Kind == ir.TypeString {
+			return true
+		}
+	case typePropertyCarriesAllocator:
+		if typ.Kind == ir.TypeString || typ.Kind == ir.TypeOwnedPtr && !isInterfaceType(types, typ.Elem) {
+			return true
+		}
+	case typePropertyNeedsRawFree:
+		if typ.Kind == ir.TypeOwnedPtr && isInterfaceType(types, typ.Elem) {
+			return false
+		}
+	}
+
 	switch typ.Kind {
 	case ir.TypeOwnedPtr:
-		return !isInterfaceType(types, typ.Elem) && typeNeedsRawFreeID(types, typ.Elem)
+		if property == typePropertyNeedsRawFree {
+			return typeHasRuntimeProperty(types, typ.Elem, property, visiting)
+		}
+		return false
+	case ir.TypeReference:
+		return false
 	case ir.TypeVariant:
 		for _, variantCase := range typ.Cases {
-			if variantCase.Payload != ir.InvalidType && typeNeedsRawFreeID(types, variantCase.Payload) {
+			if variantCase.Payload != ir.InvalidType && typeHasRuntimeProperty(types, variantCase.Payload, property, visiting) {
 				return true
 			}
 		}
 	case ir.TypeArray:
-		return typ.Length == "" || typeNeedsRawFreeID(types, typ.Elem)
+		if typ.Length == "" {
+			return true
+		}
+		return typeHasRuntimeProperty(types, typ.Elem, property, visiting)
 	case ir.TypeStruct:
 		for _, field := range typ.Fields {
-			if typeNeedsRawFreeID(types, field.Type) {
+			if typeHasRuntimeProperty(types, field.Type, property, visiting) {
 				return true
 			}
 		}
