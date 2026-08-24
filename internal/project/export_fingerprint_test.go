@@ -176,13 +176,28 @@ func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
 
 func TestConstantKeyIncludesTypeAndValue(t *testing.T) {
 	i32, _ := constvalue.NewIntText("1", "i32")
+	i32Two, _ := constvalue.NewIntText("2", "i32")
 	i64, _ := constvalue.NewIntText("1", "i64")
 	text, _ := constvalue.NewString("a:b", "str")
+	leftReady, _ := constvalue.NewVariant("left::Status", "Status", 0, []constvalue.Value{i32})
+	leftWaiting, _ := constvalue.NewVariant("left::Status", "Status", 1, nil)
+	rightReady, _ := constvalue.NewVariant("right::Status", "Status", 0, []constvalue.Value{i32})
+	leftReadyTwo, _ := constvalue.NewVariant("left::Status", "Status", 0, []constvalue.Value{i32Two})
 
 	if constantKey(i32) == constantKey(i64) {
 		t.Fatal("integer type did not change constant key")
 	}
 	if got := constantKey(text); got != `str:"a:b"` {
 		t.Fatalf("string constant key = %q", got)
+	}
+	base := constantKey(leftReady)
+	for name, value := range map[string]constvalue.Value{
+		"case":     leftWaiting,
+		"identity": rightReady,
+		"field":    leftReadyTwo,
+	} {
+		if base == constantKey(value) {
+			t.Fatalf("variant %s did not change constant key", name)
+		}
 	}
 }

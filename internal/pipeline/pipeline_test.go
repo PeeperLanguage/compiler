@@ -629,6 +629,58 @@ fn main() -> i32 { return Value; }
 	}
 }
 
+func TestTypecheckedPhaseFinalizesNamedVariantConstants(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `enum Status {
+	Ready: { code: i32, enabled: bool },
+	Waiting,
+}
+const Ready: Status = Status::Ready{ code = 7, enabled = true };
+const Waiting: Status = Status::Waiting;
+const ReadyIsReady: bool = Ready is Status::Ready;
+const WaitingIsReady: bool = Waiting is Status::Ready;
+`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+	for entry.Phase < phase.Typechecked {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
+		}
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	readySymbol, found := entry.ModuleScope.LookupLocal("Ready")
+	if !found || readySymbol == nil {
+		t.Fatal("missing const symbol Ready")
+	}
+	ready, ok := entry.Semantics.ConstValues[readySymbol.ID].(*constvalue.VariantConst)
+	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Semantics.ConstValues[readySymbol.ID])
+	}
+	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
+	if !ok || code.Text() != "7" {
+		t.Fatalf("Ready.code = %#v, want i32 7", ready.FieldValues()[0])
+	}
+	assertPipelineBoolConst(t, entry, "ReadyIsReady", true)
+	assertPipelineBoolConst(t, entry, "WaitingIsReady", false)
+}
+
+func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, want bool) {
+	t.Helper()
+	sym, found := module.ModuleScope.LookupLocal(name)
+	if !found || sym == nil {
+		t.Fatalf("missing const symbol %s", name)
+	}
+	value, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.BoolConst)
+	if !ok || value == nil || value.Bool() != want {
+		t.Fatalf("%s = %#v, want bool %t", name, module.Semantics.ConstValues[sym.ID], want)
+	}
+}
+
 func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt

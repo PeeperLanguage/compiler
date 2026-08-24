@@ -357,11 +357,14 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{
 		sym.ID: value,
 	})
-	if out == nil || len(out.StaticData) != 1 {
-		t.Fatalf("expected one static entry, got %#v", out)
+	if out == nil || len(out.StaticData) != 2 {
+		t.Fatalf("expected byte backing and typed static entry, got %#v", out)
 	}
-	entry := out.StaticData[0]
-	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Value != "puts" || entry.Align != 8 {
+	if backing := out.StaticData[0]; backing.Constant != nil || backing.Bytes != "puts" {
+		t.Fatalf("unexpected cstr backing entry: %#v", backing)
+	}
+	entry := out.StaticData[1]
+	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Constant != value || entry.Align != 8 {
 		t.Fatalf("unexpected static entry: %#v", entry)
 	}
 }
@@ -387,8 +390,67 @@ func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 		t.Fatalf("expected one static entry, got %#v", out)
 	}
 	entry := out.StaticData[0]
-	if entry.Type != mirTypes.f64 || entry.Value != "3.0" {
+	if entry.Type != mirTypes.f64 || entry.Constant != value {
 		t.Fatalf("unexpected float static entry: %#v", entry)
+	}
+}
+
+func TestGenerateMIRStaticDataPreservesTypedVariantConst(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	payload := types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}}})
+	result := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result", Identity: "test::Result",
+		Cases: []ir.VariantCase{{Name: "Ok", Payload: payload}, {Name: "Pending"}},
+	})
+	mod := &hir.Module{Name: "test", Types: types}
+	scope := symbols.NewScope(nil)
+	sym := symbols.New("Selected", symbols.SymbolConst, nil, nil)
+	sym.BindType(&typeinfo.DefinedType{
+		Name: "Result", Identity: "test::Result", Kind: typeinfo.DefinedKindEnum,
+		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{
+			{Name: "Ok", Payload: &typeinfo.StructType{Fields: []typeinfo.Field{{Name: "value", Type: &typeinfo.IntegerType{Signed: true, Bits: 32}}}}},
+			{Name: "Pending"},
+		}},
+	})
+	if err := scope.Declare(sym); err != nil {
+		t.Fatalf("declare const: %v", err)
+	}
+	field, ok := constvalue.NewIntText("42", "i32")
+	if !ok {
+		t.Fatal("NewIntText failed")
+	}
+	value, ok := constvalue.NewVariant("test::Result", "Result", 0, []constvalue.Value{field})
+	if !ok {
+		t.Fatal("NewVariant failed")
+	}
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{sym.ID: value})
+	if out == nil || len(out.StaticData) != 1 {
+		t.Fatalf("expected one static entry, got %#v", out)
+	}
+	entry := out.StaticData[0]
+	if entry.Type != result || entry.Constant != value {
+		t.Fatalf("variant static entry = %#v, want typed constant", entry)
+	}
+}
+
+func TestStaticEntryForConstUsesVariantNominalIdentity(t *testing.T) {
+	types := ir.NewTypeTable()
+	left := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Status", Identity: "left::Status",
+		Cases: []ir.VariantCase{{Name: "Ready"}},
+	})
+	types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Status", Identity: "right::Status",
+		Cases: []ir.VariantCase{{Name: "Ready"}},
+	})
+	value, ok := constvalue.NewVariant("left::Status", "Status", 0, nil)
+	if !ok {
+		t.Fatal("NewVariant failed")
+	}
+	entry, ok := staticEntryForConst(types, symbols.New("Selected", symbols.SymbolConst, nil, nil), value)
+	if !ok || entry.Type != left {
+		t.Fatalf("variant static type = %d, %t; want left nominal type %d", entry.Type, ok, left)
 	}
 }
 

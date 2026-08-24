@@ -118,6 +118,32 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
 	fnType := typeinfo.FuncTypeFromDeclWithOptions(decl, opts)
+	if _, external := ast.FunctionLinkName(decl, ""); external {
+		type externTypeSite struct {
+			typ  typeinfo.Type
+			site ast.Node
+		}
+		types := make([]externTypeSite, 0, len(fnType.Params)+1)
+		if fnType.Return != nil {
+			types = append(types, externTypeSite{typ: fnType.Return, site: decl.ReturnType})
+		}
+		params := decl.ParamsWithReceiver()
+		for index, typ := range fnType.Params {
+			site := ast.Node(decl)
+			if index < len(params) && params[index].Type != nil {
+				site = params[index].Type
+			}
+			types = append(types, externTypeSite{typ: typ, site: site})
+		}
+		for _, entry := range types {
+			if !typeinfo.ContainsNamedEnum(entry.typ) {
+				continue
+			}
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+				"named enums cannot cross extern boundaries", ast.LocOf(entry.site),
+				"define a foreign representation after enum FFI rules are specified")
+		}
+	}
 	if !c.checkCallableReturn(decl.ReturnType, decl, fnType, decl.ReturnOrigins, false) {
 		return
 	}

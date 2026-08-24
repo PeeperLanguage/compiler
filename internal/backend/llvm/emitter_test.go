@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
@@ -159,6 +160,32 @@ func TestLLVMLayoutUsesTypedVariantCaseSlots(t *testing.T) {
 	}
 	if layout.VariantTag != 0 || layout.VariantPayloads[0] != 1 || layout.VariantPayloads[1] != 2 {
 		t.Fatalf("variant physical fields = tag %d, payloads %#v", layout.VariantTag, layout.VariantPayloads)
+	}
+}
+
+func TestGenerateLLVMIRRendersTypedVariantStaticWithInactiveSlotsZeroed(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
+	result := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result", Identity: "test::Result",
+		Cases: []ir.VariantCase{{Name: "Ok", Payload: i32}, {Name: "Error", Payload: boolType}, {Name: "Pending"}},
+	})
+	payload := constvalue.NewBool(true)
+	value, ok := constvalue.NewVariant("test::Result", "Result", 1, []constvalue.Value{payload})
+	if !ok {
+		t.Fatal("NewVariant failed")
+	}
+	mod := &mir.Module{
+		Name: "test", FilePath: unixTestPath, Types: types,
+		StaticData: []*mir.StaticEntry{{Name: "@Selected", Type: result, Constant: value, Align: 4}},
+	}
+	want := "@Selected = constant { i8, i32, i1 } { i8 1, i32 zeroinitializer, i1 true }, align 4"
+	for _, targetInfo := range []target.Info{testLinux386, testLinuxAMD64} {
+		irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetInfo, false)
+		if !strings.Contains(irText, want) {
+			t.Fatalf("%d-bit typed variant static missing %q:\n%s", targetInfo.PointerBits, want, irText)
+		}
 	}
 }
 

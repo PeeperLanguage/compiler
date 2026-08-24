@@ -2,7 +2,6 @@ package mir
 
 import (
 	"fmt"
-	"strings"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
@@ -10,7 +9,6 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
 
@@ -60,7 +58,9 @@ func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.R
 				continue
 			}
 			if sym.Kind == symbols.SymbolConst {
-				entry, ok := staticEntryForConst(in.Types, sym, constValues[sym.ID])
+				value := constValues[sym.ID]
+				internConstantStrings(out, value)
+				entry, ok := staticEntryForConst(in.Types, sym, value)
 				if ok {
 					out.StaticData = append(out.StaticData, entry)
 				}
@@ -248,15 +248,12 @@ func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constva
 	if types == nil || sym == nil || value == nil {
 		return nil, false
 	}
-	valueText, ok := constStaticValueText(value)
-	if !ok {
-		return nil, false
-	}
 	typeText := value.TypeText()
-	if sym.Type != nil {
-		typeText = typeinfo.TypeText(typeinfo.Underlying(sym.Type))
+	abiKey := typeText
+	if variant, ok := value.(*constvalue.VariantConst); ok && variant != nil && variant.NominalIdentity() != "" {
+		abiKey = "variant:" + variant.NominalIdentity()
 	}
-	typ, ok := types.LookupText(typeText)
+	typ, ok := types.LookupABIKey(abiKey)
 	if !ok {
 		return nil, false
 	}
@@ -265,48 +262,30 @@ func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constva
 		align = 8
 	}
 	return &StaticEntry{
-		Name:  fmt.Sprintf("@%s$%d", sym.Name, sym.ID),
-		Type:  typ,
-		Value: valueText,
-		Align: align,
+		Name:     fmt.Sprintf("@%s$%d", sym.Name, sym.ID),
+		Type:     typ,
+		Constant: value,
+		Align:    align,
 	}, true
 }
 
-func constStaticValueText(value constvalue.Value) (string, bool) {
-	switch v := value.(type) {
-	case *constvalue.IntConst:
-		if v == nil {
-			return "", false
-		}
-		return v.Text(), true
-	case *constvalue.FloatConst:
-		if v == nil {
-			return "", false
-		}
-		return llvmFloatConstText(v.Text()), true
-	case *constvalue.BoolConst:
-		if v == nil {
-			return "", false
-		}
-		if v.Bool() {
-			return "true", true
-		}
-		return "false", true
+func internConstantStrings(module *Module, value constvalue.Value) {
+	if module == nil || value == nil {
+		return
+	}
+	switch constant := value.(type) {
 	case *constvalue.StringConst:
-		if v == nil {
-			return "", false
+		if constant != nil {
+			module.InternString(constant.Text(), 1)
 		}
-		return v.Text(), true
-	default:
-		return "", false
+	case *constvalue.VariantConst:
+		if constant == nil {
+			return
+		}
+		for _, field := range constant.FieldValues() {
+			internConstantStrings(module, field)
+		}
 	}
-}
-
-func llvmFloatConstText(value string) string {
-	if strings.ContainsAny(value, ".eE") {
-		return value
-	}
-	return value + ".0"
 }
 
 func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {

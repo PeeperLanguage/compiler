@@ -412,6 +412,75 @@ func TestHandleRenameMatchesQualifiedTypeMember(t *testing.T) {
 	}
 }
 
+func TestVariantDefinitionAndRenameUseChildSymbol(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `enum Result {
+	Ok,
+	Pending,
+}
+fn inspect(value: Result) {
+	let made = Result::__CURSOR__Ok;
+	if value is Result::Ok {}
+	match value {
+		Result::Ok => {}
+		Result::Pending => {}
+	}
+}
+`
+	clean, position := markerPosition(t, src)
+	state := NewServerState()
+	state.RootDir = root
+	state.Cache[filePath] = clean
+	if _, module := state.recompile(filePath); module == nil {
+		t.Fatal("expected compiled enum module")
+	}
+	locations, err := state.HandleDefinition(DefinitionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     position,
+	}})
+	if err != nil {
+		t.Fatalf("HandleDefinition failed: %v", err)
+	}
+	if len(locations) != 1 || locations[0].Range.Start.Line != 1 {
+		t.Fatalf("variant definition locations = %#v, want declaration line 1", locations)
+	}
+	edit, err := state.HandleRename(RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     position,
+		NewName:      "Success",
+	})
+	if err != nil {
+		t.Fatalf("HandleRename failed: %v", err)
+	}
+	edits := edit.Changes[DocumentURI(pathToURI(filePath))]
+	if len(edits) != 4 {
+		t.Fatalf("variant rename edits = %#v, want declaration plus three uses", edits)
+	}
+}
+
+func TestHoverShowsExactCaseFieldType(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `enum Choice {
+	Number: { value: i32 },
+	Text: { value: cstr },
+}
+fn read(choice: Choice) -> cstr {
+	if choice is Choice::Text {
+		return choice.__CURSOR__value;
+	}
+	return c"";
+}
+`
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, filePath, src)
+	if hover == nil || !strings.Contains(hover.Contents.Value, "(expr): cstr") {
+		t.Fatalf("exact-case field hover = %#v, want cstr", hover)
+	}
+}
+
 func TestHandleRenameMatchesSelectorField(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)

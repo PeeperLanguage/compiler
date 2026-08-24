@@ -1,0 +1,23 @@
+import "runtime_enum_constants/left";
+import "runtime_enum_constants/right";
+
+enum Result {
+    Ok: {
+        value: i32,
+        enabled: bool,
+    },
+    Pending,
+}
+
+const Selected: Result = Result::Ok{
+    value = 42,
+    enabled = true,
+};
+const SelectedIsOk: bool = Selected is Result::Ok;
+
+fn main() -> i32 {
+    if SelectedIsOk && (Selected is Result::Ok) {
+        return left::Read() + right::Read();
+    }
+    return 0;
+}

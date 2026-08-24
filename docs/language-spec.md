@@ -113,6 +113,99 @@ including pointer payloads. Optional-to-optional equality, fallback operators,
 explicit unwrap syntax, optional chaining, and optional patterns are not part of
 current language surface. Niche layout remains separate future work.
 
+## Generic Named Types And Enums
+
+Structs, enums, interfaces, and transparent type aliases may declare type
+parameters. Every use supplies exact explicit arguments, including through
+imports and nesting: `Box<i32>`, `pkg::Box<i32>`, and `Box<Box<i32>>`. Generic
+functions, methods, constraints, defaults, inference, and monomorphization are
+not part of current language surface.
+
+Named enums declare ordered PascalCase variants. A data variant owns one
+anonymous named-field payload schema; that schema is not a source-visible type.
+A payloadless variant has no data block:
+
+```peep
+enum Result<T> {
+    Ok: {
+        value: T,
+    },
+    Error: {
+        message: cstr,
+    },
+    Pending,
+}
+```
+
+Construction always names enum and variant. Generic arguments are mandatory:
+
+```peep
+let ok = Result<i32>::Ok{ value = 42 }
+let pending = Result<i32>::Pending
+```
+
+Data variants require braces and every field exactly once. Payloadless variants
+forbid braces. A variant is a case of its nominal enum, never a type, struct,
+function, or callable constructor. `.Ok`, `.Ok{...}`, `Result::Ok(...)`, and a
+variant in type position are invalid. Existing struct literals remain
+`.Point{...}` or `.{...}`; `Point{...}` is not struct syntax.
+
+At an unparenthesized control-header boundary, a fully named braced variant
+literal must be parenthesized so body braces remain unambiguous:
+
+```peep
+if value == (Result<i32>::Ok{ value = 1 }) {
+}
+```
+
+`value is Result<i32>::Ok` is a nonconsuming nominal case-membership test.
+Stable subjects gain case-set facts on CFG edges: true keeps tested case, false
+removes it, joins union possible cases, and an empty set makes an edge
+unreachable. When one data case remains, its fields are available through enum
+value (`value.field`). Same-named fields across cases stay inaccessible until
+one exact case is proven. Optional `none` tests use same internal case-set flow
+while preserving `?T` and `none` source syntax.
+
+`match` is an exhaustive statement. Subject evaluates once; every variant must
+appear exactly once, with fully named paths, `=>`, and block bodies:
+
+```peep
+match result {
+    Result<i32>::Ok{ value = payload } => {
+        use(payload)
+    }
+    Result<i32>::Error{ message = message } => {
+        report(message)
+    }
+    Result<i32>::Pending => {
+        wait()
+    }
+}
+```
+
+Data fields may be omitted. `field = local` creates an arm-scoped binding and
+`field = _` explicitly discards that field. Wildcards, guards, alternatives,
+nested patterns, shorthand bindings, fallthrough, and value-producing matches
+are not supported. Ownership-bearing temporary subjects must first be bound to
+a named place.
+
+An enum copies only when every payload field in every case copies. Copyable and
+shared-reference pattern reads preserve carrier. Moving or discarding move-only
+fields from a direct named local or parameter consumes whole carrier, drops
+omitted owned fields on selected arm, and permits later whole-carrier
+reinitialization. Partial moves from enum fields, indexes, pointees, temporaries,
+or other projected carriers are rejected.
+
+Copyable enum constructions are valid constants, and constant `is` tests fold.
+Named enums are rejected anywhere inside foreign `#[extern]` parameter or return
+types until explicit representation and ABI rules exist.
+
+Runtime enum layout is tagged. Optionals remain exactly `{i1 present, T value}`.
+Named enums use tag plus one typed payload slot for every data case; construction
+zeroes inactive slots and drop switches on tag to destroy only active payload.
+Tag is `i8` through 256 cases, `i16` through 65,536 cases, and `i32` afterward.
+Compact union storage and optional niche layouts remain separate work.
+
 ## Numeric Literals And Conversions
 
 Numeric literals may carry an attached explicit source type:

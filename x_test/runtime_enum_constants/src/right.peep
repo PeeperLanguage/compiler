@@ -1,0 +1,19 @@
+enum Status {
+    Ready: {
+        enabled: bool,
+    },
+    Waiting,
+}
+
+const Selected: Status = Status::Ready{
+    enabled = true,
+};
+
+fn Read() -> i32 {
+    if Selected is Status::Ready {
+        if Selected.enabled {
+            return 22;
+        }
+    }
+    return 0;
+}

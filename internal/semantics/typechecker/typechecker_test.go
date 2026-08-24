@@ -2232,6 +2232,25 @@ fn useCallback(callback: fn(value: &Box) -> &Box from value, value: &Box) -> &Bo
 	}
 }
 
+func TestExternSignaturesRejectNestedNamedEnums(t *testing.T) {
+	diag := checkTypeSource(t, `enum Status { Ready, Waiting }
+struct Envelope { status: Status }
+
+#[extern]
+fn direct(value: Status) -> Status;
+
+#[extern]
+fn nested(value: ?Envelope, values: [2]Status, pointer: *Status, reference: &Status);
+`)
+	out := diag.EmitAllToString()
+	if count := strings.Count(out, "named enums cannot cross extern boundaries"); count != 6 {
+		t.Fatalf("extern enum diagnostic count = %d, want 6:\n%s", count, out)
+	}
+	if !strings.Contains(out, "define a foreign representation after enum FFI rules are specified") {
+		t.Fatalf("missing enum FFI help:\n%s", out)
+	}
+}
+
 func TestInvalidReferenceReturnContractsRejected(t *testing.T) {
 	src := `
 fn missing(value: &i32) -> &i32;

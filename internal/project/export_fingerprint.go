@@ -183,6 +183,13 @@ func constantKey(value constvalue.Value) string {
 		return fmt.Sprintf("bool:%t", node.Bool())
 	case *constvalue.StringConst:
 		return node.TypeText() + ":" + fmt.Sprintf("%q", node.Text())
+	case *constvalue.VariantConst:
+		values := node.FieldValues()
+		fields := make([]string, len(values))
+		for index, field := range values {
+			fields[index] = constantKey(field)
+		}
+		return fmt.Sprintf("variant(%s:%s:%d:%s)", node.NominalIdentity(), node.TypeText(), node.CaseIndex(), strings.Join(fields, ","))
 	default:
 		panic(fmt.Sprintf("export fingerprint: unhandled constant %T", value))
 	}

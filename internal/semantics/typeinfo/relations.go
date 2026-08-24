@@ -234,6 +234,13 @@ func ContainsStoredReference(t Type) bool {
 	})
 }
 
+func ContainsNamedEnum(t Type) bool {
+	return containsType(t, typeTraversal{followDefined: true, followCallable: true}, func(candidate Type, _ bool) bool {
+		descriptor, ok := VariantDescriptorOf(candidate)
+		return ok && descriptor.Family == VariantFamilyNamed
+	})
+}
+
 type typeTraversal struct {
 	followDefined  bool
 	followCallable bool

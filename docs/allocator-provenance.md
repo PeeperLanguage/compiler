@@ -149,6 +149,7 @@ scoped allocator contexts remain later work.
 | `Allocator` | `allocator` |
 | `*T` | `{T* data, allocator}` |
 | `?*T` | `{i1 present, {T* data, allocator} value}` |
+| named enum | `{tag, typed payload slot per data case}`; inactive slots zeroed |
 | `[]T` | `{T* data, usize length, usize capacity, allocator}` |
 | `str` | `{byte* data, usize length, allocator}` |
 | `*Iface` | `{rawptr data, rawptr dispatch, allocator}` |
@@ -216,6 +217,9 @@ allocator. Nested owners inside payload retain and use their own handles.
 - Reject extern signatures that produce or consume allocation-owning carriers
   until explicit foreign-ownership ABI exists. Imported Peeper functions remain
   valid because they use Peeper carrier ABI.
+- Reject named enums anywhere inside extern parameters or returns, regardless of
+  current payload ownership, until enum representation and foreign ABI rules are
+  explicit. Raw-pointer and `cstr` bridges remain separate approved boundaries.
 
 ### HIR
 
@@ -335,7 +339,8 @@ can replace the current malloc/free bridge without source or IR model changes.
 
 Imported Peeper functions remain valid because they use compiler-generated owner
 carriers. Bodyless foreign declarations may use rawptr, cstr, references, and
-scalars only. Rawptr values are never automatically freed or adopted as owners.
+scalars only. Named enums remain rejected even when all cases are copyable.
+Rawptr values are never automatically freed or adopted as owners.
 
 Stop for review when all safe owner-producing paths attach provenance and no
 backend path emits unconditional global `free` for an owned carrier.

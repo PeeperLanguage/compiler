@@ -1,0 +1,11 @@
+enum Status {
+    Ready,
+    Waiting,
+}
+
+struct Envelope {
+    status: Status,
+}
+
+#[extern]
+fn ReadStatus(value: ?Envelope) -> Status;

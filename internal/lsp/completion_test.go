@@ -438,6 +438,89 @@ func TestCompletionQualifiedImportOnlyExposesExports(t *testing.T) {
 	}
 }
 
+func TestCompletionQualifiedEnumListsVariants(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	state := NewServerState()
+	state.RootDir = root
+	source := `enum Result<T> {
+	Ok: { value: T },
+	Pending,
+}
+fn main() {
+	let value = Result<i32>::__CURSOR__;
+}
+`
+	items := completionAtSource(t, state, filePath, source)
+	if got := completionLabels(items); !slices.Equal(got, []string{"Ok", "Pending"}) {
+		t.Fatalf("enum variant completion labels = %v", got)
+	}
+	for _, item := range items {
+		if item.Kind != completionKindConstant {
+			t.Fatalf("enum variant completion item = %#v, want constant kind", item)
+		}
+	}
+}
+
+func TestCompletionImportedQualifiedEnumListsVariants(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
+	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: { value: T }, Pending }\n")
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, mainPath, `import "app/result";
+fn main() {
+	let value = result::Result<i32>::__CURSOR__;
+}
+`)
+	if got := completionLabels(items); !slices.Equal(got, []string{"Ok", "Pending"}) {
+		t.Fatalf("imported enum variant completion labels = %v", got)
+	}
+}
+
+func TestCompletionMatchListsOnlyMissingArms(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, filePath, `enum Result {
+	Ok: { value: i32 },
+	Error: { message: cstr },
+	Pending,
+}
+fn inspect(value: Result) {
+	match value {
+		Result::Ok{ value = _ } => {}
+		__CURSOR__
+	}
+}
+`)
+	if got := completionLabels(items); !slices.Equal(got, []string{"Result::Error", "Result::Pending"}) {
+		t.Fatalf("missing match-arm completion labels = %v", got)
+	}
+}
+
+func TestCompletionRecompilesChangedEnumSchema(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	state := NewServerState()
+	state.RootDir = root
+	initial := "enum Status { Ready }\nfn main() { let value = Status::__CURSOR__; }\n"
+	if got := completionLabels(completionAtSource(t, state, filePath, initial)); !slices.Equal(got, []string{"Ready"}) {
+		t.Fatalf("initial enum completion labels = %v", got)
+	}
+	before := state.LastCtx
+	updated := "enum Status { Waiting }\nfn main() { let value = Status::__CURSOR__; }\n"
+	if got := completionLabels(completionAtSource(t, state, filePath, updated)); !slices.Equal(got, []string{"Waiting"}) {
+		t.Fatalf("updated enum completion labels = %v", got)
+	}
+	if state.LastCtx == before {
+		t.Fatal("enum schema change reused stale compiler snapshot")
+	}
+}
+
 func TestCompletionImportPathsAndReplacementRanges(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/ir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
@@ -27,24 +28,23 @@ type InterfaceThunk struct {
 }
 
 type StaticEntry struct {
-	Name  string
-	Type  ir.TypeID
-	Value string
-	Bytes bool
-	Align int
+	Name     string
+	Type     ir.TypeID
+	Bytes    string
+	Constant constvalue.Value
+	Align    int
 }
 
 func (m *Module) InternString(value string, align int) string {
 	for _, entry := range m.StaticData {
-		if entry.Bytes && entry.Value == value && entry.Align == align {
+		if entry.Constant == nil && entry.Bytes == value && entry.Align == align {
 			return entry.Name
 		}
 	}
 	name := fmt.Sprintf("@.data.%d", len(m.StaticData))
 	m.StaticData = append(m.StaticData, &StaticEntry{
 		Name:  name,
-		Value: value,
-		Bytes: true,
+		Bytes: value,
 		Align: align,
 	})
 	return name
@@ -609,7 +609,11 @@ func (m *Module) Text() string {
 	b.WriteString(m.Name)
 	b.WriteString("\n")
 	for _, data := range m.StaticData {
-		fmt.Fprintf(&b, "%s = constant type#%d %q, align %d\n", data.Name, data.Type, data.Value, data.Align)
+		value := data.Bytes
+		if data.Constant != nil {
+			value = data.Constant.TypeText()
+		}
+		fmt.Fprintf(&b, "%s = constant type#%d %q, align %d\n", data.Name, data.Type, value, data.Align)
 	}
 	if len(m.StaticData) > 0 {
 		b.WriteString("\n")

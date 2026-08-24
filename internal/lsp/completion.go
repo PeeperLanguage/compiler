@@ -117,6 +117,9 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 	case completionNames:
 		semanticCursor := source.NewPosition()
 		semanticCursor.Advance(sourceText[:parsed.cursor])
+		if items, matchContext := matchArmCompletionItems(ctx, module, semanticCursor, replacement); matchContext {
+			return items, nil
+		}
 		return lexicalCompletionItems(module, semanticCursor, parsed.prefix, replacement), nil
 	default:
 		return []CompletionItem{}, nil
@@ -208,10 +211,7 @@ func parseCompletionContext(text string, position Position) parsedCompletionCont
 	}
 	if start >= 2 && text[start-2:start] == "::" {
 		qualifierEnd := start - 2
-		qualifierStart := qualifierEnd
-		for qualifierStart > 0 && isIdentifierByte(text[qualifierStart-1]) {
-			qualifierStart--
-		}
+		qualifierStart := completionQualifierStart(text, qualifierEnd)
 		if qualifierStart == qualifierEnd {
 			return parsedCompletionContext{}
 		}
@@ -221,6 +221,35 @@ func parseCompletionContext(text string, position Position) parsedCompletionCont
 		return parsedCompletionContext{}
 	}
 	return parsedCompletionContext{kind: completionNames, prefix: prefix, start: start, end: identifierEnd, cursor: offset}
+}
+
+func completionQualifierStart(text string, end int) int {
+	depth := 0
+	start := end
+	for start > 0 {
+		ch := text[start-1]
+		switch {
+		case ch == '>':
+			depth++
+		case ch == '<':
+			if depth == 0 {
+				return start
+			}
+			depth--
+		case depth > 0:
+			// Balanced type applications may contain nested type syntax and spaces.
+		case isIdentifierByte(ch) || ch == ':':
+		case ch == ' ' || ch == '\t':
+			return start
+		default:
+			return start
+		}
+		start--
+	}
+	if depth != 0 {
+		return end
+	}
+	return start
 }
 
 func cursorLexicalState(text string, offset int) (completionLexicalState, int) {
@@ -404,6 +433,15 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 	if ctx == nil || module == nil {
 		return []CompletionItem{}
 	}
+	if enumSymbol := completionEnumSymbol(ctx, module, qualifier); enumSymbol != nil {
+		var items []CompletionItem
+		for _, sym := range enumSymbol.Scope.Symbols() {
+			if sym != nil && sym.Kind == symbols.SymbolVariant && strings.HasPrefix(sym.Name, prefix) {
+				items = append(items, symbolCompletionItem(sym, replacement))
+			}
+		}
+		return sortCompletionItems(items)
+	}
 	resolved, ok := module.Imports[qualifier]
 	if !ok || resolved.DependencyAlias != "" {
 		return []CompletionItem{}
@@ -419,6 +457,142 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		}
 	}
 	return sortCompletionItems(items)
+}
+
+func completionEnumSymbol(ctx *project.CompilerContext, module *project.Module, qualifier string) *symbols.Symbol {
+	segments := completionQualifierSegments(qualifier)
+	if len(segments) == 0 || len(segments) > 2 {
+		return nil
+	}
+	typeName := strings.TrimSpace(segments[len(segments)-1])
+	if application := strings.IndexByte(typeName, '<'); application >= 0 {
+		typeName = strings.TrimSpace(typeName[:application])
+	}
+	for _, ch := range typeName {
+		if !ascii.IsAlnum(ch) && ch != '_' {
+			return nil
+		}
+	}
+	if typeName == "" {
+		return nil
+	}
+	var sym *symbols.Symbol
+	if len(segments) == 1 {
+		if module.ModuleScope != nil {
+			sym, _ = module.ModuleScope.Lookup(typeName)
+		}
+	} else if resolved, ok := project.LookupImportedSymbol(ctx, module, segments[0], typeName); ok {
+		sym = resolved.Symbol
+	}
+	if sym == nil || sym.Kind != symbols.SymbolType || sym.Scope == nil {
+		return nil
+	}
+	if _, enum := sym.ASTNode.(*ast.EnumDecl); !enum {
+		return nil
+	}
+	return sym
+}
+
+func completionQualifierSegments(qualifier string) []string {
+	depth := 0
+	start := 0
+	var segments []string
+	for index := 0; index < len(qualifier); index++ {
+		switch qualifier[index] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case ':':
+			if depth == 0 && index+1 < len(qualifier) && qualifier[index+1] == ':' {
+				segments = append(segments, strings.TrimSpace(qualifier[start:index]))
+				start = index + 2
+				index++
+			}
+		}
+		if depth < 0 {
+			return nil
+		}
+	}
+	if depth != 0 {
+		return nil
+	}
+	segments = append(segments, strings.TrimSpace(qualifier[start:]))
+	return segments
+}
+
+func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Module, cursor source.Position, replacement Range) ([]CompletionItem, bool) {
+	if module == nil || module.Semantics == nil {
+		return nil, false
+	}
+	var match *ast.MatchStmt
+	walkModuleAST(module, func(node ast.Node, _ ast.Node) bool {
+		candidate, ok := node.(*ast.MatchStmt)
+		if !ok || !locContains(ast.LocOf(candidate), cursor.Line, cursor.Column) {
+			return true
+		}
+		for _, arm := range candidate.Arms {
+			if arm != nil && locContains(ast.LocOf(arm.Body), cursor.Line, cursor.Column) {
+				return true
+			}
+		}
+		match = candidate
+		return true
+	})
+	if match == nil || match.Subject == nil {
+		return nil, false
+	}
+	subjectType := module.EffectiveExprType(match.Subject.ID())
+	descriptor, ok := typeinfo.VariantDescriptorOf(subjectType)
+	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return nil, false
+	}
+	qualifier := typeinfo.TypeText(subjectType)
+	if len(match.Arms) > 0 && match.Arms[0] != nil && match.Arms[0].Case != nil {
+		if typePath, _, valid := match.Arms[0].Case.EnumVariantMember(); valid {
+			qualifier = ast.TypeText(typePath)
+		}
+	}
+	enumSymbol := completionEnumSymbol(ctx, module, qualifier)
+	if enumSymbol == nil {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(match.Arms))
+	for _, arm := range match.Arms {
+		if arm == nil || arm.Case == nil {
+			continue
+		}
+		_, caseName, valid := arm.Case.EnumVariantMember()
+		if valid && caseName != nil {
+			seen[caseName.Name] = struct{}{}
+		}
+	}
+	items := make([]CompletionItem, 0, len(descriptor.Cases))
+	for _, variantCase := range descriptor.Cases {
+		if _, matched := seen[variantCase.Name]; matched {
+			continue
+		}
+		variantSymbol, _ := enumSymbol.Scope.LookupLocal(variantCase.Name)
+		if variantSymbol == nil {
+			continue
+		}
+		label := qualifier + "::" + variantCase.Name
+		newText := label
+		if payload, data := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType); data && payload != nil {
+			fields := make([]string, len(payload.Fields))
+			for index, field := range payload.Fields {
+				fields[index] = fmt.Sprintf("%s = ${%d:%s}", field.Name, index+1, field.Name)
+			}
+			newText += "{ " + strings.Join(fields, ", ") + " }"
+		}
+		newText += " => {\n\t${0}\n}"
+		items = append(items, CompletionItem{
+			Label: label, Kind: completionKindConstant,
+			Detail: renderSymbol(variantSymbol, symbolRenderContext{}), SortText: "0" + label,
+			InsertTextFormat: 2, TextEdit: TextEdit{Range: replacement, NewText: newText},
+		})
+	}
+	return sortCompletionItems(items), true
 }
 
 func operationCompletionItems(ctx *project.CompilerContext, module *project.Module, cursorPosition source.Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
