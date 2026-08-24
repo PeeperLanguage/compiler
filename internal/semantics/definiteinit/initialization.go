@@ -5,6 +5,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/symbols"
 )
 
@@ -28,6 +29,7 @@ func Check(
 	nodes map[ast.NodeID]ast.Node,
 	blockScopes map[ast.NodeID]*symbols.Scope,
 	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
+	matches map[ast.NodeID]flowresult.Match,
 	diag *diagnostics.DiagnosticBag,
 ) {
 	if graphs == nil {
@@ -41,7 +43,7 @@ func Check(
 		if fn == nil {
 			continue
 		}
-		analyzeFunction(fn, graph, nodes, blockScopes, resolvedSymbols, diag)
+		analyzeFunction(fn, graph, nodes, blockScopes, resolvedSymbols, matches, diag)
 	}
 }
 
@@ -51,6 +53,7 @@ func analyzeFunction(
 	nodes map[ast.NodeID]ast.Node,
 	blockScopes map[ast.NodeID]*symbols.Scope,
 	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
+	matches map[ast.NodeID]flowresult.Match,
 	diag *diagnostics.DiagnosticBag,
 ) *functionResult {
 	sites, order, tracked := indexSites(fn, graph, nodes, blockScopes)
@@ -91,10 +94,29 @@ func analyzeFunction(
 			if sites[edge.To] == nil {
 				continue
 			}
+			edgeState := copyState(out)
+			if edge.Kind == cfg.EdgeVariantCase {
+				match, found := matches[ast.NodeID(node.cfgSite.NodeID)]
+				if found {
+					for _, arm := range match.Arms {
+						if arm.Case != edge.Case {
+							continue
+						}
+						for _, field := range arm.Fields {
+							if field.Binding == nil {
+								continue
+							}
+							edgeState[field.Binding.ID] = struct{}{}
+							tracked[field.Binding.ID] = field.Binding.Name
+						}
+						break
+					}
+				}
+			}
 			current, exists := result.In[edge.To]
-			merged := copyState(out)
+			merged := edgeState
 			if exists {
-				merged = intersectState(current, out)
+				merged = intersectState(current, edgeState)
 			}
 			if exists && equalState(current, merged) {
 				continue

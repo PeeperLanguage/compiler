@@ -58,6 +58,30 @@ type VariantFieldAccess struct {
 	Type    typeinfo.Type
 }
 
+// Match is typechecker-owned case and binding evidence consumed by CFG and
+// later semantic phases without resolving source paths again.
+type Match struct {
+	SubjectID ast.NodeID
+	EnumType  typeinfo.Type
+	Cases     []typeinfo.VariantCase
+	Arms      []MatchArm
+}
+
+type MatchArm struct {
+	ArmID   ast.NodeID
+	BodyID  ast.NodeID
+	Case    int
+	Payload *typeinfo.StructType
+	Fields  []MatchField
+}
+
+type MatchField struct {
+	Field   int
+	Type    typeinfo.Type
+	Binding *symbols.Symbol
+	Discard bool
+}
+
 type Result struct {
 	SiteFacts              map[ir.NodeID]map[cfg.SiteID]Facts
 	ExprTypes              map[ast.NodeID]typeinfo.Type

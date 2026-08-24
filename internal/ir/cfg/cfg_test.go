@@ -24,7 +24,7 @@ func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *ast.Module {
 
 func TestModuleIndexesFunctionBySourceIdentity(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	module := BuildModule(testModule(body, nil))
+	module := BuildModule(testModule(body, nil), nil)
 	if len(module.Functions) != 1 || module.Function(ir.NodeID(1)) != module.Functions[0] {
 		t.Fatalf("CFG function index = %#v, want source NodeID lookup", module)
 	}
@@ -36,7 +36,7 @@ func TestModuleIndexesFunctionBySourceIdentity(t *testing.T) {
 func TestBuildModulePreservesLexicalScopeExits(t *testing.T) {
 	nested := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 20}}
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{nested}}
-	graph := BuildModule(testModule(body, nil)).Functions[0]
+	graph := BuildModule(testModule(body, nil), nil).Functions[0]
 	if graph.Entry == nil || len(graph.Entry.Sites) != 1 || graph.Entry.Sites[0].Kind != SiteScopeExit || graph.Entry.Sites[0].NodeID != 20 {
 		t.Fatalf("entry sites = %#v, want nested scope exit", graph.Entry.Sites)
 	}
@@ -59,7 +59,7 @@ func TestBuildModulePreservesTerminatorSourceIdentity(t *testing.T) {
 	}
 	ret := &ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}, Location: location}
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{branch, ret}}
-	graph := BuildModule(testModule(body, nil)).Functions[0]
+	graph := BuildModule(testModule(body, nil), nil).Functions[0]
 	branchTerm, ok := graph.Entry.Terminator.(*Branch)
 	if !ok || branchTerm.NodeID != 30 || branchTerm.ConditionID != 31 {
 		t.Fatalf("branch = %#v, want source nodes 30 and 31", graph.Entry.Terminator)
@@ -83,7 +83,7 @@ func TestBuildModuleCreatesCanonicalSiteAdjacency(t *testing.T) {
 		Else:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 33}},
 	}
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{branch}}
-	graph := BuildModule(testModule(body, nil)).Functions[0]
+	graph := BuildModule(testModule(body, nil), nil).Functions[0]
 	if len(graph.Entry.Sites) != 1 {
 		t.Fatalf("entry sites = %#v, want one branch site", graph.Entry.Sites)
 	}
@@ -126,13 +126,52 @@ func TestFinalizeSitesLabelsVariantCaseEdges(t *testing.T) {
 	}
 }
 
+func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
+	match := &ast.MatchStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
+		Subject:      &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Name: "value"},
+		Arms: []*ast.MatchArm{
+			{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}, Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 33}}},
+			{NodeIDHolder: ast.NodeIDHolder{NodeID: 34}, Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 35}}},
+		},
+	}
+	after := &ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}, Expr: &ast.NumberLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 41}, Value: "1"}}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{match, after}}
+	graph := BuildModule(testModule(body, nil), func(matchID ast.NodeID) ([]int, bool) {
+		if matchID != 30 {
+			t.Fatalf("match evidence query = %d, want 30", matchID)
+		}
+		return []int{1, 0}, true
+	}).Functions[0]
+	switchTerm, ok := graph.Entry.Terminator.(*SwitchVariant)
+	if !ok || switchTerm.NodeID != 30 || len(switchTerm.Targets) != 2 {
+		t.Fatalf("match terminator = %#v", graph.Entry.Terminator)
+	}
+	if switchTerm.Targets[0].Case != 1 || switchTerm.Targets[1].Case != 0 {
+		t.Fatalf("switch targets = %#v, want semantic case indexes [1, 0]", switchTerm.Targets)
+	}
+	firstJump, firstFallsThrough := switchTerm.Targets[0].Target.Terminator.(*Jump)
+	secondJump, secondFallsThrough := switchTerm.Targets[1].Target.Terminator.(*Jump)
+	if !firstFallsThrough || !secondFallsThrough || firstJump.Target != secondJump.Target {
+		t.Fatalf("match arms do not share join: first=%#v second=%#v", firstJump, secondJump)
+	}
+	join := firstJump.Target
+	if len(join.Sites) == 0 || join.Sites[0].NodeID != 40 {
+		t.Fatalf("match join sites = %#v, want following statement", join.Sites)
+	}
+	if len(graph.Entry.Sites) != 1 || len(graph.Entry.Sites[0].Successors) != 2 ||
+		graph.Entry.Sites[0].Successors[0].Case != 1 || graph.Entry.Sites[0].Successors[1].Case != 0 {
+		t.Fatalf("match case edges = %#v", graph.Entry.Sites)
+	}
+}
+
 func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 2, Column: 10})
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{
 		&ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}, Location: location},
 		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 41}, Expr: &ast.NumberLit{Value: "1"}, Location: location},
 	}}
-	module := BuildModule(testModule(body, nil))
+	module := BuildModule(testModule(body, nil), nil)
 	graph := module.Functions[0]
 	found := false
 	for _, block := range graph.Blocks {
@@ -154,7 +193,7 @@ func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 
 func TestAnalyzeDoesNotRebuildFinalizedTopology(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	module := BuildModule(testModule(body, nil))
+	module := BuildModule(testModule(body, nil), nil)
 	graph := module.Functions[0]
 	before := append([]*Block(nil), graph.Entry.Predecessors...)
 	graph.Entry.Sites = nil
@@ -168,7 +207,7 @@ func TestAnalyzeReportsMissingReturn(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
 	returnType := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: 11}, Name: "i32"}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(BuildModule(testModule(body, returnType)), diag, nil)
+	Analyze(BuildModule(testModule(body, returnType), nil), diag, nil)
 	if !hasDiagnosticCode(diag, diagnostics.ErrMissingReturn) {
 		t.Fatalf("diagnostics = %#v, want missing return", diag.Diagnostics())
 	}
@@ -183,7 +222,7 @@ func TestAnalyzeReportsConstantIfCondition(t *testing.T) {
 		Location:     location,
 	}}}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(BuildModule(testModule(body, nil)), diag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
+	Analyze(BuildModule(testModule(body, nil), nil), diag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
 		if conditionID != 31 || scopeID != 10 {
 			t.Fatalf("constant condition query = (%d, %d), want (31, 10)", conditionID, scopeID)
 		}
@@ -204,7 +243,7 @@ func TestAnalyzeDoesNotReportConstantLoopCondition(t *testing.T) {
 	}}}
 	diag := diagnostics.NewDiagnosticBag()
 	queries := 0
-	Analyze(BuildModule(testModule(body, nil)), diag, func(ir.NodeID, ir.NodeID) (bool, bool) {
+	Analyze(BuildModule(testModule(body, nil), nil), diag, func(ir.NodeID, ir.NodeID) (bool, bool) {
 		queries++
 		return false, true
 	})

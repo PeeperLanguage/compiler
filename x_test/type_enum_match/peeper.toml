@@ -1,0 +1,6 @@
+name = "type_enum_match"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

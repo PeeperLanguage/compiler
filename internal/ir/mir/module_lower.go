@@ -15,15 +15,22 @@ import (
 )
 
 type lowerer struct {
-	module         *Module
-	fn             *Function
-	tmp            int
-	nextBlockID    int
-	current        *Block
-	location       *source.Location
-	temporaryDrops []ValueRef
-	cleanup        *ownershipresult.CleanupPlan
-	symbolValues   map[symbols.SymbolID]*RefName
+	module          *Module
+	fn              *Function
+	tmp             int
+	nextBlockID     int
+	current         *Block
+	location        *source.Location
+	temporaryDrops  []ValueRef
+	cleanup         *ownershipresult.CleanupPlan
+	symbolValues    map[symbols.SymbolID]*RefName
+	variantEntries  map[*cfg.Block]variantEntry
+	variantSubjects map[ir.NodeID]ValueRef
+}
+
+type variantEntry struct {
+	switchID  ir.NodeID
+	caseBlock hir.VariantCaseBlock
 }
 
 func (l *lowerer) isVoid(id ir.TypeID) bool {
@@ -102,7 +109,12 @@ func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, sta
 		Blocks:     make([]*Block, 0, len(graph.Blocks)),
 		Location:   sourceFn.Location,
 	}
-	l := &lowerer{module: mod, fn: fn, cleanup: cleanup, symbolValues: make(map[symbols.SymbolID]*RefName)}
+	l := &lowerer{
+		module: mod, fn: fn, cleanup: cleanup,
+		symbolValues:    make(map[symbols.SymbolID]*RefName),
+		variantEntries:  make(map[*cfg.Block]variantEntry),
+		variantSubjects: make(map[ir.NodeID]ValueRef),
+	}
 	for _, param := range fn.Params {
 		if param.SymbolID != 0 {
 			l.symbolValues[param.SymbolID] = &RefName{Name: param.Name, Type: param.Type}
@@ -129,12 +141,39 @@ func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, sta
 		return nil, false
 	}
 	for _, source := range graph.Blocks {
+		if source == nil {
+			continue
+		}
+		term, switched := source.Terminator.(*cfg.SwitchVariant)
+		if !switched {
+			continue
+		}
+		switchStmt, ok := statements[term.NodeID].(*hir.SwitchVariant)
+		if !ok || len(switchStmt.Cases) != len(term.Targets) {
+			return nil, false
+		}
+		for index, target := range term.Targets {
+			if blocks[target.Target] == nil || switchStmt.Cases[index].Case != target.Case || switchStmt.Cases[index].Body == nil {
+				return nil, false
+			}
+			l.variantEntries[target.Target] = variantEntry{switchID: term.NodeID, caseBlock: switchStmt.Cases[index]}
+			for _, binding := range switchStmt.Cases[index].Bindings {
+				if binding.SymbolID != 0 {
+					l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Type, Location: switchStmt.Cases[index].Body.Location}
+				}
+			}
+		}
+	}
+	for _, source := range graph.Blocks {
 		block := blocks[source]
 		if block == nil {
 			continue
 		}
 		l.current = block
 		l.location = source.Location
+		if entry, found := l.variantEntries[source]; found && !l.lowerVariantBindings(entry) {
+			return nil, false
+		}
 		for _, site := range source.Sites {
 			switch site.Kind {
 			case cfg.SiteStatement:
@@ -153,6 +192,35 @@ func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, sta
 		}
 	}
 	return fn, true
+}
+
+func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
+	if l == nil || l.current == nil {
+		return false
+	}
+	subject := l.variantSubjects[entry.switchID]
+	if subject == nil {
+		return false
+	}
+	if len(entry.caseBlock.Bindings) == 0 {
+		return true
+	}
+	if entry.caseBlock.PayloadType == ir.InvalidType {
+		return false
+	}
+	for _, binding := range entry.caseBlock.Bindings {
+		place := &Place{
+			Root: subject,
+			Projections: []PlaceProjection{
+				{Kind: PlaceProjectionVariantPayload, Case: entry.caseBlock.Case, Type: entry.caseBlock.PayloadType, Location: entry.caseBlock.Body.Location},
+				{Kind: PlaceProjectionField, FieldIndex: binding.FieldIndex, Type: binding.Type, Location: entry.caseBlock.Body.Location},
+			},
+			Type: binding.Type, Location: entry.caseBlock.Body.Location,
+		}
+		value := l.load(&l.current.Instrs, place, binding.Type, entry.caseBlock.Body.Location)
+		l.appendInstr(&l.current.Instrs, &Assign{Name: binding.Name, Value: asValueExpr(value)})
+	}
+	return true
 }
 
 func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {
@@ -381,6 +449,7 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		temporaryMark := len(l.temporaryDrops)
 		value := l.lowerExpr(switchStmt.Value, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		l.variantSubjects[term.NodeID] = value
 		l.setBlockTerm(l.current, &SwitchVariant{Value: value, Targets: targets})
 		return true
 	case *cfg.Return:

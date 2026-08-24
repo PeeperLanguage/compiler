@@ -427,6 +427,7 @@ func (a *flowAnalyzer) run() {
 			out := copyFlowState(next)
 			if site.Kind == cfg.SiteTerminator {
 				a.applyConditionEdge(site, edge.Kind, &out, events)
+				a.applyVariantCaseEdge(site, edge, &out)
 			}
 			if !out.reachable {
 				continue
@@ -445,6 +446,62 @@ func (a *flowAnalyzer) run() {
 				queued[edge.To] = true
 			}
 		}
+	}
+}
+
+func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *flowState) {
+	if a == nil || site == nil || st == nil || edge.Kind != cfg.EdgeVariantCase {
+		return
+	}
+	match, found := a.module.Semantics.Matches[ast.NodeID(site.NodeID)]
+	if !found {
+		return
+	}
+	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
+	if subject == nil {
+		return
+	}
+	scope := a.module.Semantics.BlockScopes[ast.NodeID(site.ScopeID)]
+	if scope == nil {
+		scope = a.functionScope
+	}
+	checker := &checker{ctx: a.ctx, module: a.module, flow: &flowCheck{result: a.result, state: st}}
+	resolution := checker.resolveFlowPlace(scope, subject, *st)
+	if resolution.Stable && len(resolution.StorageOrigins) > 0 {
+		restrictVariantFact(st, variantStateFact{
+			origins:      resolution.StorageOrigins,
+			cases:        []int{edge.Case},
+			caseCount:    len(match.Cases),
+			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
+		})
+	}
+	for _, arm := range match.Arms {
+		if arm.Case != edge.Case || arm.Payload == nil {
+			continue
+		}
+		payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
+		for _, field := range arm.Fields {
+			if field.Binding == nil || field.Field < 0 || field.Field >= len(arm.Payload.Fields) {
+				continue
+			}
+			fieldOrigins := place.FieldOrigins(payloadOrigins, arm.Payload.Fields[field.Field].Name)
+			bindingOrigins := []place.Origin{{Root: field.Binding}}
+			if _, _, reference := typeinfo.ReferenceValueTarget(field.Type); reference {
+				valueOrigins := originValues(st.references, fieldOrigins)
+				if len(valueOrigins) == 0 {
+					valueOrigins = fieldOrigins
+				}
+				st.references = setOriginFact(st.references, bindingOrigins, valueOrigins)
+			}
+			if _, raw := typeinfo.Underlying(field.Type).(*typeinfo.RawPtrType); raw {
+				valueOrigins := originValues(st.rawPointers, fieldOrigins)
+				if len(valueOrigins) == 0 {
+					valueOrigins = fieldOrigins
+				}
+				st.rawPointers = setOriginFact(st.rawPointers, bindingOrigins, valueOrigins)
+			}
+		}
+		return
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func analyzeInitializationSource(t *testing.T, source string) (*functionResult, *diagnostics.DiagnosticBag) {
+func analyzeInitializationSource(t *testing.T, source string) (*functionResult, *diagnostics.DiagnosticBag, *project.Module) {
 	t.Helper()
 	const filePath = "definite_init_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
@@ -38,7 +38,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST)
+	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
 		t.Fatal("choose function symbol missing")
@@ -57,13 +57,14 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		module.TypedASTNodes,
 		module.Semantics.BlockScopes,
 		module.Semantics.ResolvedSymbols,
+		module.Semantics.Matches,
 		diag,
 	)
-	return result, diag
+	return result, diag, module
 }
 
 func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
-	result, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	result, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -81,7 +82,7 @@ func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
 }
 
 func TestInitializationRejectsContinuingUninitializedBranch(t *testing.T) {
-	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -97,7 +98,7 @@ func TestInitializationRejectsContinuingUninitializedBranch(t *testing.T) {
 }
 
 func TestInitializationAcceptsAssignmentOnBothBranches(t *testing.T) {
-	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -112,7 +113,7 @@ func TestInitializationAcceptsAssignmentOnBothBranches(t *testing.T) {
 }
 
 func TestInitializationLoopMayExecuteZeroTimes(t *testing.T) {
-	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	for flag {
 		value = 7;
@@ -125,7 +126,7 @@ func TestInitializationLoopMayExecuteZeroTimes(t *testing.T) {
 }
 
 func TestInitializationAcceptsDirectAssignment(t *testing.T) {
-	_, diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	value = 7;
 	return value;
@@ -133,6 +134,43 @@ func TestInitializationAcceptsDirectAssignment(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
+}
+
+func TestInitializationDefinesMatchPatternBindingOnCaseEdge(t *testing.T) {
+	result, diag, module := analyzeInitializationSource(t, `enum Result {
+	Ok: { value: i32 },
+	Pending,
+}
+
+fn choose(result: Result) -> i32 {
+	match result {
+		Result::Ok{ value = payload } => {
+			return payload;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	binding := module.Semantics.ResolvedSymbols[match.Arms[0].Fields[0].Binding.ID()]
+	returnID := ir.NodeID(match.Arms[0].Body.Stmts[0].ID())
+	for _, block := range module.CFG.Function(ir.NodeID(fn.ID())).Blocks {
+		for _, cfgSite := range block.Sites {
+			if cfgSite.NodeID != returnID {
+				continue
+			}
+			if _, initialized := result.In[cfgSite.ID][binding.ID]; !initialized {
+				t.Fatalf("pattern binding absent at arm return: state=%#v", result.In[cfgSite.ID])
+			}
+			return
+		}
+	}
+	t.Fatal("match arm return site missing")
 }
 
 func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {

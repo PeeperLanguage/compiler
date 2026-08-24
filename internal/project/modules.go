@@ -93,6 +93,7 @@ type SemanticInfo struct {
 	ExpandedDefaultBindings  map[ast.NodeID]struct{}
 	ExprTypes                map[ast.NodeID]typeinfo.Type
 	CaseTests                map[ast.NodeID]flowresult.CaseTest
+	Matches                  map[ast.NodeID]flowresult.Match
 	ConstValues              map[symbols.SymbolID]constvalue.Value
 	MethodSets               map[string][]*symbols.Symbol
 	MethodSymbol             map[ast.NodeID]*symbols.Symbol
@@ -155,6 +156,7 @@ func NewSemanticInfo() *SemanticInfo {
 		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
 		CaseTests:                make(map[ast.NodeID]flowresult.CaseTest),
+		Matches:                  make(map[ast.NodeID]flowresult.Match),
 		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
 		MethodSets:               make(map[string][]*symbols.Symbol),
 		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
@@ -164,6 +166,26 @@ func NewSemanticInfo() *SemanticInfo {
 		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
 		OperationFunctions:       make([]*symbols.Symbol, 0),
 	}
+}
+
+// MatchCases exposes resolved case indexes without leaking match artifacts
+// into CFG's source-topology package.
+func (s *SemanticInfo) MatchCases(id ast.NodeID) ([]int, bool) {
+	if s == nil {
+		return nil, false
+	}
+	match, found := s.Matches[id]
+	if !found {
+		return nil, false
+	}
+	cases := make([]int, len(match.Arms))
+	for index, arm := range match.Arms {
+		if arm.Case < 0 || arm.Case >= len(match.Cases) {
+			return nil, false
+		}
+		cases[index] = arm.Case
+	}
+	return cases, true
 }
 
 func (m *Module) ResetSemanticData() {

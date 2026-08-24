@@ -238,6 +238,42 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 		}
 		appendBlock(module, scope, loop.Body, node.Body, returnType, ctx)
 		out.Stmts = append(out.Stmts, loop)
+	case *ast.MatchStmt:
+		evidence, found := module.Semantics.Matches[node.ID()]
+		if !found || len(evidence.Arms) != len(node.Arms) {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "match statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+			return
+		}
+		switchStmt := &hir.SwitchVariant{
+			Value:    lowerASTExpr(ctx, module, scope, node.Subject, evidence.EnumType),
+			Cases:    make([]hir.VariantCaseBlock, 0, len(evidence.Arms)),
+			NodeID:   hir.NodeID(node.ID()),
+			Location: ast.LocOf(node),
+		}
+		for armIndex, arm := range evidence.Arms {
+			sourceArm := node.Arms[armIndex]
+			caseBlock := hir.VariantCaseBlock{
+				Case: arm.Case,
+				Body: &hir.Block{Stmts: make([]hir.Stmt, 0), NodeID: hir.NodeID(sourceArm.Body.ID()), Location: ast.LocOf(sourceArm.Body)},
+			}
+			if arm.Payload != nil {
+				caseBlock.PayloadType = loweredTypeID(ctx, module, arm.Payload)
+			}
+			for _, field := range arm.Fields {
+				if field.Binding == nil {
+					continue
+				}
+				caseBlock.Bindings = append(caseBlock.Bindings, hir.VariantBinding{
+					FieldIndex: field.Field,
+					Name:       symbolName(module, field.Binding),
+					Type:       loweredTypeID(ctx, module, field.Type),
+					SymbolID:   field.Binding.ID,
+				})
+			}
+			appendBlock(module, scope, caseBlock.Body, sourceArm.Body, returnType, ctx)
+			switchStmt.Cases = append(switchStmt.Cases, caseBlock)
+		}
+		out.Stmts = append(out.Stmts, switchStmt)
 
 	case *ast.ReturnStmt:
 		if node.Value == nil {

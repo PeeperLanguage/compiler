@@ -248,6 +248,11 @@ func VariantPayloadOrigins(origins []Origin, cases []int) []Origin {
 	return out
 }
 
+// FieldOrigins projects aggregate storage through one named field.
+func FieldOrigins(origins []Origin, name string) []Origin {
+	return appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: name})
+}
+
 func appendOriginProjection(origins []Origin, projection OriginProjection) []Origin {
 	out := CloneOrigins(origins)
 	for i := range out {

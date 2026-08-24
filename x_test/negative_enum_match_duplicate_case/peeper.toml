@@ -1,0 +1,7 @@
+name = "negative_enum_match_duplicate_case"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["duplicate match arm for `Ok`"]

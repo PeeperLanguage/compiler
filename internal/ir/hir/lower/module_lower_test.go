@@ -41,7 +41,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST)
+	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -1085,5 +1085,42 @@ fn main() {
 	pendingValue, ok := pendingBinding.Value.(*ir.VariantMake)
 	if !ok || pendingValue.Case != 1 || pendingValue.Payload != nil {
 		t.Fatalf("Pending value = %#v, want payloadless case 1", pendingBinding.Value)
+	}
+}
+
+func TestGenerateHIRLowersMatchFromSemanticEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_match_test"+peeper.SourceExt, "hir_enum_match_test", `enum Result {
+	Ok: { value: i32, code: i32 },
+	Pending
+}
+
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok{ value = payload } => {
+			return payload;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	switchStmt, ok := out.Funcs[0].Body.Stmts[0].(*hir.SwitchVariant)
+	if !ok || len(switchStmt.Cases) != 2 || switchStmt.Cases[0].Case != 0 || switchStmt.Cases[1].Case != 1 {
+		t.Fatalf("match HIR = %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	if out.Types.Text(switchStmt.Value.TypeID()) != "Result" || len(switchStmt.Cases[0].Bindings) != 1 {
+		t.Fatalf("match subject/bindings = %#v", switchStmt)
+	}
+	binding := switchStmt.Cases[0].Bindings[0]
+	if binding.FieldIndex != 0 || binding.SymbolID == 0 || out.Types.Text(binding.Type) != "i32" {
+		t.Fatalf("pattern binding = %#v", binding)
+	}
+	ret := switchStmt.Cases[0].Body.Stmts[0].(*hir.Return)
+	ident, ok := ret.Value.(*ir.Ident)
+	if !ok || ident.Name != binding.Name {
+		t.Fatalf("pattern return = %#v, binding = %#v", ret.Value, binding)
 	}
 }

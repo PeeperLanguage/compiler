@@ -39,7 +39,7 @@ func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST)
+	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
 }
@@ -82,6 +82,39 @@ fn Read(choice: Choice) -> i32 {
 		if len(payload.Cases) != 1 {
 			t.Fatalf("field payload evidence = %#v, want one exact case", payload)
 		}
+	}
+}
+
+func TestNamedEnumMatchCaseEdgeRefinesExactField(t *testing.T) {
+	module, diag := checkFlowSource(t, `enum Result {
+	Ok: { value: i32 },
+	Error: { message: str },
+	Pending,
+}
+
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok{} => {
+			return result.value;
+		}
+		Result::Error{} => {
+			return 1;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected match flow diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	selector := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
+	fieldType := module.EffectiveExprType(selector.ID())
+	access, found := module.Flow.VariantFields[selector.ID()]
+	if !found || access.Case != 0 || typeinfo.TypeText(fieldType) != "i32" || typeinfo.TypeText(access.Type) != "i32" {
+		t.Fatalf("match field type = %s, access = %#v", typeinfo.TypeText(fieldType), access)
 	}
 }
 

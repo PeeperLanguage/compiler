@@ -113,3 +113,13 @@ func LookupStructField(baseType Type, name string) (field Field, index int, ok b
 	}
 	return Field{}, -1, false
 }
+
+// LookupVariantCase centralizes source-case lookup over canonical descriptors.
+func LookupVariantCase(descriptor VariantDescriptor, name string) (variant VariantCase, index int, ok bool) {
+	for index, variant := range descriptor.Cases {
+		if variant.Name == name {
+			return variant, index, true
+		}
+	}
+	return VariantCase{}, -1, false
+}

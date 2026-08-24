@@ -179,7 +179,7 @@ func cfgForHIR(module *hir.Module) *cfg.Module {
 			Location:     fn.Location,
 		})
 	}
-	return cfg.BuildModule(source)
+	return cfg.BuildModule(source, nil)
 }
 
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
@@ -560,13 +560,17 @@ func TestSwitchVariantTerminatorText(t *testing.T) {
 }
 
 func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
+	variantType := mirTypes.table.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Identity: "Result",
+		Cases: []ir.VariantCase{{Name: "Pending"}, {Name: "Ready", Payload: mirTypes.valueStruct}},
+	})
 	ifStmt := &hir.If{
 		Cond: &ir.BoolLit{Value: true, Type: mirTypes.boolType},
 		Then: &hir.Block{},
 		Else: &hir.Block{},
 	}
 	fn := &hir.Function{
-		Name: "select", Params: []ir.Param{{Name: "value", Type: mirTypes.optionalI32}}, ReturnType: mirTypes.void,
+		Name: "select", Params: []ir.Param{{Name: "value", Type: variantType}}, ReturnType: mirTypes.void,
 		Body: &hir.Block{Stmts: []hir.Stmt{ifStmt}},
 	}
 	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{fn}}
@@ -577,8 +581,15 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 		t.Fatalf("fixture entry = %#v, want branch", graph.Entry.Terminator)
 	}
 	switchStmt := &hir.SwitchVariant{
-		Value:  &ir.Ident{Name: "value", Type: mirTypes.optionalI32},
-		Cases:  []hir.VariantCaseBlock{{Case: ir.OptionalAbsentCase, Body: ifStmt.Then}, {Case: ir.OptionalPresentCase, Body: ifStmt.Else.(*hir.Block)}},
+		Value: &ir.Ident{Name: "value", Type: variantType},
+		Cases: []hir.VariantCaseBlock{
+			{Case: ir.OptionalAbsentCase, Body: ifStmt.Then},
+			{
+				Case: ir.OptionalPresentCase, PayloadType: mirTypes.valueStruct,
+				Bindings: []hir.VariantBinding{{FieldIndex: 0, Name: "payload", Type: mirTypes.i32, SymbolID: 91}},
+				Body:     ifStmt.Else.(*hir.Block),
+			},
+		},
 		NodeID: ifStmt.NodeID,
 	}
 	fn.Body.Stmts[0] = switchStmt
@@ -597,6 +608,24 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 	term, ok := out.Funcs[0].Blocks[0].Term.(*SwitchVariant)
 	if !ok || len(term.Targets) != 2 || term.Targets[0].Case != ir.OptionalAbsentCase || term.Targets[1].Case != ir.OptionalPresentCase {
 		t.Fatalf("MIR switch = %#v", out.Funcs[0].Blocks[0].Term)
+	}
+	var ready *Block
+	for _, block := range out.Funcs[0].Blocks {
+		if block.ID == term.Targets[1].TargetID {
+			ready = block
+			break
+		}
+	}
+	if ready == nil || len(ready.Instrs) != 2 {
+		t.Fatalf("ready block = %#v, want payload load and binding assignment", ready)
+	}
+	loadAssign, loadOK := ready.Instrs[0].(*Assign)
+	bindingAssign, bindingOK := ready.Instrs[1].(*Assign)
+	load, loadOK := loadAssign.Value.(*Load)
+	if !loadOK || !bindingOK || bindingAssign.Name != "payload" || len(load.Place.Projections) != 2 ||
+		load.Place.Projections[0].Kind != PlaceProjectionVariantPayload || load.Place.Projections[0].Case != ir.OptionalPresentCase ||
+		load.Place.Projections[1].Kind != PlaceProjectionField || load.Place.Projections[1].FieldIndex != 0 {
+		t.Fatalf("ready instructions = %#v", ready.Instrs)
 	}
 }
 

@@ -419,14 +419,8 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(testedType), typeinfo.TypeText(valueType))))
 		return &typeinfo.InvalidType{}
 	}
-	caseIndex := -1
-	for index, variantCase := range descriptor.Cases {
-		if variantCase.Name == caseName.Name {
-			caseIndex = index
-			break
-		}
-	}
-	if caseIndex < 0 {
+	_, caseIndex, found := typeinfo.LookupVariantCase(descriptor, caseName.Name)
+	if !found {
 		return &typeinfo.InvalidType{}
 	}
 	c.recordCaseTest(node, node.Value, caseIndex, len(descriptor.Cases), true, typeinfo.VariantFamilyNamed)
@@ -783,17 +777,10 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 		return &typeinfo.InvalidType{}
 	}
 
-	caseIndex := -1
-	for index, variant := range descriptor.Cases {
-		if variant.Name == caseName.Name {
-			caseIndex = index
-			break
-		}
-	}
-	if caseIndex < 0 {
+	selected, caseIndex, found := typeinfo.LookupVariantCase(descriptor, caseName.Name)
+	if !found {
 		return &typeinfo.InvalidType{}
 	}
-	selected := descriptor.Cases[caseIndex]
 	if selected.Payload == nil {
 		if braced {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,

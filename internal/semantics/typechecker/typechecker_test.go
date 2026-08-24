@@ -257,6 +257,67 @@ func TestEnumConstructorDiagnostics(t *testing.T) {
 	}
 }
 
+func TestNamedEnumMatchRecordsExhaustiveArmEvidence(t *testing.T) {
+	module, diag := checkTypeModule(t, `enum Result {
+	Ok: { value: i32, code: i32 },
+	Error: { message: str },
+	Pending
+}
+
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok{ value = payload } => {
+			return payload;
+		}
+		Result::Error{ message = _ } => {
+			return 1;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected match diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	evidence, found := module.Semantics.Matches[match.ID()]
+	if !found || evidence.SubjectID != match.Subject.ID() || typeinfo.TypeText(evidence.EnumType) != "Result" || len(evidence.Arms) != 3 {
+		t.Fatalf("match evidence = %#v", evidence)
+	}
+	if evidence.Arms[0].Case != 0 || len(evidence.Arms[0].Fields) != 1 || evidence.Arms[0].Fields[0].Field != 0 || evidence.Arms[0].Fields[0].Binding == nil {
+		t.Fatalf("Ok arm evidence = %#v", evidence.Arms[0])
+	}
+	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Fields[0].Discard || evidence.Arms[2].Case != 2 {
+		t.Fatalf("remaining arm evidence = %#v", evidence.Arms[1:])
+	}
+}
+
+func TestNamedEnumMatchDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing case", source: `enum Result { Ok, Pending } fn Read(value: Result) { match value { Result::Ok => {} } }`, want: "match is missing case `Pending`"},
+		{name: "duplicate case", source: `enum Result { Ok, Pending } fn Read(value: Result) { match value { Result::Ok => {} Result::Ok => {} Result::Pending => {} } }`, want: "duplicate match arm for `Ok`"},
+		{name: "data without braces", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok => {} } }`, want: "data match case `Ok` requires braces"},
+		{name: "payloadless braces", source: `enum Result { Pending } fn Read(value: Result) { match value { Result::Pending{} => {} } }`, want: "payloadless match case `Pending` does not accept braces"},
+		{name: "duplicate field", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok{ value = first, value = second } => {} } }`, want: "duplicate match pattern field `value`"},
+		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok{ missing = item } => {} } }`, want: "unknown match pattern field `missing`"},
+		{name: "foreign case", source: `enum Result { Ok } enum Other { Ok } fn Read(value: Result) { match value { Other::Ok => {} } }`, want: "match arm requires Result, got Other"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
+	}
+}
+
 func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	if diag == nil {
 		return false

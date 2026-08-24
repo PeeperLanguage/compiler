@@ -172,6 +172,24 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			r.resolveExpr(scope, node.Cond)
 		}
 		r.resolveBlock(symbols.NewScope(scope), node.Body)
+	case *ast.MatchStmt:
+		r.resolveExpr(scope, node.Subject)
+		for _, arm := range node.Arms {
+			if !r.resolveVariantPath(scope, arm.Case) {
+				r.resolveScopeResolution(arm.Case, false)
+			}
+			armScope := symbols.NewScope(scope)
+			for _, field := range arm.Fields {
+				if field.Discard {
+					continue
+				}
+				r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)
+				if binding, found := armScope.LookupNode(field.Binding); found {
+					r.module.Semantics.ResolvedSymbols[field.Binding.ID()] = binding
+				}
+			}
+			r.resolveBlock(armScope, arm.Body)
+		}
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:

@@ -1,0 +1,10 @@
+enum Result {
+    Ok,
+    Pending
+}
+
+fn Read(result: Result) {
+    match result {
+        Result::Ok => {}
+    }
+}

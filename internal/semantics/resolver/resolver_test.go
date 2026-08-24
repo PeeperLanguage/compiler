@@ -111,3 +111,35 @@ func TestResolveRejectsUnknownBracedVariantQualifier(t *testing.T) {
 		t.Fatalf("expected unknown qualifier diagnostic, got:\n%s", out)
 	}
 }
+
+func TestResolveMatchPatternBindingsInsideArmScope(t *testing.T) {
+	module, diag := checkResolveSource(t, `enum Result {
+	Ok: { value: i32 },
+	Pending
+}
+
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok{ value = payload } => {
+			return payload;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected match resolution diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	binding := match.Arms[0].Fields[0].Binding
+	use := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
+	bindingSymbol := module.Semantics.ResolvedSymbols[binding.ID()]
+	if bindingSymbol == nil || module.Semantics.ResolvedSymbols[use.ID()] != bindingSymbol {
+		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Semantics.ResolvedSymbols[use.ID()])
+	}
+	if _, found := module.Semantics.BlockScopes[match.Arms[0].Body.ID()].Lookup("payload"); !found {
+		t.Fatal("pattern binding missing from arm body scope")
+	}
+}

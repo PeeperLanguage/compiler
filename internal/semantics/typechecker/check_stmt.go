@@ -6,6 +6,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -90,6 +91,8 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 			return
 		}
 		c.checkBlock(scope, node.Body, returnType)
+	case *ast.MatchStmt:
+		c.checkMatchStmt(scope, node, returnType)
 	case *ast.ExprStmt:
 		if node.Expr == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
@@ -104,6 +107,137 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		return // resolver already diagnosed unsupported statements
 	default:
 		panic(fmt.Sprintf("typechecker: unhandled statement %T", stmt))
+	}
+}
+
+func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, returnType typeinfo.Type) {
+	if c == nil || scope == nil || node == nil || node.Subject == nil {
+		return
+	}
+	subjectType := c.requireValueType(node.Subject, c.typeWholeCarrierExpr(scope, node.Subject, nil), "match subject")
+	if c.siteOnly || typeinfo.IsInvalidOrUnknown(subjectType) {
+		return
+	}
+	descriptor, named := typeinfo.VariantDescriptorOf(subjectType)
+	if !named || descriptor.Family != typeinfo.VariantFamilyNamed {
+		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
+			"match subject must be a named enum, got "+typeinfo.TypeText(subjectType)))
+		return
+	}
+	evidenceComplete := true
+	if typeinfo.NeedsDrop(subjectType) && !place.IsPlaceExpr(node.Subject) {
+		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
+			"ownership-bearing match subject must be a named place").
+			WithHelp("bind subject to a local before matching it"))
+	}
+	evidence := flowresult.Match{
+		SubjectID: node.Subject.ID(),
+		EnumType:  subjectType,
+		Cases:     append([]typeinfo.VariantCase(nil), descriptor.Cases...),
+		Arms:      make([]flowresult.MatchArm, 0, len(node.Arms)),
+	}
+	seenCases := make(map[int]ast.Node, len(node.Arms))
+	for _, arm := range node.Arms {
+		if arm == nil || arm.Case == nil {
+			evidenceComplete = false
+			continue
+		}
+		armEvidence := flowresult.MatchArm{ArmID: arm.ID(), Case: -1}
+		if arm.Body != nil {
+			armEvidence.BodyID = arm.Body.ID()
+		}
+		typePath, caseName, pathOK := arm.Case.EnumVariantMember()
+		resolved := c.module.Semantics.ResolvedSymbols[arm.Case.ID()]
+		if !pathOK || caseName == nil || resolved == nil || resolved.Kind != symbols.SymbolVariant {
+			evidenceComplete = false
+			c.checkBlock(scope, arm.Body, returnType)
+			continue
+		}
+		armType := typeinfo.TypeFromSyntax(typePath, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		if typeinfo.IsInvalidOrUnknown(armType) {
+			evidenceComplete = false
+			c.checkBlock(scope, arm.Body, returnType)
+			continue
+		}
+		if !typeinfo.SameType(subjectType, armType) {
+			evidenceComplete = false
+			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
+				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(armType))))
+			c.checkBlock(scope, arm.Body, returnType)
+			continue
+		}
+		selected, caseIndex, found := typeinfo.LookupVariantCase(descriptor, caseName.Name)
+		if !found {
+			evidenceComplete = false
+			c.checkBlock(scope, arm.Body, returnType)
+			continue
+		}
+		armEvidence.Case = caseIndex
+		if previous := seenCases[caseIndex]; previous != nil {
+			c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match arm for `"+caseName.Name+"`").
+				WithCode(diagnostics.ErrInvalidStatement).
+				WithPrimaryLabel(ast.LocOf(arm.Case), "duplicate case").
+				WithSecondaryLabel(ast.LocOf(previous), "first matched here"))
+		} else {
+			seenCases[caseIndex] = arm.Case
+		}
+		if selected.Payload == nil {
+			if arm.HasData {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+					"payloadless match case `"+caseName.Name+"` does not accept braces", ast.LocOf(arm), "remove the braces")
+			}
+		} else {
+			payload, payloadOK := typeinfo.Underlying(selected.Payload).(*typeinfo.StructType)
+			if !payloadOK || payload == nil {
+				panic("named enum data case does not carry struct payload")
+			}
+			armEvidence.Payload = payload
+			if !arm.HasData {
+				c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
+					"data match case `"+caseName.Name+"` requires braces", ast.LocOf(arm), "use `{ ... }` after the case name")
+			}
+			seenFields := make(map[string]ast.Node, len(arm.Fields))
+			for _, pattern := range arm.Fields {
+				if pattern.Name == nil {
+					continue
+				}
+				name := pattern.Name.Name
+				if previous := seenFields[name]; previous != nil {
+					c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match pattern field `"+name+"`").
+						WithCode(diagnostics.ErrDuplicateField).
+						WithPrimaryLabel(ast.LocOf(pattern.Name), "duplicate field").
+						WithSecondaryLabel(ast.LocOf(previous), "first listed here"))
+					continue
+				}
+				seenFields[name] = pattern.Name
+				field, fieldIndex, fieldFound := typeinfo.LookupStructField(payload, name)
+				if !fieldFound {
+					c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
+						"unknown match pattern field `"+name+"`", ast.LocOf(pattern.Name), "")
+					continue
+				}
+				fieldEvidence := flowresult.MatchField{Field: fieldIndex, Type: field.Type, Discard: pattern.Discard}
+				if !pattern.Discard && pattern.Binding != nil {
+					fieldEvidence.Binding = c.module.Semantics.ResolvedSymbols[pattern.Binding.ID()]
+					if fieldEvidence.Binding != nil {
+						fieldEvidence.Binding.BindType(field.Type)
+					}
+				}
+				armEvidence.Fields = append(armEvidence.Fields, fieldEvidence)
+			}
+		}
+		evidence.Arms = append(evidence.Arms, armEvidence)
+		c.checkBlock(scope, arm.Body, returnType)
+	}
+	for caseIndex, variant := range descriptor.Cases {
+		if seenCases[caseIndex] != nil {
+			continue
+		}
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+			"match is missing case `"+variant.Name+"`", ast.LocOf(node), "add one arm for every enum case")
+	}
+	if evidenceComplete && len(evidence.Arms) == len(node.Arms) {
+		c.module.Semantics.Matches[node.ID()] = evidence
 	}
 }
 

@@ -49,7 +49,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST)
+	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
