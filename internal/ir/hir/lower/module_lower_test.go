@@ -157,6 +157,84 @@ func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRLowersNamedEnumCaseTestAndFieldPayload(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_flow_test"+peeper.SourceExt, "hir_enum_flow_test", `enum Choice {
+	Left: { value: i32 },
+	Right: { value: bool }
+}
+
+fn Read(choice: Choice) -> bool {
+	if choice is Choice::Right {
+		return choice.value;
+	}
+	return false;
+}`)
+	branch, ok := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	if !ok {
+		t.Fatalf("first statement = %T, want If", out.Funcs[0].Body.Stmts[0])
+	}
+	test, ok := branch.Cond.(*ir.VariantIs)
+	if !ok || test.Case != 1 || out.Types.Text(test.Value.TypeID()) != "Choice" {
+		t.Fatalf("condition = %#v, want VariantIs(Choice, Right)", branch.Cond)
+	}
+	ret := branch.Then.Stmts[0].(*hir.Return)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 2 {
+		t.Fatalf("field value = %#v, want payload then field load", ret.Value)
+	}
+	payload, field := load.Place.Projections[0], load.Place.Projections[1]
+	if payload.Kind != ir.PlaceProjectionVariantPayload || payload.Case != 1 ||
+		field.Kind != ir.PlaceProjectionField || field.FieldIndex != 0 || out.Types.Text(load.TypeID()) != "bool" {
+		t.Fatalf("field projections = %#v, want Right payload then value field", load.Place.Projections)
+	}
+}
+
+func TestGenerateHIRLowersNestedNamedEnumPayloadFields(t *testing.T) {
+	out := generateTestHIR(t, "hir_nested_enum_flow_test"+peeper.SourceExt, "hir_nested_enum_flow_test", `enum Inner {
+	Left: { value: i32 },
+	Right
+}
+
+enum Outer {
+	Wrapped: { inner: Inner },
+	Empty
+}
+
+fn Read(outer: Outer) -> i32 {
+	if outer is Outer::Wrapped {
+		if outer.inner is Inner::Left {
+			return outer.inner.value;
+		}
+	}
+	return 0;
+}`)
+	outerBranch := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	innerBranch := outerBranch.Then.Stmts[0].(*hir.If)
+	innerTest, ok := innerBranch.Cond.(*ir.VariantIs)
+	if !ok || out.Types.Text(innerTest.Value.TypeID()) != "Inner" {
+		t.Fatalf("inner condition = %#v, want VariantIs over Inner", innerBranch.Cond)
+	}
+	ret := innerBranch.Then.Stmts[0].(*hir.Return)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 4 {
+		t.Fatalf("nested field value = %#v, want two payload and two field projections", ret.Value)
+	}
+	wantKinds := []ir.PlaceProjectionKind{
+		ir.PlaceProjectionVariantPayload,
+		ir.PlaceProjectionField,
+		ir.PlaceProjectionVariantPayload,
+		ir.PlaceProjectionField,
+	}
+	for index, want := range wantKinds {
+		if load.Place.Projections[index].Kind != want {
+			t.Fatalf("projection %d = %#v, want %v", index, load.Place.Projections[index], want)
+		}
+	}
+	if load.Place.Projections[0].Case != 0 || load.Place.Projections[2].Case != 0 || out.Types.Text(load.TypeID()) != "i32" {
+		t.Fatalf("nested field projections = %#v, want Wrapped/inner/Left/value", load.Place.Projections)
+	}
+}
+
 func TestGenerateHIRKeepsProofAcrossImpossibleVariantEdge(t *testing.T) {
 	generateTestHIR(t, "hir_impossible_variant_edge_test"+peeper.SourceExt, "hir_impossible_variant_edge_test", `fn read(value: ?i32, other: ?i32) -> i32 {
 	if value != none {

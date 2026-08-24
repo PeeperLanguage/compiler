@@ -18,10 +18,15 @@ type VariantFact struct {
 	Dependencies   []symbols.SymbolID
 }
 
+type OriginFact struct {
+	StorageOrigins []place.Origin
+	ValueOrigins   []place.Origin
+}
+
 type Facts struct {
 	Variants          []VariantFact
-	ReferenceOrigins  map[symbols.SymbolID][]place.Origin
-	RawPointerOrigins map[symbols.SymbolID][]place.Origin
+	ReferenceOrigins  []OriginFact
+	RawPointerOrigins []OriginFact
 }
 
 type PayloadAccess struct {
@@ -30,26 +35,35 @@ type PayloadAccess struct {
 	Direct         bool
 }
 
-// OptionalTest is base typechecker evidence for source `none` comparisons.
-// Flow converts it into case-based VariantTest evidence.
-type OptionalTest struct {
-	SubjectID       ast.NodeID
-	PresentWhenTrue bool
+// AppliesTo distinguishes payload layers of an expression from projections
+// used to reach that expression through an enclosing variant payload.
+func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
+	return len(p.Cases) > 0 && place.SameOrigins(p.CarrierOrigins, storage)
 }
 
-type VariantTest struct {
+type CaseTest struct {
 	SubjectID    ast.NodeID
 	Case         int
 	CaseWhenTrue bool
 	CaseCount    int
 	PayloadPath  []int
+	Family       typeinfo.VariantFamily
+}
+
+type VariantFieldAccess struct {
+	Carrier ast.NodeID
+	Case    int
+	Payload *typeinfo.StructType
+	Field   int
+	Type    typeinfo.Type
 }
 
 type Result struct {
 	SiteFacts              map[ir.NodeID]map[cfg.SiteID]Facts
 	ExprTypes              map[ast.NodeID]typeinfo.Type
 	Payloads               map[ast.NodeID]PayloadAccess
-	VariantTests           map[ast.NodeID]VariantTest
+	CaseTests              map[ast.NodeID]CaseTest
+	VariantFields          map[ast.NodeID]VariantFieldAccess
 	ResolvedStorageOrigins map[ast.NodeID][]place.Origin
 	ResolvedValueOrigins   map[ast.NodeID][]place.Origin
 }

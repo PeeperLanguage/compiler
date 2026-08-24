@@ -280,6 +280,11 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
 		r.resolveExpr(scope, node.Right)
+	case *ast.IsExpr:
+		r.resolveExpr(scope, node.Value)
+		if !r.resolveVariantPath(scope, node.Case) {
+			r.resolveScopeResolution(node.Case, false)
+		}
 	case *ast.CallExpr:
 		r.resolveExpr(scope, node.Callee)
 		for _, arg := range node.Args {

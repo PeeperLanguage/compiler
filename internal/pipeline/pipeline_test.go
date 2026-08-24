@@ -703,6 +703,30 @@ func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.
 	}
 }
 
+func TestPipelineLowersCaseRefinedFieldWithConflictingSchemaTypes(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `enum Choice {
+	Number: { value: i32 },
+	Flag: { value: bool }
+}
+
+fn Read(choice: Choice) -> bool {
+	if choice is Choice::Flag {
+		return choice.value;
+	}
+	return false;
+}
+
+fn main() -> i32 {
+	if Read(Choice::Flag{ value = true }) {
+		return 0;
+	}
+	return 1;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	tests := []struct {
 		name   string

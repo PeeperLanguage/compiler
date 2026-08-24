@@ -593,7 +593,7 @@ fn bad(holder: Holder) {
 	}
 }`)
 	out := diag.EmitAllToString()
-	if count := strings.Count(out, "move-only optional payload"); count != 2 {
+	if count := strings.Count(out, "move-only variant payload"); count != 2 {
 		t.Fatalf("expected two optional partial-move diagnostics, got %d:\n%s", count, out)
 	}
 }

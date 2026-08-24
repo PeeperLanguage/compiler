@@ -9,9 +9,11 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -130,6 +132,9 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.BinaryExpr:
 		return c.typeBinaryExpr(scope, node, expected)
+
+	case *ast.IsExpr:
+		return c.typeIsExpr(scope, node)
 
 	case *ast.CallExpr:
 		return c.typeCallExpr(scope, node, expected)
@@ -309,7 +314,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		if isNoneExpr(subject) {
 			subject = node.Right
 		}
-		c.recordOptionalTest(node, subject)
+		c.recordCaseTest(node, subject, ir.OptionalPresentCase, 2, node.Op == "!=", typeinfo.VariantFamilyOptional)
 	}
 
 	if node.Op == "<<" || node.Op == ">>" {
@@ -383,6 +388,51 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	return exprType
 }
 
+func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Type {
+	if node == nil || node.Value == nil || node.Case == nil {
+		return &typeinfo.InvalidType{}
+	}
+	valueType := c.requireValueType(node.Value, c.typeWholeCarrierExpr(scope, node.Value, nil), "case-test subject")
+	if typeinfo.IsInvalidOrUnknown(valueType) {
+		return &typeinfo.InvalidType{}
+	}
+	if c.flow != nil {
+		test, found := c.module.Semantics.CaseTests[node.ID()]
+		if !found {
+			return &typeinfo.InvalidType{}
+		}
+		c.recordCaseTest(node, node.Value, test.Case, test.CaseCount, test.CaseWhenTrue, test.Family)
+		return &typeinfo.BoolType{}
+	}
+	typePath, caseName, pathOK := node.Case.EnumVariantMember()
+	resolved := c.module.Semantics.ResolvedSymbols[node.Case.ID()]
+	if !pathOK || caseName == nil || resolved == nil || resolved.Kind != symbols.SymbolVariant {
+		return &typeinfo.InvalidType{}
+	}
+	testedType := typeinfo.TypeFromSyntax(typePath, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	descriptor, variant := typeinfo.VariantDescriptorOf(testedType)
+	if !variant || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return &typeinfo.InvalidType{}
+	}
+	if !typeinfo.SameType(valueType, testedType) {
+		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
+			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(testedType), typeinfo.TypeText(valueType))))
+		return &typeinfo.InvalidType{}
+	}
+	caseIndex := -1
+	for index, variantCase := range descriptor.Cases {
+		if variantCase.Name == caseName.Name {
+			caseIndex = index
+			break
+		}
+	}
+	if caseIndex < 0 {
+		return &typeinfo.InvalidType{}
+	}
+	c.recordCaseTest(node, node.Value, caseIndex, len(descriptor.Cases), true, typeinfo.VariantFamilyNamed)
+	return &typeinfo.BoolType{}
+}
+
 func binaryResultIsBool(op string) bool {
 	switch op {
 	case "&&", "||", "==", "!=", "<", "<=", ">", ">=":
@@ -425,6 +475,45 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = method.Symbol
 		}
 		return method.Type
+	}
+	descriptor, variant := typeinfo.VariantDescriptorOf(baseType)
+	if variant && descriptor.Family == typeinfo.VariantFamilyNamed {
+		var deferred typeinfo.Type
+		conflictingTypes := false
+		for _, variantCase := range descriptor.Cases {
+			payload, _ := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
+			if field, _, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
+				if deferred == nil {
+					deferred = field.Type
+				} else if !typeinfo.SameType(deferred, field.Type) {
+					conflictingTypes = true
+				}
+			}
+		}
+		if c.flow == nil && deferred != nil {
+			if conflictingTypes {
+				return &typeinfo.UnknownType{}
+			}
+			return deferred
+		}
+		if c.flow != nil {
+			resolution := c.resolveFlowPlace(scope, node.Expr, *c.flow.state)
+			if caseIndex, exact := provenVariantCase(c.flow.state.variants, resolution.StorageOrigins, len(descriptor.Cases)); exact {
+				payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
+				if field, fieldIndex, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
+					c.recordPayloadAccess(node.Expr, resolution, []int{caseIndex})
+					c.flow.result.Payloads[node.ID()] = flowresult.PayloadAccess{
+						CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins),
+						Cases:          []int{caseIndex},
+					}
+					c.flow.result.VariantFields[node.ID()] = flowresult.VariantFieldAccess{
+						Carrier: node.Expr.ID(), Case: caseIndex, Payload: payload,
+						Field: fieldIndex, Type: field.Type,
+					}
+					return field.Type
+				}
+			}
+		}
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
 		WithCode(diagnostics.ErrFieldNotFound).

@@ -1,0 +1,7 @@
+name = "negative_enum_missing_case_proof"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["unknown member `value`"]

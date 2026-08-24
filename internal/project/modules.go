@@ -92,7 +92,7 @@ type SemanticInfo struct {
 	// misclassification.
 	ExpandedDefaultBindings  map[ast.NodeID]struct{}
 	ExprTypes                map[ast.NodeID]typeinfo.Type
-	OptionalTests            map[ast.NodeID]flowresult.OptionalTest
+	CaseTests                map[ast.NodeID]flowresult.CaseTest
 	ConstValues              map[symbols.SymbolID]constvalue.Value
 	MethodSets               map[string][]*symbols.Symbol
 	MethodSymbol             map[ast.NodeID]*symbols.Symbol
@@ -154,7 +154,7 @@ func NewSemanticInfo() *SemanticInfo {
 		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
 		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
-		OptionalTests:            make(map[ast.NodeID]flowresult.OptionalTest),
+		CaseTests:                make(map[ast.NodeID]flowresult.CaseTest),
 		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
 		MethodSets:               make(map[string][]*symbols.Symbol),
 		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),

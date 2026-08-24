@@ -4,4 +4,4 @@ build = "lib"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["T0035", "move-only optional payload"]
+stderr_contains = ["T0035", "move-only variant payload"]

@@ -78,7 +78,7 @@ func (a *analyzer) checkExpr(
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {
 			if a.partialVariantPayloadMove(e) {
 				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-					"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
+					"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
 				return
 			}
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -106,6 +106,8 @@ func (a *analyzer) checkExpr(
 	case *ast.BinaryExpr:
 		a.checkExpr(scope, e.Left, st, useRead, loans, false)
 		a.checkExpr(scope, e.Right, st, useRead, loans, false)
+	case *ast.IsExpr:
+		a.checkExpr(scope, e.Value, st, useRead, loans, false)
 	case *ast.AsExpr:
 		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit, *ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
@@ -218,7 +220,7 @@ func (a *analyzer) checkSelector(
 	if ownershipTrackedType(a.exprType(selector)) {
 		if a.partialVariantPayloadMove(selector) {
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-				"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(selector), "")
+				"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(selector), "")
 			return
 		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
