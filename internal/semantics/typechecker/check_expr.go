@@ -333,6 +333,16 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 			"optional equality currently requires `none` on one side"))
 		return &typeinfo.InvalidType{}
 	}
+	if node.Op == "==" || node.Op == "!=" || node.Op == "<" || node.Op == "<=" || node.Op == ">" || node.Op == ">=" {
+		leftVariant, leftIsVariant := typeinfo.VariantDescriptorOf(leftBase)
+		rightVariant, rightIsVariant := typeinfo.VariantDescriptorOf(rightBase)
+		if leftIsVariant && leftVariant.Family == typeinfo.VariantFamilyNamed ||
+			rightIsVariant && rightVariant.Family == typeinfo.VariantFamilyNamed {
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"named enum comparison is not supported; use `is` or `match`"))
+			return &typeinfo.InvalidType{}
+		}
+	}
 	if optionalTest {
 		subject := node.Left
 		if isNoneExpr(subject) {

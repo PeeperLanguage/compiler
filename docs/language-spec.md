@@ -182,6 +182,8 @@ if value == (Result<i32>::Ok{ value = 1 }) {
 ```
 
 `value is Result<i32>::Ok` is a nonconsuming nominal case-membership test.
+Named-enum equality and ordering are not supported; use `is` or `match` to
+inspect cases.
 Stable subjects gain case-set facts on CFG edges: true keeps tested case, false
 removes it, joins union possible cases, and an empty set makes an edge
 unreachable. When one data case remains, its fields are available through enum

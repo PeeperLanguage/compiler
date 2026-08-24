@@ -258,6 +258,32 @@ func TestEnumConstructorDiagnostics(t *testing.T) {
 	}
 }
 
+func TestNamedEnumComparisonRejected(t *testing.T) {
+	diag := checkTypeSource(t, `enum Status { Ready, Pending }
+fn Equal(left: Status, right: Status) -> bool {
+	return left == right;
+}
+fn Different(left: Status, right: Status) -> bool {
+	return left != right;
+}
+fn Less(left: Status, right: Status) -> bool {
+	return left < right;
+}
+fn LessEqual(left: Status, right: Status) -> bool {
+	return left <= right;
+}
+fn Greater(left: Status, right: Status) -> bool {
+	return left > right;
+}
+fn GreaterEqual(left: Status, right: Status) -> bool {
+	return left >= right;
+}`)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || strings.Count(out, "named enum comparison is not supported") != 6 {
+		t.Fatalf("expected named enum comparison diagnostics, got:\n%s", out)
+	}
+}
+
 func TestNamedEnumMatchRecordsExhaustiveArmEvidence(t *testing.T) {
 	module, diag := checkTypeModule(t, `enum Result {
 	Ok: { value: i32, code: i32 },
