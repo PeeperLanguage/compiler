@@ -257,15 +257,10 @@ func staticEntryForConst(types *ir.TypeTable, sym *symbols.Symbol, value constva
 	if !ok {
 		return nil, false
 	}
-	align := 4
-	if typeText == "cstr" {
-		align = 8
-	}
 	return &StaticEntry{
 		Name:     fmt.Sprintf("@%s$%d", sym.Name, sym.ID),
 		Type:     typ,
 		Constant: value,
-		Align:    align,
 	}, true
 }
 

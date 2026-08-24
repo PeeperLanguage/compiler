@@ -73,7 +73,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			continue
 		}
 		llvmType := emitter.layout(entry.Type).Text
-		fmt.Fprintf(&b, "%s = constant %s %s, align %d\n", entry.Name, llvmType, value, entry.Align)
+		fmt.Fprintf(&b, "%s = constant %s %s\n", entry.Name, llvmType, value)
 	}
 	if len(mod.StaticData) > 0 {
 		b.WriteString("\n")

@@ -183,14 +183,66 @@ func TestGenerateLLVMIRRendersTypedVariantStaticWithInactiveSlotsZeroed(t *testi
 	}
 	mod := &mir.Module{
 		Name: "test", FilePath: unixTestPath, Types: types,
-		StaticData: []*mir.StaticEntry{{Name: "@Selected", Type: result, Constant: value, Align: 4}},
+		StaticData: []*mir.StaticEntry{{Name: "@Selected", Type: result, Constant: value}},
 	}
 	carrier := namedLLVMTypeName(types, result)
-	want := "@Selected = constant " + carrier + " { i8 1, i32 zeroinitializer, i1 true }, align 4"
+	want := "@Selected = constant " + carrier + " { i8 1, i32 zeroinitializer, i1 true }"
 	for _, targetInfo := range []target.Info{testLinux386, testLinuxAMD64} {
 		irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetInfo, false)
 		if !strings.Contains(irText, want) {
 			t.Fatalf("%d-bit typed variant static missing %q:\n%s", targetInfo.PointerBits, want, irText)
+		}
+	}
+}
+
+func TestGenerateLLVMIRUsesNaturalAlignmentForTypedVariantStatics(t *testing.T) {
+	types := ir.NewTypeTable()
+	f64 := types.Intern(ir.Type{Kind: ir.TypeFloat, Bits: 64})
+	payload := types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: f64}}})
+	result := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result", Identity: "test::Result",
+		Cases: []ir.VariantCase{{Name: "Ok", Payload: payload}, {Name: "Pending"}},
+	})
+	field, ok := constvalue.NewFloatText("42", "f64")
+	if !ok {
+		t.Fatal("NewFloatText failed")
+	}
+	value, ok := constvalue.NewVariant("test::Result", "Result", 0, []constvalue.Value{field})
+	if !ok {
+		t.Fatal("NewVariant failed")
+	}
+	mod := &mir.Module{
+		Name: "test", FilePath: unixTestPath, Types: types,
+		StaticData: []*mir.StaticEntry{{Name: "@Selected$1", Type: result, Constant: value}},
+		Funcs: []*mir.Function{{
+			Name: "selected", ReturnType: result,
+			Blocks: []*mir.Block{{ID: 0, Term: &mir.Ret{Value: &mir.RefName{Name: "Selected$1", Type: result}}}},
+		}, {
+			Name: "imported", ReturnType: result,
+			Blocks: []*mir.Block{{ID: 0, Term: &mir.Ret{Value: &mir.RefName{Name: "Imported$2", Type: result}}}},
+		}},
+	}
+	carrier := namedLLVMTypeName(types, result)
+	for _, targetInfo := range []target.Info{testLinux386, testLinuxAMD64} {
+		irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetInfo, false)
+		if !strings.Contains(irText, "@Selected$1 = constant "+carrier+" { i8 0, { double } { double 0x4045000000000000 } }\n") {
+			t.Fatalf("%d-bit typed static forced non-ABI alignment:\n%s", targetInfo.PointerBits, irText)
+		}
+		if !strings.Contains(irText, " = load "+carrier+", "+carrier+"* @Selected$1\n") {
+			t.Fatalf("%d-bit typed static load forced non-ABI alignment:\n%s", targetInfo.PointerBits, irText)
+		}
+		if !strings.Contains(irText, " = load "+carrier+", "+carrier+"* @Imported$2\n") ||
+			!strings.Contains(irText, "@Imported$2 = external global "+carrier+"\n") {
+			t.Fatalf("%d-bit imported typed static forced non-ABI alignment:\n%s", targetInfo.PointerBits, irText)
+		}
+		clang, err := exec.LookPath("clang")
+		if err != nil {
+			return
+		}
+		cmd := exec.Command(clang, "-target", targetInfo.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "typed-static.o"), "-")
+		cmd.Stdin = strings.NewReader(irText)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%d-bit typed static LLVM is invalid: %v\n%s\n%s", targetInfo.PointerBits, err, output, irText)
 		}
 	}
 }

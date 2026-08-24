@@ -28,8 +28,10 @@ type InterfaceThunk struct {
 }
 
 type StaticEntry struct {
-	Name     string
-	Type     ir.TypeID
+	Name string
+	Type ir.TypeID
+	// Bytes and Align describe raw byte storage when Constant is nil. Typed
+	// constants use target-natural ABI alignment selected by LLVM.
 	Bytes    string
 	Constant constvalue.Value
 	Align    int
@@ -609,11 +611,11 @@ func (m *Module) Text() string {
 	b.WriteString(m.Name)
 	b.WriteString("\n")
 	for _, data := range m.StaticData {
-		value := data.Bytes
 		if data.Constant != nil {
-			value = data.Constant.TypeText()
+			fmt.Fprintf(&b, "%s = constant type#%d %q\n", data.Name, data.Type, data.Constant.TypeText())
+			continue
 		}
-		fmt.Fprintf(&b, "%s = constant type#%d %q, align %d\n", data.Name, data.Type, value, data.Align)
+		fmt.Fprintf(&b, "%s = constant type#%d %q, align %d\n", data.Name, data.Type, data.Bytes, data.Align)
 	}
 	if len(m.StaticData) > 0 {
 		b.WriteString("\n")

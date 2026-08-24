@@ -4,4 +4,4 @@ build = "program"
 [test]
 mode = "run"
 outcome = "exit_code"
-exit_code = 42
+exit_code = 43

@@ -364,7 +364,7 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 		t.Fatalf("unexpected cstr backing entry: %#v", backing)
 	}
 	entry := out.StaticData[1]
-	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Constant != value || entry.Align != 8 {
+	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Constant != value || entry.Align != 0 {
 		t.Fatalf("unexpected static entry: %#v", entry)
 	}
 }

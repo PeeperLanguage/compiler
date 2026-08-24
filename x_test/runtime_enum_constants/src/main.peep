@@ -9,16 +9,35 @@ enum Result {
     Pending,
 }
 
+enum WideResult {
+    Value: {
+        number: f64,
+    },
+    Pending,
+}
+
 const Selected: Result = Result::Ok{
     value = 42,
     enabled = true,
 };
 const Unreferenced: Result = Result::Pending;
 const SelectedIsOk: bool = Selected is Result::Ok;
+const WideSelected: WideResult = WideResult::Value{
+    number = 42.0,
+};
+
+fn ReadWide() -> i32 {
+    if WideSelected is WideResult::Value {
+        if WideSelected.number == 42.0 {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 fn main() -> i32 {
     if SelectedIsOk && (Selected is Result::Ok) {
-        return left::Read() + right::Read();
+        return left::Read() + right::Read() + ReadWide();
     }
     return 0;
 }
