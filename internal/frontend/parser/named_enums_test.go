@@ -131,6 +131,11 @@ func TestParseStatementMatch(t *testing.T) {
 	if ast.ExprText(match.Subject) != "result" || len(match.Arms) != 3 {
 		t.Fatalf("match = %#v", match)
 	}
+	if match.ArmListLocation == nil || match.ArmListLocation.Start == nil || match.ArmListLocation.End == nil ||
+		match.ArmListLocation.Start.Index >= ast.StartOf(match.Arms[0]).Index ||
+		match.ArmListLocation.End.Index <= ast.EndOf(match.Arms[len(match.Arms)-1]).Index {
+		t.Fatalf("match arm-list location = %#v", match.ArmListLocation)
+	}
 	ok := match.Arms[0]
 	if !ok.HasData || len(ok.Fields) != 1 || ok.Fields[0].Binding.Name != "payload" {
 		t.Fatalf("Ok arm = %#v", ok)

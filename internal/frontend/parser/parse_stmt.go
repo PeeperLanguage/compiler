@@ -262,17 +262,20 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 				WithPrimaryLabel(source.NewLocation(p.filePath, comma.Start, comma.End), "remove this comma"))
 		}
 	}
+	armListEnd := p.current().End
 	end := p.expectClose(open.Start, token.RBRACE, "{")
 	endPos := open.End
 	if end != nil {
 		endPos = end.End
+		armListEnd = end.End
 	} else if len(arms) > 0 {
 		endPos = ast.EndOf(arms[len(arms)-1])
 	}
 	return reg(p, &ast.MatchStmt{
-		Subject:  subject,
-		Arms:     arms,
-		Location: source.NewLocation(p.filePath, start.Start, endPos),
+		Subject:         subject,
+		Arms:            arms,
+		ArmListLocation: source.NewLocation(p.filePath, open.End, armListEnd),
+		Location:        source.NewLocation(p.filePath, start.Start, endPos),
 	})
 }
 

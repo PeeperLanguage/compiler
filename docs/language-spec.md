@@ -160,6 +160,13 @@ let ok = Result<i32>::Ok{ value = 42 }
 let pending = Result<i32>::Pending
 ```
 
+Transparent aliases may qualify variants while preserving canonical enum and
+variant identity: `Alias<i32>::Ok` and `pkg::Alias<i32>::Ok`. Qualifier
+identifiers still refer to alias declarations; final case identifiers refer to
+original enum-owned variant symbols. Aliases do not copy variant scopes, and
+aliases to structs, interfaces, optionals, or other non-enum types cannot
+qualify cases. Optional's internal representation cases are never source names.
+
 Data variants require braces and every field exactly once. Payloadless variants
 forbid braces. A variant is a case of its nominal enum, never a type, struct,
 function, or callable constructor. `.Ok`, `.Ok{...}`, `Result::Ok(...)`, and a

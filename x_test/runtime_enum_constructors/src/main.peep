@@ -1,16 +1,25 @@
 import "runtime_enum_constructors/result";
 
-fn ReadImported(value: result::Result<i32>) -> i32 {
-    if value is result::Result<i32>::Ok {
-        return value.value;
+type LocalResult<T> = result::Alias<T>;
+
+fn ReadImported(value: result::Alias<i32>) -> i32 {
+    if !(value is result::Alias<i32>::Ok) {
+        return 0;
     }
-    return 0;
+    match value {
+        result::Alias<i32>::Ok{ value = payload } => {
+            return payload;
+        }
+        result::Alias<i32>::Pending => {
+            return 0;
+        }
+    }
 }
 
 fn main() -> i32 {
-    let value = result::Result<i32>::Ok{
+    let value = LocalResult<i32>::Ok{
         value = 42,
     };
-    let _ = result::Result<i32>::Pending;
+    let _ = LocalResult<i32>::Pending;
     return ReadImported(value);
 }

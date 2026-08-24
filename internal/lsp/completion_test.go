@@ -480,6 +480,44 @@ fn main() {
 	}
 }
 
+func TestCompletionAliasQualifiedEnumListsCanonicalVariants(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, filePath, `enum Result<T> {
+	Ok: { value: T },
+	Pending
+}
+type Alias<T> = Result<T>;
+type Chain<T> = Alias<T>;
+fn main() {
+	let value = Chain<i32>::__CURSOR__;
+}
+`)
+	if got := completionLabels(items); !slices.Equal(got, []string{"Ok", "Pending"}) {
+		t.Fatalf("alias-qualified enum completion labels = %v", got)
+	}
+}
+
+func TestCompletionImportedAliasQualifiedEnumListsCanonicalVariants(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
+	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: { value: T }, Pending }\ntype Alias<T> = Result<T>;\n")
+	state := NewServerState()
+	state.RootDir = root
+	items := completionAtSource(t, state, mainPath, `import "app/result";
+fn main() {
+	let value = result::Alias<i32>::__CURSOR__;
+}
+`)
+	if got := completionLabels(items); !slices.Equal(got, []string{"Ok", "Pending"}) {
+		t.Fatalf("imported alias-qualified enum completion labels = %v", got)
+	}
+}
+
 func TestCompletionMatchListsOnlyMissingArms(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
@@ -499,6 +537,64 @@ fn inspect(value: Result) {
 `)
 	if got := completionLabels(items); !slices.Equal(got, []string{"Result::Error", "Result::Pending"}) {
 		t.Fatalf("missing match-arm completion labels = %v", got)
+	}
+}
+
+func TestCompletionMatchDeclinesNonInsertionPositions(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		marked string
+	}{
+		{
+			name: "subject",
+			marked: `match __CURSOR__value {
+		Result::Ok{} => {}
+	}`,
+		},
+		{
+			name: "pattern",
+			marked: `match value {
+		__CURSOR__Result::Ok{} => {}
+	}`,
+		},
+		{
+			name: "arrow",
+			marked: `match value {
+		Result::Ok{} __CURSOR__=> {}
+	}`,
+		},
+		{
+			name: "exhaustive",
+			marked: `match value {
+		Result::Ok{} => {}
+		Result::Pending => {}
+		__CURSOR__
+	}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			filePath := filepath.Join(root, "main"+peeper.SourceExt)
+			state := NewServerState()
+			state.RootDir = root
+			source := `enum Result {
+	Ok: { value: i32 },
+	Pending,
+}
+fn inspect(value: Result) {
+	` + test.marked + `
+}
+`
+			labels := completionLabels(completionAtSource(t, state, filePath, source))
+			if !slices.Contains(labels, "value") {
+				t.Fatalf("completion labels = %v, want lexical value", labels)
+			}
+			for _, label := range labels {
+				if strings.HasPrefix(label, "Result::") {
+					t.Fatalf("completion labels = %v, unexpected match-arm item", labels)
+				}
+			}
+		})
 	}
 }
 

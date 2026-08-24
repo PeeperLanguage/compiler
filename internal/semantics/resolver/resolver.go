@@ -372,7 +372,7 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		return false
 	}
 
-	var enumSymbol *symbols.Symbol
+	var qualifierSymbol *symbols.Symbol
 	var enumName *ast.Ident
 	switch enumPath := typePath.(type) {
 	case *ast.NamedType:
@@ -381,14 +381,14 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		if !ok || resolved == nil || resolved.Kind != symbols.SymbolType {
 			return false
 		}
-		enumSymbol = resolved
+		qualifierSymbol = resolved
 	case *ast.AppliedType:
 		enumName = enumPath.Name
 		resolved, ok := scope.Lookup(enumPath.Name.Name)
 		if !ok || resolved == nil || resolved.Kind != symbols.SymbolType {
 			return false
 		}
-		enumSymbol = resolved
+		qualifierSymbol = resolved
 	case *ast.ScopeResolution:
 		qualifier, member, ok := enumPath.ImportMember()
 		if !ok {
@@ -399,13 +399,14 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		if !found {
 			return true
 		}
-		enumSymbol = resolved
+		qualifierSymbol = resolved
 	default:
 		return false
 	}
 
-	if _, declaredEnum := enumSymbol.ASTNode.(*ast.EnumDecl); !declaredEnum || enumSymbol.Scope == nil {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "only enum declarations can qualify variants", ast.LocOf(enumName), "use the enum declaration name directly")
+	enumSymbol, declaredEnum := project.CanonicalEnumDeclaration(r.ctx, qualifierSymbol)
+	if !declaredEnum {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "variant qualifier must resolve to a named enum", ast.LocOf(enumName), "use an enum declaration or transparent enum alias")
 		return true
 	}
 	variant, ok := enumSymbol.Scope.LookupLocal(caseName.Name)
@@ -413,9 +414,10 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown variant `"+caseName.Name+"` in enum `"+enumSymbol.Name+"`", ast.LocOf(caseName), "")
 		return true
 	}
+	qualifierSymbol.Used = true
 	enumSymbol.Used = true
 	variant.Used = true
-	r.module.Semantics.ResolvedSymbols[enumName.ID()] = enumSymbol
+	r.module.Semantics.ResolvedSymbols[enumName.ID()] = qualifierSymbol
 	r.module.Semantics.ResolvedSymbols[path.ID()] = variant
 	r.module.Semantics.ResolvedSymbols[caseName.ID()] = variant
 	return true

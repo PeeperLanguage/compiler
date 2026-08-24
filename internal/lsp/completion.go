@@ -484,13 +484,11 @@ func completionEnumSymbol(ctx *project.CompilerContext, module *project.Module, 
 	} else if resolved, ok := project.LookupImportedSymbol(ctx, module, segments[0], typeName); ok {
 		sym = resolved.Symbol
 	}
-	if sym == nil || sym.Kind != symbols.SymbolType || sym.Scope == nil {
+	enumSymbol, ok := project.CanonicalEnumDeclaration(ctx, sym)
+	if !ok {
 		return nil
 	}
-	if _, enum := sym.ASTNode.(*ast.EnumDecl); !enum {
-		return nil
-	}
-	return sym
+	return enumSymbol
 }
 
 func completionQualifierSegments(qualifier string) []string {
@@ -528,11 +526,11 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Modul
 	var match *ast.MatchStmt
 	walkModuleAST(module, func(node ast.Node, _ ast.Node) bool {
 		candidate, ok := node.(*ast.MatchStmt)
-		if !ok || !locContains(ast.LocOf(candidate), cursor.Line, cursor.Column) {
+		if !ok || !locContains(candidate.ArmListLocation, cursor.Line, cursor.Column) {
 			return true
 		}
 		for _, arm := range candidate.Arms {
-			if arm != nil && locContains(ast.LocOf(arm.Body), cursor.Line, cursor.Column) {
+			if arm != nil && locContains(ast.LocOf(arm), cursor.Line, cursor.Column) {
 				return true
 			}
 		}
@@ -591,6 +589,9 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Modul
 			Detail: renderSymbol(variantSymbol, symbolRenderContext{}), SortText: "0" + label,
 			InsertTextFormat: 2, TextEdit: TextEdit{Range: replacement, NewText: newText},
 		})
+	}
+	if len(items) == 0 {
+		return nil, false
 	}
 	return sortCompletionItems(items), true
 }

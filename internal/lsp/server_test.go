@@ -459,6 +459,48 @@ fn inspect(value: Result) {
 	}
 }
 
+func TestImportedAliasVariantDefinitionAndRenameUseCanonicalSymbol(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
+	writeWorkspaceFile(t, resultPath, "enum Result { Ok, Pending }\ntype Alias = Result;\n")
+	source := `import "app/result";
+fn inspect(value: result::Alias) {
+	let made = result::Alias::__CURSOR__Ok;
+	if value is result::Alias::Ok {}
+}
+`
+	clean, position := markerPosition(t, source)
+	state := NewServerState()
+	state.RootDir = root
+	state.Cache[mainPath] = clean
+	if _, module := state.recompile(mainPath); module == nil {
+		t.Fatal("expected compiled enum alias module")
+	}
+	locations, err := state.HandleDefinition(DefinitionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(mainPath))},
+		Position:     position,
+	}})
+	if err != nil || len(locations) != 1 || locations[0].URI != DocumentURI(pathToURI(resultPath)) || locations[0].Range.Start.Line != 0 {
+		t.Fatalf("alias variant definition = %#v, err = %v", locations, err)
+	}
+	edit, err := state.HandleRename(RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(mainPath))},
+		Position:     position,
+		NewName:      "Success",
+	})
+	if err != nil {
+		t.Fatalf("HandleRename failed: %v", err)
+	}
+	if got := len(edit.Changes[DocumentURI(pathToURI(resultPath))]); got != 1 {
+		t.Fatalf("canonical declaration edits = %#v, want one", edit.Changes)
+	}
+	if got := len(edit.Changes[DocumentURI(pathToURI(mainPath))]); got != 2 {
+		t.Fatalf("alias-qualified use edits = %#v, want two", edit.Changes)
+	}
+}
+
 func TestHoverShowsExactCaseFieldType(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)

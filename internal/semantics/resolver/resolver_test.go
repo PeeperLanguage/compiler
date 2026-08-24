@@ -96,12 +96,48 @@ fn main() {
 	}
 }
 
-func TestResolveRejectsAliasVariantNamespace(t *testing.T) {
-	_, diag := checkResolveSource(t, `enum Result { Pending }
-type Alias = Result;
-fn main() { let value = Alias::Pending; }`)
-	if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "only enum declarations can qualify variants") {
-		t.Fatalf("expected alias namespace diagnostic, got:\n%s", out)
+func TestResolveAliasVariantNamespaceToCanonicalSymbol(t *testing.T) {
+	module, diag := checkResolveSource(t, `enum Result<T> {
+	Ok: { value: T },
+	Pending
+}
+type Alias<T> = Result<T>;
+type Chain<T> = Alias<T>;
+fn main() {
+	let pending = Alias<i32>::Pending;
+	let ok = Chain<i32>::Ok{ value = 42 };
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected alias namespace diagnostic:\n%s", diag.EmitAllToString())
+	}
+	result, _ := module.ModuleScope.LookupLocal("Result")
+	if result == nil || result.Scope == nil {
+		t.Fatal("canonical enum symbol missing")
+	}
+	fn := module.AST.Stmts[3].(*ast.FnDecl)
+	pendingPath := fn.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.ScopeResolution)
+	okPath := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.VariantLit).Case
+	for _, path := range []*ast.ScopeResolution{pendingPath, okPath} {
+		_, caseName, valid := path.EnumVariantMember()
+		if !valid || caseName == nil {
+			t.Fatalf("invalid variant path %s", path.TypeText())
+		}
+		canonical, _ := result.Scope.LookupLocal(caseName.Name)
+		if got := module.Semantics.ResolvedSymbols[path.ID()]; got == nil || got != canonical {
+			t.Fatalf("resolved %s = %#v, want canonical %#v", path.TypeText(), got, canonical)
+		}
+	}
+}
+
+func TestResolveRejectsNonEnumAliasVariantNamespace(t *testing.T) {
+	for _, source := range []string{
+		"type Alias = ?i32; fn main() { let value = Alias::Present; }",
+		"struct Box {} type Alias = Box; fn main() { let value = Alias::Ready; }",
+	} {
+		_, diag := checkResolveSource(t, source)
+		if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "variant qualifier must resolve to a named enum") {
+			t.Fatalf("expected non-enum alias diagnostic, got:\n%s", out)
+		}
 	}
 }
 

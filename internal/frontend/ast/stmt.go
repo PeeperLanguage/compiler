@@ -124,9 +124,10 @@ func (a *MatchArm) loc() *source.Location { return a.Location }
 type MatchStmt struct {
 	NodeIDHolder
 	Documented
-	Subject  Expr
-	Arms     []*MatchArm
-	Location *source.Location
+	Subject         Expr
+	Arms            []*MatchArm
+	ArmListLocation *source.Location
+	Location        *source.Location
 }
 
 func (*MatchStmt) stmtNode() {}
