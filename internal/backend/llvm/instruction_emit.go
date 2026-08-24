@@ -21,6 +21,8 @@ type llvmEmitter struct {
 	target          target.Info
 	badTypes        map[string]struct{}
 	layouts         map[ir.TypeID]*llvmLayout
+	layoutBuilding  map[ir.TypeID]bool
+	dropHelpers     map[ir.TypeID]string
 	invalid         bool
 	externalGlobals map[string]ir.TypeID
 	debug           *llvmDebugEmitter

@@ -365,3 +365,44 @@ func TestInvalidateVariantFactsPreservesCaseForPayloadDescendant(t *testing.T) {
 		t.Fatalf("payload mutation invalidated carrier case = %#v", state.variants)
 	}
 }
+
+func TestMergeFlowStatesTreatsMissingOriginAsUnknown(t *testing.T) {
+	pointer := symbols.New("pointer", symbols.SymbolVar, nil, nil)
+	left := symbols.New("left", symbols.SymbolVar, nil, nil)
+	right := symbols.New("right", symbols.SymbolVar, nil, nil)
+	pointerOrigins := []place.Origin{{Root: pointer}}
+	leftState := newFlowState()
+	leftState.rawPointers = setOriginFact(leftState.rawPointers, pointerOrigins, []place.Origin{{Root: left}})
+
+	unknown := mergeFlowStates(leftState, newFlowState())
+	if known := originValues(unknown.rawPointers, pointerOrigins); len(known) != 0 {
+		t.Fatalf("one unknown predecessor retained raw-pointer origins: %#v", known)
+	}
+
+	rightState := newFlowState()
+	rightState.rawPointers = setOriginFact(rightState.rawPointers, pointerOrigins, []place.Origin{{Root: right}})
+	known := mergeFlowStates(leftState, rightState)
+	want := []place.Origin{{Root: left}, {Root: right}}
+	if got := originValues(known.rawPointers, pointerOrigins); !place.SameOrigins(got, want) {
+		t.Fatalf("known predecessor origins = %#v, want %#v", got, want)
+	}
+}
+
+func TestInvalidateVariantOriginsClearsIndexDependencies(t *testing.T) {
+	values := symbols.New("values", symbols.SymbolParam, nil, nil)
+	index := symbols.New("index", symbols.SymbolVar, nil, nil)
+	state := flowState{variants: []variantStateFact{{
+		origins: []place.Origin{{Root: values, Projections: []place.OriginProjection{{
+			Kind: place.OriginBindingIndex, Binding: index,
+		}}}},
+		cases:        []int{1},
+		caseCount:    2,
+		dependencies: []*symbols.Symbol{index},
+	}}}
+
+	invalidateVariantOrigins(&state, []place.Origin{{Root: index}})
+
+	if len(state.variants) != 0 {
+		t.Fatalf("index mutation retained dependent variant fact: %#v", state.variants)
+	}
+}

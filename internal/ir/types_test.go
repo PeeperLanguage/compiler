@@ -27,13 +27,14 @@ func TestTypeTableConcurrentInterningAndReads(t *testing.T) {
 			for round := range rounds {
 				shared = types.Intern(Type{Kind: TypeStruct, Fields: []TypeField{{Name: "value", Type: i32}}})
 				uniqueName := fmt.Sprintf("Worker%dRound%d", worker, round)
-				unique := types.Intern(Type{Kind: TypeNamed, Name: uniqueName})
+				unique := types.Intern(Type{Kind: TypeStruct, Name: uniqueName, Identity: "test::" + uniqueName})
 				if got := types.Text(unique); got != uniqueName {
 					results <- result{err: fmt.Sprintf("Text(%d) = %q, want %q", unique, got, uniqueName)}
 					return
 				}
-				if got, ok := types.LookupABIKey(uniqueName); !ok || got != unique {
-					results <- result{err: fmt.Sprintf("LookupABIKey(%q) = (%d, %t), want (%d, true)", uniqueName, got, ok, unique)}
+				abiKey := types.ABIKey(unique)
+				if got, ok := types.LookupABIKey(abiKey); !ok || got != unique {
+					results <- result{err: fmt.Sprintf("LookupABIKey(%q) = (%d, %t), want (%d, true)", abiKey, got, ok, unique)}
 					return
 				}
 				if typ, ok := types.Type(shared); !ok || typ.Kind != TypeStruct {
@@ -68,6 +69,60 @@ func TestTypeTableUsesLanguageNamesForStringTypes(t *testing.T) {
 	types := NewTypeTable()
 	if got := types.Text(types.Intern(Type{Kind: TypeString})); got != "str" {
 		t.Fatalf("string type text = %q, want str", got)
+	}
+}
+
+func TestTypeTablePreservesInterfaceReceiverIdentity(t *testing.T) {
+	types := NewTypeTable()
+	void := types.Intern(Type{Kind: TypeVoid})
+	shared := types.Intern(Type{Kind: TypeInterface, Methods: []TypeMethod{{
+		Name: "read", Receiver: MethodReceiverShared, Return: void,
+	}}})
+	mutable := types.Intern(Type{Kind: TypeInterface, Methods: []TypeMethod{{
+		Name: "read", Receiver: MethodReceiverMutable, Return: void,
+	}}})
+	if shared == mutable {
+		t.Fatal("shared and mutable interface receivers shared one TypeID")
+	}
+	if types.Text(shared) != "iface{read(&Self)}" || types.Text(mutable) != "iface{read(&mut Self)}" {
+		t.Fatalf("interface receiver text = %q and %q", types.Text(shared), types.Text(mutable))
+	}
+}
+
+func TestTypeTableReservesAndCompletesRecursiveNamedComposite(t *testing.T) {
+	types := NewTypeTable()
+	nodeShell := Type{Kind: TypeStruct, Name: "Node", Identity: "test::Node"}
+	nodeID, err := types.ReserveNamed(nodeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, complete := types.Type(nodeID); complete {
+		t.Fatal("reserved named type was visible before completion")
+	}
+	if repeated, err := types.ReserveNamed(nodeShell); err != nil || repeated != nodeID {
+		t.Fatalf("repeated reservation = (%d, %v), want (%d, nil)", repeated, err, nodeID)
+	}
+	ownedNode := types.Intern(Type{Kind: TypeOwnedPtr, Elem: nodeID})
+	optionalNode := types.Intern(OptionalVariant(ownedNode))
+	node := nodeShell
+	node.Fields = []TypeField{{Name: "next", Type: optionalNode}}
+	if err := types.CompleteNamed(nodeID, node); err != nil {
+		t.Fatal(err)
+	}
+	completed, ok := types.Type(nodeID)
+	if !ok || len(completed.Fields) != 1 || completed.Fields[0].Type != optionalNode {
+		t.Fatalf("completed recursive descriptor = %#v", completed)
+	}
+	if got := types.Text(nodeID); got != "Node" {
+		t.Fatalf("recursive type text = %q, want Node", got)
+	}
+	if got := types.ABIKey(nodeID); got != "struct:test::Node" {
+		t.Fatalf("recursive ABI key = %q", got)
+	}
+	conflict := node
+	conflict.Fields = []TypeField{{Name: "other", Type: optionalNode}}
+	if err := types.CompleteNamed(nodeID, conflict); err == nil {
+		t.Fatal("conflicting named type completion succeeded")
 	}
 }
 

@@ -1,0 +1,13 @@
+type BaseInt = i32;
+type MyInt = BaseInt;
+
+enum Choice<T> {
+    Left,
+    Right
+}
+
+fn Accept(value: Choice<i32>) {}
+
+fn Forward(value: Choice<MyInt>) {
+    Accept(value);
+}

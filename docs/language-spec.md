@@ -73,6 +73,28 @@ must be ordered, within the byte length, and on UTF-8 codepoint boundaries.
 Invalid bounds or boundaries trap at runtime. The owner remains responsible
 for backing storage and is dropped exactly once.
 
+## Generic Named Types
+
+Structs, enums, interfaces, and transparent type aliases may declare type
+parameters. Every use supplies exact explicit arguments, including imported and
+nested applications such as `container::Box<Pair<i32, str>>`. Type-context
+parsing splits adjacent closing `>>` tokens; expression comparisons keep normal
+`<` and `>` behavior.
+
+Transparent aliases do not create a new generic argument identity. If
+`MyInt = i32`, then `Choice<MyInt>` and `Choice<i32>` are the same semantic
+instance. Nominal identity still belongs to the applied declaration and its
+canonical arguments.
+
+Recursive generic applications must preserve exact canonical arguments.
+`Node<T>` may contain `*Node<T>` or another fixed-size indirect reference to the
+same application. Expanding or transformed recursion such as
+`Loop<T> -> Loop<Loop<T>>` or `Pair<A, B> -> Pair<B, A>` is rejected. Direct
+by-value recursion remains unsized and rejected independently.
+
+Constraints, defaults, generic inference, generic functions, generic methods,
+and monomorphization are not part of current language surface.
+
 ## Optional Values And Flow Narrowing
 
 `?T` contains either one `T` value or `none`. `none` is valid only where an
@@ -113,13 +135,7 @@ including pointer payloads. Optional-to-optional equality, fallback operators,
 explicit unwrap syntax, optional chaining, and optional patterns are not part of
 current language surface. Niche layout remains separate future work.
 
-## Generic Named Types And Enums
-
-Structs, enums, interfaces, and transparent type aliases may declare type
-parameters. Every use supplies exact explicit arguments, including through
-imports and nesting: `Box<i32>`, `pkg::Box<i32>`, and `Box<Box<i32>>`. Generic
-functions, methods, constraints, defaults, inference, and monomorphization are
-not part of current language surface.
+## Named Enums
 
 Named enums declare ordered PascalCase variants. A data variant owns one
 anonymous named-field payload schema; that schema is not a source-visible type.

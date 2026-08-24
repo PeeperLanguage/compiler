@@ -147,6 +147,36 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 	}
 }
 
+func TestServerStateReindexesReusedGenericDeclarations(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	container := filepath.Join(root, peeper.SourceDirName, "container"+peeper.SourceExt)
+	const initial = `import "app/container";
+fn Take(value: container::Box<i32>) {}
+fn main() {}`
+	writeWorkspaceFile(t, entry, initial)
+	writeWorkspaceFile(t, container, "struct Box<T> { value: T }\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	ctx, mod := state.recompile(entry)
+	if mod == nil || ctx == nil || ctx.Diagnostics.HasErrors() {
+		t.Fatalf("initial generic compile failed:\n%s", ctx.Diagnostics.EmitAllToString())
+	}
+
+	state.Cache[entry] = `import "app/container";
+fn Take(value: container::Box<i32>) {}
+fn main() { let body_only = 1; }`
+	ctx, mod = state.recompile(entry)
+	if mod == nil || ctx == nil {
+		t.Fatal("incremental generic compile returned nil")
+	}
+	if ctx.Diagnostics.HasErrors() {
+		t.Fatalf("incremental generic compile lost declaration registry:\n%s", ctx.Diagnostics.EmitAllToString())
+	}
+}
+
 func TestServerStateReplaysDiagnosticsForUnchangedModule(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")

@@ -512,3 +512,23 @@ func TestVariantDescriptorUsesEnumIdentityThroughTransparentAlias(t *testing.T) 
 		t.Fatalf("aliased enum descriptor = %#v, want identity %q", descriptor, status.Identity)
 	}
 }
+
+func TestUnaliasCanonicalizesChainsWithoutErasingNominalTypes(t *testing.T) {
+	integer := &IntegerType{Signed: true, Bits: 32}
+	inner := &DefinedType{Name: "Inner", Kind: DefinedKindAlias, Underlying: integer}
+	outer := &DefinedType{Name: "Outer", Kind: DefinedKindAlias, Underlying: inner}
+	if got := Unalias(outer); got != integer {
+		t.Fatalf("Unalias(alias chain) = %#v, want canonical integer", got)
+	}
+
+	nominal := &DefinedType{Name: "Value", Kind: DefinedKindStruct, Underlying: &StructType{}}
+	if got := Unalias(nominal); got != nominal {
+		t.Fatalf("Unalias(nominal) = %#v, want original nominal type", got)
+	}
+
+	cycle := &DefinedType{Name: "Cycle", Kind: DefinedKindAlias}
+	cycle.Underlying = cycle
+	if got := Unalias(cycle); !IsInvalid(got) {
+		t.Fatalf("Unalias(alias cycle) = %#v, want invalid", got)
+	}
+}

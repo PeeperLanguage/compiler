@@ -220,6 +220,12 @@ func ContainsTypeParameter(t Type) bool {
 	})
 }
 
+func ContainsInvalid(t Type) bool {
+	return containsType(t, typeTraversal{followDefined: true, followCallable: true}, func(candidate Type, _ bool) bool {
+		return IsInvalid(candidate)
+	})
+}
+
 func ContainsReference(t Type) bool {
 	return containsType(t, typeTraversal{followDefined: true}, func(candidate Type, _ bool) bool {
 		_, ok := candidate.(*RefType)

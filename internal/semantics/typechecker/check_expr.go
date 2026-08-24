@@ -23,6 +23,9 @@ import (
 // typeExpr records canonical base typing, then applies per-use flow refinement.
 // Recursive typing stays in typeExprBase so both passes use one AST switch.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	if c.flow != nil && expr != nil {
+		delete(c.flow.result.Payloads, expr.ID())
+	}
 	base := c.typeExprBase(scope, expr, expected)
 	if call, ok := expr.(*ast.CallExpr); ok && c.flow != nil && c.flow.analyzer != nil {
 		c.flow.analyzer.invalidateCall(c, scope, call, c.flow.state)
@@ -137,7 +140,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return c.typeIsExpr(scope, node)
 
 	case *ast.CallExpr:
-		return c.typeCallExpr(scope, node, expected)
+		return c.typeCallExpr(scope, node)
 
 	case *ast.FreeExpr:
 		return c.typeFreeExpr(scope, node)
@@ -208,13 +211,22 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	if node == nil || node.Expr == nil {
 		return &typeinfo.InvalidType{}
 	}
-	valueType := c.typePayloadExpr(scope, node.Expr, nil)
+	var valueType typeinfo.Type
+	if node.Mode == ast.AddressRaw {
+		valueType = c.typeWholeCarrierExpr(scope, node.Expr, nil)
+	} else {
+		var valueExpected typeinfo.Type
+		if target, _, reference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(expected)); reference {
+			valueExpected = target
+		}
+		valueType = c.typeExpr(scope, node.Expr, valueExpected)
+	}
 	valueType = c.requireValueType(node.Expr, valueType, "address operand")
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
 	exprType := func(expr ast.Expr) typeinfo.Type {
-		return c.typeExpr(scope, expr, nil)
+		return c.module.EffectiveExprType(expr.ID())
 	}
 	addressable := place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
@@ -251,7 +263,10 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 
 func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
 	optionalTest := (node.Op == "==" || node.Op == "!=") && isNoneExpr(node.Left) != isNoneExpr(node.Right)
-	if !optionalTest {
+	if optionalTest {
+		c.optionalTestContext++
+		defer func() { c.optionalTestContext-- }()
+	} else {
 		c.payloadContext++
 		defer func() { c.payloadContext-- }()
 	}
@@ -269,7 +284,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 		right = c.typeExpr(scope, node.Right, rightExpected)
 	} else if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
-		right = c.typeOptionalTestExpr(scope, node.Right, operandExpected)
+		right = c.typeExpr(scope, node.Right, operandExpected)
 		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
 	} else if leftNumber, leftLiteral := node.Left.(*ast.NumberLit); leftLiteral {
 		if rightNumber, rightLiteral := node.Right.(*ast.NumberLit); !rightLiteral {
@@ -290,7 +305,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		right = c.typeExpr(scope, node.Right, left)
 	} else {
 		if isNoneExpr(node.Right) {
-			left = c.typeOptionalTestExpr(scope, node.Left, operandExpected)
+			left = c.typeExpr(scope, node.Left, operandExpected)
 			right = c.typeExpr(scope, node.Right, optionalOperandExpected(left))
 		} else {
 			left = c.typeExpr(scope, node.Left, operandExpected)
@@ -303,7 +318,16 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	if typeinfo.IsInvalidOrUnknown(left) || typeinfo.IsInvalidOrUnknown(right) {
 		return &typeinfo.InvalidType{}
 	}
-	if (node.Op == "==" || node.Op == "!=") && (isOptionalType(left) || isOptionalType(right)) &&
+	leftBase, rightBase := left, right
+	if c.module != nil && c.module.Semantics != nil {
+		if typ := c.module.Semantics.ExprTypes[node.Left.ID()]; typ != nil {
+			leftBase = typ
+		}
+		if typ := c.module.Semantics.ExprTypes[node.Right.ID()]; typ != nil {
+			rightBase = typ
+		}
+	}
+	if (node.Op == "==" || node.Op == "!=") && isOptionalType(leftBase) && isOptionalType(rightBase) &&
 		!isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"optional equality currently requires `none` on one side"))

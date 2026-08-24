@@ -42,7 +42,7 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 			return symbols.GetSymbolType(resolved.Symbol)
 		},
 		Instantiate: func(base *typeinfo.DefinedType, arguments []typeinfo.Type, node ast.TypeExpr) typeinfo.Type {
-			return ctx.instantiateType(base, arguments, node)
+			return ctx.instantiateType(base, arguments, node, nil)
 		},
 		InvalidSelf: func(node *ast.NamedType) typeinfo.Type {
 			if ctx != nil && ctx.Diagnostics != nil {

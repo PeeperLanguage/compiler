@@ -118,12 +118,6 @@ func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected 
 	return c.typeExpr(scope, expr, expected)
 }
 
-func (c *checker) typeOptionalTestExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
-	c.optionalTestContext++
-	defer func() { c.optionalTestContext-- }()
-	return c.typeExpr(scope, expr, expected)
-}
-
 func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	previous := c.wholeCarrierExpr
 	c.wholeCarrierExpr = expr
@@ -147,12 +141,13 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 		c.recordFlowResolution(expr, resolution)
 		return base
 	}
+	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
 	required := payloadDepthForExpected(base, expected)
-	if c.payloadContext > 0 && required == 0 {
+	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
 		required = optionalLayerCount(base)
 	}
 	if c.flow == nil {
-		if c.optionalTestContext > 0 || required == 0 {
+		if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
 			return base
 		}
 		return unwrapOptionalLayers(base, required)
@@ -162,11 +157,9 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 	resolved := unwrapOptionalLayers(base, len(payloadCases))
 	applied := optionalLayerCount(base) - optionalLayerCount(resolved)
 	payloadCases = payloadCases[:applied]
-	if c.optionalTestContext == 0 {
-		if _, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType); explicitCarrier {
-			c.recordFlowResolution(expr, resolution)
-			return base
-		}
+	if c.optionalTestContext == 0 && explicitCarrier {
+		c.recordFlowResolution(expr, resolution)
+		return base
 	}
 	if applied > 0 {
 		c.recordPayloadAccess(expr, resolution, payloadCases)
@@ -374,8 +367,13 @@ func (a *flowAnalyzer) run() {
 		}
 		if typ, ok := symbols.GetSymbolType(sym); ok {
 			if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
-				root := []place.Origin{{Root: sym}}
-				entryState.references = setOriginFact(entryState.references, root, root)
+				carrier := []place.Origin{{Root: sym}}
+				cases := make([]int, optionalLayerCount(typ))
+				for index := range cases {
+					cases[index] = ir.OptionalPresentCase
+				}
+				value := place.VariantPayloadOrigins(carrier, cases)
+				entryState.references = setOriginFact(entryState.references, carrier, value)
 			}
 		}
 	}
@@ -612,9 +610,6 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 			typ = a.module.Semantics.ExprTypes[node.Target.ID()]
 		}
 		a.updateOriginPlace(c, scope, resolution.StorageOrigins, typ, node.Value, sourceState, st)
-		if sym := a.assignedSymbol(scope, node.Target); sym != nil {
-			invalidateVariantDependency(st, sym)
-		}
 	}
 }
 
@@ -1224,32 +1219,22 @@ func mergeDependencies(left, right []*symbols.Symbol) []*symbols.Symbol {
 	return merged
 }
 
-func invalidateVariantDependency(st *flowState, assigned *symbols.Symbol) {
-	if st == nil || assigned == nil {
-		return
-	}
-	kept := st.variants[:0]
-	for _, fact := range st.variants {
-		dependent := false
-		for _, dependency := range fact.dependencies {
-			if dependency == assigned {
-				dependent = true
-				break
-			}
-		}
-		if !dependent {
-			kept = append(kept, fact)
-		}
-	}
-	st.variants = kept
-}
-
 func invalidateVariantOrigins(st *flowState, mutated []place.Origin) {
 	if st == nil || len(mutated) == 0 {
 		return
 	}
 	kept := st.variants[:0]
 	for _, fact := range st.variants {
+		dependencyMutated := false
+		for _, dependency := range fact.dependencies {
+			if dependency != nil && place.OriginsOverlap([]place.Origin{{Root: dependency}}, mutated) {
+				dependencyMutated = true
+				break
+			}
+		}
+		if dependencyMutated {
+			continue
+		}
 		if !place.OriginsOverlap(fact.origins, mutated) {
 			kept = append(kept, fact)
 			continue
@@ -1292,7 +1277,6 @@ func clearFlowScope(scope *symbols.Scope, st *flowState) {
 		root := []place.Origin{{Root: sym}}
 		st.references = clearOriginRoot(st.references, root)
 		st.rawPointers = clearOriginRoot(st.rawPointers, root)
-		invalidateVariantDependency(st, sym)
 		invalidateVariantOrigins(st, root)
 	}
 }

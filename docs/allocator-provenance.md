@@ -171,6 +171,11 @@ text.
 `i64` on supported 64-bit targets. Length, capacity, and index operands must
 share that target-sized layout.
 
+Recursive named owner layouts reserve identified aggregate shells before child
+layout. Their private drop functions recurse through calls and release each
+owned pointer with its carried allocator descriptor. Direct by-value recursive
+storage is rejected before HIR.
+
 Empty dynamic arrays carry chosen allocator even while `data`, length, and
 capacity are zero. This lets later `append` or `reserve` allocate through same
 instance. Plain `[]T{}` carries default allocator without allocating storage.

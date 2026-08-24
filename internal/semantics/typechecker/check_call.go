@@ -54,7 +54,7 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 	}
 }
 
-func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
 	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil {
 		if sym := c.module.Semantics.ResolvedSymbols[path.ID()]; sym != nil && sym.Kind == symbols.SymbolVariant {
 			for _, arg := range node.Args {
@@ -87,7 +87,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr, expecte
 			}
 		}
 	}
-	calleeType := c.typePayloadExpr(scope, node.Callee, expected)
+	calleeType := c.typePayloadExpr(scope, node.Callee, nil)
 	if sym := c.callableSymbol(node.Callee); sym != nil {
 		c.expandCallDefaults(node, sym, c.callableModule(node.Callee))
 	}
@@ -236,7 +236,7 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 }
 
 func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
-	baseType := c.typeExpr(scope, selector.Expr, nil)
+	baseType := c.typePayloadExpr(scope, selector.Expr, nil)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}

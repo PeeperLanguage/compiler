@@ -1,10 +1,13 @@
 package llvm
 
 import (
+	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
@@ -131,10 +134,11 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 		{types.Intern(ir.Type{Kind: ir.TypeArray, Elem: types.Intern(ir.OptionalVariant(llvmTypes.stringType))}), "{ { i1, { i8*, i64, i8* } }*, i64, i64, i8* }"},
 		{types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "x", Type: types.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.u8, Length: "2"})}}}), "{ [2 x i8] }"},
 	}
+	emitter := &llvmEmitter{mod: &mir.Module{Types: types}}
 	for _, tt := range cases {
-		got, ok := llvmLayoutID(types, tt.id)
+		got, ok := emitter.layoutType(tt.id, false)
 		if !ok || got.Text != tt.want {
-			t.Fatalf("llvmLayoutID(%s) = %v, %v; want %q, true", types.Text(tt.id), got, ok, tt.want)
+			t.Fatalf("layoutType(%s) = %v, %v; want %q, true", types.Text(tt.id), got, ok, tt.want)
 		}
 	}
 }
@@ -154,8 +158,9 @@ func TestLLVMLayoutUsesTypedVariantCaseSlots(t *testing.T) {
 		},
 	})
 
-	layout, ok := llvmLayoutID(types, result)
-	if !ok || layout.Text != "{ i8, i32, { i8*, i64, i8* } }" {
+	emitter := &llvmEmitter{mod: &mir.Module{Types: types}}
+	layout, ok := emitter.layoutType(result, false)
+	if !ok || llvmAggregateText(layout.Elements) != "{ i8, i32, { i8*, i64, i8* } }" {
 		t.Fatalf("variant layout = (%v, %t)", layout, ok)
 	}
 	if layout.VariantTag != 0 || layout.VariantPayloads[0] != 1 || layout.VariantPayloads[1] != 2 {
@@ -180,7 +185,8 @@ func TestGenerateLLVMIRRendersTypedVariantStaticWithInactiveSlotsZeroed(t *testi
 		Name: "test", FilePath: unixTestPath, Types: types,
 		StaticData: []*mir.StaticEntry{{Name: "@Selected", Type: result, Constant: value, Align: 4}},
 	}
-	want := "@Selected = constant { i8, i32, i1 } { i8 1, i32 zeroinitializer, i1 true }, align 4"
+	carrier := namedLLVMTypeName(types, result)
+	want := "@Selected = constant " + carrier + " { i8 1, i32 zeroinitializer, i1 true }, align 4"
 	for _, targetInfo := range []target.Info{testLinux386, testLinuxAMD64} {
 		irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), targetInfo, false)
 		if !strings.Contains(irText, want) {
@@ -200,15 +206,16 @@ func TestLLVMLayoutUsesContextSizedUsize(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			types := newLLVMTypeFixture(tt.info.IndexBits)
-			got, ok := llvmLayoutID(types.table, types.usize)
+			emitter := &llvmEmitter{mod: &mir.Module{Types: types.table}}
+			got, ok := emitter.layoutType(types.usize, false)
 			if !ok || got.Text != tt.want {
-				t.Fatalf("llvmLayoutID(usize) = %v, %v; want %q, true", got, ok, tt.want)
+				t.Fatalf("layoutType(usize) = %v, %v; want %q, true", got, ok, tt.want)
 			}
 			refString := types.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: types.stringType})
-			got, ok = llvmLayoutID(types.table, refString)
+			got, ok = emitter.layoutType(refString, false)
 			wantRefString := "{ i8*, " + tt.want + " }"
 			if !ok || got.Text != wantRefString {
-				t.Fatalf("llvmLayoutID(&str) = %v, %v; want %q, true", got, ok, wantRefString)
+				t.Fatalf("layoutType(&str) = %v, %v; want %q, true", got, ok, wantRefString)
 			}
 		})
 	}
@@ -242,7 +249,8 @@ func TestLLVMLayoutsNameBuiltInCarrierFields(t *testing.T) {
 		{name: "owned interface", typeID: ownedInterface, fields: map[llvmFieldName]int{llvmFieldData: 0, llvmFieldDispatch: 1, llvmFieldAllocator: 2}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			layout, ok := llvmLayoutID(llvmTypes.table, tt.typeID)
+			emitter := &llvmEmitter{mod: &mir.Module{Types: llvmTypes.table}}
+			layout, ok := emitter.layoutType(tt.typeID, false)
 			if !ok {
 				t.Fatalf("layout missing for %s", tt.name)
 			}
@@ -1052,6 +1060,114 @@ func TestGenerateLLVMIRLowersTaggedOptionalOwnedDropAcrossTargetWidths(t *testin
 	}
 }
 
+func TestGenerateLLVMIRLowersRecursiveNamedTypesAndDrop(t *testing.T) {
+	const childEnv = "PEEPER_RECURSIVE_LLVM_CHILD"
+	if os.Getenv(childEnv) != "1" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestGenerateLLVMIRLowersRecursiveNamedTypesAndDrop$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		output, err := cmd.CombinedOutput()
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Fatalf("recursive LLVM generation did not terminate")
+		}
+		if err != nil {
+			t.Fatalf("recursive LLVM child failed: %v\n%s", err, output)
+		}
+		return
+	}
+
+	for _, compilerTarget := range []target.Info{testLinux386, testLinuxAMD64} {
+		types := ir.NewTypeTable()
+		void := types.Intern(ir.Type{Kind: ir.TypeVoid})
+		i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+		usize := types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: compilerTarget.IndexBits})
+		types.SetIndexType(usize)
+
+		nodeShell := ir.Type{Kind: ir.TypeStruct, Name: "Node", Identity: "test::Node"}
+		nodeID, err := types.ReserveNamed(nodeShell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownedNode := types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: nodeID})
+		nodeShell.Fields = []ir.TypeField{{Name: "value", Type: i32}, {Name: "next", Type: types.Intern(ir.OptionalVariant(ownedNode))}}
+		if err := types.CompleteNamed(nodeID, nodeShell); err != nil {
+			t.Fatal(err)
+		}
+
+		chainShell := ir.Type{Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Chain", Identity: "test::Chain"}
+		chainID, err := types.ReserveNamed(chainShell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownedChain := types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: chainID})
+		chainPayload := types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{
+			{Name: "value", Type: i32},
+			{Name: "next", Type: types.Intern(ir.OptionalVariant(ownedChain))},
+		}})
+		chainShell.Cases = []ir.VariantCase{{Name: "End"}, {Name: "Next", Payload: chainPayload}}
+		if err := types.CompleteNamed(chainID, chainShell); err != nil {
+			t.Fatal(err)
+		}
+
+		mod := &mir.Module{
+			Name: "recursive", Types: types,
+			Funcs: []*mir.Function{
+				{
+					Name: "release_node", Params: []ir.Param{{Name: "value", Type: nodeID}}, ReturnType: void,
+					Blocks: []*mir.Block{{ID: 0, Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: nodeID}}}, Term: &mir.Ret{}}},
+				},
+				{
+					Name: "release_chain", Params: []ir.Param{{Name: "value", Type: chainID}}, ReturnType: void,
+					Blocks: []*mir.Block{{ID: 0, Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: chainID}}}, Term: &mir.Ret{}}},
+				},
+			},
+		}
+		out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget, false)
+		if !strings.Contains(out, namedLLVMTypeName(types, nodeID)+" = type { i32, { i1,") ||
+			!strings.Contains(out, namedLLVMTypeName(types, chainID)+" = type { i8,") {
+			t.Fatalf("recursive identified layouts missing for %s:\n%s", compilerTarget.Arch, out)
+		}
+		if strings.Count(out, "define private void @peeper_drop_") != 2 || strings.Count(out, "call void @peeper_drop_") < 4 {
+			t.Fatalf("recursive drop helpers missing for %s:\n%s", compilerTarget.Arch, out)
+		}
+		clang, err := exec.LookPath("clang")
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(clang, "-target", compilerTarget.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "recursive.o"), "-")
+		cmd.Stdin = strings.NewReader(out)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s recursive LLVM is invalid: %v\n%s\n%s", compilerTarget.Arch, err, output, out)
+		}
+	}
+}
+
+func TestGenerateLLVMIRRejectsIncompleteNamedType(t *testing.T) {
+	types := ir.NewTypeTable()
+	void := types.Intern(ir.Type{Kind: ir.TypeVoid})
+	usize := types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
+	types.SetIndexType(usize)
+	pending, err := types.ReserveNamed(ir.Type{Kind: ir.TypeStruct, Name: "Pending", Identity: "test::Pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := &mir.Module{
+		Name: "incomplete", Types: types,
+		Funcs: []*mir.Function{{
+			Name: "use_pending", Params: []ir.Param{{Name: "value", Type: pending}}, ReturnType: void,
+			Blocks: []*mir.Block{{ID: 0, Term: &mir.Ret{}}},
+		}},
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	if out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false); out != "" {
+		t.Fatalf("incomplete named type emitted LLVM:\n%s", out)
+	}
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "unsupported llvm type: Pending") {
+		t.Fatalf("incomplete named type diagnostic missing:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestGenerateLLVMIRDefaultDescriptorEmitted(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -1173,7 +1289,7 @@ func TestGenerateLLVMIRAcceptsRawExternBoundaries(t *testing.T) {
 }
 
 func TestGenerateLLVMIRUsesCarriedAllocatorForInterfaceDrops(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.valueStruct}}, Return: llvmTypes.void}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Receiver: ir.MethodReceiverValue, Return: llvmTypes.void}}})
 	ownedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	optionalOwnedIface := llvmTypes.table.Intern(ir.OptionalVariant(ownedIface))
 	for _, tt := range []struct {
@@ -1243,7 +1359,7 @@ func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.
 }
 
 func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.refValueStruct}}, Return: llvmTypes.i32}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32}}})
 	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: iface})
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -1286,7 +1402,7 @@ func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
 }
 
 func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.T) {
-	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.refValueStruct}}, Return: llvmTypes.i32}}})
+	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32}}})
 	functionType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{interfaceType}, Return: llvmTypes.i32})
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -1316,7 +1432,7 @@ func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.
 }
 
 func TestInterfaceSymbolsDistinguishOwnedAndBorrowedABI(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.refValueStruct}}, Return: llvmTypes.i32}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32}}})
 	owned := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	borrowed := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: iface})
 
@@ -2674,7 +2790,7 @@ func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
 }
 
 func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Params: []ir.TypeField{{Name: "self", Type: llvmTypes.valueStruct}}, Return: llvmTypes.void}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Receiver: ir.MethodReceiverValue, Return: llvmTypes.void}}})
 	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -2790,6 +2906,7 @@ func TestGenerateLLVMIRRejectsIncompleteVariantSwitch(t *testing.T) {
 
 func TestLLVMVariantTagWidthsAndEmptyRejection(t *testing.T) {
 	types := ir.NewTypeTable()
+	emitter := &llvmEmitter{mod: &mir.Module{Types: types}}
 	for _, test := range []struct {
 		name  string
 		count int
@@ -2805,13 +2922,13 @@ func TestLLVMVariantTagWidthsAndEmptyRejection(t *testing.T) {
 				Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Many", Identity: "test::Many",
 				Cases: make([]ir.VariantCase, test.count),
 			}
-			layout, ok := llvmVariantLayout(types, variant)
+			layout, ok := emitter.variantLayout(variant)
 			if !ok || layout.Elements[layout.VariantTag].Text != test.want {
 				t.Fatalf("tag layout for %d cases = %#v, want %s", test.count, layout, test.want)
 			}
 		})
 	}
-	if layout, ok := llvmVariantLayout(types, ir.Type{Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Identity: "test::Empty"}); ok || layout != nil {
+	if layout, ok := emitter.variantLayout(ir.Type{Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Identity: "test::Empty"}); ok || layout != nil {
 		t.Fatalf("empty variant layout = %#v, %v; want rejection", layout, ok)
 	}
 }
@@ -2857,15 +2974,18 @@ func TestGenerateLLVMIRLowersNamedVariantOperationsAndDrop(t *testing.T) {
 		},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	carrier := namedLLVMTypeName(llvmTypes.table, result)
 	for _, expected := range []string{
-		"insertvalue { i8, i32, { i32*, i8* } } zeroinitializer, i8 1, 0",
-		"insertvalue { i8, i32, { i32*, i8* } }",
-		"extractvalue { i8, i32, { i32*, i8* } } %result, 0",
+		carrier + " = type { i8, i32, { i32*, i8* } }",
+		"insertvalue " + carrier + " zeroinitializer, i8 1, 0",
+		"insertvalue " + carrier,
+		"extractvalue " + carrier + " %result, 0",
 		"icmp eq i8",
-		"getelementptr inbounds { i8, i32, { i32*, i8* } }, { i8, i32, { i32*, i8* } }*",
+		"getelementptr inbounds " + carrier + ", " + carrier + "*",
 		"i32 0, i32 2",
 		"switch i8",
-		"extractvalue { i8, i32, { i32*, i8* } } %result, 2",
+		"extractvalue " + carrier + " %value, 2",
+		"call void @peeper_drop_",
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("missing %q in named variant LLVM:\n%s", expected, out)
@@ -2912,7 +3032,8 @@ func TestGenerateLLVMIRDropsNamedVariantPayloadFieldAcrossTargetWidths(t *testin
 				}},
 			}
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget.info, false)
-			if !strings.Contains(out, "getelementptr inbounds { i8, { { i32*, i8* } } }") ||
+			carrier := namedLLVMTypeName(types.table, resource)
+			if !strings.Contains(out, "getelementptr inbounds "+carrier) ||
 				!strings.Contains(out, "i32 0, i32 1") || !strings.Contains(out, "i32 0, i32 0") ||
 				!strings.Contains(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to "+compilerTarget.indexType) {
 				t.Fatalf("expected named variant payload field drop using %s target width, got:\n%s", compilerTarget.indexType, out)

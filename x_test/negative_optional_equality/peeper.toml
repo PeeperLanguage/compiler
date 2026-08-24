@@ -1,0 +1,7 @@
+name = "negative_optional_equality"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0004", "optional equality currently requires `none` on one side"]
