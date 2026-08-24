@@ -75,6 +75,7 @@ func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult
 	if ctx == nil || module == nil || module.CFG == nil || module.Semantics == nil || module.ModuleScope == nil {
 		return result
 	}
+	maps.Copy(result.OptionalTests, module.Semantics.OptionalTests)
 	for _, graph := range module.CFG.Functions {
 		if graph == nil {
 			continue
@@ -112,12 +113,6 @@ func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected 
 	return c.typeExpr(scope, expr, expected)
 }
 
-func (c *checker) typeOptionalTestExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
-	c.optionalTestContext++
-	defer func() { c.optionalTestContext-- }()
-	return c.typeExpr(scope, expr, expected)
-}
-
 func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	previous := c.wholeCarrierExpr
 	c.wholeCarrierExpr = expr
@@ -131,6 +126,7 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 	}
 	resolution := place.Resolution{}
 	if c.flow != nil {
+		delete(c.flow.result.Payloads, expr.ID())
 		resolution = c.resolveFlowPlace(scope, expr, *c.flow.state)
 	}
 	if c.wholeCarrierExpr == expr {
@@ -141,12 +137,13 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 		c.recordFlowResolution(expr, resolution)
 		return base
 	}
+	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
 	required := payloadDepthForExpected(base, expected)
-	if c.payloadContext > 0 && required == 0 {
+	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
 		required = optionalLayerCount(base)
 	}
 	if c.flow == nil {
-		if c.optionalTestContext > 0 || required == 0 {
+		if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
 			return base
 		}
 		return unwrapOptionalLayers(base, required)
@@ -155,11 +152,9 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 	proven := presenceDepth(c.flow.state.presence, resolution.StorageOrigins)
 	resolved := unwrapOptionalLayers(base, proven)
 	applied := optionalLayerCount(base) - optionalLayerCount(resolved)
-	if c.optionalTestContext == 0 {
-		if _, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType); explicitCarrier {
-			c.recordFlowResolution(expr, resolution)
-			return base
-		}
+	if c.optionalTestContext == 0 && explicitCarrier {
+		c.recordFlowResolution(expr, resolution)
+		return base
 	}
 	if applied > 0 {
 		c.recordPayloadAccess(expr, resolution, applied)
@@ -233,14 +228,20 @@ func (c *checker) recordOptionalTest(node *ast.BinaryExpr, subject ast.Expr) {
 	if c == nil || node == nil || subject == nil {
 		return
 	}
-	test := flowresult.OptionalTest{SubjectID: subject.ID(), PresentWhenTrue: node.Op == "!="}
 	if c.flow == nil {
 		if c.module != nil && c.module.Semantics != nil {
-			c.module.Semantics.OptionalTests[node.ID()] = test
+			c.module.Semantics.OptionalTests[node.ID()] = flowresult.OptionalTest{
+				SubjectID: subject.ID(), PresentWhenTrue: node.Op == "!=",
+			}
 		}
 		return
 	}
-	if payload, ok := c.flow.result.Payloads[subject.ID()]; ok {
+	test, found := c.flow.result.OptionalTests[node.ID()]
+	if !found {
+		return
+	}
+	test.Depth = 0
+	if payload, ok := c.flow.result.Payloads[test.SubjectID]; ok {
 		test.Depth = payload.Depth
 	}
 	c.flow.result.OptionalTests[node.ID()] = test
@@ -354,7 +355,8 @@ func (a *flowAnalyzer) run() {
 		}
 		if typ, ok := symbols.GetSymbolType(sym); ok {
 			if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
-				entryState.references[sym] = []place.Origin{{Root: sym}}
+				carrier := []place.Origin{{Root: sym}}
+				entryState.references[sym] = place.PayloadOrigins(carrier, optionalLayerCount(typ))
 			}
 		}
 	}
@@ -528,7 +530,6 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 		resolution := c.resolveFlowPlace(scope, node.Target, *st)
 		invalidatePresenceOrigins(st, resolution.StorageOrigins)
 		if sym := a.assignedSymbol(scope, node.Target); sym != nil {
-			invalidatePresenceDependency(st, sym)
 			a.updateOriginBinding(c, scope, sym, node.Value, st)
 		}
 	}
@@ -822,17 +823,21 @@ func intersectPresenceFacts(left, right []presenceStateFact) []presenceStateFact
 func mergeFlowStates(left, right flowState) flowState {
 	merged := newFlowState()
 	merged.presence = intersectPresenceFacts(left.presence, right.presence)
-	for sym, origins := range left.references {
-		merged.references[sym] = place.CloneOrigins(origins)
-	}
-	for sym, origins := range right.references {
-		merged.references[sym] = place.MergeOrigins(merged.references[sym], origins)
-	}
-	for sym, origins := range left.rawPointers {
-		merged.rawPointers[sym] = place.CloneOrigins(origins)
-	}
-	for sym, origins := range right.rawPointers {
-		merged.rawPointers[sym] = place.MergeOrigins(merged.rawPointers[sym], origins)
+	merged.references = mergeKnownOriginMaps(left.references, right.references)
+	merged.rawPointers = mergeKnownOriginMaps(left.rawPointers, right.rawPointers)
+	return merged
+}
+
+func mergeKnownOriginMaps(
+	left, right map[*symbols.Symbol][]place.Origin,
+) map[*symbols.Symbol][]place.Origin {
+	merged := make(map[*symbols.Symbol][]place.Origin)
+	for sym, leftOrigins := range left {
+		rightOrigins, known := right[sym]
+		if !known {
+			continue
+		}
+		merged[sym] = place.MergeOrigins(leftOrigins, rightOrigins)
 	}
 	return merged
 }
@@ -871,32 +876,22 @@ func mergeDependencies(left, right []*symbols.Symbol) []*symbols.Symbol {
 	return merged
 }
 
-func invalidatePresenceDependency(st *flowState, assigned *symbols.Symbol) {
-	if st == nil || assigned == nil {
-		return
-	}
-	kept := st.presence[:0]
-	for _, fact := range st.presence {
-		dependent := false
-		for _, dependency := range fact.dependencies {
-			if dependency == assigned {
-				dependent = true
-				break
-			}
-		}
-		if !dependent {
-			kept = append(kept, fact)
-		}
-	}
-	st.presence = kept
-}
-
 func invalidatePresenceOrigins(st *flowState, mutated []place.Origin) {
 	if st == nil || len(mutated) == 0 {
 		return
 	}
 	kept := st.presence[:0]
 	for _, fact := range st.presence {
+		dependencyMutated := false
+		for _, dependency := range fact.dependencies {
+			if dependency != nil && place.OriginsOverlap([]place.Origin{{Root: dependency}}, mutated) {
+				dependencyMutated = true
+				break
+			}
+		}
+		if dependencyMutated {
+			continue
+		}
 		if !place.OriginsOverlap(fact.origins, mutated) {
 			kept = append(kept, fact)
 			continue
@@ -949,7 +944,6 @@ func clearFlowScope(scope *symbols.Scope, st *flowState) {
 	for _, sym := range scope.Symbols() {
 		delete(st.references, sym)
 		delete(st.rawPointers, sym)
-		invalidatePresenceDependency(st, sym)
 		invalidatePresenceOrigins(st, []place.Origin{{Root: sym}})
 	}
 }

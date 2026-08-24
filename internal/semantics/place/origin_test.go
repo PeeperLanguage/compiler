@@ -227,6 +227,85 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	}
 }
 
+func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
+	scope := symbols.NewScope(nil)
+	carrier := symbols.New("value", symbols.SymbolVar, nil, nil)
+	carrier.BindType(&typeinfo.OptionalType{Inner: typeinfo.DefaultIntegerType()})
+	if err := scope.Declare(carrier); err != nil {
+		t.Fatal(err)
+	}
+
+	ident := &ast.Ident{Name: "value"}
+	resolved := Resolve(scope, &ast.AddressExpr{Expr: ident}, ResolveOptions{
+		PayloadDepth: func(expr ast.Expr) int {
+			if expr == ident {
+				return 1
+			}
+			return 0
+		},
+	})
+	storage := []Origin{{Root: carrier}}
+	payload := PayloadOrigins(storage, 1)
+	if !SameOrigins(resolved.StorageOrigins, storage) || !SameOrigins(resolved.ValueOrigins, payload) {
+		t.Fatalf("address resolution = %#v, want carrier storage and payload value %#v", resolved, payload)
+	}
+}
+
+func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t *testing.T) {
+	scope := symbols.NewScope(nil)
+	valueType := &typeinfo.StructType{Fields: []typeinfo.Field{{Name: "value", Type: typeinfo.DefaultIntegerType()}}}
+	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
+	owner.BindType(&typeinfo.OptionalType{Inner: &typeinfo.OwnedPtrType{Target: valueType}})
+	referent := symbols.New("referent", symbols.SymbolVar, nil, nil)
+	referent.BindType(valueType)
+	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
+	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{Mutable: true, Target: valueType}})
+	for _, sym := range []*symbols.Symbol{owner, referent, reference} {
+		if err := scope.Declare(sym); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ownerBase := &ast.Ident{Name: "owner"}
+	ownerField := &ast.SelectorExpr{Expr: ownerBase, Name: &ast.Ident{Name: "value"}}
+	ownerResolution := Resolve(scope, ownerField, ResolveOptions{
+		ExprType: func(ast.Expr) typeinfo.Type { return &typeinfo.OwnedPtrType{Target: valueType} },
+		PayloadDepth: func(expr ast.Expr) int {
+			if expr == ownerBase {
+				return 1
+			}
+			return 0
+		},
+	})
+	wantOwner := []Origin{{Root: owner, Projections: []OriginProjection{
+		{Kind: OriginOptionalPayload},
+		{Kind: OriginPointee},
+		{Kind: OriginField, Field: "value"},
+	}}}
+	if !SameOrigins(ownerResolution.ValueOrigins, wantOwner) {
+		t.Fatalf("owned optional resolution = %#v, want %#v", ownerResolution, wantOwner)
+	}
+
+	referenceBase := &ast.Ident{Name: "reference"}
+	referenceField := &ast.SelectorExpr{Expr: referenceBase, Name: &ast.Ident{Name: "value"}}
+	referenceResolution := Resolve(scope, referenceField, ResolveOptions{
+		ExprType: func(ast.Expr) typeinfo.Type { return &typeinfo.RefType{Mutable: true, Target: valueType} },
+		ReferenceOrigins: func(*symbols.Symbol) []Origin {
+			return []Origin{{Root: referent}}
+		},
+		PayloadDepth: func(expr ast.Expr) int {
+			if expr == referenceBase {
+				return 1
+			}
+			return 0
+		},
+	})
+	wantReference := []Origin{{Root: referent, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
+	if !SameOrigins(referenceResolution.ValueOrigins, wantReference) {
+		t.Fatalf("optional reference resolution = %#v, want %#v", referenceResolution, wantReference)
+	}
+}
+
 func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T) {
 	scope := symbols.NewScope(nil)
 	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)

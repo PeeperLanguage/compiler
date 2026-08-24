@@ -1,0 +1,9 @@
+fn Change(_: &mut usize) {}
+
+fn InvalidatedThroughAlias(values: [2]?i32, mut index: usize) -> i32 {
+    if values[index] == none {
+        return 0;
+    }
+    Change(&mut index);
+    return values[index];
+}
