@@ -165,6 +165,19 @@ func TestSemanticTypeKeyIncludesEnumCaseSchemas(t *testing.T) {
 	}
 }
 
+func TestSemanticTypeKeyIncludesNamedEnumIdentity(t *testing.T) {
+	schema := &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}, {Name: "Waiting"}}}
+	left := &typeinfo.DefinedType{
+		Name: "Status", Identity: "left::Status", Kind: typeinfo.DefinedKindEnum, Underlying: schema,
+	}
+	right := &typeinfo.DefinedType{
+		Name: "Status", Identity: "right::Status", Kind: typeinfo.DefinedKindEnum, Underlying: schema,
+	}
+	if semanticTypeKey(left, make(map[typeinfo.Type]bool)) == semanticTypeKey(right, make(map[typeinfo.Type]bool)) {
+		t.Fatal("named enum identity did not change semantic type key")
+	}
+}
+
 func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
 	defer func() {
 		if recover() == nil {
