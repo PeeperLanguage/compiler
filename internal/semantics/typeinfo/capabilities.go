@@ -243,18 +243,18 @@ func IsNoCopyType(t Type) bool {
 }
 
 // IsLowerableType reports whether current backend lowering can represent type.
-// Owned pointers close recursive named composites without expanding storage;
+// Owned pointers and safe references close recursive named composites without expanding storage;
 // abstract Self parameters remain semantic-only interface metadata.
 func IsLowerableType(t Type) bool {
 	visiting := make(map[Type]struct{})
-	var check func(Type) bool
-	check = func(t Type) bool {
+	var check func(Type, bool) bool
+	check = func(t Type, throughIndirection bool) bool {
 		t = Underlying(t)
 		if t == nil {
 			return false
 		}
 		if _, found := visiting[t]; found {
-			return false
+			return throughIndirection
 		}
 		visiting[t] = struct{}{}
 		defer delete(visiting, t)
@@ -275,19 +275,19 @@ func IsLowerableType(t Type) bool {
 				return false
 			}
 			if target, ok := Underlying(typ.Target).(*ArrayType); ok && target != nil && target.Shape == ArraySlice {
-				return target.Elem != nil && check(target.Elem)
+				return target.Elem != nil && check(target.Elem, true)
 			}
-			return check(typ.Target)
+			return check(typ.Target, true)
 		case *OptionalType:
-			return typ != nil && typ.Inner != nil && check(typ.Inner)
+			return typ != nil && typ.Inner != nil && check(typ.Inner, throughIndirection)
 		case *ArrayType:
-			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem)
+			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem, throughIndirection)
 		case *StructType:
 			if typ == nil {
 				return false
 			}
 			for _, field := range typ.Fields {
-				if !check(field.Type) {
+				if !check(field.Type, throughIndirection) {
 					return false
 				}
 			}
@@ -304,11 +304,11 @@ func IsLowerableType(t Type) bool {
 					if i == 0 {
 						continue
 					}
-					if ContainsAbstractSelf(param.Type) || !check(param.Type) {
+					if ContainsAbstractSelf(param.Type) || !check(param.Type, throughIndirection) {
 						return false
 					}
 				}
-				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return)) {
+				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return, throughIndirection)) {
 					return false
 				}
 			}
@@ -318,17 +318,17 @@ func IsLowerableType(t Type) bool {
 				return false
 			}
 			for _, param := range typ.Params {
-				if !check(param) {
+				if !check(param, throughIndirection) {
 					return false
 				}
 			}
-			return typ.Return == nil || check(typ.Return)
+			return typ.Return == nil || check(typ.Return, throughIndirection)
 		case *EnumType:
 			if typ == nil {
 				return false
 			}
 			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload) {
+				if variant.Payload != nil && !check(variant.Payload, throughIndirection) {
 					return false
 				}
 			}
@@ -337,7 +337,7 @@ func IsLowerableType(t Type) bool {
 			return false
 		}
 	}
-	return check(t)
+	return check(t, false)
 }
 
 // NeedsDrop reports whether normal scope cleanup must destroy runtime-owned

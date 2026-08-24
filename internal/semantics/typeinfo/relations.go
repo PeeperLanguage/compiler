@@ -234,7 +234,7 @@ func ContainsReference(t Type) bool {
 }
 
 func ContainsStoredReference(t Type) bool {
-	return containsType(t, typeTraversal{followDefined: true}, func(candidate Type, stored bool) bool {
+	return containsType(t, typeTraversal{followDefined: true, referenceLeaf: true}, func(candidate Type, stored bool) bool {
 		_, ok := candidate.(*RefType)
 		return stored && ok
 	})
@@ -250,6 +250,7 @@ func ContainsNamedEnum(t Type) bool {
 type typeTraversal struct {
 	followDefined  bool
 	followCallable bool
+	referenceLeaf  bool
 }
 
 func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool) bool {
@@ -278,6 +279,9 @@ func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool
 		case *OwnedPtrType:
 			return typ != nil && visit(typ.Target, true)
 		case *RefType:
+			if traversal.referenceLeaf {
+				return false
+			}
 			return typ != nil && visit(typ.Target, stored)
 		case *OptionalType:
 			return typ != nil && visit(typ.Inner, stored)

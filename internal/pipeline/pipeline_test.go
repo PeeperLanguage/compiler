@@ -1327,6 +1327,58 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersReferenceRecursiveEnumOnSupportedWidths(t *testing.T) {
+	const src = `enum Node {
+	Next: { next: &Node },
+	End
+}
+
+fn Read(_: &Node) {}
+
+fn main() -> i32 {
+	let end = Node::End;
+	let node = Node::Next{ next = &end };
+	let mut result = 1;
+	match node {
+		Node::Next{ next = next } => {
+			Read(next);
+			result = 0;
+		}
+		Node::End => {}
+	}
+	return result;
+}`
+
+	for _, arch := range []string{"386", "amd64"} {
+		t.Run(arch, func(t *testing.T) {
+			filePath := "recursive_enum_reference_" + arch + peeper.SourceExt
+			diag := diagnostics.NewDiagnosticBag()
+			diag.AddSourceContent(filePath, src)
+			ctx := project.NewWithConfig(project.Config{
+				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
+			}, diag)
+			entry := parseModuleSource(filePath, src, diag)
+			entry.Origin = project.ModuleOriginLocal
+			if err := Run(ctx, entry); err != nil {
+				t.Fatalf("pipeline.Run returned error: %v", err)
+			}
+			if diag.HasErrors() || entry.Phase != phase.Backend || entry.LLVMIR == "" {
+				t.Fatalf("reference-recursive enum stopped before backend: phase=%v\n%s", entry.Phase, diag.EmitAllToString())
+			}
+
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				t.Skip("clang unavailable for LLVM IR validation")
+			}
+			cmd := exec.Command(clang, "-target", ctx.Target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "recursive-enum.o"), "-")
+			cmd.Stdin = strings.NewReader(entry.LLVMIR)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s reference-recursive enum LLVM is invalid: %v\n%s\n%s", arch, err, output, entry.LLVMIR)
+			}
+		})
+	}
+}
+
 func TestPipelineRejectsDirectStructCycle(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct A {

@@ -225,6 +225,23 @@ func TestReferenceStorageTraversalIgnoresCallableMetadata(t *testing.T) {
 	}
 }
 
+func TestStoredReferenceTraversalStopsAtDirectReferent(t *testing.T) {
+	recursive := &DefinedType{Name: "Node", Kind: DefinedKindEnum}
+	recursive.Underlying = &EnumType{Cases: []VariantCase{{
+		Name: "Next",
+		Payload: &StructType{Fields: []Field{{
+			Name: "next",
+			Type: &RefType{Target: recursive},
+		}}},
+	}}}
+	if ContainsStoredReference(&RefType{Target: recursive}) {
+		t.Fatal("direct reference storage must not include fields behind its referent")
+	}
+	if !ContainsStoredReference(recursive) {
+		t.Fatal("recursive enum carrier must still include its stored reference field")
+	}
+}
+
 func TestContainsAbstractSelfDoesNotExpandResolvedTypes(t *testing.T) {
 	resolved := &DefinedType{
 		Name: "Resolved",
@@ -473,6 +490,36 @@ func TestNamedEnumPayloadCapabilitiesFollowEveryCaseField(t *testing.T) {
 	}
 	if !ContainsReference(reference) || !ContainsStoredReference(reference) {
 		t.Fatal("enum payload traversal must find stored references")
+	}
+}
+
+func TestReferenceClosesRecursiveNamedEnumLowerability(t *testing.T) {
+	node := &DefinedType{Name: "Node", Identity: "test::Node", Kind: DefinedKindEnum}
+	node.Underlying = &EnumType{Cases: []VariantCase{
+		{
+			Name: "Next",
+			Payload: &StructType{Fields: []Field{{
+				Name: "next",
+				Type: &RefType{Target: node},
+			}}},
+		},
+		{Name: "End"},
+	}}
+
+	if !IsLowerableType(node) {
+		t.Fatal("reference-recursive named enum must be lowerable")
+	}
+
+	byValue := &DefinedType{Name: "ByValue", Identity: "test::ByValue", Kind: DefinedKindEnum}
+	byValue.Underlying = &EnumType{Cases: []VariantCase{{
+		Name: "Next",
+		Payload: &StructType{Fields: []Field{{
+			Name: "next",
+			Type: byValue,
+		}}},
+	}}}
+	if IsLowerableType(byValue) {
+		t.Fatal("by-value recursive named enum must remain non-lowerable")
 	}
 }
 

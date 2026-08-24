@@ -425,6 +425,11 @@ Generic recursive links must repeat same canonical type arguments. Exact
 `Node<T> -> *Node<T>` recursion reuses one semantic and runtime shell;
 argument-expanding recursion is rejected before lowering.
 
+Safe references can also close recursive named layouts because reference
+storage has fixed size. Such carriers remain subject to normal reference-origin
+and storage rules: indirection changes layout recursion, not referent lifetime
+or ownership.
+
 ## Final Rules
 
 - `T` owns.
