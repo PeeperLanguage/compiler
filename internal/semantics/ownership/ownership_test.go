@@ -637,20 +637,90 @@ fn valid(mut resource: Resource) {
 	}
 }
 
-func TestMoveOnlyMatchArmStatesMustConverge(t *testing.T) {
+func TestDeadMoveOnlyMatchCarrierConverges(t *testing.T) {
 	result := checkOwnershipSource(t, `enum Resource {
 	Owned: { value: *i32 },
 	Pending
 }
-fn invalid(resource: Resource) {
+fn valid(resource: Resource) {
 	match resource {
 		Resource::Owned{ value = owned } => { free(owned); }
 		Resource::Pending => {}
 	}
 }`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected dead-carrier diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	plan := cleanupPlanForFunction(t, result, fn)
+	function, _ := result.module.ModuleScope.Lookup("valid")
+	resource, _ := function.Scope.Lookup("resource")
+	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
+	pendingBodyID := ir.NodeID(match.Arms[1].Body.ID())
+	if got := plan.MatchCarrierMoves[ownedBodyID]; got != resource.ID {
+		t.Fatalf("owned arm carrier move = %d, want %d", got, resource.ID)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[pendingBodyID]); !slices.Equal(got, []string{"resource"}) {
+		t.Fatalf("pending arm cleanup = %v, want [resource]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(fn.Body.ID())]); slices.Contains(got, "resource") {
+		t.Fatalf("dead carrier remains in function cleanup: %v", got)
+	}
+}
+
+func TestLiveMoveOnlyMatchCarrierMustConverge(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn Consume(_: Resource) {}
+fn invalid(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Pending => {}
+	}
+	Consume(resource);
+}`)
 	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
 		!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
-		t.Fatalf("expected match-arm convergence diagnostic, got:\n%s", result.EmitAllToString())
+		t.Fatalf("expected live match-arm convergence diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyMatchCarrierAssignmentAfterJoinMustConverge(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn invalid(mut resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Pending => {}
+	}
+	resource = Resource::Pending;
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
+		t.Fatalf("expected assignment-after-match convergence diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestNoDropMatchCarrierCanBeAssignedAfterJoin(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Borrowed: { value: &mut i32 },
+	Pending
+}
+fn valid(source: &mut i32) {
+	let mut resource = Resource::Borrowed{ value = source };
+	match resource {
+		Resource::Borrowed{ value = value } => {}
+		Resource::Pending => {}
+	}
+	resource = Resource::Pending;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected no-drop assignment diagnostics:\n%s", result.EmitAllToString())
 	}
 }
 
@@ -709,6 +779,36 @@ fn bad(resource: Resource) {
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
 		t.Fatalf("expected explicit discard to consume direct carrier, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestDeadMoveOnlyMatchDiscardPlansOneDropPerPath(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn valid(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = _ } => {}
+		Resource::Pending => {}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected dead discard diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	plan := cleanupPlanForFunction(t, result, fn)
+	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
+	pendingBodyID := ir.NodeID(match.Arms[1].Body.ID())
+	if got := plan.MatchFieldDrops[ownedBodyID]; !slices.Equal(got, []int{0}) {
+		t.Fatalf("owned discard drops = %v, want [0]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[ownedBodyID]); slices.Contains(got, "resource") {
+		t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[pendingBodyID]); !slices.Equal(got, []string{"resource"}) {
+		t.Fatalf("preserving arm cleanup = %v, want [resource]", got)
 	}
 }
 
@@ -1017,7 +1117,7 @@ fn parameter(maybe: ?&i32) {
 	if got := referenceOrigins(local.inStates[localUse.cfgSite.ID].references[copied]); !place.SameOrigins(got, want) {
 		t.Fatalf("copied optional origins = %#v, want %#v", got, want)
 	}
-	if _, live := local.referenceLiveIn[localUse.cfgSite.ID][copied]; !live {
+	if _, live := local.symbolLiveIn[localUse.cfgSite.ID][copied]; !live {
 		t.Fatalf("optional reference not live at none comparison")
 	}
 
@@ -1045,7 +1145,7 @@ fn parameter(maybe: ?&i32) {
 	if !place.SameOrigins(referenceOrigins(parameterValue), []place.Origin{{Root: maybeParameter}}) {
 		t.Fatalf("optional reference parameter origins = %#v", referenceOrigins(parameterValue))
 	}
-	if _, live := parameter.referenceLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
+	if _, live := parameter.symbolLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
 		t.Fatalf("optional reference parameter not live at none comparison")
 	}
 }
@@ -1092,13 +1192,13 @@ fn inspect(mut value: i32) {
 	callNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	assignNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[2])
 	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.referenceLiveIn[callNode.cfgSite.ID][reference]; !live {
+	if _, live := analysis.symbolLiveIn[callNode.cfgSite.ID][reference]; !live {
 		t.Fatalf("reference not live at its final use")
 	}
-	if _, live := analysis.referenceLiveOut[callNode.cfgSite.ID][reference]; live {
+	if _, live := analysis.symbolLiveOut[callNode.cfgSite.ID][reference]; live {
 		t.Fatalf("reference remains live after final use")
 	}
-	if _, live := analysis.referenceLiveIn[assignNode.cfgSite.ID][reference]; live {
+	if _, live := analysis.symbolLiveIn[assignNode.cfgSite.ID][reference]; live {
 		t.Fatalf("reference remains live at following assignment")
 	}
 }
@@ -1123,16 +1223,16 @@ func TestReferenceLivenessEndsAfterConditionalUse(t *testing.T) {
 	elseBlock := conditional.Else.(*ast.BlockStmt)
 	elseNode := analysisNodeForStmt(t, analysis, elseBlock.Stmts[0])
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[conditionNode.cfgSite.ID][maybe]; !live {
+	if _, live := analysis.symbolLiveIn[conditionNode.cfgSite.ID][maybe]; !live {
 		t.Fatalf("reference not live at conditional use")
 	}
-	if _, live := analysis.referenceLiveOut[conditionNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveOut[conditionNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live after conditional use")
 	}
-	if _, live := analysis.referenceLiveIn[thenNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveIn[thenNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live in then branch")
 	}
-	if _, live := analysis.referenceLiveIn[elseNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveIn[elseNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live in else branch")
 	}
 }
@@ -1152,7 +1252,7 @@ fn inspect(cond: bool, value: i32) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	loopNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.referenceLiveIn[loopNode.cfgSite.ID][reference]; !live {
+	if _, live := analysis.symbolLiveIn[loopNode.cfgSite.ID][reference]; !live {
 		t.Fatalf("loop body reference use did not propagate through header")
 	}
 }
@@ -1178,7 +1278,7 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 		t.Fatalf("loop exit continuation not found")
 	}
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[exit.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveIn[exit.cfgSite.ID][maybe]; live {
 		t.Fatalf("loop exit continuation repeats condition use")
 	}
 }

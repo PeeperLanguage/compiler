@@ -1,0 +1,7 @@
+name = "runtime_enum_match_dead_carrier"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["42", "failed", "2"]

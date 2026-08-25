@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -23,18 +24,19 @@ type site struct {
 }
 
 type analyzer struct {
-	ctx              *project.CompilerContext
-	module           *project.Module
-	graph            *cfg.Graph
-	sites            map[cfg.SiteID]*site
-	order            []cfg.SiteID
-	cleanup          *ownershipresult.CleanupPlan
-	function         *ast.FnDecl
-	functionScope    *symbols.Scope
-	reportedJoin     map[cfg.SiteID]bool
-	inStates         map[cfg.SiteID]state
-	referenceLiveIn  map[cfg.SiteID]map[*symbols.Symbol]ast.Node
-	referenceLiveOut map[cfg.SiteID]map[*symbols.Symbol]ast.Node
+	ctx                    *project.CompilerContext
+	module                 *project.Module
+	graph                  *cfg.Graph
+	sites                  map[cfg.SiteID]*site
+	order                  []cfg.SiteID
+	cleanup                *ownershipresult.CleanupPlan
+	function               *ast.FnDecl
+	functionScope          *symbols.Scope
+	reportedJoin           map[cfg.SiteID]bool
+	inStates               map[cfg.SiteID]state
+	symbolLiveIn           map[cfg.SiteID]map[*symbols.Symbol]ast.Node
+	symbolLiveOut          map[cfg.SiteID]map[*symbols.Symbol]ast.Node
+	deadMatchCarrierAtExit map[ast.NodeID]*symbols.Symbol
 }
 
 type pointerOrigin struct {
@@ -161,7 +163,8 @@ func (a *analyzer) run() {
 	if a == nil || a.graph == nil || a.graph.Entry == nil || len(a.graph.Entry.Sites) == 0 {
 		return
 	}
-	a.computeReferenceLiveness()
+	a.computeSymbolLiveness()
+	a.planDeadMatchCarrierCleanup()
 	entryState := newState()
 	for _, sym := range a.functionScope.Symbols() {
 		if sym == nil || sym.Kind != symbols.SymbolParam {
@@ -218,6 +221,59 @@ func (a *analyzer) run() {
 				queue = append(queue, succ)
 				queued[succ] = true
 			}
+		}
+	}
+}
+
+func (a *analyzer) planDeadMatchCarrierCleanup() {
+	a.deadMatchCarrierAtExit = make(map[ast.NodeID]*symbols.Symbol)
+	scopeExits := make(map[ast.NodeID]*site)
+	for _, node := range a.sites {
+		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil {
+			scopeExits[node.block.ID()] = node
+		}
+	}
+
+	for _, node := range a.sites {
+		matchStmt, ok := node.stmt.(*ast.MatchStmt)
+		if !ok || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
+			continue
+		}
+		match, found := a.module.Semantics.Matches[matchStmt.ID()]
+		if !found {
+			continue
+		}
+		_, carrier := a.matchSubjectCarrier(match)
+		if carrier == nil {
+			continue
+		}
+
+		fallingBodies := make([]ast.NodeID, 0, len(match.Arms))
+		var join cfg.SiteID
+		joinFound := false
+		movesCarrier := false
+		for _, arm := range match.Arms {
+			exit := scopeExits[arm.BodyID]
+			if exit == nil || exit.cfgSite == nil || len(exit.cfgSite.Successors) != 1 {
+				continue
+			}
+			armJoin := exit.cfgSite.Successors[0].To
+			if joinFound && armJoin != join {
+				panic("match ownership cleanup requires one shared falling-arm join")
+			}
+			join = armJoin
+			joinFound = true
+			fallingBodies = append(fallingBodies, arm.BodyID)
+			movesCarrier = movesCarrier || matchArmMovesCarrier(arm)
+		}
+		if !joinFound || len(fallingBodies) < 2 || !movesCarrier {
+			continue
+		}
+		if _, live := a.symbolLiveIn[join][carrier]; live {
+			continue
+		}
+		for _, bodyID := range fallingBodies {
+			a.deadMatchCarrierAtExit[bodyID] = carrier
 		}
 	}
 }
@@ -302,6 +358,17 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	a.checkScopeDestruction(node.scope, node.block, loans)
 	delete(a.cleanup.AfterScope, ir.NodeID(node.block.ID()))
 	cleanup := cleanupSymbols(node.scope, st)
+	if carrier := a.deadMatchCarrierAtExit[node.block.ID()]; carrier != nil {
+		if _, live := st.live[carrier]; live {
+			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block, loans)
+			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.NeedsDrop(typ) {
+				cleanup = append(cleanup, carrier)
+			}
+			st.moved[carrier] = node.block
+			delete(st.live, carrier)
+			delete(st.references, carrier)
+		}
+	}
 	if len(cleanup) > 0 {
 		a.cleanup.AfterScope[ir.NodeID(node.block.ID())] = symbolIDs(cleanup)
 	}
@@ -443,29 +510,20 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if !found || arm.Payload == nil {
 		return
 	}
-	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
+	subject, carrier := a.matchSubjectCarrier(match)
 	if subject == nil {
 		return
 	}
-	movesCarrier := false
+	movesCarrier := matchArmMovesCarrier(arm)
 	listed := make(map[int]bool, len(arm.Fields))
 	for _, field := range arm.Fields {
 		listed[field.Field] = field.Discard
-		if !typeinfo.IsImplicitCopyType(field.Type) {
-			movesCarrier = true
-		}
 	}
-	ident, direct := subject.(*ast.Ident)
-	var carrier *symbols.Symbol
-	if direct {
-		carrier = a.module.Semantics.ResolvedSymbols[ident.ID()]
-		direct = carrier != nil && (carrier.Kind == symbols.SymbolVar || carrier.Kind == symbols.SymbolConst || carrier.Kind == symbols.SymbolParam)
-	}
-	if movesCarrier && !direct {
+	if movesCarrier && carrier == nil {
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(subject), "")
 	}
-	if movesCarrier && direct {
+	if movesCarrier && carrier != nil {
 		moveSite, _ := a.module.TypedASTNodes[arm.ArmID].(ast.Node)
 		if moveSite == nil {
 			moveSite = subject
@@ -506,6 +564,28 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			}}
 		}
 	}
+}
+
+func (a *analyzer) matchSubjectCarrier(match flowresult.Match) (ast.Expr, *symbols.Symbol) {
+	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
+	ident, direct := subject.(*ast.Ident)
+	if !direct {
+		return subject, nil
+	}
+	carrier := a.module.Semantics.ResolvedSymbols[ident.ID()]
+	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
+		return subject, nil
+	}
+	return subject, carrier
+}
+
+func matchArmMovesCarrier(arm flowresult.MatchArm) bool {
+	for _, field := range arm.Fields {
+		if !typeinfo.IsImplicitCopyType(field.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
