@@ -1,0 +1,6 @@
+name = "runtime_enum_match"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

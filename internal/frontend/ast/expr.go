@@ -95,6 +95,45 @@ func (e *ScopeResolution) ImportValueMember() (qualifier, member *Ident, ok bool
 	return qualifier, member, true
 }
 
+// EnumVariantMember splits fully qualified variant syntax into its enum type
+// and final case name. Variant names cannot carry type arguments.
+func (e *ScopeResolution) EnumVariantMember() (TypeExpr, *Ident, bool) {
+	if e == nil || len(e.Segments) < 2 || len(e.Segments) > 3 {
+		return nil, nil, false
+	}
+	caseSegment := e.Segments[len(e.Segments)-1]
+	if caseSegment.Name == nil || len(caseSegment.TypeArgs) != 0 {
+		return nil, nil, false
+	}
+	if len(e.Segments) == 2 {
+		typeSegment := e.Segments[0]
+		if typeSegment.Name == nil {
+			return nil, nil, false
+		}
+		if len(typeSegment.TypeArgs) == 0 {
+			return &NamedType{
+				NodeIDHolder: NodeIDHolder{NodeID: typeSegment.Name.ID()},
+				Name:         typeSegment.Name.Name,
+				Location:     typeSegment.Location,
+			}, caseSegment.Name, true
+		}
+		return &AppliedType{
+			NodeIDHolder: NodeIDHolder{NodeID: typeSegment.Name.ID()},
+			Name:         typeSegment.Name,
+			TypeArgs:     typeSegment.TypeArgs,
+			Location:     typeSegment.Location,
+		}, caseSegment.Name, true
+	}
+	if e.Segments[0].Name == nil || len(e.Segments[0].TypeArgs) != 0 || e.Segments[1].Name == nil {
+		return nil, nil, false
+	}
+	return &ScopeResolution{
+		NodeIDHolder: NodeIDHolder{NodeID: e.Segments[1].Name.ID()},
+		Segments:     e.Segments[:2],
+		Location:     e.Location,
+	}, caseSegment.Name, true
+}
+
 func (e *ScopeResolution) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
@@ -267,6 +306,61 @@ func (e *StructLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, b
 		fields[i] = StructLitField{Name: cloneIdent(field.Name, newID, fromArgument), Value: field.Value.copyExpr(substitutions, newID, fromArgument), Location: field.Location}
 	}
 	return &StructLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Type: cloneTypeExpr(e.Type, newID, fromArgument), Fields: fields, Location: e.Location}
+}
+
+type VariantLit struct {
+	NodeIDHolder
+	Case     *ScopeResolution
+	Fields   []StructLitField
+	Location *source.Location
+}
+
+func (*VariantLit) exprNode() {}
+func (e *VariantLit) forEachChild(visit func(Node)) {
+	visit(e.Case)
+	for _, field := range e.Fields {
+		visit(field.Name)
+		visit(field.Value)
+	}
+}
+func (e *VariantLit) loc() *source.Location { return e.Location }
+func (e *VariantLit) exprText() string {
+	if e == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(ExprText(e.Case))
+	b.WriteByte('{')
+	for index, field := range e.Fields {
+		if index > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(identText(field.Name))
+		b.WriteString(" = ")
+		b.WriteString(ExprText(field.Value))
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+func (e *VariantLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+	if e == nil {
+		return nil
+	}
+	fields := make([]StructLitField, len(e.Fields))
+	for index, field := range e.Fields {
+		fields[index] = StructLitField{
+			Name:     cloneIdent(field.Name, newID, fromArgument),
+			Value:    field.Value.copyExpr(substitutions, newID, fromArgument),
+			Location: field.Location,
+		}
+	}
+	return &VariantLit{
+		NodeIDHolder: NodeIDHolder{NodeID: newID(e.ID(), fromArgument)},
+		Case:         e.Case.copyExpr(substitutions, newID, fromArgument).(*ScopeResolution),
+		Fields:       fields,
+		Location:     e.Location,
+	}
 }
 
 type ArrayLit struct {
@@ -549,6 +643,38 @@ type BinaryExpr struct {
 	Op       string
 	Right    Expr
 	Location *source.Location
+}
+
+type IsExpr struct {
+	NodeIDHolder
+	Value    Expr
+	Case     *ScopeResolution
+	Location *source.Location
+}
+
+func (*IsExpr) exprNode() {}
+func (e *IsExpr) forEachChild(visit func(Node)) {
+	visit(e.Value)
+	visit(e.Case)
+}
+func (e *IsExpr) loc() *source.Location { return e.Location }
+func (e *IsExpr) exprText() string {
+	if e == nil {
+		return ""
+	}
+	return "(" + ExprText(e.Value) + " is " + ExprText(e.Case) + ")"
+}
+
+func (e *IsExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+	if e == nil {
+		return nil
+	}
+	return &IsExpr{
+		NodeIDHolder: NodeIDHolder{NodeID: newID(e.ID(), fromArgument)},
+		Value:        e.Value.copyExpr(substitutions, newID, fromArgument),
+		Case:         e.Case.copyExpr(substitutions, newID, fromArgument).(*ScopeResolution),
+		Location:     e.Location,
+	}
 }
 
 func (*BinaryExpr) exprNode() {}

@@ -1,0 +1,5 @@
+type Alias = ?i32;
+
+fn main() {
+    let value = Alias::Present;
+}

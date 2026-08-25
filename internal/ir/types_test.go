@@ -32,8 +32,9 @@ func TestTypeTableConcurrentInterningAndReads(t *testing.T) {
 					results <- result{err: fmt.Sprintf("Text(%d) = %q, want %q", unique, got, uniqueName)}
 					return
 				}
-				if got, ok := types.LookupText(uniqueName); !ok || got != unique {
-					results <- result{err: fmt.Sprintf("LookupText(%q) = (%d, %t), want (%d, true)", uniqueName, got, ok, unique)}
+				abiKey := types.ABIKey(unique)
+				if got, ok := types.LookupABIKey(abiKey); !ok || got != unique {
+					results <- result{err: fmt.Sprintf("LookupABIKey(%q) = (%d, %t), want (%d, true)", abiKey, got, ok, unique)}
 					return
 				}
 				if typ, ok := types.Type(shared); !ok || typ.Kind != TypeStruct {

@@ -41,7 +41,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST)
+	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -157,6 +157,84 @@ func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRLowersNamedEnumCaseTestAndFieldPayload(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_flow_test"+peeper.SourceExt, "hir_enum_flow_test", `enum Choice {
+	Left: { value: i32 },
+	Right: { value: bool }
+}
+
+fn Read(choice: Choice) -> bool {
+	if choice is Choice::Right {
+		return choice.value;
+	}
+	return false;
+}`)
+	branch, ok := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	if !ok {
+		t.Fatalf("first statement = %T, want If", out.Funcs[0].Body.Stmts[0])
+	}
+	test, ok := branch.Cond.(*ir.VariantIs)
+	if !ok || test.Case != 1 || out.Types.Text(test.Value.TypeID()) != "Choice" {
+		t.Fatalf("condition = %#v, want VariantIs(Choice, Right)", branch.Cond)
+	}
+	ret := branch.Then.Stmts[0].(*hir.Return)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 2 {
+		t.Fatalf("field value = %#v, want payload then field load", ret.Value)
+	}
+	payload, field := load.Place.Projections[0], load.Place.Projections[1]
+	if payload.Kind != ir.PlaceProjectionVariantPayload || payload.Case != 1 ||
+		field.Kind != ir.PlaceProjectionField || field.FieldIndex != 0 || out.Types.Text(load.TypeID()) != "bool" {
+		t.Fatalf("field projections = %#v, want Right payload then value field", load.Place.Projections)
+	}
+}
+
+func TestGenerateHIRLowersNestedNamedEnumPayloadFields(t *testing.T) {
+	out := generateTestHIR(t, "hir_nested_enum_flow_test"+peeper.SourceExt, "hir_nested_enum_flow_test", `enum Inner {
+	Left: { value: i32 },
+	Right
+}
+
+enum Outer {
+	Wrapped: { inner: Inner },
+	Empty
+}
+
+fn Read(outer: Outer) -> i32 {
+	if outer is Outer::Wrapped {
+		if outer.inner is Inner::Left {
+			return outer.inner.value;
+		}
+	}
+	return 0;
+}`)
+	outerBranch := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	innerBranch := outerBranch.Then.Stmts[0].(*hir.If)
+	innerTest, ok := innerBranch.Cond.(*ir.VariantIs)
+	if !ok || out.Types.Text(innerTest.Value.TypeID()) != "Inner" {
+		t.Fatalf("inner condition = %#v, want VariantIs over Inner", innerBranch.Cond)
+	}
+	ret := innerBranch.Then.Stmts[0].(*hir.Return)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 4 {
+		t.Fatalf("nested field value = %#v, want two payload and two field projections", ret.Value)
+	}
+	wantKinds := []ir.PlaceProjectionKind{
+		ir.PlaceProjectionVariantPayload,
+		ir.PlaceProjectionField,
+		ir.PlaceProjectionVariantPayload,
+		ir.PlaceProjectionField,
+	}
+	for index, want := range wantKinds {
+		if load.Place.Projections[index].Kind != want {
+			t.Fatalf("projection %d = %#v, want %v", index, load.Place.Projections[index], want)
+		}
+	}
+	if load.Place.Projections[0].Case != 0 || load.Place.Projections[2].Case != 0 || out.Types.Text(load.TypeID()) != "i32" {
+		t.Fatalf("nested field projections = %#v, want Wrapped/inner/Left/value", load.Place.Projections)
+	}
+}
+
 func TestGenerateHIRKeepsProofAcrossImpossibleVariantEdge(t *testing.T) {
 	generateTestHIR(t, "hir_impossible_variant_edge_test"+peeper.SourceExt, "hir_impossible_variant_edge_test", `fn read(value: ?i32, other: ?i32) -> i32 {
 	if value != none {
@@ -195,7 +273,7 @@ func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
 	consumer := &project.Module{Key: "local:consumer.peep", ModuleScope: symbols.NewScope(nil)}
 	typ := &typeinfo.DefinedType{
 		Name:       "Status",
-		Underlying: &typeinfo.EnumType{Variants: []string{"Ready"}},
+		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}}},
 	}
 	lowered, ok := loweredRuntimeType(consumer, typ, nil).(*typeinfo.DefinedType)
 	if !ok || lowered == nil {
@@ -1013,12 +1091,77 @@ func TestLoweredTypeIDUsesSharedVariantDescriptor(t *testing.T) {
 	}
 	enumID := loweredTypeID(ctx, nil, &typeinfo.DefinedType{
 		Name:       "Status",
-		Underlying: &typeinfo.EnumType{Variants: []string{"Ready", "Waiting"}},
+		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
 	})
 	variant, ok := types.Type(enumID)
 	if !ok || variant.Kind != ir.TypeVariant || variant.Family != ir.VariantFamilyNamed ||
 		variant.Identity != "Status" || len(variant.Cases) != 2 || variant.Cases[0].Name != "Ready" {
 		t.Fatalf("enum runtime type = %#v", variant)
+	}
+}
+
+func TestGenerateHIRLowersEnumConstructorsFromSemanticEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_construction_test"+peeper.SourceExt, "hir_enum_construction_test", `enum Result<T> {
+	Ok: { value: T, code: i32 },
+	Pending,
+}
+fn main() {
+	let ok = Result<i32>::Ok{ code = 7, value = 42 };
+	let pending = Result<i32>::Pending;
+}`)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 2 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	okBinding := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
+	okValue, ok := okBinding.Value.(*ir.VariantMake)
+	if !ok || okValue.Case != 0 {
+		t.Fatalf("Ok value = %#v, want case 0", okBinding.Value)
+	}
+	payload, ok := okValue.Payload.(*ir.StructLit)
+	if !ok || len(payload.Fields) != 2 || payload.Fields[0].String() != "42" || payload.Fields[1].String() != "7" {
+		t.Fatalf("Ok payload = %#v, want declaration-ordered [42, 7]", okValue.Payload)
+	}
+	pendingBinding := out.Funcs[0].Body.Stmts[1].(*hir.Binding)
+	pendingValue, ok := pendingBinding.Value.(*ir.VariantMake)
+	if !ok || pendingValue.Case != 1 || pendingValue.Payload != nil {
+		t.Fatalf("Pending value = %#v, want payloadless case 1", pendingBinding.Value)
+	}
+}
+
+func TestGenerateHIRLowersMatchFromSemanticEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_match_test"+peeper.SourceExt, "hir_enum_match_test", `enum Result {
+	Ok: { value: i32, code: i32 },
+	Pending
+}
+
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok{ value = payload } => {
+			return payload;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	switchStmt, ok := out.Funcs[0].Body.Stmts[0].(*hir.SwitchVariant)
+	if !ok || len(switchStmt.Cases) != 2 || switchStmt.Cases[0].Case != 0 || switchStmt.Cases[1].Case != 1 {
+		t.Fatalf("match HIR = %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	if out.Types.Text(switchStmt.Value.TypeID()) != "Result" || len(switchStmt.Cases[0].Bindings) != 1 {
+		t.Fatalf("match subject/bindings = %#v", switchStmt)
+	}
+	binding := switchStmt.Cases[0].Bindings[0]
+	if binding.FieldIndex != 0 || binding.SymbolID == 0 || out.Types.Text(binding.Type) != "i32" {
+		t.Fatalf("pattern binding = %#v", binding)
+	}
+	ret := switchStmt.Cases[0].Body.Stmts[0].(*hir.Return)
+	ident, ok := ret.Value.(*ir.Ident)
+	if !ok || ident.Name != binding.Name {
+		t.Fatalf("pattern return = %#v, binding = %#v", ret.Value, binding)
 	}
 }
 

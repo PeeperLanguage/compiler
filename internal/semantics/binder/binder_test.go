@@ -74,6 +74,15 @@ struct B { a: A }`,
 			name:   "enum leaf",
 			source: `enum State { Ready }`,
 		},
+		{
+			name:      "enum value recursion",
+			source:    `enum Node { Next: { value: Node } }`,
+			wantCycle: true,
+		},
+		{
+			name:   "enum pointer recursion",
+			source: `enum Node { Next: { value: *Node }, End }`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -110,7 +119,7 @@ func TestBindInstantiatesGenericNamedTypes(t *testing.T) {
 struct Node<T> { next: *Node<T> }
 type Maybe<T> = ?T;
 iface Reader<T> { fn (&Self) read() -> T }
-enum Choice<T> { Left, Right }
+enum Choice<T> { Left: { value: T }, Right }
 fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, node: Node<i32>, maybe: Maybe<i32>, reader: Reader<i32>, choice: Choice<i32>) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
@@ -177,6 +186,15 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 	choice, ok := fn.Params[7].(*typeinfo.DefinedType)
 	if !ok || choice.Text() != "Choice<i32>" {
 		t.Fatalf("Choice<i32> instance = %#v", fn.Params[7])
+	}
+	choiceDescriptor, ok := typeinfo.VariantDescriptorOf(choice)
+	if !ok || len(choiceDescriptor.Cases) != 2 || choiceDescriptor.Cases[0].Name != "Left" {
+		t.Fatalf("Choice<i32> descriptor = %#v", choiceDescriptor)
+	}
+	payload, ok := choiceDescriptor.Cases[0].Payload.(*typeinfo.StructType)
+	if !ok || len(payload.Fields) != 1 || payload.Fields[0].Name != "value" ||
+		!typeinfo.SameType(payload.Fields[0].Type, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+		t.Fatalf("Choice<i32>::Left payload = %#v, want value: i32", choiceDescriptor.Cases[0].Payload)
 	}
 }
 

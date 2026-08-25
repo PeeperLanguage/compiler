@@ -18,10 +18,15 @@ type VariantFact struct {
 	Dependencies   []symbols.SymbolID
 }
 
+type OriginFact struct {
+	StorageOrigins []place.Origin
+	ValueOrigins   []place.Origin
+}
+
 type Facts struct {
 	Variants          []VariantFact
-	ReferenceOrigins  map[symbols.SymbolID][]place.Origin
-	RawPointerOrigins map[symbols.SymbolID][]place.Origin
+	ReferenceOrigins  []OriginFact
+	RawPointerOrigins []OriginFact
 }
 
 type PayloadAccess struct {
@@ -30,26 +35,69 @@ type PayloadAccess struct {
 	Direct         bool
 }
 
-// OptionalTest is base typechecker evidence for source `none` comparisons.
-// Flow converts it into case-based VariantTest evidence.
-type OptionalTest struct {
-	SubjectID       ast.NodeID
-	PresentWhenTrue bool
+// AppliesTo distinguishes payload layers of an expression from projections
+// used to reach that expression through an enclosing variant payload.
+func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
+	return len(p.Cases) > 0 && place.SameOrigins(p.CarrierOrigins, storage)
 }
 
-type VariantTest struct {
+type CaseTest struct {
 	SubjectID    ast.NodeID
 	Case         int
 	CaseWhenTrue bool
 	CaseCount    int
 	PayloadPath  []int
+	Family       typeinfo.VariantFamily
+}
+
+type VariantFieldAccess struct {
+	Carrier ast.NodeID
+	Case    int
+	Payload *typeinfo.StructType
+	Field   int
+	Type    typeinfo.Type
+}
+
+// Match is typechecker-owned case and binding evidence consumed by CFG and
+// later semantic phases without resolving source paths again.
+type Match struct {
+	SubjectID ast.NodeID
+	EnumType  typeinfo.Type
+	Cases     []typeinfo.VariantCase
+	Arms      []MatchArm
+}
+
+type MatchArm struct {
+	ArmID   ast.NodeID
+	BodyID  ast.NodeID
+	Case    int
+	Payload *typeinfo.StructType
+	Fields  []MatchField
+}
+
+type MatchField struct {
+	Field   int
+	Type    typeinfo.Type
+	Binding *symbols.Symbol
+	Discard bool
+}
+
+// Arm returns resolved evidence for one case-labelled CFG edge.
+func (m Match) Arm(caseIndex int) (MatchArm, bool) {
+	for _, arm := range m.Arms {
+		if arm.Case == caseIndex {
+			return arm, true
+		}
+	}
+	return MatchArm{}, false
 }
 
 type Result struct {
 	SiteFacts              map[ir.NodeID]map[cfg.SiteID]Facts
 	ExprTypes              map[ast.NodeID]typeinfo.Type
 	Payloads               map[ast.NodeID]PayloadAccess
-	VariantTests           map[ast.NodeID]VariantTest
+	CaseTests              map[ast.NodeID]CaseTest
+	VariantFields          map[ast.NodeID]VariantFieldAccess
 	ResolvedStorageOrigins map[ast.NodeID][]place.Origin
 	ResolvedValueOrigins   map[ast.NodeID][]place.Origin
 }

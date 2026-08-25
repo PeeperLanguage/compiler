@@ -32,6 +32,15 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		Externs:  make([]hir.Extern, 0),
 		Funcs:    make([]*hir.Function, 0),
 	}
+	for _, sym := range module.ModuleScope.Symbols() {
+		if sym == nil || sym.Kind != symbols.SymbolConst {
+			continue
+		}
+		constantType, ok := symbols.GetSymbolType(sym)
+		if !ok || loweredTypeID(ctx, module, constantType) == ir.InvalidType {
+			return nil
+		}
+	}
 	ast.ForEachDecl(module.AST, func(decl ast.Decl) bool {
 		fn, ok := decl.(*ast.FnDecl)
 		if !ok || fn == nil || fn.Name == nil {
@@ -238,6 +247,42 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 		}
 		appendBlock(module, scope, loop.Body, node.Body, returnType, ctx)
 		out.Stmts = append(out.Stmts, loop)
+	case *ast.MatchStmt:
+		evidence, found := module.Semantics.Matches[node.ID()]
+		if !found || len(evidence.Arms) != len(node.Arms) {
+			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "match statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+			return
+		}
+		switchStmt := &hir.SwitchVariant{
+			Value:    lowerASTExpr(ctx, module, scope, node.Subject, evidence.EnumType),
+			Cases:    make([]hir.VariantCaseBlock, 0, len(evidence.Arms)),
+			NodeID:   hir.NodeID(node.ID()),
+			Location: ast.LocOf(node),
+		}
+		for armIndex, arm := range evidence.Arms {
+			sourceArm := node.Arms[armIndex]
+			caseBlock := hir.VariantCaseBlock{
+				Case: arm.Case,
+				Body: &hir.Block{Stmts: make([]hir.Stmt, 0), NodeID: hir.NodeID(sourceArm.Body.ID()), Location: ast.LocOf(sourceArm.Body)},
+			}
+			if arm.Payload != nil {
+				caseBlock.PayloadType = loweredTypeID(ctx, module, arm.Payload)
+			}
+			for _, field := range arm.Fields {
+				if field.Binding == nil {
+					continue
+				}
+				caseBlock.Bindings = append(caseBlock.Bindings, hir.VariantBinding{
+					FieldIndex: field.Field,
+					Name:       symbolName(module, field.Binding),
+					Type:       loweredTypeID(ctx, module, field.Type),
+					SymbolID:   field.Binding.ID,
+				})
+			}
+			appendBlock(module, scope, caseBlock.Body, sourceArm.Body, returnType, ctx)
+			switchStmt.Cases = append(switchStmt.Cases, caseBlock)
+		}
+		out.Stmts = append(out.Stmts, switchStmt)
 
 	case *ast.ReturnStmt:
 		if node.Value == nil {
@@ -273,6 +318,18 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 
 func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr) *ir.Place {
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil && selector.Expr != nil && selector.Name != nil {
+		if module != nil && module.Flow != nil {
+			if access, found := module.Flow.VariantFields[selector.ID()]; found {
+				out := lowerPlace(ctx, module, scope, selector.Expr)
+				out.Projections = append(out.Projections, ir.PlaceProjection{
+					Kind: ir.PlaceProjectionField, FieldIndex: access.Field,
+					Type: loweredTypeID(ctx, module, access.Type), Location: ast.LocOf(selector),
+				})
+				out.Type = loweredTypeID(ctx, module, access.Type)
+				out.Location = ast.LocOf(selector)
+				return appendVariantPayloadPlace(ctx, module, selector, out)
+			}
+		}
 		baseType := exprResolvedType(module, selector.Expr)
 		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
 			out := lowerPlace(ctx, module, scope, selector.Expr)
@@ -300,7 +357,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 			indexExpr := lowerASTExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType())
 			if value, ok := consteval.EvaluateExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType()); ok {
 				if intConst, ok := value.(*constvalue.IntConst); ok && intConst != nil {
-					indexType, ok := ctx.Types.LookupText(intConst.TypeText())
+					indexType, ok := ctx.Types.LookupABIKey(intConst.TypeText())
 					if ok {
 						indexExpr = &ir.IntLit{Value: intConst.Text(), Type: indexType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(index.Index)}}
 					}
@@ -340,6 +397,9 @@ func appendVariantPayloadPlace(ctx *project.CompilerContext, module *project.Mod
 		return out
 	}
 	payload := module.Flow.Payloads[expr.ID()]
+	if !payload.AppliesTo(module.Flow.ResolvedStorageOrigins[expr.ID()]) {
+		return out
+	}
 	for _, caseIndex := range payload.Cases {
 		variant, ok := ctx.Types.Type(out.Type)
 		variantCase, caseOK := variant.VariantCase(caseIndex)
@@ -444,17 +504,17 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		resolvedTypeID = loweredTypeID(ctx, module, resolvedType)
 	}
 	if module != nil && module.Flow != nil {
-		if test, ok := module.Flow.VariantTests[expr.ID()]; ok {
+		if test, ok := module.Flow.CaseTests[expr.ID()]; ok {
 			subject, _ := module.TypedASTNodes[test.SubjectID].(ast.Expr)
-			present := &ir.VariantIs{
+			membership := &ir.VariantIs{
 				Value: lowerASTExpr(ctx, module, scope, subject, nil),
 				Case:  test.Case,
 				Type:  loweredTypeID(ctx, module, &typeinfo.BoolType{}),
 			}
 			if test.CaseWhenTrue {
-				return present
+				return membership
 			}
-			return &ir.Unary{Op: "!", Arg: present, Type: present.Type}
+			return &ir.Unary{Op: "!", Arg: membership, Type: membership.Type}
 		}
 		if payload := module.Flow.Payloads[expr.ID()]; len(payload.Cases) > 0 && place.IsPlaceExpr(expr) {
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, expr)}
@@ -475,6 +535,23 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		typeinfo.CheckNumericCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
 		value := lowerASTExpr(ctx, module, scope, expr, nil)
 		return &ir.Cast{Expr: value, Type: loweredTypeID(ctx, module, expectedType), SourceInfo: ir.SourceInfo{Location: loc}}
+	}
+	if construction, ok := module.Semantics.VariantConstructions[expr.ID()]; ok {
+		variant := &ir.VariantMake{
+			Case: construction.Case,
+			Type: loweredTypeID(ctx, module, construction.EnumType),
+		}
+		if construction.Payload != nil {
+			fields := make([]ir.Expr, len(construction.Fields))
+			for index, field := range construction.Fields {
+				fields[index] = lowerASTExpr(ctx, module, scope, field, construction.Payload.Fields[index].Type)
+			}
+			variant.Payload = &ir.StructLit{
+				Fields: fields,
+				Type:   loweredTypeID(ctx, module, construction.Payload),
+			}
+		}
+		return variant
 	}
 	expectedTypeID := loweredTypeID(ctx, module, expectedType)
 
@@ -681,6 +758,12 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	case *ast.StructLit:
 		return lowerStructLiteralExpr(ctx, module, scope, node)
 
+	case *ast.VariantLit:
+		return &ir.InvalidExpr{Message: "enum variant construction evidence missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
+
+	case *ast.IsExpr:
+		return &ir.InvalidExpr{Message: "enum case-test evidence missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
+
 	case *ast.ArrayLit:
 		return lowerArrayLiteralExpr(ctx, module, scope, node)
 
@@ -825,6 +908,11 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, selector *ast.SelectorExpr) ir.Expr {
 	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
 		return &ir.InvalidExpr{Message: "invalid selector", Type: ir.InvalidType}
+	}
+	if module.Flow != nil {
+		if _, found := module.Flow.VariantFields[selector.ID()]; found {
+			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
+		}
 	}
 	baseType := exprResolvedType(module, selector.Expr)
 	if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {

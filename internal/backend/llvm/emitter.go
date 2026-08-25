@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/ir/mir"
@@ -61,13 +62,18 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	}
 
 	for _, entry := range mod.StaticData {
-		if entry.Bytes {
-			escaped := llvmEscapeString(entry.Value)
-			fmt.Fprintf(&b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Value)+1, escaped, entry.Align)
-		} else {
-			llvmType := emitter.layout(entry.Type).Text
-			fmt.Fprintf(&b, "%s = constant %s %s, align %d\n", entry.Name, llvmType, entry.Value, entry.Align)
+		if entry.Constant == nil {
+			escaped := llvmEscapeString(entry.Bytes)
+			fmt.Fprintf(&b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Bytes)+1, escaped, entry.Align)
+			continue
 		}
+		value, ok := emitter.staticConstant(entry.Constant, entry.Type)
+		if !ok {
+			emitter.markInvalid("cannot lower typed static constant " + entry.Name)
+			continue
+		}
+		llvmType := emitter.layout(entry.Type).Text
+		fmt.Fprintf(&b, "%s = constant %s %s\n", entry.Name, llvmType, value)
 	}
 	if len(mod.StaticData) > 0 {
 		b.WriteString("\n")
@@ -340,6 +346,113 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		b.WriteString("}\n")
 	}
 	return finalLLVMText(&b, emitter)
+}
+
+func (e *llvmEmitter) staticConstant(value constvalue.Value, typeID ir.TypeID) (string, bool) {
+	if e == nil || e.mod == nil || e.mod.Types == nil || value == nil {
+		return "", false
+	}
+	typ, ok := e.mod.Types.Type(typeID)
+	if !ok {
+		return "", false
+	}
+	switch constant := value.(type) {
+	case *constvalue.IntConst:
+		if constant == nil || (typ.Kind != ir.TypeInteger && typ.Kind != ir.TypeByte && typ.Kind != ir.TypeChar) {
+			return "", false
+		}
+		return constant.Text(), true
+	case *constvalue.FloatConst:
+		if constant == nil || typ.Kind != ir.TypeFloat {
+			return "", false
+		}
+		return llvmFloatConst(constant.Text(), typ.Bits), true
+	case *constvalue.BoolConst:
+		if constant == nil || typ.Kind != ir.TypeBool {
+			return "", false
+		}
+		return fmt.Sprintf("%t", constant.Bool()), true
+	case *constvalue.StringConst:
+		if constant == nil || typ.Kind != ir.TypeCStr {
+			return "", false
+		}
+		for _, entry := range e.mod.StaticData {
+			if entry.Constant == nil && entry.Bytes == constant.Text() {
+				arrayType := fmt.Sprintf("[%d x i8]", len(entry.Bytes)+1)
+				return fmt.Sprintf("getelementptr inbounds (%s, %s* %s, i64 0, i64 0)", arrayType, arrayType, entry.Name), true
+			}
+		}
+		return "", false
+	case *constvalue.VariantConst:
+		return e.staticVariantConstant(constant, typeID, typ)
+	default:
+		return "", false
+	}
+}
+
+func (e *llvmEmitter) staticVariantConstant(value *constvalue.VariantConst, typeID ir.TypeID, typ ir.Type) (string, bool) {
+	if value == nil || typ.Kind != ir.TypeVariant || (value.NominalIdentity() != "" && value.NominalIdentity() != typ.Identity) {
+		return "", false
+	}
+	variantCase, ok := typ.VariantCase(value.CaseIndex())
+	if !ok {
+		return "", false
+	}
+	layout, ok := e.layoutType(typeID, false)
+	if !ok || layout.VariantTag < 0 || layout.VariantTag >= len(layout.Elements) {
+		return "", false
+	}
+	elements := make([]string, len(layout.Elements))
+	for index, element := range layout.Elements {
+		elements[index] = element.Text + " zeroinitializer"
+	}
+	tag := fmt.Sprintf("%d", value.CaseIndex())
+	if layout.Elements[layout.VariantTag].Text == "i1" {
+		tag = fmt.Sprintf("%t", value.CaseIndex() != 0)
+	}
+	elements[layout.VariantTag] = layout.Elements[layout.VariantTag].Text + " " + tag
+	fields := value.FieldValues()
+	if variantCase.Payload == ir.InvalidType {
+		if len(fields) != 0 {
+			return "", false
+		}
+		return "{ " + strings.Join(elements, ", ") + " }", true
+	}
+	payloadIndex, found := layout.VariantPayloads[value.CaseIndex()]
+	if !found || payloadIndex < 0 || payloadIndex >= len(elements) {
+		return "", false
+	}
+	payload, ok := e.staticVariantPayload(fields, variantCase.Payload)
+	if !ok {
+		return "", false
+	}
+	elements[payloadIndex] = layout.Elements[payloadIndex].Text + " " + payload
+	return "{ " + strings.Join(elements, ", ") + " }", true
+}
+
+func (e *llvmEmitter) staticVariantPayload(fields []constvalue.Value, typeID ir.TypeID) (string, bool) {
+	typ, ok := e.mod.Types.Type(typeID)
+	if !ok {
+		return "", false
+	}
+	if typ.Kind != ir.TypeStruct {
+		if len(fields) != 1 {
+			return "", false
+		}
+		return e.staticConstant(fields[0], typeID)
+	}
+	if len(fields) != len(typ.Fields) {
+		return "", false
+	}
+	elements := make([]string, len(fields))
+	for index, field := range fields {
+		text, ok := e.staticConstant(field, typ.Fields[index].Type)
+		if !ok {
+			return "", false
+		}
+		elements[index] = e.layout(typ.Fields[index].Type).Text + " " + text
+	}
+	return "{ " + strings.Join(elements, ", ") + " }", true
 }
 
 func emitVariantSwitch(b *llvmBuilder, term *mir.SwitchVariant) {

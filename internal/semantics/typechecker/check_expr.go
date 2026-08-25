@@ -9,9 +9,11 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -21,6 +23,9 @@ import (
 // typeExpr records canonical base typing, then applies per-use flow refinement.
 // Recursive typing stays in typeExprBase so both passes use one AST switch.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	if c.flow != nil && expr != nil {
+		delete(c.flow.result.Payloads, expr.ID())
+	}
 	base := c.typeExprBase(scope, expr, expected)
 	if call, ok := expr.(*ast.CallExpr); ok && c.flow != nil && c.flow.analyzer != nil {
 		c.flow.analyzer.invalidateCall(c, scope, call, c.flow.state)
@@ -103,7 +108,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return t
 
 	case *ast.ScopeResolution:
-		return c.qualifiedScopeType(node)
+		return c.qualifiedScopeType(scope, node)
 
 	case *ast.SelectorExpr:
 		return c.typeSelectorExpr(scope, node)
@@ -119,6 +124,9 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 	case *ast.StructLit:
 		return c.typeStructLit(scope, node, expected)
 
+	case *ast.VariantLit:
+		return c.typeVariantConstruction(scope, node, node.Case, node.Fields, true)
+
 	case *ast.ArrayLit:
 		return c.typeArrayLit(scope, node)
 
@@ -127,6 +135,9 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.BinaryExpr:
 		return c.typeBinaryExpr(scope, node, expected)
+
+	case *ast.IsExpr:
+		return c.typeIsExpr(scope, node)
 
 	case *ast.CallExpr:
 		return c.typeCallExpr(scope, node)
@@ -322,12 +333,22 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 			"optional equality currently requires `none` on one side"))
 		return &typeinfo.InvalidType{}
 	}
+	if node.Op == "==" || node.Op == "!=" || node.Op == "<" || node.Op == "<=" || node.Op == ">" || node.Op == ">=" {
+		leftVariant, leftIsVariant := typeinfo.VariantDescriptorOf(leftBase)
+		rightVariant, rightIsVariant := typeinfo.VariantDescriptorOf(rightBase)
+		if leftIsVariant && leftVariant.Family == typeinfo.VariantFamilyNamed ||
+			rightIsVariant && rightVariant.Family == typeinfo.VariantFamilyNamed {
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"named enum comparison is not supported; use `is` or `match`"))
+			return &typeinfo.InvalidType{}
+		}
+	}
 	if optionalTest {
 		subject := node.Left
 		if isNoneExpr(subject) {
 			subject = node.Right
 		}
-		c.recordOptionalTest(node, subject)
+		c.recordCaseTest(node, subject, ir.OptionalPresentCase, 2, node.Op == "!=", typeinfo.VariantFamilyOptional)
 	}
 
 	if node.Op == "<<" || node.Op == ">>" {
@@ -401,6 +422,116 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	return exprType
 }
 
+func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Type {
+	if node == nil || node.Value == nil || node.Case == nil {
+		return &typeinfo.InvalidType{}
+	}
+	valueType := c.requireValueType(node.Value, c.typeWholeCarrierExpr(scope, node.Value, nil), "case-test subject")
+	if typeinfo.IsInvalidOrUnknown(valueType) {
+		return &typeinfo.InvalidType{}
+	}
+	if c.flow != nil {
+		test, found := c.module.Semantics.CaseTests[node.ID()]
+		if !found {
+			return &typeinfo.InvalidType{}
+		}
+		c.recordCaseTest(node, node.Value, test.Case, test.CaseCount, test.CaseWhenTrue, test.Family)
+		return &typeinfo.BoolType{}
+	}
+	resolved, ok := c.resolveNamedVariant(node.Case)
+	if !ok {
+		return &typeinfo.InvalidType{}
+	}
+	if !typeinfo.SameType(valueType, resolved.EnumType) {
+		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
+			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(resolved.EnumType), typeinfo.TypeText(valueType))))
+		return &typeinfo.InvalidType{}
+	}
+	c.recordCaseTest(node, node.Value, resolved.CaseIndex, len(resolved.Descriptor.Cases), true, typeinfo.VariantFamilyNamed)
+	return &typeinfo.BoolType{}
+}
+
+type resolvedNamedVariant struct {
+	EnumType   typeinfo.Type
+	Descriptor typeinfo.VariantDescriptor
+	Case       typeinfo.VariantCase
+	CaseName   *ast.Ident
+	CaseIndex  int
+}
+
+// resolveNamedVariant keeps variant type syntax bound to resolver-owned symbol
+// identity. Expanded defaults retain declaration-module symbols even when their
+// cloned syntax is typechecked inside a caller module.
+func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedVariant, bool) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || path == nil {
+		return resolvedNamedVariant{}, false
+	}
+	typePath, caseName, ok := path.EnumVariantMember()
+	caseSymbol := c.module.Semantics.ResolvedSymbols[path.ID()]
+	if !ok || caseName == nil || caseSymbol == nil || caseSymbol.Kind != symbols.SymbolVariant || caseSymbol.Name != caseName.Name {
+		return resolvedNamedVariant{}, false
+	}
+	qualifierSymbol := c.module.Semantics.ResolvedSymbols[typePath.ID()]
+	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
+		return resolvedNamedVariant{}, false
+	}
+	qualifierType, ok := symbols.GetSymbolType(qualifierSymbol)
+	if !ok || qualifierType == nil {
+		return resolvedNamedVariant{}, false
+	}
+
+	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+	switch node := typePath.(type) {
+	case *ast.NamedType:
+		resolveNamed := opts.ResolveNamed
+		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
+			if name == node.Name {
+				return qualifierType, true
+			}
+			return resolveNamed(name)
+		}
+	case *ast.AppliedType:
+		if node.Name == nil {
+			return resolvedNamedVariant{}, false
+		}
+		resolveNamed := opts.ResolveNamed
+		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
+			if name == node.Name.Name {
+				return qualifierType, true
+			}
+			return resolveNamed(name)
+		}
+	case *ast.ScopeResolution:
+		qualifier, member, imported := node.ImportMember()
+		if !imported {
+			return resolvedNamedVariant{}, false
+		}
+		resolveQualified := opts.ResolveQualified
+		opts.ResolveQualified = func(moduleName, memberName string) (typeinfo.Type, bool) {
+			if moduleName == qualifier.Name && memberName == member.Name {
+				return qualifierType, true
+			}
+			return resolveQualified(moduleName, memberName)
+		}
+	default:
+		return resolvedNamedVariant{}, false
+	}
+
+	enumType := typeinfo.TypeFromSyntax(typePath, opts)
+	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
+	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return resolvedNamedVariant{}, false
+	}
+	selected, caseIndex, ok := typeinfo.LookupVariantCase(descriptor, caseName.Name)
+	if !ok {
+		return resolvedNamedVariant{}, false
+	}
+	return resolvedNamedVariant{
+		EnumType: enumType, Descriptor: descriptor, Case: selected,
+		CaseName: caseName, CaseIndex: caseIndex,
+	}, true
+}
+
 func binaryResultIsBool(op string) bool {
 	switch op {
 	case "&&", "||", "==", "!=", "<", "<=", ">", ">=":
@@ -443,6 +574,45 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = method.Symbol
 		}
 		return method.Type
+	}
+	descriptor, variant := typeinfo.VariantDescriptorOf(baseType)
+	if variant && descriptor.Family == typeinfo.VariantFamilyNamed {
+		var deferred typeinfo.Type
+		conflictingTypes := false
+		for _, variantCase := range descriptor.Cases {
+			payload, _ := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
+			if field, _, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
+				if deferred == nil {
+					deferred = field.Type
+				} else if !typeinfo.SameType(deferred, field.Type) {
+					conflictingTypes = true
+				}
+			}
+		}
+		if c.flow == nil && deferred != nil {
+			if conflictingTypes {
+				return &typeinfo.UnknownType{}
+			}
+			return deferred
+		}
+		if c.flow != nil {
+			resolution := c.resolveFlowPlace(scope, node.Expr, *c.flow.state)
+			if caseIndex, exact := provenVariantCase(c.flow.state.variants, resolution.StorageOrigins, len(descriptor.Cases)); exact {
+				payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
+				if field, fieldIndex, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
+					c.recordPayloadAccess(node.Expr, resolution, []int{caseIndex})
+					c.flow.result.Payloads[node.ID()] = flowresult.PayloadAccess{
+						CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins),
+						Cases:          []int{caseIndex},
+					}
+					c.flow.result.VariantFields[node.ID()] = flowresult.VariantFieldAccess{
+						Carrier: node.Expr.ID(), Case: caseIndex, Payload: payload,
+						Field: fieldIndex, Type: field.Type,
+					}
+					return field.Type
+				}
+			}
+		}
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
 		WithCode(diagnostics.ErrFieldNotFound).
@@ -624,11 +794,13 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 				"composite literal type must be struct", ast.LocOf(node.Type), "")
 			return &typeinfo.InvalidType{}
 		}
-		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)
+		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		return targetType
 	}
 	targetStruct, targetType := c.expectedStructType(expected)
 	if targetStruct != nil {
-		return c.typeStructLitWithExpected(scope, node, targetStruct, targetType)
+		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		return targetType
 	}
 	return c.typeStructLitAnonymous(scope, node)
 }
@@ -643,47 +815,92 @@ func (c *checker) expectedStructType(expected typeinfo.Type) (*typeinfo.StructTy
 	return nil, nil
 }
 
-func (c *checker) typeStructLitWithExpected(scope *symbols.Scope, node *ast.StructLit, targetStruct *typeinfo.StructType, targetType typeinfo.Type) typeinfo.Type {
+func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields []ast.StructLitField, targetStruct *typeinfo.StructType, literal string) ([]ast.Expr, bool) {
 	if targetStruct == nil {
-		return &typeinfo.InvalidType{}
+		return nil, false
 	}
-	fieldsByName := make(map[string]ast.StructLitField, len(node.Fields))
-	for _, field := range node.Fields {
+	valid := true
+	fieldsByName := make(map[string]ast.StructLitField, len(fields))
+	for _, field := range fields {
 		if field.Name == nil || field.Name.Name == "" {
 			continue
 		}
 		if _, exists := fieldsByName[field.Name.Name]; exists {
+			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrDuplicateField,
-				"duplicate struct literal field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
+				"duplicate "+literal+" field `"+field.Name.Name+"`", ast.LocOf(field.Name), "")
 			continue
 		}
 		fieldsByName[field.Name.Name] = field
 	}
-	for _, targetField := range targetStruct.Fields {
+	ordered := make([]ast.Expr, len(targetStruct.Fields))
+	required := availableFields(targetStruct)
+	for index, targetField := range targetStruct.Fields {
 		field, ok := fieldsByName[targetField.Name]
 		if !ok {
+			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-				"missing struct literal field `"+targetField.Name+"`", ast.LocOf(node), "").
-				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(availableFields(targetType), ", ")))
+				"missing "+literal+" field `"+targetField.Name+"`", ast.LocOf(site), "").
+				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(required, ", ")))
 			continue
 		}
+		ordered[index] = field.Value
+		delete(fieldsByName, targetField.Name)
 		valueType := c.typeExpr(scope, field.Value, targetField.Type)
-		valueType = c.requireValueType(field.Value, valueType, "struct field initializer")
+		valueType = c.requireValueType(field.Value, valueType, literal+" field initializer")
 		if typeinfo.IsInvalidOrUnknown(valueType) {
+			valid = false
 			continue
 		}
 		if !c.assignable(targetField.Type, valueType, field.Value) {
+			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
 					typeinfo.TypeText(valueType), targetField.Name, typeinfo.TypeText(targetField.Type)), ast.LocOf(field.Value), "")
 		}
-		delete(fieldsByName, targetField.Name)
 	}
 	for name, field := range fieldsByName {
+		valid = false
 		c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-			"unknown struct literal field `"+name+"`", ast.LocOf(field.Name), "")
+			"unknown "+literal+" field `"+name+"`", ast.LocOf(field.Name), "")
 	}
-	return targetType
+	return ordered, valid
+}
+
+func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, path *ast.ScopeResolution, fields []ast.StructLitField, braced bool) typeinfo.Type {
+	resolved, ok := c.resolveNamedVariant(path)
+	if !ok {
+		return &typeinfo.InvalidType{}
+	}
+	if resolved.Case.Payload == nil {
+		if braced {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept braces", ast.LocOf(site), "remove the braces")
+			return &typeinfo.InvalidType{}
+		}
+		c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
+		return resolved.EnumType
+	}
+	if !braced {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
+			"data enum variant `"+resolved.CaseName.Name+"` requires a braced field initializer", ast.LocOf(site), "initialize its named fields with `{ ... }`")
+		return &typeinfo.InvalidType{}
+	}
+	payload, ok := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
+	if !ok || payload == nil {
+		panic("named enum data case does not carry struct payload")
+	}
+	ordered, valid := c.typeLiteralFields(scope, site, fields, payload, "enum variant literal")
+	if !valid {
+		return &typeinfo.InvalidType{}
+	}
+	c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{
+		EnumType: resolved.EnumType,
+		Case:     resolved.CaseIndex,
+		Payload:  payload,
+		Fields:   ordered,
+	}
+	return resolved.EnumType
 }
 
 func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructLit) typeinfo.Type {

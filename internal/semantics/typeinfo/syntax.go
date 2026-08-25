@@ -212,13 +212,26 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
-		variants := make([]string, 0, len(typ.Variants))
+		cases := make([]VariantCase, 0, len(typ.Variants))
 		for _, variant := range typ.Variants {
-			if variant.Name != nil {
-				variants = append(variants, variant.Name.Name)
+			if variant.Name == nil {
+				continue
 			}
+			semanticCase := VariantCase{Name: variant.Name.Name}
+			if variant.HasData {
+				fields := make([]Field, 0, len(variant.Fields))
+				for _, field := range variant.Fields {
+					name := ""
+					if field.Name != nil {
+						name = field.Name.Name
+					}
+					fields = append(fields, Field{Name: name, Type: TypeFromSyntax(field.Type, opts)})
+				}
+				semanticCase.Payload = &StructType{Fields: fields}
+			}
+			cases = append(cases, semanticCase)
 		}
-		return &EnumType{Variants: variants}
+		return &EnumType{Cases: cases}
 	default:
 		return nil
 	}

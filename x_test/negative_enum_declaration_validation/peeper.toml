@@ -1,0 +1,7 @@
+name = "negative_enum_declaration_validation"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0021", "variant name must be PascalCase", "variant field `value` already declared"]

@@ -20,12 +20,13 @@ import (
 )
 
 type Parser struct {
-	filePath string
-	stream   []token.Token
-	diag     *diagnostics.DiagnosticBag
-	pos      int
-	nodeID   ast.NodeID
-	context  []string // parsing context stack for error messages
+	filePath      string
+	stream        []token.Token
+	diag          *diagnostics.DiagnosticBag
+	pos           int
+	nodeID        ast.NodeID
+	context       []string // parsing context stack for error messages
+	controlHeader bool
 }
 
 const (
@@ -383,7 +384,7 @@ func (p *Parser) parseStructDecl() ast.Decl {
 		return nil
 	}
 	typeParams := p.parseOptionalTypeParams()
-	fields, end, _ := p.parseStructFields()
+	fields, end, _ := p.parseTypeFields("expected '{' after struct", "expected '}' after struct fields")
 	p.match(token.SEMICOLON)
 	// Named type declarations keep the same payload node shape as anonymous
 	// type syntax so later semantic phases only see one struct-type model.

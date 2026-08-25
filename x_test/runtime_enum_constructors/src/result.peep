@@ -1,0 +1,12 @@
+enum Result<T> {
+    Ok: {
+        value: T,
+    },
+    Pending,
+}
+
+type Alias<T> = Result<T>;
+
+fn Accept(value: Result<i32>) -> i32 {
+    return 42;
+}

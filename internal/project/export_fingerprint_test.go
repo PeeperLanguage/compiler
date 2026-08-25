@@ -144,6 +144,40 @@ func TestSemanticTypeKeyIncludesCallableMetadata(t *testing.T) {
 	}
 }
 
+func TestSemanticTypeKeyIncludesEnumCaseSchemas(t *testing.T) {
+	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	i64 := &typeinfo.IntegerType{Signed: true, Bits: 64}
+	makeEnum := func(fieldName string, fieldType typeinfo.Type) *typeinfo.EnumType {
+		return &typeinfo.EnumType{Cases: []typeinfo.VariantCase{
+			{Name: "Ready", Payload: &typeinfo.StructType{Fields: []typeinfo.Field{{Name: fieldName, Type: fieldType}}}},
+			{Name: "Pending"},
+		}}
+	}
+	base := semanticTypeKey(makeEnum("value", i32), make(map[typeinfo.Type]bool))
+	if base == semanticTypeKey(makeEnum("code", i32), make(map[typeinfo.Type]bool)) {
+		t.Fatal("enum payload field name did not change semantic type key")
+	}
+	if base == semanticTypeKey(makeEnum("value", i64), make(map[typeinfo.Type]bool)) {
+		t.Fatal("enum payload field type did not change semantic type key")
+	}
+	if base == semanticTypeKey(&typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Waiting"}}}, make(map[typeinfo.Type]bool)) {
+		t.Fatal("enum case name did not change semantic type key")
+	}
+}
+
+func TestSemanticTypeKeyIncludesNamedEnumIdentity(t *testing.T) {
+	schema := &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}, {Name: "Waiting"}}}
+	left := &typeinfo.DefinedType{
+		Name: "Status", Identity: "left::Status", Kind: typeinfo.DefinedKindEnum, Underlying: schema,
+	}
+	right := &typeinfo.DefinedType{
+		Name: "Status", Identity: "right::Status", Kind: typeinfo.DefinedKindEnum, Underlying: schema,
+	}
+	if semanticTypeKey(left, make(map[typeinfo.Type]bool)) == semanticTypeKey(right, make(map[typeinfo.Type]bool)) {
+		t.Fatal("named enum identity did not change semantic type key")
+	}
+}
+
 func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -155,13 +189,28 @@ func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
 
 func TestConstantKeyIncludesTypeAndValue(t *testing.T) {
 	i32, _ := constvalue.NewIntText("1", "i32")
+	i32Two, _ := constvalue.NewIntText("2", "i32")
 	i64, _ := constvalue.NewIntText("1", "i64")
 	text, _ := constvalue.NewString("a:b", "str")
+	leftReady, _ := constvalue.NewVariant("left::Status", "Status", 0, []constvalue.Value{i32})
+	leftWaiting, _ := constvalue.NewVariant("left::Status", "Status", 1, nil)
+	rightReady, _ := constvalue.NewVariant("right::Status", "Status", 0, []constvalue.Value{i32})
+	leftReadyTwo, _ := constvalue.NewVariant("left::Status", "Status", 0, []constvalue.Value{i32Two})
 
 	if constantKey(i32) == constantKey(i64) {
 		t.Fatal("integer type did not change constant key")
 	}
 	if got := constantKey(text); got != `str:"a:b"` {
 		t.Fatalf("string constant key = %q", got)
+	}
+	base := constantKey(leftReady)
+	for name, value := range map[string]constvalue.Value{
+		"case":     leftWaiting,
+		"identity": rightReady,
+		"field":    leftReadyTwo,
+	} {
+		if base == constantKey(value) {
+			t.Fatalf("variant %s did not change constant key", name)
+		}
 	}
 }

@@ -206,8 +206,8 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	}
 	resolved := Resolve(scope, index, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
-		ReferenceOrigins: func(sym *symbols.Symbol) []Origin {
-			if sym == reference {
+		ReferenceOrigins: func(storage []Origin) []Origin {
+			if SameOrigins(storage, []Origin{{Root: reference}}) {
 				return []Origin{{Root: value}}
 			}
 			return nil
@@ -222,9 +222,41 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 		t.Fatalf("resolution = %#v, want stable value origins %#v", resolved, want)
 	}
 	if !SameOrigins(Resolve(scope, base, ResolveOptions{
-		ReferenceOrigins: func(*symbols.Symbol) []Origin { return []Origin{{Root: value}} },
+		ReferenceOrigins: func([]Origin) []Origin { return []Origin{{Root: value}} },
 	}).StorageOrigins, []Origin{{Root: reference}}) {
 		t.Fatal("reference carrier storage did not retain binding identity")
+	}
+}
+
+func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
+	scope := symbols.NewScope(nil)
+	value := symbols.New("value", symbols.SymbolVar, nil, nil)
+	holder := symbols.New("holder", symbols.SymbolVar, nil, nil)
+	holder.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{
+		Name: "ref", Type: &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()},
+	}}})
+	if err := scope.Declare(holder); err != nil {
+		t.Fatal(err)
+	}
+	base := &ast.Ident{Name: "holder"}
+	field := &ast.SelectorExpr{Expr: base, Name: &ast.Ident{Name: "ref"}}
+	types := map[ast.Expr]typeinfo.Type{
+		base:  holder.Type,
+		field: &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()},
+	}
+	wantStorage := []Origin{{Root: holder, Projections: []OriginProjection{{Kind: OriginField, Field: "ref"}}}}
+	resolved := Resolve(scope, field, ResolveOptions{
+		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
+		ReferenceOrigins: func(storage []Origin) []Origin {
+			if SameOrigins(storage, wantStorage) {
+				return []Origin{{Root: value}}
+			}
+			return nil
+		},
+	})
+	if !SameOrigins(resolved.StorageOrigins, wantStorage) ||
+		!SameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.Stable {
+		t.Fatalf("projected reference resolution = %#v", resolved)
 	}
 }
 
@@ -290,8 +322,16 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 	referenceBase := &ast.Ident{Name: "reference"}
 	referenceField := &ast.SelectorExpr{Expr: referenceBase, Name: &ast.Ident{Name: "value"}}
 	referenceResolution := Resolve(scope, referenceField, ResolveOptions{
-		ExprType: func(ast.Expr) typeinfo.Type { return &typeinfo.RefType{Mutable: true, Target: valueType} },
-		ReferenceOrigins: func(*symbols.Symbol) []Origin {
+		ExprType: func(expr ast.Expr) typeinfo.Type {
+			if expr == referenceBase {
+				return &typeinfo.RefType{Mutable: true, Target: valueType}
+			}
+			return typeinfo.DefaultIntegerType()
+		},
+		ReferenceOrigins: func(storage []Origin) []Origin {
+			if !SameOrigins(storage, []Origin{{Root: reference}}) {
+				return nil
+			}
 			return []Origin{{Root: referent}}
 		},
 		PayloadCases: func(expr ast.Expr) []int {

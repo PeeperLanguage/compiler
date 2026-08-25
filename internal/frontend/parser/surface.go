@@ -102,7 +102,17 @@ func enumDeclSurface(decl *ast.EnumDecl) string {
 		if variant.Name == nil {
 			continue
 		}
-		variants = append(variants, variant.Name.Name)
+		if !variant.HasData {
+			variants = append(variants, variant.Name.Name)
+			continue
+		}
+		fields := make([]string, 0, len(variant.Fields))
+		for _, field := range variant.Fields {
+			if field.Name != nil {
+				fields = append(fields, field.Name.Name+":"+ast.TypeText(field.Type))
+			}
+		}
+		variants = append(variants, variant.Name.Name+":"+strings.Join(fields, ","))
 	}
 	return "enum:" + decl.Name.Name + ":" + strings.Join(variants, ",")
 }

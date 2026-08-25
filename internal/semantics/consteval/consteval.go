@@ -122,6 +122,43 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 }
 
 func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+	if construction, ok := e.module.Semantics.VariantConstructions[expr.ID()]; ok {
+		if !typeinfo.IsImplicitCopyType(construction.EnumType) {
+			return nil, false
+		}
+		descriptor, variant := typeinfo.VariantDescriptorOf(construction.EnumType)
+		if !variant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
+			return nil, false
+		}
+		fields := make([]constvalue.Value, len(construction.Fields))
+		for index, field := range construction.Fields {
+			if construction.Payload == nil || index >= len(construction.Payload.Fields) {
+				return nil, false
+			}
+			value, ok := e.evalExpr(scope, field, construction.Payload.Fields[index].Type)
+			if !ok {
+				return nil, false
+			}
+			fields[index] = value
+		}
+		return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
+	}
+	if node, ok := expr.(*ast.IsExpr); ok {
+		test, found := e.module.Semantics.CaseTests[node.ID()]
+		if !found || test.Family != typeinfo.VariantFamilyNamed {
+			return nil, false
+		}
+		value, ok := e.evalExpr(scope, node.Value, e.module.Semantics.ExprTypes[node.Value.ID()])
+		variant, constant := value.(*constvalue.VariantConst)
+		if !ok || !constant || variant == nil {
+			return nil, false
+		}
+		matched := variant.CaseIndex() == test.Case
+		if !test.CaseWhenTrue {
+			matched = !matched
+		}
+		return constvalue.NewBool(matched), true
+	}
 	if node, ok := expr.(*ast.StringLit); ok {
 		typText := "str"
 		if node.CString {

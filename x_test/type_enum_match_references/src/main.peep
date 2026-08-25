@@ -1,0 +1,48 @@
+enum SharedResource {
+    Borrowed: { value: &i32 }
+}
+
+enum MutableResource {
+    Borrowed: { value: &mut i32 }
+}
+
+enum RawResource {
+    Pointer: { value: rawptr }
+}
+
+const global: i32 = 1;
+
+fn Read(_: &i32) {}
+fn Write(_: &mut i32) {}
+
+fn Shared(source: &i32) {
+    let resource = SharedResource::Borrowed{ value = source };
+    match resource {
+        SharedResource::Borrowed{ value = value } => {
+            Read(value);
+        }
+    }
+    match resource {
+        SharedResource::Borrowed{ value = value } => {
+            Read(value);
+        }
+    }
+}
+
+fn Mutable(source: &mut i32) {
+    let resource = MutableResource::Borrowed{ value = source };
+    match resource {
+        MutableResource::Borrowed{ value = value } => {
+            Write(value);
+        }
+    }
+}
+
+fn GlobalPointer() -> rawptr {
+    let resource = RawResource::Pointer{ value = @global };
+    match resource {
+        RawResource::Pointer{ value = pointer } => {
+            return pointer;
+        }
+    }
+}

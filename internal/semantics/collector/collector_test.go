@@ -81,6 +81,74 @@ func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
 	}
 }
 
+func TestCollectedEnumOwnsOrderedVariantSymbols(t *testing.T) {
+	const filePath = "collector_enum_variants_test" + peeper.SourceExt
+	const src = `enum Result<T> {
+	Ok: { value: T },
+	Pending,
+}
+type Alias = Result<i32>;`
+	diag := diagnostics.NewDiagnosticBag()
+	module := &project.Module{
+		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		FilePath: filePath,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	ctx := project.New(".", peeper.SourceExt, diag)
+	Collect(ctx, module)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+
+	result, ok := module.ModuleScope.LookupLocal("Result")
+	if !ok || result == nil || result.Scope == nil {
+		t.Fatal("enum type must own variant child scope")
+	}
+	children := result.Scope.Symbols()
+	if len(children) != 2 || children[0].Name != "Ok" || children[1].Name != "Pending" {
+		t.Fatalf("variant children = %#v, want [Ok Pending]", children)
+	}
+	for _, child := range children {
+		if child.Kind != symbols.SymbolVariant || child.Type != result.Type {
+			t.Fatalf("variant symbol = %#v, want SymbolVariant with enum type", child)
+		}
+	}
+	enumDecl, ok := result.ASTNode.(*ast.EnumDecl)
+	if !ok || enumDecl == nil {
+		t.Fatalf("enum declaration = %T", result.ASTNode)
+	}
+	enumType := enumDecl.Type.(*ast.EnumType)
+	for index, variant := range enumType.Variants {
+		if module.Semantics.ResolvedSymbols[variant.Name.ID()] != children[index] {
+			t.Fatalf("variant %s identifier does not resolve to child symbol", variant.Name.Name)
+		}
+	}
+	alias, ok := module.ModuleScope.LookupLocal("Alias")
+	if !ok || alias == nil || alias.Scope != nil {
+		t.Fatal("transparent enum alias must not expose variant namespace")
+	}
+}
+
+func TestCollectedEnumRejectsDuplicateVariants(t *testing.T) {
+	const filePath = "collector_enum_duplicate_test" + peeper.SourceExt
+	const src = `enum Status { Ready, Ready }`
+	diag := diagnostics.NewDiagnosticBag()
+	module := &project.Module{
+		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		FilePath: filePath,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	ctx := project.New(".", peeper.SourceExt, diag)
+	Collect(ctx, module)
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "`Ready` already exists in this scope") {
+		t.Fatalf("expected duplicate variant diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestImportSymbolsKeepSourceLocation(t *testing.T) {
 	const filePath = "collector_import_test" + peeper.SourceExt
 	src := `import "external";

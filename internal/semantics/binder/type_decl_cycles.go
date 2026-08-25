@@ -89,8 +89,14 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 		}
 	case *ast.ScopeResolution:
 		b.addTypeDeclEdge(owner, b.lookupQualifiedTypeDeclNodeID(node), indirect)
-	case *ast.RawPtrType, *ast.EnumType:
-		// These types contain no named storage dependency.
+	case *ast.RawPtrType:
+		// Raw pointers carry no pointee layout dependency.
+	case *ast.EnumType:
+		for _, variant := range node.Variants {
+			for _, field := range variant.Fields {
+				b.addTypeDeclEdges(owner, field.Type, indirect)
+			}
+		}
 	case *ast.OwnedPtrType:
 		// Pointer target is not a layout dependency.
 		b.addTypeDeclEdges(owner, node.Target, true)

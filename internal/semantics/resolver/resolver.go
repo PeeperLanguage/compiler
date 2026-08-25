@@ -172,6 +172,24 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			r.resolveExpr(scope, node.Cond)
 		}
 		r.resolveBlock(symbols.NewScope(scope), node.Body)
+	case *ast.MatchStmt:
+		r.resolveExpr(scope, node.Subject)
+		for _, arm := range node.Arms {
+			if !r.resolveVariantPath(scope, arm.Case) {
+				r.resolveScopeResolution(arm.Case, false)
+			}
+			armScope := symbols.NewScope(scope)
+			for _, field := range arm.Fields {
+				if field.Discard {
+					continue
+				}
+				r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)
+				if binding, found := armScope.LookupNode(field.Binding); found {
+					r.module.Semantics.ResolvedSymbols[field.Binding.ID()] = binding
+				}
+			}
+			r.resolveBlock(armScope, arm.Body)
+		}
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:
@@ -238,6 +256,9 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		}
 		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
 	case *ast.ScopeResolution:
+		if r.resolveVariantPath(scope, node) {
+			return
+		}
 		if r.resolveScopeResolution(node, false) {
 			return
 		}
@@ -256,6 +277,13 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		for _, field := range node.Fields {
 			r.resolveExpr(scope, field.Value)
 		}
+	case *ast.VariantLit:
+		if !r.resolveVariantPath(scope, node.Case) {
+			r.resolveScopeResolution(node.Case, false)
+		}
+		for _, field := range node.Fields {
+			r.resolveExpr(scope, field.Value)
+		}
 	case *ast.ArrayLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
 			r.resolveScopeResolution(scopedType, true)
@@ -270,6 +298,11 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
 		r.resolveExpr(scope, node.Right)
+	case *ast.IsExpr:
+		r.resolveExpr(scope, node.Value)
+		if !r.resolveVariantPath(scope, node.Case) {
+			r.resolveScopeResolution(node.Case, false)
+		}
 	case *ast.CallExpr:
 		r.resolveExpr(scope, node.Callee)
 		for _, arg := range node.Args {
@@ -325,27 +358,91 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution, allowTypeAr
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "type arguments are not allowed on value paths", ast.LocOf(node), "generic functions and values are not supported")
 		return false
 	}
+	resolved, ok := r.lookupImportedMember(qualifierNode, memberNode, node)
+	if !ok {
+		return false
+	}
+	r.module.Semantics.ResolvedSymbols[node.ID()] = resolved
+	return true
+}
+
+func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResolution) bool {
+	typePath, caseName, variantPath := path.EnumVariantMember()
+	if !variantPath {
+		return false
+	}
+
+	var qualifierSymbol *symbols.Symbol
+	var enumName *ast.Ident
+	switch enumPath := typePath.(type) {
+	case *ast.NamedType:
+		enumName = path.Segments[0].Name
+		resolved, ok := scope.Lookup(enumPath.Name)
+		if !ok || resolved == nil || resolved.Kind != symbols.SymbolType {
+			return false
+		}
+		qualifierSymbol = resolved
+	case *ast.AppliedType:
+		enumName = enumPath.Name
+		resolved, ok := scope.Lookup(enumPath.Name.Name)
+		if !ok || resolved == nil || resolved.Kind != symbols.SymbolType {
+			return false
+		}
+		qualifierSymbol = resolved
+	case *ast.ScopeResolution:
+		qualifier, member, ok := enumPath.ImportMember()
+		if !ok {
+			return false
+		}
+		enumName = member
+		resolved, found := r.lookupImportedMember(qualifier, member, path)
+		if !found {
+			return true
+		}
+		qualifierSymbol = resolved
+	default:
+		return false
+	}
+
+	qualifierType, _ := symbols.GetSymbolType(qualifierSymbol)
+	_, enumSymbol, declaredEnum := project.CanonicalEnumDeclaration(r.ctx, qualifierType)
+	if !declaredEnum {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "variant qualifier must resolve to a named enum", ast.LocOf(enumName), "use an enum declaration or transparent enum alias")
+		return true
+	}
+	variant, ok := enumSymbol.Scope.LookupLocal(caseName.Name)
+	if !ok || variant == nil || variant.Kind != symbols.SymbolVariant {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown variant `"+caseName.Name+"` in enum `"+enumSymbol.Name+"`", ast.LocOf(caseName), "")
+		return true
+	}
+	qualifierSymbol.Used = true
+	enumSymbol.Used = true
+	variant.Used = true
+	r.module.Semantics.ResolvedSymbols[enumName.ID()] = qualifierSymbol
+	r.module.Semantics.ResolvedSymbols[path.ID()] = variant
+	r.module.Semantics.ResolvedSymbols[caseName.ID()] = variant
+	return true
+}
+
+func (r *resolver) lookupImportedMember(qualifierNode, memberNode *ast.Ident, site ast.Node) (*symbols.Symbol, bool) {
 	qualifier := qualifierNode.Name
 	member := memberNode.Name
 	resolved, ok := project.LookupImportedSymbol(r.ctx, r.module, qualifier, member)
 	if !ok || resolved.Symbol == nil {
-		if r.ctx != nil {
-			if _, exists := r.module.Imports[qualifier]; !exists {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(node), "")
-			} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(node), "")
-			} else {
-				r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(node), "")
-			}
+		if _, exists := r.module.Imports[qualifier]; !exists {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(site), "")
+		} else if resolved.Module == nil || resolved.Module.ModuleScope == nil {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "imported module not loaded for `"+qualifier+"`", ast.LocOf(site), "")
+		} else {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown identifier `"+member+"` in module `"+qualifier+"`", ast.LocOf(site), "")
 		}
-		return false
+		return nil, false
 	}
 	if !resolved.Symbol.IsPub {
-		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(node), "use of unexported symbol").
+		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(site), "use of unexported symbol").
 			WithSecondaryLabel(resolved.Symbol.Location, "defined here").
 			WithNote("symbols with uppercase are exported otherwise private")
-		return false
+		return nil, false
 	}
-	r.module.Semantics.ResolvedSymbols[node.ID()] = resolved.Symbol
-	return true
+	return resolved.Symbol, true
 }

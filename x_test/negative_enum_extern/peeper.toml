@@ -1,0 +1,7 @@
+name = "negative_enum_extern"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["named enums cannot cross extern boundaries", "define a foreign representation after enum FFI rules are specified"]

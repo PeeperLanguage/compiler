@@ -280,11 +280,11 @@ func checkEnumCompatibility(dst, src Type) Compatibility {
 		return Incompatible
 	}
 	right, ok := Underlying(src).(*EnumType)
-	if !ok || right == nil || len(left.Variants) != len(right.Variants) {
+	if !ok || right == nil || len(left.Cases) != len(right.Cases) {
 		return Incompatible
 	}
-	for i := range left.Variants {
-		if left.Variants[i] != right.Variants[i] {
+	for i := range left.Cases {
+		if left.Cases[i].Name != right.Cases[i].Name || !SameType(left.Cases[i].Payload, right.Cases[i].Payload) {
 			return Incompatible
 		}
 	}

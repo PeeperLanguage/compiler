@@ -32,10 +32,21 @@ type StringConst struct {
 	typeID string
 }
 
-func (*IntConst) constValueNode()    {}
-func (*FloatConst) constValueNode()  {}
-func (*BoolConst) constValueNode()   {}
-func (*StringConst) constValueNode() {}
+// VariantConst keeps semantic case identity and declaration-ordered payload
+// fields. Named enums require nominalIdentity; structural variants may leave it
+// empty while retaining typeID.
+type VariantConst struct {
+	nominalIdentity string
+	typeID          string
+	caseIndex       int
+	fieldValues     []Value
+}
+
+func (*IntConst) constValueNode()     {}
+func (*FloatConst) constValueNode()   {}
+func (*BoolConst) constValueNode()    {}
+func (*StringConst) constValueNode()  {}
+func (*VariantConst) constValueNode() {}
 
 func NewInt(value *big.Int, typeID string) (*IntConst, bool) {
 	out, ok := NormalizeInteger(value, typeID)
@@ -85,6 +96,25 @@ func NewString(value, typeID string) (*StringConst, bool) {
 	}
 }
 
+func NewVariant(nominalIdentity, typeID string, caseIndex int, fieldValues []Value) (*VariantConst, bool) {
+	if typeID == "" || caseIndex < 0 {
+		return nil, false
+	}
+	fields := make([]Value, len(fieldValues))
+	for index, field := range fieldValues {
+		if field == nil {
+			return nil, false
+		}
+		fields[index] = field
+	}
+	return &VariantConst{
+		nominalIdentity: nominalIdentity,
+		typeID:          typeID,
+		caseIndex:       caseIndex,
+		fieldValues:     fields,
+	}, true
+}
+
 func (v *IntConst) Int() *big.Int {
 	if v == nil || v.value == nil {
 		return nil
@@ -124,6 +154,27 @@ func (v *StringConst) Text() string {
 	return v.value
 }
 
+func (v *VariantConst) NominalIdentity() string {
+	if v == nil {
+		return ""
+	}
+	return v.nominalIdentity
+}
+
+func (v *VariantConst) CaseIndex() int {
+	if v == nil {
+		return -1
+	}
+	return v.caseIndex
+}
+
+func (v *VariantConst) FieldValues() []Value {
+	if v == nil {
+		return nil
+	}
+	return append([]Value(nil), v.fieldValues...)
+}
+
 func (v *IntConst) Truthy() bool {
 	return v != nil && v.value != nil && v.value.Sign() != 0
 }
@@ -139,6 +190,8 @@ func (v *BoolConst) Truthy() bool {
 func (v *StringConst) Truthy() bool {
 	return v != nil && v.value != ""
 }
+
+func (*VariantConst) Truthy() bool { return false }
 
 func (v *IntConst) TypeText() string {
 	if v == nil {
@@ -157,6 +210,13 @@ func (v *FloatConst) TypeText() string {
 func (v *BoolConst) TypeText() string { return "bool" }
 
 func (v *StringConst) TypeText() string {
+	if v == nil {
+		return ""
+	}
+	return v.typeID
+}
+
+func (v *VariantConst) TypeText() string {
 	if v == nil {
 		return ""
 	}

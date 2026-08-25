@@ -1,0 +1,7 @@
+name = "negative_variant_literal_control_header"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["P0003", "parenthesize variant literal in control header"]

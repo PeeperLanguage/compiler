@@ -1,0 +1,7 @@
+name = "negative_enum_constructors"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["missing enum variant literal field `value`", "duplicate enum variant literal field `value`", "unknown enum variant literal field `item`", "payloadless enum variant `Pending` does not accept braces", "data enum variant `Ok` requires a braced field initializer", "enum variants are not callable"]

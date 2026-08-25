@@ -183,6 +183,168 @@ func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	return module, diag
 }
 
+func TestEnumDeclarationValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "empty enum", source: `enum Empty {}`, want: "enum requires at least one variant"},
+		{name: "lowercase variant", source: `enum Status { ready }`, want: "variant name must be PascalCase"},
+		{name: "duplicate field", source: `enum Result { Ok: { value: i32, value: i64 } }`, want: "variant field `value` already declared"},
+		{name: "unsized field", source: `iface Reader { fn (&Self) read() -> i32 } enum Event { Read: { reader: Reader } }`, want: "enum variant field requires a sized type"},
+		{name: "nested reference storage", source: `enum Resource { Borrowed: { values: [1]&i32 } }`, want: "references cannot be stored in enum variant fields in v1"},
+		{name: "method field collision", source: `enum Result { Ok: { value: i32 } } fn (self: Result) value() {}`, want: "method `value` conflicts with enum variant data field"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
+	}
+}
+
+func TestEnumConstructorsRecordOrderedSemanticEvidence(t *testing.T) {
+	module, diag := checkTypeModule(t, `enum Result<T> {
+	Ok: { value: T, code: i32 },
+	Pending,
+}
+fn main() {
+	let ok = Result<i32>::Ok{ code = 7, value = 42 };
+	let pending = Result<i32>::Pending;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	ok := fn.Body.Stmts[0].(*ast.LetDecl).Value
+	pending := fn.Body.Stmts[1].(*ast.LetDecl).Value
+	okEvidence, found := module.Semantics.VariantConstructions[ok.ID()]
+	if !found || typeinfo.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
+		okEvidence.Payload == nil || len(okEvidence.Fields) != 2 || ast.ExprText(okEvidence.Fields[0]) != "42" || ast.ExprText(okEvidence.Fields[1]) != "7" {
+		t.Fatalf("Ok construction evidence = %#v", okEvidence)
+	}
+	pendingEvidence, found := module.Semantics.VariantConstructions[pending.ID()]
+	if !found || typeinfo.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
+		pendingEvidence.Payload != nil || len(pendingEvidence.Fields) != 0 {
+		t.Fatalf("Pending construction evidence = %#v", pendingEvidence)
+	}
+}
+
+func TestEnumConstructorDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{}; }`, want: "missing enum variant literal field `value`"},
+		{name: "duplicate field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ value = 1, value = 2 }; }`, want: "duplicate enum variant literal field `value`"},
+		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ item = 1 }; }`, want: "unknown enum variant literal field `item`"},
+		{name: "payloadless braces", source: `enum Result { Pending } fn main() { let value = Result::Pending{}; }`, want: "payloadless enum variant `Pending` does not accept braces"},
+		{name: "data without braces", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok; }`, want: "data enum variant `Ok` requires a braced field initializer"},
+		{name: "missing generic arguments", source: `enum Result<T> { Pending } fn main() { let value = Result::Pending; }`, want: "expects 1 type argument, got 0"},
+		{name: "variant call", source: `enum Result { Pending } fn main() { Result::Pending(); }`, want: "enum variants are not callable"},
+		{name: "variant type", source: `enum Result { Pending } fn Read(value: Result::Pending) {}`, want: "not lowerable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
+	}
+}
+
+func TestNamedEnumComparisonRejected(t *testing.T) {
+	diag := checkTypeSource(t, `enum Status { Ready, Pending }
+fn Equal(left: Status, right: Status) -> bool {
+	return left == right;
+}
+fn Different(left: Status, right: Status) -> bool {
+	return left != right;
+}
+fn Less(left: Status, right: Status) -> bool {
+	return left < right;
+}
+fn LessEqual(left: Status, right: Status) -> bool {
+	return left <= right;
+}
+fn Greater(left: Status, right: Status) -> bool {
+	return left > right;
+}
+fn GreaterEqual(left: Status, right: Status) -> bool {
+	return left >= right;
+}`)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || strings.Count(out, "named enum comparison is not supported") != 6 {
+		t.Fatalf("expected named enum comparison diagnostics, got:\n%s", out)
+	}
+}
+
+func TestNamedEnumMatchRecordsExhaustiveArmEvidence(t *testing.T) {
+	module, diag := checkTypeModule(t, `enum Result {
+	Ok: { value: i32, code: i32 },
+	Error: { message: str },
+	Pending
+}
+
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok{ value = payload } => {
+			return payload;
+		}
+		Result::Error{ message = _ } => {
+			return 1;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected match diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	evidence, found := module.Semantics.Matches[match.ID()]
+	if !found || evidence.SubjectID != match.Subject.ID() || typeinfo.TypeText(evidence.EnumType) != "Result" || len(evidence.Arms) != 3 {
+		t.Fatalf("match evidence = %#v", evidence)
+	}
+	if evidence.Arms[0].Case != 0 || len(evidence.Arms[0].Fields) != 1 || evidence.Arms[0].Fields[0].Field != 0 || evidence.Arms[0].Fields[0].Binding == nil {
+		t.Fatalf("Ok arm evidence = %#v", evidence.Arms[0])
+	}
+	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Fields[0].Discard || evidence.Arms[2].Case != 2 {
+		t.Fatalf("remaining arm evidence = %#v", evidence.Arms[1:])
+	}
+}
+
+func TestNamedEnumMatchDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing case", source: `enum Result { Ok, Pending } fn Read(value: Result) { match value { Result::Ok => {} } }`, want: "match is missing case `Pending`"},
+		{name: "duplicate case", source: `enum Result { Ok, Pending } fn Read(value: Result) { match value { Result::Ok => {} Result::Ok => {} Result::Pending => {} } }`, want: "duplicate match arm for `Ok`"},
+		{name: "data without braces", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok => {} } }`, want: "data match case `Ok` requires braces"},
+		{name: "payloadless braces", source: `enum Result { Pending } fn Read(value: Result) { match value { Result::Pending{} => {} } }`, want: "payloadless match case `Pending` does not accept braces"},
+		{name: "duplicate field", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok{ value = first, value = second } => {} } }`, want: "duplicate match pattern field `value`"},
+		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok{ missing = item } => {} } }`, want: "unknown match pattern field `missing`"},
+		{name: "foreign case", source: `enum Result { Ok } enum Other { Ok } fn Read(value: Result) { match value { Other::Ok => {} } }`, want: "match arm requires Result, got Other"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
+	}
+}
+
 func hasTypeCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	if diag == nil {
 		return false
@@ -2110,6 +2272,25 @@ fn useCallback(callback: fn(value: &Box) -> &Box from value, value: &Box) -> &Bo
 	}
 }
 
+func TestExternSignaturesRejectNestedNamedEnums(t *testing.T) {
+	diag := checkTypeSource(t, `enum Status { Ready, Waiting }
+struct Envelope { status: Status }
+
+#[extern]
+fn direct(value: Status) -> Status;
+
+#[extern]
+fn nested(value: ?Envelope, values: [2]Status, pointer: *Status, reference: &Status);
+`)
+	out := diag.EmitAllToString()
+	if count := strings.Count(out, "named enums cannot cross extern boundaries"); count != 6 {
+		t.Fatalf("extern enum diagnostic count = %d, want 6:\n%s", count, out)
+	}
+	if !strings.Contains(out, "define a foreign representation after enum FFI rules are specified") {
+		t.Fatalf("missing enum FFI help:\n%s", out)
+	}
+}
+
 func TestInvalidReferenceReturnContractsRejected(t *testing.T) {
 	src := `
 fn missing(value: &i32) -> &i32;
@@ -2176,6 +2357,42 @@ fn StoreReferences(_: []&Box) {
 	}
 	if strings.Count(diag.EmitAllToString(), "references cannot be stored") < 4 {
 		t.Fatalf("expected alias, global, parameter, and local storage diagnostics, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestNamedEnumReferenceStorageKeepsNarrowLocalBoundary(t *testing.T) {
+	accepted := checkTypeSource(t, `enum Resource { Borrowed: { value: &i32 } }
+fn valid(source: &i32) {
+	let resource = Resource::Borrowed{ value = source };
+}`)
+	if accepted.HasErrors() {
+		t.Fatalf("unexpected local enum reference diagnostics:\n%s", accepted.EmitAllToString())
+	}
+	generic := checkTypeSource(t, `enum Resource<T> { Borrowed: { value: T } }
+fn invalid(source: &i32) {
+	let resource = Resource<[1]&i32>::Borrowed{ value = [_]&i32{source} };
+}`)
+	if emitted := generic.EmitAllToString(); !strings.Contains(emitted, "references cannot be stored in named enum payloads in v1") {
+		t.Fatalf("expected substituted nested reference-storage diagnostic, got:\n%s", emitted)
+	}
+
+	rejected := checkTypeSource(t, `enum Resource { Borrowed: { value: &i32 } }
+const Global: Resource = none;
+fn Parameter(_: Resource) {}
+fn Return() -> Resource;
+fn Heap(source: &i32) {
+	let resource = Resource::Borrowed{ value = source };
+	let stored = alloc(resource);
+}`)
+	emitted := rejected.EmitAllToString()
+	if count := strings.Count(emitted, "references cannot be stored"); count < 3 {
+		t.Fatalf("expected module, parameter, and heap reference-storage diagnostics, got %d:\n%s", count, emitted)
+	}
+	if !strings.Contains(emitted, "reference return must be a direct reference or optional reference value") {
+		t.Fatalf("expected aggregate reference-return diagnostic, got:\n%s", emitted)
+	}
+	if !strings.Contains(emitted, "alloc cannot store value containing a reference") {
+		t.Fatalf("expected owned heap-storage diagnostic, got:\n%s", emitted)
 	}
 }
 

@@ -1,0 +1,6 @@
+name = "enum_schema_declarations"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

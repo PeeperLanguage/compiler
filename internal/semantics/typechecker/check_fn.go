@@ -2,9 +2,11 @@ package typechecker
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -116,6 +118,32 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
 	fnType := typeinfo.FuncTypeFromDeclWithOptions(decl, opts)
+	if _, external := ast.FunctionLinkName(decl, ""); external {
+		type externTypeSite struct {
+			typ  typeinfo.Type
+			site ast.Node
+		}
+		types := make([]externTypeSite, 0, len(fnType.Params)+1)
+		if fnType.Return != nil {
+			types = append(types, externTypeSite{typ: fnType.Return, site: decl.ReturnType})
+		}
+		params := decl.ParamsWithReceiver()
+		for index, typ := range fnType.Params {
+			site := ast.Node(decl)
+			if index < len(params) && params[index].Type != nil {
+				site = params[index].Type
+			}
+			types = append(types, externTypeSite{typ: typ, site: site})
+		}
+		for _, entry := range types {
+			if !typeinfo.ContainsNamedEnum(entry.typ) {
+				continue
+			}
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+				"named enums cannot cross extern boundaries", ast.LocOf(entry.site),
+				"define a foreign representation after enum FFI rules are specified")
+		}
+	}
 	if !c.checkCallableReturn(decl.ReturnType, decl, fnType, decl.ReturnOrigins, false) {
 		return
 	}
@@ -329,6 +357,72 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		}
 	}
 
+}
+
+func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
+	if c == nil || decl == nil {
+		return
+	}
+	enumType, ok := decl.Type.(*ast.EnumType)
+	if !ok || enumType == nil {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "enum declaration missing enum payload", ast.LocOf(decl), "")
+		return
+	}
+	if len(enumType.Variants) == 0 {
+		c.ctx.Diagnostics.Add(invalidTypeError(decl, "enum requires at least one variant"))
+		return
+	}
+	opts := c.typeDeclSyntaxOptions(decl, false)
+	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
+	dataFields := make(map[string]*ast.Ident)
+	for _, variant := range enumType.Variants {
+		if variant.Name == nil || variant.Name.Name == "" {
+			continue
+		}
+		if !symbols.IsPubName(variant.Name.Name) || strings.Contains(variant.Name.Name, "_") {
+			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant name must be PascalCase"))
+		}
+		if variant.HasData && len(variant.Fields) == 0 {
+			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant data requires at least one field"))
+			continue
+		}
+		variantFields := make(map[string]*ast.Ident, len(variant.Fields))
+		for _, field := range variant.Fields {
+			if field.Name == nil || field.Name.Name == "" {
+				continue
+			}
+			if previous := variantFields[field.Name.Name]; previous != nil {
+				message := fmt.Sprintf("variant field `%s` already declared", field.Name.Name)
+				c.ctx.Diagnostics.Add(problems.Redeclaration(message, field.Name.Location, previous.Location))
+				continue
+			}
+			variantFields[field.Name.Name] = field.Name
+			if dataFields[field.Name.Name] == nil {
+				dataFields[field.Name.Name] = field.Name
+			}
+			fieldType := typeinfo.TypeFromSyntax(field.Type, opts)
+			if c.rejectUnsizedType(fieldType, field.Type, "enum variant field") {
+				continue
+			}
+			if c.rejectReferenceStorage(fieldType, field.Type, "enum variant fields", false) {
+				continue
+			}
+			if !typeinfo.IsLowerableType(fieldType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(fieldType)) {
+				c.ctx.Diagnostics.Add(invalidTypeError(field.Type,
+					"enum variant field type is not lowerable in current compiler stage"))
+			}
+		}
+	}
+	if decl.Name == nil {
+		return
+	}
+	for _, method := range c.module.Semantics.MethodSets[decl.Name.Name] {
+		if method == nil || dataFields[method.Name] == nil {
+			continue
+		}
+		message := fmt.Sprintf("method `%s` conflicts with enum variant data field", method.Name)
+		c.ctx.Diagnostics.Add(problems.Redeclaration(message, method.Location, dataFields[method.Name].Location))
+	}
 }
 
 func (c *checker) typeDeclSyntaxOptions(decl ast.TypeDecl, allowAbstractSelf bool) typeinfo.SyntaxOptions {

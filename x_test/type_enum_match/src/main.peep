@@ -1,0 +1,19 @@
+enum Result {
+    Ok: { value: i32, code: i32 },
+    Error: { message: str },
+    Pending
+}
+
+fn Read(result: Result) -> i32 {
+    match result {
+        Result::Ok{ value = payload } => {
+            return payload;
+        }
+        Result::Error{ message = _ } => {
+            return 1;
+        }
+        Result::Pending => {
+            return 0;
+        }
+    }
+}

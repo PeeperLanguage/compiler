@@ -1,0 +1,86 @@
+enum Choice {
+    Left: {
+        value: i32,
+    },
+    Right: {
+        value: i32,
+    },
+    Pending,
+}
+
+enum Mixed {
+    Number: { value: i32 },
+    Flag: { value: bool }
+}
+
+enum Inner {
+    Left: { value: i32 },
+    Right
+}
+
+enum OuterChoice {
+    Wrapped: { inner: Inner },
+    Empty
+}
+
+struct Holder {
+    choice: Choice,
+}
+
+fn ReadLeft(choice: Choice) -> i32 {
+    if choice is Choice::Left {
+        return choice.value;
+    }
+    return 0;
+}
+
+fn ReadRight(choice: Choice) -> i32 {
+    if !(choice is Choice::Right) {
+        return 0;
+    }
+    return choice.value;
+}
+
+fn ReadField(holder: Holder) -> i32 {
+    if holder.choice is Choice::Left {
+        return holder.choice.value;
+    }
+    return 0;
+}
+
+fn ReadIndex(values: [1]Choice) -> i32 {
+    if values[0] is Choice::Right {
+        return values[0].value;
+    }
+    return 0;
+}
+
+fn ReadFlag(choice: Mixed) -> bool {
+    if choice is Mixed::Flag {
+        let value = choice.value;
+        return value;
+    }
+    return false;
+}
+
+fn ReadNested(outer: OuterChoice) -> i32 {
+    if outer is OuterChoice::Wrapped {
+        if outer.inner is Inner::Left {
+            return outer.inner.value;
+        }
+    }
+    return 0;
+}
+
+fn main() -> i32 {
+    let left = Choice::Left{ value = 10 };
+    let right = Choice::Right{ value = 11 };
+    let holder = .Holder{ choice = Choice::Left{ value = 10 } };
+    let values = [1]Choice{ Choice::Right{ value = 11 } };
+    let mixed = Mixed::Flag{ value = true };
+    if !ReadFlag(mixed) {
+        return 1;
+    }
+    let nested = OuterChoice::Wrapped{ inner = Inner::Left{ value = 13 } };
+    return ReadLeft(left) + ReadRight(right) + ReadField(holder) + ReadIndex(values) + ReadNested(nested) - 13;
+}

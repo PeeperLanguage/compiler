@@ -49,7 +49,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST)
+	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
@@ -220,11 +220,13 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.BeforeAssign[staleID] = struct{}{}
 	plan.DiscardedValue[staleID] = struct{}{}
 	plan.ProjectionBase[staleID] = struct{}{}
+	plan.MatchCarrierMoves[staleID] = 999999
+	plan.MatchFieldDrops[staleID] = []int{0}
 
 	result.module.Ownership = Check(result.ctx, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
-		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 {
+		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 || len(plan.MatchCarrierMoves) != 0 || len(plan.MatchFieldDrops) != 0 {
 		t.Fatalf("stale ownership plans survived rerun: %#v", plan)
 	}
 }
@@ -593,8 +595,363 @@ fn bad(holder: Holder) {
 	}
 }`)
 	out := diag.EmitAllToString()
-	if count := strings.Count(out, "move-only optional payload"); count != 2 {
+	if count := strings.Count(out, "move-only variant payload"); count != 2 {
 		t.Fatalf("expected two optional partial-move diagnostics, got %d:\n%s", count, out)
+	}
+}
+
+func TestMoveOnlyMatchBindingConsumesDirectCarrier(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 }
+}
+fn Consume(_: Resource) {}
+fn bad(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => {
+			free(owned);
+		}
+	}
+	Consume(resource);
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected match to consume direct carrier, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyMatchCarrierCanBeReinitialized(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 }
+}
+fn Consume(_: Resource) {}
+fn valid(mut resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => {
+			free(owned);
+		}
+	}
+	resource = Resource::Owned{ value = alloc(2) };
+	Consume(resource);
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestDeadMoveOnlyMatchCarrierConverges(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn valid(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Pending => {}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected dead-carrier diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	plan := cleanupPlanForFunction(t, result, fn)
+	function, _ := result.module.ModuleScope.Lookup("valid")
+	resource, _ := function.Scope.Lookup("resource")
+	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
+	pendingBodyID := ir.NodeID(match.Arms[1].Body.ID())
+	if got := plan.MatchCarrierMoves[ownedBodyID]; got != resource.ID {
+		t.Fatalf("owned arm carrier move = %d, want %d", got, resource.ID)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[pendingBodyID]); !slices.Equal(got, []string{"resource"}) {
+		t.Fatalf("pending arm cleanup = %v, want [resource]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(fn.Body.ID())]); slices.Contains(got, "resource") {
+		t.Fatalf("dead carrier remains in function cleanup: %v", got)
+	}
+}
+
+func TestLiveMoveOnlyMatchCarrierMustConverge(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn Consume(_: Resource) {}
+fn invalid(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Pending => {}
+	}
+	Consume(resource);
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
+		t.Fatalf("expected live match-arm convergence diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyMatchCarrierAssignmentAfterJoinMustConverge(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn invalid(mut resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Pending => {}
+	}
+	resource = Resource::Pending;
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+		!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
+		t.Fatalf("expected assignment-after-match convergence diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestNoDropMatchCarrierCanBeAssignedAfterJoin(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Borrowed: { value: &mut i32 },
+	Pending
+}
+fn valid(source: &mut i32) {
+	let mut resource = Resource::Borrowed{ value = source };
+	match resource {
+		Resource::Borrowed{ value = value } => {}
+		Resource::Pending => {}
+	}
+	resource = Resource::Pending;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected no-drop assignment diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyMatchArmReinitializationConverges(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn Consume(_: Resource) {}
+fn valid(mut resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => {
+			free(owned);
+			resource = Resource::Pending;
+		}
+		Resource::Pending => {}
+	}
+	Consume(resource);
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected reinitialized match-arm diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestTerminatingMoveOnlyMatchArmDoesNotReachJoin(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn Consume(_: Resource) {}
+fn valid(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = owned } => {
+			free(owned);
+			return;
+		}
+		Resource::Pending => {}
+	}
+	Consume(resource);
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected terminating match-arm diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyMatchDiscardConsumesDirectCarrier(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 }
+}
+fn Consume(_: Resource) {}
+fn bad(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = _ } => {}
+	}
+	Consume(resource);
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected explicit discard to consume direct carrier, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestDeadMoveOnlyMatchDiscardPlansOneDropPerPath(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn valid(resource: Resource) {
+	match resource {
+		Resource::Owned{ value = _ } => {}
+		Resource::Pending => {}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected dead discard diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	plan := cleanupPlanForFunction(t, result, fn)
+	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
+	pendingBodyID := ir.NodeID(match.Arms[1].Body.ID())
+	if got := plan.MatchFieldDrops[ownedBodyID]; !slices.Equal(got, []int{0}) {
+		t.Fatalf("owned discard drops = %v, want [0]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[ownedBodyID]); slices.Contains(got, "resource") {
+		t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[pendingBodyID]); !slices.Equal(got, []string{"resource"}) {
+		t.Fatalf("preserving arm cleanup = %v, want [resource]", got)
+	}
+}
+
+func TestMoveOnlyMatchBindingFromPartialCarrierRejected(t *testing.T) {
+	tests := map[string]string{
+		"field": `enum Resource { Owned: { value: *i32 } }
+struct Holder { resource: Resource }
+fn bad(holder: Holder) {
+	match holder.resource { Resource::Owned{ value = owned } => { free(owned); } }
+}`,
+		"index": `enum Resource { Owned: { value: *i32 } }
+fn bad(resources: [1]Resource) {
+	match resources[0] { Resource::Owned{ value = owned } => { free(owned); } }
+}`,
+		"pointee": `enum Resource { Owned: { value: *i32 } }
+struct Holder { resource: Resource }
+fn bad(holder: *Holder) {
+	match holder.resource { Resource::Owned{ value = owned } => { free(owned); } }
+}`,
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			result := checkOwnershipSource(t, src)
+			if !hasOwnershipCode(result, diagnostics.ErrInvalidCopy) {
+				t.Fatalf("expected partial-carrier match move rejection, got:\n%s", result.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestMatchSharedReferenceBindingPreservesCarrier(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
+fn Read(_: &i32) {}
+fn valid(source: &i32) {
+	let resource = Resource::Borrowed{ value = source };
+	match resource { Resource::Borrowed{ value = value } => { Read(value); } }
+	match resource { Resource::Borrowed{ value = value } => { Read(value); } }
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMatchMutableReferenceBindingTransfersCarrier(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &mut i32 } }
+fn Write(_: &mut i32) {}
+fn invalid(source: &mut i32) {
+	let resource = Resource::Borrowed{ value = source };
+	match resource { Resource::Borrowed{ value = value } => { Write(value); } }
+	match resource { Resource::Borrowed{} => {} }
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected mutable-reference pattern transfer to consume carrier:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestStoredMatchReferenceKeepsSourceBorrowed(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
+fn Read(_: &i32) {}
+fn invalid(mut source: i32) {
+	let resource = Resource::Borrowed{ value = &source };
+	source = 2;
+	match resource { Resource::Borrowed{ value = value } => { Read(value); } }
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+		t.Fatalf("expected stored match reference to retain source loan:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestCopiedMatchReferenceKeepsSourceBorrowed(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
+fn Read(_: &i32) {}
+fn invalid(mut source: i32) {
+	let resource = Resource::Borrowed{ value = &source };
+	let duplicate = resource;
+	source = 2;
+	match duplicate { Resource::Borrowed{ value = value } => { Read(value); } }
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+		t.Fatalf("expected copied match reference to retain source loan:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestSelfAssignedMatchReferenceKeepsSourceBorrowed(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
+fn Read(_: &i32) {}
+fn invalid(mut source: i32) {
+	let mut resource = Resource::Borrowed{ value = &source };
+	resource = resource;
+	match resource {
+		Resource::Borrowed{ value = value } => {
+			source = 2;
+			Read(value);
+		}
+	}
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+		t.Fatalf("expected self-assigned match reference to retain source loan:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMatchMoveConflictsWithLiveCarrierBorrow(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Owned: { value: *i32 } }
+fn Read(_: &Resource) {}
+fn invalid(resource: Resource) {
+	let reference = &resource;
+	match resource { Resource::Owned{ value = value } => { free(value); } }
+	Read(reference);
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+		t.Fatalf("expected carrier borrow conflict during match move:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyMatchPlansReverseOmittedFieldDrops(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { first: *i32, second: *i32, third: *i32 }
+}
+fn consume(resource: Resource) {
+	match resource {
+		Resource::Owned{ first = selected } => {}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	plan := cleanupPlanForFunction(t, result, fn)
+	bodyID := ir.NodeID(match.Arms[0].Body.ID())
+	if got := plan.MatchFieldDrops[bodyID]; !slices.Equal(got, []int{2, 1}) {
+		t.Fatalf("match field drops = %v, want [2 1]", got)
+	}
+	function, _ := result.module.ModuleScope.Lookup("consume")
+	resource, _ := function.Scope.Lookup("resource")
+	if got := plan.MatchCarrierMoves[bodyID]; got != resource.ID {
+		t.Fatalf("match carrier move = %d, want %d", got, resource.ID)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {
+		t.Fatalf("arm binding cleanup = %v, want [selected]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(fn.Body.ID())]); slices.Contains(got, "resource") {
+		t.Fatalf("consumed carrier remains in function cleanup: %v", got)
 	}
 }
 
@@ -760,7 +1117,7 @@ fn parameter(maybe: ?&i32) {
 	if got := referenceOrigins(local.inStates[localUse.cfgSite.ID].references[copied]); !place.SameOrigins(got, want) {
 		t.Fatalf("copied optional origins = %#v, want %#v", got, want)
 	}
-	if _, live := local.referenceLiveIn[localUse.cfgSite.ID][copied]; !live {
+	if _, live := local.symbolLiveIn[localUse.cfgSite.ID][copied]; !live {
 		t.Fatalf("optional reference not live at none comparison")
 	}
 
@@ -788,7 +1145,7 @@ fn parameter(maybe: ?&i32) {
 	if !place.SameOrigins(referenceOrigins(parameterValue), []place.Origin{{Root: maybeParameter}}) {
 		t.Fatalf("optional reference parameter origins = %#v", referenceOrigins(parameterValue))
 	}
-	if _, live := parameter.referenceLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
+	if _, live := parameter.symbolLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
 		t.Fatalf("optional reference parameter not live at none comparison")
 	}
 }
@@ -835,13 +1192,13 @@ fn inspect(mut value: i32) {
 	callNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	assignNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[2])
 	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.referenceLiveIn[callNode.cfgSite.ID][reference]; !live {
+	if _, live := analysis.symbolLiveIn[callNode.cfgSite.ID][reference]; !live {
 		t.Fatalf("reference not live at its final use")
 	}
-	if _, live := analysis.referenceLiveOut[callNode.cfgSite.ID][reference]; live {
+	if _, live := analysis.symbolLiveOut[callNode.cfgSite.ID][reference]; live {
 		t.Fatalf("reference remains live after final use")
 	}
-	if _, live := analysis.referenceLiveIn[assignNode.cfgSite.ID][reference]; live {
+	if _, live := analysis.symbolLiveIn[assignNode.cfgSite.ID][reference]; live {
 		t.Fatalf("reference remains live at following assignment")
 	}
 }
@@ -866,16 +1223,16 @@ func TestReferenceLivenessEndsAfterConditionalUse(t *testing.T) {
 	elseBlock := conditional.Else.(*ast.BlockStmt)
 	elseNode := analysisNodeForStmt(t, analysis, elseBlock.Stmts[0])
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[conditionNode.cfgSite.ID][maybe]; !live {
+	if _, live := analysis.symbolLiveIn[conditionNode.cfgSite.ID][maybe]; !live {
 		t.Fatalf("reference not live at conditional use")
 	}
-	if _, live := analysis.referenceLiveOut[conditionNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveOut[conditionNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live after conditional use")
 	}
-	if _, live := analysis.referenceLiveIn[thenNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveIn[thenNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live in then branch")
 	}
-	if _, live := analysis.referenceLiveIn[elseNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveIn[elseNode.cfgSite.ID][maybe]; live {
 		t.Fatalf("reference remains live in else branch")
 	}
 }
@@ -895,7 +1252,7 @@ fn inspect(cond: bool, value: i32) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	loopNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.referenceLiveIn[loopNode.cfgSite.ID][reference]; !live {
+	if _, live := analysis.symbolLiveIn[loopNode.cfgSite.ID][reference]; !live {
 		t.Fatalf("loop body reference use did not propagate through header")
 	}
 }
@@ -921,7 +1278,7 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 		t.Fatalf("loop exit continuation not found")
 	}
 	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.referenceLiveIn[exit.cfgSite.ID][maybe]; live {
+	if _, live := analysis.symbolLiveIn[exit.cfgSite.ID][maybe]; live {
 		t.Fatalf("loop exit continuation repeats condition use")
 	}
 }
@@ -1466,6 +1823,58 @@ func TestReturnLocalPointerBindingRejected(t *testing.T) {
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
 		t.Fatalf("expected pointer escape diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReturnRawPointerMatchBindingToLocalRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `enum Resource { Pointer: { value: rawptr } }
+fn bad() -> rawptr {
+	let value: i32 = 1;
+	let resource = Resource::Pointer{ value = @value };
+	match resource {
+		Resource::Pointer{ value = pointer } => {
+			return pointer;
+		}
+	}
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
+		t.Fatalf("expected matched pointer escape diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReturnRawPointerMatchBindingToModuleGlobalAccepted(t *testing.T) {
+	diag := checkOwnershipSource(t, `const global: i32 = 1;
+enum Resource { Pointer: { value: rawptr } }
+fn get() -> rawptr {
+	let resource = Resource::Pointer{ value = @global };
+	match resource {
+		Resource::Pointer{ value = pointer } => {
+			return pointer;
+		}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected matched module-global pointer diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestReturnRawPointerMatchBindingWithPossibleLocalRejected(t *testing.T) {
+	diag := checkOwnershipSource(t, `const global: i32 = 1;
+enum Resource { Pointer: { value: rawptr } }
+fn bad(chooseLocal: bool) -> rawptr {
+	let local: i32 = 2;
+	let mut resource = Resource::Pointer{ value = @global };
+	if chooseLocal {
+		resource = Resource::Pointer{ value = @local };
+	}
+	match resource {
+		Resource::Pointer{ value = pointer } => {
+			return pointer;
+		}
+	}
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrPointerEscape) {
+		t.Fatalf("expected possible matched local pointer escape diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 

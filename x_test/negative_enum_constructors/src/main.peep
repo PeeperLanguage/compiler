@@ -1,0 +1,15 @@
+enum Result {
+    Ok: {
+        value: i32,
+    },
+    Pending,
+}
+
+fn main() {
+    let missing = Result::Ok{};
+    let duplicate = Result::Ok{ value = 1, value = 2 };
+    let unknown = Result::Ok{ item = 1 };
+    let payloadless = Result::Pending{};
+    let bare = Result::Ok;
+    Result::Pending();
+}

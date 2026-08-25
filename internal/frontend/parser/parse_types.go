@@ -304,7 +304,7 @@ func (p *Parser) parseStructTypeExpr() ast.TypeExpr {
 	if start == nil {
 		return nil
 	}
-	fields, end, _ := p.parseStructFields()
+	fields, end, _ := p.parseTypeFields("expected '{' after struct", "expected '}' after struct fields")
 	return reg(p, &ast.StructType{Fields: fields, Location: source.NewLocation(p.filePath, start.Start, end.End)})
 }
 
@@ -328,8 +328,8 @@ func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
 
 // --- Shared type body parsers ---
 
-func (p *Parser) parseStructFields() ([]ast.TypeField, *token.Token, bool) {
-	return parseBracedItemList(p, "expected '{' after struct", "expected '}' after struct fields",
+func (p *Parser) parseTypeFields(openerMsg, itemMsg string) ([]ast.TypeField, *token.Token, bool) {
+	return parseBracedItemList(p, openerMsg, itemMsg,
 		func() (ast.TypeField, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -409,11 +409,29 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 func (p *Parser) parseEnumVariants() ([]ast.EnumVariant, *token.Token, bool) {
 	return parseBracedItemList(p, "expected '{' after enum", "expected '}' after enum variants",
 		func() (ast.EnumVariant, bool) {
-			v := p.parseIdent()
-			if v == nil {
+			name := p.parseIdent()
+			if name == nil {
 				return ast.EnumVariant{}, false
 			}
-			return ast.EnumVariant{Name: v, Location: v.Location}, true
+			if !p.match(token.COLON) {
+				return ast.EnumVariant{Name: name, Location: name.Location}, true
+			}
+			colon := p.prev()
+			fields, end, ok := p.parseTypeFields("expected '{' after enum variant ':'", "expected '}' after enum variant fields")
+			if !ok {
+				return ast.EnumVariant{}, false
+			}
+			if len(fields) == 0 {
+				p.diag.Add(diagnostics.NewError("variant data requires at least one field").
+					WithCode(diagnostics.ErrInvalidTypeInParser).
+					WithPrimaryLabel(source.NewLocation(p.filePath, colon.Start, end.End), "remove the data block or add a field"))
+			}
+			return ast.EnumVariant{
+				Name:     name,
+				Fields:   fields,
+				HasData:  true,
+				Location: source.NewLocation(p.filePath, ast.StartOf(name), end.End),
+			}, true
 		})
 }
 

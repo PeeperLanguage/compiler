@@ -79,16 +79,49 @@ func IsCondition(t Type) bool {
 }
 
 func IsImplicitCopyType(t Type) bool {
-	switch typ := Underlying(t).(type) {
-	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
-		return true
-	case *RefType:
-		return typ != nil && !typ.Mutable
-	case *OptionalType:
-		return typ != nil && IsImplicitCopyType(typ.Inner)
-	default:
-		return false
+	visiting := make(map[*DefinedType]bool)
+	var check func(Type, bool) bool
+	check = func(current Type, enumPayload bool) bool {
+		if defined, ok := current.(*DefinedType); ok {
+			if defined == nil || visiting[defined] {
+				return false
+			}
+			visiting[defined] = true
+			defer delete(visiting, defined)
+			return check(defined.Underlying, enumPayload)
+		}
+		switch typ := Underlying(current).(type) {
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
+			return true
+		case *RefType:
+			return typ != nil && !typ.Mutable
+		case *OptionalType:
+			return typ != nil && check(typ.Inner, false)
+		case *StructType:
+			if typ == nil || !enumPayload {
+				return false
+			}
+			for _, field := range typ.Fields {
+				if !check(field.Type, false) {
+					return false
+				}
+			}
+			return true
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && !check(variant.Payload, true) {
+					return false
+				}
+			}
+			return true
+		default:
+			return false
+		}
 	}
+	return check(t, false)
 }
 
 func IsSizedType(t Type) bool {
@@ -109,7 +142,7 @@ func IsSizedType(t Type) bool {
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
 			return false
-		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *TypeParameterType, *EnumType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *NamedType, *TypeParameterType, *AllocatorType:
 			return true
 		case *OwnedPtrType:
 			return typ != nil && typ.Target != nil
@@ -133,6 +166,16 @@ func IsSizedType(t Type) bool {
 			}
 			for _, field := range typ.Fields {
 				if !check(field.Type) {
+					return false
+				}
+			}
+			return true
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && !check(variant.Payload) {
 					return false
 				}
 			}
@@ -184,6 +227,15 @@ func IsNoCopyType(t Type) bool {
 					return true
 				}
 			}
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && check(variant.Payload) {
+					return true
+				}
+			}
 		}
 		return false
 	}
@@ -191,18 +243,18 @@ func IsNoCopyType(t Type) bool {
 }
 
 // IsLowerableType reports whether current backend lowering can represent type.
-// Owned pointers close recursive named composites without expanding storage;
+// Owned pointers and safe references close recursive named composites without expanding storage;
 // abstract Self parameters remain semantic-only interface metadata.
 func IsLowerableType(t Type) bool {
 	visiting := make(map[Type]struct{})
-	var check func(Type) bool
-	check = func(t Type) bool {
+	var check func(Type, bool) bool
+	check = func(t Type, throughIndirection bool) bool {
 		t = Underlying(t)
 		if t == nil {
 			return false
 		}
 		if _, found := visiting[t]; found {
-			return false
+			return throughIndirection
 		}
 		visiting[t] = struct{}{}
 		defer delete(visiting, t)
@@ -223,19 +275,19 @@ func IsLowerableType(t Type) bool {
 				return false
 			}
 			if target, ok := Underlying(typ.Target).(*ArrayType); ok && target != nil && target.Shape == ArraySlice {
-				return target.Elem != nil && check(target.Elem)
+				return target.Elem != nil && check(target.Elem, true)
 			}
-			return check(typ.Target)
+			return check(typ.Target, true)
 		case *OptionalType:
-			return typ != nil && typ.Inner != nil && check(typ.Inner)
+			return typ != nil && typ.Inner != nil && check(typ.Inner, throughIndirection)
 		case *ArrayType:
-			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem)
+			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem, throughIndirection)
 		case *StructType:
 			if typ == nil {
 				return false
 			}
 			for _, field := range typ.Fields {
-				if !check(field.Type) {
+				if !check(field.Type, throughIndirection) {
 					return false
 				}
 			}
@@ -252,11 +304,11 @@ func IsLowerableType(t Type) bool {
 					if i == 0 {
 						continue
 					}
-					if ContainsAbstractSelf(param.Type) || !check(param.Type) {
+					if ContainsAbstractSelf(param.Type) || !check(param.Type, throughIndirection) {
 						return false
 					}
 				}
-				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return)) {
+				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return, throughIndirection)) {
 					return false
 				}
 			}
@@ -266,18 +318,26 @@ func IsLowerableType(t Type) bool {
 				return false
 			}
 			for _, param := range typ.Params {
-				if !check(param) {
+				if !check(param, throughIndirection) {
 					return false
 				}
 			}
-			return typ.Return == nil || check(typ.Return)
+			return typ.Return == nil || check(typ.Return, throughIndirection)
 		case *EnumType:
-			return typ != nil
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && !check(variant.Payload, throughIndirection) {
+					return false
+				}
+			}
+			return true
 		default:
 			return false
 		}
 	}
-	return check(t)
+	return check(t, false)
 }
 
 // NeedsDrop reports whether normal scope cleanup must destroy runtime-owned
@@ -309,6 +369,15 @@ func NeedsDrop(t Type) bool {
 			}
 			for _, field := range typ.Fields {
 				if check(field.Type) {
+					return true
+				}
+			}
+		case *EnumType:
+			if typ == nil {
+				return false
+			}
+			for _, variant := range typ.Cases {
+				if variant.Payload != nil && check(variant.Payload) {
 					return true
 				}
 			}

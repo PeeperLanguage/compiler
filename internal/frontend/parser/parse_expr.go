@@ -100,7 +100,7 @@ func init() {
 	// grouping
 	nud(token.LPAREN, func(p *Parser) ast.Expr {
 		p.advance()
-		inner := p.parseExpr(precLowest)
+		inner := p.parseExprWithControlHeader(precLowest, false)
 		if p.consume(token.RPAREN, "expected ')'") == nil {
 			return inner
 		}
@@ -130,6 +130,7 @@ func init() {
 	// equality
 	led(token.EQ, precEquality, parseBinaryExpr)
 	led(token.NEQ, precEquality, parseBinaryExpr)
+	led(token.IS, precEquality, parseIsExpr)
 
 	// relational
 	led(token.LT, precCompare, parseBinaryExpr)
@@ -214,6 +215,14 @@ func (p *Parser) parseExpr(precedence uint8) ast.Expr {
 		}
 	}
 	return left
+}
+
+func (p *Parser) parseExprWithControlHeader(precedence uint8, enabled bool) ast.Expr {
+	controlHeader := p.controlHeader
+	p.controlHeader = enabled
+	expr := p.parseExpr(precedence)
+	p.controlHeader = controlHeader
+	return expr
 }
 
 func (p *Parser) parseUnaryExpr() ast.Expr {
@@ -324,6 +333,19 @@ func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
 	})
 }
 
+func parseIsExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+	p.advance()
+	casePath := p.parseVariantCasePath()
+	if casePath == nil {
+		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(left))})
+	}
+	return reg(p, &ast.IsExpr{
+		Value:    left,
+		Case:     casePath,
+		Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(casePath)),
+	})
+}
+
 func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	start := p.consume(token.LPAREN, "expected '('")
 	if start == nil {
@@ -332,7 +354,7 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	var args []ast.Expr
 	if !p.at(token.RPAREN) {
 		for {
-			arg := p.parseExpr(precLowest)
+			arg := p.parseExprWithControlHeader(precLowest, false)
 			if arg != nil {
 				args = append(args, arg)
 			}
@@ -386,7 +408,7 @@ func (p *Parser) parseIndexOperand() ast.Expr {
 	if p.at(token.DOTDOT) || p.at(token.DOTDOT_EQ) {
 		return p.parseRangeExpr(nil)
 	}
-	start := p.parseExpr(precLowest)
+	start := p.parseExprWithControlHeader(precLowest, false)
 	if p.at(token.DOTDOT) || p.at(token.DOTDOT_EQ) {
 		return p.parseRangeExpr(start)
 	}
@@ -399,7 +421,7 @@ func (p *Parser) parseRangeExpr(start ast.Expr) ast.Expr {
 	p.advance()
 	var end ast.Expr
 	if !p.at(token.RBRACK) {
-		end = p.parseExpr(precLowest)
+		end = p.parseExprWithControlHeader(precLowest, false)
 	} else if tok.Kind == token.DOTDOT_EQ {
 		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
 		p.diag.Add(diagnostics.NewError("inclusive range requires an end bound").
@@ -457,7 +479,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	}
 	values, end, ok := parseBracedItemList(p, "expected '{' after array literal type", "expected '}' after array literal",
 		func() (ast.Expr, bool) {
-			value := p.parseExpr(precLowest)
+			value := p.parseExprWithControlHeader(precLowest, false)
 			return value, value != nil
 		})
 	if !ok {
@@ -488,6 +510,33 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 }
 
 func (p *Parser) parseIdentExpr() ast.Expr {
+	expr := p.parseIdentPath()
+	path, ok := expr.(*ast.ScopeResolution)
+	if !ok || !p.at(token.LBRACE) {
+		return expr
+	}
+	if p.controlHeader && !p.variantLiteralPrecedesControlBody() {
+		return path
+	}
+	ambiguousControlHeader := p.controlHeader
+	if ambiguousControlHeader {
+		p.diag.Add(diagnostics.NewError("parenthesize variant literal in control header").
+			WithCode(diagnostics.ErrInvalidExpression).
+			WithPrimaryLabel(ast.LocOf(path), "wrap the variant literal or whole condition in parentheses"))
+	}
+	fields, end, _ := p.parseStructLiteralFields("expected '{' after enum variant", "expected '}' after enum variant literal")
+	location := source.NewLocation(p.filePath, ast.StartOf(path), end.End)
+	if ambiguousControlHeader {
+		return reg(p, &ast.BadExpr{Location: location})
+	}
+	return reg(p, &ast.VariantLit{
+		Case:     path,
+		Fields:   fields,
+		Location: location,
+	})
+}
+
+func (p *Parser) parseIdentPath() ast.Expr {
 	id := p.parseIdent()
 	if id == nil {
 		return nil
@@ -509,6 +558,40 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 		return path
 	}
 	return id
+}
+
+func (p *Parser) parseVariantCasePath() *ast.ScopeResolution {
+	expr := p.parseIdentPath()
+	path, ok := expr.(*ast.ScopeResolution)
+	if ok {
+		return path
+	}
+	loc := ast.LocOf(expr)
+	if loc == nil {
+		loc = source.NewLocation(p.filePath, p.current().Start, p.current().End)
+	}
+	p.diag.Add(diagnostics.NewError("enum case must use a fully named path").
+		WithCode(diagnostics.ErrInvalidExpression).
+		WithPrimaryLabel(loc, "write `Enum::Variant`"))
+	return nil
+}
+
+func (p *Parser) variantLiteralPrecedesControlBody() bool {
+	depth := 0
+	for index := p.pos; index < len(p.stream); index++ {
+		switch p.stream[index].Kind {
+		case token.LBRACE:
+			depth++
+		case token.RBRACE:
+			depth--
+			if depth == 0 {
+				return index+1 < len(p.stream) && p.stream[index+1].Kind == token.LBRACE
+			}
+		case token.EOF:
+			return false
+		}
+	}
+	return false
 }
 
 func (p *Parser) typeArgumentsAreFollowedByScope() bool {
@@ -564,7 +647,16 @@ func (p *Parser) parseCompositeLiteral() ast.Expr {
 		typ = p.parseTypeExpr()
 		openMsg = "expected '{' after composite literal type"
 	}
-	fields, end, _ := parseBracedItemList(p, openMsg, "expected '}' after composite literal",
+	fields, end, _ := p.parseStructLiteralFields(openMsg, "expected '}' after composite literal")
+	return reg(p, &ast.StructLit{
+		Type:     typ,
+		Fields:   fields,
+		Location: source.NewLocation(p.filePath, start.Start, end.End),
+	})
+}
+
+func (p *Parser) parseStructLiteralFields(openerMsg, itemMsg string) ([]ast.StructLitField, *token.Token, bool) {
+	return parseBracedItemList(p, openerMsg, itemMsg,
 		func() (ast.StructLitField, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -573,7 +665,7 @@ func (p *Parser) parseCompositeLiteral() ast.Expr {
 			if p.consume(token.ASSIGN, "expected '=' after struct literal field name") == nil {
 				return ast.StructLitField{}, false
 			}
-			value := p.parseExpr(precLowest)
+			value := p.parseExprWithControlHeader(precLowest, false)
 			if value == nil {
 				return ast.StructLitField{}, false
 			}
@@ -583,11 +675,6 @@ func (p *Parser) parseCompositeLiteral() ast.Expr {
 				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(value)),
 			}, true
 		})
-	return reg(p, &ast.StructLit{
-		Type:     typ,
-		Fields:   fields,
-		Location: source.NewLocation(p.filePath, start.Start, end.End),
-	})
 }
 
 func (p *Parser) parseIdent() *ast.Ident {

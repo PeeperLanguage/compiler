@@ -1,0 +1,13 @@
+enum Direct {
+    Borrowed: { values: [1]&i32 }
+}
+
+enum Resource<T> {
+    Borrowed: { value: T }
+}
+
+fn Invalid(source: &i32) {
+    let resource = Resource<[1]&i32>::Borrowed{
+        value = [_]&i32{source}
+    };
+}

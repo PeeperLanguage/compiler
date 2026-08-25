@@ -9,12 +9,16 @@ import (
 )
 
 type builder struct {
-	fn     *Graph
-	nextID int
+	fn         *Graph
+	matchCases MatchCaseQuery
+	nextID     int
 }
 
+// MatchCaseQuery supplies typechecker-resolved case indexes in source arm order.
+type MatchCaseQuery func(ast.NodeID) ([]int, bool)
+
 // BuildModule creates immutable control-flow topology from typed source syntax.
-func BuildModule(source *ast.Module) *Module {
+func BuildModule(source *ast.Module, matchCases MatchCaseQuery) *Module {
 	if source == nil {
 		return nil
 	}
@@ -27,7 +31,7 @@ func BuildModule(source *ast.Module) *Module {
 		if !ok || fn == nil || fn.Body == nil {
 			return true
 		}
-		graph := buildFunction(fn)
+		graph := buildFunction(fn, matchCases)
 		finalizeGraph(graph)
 		if module.byNodeID[graph.NodeID] != nil {
 			panic(fmt.Sprintf("CFG construction: duplicate function NodeID %d", graph.NodeID))
@@ -39,7 +43,7 @@ func BuildModule(source *ast.Module) *Module {
 	return module
 }
 
-func buildFunction(source *ast.FnDecl) *Graph {
+func buildFunction(source *ast.FnDecl, matchCases MatchCaseQuery) *Graph {
 	name := ""
 	if source.Name != nil {
 		name = source.Name.Name
@@ -52,7 +56,7 @@ func buildFunction(source *ast.FnDecl) *Graph {
 		ReturnsValue:   source.ReturnType != nil,
 		Blocks:         make([]*Block, 0),
 	}
-	b := &builder{fn: fn}
+	b := &builder{fn: fn, matchCases: matchCases}
 	fn.Entry = b.newBlock(BlockNormal, ast.LocOf(source.Body))
 	fn.Exit = b.newBlock(BlockNormal, ast.LocOf(source))
 	next := b.buildBlock(source.Body, fn.Entry)
@@ -171,6 +175,40 @@ func (b *builder) buildStmt(stmt ast.Stmt, current *Block, scopeID ir.NodeID) *B
 			bodyEnd.Terminator = &Jump{Target: header}
 		}
 		return exit
+	case *ast.MatchStmt:
+		var cases []int
+		found := false
+		if b.matchCases != nil {
+			cases, found = b.matchCases(node.ID())
+		}
+		if !found || len(cases) != len(node.Arms) {
+			// Invalid source may not have complete semantic evidence. Preserve one
+			// recovery site so diagnostics can be published without inventing tags.
+			current.Sites = append(current.Sites, statementSite(node, scopeID))
+			return current
+		}
+		join := b.newBlock(BlockNormal, ast.LocOf(node))
+		targets := make([]VariantTarget, 0, len(node.Arms))
+		fallsThrough := false
+		for armIndex, arm := range node.Arms {
+			armBlock := b.newBlock(BlockNormal, ast.LocOf(arm))
+			targets = append(targets, VariantTarget{Case: cases[armIndex], Target: armBlock})
+			armEnd := b.buildBlock(arm.Body, armBlock)
+			if armEnd != nil {
+				fallsThrough = true
+				if armEnd.Terminator == nil {
+					armEnd.Terminator = &Jump{Target: join}
+				}
+			}
+		}
+		current.Terminator = &SwitchVariant{
+			NodeID: ir.NodeID(node.ID()), ScopeID: scopeID,
+			Location: ast.LocOf(node), Targets: targets,
+		}
+		if !fallsThrough {
+			return nil
+		}
+		return join
 	case *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl, *ast.TypeAliasDecl,
 		*ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
 		current.Sites = append(current.Sites, statementSite(node, scopeID))

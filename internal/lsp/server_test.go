@@ -412,6 +412,117 @@ func TestHandleRenameMatchesQualifiedTypeMember(t *testing.T) {
 	}
 }
 
+func TestVariantDefinitionAndRenameUseChildSymbol(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `enum Result {
+	Ok,
+	Pending,
+}
+fn inspect(value: Result) {
+	let made = Result::__CURSOR__Ok;
+	if value is Result::Ok {}
+	match value {
+		Result::Ok => {}
+		Result::Pending => {}
+	}
+}
+`
+	clean, position := markerPosition(t, src)
+	state := NewServerState()
+	state.RootDir = root
+	state.Cache[filePath] = clean
+	if _, module := state.recompile(filePath); module == nil {
+		t.Fatal("expected compiled enum module")
+	}
+	locations, err := state.HandleDefinition(DefinitionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     position,
+	}})
+	if err != nil {
+		t.Fatalf("HandleDefinition failed: %v", err)
+	}
+	if len(locations) != 1 || locations[0].Range.Start.Line != 1 {
+		t.Fatalf("variant definition locations = %#v, want declaration line 1", locations)
+	}
+	edit, err := state.HandleRename(RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     position,
+		NewName:      "Success",
+	})
+	if err != nil {
+		t.Fatalf("HandleRename failed: %v", err)
+	}
+	edits := edit.Changes[DocumentURI(pathToURI(filePath))]
+	if len(edits) != 4 {
+		t.Fatalf("variant rename edits = %#v, want declaration plus three uses", edits)
+	}
+}
+
+func TestImportedAliasVariantDefinitionAndRenameUseCanonicalSymbol(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
+	writeWorkspaceFile(t, resultPath, "enum Result { Ok, Pending }\ntype Alias = Result;\n")
+	source := `import "app/result";
+fn inspect(value: result::Alias) {
+	let made = result::Alias::__CURSOR__Ok;
+	if value is result::Alias::Ok {}
+}
+`
+	clean, position := markerPosition(t, source)
+	state := NewServerState()
+	state.RootDir = root
+	state.Cache[mainPath] = clean
+	if _, module := state.recompile(mainPath); module == nil {
+		t.Fatal("expected compiled enum alias module")
+	}
+	locations, err := state.HandleDefinition(DefinitionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(mainPath))},
+		Position:     position,
+	}})
+	if err != nil || len(locations) != 1 || locations[0].URI != DocumentURI(pathToURI(resultPath)) || locations[0].Range.Start.Line != 0 {
+		t.Fatalf("alias variant definition = %#v, err = %v", locations, err)
+	}
+	edit, err := state.HandleRename(RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(mainPath))},
+		Position:     position,
+		NewName:      "Success",
+	})
+	if err != nil {
+		t.Fatalf("HandleRename failed: %v", err)
+	}
+	if got := len(edit.Changes[DocumentURI(pathToURI(resultPath))]); got != 1 {
+		t.Fatalf("canonical declaration edits = %#v, want one", edit.Changes)
+	}
+	if got := len(edit.Changes[DocumentURI(pathToURI(mainPath))]); got != 2 {
+		t.Fatalf("alias-qualified use edits = %#v, want two", edit.Changes)
+	}
+}
+
+func TestHoverShowsExactCaseFieldType(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `enum Choice {
+	Number: { value: i32 },
+	Text: { value: cstr },
+}
+fn read(choice: Choice) -> cstr {
+	if choice is Choice::Text {
+		return choice.__CURSOR__value;
+	}
+	return c"";
+}
+`
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, filePath, src)
+	if hover == nil || !strings.Contains(hover.Contents.Value, "(expr): cstr") {
+		t.Fatalf("exact-case field hover = %#v, want cstr", hover)
+	}
+}
+
 func TestHandleRenameMatchesSelectorField(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
@@ -1213,7 +1324,7 @@ func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
 func TestHoverShowsEnumTypeWithMultilineVariants(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "__CURSOR__enum Color {\n\tRed,\n\tGreen,\n\tBlue,\n}\n"
+	src := "__CURSOR__enum Color {\n\tRgb: { red: u8, green: u8, blue: u8 },\n\tTransparent,\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -1221,7 +1332,7 @@ func TestHoverShowsEnumTypeWithMultilineVariants(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "enum {\n  Red,\n  Green,\n  Blue,\n}") {
+	if !strings.Contains(hover.Contents.Value, "enum {\n  Rgb: {red: u8, green: u8, blue: u8},\n  Transparent,\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }

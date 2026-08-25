@@ -629,6 +629,91 @@ fn main() -> i32 { return Value; }
 	}
 }
 
+func TestTypecheckedPhaseFinalizesNamedVariantConstants(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `enum Status {
+	Ready: { code: i32, enabled: bool },
+	Waiting,
+}
+const Ready: Status = Status::Ready{ code = 7, enabled = true };
+const Waiting: Status = Status::Waiting;
+const ReadyIsReady: bool = Ready is Status::Ready;
+const WaitingIsReady: bool = Waiting is Status::Ready;
+`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+	for entry.Phase < phase.Typechecked {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
+		}
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	readySymbol, found := entry.ModuleScope.LookupLocal("Ready")
+	if !found || readySymbol == nil {
+		t.Fatal("missing const symbol Ready")
+	}
+	ready, ok := entry.Semantics.ConstValues[readySymbol.ID].(*constvalue.VariantConst)
+	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Semantics.ConstValues[readySymbol.ID])
+	}
+	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
+	if !ok || code.Text() != "7" {
+		t.Fatalf("Ready.code = %#v, want i32 7", ready.FieldValues()[0])
+	}
+	assertPipelineBoolConst(t, entry, "ReadyIsReady", true)
+	assertPipelineBoolConst(t, entry, "WaitingIsReady", false)
+}
+
+func TestPipelineEmitsStaticForFunctionUnreferencedVariantConstant(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `enum Status {
+	Ready,
+	Waiting,
+}
+const Selected: Status = Status::Ready;
+
+fn main() -> i32 {
+	return 0;
+}
+`, diag)
+	entry.Origin = project.ModuleOriginLocal
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:           ".",
+		Extension:         peeper.SourceExt,
+		RequireEntrypoint: true,
+	}, diag)
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if entry.MIR == nil || len(entry.MIR.StaticData) != 1 {
+		t.Fatalf("static data = %#v, want Selected variant constant", entry.MIR)
+	}
+	if _, ok := entry.MIR.StaticData[0].Constant.(*constvalue.VariantConst); !ok {
+		t.Fatalf("static constant = %#v, want typed variant", entry.MIR.StaticData[0].Constant)
+	}
+}
+
+func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, want bool) {
+	t.Helper()
+	sym, found := module.ModuleScope.LookupLocal(name)
+	if !found || sym == nil {
+		t.Fatalf("missing const symbol %s", name)
+	}
+	value, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.BoolConst)
+	if !ok || value == nil || value.Bool() != want {
+		t.Fatalf("%s = %#v, want bool %t", name, module.Semantics.ConstValues[sym.ID], want)
+	}
+}
+
 func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
@@ -697,6 +782,30 @@ func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.
 		return 3;
 	}
 	return value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineLowersCaseRefinedFieldWithConflictingSchemaTypes(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `enum Choice {
+	Number: { value: i32 },
+	Flag: { value: bool }
+}
+
+fn Read(choice: Choice) -> bool {
+	if choice is Choice::Flag {
+		return choice.value;
+	}
+	return false;
+}
+
+fn main() -> i32 {
+	if Read(Choice::Flag{ value = true }) {
+		return 0;
+	}
+	return 1;
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -1218,6 +1327,58 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersReferenceRecursiveEnumOnSupportedWidths(t *testing.T) {
+	const src = `enum Node {
+	Next: { next: &Node },
+	End
+}
+
+fn Read(_: &Node) {}
+
+fn main() -> i32 {
+	let end = Node::End;
+	let node = Node::Next{ next = &end };
+	let mut result = 1;
+	match node {
+		Node::Next{ next = next } => {
+			Read(next);
+			result = 0;
+		}
+		Node::End => {}
+	}
+	return result;
+}`
+
+	for _, arch := range []string{"386", "amd64"} {
+		t.Run(arch, func(t *testing.T) {
+			filePath := "recursive_enum_reference_" + arch + peeper.SourceExt
+			diag := diagnostics.NewDiagnosticBag()
+			diag.AddSourceContent(filePath, src)
+			ctx := project.NewWithConfig(project.Config{
+				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
+			}, diag)
+			entry := parseModuleSource(filePath, src, diag)
+			entry.Origin = project.ModuleOriginLocal
+			if err := Run(ctx, entry); err != nil {
+				t.Fatalf("pipeline.Run returned error: %v", err)
+			}
+			if diag.HasErrors() || entry.Phase != phase.Backend || entry.LLVMIR == "" {
+				t.Fatalf("reference-recursive enum stopped before backend: phase=%v\n%s", entry.Phase, diag.EmitAllToString())
+			}
+
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				t.Skip("clang unavailable for LLVM IR validation")
+			}
+			cmd := exec.Command(clang, "-target", ctx.Target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "recursive-enum.o"), "-")
+			cmd.Stdin = strings.NewReader(entry.LLVMIR)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s reference-recursive enum LLVM is invalid: %v\n%s\n%s", arch, err, output, entry.LLVMIR)
+			}
+		})
+	}
+}
+
 func TestPipelineRejectsDirectStructCycle(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct A {
@@ -1449,6 +1610,36 @@ fn main() -> i32 {
 }`, `struct Box<T> { value: T }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected imported generic diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineExpandsImportedNamedEnumDefault(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn main() -> i32 {
+	if !(runtime::IsPending()) {
+		return 1;
+	}
+	return runtime::Read();
+}`, `enum Status<T> {
+	Ready: { value: T },
+	Pending,
+}
+
+type State<T> = Status<T>;
+
+fn Read(status: State<i32> = State<i32>::Ready{ value = 42 }) -> i32 {
+	match status {
+		State<i32>::Ready{ value = value } => { return value; }
+		State<i32>::Pending => { return 0; }
+	}
+}
+
+fn IsPending(pending: bool = State<i32>::Pending is State<i32>::Pending) -> bool {
+	return pending;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected imported enum default diagnostics:\n%s", diag.EmitAllToString())
 	}
 }
 

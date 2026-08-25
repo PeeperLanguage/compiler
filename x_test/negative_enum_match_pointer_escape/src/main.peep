@@ -1,0 +1,18 @@
+enum Resource {
+    Pointer: { value: rawptr }
+}
+
+const global: i32 = 1;
+
+fn Invalid(chooseLocal: bool) -> rawptr {
+    let local: i32 = 2;
+    let mut resource = Resource::Pointer{ value = @global };
+    if chooseLocal {
+        resource = Resource::Pointer{ value = @local };
+    }
+    match resource {
+        Resource::Pointer{ value = pointer } => {
+            return pointer;
+        }
+    }
+}

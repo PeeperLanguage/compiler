@@ -1,8 +1,6 @@
 package typechecker
 
 import (
-	"maps"
-
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
@@ -22,11 +20,16 @@ type variantStateFact struct {
 	dependencies []*symbols.Symbol
 }
 
+type originStateFact struct {
+	storage []place.Origin
+	value   []place.Origin
+}
+
 type flowState struct {
 	reachable   bool
 	variants    []variantStateFact
-	references  map[*symbols.Symbol][]place.Origin
-	rawPointers map[*symbols.Symbol][]place.Origin
+	references  []originStateFact
+	rawPointers []originStateFact
 }
 
 type flowCheck struct {
@@ -63,14 +66,15 @@ type flowAnalyzer struct {
 	inStates      map[cfg.SiteID]flowState
 }
 
-// CheckFlow runs optional/origin facts to fixed point, then records exact
+// CheckFlow runs variant/origin facts to fixed point, then records exact
 // per-use types through the existing checker implementation.
 func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult.Result {
 	result := &flowresult.Result{
 		SiteFacts:              make(map[ir.NodeID]map[cfg.SiteID]flowresult.Facts),
 		ExprTypes:              make(map[ast.NodeID]typeinfo.Type),
 		Payloads:               make(map[ast.NodeID]flowresult.PayloadAccess),
-		VariantTests:           make(map[ast.NodeID]flowresult.VariantTest),
+		CaseTests:              make(map[ast.NodeID]flowresult.CaseTest),
+		VariantFields:          make(map[ast.NodeID]flowresult.VariantFieldAccess),
 		ResolvedStorageOrigins: make(map[ast.NodeID][]place.Origin),
 		ResolvedValueOrigins:   make(map[ast.NodeID][]place.Origin),
 	}
@@ -127,7 +131,6 @@ func (c *checker) effectiveExpressionType(scope *symbols.Scope, expr ast.Expr, b
 	}
 	resolution := place.Resolution{}
 	if c.flow != nil {
-		delete(c.flow.result.Payloads, expr.ID())
 		resolution = c.resolveFlowPlace(scope, expr, *c.flow.state)
 	}
 	if c.wholeCarrierExpr == expr {
@@ -226,29 +229,32 @@ func unwrapOptionalLayers(typ typeinfo.Type, depth int) typeinfo.Type {
 	return typ
 }
 
-func (c *checker) recordOptionalTest(node *ast.BinaryExpr, subject ast.Expr) {
+func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
 	if c == nil || node == nil || subject == nil {
 		return
 	}
-	test := flowresult.OptionalTest{SubjectID: subject.ID(), PresentWhenTrue: node.Op == "!="}
+	test := flowresult.CaseTest{
+		SubjectID: subject.ID(), Case: caseIndex, CaseWhenTrue: caseWhenTrue,
+		CaseCount: caseCount, Family: family,
+	}
 	if c.flow == nil {
 		if c.module != nil && c.module.Semantics != nil {
-			c.module.Semantics.OptionalTests[node.ID()] = test
+			c.module.Semantics.CaseTests[node.ID()] = test
 		}
 		return
 	}
+	base, found := c.module.Semantics.CaseTests[node.ID()]
+	if !found || base.SubjectID != subject.ID() {
+		return
+	}
+	test = base
 	if payload, ok := c.flow.result.Payloads[subject.ID()]; ok {
-		c.flow.result.VariantTests[node.ID()] = flowresult.VariantTest{
-			SubjectID: subject.ID(), Case: ir.OptionalPresentCase,
-			CaseWhenTrue: test.PresentWhenTrue, CaseCount: 2,
-			PayloadPath: append([]int(nil), payload.Cases...),
-		}
-	} else {
-		c.flow.result.VariantTests[node.ID()] = flowresult.VariantTest{
-			SubjectID: subject.ID(), Case: ir.OptionalPresentCase,
-			CaseWhenTrue: test.PresentWhenTrue, CaseCount: 2,
+		storage := c.flow.result.ResolvedStorageOrigins[subject.ID()]
+		if payload.AppliesTo(storage) {
+			test.PayloadPath = append([]int(nil), payload.Cases...)
 		}
 	}
+	c.flow.result.CaseTests[node.ID()] = test
 	if c.flow.events != nil {
 		c.flow.events.next++
 		c.flow.events.tests[node.ID()] = c.flow.events.next
@@ -294,11 +300,11 @@ func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowS
 			return c.module.Semantics.ExprTypes[node.ID()]
 		},
 		ResolveBinding: c.expandedDefaultBinding,
-		ReferenceOrigins: func(sym *symbols.Symbol) []place.Origin {
-			return st.references[sym]
+		ReferenceOrigins: func(storage []place.Origin) []place.Origin {
+			return originValues(st.references, storage)
 		},
-		RawPointerOrigins: func(sym *symbols.Symbol) []place.Origin {
-			return st.rawPointers[sym]
+		RawPointerOrigins: func(storage []place.Origin) []place.Origin {
+			return originValues(st.rawPointers, storage)
 		},
 		CallOrigins: func(call *ast.CallExpr) []place.Origin {
 			if call == nil || call.Callee == nil {
@@ -366,7 +372,8 @@ func (a *flowAnalyzer) run() {
 				for index := range cases {
 					cases[index] = ir.OptionalPresentCase
 				}
-				entryState.references[sym] = place.VariantPayloadOrigins(carrier, cases)
+				value := place.VariantPayloadOrigins(carrier, cases)
+				entryState.references = setOriginFact(entryState.references, carrier, value)
 			}
 		}
 	}
@@ -418,6 +425,7 @@ func (a *flowAnalyzer) run() {
 			out := copyFlowState(next)
 			if site.Kind == cfg.SiteTerminator {
 				a.applyConditionEdge(site, edge.Kind, &out, events)
+				a.applyVariantCaseEdge(site, edge, &out)
 			}
 			if !out.reachable {
 				continue
@@ -439,12 +447,68 @@ func (a *flowAnalyzer) run() {
 	}
 }
 
-func newFlowState() flowState {
-	return flowState{
-		reachable:   true,
-		references:  make(map[*symbols.Symbol][]place.Origin),
-		rawPointers: make(map[*symbols.Symbol][]place.Origin),
+func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *flowState) {
+	if a == nil || site == nil || st == nil || edge.Kind != cfg.EdgeVariantCase {
+		return
 	}
+	match, found := a.module.Semantics.Matches[ast.NodeID(site.NodeID)]
+	if !found {
+		return
+	}
+	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
+	if subject == nil {
+		return
+	}
+	scope := a.module.Semantics.BlockScopes[ast.NodeID(site.ScopeID)]
+	if scope == nil {
+		scope = a.functionScope
+	}
+	checker := &checker{ctx: a.ctx, module: a.module, flow: &flowCheck{result: a.result, state: st}}
+	resolution := checker.resolveFlowPlace(scope, subject, *st)
+	if resolution.Stable && len(resolution.StorageOrigins) > 0 {
+		restrictVariantFact(st, variantStateFact{
+			origins:      resolution.StorageOrigins,
+			cases:        []int{edge.Case},
+			caseCount:    len(match.Cases),
+			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
+		})
+	}
+	arm, found := match.Arm(edge.Case)
+	if !found || arm.Payload == nil {
+		return
+	}
+	payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
+	for _, field := range arm.Fields {
+		if field.Binding == nil || field.Field < 0 || field.Field >= len(arm.Payload.Fields) {
+			continue
+		}
+		fieldOrigins := place.FieldOrigins(payloadOrigins, arm.Payload.Fields[field.Field].Name)
+		bindingOrigins := []place.Origin{{Root: field.Binding}}
+		valueOrigins := fieldOrigins
+		if _, _, reference := typeinfo.ReferenceValueTarget(field.Type); reference {
+			valueOrigins = originValues(st.references, fieldOrigins)
+			if len(valueOrigins) == 0 {
+				valueOrigins = fieldOrigins
+			}
+			st.references = setOriginFact(st.references, bindingOrigins, valueOrigins)
+		}
+		if _, raw := typeinfo.Underlying(field.Type).(*typeinfo.RawPtrType); raw {
+			valueOrigins = originValues(st.rawPointers, fieldOrigins)
+			if len(valueOrigins) == 0 {
+				valueOrigins = fieldOrigins
+			}
+			st.rawPointers = setOriginFact(st.rawPointers, bindingOrigins, valueOrigins)
+		}
+		if field.Binding.ASTNode != nil {
+			id := field.Binding.ASTNode.ID()
+			a.result.ResolvedStorageOrigins[id] = place.MergeOrigins(a.result.ResolvedStorageOrigins[id], bindingOrigins)
+			a.result.ResolvedValueOrigins[id] = place.MergeOrigins(a.result.ResolvedValueOrigins[id], valueOrigins)
+		}
+	}
+}
+
+func newFlowState() flowState {
+	return flowState{reachable: true}
 }
 
 func copyFlowState(src flowState) flowState {
@@ -456,20 +520,13 @@ func copyFlowState(src flowState) flowState {
 			dependencies: append([]*symbols.Symbol(nil), fact.dependencies...),
 		})
 	}
-	for sym, origins := range src.references {
-		dst.references[sym] = place.CloneOrigins(origins)
-	}
-	for sym, origins := range src.rawPointers {
-		dst.rawPointers[sym] = place.CloneOrigins(origins)
-	}
+	dst.references = cloneOriginFacts(src.references)
+	dst.rawPointers = cloneOriginFacts(src.rawPointers)
 	return dst
 }
 
 func snapshotFlowState(st flowState) flowresult.Facts {
-	facts := flowresult.Facts{
-		ReferenceOrigins:  make(map[symbols.SymbolID][]place.Origin),
-		RawPointerOrigins: make(map[symbols.SymbolID][]place.Origin),
-	}
+	facts := flowresult.Facts{}
 	for _, fact := range st.variants {
 		dependencies := make([]symbols.SymbolID, 0, len(fact.dependencies))
 		for _, sym := range fact.dependencies {
@@ -482,15 +539,15 @@ func snapshotFlowState(st flowState) flowresult.Facts {
 			CaseCount: fact.caseCount, Dependencies: dependencies,
 		})
 	}
-	for sym, origins := range st.references {
-		if sym != nil {
-			facts.ReferenceOrigins[sym.ID] = place.CloneOrigins(origins)
-		}
+	for _, fact := range st.references {
+		facts.ReferenceOrigins = append(facts.ReferenceOrigins, flowresult.OriginFact{
+			StorageOrigins: place.CloneOrigins(fact.storage), ValueOrigins: place.CloneOrigins(fact.value),
+		})
 	}
-	for sym, origins := range st.rawPointers {
-		if sym != nil {
-			facts.RawPointerOrigins[sym.ID] = place.CloneOrigins(origins)
-		}
+	for _, fact := range st.rawPointers {
+		facts.RawPointerOrigins = append(facts.RawPointerOrigins, flowresult.OriginFact{
+			StorageOrigins: place.CloneOrigins(fact.storage), ValueOrigins: place.CloneOrigins(fact.value),
+		})
 	}
 	return facts
 }
@@ -536,18 +593,23 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 	switch node := stmt.(type) {
 	case *ast.LetDecl:
 		if sym, found := scope.LookupNode(node); found {
-			a.updateOriginBinding(c, scope, sym, node.Value, st)
+			typ, _ := symbols.GetSymbolType(sym)
+			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
 	case *ast.ConstDecl:
 		if sym, found := scope.LookupNode(node); found {
-			a.updateOriginBinding(c, scope, sym, node.Value, st)
+			typ, _ := symbols.GetSymbolType(sym)
+			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
 	case *ast.AssignStmt:
+		sourceState := copyFlowState(*st)
 		resolution := c.resolveFlowPlace(scope, node.Target, *st)
 		invalidateVariantOrigins(st, resolution.StorageOrigins)
-		if sym := a.assignedSymbol(scope, node.Target); sym != nil {
-			a.updateOriginBinding(c, scope, sym, node.Value, st)
+		typ := a.result.ExprTypes[node.Target.ID()]
+		if typ == nil {
+			typ = a.module.Semantics.ExprTypes[node.Target.ID()]
 		}
+		a.updateOriginPlace(c, scope, resolution.StorageOrigins, typ, node.Value, sourceState, st)
 	}
 }
 
@@ -563,29 +625,83 @@ func (a *flowAnalyzer) assignedSymbol(scope *symbols.Scope, expr ast.Expr) *symb
 	return sym
 }
 
-func (a *flowAnalyzer) updateOriginBinding(c *checker, scope *symbols.Scope, sym *symbols.Symbol, value ast.Expr, st *flowState) {
-	if sym == nil || st == nil {
+func (a *flowAnalyzer) updateOriginPlace(
+	c *checker,
+	scope *symbols.Scope,
+	storage []place.Origin,
+	typ typeinfo.Type,
+	value ast.Expr,
+	sourceState flowState,
+	st *flowState,
+) {
+	if st == nil || len(storage) == 0 {
 		return
 	}
-	typ, typed := symbols.GetSymbolType(sym)
-	if !typed {
-		delete(st.references, sym)
-		delete(st.rawPointers, sym)
+	st.references = invalidateOriginFacts(st.references, storage)
+	st.rawPointers = invalidateOriginFacts(st.rawPointers, storage)
+	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
+		st.references = setOriginFact(st.references, storage, c.resolveFlowPlace(scope, value, sourceState).ValueOrigins)
+	}
+	if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
+		if origins, known := a.rawPointerOrigins(c, scope, value, sourceState); known {
+			st.rawPointers = setOriginFact(st.rawPointers, storage, origins)
+		}
+	}
+	if value == nil {
+		return
+	}
+	construction, constructed := a.module.Semantics.VariantConstructions[value.ID()]
+	if !constructed || construction.Payload == nil || construction.Case < 0 {
+		source := c.resolveFlowPlace(scope, value, sourceState)
+		a.copyStoredOriginPlace(storage, source.ValueOrigins, typ, sourceState, st)
+		return
+	}
+	payloadStorage := place.VariantPayloadOrigins(storage, []int{construction.Case})
+	for fieldIndex, fieldValue := range construction.Fields {
+		if fieldIndex >= len(construction.Payload.Fields) {
+			return
+		}
+		field := construction.Payload.Fields[fieldIndex]
+		a.updateOriginPlace(c, scope, place.FieldOrigins(payloadStorage, field.Name), field.Type, fieldValue, sourceState, st)
+	}
+}
+
+func (a *flowAnalyzer) copyStoredOriginPlace(destination, source []place.Origin, typ typeinfo.Type, sourceState flowState, st *flowState) {
+	if a == nil || st == nil || len(destination) == 0 || len(source) == 0 {
 		return
 	}
 	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
-		st.references[sym] = place.CloneOrigins(c.resolveFlowPlace(scope, value, *st).ValueOrigins)
-	} else {
-		delete(st.references, sym)
+		if value := originValues(sourceState.references, source); len(value) > 0 {
+			st.references = setOriginFact(st.references, destination, value)
+		}
+		return
 	}
 	if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
-		if origins, known := a.rawPointerOrigins(c, scope, value, *st); known {
-			st.rawPointers[sym] = origins
-		} else {
-			delete(st.rawPointers, sym)
+		if value := originValues(sourceState.rawPointers, source); len(value) > 0 {
+			st.rawPointers = setOriginFact(st.rawPointers, destination, value)
 		}
-	} else {
-		delete(st.rawPointers, sym)
+		return
+	}
+	descriptor, variant := typeinfo.VariantDescriptorOf(typ)
+	if !variant || descriptor.Family != typeinfo.VariantFamilyNamed {
+		return
+	}
+	for caseIndex, variantCase := range descriptor.Cases {
+		payload, payloadFound := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
+		if !payloadFound || payload == nil {
+			continue
+		}
+		destinationPayload := place.VariantPayloadOrigins(destination, []int{caseIndex})
+		sourcePayload := place.VariantPayloadOrigins(source, []int{caseIndex})
+		for _, field := range payload.Fields {
+			a.copyStoredOriginPlace(
+				place.FieldOrigins(destinationPayload, field.Name),
+				place.FieldOrigins(sourcePayload, field.Name),
+				field.Type,
+				sourceState,
+				st,
+			)
+		}
 	}
 }
 
@@ -633,13 +749,14 @@ func (a *flowAnalyzer) rawPointerOrigins(c *checker, scope *symbols.Scope, expr 
 		}
 	case *ast.Ident:
 		if sym := a.assignedSymbol(scope, node); sym != nil {
-			origins, known := st.rawPointers[sym]
-			return place.CloneOrigins(origins), known
+			origins := originValues(st.rawPointers, []place.Origin{{Root: sym}})
+			return origins, len(origins) > 0
 		}
 	case *ast.AsExpr:
 		return a.rawPointerOrigins(c, scope, node.Expr, st)
 	}
-	return nil, false
+	origins := c.resolveFlowPlace(scope, expr, st).ValueOrigins
+	return origins, len(origins) > 0
 }
 
 func (a *flowAnalyzer) applyConditionEdge(site *cfg.Site, edge cfg.EdgeKind, st *flowState, events *flowExpressionEvents) {
@@ -691,12 +808,14 @@ func (a *flowAnalyzer) impliedVariants(
 	if expr == nil {
 		return nil
 	}
-	if test, found := a.result.VariantTests[expr.ID()]; found {
+	if test, found := a.result.CaseTests[expr.ID()]; found {
 		subject, _ := a.module.TypedASTNodes[test.SubjectID].(ast.Expr)
 		checker := &checker{ctx: a.ctx, module: a.module, flow: &flowCheck{result: a.result, state: &st}}
 		resolution := checker.resolveFlowPlace(scope, subject, st)
 		if !resolution.Stable || len(resolution.StorageOrigins) == 0 {
-			a.ctx.Diagnostics.Add(unstableOptionalNarrowingError(subject))
+			if test.Family == typeinfo.VariantFamilyOptional {
+				a.ctx.Diagnostics.Add(unstableOptionalNarrowingError(subject))
+			}
 			return nil
 		}
 		cases := []int{test.Case}
@@ -748,6 +867,14 @@ func (a *flowAnalyzer) impliedVariants(
 		}
 	}
 	return nil
+}
+
+func provenVariantCase(facts []variantStateFact, origins []place.Origin, caseCount int) (int, bool) {
+	fact, found := variantFact(facts, origins)
+	if !found || fact.caseCount != caseCount || len(fact.cases) != 1 {
+		return 0, false
+	}
+	return fact.cases[0], true
 }
 
 func provenOptionalPayloadCases(facts []variantStateFact, origins []place.Origin) []int {
@@ -924,22 +1051,8 @@ func mergeFlowStates(left, right flowState) flowState {
 	}
 	merged := newFlowState()
 	merged.variants = mergeVariantFacts(left.variants, right.variants)
-	merged.references = mergeKnownOriginMaps(left.references, right.references)
-	merged.rawPointers = mergeKnownOriginMaps(left.rawPointers, right.rawPointers)
-	return merged
-}
-
-func mergeKnownOriginMaps(
-	left, right map[*symbols.Symbol][]place.Origin,
-) map[*symbols.Symbol][]place.Origin {
-	merged := make(map[*symbols.Symbol][]place.Origin)
-	for sym, leftOrigins := range left {
-		rightOrigins, known := right[sym]
-		if !known {
-			continue
-		}
-		merged[sym] = place.MergeOrigins(leftOrigins, rightOrigins)
-	}
+	merged.references = mergeOriginFacts(left.references, right.references)
+	merged.rawPointers = mergeOriginFacts(left.rawPointers, right.rawPointers)
 	return merged
 }
 
@@ -954,8 +1067,7 @@ func sameFlowState(left, right flowState) bool {
 			return false
 		}
 	}
-	if !maps.EqualFunc(left.references, right.references, place.SameOrigins) ||
-		!maps.EqualFunc(left.rawPointers, right.rawPointers, place.SameOrigins) {
+	if !sameOriginFacts(left.references, right.references) || !sameOriginFacts(left.rawPointers, right.rawPointers) {
 		return false
 	}
 	return true
@@ -968,6 +1080,75 @@ func variantFact(facts []variantStateFact, origins []place.Origin) (variantState
 		}
 	}
 	return variantStateFact{}, false
+}
+
+func cloneOriginFacts(facts []originStateFact) []originStateFact {
+	cloned := make([]originStateFact, len(facts))
+	for index, fact := range facts {
+		cloned[index] = originStateFact{
+			storage: place.CloneOrigins(fact.storage), value: place.CloneOrigins(fact.value),
+		}
+	}
+	return cloned
+}
+
+func originValues(facts []originStateFact, storage []place.Origin) []place.Origin {
+	for _, fact := range facts {
+		if place.SameOrigins(fact.storage, storage) {
+			return place.CloneOrigins(fact.value)
+		}
+	}
+	return nil
+}
+
+func setOriginFact(facts []originStateFact, storage, value []place.Origin) []originStateFact {
+	if len(storage) == 0 || len(value) == 0 {
+		return facts
+	}
+	for index := range facts {
+		if place.SameOrigins(facts[index].storage, storage) {
+			facts[index].value = place.CloneOrigins(value)
+			return facts
+		}
+	}
+	return append(facts, originStateFact{storage: place.CloneOrigins(storage), value: place.CloneOrigins(value)})
+}
+
+func mergeOriginFacts(left, right []originStateFact) []originStateFact {
+	merged := make([]originStateFact, 0, min(len(left), len(right)))
+	for _, leftFact := range left {
+		rightValue := originValues(right, leftFact.storage)
+		if len(rightValue) == 0 {
+			continue
+		}
+		merged = append(merged, originStateFact{
+			storage: place.CloneOrigins(leftFact.storage),
+			value:   place.MergeOrigins(leftFact.value, rightValue),
+		})
+	}
+	return merged
+}
+
+func sameOriginFacts(left, right []originStateFact) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for _, fact := range left {
+		if !place.SameOrigins(fact.value, originValues(right, fact.storage)) {
+			return false
+		}
+	}
+	return true
+}
+
+func invalidateOriginFacts(facts []originStateFact, mutated []place.Origin) []originStateFact {
+	kept := facts[:0]
+	for _, fact := range facts {
+		if !place.OriginsOverlap(fact.storage, mutated) {
+			kept = append(kept, fact)
+		}
+	}
+	return kept
 }
 
 func variantCasesExcept(caseCount, excluded int) []int {
@@ -1093,8 +1274,19 @@ func clearFlowScope(scope *symbols.Scope, st *flowState) {
 		return
 	}
 	for _, sym := range scope.Symbols() {
-		delete(st.references, sym)
-		delete(st.rawPointers, sym)
-		invalidateVariantOrigins(st, []place.Origin{{Root: sym}})
+		root := []place.Origin{{Root: sym}}
+		st.references = clearOriginRoot(st.references, root)
+		st.rawPointers = clearOriginRoot(st.rawPointers, root)
+		invalidateVariantOrigins(st, root)
 	}
+}
+
+func clearOriginRoot(facts []originStateFact, root []place.Origin) []originStateFact {
+	kept := facts[:0]
+	for _, fact := range facts {
+		if !place.OriginsOverlap(fact.storage, root) && !place.OriginsOverlap(fact.value, root) {
+			kept = append(kept, fact)
+		}
+	}
+	return kept
 }

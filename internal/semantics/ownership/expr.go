@@ -41,6 +41,9 @@ func (a *analyzer) checkExpr(
 		if !projectionBase {
 			a.checkStorageAccess(e, loans, storageAccessForUse(a.exprType(e), use))
 		}
+		if referenceHoldingSymbol(sym) {
+			loans.useReference(sym)
+		}
 	case *ast.AddressExpr:
 		access := storageSharedBorrow
 		if e.Mode == ast.AddressMutable {
@@ -78,7 +81,7 @@ func (a *analyzer) checkExpr(
 		if use != useRead && ownershipTrackedType(a.exprType(e)) {
 			if a.partialVariantPayloadMove(e) {
 				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-					"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
+					"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
 				return
 			}
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -88,9 +91,9 @@ func (a *analyzer) checkExpr(
 		a.checkExpr(scope, e.Start, st, useRead, loans, false)
 		a.checkExpr(scope, e.End, st, useRead, loans, false)
 	case *ast.StructLit:
-		for _, field := range e.Fields {
-			a.checkExpr(scope, field.Value, st, useConsume, loans, false)
-		}
+		a.checkLiteralFields(scope, e.Fields, st, loans)
+	case *ast.VariantLit:
+		a.checkLiteralFields(scope, e.Fields, st, loans)
 	case *ast.ArrayLit:
 		for _, value := range e.Values {
 			a.checkExpr(scope, value, st, useConsume, loans, false)
@@ -106,12 +109,20 @@ func (a *analyzer) checkExpr(
 	case *ast.BinaryExpr:
 		a.checkExpr(scope, e.Left, st, useRead, loans, false)
 		a.checkExpr(scope, e.Right, st, useRead, loans, false)
+	case *ast.IsExpr:
+		a.checkExpr(scope, e.Value, st, useRead, loans, false)
 	case *ast.AsExpr:
 		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit, *ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
 		panic(fmt.Sprintf("ownership: unhandled expression %T", expr))
+	}
+}
+
+func (a *analyzer) checkLiteralFields(scope *symbols.Scope, fields []ast.StructLitField, st state, loans *loanContext) {
+	for _, field := range fields {
+		a.checkExpr(scope, field.Value, st, useConsume, loans, false)
 	}
 }
 
@@ -212,7 +223,7 @@ func (a *analyzer) checkSelector(
 	if ownershipTrackedType(a.exprType(selector)) {
 		if a.partialVariantPayloadMove(selector) {
 			a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
-				"move-only optional payload cannot be moved from partial place; borrow it instead", ast.LocOf(selector), "")
+				"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(selector), "")
 			return
 		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -402,9 +413,15 @@ func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr ast.Expr, st st
 	}
 	switch e := expr.(type) {
 	case *ast.StructLit:
-		for _, field := range e.Fields {
-			a.checkPointerEscape(scope, field.Value, st)
-		}
+		a.checkLiteralPointerEscapes(scope, e.Fields, st)
+	case *ast.VariantLit:
+		a.checkLiteralPointerEscapes(scope, e.Fields, st)
+	}
+}
+
+func (a *analyzer) checkLiteralPointerEscapes(scope *symbols.Scope, fields []ast.StructLitField, st state) {
+	for _, field := range fields {
+		a.checkPointerEscape(scope, field.Value, st)
 	}
 }
 
@@ -422,6 +439,25 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 	case *ast.Ident:
 		if scope == nil {
 			return pointerOrigin{}, false
+		}
+		if _, raw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !raw {
+			return pointerOrigin{}, false
+		}
+		if a.module != nil && a.module.Flow != nil {
+			if origins, resolved := a.module.Flow.ResolvedValueOrigins[e.ID()]; resolved {
+				for _, origin := range origins {
+					if origin.Root == nil {
+						continue
+					}
+					for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+						local, found := current.LookupLocal(origin.Root.Name)
+						if found && local == origin.Root {
+							return pointerOrigin{root: origin.Root, site: e}, true
+						}
+					}
+				}
+				return pointerOrigin{}, false
+			}
 		}
 		var sym *symbols.Symbol
 		var found bool

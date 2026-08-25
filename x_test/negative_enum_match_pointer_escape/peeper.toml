@@ -1,0 +1,7 @@
+name = "negative_enum_match_pointer_escape"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0036", "cannot return pointer to local storage"]

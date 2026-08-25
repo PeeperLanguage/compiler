@@ -1,0 +1,27 @@
+enum Resource {
+    Borrowed: { value: &i32 }
+}
+
+fn Read(_: &i32) {}
+
+fn Invalid(mut source: i32) {
+    let resource = Resource::Borrowed{ value = &source };
+    let duplicate = resource;
+    source = 2;
+    match duplicate {
+        Resource::Borrowed{ value = value } => {
+            Read(value);
+        }
+    }
+}
+
+fn InvalidSelfAssignment(mut source: i32) {
+    let mut resource = Resource::Borrowed{ value = &source };
+    resource = resource;
+    match resource {
+        Resource::Borrowed{ value = value } => {
+            source = 2;
+            Read(value);
+        }
+    }
+}

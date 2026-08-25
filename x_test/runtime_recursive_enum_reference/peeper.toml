@@ -1,0 +1,6 @@
+name = "runtime_recursive_enum_reference"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

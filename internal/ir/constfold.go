@@ -23,11 +23,17 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 	case *VariantMake:
 		return &VariantMake{Case: node.Case, Payload: FoldExpr(types, node.Payload, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *VariantIs:
-		return &VariantIs{Value: FoldExpr(types, node.Value, env), Case: node.Case, Type: node.Type, SourceInfo: node.SourceInfo}
+		value := FoldExpr(types, node.Value, env)
+		if constant, ok := ConstValueOf(types, value); ok {
+			if variant, ok := constant.(*constvalue.VariantConst); ok {
+				return &BoolLit{Value: variant.CaseIndex() == node.Case, Type: node.Type, SourceInfo: node.SourceInfo}
+			}
+		}
+		return &VariantIs{Value: value, Case: node.Case, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {
-				return constValueExprAt(value, node.Type, node.Origin())
+				return constValueExprAt(types, value, node.Type, node.Origin())
 			}
 		}
 		return expr
@@ -35,7 +41,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		arg := FoldExpr(types, node.Arg, env)
 		if value, ok := ConstValueOf(types, arg); ok {
 			if folded, ok := constvalue.FoldUnary(node.Op, value); ok {
-				return constValueExprAt(folded, node.Type, node.Origin())
+				return constValueExprAt(types, folded, node.Type, node.Origin())
 			}
 		}
 		return &Unary{Op: node.Op, Arg: arg, Type: node.Type, SourceInfo: node.SourceInfo}
@@ -46,7 +52,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		rv, rok := ConstValueOf(types, right)
 		if lok && rok {
 			if folded, ok := constvalue.FoldBinary(node.Op, lv, rv); ok {
-				return constValueExprAt(folded, node.Type, node.Origin())
+				return constValueExprAt(types, folded, node.Type, node.Origin())
 			}
 		}
 		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type, SourceInfo: node.SourceInfo}
@@ -162,7 +168,7 @@ func FoldPlace(types *TypeTable, place *Place, env map[string]constvalue.Value) 
 	}
 }
 
-func constValueExprAt(value constvalue.Value, typ TypeID, origin SourceInfo) Expr {
+func constValueExprAt(types *TypeTable, value constvalue.Value, typ TypeID, origin SourceInfo) Expr {
 	switch node := value.(type) {
 	case *constvalue.IntConst:
 		if node == nil {
@@ -176,6 +182,40 @@ func constValueExprAt(value constvalue.Value, typ TypeID, origin SourceInfo) Exp
 		return &FloatLit{Value: node.Text(), Type: typ, SourceInfo: origin}
 	case *constvalue.BoolConst:
 		return &BoolLit{Value: node != nil && node.Bool(), Type: typ, SourceInfo: origin}
+	case *constvalue.VariantConst:
+		variantType, ok := types.Type(typ)
+		if node == nil || !ok || variantType.Kind != TypeVariant {
+			return &InvalidExpr{Message: "invalid variant constant", Type: InvalidType, SourceInfo: origin}
+		}
+		variantCase, ok := variantType.VariantCase(node.CaseIndex())
+		if !ok {
+			return &InvalidExpr{Message: "invalid variant constant case", Type: InvalidType, SourceInfo: origin}
+		}
+		fields := node.FieldValues()
+		var payload Expr
+		if variantCase.Payload != InvalidType {
+			payloadType, found := types.Type(variantCase.Payload)
+			if !found {
+				return &InvalidExpr{Message: "invalid variant constant payload type", Type: InvalidType, SourceInfo: origin}
+			}
+			if payloadType.Kind == TypeStruct {
+				if len(fields) != len(payloadType.Fields) {
+					return &InvalidExpr{Message: "invalid variant constant field count", Type: InvalidType, SourceInfo: origin}
+				}
+				values := make([]Expr, len(fields))
+				for index, field := range fields {
+					values[index] = constValueExprAt(types, field, payloadType.Fields[index].Type, origin)
+				}
+				payload = &StructLit{Fields: values, Type: variantCase.Payload, SourceInfo: origin}
+			} else if len(fields) == 1 {
+				payload = constValueExprAt(types, fields[0], variantCase.Payload, origin)
+			} else {
+				return &InvalidExpr{Message: "invalid variant constant payload", Type: InvalidType, SourceInfo: origin}
+			}
+		} else if len(fields) != 0 {
+			return &InvalidExpr{Message: "payloadless variant constant has fields", Type: InvalidType, SourceInfo: origin}
+		}
+		return &VariantMake{Case: node.CaseIndex(), Payload: payload, Type: typ, SourceInfo: origin}
 	default:
 		return &InvalidExpr{Message: "unknown constant", Type: InvalidType, SourceInfo: origin}
 	}
@@ -195,6 +235,35 @@ func ConstValueOf(types *TypeTable, expr Expr) (constvalue.Value, bool) {
 		return constvalue.NewFloatText(node.Value, types.Text(node.TypeID()))
 	case *BoolLit:
 		return constvalue.NewBool(node.Value), true
+	case *VariantMake:
+		variantType, ok := types.Type(node.Type)
+		if !ok || variantType.Kind != TypeVariant {
+			return nil, false
+		}
+		variantCase, ok := variantType.VariantCase(node.Case)
+		if !ok {
+			return nil, false
+		}
+		var fields []constvalue.Value
+		if variantCase.Payload != InvalidType {
+			if payload, ok := node.Payload.(*StructLit); ok {
+				fields = make([]constvalue.Value, len(payload.Fields))
+				for index, field := range payload.Fields {
+					value, constant := ConstValueOf(types, field)
+					if !constant {
+						return nil, false
+					}
+					fields[index] = value
+				}
+			} else {
+				value, constant := ConstValueOf(types, node.Payload)
+				if !constant {
+					return nil, false
+				}
+				fields = []constvalue.Value{value}
+			}
+		}
+		return constvalue.NewVariant(variantType.Identity, types.Text(node.Type), node.Case, fields)
 	default:
 		return nil, false
 	}

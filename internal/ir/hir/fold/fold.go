@@ -97,6 +97,20 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, env map[string]constvalue.Valu
 			cond = ir.FoldExpr(types, node.Cond, env)
 		}
 		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(types, node.Body, cloneConstEnv(env)), NodeID: node.NodeID, Location: node.Location}}
+	case *hir.SwitchVariant:
+		cases := make([]hir.VariantCaseBlock, len(node.Cases))
+		for index, variantCase := range node.Cases {
+			cases[index] = hir.VariantCaseBlock{
+				Case:        variantCase.Case,
+				PayloadType: variantCase.PayloadType,
+				Bindings:    append([]hir.VariantBinding(nil), variantCase.Bindings...),
+				Body:        foldBlock(types, variantCase.Body, cloneConstEnv(env)),
+			}
+		}
+		return []hir.Stmt{&hir.SwitchVariant{
+			Value: ir.FoldExpr(types, node.Value, env), Cases: cases,
+			NodeID: node.NodeID, Location: node.Location,
+		}}
 	default:
 		panic(fmt.Sprintf("unhandled HIR statement %T in typed folding", stmt))
 	}

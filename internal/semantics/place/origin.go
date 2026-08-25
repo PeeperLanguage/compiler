@@ -33,8 +33,8 @@ type Origin struct {
 type ResolveOptions struct {
 	ExprType          ExprTypeFunc
 	ResolveBinding    BindingResolver
-	ReferenceOrigins  func(*symbols.Symbol) []Origin
-	RawPointerOrigins func(*symbols.Symbol) []Origin
+	ReferenceOrigins  func([]Origin) []Origin
+	RawPointerOrigins func([]Origin) []Origin
 	CallOrigins       func(*ast.CallExpr) []Origin
 	ConstantIndex     func(ast.Expr) (string, bool)
 	PayloadCases      func(ast.Expr) []int
@@ -71,20 +71,9 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 		}
 		storage := []Origin{{Root: sym}}
 		if typ, ok := symbols.GetSymbolType(sym); ok {
-			if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference && opts.ReferenceOrigins != nil {
-				return Resolution{
-					StorageOrigins: storage,
-					ValueOrigins:   CloneOrigins(opts.ReferenceOrigins(sym)),
-					Stable:         true,
-				}
-			}
-			if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw && opts.RawPointerOrigins != nil {
-				return Resolution{
-					StorageOrigins: storage,
-					ValueOrigins:   CloneOrigins(opts.RawPointerOrigins(sym)),
-					Stable:         true,
-				}
-			}
+			return resolveStoredValueOrigins(typ, Resolution{
+				StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), Stable: true,
+			}, opts)
 		}
 		return Resolution{StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), Stable: true}
 	case *ast.SelectorExpr:
@@ -95,12 +84,13 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 		origins := appendVariantPayloadProjections(base.ValueOrigins, node.Expr, opts.ExprType, opts.PayloadCases)
 		origins = appendIndirectProjection(origins, node.Expr, opts.ExprType)
 		origins = appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: node.Name.Name})
-		return Resolution{
+		resolved := Resolution{
 			StorageOrigins: origins,
 			ValueOrigins:   CloneOrigins(origins),
 			Dependencies:   append([]*symbols.Symbol(nil), base.Dependencies...),
 			Stable:         base.Stable && len(origins) > 0,
 		}
+		return resolveStoredExpressionOrigins(node, resolved, opts)
 	case *ast.IndexExpr:
 		base := Resolve(scope, node.Expr, opts)
 		origins := appendVariantPayloadProjections(base.ValueOrigins, node.Expr, opts.ExprType, opts.PayloadCases)
@@ -113,12 +103,13 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 		if opts.ConstantIndex != nil {
 			if value, ok := opts.ConstantIndex(node.Index); ok {
 				origins = appendOriginProjection(origins, OriginProjection{Kind: OriginIndex, Index: value})
-				return Resolution{
+				resolved := Resolution{
 					StorageOrigins: origins,
 					ValueOrigins:   CloneOrigins(origins),
 					Dependencies:   dependencies,
 					Stable:         base.Stable && len(origins) > 0,
 				}
+				return resolveStoredExpressionOrigins(node, resolved, opts)
 			}
 		}
 		if index, ok := node.Index.(*ast.Ident); ok {
@@ -126,12 +117,13 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.IsIntegral(typ) {
 					origins = appendOriginProjection(origins, OriginProjection{Kind: OriginBindingIndex, Binding: sym})
 					dependencies = append(dependencies, sym)
-					return Resolution{
+					resolved := Resolution{
 						StorageOrigins: origins,
 						ValueOrigins:   CloneOrigins(origins),
 						Dependencies:   dependencies,
 						Stable:         base.Stable && len(origins) > 0,
 					}
+					return resolveStoredExpressionOrigins(node, resolved, opts)
 				}
 			}
 		}
@@ -145,6 +137,22 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 	default:
 		return Resolution{}
 	}
+}
+
+func resolveStoredExpressionOrigins(expr ast.Expr, resolved Resolution, opts ResolveOptions) Resolution {
+	if opts.ExprType == nil {
+		return resolved
+	}
+	return resolveStoredValueOrigins(opts.ExprType(expr), resolved, opts)
+}
+
+func resolveStoredValueOrigins(typ typeinfo.Type, resolved Resolution, opts ResolveOptions) Resolution {
+	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference && opts.ReferenceOrigins != nil {
+		resolved.ValueOrigins = CloneOrigins(opts.ReferenceOrigins(resolved.StorageOrigins))
+	} else if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw && opts.RawPointerOrigins != nil {
+		resolved.ValueOrigins = CloneOrigins(opts.RawPointerOrigins(resolved.StorageOrigins))
+	}
+	return resolved
 }
 
 func resolveSymbol(scope *symbols.Scope, ident *ast.Ident, resolve BindingResolver) (*symbols.Symbol, bool) {
@@ -254,6 +262,11 @@ func VariantPayloadOrigins(origins []Origin, cases []int) []Origin {
 		out = appendOriginProjection(out, OriginProjection{Kind: OriginVariantPayload, Case: caseIndex})
 	}
 	return out
+}
+
+// FieldOrigins projects aggregate storage through one named field.
+func FieldOrigins(origins []Origin, name string) []Origin {
+	return appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: name})
 }
 
 func appendOriginProjection(origins []Origin, projection OriginProjection) []Origin {

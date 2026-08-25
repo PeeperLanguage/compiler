@@ -169,3 +169,37 @@ func TestApplyTypedExpressionFoldingPreservesHIRIdentity(t *testing.T) {
 		t.Fatalf("folded identity = %#v / %#v, want all origin fields preserved", fn, binding)
 	}
 }
+
+func TestApplyTypedExpressionFoldingPreservesVariantSwitchBindings(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	switchStmt := &hir.SwitchVariant{
+		Value: &ir.Binary{Op: "+", Left: &ir.IntLit{Value: "20", Type: i32}, Right: &ir.IntLit{Value: "22", Type: i32}, Type: i32},
+		Cases: []hir.VariantCaseBlock{{
+			Case: 1, PayloadType: i32,
+			Bindings: []hir.VariantBinding{{FieldIndex: 2, Name: "payload", Type: i32, SymbolID: 9}},
+			Body: &hir.Block{NodeID: 12, Stmts: []hir.Stmt{&hir.Return{
+				Value: &ir.Binary{Op: "+", Left: &ir.IntLit{Value: "1", Type: i32}, Right: &ir.IntLit{Value: "2", Type: i32}, Type: i32},
+			}}},
+		}},
+		NodeID: 10,
+	}
+	mod := &hir.Module{Types: types, Funcs: []*hir.Function{{Name: "main", Body: &hir.Block{Stmts: []hir.Stmt{switchStmt}}}}}
+
+	out := ApplyTypedExpressionFolding(mod)
+	folded, ok := out.Funcs[0].Body.Stmts[0].(*hir.SwitchVariant)
+	if !ok || folded.NodeID != 10 || len(folded.Cases) != 1 || len(folded.Cases[0].Bindings) != 1 {
+		t.Fatalf("folded switch = %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	if value, ok := folded.Value.(*ir.IntLit); !ok || value.Value != "42" {
+		t.Fatalf("folded subject = %#v, want 42", folded.Value)
+	}
+	binding := folded.Cases[0].Bindings[0]
+	if binding.FieldIndex != 2 || binding.SymbolID != 9 || binding.Type != i32 || binding.Name != "payload" {
+		t.Fatalf("folded pattern binding = %#v", binding)
+	}
+	ret := folded.Cases[0].Body.Stmts[0].(*hir.Return)
+	if value, ok := ret.Value.(*ir.IntLit); !ok || value.Value != "3" {
+		t.Fatalf("folded case return = %#v, want 3", ret.Value)
+	}
+}

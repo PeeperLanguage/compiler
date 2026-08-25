@@ -72,15 +72,6 @@ func (b *llvmBuilder) load(source llvmPlace) llvmValue {
 	return result
 }
 
-func (b *llvmBuilder) alignedLoad(source llvmPlace, alignment int) llvmValue {
-	if source.Pointee == nil || alignment <= 0 {
-		b.invariant("aligned load requires typed pointee and positive alignment")
-	}
-	result := b.nextValue(source.Pointee)
-	b.line(fmt.Sprintf("%s = load %s, %s* %s, align %d", result.Text, source.Pointee.Text, source.Pointee.Text, source.Text, alignment))
-	return result
-}
-
 func (b *llvmBuilder) store(target llvmPlace, value llvmValue) {
 	if !llvmLayoutsMatch(target.Pointee, value.Layout) {
 		b.invariant("store %s into %s pointee", value.Layout.Text, target.Pointee.Text)

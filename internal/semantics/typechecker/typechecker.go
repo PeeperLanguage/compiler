@@ -74,6 +74,9 @@ func (c *checker) checkModule() {
 		if iface, ok := typeDecl.(*ast.InterfaceDecl); ok {
 			c.checkInterfaceDecl(iface)
 		}
+		if enum, ok := typeDecl.(*ast.EnumDecl); ok {
+			c.checkEnumDecl(enum)
+		}
 		c.checkTypeDeclReferenceStorage(typeDecl)
 		return true
 	})

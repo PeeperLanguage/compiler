@@ -1,0 +1,7 @@
+name = "negative_enum_reference_storage"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0021", "references cannot be stored"]

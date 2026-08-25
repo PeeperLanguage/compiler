@@ -122,8 +122,17 @@ type For struct {
 }
 
 type VariantCaseBlock struct {
-	Case int
-	Body *Block
+	Case        int
+	PayloadType ir.TypeID
+	Bindings    []VariantBinding
+	Body        *Block
+}
+
+type VariantBinding struct {
+	FieldIndex int
+	Name       string
+	Type       ir.TypeID
+	SymbolID   symbols.SymbolID
 }
 
 // SwitchVariant owns semantic subject and case bodies; CFG owns target edges.

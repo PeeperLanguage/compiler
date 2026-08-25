@@ -1,0 +1,8 @@
+enum Status {
+    Ready,
+    Pending,
+}
+
+fn Equal(left: Status, right: Status) -> bool {
+    return left == right;
+}

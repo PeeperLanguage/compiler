@@ -1,0 +1,26 @@
+enum Result {
+    Ok: { value: i32 },
+    Error: { message: str },
+    Pending
+}
+
+fn Show(result: Result) {
+    match result {
+        Result::Ok{ value = payload } => {
+            println(payload);
+        }
+        Result::Error{ message = message } => {
+            println(message);
+        }
+        Result::Pending => {
+            println(2);
+        }
+    }
+}
+
+fn main() -> i32 {
+    Show(Result::Ok{ value = 42 });
+    Show(Result::Error{ message = "failed" });
+    Show(Result::Pending);
+    return 0;
+}

@@ -14,19 +14,20 @@ import (
 )
 
 type ServerState struct {
-	mu               sync.Mutex
-	publishMu        sync.Mutex
-	diagWG           sync.WaitGroup
-	diagErr          error
-	RootDir          string
-	Cache            map[string]string
-	LastCtx          *project.CompilerContext
-	LastMetrics      project.CompileMetrics
-	workspace        *workspaceIndex
-	modules          map[string]*project.Module
-	diagVersion      map[string]uint64
-	diagGeneration   uint64
-	documentVersions map[string]int
+	mu                sync.Mutex
+	publishMu         sync.Mutex
+	diagWG            sync.WaitGroup
+	diagErr           error
+	RootDir           string
+	Cache             map[string]string
+	LastCtx           *project.CompilerContext
+	LastMetrics       project.CompileMetrics
+	lastCtxGeneration uint64
+	workspace         *workspaceIndex
+	modules           map[string]*project.Module
+	diagVersion       map[string]uint64
+	diagGeneration    uint64
+	documentVersions  map[string]int
 }
 
 func NewServerState() *ServerState {
@@ -153,8 +154,7 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 		diagnostic := diagnostics.NewError(err.Error())
 		diagnostic.FilePath = canonicalEntry
 		ctx.Diagnostics.BeginPhase(phase.Load, "").Add(diagnostic)
-		s.LastCtx = ctx
-		s.LastMetrics = ctx.Metrics.Snapshot()
+		s.retainCompiledContext(ctx)
 		return ctx, nil
 	}
 
@@ -175,8 +175,7 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 				if compiler.CompileFile(ctx, virtualPath, &content) != nil {
 					if mod, ok := ctx.ModuleByFile(entryFile); ok {
 						activateReusableDiagnostics(ctx, deferredDiagnostics)
-						s.LastCtx = ctx
-						s.LastMetrics = ctx.Metrics.Snapshot()
+						s.retainCompiledContext(ctx)
 						s.captureModules(ctx)
 						return ctx, mod
 					}
@@ -198,10 +197,15 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 	}
 	mod := compiler.CompileFile(ctx, entryFile, overlay)
 	activateReusableDiagnostics(ctx, deferredDiagnostics)
-	s.LastCtx = ctx
-	s.LastMetrics = ctx.Metrics.Snapshot()
+	s.retainCompiledContext(ctx)
 	s.captureModules(ctx)
 	return ctx, mod
+}
+
+func (s *ServerState) retainCompiledContext(ctx *project.CompilerContext) {
+	s.LastCtx = ctx
+	s.LastMetrics = ctx.Metrics.Snapshot()
+	s.lastCtxGeneration = s.diagGeneration
 }
 
 func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerContext, *project.Module) {
@@ -210,7 +214,7 @@ func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerC
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.LastCtx != nil {
+	if s.LastCtx != nil && s.lastCtxGeneration == s.diagGeneration {
 		canonical := project.CanonicalPath(filePath)
 		if canonical != "" {
 			if mod, ok := s.LastCtx.ModuleByFile(canonical); ok && mod != nil {

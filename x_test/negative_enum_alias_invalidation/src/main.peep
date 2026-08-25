@@ -1,0 +1,20 @@
+enum Choice {
+    Left: { value: i32 },
+    Right: { value: i32 },
+}
+
+struct Holder {
+    choice: Choice,
+}
+
+fn Clear(holder: &mut Holder) {
+    holder.choice = Choice::Right{ value = 0 };
+}
+
+fn Read(mut holder: Holder) -> i32 {
+    if holder.choice is Choice::Left {
+        Clear(&mut holder);
+        return holder.choice.value;
+    }
+    return 0;
+}

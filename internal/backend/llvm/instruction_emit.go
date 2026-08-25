@@ -806,12 +806,12 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 			}
 
 			if isLocalStatic && localEntry != nil {
-				if localEntry.Bytes {
-					arrayType := fmt.Sprintf("[%d x i8]", len(localEntry.Value)+1)
+				if localEntry.Constant == nil {
+					arrayType := fmt.Sprintf("[%d x i8]", len(localEntry.Bytes)+1)
 					return b.value(fmt.Sprintf("getelementptr inbounds (%s, %s* %s, i64 0, i64 0)", arrayType, arrayType, localEntry.Name), layout)
 				}
 				staticLayout := b.emitter.layout(localEntry.Type)
-				return b.alignedLoad(b.place(localEntry.Name, staticLayout), localEntry.Align)
+				return b.load(b.place(localEntry.Name, staticLayout))
 			}
 
 			if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
@@ -821,7 +821,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 				}
 				b.emitter.externalGlobals[name] = v.Type
 
-				return b.alignedLoad(b.place(name, layout), 4)
+				return b.load(b.place(name, layout))
 			}
 
 			if strings.HasPrefix(v.Name, "@") {

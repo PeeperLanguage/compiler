@@ -1,0 +1,7 @@
+name = "negative_enum_match_mixed_use_after_move"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0007", "ownership state differs across control-flow paths", "T0034", "value used after move"]

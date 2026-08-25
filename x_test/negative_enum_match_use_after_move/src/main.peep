@@ -1,0 +1,14 @@
+enum Resource {
+    Owned: { value: *i32 }
+}
+
+fn Consume(_: Resource) {}
+
+fn Invalid(resource: Resource) {
+    match resource {
+        Resource::Owned{ value = value } => {
+            free(value);
+        }
+    }
+    Consume(resource);
+}

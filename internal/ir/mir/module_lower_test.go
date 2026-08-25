@@ -179,7 +179,7 @@ func cfgForHIR(module *hir.Module) *cfg.Module {
 			Location:     fn.Location,
 		})
 	}
-	return cfg.BuildModule(source)
+	return cfg.BuildModule(source, nil)
 }
 
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
@@ -357,11 +357,14 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{
 		sym.ID: value,
 	})
-	if out == nil || len(out.StaticData) != 1 {
-		t.Fatalf("expected one static entry, got %#v", out)
+	if out == nil || len(out.StaticData) != 2 {
+		t.Fatalf("expected byte backing and typed static entry, got %#v", out)
 	}
-	entry := out.StaticData[0]
-	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Value != "puts" || entry.Align != 8 {
+	if backing := out.StaticData[0]; backing.Constant != nil || backing.Bytes != "puts" {
+		t.Fatalf("unexpected cstr backing entry: %#v", backing)
+	}
+	entry := out.StaticData[1]
+	if entry.Name != fmt.Sprintf("@Name$%d", sym.ID) || entry.Type != mirTypes.cstr || entry.Constant != value || entry.Align != 0 {
 		t.Fatalf("unexpected static entry: %#v", entry)
 	}
 }
@@ -387,8 +390,67 @@ func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 		t.Fatalf("expected one static entry, got %#v", out)
 	}
 	entry := out.StaticData[0]
-	if entry.Type != mirTypes.f64 || entry.Value != "3.0" {
+	if entry.Type != mirTypes.f64 || entry.Constant != value {
 		t.Fatalf("unexpected float static entry: %#v", entry)
+	}
+}
+
+func TestGenerateMIRStaticDataPreservesTypedVariantConst(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	payload := types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}}})
+	result := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result", Identity: "test::Result",
+		Cases: []ir.VariantCase{{Name: "Ok", Payload: payload}, {Name: "Pending"}},
+	})
+	mod := &hir.Module{Name: "test", Types: types}
+	scope := symbols.NewScope(nil)
+	sym := symbols.New("Selected", symbols.SymbolConst, nil, nil)
+	sym.BindType(&typeinfo.DefinedType{
+		Name: "Result", Identity: "test::Result", Kind: typeinfo.DefinedKindEnum,
+		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{
+			{Name: "Ok", Payload: &typeinfo.StructType{Fields: []typeinfo.Field{{Name: "value", Type: &typeinfo.IntegerType{Signed: true, Bits: 32}}}}},
+			{Name: "Pending"},
+		}},
+	})
+	if err := scope.Declare(sym); err != nil {
+		t.Fatalf("declare const: %v", err)
+	}
+	field, ok := constvalue.NewIntText("42", "i32")
+	if !ok {
+		t.Fatal("NewIntText failed")
+	}
+	value, ok := constvalue.NewVariant("test::Result", "Result", 0, []constvalue.Value{field})
+	if !ok {
+		t.Fatal("NewVariant failed")
+	}
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{sym.ID: value})
+	if out == nil || len(out.StaticData) != 1 {
+		t.Fatalf("expected one static entry, got %#v", out)
+	}
+	entry := out.StaticData[0]
+	if entry.Type != result || entry.Constant != value {
+		t.Fatalf("variant static entry = %#v, want typed constant", entry)
+	}
+}
+
+func TestStaticEntryForConstUsesVariantNominalIdentity(t *testing.T) {
+	types := ir.NewTypeTable()
+	left := types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Status", Identity: "left::Status",
+		Cases: []ir.VariantCase{{Name: "Ready"}},
+	})
+	types.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Status", Identity: "right::Status",
+		Cases: []ir.VariantCase{{Name: "Ready"}},
+	})
+	value, ok := constvalue.NewVariant("left::Status", "Status", 0, nil)
+	if !ok {
+		t.Fatal("NewVariant failed")
+	}
+	entry, ok := staticEntryForConst(types, symbols.New("Selected", symbols.SymbolConst, nil, nil), value)
+	if !ok || entry.Type != left {
+		t.Fatalf("variant static type = %d, %t; want left nominal type %d", entry.Type, ok, left)
 	}
 }
 
@@ -560,13 +622,18 @@ func TestSwitchVariantTerminatorText(t *testing.T) {
 }
 
 func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
+	variantType := mirTypes.table.Intern(ir.Type{
+		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Identity: "Result",
+		Cases: []ir.VariantCase{{Name: "Pending"}, {Name: "Ready", Payload: mirTypes.ownerStruct}},
+	})
 	ifStmt := &hir.If{
 		Cond: &ir.BoolLit{Value: true, Type: mirTypes.boolType},
 		Then: &hir.Block{},
 		Else: &hir.Block{},
 	}
+	ifStmt.Else.(*hir.Block).NodeID = 88
 	fn := &hir.Function{
-		Name: "select", Params: []ir.Param{{Name: "value", Type: mirTypes.optionalI32}}, ReturnType: mirTypes.void,
+		Name: "select", Params: []ir.Param{{Name: "value", Type: variantType}}, ReturnType: mirTypes.void,
 		Body: &hir.Block{Stmts: []hir.Stmt{ifStmt}},
 	}
 	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{fn}}
@@ -577,8 +644,15 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 		t.Fatalf("fixture entry = %#v, want branch", graph.Entry.Terminator)
 	}
 	switchStmt := &hir.SwitchVariant{
-		Value:  &ir.Ident{Name: "value", Type: mirTypes.optionalI32},
-		Cases:  []hir.VariantCaseBlock{{Case: ir.OptionalAbsentCase, Body: ifStmt.Then}, {Case: ir.OptionalPresentCase, Body: ifStmt.Else.(*hir.Block)}},
+		Value: &ir.Ident{Name: "value", Type: variantType},
+		Cases: []hir.VariantCaseBlock{
+			{Case: ir.OptionalAbsentCase, Body: ifStmt.Then},
+			{
+				Case: ir.OptionalPresentCase, PayloadType: mirTypes.ownerStruct,
+				Bindings: []hir.VariantBinding{{FieldIndex: 0, Name: "payload", Type: mirTypes.i32, SymbolID: 91}},
+				Body:     ifStmt.Else.(*hir.Block),
+			},
+		},
 		NodeID: ifStmt.NodeID,
 	}
 	fn.Body.Stmts[0] = switchStmt
@@ -590,13 +664,42 @@ func TestGenerateMIRLowersHIRAndCFGVariantSwitch(t *testing.T) {
 		},
 	}
 
-	out := GenerateMIR(mod, graphs, nil, nil, nil)
+	ownership := ownershipresult.Result{fn.NodeID: &ownershipresult.CleanupPlan{
+		MatchFieldDrops: map[ir.NodeID][]int{88: {1}},
+	}}
+	out := GenerateMIR(mod, graphs, ownership, nil, nil)
 	if out == nil || len(out.Funcs) != 1 {
 		t.Fatalf("MIR = %#v", out)
 	}
 	term, ok := out.Funcs[0].Blocks[0].Term.(*SwitchVariant)
 	if !ok || len(term.Targets) != 2 || term.Targets[0].Case != ir.OptionalAbsentCase || term.Targets[1].Case != ir.OptionalPresentCase {
 		t.Fatalf("MIR switch = %#v", out.Funcs[0].Blocks[0].Term)
+	}
+	var ready *Block
+	for _, block := range out.Funcs[0].Blocks {
+		if block.ID == term.Targets[1].TargetID {
+			ready = block
+			break
+		}
+	}
+	if ready == nil || len(ready.Instrs) != 4 {
+		t.Fatalf("ready block = %#v, want binding load/assignment and planned field load/drop", ready)
+	}
+	loadAssign, loadOK := ready.Instrs[0].(*Assign)
+	bindingAssign, bindingOK := ready.Instrs[1].(*Assign)
+	load, loadOK := loadAssign.Value.(*Load)
+	if !loadOK || !bindingOK || bindingAssign.Name != "payload" || len(load.Place.Projections) != 2 ||
+		load.Place.Projections[0].Kind != PlaceProjectionVariantPayload || load.Place.Projections[0].Case != ir.OptionalPresentCase ||
+		load.Place.Projections[1].Kind != PlaceProjectionField || load.Place.Projections[1].FieldIndex != 0 {
+		t.Fatalf("ready instructions = %#v", ready.Instrs)
+	}
+	dropLoadAssign, dropLoadOK := ready.Instrs[2].(*Assign)
+	drop, dropOK := ready.Instrs[3].(*Drop)
+	dropLoad, dropLoadOK := dropLoadAssign.Value.(*Load)
+	if !dropLoadOK || !dropOK || drop.Value.Text() != dropLoadAssign.Name || len(dropLoad.Place.Projections) != 2 ||
+		dropLoad.Place.Projections[0].Kind != PlaceProjectionVariantPayload || dropLoad.Place.Projections[0].Case != ir.OptionalPresentCase ||
+		dropLoad.Place.Projections[1].Kind != PlaceProjectionField || dropLoad.Place.Projections[1].FieldIndex != 1 {
+		t.Fatalf("planned field drop instructions = %#v", ready.Instrs[2:])
 	}
 }
 

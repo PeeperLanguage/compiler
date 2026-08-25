@@ -1,0 +1,6 @@
+enum Bad {
+    ready: {
+        value: i32,
+        value: i64,
+    },
+}

@@ -95,14 +95,25 @@ type SemanticInfo struct {
 	// misclassification.
 	ExpandedDefaultBindings  map[ast.NodeID]struct{}
 	ExprTypes                map[ast.NodeID]typeinfo.Type
-	OptionalTests            map[ast.NodeID]flowresult.OptionalTest
+	CaseTests                map[ast.NodeID]flowresult.CaseTest
+	Matches                  map[ast.NodeID]flowresult.Match
 	ConstValues              map[symbols.SymbolID]constvalue.Value
 	MethodSets               map[string][]*symbols.Symbol
 	MethodSymbol             map[ast.NodeID]*symbols.Symbol
 	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
 	ImplicitCallArguments    map[ast.NodeID]typeinfo.Type
 	CompilerCalls            map[ast.NodeID]CompilerCall
+	VariantConstructions     map[ast.NodeID]VariantConstruction
 	OperationFunctions       []*symbols.Symbol
+}
+
+// VariantConstruction is typechecker proof consumed by HIR without resolving
+// source paths or revalidating constructor fields.
+type VariantConstruction struct {
+	EnumType typeinfo.Type
+	Case     int
+	Payload  *typeinfo.StructType
+	Fields   []ast.Expr
 }
 
 // CompilerCall is typechecker-owned dispatch evidence consumed by HIR.
@@ -147,15 +158,37 @@ func NewSemanticInfo() *SemanticInfo {
 		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
 		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
-		OptionalTests:            make(map[ast.NodeID]flowresult.OptionalTest),
+		CaseTests:                make(map[ast.NodeID]flowresult.CaseTest),
+		Matches:                  make(map[ast.NodeID]flowresult.Match),
 		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
 		MethodSets:               make(map[string][]*symbols.Symbol),
 		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
 		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
 		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
 		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
+		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
 		OperationFunctions:       make([]*symbols.Symbol, 0),
 	}
+}
+
+// MatchCases exposes resolved case indexes without leaking match artifacts
+// into CFG's source-topology package.
+func (s *SemanticInfo) MatchCases(id ast.NodeID) ([]int, bool) {
+	if s == nil {
+		return nil, false
+	}
+	match, found := s.Matches[id]
+	if !found {
+		return nil, false
+	}
+	cases := make([]int, len(match.Arms))
+	for index, arm := range match.Arms {
+		if arm.Case < 0 || arm.Case >= len(match.Cases) {
+			return nil, false
+		}
+		cases[index] = arm.Case
+	}
+	return cases, true
 }
 
 func (m *Module) ResetSemanticData() {

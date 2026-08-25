@@ -116,7 +116,7 @@ func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 		for index, argument := range node.TypeArguments {
 			arguments[index] = semanticTypeKey(argument, visiting)
 		}
-		return fmt.Sprintf("defined(%d:%s<%s>[%s]:%s)", node.Kind, node.Name,
+		return fmt.Sprintf("defined(%d:%s:%s<%s>[%s]:%s)", node.Kind, node.Identity, node.Name,
 			strings.Join(parameters, ","), strings.Join(arguments, ","), semanticTypeKey(node.Underlying, visiting))
 	case *typeinfo.TypeParameterType:
 		return fmt.Sprintf("parameter(%s:%d:%s)", node.OwnerIdentity, node.Index, node.Name)
@@ -155,7 +155,11 @@ func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 		}
 		return "interface(" + strings.Join(methods, ";") + ")"
 	case *typeinfo.EnumType:
-		return "enum(" + strings.Join(node.Variants, ",") + ")"
+		cases := make([]string, len(node.Cases))
+		for index, variant := range node.Cases {
+			cases[index] = variant.Name + ":" + semanticTypeKey(variant.Payload, visiting)
+		}
+		return "enum(" + strings.Join(cases, ",") + ")"
 	case *typeinfo.InvalidType, *typeinfo.UnknownType, *typeinfo.IntegerType,
 		*typeinfo.ByteType, *typeinfo.CharType, *typeinfo.FloatType, *typeinfo.BoolType,
 		*typeinfo.CStrType, *typeinfo.StringType, *typeinfo.NoneType, *typeinfo.AllocatorType,
@@ -179,6 +183,13 @@ func constantKey(value constvalue.Value) string {
 		return fmt.Sprintf("bool:%t", node.Bool())
 	case *constvalue.StringConst:
 		return node.TypeText() + ":" + fmt.Sprintf("%q", node.Text())
+	case *constvalue.VariantConst:
+		values := node.FieldValues()
+		fields := make([]string, len(values))
+		for index, field := range values {
+			fields[index] = constantKey(field)
+		}
+		return fmt.Sprintf("variant(%s:%s:%d:%s)", node.NominalIdentity(), node.TypeText(), node.CaseIndex(), strings.Join(fields, ","))
 	default:
 		panic(fmt.Sprintf("export fingerprint: unhandled constant %T", value))
 	}

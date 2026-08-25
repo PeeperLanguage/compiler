@@ -1,0 +1,24 @@
+enum Result {
+    Ok: { value: i32, code: i32 },
+    Pending
+}
+
+fn Read(result: Result) -> i32 {
+    match result {
+        Result::Ok{ value = payload } => {
+            return payload;
+        }
+        Result::Pending => {
+            return 0;
+        }
+    }
+}
+
+fn main() -> i32 {
+    let ok = Result::Ok{ value = 42, code = 7 };
+    let pending = Result::Pending;
+    if Read(ok) == 42 && Read(pending) == 0 {
+        return 0;
+    }
+    return 1;
+}

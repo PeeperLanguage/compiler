@@ -1,0 +1,7 @@
+name = "negative_enum_empty_data_schema"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["P0011", "variant data requires at least one field"]

@@ -336,6 +336,10 @@ func (*EnumType) typeNode() {}
 func (t *EnumType) forEachChild(visit func(Node)) {
 	for _, variant := range t.Variants {
 		visit(variant.Name)
+		for _, field := range variant.Fields {
+			visit(field.Name)
+			visit(field.Type)
+		}
 	}
 }
 func (t *EnumType) loc() *source.Location { return t.Location }
@@ -351,6 +355,18 @@ func (t *EnumType) TypeText() string {
 		}
 		if variant.Name != nil {
 			b.WriteString(variant.Name.Name)
+		}
+		if variant.HasData {
+			b.WriteString(": {")
+			for fieldIndex, field := range variant.Fields {
+				if fieldIndex > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(identText(field.Name))
+				b.WriteString(": ")
+				b.WriteString(TypeText(field.Type))
+			}
+			b.WriteByte('}')
 		}
 	}
 	b.WriteString("}")
@@ -375,6 +391,8 @@ type TypeMethod struct {
 
 type EnumVariant struct {
 	Name     *Ident
+	Fields   []TypeField
+	HasData  bool
 	Location *source.Location
 }
 

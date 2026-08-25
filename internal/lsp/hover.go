@@ -644,9 +644,21 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 		}
 		var b strings.Builder
 		b.WriteString("enum {\n")
-		for _, variant := range t.Variants {
+		for _, variant := range t.Cases {
 			b.WriteString("  ")
-			b.WriteString(variant)
+			b.WriteString(variant.Name)
+			if payload, ok := variant.Payload.(*typeinfo.StructType); ok && payload != nil {
+				b.WriteString(": {")
+				for index, field := range payload.Fields {
+					if index > 0 {
+						b.WriteString(", ")
+					}
+					b.WriteString(field.Name)
+					b.WriteString(": ")
+					b.WriteString(typeinfo.TypeText(field.Type))
+				}
+				b.WriteString("}")
+			}
 			b.WriteString(",\n")
 		}
 		b.WriteString("}")

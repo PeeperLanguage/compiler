@@ -25,7 +25,7 @@ type referenceLoan struct {
 	site    ast.Node
 }
 
-type referenceUse struct {
+type symbolUse struct {
 	symbol *symbols.Symbol
 	site   ast.Node
 }
@@ -71,12 +71,12 @@ func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
 	}
 	ctx := &loanContext{
 		remaining: make(map[*symbols.Symbol]int),
-		liveOut:   a.referenceLiveOut[node.cfgSite.ID],
+		liveOut:   a.symbolLiveOut[node.cfgSite.ID],
 	}
-	for _, use := range a.referenceUseSequence(node) {
+	for _, use := range a.symbolUseSequence(node, referenceHoldingSymbol) {
 		ctx.remaining[use.symbol]++
 	}
-	for sym, keepingAlive := range a.referenceLiveIn[node.cfgSite.ID] {
+	for sym, keepingAlive := range a.symbolLiveIn[node.cfgSite.ID] {
 		value, tracked := st.references[sym]
 		if !tracked {
 			continue
@@ -322,24 +322,43 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	}
 }
 
-func (a *analyzer) referenceValueForExpr(expr ast.Expr) ([]referenceLoan, bool) {
+func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLoan, bool) {
 	if a == nil || expr == nil {
 		return []referenceLoan{}, false
 	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+		if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.ContainsStoredReference(typ) {
+			if value, found := st.references[sym]; found {
+				return copyReferenceLoans(value), true
+			}
+		}
+	}
 	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
-	if !ok {
+	if ok {
+		origins := a.originsForExpr(expr)
+		if len(origins) == 0 {
+			return []referenceLoan{}, false
+		}
+		return []referenceLoan{{
+			id:      loanID{node: expr},
+			origins: origins,
+			mutable: mutable,
+			site:    expr,
+		}}, true
+	}
+	construction, constructed := a.module.Semantics.VariantConstructions[expr.ID()]
+	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}
-	origins := a.originsForExpr(expr)
-	if len(origins) == 0 {
-		return []referenceLoan{}, false
+	var loans []referenceLoan
+	for _, field := range construction.Fields {
+		fieldLoans, found := a.referenceValueForExpr(field, st)
+		if found {
+			loans = append(loans, fieldLoans...)
+		}
 	}
-	return []referenceLoan{{
-		id:      loanID{node: expr},
-		origins: origins,
-		mutable: mutable,
-		site:    expr,
-	}}, true
+	return loans, len(loans) > 0
 }
 
 func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
@@ -349,14 +368,14 @@ func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
 	return place.CloneOrigins(a.module.Flow.ResolvedValueOrigins[expr.ID()])
 }
 
-func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt) {
+func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state) {
 	if a == nil || a.function == nil || scope == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
 	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !reference {
 		return
 	}
-	value, found := a.referenceValueForExpr(stmt.Value)
+	value, found := a.referenceValueForExpr(stmt.Value, st)
 	if !found {
 		return
 	}
@@ -399,13 +418,15 @@ func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value []referenceL
 		return
 	}
 	mutable, reference := referenceMutability(sym)
-	if !reference || !hasValue {
+	if (!reference && !referenceHoldingSymbol(sym)) || !hasValue {
 		delete(st.references, sym)
 		return
 	}
 	value = copyReferenceLoans(value)
-	for i := range value {
-		value[i].mutable = mutable
+	if reference {
+		for i := range value {
+			value[i].mutable = mutable
+		}
 	}
 	st.references[sym] = value
 }
@@ -417,6 +438,11 @@ func referenceMutability(sym *symbols.Symbol) (bool, bool) {
 	}
 	_, mutable, reference := typeinfo.ReferenceValueTarget(typ)
 	return mutable, reference
+}
+
+func referenceHoldingSymbol(sym *symbols.Symbol) bool {
+	typ, ok := symbols.GetSymbolType(sym)
+	return ok && typeinfo.ContainsReference(typ)
 }
 
 func copyReferenceLoans(value []referenceLoan) []referenceLoan {
@@ -504,12 +530,12 @@ func referenceLoanIndex(loans []referenceLoan, id loanID) int {
 	return -1
 }
 
-func (a *analyzer) computeReferenceLiveness() {
+func (a *analyzer) computeSymbolLiveness() {
 	if a == nil || a.sites == nil {
 		return
 	}
-	a.referenceLiveIn = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
-	a.referenceLiveOut = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
+	a.symbolLiveIn = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
+	a.symbolLiveOut = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
 	queue := make([]cfg.SiteID, 0, len(a.order))
 	queued := make(map[cfg.SiteID]bool, len(a.order))
 	for _, id := range slices.Backward(a.order) {
@@ -527,20 +553,20 @@ func (a *analyzer) computeReferenceLiveness() {
 			continue
 		}
 		for _, edge := range node.cfgSite.Successors {
-			mergeReferenceLiveSets(out, a.referenceLiveIn[edge.To])
+			mergeSymbolLiveSets(out, a.symbolLiveIn[edge.To])
 		}
-		uses, definitions := a.referenceUsesAndDefinitions(node)
+		uses, definitions := a.symbolUsesAndDefinitions(node)
 		in := maps.Clone(out)
 		for sym := range definitions {
 			delete(in, sym)
 		}
-		mergeReferenceLiveSets(in, uses)
+		mergeSymbolLiveSets(in, uses)
 
-		if maps.Equal(a.referenceLiveIn[id], in) && maps.Equal(a.referenceLiveOut[id], out) {
+		if maps.Equal(a.symbolLiveIn[id], in) && maps.Equal(a.symbolLiveOut[id], out) {
 			continue
 		}
-		a.referenceLiveIn[id] = in
-		a.referenceLiveOut[id] = out
+		a.symbolLiveIn[id] = in
+		a.symbolLiveOut[id] = out
 		for _, edge := range node.cfgSite.Predecessors {
 			pred := edge.From
 			if !queued[pred] {
@@ -551,7 +577,7 @@ func (a *analyzer) computeReferenceLiveness() {
 	}
 }
 
-func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
+func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
 	uses := make(map[*symbols.Symbol]ast.Node)
 	definitions := make(map[*symbols.Symbol]struct{})
 	if a == nil || node == nil || node.cfgSite == nil ||
@@ -562,10 +588,8 @@ func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]
 		if node.scope == nil || binding == nil {
 			return
 		}
-		if sym, found := node.scope.LookupNode(binding); found {
-			if _, reference := referenceMutability(sym); reference {
-				definitions[sym] = struct{}{}
-			}
+		if sym, found := node.scope.LookupNode(binding); found && trackedLiveSymbol(sym) {
+			definitions[sym] = struct{}{}
 		}
 	}
 
@@ -576,14 +600,15 @@ func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]
 		addDefinition(stmt)
 	case *ast.AssignStmt:
 		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
-			if sym, found := node.scope.Lookup(target.Name); found {
-				if _, reference := referenceMutability(sym); reference {
-					definitions[sym] = struct{}{}
+			if sym, found := node.scope.Lookup(target.Name); found && trackedLiveSymbol(sym) {
+				definitions[sym] = struct{}{}
+				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.NeedsDrop(typ) {
+					uses[sym] = target
 				}
 			}
 		}
 	}
-	for _, use := range a.referenceUseSequence(node) {
+	for _, use := range a.symbolUseSequence(node, trackedLiveSymbol) {
 		if previous, found := uses[use.symbol]; !found {
 			uses[use.symbol] = use.site
 		} else {
@@ -593,10 +618,10 @@ func (a *analyzer) referenceUsesAndDefinitions(node *site) (map[*symbols.Symbol]
 	return uses, definitions
 }
 
-func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
+func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) bool) []symbolUse {
 	if a == nil || node == nil || node.cfgSite == nil ||
 		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil ||
-		a.module == nil || a.module.Semantics == nil {
+		a.module == nil || a.module.Semantics == nil || include == nil {
 		return nil
 	}
 	var expressions []ast.Expr
@@ -618,9 +643,11 @@ func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
 		expressions = append(expressions, stmt.Cond)
 	case *ast.ForStmt:
 		expressions = append(expressions, stmt.Cond)
+	case *ast.MatchStmt:
+		expressions = append(expressions, stmt.Subject)
 	}
 
-	var uses []referenceUse
+	var uses []symbolUse
 	for _, expr := range expressions {
 		if expr == nil {
 			continue
@@ -631,8 +658,8 @@ func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
 				return true
 			}
 			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
-			if _, reference := referenceMutability(sym); reference {
-				uses = append(uses, referenceUse{symbol: sym, site: ident})
+			if include(sym) {
+				uses = append(uses, symbolUse{symbol: sym, site: ident})
 			}
 			return true
 		})
@@ -640,7 +667,7 @@ func (a *analyzer) referenceUseSequence(node *site) []referenceUse {
 	return uses
 }
 
-func mergeReferenceLiveSets(dst, src map[*symbols.Symbol]ast.Node) {
+func mergeSymbolLiveSets(dst, src map[*symbols.Symbol]ast.Node) {
 	for sym, site := range src {
 		if previous, found := dst[sym]; !found {
 			dst[sym] = site
@@ -648,6 +675,10 @@ func mergeReferenceLiveSets(dst, src map[*symbols.Symbol]ast.Node) {
 			dst[sym] = earlierNode(previous, site)
 		}
 	}
+}
+
+func trackedLiveSymbol(sym *symbols.Symbol) bool {
+	return referenceHoldingSymbol(sym) || ownershipTrackedSymbol(sym)
 }
 
 func earlierNode(left, right ast.Node) ast.Node {

@@ -1,7 +1,7 @@
 # Peeper Ownership And Pointer Model
 
 This document is the current design reference for ownership, pointers, copy rules,
-and optionals.
+optionals, and named enums.
 
 Target model:
 
@@ -10,6 +10,7 @@ Target model:
 - `rawptr` is an opaque nullable pointer for FFI and unsafe interop.
 - `?T` is optional for non-raw values.
 - `?*T` is optional heap-handle storage.
+- named enums own active-case payload storage.
 - scalar/raw values copy implicitly; composites move implicitly.
 - duplication beyond implicit scalar/raw copy is ordinary user-defined method behavior.
 - Shallow copy of `*T` is never implicit.
@@ -122,6 +123,21 @@ shared-reference payload preserves the carrier. Moving a move-only payload from
 a direct named optional consumes the whole carrier; moving one from a field,
 index, pointee, or other partial place is rejected. Presence checks never
 consume. Pointer niche layout remains future issue #30 work.
+
+## Named Enums
+
+Named enums use same tagged-variant operations and case-set flow facts as
+optionals. Source syntax stays explicit: `Enum::Variant`, `is`, and exhaustive
+statement `match`; internal optional cases never become source names. Named enum
+layout stores tag plus one typed slot for each data case, zeroes inactive slots,
+and destroys only active payload. Enum copyability and destruction traverse all
+case payloads.
+
+Case tests never consume. Copyable and shared-reference case fields preserve
+carrier. Moving or explicitly discarding move-only fields through match is legal
+only from direct named local or parameter carrier; it consumes whole carrier and
+drops omitted owned fields on selected arm. Partial-carrier extraction remains
+rejected. Reassignment reinitializes consumed carrier.
 
 ## Strings
 
@@ -409,6 +425,11 @@ Generic recursive links must repeat same canonical type arguments. Exact
 `Node<T> -> *Node<T>` recursion reuses one semantic and runtime shell;
 argument-expanding recursion is rejected before lowering.
 
+Safe references can also close recursive named layouts because reference
+storage has fixed size. Such carriers remain subject to normal reference-origin
+and storage rules: indirection changes layout recursion, not referent lifetime
+or ownership.
+
 ## Final Rules
 
 - `T` owns.
@@ -417,6 +438,7 @@ argument-expanding recursion is rejected before lowering.
 - `@expr` produces a non-owning raw pointer to addressable storage.
 - `?T` is optional for non-raw values.
 - `?*T` is nullable heap-handle storage.
+- named enums are nominal tagged values; variants are cases, never types.
 - an optional copies only when its payload copies; otherwise it moves.
 - move-only payload extraction consumes a direct named carrier and is rejected from partial places.
 - `str` is an owned immutable text value; `&str` is its borrowed view.
