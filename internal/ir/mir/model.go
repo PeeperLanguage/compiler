@@ -93,6 +93,17 @@ type Branch struct {
 	Location *source.Location
 }
 
+type VariantTarget struct {
+	Case     int
+	TargetID int
+}
+
+type SwitchVariant struct {
+	Value    ValueRef
+	Targets  []VariantTarget
+	Location *source.Location
+}
+
 type Ret struct {
 	Value    ValueRef
 	Location *source.Location
@@ -179,13 +190,14 @@ const (
 	PlaceProjectionDeref PlaceProjectionKind = iota
 	PlaceProjectionField
 	PlaceProjectionIndex
-	PlaceProjectionOptionalPayload
+	PlaceProjectionVariantPayload
 )
 
 type PlaceProjection struct {
 	Kind       PlaceProjectionKind
 	FieldIndex int
 	Index      ValueRef
+	Case       int
 	Type       ir.TypeID
 	Location   *source.Location
 }
@@ -277,14 +289,16 @@ type ZeroValue struct {
 	Location *source.Location
 }
 
-type OptionalSome struct {
-	Value    ValueRef
+type VariantMake struct {
+	Case     int
+	Payload  ValueRef
 	Type     ir.TypeID
 	Location *source.Location
 }
 
-type OptionalPresent struct {
+type VariantIs struct {
 	Value    ValueRef
+	Case     int
 	Type     ir.TypeID
 	Location *source.Location
 }
@@ -330,6 +344,16 @@ func (i *Branch) Text() string {
 	return fmt.Sprintf("br %s, b%d, b%d", i.Cond.Text(), i.ThenID, i.ElseID)
 }
 
+func (i *SwitchVariant) Text() string {
+	var b strings.Builder
+	b.WriteString("switch-variant ")
+	b.WriteString(i.Value.Text())
+	for _, target := range i.Targets {
+		fmt.Fprintf(&b, ", case %d: b%d", target.Case, target.TargetID)
+	}
+	return b.String()
+}
+
 func (i *Ret) Text() string {
 	if i == nil || i.Value == nil {
 		return "ret"
@@ -352,8 +376,8 @@ func (*ArrayLit) valueExprNode()          {}
 func (*DynamicArrayAlloc) valueExprNode() {}
 func (*Alloc) valueExprNode()             {}
 func (*ZeroValue) valueExprNode()         {}
-func (*OptionalSome) valueExprNode()      {}
-func (*OptionalPresent) valueExprNode()   {}
+func (*VariantMake) valueExprNode()       {}
+func (*VariantIs) valueExprNode()         {}
 func (*InterfaceMake) valueExprNode()     {}
 func (*InterfaceCall) valueExprNode()     {}
 func (*StringLiteral) valueExprNode()     {}
@@ -366,6 +390,7 @@ func (i *Print) SourceLocation() *source.Location             { return i.Locatio
 func (i *Drop) SourceLocation() *source.Location              { return i.Location }
 func (i *Jump) SourceLocation() *source.Location              { return i.Location }
 func (i *Branch) SourceLocation() *source.Location            { return i.Location }
+func (i *SwitchVariant) SourceLocation() *source.Location     { return i.Location }
 func (i *Ret) SourceLocation() *source.Location               { return i.Location }
 func (r *RefConst) SourceLocation() *source.Location          { return r.Location }
 func (r *RefName) SourceLocation() *source.Location           { return r.Location }
@@ -386,8 +411,8 @@ func (v *DynamicArrayAlloc) SourceLocation() *source.Location { return v.Locatio
 func (v *DynamicArrayOp) SourceLocation() *source.Location    { return v.Location }
 func (v *Alloc) SourceLocation() *source.Location             { return v.Location }
 func (v *ZeroValue) SourceLocation() *source.Location         { return v.Location }
-func (v *OptionalSome) SourceLocation() *source.Location      { return v.Location }
-func (v *OptionalPresent) SourceLocation() *source.Location   { return v.Location }
+func (v *VariantMake) SourceLocation() *source.Location       { return v.Location }
+func (v *VariantIs) SourceLocation() *source.Location         { return v.Location }
 func (v *InterfaceMake) SourceLocation() *source.Location     { return v.Location }
 func (v *InterfaceCall) SourceLocation() *source.Location     { return v.Location }
 
@@ -425,8 +450,8 @@ func (p *Place) Text() string {
 				b.WriteString(projection.Index.Text())
 			}
 			b.WriteString("]")
-		case PlaceProjectionOptionalPayload:
-			b.WriteString(".value")
+		case PlaceProjectionVariantPayload:
+			fmt.Fprintf(&b, ".variant%d", projection.Case)
 		}
 	}
 	return b.String()
@@ -509,17 +534,20 @@ func (v *ZeroValue) Text() string {
 	}
 	return "zero"
 }
-func (v *OptionalSome) Text() string {
-	if v == nil || v.Value == nil {
-		return "some(<nil>)"
+func (v *VariantMake) Text() string {
+	if v == nil {
+		return "variant(<nil>)"
 	}
-	return "some(" + v.Value.Text() + ")"
+	if v.Payload == nil {
+		return fmt.Sprintf("variant %d", v.Case)
+	}
+	return fmt.Sprintf("variant %d, %s", v.Case, v.Payload.Text())
 }
-func (v *OptionalPresent) Text() string {
+func (v *VariantIs) Text() string {
 	if v == nil || v.Value == nil {
-		return "present(<nil>)"
+		return "is-variant(<nil>)"
 	}
-	return "present(" + v.Value.Text() + ")"
+	return fmt.Sprintf("is-variant %s, %d", v.Value.Text(), v.Case)
 }
 
 func (v *InterfaceMake) Text() string {

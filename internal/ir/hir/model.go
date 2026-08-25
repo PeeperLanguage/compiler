@@ -1,6 +1,7 @@
 package hir
 
 import (
+	"strconv"
 	"strings"
 
 	"compiler/internal/ir"
@@ -120,14 +121,28 @@ type For struct {
 	Location *source.Location
 }
 
-func (*Block) stmtNode()    {}
-func (*Binding) stmtNode()  {}
-func (*ExprStmt) stmtNode() {}
-func (*Assign) stmtNode()   {}
-func (*Invalid) stmtNode()  {}
-func (*Return) stmtNode()   {}
-func (*If) stmtNode()       {}
-func (*For) stmtNode()      {}
+type VariantCaseBlock struct {
+	Case int
+	Body *Block
+}
+
+// SwitchVariant owns semantic subject and case bodies; CFG owns target edges.
+type SwitchVariant struct {
+	Value    ir.Expr
+	Cases    []VariantCaseBlock
+	NodeID   NodeID
+	Location *source.Location
+}
+
+func (*Block) stmtNode()         {}
+func (*Binding) stmtNode()       {}
+func (*ExprStmt) stmtNode()      {}
+func (*Assign) stmtNode()        {}
+func (*Invalid) stmtNode()       {}
+func (*Return) stmtNode()        {}
+func (*If) stmtNode()            {}
+func (*For) stmtNode()           {}
+func (*SwitchVariant) stmtNode() {}
 
 func (s *Block) forEachChild(visit func(Stmt)) {
 	for _, stmt := range s.Stmts {
@@ -144,6 +159,11 @@ func (s *If) forEachChild(visit func(Stmt)) {
 	visit(s.Else)
 }
 func (s *For) forEachChild(visit func(Stmt)) { visit(s.Body) }
+func (s *SwitchVariant) forEachChild(visit func(Stmt)) {
+	for _, variantCase := range s.Cases {
+		visit(variantCase.Body)
+	}
+}
 
 // InspectStmt traverses structured HIR in depth-first preorder.
 func InspectStmt(stmt Stmt, visit func(Stmt) bool) {
@@ -176,6 +196,9 @@ func (f *If) sourceInfo() ir.SourceInfo {
 }
 func (f *For) sourceInfo() ir.SourceInfo {
 	return ir.SourceInfo{NodeID: f.NodeID, Location: f.Location}
+}
+func (s *SwitchVariant) sourceInfo() ir.SourceInfo {
+	return ir.SourceInfo{NodeID: s.NodeID, Location: s.Location}
 }
 
 func (m *Module) Text() string {
@@ -317,6 +340,24 @@ func (s *For) appendText(b *strings.Builder, indent int) {
 	}
 	b.WriteString(" {\n")
 	appendBlockText(b, s.Body, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}\n")
+}
+
+func (s *SwitchVariant) appendText(b *strings.Builder, indent int) {
+	writeIndent(b, indent)
+	b.WriteString("switch-variant ")
+	b.WriteString(s.Value.String())
+	b.WriteString(" {\n")
+	for _, variantCase := range s.Cases {
+		writeIndent(b, indent+1)
+		b.WriteString("case ")
+		b.WriteString(strconv.Itoa(variantCase.Case))
+		b.WriteString(" {\n")
+		appendBlockText(b, variantCase.Body, indent+2)
+		writeIndent(b, indent+1)
+		b.WriteString("}\n")
+	}
 	writeIndent(b, indent)
 	b.WriteString("}\n")
 }

@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -27,6 +28,7 @@ const (
 	llvmFieldLength    llvmFieldName = "length"
 	llvmFieldCapacity  llvmFieldName = "capacity"
 	llvmFieldAllocator llvmFieldName = "allocator"
+	llvmFieldTag       llvmFieldName = "tag"
 	llvmFieldPresent   llvmFieldName = "present"
 	llvmFieldValue     llvmFieldName = "value"
 	llvmFieldDispatch  llvmFieldName = "dispatch"
@@ -35,14 +37,16 @@ const (
 // llvmLayout is backend-owned physical type evidence. Named carrier fields
 // keep ABI field knowledge out of lowering and drop emitters.
 type llvmLayout struct {
-	Text       string
-	Kind       llvmLayoutKind
-	Pointee    *llvmLayout
-	Element    *llvmLayout
-	Elements   []*llvmLayout
-	Fields     map[llvmFieldName]int
-	Return     *llvmLayout
-	Parameters []*llvmLayout
+	Text            string
+	Kind            llvmLayoutKind
+	Pointee         *llvmLayout
+	Element         *llvmLayout
+	Elements        []*llvmLayout
+	Fields          map[llvmFieldName]int
+	VariantTag      int
+	VariantPayloads map[int]int
+	Return          *llvmLayout
+	Parameters      []*llvmLayout
 }
 
 func llvmScalarLayout(text string) *llvmLayout {
@@ -54,11 +58,15 @@ func llvmPointerLayout(pointee *llvmLayout) *llvmLayout {
 }
 
 func llvmAggregateLayout(elements []*llvmLayout, fields map[llvmFieldName]int) *llvmLayout {
+	return &llvmLayout{Text: llvmAggregateText(elements), Kind: llvmLayoutAggregate, Elements: elements, Fields: fields}
+}
+
+func llvmAggregateText(elements []*llvmLayout) string {
 	parts := make([]string, len(elements))
 	for i, element := range elements {
 		parts[i] = element.Text
 	}
-	return &llvmLayout{Text: "{ " + strings.Join(parts, ", ") + " }", Kind: llvmLayoutAggregate, Elements: elements, Fields: fields}
+	return "{ " + strings.Join(parts, ", ") + " }"
 }
 
 func llvmFunctionLayout(result *llvmLayout, params []*llvmLayout) *llvmLayout {
@@ -73,19 +81,66 @@ func llvmFunctionLayout(result *llvmLayout, params []*llvmLayout) *llvmLayout {
 }
 
 func (e *llvmEmitter) layout(id ir.TypeID) *llvmLayout {
+	if layout, ok := e.layoutType(id, false); ok {
+		return layout
+	}
+	e.reportUnsupportedType(id)
+	return llvmScalarLayout("i32")
+}
+
+func (e *llvmEmitter) layoutType(id ir.TypeID, allowRecursiveShell bool) (*llvmLayout, bool) {
 	if e == nil || e.mod == nil || e.mod.Types == nil {
-		return nil
+		return nil, false
 	}
 	if layout := e.layouts[id]; layout != nil {
-		return layout
-	}
-	layout, ok := llvmLayoutID(e.mod.Types, id)
-	if ok {
-		if e.layouts == nil {
-			e.layouts = make(map[ir.TypeID]*llvmLayout)
+		if e.layoutBuilding[id] && !allowRecursiveShell {
+			return nil, false
 		}
-		e.layouts[id] = layout
-		return layout
+		return layout, true
+	}
+	typ, ok := e.mod.Types.Type(id)
+	if !ok {
+		return nil, false
+	}
+	if e.layouts == nil {
+		e.layouts = make(map[ir.TypeID]*llvmLayout)
+	}
+	if e.layoutBuilding == nil {
+		e.layoutBuilding = make(map[ir.TypeID]bool)
+	}
+	named := typ.Identity != "" && (typ.Kind == ir.TypeStruct || typ.Kind == ir.TypeVariant && typ.Family == ir.VariantFamilyNamed)
+	if named {
+		shell := &llvmLayout{Text: namedLLVMTypeName(e.mod.Types, id), Kind: llvmLayoutAggregate}
+		e.layouts[id] = shell
+		e.layoutBuilding[id] = true
+		body, built := e.buildLayout(id, typ)
+		delete(e.layoutBuilding, id)
+		if !built || body == nil || body.Kind != llvmLayoutAggregate {
+			delete(e.layouts, id)
+			return nil, false
+		}
+		shell.Elements = body.Elements
+		shell.Fields = body.Fields
+		shell.VariantTag = body.VariantTag
+		shell.VariantPayloads = body.VariantPayloads
+		return shell, true
+	}
+	if e.layoutBuilding[id] {
+		return nil, false
+	}
+	e.layoutBuilding[id] = true
+	layout, built := e.buildLayout(id, typ)
+	delete(e.layoutBuilding, id)
+	if !built {
+		return nil, false
+	}
+	e.layouts[id] = layout
+	return layout, true
+}
+
+func (e *llvmEmitter) reportUnsupportedType(id ir.TypeID) {
+	if e == nil || e.mod == nil || e.mod.Types == nil {
+		return
 	}
 	e.invalid = true
 	if e.badTypes == nil {
@@ -98,14 +153,10 @@ func (e *llvmEmitter) layout(id ir.TypeID) *llvmLayout {
 			e.diag.Add(diagnostics.NewError("unsupported llvm type: " + text).WithCode(diagnostics.ErrInvalidType))
 		}
 	}
-	return llvmScalarLayout("i32")
 }
 
-func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
-	typ, ok := types.Type(id)
-	if !ok {
-		return nil, false
-	}
+func (e *llvmEmitter) buildLayout(id ir.TypeID, typ ir.Type) (*llvmLayout, bool) {
+	types := e.mod.Types
 	i8 := llvmScalarLayout("i8")
 	rawPointer := llvmPointerLayout(i8)
 	switch typ.Kind {
@@ -131,7 +182,7 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 	case ir.TypeCStr, ir.TypeRawPtr, ir.TypeAllocator:
 		return rawPointer, true
 	case ir.TypeString:
-		index, ok := llvmLayoutID(types, types.IndexType())
+		index, ok := e.layoutType(types.IndexType(), false)
 		if !ok {
 			return nil, false
 		}
@@ -144,7 +195,7 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 				llvmFieldData: 0, llvmFieldDispatch: 1, llvmFieldAllocator: 2,
 			}), true
 		}
-		elem, ok := llvmLayoutID(types, typ.Elem)
+		elem, ok := e.layoutType(typ.Elem, true)
 		if !ok {
 			return nil, false
 		}
@@ -162,7 +213,7 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 			return nil, false
 		}
 		if elemType.Kind == ir.TypeString {
-			index, ok := llvmLayoutID(types, types.IndexType())
+			index, ok := e.layoutType(types.IndexType(), false)
 			if !ok {
 				return nil, false
 			}
@@ -171,11 +222,11 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 			}), true
 		}
 		if elemType.Kind == ir.TypeSlice {
-			elem, ok := llvmLayoutID(types, elemType.Elem)
+			elem, ok := e.layoutType(elemType.Elem, false)
 			if !ok {
 				return nil, false
 			}
-			index, ok := llvmLayoutID(types, types.IndexType())
+			index, ok := e.layoutType(types.IndexType(), false)
 			if !ok {
 				return nil, false
 			}
@@ -183,26 +234,20 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 				llvmFieldData: 0, llvmFieldLength: 1,
 			}), true
 		}
-		elem, ok := llvmLayoutID(types, typ.Elem)
+		elem, ok := e.layoutType(typ.Elem, true)
 		if !ok {
 			return nil, false
 		}
 		return llvmPointerLayout(elem), true
-	case ir.TypeOptional:
-		inner, ok := llvmLayoutID(types, typ.Elem)
-		if !ok {
-			return nil, false
-		}
-		return llvmAggregateLayout([]*llvmLayout{llvmScalarLayout("i1"), inner}, map[llvmFieldName]int{
-			llvmFieldPresent: 0, llvmFieldValue: 1,
-		}), true
+	case ir.TypeVariant:
+		return e.variantLayout(typ)
 	case ir.TypeArray:
-		elem, ok := llvmLayoutID(types, typ.Elem)
+		elem, ok := e.layoutType(typ.Elem, false)
 		if !ok {
 			return nil, false
 		}
 		if typ.Length == "" {
-			index, ok := llvmLayoutID(types, types.IndexType())
+			index, ok := e.layoutType(types.IndexType(), false)
 			if !ok {
 				return nil, false
 			}
@@ -216,7 +261,7 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 	case ir.TypeStruct:
 		fields := make([]*llvmLayout, 0, len(typ.Fields))
 		for _, field := range typ.Fields {
-			llvmField, ok := llvmLayoutID(types, field.Type)
+			llvmField, ok := e.layoutType(field.Type, false)
 			if !ok {
 				return nil, false
 			}
@@ -228,13 +273,13 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 			llvmFieldData: 0, llvmFieldDispatch: 1,
 		}), true
 	case ir.TypeFunction:
-		returnType, ok := llvmLayoutID(types, typ.Return)
+		returnType, ok := e.layoutType(typ.Return, false)
 		if !ok {
 			return nil, false
 		}
 		params := make([]*llvmLayout, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			llvmParam, ok := llvmLayoutID(types, param)
+			llvmParam, ok := e.layoutType(param, false)
 			if !ok {
 				return nil, false
 			}
@@ -244,6 +289,76 @@ func llvmLayoutID(types *ir.TypeTable, id ir.TypeID) (*llvmLayout, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func (e *llvmEmitter) variantLayout(typ ir.Type) (*llvmLayout, bool) {
+	if len(typ.Cases) == 0 {
+		return nil, false
+	}
+	if payload, optional := typ.OptionalPayload(); optional {
+		payloadLayout, ok := e.layoutType(payload, false)
+		if !ok {
+			return nil, false
+		}
+		layout := llvmAggregateLayout([]*llvmLayout{llvmScalarLayout("i1"), payloadLayout}, map[llvmFieldName]int{
+			llvmFieldPresent: 0, llvmFieldValue: 1,
+		})
+		layout.VariantTag = 0
+		layout.VariantPayloads = map[int]int{ir.OptionalPresentCase: 1}
+		return layout, true
+	}
+	if typ.Family != ir.VariantFamilyNamed || typ.Identity == "" {
+		return nil, false
+	}
+	tag := llvmScalarLayout("i32")
+	switch {
+	case len(typ.Cases) <= 256:
+		tag = llvmScalarLayout("i8")
+	case len(typ.Cases) <= 65536:
+		tag = llvmScalarLayout("i16")
+	}
+	elements := []*llvmLayout{tag}
+	payloads := make(map[int]int)
+	for caseIndex, variant := range typ.Cases {
+		if variant.Payload == ir.InvalidType {
+			continue
+		}
+		payload, ok := e.layoutType(variant.Payload, false)
+		if !ok {
+			return nil, false
+		}
+		payloads[caseIndex] = len(elements)
+		elements = append(elements, payload)
+	}
+	layout := llvmAggregateLayout(elements, map[llvmFieldName]int{llvmFieldTag: 0})
+	layout.VariantTag = 0
+	layout.VariantPayloads = payloads
+	return layout, true
+}
+
+func namedLLVMTypeName(types *ir.TypeTable, id ir.TypeID) string {
+	return "%peeper.type." + hex.EncodeToString([]byte(types.ABIKey(id)))
+}
+
+func (e *llvmEmitter) emitNamedTypeDefinitions(out *strings.Builder) bool {
+	if e == nil || e.mod == nil || e.mod.Types == nil || out == nil {
+		return false
+	}
+	ids := e.mod.Types.NamedTypeIDs()
+	for _, id := range ids {
+		if _, ok := e.layoutType(id, false); !ok {
+			e.reportUnsupportedType(id)
+			return false
+		}
+	}
+	for _, id := range ids {
+		layout := e.layouts[id]
+		fmt.Fprintf(out, "%s = type %s\n", layout.Text, llvmAggregateText(layout.Elements))
+	}
+	if len(ids) > 0 {
+		out.WriteString("\n")
+	}
+	return true
 }
 
 func isInterfaceType(types *ir.TypeTable, id ir.TypeID) bool {
@@ -277,30 +392,30 @@ func interfaceTypeID(types *ir.TypeTable, id ir.TypeID) (ir.TypeID, bool) {
 	return id, ok && typ.Kind == ir.TypeInterface
 }
 
-func interfaceSlotLLVMLayout(types *ir.TypeTable, id ir.TypeID, slot int) (*llvmLayout, bool) {
-	interfaceID, ok := interfaceTypeID(types, id)
+func (e *llvmEmitter) interfaceSlotLayout(id ir.TypeID, slot int) (*llvmLayout, bool) {
+	if e == nil || e.mod == nil || e.mod.Types == nil {
+		return nil, false
+	}
+	interfaceID, ok := interfaceTypeID(e.mod.Types, id)
 	if !ok {
 		return nil, false
 	}
-	iface, _ := types.Type(interfaceID)
+	iface, _ := e.mod.Types.Type(interfaceID)
 	if slot < 0 || slot >= len(iface.Methods) {
 		return nil, false
 	}
 	method := iface.Methods[slot]
 	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
-	params := make([]*llvmLayout, 0, len(method.Params))
+	params := make([]*llvmLayout, 0, len(method.Params)+1)
 	params = append(params, rawPointer)
-	for index, param := range method.Params {
-		if index == 0 {
-			continue
-		}
-		llvmParam, ok := llvmLayoutID(types, param.Type)
+	for _, param := range method.Params {
+		llvmParam, ok := e.layoutType(param.Type, false)
 		if !ok {
 			return nil, false
 		}
 		params = append(params, llvmParam)
 	}
-	ret, ok := llvmLayoutID(types, method.Return)
+	ret, ok := e.layoutType(method.Return, false)
 	if !ok {
 		return nil, false
 	}
@@ -431,9 +546,9 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 		return v.Type
 	case *mir.ZeroValue:
 		return v.Type
-	case *mir.OptionalSome:
+	case *mir.VariantMake:
 		return v.Type
-	case *mir.OptionalPresent:
+	case *mir.VariantIs:
 		return v.Type
 	case *mir.InterfaceMake:
 		return v.Type

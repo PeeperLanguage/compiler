@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -237,15 +238,15 @@ func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 
 	ident := &ast.Ident{Name: "value"}
 	resolved := Resolve(scope, &ast.AddressExpr{Expr: ident}, ResolveOptions{
-		PayloadDepth: func(expr ast.Expr) int {
+		PayloadCases: func(expr ast.Expr) []int {
 			if expr == ident {
-				return 1
+				return []int{ir.OptionalPresentCase}
 			}
-			return 0
+			return nil
 		},
 	})
 	storage := []Origin{{Root: carrier}}
-	payload := PayloadOrigins(storage, 1)
+	payload := VariantPayloadOrigins(storage, []int{ir.OptionalPresentCase})
 	if !SameOrigins(resolved.StorageOrigins, storage) || !SameOrigins(resolved.ValueOrigins, payload) {
 		t.Fatalf("address resolution = %#v, want carrier storage and payload value %#v", resolved, payload)
 	}
@@ -270,15 +271,15 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 	ownerField := &ast.SelectorExpr{Expr: ownerBase, Name: &ast.Ident{Name: "value"}}
 	ownerResolution := Resolve(scope, ownerField, ResolveOptions{
 		ExprType: func(ast.Expr) typeinfo.Type { return &typeinfo.OwnedPtrType{Target: valueType} },
-		PayloadDepth: func(expr ast.Expr) int {
+		PayloadCases: func(expr ast.Expr) []int {
 			if expr == ownerBase {
-				return 1
+				return []int{ir.OptionalPresentCase}
 			}
-			return 0
+			return nil
 		},
 	})
 	wantOwner := []Origin{{Root: owner, Projections: []OriginProjection{
-		{Kind: OriginOptionalPayload},
+		{Kind: OriginVariantPayload, Case: ir.OptionalPresentCase},
 		{Kind: OriginPointee},
 		{Kind: OriginField, Field: "value"},
 	}}}
@@ -293,11 +294,11 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 		ReferenceOrigins: func(*symbols.Symbol) []Origin {
 			return []Origin{{Root: referent}}
 		},
-		PayloadDepth: func(expr ast.Expr) int {
+		PayloadCases: func(expr ast.Expr) []int {
 			if expr == referenceBase {
-				return 1
+				return []int{ir.OptionalPresentCase}
 			}
-			return 0
+			return nil
 		},
 	})
 	wantReference := []Origin{{Root: referent, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
@@ -422,5 +423,17 @@ func TestOriginsOverlap(t *testing.T) {
 				t.Fatalf("OriginsOverlap() = %v, want %v", got, test.overlap)
 			}
 		})
+	}
+}
+
+func TestVariantPayloadOriginsPreserveExactCasePath(t *testing.T) {
+	root := symbols.New("value", symbols.SymbolVar, nil, nil)
+	origins := VariantPayloadOrigins([]Origin{{Root: root}}, []int{2, 1})
+	want := []Origin{{Root: root, Projections: []OriginProjection{
+		{Kind: OriginVariantPayload, Case: 2},
+		{Kind: OriginVariantPayload, Case: 1},
+	}}}
+	if !SameOrigins(origins, want) {
+		t.Fatalf("variant payload origins = %#v, want %#v", origins, want)
 	}
 }

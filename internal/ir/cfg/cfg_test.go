@@ -104,6 +104,28 @@ func TestBuildModuleCreatesCanonicalSiteAdjacency(t *testing.T) {
 	}
 }
 
+func TestFinalizeSitesLabelsVariantCaseEdges(t *testing.T) {
+	first := &Block{ID: 1}
+	second := &Block{ID: 2}
+	entry := &Block{ID: 0, Terminator: &SwitchVariant{
+		NodeID: 41,
+		Targets: []VariantTarget{
+			{Case: 0, Target: first},
+			{Case: 1, Target: second},
+		},
+	}}
+	graph := &Graph{Entry: entry, Exit: &Block{ID: 3}, Blocks: []*Block{entry, first, second}}
+	finalizeSites(graph)
+	if len(entry.Sites) != 1 || len(entry.Sites[0].Successors) != 2 {
+		t.Fatalf("switch sites = %#v", entry.Sites)
+	}
+	for caseIndex, edge := range entry.Sites[0].Successors {
+		if edge.Kind != EdgeVariantCase || edge.Case != caseIndex {
+			t.Fatalf("switch edge %d = %#v", caseIndex, edge)
+		}
+	}
+}
+
 func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 2, Column: 10})
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{

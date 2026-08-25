@@ -618,7 +618,7 @@ fn inspect(value: ?Token) {
 	storage := []place.Origin{{Root: value}}
 	payload := []place.Origin{{
 		Root:        value,
-		Projections: []place.OriginProjection{{Kind: place.OriginOptionalPayload}},
+		Projections: []place.OriginProjection{{Kind: place.OriginVariantPayload, Case: ir.OptionalPresentCase}},
 	}}
 	if got := result.module.Flow.ResolvedStorageOrigins[valueUse.ID()]; !place.SameOrigins(got, storage) {
 		t.Fatalf("payload storage origins = %#v, want carrier %#v", got, storage)

@@ -101,10 +101,12 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
 	if defined, ok := sym.Type.(*typeinfo.DefinedType); ok && defined != nil {
 		// Reuse same shell so self-references keep same type identity.
 		defined.Name = name.Name
+		defined.Identity = b.module.TypeDeclarationIdentity(name.Name)
 		defined.Underlying = underlying
 	} else {
 		sym.BindType(&typeinfo.DefinedType{
 			Name:       name.Name,
+			Identity:   b.module.TypeDeclarationIdentity(name.Name),
 			Underlying: underlying,
 		})
 	}

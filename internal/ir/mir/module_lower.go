@@ -364,6 +364,25 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		l.setBlockTerm(l.current, &Branch{Cond: lowered, ThenID: thenBlock.ID, ElseID: elseBlock.ID})
 		return true
+	case *cfg.SwitchVariant:
+		switchStmt, ok := statements[term.NodeID].(*hir.SwitchVariant)
+		if !ok || switchStmt == nil || len(switchStmt.Cases) != len(term.Targets) || len(term.Targets) == 0 {
+			return false
+		}
+		l.location = switchStmt.Location
+		targets := make([]VariantTarget, len(term.Targets))
+		for i, target := range term.Targets {
+			block := blocks[target.Target]
+			if block == nil || switchStmt.Cases[i].Case != target.Case {
+				return false
+			}
+			targets[i] = VariantTarget{Case: target.Case, TargetID: block.ID}
+		}
+		temporaryMark := len(l.temporaryDrops)
+		value := l.lowerExpr(switchStmt.Value, &l.current.Instrs)
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		l.setBlockTerm(l.current, &SwitchVariant{Value: value, Targets: targets})
+		return true
 	case *cfg.Return:
 		ret, ok := statements[term.NodeID].(*hir.Return)
 		if !ok || ret == nil {
@@ -429,7 +448,7 @@ func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
 	root := l.lowerExpr(place.Root, out)
 	projections := make([]PlaceProjection, 0, len(place.Projections))
 	for _, projection := range place.Projections {
-		lowered := PlaceProjection{FieldIndex: projection.FieldIndex, Type: projection.Type, Location: projection.Location}
+		lowered := PlaceProjection{FieldIndex: projection.FieldIndex, Case: projection.Case, Type: projection.Type, Location: projection.Location}
 		switch projection.Kind {
 		case ir.PlaceProjectionDeref:
 			lowered.Kind = PlaceProjectionDeref
@@ -438,8 +457,8 @@ func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
 		case ir.PlaceProjectionIndex:
 			lowered.Kind = PlaceProjectionIndex
 			lowered.Index = l.lowerExpr(projection.Index, out)
-		case ir.PlaceProjectionOptionalPayload:
-			lowered.Kind = PlaceProjectionOptionalPayload
+		case ir.PlaceProjectionVariantPayload:
+			lowered.Kind = PlaceProjectionVariantPayload
 		default:
 			panic(fmt.Sprintf("unsupported HIR place projection %d", projection.Kind))
 		}
@@ -461,6 +480,8 @@ func (l *lowerer) setBlockTerm(block *Block, term Terminator) {
 	case *Ret:
 		node.Location = l.location
 	case *Branch:
+		node.Location = l.location
+	case *SwitchVariant:
 		node.Location = l.location
 	case *Jump:
 		node.Location = l.location
@@ -499,15 +520,15 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
-	case *ir.OptionalSome:
-		value := l.lowerExpr(e.Value, out)
+	case *ir.VariantMake:
+		payload := l.lowerExpr(e.Payload, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &OptionalSome{Value: value, Type: e.TypeID(), Location: e.Origin().Location}})
+		l.appendInstr(out, &Assign{Name: name, Value: &VariantMake{Case: e.Case, Payload: payload, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
-	case *ir.OptionalPresent:
+	case *ir.VariantIs:
 		value := l.lowerExpr(e.Value, out)
 		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &OptionalPresent{Value: value, Type: e.TypeID(), Location: e.Origin().Location}})
+		l.appendInstr(out, &Assign{Name: name, Value: &VariantIs{Value: value, Case: e.Case, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Ident:
 		return &RefName{Name: e.Name, Type: e.TypeID(), Location: e.Origin().Location}

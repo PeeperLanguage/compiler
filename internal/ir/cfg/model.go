@@ -43,6 +43,7 @@ const (
 	EdgeTrue
 	EdgeFalse
 	EdgeReturn
+	EdgeVariantCase
 )
 
 // Edge preserves branch meaning independently from adjacency ordering.
@@ -50,6 +51,7 @@ type Edge struct {
 	From SiteID
 	To   SiteID
 	Kind EdgeKind
+	Case int
 }
 
 type SiteKind uint8
@@ -114,9 +116,22 @@ type Return struct {
 	NodeID ir.NodeID
 }
 
-func (*Jump) termNode()   {}
-func (*Branch) termNode() {}
-func (*Return) termNode() {}
+type VariantTarget struct {
+	Case   int
+	Target *Block
+}
+
+type SwitchVariant struct {
+	NodeID   ir.NodeID
+	ScopeID  ir.NodeID
+	Location *source.Location
+	Targets  []VariantTarget
+}
+
+func (*Jump) termNode()          {}
+func (*Branch) termNode()        {}
+func (*Return) termNode()        {}
+func (*SwitchVariant) termNode() {}
 
 func (t *Jump) Successors() []*Block {
 	if t == nil || t.Target == nil {
@@ -140,3 +155,16 @@ func (t *Branch) Successors() []*Block {
 }
 
 func (*Return) Successors() []*Block { return nil }
+
+func (t *SwitchVariant) Successors() []*Block {
+	if t == nil {
+		return nil
+	}
+	out := make([]*Block, 0, len(t.Targets))
+	for _, target := range t.Targets {
+		if target.Target != nil {
+			out = append(out, target.Target)
+		}
+	}
+	return out
+}

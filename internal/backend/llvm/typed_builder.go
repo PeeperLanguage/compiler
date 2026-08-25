@@ -20,6 +20,11 @@ type llvmIncoming struct {
 	Label string
 }
 
+type llvmSwitchCase struct {
+	Value llvmValue
+	Label string
+}
+
 func llvmLayoutsMatch(left, right *llvmLayout) bool {
 	return left != nil && right != nil && left.Kind == right.Kind && left.Text == right.Text
 }
@@ -145,6 +150,49 @@ func (b *llvmBuilder) insertField(aggregate, value llvmValue, field llvmFieldNam
 		b.invariant("layout %s has no field %q", aggregate.Layout.Text, field)
 	}
 	return b.insertIndex(aggregate, value, index)
+}
+
+func (b *llvmBuilder) variantTag(value llvmValue) llvmValue {
+	if value.Layout == nil || value.Layout.VariantTag < 0 {
+		b.invariant("variant tag requires variant layout")
+	}
+	return b.extractIndex(value, value.Layout.VariantTag)
+}
+
+func (b *llvmBuilder) variantCaseTag(caseIndex int, layout *llvmLayout) llvmValue {
+	if caseIndex < 0 || layout == nil || layout.Kind != llvmLayoutScalar {
+		b.invariant("variant case tag requires nonnegative case and scalar layout")
+	}
+	text := fmt.Sprintf("%d", caseIndex)
+	if layout.Text == "i1" {
+		if caseIndex > 1 {
+			b.invariant("i1 variant tag cannot represent case %d", caseIndex)
+		}
+		text = fmt.Sprintf("%t", caseIndex != 0)
+	}
+	return b.value(text, layout)
+}
+
+func (b *llvmBuilder) variantPayload(value llvmValue, caseIndex int) llvmValue {
+	if value.Layout == nil {
+		b.invariant("variant payload requires variant layout")
+	}
+	index, ok := value.Layout.VariantPayloads[caseIndex]
+	if !ok {
+		b.invariant("variant layout %s has no payload for case %d", value.Layout.Text, caseIndex)
+	}
+	return b.extractIndex(value, index)
+}
+
+func (b *llvmBuilder) insertVariantPayload(value, payload llvmValue, caseIndex int) llvmValue {
+	if value.Layout == nil {
+		b.invariant("variant payload insert requires variant layout")
+	}
+	index, ok := value.Layout.VariantPayloads[caseIndex]
+	if !ok {
+		b.invariant("variant layout %s has no payload for case %d", value.Layout.Text, caseIndex)
+	}
+	return b.insertIndex(value, payload, index)
 }
 
 func (b *llvmBuilder) compare(opcode, predicate string, left, right llvmValue) llvmValue {
@@ -349,6 +397,20 @@ func (b *llvmBuilder) condBranch(condition llvmValue, yes, no string) {
 		b.invariant("conditional branch requires i1 and target labels")
 	}
 	b.line(fmt.Sprintf("br i1 %s, label %%%s, label %%%s", condition.Text, yes, no))
+}
+
+func (b *llvmBuilder) switchBranch(value llvmValue, fallback string, cases []llvmSwitchCase) {
+	if value.Layout == nil || value.Layout.Kind != llvmLayoutScalar || fallback == "" {
+		b.invariant("switch requires scalar value and fallback label")
+	}
+	parts := make([]string, len(cases))
+	for i, switchCase := range cases {
+		if !llvmLayoutsMatch(value.Layout, switchCase.Value.Layout) || switchCase.Label == "" {
+			b.invariant("switch case requires matching value and label")
+		}
+		parts[i] = fmt.Sprintf("%s %s, label %%%s", switchCase.Value.Layout.Text, switchCase.Value.Text, switchCase.Label)
+	}
+	b.line(fmt.Sprintf("switch %s %s, label %%%s [ %s ]", value.Layout.Text, value.Text, fallback, strings.Join(parts, " ")))
 }
 
 func (b *llvmBuilder) ret(value llvmValue, expected *llvmLayout) {

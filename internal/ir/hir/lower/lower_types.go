@@ -1,6 +1,7 @@
 package lower
 
 import (
+	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
@@ -11,7 +12,10 @@ func loweredTypeID(ctx *project.CompilerContext, module *project.Module, t typei
 	if ctx == nil || ctx.Types == nil || t == nil {
 		return ir.InvalidType
 	}
-	return internRuntimeType(ctx.Types, loweredRuntimeType(module, t, nil))
+	interner := runtimeTypeInterner{
+		ctx: ctx, module: module, active: make(map[string]ir.TypeID),
+	}
+	return interner.intern(t)
 }
 
 func loweredReturnTypeID(ctx *project.CompilerContext, module *project.Module, t typeinfo.Type) ir.TypeID {
@@ -21,11 +25,37 @@ func loweredReturnTypeID(ctx *project.CompilerContext, module *project.Module, t
 	return loweredTypeID(ctx, module, t)
 }
 
-// internRuntimeType is the semantic-to-IR type boundary. It receives only
-// runtime-normalized semantic types, so IR never reparses source type text.
-func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
-	if types == nil || t == nil {
+// runtimeTypeInterner is semantic-to-IR type construction state. Named
+// composites reserve identity before child descent so legal pointer/reference
+// recursion closes on one canonical TypeID.
+type runtimeTypeInterner struct {
+	ctx    *project.CompilerContext
+	module *project.Module
+	active map[string]ir.TypeID
+}
+
+func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
+	if l == nil || l.ctx == nil || l.ctx.Types == nil || t == nil {
 		return ir.InvalidType
+	}
+	if l.module != nil {
+		t = resolveNamedType(l.module.ModuleScope, t)
+	}
+	if defined, ok := t.(*typeinfo.DefinedType); ok {
+		return l.internDefined(defined)
+	}
+	if descriptor, ok := typeinfo.VariantDescriptorOf(t); ok {
+		cases := make([]ir.VariantCase, len(descriptor.Cases))
+		for i, variantCase := range descriptor.Cases {
+			cases[i].Name = variantCase.Name
+			if variantCase.Payload != nil {
+				cases[i].Payload = l.intern(variantCase.Payload)
+			}
+		}
+		if descriptor.Family == typeinfo.VariantFamilyOptional {
+			return l.ctx.Types.Intern(ir.OptionalVariant(cases[ir.OptionalPresentCase].Payload))
+		}
+		return l.invalid("named variant reached IR lowering without declaration identity")
 	}
 	switch typ := typeinfo.Underlying(t).(type) {
 	case *typeinfo.InvalidType, *typeinfo.UnknownType:
@@ -34,109 +64,201 @@ func internRuntimeType(types *ir.TypeTable, t typeinfo.Type) ir.TypeID {
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: typ.Signed, Bits: typ.Bits})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: typ.Signed, Bits: typ.Bits})
 	case *typeinfo.ByteType:
-		return types.Intern(ir.Type{Kind: ir.TypeByte})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeByte})
 	case *typeinfo.CharType:
-		return types.Intern(ir.Type{Kind: ir.TypeChar})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeChar})
 	case *typeinfo.FloatType:
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeFloat, Bits: typ.Bits})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeFloat, Bits: typ.Bits})
 	case *typeinfo.BoolType:
-		return types.Intern(ir.Type{Kind: ir.TypeBool})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeBool})
 	case *typeinfo.CStrType:
-		return types.Intern(ir.Type{Kind: ir.TypeCStr})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeCStr})
 	case *typeinfo.StringType:
-		return types.Intern(ir.Type{Kind: ir.TypeString})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeString})
 	case *typeinfo.NoneType:
-		return types.Intern(ir.Type{Kind: ir.TypeVoid})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
 	case *typeinfo.AllocatorType:
-		return types.Intern(ir.Type{Kind: ir.TypeAllocator})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeAllocator})
 	case *typeinfo.NamedType:
-		if typ == nil || typ.Name == "" {
-			return ir.InvalidType
-		}
-		return types.Intern(ir.Type{Kind: ir.TypeNamed, Name: typ.Name})
+		return l.invalid("unresolved named type reached IR lowering")
 	case *typeinfo.OwnedPtrType:
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: internRuntimeType(types, typ.Target)})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: l.intern(typ.Target)})
 	case *typeinfo.RawPtrType:
-		return types.Intern(ir.Type{Kind: ir.TypeRawPtr})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeRawPtr})
 	case *typeinfo.RefType:
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: typ.Mutable, Elem: internRuntimeType(types, typ.Target)})
-	case *typeinfo.OptionalType:
-		if typ == nil {
-			return ir.InvalidType
-		}
-		return types.Intern(ir.Type{Kind: ir.TypeOptional, Elem: internRuntimeType(types, typ.Inner)})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: typ.Mutable, Elem: l.intern(typ.Target)})
 	case *typeinfo.ArrayType:
 		if typ == nil {
 			return ir.InvalidType
 		}
 		if typ.Shape == typeinfo.ArraySlice {
-			return types.Intern(ir.Type{Kind: ir.TypeSlice, Elem: internRuntimeType(types, typ.Elem)})
+			return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeSlice, Elem: l.intern(typ.Elem)})
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeArray, Length: typ.Len, Elem: internRuntimeType(types, typ.Elem)})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeArray, Length: typ.Len, Elem: l.intern(typ.Elem)})
 	case *typeinfo.StructType:
 		if typ == nil {
 			return ir.InvalidType
 		}
 		fields := make([]ir.TypeField, 0, len(typ.Fields))
 		for _, field := range typ.Fields {
-			fields = append(fields, ir.TypeField{Name: field.Name, Type: internRuntimeType(types, field.Type)})
+			fields = append(fields, ir.TypeField{Name: field.Name, Type: l.intern(field.Type)})
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: fields})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: fields})
 	case *typeinfo.InterfaceType:
 		if typ == nil {
 			return ir.InvalidType
 		}
 		methods := make([]ir.TypeMethod, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
-			params := make([]ir.TypeField, 0, len(method.Params))
-			for _, param := range method.Params {
-				params = append(params, ir.TypeField{Name: param.Name, Type: internRuntimeType(types, param.Type)})
+			if len(method.Params) == 0 {
+				return l.invalid("interface method reached IR lowering without receiver")
 			}
-			returnType := internRuntimeType(types, method.Return)
+			receiver := ir.MethodReceiverInvalid
+			switch semanticReceiver := typeinfo.Underlying(method.Params[0].Type).(type) {
+			case *typeinfo.NamedType:
+				if semanticReceiver != nil && semanticReceiver.Name == "Self" {
+					receiver = ir.MethodReceiverValue
+				}
+			case *typeinfo.RefType:
+				if semanticReceiver == nil {
+					break
+				}
+				self, selfOK := typeinfo.Underlying(semanticReceiver.Target).(*typeinfo.NamedType)
+				if selfOK && self != nil && self.Name == "Self" {
+					receiver = ir.MethodReceiverShared
+					if semanticReceiver.Mutable {
+						receiver = ir.MethodReceiverMutable
+					}
+				}
+			}
+			if receiver == ir.MethodReceiverInvalid {
+				return l.invalid("interface method reached IR lowering with invalid receiver")
+			}
+			params := make([]ir.TypeField, 0, len(method.Params)-1)
+			for _, param := range method.Params[1:] {
+				params = append(params, ir.TypeField{Name: param.Name, Type: l.intern(param.Type)})
+			}
+			returnType := l.intern(method.Return)
 			if returnType == ir.InvalidType {
-				returnType = types.Intern(ir.Type{Kind: ir.TypeVoid})
+				returnType = l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
 			}
-			methods = append(methods, ir.TypeMethod{Name: method.Name, Params: params, Return: returnType})
+			methods = append(methods, ir.TypeMethod{Name: method.Name, Receiver: receiver, Params: params, Return: returnType})
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: methods})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: methods})
 	case *typeinfo.FuncType:
 		if typ == nil {
 			return ir.InvalidType
 		}
 		params := make([]ir.TypeID, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, internRuntimeType(types, param))
+			params = append(params, l.intern(param))
 		}
-		returnType := internRuntimeType(types, typ.Return)
+		returnType := l.intern(typ.Return)
 		if returnType == ir.InvalidType {
-			returnType = types.Intern(ir.Type{Kind: ir.TypeVoid})
+			returnType = l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
 		}
-		return types.Intern(ir.Type{Kind: ir.TypeFunction, Params: params, Return: returnType})
-	case *typeinfo.EnumType:
-		if typ == nil {
-			return ir.InvalidType
-		}
-		return types.Intern(ir.Type{Kind: ir.TypeNamed, Name: typ.Text()})
+		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: params, Return: returnType})
 	default:
 		return ir.InvalidType
 	}
 }
 
+func (l *runtimeTypeInterner) internDefined(defined *typeinfo.DefinedType) ir.TypeID {
+	if defined == nil || defined.Underlying == nil {
+		return l.invalid("incomplete named type reached IR lowering")
+	}
+	identity := defined.Identity
+	if identity == "" {
+		identity = defined.Name
+	}
+	switch underlying := defined.Underlying.(type) {
+	case *typeinfo.StructType:
+		shell := ir.Type{Kind: ir.TypeStruct, Name: defined.Name, Identity: identity}
+		return l.internNamed(shell, func() (ir.Type, bool) {
+			fields := make([]ir.TypeField, 0, len(underlying.Fields))
+			valid := true
+			for _, field := range underlying.Fields {
+				fieldType := l.intern(field.Type)
+				valid = valid && fieldType != ir.InvalidType
+				fields = append(fields, ir.TypeField{Name: field.Name, Type: fieldType})
+			}
+			shell.Fields = fields
+			return shell, valid
+		})
+	case *typeinfo.EnumType:
+		descriptor, ok := typeinfo.VariantDescriptorOf(defined)
+		if !ok {
+			return l.invalid("invalid named variant reached IR lowering")
+		}
+		shell := ir.Type{
+			Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed,
+			Name: defined.Name, Identity: descriptor.Identity,
+		}
+		return l.internNamed(shell, func() (ir.Type, bool) {
+			cases := make([]ir.VariantCase, len(descriptor.Cases))
+			valid := true
+			for index, variantCase := range descriptor.Cases {
+				cases[index].Name = variantCase.Name
+				if variantCase.Payload != nil {
+					payload := l.intern(variantCase.Payload)
+					valid = valid && payload != ir.InvalidType
+					cases[index].Payload = payload
+				}
+			}
+			shell.Cases = cases
+			return shell, valid
+		})
+	default:
+		return l.intern(defined.Underlying)
+	}
+}
+
+func (l *runtimeTypeInterner) internNamed(shell ir.Type, descriptor func() (ir.Type, bool)) ir.TypeID {
+	id, err := l.ctx.Types.ReserveNamed(shell)
+	if err != nil {
+		return l.invalid(err.Error())
+	}
+	if _, complete := l.ctx.Types.Type(id); complete {
+		return id
+	}
+	key := l.ctx.Types.ABIKey(id)
+	if activeID, active := l.active[key]; active {
+		return activeID
+	}
+	l.active[key] = id
+	defer delete(l.active, key)
+	typ, valid := descriptor()
+	if !valid {
+		return l.invalid("named type " + shell.Name + " has invalid runtime descriptor")
+	}
+	if err := l.ctx.Types.CompleteNamed(id, typ); err != nil {
+		return l.invalid(err.Error())
+	}
+	return id
+}
+
+func (l *runtimeTypeInterner) invalid(message string) ir.TypeID {
+	if l != nil && l.ctx != nil && l.ctx.Diagnostics != nil {
+		l.ctx.Diagnostics.Add(diagnostics.NewError(message).WithCode(diagnostics.ErrInvalidType))
+	}
+	return ir.InvalidType
+}
+
 // resolveNamedType performs a single-hop scope lookup for a NamedType so the
 // lowerer can collapse source-level aliases before runtime layout work.
-// Called only from loweredRuntimeType; lives here to avoid importing table
-// from the leaf typeinfo package.
+// Runtime normalization and IR interning share it here to avoid importing
+// symbol tables from the leaf typeinfo package.
 func resolveNamedType(scope *symbols.Scope, t typeinfo.Type) typeinfo.Type {
 	if scope == nil || t == nil {
 		return t
@@ -177,6 +299,9 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		}
 		seen[typ] = struct{}{}
 		defer delete(seen, typ)
+		if enum, ok := typeinfo.Underlying(typ.Underlying).(*typeinfo.EnumType); ok {
+			return &typeinfo.DefinedType{Name: typ.Name, Identity: typ.Identity, Underlying: enum}
+		}
 		return loweredRuntimeType(module, typ.Underlying, seen)
 	case *typeinfo.OwnedPtrType:
 		if typ == nil {

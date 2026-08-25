@@ -28,13 +28,12 @@ const (
 	TypeRawPtr
 	TypeOwnedPtr
 	TypeReference
-	TypeOptional
+	TypeVariant
 	TypeArray
 	TypeSlice
 	TypeStruct
 	TypeInterface
 	TypeFunction
-	TypeNamed
 )
 
 type TypeField struct {
@@ -42,26 +41,84 @@ type TypeField struct {
 	Type TypeID
 }
 
+type MethodReceiver uint8
+
+const (
+	MethodReceiverInvalid MethodReceiver = iota
+	MethodReceiverValue
+	MethodReceiverShared
+	MethodReceiverMutable
+)
+
 type TypeMethod struct {
-	Name   string
-	Params []TypeField
-	Return TypeID
+	Name     string
+	Receiver MethodReceiver
+	Params   []TypeField
+	Return   TypeID
+}
+
+type VariantFamily uint8
+
+const (
+	VariantFamilyInvalid VariantFamily = iota
+	VariantFamilyOptional
+	VariantFamilyNamed
+)
+
+const (
+	OptionalAbsentCase = iota
+	OptionalPresentCase
+)
+
+type VariantCase struct {
+	Name    string
+	Payload TypeID
 }
 
 // Type is a backend-independent runtime descriptor. Source-only aliases are
 // resolved before interning, so every child directly describes its ABI shape.
 type Type struct {
-	Kind    TypeKind
-	Signed  bool
-	Bits    int
-	Mutable bool
-	Length  string
-	Elem    TypeID
-	Fields  []TypeField
-	Methods []TypeMethod
-	Params  []TypeID
-	Return  TypeID
-	Name    string
+	Kind     TypeKind
+	Signed   bool
+	Bits     int
+	Mutable  bool
+	Length   string
+	Elem     TypeID
+	Fields   []TypeField
+	Methods  []TypeMethod
+	Params   []TypeID
+	Return   TypeID
+	Name     string
+	Family   VariantFamily
+	Identity string
+	Cases    []VariantCase
+}
+
+// OptionalVariant owns optional's fixed case order. Flow facts, lowering, and
+// backends use these case indexes instead of rebuilding optional conventions.
+func OptionalVariant(payload TypeID) Type {
+	return Type{
+		Kind: TypeVariant, Family: VariantFamilyOptional,
+		Cases: []VariantCase{{Name: "Absent"}, {Name: "Present", Payload: payload}},
+	}
+}
+
+func (t Type) VariantCase(index int) (VariantCase, bool) {
+	if t.Kind != TypeVariant || index < 0 || index >= len(t.Cases) {
+		return VariantCase{}, false
+	}
+	return t.Cases[index], true
+}
+
+func (t Type) OptionalPayload() (TypeID, bool) {
+	if t.Kind != TypeVariant || t.Family != VariantFamilyOptional || len(t.Cases) != 2 {
+		return InvalidType, false
+	}
+	present := t.Cases[OptionalPresentCase]
+	if t.Cases[OptionalAbsentCase].Payload != InvalidType || present.Payload == InvalidType {
+		return InvalidType, false
+	}
+	return present.Payload, true
 }
 
 // TypeTable is owned by one CompilerContext. It is canonical storage for IR
@@ -71,14 +128,16 @@ type TypeTable struct {
 	types     []Type
 	ids       map[string]TypeID
 	texts     map[string]TypeID
+	complete  []bool
 	indexType TypeID
 }
 
 func NewTypeTable() *TypeTable {
 	return &TypeTable{
-		types: []Type{{Name: "<invalid>"}},
-		ids:   make(map[string]TypeID),
-		texts: make(map[string]TypeID),
+		types:    []Type{{Name: "<invalid>"}},
+		ids:      make(map[string]TypeID),
+		texts:    make(map[string]TypeID),
+		complete: []bool{false},
 	}
 }
 
@@ -94,9 +153,64 @@ func (t *TypeTable) Intern(typ Type) TypeID {
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(typ))
+	t.complete = append(t.complete, true)
 	t.ids[key] = id
 	t.texts[t.textLocked(id)] = id
 	return id
+}
+
+// ReserveNamed allocates stable identity before named composite children are
+// interned. Recursive child paths reuse this TypeID until CompleteNamed fills
+// the descriptor.
+func (t *TypeTable) ReserveNamed(shell Type) (TypeID, error) {
+	if t == nil {
+		return InvalidType, fmt.Errorf("reserving named IR type without a type table")
+	}
+	key, ok := identifiedTypeKey(shell)
+	if !ok || shell.Name == "" {
+		return InvalidType, fmt.Errorf("reserving IR type without named composite identity")
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if id, found := t.ids[key]; found {
+		return id, nil
+	}
+	id := TypeID(len(t.types))
+	t.types = append(t.types, cloneType(shell))
+	t.complete = append(t.complete, false)
+	t.ids[key] = id
+	return id, nil
+}
+
+// CompleteNamed atomically publishes children for a reserved named composite.
+// Repeating the same completion is valid; conflicting descriptors are rejected.
+func (t *TypeTable) CompleteNamed(id TypeID, typ Type) error {
+	if t == nil {
+		return fmt.Errorf("completing named IR type without a type table")
+	}
+	key, ok := identifiedTypeKey(typ)
+	if !ok || typ.Name == "" {
+		return fmt.Errorf("completing IR type without named composite identity")
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if id == InvalidType || int(id) >= len(t.types) {
+		return fmt.Errorf("completing invalid named IR TypeID %d", id)
+	}
+	shellKey, shellOK := identifiedTypeKey(t.types[id])
+	if !shellOK || shellKey != key {
+		return fmt.Errorf("completing named IR TypeID %d with mismatched identity", id)
+	}
+	if t.complete[id] {
+		if descriptorKey(t.types[id]) != descriptorKey(typ) {
+			return fmt.Errorf("named IR type %q completed with conflicting descriptor", typ.Name)
+		}
+		return nil
+	}
+	t.types[id] = cloneType(typ)
+	t.complete[id] = true
+	t.texts[t.textLocked(id)] = id
+	return nil
 }
 
 // LookupText bridges semantic constant metadata into an already-interned IR
@@ -139,10 +253,30 @@ func (t *TypeTable) Type(id TypeID) (Type, bool) {
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if id == InvalidType || int(id) >= len(t.types) {
+	if id == InvalidType || int(id) >= len(t.types) || !t.complete[id] {
 		return Type{}, false
 	}
 	return t.types[id], true
+}
+
+// NamedTypeIDs returns completed identified composites in stable TypeID order.
+// Backends use this to declare recursive aggregate shells before all uses.
+func (t *TypeTable) NamedTypeIDs() []TypeID {
+	if t == nil {
+		return nil
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	ids := make([]TypeID, 0)
+	for index := 1; index < len(t.types); index++ {
+		if !t.complete[index] {
+			continue
+		}
+		if _, named := identifiedTypeKey(t.types[index]); named {
+			ids = append(ids, TypeID(index))
+		}
+	}
+	return ids
 }
 
 func (t *TypeTable) Text(id TypeID) string {
@@ -193,8 +327,14 @@ func (t *TypeTable) textLocked(id TypeID) string {
 			prefix = "&mut "
 		}
 		return prefix + t.textLocked(typ.Elem)
-	case TypeOptional:
-		return "?" + t.textLocked(typ.Elem)
+	case TypeVariant:
+		if payload, optional := typ.OptionalPayload(); optional {
+			return "?" + t.textLocked(payload)
+		}
+		if typ.Family == VariantFamilyNamed && typ.Name != "" {
+			return typ.Name
+		}
+		return "<invalid>"
 	case TypeArray:
 		if typ.Length == "" {
 			return "[]" + t.textLocked(typ.Elem)
@@ -203,11 +343,22 @@ func (t *TypeTable) textLocked(id TypeID) string {
 	case TypeSlice:
 		return "[..]" + t.textLocked(typ.Elem)
 	case TypeStruct:
+		if typ.Name != "" && typ.Identity != "" {
+			return typ.Name
+		}
 		return "struct{" + t.fieldsTextLocked(typ.Fields, ';') + "}"
 	case TypeInterface:
 		methods := make([]string, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
-			params := make([]string, 0, len(method.Params))
+			params := make([]string, 0, len(method.Params)+1)
+			switch method.Receiver {
+			case MethodReceiverValue:
+				params = append(params, "Self")
+			case MethodReceiverShared:
+				params = append(params, "&Self")
+			case MethodReceiverMutable:
+				params = append(params, "&mut Self")
+			}
 			for _, param := range method.Params {
 				params = append(params, param.Name+": "+t.textLocked(param.Type))
 			}
@@ -228,8 +379,6 @@ func (t *TypeTable) textLocked(id TypeID) string {
 			text += " -> " + t.textLocked(typ.Return)
 		}
 		return text
-	case TypeNamed:
-		return typ.Name
 	default:
 		return "<invalid>"
 	}
@@ -237,16 +386,55 @@ func (t *TypeTable) textLocked(id TypeID) string {
 
 // ABIKey is stable only inside the compiler ABI model. Backends may use it for
 // symbol identity, never raw TypeID values.
-func (t *TypeTable) ABIKey(id TypeID) string { return t.Text(id) }
+func (t *TypeTable) ABIKey(id TypeID) string {
+	if t == nil {
+		return "<invalid>"
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if id == InvalidType || int(id) >= len(t.types) {
+		return "<invalid>"
+	}
+	typ := t.types[id]
+	if key, ok := identifiedTypeKey(typ); ok {
+		return key
+	}
+	return t.textLocked(id)
+}
 
 func (t *TypeTable) key(typ Type) string {
+	if key, ok := identifiedTypeKey(typ); ok {
+		return key
+	}
+	return descriptorKey(typ)
+}
+
+func identifiedTypeKey(typ Type) (string, bool) {
+	if typ.Identity == "" {
+		return "", false
+	}
+	switch typ.Kind {
+	case TypeStruct:
+		return "struct:" + typ.Identity, true
+	case TypeVariant:
+		if typ.Family == VariantFamilyNamed {
+			return "variant:" + typ.Identity, true
+		}
+	}
+	return "", false
+}
+
+func descriptorKey(typ Type) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q", typ.Kind, typ.Signed, typ.Bits, typ.Mutable, typ.Length, typ.Elem, typ.Return, typ.Name)
+	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q|%d|%q", typ.Kind, typ.Signed, typ.Bits, typ.Mutable, typ.Length, typ.Elem, typ.Return, typ.Name, typ.Family, typ.Identity)
+	for _, variant := range typ.Cases {
+		fmt.Fprintf(&b, "|v:%q:%d", variant.Name, variant.Payload)
+	}
 	for _, field := range typ.Fields {
 		fmt.Fprintf(&b, "|f:%q:%d", field.Name, field.Type)
 	}
 	for _, method := range typ.Methods {
-		fmt.Fprintf(&b, "|m:%q:%d", method.Name, method.Return)
+		fmt.Fprintf(&b, "|m:%q:%d:%d", method.Name, method.Receiver, method.Return)
 		for _, param := range method.Params {
 			fmt.Fprintf(&b, ":%q:%d", param.Name, param.Type)
 		}
@@ -268,6 +456,7 @@ func (t *TypeTable) fieldsTextLocked(fields []TypeField, separator byte) string 
 func cloneType(typ Type) Type {
 	typ.Fields = append([]TypeField(nil), typ.Fields...)
 	typ.Params = append([]TypeID(nil), typ.Params...)
+	typ.Cases = append([]VariantCase(nil), typ.Cases...)
 	if len(typ.Methods) == 0 {
 		return typ
 	}

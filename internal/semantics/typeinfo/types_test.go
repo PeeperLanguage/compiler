@@ -412,3 +412,22 @@ func TestDynamicArrayRequiresRecursivelySizedElement(t *testing.T) {
 		t.Fatalf("dynamic array of fixed arrays containing bare interfaces must be unsized")
 	}
 }
+
+func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
+	i32 := &IntegerType{Signed: true, Bits: 32}
+	optional, ok := VariantDescriptorOf(&OptionalType{Inner: i32})
+	if !ok || optional.Family != VariantFamilyOptional || optional.Identity != "" || len(optional.Cases) != 2 ||
+		optional.Cases[0].Name != "Absent" || optional.Cases[0].Payload != nil ||
+		optional.Cases[1].Name != "Present" || TypeText(optional.Cases[1].Payload) != "i32" {
+		t.Fatalf("optional descriptor = %#v", optional)
+	}
+
+	named, ok := VariantDescriptorOf(&DefinedType{
+		Name:       "Status",
+		Underlying: &EnumType{Variants: []string{"Ready", "Waiting"}},
+	})
+	if !ok || named.Family != VariantFamilyNamed || named.Identity != "Status" || len(named.Cases) != 2 ||
+		named.Cases[0].Name != "Ready" || named.Cases[1].Name != "Waiting" {
+		t.Fatalf("named descriptor = %#v", named)
+	}
+}

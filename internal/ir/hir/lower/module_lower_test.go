@@ -138,9 +138,12 @@ func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
 	if !ok {
 		t.Fatalf("first statement = %T, want If", out.Funcs[0].Body.Stmts[0])
 	}
-	present, ok := branch.Cond.(*ir.OptionalPresent)
+	present, ok := branch.Cond.(*ir.VariantIs)
 	if !ok || out.Types.Text(present.Value.TypeID()) != "?i32" || out.Types.Text(present.TypeID()) != "bool" {
-		t.Fatalf("condition = %#v, want OptionalPresent(?i32) -> bool", branch.Cond)
+		t.Fatalf("condition = %#v, want VariantIs(?i32, Present) -> bool", branch.Cond)
+	}
+	if present.Case != ir.OptionalPresentCase {
+		t.Fatalf("condition case = %d, want Present", present.Case)
 	}
 	ret, ok := branch.Then.Stmts[0].(*hir.Return)
 	if !ok {
@@ -148,8 +151,97 @@ func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
 	}
 	load, ok := ret.Value.(*ir.Load)
 	if !ok || load.Place == nil || len(load.Place.Projections) != 1 ||
-		load.Place.Projections[0].Kind != ir.PlaceProjectionOptionalPayload || out.Types.Text(load.TypeID()) != "i32" {
+		load.Place.Projections[0].Kind != ir.PlaceProjectionVariantPayload ||
+		load.Place.Projections[0].Case != ir.OptionalPresentCase || out.Types.Text(load.TypeID()) != "i32" {
 		t.Fatalf("proven value = %#v, want i32 optional payload load", ret.Value)
+	}
+}
+
+func TestGenerateHIRKeepsProofAcrossImpossibleVariantEdge(t *testing.T) {
+	generateTestHIR(t, "hir_impossible_variant_edge_test"+peeper.SourceExt, "hir_impossible_variant_edge_test", `fn read(value: ?i32, other: ?i32) -> i32 {
+	if value != none {
+		if other != none && other == none {
+			let ignored = 0;
+		}
+		return value;
+	}
+	return 0;
+}`)
+}
+
+func TestGenerateHIRKeepsEagerConditionMutationOrdering(t *testing.T) {
+	generateTestHIR(t, "hir_eager_variant_mutation_test"+peeper.SourceExt, "hir_eager_variant_mutation_test", `struct Holder {
+	field: ?i32
+}
+
+fn Clear(holder: &mut Holder) -> bool {
+	holder.field = none;
+	return true;
+}
+
+fn read(value: ?i32, other: Holder) -> i32 {
+	if value == none {
+		return 0;
+	}
+	let mut holder = other;
+	if holder.field != none && Clear(&mut holder) && holder.field == none {
+		return value;
+	}
+	return 0;
+}`)
+}
+
+func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
+	consumer := &project.Module{Key: "local:consumer.peep", ModuleScope: symbols.NewScope(nil)}
+	typ := &typeinfo.DefinedType{
+		Name:       "Status",
+		Underlying: &typeinfo.EnumType{Variants: []string{"Ready"}},
+	}
+	lowered, ok := loweredRuntimeType(consumer, typ, nil).(*typeinfo.DefinedType)
+	if !ok || lowered == nil {
+		t.Fatalf("lowered type = %T, want DefinedType", lowered)
+	}
+	if lowered.Identity != "" {
+		t.Fatalf("lowered type invented use-site identity %q", lowered.Identity)
+	}
+}
+
+func TestGenerateHIRCompletesRecursiveNamedStructType(t *testing.T) {
+	out := generateTestHIR(t, "hir_recursive_struct_test"+peeper.SourceExt, "hir_recursive_struct_test", `struct Node {
+	value: i32,
+	next: ?*Node
+}
+
+fn Read(value: &Node) -> i32 {
+	return value.value;
+}`)
+
+	if len(out.Funcs) != 1 || len(out.Funcs[0].Params) != 1 {
+		t.Fatalf("recursive struct HIR = %#v", out.Funcs)
+	}
+	reference, ok := out.Types.Type(out.Funcs[0].Params[0].Type)
+	if !ok || reference.Kind != ir.TypeReference {
+		t.Fatalf("recursive struct parameter type = %#v", reference)
+	}
+	nodeID := reference.Elem
+	node, ok := out.Types.Type(nodeID)
+	if !ok || node.Kind != ir.TypeStruct || node.Name != "Node" || node.Identity == "" || len(node.Fields) != 2 {
+		t.Fatalf("recursive struct descriptor = %#v", node)
+	}
+	optional, ok := out.Types.Type(node.Fields[1].Type)
+	if !ok {
+		t.Fatalf("recursive optional descriptor missing")
+	}
+	payload, ok := optional.OptionalPayload()
+	if !ok {
+		t.Fatalf("recursive field type = %#v, want optional", optional)
+	}
+	owned, ok := out.Types.Type(payload)
+	if !ok || owned.Kind != ir.TypeOwnedPtr || owned.Elem != nodeID {
+		t.Fatalf("recursive optional payload = %#v, want owned pointer to TypeID %d", owned, nodeID)
+	}
+	if got := out.Types.Text(nodeID); got != "Node" {
+		t.Fatalf("recursive struct text = %q, want Node", got)
 	}
 }
 
@@ -171,7 +263,7 @@ func TestGenerateHIRKeepsOptionalIndexCarrierBeforePayloadProjection(t *testing.
 	index := load.Place.Projections[0]
 	payload := load.Place.Projections[1]
 	if index.Kind != ir.PlaceProjectionIndex || out.Types.Text(index.Type) != "?i32" ||
-		payload.Kind != ir.PlaceProjectionOptionalPayload || out.Types.Text(payload.Type) != "i32" {
+		payload.Kind != ir.PlaceProjectionVariantPayload || payload.Case != ir.OptionalPresentCase || out.Types.Text(payload.Type) != "i32" {
 		t.Fatalf("projections = %#v, want index:?i32 then optional-payload:i32", load.Place.Projections)
 	}
 }
@@ -308,10 +400,10 @@ fn update(mut holder: Holder) {
 		t.Fatalf("expected reference binding, got %#v", out.Funcs[0].Body.Stmts[0])
 	}
 	address, ok := binding.Value.(*ir.AddrOf)
-	if !ok || out.Types.Text(address.Type) != "&mut struct{value: i32}" {
+	if !ok || out.Types.Text(address.Type) != "&mut Token" {
 		t.Fatalf("expected mutable element address, got %#v", binding.Value)
 	}
-	if address.Place == nil || out.Types.Text(address.Place.Root.TypeID()) != "struct{tokens: [1]struct{value: i32}}" {
+	if address.Place == nil || out.Types.Text(address.Place.Root.TypeID()) != "Holder" {
 		t.Fatalf("expected Holder place root, got %#v", address.Place)
 	}
 	if len(address.Place.Projections) != 2 {
@@ -845,7 +937,7 @@ fn main() -> i32 { return Read(&Make()); }`
 		t.Fatalf("expected Read call, got %#v", ret.Value)
 	}
 	temporary, ok := call.Args[0].(*ir.TempBorrow)
-	if !ok || temporary.Value == nil || out.Types.Text(temporary.Type) != "&struct{value: i32}" || temporary.Slice {
+	if !ok || temporary.Value == nil || out.Types.Text(temporary.Type) != "&Box" || temporary.Slice {
 		t.Fatalf("expected temporary Box borrow, got %#v", call.Args[0])
 	}
 }
@@ -882,7 +974,7 @@ fn main() -> i32 {
 		t.Fatalf("method call = %#v, want receiver argument", ret.Value)
 	}
 	borrow, ok := call.Args[0].(*ir.AddrOf)
-	if !ok || borrow.Place == nil || out.Types.Text(borrow.Type) != "&struct{value: i32}" {
+	if !ok || borrow.Place == nil || out.Types.Text(borrow.Type) != "&Counter" {
 		t.Fatalf("method receiver = %#v, want semantic shared borrow", call.Args[0])
 	}
 }
@@ -908,5 +1000,44 @@ fn main() { let ignored = make(); }`)
 	}
 	if _, ok := stmt.Value.(*ir.Call); !ok {
 		t.Fatalf("discarded value = %T, want call", stmt.Value)
+	}
+}
+
+func TestLoweredTypeIDUsesSharedVariantDescriptor(t *testing.T) {
+	types := ir.NewTypeTable()
+	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	optionalID := loweredTypeID(ctx, nil, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	if direct := types.Intern(ir.OptionalVariant(i32)); optionalID != direct {
+		t.Fatalf("semantic optional ID = %d, direct optional ID = %d", optionalID, direct)
+	}
+	enumID := loweredTypeID(ctx, nil, &typeinfo.DefinedType{
+		Name:       "Status",
+		Underlying: &typeinfo.EnumType{Variants: []string{"Ready", "Waiting"}},
+	})
+	variant, ok := types.Type(enumID)
+	if !ok || variant.Kind != ir.TypeVariant || variant.Family != ir.VariantFamilyNamed ||
+		variant.Identity != "Status" || len(variant.Cases) != 2 || variant.Cases[0].Name != "Ready" {
+		t.Fatalf("enum runtime type = %#v", variant)
+	}
+}
+
+func TestLoweredTypeIDDoesNotPublishNamedTypeWithInvalidChild(t *testing.T) {
+	types := ir.NewTypeTable()
+	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
+	broken := &typeinfo.DefinedType{
+		Name: "Broken", Identity: "test::Broken",
+		Underlying: &typeinfo.StructType{Fields: []typeinfo.Field{{
+			Name: "missing", Type: &typeinfo.NamedType{Name: "Missing"},
+		}}},
+	}
+	if id := loweredTypeID(ctx, nil, broken); id != ir.InvalidType {
+		t.Fatalf("invalid named descriptor lowered as TypeID %d", id)
+	}
+	if ids := types.NamedTypeIDs(); len(ids) != 0 {
+		t.Fatalf("invalid named descriptor published as %#v", ids)
+	}
+	if !ctx.Diagnostics.HasErrors() || !strings.Contains(ctx.Diagnostics.EmitAllToString(), "unresolved named type reached IR lowering") {
+		t.Fatalf("invalid child diagnostic missing:\n%s", ctx.Diagnostics.EmitAllToString())
 	}
 }

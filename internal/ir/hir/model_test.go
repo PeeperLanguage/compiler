@@ -1,6 +1,7 @@
 package hir
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/ir"
@@ -45,5 +46,29 @@ func TestInspectStmtTraversesStructuredChildren(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("visited NodeIDs = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestSwitchVariantHIRKeepsCaseBlocksAndText(t *testing.T) {
+	switchStmt := &SwitchVariant{
+		Value: &ir.Ident{Name: "status"},
+		Cases: []VariantCaseBlock{
+			{Case: 0, Body: &Block{NodeID: 2}},
+			{Case: 1, Body: &Block{NodeID: 3}},
+		},
+		NodeID: 1,
+	}
+	visited := make([]NodeID, 0)
+	InspectStmt(switchStmt, func(stmt Stmt) bool {
+		visited = append(visited, NodeIDOf(stmt))
+		return true
+	})
+	var text strings.Builder
+	switchStmt.appendText(&text, 0)
+	if got := text.String(); got != "switch-variant status {\n  case 0 {\n  }\n  case 1 {\n  }\n}\n" {
+		t.Fatalf("switch text = %q", got)
+	}
+	if len(visited) != 3 || visited[0] != 1 || visited[1] != 2 || visited[2] != 3 {
+		t.Fatalf("visited switch nodes = %v", visited)
 	}
 }

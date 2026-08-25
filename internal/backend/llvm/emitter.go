@@ -44,6 +44,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	b.WriteString("target triple = \"")
 	b.WriteString(targetInfo.LLVMTriple)
 	b.WriteString("\"\n\n")
+	if !emitter.emitNamedTypeDefinitions(&b) {
+		return ""
+	}
 	printUsed, _, allocUsed, allocatorRuntimeUsed, freeRuntimeUsed := moduleRuntimeOperations(mod)
 	if printUsed {
 		b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
@@ -112,7 +115,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					} else {
 						slotName = "null"
 					}
-					slotLayout, ok := interfaceSlotLLVMLayout(mod.Types, makeVal.Type, i)
+					slotLayout, ok := emitter.interfaceSlotLayout(makeVal.Type, i)
 					if !ok {
 						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
 					}
@@ -218,6 +221,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	if !hasDefine {
 		return finalLLVMText(&b, emitter)
 	}
+	emitter.emitNamedDropHelpers(&b)
 	for _, thunk := range mod.InterfaceThunks {
 		emitInterfaceThunk(&b, emitter, thunk)
 	}
@@ -316,6 +320,8 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				case *mir.Branch:
 					cond := emitCondRef(lb, term.Cond)
 					lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
+				case *mir.SwitchVariant:
+					emitVariantSwitch(lb, term)
 				case *mir.Ret:
 					if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
 						if returnLayout.Kind != llvmLayoutVoid {
@@ -334,6 +340,48 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		b.WriteString("}\n")
 	}
 	return finalLLVMText(&b, emitter)
+}
+
+func emitVariantSwitch(b *llvmBuilder, term *mir.SwitchVariant) {
+	if b == nil || term == nil || term.Value == nil || len(term.Targets) == 0 {
+		if b != nil {
+			b.emitter.markInvalid("variant switch requires subject and targets")
+		}
+		return
+	}
+	variant, ok := b.emitter.mod.Types.Type(mirRefType(term.Value))
+	if !ok || variant.Kind != ir.TypeVariant {
+		b.emitter.markInvalid("variant switch requires variant subject")
+		return
+	}
+	if len(term.Targets) != len(variant.Cases) {
+		b.emitter.markInvalid("variant switch must cover every case")
+		return
+	}
+	value := emitRef(b, term.Value)
+	tag := b.variantTag(value)
+	cases := make([]llvmSwitchCase, len(term.Targets))
+	seen := make(map[int]struct{}, len(term.Targets))
+	for i, target := range term.Targets {
+		if _, caseOK := variant.VariantCase(target.Case); !caseOK {
+			b.emitter.markInvalid(fmt.Sprintf("variant switch has invalid case %d", target.Case))
+			return
+		}
+		if _, duplicate := seen[target.Case]; duplicate {
+			b.emitter.markInvalid(fmt.Sprintf("variant switch repeats case %d", target.Case))
+			return
+		}
+		seen[target.Case] = struct{}{}
+		cases[i] = llvmSwitchCase{
+			Value: b.variantCaseTag(target.Case, tag.Layout),
+			Label: fmt.Sprintf("b%d", target.TargetID),
+		}
+	}
+	invalidLabel := fmt.Sprintf("invalid_variant_%d", b.nextID)
+	b.nextID++
+	b.switchBranch(tag, invalidLabel, cases)
+	b.namedLabel(invalidLabel)
+	b.trap()
 }
 
 // ValidateRuntimeSymbols checks runtime ABI reservations after ownership and
