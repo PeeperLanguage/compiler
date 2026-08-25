@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -39,6 +40,9 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
+	module.TypedASTNodes = ast.Index(module.AST)
+	module.CFG = cfg.BuildModule(module.AST)
+	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -120,6 +124,77 @@ func TestGenerateHIRLowersIndexExpr(t *testing.T) {
 	}
 	if out.Types.Text(load.TypeID()) != "i32" || load.Place.Projections[0].Kind != ir.PlaceProjectionIndex {
 		t.Fatalf("index load = %#v, want i32 Index place", load)
+	}
+}
+
+func TestGenerateHIRLowersOptionalFlowEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_optional_flow_test"+peeper.SourceExt, "hir_optional_flow_test", `fn read(value: ?i32) -> i32 {
+	if value != none {
+		return value;
+	}
+	return 0;
+}`)
+	branch, ok := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	if !ok {
+		t.Fatalf("first statement = %T, want If", out.Funcs[0].Body.Stmts[0])
+	}
+	present, ok := branch.Cond.(*ir.OptionalPresent)
+	if !ok || out.Types.Text(present.Value.TypeID()) != "?i32" || out.Types.Text(present.TypeID()) != "bool" {
+		t.Fatalf("condition = %#v, want OptionalPresent(?i32) -> bool", branch.Cond)
+	}
+	ret, ok := branch.Then.Stmts[0].(*hir.Return)
+	if !ok {
+		t.Fatalf("then statement = %T, want Return", branch.Then.Stmts[0])
+	}
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 1 ||
+		load.Place.Projections[0].Kind != ir.PlaceProjectionOptionalPayload || out.Types.Text(load.TypeID()) != "i32" {
+		t.Fatalf("proven value = %#v, want i32 optional payload load", ret.Value)
+	}
+}
+
+func TestGenerateHIRKeepsOptionalIndexCarrierBeforePayloadProjection(t *testing.T) {
+	out := generateTestHIR(t, "hir_optional_index_flow_test"+peeper.SourceExt, "hir_optional_index_flow_test", `fn read(values: [1]?i32) -> i32 {
+	if values[0] == none {
+		return 0;
+	}
+	return values[0];
+}`)
+	ret, ok := out.Funcs[0].Body.Stmts[1].(*hir.Return)
+	if !ok {
+		t.Fatalf("second statement = %T, want Return", out.Funcs[0].Body.Stmts[1])
+	}
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 2 {
+		t.Fatalf("proven index = %#v, want index then optional payload load", ret.Value)
+	}
+	index := load.Place.Projections[0]
+	payload := load.Place.Projections[1]
+	if index.Kind != ir.PlaceProjectionIndex || out.Types.Text(index.Type) != "?i32" ||
+		payload.Kind != ir.PlaceProjectionOptionalPayload || out.Types.Text(payload.Type) != "i32" {
+		t.Fatalf("projections = %#v, want index:?i32 then optional-payload:i32", load.Place.Projections)
+	}
+}
+
+func TestGenerateHIRPreservesExplicitOptionalCarrierInsideProof(t *testing.T) {
+	out := generateTestHIR(t, "hir_optional_carrier_test"+peeper.SourceExt, "hir_optional_carrier_test", `fn keep(value: ?i32) -> ?i32 {
+	if value != none {
+		let carrier: ?i32 = value;
+		return carrier;
+	}
+	return none;
+}`)
+	branch, ok := out.Funcs[0].Body.Stmts[0].(*hir.If)
+	if !ok || branch.Then == nil || len(branch.Then.Stmts) == 0 {
+		t.Fatalf("first statement = %#v, want populated If", out.Funcs[0].Body.Stmts[0])
+	}
+	binding, ok := branch.Then.Stmts[0].(*hir.Binding)
+	if !ok {
+		t.Fatalf("then statement = %T, want Binding", branch.Then.Stmts[0])
+	}
+	ident, ok := binding.Value.(*ir.Ident)
+	if !ok || out.Types.Text(ident.TypeID()) != "?i32" {
+		t.Fatalf("explicit carrier value = %#v, want ?i32 Ident", binding.Value)
 	}
 }
 

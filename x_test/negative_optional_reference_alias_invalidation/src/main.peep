@@ -1,0 +1,12 @@
+struct Holder {
+    maybe: ?i32
+}
+
+fn Invalid(holder: &mut Holder) -> i32 {
+    let alias = holder;
+    if alias.maybe == none {
+        return 0;
+    }
+    alias.maybe = none;
+    return alias.maybe;
+}

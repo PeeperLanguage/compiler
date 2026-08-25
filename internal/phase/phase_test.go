@@ -5,7 +5,7 @@ import "testing"
 func TestPhaseString(t *testing.T) {
 	for phase, want := range map[Phase]string{
 		None: "none", Setup: "setup", Load: "load", Parsed: "parsed",
-		Typechecked: "typechecked", CFG: "CFG", DefiniteInit: "definite-init",
+		Typechecked: "typechecked", CFG: "CFG", FlowTyped: "flow-typed", DefiniteInit: "definite-init",
 		Ownership: "ownership", Usage: "usage", HIR: "HIR", MIR: "MIR",
 		Backend: "backend", Finalize: "finalize",
 	} {

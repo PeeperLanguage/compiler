@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
@@ -1282,6 +1283,106 @@ func TestHoverShowsBinaryExpressionType(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "(expr): i32") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsFlowRefinedOptionalUseType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	state := NewServerState()
+	state.RootDir = root
+
+	outside := hoverAtSource(t, state, mainPath, `fn read(value: ?i32) -> i32 {
+	let carrier: ?i32 = __CURSOR__value;
+	if value == none {
+		return 0;
+	}
+	return value;
+}`)
+	if outside == nil || !strings.Contains(outside.Contents.Value, "(param) value: ?i32") {
+		t.Fatalf("outside-proof hover = %#v, want ?i32", outside)
+	}
+
+	inside := hoverAtSource(t, state, mainPath, `fn read(value: ?i32) -> i32 {
+	let carrier: ?i32 = value;
+	if value == none {
+		return 0;
+	}
+	return __CURSOR__value;
+}`)
+	if inside == nil || !strings.Contains(inside.Contents.Value, "(param) value: i32") {
+		t.Fatalf("inside-proof hover = %#v, want i32", inside)
+	}
+}
+
+func TestLSPRefreshesOptionalFlowDiagnosticsAfterEdit(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		invalid string
+		valid   string
+	}{
+		{
+			name: "missing proof",
+			code: diagnostics.ErrOptionalPayloadProof,
+			invalid: `fn read(value: ?i32) -> i32 {
+	return value;
+}`,
+			valid: `fn read(value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	return value;
+}`,
+		},
+		{
+			name: "unstable index",
+			code: diagnostics.ErrUnstableNarrowing,
+			invalid: `fn read(values: [2]?i32, index: usize) -> i32 {
+	if values[index + 1] == none {
+		return 0;
+	}
+	return values[index + 1];
+}`,
+			valid: `fn read(values: [2]?i32, index: usize) -> i32 {
+	if values[index] == none {
+		return 0;
+	}
+	return values[index];
+}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			filePath := filepath.Join(root, "main"+peeper.SourceExt)
+			state := NewServerState()
+			state.RootDir = root
+			version := 1
+			state.applyDocumentSnapshot(filePath, &test.invalid, &version)
+			params := publishCurrentDiagnostics(t, state, filePath)
+			found := false
+			for _, diagnostic := range params.Diagnostics {
+				if diagnostic.Code == test.code {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("version %d diagnostics = %#v, want %s", version, params.Diagnostics, test.code)
+			}
+
+			version++
+			state.applyDocumentSnapshot(filePath, &test.valid, &version)
+			params = publishCurrentDiagnostics(t, state, filePath)
+			if params.Version == nil || *params.Version != version {
+				t.Fatalf("recovered diagnostic version = %v, want %d", params.Version, version)
+			}
+			if hasErrorDiagnostic(params.Diagnostics) {
+				t.Fatalf("optional flow diagnostics remained after edit: %#v", params.Diagnostics)
+			}
+		})
 	}
 }
 

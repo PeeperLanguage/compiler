@@ -1,0 +1,8 @@
+fn Invalidated(values: [2]?i32) -> i32 {
+    let mut index: usize = 0;
+    if values[index] != none {
+        index = 1;
+        return values[index];
+    }
+    return 0;
+}

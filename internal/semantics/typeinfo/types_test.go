@@ -77,6 +77,9 @@ func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	if !IsImplicitCopyType(i32) || !IsImplicitCopyType(&RawPtrType{}) || !IsImplicitCopyType(&RefType{Target: i32}) {
 		t.Fatalf("scalar, raw pointer, and shared reference should copy implicitly")
 	}
+	if !IsImplicitCopyType(&OptionalType{Inner: i32}) || IsImplicitCopyType(&OptionalType{Inner: &StructType{}}) {
+		t.Fatalf("optional copyability should follow payload copyability")
+	}
 	if IsImplicitCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
 		t.Fatalf("struct should not copy implicitly")
 	}

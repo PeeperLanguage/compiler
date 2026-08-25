@@ -1,0 +1,207 @@
+struct Holder {
+    field: ?i32,
+    items: [2]?i32
+}
+
+struct Outer {
+    inner: Holder
+}
+
+struct Token {
+    value: i32
+}
+
+fn (self: &Token) Read() -> i32 {
+    return self.value;
+}
+
+struct OwnedBox {
+    value: i32
+}
+
+fn Some(value: i32) -> ?i32 {
+    return value;
+}
+
+fn Guard(value: ?i32) -> i32 {
+    if value == none {
+        return 10;
+    }
+    return value;
+}
+
+fn Take(value: Token) -> i32 {
+    return value.value;
+}
+
+fn TakeOptional(value: ?Token) -> i32 {
+    if value == none {
+        return 0;
+    }
+    return Take(value);
+}
+
+fn ReadOptionalMethod(value: ?Token) -> i32 {
+    if value == none {
+        return 0;
+    }
+    return value.Read();
+}
+
+fn WritePayload(_: &mut i32) {}
+
+fn HoldCarrier(_: &?i32) {}
+
+fn HoldOptionalCarrier(_: ?&?i32) {}
+
+fn TouchOptional(_: &mut ?i32) -> bool {
+    return true;
+}
+
+fn ReborrowOptionalReference(value: ?&mut i32) {
+    if value == none {
+        return;
+    }
+    WritePayload(value);
+    WritePayload(value);
+}
+
+fn ReadAfterOwnedPayloadMutation(mut owner: ?*OwnedBox) -> i32 {
+    if owner == none {
+        return 0;
+    }
+    WritePayload(&mut owner.value);
+    return owner.value;
+}
+
+fn ConsumeOptionalOwner(owner: ?*OwnedBox) -> i32 {
+    if owner == none {
+        return 0;
+    }
+    let result = owner.value;
+    free(owner);
+    return result;
+}
+
+fn ReadThroughAlias(holder: &Holder) -> i32 {
+    let alias = holder;
+    if alias.field == none {
+        return 0;
+    }
+    return holder.field;
+}
+
+fn main() -> i32 {
+    let maybe = Some(7);
+    if maybe == none {
+        return 1;
+    }
+    let carried: ?i32 = maybe;
+    HoldCarrier(&carried);
+    if carried == none {
+        return 2;
+    }
+    HoldOptionalCarrier(&carried);
+    if carried != 7 {
+        return 2;
+    }
+    let inferred = maybe;
+    if inferred != 7 {
+        return 2;
+    }
+
+    let reversedEq = Some(7);
+    if none == reversedEq {
+        return 3;
+    }
+    if reversedEq != 7 {
+        return 4;
+    }
+
+    let reversedNe = Some(7);
+    if none != reversedNe {
+        if reversedNe != 7 {
+            return 4;
+        }
+    }
+
+    let holder = .Holder{field = Some(9), items = [2]?i32{Some(11), none}};
+    if holder.field != none {
+        if holder.field != 9 {
+            return 5;
+        }
+    }
+    let nestedOuter = .Outer{inner = .Holder{field = Some(9), items = [2]?i32{none, none}}};
+    if nestedOuter.inner.field != none {
+        if nestedOuter.inner.field != 9 {
+            return 5;
+        }
+    }
+    const index: usize = 0;
+    if holder.items[index] != none {
+        if holder.items[index] != 11 {
+            return 6;
+        }
+    }
+    let bindingIndex: usize = 0;
+    if holder.items[bindingIndex] != none {
+        if holder.items[bindingIndex] != 11 {
+            return 6;
+        }
+    }
+
+    let inner: ?i32 = Some(13);
+    let eagerOuter: ? ?i32 = inner;
+    if !(eagerOuter != none && true) {
+        return 7;
+    }
+    let outer: ? ?i32 = inner;
+    if outer != none {
+        if outer != none {
+            if outer != 13 {
+                return 7;
+            }
+        }
+    }
+
+    let ownerResult = TakeOptional(.Token{value = 23});
+    if ownerResult != 23 {
+        return 8;
+    }
+    if ReadOptionalMethod(.Token{value = 41}) != 41 {
+        return 8;
+    }
+
+    let mut borrowedPayload: ?i32 = Some(29);
+    if borrowedPayload == none {
+        return 9;
+    }
+    WritePayload(&mut borrowedPayload);
+    if borrowedPayload != 29 {
+        return 9;
+    }
+    let mut referenced = 31;
+    ReborrowOptionalReference(&mut referenced);
+    if ReadAfterOwnedPayloadMutation(alloc(.OwnedBox{value = 37})) != 37 {
+        return 10;
+    }
+
+    let mut reproved = Some(43);
+    if reproved != none && TouchOptional(&mut reproved) && reproved != none {
+        if reproved != 43 {
+            return 11;
+        }
+    } else {
+        return 11;
+    }
+
+    let aliasHolder = .Holder{field = Some(47), items = [2]?i32{none, none}};
+    if ReadThroughAlias(&aliasHolder) != 47 {
+        return 12;
+    }
+    if ConsumeOptionalOwner(alloc(.OwnedBox{value = 53})) != 53 {
+        return 13;
+    }
+
+    return Guard(Some(17)) - 17;
+}

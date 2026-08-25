@@ -1,0 +1,15 @@
+fn MissingProof(value: ?i32) -> i32 {
+    return value;
+}
+
+fn StaleJoinProof(value: ? ?i32) -> i32 {
+    if value != none {
+    } else {
+        print(0);
+        print(1);
+    }
+    if value == none {
+        return 0;
+    }
+    return value;
+}

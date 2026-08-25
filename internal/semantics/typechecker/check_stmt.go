@@ -74,6 +74,9 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
 		}
+		if c.siteOnly {
+			return
+		}
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ForStmt:
@@ -82,6 +85,9 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool"))
 			}
+		}
+		if c.siteOnly {
+			return
 		}
 		c.checkBlock(scope, node.Body, returnType)
 	case *ast.ExprStmt:
@@ -105,7 +111,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	if c == nil || scope == nil || node == nil || node.Target == nil || node.Value == nil {
 		return
 	}
-	targetType := c.typeExpr(scope, node.Target, nil)
+	targetType := c.typeWholeCarrierExpr(scope, node.Target, nil)
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		return
 	}

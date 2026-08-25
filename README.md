@@ -83,7 +83,8 @@ source
   -> tokens
   -> AST
   -> name and base-type semantics
-  -> typed CFG
+  -> CFG
+  -> flow typing and optional narrowing
   -> definite initialization
   -> ownership
   -> project-wide usage analysis

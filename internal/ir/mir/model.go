@@ -179,6 +179,7 @@ const (
 	PlaceProjectionDeref PlaceProjectionKind = iota
 	PlaceProjectionField
 	PlaceProjectionIndex
+	PlaceProjectionOptionalPayload
 )
 
 type PlaceProjection struct {
@@ -282,6 +283,12 @@ type OptionalSome struct {
 	Location *source.Location
 }
 
+type OptionalPresent struct {
+	Value    ValueRef
+	Type     ir.TypeID
+	Location *source.Location
+}
+
 type InterfaceMake struct {
 	Value    ValueRef
 	DataType ir.TypeID
@@ -346,6 +353,7 @@ func (*DynamicArrayAlloc) valueExprNode() {}
 func (*Alloc) valueExprNode()             {}
 func (*ZeroValue) valueExprNode()         {}
 func (*OptionalSome) valueExprNode()      {}
+func (*OptionalPresent) valueExprNode()   {}
 func (*InterfaceMake) valueExprNode()     {}
 func (*InterfaceCall) valueExprNode()     {}
 func (*StringLiteral) valueExprNode()     {}
@@ -379,6 +387,7 @@ func (v *DynamicArrayOp) SourceLocation() *source.Location    { return v.Locatio
 func (v *Alloc) SourceLocation() *source.Location             { return v.Location }
 func (v *ZeroValue) SourceLocation() *source.Location         { return v.Location }
 func (v *OptionalSome) SourceLocation() *source.Location      { return v.Location }
+func (v *OptionalPresent) SourceLocation() *source.Location   { return v.Location }
 func (v *InterfaceMake) SourceLocation() *source.Location     { return v.Location }
 func (v *InterfaceCall) SourceLocation() *source.Location     { return v.Location }
 
@@ -416,6 +425,8 @@ func (p *Place) Text() string {
 				b.WriteString(projection.Index.Text())
 			}
 			b.WriteString("]")
+		case PlaceProjectionOptionalPayload:
+			b.WriteString(".value")
 		}
 	}
 	return b.String()
@@ -503,6 +514,12 @@ func (v *OptionalSome) Text() string {
 		return "some(<nil>)"
 	}
 	return "some(" + v.Value.Text() + ")"
+}
+func (v *OptionalPresent) Text() string {
+	if v == nil || v.Value == nil {
+		return "present(<nil>)"
+	}
+	return "present(" + v.Value.Text() + ")"
 }
 
 func (v *InterfaceMake) Text() string {

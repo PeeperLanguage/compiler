@@ -1,0 +1,15 @@
+struct Token {
+    value: i32
+}
+
+struct Holder {
+    token: ?Token
+}
+
+fn Consume(_: Token) {}
+
+fn PartialMove(holder: Holder) {
+    if holder.token != none {
+        Consume(holder.token);
+    }
+}

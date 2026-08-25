@@ -1,0 +1,6 @@
+name = "runtime_optional_narrowing"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

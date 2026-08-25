@@ -156,15 +156,15 @@ func checkOptionalCompatibility(dst, src Type) Compatibility {
 	if _, ok := Underlying(src).(*NoneType); ok {
 		return Compatible
 	}
+	if SameType(left.Inner, src) {
+		return Compatible
+	}
 	right, ok := Underlying(src).(*OptionalType)
 	if ok && right != nil {
 		if SameType(left.Inner, right.Inner) {
 			return Compatible
 		}
 		return Incompatible
-	}
-	if SameType(left.Inner, src) {
-		return Compatible
 	}
 	return Incompatible
 }

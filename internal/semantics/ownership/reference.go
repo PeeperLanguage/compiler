@@ -4,12 +4,10 @@ import (
 	"maps"
 	"slices"
 
-	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
-	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -131,9 +129,7 @@ func (ctx *loanContext) addTemporary(value []referenceLoan, call ast.Node) {
 }
 
 func (a *analyzer) checkStorageAccess(
-	scope *symbols.Scope,
 	expr ast.Expr,
-	st state,
 	loans *loanContext,
 	access storageAccess,
 ) {
@@ -141,7 +137,7 @@ func (a *analyzer) checkStorageAccess(
 		return
 	}
 	a.reportLoanConflict(
-		a.originsForExpr(scope, expr, st),
+		a.originsForExpr(expr),
 		a.referenceHolder(expr),
 		access,
 		expr,
@@ -326,21 +322,15 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	}
 }
 
-func (a *analyzer) referenceValueForExpr(scope *symbols.Scope, expr ast.Expr, st state) ([]referenceLoan, bool) {
-	if a == nil || scope == nil || expr == nil {
+func (a *analyzer) referenceValueForExpr(expr ast.Expr) ([]referenceLoan, bool) {
+	if a == nil || expr == nil {
 		return []referenceLoan{}, false
 	}
 	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
 	if !ok {
 		return []referenceLoan{}, false
 	}
-	if ident, ok := expr.(*ast.Ident); ok {
-		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
-		if value, tracked := st.references[sym]; tracked {
-			return copyReferenceLoans(value), true
-		}
-	}
-	origins := a.originsForExpr(scope, expr, st)
+	origins := a.originsForExpr(expr)
 	if len(origins) == 0 {
 		return []referenceLoan{}, false
 	}
@@ -352,57 +342,21 @@ func (a *analyzer) referenceValueForExpr(scope *symbols.Scope, expr ast.Expr, st
 	}}, true
 }
 
-func (a *analyzer) originsForExpr(scope *symbols.Scope, expr ast.Expr, st state) []place.Origin {
-	if a == nil || scope == nil || expr == nil {
+func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
+	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
 		return nil
 	}
-	return place.Origins(scope, expr, place.OriginOptions{
-		ExprType:       a.exprType,
-		ResolveBinding: a.expandedDefaultBinding,
-		ReferenceOrigins: func(sym *symbols.Symbol) []place.Origin {
-			return referenceOrigins(st.references[sym])
-		},
-		CallOrigins: func(call *ast.CallExpr) []place.Origin {
-			return a.callReturnOrigins(scope, call, st)
-		},
-		ConstantIndex: func(index ast.Expr) (string, bool) {
-			expected := a.exprType(index)
-			if !typeinfo.IsIntegral(expected) {
-				expected = typeinfo.DefaultIntegerType()
-			}
-			value, evaluated := consteval.EvaluateExpr(a.ctx, a.module, scope, index, expected)
-			integer, integral := value.(*constvalue.IntConst)
-			if !evaluated || !integral || integer == nil {
-				return "", false
-			}
-			return integer.Text(), true
-		},
-	})
+	return place.CloneOrigins(a.module.Flow.ResolvedValueOrigins[expr.ID()])
 }
 
-func (a *analyzer) callReturnOrigins(scope *symbols.Scope, call *ast.CallExpr, st state) []place.Origin {
-	if a == nil || call == nil || call.Callee == nil {
-		return nil
-	}
-	fnType, _ := typeinfo.Underlying(a.exprType(call.Callee)).(*typeinfo.FuncType)
-	if fnType == nil || fnType.ReturnOrigins == nil {
-		return nil
-	}
-	var origins []place.Origin
-	for _, source := range typeinfo.ReturnOriginSources(call, fnType) {
-		origins = place.MergeOrigins(origins, a.originsForExpr(scope, source, st))
-	}
-	return origins
-}
-
-func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state) {
+func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt) {
 	if a == nil || a.function == nil || scope == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
 	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !reference {
 		return
 	}
-	value, found := a.referenceValueForExpr(scope, stmt.Value, st)
+	value, found := a.referenceValueForExpr(stmt.Value)
 	if !found {
 		return
 	}

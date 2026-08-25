@@ -15,7 +15,8 @@ Core rules:
 - Builtin concepts must use builtin syntax, not library-shaped names.
 - Heap allocation is explicit.
 - Scalars and raw pointers copy implicitly.
-- Composites move implicitly on every by-value use.
+- Non-optional composites move implicitly on every by-value use.
+- Optionals copy only when their payload type copies; otherwise they move.
 - Duplication beyond implicit scalar/raw copy is an ordinary user-defined method API.
 - Types containing tracked ownership cannot be copied.
 - Live owned values are destroyed automatically at normal scope exit.
@@ -28,7 +29,7 @@ Core rules:
 | --- | --- | --- |
 | scalar builtin | Scalar value | Implicit copy |
 | `T` | Composite value | Implicit move; user methods may construct duplicates |
-| `?T` | Optional value | Implicit move |
+| `?T` | Optional value | Copies when `T` copies; otherwise moves |
 | `*T` | Unique non-null heap handle to `T` | Implicit move; never copyable |
 | `rawptr` | Opaque nullable pointer | Copyable pointer bits |
 | `&T` | Shared reference to `T` | Copyable temporary view |
@@ -71,6 +72,46 @@ String ranges use byte offsets and return borrowed `&str` views. Start and end
 must be ordered, within the byte length, and on UTF-8 codepoint boundaries.
 Invalid bounds or boundaries trap at runtime. The owner remains responsible
 for backing storage and is dropped exactly once.
+
+## Optional Values And Flow Narrowing
+
+`?T` contains either one `T` value or `none`. `none` is valid only where an
+optional type is expected. A `T` value promotes to `?T`; this permits one-layer
+promotion such as `?T` to `??T` when the outer optional is expected. Assigning
+or passing a whole optional to an explicit optional destination preserves its
+carrier type instead of reading its payload.
+
+Comparing a stable optional place with `none` establishes presence on one CFG
+edge. `x != none` proves presence on the true edge; `x == none` proves presence
+on the false edge. Reversed operands have identical meaning. Each proof unwraps
+one optional layer, so nested optionals require one proof per layer. A proven
+ordinary value use has payload type `T`; an unproven use retains `?T` and cannot
+stand in for `T`.
+
+Stable places are variables, field and nested-field projections, constant-folded
+indexes, and direct resolved integral binding indexes. Other computed indexes
+are unstable. Assigning a carrier or ancestor, mutating overlapping storage
+through an alias, changing a binding used as an index, or calling code that may
+mutate overlapping storage invalidates affected facts. Unknown raw-pointer
+effects invalidate all potentially reachable facts; calls also invalidate
+mutable module-global facts. Payload-descendant mutation preserves presence of
+the containing optional.
+
+Facts survive terminating guards, intersect at joins, and reach a fixed point
+through loops. Logical `&&` and `||` are eager: their right operands receive no
+short-circuit proof, though the completed boolean result may refine its outgoing
+CFG edge.
+
+Presence checks never consume. Reading a copyable payload, including a shared
+reference payload, preserves the carrier. Moving a move-only payload from a
+direct named local or parameter consumes the whole carrier. Move-only payloads
+cannot be partially moved from fields, indexes, pointees, or other projected
+places; borrow them instead. Reassigning a consumed carrier reinitializes it.
+
+Every optional currently uses tagged `{present, value}` runtime storage,
+including pointer payloads. Optional-to-optional equality, fallback operators,
+explicit unwrap syntax, optional chaining, and optional patterns are not part of
+current language surface. Niche layout remains separate future work.
 
 ## Numeric Literals And Conversions
 

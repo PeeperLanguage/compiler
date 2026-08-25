@@ -22,6 +22,8 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return expr
 	case *OptionalSome:
 		return &OptionalSome{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
+	case *OptionalPresent:
+		return &OptionalPresent{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Ident:
 		if env != nil {
 			if value, ok := env[node.Name]; ok && value != nil {

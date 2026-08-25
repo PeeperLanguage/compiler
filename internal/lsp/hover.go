@@ -319,12 +319,13 @@ func resolveSelectorHoverSubject(cc *cursorContext) *hoverSubject {
 			Decl:     documentedDeclAncestor(ident, cc.parents),
 			Location: ast.LocOf(ident),
 			Symbol:   sym,
+			ExprType: cc.module.EffectiveExprType(sel.ID()),
 		}
 	}
 	if subject := resolveInterfaceSelectorMethodHoverSubject(cc, sel, ident); subject != nil {
 		return subject
 	}
-	if exprType, ok := cc.module.Semantics.ExprTypes[sel.ID()]; ok {
+	if exprType := cc.module.EffectiveExprType(sel.ID()); exprType != nil {
 		return &hoverSubject{
 			Kind:     hoverSubjectExpr,
 			Node:     ident,
@@ -380,6 +381,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 		Decl:     documentedDeclAncestor(ident, cc.parents),
 		Location: ast.LocOf(ident),
 		Symbol:   sym,
+		ExprType: cc.module.EffectiveExprType(ident.ID()),
 	}
 	if sym.Kind == symbols.SymbolType {
 		if typ, ok := symbols.GetSymbolType(sym); ok {
@@ -492,8 +494,8 @@ func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
 	if _, ok := cc.node.(ast.Expr); !ok {
 		return nil
 	}
-	exprType, ok := cc.module.Semantics.ExprTypes[cc.node.ID()]
-	if !ok {
+	exprType := cc.module.EffectiveExprType(cc.node.ID())
+	if exprType == nil {
 		return nil
 	}
 	return &hoverSubject{
@@ -515,7 +517,7 @@ func renderHoverSubject(subject *hoverSubject) string {
 		if subject.Symbol == nil {
 			return ""
 		}
-		text = renderSymbol(subject.Symbol, symbolRenderContext{Declaration: subject.Decl})
+		text = renderSymbol(subject.Symbol, symbolRenderContext{Type: subject.ExprType, Declaration: subject.Decl})
 		if typ, ok := symbols.GetSymbolType(subject.Symbol); ok && typ != nil {
 			if subject.Symbol.Kind == symbols.SymbolType {
 				text += renderTypeDetails(typ, subject.MethodSymbols)

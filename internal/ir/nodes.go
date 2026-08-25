@@ -85,6 +85,12 @@ type OptionalSome struct {
 	Type  TypeID
 }
 
+type OptionalPresent struct {
+	SourceInfo
+	Value Expr
+	Type  TypeID
+}
+
 type Ident struct {
 	SourceInfo
 	Name     string
@@ -120,6 +126,7 @@ const (
 	PlaceProjectionDeref PlaceProjectionKind = iota
 	PlaceProjectionField
 	PlaceProjectionIndex
+	PlaceProjectionOptionalPayload
 )
 
 type PlaceProjection struct {
@@ -268,6 +275,7 @@ var (
 	_ Expr = (*BoolLit)(nil)
 	_ Expr = (*ZeroValue)(nil)
 	_ Expr = (*OptionalSome)(nil)
+	_ Expr = (*OptionalPresent)(nil)
 	_ Expr = (*Ident)(nil)
 	_ Expr = (*Unary)(nil)
 	_ Expr = (*Binary)(nil)
@@ -290,25 +298,27 @@ var (
 	_ Expr = (*Drop)(nil)
 )
 
-func (*InvalidExpr) exprNode()                        {}
-func (*InvalidExpr) forEachChild(func(Expr))          {}
-func (*IntLit) exprNode()                             {}
-func (*IntLit) forEachChild(func(Expr))               {}
-func (*FloatLit) exprNode()                           {}
-func (*FloatLit) forEachChild(func(Expr))             {}
-func (*StringLit) exprNode()                          {}
-func (*StringLit) forEachChild(func(Expr))            {}
-func (*BoolLit) exprNode()                            {}
-func (*BoolLit) forEachChild(func(Expr))              {}
-func (*ZeroValue) exprNode()                          {}
-func (*ZeroValue) forEachChild(func(Expr))            {}
-func (*OptionalSome) exprNode()                       {}
-func (e *OptionalSome) forEachChild(visit func(Expr)) { visit(e.Value) }
-func (*Ident) exprNode()                              {}
-func (*Ident) forEachChild(func(Expr))                {}
-func (*Unary) exprNode()                              {}
-func (e *Unary) forEachChild(visit func(Expr))        { visit(e.Arg) }
-func (*Binary) exprNode()                             {}
+func (*InvalidExpr) exprNode()                           {}
+func (*InvalidExpr) forEachChild(func(Expr))             {}
+func (*IntLit) exprNode()                                {}
+func (*IntLit) forEachChild(func(Expr))                  {}
+func (*FloatLit) exprNode()                              {}
+func (*FloatLit) forEachChild(func(Expr))                {}
+func (*StringLit) exprNode()                             {}
+func (*StringLit) forEachChild(func(Expr))               {}
+func (*BoolLit) exprNode()                               {}
+func (*BoolLit) forEachChild(func(Expr))                 {}
+func (*ZeroValue) exprNode()                             {}
+func (*ZeroValue) forEachChild(func(Expr))               {}
+func (*OptionalSome) exprNode()                          {}
+func (e *OptionalSome) forEachChild(visit func(Expr))    { visit(e.Value) }
+func (*OptionalPresent) exprNode()                       {}
+func (e *OptionalPresent) forEachChild(visit func(Expr)) { visit(e.Value) }
+func (*Ident) exprNode()                                 {}
+func (*Ident) forEachChild(func(Expr))                   {}
+func (*Unary) exprNode()                                 {}
+func (e *Unary) forEachChild(visit func(Expr))           { visit(e.Arg) }
+func (*Binary) exprNode()                                {}
 func (e *Binary) forEachChild(visit func(Expr)) {
 	visit(e.Left)
 	visit(e.Right)
@@ -486,6 +496,18 @@ func (e *OptionalSome) TypeID() TypeID {
 	}
 	return e.Type
 }
+func (e *OptionalPresent) String() string {
+	if e == nil || e.Value == nil {
+		return "present(<nil>)"
+	}
+	return "present(" + e.Value.String() + ")"
+}
+func (e *OptionalPresent) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
 func (e *Ident) String() string { return e.Name }
 func (e *Ident) TypeID() TypeID {
 	if e == nil {
@@ -583,6 +605,8 @@ func (p *Place) String() string {
 				b.WriteString(projection.Index.String())
 			}
 			b.WriteString("]")
+		case PlaceProjectionOptionalPayload:
+			b.WriteString(".value")
 		}
 	}
 	return b.String()

@@ -84,14 +84,15 @@ storage and require a named allocating clone method.
 ```peep
 fn optionals() {
     let scalar: ?i32 = 7
-    let scalar_copy = optional_copy(&scalar)
+    let scalar_copy = scalar
 
     let owner: ?*Node = none
     let owner_clone = clone_optional_owner(&owner)
 }
 ```
 
-Optional values always move implicitly. Duplication APIs are user-defined.
+Optional values copy when their payload copies. An optional with a move-only
+payload moves implicitly; duplication remains a user-defined API.
 
 ## By-Value Calls And Borrows
 

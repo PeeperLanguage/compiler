@@ -954,6 +954,53 @@ func TestGenerateLLVMIRLowersOptionalOwnedPointerAsTagged(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersTaggedOptionalOwnedDropAcrossTargetWidths(t *testing.T) {
+	for _, compilerTarget := range []struct {
+		name      string
+		info      target.Info
+		bits      int
+		indexType string
+	}{
+		{name: "amd64", info: testLinuxAMD64, bits: target.Bits64, indexType: "i64"},
+		{name: "386", info: testLinux386, bits: target.Bits32, indexType: "i32"},
+	} {
+		t.Run(compilerTarget.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(compilerTarget.bits)
+			mod := &mir.Module{
+				Name: "test", Types: types.table, FilePath: unixTestPath,
+				Funcs: []*mir.Function{{
+					Name: "release", Params: []ir.Param{{Name: "value", Type: types.optionalOwnedI32}},
+					ReturnType: types.void,
+					Blocks: []*mir.Block{{
+						ID:     0,
+						Instrs: []mir.Instr{&mir.Drop{Value: &mir.RefName{Name: "value", Type: types.optionalOwnedI32}}},
+						Term:   &mir.Ret{},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget.info, false)
+			carrier := "{ i1, { i32*, i8* } }"
+			if !strings.Contains(out, "define void @release("+carrier+" %value)") ||
+				!strings.Contains(out, "extractvalue "+carrier+" %value, 0") ||
+				!strings.Contains(out, "extractvalue "+carrier+" %value, 1") ||
+				!strings.Contains(out, "br i1") ||
+				!strings.Contains(out, "ptrtoint i32* getelementptr (i32, i32* null, i32 1) to "+compilerTarget.indexType) {
+				t.Fatalf("expected tagged optional drop using %s target width, got:\n%s", compilerTarget.indexType, out)
+			}
+
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				return
+			}
+			cmd := exec.Command(clang, "-target", compilerTarget.info.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "optional.o"), "-")
+			cmd.Stdin = strings.NewReader(out)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s tagged optional LLVM is invalid: %v\n%s\n%s", compilerTarget.name, err, output, out)
+			}
+		})
+	}
+}
+
 func TestGenerateLLVMIRDefaultDescriptorEmitted(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -1604,7 +1651,7 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 				}},
 			},
 			{
-				Name:       "niche",
+				Name:       "tagged_ptr",
 				ReturnType: llvmTypes.optionalOwnedI32,
 				EntryID:    0,
 				Blocks: []*mir.Block{{
@@ -1625,7 +1672,7 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 	if !strings.Contains(irText, "ret { i1, i32 } zeroinitializer") {
 		t.Fatalf("expected tagged optional none as zeroinitializer, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "define { i1, { i32*, i8* } } @niche(") {
+	if !strings.Contains(irText, "define { i1, { i32*, i8* } } @tagged_ptr(") {
 		t.Fatalf("expected tagged optional pointer return type, got:\n%s", irText)
 	}
 	if !strings.Contains(irText, "ret { i1, { i32*, i8* } } zeroinitializer") {
@@ -1653,7 +1700,7 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 				}},
 			},
 			{
-				Name:       "niche",
+				Name:       "tagged_ptr",
 				Params:     []ir.Param{{Name: "p", Type: llvmTypes.ownedI32}},
 				ReturnType: llvmTypes.optionalOwnedI32,
 				EntryID:    0,
@@ -1675,7 +1722,7 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 	if !strings.Contains(irText, "insertvalue { i1, i32 } %") || !strings.Contains(irText, "i32 7, 1") {
 		t.Fatalf("expected tagged optional payload, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "define { i1, { i32*, i8* } } @niche({ i32*, i8* } %p)") {
+	if !strings.Contains(irText, "define { i1, { i32*, i8* } } @tagged_ptr({ i32*, i8* } %p)") {
 		t.Fatalf("expected tagged optional pointer ABI, got:\n%s", irText)
 	}
 	if !strings.Contains(irText, "insertvalue { i1, { i32*, i8* } } %") || !strings.Contains(irText, "{ i32*, i8* } %p, 1") {
@@ -1683,7 +1730,7 @@ func TestGenerateLLVMIRLowersOptionalSome(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRComparesTaggedOptionalWithNone(t *testing.T) {
+func TestGenerateLLVMIRReadsTaggedOptionalPresence(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
@@ -1698,11 +1745,8 @@ func TestGenerateLLVMIRComparesTaggedOptionalWithNone(t *testing.T) {
 					ID: 0,
 					Instrs: []mir.Instr{
 						&mir.Assign{Name: "x", Value: &mir.OptionalSome{Value: &mir.RefConst{Value: "7", Type: llvmTypes.i32}, Type: llvmTypes.optionalI32}},
-						&mir.Assign{Name: "none", Value: &mir.ZeroValue{Type: llvmTypes.optionalI32}},
-						&mir.Assign{Name: "isnone", Value: &mir.Binary{
-							Op:    "==",
-							Left:  &mir.RefName{Name: "x", Type: llvmTypes.optionalI32},
-							Right: &mir.RefName{Name: "none", Type: llvmTypes.optionalI32},
+						&mir.Assign{Name: "present", Value: &mir.OptionalPresent{
+							Value: &mir.RefName{Name: "x", Type: llvmTypes.optionalI32},
 							Type:  llvmTypes.boolType,
 						}},
 					},
@@ -1716,8 +1760,39 @@ func TestGenerateLLVMIRComparesTaggedOptionalWithNone(t *testing.T) {
 	if !strings.Contains(irText, "extractvalue { i1, i32 } %") {
 		t.Fatalf("expected optional tag extraction, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, "icmp eq i1") {
-		t.Fatalf("expected tag compare against none, got:\n%s", irText)
+	if strings.Contains(irText, "icmp eq i1") {
+		t.Fatalf("presence read must not compare aggregate text against none, got:\n%s", irText)
+	}
+}
+
+func TestGenerateLLVMIRLoadsTaggedOptionalPayload(t *testing.T) {
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table, FilePath: unixTestPath,
+		Funcs: []*mir.Function{{
+			Name: "payload", Params: []ir.Param{{Name: "value", Type: llvmTypes.optionalI32}}, ReturnType: llvmTypes.i32, EntryID: 0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Assign{Name: "payload", Value: &mir.Load{
+					Place: &mir.Place{
+						Root: &mir.RefName{Name: "value", Type: llvmTypes.optionalI32},
+						Projections: []mir.PlaceProjection{
+							{Kind: mir.PlaceProjectionOptionalPayload, Type: llvmTypes.i32},
+						},
+						Type: llvmTypes.i32,
+					},
+					Type: llvmTypes.i32,
+				}}},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "payload", Type: llvmTypes.i32}},
+			}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if !strings.Contains(irText, "getelementptr inbounds { i1, i32 }, { i1, i32 }*") || !strings.Contains(irText, "i32 1") {
+		t.Fatalf("expected named optional payload field GEP, got:\n%s", irText)
+	}
+	if !strings.Contains(irText, "load i32, i32*") {
+		t.Fatalf("expected optional payload load, got:\n%s", irText)
 	}
 }
 

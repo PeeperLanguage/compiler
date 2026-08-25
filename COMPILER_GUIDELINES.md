@@ -107,7 +107,7 @@ arbitrary total order to hide dependency.
 
 Control-flow-sensitive rules belong on a representation that understands
 reachability and predecessors. Examples include return completeness, definite
-initialization, ownership state, and future narrowing.
+initialization, ownership state, and optional narrowing.
 
 Control-flow edges must carry semantic kinds when analyses depend on branch
 meaning. Consumers must not infer true/false, return, unwind, or cleanup meaning
@@ -119,6 +119,11 @@ paths must not corrupt facts for reachable paths.
 CFG topology should remain a control-flow artifact. Analysis outputs such as
 cleanup plans or narrowing facts belong to their analyses unless they are part
 of graph topology itself.
+
+Optional narrowing produces `Module.Flow` after CFG construction and before
+definite initialization and ownership. Downstream phases query effective
+per-use types and consume recorded optional-test, payload, and origin evidence.
+They must not re-detect `none` comparisons from AST shape or backend text.
 
 ## 6. Centralize Structural Traversal
 

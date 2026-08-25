@@ -12,13 +12,16 @@ const (
 	OriginPointee OriginProjectionKind = iota
 	OriginField
 	OriginIndex
+	OriginBindingIndex
+	OriginOptionalPayload
 	OriginWildcard
 )
 
 type OriginProjection struct {
-	Kind  OriginProjectionKind
-	Field string
-	Index string
+	Kind    OriginProjectionKind
+	Field   string
+	Index   string
+	Binding *symbols.Symbol
 }
 
 type Origin struct {
@@ -26,71 +29,133 @@ type Origin struct {
 	Projections []OriginProjection
 }
 
-type OriginOptions struct {
-	ExprType         ExprTypeFunc
-	ResolveBinding   BindingResolver
-	ReferenceOrigins func(*symbols.Symbol) []Origin
-	CallOrigins      func(*ast.CallExpr) []Origin
-	ConstantIndex    func(ast.Expr) (string, bool)
+type ResolveOptions struct {
+	ExprType          ExprTypeFunc
+	ResolveBinding    BindingResolver
+	ReferenceOrigins  func(*symbols.Symbol) []Origin
+	RawPointerOrigins func(*symbols.Symbol) []Origin
+	CallOrigins       func(*ast.CallExpr) []Origin
+	ConstantIndex     func(ast.Expr) (string, bool)
+	PayloadDepth      func(ast.Expr) int
 }
 
-// Origins resolves safe-reference dereferences eagerly. Canonical origins never
-// retain a reference binding as storage identity when its referent is known.
-func Origins(scope *symbols.Scope, expr ast.Expr, opts OriginOptions) []Origin {
+// Resolution keeps carrier storage distinct from referenced value storage.
+// Stable is false when any projection cannot retain identity across CFG sites.
+type Resolution struct {
+	StorageOrigins []Origin
+	ValueOrigins   []Origin
+	Dependencies   []*symbols.Symbol
+	Stable         bool
+}
+
+// Resolve is the canonical place walk. Value origins preserve the previous
+// eager safe-reference normalization; storage origins retain carrier identity.
+func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolution {
 	if scope == nil || expr == nil {
-		return nil
+		return Resolution{}
 	}
 	switch node := expr.(type) {
 	case *ast.AddressExpr:
-		return Origins(scope, node.Expr, opts)
-	case *ast.Ident:
-		var sym *symbols.Symbol
-		var found bool
-		if opts.ResolveBinding != nil {
-			binding, resolved := opts.ResolveBinding(node)
-			if resolved {
-				sym, found = binding.Symbol, true
+		resolved := Resolve(scope, node.Expr, opts)
+		if opts.PayloadDepth != nil {
+			if depth := opts.PayloadDepth(node.Expr); depth > 0 {
+				resolved.ValueOrigins = PayloadOrigins(resolved.StorageOrigins, depth)
 			}
 		}
-		if !found {
-			sym, found = scope.Lookup(node.Name)
-		}
+		return resolved
+	case *ast.Ident:
+		sym, found := resolveSymbol(scope, node, opts.ResolveBinding)
 		if !found || sym == nil {
-			return nil
+			return Resolution{}
 		}
+		storage := []Origin{{Root: sym}}
 		if typ, ok := symbols.GetSymbolType(sym); ok {
 			if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference && opts.ReferenceOrigins != nil {
-				return CloneOrigins(opts.ReferenceOrigins(sym))
+				return Resolution{
+					StorageOrigins: storage,
+					ValueOrigins:   CloneOrigins(opts.ReferenceOrigins(sym)),
+					Stable:         true,
+				}
+			}
+			if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw && opts.RawPointerOrigins != nil {
+				return Resolution{
+					StorageOrigins: storage,
+					ValueOrigins:   CloneOrigins(opts.RawPointerOrigins(sym)),
+					Stable:         true,
+				}
 			}
 		}
-		return []Origin{{Root: sym}}
+		return Resolution{StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), Stable: true}
 	case *ast.SelectorExpr:
 		if node.Name == nil {
-			return nil
+			return Resolution{}
 		}
-		origins := Origins(scope, node.Expr, opts)
+		base := Resolve(scope, node.Expr, opts)
+		origins := appendOptionalPayloadProjections(base.ValueOrigins, node.Expr, opts.ExprType, opts.PayloadDepth)
 		origins = appendIndirectProjection(origins, node.Expr, opts.ExprType)
-		return appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: node.Name.Name})
+		origins = appendOriginProjection(origins, OriginProjection{Kind: OriginField, Field: node.Name.Name})
+		return Resolution{
+			StorageOrigins: origins,
+			ValueOrigins:   CloneOrigins(origins),
+			Dependencies:   append([]*symbols.Symbol(nil), base.Dependencies...),
+			Stable:         base.Stable && len(origins) > 0,
+		}
 	case *ast.IndexExpr:
-		origins := Origins(scope, node.Expr, opts)
+		base := Resolve(scope, node.Expr, opts)
+		origins := appendOptionalPayloadProjections(base.ValueOrigins, node.Expr, opts.ExprType, opts.PayloadDepth)
 		origins = appendIndirectProjection(origins, node.Expr, opts.ExprType)
+		dependencies := append([]*symbols.Symbol(nil), base.Dependencies...)
 		if _, rangeIndex := node.Index.(*ast.RangeExpr); rangeIndex {
-			return appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
+			origins = appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
+			return Resolution{StorageOrigins: origins, ValueOrigins: CloneOrigins(origins)}
 		}
 		if opts.ConstantIndex != nil {
 			if value, ok := opts.ConstantIndex(node.Index); ok {
-				return appendOriginProjection(origins, OriginProjection{Kind: OriginIndex, Index: value})
+				origins = appendOriginProjection(origins, OriginProjection{Kind: OriginIndex, Index: value})
+				return Resolution{
+					StorageOrigins: origins,
+					ValueOrigins:   CloneOrigins(origins),
+					Dependencies:   dependencies,
+					Stable:         base.Stable && len(origins) > 0,
+				}
 			}
 		}
-		return appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
+		if index, ok := node.Index.(*ast.Ident); ok {
+			if sym, found := resolveSymbol(scope, index, opts.ResolveBinding); found && sym != nil {
+				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.IsIntegral(typ) {
+					origins = appendOriginProjection(origins, OriginProjection{Kind: OriginBindingIndex, Binding: sym})
+					dependencies = append(dependencies, sym)
+					return Resolution{
+						StorageOrigins: origins,
+						ValueOrigins:   CloneOrigins(origins),
+						Dependencies:   dependencies,
+						Stable:         base.Stable && len(origins) > 0,
+					}
+				}
+			}
+		}
+		origins = appendOriginProjection(origins, OriginProjection{Kind: OriginWildcard})
+		return Resolution{StorageOrigins: origins, ValueOrigins: CloneOrigins(origins), Dependencies: dependencies}
 	case *ast.CallExpr:
 		if opts.CallOrigins != nil {
-			return CloneOrigins(opts.CallOrigins(node))
+			return Resolution{ValueOrigins: CloneOrigins(opts.CallOrigins(node))}
 		}
-		return nil
+		return Resolution{}
 	default:
-		return nil
+		return Resolution{}
 	}
+}
+
+func resolveSymbol(scope *symbols.Scope, ident *ast.Ident, resolve BindingResolver) (*symbols.Symbol, bool) {
+	if ident == nil {
+		return nil, false
+	}
+	if resolve != nil {
+		if binding, found := resolve(ident); found {
+			return binding.Symbol, binding.Symbol != nil
+		}
+	}
+	return scope.Lookup(ident.Name)
 }
 
 func CloneOrigins(origins []Origin) []Origin {
@@ -141,7 +206,8 @@ func SameOrigins(left, right []Origin) bool {
 
 // OriginsOverlap is conservative unless two canonical paths prove disjoint at
 // a concrete field or fixed index. Prefixes overlap because one path names
-// storage containing the other; wildcards overlap every descendant.
+// storage containing the other; symbolic indexes and wildcards may alias any
+// indexed descendant.
 func OriginsOverlap(left, right []Origin) bool {
 	for _, leftOrigin := range left {
 		for _, rightOrigin := range right {
@@ -161,6 +227,27 @@ func appendIndirectProjection(origins []Origin, base ast.Expr, exprType ExprType
 		return origins
 	}
 	return appendOriginProjection(origins, OriginProjection{Kind: OriginPointee})
+}
+
+func appendOptionalPayloadProjections(origins []Origin, base ast.Expr, exprType ExprTypeFunc, payloadDepth func(ast.Expr) int) []Origin {
+	if payloadDepth == nil {
+		return origins
+	}
+	if exprType != nil {
+		if _, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(base))); reference {
+			return origins
+		}
+	}
+	return PayloadOrigins(origins, payloadDepth(base))
+}
+
+// PayloadOrigins projects carrier storage through exact proven optional layers.
+func PayloadOrigins(origins []Origin, depth int) []Origin {
+	out := CloneOrigins(origins)
+	for range depth {
+		out = appendOriginProjection(out, OriginProjection{Kind: OriginOptionalPayload})
+	}
+	return out
 }
 
 func appendOriginProjection(origins []Origin, projection OriginProjection) []Origin {

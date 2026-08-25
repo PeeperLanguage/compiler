@@ -433,6 +433,8 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 		return v.Type
 	case *mir.OptionalSome:
 		return v.Type
+	case *mir.OptionalPresent:
+		return v.Type
 	case *mir.InterfaceMake:
 		return v.Type
 	case *mir.InterfaceCall:

@@ -9,8 +9,13 @@ import (
 )
 
 type checker struct {
-	ctx    *project.CompilerContext
-	module *project.Module
+	ctx                 *project.CompilerContext
+	module              *project.Module
+	flow                *flowCheck
+	siteOnly            bool
+	payloadContext      int
+	optionalTestContext int
+	wholeCarrierExpr    ast.Expr
 }
 
 // Concrete references convert to satisfied interface borrows, while owned

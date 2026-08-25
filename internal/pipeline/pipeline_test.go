@@ -552,6 +552,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.ConstEval,
 		phase.Typechecked,
 		phase.CFG,
+		phase.FlowTyped,
 		phase.DefiniteInit,
 		phase.Ownership,
 	}
@@ -564,6 +565,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		}
 		if wantPhase == phase.CFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
+		}
+		if wantPhase == phase.FlowTyped && entry.Flow == nil {
+			t.Fatal("flow-typed phase must retain canonical result")
 		}
 		if wantPhase < phase.HIR && entry.HIR != nil {
 			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)
@@ -1998,6 +2002,597 @@ fn main() -> i32 {
 			cmd.Stdin = strings.NewReader(entry.LLVMIR)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("%s representative LLVM IR is invalid: %v\n%s\n%s", compilerTarget.name, err, out, entry.LLVMIR)
+			}
+		})
+	}
+}
+
+func TestPipelineAcceptsOptionalNarrowingAcrossCFGAndStablePlaces(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "polarity and reversed operands",
+			src: `fn direct(value: ?i32) -> i32 {
+	if value != none {
+		return value;
+	}
+	return 0;
+}
+
+fn reverseEq(value: ?i32) -> i32 {
+	if none == value {
+		return 0;
+	}
+	return value;
+}
+
+fn reverseNe(value: ?i32) -> i32 {
+	if none != value {
+		return value;
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "terminating guard and inferred payload",
+			src: `fn guarded(value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	let payload = value;
+	return payload;
+}`,
+		},
+		{
+			name: "field and stable indexes",
+			src: `struct Holder {
+	field: ?i32,
+	items: [2]?i32
+}
+
+struct Outer {
+	inner: Holder
+}
+
+fn fields(outer: Outer, holder: Holder, index: usize) -> i32 {
+	if outer.inner.field != none {
+		return outer.inner.field;
+	}
+	if holder.field != none {
+		return holder.field;
+	}
+	if holder.items[0] != none {
+		return holder.items[0];
+	}
+	if holder.items[index] != none {
+		return holder.items[index];
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "nested optional proofs",
+			src: `fn nested(value: ? ?i32) -> i32 {
+	if value != none {
+		if value != none {
+			return value;
+		}
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "nested optional test in eager boolean",
+			src: `fn nested(value: ? ?i32, enabled: bool) -> bool {
+	return value != none && enabled;
+}`,
+		},
+		{
+			name: "nested inferred carrier and shadowed identity",
+			src: `fn inferred(value: ? ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	let inner = value;
+	if inner == none {
+		return 0;
+	}
+	return inner;
+}
+
+fn shadowed(value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	{
+		let value: ?i32 = none;
+		if value != none {
+			return value;
+		}
+	}
+	return value;
+}`,
+		},
+		{
+			name: "join loop and eager result facts",
+			src: `fn joined(value: ?i32, choose: bool) -> i32 {
+	if choose {
+		if value == none {
+			return 0;
+		}
+	} else {
+		if value == none {
+			return 0;
+		}
+	}
+	return value;
+}
+
+fn looped(value: ?i32) -> i32 {
+	for value != none {
+		return value;
+	}
+	return 0;
+}
+
+fn eager(value: ?i32) -> i32 {
+	if value != none && true {
+		return value;
+	}
+	if value == none || false {
+		return 0;
+	}
+	return value;
+}`,
+		},
+		{
+			name: "payload descendant and disjoint mutation",
+			src: `struct Payload {
+	value: i32
+}
+
+struct Holder {
+	maybe: ?i32,
+	other: i32
+}
+
+fn Write(_: &mut i32) {}
+
+fn descendant(mut value: ?Payload) -> i32 {
+	if value == none {
+		return 0;
+	}
+	value.value = 7;
+	return value.value;
+}
+
+fn disjoint(mut holder: Holder) -> i32 {
+	if holder.maybe == none {
+		return 0;
+	}
+	holder.other = 1;
+	Write(&mut holder.other);
+	return holder.maybe;
+}`,
+		},
+		{
+			name: "mutable payload borrow preserves carrier presence",
+			src: `fn Write(_: &mut i32) {}
+
+fn read(mut value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	Write(&mut value);
+	return value;
+}`,
+		},
+		{
+			name: "explicit optional reference preserves carrier",
+			src: `fn Hold(_: &?i32) {}
+
+fn valid(value: ?i32) {
+	Hold(&value);
+}`,
+		},
+		{
+			name: "optional reference destination preserves carrier inside proof",
+			src: `fn Hold(_: ?&?i32) {}
+
+fn valid(value: ?i32) {
+	if value == none {
+		return;
+	}
+	Hold(&value);
+}`,
+		},
+		{
+			name: "mutable reference payload reborrow preserves parameter carrier",
+			src: `fn Write(_: &mut i32) {}
+
+fn valid(value: ?&mut i32) {
+	if value == none {
+		return;
+	}
+	Write(value);
+	Write(value);
+}`,
+		},
+		{
+			name: "owned pointer payload mutation preserves carrier",
+			src: `struct Holder { value: i32 }
+fn Write(_: &mut i32) {}
+
+fn valid(mut holder: ?*Holder) -> i32 {
+	if holder == none {
+		return 0;
+	}
+	Write(&mut holder.value);
+	return holder.value;
+}`,
+		},
+		{
+			name: "proven optional receiver method",
+			src: `struct Holder { value: i32 }
+fn (self: &Holder) Get() -> i32 { return self.value; }
+
+fn valid(value: ?Holder) -> i32 {
+	if value == none {
+		return 0;
+	}
+	return value.Get();
+}`,
+		},
+		{
+			name: "proven optional callable with optional result destination",
+			src: `fn valid(callable: ?fn() -> i32) -> ?i32 {
+	if callable == none {
+		return none;
+	}
+	let result: ?i32 = callable();
+	return result;
+}`,
+		},
+		{
+			name: "eager call ordering preserves fresh and disjoint proofs",
+			src: `struct Holder {
+	maybe: ?i32,
+	other: i32
+}
+
+fn Mutate(_: &mut Holder) -> bool { return true; }
+
+fn Touch(_: &mut i32) -> bool { return true; }
+
+fn fresh(holder: &mut Holder) -> i32 {
+	if Mutate(holder) && holder.maybe != none {
+		return holder.maybe;
+	}
+	return 0;
+}
+
+fn disjoint(holder: &mut Holder) -> i32 {
+	if holder.maybe != none && Touch(&mut holder.other) {
+		return holder.maybe;
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "eager later test restores invalidated proof",
+			src: `fn Touch(_: &mut ?i32) -> bool { return true; }
+
+fn valid(mut value: ?i32) -> i32 {
+	if value != none && Touch(&mut value) && value != none {
+		return value;
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "reference alias shares presence proof",
+			src: `struct Holder { maybe: ?i32 }
+
+fn valid(holder: &Holder) -> i32 {
+	let alias = holder;
+	if alias.maybe == none {
+		return 0;
+	}
+	return holder.maybe;
+}`,
+		},
+		{
+			name: "owned pointer payload consumption",
+			src: `struct Holder { value: i32 }
+
+fn valid(owner: ?*Holder) -> i32 {
+	if owner == none {
+		return 0;
+	}
+	let result = owner.value;
+	free(owner);
+	return result;
+}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", tt.src)
+			if diag.HasErrors() {
+				t.Fatalf("optional narrowing failed:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestPipelineRejectsInvalidOptionalPayloadAccess(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		src  string
+	}{
+		{
+			name: "missing proof",
+			code: "T0041",
+			src:  `fn invalid(value: ?i32) -> i32 { return value; }`,
+		},
+		{
+			name: "method receiver missing proof",
+			code: "T0041",
+			src: `struct Holder { value: i32 }
+fn (self: &Holder) Get() -> i32 { return self.value; }
+fn invalid(value: ?Holder) -> i32 { return value.Get(); }`,
+		},
+		{
+			name: "optional equality requires none operand",
+			code: "T0004",
+			src: `fn invalid(left: ?i32, right: ?i32) -> bool {
+	return left == right;
+}`,
+		},
+		{
+			name: "join recheck clears stale nested payload evidence",
+			code: "T0041",
+			src: `fn invalid(value: ? ?i32) -> i32 {
+	if value != none {
+	} else {
+		print(0);
+		print(1);
+	}
+	if value == none {
+		return 0;
+	}
+	return value;
+}`,
+		},
+		{
+			name: "computed index",
+			code: "T0042",
+			src: `fn invalid(values: [2]?i32, index: usize) -> i32 {
+	if values[index + 1] != none {
+		return values[index + 1];
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "index dependency invalidated",
+			code: "T0041",
+			src: `fn invalid(values: [2]?i32) -> i32 {
+	let mut index: usize = 0;
+	if values[index] != none {
+		index = 1;
+		return values[index];
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "index dependency invalidated through mutable alias",
+			code: "T0041",
+			src: `fn Change(_: &mut usize) {}
+
+fn invalid(values: [2]?i32, mut index: usize) -> i32 {
+	if values[index] == none {
+		return 0;
+	}
+	Change(&mut index);
+	return values[index];
+}`,
+		},
+		{
+			name: "carrier invalidated through mutable reference alias",
+			code: "T0041",
+			src: `struct Holder { maybe: ?i32 }
+
+fn invalid(holder: &mut Holder) -> i32 {
+	let alias = holder;
+	if alias.maybe == none {
+		return 0;
+	}
+	alias.maybe = none;
+	return alias.maybe;
+}`,
+		},
+		{
+			name: "exact carrier assignment invalidated",
+			code: "T0041",
+			src: `fn invalid(mut value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	value = 1;
+	return value;
+}`,
+		},
+		{
+			name: "ancestor assignment invalidated",
+			code: "T0041",
+			src: `struct Holder {
+	field: ?i32
+}
+
+fn invalid(mut holder: Holder) -> i32 {
+	if holder.field == none {
+		return 0;
+	}
+	holder = .Holder{field = 1};
+	return holder.field;
+}`,
+		},
+		{
+			name: "nested ancestor assignment invalidated",
+			code: "T0041",
+			src: `struct Holder {
+	field: ?i32
+}
+
+struct Outer {
+	inner: Holder
+}
+
+fn invalid(mut outer: Outer) -> i32 {
+	if outer.inner.field == none {
+		return 0;
+	}
+	outer.inner = .Holder{field = 1};
+	return outer.inner.field;
+}`,
+		},
+		{
+			name: "mutable reference call invalidated",
+			code: "T0041",
+			src: `struct Holder {
+	field: ?i32
+}
+
+fn Write(_: &mut Holder) {}
+
+fn invalid(holder: &mut Holder) -> i32 {
+	if holder.field == none {
+		return 0;
+	}
+	Write(holder);
+	return holder.field;
+}`,
+		},
+		{
+			name: "mutable reference call invalidates later argument",
+			code: "T0041",
+			src: `struct Holder {
+	field: ?i32
+}
+
+fn Write(_: &mut Holder) -> i32 { return 0; }
+
+fn Use(_: i32, _: i32) {}
+
+fn invalid(holder: &mut Holder) {
+	if holder.field == none {
+		return;
+	}
+	Use(Write(holder), holder.field);
+}`,
+		},
+		{
+			name: "known raw pointer call invalidated",
+			code: "T0041",
+			src: `fn Touch(_: rawptr) {}
+
+fn invalid(mut value: ?i32) -> i32 {
+	if value == none {
+		return 0;
+	}
+	Touch(@value);
+	return value;
+}`,
+		},
+		{
+			name: "unknown raw pointer call invalidated",
+			code: "T0041",
+			src: `fn Touch(_: rawptr) {}
+
+fn invalid(value: ?i32, pointer: rawptr) -> i32 {
+	if value == none {
+		return 0;
+	}
+	Touch(pointer);
+	return value;
+}`,
+		},
+		{
+			name: "unknown raw pointer branch dominates known origin",
+			code: "T0041",
+			src: `struct Holder { maybe: ?i32, other: i32 }
+fn Touch(_: rawptr) {}
+
+fn invalid(mut holder: Holder, pointer: rawptr, choose: bool) -> i32 {
+	let mut target: rawptr = @holder.other;
+	if choose {
+		target = pointer;
+	}
+	if holder.maybe == none {
+		return 0;
+	}
+	Touch(target);
+	return holder.maybe;
+}`,
+		},
+		{
+			name: "optional reference carrier assignment invalidated",
+			code: "T0041",
+			src: `fn Read(_: &i32) {}
+
+fn invalid(value: i32) {
+	let mut maybe: ?&i32 = &value;
+	if maybe == none {
+		return;
+	}
+	maybe = none;
+	Read(maybe);
+}`,
+		},
+		{
+			name: "eager right operand has no proof",
+			code: "T0041",
+			src: `fn invalid(value: ?i32) -> bool {
+	return value != none && value > 0;
+}`,
+		},
+		{
+			name: "eager later call invalidates result proof",
+			code: "T0041",
+			src: `struct Holder {
+	maybe: ?i32
+}
+
+fn Mutate(_: &mut Holder) -> bool { return true; }
+
+fn invalid(holder: &mut Holder) -> i32 {
+	if holder.maybe != none && Mutate(holder) {
+		return holder.maybe;
+	}
+	return 0;
+}`,
+		},
+		{
+			name: "unreachable payload use still checked",
+			code: "T0041",
+			src: `fn invalid(value: ?i32) -> i32 {
+	return 0;
+	return value;
+}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", tt.src)
+			if !strings.Contains(diag.EmitAllToString(), tt.code) {
+				t.Fatalf("expected %s diagnostic, got:\n%s", tt.code, diag.EmitAllToString())
 			}
 		})
 	}

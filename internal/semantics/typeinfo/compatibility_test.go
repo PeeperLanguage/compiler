@@ -136,3 +136,15 @@ func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
 		t.Fatalf("shared-to-mutable ref compat = %v, want incompatible", got)
 	}
 }
+
+func TestOptionalCompatibilityAllowsOneLayerPromotion(t *testing.T) {
+	i32 := &IntegerType{Signed: true, Bits: 32}
+	inner := &OptionalType{Inner: i32}
+	outer := &OptionalType{Inner: inner}
+	if CheckCompatibility(outer, inner) != Compatible {
+		t.Fatal("?T must promote into ??T as one intact payload layer")
+	}
+	if CheckCompatibility(inner, inner) != Compatible {
+		t.Fatal("exact optional carrier assignment must remain compatible")
+	}
+}
