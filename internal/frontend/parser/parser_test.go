@@ -211,6 +211,61 @@ func TestParseFunctionWithTypeParams(t *testing.T) {
 	}
 }
 
+func TestParseAppliedNamedTypesAndNestedClosers(t *testing.T) {
+	mod, diag := parseTestModule(`fn transform(value: Box<i32>) -> pkg::Outer<Box<i32>> {
+	return value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := mod.Stmts[0].(*ast.FnDecl)
+	param, ok := fn.Params[0].Type.(*ast.AppliedType)
+	if !ok || ast.TypeText(param) != "Box<i32>" {
+		t.Fatalf("parameter type = %#v, want Box<i32>", fn.Params[0].Type)
+	}
+	qualified, ok := fn.ReturnType.(*ast.ScopeResolution)
+	if !ok || len(qualified.Segments) != 2 || ast.TypeText(qualified) != "pkg::Outer<Box<i32>>" {
+		t.Fatalf("return type = %#v, want pkg::Outer<Box<i32>>", fn.ReturnType)
+	}
+	if len(qualified.Segments[1].TypeArgs) != 1 {
+		t.Fatalf("return type arguments = %#v", qualified.Segments[1].TypeArgs)
+	}
+}
+
+func TestParseGenericQualifiedExpressionPath(t *testing.T) {
+	mod, diag := parseTestModule(`fn main() {
+	pkg::Result<i32>::Ok;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	stmt := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ExprStmt)
+	path, ok := stmt.Expr.(*ast.ScopeResolution)
+	if !ok || len(path.Segments) != 3 || ast.ExprText(path) != "pkg::Result<i32>::Ok" {
+		t.Fatalf("expression = %#v, want three-segment generic path", stmt.Expr)
+	}
+	if len(path.Segments[0].TypeArgs) != 0 || len(path.Segments[1].TypeArgs) != 1 || len(path.Segments[2].TypeArgs) != 0 {
+		t.Fatalf("path type arguments = %#v", path.Segments)
+	}
+}
+
+func TestParseComparisonAndShiftRemainExpressions(t *testing.T) {
+	mod, diag := parseTestModule(`fn compare(left: i32, right: i32) -> bool {
+	let less = left < right;
+	let shifted = left >> right;
+	return less;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	body := mod.Stmts[0].(*ast.FnDecl).Body
+	less := body.Stmts[0].(*ast.LetDecl).Value.(*ast.BinaryExpr)
+	shifted := body.Stmts[1].(*ast.LetDecl).Value.(*ast.BinaryExpr)
+	if less.Op != "<" || shifted.Op != ">>" {
+		t.Fatalf("operators = %q and %q, want < and >>", less.Op, shifted.Op)
+	}
+}
+
 func TestParseValueParam(t *testing.T) {
 	src := `fn destroy(data: Buffer) {}`
 	mod, diag := parseTestModule(src)

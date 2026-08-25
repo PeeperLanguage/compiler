@@ -104,3 +104,49 @@ func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.
 		t.Fatalf("module artifacts after reset = %#v", module)
 	}
 }
+
+func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
+	ctx := New(".", ".peep", nil)
+	module := &Module{Key: "owner"}
+	ctx.typeInstances["owner::Box<i32>"] = namedTypeInstance{
+		ownerModuleKey: module.Key,
+		typ:            &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
+	}
+	ctx.typeInstances["other::Box<i32>"] = namedTypeInstance{
+		ownerModuleKey: "other",
+		typ:            &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
+	}
+
+	ctx.ResetModule(&Module{Key: module.Key}, phase.Parsed)
+
+	if _, found := ctx.typeInstances["owner::Box<i32>"]; found {
+		t.Fatal("reset retained instance owned by reset module")
+	}
+	if _, found := ctx.typeInstances["other::Box<i32>"]; !found {
+		t.Fatal("reset removed instance owned by another module")
+	}
+}
+
+func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
+	module := &Module{Key: "owner", Phase: phase.Collected}
+	base := &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box", Kind: typeinfo.DefinedKindStruct}
+	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}}
+	original := New(".", ".peep", nil)
+	original.RegisterTypeDeclaration(module, declaration, base)
+
+	fresh := New(".", ".peep", nil)
+	fresh.AddModule(module)
+	registeredModule, found := fresh.typeDeclarations[base.Identity]
+	registered := module.namedTypeDeclarations[base.Identity]
+	if !found || registeredModule != module || registered.base != base || registered.syntax != declaration {
+		t.Fatalf("reindexed declaration module = %#v, artifact = %#v", registeredModule, registered)
+	}
+
+	fresh.ResetModule(module, phase.Parsed)
+	if module.namedTypeDeclarations != nil {
+		t.Fatal("reset below collection retained module declaration artifact")
+	}
+	if _, found := fresh.typeDeclarations[base.Identity]; found {
+		t.Fatal("reset below collection retained context declaration index")
+	}
+}

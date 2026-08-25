@@ -1,0 +1,5 @@
+struct Loop<T> {
+    next: *Loop<Loop<T>>
+}
+
+fn Use(value: &Loop<i32>) {}

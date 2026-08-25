@@ -41,6 +41,9 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 			}
 			return symbols.GetSymbolType(resolved.Symbol)
 		},
+		Instantiate: func(base *typeinfo.DefinedType, arguments []typeinfo.Type, node ast.TypeExpr) typeinfo.Type {
+			return ctx.instantiateType(base, arguments, node, nil)
+		},
 		InvalidSelf: func(node *ast.NamedType) typeinfo.Type {
 			if ctx != nil && ctx.Diagnostics != nil {
 				ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -53,6 +56,18 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 				ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 					fmt.Sprintf("array length must be an integer literal that fits its explicit type and target usize (u%d)", compilerTarget.IndexBits),
 					ast.LocOf(node), "invalid array length")
+			}
+			return &typeinfo.InvalidType{}
+		},
+		InvalidApplication: func(node ast.TypeExpr, name string, want, got int) typeinfo.Type {
+			if ctx != nil && ctx.Diagnostics != nil {
+				word := "arguments"
+				if want == 1 {
+					word = "argument"
+				}
+				ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+					fmt.Sprintf("type `%s` expects %d type %s, got %d", name, want, word, got),
+					ast.LocOf(node), "use exact explicit type arguments")
 			}
 			return &typeinfo.InvalidType{}
 		},

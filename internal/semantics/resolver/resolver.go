@@ -238,7 +238,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		}
 		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
 	case *ast.ScopeResolution:
-		if r.resolveScopeResolution(node) {
+		if r.resolveScopeResolution(node, false) {
 			return
 		}
 	case *ast.SelectorExpr:
@@ -251,14 +251,14 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		r.resolveExpr(scope, node.End)
 	case *ast.StructLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
-			r.resolveScopeResolution(scopedType)
+			r.resolveScopeResolution(scopedType, true)
 		}
 		for _, field := range node.Fields {
 			r.resolveExpr(scope, field.Value)
 		}
 	case *ast.ArrayLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
-			r.resolveScopeResolution(scopedType)
+			r.resolveScopeResolution(scopedType, true)
 		}
 		for _, value := range node.Values {
 			r.resolveExpr(scope, value)
@@ -312,12 +312,21 @@ func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 	}
 }
 
-func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution) bool {
+func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution, allowTypeArguments bool) bool {
 	if r == nil || r.module == nil || node == nil {
 		return false
 	}
-	qualifier := node.Module.Name
-	member := node.Name.Name
+	qualifierNode, memberNode, imported := node.ImportMember()
+	if !imported {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unsupported qualified path `"+node.TypeText()+"`", ast.LocOf(node), "qualified values currently use `module::member`")
+		return false
+	}
+	if !allowTypeArguments && len(node.Segments[1].TypeArgs) != 0 {
+		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType, "type arguments are not allowed on value paths", ast.LocOf(node), "generic functions and values are not supported")
+		return false
+	}
+	qualifier := qualifierNode.Name
+	member := memberNode.Name
 	resolved, ok := project.LookupImportedSymbol(r.ctx, r.module, qualifier, member)
 	if !ok || resolved.Symbol == nil {
 		if r.ctx != nil {

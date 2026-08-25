@@ -56,6 +56,12 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 	switch typ := typ.(type) {
 	case *NamedType:
 		return &NamedType{NodeIDHolder: id, Name: typ.Name, Location: typ.Location}
+	case *AppliedType:
+		args := make([]TypeExpr, len(typ.TypeArgs))
+		for index, arg := range typ.TypeArgs {
+			args[index] = cloneTypeExpr(arg, newID, fromArgument)
+		}
+		return &AppliedType{NodeIDHolder: id, Name: cloneIdent(typ.Name, newID, fromArgument), TypeArgs: args, Location: typ.Location}
 	case *OwnedPtrType:
 		return &OwnedPtrType{NodeIDHolder: id, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
 	case *RawPtrType:
@@ -108,10 +114,24 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 		}
 		return &EnumType{NodeIDHolder: id, Variants: variants, Location: typ.Location}
 	case *ScopeResolution:
-		return &ScopeResolution{NodeIDHolder: id, Module: cloneIdent(typ.Module, newID, fromArgument), Name: cloneIdent(typ.Name, newID, fromArgument), Location: typ.Location}
+		return &ScopeResolution{NodeIDHolder: id, Segments: clonePathSegments(typ.Segments, newID, fromArgument), Location: typ.Location}
 	default:
 		panic("unhandled type expression in call-default clone")
 	}
+}
+
+func clonePathSegments(segments []PathSegment, newID func(NodeID, bool) NodeID, fromArgument bool) []PathSegment {
+	cloned := make([]PathSegment, len(segments))
+	for index, segment := range segments {
+		args := make([]TypeExpr, len(segment.TypeArgs))
+		for argIndex, arg := range segment.TypeArgs {
+			args[argIndex] = cloneTypeExpr(arg, newID, fromArgument)
+		}
+		cloned[index] = PathSegment{
+			Name: cloneIdent(segment.Name, newID, fromArgument), TypeArgs: args, Location: segment.Location,
+		}
+	}
+	return cloned
 }
 
 func cloneParam(param Param, newID func(NodeID, bool) NodeID, fromArgument bool) Param {

@@ -116,7 +116,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
 	fnType := typeinfo.FuncTypeFromDeclWithOptions(decl, opts)
-	if !c.checkCallableReturn(decl.ReturnType, decl, fnType, decl.ReturnOrigins) {
+	if !c.checkCallableReturn(decl.ReturnType, decl, fnType, decl.ReturnOrigins, false) {
 		return
 	}
 	for _, param := range decl.ParamsWithReceiver() {
@@ -139,7 +139,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	}
 }
 
-func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, fnType *typeinfo.FuncType, clause *ast.ReturnOriginClause) bool {
+func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, fnType *typeinfo.FuncType, clause *ast.ReturnOriginClause, allowTypeParameters bool) bool {
 	if fnType == nil {
 		return false
 	}
@@ -222,7 +222,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 	if c.rejectUnsizedType(typ, typeNode, "function return") {
 		return false
 	}
-	if !typeinfo.IsLowerableType(typ) {
+	if !typeinfo.IsLowerableType(typ) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(typ)) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 			"function return type is not lowerable in current compiler stage", site, "")
 		return false
@@ -231,15 +231,20 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 }
 
 func (c *checker) checkFunctionTypeContracts() {
-	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
+		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+		allowTypeParameters := false
+		if typeDecl, ok := decl.(ast.TypeDecl); ok && len(typeDecl.DeclarationTypeParams()) > 0 {
+			opts = c.typeDeclSyntaxOptions(typeDecl, false)
+			allowTypeParameters = true
+		}
 		ast.Inspect(decl, func(node ast.Node) bool {
 			fnTypeSyntax, ok := node.(*ast.FuncType)
 			if !ok || fnTypeSyntax == nil {
 				return true
 			}
 			fnType, _ := typeinfo.TypeFromSyntax(fnTypeSyntax, opts).(*typeinfo.FuncType)
-			c.checkCallableReturn(fnTypeSyntax.Return, fnTypeSyntax, fnType, fnTypeSyntax.ReturnOrigins)
+			c.checkCallableReturn(fnTypeSyntax.Return, fnTypeSyntax, fnType, fnTypeSyntax.ReturnOrigins, allowTypeParameters)
 			return true
 		})
 		return true
@@ -250,7 +255,7 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 	if decl == nil {
 		return
 	}
-	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+	opts := c.typeDeclSyntaxOptions(decl, false)
 	switch node := decl.(type) {
 	case *ast.StructDecl:
 		strct, ok := node.Type.(*ast.StructType)
@@ -279,13 +284,14 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
 		return
 	}
-	resolvedIface, _ := typeinfo.TypeFromSyntax(iface, project.TypeSyntaxOptions(c.ctx, c.module, nil, false)).(*typeinfo.InterfaceType)
+	resolvedIface, _ := typeinfo.TypeFromSyntax(iface, c.typeDeclSyntaxOptions(decl, false)).(*typeinfo.InterfaceType)
+	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	for methodIndex, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", method.Location, "")
 			continue
 		}
-		receiverOpts := project.TypeSyntaxOptions(c.ctx, c.module, nil, true)
+		receiverOpts := c.typeDeclSyntaxOptions(decl, true)
 		if method.Receiver == nil {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Name,
 				"iface methods require Self, &Self, or &mut Self receiver"))
@@ -299,7 +305,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Receiver.Type,
 				"iface method receiver must be Self, &Self, or &mut Self"))
 		}
-		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+		opts := c.typeDeclSyntaxOptions(decl, false)
 		for _, param := range method.Params {
 			paramType := typeinfo.TypeFromSyntax(param.Type, opts)
 			if c.rejectUnsizedType(paramType, param.Type, "interface method parameter") {
@@ -308,7 +314,8 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			if c.rejectReferenceStorage(paramType, param.Type, "interface parameter aggregate types", false) {
 				continue
 			}
-			if paramType != nil && !typeinfo.IsLowerableType(paramType) {
+			if paramType != nil && !typeinfo.IsLowerableType(paramType) &&
+				!(allowTypeParameters && typeinfo.ContainsTypeParameter(paramType)) {
 				site := ast.Node(decl)
 				if param.Name != nil {
 					site = param.Name
@@ -318,10 +325,26 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			}
 		}
 		if resolvedIface != nil && methodIndex < len(resolvedIface.Methods) {
-			c.checkCallableReturn(method.ReturnType, decl, resolvedIface.Methods[methodIndex].CallableType(), method.ReturnOrigins)
+			c.checkCallableReturn(method.ReturnType, decl, resolvedIface.Methods[methodIndex].CallableType(), method.ReturnOrigins, allowTypeParameters)
 		}
 	}
 
+}
+
+func (c *checker) typeDeclSyntaxOptions(decl ast.TypeDecl, allowAbstractSelf bool) typeinfo.SyntaxOptions {
+	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, allowAbstractSelf)
+	if c == nil || c.module == nil || c.module.ModuleScope == nil || decl == nil || decl.DeclName() == nil {
+		return opts
+	}
+	sym, ok := c.module.ModuleScope.LookupLocal(decl.DeclName().Name)
+	if !ok || sym == nil {
+		return opts
+	}
+	defined, ok := sym.Type.(*typeinfo.DefinedType)
+	if ok && defined != nil {
+		opts.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
+	}
+	return opts
 }
 
 func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {

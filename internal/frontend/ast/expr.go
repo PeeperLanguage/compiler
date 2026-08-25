@@ -36,16 +36,25 @@ func (e *Ident) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool)
 
 type ScopeResolution struct {
 	NodeIDHolder
-	Module   *Ident
+	Segments []PathSegment
+	Location *source.Location
+}
+
+type PathSegment struct {
 	Name     *Ident
+	TypeArgs []TypeExpr
 	Location *source.Location
 }
 
 func (*ScopeResolution) exprNode() {}
 func (*ScopeResolution) typeNode() {}
 func (e *ScopeResolution) forEachChild(visit func(Node)) {
-	visit(e.Module)
-	visit(e.Name)
+	for _, segment := range e.Segments {
+		visit(segment.Name)
+		for _, arg := range segment.TypeArgs {
+			visit(arg)
+		}
+	}
 }
 func (e *ScopeResolution) loc() *source.Location { return e.Location }
 func (e *ScopeResolution) exprText() string {
@@ -58,21 +67,32 @@ func (e *ScopeResolution) TypeText() string {
 	if e == nil {
 		return ""
 	}
-	module := ""
-	if e.Module != nil {
-		module = e.Module.Name
+	parts := make([]string, 0, len(e.Segments))
+	for _, segment := range e.Segments {
+		parts = append(parts, appliedTypeText(segment.Name, segment.TypeArgs))
 	}
-	name := ""
-	if e.Name != nil {
-		name = e.Name.Name
+	return strings.Join(parts, "::")
+}
+
+// ImportMember accepts only paths whose first segment is an import qualifier
+// and whose second segment is the imported symbol. Longer paths belong to
+// enum/type member resolution in later semantic work.
+func (e *ScopeResolution) ImportMember() (qualifier, member *Ident, ok bool) {
+	if e == nil || len(e.Segments) != 2 || len(e.Segments[0].TypeArgs) != 0 ||
+		e.Segments[0].Name == nil || e.Segments[1].Name == nil {
+		return nil, nil, false
 	}
-	if module == "" {
-		return name
+	return e.Segments[0].Name, e.Segments[1].Name, true
+}
+
+// ImportValueMember excludes applied final segments because generic functions
+// and values are not part of named-type application support.
+func (e *ScopeResolution) ImportValueMember() (qualifier, member *Ident, ok bool) {
+	qualifier, member, ok = e.ImportMember()
+	if !ok || len(e.Segments[1].TypeArgs) != 0 {
+		return nil, nil, false
 	}
-	if name == "" {
-		return module + "::"
-	}
-	return module + "::" + name
+	return qualifier, member, true
 }
 
 func (e *ScopeResolution) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
@@ -80,7 +100,21 @@ func (e *ScopeResolution) copyExpr(substitutions map[string]Expr, newID func(Nod
 		return nil
 	}
 	id := newID(e.ID(), fromArgument)
-	return &ScopeResolution{NodeIDHolder: NodeIDHolder{NodeID: id}, Module: cloneIdent(e.Module, newID, fromArgument), Name: cloneIdent(e.Name, newID, fromArgument), Location: e.Location}
+	return &ScopeResolution{NodeIDHolder: NodeIDHolder{NodeID: id}, Segments: clonePathSegments(e.Segments, newID, fromArgument), Location: e.Location}
+}
+
+func appliedTypeText(name *Ident, args []TypeExpr) string {
+	if name == nil {
+		return ""
+	}
+	if len(args) == 0 {
+		return name.Name
+	}
+	parts := make([]string, len(args))
+	for index, arg := range args {
+		parts[index] = TypeText(arg)
+	}
+	return name.Name + "<" + strings.Join(parts, ", ") + ">"
 }
 
 type SelectorExpr struct {

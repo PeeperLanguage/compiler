@@ -41,10 +41,29 @@ type NamedType struct {
 	Name string
 }
 
+type DefinedKind uint8
+
+const (
+	DefinedKindInvalid DefinedKind = iota
+	DefinedKindAlias
+	DefinedKindStruct
+	DefinedKindInterface
+	DefinedKindEnum
+)
+
+type TypeParameterType struct {
+	Name          string
+	OwnerIdentity string
+	Index         int
+}
+
 type DefinedType struct {
-	Name       string
-	Identity   string
-	Underlying Type
+	Name           string
+	Identity       string
+	Kind           DefinedKind
+	TypeParameters []*TypeParameterType
+	TypeArguments  []Type
+	Underlying     Type
 }
 
 type OwnedPtrType struct {
@@ -145,28 +164,29 @@ type EnumType struct {
 	Variants []string
 }
 
-func (*InvalidType) TypeNode()   {}
-func (*UnknownType) TypeNode()   {}
-func (*IntegerType) TypeNode()   {}
-func (*ByteType) TypeNode()      {}
-func (*CharType) TypeNode()      {}
-func (*FloatType) TypeNode()     {}
-func (*BoolType) TypeNode()      {}
-func (*CStrType) TypeNode()      {}
-func (*StringType) TypeNode()    {}
-func (*NoneType) TypeNode()      {}
-func (*AllocatorType) TypeNode() {}
-func (*NamedType) TypeNode()     {}
-func (*DefinedType) TypeNode()   {}
-func (*OwnedPtrType) TypeNode()  {}
-func (*RawPtrType) TypeNode()    {}
-func (*RefType) TypeNode()       {}
-func (*OptionalType) TypeNode()  {}
-func (*ArrayType) TypeNode()     {}
-func (*FuncType) TypeNode()      {}
-func (*StructType) TypeNode()    {}
-func (*InterfaceType) TypeNode() {}
-func (*EnumType) TypeNode()      {}
+func (*InvalidType) TypeNode()       {}
+func (*UnknownType) TypeNode()       {}
+func (*IntegerType) TypeNode()       {}
+func (*ByteType) TypeNode()          {}
+func (*CharType) TypeNode()          {}
+func (*FloatType) TypeNode()         {}
+func (*BoolType) TypeNode()          {}
+func (*CStrType) TypeNode()          {}
+func (*StringType) TypeNode()        {}
+func (*NoneType) TypeNode()          {}
+func (*AllocatorType) TypeNode()     {}
+func (*NamedType) TypeNode()         {}
+func (*TypeParameterType) TypeNode() {}
+func (*DefinedType) TypeNode()       {}
+func (*OwnedPtrType) TypeNode()      {}
+func (*RawPtrType) TypeNode()        {}
+func (*RefType) TypeNode()           {}
+func (*OptionalType) TypeNode()      {}
+func (*ArrayType) TypeNode()         {}
+func (*FuncType) TypeNode()          {}
+func (*StructType) TypeNode()        {}
+func (*InterfaceType) TypeNode()     {}
+func (*EnumType) TypeNode()          {}
 
 func (*InvalidType) Text() string { return "<invalid>" }
 func (*UnknownType) Text() string { return "<unknown>" }
@@ -209,11 +229,67 @@ func (t *NamedType) Text() string {
 	return t.Name
 }
 
-func (t *DefinedType) Text() string {
+func (t *TypeParameterType) Text() string {
 	if t == nil {
 		return ""
 	}
 	return t.Name
+}
+
+func (t *DefinedType) Text() string {
+	if t == nil {
+		return ""
+	}
+	arguments := t.TypeArguments
+	if len(arguments) == 0 && len(t.TypeParameters) > 0 {
+		arguments = make([]Type, len(t.TypeParameters))
+		for index, parameter := range t.TypeParameters {
+			arguments[index] = parameter
+		}
+	}
+	if len(arguments) == 0 {
+		return t.Name
+	}
+	parts := make([]string, len(arguments))
+	for index, argument := range arguments {
+		parts[index] = TypeText(argument)
+	}
+	return t.Name + "<" + strings.Join(parts, ", ") + ">"
+}
+
+// TypeParameterBindings is the canonical substitution environment for one
+// named declaration. Nil arguments retain declaration parameters; concrete
+// arguments replace them during instance construction.
+func TypeParameterBindings(parameters []*TypeParameterType, arguments []Type) map[string]Type {
+	bindings := make(map[string]Type, len(parameters))
+	for index, parameter := range parameters {
+		if parameter == nil || parameter.Name == "" {
+			continue
+		}
+		bound := Type(parameter)
+		if len(arguments) == len(parameters) && arguments[index] != nil {
+			bound = arguments[index]
+		}
+		bindings[parameter.Name] = bound
+	}
+	return bindings
+}
+
+// Unalias returns canonical transparent-alias storage without erasing nominal
+// structs, interfaces, or enums. Invalid alias cycles terminate as invalid.
+func Unalias(t Type) Type {
+	seen := make(map[*DefinedType]struct{})
+	for {
+		defined, ok := t.(*DefinedType)
+		if !ok || defined == nil || defined.Kind != DefinedKindAlias || defined.Underlying == nil {
+			return t
+		}
+		if _, found := seen[defined]; found {
+			return &InvalidType{}
+		}
+		seen[defined] = struct{}{}
+		t = defined.Underlying
+	}
 }
 
 func Underlying(t Type) Type {
@@ -231,13 +307,15 @@ func Underlying(t Type) Type {
 // representation, while optionals remain structural source types.
 func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 	identity := ""
-	if defined, ok := t.(*DefinedType); ok && defined != nil {
+	if enumIdentity, nominal := nominalEnumIdentity(t); nominal {
+		identity = enumIdentity
+	} else if defined, ok := t.(*DefinedType); ok && defined != nil && defined.Kind != DefinedKindAlias {
 		identity = defined.Identity
 		if identity == "" {
 			identity = defined.Name
 		}
-		t = defined.Underlying
 	}
+	t = Underlying(t)
 	switch variant := t.(type) {
 	case *OptionalType:
 		if variant == nil || variant.Inner == nil {

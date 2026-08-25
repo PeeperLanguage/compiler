@@ -492,18 +492,49 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 	if id == nil {
 		return nil
 	}
-	if p.match(token.DCOLON) {
-		member := p.parseIdent()
-		if member == nil {
+	first := ast.PathSegment{Name: id, Location: id.Location}
+	if p.at(token.LT) && p.typeArgumentsAreFollowedByScope() {
+		args, close, ok := p.parseTypeArguments()
+		if !ok {
 			return nil
 		}
-		return reg(p, &ast.ScopeResolution{
-			Module:   id,
-			Name:     member,
-			Location: source.NewLocation(p.filePath, ast.StartOf(id), ast.EndOf(member)),
-		})
+		first.TypeArgs = args
+		first.Location = source.NewLocation(p.filePath, ast.StartOf(id), close.End)
+	}
+	if p.at(token.DCOLON) {
+		path := p.parseScopeResolution(first)
+		if path == nil {
+			return nil
+		}
+		return path
 	}
 	return id
+}
+
+func (p *Parser) typeArgumentsAreFollowedByScope() bool {
+	if !p.at(token.LT) {
+		return false
+	}
+	depth := 0
+	for index := p.pos; index < len(p.stream); index++ {
+		switch p.stream[index].Kind {
+		case token.LT:
+			depth++
+		case token.GT:
+			depth--
+		case token.SHR:
+			depth -= 2
+		case token.EOF, token.SEMICOLON:
+			return false
+		}
+		if depth < 0 {
+			return false
+		}
+		if depth == 0 {
+			return index+1 < len(p.stream) && p.stream[index+1].Kind == token.DCOLON
+		}
+	}
+	return false
 }
 
 func (p *Parser) parseSelector(left ast.Expr) ast.Expr {

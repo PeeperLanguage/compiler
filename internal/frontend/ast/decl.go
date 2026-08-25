@@ -28,6 +28,28 @@ type NamedType struct {
 	Location *source.Location
 }
 
+type AppliedType struct {
+	NodeIDHolder
+	Name     *Ident
+	TypeArgs []TypeExpr
+	Location *source.Location
+}
+
+func (*AppliedType) typeNode() {}
+func (t *AppliedType) forEachChild(visit func(Node)) {
+	visit(t.Name)
+	for _, arg := range t.TypeArgs {
+		visit(arg)
+	}
+}
+func (t *AppliedType) loc() *source.Location { return t.Location }
+func (t *AppliedType) TypeText() string {
+	if t == nil {
+		return ""
+	}
+	return appliedTypeText(t.Name, t.TypeArgs)
+}
+
 func (*NamedType) typeNode()               {}
 func (*NamedType) forEachChild(func(Node)) {}
 func (t *NamedType) loc() *source.Location { return t.Location }
@@ -467,6 +489,9 @@ func (d *TypeAliasDecl) forEachChild(visit func(Node)) {
 }
 func (d *TypeAliasDecl) loc() *source.Location { return d.Location }
 func (d *TypeAliasDecl) DeclName() *Ident      { return d.Name }
+func (d *TypeAliasDecl) DeclarationTypeParams() []TypeParam {
+	return d.TypeParams
+}
 func (d *TypeAliasDecl) UnderlyingType() TypeExpr {
 	return d.Type
 }
@@ -493,6 +518,9 @@ func (d *StructDecl) forEachChild(visit func(Node)) {
 }
 func (d *StructDecl) loc() *source.Location { return d.Location }
 func (d *StructDecl) DeclName() *Ident      { return d.Name }
+func (d *StructDecl) DeclarationTypeParams() []TypeParam {
+	return d.TypeParams
+}
 func (d *StructDecl) UnderlyingType() TypeExpr {
 	return d.Type
 }
@@ -518,6 +546,9 @@ func (d *InterfaceDecl) forEachChild(visit func(Node)) {
 }
 func (d *InterfaceDecl) loc() *source.Location { return d.Location }
 func (d *InterfaceDecl) DeclName() *Ident      { return d.Name }
+func (d *InterfaceDecl) DeclarationTypeParams() []TypeParam {
+	return d.TypeParams
+}
 func (d *InterfaceDecl) UnderlyingType() TypeExpr {
 	return d.Type
 }
@@ -543,6 +574,9 @@ func (d *EnumDecl) forEachChild(visit func(Node)) {
 }
 func (d *EnumDecl) loc() *source.Location { return d.Location }
 func (d *EnumDecl) DeclName() *Ident      { return d.Name }
+func (d *EnumDecl) DeclarationTypeParams() []TypeParam {
+	return d.TypeParams
+}
 func (d *EnumDecl) UnderlyingType() TypeExpr {
 	return d.Type
 }

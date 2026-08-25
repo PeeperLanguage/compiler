@@ -1,0 +1,6 @@
+name = "type_imported_generic"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

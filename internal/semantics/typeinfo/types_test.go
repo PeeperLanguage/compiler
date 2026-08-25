@@ -159,6 +159,10 @@ func TestSizedTypesDistinguishInterfaceCarriers(t *testing.T) {
 	if !IsSizedType(&NamedType{Name: "T"}) {
 		t.Fatalf("generic type parameter must be sized")
 	}
+	parameter := &TypeParameterType{Name: "T", OwnerIdentity: "Box", Index: 0}
+	if !IsSizedType(parameter) || IsLowerableType(parameter) {
+		t.Fatal("declared type parameter must be sized but not backend-lowerable before substitution")
+	}
 	if IsSizedType(&ArrayType{Shape: ArrayOwner, Elem: iface}) {
 		t.Fatalf("dynamic array cannot contain unsized interface elements")
 	}
@@ -429,5 +433,62 @@ func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
 	if !ok || named.Family != VariantFamilyNamed || named.Identity != "Status" || len(named.Cases) != 2 ||
 		named.Cases[0].Name != "Ready" || named.Cases[1].Name != "Waiting" {
 		t.Fatalf("named descriptor = %#v", named)
+	}
+}
+
+func TestNamedEnumCompatibilityUsesDeclarationAndArguments(t *testing.T) {
+	variants := []string{"Ready", "Waiting"}
+	left := &DefinedType{
+		Name: "Status", Identity: "left::Status", Kind: DefinedKindEnum,
+		Underlying: &EnumType{Variants: variants},
+	}
+	right := &DefinedType{
+		Name: "Status", Identity: "right::Status", Kind: DefinedKindEnum,
+		Underlying: &EnumType{Variants: variants},
+	}
+	leftAgain := &DefinedType{
+		Name: "Status", Identity: "left::Status", Kind: DefinedKindEnum,
+		Underlying: &EnumType{Variants: variants},
+	}
+	if SameType(left, right) || Assignable(left, right) {
+		t.Fatal("different enum declarations must remain nominally distinct")
+	}
+	if !SameType(left, leftAgain) || !Assignable(left, leftAgain) {
+		t.Fatal("same enum declaration and arguments must be compatible")
+	}
+}
+
+func TestVariantDescriptorUsesEnumIdentityThroughTransparentAlias(t *testing.T) {
+	status := &DefinedType{
+		Name: "Status", Identity: "module::Status", Kind: DefinedKindEnum,
+		Underlying: &EnumType{Variants: []string{"Ready", "Waiting"}},
+	}
+	alias := &DefinedType{
+		Name: "State", Identity: "module::State", Kind: DefinedKindAlias,
+		Underlying: status,
+	}
+	descriptor, ok := VariantDescriptorOf(alias)
+	if !ok || descriptor.Identity != status.Identity || descriptor.Family != VariantFamilyNamed {
+		t.Fatalf("aliased enum descriptor = %#v, want identity %q", descriptor, status.Identity)
+	}
+}
+
+func TestUnaliasCanonicalizesChainsWithoutErasingNominalTypes(t *testing.T) {
+	integer := &IntegerType{Signed: true, Bits: 32}
+	inner := &DefinedType{Name: "Inner", Kind: DefinedKindAlias, Underlying: integer}
+	outer := &DefinedType{Name: "Outer", Kind: DefinedKindAlias, Underlying: inner}
+	if got := Unalias(outer); got != integer {
+		t.Fatalf("Unalias(alias chain) = %#v, want canonical integer", got)
+	}
+
+	nominal := &DefinedType{Name: "Value", Kind: DefinedKindStruct, Underlying: &StructType{}}
+	if got := Unalias(nominal); got != nominal {
+		t.Fatalf("Unalias(nominal) = %#v, want original nominal type", got)
+	}
+
+	cycle := &DefinedType{Name: "Cycle", Kind: DefinedKindAlias}
+	cycle.Underlying = cycle
+	if got := Unalias(cycle); !IsInvalid(got) {
+		t.Fatalf("Unalias(alias cycle) = %#v, want invalid", got)
 	}
 }

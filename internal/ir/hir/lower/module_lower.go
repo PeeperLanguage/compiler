@@ -522,8 +522,10 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			sym = module.Semantics.ResolvedSymbols[node.ID()]
 		}
 		if sym == nil {
-			if resolved, ok := project.LookupImportedSymbol(ctx, module, node.Module.Name, node.Name.Name); ok {
-				sym = resolved.Symbol
+			if qualifier, member, imported := node.ImportValueMember(); imported {
+				if resolved, ok := project.LookupImportedSymbol(ctx, module, qualifier.Name, member.Name); ok {
+					sym = resolved.Symbol
+				}
 			}
 		}
 		if sym != nil {
@@ -537,7 +539,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			}
 			return &ir.Ident{Name: symbolName(module, sym), Type: t, SymbolID: sym.ID, SourceInfo: ir.SourceInfo{Location: loc}}
 		}
-		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.Module.Name + "::" + node.Name.Name, Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
+		return &ir.InvalidExpr{Message: "unresolved qualified identifier: " + node.TypeText(), Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.UnaryExpr:
 		arg := lowerASTExpr(ctx, module, scope, node.Expr, expectedType)
@@ -642,8 +644,10 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 					sym = s
 				}
 			case *ast.ScopeResolution:
-				if resolved, ok := project.LookupImportedSymbol(ctx, module, callee.Module.Name, callee.Name.Name); ok && resolved.Symbol != nil {
-					sym = resolved.Symbol
+				if qualifier, member, imported := callee.ImportValueMember(); imported {
+					if resolved, ok := project.LookupImportedSymbol(ctx, module, qualifier.Name, member.Name); ok && resolved.Symbol != nil {
+						sym = resolved.Symbol
+					}
 				}
 			}
 			if sym != nil {

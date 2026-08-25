@@ -14,7 +14,7 @@ import (
 	"compiler/pkg/peeper"
 )
 
-var _ func(*collector, *ast.Ident, ast.Node) = (*collector).collectConcreteTypeDecl
+var _ func(*collector, ast.TypeDecl) = (*collector).collectConcreteTypeDecl
 var _ func(*collector, *ast.Ident, symbols.Kind, ast.Node) = (*collector).collectModuleBinding
 
 func TestCallableSymbolsKeepDefiningModuleKey(t *testing.T) {

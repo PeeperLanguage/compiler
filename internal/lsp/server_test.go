@@ -930,6 +930,22 @@ func TestHoverShowsInlineTypeSyntax(t *testing.T) {
 	}
 }
 
+func TestHoverShowsAppliedNamedType(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := "struct Box<T> { value: T }\nfn use(value: __CURSOR__Box<i32>) {}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, mainPath, src)
+	if hover == nil {
+		t.Fatal("expected applied type hover")
+	}
+	if !strings.Contains(hover.Contents.Value, "(type) Box<i32>") {
+		t.Fatalf("unexpected applied type hover: %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverShowsSelectorMemberFieldType(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)

@@ -8,13 +8,16 @@ import (
 )
 
 type SyntaxOptions struct {
-	Target            target.Info
-	SelfType          Type
-	AllowAbstractSelf bool
-	ResolveNamed      func(name string) (Type, bool)
-	ResolveQualified  func(moduleName, memberName string) (Type, bool)
-	InvalidSelf       func(node *ast.NamedType) Type
-	InvalidArrayLen   func(node *ast.NumberLit) Type
+	Target             target.Info
+	SelfType           Type
+	AllowAbstractSelf  bool
+	TypeParameters     map[string]Type
+	ResolveNamed       func(name string) (Type, bool)
+	ResolveQualified   func(moduleName, memberName string) (Type, bool)
+	Instantiate        func(base *DefinedType, arguments []Type, node ast.TypeExpr) Type
+	InvalidSelf        func(node *ast.NamedType) Type
+	InvalidArrayLen    func(node *ast.NumberLit) Type
+	InvalidApplication func(node ast.TypeExpr, name string, want, got int) Type
 }
 
 func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
@@ -41,43 +44,37 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 			return &InvalidType{}
 		}
-		if opts.ResolveNamed != nil {
-			if resolved, ok := opts.ResolveNamed(typ.Name); ok && resolved != nil {
-				return resolved
-			}
+		if parameter := opts.TypeParameters[typ.Name]; parameter != nil {
+			return parameter
 		}
-		switch typ.Name {
-		case "bool":
-			return &BoolType{}
-		case "byte":
-			return &ByteType{}
-		case "char":
-			return &CharType{}
-		case "cstr":
-			return &CStrType{}
-		case "str", "string":
-			return &StringType{}
-		case "f32":
-			return &FloatType{Bits: 32}
-		case "f64":
-			return &FloatType{Bits: 64}
-		case "Allocator":
-			return &AllocatorType{}
+		return applyTypeArguments(typ, resolveTypeName(typ.Name, opts), nil, opts)
+	case *ast.AppliedType:
+		if typ == nil || typ.Name == nil {
+			return nil
 		}
-		if signed, bits, ok := token.ParseIntegerBuiltin(typ.Name, opts.Target); ok {
-			return &IntegerType{Signed: signed, Bits: bits}
+		arguments := make([]Type, len(typ.TypeArgs))
+		for index, argument := range typ.TypeArgs {
+			arguments[index] = TypeFromSyntax(argument, opts)
 		}
-		return &NamedType{Name: typ.Name}
+		if opts.TypeParameters[typ.Name.Name] != nil {
+			return applyTypeArguments(typ, &NamedType{Name: typ.Name.Name}, arguments, opts)
+		}
+		return applyTypeArguments(typ, resolveTypeName(typ.Name.Name, opts), arguments, opts)
 	case *ast.ScopeResolution:
 		if typ == nil {
 			return nil
 		}
-		if opts.ResolveQualified != nil {
-			if resolved, ok := opts.ResolveQualified(typ.Module.Name, typ.Name.Name); ok && resolved != nil {
-				return resolved
+		qualifier, member, imported := typ.ImportMember()
+		if imported && opts.ResolveQualified != nil {
+			if resolved, ok := opts.ResolveQualified(qualifier.Name, member.Name); ok && resolved != nil {
+				arguments := make([]Type, len(typ.Segments[1].TypeArgs))
+				for index, argument := range typ.Segments[1].TypeArgs {
+					arguments[index] = TypeFromSyntax(argument, opts)
+				}
+				return applyTypeArguments(typ, resolved, arguments, opts)
 			}
 		}
-		return &NamedType{Name: typ.Module.Name + "::" + typ.Name.Name}
+		return &NamedType{Name: typ.TypeText()}
 	case *ast.OwnedPtrType:
 		if typ == nil {
 			return nil
@@ -225,6 +222,59 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 	default:
 		return nil
 	}
+}
+
+func resolveTypeName(name string, opts SyntaxOptions) Type {
+	if opts.ResolveNamed != nil {
+		if resolved, ok := opts.ResolveNamed(name); ok && resolved != nil {
+			return resolved
+		}
+	}
+	switch name {
+	case "bool":
+		return &BoolType{}
+	case "byte":
+		return &ByteType{}
+	case "char":
+		return &CharType{}
+	case "cstr":
+		return &CStrType{}
+	case "str", "string":
+		return &StringType{}
+	case "f32":
+		return &FloatType{Bits: 32}
+	case "f64":
+		return &FloatType{Bits: 64}
+	case "Allocator":
+		return &AllocatorType{}
+	}
+	if signed, bits, ok := token.ParseIntegerBuiltin(name, opts.Target); ok {
+		return &IntegerType{Signed: signed, Bits: bits}
+	}
+	return &NamedType{Name: name}
+}
+
+func applyTypeArguments(node ast.TypeExpr, base Type, arguments []Type, opts SyntaxOptions) Type {
+	defined, named := base.(*DefinedType)
+	want := 0
+	if named && defined != nil {
+		want = len(defined.TypeParameters)
+	}
+	got := len(arguments)
+	if want != got || got > 0 && !named {
+		name := TypeText(base)
+		if opts.InvalidApplication != nil {
+			return opts.InvalidApplication(node, name, want, got)
+		}
+		return &InvalidType{}
+	}
+	if got == 0 {
+		return base
+	}
+	if opts.Instantiate != nil {
+		return opts.Instantiate(defined, arguments, node)
+	}
+	return &InvalidType{}
 }
 
 func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType {

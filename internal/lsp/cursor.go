@@ -113,20 +113,23 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	}
 
 	// 2. Check if it's a scope resolution member (M::x)
-	if sr, ok := parent.(*ast.ScopeResolution); ok && sr.Name == ident {
-		qualifier := sr.Module.Name
-		if imp, ok := module.Imports[qualifier]; ok {
-			if mod, ok := ctx.ModuleByKey(imp.Key); ok && mod.ModuleScope != nil {
-				if sym, ok := mod.ModuleScope.LookupLocal(ident.Name); ok {
-					return sym
+	if sr, ok := parent.(*ast.ScopeResolution); ok {
+		qualifierNode, memberNode, imported := sr.ImportMember()
+		if imported && memberNode == ident {
+			qualifier := qualifierNode.Name
+			if imp, ok := module.Imports[qualifier]; ok {
+				if mod, ok := ctx.ModuleByKey(imp.Key); ok && mod.ModuleScope != nil {
+					if sym, ok := mod.ModuleScope.LookupLocal(ident.Name); ok {
+						return sym
+					}
 				}
 			}
+			return nil
 		}
-		return nil
 	}
 
 	// 3. Check if it's a scope resolution qualifier (M::x)
-	if sr, ok := parent.(*ast.ScopeResolution); ok && sr.Module == ident {
+	if sr, ok := parent.(*ast.ScopeResolution); ok && len(sr.Segments) > 1 && sr.Segments[0].Name == ident {
 		qualifier := ident.Name
 		if imp, ok := module.Imports[qualifier]; ok {
 			sym := symbols.New(ident.Name, symbols.SymbolImport, parent, ast.LocOf(ident))

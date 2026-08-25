@@ -42,7 +42,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 func (c *collector) collectNode(node ast.Node) {
 	if decl, ok := node.(ast.TypeDecl); ok {
 		if name := decl.DeclName(); name != nil {
-			c.collectConcreteTypeDecl(name, node)
+			c.collectConcreteTypeDecl(decl)
 			return
 		}
 	}
@@ -101,24 +101,49 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	}
 }
 
-func (c *collector) collectConcreteTypeDecl(name *ast.Ident, node ast.Node) {
-	if c == nil || c.module == nil || node == nil {
+func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
+	if c == nil || c.module == nil || decl == nil {
 		return
 	}
+	name := decl.DeclName()
 	if name == nil || name.Name == "" {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "type name required", ast.LocOf(node), "")
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "type name required", ast.LocOf(decl), "")
 		return
 	}
-	sym := symbols.New(name.Name, symbols.SymbolType, node, ast.LocOf(name))
-	sym.Type = &typeinfo.DefinedType{
-		Name:     name.Name,
-		Identity: c.module.TypeDeclarationIdentity(name.Name),
+	identity := c.module.TypeDeclarationIdentity(name.Name)
+	parameters := make([]*typeinfo.TypeParameterType, 0, len(decl.DeclarationTypeParams()))
+	for index, parameter := range decl.DeclarationTypeParams() {
+		if parameter.Name != nil && parameter.Name.Name != "" {
+			parameters = append(parameters, &typeinfo.TypeParameterType{
+				Name: parameter.Name.Name, OwnerIdentity: identity, Index: index,
+			})
+		}
+	}
+	kind := typeinfo.DefinedKindInvalid
+	switch decl.(type) {
+	case *ast.TypeAliasDecl:
+		kind = typeinfo.DefinedKindAlias
+	case *ast.StructDecl:
+		kind = typeinfo.DefinedKindStruct
+	case *ast.InterfaceDecl:
+		kind = typeinfo.DefinedKindInterface
+	case *ast.EnumDecl:
+		kind = typeinfo.DefinedKindEnum
+	}
+	sym := symbols.New(name.Name, symbols.SymbolType, decl, ast.LocOf(name))
+	defined := &typeinfo.DefinedType{
+		Name:           name.Name,
+		Identity:       identity,
+		Kind:           kind,
+		TypeParameters: parameters,
 		// Underlying is filled by binder.
 	}
+	sym.Type = defined
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
+	c.ctx.RegisterTypeDeclaration(c.module, decl, defined)
 }
 
 func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, node ast.Node) {

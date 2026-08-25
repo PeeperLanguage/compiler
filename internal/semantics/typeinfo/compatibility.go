@@ -269,6 +269,12 @@ func sameReturnOriginContract(left, right *ReturnOriginContract) bool {
 }
 
 func checkEnumCompatibility(dst, src Type) Compatibility {
+	if same, nominal := sameNominalEnum(dst, src); nominal {
+		if same {
+			return Compatible
+		}
+		return Incompatible
+	}
 	left, ok := Underlying(dst).(*EnumType)
 	if !ok || left == nil {
 		return Incompatible

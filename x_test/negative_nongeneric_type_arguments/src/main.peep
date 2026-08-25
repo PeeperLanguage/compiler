@@ -1,0 +1,3 @@
+struct Plain {}
+
+fn Use(value: Plain<i32>) {}

@@ -1413,6 +1413,86 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersConcreteGenericStructInstance(t *testing.T) {
+	entrySrc := `struct Box<T> { value: T }
+
+fn Read(box: &Box<i32>) -> i32 { return box.value; }
+fn main() -> i32 {
+	let box: Box<i32> = .{ value = 42 };
+	return Read(&box);
+}`
+	const entryPath = "entry" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected generic pipeline diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
+		t.Fatal("generic named type did not reach HIR, MIR, and LLVM")
+	}
+}
+
+func TestPipelineResolvesImportedGenericApplication(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn Read(box: &runtime::Box<i32>) -> i32 { return box.value; }
+fn main() -> i32 {
+	let box: runtime::Box<i32> = .{ value = 9 };
+	return Read(&box);
+}`, `struct Box<T> { value: T }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected imported generic diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineRejectsTypeArgumentsOnImportedValuePath(t *testing.T) {
+	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
+
+fn main() -> i32 {
+	return runtime::Make<i32>();
+}`, `fn Make() -> i32 { return 42; }`)
+	out := diag.EmitAllToString()
+	if !diag.HasErrors() || !strings.Contains(out, diagnostics.ErrInvalidType) ||
+		!strings.Contains(out, "type arguments are not allowed on value paths") {
+		t.Fatalf("expected rejected imported value type arguments, got:\n%s", out)
+	}
+}
+
+func TestPipelineLowersGenericInterfaceInstance(t *testing.T) {
+	entrySrc := `iface Reader<T> { fn (&Self) read() -> T }
+struct Counter { value: i32 }
+
+fn (self: &Counter) read() -> i32 { return self.value; }
+fn Read(reader: &Reader<i32>) -> i32 { return reader.read(); }
+fn main() -> i32 {
+	let counter: Counter = .{ value = 17 };
+	return Read(&counter);
+}`
+	const entryPath = "entry" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(entryPath, entrySrc)
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	entry := parseModuleSource(entryPath, entrySrc, diag)
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("unexpected generic interface diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if entry.MIR == nil || entry.LLVMIR == "" {
+		t.Fatal("generic interface instance did not reach MIR and LLVM")
+	}
+}
+
 func TestPipelineLowersArrayIndexRead(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `fn first(xs: [4]i32) -> i32 {

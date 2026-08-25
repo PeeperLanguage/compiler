@@ -1,0 +1,6 @@
+name = "type_generic_alias_identity"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"
