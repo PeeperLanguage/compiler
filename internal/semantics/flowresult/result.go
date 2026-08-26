@@ -71,15 +71,16 @@ type MatchArm struct {
 	ArmID   ast.NodeID
 	BodyID  ast.NodeID
 	Case    int
-	Payload *typeinfo.StructType
+	Payload typeinfo.Type
 	Fields  []MatchField
 }
 
 type MatchField struct {
-	Field   int
-	Type    typeinfo.Type
-	Binding *symbols.Symbol
-	Discard bool
+	Field        int
+	WholePayload bool
+	Type         typeinfo.Type
+	Binding      *symbols.Symbol
+	Discard      bool
 }
 
 // Arm returns resolved evidence for one case-labelled CFG edge.

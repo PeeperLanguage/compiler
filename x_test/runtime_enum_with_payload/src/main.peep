@@ -1,0 +1,43 @@
+enum Result {
+    Ok: {
+        value: i32,
+    },
+    Failed: str,
+    Pending,
+}
+
+enum Code {
+    Value: i32,
+}
+
+const SelectedCode: Code = Code::Value with 7;
+
+fn Show(result: Result) {
+    match result {
+        Result::Ok with { value = payload } => {
+            println(payload);
+        }
+        Result::Failed with message => {
+            println(message);
+        }
+        Result::Pending => {
+            println("pending");
+        }
+    }
+}
+
+fn ShowCode() {
+    match SelectedCode {
+        Code::Value with value => {
+            println(value);
+        }
+    }
+}
+
+fn main() -> i32 {
+    Show(Result::Ok with .{ value = 42 });
+    Show(Result::Failed with "404 not found");
+    Show(Result::Pending);
+    ShowCode();
+    return 0;
+}

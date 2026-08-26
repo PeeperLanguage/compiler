@@ -1,0 +1,7 @@
+name = "runtime_enum_with_payload"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["42", "404 not found", "pending", "7"]

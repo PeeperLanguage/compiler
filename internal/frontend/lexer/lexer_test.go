@@ -107,6 +107,23 @@ func TestLexLiteralKinds(t *testing.T) {
 	}
 }
 
+func TestLexWithKeyword(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	stream := New("with"+peeper.SourceExt, `Result::Failed with "not found"`, diag).Tokenize()
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	want := []token.Kind{token.IDENT, token.DCOLON, token.IDENT, token.WITH, token.STRING, token.EOF}
+	if len(stream) != len(want) {
+		t.Fatalf("token length mismatch: got=%d want=%d", len(stream), len(want))
+	}
+	for index, kind := range want {
+		if stream[index].Kind != kind {
+			t.Fatalf("token[%d]: got %s want %s", index, stream[index].Kind, kind)
+		}
+	}
+}
+
 func TestLexRejectsMalformedHexEscape(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	stream := New(

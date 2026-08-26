@@ -16,13 +16,13 @@ enum WideResult {
     Pending,
 }
 
-const Selected: Result = Result::Ok{
+const Selected: Result = Result::Ok with .{
     value = 42,
     enabled = true,
 };
 const Unreferenced: Result = Result::Pending;
 const SelectedIsOk: bool = Selected is Result::Ok;
-const WideSelected: WideResult = WideResult::Value{
+const WideSelected: WideResult = WideResult::Value with .{
     number = 42.0,
 };
 

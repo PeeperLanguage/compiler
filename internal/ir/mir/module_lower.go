@@ -203,19 +203,32 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 		return false
 	}
 	var drops []int
+	payloadDrop := false
 	if l.cleanup != nil && entry.caseBlock.Body != nil {
 		drops = l.cleanup.MatchFieldDrops[entry.caseBlock.Body.NodeID]
+		_, payloadDrop = l.cleanup.MatchWholePayloadDrops[entry.caseBlock.Body.NodeID]
 	}
-	if len(entry.caseBlock.Bindings) == 0 && len(drops) == 0 {
+	if len(entry.caseBlock.Bindings) == 0 && len(drops) == 0 && !payloadDrop {
 		return true
 	}
 	if entry.caseBlock.PayloadType == ir.InvalidType {
 		return false
 	}
 	for _, binding := range entry.caseBlock.Bindings {
-		place := variantFieldPlace(subject, entry.caseBlock, binding.FieldIndex, binding.Type)
+		place := variantPayloadPlace(subject, entry.caseBlock)
+		if !binding.WholePayload {
+			place = variantFieldPlace(subject, entry.caseBlock, binding.FieldIndex, binding.Type)
+		}
 		value := l.load(&l.current.Instrs, place, binding.Type, entry.caseBlock.Body.Location)
 		l.appendInstr(&l.current.Instrs, &Assign{Name: binding.Name, Value: asValueExpr(value)})
+	}
+	if payloadDrop {
+		place := variantPayloadPlace(subject, entry.caseBlock)
+		value := l.load(&l.current.Instrs, place, entry.caseBlock.PayloadType, entry.caseBlock.Body.Location)
+		l.appendInstr(&l.current.Instrs, &Drop{Value: value})
+	}
+	if len(drops) == 0 {
+		return true
 	}
 	payload, ok := l.module.Types.Type(entry.caseBlock.PayloadType)
 	if !ok || payload.Kind != ir.TypeStruct {
@@ -234,13 +247,19 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 }
 
 func variantFieldPlace(subject ValueRef, block hir.VariantCaseBlock, fieldIndex int, fieldType ir.TypeID) *Place {
+	place := variantPayloadPlace(subject, block)
+	place.Projections = append(place.Projections, PlaceProjection{Kind: PlaceProjectionField, FieldIndex: fieldIndex, Type: fieldType, Location: block.Body.Location})
+	place.Type = fieldType
+	return place
+}
+
+func variantPayloadPlace(subject ValueRef, block hir.VariantCaseBlock) *Place {
 	return &Place{
 		Root: subject,
 		Projections: []PlaceProjection{
 			{Kind: PlaceProjectionVariantPayload, Case: block.Case, Type: block.PayloadType, Location: block.Body.Location},
-			{Kind: PlaceProjectionField, FieldIndex: fieldIndex, Type: fieldType, Location: block.Body.Location},
 		},
-		Type: fieldType, Location: block.Body.Location,
+		Type: block.PayloadType, Location: block.Body.Location,
 	}
 }
 

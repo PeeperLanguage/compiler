@@ -23,9 +23,9 @@ enum Status<T> {
 
 type State<T> = Status<T>;
 
-fn StateCode(status: State<i32> = State<i32>::Ready{ value = 42 }) -> i32 {
+fn StateCode(status: State<i32> = State<i32>::Ready with .{ value = 42 }) -> i32 {
     match status {
-        State<i32>::Ready{ value = value } => {
+        State<i32>::Ready with { value = value } => {
             return value;
         }
         State<i32>::Pending => {

@@ -636,7 +636,7 @@ func TestTypecheckedPhaseFinalizesNamedVariantConstants(t *testing.T) {
 	Ready: { code: i32, enabled: bool },
 	Waiting,
 }
-const Ready: Status = Status::Ready{ code = 7, enabled = true };
+const Ready: Status = Status::Ready with .{ code = 7, enabled = true };
 const Waiting: Status = Status::Waiting;
 const ReadyIsReady: bool = Ready is Status::Ready;
 const WaitingIsReady: bool = Waiting is Status::Ready;
@@ -802,7 +802,7 @@ fn Read(choice: Choice) -> bool {
 }
 
 fn main() -> i32 {
-	if Read(Choice::Flag{ value = true }) {
+	if Read(Choice::Flag with .{ value = true }) {
 		return 0;
 	}
 	return 1;
@@ -1337,10 +1337,10 @@ fn Read(_: &Node) {}
 
 fn main() -> i32 {
 	let end = Node::End;
-	let node = Node::Next{ next = &end };
+	let node = Node::Next with .{ next = &end };
 	let mut result = 1;
 	match node {
-		Node::Next{ next = next } => {
+		Node::Next with { next = next } => {
 			Read(next);
 			result = 0;
 		}
@@ -1628,9 +1628,9 @@ fn main() -> i32 {
 
 type State<T> = Status<T>;
 
-fn Read(status: State<i32> = State<i32>::Ready{ value = 42 }) -> i32 {
+fn Read(status: State<i32> = State<i32>::Ready with .{ value = 42 }) -> i32 {
 	match status {
-		State<i32>::Ready{ value = value } => { return value; }
+		State<i32>::Ready with { value = value } => { return value; }
 		State<i32>::Pending => { return 0; }
 	}
 }

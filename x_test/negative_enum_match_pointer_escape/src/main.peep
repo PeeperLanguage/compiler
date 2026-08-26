@@ -6,12 +6,12 @@ const global: i32 = 1;
 
 fn Invalid(chooseLocal: bool) -> rawptr {
     let local: i32 = 2;
-    let mut resource = Resource::Pointer{ value = @global };
+    let mut resource = Resource::Pointer with .{ value = @global };
     if chooseLocal {
-        resource = Resource::Pointer{ value = @local };
+        resource = Resource::Pointer with .{ value = @local };
     }
     match resource {
-        Resource::Pointer{ value = pointer } => {
+        Resource::Pointer with { value = pointer } => {
             return pointer;
         }
     }

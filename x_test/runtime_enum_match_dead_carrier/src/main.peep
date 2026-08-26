@@ -6,10 +6,10 @@ enum Result {
 
 fn Show(result: Result) {
     match result {
-        Result::Ok{ value = payload } => {
+        Result::Ok with { value = payload } => {
             println(payload);
         }
-        Result::Error{ message = message } => {
+        Result::Error with { message = message } => {
             println(message);
         }
         Result::Pending => {
@@ -19,8 +19,8 @@ fn Show(result: Result) {
 }
 
 fn main() -> i32 {
-    Show(Result::Ok{ value = 42 });
-    Show(Result::Error{ message = "failed" });
+    Show(Result::Ok with .{ value = 42 });
+    Show(Result::Error with .{ message = "failed" });
     Show(Result::Pending);
     return 0;
 }

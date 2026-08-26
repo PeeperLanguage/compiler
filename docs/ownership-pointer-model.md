@@ -133,10 +133,11 @@ layout stores tag plus one typed slot for each data case, zeroes inactive slots,
 and destroys only active payload. Enum copyability and destruction traverse all
 case payloads.
 
-Case tests never consume. Copyable and shared-reference case fields preserve
-carrier. Moving or explicitly discarding move-only fields through match is legal
-only from direct named local or parameter carrier; it consumes whole carrier and
-drops omitted owned fields on selected arm. Partial-carrier extraction remains
+Case tests never consume. Copyable and shared-reference payload reads preserve
+carrier. Moving or explicitly discarding a move-only whole payload, or
+move-only struct payload fields, through match is legal only from direct named
+local or parameter carrier. It consumes whole carrier; struct patterns also
+drop omitted owned fields on selected arm. Partial-carrier extraction remains
 rejected. Reassignment reinitializes consumed carrier.
 
 ## Strings

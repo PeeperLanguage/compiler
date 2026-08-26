@@ -7,7 +7,7 @@ enum Resource<T> {
 }
 
 fn Invalid(source: &i32) {
-    let resource = Resource<[1]&i32>::Borrowed{
+    let resource = Resource<[1]&i32>::Borrowed with .{
         value = [_]&i32{source}
     };
 }

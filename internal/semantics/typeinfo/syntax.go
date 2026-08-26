@@ -218,16 +218,8 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 				continue
 			}
 			semanticCase := VariantCase{Name: variant.Name.Name}
-			if variant.HasData {
-				fields := make([]Field, 0, len(variant.Fields))
-				for _, field := range variant.Fields {
-					name := ""
-					if field.Name != nil {
-						name = field.Name.Name
-					}
-					fields = append(fields, Field{Name: name, Type: TypeFromSyntax(field.Type, opts)})
-				}
-				semanticCase.Payload = &StructType{Fields: fields}
+			if variant.Payload != nil {
+				semanticCase.Payload = TypeFromSyntax(variant.Payload, opts)
 			}
 			cases = append(cases, semanticCase)
 		}

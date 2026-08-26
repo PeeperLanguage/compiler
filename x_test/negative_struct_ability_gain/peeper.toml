@@ -1,0 +1,7 @@
+name = "negative_struct_ability_gain"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot assign struct{directValue: i32} to Direct", "cannot assign struct{aliasValue: i32} to Alias"]

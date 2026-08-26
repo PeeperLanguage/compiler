@@ -144,7 +144,7 @@ func TestInitializationDefinesMatchPatternBindingOnCaseEdge(t *testing.T) {
 
 fn choose(result: Result) -> i32 {
 	match result {
-		Result::Ok{ value = payload } => {
+		Result::Ok with { value = payload } => {
 			return payload;
 		}
 		Result::Pending => {

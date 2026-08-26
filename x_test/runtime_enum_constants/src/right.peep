@@ -5,7 +5,7 @@ enum Status {
     Waiting,
 }
 
-const Selected: Status = Status::Ready{
+const Selected: Status = Status::Ready with .{
     enabled = true,
 };
 

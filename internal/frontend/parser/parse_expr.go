@@ -512,28 +512,29 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 func (p *Parser) parseIdentExpr() ast.Expr {
 	expr := p.parseIdentPath()
 	path, ok := expr.(*ast.ScopeResolution)
-	if !ok || !p.at(token.LBRACE) {
+	if !ok {
 		return expr
+	}
+	if p.match(token.WITH) {
+		payload := p.parseExpr(precLowest)
+		return reg(p, &ast.VariantLit{
+			Case:     path,
+			Payload:  payload,
+			Location: source.NewLocation(p.filePath, ast.StartOf(path), ast.EndOf(payload)),
+		})
+	}
+	if !p.at(token.LBRACE) {
+		return path
 	}
 	if p.controlHeader && !p.variantLiteralPrecedesControlBody() {
 		return path
 	}
-	ambiguousControlHeader := p.controlHeader
-	if ambiguousControlHeader {
-		p.diag.Add(diagnostics.NewError("parenthesize variant literal in control header").
-			WithCode(diagnostics.ErrInvalidExpression).
-			WithPrimaryLabel(ast.LocOf(path), "wrap the variant literal or whole condition in parentheses"))
-	}
-	fields, end, _ := p.parseStructLiteralFields("expected '{' after enum variant", "expected '}' after enum variant literal")
+	_, end, _ := p.parseStructLiteralFields("expected '{' after enum variant", "expected '}' after enum variant literal")
 	location := source.NewLocation(p.filePath, ast.StartOf(path), end.End)
-	if ambiguousControlHeader {
-		return reg(p, &ast.BadExpr{Location: location})
-	}
-	return reg(p, &ast.VariantLit{
-		Case:     path,
-		Fields:   fields,
-		Location: location,
-	})
+	p.diag.Add(diagnostics.NewError("enum variant payload requires 'with'").
+		WithCode(diagnostics.ErrInvalidExpression).
+		WithPrimaryLabel(location, "write `Enum::Variant with .{ ... }`"))
+	return reg(p, &ast.BadExpr{Location: location})
 }
 
 func (p *Parser) parseIdentPath() ast.Expr {

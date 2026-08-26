@@ -273,10 +273,11 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 					continue
 				}
 				caseBlock.Bindings = append(caseBlock.Bindings, hir.VariantBinding{
-					FieldIndex: field.Field,
-					Name:       symbolName(module, field.Binding),
-					Type:       loweredTypeID(ctx, module, field.Type),
-					SymbolID:   field.Binding.ID,
+					FieldIndex:   field.Field,
+					WholePayload: field.WholePayload,
+					Name:         symbolName(module, field.Binding),
+					Type:         loweredTypeID(ctx, module, field.Type),
+					SymbolID:     field.Binding.ID,
 				})
 			}
 			appendBlock(module, scope, caseBlock.Body, sourceArm.Body, returnType, ctx)
@@ -542,14 +543,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			Type: loweredTypeID(ctx, module, construction.EnumType),
 		}
 		if construction.Payload != nil {
-			fields := make([]ir.Expr, len(construction.Fields))
-			for index, field := range construction.Fields {
-				fields[index] = lowerASTExpr(ctx, module, scope, field, construction.Payload.Fields[index].Type)
-			}
-			variant.Payload = &ir.StructLit{
-				Fields: fields,
-				Type:   loweredTypeID(ctx, module, construction.Payload),
-			}
+			variant.Payload = lowerASTExpr(ctx, module, scope, construction.Value, construction.Payload)
 		}
 		return variant
 	}

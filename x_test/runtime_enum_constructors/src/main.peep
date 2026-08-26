@@ -7,7 +7,7 @@ fn ReadImported(value: result::Alias<i32>) -> i32 {
         return 0;
     }
     match value {
-        result::Alias<i32>::Ok{ value = payload } => {
+        result::Alias<i32>::Ok with { value = payload } => {
             return payload;
         }
         result::Alias<i32>::Pending => {
@@ -17,7 +17,7 @@ fn ReadImported(value: result::Alias<i32>) -> i32 {
 }
 
 fn main() -> i32 {
-    let value = LocalResult<i32>::Ok{
+    let value = LocalResult<i32>::Ok with .{
         value = 42,
     };
     let _ = LocalResult<i32>::Pending;

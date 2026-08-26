@@ -6,10 +6,10 @@ enum Result {
 
 fn Read(result: Result) -> i32 {
     match result {
-        Result::Ok{ value = payload } => {
+        Result::Ok with { value = payload } => {
             return payload;
         }
-        Result::Error{ message = _ } => {
+        Result::Error with { message = _ } => {
             return 1;
         }
         Result::Pending => {

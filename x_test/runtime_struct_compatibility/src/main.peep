@@ -1,0 +1,17 @@
+struct Point {
+    value: i32,
+}
+
+type PointAlias = Point;
+
+fn (self: &Point) total() -> i32 {
+    return self.value;
+}
+
+fn main() -> i32 {
+    let aliased: PointAlias = .Point{ value = 10 };
+    let unnamed: struct { value: i32 } = aliased;
+    let named: Point = .Point{ value = 20 };
+    println("struct compatibility ok");
+    return unnamed.value + named.total();
+}

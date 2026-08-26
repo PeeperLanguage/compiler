@@ -1105,8 +1105,9 @@ func TestGenerateHIRLowersEnumConstructorsFromSemanticEvidence(t *testing.T) {
 	Ok: { value: T, code: i32 },
 	Pending,
 }
+
 fn main() {
-	let ok = Result<i32>::Ok{ code = 7, value = 42 };
+	let ok = Result<i32>::Ok with .{ code = 7, value = 42 };
 	let pending = Result<i32>::Pending;
 }`)
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 2 {
@@ -1133,10 +1134,9 @@ func TestGenerateHIRLowersMatchFromSemanticEvidence(t *testing.T) {
 	Ok: { value: i32, code: i32 },
 	Pending
 }
-
 fn Read(result: Result) -> i32 {
 	match result {
-		Result::Ok{ value = payload } => {
+		Result::Ok with { value = payload } => {
 			return payload;
 		}
 		Result::Pending => {
@@ -1162,6 +1162,51 @@ fn Read(result: Result) -> i32 {
 	ident, ok := ret.Value.(*ir.Ident)
 	if !ok || ident.Name != binding.Name {
 		t.Fatalf("pattern return = %#v, binding = %#v", ret.Value, binding)
+	}
+}
+
+func TestGenerateHIRLowersDirectEnumPayload(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_direct_payload_test"+peeper.SourceExt, "hir_enum_direct_payload_test", `enum Code {
+	Value: i32,
+}
+fn main() {
+	let code = Code::Value with 42;
+}`)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	binding := out.Funcs[0].Body.Stmts[0].(*hir.Binding)
+	value, ok := binding.Value.(*ir.VariantMake)
+	if !ok || value.Case != 0 {
+		t.Fatalf("direct variant = %#v, want case 0", binding.Value)
+	}
+	payload, ok := value.Payload.(*ir.IntLit)
+	if !ok || payload.Value != "42" || out.Types.Text(payload.TypeID()) != "i32" {
+		t.Fatalf("scalar payload = %#v, want i32 literal 42", value.Payload)
+	}
+}
+
+func TestGenerateHIRLowersDirectEnumPayloadMatchBinding(t *testing.T) {
+	out := generateTestHIR(t, "hir_enum_direct_match_test"+peeper.SourceExt, "hir_enum_direct_match_test", `enum Code {
+	Value: i32,
+}
+fn Read(code: Code) -> i32 {
+	match code {
+		Code::Value with value => {
+			return value;
+		}
+	}
+}`)
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	switchStmt, ok := out.Funcs[0].Body.Stmts[0].(*hir.SwitchVariant)
+	if !ok || len(switchStmt.Cases) != 1 || len(switchStmt.Cases[0].Bindings) != 1 {
+		t.Fatalf("direct match HIR = %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	binding := switchStmt.Cases[0].Bindings[0]
+	if !binding.WholePayload || binding.SymbolID == 0 || out.Types.Text(binding.Type) != "i32" {
+		t.Fatalf("direct pattern binding = %#v", binding)
 	}
 }
 

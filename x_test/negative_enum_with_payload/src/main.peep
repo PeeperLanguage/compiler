@@ -1,0 +1,19 @@
+enum Result {
+    Failed: str,
+    Pending,
+}
+
+fn Check() {
+    let missing = Result::Failed;
+    let payloadless = Result::Pending with 1;
+    let wrong = Result::Failed with 404;
+}
+
+fn Inspect(result: Result) {
+    match result {
+        Result::Failed with { value = payload } => {
+            println(payload);
+        }
+        Result::Pending => {}
+    }
+}

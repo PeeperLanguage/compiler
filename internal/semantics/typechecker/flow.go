@@ -479,10 +479,17 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 	}
 	payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
 	for _, field := range arm.Fields {
-		if field.Binding == nil || field.Field < 0 || field.Field >= len(arm.Payload.Fields) {
+		if field.Binding == nil {
 			continue
 		}
-		fieldOrigins := place.FieldOrigins(payloadOrigins, arm.Payload.Fields[field.Field].Name)
+		fieldOrigins := payloadOrigins
+		if !field.WholePayload {
+			payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType)
+			if !payloadFound || payload == nil || field.Field < 0 || field.Field >= len(payload.Fields) {
+				continue
+			}
+			fieldOrigins = place.FieldOrigins(payloadOrigins, payload.Fields[field.Field].Name)
+		}
 		bindingOrigins := []place.Origin{{Root: field.Binding}}
 		valueOrigins := fieldOrigins
 		if _, _, reference := typeinfo.ReferenceValueTarget(field.Type); reference {
@@ -650,6 +657,23 @@ func (a *flowAnalyzer) updateOriginPlace(
 	if value == nil {
 		return
 	}
+	if literal, ok := value.(*ast.StructLit); ok {
+		strct, structured := typeinfo.Underlying(typ).(*typeinfo.StructType)
+		if !structured || strct == nil {
+			return
+		}
+		for _, fieldValue := range literal.Fields {
+			if fieldValue.Name == nil {
+				continue
+			}
+			field, _, found := typeinfo.LookupStructField(strct, fieldValue.Name.Name)
+			if !found {
+				continue
+			}
+			a.updateOriginPlace(c, scope, place.FieldOrigins(storage, field.Name), field.Type, fieldValue.Value, sourceState, st)
+		}
+		return
+	}
 	construction, constructed := a.module.Semantics.VariantConstructions[value.ID()]
 	if !constructed || construction.Payload == nil || construction.Case < 0 {
 		source := c.resolveFlowPlace(scope, value, sourceState)
@@ -657,13 +681,7 @@ func (a *flowAnalyzer) updateOriginPlace(
 		return
 	}
 	payloadStorage := place.VariantPayloadOrigins(storage, []int{construction.Case})
-	for fieldIndex, fieldValue := range construction.Fields {
-		if fieldIndex >= len(construction.Payload.Fields) {
-			return
-		}
-		field := construction.Payload.Fields[fieldIndex]
-		a.updateOriginPlace(c, scope, place.FieldOrigins(payloadStorage, field.Name), field.Type, fieldValue, sourceState, st)
-	}
+	a.updateOriginPlace(c, scope, payloadStorage, construction.Payload, construction.Value, sourceState, st)
 }
 
 func (a *flowAnalyzer) copyStoredOriginPlace(destination, source []place.Origin, typ typeinfo.Type, sourceState flowState, st *flowState) {

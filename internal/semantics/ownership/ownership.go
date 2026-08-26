@@ -64,13 +64,14 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			continue
 		}
 		result[graph.NodeID] = &ownershipresult.CleanupPlan{
-			AfterScope:        make(map[ir.NodeID][]symbols.SymbolID),
-			BeforeReturn:      make(map[ir.NodeID][]symbols.SymbolID),
-			BeforeAssign:      make(map[ir.NodeID]struct{}),
-			DiscardedValue:    make(map[ir.NodeID]struct{}),
-			ProjectionBase:    make(map[ir.NodeID]struct{}),
-			MatchCarrierMoves: make(map[ir.NodeID]symbols.SymbolID),
-			MatchFieldDrops:   make(map[ir.NodeID][]int),
+			AfterScope:             make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeReturn:           make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeAssign:           make(map[ir.NodeID]struct{}),
+			DiscardedValue:         make(map[ir.NodeID]struct{}),
+			ProjectionBase:         make(map[ir.NodeID]struct{}),
+			MatchCarrierMoves:      make(map[ir.NodeID]symbols.SymbolID),
+			MatchFieldDrops:        make(map[ir.NodeID][]int),
+			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
 	}
 	for _, stmt := range module.AST.Stmts {
@@ -517,7 +518,9 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	movesCarrier := matchArmMovesCarrier(arm)
 	listed := make(map[int]bool, len(arm.Fields))
 	for _, field := range arm.Fields {
-		listed[field.Field] = field.Discard
+		if !field.WholePayload {
+			listed[field.Field] = field.Discard
+		}
 	}
 	if movesCarrier && carrier == nil {
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -533,16 +536,22 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		delete(st.live, carrier)
 		delete(st.references, carrier)
 		a.cleanup.MatchCarrierMoves[ir.NodeID(arm.BodyID)] = carrier.ID
-		drops := make([]int, 0)
-		for fieldIndex := len(arm.Payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
-			field := arm.Payload.Fields[fieldIndex]
-			discarded, selected := listed[fieldIndex]
-			if typeinfo.NeedsDrop(field.Type) && (!selected || discarded) {
-				drops = append(drops, fieldIndex)
+		if len(arm.Fields) == 1 && arm.Fields[0].WholePayload {
+			if arm.Fields[0].Discard && typeinfo.NeedsDrop(arm.Fields[0].Type) {
+				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.BodyID)] = struct{}{}
 			}
-		}
-		if len(drops) > 0 {
-			a.cleanup.MatchFieldDrops[ir.NodeID(arm.BodyID)] = drops
+		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
+			drops := make([]int, 0)
+			for fieldIndex := len(payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
+				field := payload.Fields[fieldIndex]
+				discarded, selected := listed[fieldIndex]
+				if typeinfo.NeedsDrop(field.Type) && (!selected || discarded) {
+					drops = append(drops, fieldIndex)
+				}
+			}
+			if len(drops) > 0 {
+				a.cleanup.MatchFieldDrops[ir.NodeID(arm.BodyID)] = drops
+			}
 		}
 	}
 	for _, field := range arm.Fields {

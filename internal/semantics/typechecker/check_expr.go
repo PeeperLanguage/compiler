@@ -125,7 +125,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return c.typeStructLit(scope, node, expected)
 
 	case *ast.VariantLit:
-		return c.typeVariantConstruction(scope, node, node.Case, node.Fields, true)
+		return c.typeVariantConstruction(scope, node, node.Case, node.Payload)
 
 	case *ast.ArrayLit:
 		return c.typeArrayLit(scope, node)
@@ -867,38 +867,46 @@ func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields 
 	return ordered, valid
 }
 
-func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, path *ast.ScopeResolution, fields []ast.StructLitField, braced bool) typeinfo.Type {
+func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, path *ast.ScopeResolution, value ast.Expr) typeinfo.Type {
 	resolved, ok := c.resolveNamedVariant(path)
 	if !ok {
 		return &typeinfo.InvalidType{}
 	}
+	_, initialized := site.(*ast.VariantLit)
 	if resolved.Case.Payload == nil {
-		if braced {
+		if initialized {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept braces", ast.LocOf(site), "remove the braces")
+				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(site), "remove `with` and its value")
 			return &typeinfo.InvalidType{}
 		}
 		c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
 		return resolved.EnumType
 	}
-	if !braced {
+	if !initialized {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-			"data enum variant `"+resolved.CaseName.Name+"` requires a braced field initializer", ast.LocOf(site), "initialize its named fields with `{ ... }`")
+			"data enum variant `"+resolved.CaseName.Name+"` requires a payload", ast.LocOf(site), "add `with` and its payload value")
 		return &typeinfo.InvalidType{}
 	}
-	payload, ok := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
-	if !ok || payload == nil {
-		panic("named enum data case does not carry struct payload")
+	if value == nil {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
+			"enum variant `"+resolved.CaseName.Name+"` requires a payload value", ast.LocOf(site), "write `with <expression>`")
+		return &typeinfo.InvalidType{}
 	}
-	ordered, valid := c.typeLiteralFields(scope, site, fields, payload, "enum variant literal")
-	if !valid {
+	valueType := c.typeExpr(scope, value, resolved.Case.Payload)
+	valueType = c.requireValueType(value, valueType, "enum variant payload")
+	if typeinfo.IsInvalidOrUnknown(valueType) {
+		return &typeinfo.InvalidType{}
+	}
+	if !c.assignable(resolved.Case.Payload, valueType, value) {
+		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
+			fmt.Sprintf("cannot assign %s to enum variant payload of type %s", typeinfo.TypeText(valueType), typeinfo.TypeText(resolved.Case.Payload)), ast.LocOf(value), "")
 		return &typeinfo.InvalidType{}
 	}
 	c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{
 		EnumType: resolved.EnumType,
 		Case:     resolved.CaseIndex,
-		Payload:  payload,
-		Fields:   ordered,
+		Payload:  resolved.Case.Payload,
+		Value:    value,
 	}
 	return resolved.EnumType
 }

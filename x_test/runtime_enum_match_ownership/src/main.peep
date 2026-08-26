@@ -5,7 +5,7 @@ enum Resource {
 
 fn Consume(resource: Resource) {
     match resource {
-        Resource::Owned{ selected = selected } => {
+        Resource::Owned with { selected = selected } => {
             free(selected);
             return;
         }
@@ -17,7 +17,7 @@ fn Consume(resource: Resource) {
 
 fn ResetAndConsume(mut resource: Resource) {
     match resource {
-        Resource::Owned{ selected = selected } => {
+        Resource::Owned with { selected = selected } => {
             free(selected);
             resource = Resource::Pending;
         }
@@ -27,7 +27,7 @@ fn ResetAndConsume(mut resource: Resource) {
 }
 
 fn main() -> i32 {
-    let resource = Resource::Owned{
+    let resource = Resource::Owned with .{
         selected = alloc(1),
         omitted = alloc(2),
     };

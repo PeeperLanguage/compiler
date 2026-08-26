@@ -347,18 +347,21 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 			site:    expr,
 		}}, true
 	}
+	if literal, ok := expr.(*ast.StructLit); ok {
+		var loans []referenceLoan
+		for _, field := range literal.Fields {
+			fieldLoans, found := a.referenceValueForExpr(field.Value, st)
+			if found {
+				loans = append(loans, fieldLoans...)
+			}
+		}
+		return loans, len(loans) > 0
+	}
 	construction, constructed := a.module.Semantics.VariantConstructions[expr.ID()]
 	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}
-	var loans []referenceLoan
-	for _, field := range construction.Fields {
-		fieldLoans, found := a.referenceValueForExpr(field, st)
-		if found {
-			loans = append(loans, fieldLoans...)
-		}
-	}
-	return loans, len(loans) > 0
+	return a.referenceValueForExpr(construction.Value, st)
 }
 
 func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {

@@ -382,12 +382,20 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		if !symbols.IsPubName(variant.Name.Name) || strings.Contains(variant.Name.Name, "_") {
 			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant name must be PascalCase"))
 		}
-		if variant.HasData && len(variant.Fields) == 0 {
+		if variant.Payload == nil {
+			continue
+		}
+		payload, isStruct := variant.Payload.(*ast.StructType)
+		if !isStruct {
+			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
+			continue
+		}
+		if len(payload.Fields) == 0 {
 			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant data requires at least one field"))
 			continue
 		}
-		variantFields := make(map[string]*ast.Ident, len(variant.Fields))
-		for _, field := range variant.Fields {
+		variantFields := make(map[string]*ast.Ident, len(payload.Fields))
+		for _, field := range payload.Fields {
 			if field.Name == nil || field.Name.Name == "" {
 				continue
 			}
@@ -400,17 +408,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			if dataFields[field.Name.Name] == nil {
 				dataFields[field.Name.Name] = field.Name
 			}
-			fieldType := typeinfo.TypeFromSyntax(field.Type, opts)
-			if c.rejectUnsizedType(fieldType, field.Type, "enum variant field") {
-				continue
-			}
-			if c.rejectReferenceStorage(fieldType, field.Type, "enum variant fields", false) {
-				continue
-			}
-			if !typeinfo.IsLowerableType(fieldType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(fieldType)) {
-				c.ctx.Diagnostics.Add(invalidTypeError(field.Type,
-					"enum variant field type is not lowerable in current compiler stage"))
-			}
+			c.checkEnumPayloadType(field.Type, opts, allowTypeParameters, "enum variant field")
 		}
 	}
 	if decl.Name == nil {
@@ -422,6 +420,19 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		}
 		message := fmt.Sprintf("method `%s` conflicts with enum variant data field", method.Name)
 		c.ctx.Diagnostics.Add(problems.Redeclaration(message, method.Location, dataFields[method.Name].Location))
+	}
+}
+
+func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, opts typeinfo.SyntaxOptions, allowTypeParameters bool, context string) {
+	payloadType := typeinfo.TypeFromSyntax(syntax, opts)
+	if c.rejectUnsizedType(payloadType, syntax, context) {
+		return
+	}
+	if c.rejectReferenceStorage(payloadType, syntax, context+"s", false) {
+		return
+	}
+	if !typeinfo.IsLowerableType(payloadType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(payloadType)) {
+		c.ctx.Diagnostics.Add(invalidTypeError(syntax, context+" type is not lowerable in current compiler stage"))
 	}
 }
 

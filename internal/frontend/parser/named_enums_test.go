@@ -22,14 +22,71 @@ func TestParseEnumVariantDataSchemas(t *testing.T) {
 		t.Fatalf("variants = %d, want 3", len(enumType.Variants))
 	}
 	ok := enumType.Variants[0]
-	if !ok.HasData || len(ok.Fields) != 1 || ok.Fields[0].Name.Name != "value" || ast.TypeText(ok.Fields[0].Type) != "T" {
+	payload, payloadOK := ok.Payload.(*ast.StructType)
+	if !payloadOK || len(payload.Fields) != 1 || payload.Fields[0].Name.Name != "value" || ast.TypeText(payload.Fields[0].Type) != "T" {
 		t.Fatalf("Ok schema = %#v", ok)
 	}
-	if enumType.Variants[2].HasData || len(enumType.Variants[2].Fields) != 0 {
+	if enumType.Variants[2].Payload != nil {
 		t.Fatalf("Pending should be payloadless: %#v", enumType.Variants[2])
 	}
 	if got := ast.TypeText(enumType); got != "enum {Ok: {value: T}, Error: {message: str}, Pending}" {
 		t.Fatalf("enum text = %q", got)
+	}
+}
+
+func TestParseDirectEnumPayloadWithConstructionAndMatch(t *testing.T) {
+	mod, diag := parseTestModule(`enum Result {
+	Ok: { value: i32 },
+	Failed: str,
+	Pending,
+}
+fn inspect(result: Result) {
+	let failed = Result::Failed with "not found";
+	let ok = Result::Ok with .{ value = 42 };
+	match result {
+		Result::Ok with { value = payload } => { println(payload); }
+		Result::Failed with message => { println(message); }
+		Result::Pending => {}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	enumType := mod.Stmts[0].(*ast.EnumDecl).Type.(*ast.EnumType)
+	if got := ast.TypeText(enumType.Variants[1].Payload); got != "str" {
+		t.Fatalf("Failed payload = %q, want str", got)
+	}
+	body := mod.Stmts[1].(*ast.FnDecl).Body
+	failed := body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit)
+	if got := ast.ExprText(failed.Payload); got != "\"not found\"" {
+		t.Fatalf("Failed value = %q", got)
+	}
+	ok := body.Stmts[1].(*ast.LetDecl).Value.(*ast.VariantLit)
+	if _, ok := ok.Payload.(*ast.StructLit); !ok {
+		t.Fatalf("Ok payload = %#v", ok)
+	}
+	match := body.Stmts[2].(*ast.MatchStmt)
+	if match.Arms[1].Binding == nil || match.Arms[1].Binding.Name != "message" || match.Arms[1].Discard {
+		t.Fatalf("Failed arm = %#v", match.Arms[1])
+	}
+}
+
+func TestParseWithConsumesFullPayloadExpression(t *testing.T) {
+	mod, diag := parseTestModule(`fn make() {
+	let value = Result::Code with 40 + 2;
+	accept(Result::Code with calculate(21 * 2));
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	body := mod.Stmts[0].(*ast.FnDecl).Body
+	value := body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit)
+	if got := ast.ExprText(value.Payload); got != "(40 + 2)" {
+		t.Fatalf("payload = %q", got)
+	}
+	call := body.Stmts[1].(*ast.ExprStmt).Expr.(*ast.CallExpr)
+	if got := ast.ExprText(call.Args[0]); got != "Result::Code with calculate((21 * 2))" {
+		t.Fatalf("call argument = %q", got)
 	}
 }
 
@@ -74,21 +131,21 @@ func TestParseRejectsEmptyEnumVariantDataSchema(t *testing.T) {
 func TestParseVariantLiteralsAcrossExpressionContexts(t *testing.T) {
 	mod, diag := parseTestModule(`fn accept(value: Result<i32>) {}
 fn make() -> Result<i32> {
-	let direct = Result<i32>::Ok{ value = 1, };
-	accept(pkg::Result<i32>::Ok{ value = 2 });
-	let nested = [1]Result<i32>{Result<i32>::Ok{ value = 3 }};
-	return Result<i32>::Ok{ value = direct.value };
+	let direct = Result<i32>::Ok with .{ value = 1, };
+	accept(pkg::Result<i32>::Ok with .{ value = 2 });
+	let nested = [1]Result<i32>{Result<i32>::Ok with .{ value = 3 }};
+	return Result<i32>::Ok with .{ value = direct.value };
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	body := mod.Stmts[1].(*ast.FnDecl).Body
 	direct := body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit)
-	if ast.ExprText(direct.Case) != "Result<i32>::Ok" || len(direct.Fields) != 1 {
+	if ast.ExprText(direct.Case) != "Result<i32>::Ok" {
 		t.Fatalf("direct literal = %#v", direct)
 	}
 	call := body.Stmts[1].(*ast.ExprStmt).Expr.(*ast.CallExpr)
-	if got := ast.ExprText(call.Args[0]); got != "pkg::Result<i32>::Ok{value = 2}" {
+	if got := ast.ExprText(call.Args[0]); got != "pkg::Result<i32>::Ok with .{value = 2}" {
 		t.Fatalf("call literal text = %q", got)
 	}
 	array := body.Stmts[2].(*ast.LetDecl).Value.(*ast.ArrayLit)
@@ -119,8 +176,8 @@ func TestParseIsAtEqualityPrecedence(t *testing.T) {
 func TestParseStatementMatch(t *testing.T) {
 	mod, diag := parseTestModule(`fn inspect(result: Result<i32>) {
 	match result {
-		Result<i32>::Ok{ value = payload } => { println(payload); }
-		Result<i32>::Error{ message = _, code = code } => { println(code); }
+		Result<i32>::Ok with { value = payload } => { println(payload); }
+		Result<i32>::Error with { message = _, code = code } => { println(code); }
 		Result<i32>::Pending => { println("wait"); }
 	}
 }`)
@@ -149,10 +206,10 @@ func TestParseStatementMatch(t *testing.T) {
 	}
 }
 
-func TestParseParenthesizedVariantLiteralInIfHeader(t *testing.T) {
+func TestParseVariantLiteralInIfHeader(t *testing.T) {
 	mod, diag := parseTestModule(`fn check(value: Result<i32>) {
-	if value == (Result<i32>::Ok{ value = 1 }) { println("ok"); }
-	if (value == Result<i32>::Ok{ value = 2 }) { println("ok"); }
+	if value == Result<i32>::Ok with .{ value = 1 } { println("ok"); }
+	if value == Result<i32>::Ok with 2 { println("ok"); }
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -167,15 +224,15 @@ func TestParseParenthesizedVariantLiteralInIfHeader(t *testing.T) {
 	}
 }
 
-func TestParseDiagnosesUnparenthesizedVariantLiteralInIfHeader(t *testing.T) {
+func TestParseDiagnosesOldBraceOnlyVariantLiteral(t *testing.T) {
 	mod, diag := parseTestModule(`fn check(value: Result<i32>) {
 	if value == Result<i32>::Ok{ value = 1 } { println("ok"); }
 	if pkg::ready { println("ready"); }
 }`)
 	if !diag.HasErrors() {
-		t.Fatal("expected ambiguous control-header diagnostic")
+		t.Fatal("expected old variant literal diagnostic")
 	}
-	if output := diag.EmitAllToString(); !strings.Contains(output, "parenthesize variant literal in control header") {
+	if output := diag.EmitAllToString(); !strings.Contains(output, "enum variant payload requires 'with'") {
 		t.Fatalf("unexpected diagnostics:\n%s", output)
 	}
 	body := mod.Stmts[0].(*ast.FnDecl).Body

@@ -1,0 +1,7 @@
+name = "negative_enum_with_payload"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["requires", "does not accept a payload", "cannot be used as str", "field pattern requires a struct payload"]

@@ -179,6 +179,12 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 				r.resolveScopeResolution(arm.Case, false)
 			}
 			armScope := symbols.NewScope(scope)
+			if arm.Binding != nil && !arm.Discard {
+				r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location)
+				if binding, found := armScope.LookupNode(arm.Binding); found {
+					r.module.Semantics.ResolvedSymbols[arm.Binding.ID()] = binding
+				}
+			}
 			for _, field := range arm.Fields {
 				if field.Discard {
 					continue
@@ -281,9 +287,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		if !r.resolveVariantPath(scope, node.Case) {
 			r.resolveScopeResolution(node.Case, false)
 		}
-		for _, field := range node.Fields {
-			r.resolveExpr(scope, field.Value)
-		}
+		r.resolveExpr(scope, node.Payload)
 	case *ast.ArrayLit:
 		if scopedType, ok := node.Type.(*ast.ScopeResolution); ok {
 			r.resolveScopeResolution(scopedType, true)
