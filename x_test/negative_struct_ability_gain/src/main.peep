@@ -9,6 +9,8 @@ struct Named {
 type Alias = Named;
 
 fn main() {
-    let direct: Direct = .{ directValue = 1 };
-    let alias: Alias = .{ aliasValue = 2 };
+    let anonymousDirect = .{ directValue = 1 };
+    let direct: Direct = anonymousDirect;
+    let anonymousAlias = .{ aliasValue = 2 };
+    let alias: Alias = anonymousAlias;
 }

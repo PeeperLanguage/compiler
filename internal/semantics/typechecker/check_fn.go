@@ -10,6 +10,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
@@ -374,7 +375,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	}
 	opts := c.typeDeclSyntaxOptions(decl, false)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
-	dataFields := make(map[string]*ast.Ident)
+	dataFields := make(map[string]*source.Location)
 	for _, variant := range enumType.Variants {
 		if variant.Name == nil || variant.Name.Name == "" {
 			continue
@@ -385,17 +386,31 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		if variant.Payload == nil {
 			continue
 		}
-		payload, isStruct := variant.Payload.(*ast.StructType)
+		payloadType := typeinfo.TypeFromSyntax(variant.Payload, opts)
+		payload, isStruct := typeinfo.Underlying(payloadType).(*typeinfo.StructType)
+		inlinePayload, inline := variant.Payload.(*ast.StructType)
 		if !isStruct {
 			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
 			continue
 		}
-		if len(payload.Fields) == 0 {
+		if inline && len(inlinePayload.Fields) == 0 {
 			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant data requires at least one field"))
 			continue
 		}
-		variantFields := make(map[string]*ast.Ident, len(payload.Fields))
-		for _, field := range payload.Fields {
+		if !inline {
+			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
+			for _, field := range payload.Fields {
+				if field.Name == "" {
+					continue
+				}
+				if dataFields[field.Name] == nil {
+					dataFields[field.Name] = ast.LocOf(variant.Payload)
+				}
+			}
+			continue
+		}
+		variantFields := make(map[string]*ast.Ident, len(inlinePayload.Fields))
+		for _, field := range inlinePayload.Fields {
 			if field.Name == nil || field.Name.Name == "" {
 				continue
 			}
@@ -406,7 +421,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			}
 			variantFields[field.Name.Name] = field.Name
 			if dataFields[field.Name.Name] == nil {
-				dataFields[field.Name.Name] = field.Name
+				dataFields[field.Name.Name] = field.Name.Location
 			}
 			c.checkEnumPayloadType(field.Type, opts, allowTypeParameters, "enum variant field")
 		}
@@ -419,7 +434,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			continue
 		}
 		message := fmt.Sprintf("method `%s` conflicts with enum variant data field", method.Name)
-		c.ctx.Diagnostics.Add(problems.Redeclaration(message, method.Location, dataFields[method.Name].Location))
+		c.ctx.Diagnostics.Add(problems.Redeclaration(message, method.Location, dataFields[method.Name]))
 	}
 }
 

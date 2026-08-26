@@ -13,7 +13,11 @@ struct NamedPayload {
     namedValue: i32,
 }
 
-type AliasedPayload = NamedPayload;
+struct AliasedPayloadTarget {
+    aliasedValue: i32,
+}
+
+type AliasedPayload = AliasedPayloadTarget;
 
 enum NamedStructPayload {
     Value: NamedPayload,

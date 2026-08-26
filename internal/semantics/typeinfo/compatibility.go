@@ -207,6 +207,11 @@ func checkArrayCompatibility(dst, src Type) Compatibility {
 }
 
 func checkStructCompatibility(dst, src Type) Compatibility {
+	dstStruct, dstNominal := nominalStructType(dst)
+	srcStruct, srcNominal := nominalStructType(src)
+	if dstNominal && (!srcNominal || dstStruct.Identity != srcStruct.Identity) {
+		return Incompatible
+	}
 	left, ok := Underlying(dst).(*StructType)
 	if !ok || left == nil {
 		return Incompatible
