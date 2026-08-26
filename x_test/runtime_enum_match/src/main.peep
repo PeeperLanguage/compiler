@@ -5,7 +5,7 @@ enum Result {
 
 fn Read(result: Result) -> i32 {
     match result {
-        Result::Ok{ value = payload } => {
+        Result::Ok with { value = payload } => {
             return payload;
         }
         Result::Pending => {
@@ -15,7 +15,7 @@ fn Read(result: Result) -> i32 {
 }
 
 fn main() -> i32 {
-    let ok = Result::Ok{ value = 42, code = 7 };
+    let ok = Result::Ok with .{ value = 42, code = 7 };
     let pending = Result::Pending;
     if Read(ok) == 42 && Read(pending) == 0 {
         return 0;

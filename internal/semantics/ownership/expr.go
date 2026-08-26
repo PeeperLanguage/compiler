@@ -93,7 +93,7 @@ func (a *analyzer) checkExpr(
 	case *ast.StructLit:
 		a.checkLiteralFields(scope, e.Fields, st, loans)
 	case *ast.VariantLit:
-		a.checkLiteralFields(scope, e.Fields, st, loans)
+		a.checkExpr(scope, e.Payload, st, useConsume, loans, false)
 	case *ast.ArrayLit:
 		for _, value := range e.Values {
 			a.checkExpr(scope, value, st, useConsume, loans, false)
@@ -415,7 +415,7 @@ func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr ast.Expr, st st
 	case *ast.StructLit:
 		a.checkLiteralPointerEscapes(scope, e.Fields, st)
 	case *ast.VariantLit:
-		a.checkLiteralPointerEscapes(scope, e.Fields, st)
+		a.checkPointerEscape(scope, e.Payload, st)
 	}
 }
 

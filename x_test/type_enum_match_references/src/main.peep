@@ -16,32 +16,32 @@ fn Read(_: &i32) {}
 fn Write(_: &mut i32) {}
 
 fn Shared(source: &i32) {
-    let resource = SharedResource::Borrowed{ value = source };
+    let resource = SharedResource::Borrowed with .{ value = source };
     match resource {
-        SharedResource::Borrowed{ value = value } => {
+        SharedResource::Borrowed with { value = value } => {
             Read(value);
         }
     }
     match resource {
-        SharedResource::Borrowed{ value = value } => {
+        SharedResource::Borrowed with { value = value } => {
             Read(value);
         }
     }
 }
 
 fn Mutable(source: &mut i32) {
-    let resource = MutableResource::Borrowed{ value = source };
+    let resource = MutableResource::Borrowed with .{ value = source };
     match resource {
-        MutableResource::Borrowed{ value = value } => {
+        MutableResource::Borrowed with { value = value } => {
             Write(value);
         }
     }
 }
 
 fn GlobalPointer() -> rawptr {
-    let resource = RawResource::Pointer{ value = @global };
+    let resource = RawResource::Pointer with .{ value = @global };
     match resource {
-        RawResource::Pointer{ value = pointer } => {
+        RawResource::Pointer with { value = pointer } => {
             return pointer;
         }
     }

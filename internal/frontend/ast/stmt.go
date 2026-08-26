@@ -105,6 +105,8 @@ type MatchPatternField struct {
 type MatchArm struct {
 	NodeIDHolder
 	Case     *ScopeResolution
+	Binding  *Ident
+	Discard  bool
 	Fields   []MatchPatternField
 	HasData  bool
 	Body     *BlockStmt
@@ -113,6 +115,7 @@ type MatchArm struct {
 
 func (a *MatchArm) forEachChild(visit func(Node)) {
 	visit(a.Case)
+	visit(a.Binding)
 	for _, field := range a.Fields {
 		visit(field.Name)
 		visit(field.Binding)

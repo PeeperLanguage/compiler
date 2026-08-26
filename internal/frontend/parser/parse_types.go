@@ -417,21 +417,24 @@ func (p *Parser) parseEnumVariants() ([]ast.EnumVariant, *token.Token, bool) {
 				return ast.EnumVariant{Name: name, Location: name.Location}, true
 			}
 			colon := p.prev()
-			fields, end, ok := p.parseTypeFields("expected '{' after enum variant ':'", "expected '}' after enum variant fields")
-			if !ok {
+			if p.at(token.LBRACE) {
+				fields, end, ok := p.parseTypeFields("expected '{' after enum variant ':'", "expected '}' after enum variant fields")
+				if !ok {
+					return ast.EnumVariant{}, false
+				}
+				if len(fields) == 0 {
+					p.diag.Add(diagnostics.NewError("variant data requires at least one field").
+						WithCode(diagnostics.ErrInvalidTypeInParser).
+						WithPrimaryLabel(source.NewLocation(p.filePath, colon.Start, end.End), "remove the data block or add a field"))
+				}
+				payload := reg(p, &ast.StructType{Fields: fields, Location: source.NewLocation(p.filePath, colon.Start, end.End)})
+				return ast.EnumVariant{Name: name, Payload: payload, Location: source.NewLocation(p.filePath, ast.StartOf(name), end.End)}, true
+			}
+			payload := p.parseTypeExpr()
+			if payload == nil {
 				return ast.EnumVariant{}, false
 			}
-			if len(fields) == 0 {
-				p.diag.Add(diagnostics.NewError("variant data requires at least one field").
-					WithCode(diagnostics.ErrInvalidTypeInParser).
-					WithPrimaryLabel(source.NewLocation(p.filePath, colon.Start, end.End), "remove the data block or add a field"))
-			}
-			return ast.EnumVariant{
-				Name:     name,
-				Fields:   fields,
-				HasData:  true,
-				Location: source.NewLocation(p.filePath, ast.StartOf(name), end.End),
-			}, true
+			return ast.EnumVariant{Name: name, Payload: payload, Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(payload))}, true
 		})
 }
 

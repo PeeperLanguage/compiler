@@ -8,7 +8,7 @@ struct Holder {
 }
 
 fn Clear(holder: &mut Holder) {
-    holder.choice = Choice::Right{ value = 0 };
+    holder.choice = Choice::Right with .{ value = 0 };
 }
 
 fn Read(mut holder: Holder) -> i32 {

@@ -311,17 +311,14 @@ func (e *StructLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, b
 type VariantLit struct {
 	NodeIDHolder
 	Case     *ScopeResolution
-	Fields   []StructLitField
+	Payload  Expr
 	Location *source.Location
 }
 
 func (*VariantLit) exprNode() {}
 func (e *VariantLit) forEachChild(visit func(Node)) {
 	visit(e.Case)
-	for _, field := range e.Fields {
-		visit(field.Name)
-		visit(field.Value)
-	}
+	visit(e.Payload)
 }
 func (e *VariantLit) loc() *source.Location { return e.Location }
 func (e *VariantLit) exprText() string {
@@ -330,16 +327,8 @@ func (e *VariantLit) exprText() string {
 	}
 	var b strings.Builder
 	b.WriteString(ExprText(e.Case))
-	b.WriteByte('{')
-	for index, field := range e.Fields {
-		if index > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(identText(field.Name))
-		b.WriteString(" = ")
-		b.WriteString(ExprText(field.Value))
-	}
-	b.WriteByte('}')
+	b.WriteString(" with ")
+	b.WriteString(ExprText(e.Payload))
 	return b.String()
 }
 
@@ -347,18 +336,14 @@ func (e *VariantLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, 
 	if e == nil {
 		return nil
 	}
-	fields := make([]StructLitField, len(e.Fields))
-	for index, field := range e.Fields {
-		fields[index] = StructLitField{
-			Name:     cloneIdent(field.Name, newID, fromArgument),
-			Value:    field.Value.copyExpr(substitutions, newID, fromArgument),
-			Location: field.Location,
-		}
+	var payload Expr
+	if e.Payload != nil {
+		payload = e.Payload.copyExpr(substitutions, newID, fromArgument)
 	}
 	return &VariantLit{
 		NodeIDHolder: NodeIDHolder{NodeID: newID(e.ID(), fromArgument)},
 		Case:         e.Case.copyExpr(substitutions, newID, fromArgument).(*ScopeResolution),
-		Fields:       fields,
+		Payload:      payload,
 		Location:     e.Location,
 	}
 }

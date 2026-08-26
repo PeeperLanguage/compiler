@@ -39,6 +39,49 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
+func (l *lowerer) structCastFields(arg ValueRef, target ir.TypeID, loc *source.Location, out *[]Instr) ([]ValueRef, bool) {
+	if l == nil || l.module == nil || l.module.Types == nil || arg == nil || out == nil {
+		return nil, false
+	}
+	sourceID := ir.InvalidType
+	switch value := arg.(type) {
+	case *RefConst:
+		sourceID = value.Type
+	case *RefName:
+		sourceID = value.Type
+	}
+	source, ok := l.module.Types.Type(sourceID)
+	if !ok || source.Kind != ir.TypeStruct {
+		return nil, false
+	}
+	targetType, ok := l.module.Types.Type(target)
+	if !ok || targetType.Kind != ir.TypeStruct || len(source.Fields) != len(targetType.Fields) {
+		return nil, false
+	}
+	sourceFields := make(map[string]int, len(source.Fields))
+	for index, field := range source.Fields {
+		if field.Name == "" {
+			return nil, false
+		}
+		if _, exists := sourceFields[field.Name]; exists {
+			return nil, false
+		}
+		sourceFields[field.Name] = index
+	}
+	fields := make([]ValueRef, 0, len(targetType.Fields))
+	for _, field := range targetType.Fields {
+		sourceIndex, ok := sourceFields[field.Name]
+		if !ok || source.Fields[sourceIndex].Type != field.Type {
+			return nil, false
+		}
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: arg, Index: sourceIndex, Type: field.Type, Location: loc}})
+		fields = append(fields, &RefName{Name: name, Type: field.Type, Location: loc})
+		delete(sourceFields, field.Name)
+	}
+	return fields, len(sourceFields) == 0
+}
+
 func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *symbols.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil || graphs == nil {
 		return nil
@@ -203,19 +246,32 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 		return false
 	}
 	var drops []int
+	payloadDrop := false
 	if l.cleanup != nil && entry.caseBlock.Body != nil {
 		drops = l.cleanup.MatchFieldDrops[entry.caseBlock.Body.NodeID]
+		_, payloadDrop = l.cleanup.MatchWholePayloadDrops[entry.caseBlock.Body.NodeID]
 	}
-	if len(entry.caseBlock.Bindings) == 0 && len(drops) == 0 {
+	if len(entry.caseBlock.Bindings) == 0 && len(drops) == 0 && !payloadDrop {
 		return true
 	}
 	if entry.caseBlock.PayloadType == ir.InvalidType {
 		return false
 	}
 	for _, binding := range entry.caseBlock.Bindings {
-		place := variantFieldPlace(subject, entry.caseBlock, binding.FieldIndex, binding.Type)
+		place := variantPayloadPlace(subject, entry.caseBlock)
+		if !binding.WholePayload {
+			place = variantFieldPlace(subject, entry.caseBlock, binding.FieldIndex, binding.Type)
+		}
 		value := l.load(&l.current.Instrs, place, binding.Type, entry.caseBlock.Body.Location)
 		l.appendInstr(&l.current.Instrs, &Assign{Name: binding.Name, Value: asValueExpr(value)})
+	}
+	if payloadDrop {
+		place := variantPayloadPlace(subject, entry.caseBlock)
+		value := l.load(&l.current.Instrs, place, entry.caseBlock.PayloadType, entry.caseBlock.Body.Location)
+		l.appendInstr(&l.current.Instrs, &Drop{Value: value})
+	}
+	if len(drops) == 0 {
+		return true
 	}
 	payload, ok := l.module.Types.Type(entry.caseBlock.PayloadType)
 	if !ok || payload.Kind != ir.TypeStruct {
@@ -234,13 +290,19 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 }
 
 func variantFieldPlace(subject ValueRef, block hir.VariantCaseBlock, fieldIndex int, fieldType ir.TypeID) *Place {
+	place := variantPayloadPlace(subject, block)
+	place.Projections = append(place.Projections, PlaceProjection{Kind: PlaceProjectionField, FieldIndex: fieldIndex, Type: fieldType, Location: block.Body.Location})
+	place.Type = fieldType
+	return place
+}
+
+func variantPayloadPlace(subject ValueRef, block hir.VariantCaseBlock) *Place {
 	return &Place{
 		Root: subject,
 		Projections: []PlaceProjection{
 			{Kind: PlaceProjectionVariantPayload, Case: block.Case, Type: block.PayloadType, Location: block.Body.Location},
-			{Kind: PlaceProjectionField, FieldIndex: fieldIndex, Type: fieldType, Location: block.Body.Location},
 		},
-		Type: fieldType, Location: block.Body.Location,
+		Type: block.PayloadType, Location: block.Body.Location,
 	}
 }
 
@@ -822,6 +884,11 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
+		if fields, ok := l.structCastFields(arg, e.TypeID(), e.Origin().Location, out); ok {
+			name := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location}})
+			return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}

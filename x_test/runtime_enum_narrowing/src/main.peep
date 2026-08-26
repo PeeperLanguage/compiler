@@ -73,14 +73,14 @@ fn ReadNested(outer: OuterChoice) -> i32 {
 }
 
 fn main() -> i32 {
-    let left = Choice::Left{ value = 10 };
-    let right = Choice::Right{ value = 11 };
-    let holder = .Holder{ choice = Choice::Left{ value = 10 } };
-    let values = [1]Choice{ Choice::Right{ value = 11 } };
-    let mixed = Mixed::Flag{ value = true };
+    let left = Choice::Left with .{ value = 10 };
+    let right = Choice::Right with .{ value = 11 };
+    let holder = .Holder{ choice = Choice::Left with .{ value = 10 } };
+    let values = [1]Choice{ Choice::Right with .{ value = 11 } };
+    let mixed = Mixed::Flag with .{ value = true };
     if !ReadFlag(mixed) {
         return 1;
     }
-    let nested = OuterChoice::Wrapped{ inner = Inner::Left{ value = 13 } };
+    let nested = OuterChoice::Wrapped with .{ inner = Inner::Left with .{ value = 13 } };
     return ReadLeft(left) + ReadRight(right) + ReadField(holder) + ReadIndex(values) + ReadNested(nested) - 13;
 }

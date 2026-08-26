@@ -1,4 +1,20 @@
-// Computes stable declaration and module surfaces for incremental invalidation.
+// This file builds syntax-level module surfaces used by incremental compilation.
+// A surface describes imports and declaration shapes that can affect another
+// module: names, type parameters, parameter and return types, fields, enum
+// payloads, and default expressions. Function bodies and other implementation
+// details are deliberately excluded, so a body-only edit invalidates its module
+// without needlessly invalidating dependents.
+//
+// Parsing owns this first fingerprint layer because ParseModule already visits
+// every top-level import and declaration exactly once. Each declaration keeps
+// its serialized surface on its AST node; moduleSurface collects those surfaces
+// into stable ImportFingerprint and ExportFingerprint values. LSP workspace
+// compares these fingerprints when deciding whether change must propagate
+// through reverse dependency graph. Later semantic analysis combines same declaration surface
+// with resolved types, constants, attributes, and link metadata to form semantic
+// export fingerprint. Keeping syntax and semantic layers separate lets editor
+// reuse parsed modules while still detecting API changes that require rechecking
+// dependents.
 
 package parser
 
@@ -102,17 +118,11 @@ func enumDeclSurface(decl *ast.EnumDecl) string {
 		if variant.Name == nil {
 			continue
 		}
-		if !variant.HasData {
+		if variant.Payload == nil {
 			variants = append(variants, variant.Name.Name)
 			continue
 		}
-		fields := make([]string, 0, len(variant.Fields))
-		for _, field := range variant.Fields {
-			if field.Name != nil {
-				fields = append(fields, field.Name.Name+":"+ast.TypeText(field.Type))
-			}
-		}
-		variants = append(variants, variant.Name.Name+":"+strings.Join(fields, ","))
+		variants = append(variants, variant.Name.Name+":"+ast.TypeText(variant.Payload))
 	}
 	return "enum:" + decl.Name.Name + ":" + strings.Join(variants, ",")
 }

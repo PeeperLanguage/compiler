@@ -1,0 +1,16 @@
+struct Direct {
+    directValue: i32
+}
+
+struct Named {
+    aliasValue: i32
+}
+
+type Alias = Named;
+
+fn main() {
+    let anonymousDirect = .{ directValue = 1 };
+    let direct: Direct = anonymousDirect;
+    let anonymousAlias = .{ aliasValue = 2 };
+    let alias: Alias = anonymousAlias;
+}

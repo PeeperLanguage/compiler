@@ -176,46 +176,58 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		if resolved.Case.Payload == nil {
 			if arm.HasData {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
-					"payloadless match case `"+resolved.CaseName.Name+"` does not accept braces", ast.LocOf(arm), "remove the braces")
+					"payloadless match case `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(arm), "remove `with` and its pattern")
 			}
 		} else {
-			payload, payloadOK := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
-			if !payloadOK || payload == nil {
-				panic("named enum data case does not carry struct payload")
-			}
-			armEvidence.Payload = payload
+			armEvidence.Payload = resolved.Case.Payload
 			if !arm.HasData {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-					"data match case `"+resolved.CaseName.Name+"` requires braces", ast.LocOf(arm), "use `{ ... }` after the case name")
-			}
-			seenFields := make(map[string]ast.Node, len(arm.Fields))
-			for _, pattern := range arm.Fields {
-				if pattern.Name == nil {
-					continue
-				}
-				name := pattern.Name.Name
-				if previous := seenFields[name]; previous != nil {
-					c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match pattern field `"+name+"`").
-						WithCode(diagnostics.ErrDuplicateField).
-						WithPrimaryLabel(ast.LocOf(pattern.Name), "duplicate field").
-						WithSecondaryLabel(ast.LocOf(previous), "first listed here"))
-					continue
-				}
-				seenFields[name] = pattern.Name
-				field, fieldIndex, fieldFound := typeinfo.LookupStructField(payload, name)
-				if !fieldFound {
-					c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-						"unknown match pattern field `"+name+"`", ast.LocOf(pattern.Name), "")
-					continue
-				}
-				fieldEvidence := flowresult.MatchField{Field: fieldIndex, Type: field.Type, Discard: pattern.Discard}
-				if !pattern.Discard && pattern.Binding != nil {
-					fieldEvidence.Binding = c.module.Semantics.ResolvedSymbols[pattern.Binding.ID()]
+					"data match case `"+resolved.CaseName.Name+"` requires a payload pattern", ast.LocOf(arm), "add `with <binding>` or `with _`")
+			} else if arm.Binding != nil || arm.Discard {
+				fieldEvidence := flowresult.MatchField{WholePayload: true, Type: resolved.Case.Payload, Discard: arm.Discard}
+				if arm.Binding != nil {
+					fieldEvidence.Binding = c.module.Semantics.ResolvedSymbols[arm.Binding.ID()]
 					if fieldEvidence.Binding != nil {
-						fieldEvidence.Binding.BindType(field.Type)
+						fieldEvidence.Binding.BindType(resolved.Case.Payload)
 					}
 				}
 				armEvidence.Fields = append(armEvidence.Fields, fieldEvidence)
+			} else {
+				payload, payloadOK := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
+				if !payloadOK || payload == nil {
+					c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+						"field pattern requires a struct payload", ast.LocOf(arm), "write `with <binding>` or `with _`")
+				} else {
+					seenFields := make(map[string]ast.Node, len(arm.Fields))
+					for _, pattern := range arm.Fields {
+						if pattern.Name == nil {
+							continue
+						}
+						name := pattern.Name.Name
+						if previous := seenFields[name]; previous != nil {
+							c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match pattern field `"+name+"`").
+								WithCode(diagnostics.ErrDuplicateField).
+								WithPrimaryLabel(ast.LocOf(pattern.Name), "duplicate field").
+								WithSecondaryLabel(ast.LocOf(previous), "first listed here"))
+							continue
+						}
+						seenFields[name] = pattern.Name
+						field, fieldIndex, fieldFound := typeinfo.LookupStructField(payload, name)
+						if !fieldFound {
+							c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
+								"unknown match pattern field `"+name+"`", ast.LocOf(pattern.Name), "")
+							continue
+						}
+						fieldEvidence := flowresult.MatchField{Field: fieldIndex, Type: field.Type, Discard: pattern.Discard}
+						if !pattern.Discard && pattern.Binding != nil {
+							fieldEvidence.Binding = c.module.Semantics.ResolvedSymbols[pattern.Binding.ID()]
+							if fieldEvidence.Binding != nil {
+								fieldEvidence.Binding.BindType(field.Type)
+							}
+						}
+						armEvidence.Fields = append(armEvidence.Fields, fieldEvidence)
+					}
+				}
 			}
 		}
 		evidence.Arms = append(evidence.Arms, armEvidence)

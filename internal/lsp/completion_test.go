@@ -530,7 +530,7 @@ func TestCompletionMatchListsOnlyMissingArms(t *testing.T) {
 }
 fn inspect(value: Result) {
 	match value {
-		Result::Ok{ value = _ } => {}
+		Result::Ok with { value = _ } => {}
 		__CURSOR__
 	}
 }
@@ -568,25 +568,25 @@ func TestCompletionMatchDeclinesNonInsertionPositions(t *testing.T) {
 		{
 			name: "subject",
 			marked: `match __CURSOR__value {
-		Result::Ok{} => {}
+		Result::Ok with {} => {}
 	}`,
 		},
 		{
 			name: "pattern",
 			marked: `match value {
-		__CURSOR__Result::Ok{} => {}
+		__CURSOR__Result::Ok with {} => {}
 	}`,
 		},
 		{
 			name: "arrow",
 			marked: `match value {
-		Result::Ok{} __CURSOR__=> {}
+		Result::Ok with {} __CURSOR__=> {}
 	}`,
 		},
 		{
 			name: "exhaustive",
 			marked: `match value {
-		Result::Ok{} => {}
+		Result::Ok with {} => {}
 		Result::Pending => {}
 		__CURSOR__
 	}`,

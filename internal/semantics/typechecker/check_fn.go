@@ -10,6 +10,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
@@ -374,7 +375,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	}
 	opts := c.typeDeclSyntaxOptions(decl, false)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
-	dataFields := make(map[string]*ast.Ident)
+	dataFields := make(map[string]*source.Location)
 	for _, variant := range enumType.Variants {
 		if variant.Name == nil || variant.Name.Name == "" {
 			continue
@@ -382,12 +383,34 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		if !symbols.IsPubName(variant.Name.Name) || strings.Contains(variant.Name.Name, "_") {
 			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant name must be PascalCase"))
 		}
-		if variant.HasData && len(variant.Fields) == 0 {
+		if variant.Payload == nil {
+			continue
+		}
+		payloadType := typeinfo.TypeFromSyntax(variant.Payload, opts)
+		payload, isStruct := typeinfo.Underlying(payloadType).(*typeinfo.StructType)
+		inlinePayload, inline := variant.Payload.(*ast.StructType)
+		if !isStruct {
+			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
+			continue
+		}
+		if inline && len(inlinePayload.Fields) == 0 {
 			c.ctx.Diagnostics.Add(invalidTypeError(variant.Name, "variant data requires at least one field"))
 			continue
 		}
-		variantFields := make(map[string]*ast.Ident, len(variant.Fields))
-		for _, field := range variant.Fields {
+		if !inline {
+			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
+			for _, field := range payload.Fields {
+				if field.Name == "" {
+					continue
+				}
+				if dataFields[field.Name] == nil {
+					dataFields[field.Name] = ast.LocOf(variant.Payload)
+				}
+			}
+			continue
+		}
+		variantFields := make(map[string]*ast.Ident, len(inlinePayload.Fields))
+		for _, field := range inlinePayload.Fields {
 			if field.Name == nil || field.Name.Name == "" {
 				continue
 			}
@@ -398,19 +421,9 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			}
 			variantFields[field.Name.Name] = field.Name
 			if dataFields[field.Name.Name] == nil {
-				dataFields[field.Name.Name] = field.Name
+				dataFields[field.Name.Name] = field.Name.Location
 			}
-			fieldType := typeinfo.TypeFromSyntax(field.Type, opts)
-			if c.rejectUnsizedType(fieldType, field.Type, "enum variant field") {
-				continue
-			}
-			if c.rejectReferenceStorage(fieldType, field.Type, "enum variant fields", false) {
-				continue
-			}
-			if !typeinfo.IsLowerableType(fieldType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(fieldType)) {
-				c.ctx.Diagnostics.Add(invalidTypeError(field.Type,
-					"enum variant field type is not lowerable in current compiler stage"))
-			}
+			c.checkEnumPayloadType(field.Type, opts, allowTypeParameters, "enum variant field")
 		}
 	}
 	if decl.Name == nil {
@@ -421,7 +434,20 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			continue
 		}
 		message := fmt.Sprintf("method `%s` conflicts with enum variant data field", method.Name)
-		c.ctx.Diagnostics.Add(problems.Redeclaration(message, method.Location, dataFields[method.Name].Location))
+		c.ctx.Diagnostics.Add(problems.Redeclaration(message, method.Location, dataFields[method.Name]))
+	}
+}
+
+func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, opts typeinfo.SyntaxOptions, allowTypeParameters bool, context string) {
+	payloadType := typeinfo.TypeFromSyntax(syntax, opts)
+	if c.rejectUnsizedType(payloadType, syntax, context) {
+		return
+	}
+	if c.rejectReferenceStorage(payloadType, syntax, context+"s", false) {
+		return
+	}
+	if !typeinfo.IsLowerableType(payloadType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(payloadType)) {
+		c.ctx.Diagnostics.Add(invalidTypeError(syntax, context+" type is not lowerable in current compiler stage"))
 	}
 }
 

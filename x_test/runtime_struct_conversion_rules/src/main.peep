@@ -1,0 +1,22 @@
+struct Pair {
+    x: i32,
+    y: i32
+}
+
+struct ReorderedPair {
+    y: i32,
+    x: i32
+}
+
+type PairAlias = Pair;
+
+fn main() -> i32 {
+    let pairForAnonymous: Pair = .{ x = 10, y = 20 };
+    let anonymous: struct { y: i32, x: i32 } = pairForAnonymous;
+    let pairForNamed: Pair = .{ x = 10, y = 20 };
+    let named: ReorderedPair = pairForNamed as ReorderedPair;
+    let anonymousSource = .{ y = 3, x = 4 };
+    let fromAnonymous: PairAlias = anonymousSource as PairAlias;
+    println("struct conversion rules ok");
+    return anonymous.x + named.y + fromAnonymous.x + fromAnonymous.y + 12;
+}

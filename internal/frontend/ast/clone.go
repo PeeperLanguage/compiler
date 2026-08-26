@@ -110,18 +110,9 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 	case *EnumType:
 		variants := make([]EnumVariant, len(typ.Variants))
 		for index, variant := range typ.Variants {
-			fields := make([]TypeField, len(variant.Fields))
-			for fieldIndex, field := range variant.Fields {
-				fields[fieldIndex] = TypeField{
-					Name:     cloneIdent(field.Name, newID, fromArgument),
-					Type:     cloneTypeExpr(field.Type, newID, fromArgument),
-					Location: field.Location,
-				}
-			}
 			variants[index] = EnumVariant{
 				Name:     cloneIdent(variant.Name, newID, fromArgument),
-				Fields:   fields,
-				HasData:  variant.HasData,
+				Payload:  cloneTypeExpr(variant.Payload, newID, fromArgument),
 				Location: variant.Location,
 			}
 		}

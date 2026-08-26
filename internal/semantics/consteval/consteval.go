@@ -130,18 +130,36 @@ func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typei
 		if !variant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
 			return nil, false
 		}
-		fields := make([]constvalue.Value, len(construction.Fields))
-		for index, field := range construction.Fields {
-			if construction.Payload == nil || index >= len(construction.Payload.Fields) {
-				return nil, false
+		if construction.Value != nil {
+			if literal, ok := construction.Value.(*ast.StructLit); ok {
+				payload, structured := typeinfo.Underlying(construction.Payload).(*typeinfo.StructType)
+				if !structured || payload == nil {
+					return nil, false
+				}
+				valuesByName := make(map[string]ast.Expr, len(literal.Fields))
+				for _, field := range literal.Fields {
+					if field.Name != nil {
+						valuesByName[field.Name.Name] = field.Value
+					}
+				}
+				fields := make([]constvalue.Value, len(payload.Fields))
+				for index, field := range payload.Fields {
+					valueExpr := valuesByName[field.Name]
+					value, ok := e.evalExpr(scope, valueExpr, field.Type)
+					if !ok {
+						return nil, false
+					}
+					fields[index] = value
+				}
+				return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
 			}
-			value, ok := e.evalExpr(scope, field, construction.Payload.Fields[index].Type)
+			value, ok := e.evalExpr(scope, construction.Value, construction.Payload)
 			if !ok {
 				return nil, false
 			}
-			fields[index] = value
+			return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, []constvalue.Value{value})
 		}
-		return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
+		return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, nil)
 	}
 	if node, ok := expr.(*ast.IsExpr); ok {
 		test, found := e.module.Semantics.CaseTests[node.ID()]

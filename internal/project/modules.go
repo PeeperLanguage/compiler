@@ -112,8 +112,8 @@ type SemanticInfo struct {
 type VariantConstruction struct {
 	EnumType typeinfo.Type
 	Case     int
-	Payload  *typeinfo.StructType
-	Fields   []ast.Expr
+	Payload  typeinfo.Type
+	Value    ast.Expr
 }
 
 // CompilerCall is typechecker-owned dispatch evidence consumed by HIR.

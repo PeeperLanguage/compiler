@@ -4,4 +4,4 @@ build = "lib"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["missing enum variant literal field `value`", "duplicate enum variant literal field `value`", "unknown enum variant literal field `item`", "payloadless enum variant `Pending` does not accept braces", "data enum variant `Ok` requires a braced field initializer", "enum variants are not callable"]
+stderr_contains = ["missing struct literal field `value`", "duplicate struct literal field `value`", "unknown struct literal field `item`", "payloadless enum variant `Pending` does not accept a payload", "data enum variant `Ok` requires a payload", "enum variants are not callable"]

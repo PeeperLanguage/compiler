@@ -13,6 +13,9 @@ func SameType(left, right Type) bool {
 	if same, nominal := sameNominalEnum(left, right); nominal {
 		return same
 	}
+	if same, nominal := sameNominalStruct(left, right); nominal {
+		return same
+	}
 	left = Underlying(left)
 	right = Underlying(right)
 	switch l := left.(type) {
@@ -73,7 +76,7 @@ func SameType(left, right Type) bool {
 	case *FuncType:
 		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
-		return checkStructCompatibility(l, right) == Compatible
+		return CheckStructCompatibility(l, right) == Compatible
 	case *InterfaceType:
 		return checkInterfaceCompatibility(l, right) == Compatible
 	case *EnumType:
@@ -107,6 +110,20 @@ func nominalEnumIdentity(typ Type) (string, bool) {
 			return "", false
 		}
 	}
+}
+
+func sameNominalStruct(left, right Type) (same, nominal bool) {
+	leftType, leftNominal := nominalStructType(left)
+	rightType, rightNominal := nominalStructType(right)
+	if !leftNominal && !rightNominal {
+		return false, false
+	}
+	return leftNominal && rightNominal && leftType.Identity != "" && leftType.Identity == rightType.Identity, true
+}
+
+func nominalStructType(typ Type) (*DefinedType, bool) {
+	defined, ok := Unalias(typ).(*DefinedType)
+	return defined, ok && defined != nil && defined.Kind == DefinedKindStruct
 }
 
 type NumericFamily int

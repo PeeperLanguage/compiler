@@ -93,9 +93,7 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 		// Raw pointers carry no pointee layout dependency.
 	case *ast.EnumType:
 		for _, variant := range node.Variants {
-			for _, field := range variant.Fields {
-				b.addTypeDeclEdges(owner, field.Type, indirect)
-			}
+			b.addTypeDeclEdges(owner, variant.Payload, indirect)
 		}
 	case *ast.OwnedPtrType:
 		// Pointer target is not a layout dependency.

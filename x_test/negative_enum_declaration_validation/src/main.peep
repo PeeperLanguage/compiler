@@ -4,3 +4,29 @@ enum Bad {
         value: i64,
     },
 }
+
+enum InlinePayload {
+    Value: { inlineValue: i32 },
+}
+
+struct NamedPayload {
+    namedValue: i32,
+}
+
+struct AliasedPayloadTarget {
+    aliasedValue: i32,
+}
+
+type AliasedPayload = AliasedPayloadTarget;
+
+enum NamedStructPayload {
+    Value: NamedPayload,
+}
+
+enum AliasedNamedStructPayload {
+    Value: AliasedPayload,
+}
+
+fn (self: InlinePayload) inlineValue() {}
+fn (self: NamedStructPayload) namedValue() {}
+fn (self: AliasedNamedStructPayload) aliasedValue() {}

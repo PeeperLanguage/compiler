@@ -297,7 +297,7 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 		sym = resolved.Symbol
 	}
 	if sym.Kind == symbols.SymbolVariant {
-		return c.typeVariantConstruction(scope, node, node, nil, false)
+		return c.typeVariantConstruction(scope, node, node, nil)
 	}
 	t, ok := symbols.GetSymbolType(sym)
 	if !ok || t == nil {

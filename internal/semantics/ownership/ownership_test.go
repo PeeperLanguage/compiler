@@ -222,11 +222,13 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.ProjectionBase[staleID] = struct{}{}
 	plan.MatchCarrierMoves[staleID] = 999999
 	plan.MatchFieldDrops[staleID] = []int{0}
+	plan.MatchWholePayloadDrops[staleID] = struct{}{}
 
 	result.module.Ownership = Check(result.ctx, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
-		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 || len(plan.MatchCarrierMoves) != 0 || len(plan.MatchFieldDrops) != 0 {
+		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 || len(plan.MatchCarrierMoves) != 0 ||
+		len(plan.MatchFieldDrops) != 0 || len(plan.MatchWholePayloadDrops) != 0 {
 		t.Fatalf("stale ownership plans survived rerun: %#v", plan)
 	}
 }
@@ -607,7 +609,7 @@ func TestMoveOnlyMatchBindingConsumesDirectCarrier(t *testing.T) {
 fn Consume(_: Resource) {}
 fn bad(resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => {
+		Resource::Owned with { value = owned } => {
 			free(owned);
 		}
 	}
@@ -625,11 +627,11 @@ func TestMoveOnlyMatchCarrierCanBeReinitialized(t *testing.T) {
 fn Consume(_: Resource) {}
 fn valid(mut resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => {
+		Resource::Owned with { value = owned } => {
 			free(owned);
 		}
 	}
-	resource = Resource::Owned{ value = alloc(2) };
+	resource = Resource::Owned with .{ value = alloc(2) };
 	Consume(resource);
 }`)
 	if result.HasErrors() {
@@ -644,7 +646,7 @@ func TestDeadMoveOnlyMatchCarrierConverges(t *testing.T) {
 }
 fn valid(resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Owned with { value = owned } => { free(owned); }
 		Resource::Pending => {}
 	}
 }`)
@@ -677,7 +679,7 @@ func TestLiveMoveOnlyMatchCarrierMustConverge(t *testing.T) {
 fn Consume(_: Resource) {}
 fn invalid(resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Owned with { value = owned } => { free(owned); }
 		Resource::Pending => {}
 	}
 	Consume(resource);
@@ -695,7 +697,7 @@ func TestMoveOnlyMatchCarrierAssignmentAfterJoinMustConverge(t *testing.T) {
 }
 fn invalid(mut resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => { free(owned); }
+		Resource::Owned with { value = owned } => { free(owned); }
 		Resource::Pending => {}
 	}
 	resource = Resource::Pending;
@@ -712,9 +714,9 @@ func TestNoDropMatchCarrierCanBeAssignedAfterJoin(t *testing.T) {
 	Pending
 }
 fn valid(source: &mut i32) {
-	let mut resource = Resource::Borrowed{ value = source };
+	let mut resource = Resource::Borrowed with .{ value = source };
 	match resource {
-		Resource::Borrowed{ value = value } => {}
+		Resource::Borrowed with { value = value } => {}
 		Resource::Pending => {}
 	}
 	resource = Resource::Pending;
@@ -732,7 +734,7 @@ func TestMoveOnlyMatchArmReinitializationConverges(t *testing.T) {
 fn Consume(_: Resource) {}
 fn valid(mut resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => {
+		Resource::Owned with { value = owned } => {
 			free(owned);
 			resource = Resource::Pending;
 		}
@@ -753,7 +755,7 @@ func TestTerminatingMoveOnlyMatchArmDoesNotReachJoin(t *testing.T) {
 fn Consume(_: Resource) {}
 fn valid(resource: Resource) {
 	match resource {
-		Resource::Owned{ value = owned } => {
+		Resource::Owned with { value = owned } => {
 			free(owned);
 			return;
 		}
@@ -773,7 +775,7 @@ func TestMoveOnlyMatchDiscardConsumesDirectCarrier(t *testing.T) {
 fn Consume(_: Resource) {}
 fn bad(resource: Resource) {
 	match resource {
-		Resource::Owned{ value = _ } => {}
+		Resource::Owned with { value = _ } => {}
 	}
 	Consume(resource);
 }`)
@@ -789,7 +791,7 @@ func TestDeadMoveOnlyMatchDiscardPlansOneDropPerPath(t *testing.T) {
 }
 fn valid(resource: Resource) {
 	match resource {
-		Resource::Owned{ value = _ } => {}
+		Resource::Owned with { value = _ } => {}
 		Resource::Pending => {}
 	}
 }`)
@@ -812,21 +814,71 @@ fn valid(resource: Resource) {
 	}
 }
 
+func TestCopyableDirectMatchPayloadPreservesCarrier(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Value { Number: i32 }
+fn Consume(_: Value) {}
+fn valid(value: Value) {
+	match value {
+		Value::Number with number => { println(number); }
+	}
+	Consume(value);
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected direct copyable payload diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestMoveOnlyDirectMatchPayloadConsumesCarrier(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Owned: *i32 }
+fn Consume(_: Resource) {}
+fn invalid(resource: Resource) {
+	match resource {
+		Resource::Owned with owned => { free(owned); }
+	}
+	Consume(resource);
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected whole-payload move to consume carrier:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestDeadMoveOnlyDirectMatchDiscardPlansPayloadDrop(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource { Owned: *i32 }
+fn valid(resource: Resource) {
+	match resource {
+		Resource::Owned with _ => {}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected direct discard diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	match := fn.Body.Stmts[0].(*ast.MatchStmt)
+	plan := cleanupPlanForFunction(t, result, fn)
+	bodyID := ir.NodeID(match.Arms[0].Body.ID())
+	if _, ok := plan.MatchWholePayloadDrops[bodyID]; !ok {
+		t.Fatalf("whole-payload discard has no planned payload drop: %#v", plan)
+	}
+	if fields := plan.MatchFieldDrops[bodyID]; len(fields) != 0 {
+		t.Fatalf("whole-payload discard planned field drops: %v", fields)
+	}
+}
+
 func TestMoveOnlyMatchBindingFromPartialCarrierRejected(t *testing.T) {
 	tests := map[string]string{
 		"field": `enum Resource { Owned: { value: *i32 } }
 struct Holder { resource: Resource }
 fn bad(holder: Holder) {
-	match holder.resource { Resource::Owned{ value = owned } => { free(owned); } }
+	match holder.resource { Resource::Owned with { value = owned } => { free(owned); } }
 }`,
 		"index": `enum Resource { Owned: { value: *i32 } }
 fn bad(resources: [1]Resource) {
-	match resources[0] { Resource::Owned{ value = owned } => { free(owned); } }
+	match resources[0] { Resource::Owned with { value = owned } => { free(owned); } }
 }`,
 		"pointee": `enum Resource { Owned: { value: *i32 } }
 struct Holder { resource: Resource }
 fn bad(holder: *Holder) {
-	match holder.resource { Resource::Owned{ value = owned } => { free(owned); } }
+	match holder.resource { Resource::Owned with { value = owned } => { free(owned); } }
 }`,
 	}
 	for name, src := range tests {
@@ -843,9 +895,9 @@ func TestMatchSharedReferenceBindingPreservesCarrier(t *testing.T) {
 	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
 fn Read(_: &i32) {}
 fn valid(source: &i32) {
-	let resource = Resource::Borrowed{ value = source };
-	match resource { Resource::Borrowed{ value = value } => { Read(value); } }
-	match resource { Resource::Borrowed{ value = value } => { Read(value); } }
+	let resource = Resource::Borrowed with .{ value = source };
+	match resource { Resource::Borrowed with { value = value } => { Read(value); } }
+	match resource { Resource::Borrowed with { value = value } => { Read(value); } }
 }`)
 	if result.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
@@ -856,9 +908,9 @@ func TestMatchMutableReferenceBindingTransfersCarrier(t *testing.T) {
 	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &mut i32 } }
 fn Write(_: &mut i32) {}
 fn invalid(source: &mut i32) {
-	let resource = Resource::Borrowed{ value = source };
-	match resource { Resource::Borrowed{ value = value } => { Write(value); } }
-	match resource { Resource::Borrowed{} => {} }
+	let resource = Resource::Borrowed with .{ value = source };
+	match resource { Resource::Borrowed with { value = value } => { Write(value); } }
+	match resource { Resource::Borrowed with {} => {} }
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
 		t.Fatalf("expected mutable-reference pattern transfer to consume carrier:\n%s", result.EmitAllToString())
@@ -869,9 +921,9 @@ func TestStoredMatchReferenceKeepsSourceBorrowed(t *testing.T) {
 	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
 fn Read(_: &i32) {}
 fn invalid(mut source: i32) {
-	let resource = Resource::Borrowed{ value = &source };
+	let resource = Resource::Borrowed with .{ value = &source };
 	source = 2;
-	match resource { Resource::Borrowed{ value = value } => { Read(value); } }
+	match resource { Resource::Borrowed with { value = value } => { Read(value); } }
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
 		t.Fatalf("expected stored match reference to retain source loan:\n%s", result.EmitAllToString())
@@ -882,10 +934,10 @@ func TestCopiedMatchReferenceKeepsSourceBorrowed(t *testing.T) {
 	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
 fn Read(_: &i32) {}
 fn invalid(mut source: i32) {
-	let resource = Resource::Borrowed{ value = &source };
+	let resource = Resource::Borrowed with .{ value = &source };
 	let duplicate = resource;
 	source = 2;
-	match duplicate { Resource::Borrowed{ value = value } => { Read(value); } }
+	match duplicate { Resource::Borrowed with { value = value } => { Read(value); } }
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
 		t.Fatalf("expected copied match reference to retain source loan:\n%s", result.EmitAllToString())
@@ -896,10 +948,10 @@ func TestSelfAssignedMatchReferenceKeepsSourceBorrowed(t *testing.T) {
 	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32 } }
 fn Read(_: &i32) {}
 fn invalid(mut source: i32) {
-	let mut resource = Resource::Borrowed{ value = &source };
+	let mut resource = Resource::Borrowed with .{ value = &source };
 	resource = resource;
 	match resource {
-		Resource::Borrowed{ value = value } => {
+		Resource::Borrowed with { value = value } => {
 			source = 2;
 			Read(value);
 		}
@@ -915,7 +967,7 @@ func TestMatchMoveConflictsWithLiveCarrierBorrow(t *testing.T) {
 fn Read(_: &Resource) {}
 fn invalid(resource: Resource) {
 	let reference = &resource;
-	match resource { Resource::Owned{ value = value } => { free(value); } }
+	match resource { Resource::Owned with { value = value } => { free(value); } }
 	Read(reference);
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
@@ -929,7 +981,7 @@ func TestMoveOnlyMatchPlansReverseOmittedFieldDrops(t *testing.T) {
 }
 fn consume(resource: Resource) {
 	match resource {
-		Resource::Owned{ first = selected } => {}
+		Resource::Owned with { first = selected } => {}
 	}
 }`)
 	if result.HasErrors() {
@@ -1830,9 +1882,9 @@ func TestReturnRawPointerMatchBindingToLocalRejected(t *testing.T) {
 	diag := checkOwnershipSource(t, `enum Resource { Pointer: { value: rawptr } }
 fn bad() -> rawptr {
 	let value: i32 = 1;
-	let resource = Resource::Pointer{ value = @value };
+	let resource = Resource::Pointer with .{ value = @value };
 	match resource {
-		Resource::Pointer{ value = pointer } => {
+		Resource::Pointer with { value = pointer } => {
 			return pointer;
 		}
 	}
@@ -1846,9 +1898,9 @@ func TestReturnRawPointerMatchBindingToModuleGlobalAccepted(t *testing.T) {
 	diag := checkOwnershipSource(t, `const global: i32 = 1;
 enum Resource { Pointer: { value: rawptr } }
 fn get() -> rawptr {
-	let resource = Resource::Pointer{ value = @global };
+	let resource = Resource::Pointer with .{ value = @global };
 	match resource {
-		Resource::Pointer{ value = pointer } => {
+		Resource::Pointer with { value = pointer } => {
 			return pointer;
 		}
 	}
@@ -1863,12 +1915,12 @@ func TestReturnRawPointerMatchBindingWithPossibleLocalRejected(t *testing.T) {
 enum Resource { Pointer: { value: rawptr } }
 fn bad(chooseLocal: bool) -> rawptr {
 	let local: i32 = 2;
-	let mut resource = Resource::Pointer{ value = @global };
+	let mut resource = Resource::Pointer with .{ value = @global };
 	if chooseLocal {
-		resource = Resource::Pointer{ value = @local };
+		resource = Resource::Pointer with .{ value = @local };
 	}
 	match resource {
-		Resource::Pointer{ value = pointer } => {
+		Resource::Pointer with { value = pointer } => {
 			return pointer;
 		}
 	}

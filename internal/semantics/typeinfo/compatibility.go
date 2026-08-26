@@ -58,7 +58,7 @@ func CheckCompatibility(dst, src Type) Compatibility {
 	if compat := checkArrayCompatibility(dst, src); compat != Incompatible {
 		return compat
 	}
-	if compat := checkStructCompatibility(dst, src); compat != Incompatible {
+	if compat := CheckStructCompatibility(dst, src); compat != Incompatible {
 		return compat
 	}
 	if compat := checkInterfaceCompatibility(dst, src); compat != Incompatible {
@@ -206,7 +206,9 @@ func checkArrayCompatibility(dst, src Type) Compatibility {
 	return Incompatible
 }
 
-func checkStructCompatibility(dst, src Type) Compatibility {
+func CheckStructCompatibility(dst, src Type) Compatibility {
+	dstStruct, dstNominal := nominalStructType(dst)
+	srcStruct, srcNominal := nominalStructType(src)
 	left, ok := Underlying(dst).(*StructType)
 	if !ok || left == nil {
 		return Incompatible
@@ -215,12 +217,40 @@ func checkStructCompatibility(dst, src Type) Compatibility {
 	if !ok || right == nil || len(left.Fields) != len(right.Fields) {
 		return Incompatible
 	}
-	for i := range left.Fields {
-		if left.Fields[i].Name != right.Fields[i].Name || !SameType(left.Fields[i].Type, right.Fields[i].Type) {
-			return Incompatible
+	if !sameStructFields(left, right) {
+		return Incompatible
+	}
+	if dstNominal {
+		if srcNominal && dstStruct.Identity == srcStruct.Identity {
+			return Compatible
 		}
+		return ExplicitCastable
 	}
 	return Compatible
+}
+
+func sameStructFields(left, right *StructType) bool {
+	if left == nil || right == nil || len(left.Fields) != len(right.Fields) {
+		return false
+	}
+	rightFields := make(map[string]Type, len(right.Fields))
+	for _, field := range right.Fields {
+		if field.Name == "" {
+			return false
+		}
+		if _, exists := rightFields[field.Name]; exists {
+			return false
+		}
+		rightFields[field.Name] = field.Type
+	}
+	for _, field := range left.Fields {
+		rightType, ok := rightFields[field.Name]
+		if !ok || !SameType(field.Type, rightType) {
+			return false
+		}
+		delete(rightFields, field.Name)
+	}
+	return len(rightFields) == 0
 }
 
 func checkInterfaceCompatibility(dst, src Type) Compatibility {

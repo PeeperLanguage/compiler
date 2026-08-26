@@ -5,21 +5,21 @@ enum Resource {
 fn Read(_: &i32) {}
 
 fn Invalid(mut source: i32) {
-    let resource = Resource::Borrowed{ value = &source };
+    let resource = Resource::Borrowed with .{ value = &source };
     let duplicate = resource;
     source = 2;
     match duplicate {
-        Resource::Borrowed{ value = value } => {
+        Resource::Borrowed with { value = value } => {
             Read(value);
         }
     }
 }
 
 fn InvalidSelfAssignment(mut source: i32) {
-    let mut resource = Resource::Borrowed{ value = &source };
+    let mut resource = Resource::Borrowed with .{ value = &source };
     resource = resource;
     match resource {
-        Resource::Borrowed{ value = value } => {
+        Resource::Borrowed with { value = value } => {
             source = 2;
             Read(value);
         }

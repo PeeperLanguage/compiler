@@ -8,7 +8,7 @@ struct Holder {
 
 fn Invalid(holder: Holder) {
     match holder.resource {
-        Resource::Owned{ value = value } => {
+        Resource::Owned with { value = value } => {
             free(value);
         }
     }

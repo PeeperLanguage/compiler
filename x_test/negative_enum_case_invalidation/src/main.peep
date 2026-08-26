@@ -9,7 +9,7 @@ enum Choice {
 
 fn Read(mut choice: Choice) -> i32 {
     if choice is Choice::Left {
-        choice = Choice::Right{ value = 0 };
+        choice = Choice::Right with .{ value = 0 };
         return choice.value;
     }
     return 0;

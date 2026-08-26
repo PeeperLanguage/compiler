@@ -72,7 +72,7 @@ func TestResolveEnumVariantPathsToChildSymbols(t *testing.T) {
 	Pending,
 }
 fn main() {
-	let ok = Result<i32>::Ok{ value = 42 };
+	let ok = Result<i32>::Ok with .{ value = 42 };
 	let pending = Result<i32>::Pending;
 }`)
 	if diag.HasErrors() {
@@ -105,7 +105,7 @@ type Alias<T> = Result<T>;
 type Chain<T> = Alias<T>;
 fn main() {
 	let pending = Alias<i32>::Pending;
-	let ok = Chain<i32>::Ok{ value = 42 };
+	let ok = Chain<i32>::Ok with .{ value = 42 };
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected alias namespace diagnostic:\n%s", diag.EmitAllToString())
@@ -141,8 +141,8 @@ func TestResolveRejectsNonEnumAliasVariantNamespace(t *testing.T) {
 	}
 }
 
-func TestResolveRejectsUnknownBracedVariantQualifier(t *testing.T) {
-	_, diag := checkResolveSource(t, `fn main() { let value = Missing::Ready{}; }`)
+func TestResolveRejectsUnknownPayloadVariantQualifier(t *testing.T) {
+	_, diag := checkResolveSource(t, `fn main() { let value = Missing::Ready with .{}; }`)
 	if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "unknown import alias `Missing`") {
 		t.Fatalf("expected unknown qualifier diagnostic, got:\n%s", out)
 	}
@@ -156,7 +156,7 @@ func TestResolveMatchPatternBindingsInsideArmScope(t *testing.T) {
 
 fn Read(result: Result) -> i32 {
 	match result {
-		Result::Ok{ value = payload } => {
+		Result::Ok with { value = payload } => {
 			return payload;
 		}
 		Result::Pending => {

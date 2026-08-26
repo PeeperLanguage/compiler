@@ -234,12 +234,30 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 			continue
 		}
 		var fields []ast.MatchPatternField
-		hasData := p.at(token.LBRACE)
+		var binding *ast.Ident
+		discard := false
+		hasData := p.match(token.WITH)
 		endPos := ast.EndOf(casePath)
 		if hasData {
-			var end *token.Token
-			fields, end, _ = p.parseMatchPatternFields()
+			if p.at(token.LBRACE) {
+				var end *token.Token
+				fields, end, _ = p.parseMatchPatternFields()
+				endPos = end.End
+			} else if p.at(token.IDENT) && p.current().Literal == "_" {
+				discard = true
+				endPos = p.advance().End
+			} else {
+				binding = p.parseIdent()
+				if binding != nil {
+					endPos = ast.EndOf(binding)
+				}
+			}
+		} else if p.at(token.LBRACE) {
+			_, end, _ := p.parseMatchPatternFields()
 			endPos = end.End
+			p.diag.Add(diagnostics.NewError("enum variant pattern requires 'with'").
+				WithCode(diagnostics.ErrInvalidExpression).
+				WithPrimaryLabel(source.NewLocation(p.filePath, ast.StartOf(casePath), end.End), "write `Enum::Variant with { ... }`"))
 		}
 		if p.consume(token.FATARROW, "expected '=>' after match pattern") == nil {
 			p.synchronize(token.LBRACE, token.RBRACE)
@@ -250,6 +268,8 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 		}
 		arms = append(arms, reg(p, &ast.MatchArm{
 			Case:     casePath,
+			Binding:  binding,
+			Discard:  discard,
 			Fields:   fields,
 			HasData:  hasData,
 			Body:     body,

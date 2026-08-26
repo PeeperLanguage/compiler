@@ -94,10 +94,10 @@ func TestNamedEnumMatchCaseEdgeRefinesExactField(t *testing.T) {
 
 fn Read(result: Result) -> i32 {
 	match result {
-		Result::Ok{} => {
+		Result::Ok with {} => {
 			return result.value;
 		}
-		Result::Error{} => {
+		Result::Error with {} => {
 			return 1;
 		}
 		Result::Pending => {
@@ -182,7 +182,7 @@ func TestNamedEnumCarrierMutationInvalidatesCaseProof(t *testing.T) {
 
 fn Read(mut choice: Choice) -> i32 {
 	if choice is Choice::Left {
-		choice = Choice::Right{ value = 0 };
+		choice = Choice::Right with .{ value = 0 };
 		return choice.value;
 	}
 	return 0;
@@ -241,7 +241,7 @@ func TestNamedEnumCaseFactsInvalidateThroughAliasAndIndexDependency(t *testing.T
 	}{
 		{name: "mutable alias", src: `enum Choice { Left: { value: i32 }, Right: { value: i32 } }
 struct Holder { choice: Choice }
-fn Clear(holder: &mut Holder) { holder.choice = Choice::Right{ value = 0 }; }
+fn Clear(holder: &mut Holder) { holder.choice = Choice::Right with .{ value = 0 }; }
 fn Read(mut holder: Holder) -> i32 {
 	if holder.choice is Choice::Left {
 		Clear(&mut holder);
@@ -270,7 +270,7 @@ fn Read(values: [2]Choice, mut index: usize) -> i32 {
 
 func TestUnstableNamedEnumCaseTestDoesNotCreateReusableFact(t *testing.T) {
 	_, diag := checkFlowSource(t, `enum Choice { Left: { value: i32 }, Right: { value: i32 } }
-fn Make() -> Choice { return Choice::Left{ value = 1 }; }
+fn Make() -> Choice { return Choice::Left with .{ value = 1 }; }
 fn IsLeft() -> bool { return Make() is Choice::Left; }`)
 	if diag.HasErrors() {
 		t.Fatalf("unstable case test should remain valid without refinement:\n%s", diag.EmitAllToString())

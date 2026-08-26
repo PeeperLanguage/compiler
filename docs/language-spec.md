@@ -137,9 +137,10 @@ current language surface. Niche layout remains separate future work.
 
 ## Named Enums
 
-Named enums declare ordered PascalCase variants. A data variant owns one
-anonymous named-field payload schema; that schema is not a source-visible type.
-A payloadless variant has no data block:
+Named enums declare ordered PascalCase variants. Each data variant owns one
+payload type. A braced payload declaration is shorthand for an anonymous struct
+type; that struct type is not source-visible by name. A payloadless variant has
+no payload:
 
 ```peep
 enum Result<T> {
@@ -149,6 +150,7 @@ enum Result<T> {
     Error: {
         message: cstr,
     },
+    Failed: str,
     Pending,
 }
 ```
@@ -156,7 +158,8 @@ enum Result<T> {
 Construction always names enum and variant. Generic arguments are mandatory:
 
 ```peep
-let ok = Result<i32>::Ok{ value = 42 }
+let ok = Result<i32>::Ok with .{ value = 42 }
+let failed = Result<i32>::Failed with "not found"
 let pending = Result<i32>::Pending
 ```
 
@@ -167,39 +170,37 @@ original enum-owned variant symbols. Aliases do not copy variant scopes, and
 aliases to structs, interfaces, optionals, or other non-enum types cannot
 qualify cases. Optional's internal representation cases are never source names.
 
-Data variants require braces and every field exactly once. Payloadless variants
-forbid braces. A variant is a case of its nominal enum, never a type, struct,
-function, or callable constructor. `.Ok`, `.Ok{...}`, `Result::Ok(...)`, and a
-variant in type position are invalid. Existing struct literals remain
-`.Point{...}` or `.{...}`; `Point{...}` is not struct syntax.
-
-At an unparenthesized control-header boundary, a fully named braced variant
-literal must be parenthesized so body braces remain unambiguous:
-
-```peep
-if value == (Result<i32>::Ok{ value = 1 }) {
-}
-```
+Every data construction requires `with`, followed by one ordinary expression.
+The anonymous struct shorthand above uses normal contextual struct construction,
+so its value is `.{...}` and normal struct field validation applies. Payloadless
+variants forbid `with`. A variant is a case of its nominal enum, never a type,
+struct, function, or callable constructor. `.Ok`,
+`.Ok{...}`, `Result::Ok{...}`, `Result::Ok(...)`, and a variant in type position
+are invalid. Existing struct literals remain `.Point{...}` or `.{...}`;
+`Point{...}` is not struct syntax.
 
 `value is Result<i32>::Ok` is a nonconsuming nominal case-membership test.
 Named-enum equality and ordering are not supported; use `is` or `match` to
 inspect cases.
 Stable subjects gain case-set facts on CFG edges: true keeps tested case, false
 removes it, joins union possible cases, and an empty set makes an edge
-unreachable. When one data case remains, its fields are available through enum
-value (`value.field`). Same-named fields across cases stay inaccessible until
-one exact case is proven. Optional `none` tests use same internal case-set flow
-while preserving `?T` and `none` source syntax.
+unreachable. When one struct-payload case remains, its fields are available
+through enum value (`value.field`). Same-named fields across cases stay
+inaccessible until one exact case is proven. Optional `none` tests use same
+internal case-set flow while preserving `?T` and `none` source syntax.
 
 `match` is an exhaustive statement. Subject evaluates once; every variant must
 appear exactly once, with fully named paths, `=>`, and block bodies:
 
 ```peep
 match result {
-    Result<i32>::Ok{ value = payload } => {
+    Result<i32>::Ok with { value = payload } => {
         use(payload)
     }
-    Result<i32>::Error{ message = message } => {
+    Result<i32>::Error with { message = message } => {
+        report(message)
+    }
+    Result<i32>::Failed with message => {
         report(message)
     }
     Result<i32>::Pending => {
@@ -208,18 +209,20 @@ match result {
 }
 ```
 
-Data fields may be omitted. `field = local` creates an arm-scoped binding and
-`field = _` explicitly discards that field. Wildcards, guards, alternatives,
-nested patterns, shorthand bindings, fallthrough, and value-producing matches
-are not supported. Ownership-bearing temporary subjects must first be bound to
-a named place.
+Any payload may use `with local` or `with _` to bind or discard whole payload.
+Struct payloads additionally support `with { ... }`: fields may be omitted,
+`field = local` creates an arm-scoped binding, and `field = _` explicitly
+discards that field. Wildcards, guards, alternatives, nested patterns, shorthand
+bindings, fallthrough, and value-producing matches are not supported.
+Ownership-bearing temporary subjects must first be bound to a named place.
 
 An enum copies only when every payload field in every case copies. Copyable and
-shared-reference pattern reads preserve carrier. Moving or discarding move-only
-fields from a direct named local or parameter consumes whole carrier, drops
-omitted owned fields on selected arm, and permits later whole-carrier
-reinitialization. Partial moves from enum fields, indexes, pointees, temporaries,
-or other projected carriers are rejected.
+shared-reference pattern reads preserve carrier. Moving or discarding a
+move-only whole payload, or move-only struct payload fields, from a direct named
+local or parameter consumes whole carrier. Struct patterns drop omitted owned
+fields on selected arm. Whole-carrier reinitialization remains valid. Partial
+moves from enum fields, indexes, pointees, temporaries, or other projected
+carriers are rejected.
 
 Copyable enum constructions are valid constants, and constant `is` tests fold.
 Named enums are rejected anywhere inside foreign `#[extern]` parameter or return

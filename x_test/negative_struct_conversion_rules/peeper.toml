@@ -1,0 +1,7 @@
+name = "negative_struct_conversion_rules"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot cast Source to Renamed", "cannot cast Source to DifferentType", "cannot cast Source to ExtraField", "cannot cast Source to MissingField"]
