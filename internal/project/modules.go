@@ -101,10 +101,12 @@ type SemanticInfo struct {
 	MethodSets               map[string][]*symbols.Symbol
 	MethodSymbol             map[ast.NodeID]*symbols.Symbol
 	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
-	ImplicitCallArguments    map[ast.NodeID]typeinfo.Type
-	CompilerCalls            map[ast.NodeID]CompilerCall
-	VariantConstructions     map[ast.NodeID]VariantConstruction
-	OperationFunctions       []*symbols.Symbol
+	// ImplicitConversions is typechecker proof consumed directly by HIR.
+	ImplicitConversions   map[ast.NodeID]typeinfo.Conversion
+	ImplicitCallArguments map[ast.NodeID]typeinfo.Type
+	CompilerCalls         map[ast.NodeID]CompilerCall
+	VariantConstructions  map[ast.NodeID]VariantConstruction
+	OperationFunctions    []*symbols.Symbol
 }
 
 // VariantConstruction is typechecker proof consumed by HIR without resolving
@@ -164,6 +166,7 @@ func NewSemanticInfo() *SemanticInfo {
 		MethodSets:               make(map[string][]*symbols.Symbol),
 		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
 		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
+		ImplicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
 		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
 		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
 		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
