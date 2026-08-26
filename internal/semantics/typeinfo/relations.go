@@ -76,7 +76,7 @@ func SameType(left, right Type) bool {
 	case *FuncType:
 		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
-		return checkStructCompatibility(l, right) == Compatible
+		return CheckStructCompatibility(l, right) == Compatible
 	case *InterfaceType:
 		return checkInterfaceCompatibility(l, right) == Compatible
 	case *EnumType:

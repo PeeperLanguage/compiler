@@ -148,3 +148,39 @@ func TestOptionalCompatibilityAllowsOneLayerPromotion(t *testing.T) {
 		t.Fatal("exact optional carrier assignment must remain compatible")
 	}
 }
+
+func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
+	i32 := &IntegerType{Signed: true, Bits: 32}
+	u32 := &IntegerType{Signed: false, Bits: 32}
+	left := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
+	reordered := &StructType{Fields: []Field{{Name: "y", Type: u32}, {Name: "x", Type: i32}}}
+	renamed := &StructType{Fields: []Field{{Name: "width", Type: i32}, {Name: "height", Type: u32}}}
+	differentType := &StructType{Fields: []Field{{Name: "x", Type: u32}, {Name: "y", Type: i32}}}
+	extra := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}, {Name: "z", Type: i32}}}
+	namedLeft := &DefinedType{Name: "Left", Identity: "test::Left", Kind: DefinedKindStruct, Underlying: left}
+	namedRight := &DefinedType{Name: "Right", Identity: "test::Right", Kind: DefinedKindStruct, Underlying: reordered}
+
+	tests := []struct {
+		name string
+		dst  Type
+		src  Type
+		want Compatibility
+	}{
+		{"anonymous reorder", reordered, left, Compatible},
+		{"named to anonymous", reordered, namedLeft, Compatible},
+		{"anonymous to named", namedLeft, reordered, ExplicitCastable},
+		{"named to different named", namedRight, namedLeft, ExplicitCastable},
+		{"renamed fields", renamed, left, Incompatible},
+		{"different field types", differentType, left, Incompatible},
+		{"extra source field", left, extra, Incompatible},
+		{"missing source field", extra, left, Incompatible},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CheckStructCompatibility(tt.dst, tt.src); got != tt.want {
+				t.Fatalf("CheckStructCompatibility() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

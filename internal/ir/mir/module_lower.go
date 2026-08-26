@@ -39,6 +39,49 @@ func (l *lowerer) isVoid(id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeVoid
 }
 
+func (l *lowerer) structCastFields(arg ValueRef, target ir.TypeID, loc *source.Location, out *[]Instr) ([]ValueRef, bool) {
+	if l == nil || l.module == nil || l.module.Types == nil || arg == nil || out == nil {
+		return nil, false
+	}
+	sourceID := ir.InvalidType
+	switch value := arg.(type) {
+	case *RefConst:
+		sourceID = value.Type
+	case *RefName:
+		sourceID = value.Type
+	}
+	source, ok := l.module.Types.Type(sourceID)
+	if !ok || source.Kind != ir.TypeStruct {
+		return nil, false
+	}
+	targetType, ok := l.module.Types.Type(target)
+	if !ok || targetType.Kind != ir.TypeStruct || len(source.Fields) != len(targetType.Fields) {
+		return nil, false
+	}
+	sourceFields := make(map[string]int, len(source.Fields))
+	for index, field := range source.Fields {
+		if field.Name == "" {
+			return nil, false
+		}
+		if _, exists := sourceFields[field.Name]; exists {
+			return nil, false
+		}
+		sourceFields[field.Name] = index
+	}
+	fields := make([]ValueRef, 0, len(targetType.Fields))
+	for _, field := range targetType.Fields {
+		sourceIndex, ok := sourceFields[field.Name]
+		if !ok || source.Fields[sourceIndex].Type != field.Type {
+			return nil, false
+		}
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: arg, Index: sourceIndex, Type: field.Type, Location: loc}})
+		fields = append(fields, &RefName{Name: name, Type: field.Type, Location: loc})
+		delete(sourceFields, field.Name)
+	}
+	return fields, len(sourceFields) == 0
+}
+
 func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *symbols.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
 	if in == nil || graphs == nil {
 		return nil
@@ -841,6 +884,11 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
+		if fields, ok := l.structCastFields(arg, e.TypeID(), e.Origin().Location, out); ok {
+			name := l.nextTemp()
+			l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location}})
+			return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}

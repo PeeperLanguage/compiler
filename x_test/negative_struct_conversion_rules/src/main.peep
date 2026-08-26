@@ -1,0 +1,35 @@
+struct Source {
+    id: u64,
+    active: bool
+}
+
+struct Renamed {
+    accountId: u64,
+    enabled: bool
+}
+
+struct DifferentType {
+    id: bool,
+    active: u64
+}
+
+struct ExtraField {
+    id: u64,
+    active: bool,
+    count: i32
+}
+
+struct MissingField {
+    id: u64
+}
+
+fn main() {
+    let renamedSource: Source = .{ id = 7u64, active = true };
+    let renamed = renamedSource as Renamed;
+    let differentSource: Source = .{ id = 7u64, active = true };
+    let different = differentSource as DifferentType;
+    let extraSource: Source = .{ id = 7u64, active = true };
+    let extra = extraSource as ExtraField;
+    let missingSource: Source = .{ id = 7u64, active = true };
+    let missing = missingSource as MissingField;
+}

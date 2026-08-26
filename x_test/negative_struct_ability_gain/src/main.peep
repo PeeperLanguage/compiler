@@ -1,9 +1,9 @@
 struct Direct {
-    directValue: i32,
+    directValue: i32
 }
 
 struct Named {
-    aliasValue: i32,
+    aliasValue: i32
 }
 
 type Alias = Named;

@@ -504,6 +504,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	if resolvedType != nil {
 		resolvedTypeID = loweredTypeID(ctx, module, resolvedType)
 	}
+	expectedTypeID := loweredTypeID(ctx, module, expectedType)
 	if module != nil && module.Flow != nil {
 		if test, ok := module.Flow.CaseTests[expr.ID()]; ok {
 			subject, _ := module.TypedASTNodes[test.SubjectID].(ast.Expr)
@@ -535,7 +536,12 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	if expectedType != nil && resolvedType != nil && !typeinfo.SameType(expectedType, resolvedType) &&
 		typeinfo.CheckNumericCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
 		value := lowerASTExpr(ctx, module, scope, expr, nil)
-		return &ir.Cast{Expr: value, Type: loweredTypeID(ctx, module, expectedType), SourceInfo: ir.SourceInfo{Location: loc}}
+		return &ir.Cast{Expr: value, Type: expectedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
+	}
+	if expectedType != nil && resolvedType != nil && expectedTypeID != resolvedTypeID &&
+		typeinfo.CheckStructCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
+		value := lowerASTExpr(ctx, module, scope, expr, nil)
+		return &ir.Cast{Expr: value, Type: expectedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
 	}
 	if construction, ok := module.Semantics.VariantConstructions[expr.ID()]; ok {
 		variant := &ir.VariantMake{
@@ -547,8 +553,6 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		}
 		return variant
 	}
-	expectedTypeID := loweredTypeID(ctx, module, expectedType)
-
 	switch node := expr.(type) {
 	case *ast.NumberLit:
 		t := resolvedType
@@ -971,6 +975,15 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 	if !ok || strct == nil {
 		return &ir.InvalidExpr{Message: "struct literal type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
+	fieldTypes := make(map[string]typeinfo.Type, len(strct.Fields))
+	for _, field := range strct.Fields {
+		fieldTypes[field.Name] = field.Type
+	}
+	if semanticStruct, ok := typeinfo.Underlying(resolved).(*typeinfo.StructType); ok && semanticStruct != nil {
+		for _, field := range semanticStruct.Fields {
+			fieldTypes[field.Name] = field.Type
+		}
+	}
 	fieldsByName := make(map[string]ast.Expr, len(node.Fields))
 	for _, field := range node.Fields {
 		if field.Name == nil || field.Value == nil {
@@ -984,7 +997,11 @@ func lowerStructLiteralExpr(ctx *project.CompilerContext, module *project.Module
 		if !ok {
 			return &ir.InvalidExpr{Message: "struct literal field missing during lowering", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 		}
-		values = append(values, lowerASTExpr(ctx, module, scope, value, field.Type))
+		fieldType := field.Type
+		if semanticType := fieldTypes[field.Name]; semanticType != nil {
+			fieldType = semanticType
+		}
+		values = append(values, lowerASTExpr(ctx, module, scope, value, fieldType))
 	}
 	return &ir.StructLit{
 		Fields:     values,
@@ -1002,9 +1019,13 @@ func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module,
 	if !ok || array == nil || array.Elem == nil {
 		return &ir.InvalidExpr{Message: "array literal type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
+	elementType := array.Elem
+	if semanticArray, ok := typeinfo.Underlying(resolved).(*typeinfo.ArrayType); ok && semanticArray != nil && semanticArray.Elem != nil {
+		elementType = semanticArray.Elem
+	}
 	values := make([]ir.Expr, 0, len(node.Values))
 	for _, value := range node.Values {
-		values = append(values, lowerASTExpr(ctx, module, scope, value, array.Elem))
+		values = append(values, lowerASTExpr(ctx, module, scope, value, elementType))
 	}
 	return &ir.ArrayLit{
 		Values:     values,

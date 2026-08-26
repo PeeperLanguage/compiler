@@ -1003,13 +1003,16 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 		return targetType
 	}
 	compat := typeinfo.CheckNumericCompatibility(targetType, exprType)
-	if compat == typeinfo.Incompatible {
-		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCast,
-			fmt.Sprintf("cannot cast %s to %s",
-				typeinfo.TypeText(exprType), typeinfo.TypeText(targetType)), ast.LocOf(node), "")
-		return &typeinfo.InvalidType{}
+	if compat != typeinfo.Incompatible {
+		return targetType
 	}
-	return targetType
+	if typeinfo.CheckStructCompatibility(targetType, exprType) != typeinfo.Incompatible {
+		return targetType
+	}
+	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCast,
+		fmt.Sprintf("cannot cast %s to %s",
+			typeinfo.TypeText(exprType), typeinfo.TypeText(targetType)), ast.LocOf(node), "")
+	return &typeinfo.InvalidType{}
 }
 
 func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typeinfo.Type {
