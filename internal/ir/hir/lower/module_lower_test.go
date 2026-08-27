@@ -368,6 +368,40 @@ func TestGenerateHIRPreservesExplicitOptionalCarrierInsideProof(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRPromotesOneOptionalLayer(t *testing.T) {
+	out := generateTestHIR(t, "hir_optional_promotion_test"+peeper.SourceExt, "hir_optional_promotion_test", `fn promote(inner: ?i32) -> ? ?i32 {
+	return inner;
+}`)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	outer, ok := ret.Value.(*ir.VariantMake)
+	if !ok || out.Types.Text(outer.TypeID()) != "??i32" {
+		t.Fatalf("promotion = %#v, want outer ??i32 VariantMake", ret.Value)
+	}
+	payload, ok := outer.Payload.(*ir.Ident)
+	if !ok || out.Types.Text(payload.TypeID()) != "?i32" {
+		t.Fatalf("promotion payload = %#v, want intact ?i32 carrier", outer.Payload)
+	}
+}
+
+func TestGenerateHIRPreservesNamedOptionalPayload(t *testing.T) {
+	out := generateTestHIR(t, "hir_named_optional_promotion_test"+peeper.SourceExt, "hir_named_optional_promotion_test", `struct Token {
+	value: i32
+}
+
+fn promote() -> ?Token {
+	return .Token{value = 7};
+}`)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	optional, ok := ret.Value.(*ir.VariantMake)
+	if !ok || out.Types.Text(optional.TypeID()) != "?Token" {
+		t.Fatalf("promotion = %#v, want ?Token VariantMake", ret.Value)
+	}
+	payload, ok := optional.Payload.(*ir.StructLit)
+	if !ok || out.Types.Text(payload.TypeID()) != "Token" {
+		t.Fatalf("promotion payload = %#v, want nominal Token struct", optional.Payload)
+	}
+}
+
 func TestGenerateHIRPreservesSourceAndSymbolIdentity(t *testing.T) {
 	out := generateTestHIR(t, "hir_identity_test"+peeper.SourceExt, "hir_identity_test", `fn echo(value: i32) -> i32 {
 	let copy = value;

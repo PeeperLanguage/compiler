@@ -528,7 +528,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	}
 	if expectedType != nil && resolvedType != nil && converting &&
 		conversion.Kind == typeinfo.ConversionOptional && conversion.Compatibility == typeinfo.Compatible {
-		if innerExpected := optionalPromotionInnerType(module, expectedType, expr); innerExpected != nil {
+		if innerExpected := optionalPromotionInnerType(expectedType, resolvedType, expr); innerExpected != nil {
 			return &ir.VariantMake{
 				Case:       ir.OptionalPresentCase,
 				Payload:    lowerASTExpr(ctx, module, scope, expr, innerExpected),
@@ -822,15 +822,15 @@ func lowerOptionalAbsent(ctx *project.CompilerContext, typeID ir.TypeID, loc *so
 	return &ir.VariantMake{Case: ir.OptionalAbsentCase, Type: typeID, SourceInfo: ir.SourceInfo{Location: loc}}
 }
 
-func optionalPromotionInnerType(module *project.Module, expectedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
-	if expectedType == nil || expr == nil {
+func optionalPromotionInnerType(expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
+	if expectedType == nil || resolvedType == nil || expr == nil {
 		return nil
 	}
 	if _, ok := expr.(*ast.NoneLit); ok {
 		return nil
 	}
-	expected, ok := loweredRuntimeType(module, expectedType, nil).(*typeinfo.OptionalType)
-	if !ok || expected == nil || expected.Inner == nil {
+	expected, ok := typeinfo.Underlying(expectedType).(*typeinfo.OptionalType)
+	if !ok || expected == nil || expected.Inner == nil || !typeinfo.SameType(expected.Inner, resolvedType) {
 		return nil
 	}
 	return expected.Inner
