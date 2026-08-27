@@ -102,6 +102,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
 		paramSym.Mutable = param.IsMutable
+		paramSym.MutableLocation = param.MutableLocation
 		paramSym.IsReceiver = fn.Receiver != nil && i == 0
 		if err := funcScope.Declare(paramSym); err != nil {
 			problems.ReportRedeclaration(r.ctx.Diagnostics, funcScope, err.Error(), param.Name.Name, param.Name.Location)
@@ -211,6 +212,9 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 
 func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
+	if declaration, ok := node.(*ast.LetDecl); ok {
+		sym.MutableLocation = declaration.MutableLocation
+	}
 	sym.Initializing = true
 	if err := scope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(r.ctx.Diagnostics, scope, err.Error(), name.Name, loc)

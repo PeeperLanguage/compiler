@@ -373,10 +373,14 @@ func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr
 	addressable := place.Addressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
 	}, c.expandedDefaultBinding)
+	var mutableBinding *symbols.Symbol
 	if mutable {
-		addressable, _ = c.mutableAddressableExpr(scope, expr)
+		addressable, _, mutableBinding = c.mutableAddressableExpr(scope, expr)
 	}
 	if addressable {
+		if mutableBinding != nil {
+			mutableBinding.RequiresMutable = true
+		}
 		return true
 	}
 	if mutable {

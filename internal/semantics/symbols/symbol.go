@@ -56,20 +56,22 @@ type DefiningModuleKey struct {
 }
 
 type Symbol struct {
-	ID             SymbolID
-	Name           string
-	Kind           Kind
-	Type           Type
-	IsPub          bool
-	Mutable        bool
-	IsReceiver     bool
-	Initializing   bool
-	Used           bool
-	CompilerOp     CompilerOp
-	DefiningModule DefiningModuleKey
-	Location       *source.Location
-	ASTNode        ast.Node
-	Scope          *Scope
+	ID              SymbolID
+	Name            string
+	Kind            Kind
+	Type            Type
+	IsPub           bool
+	Mutable         bool
+	IsReceiver      bool
+	Initializing    bool
+	Used            bool
+	RequiresMutable bool
+	CompilerOp      CompilerOp
+	DefiningModule  DefiningModuleKey
+	Location        *source.Location
+	MutableLocation *source.Location
+	ASTNode         ast.Node
+	Scope           *Scope
 }
 
 func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {

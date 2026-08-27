@@ -291,6 +291,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 				).WithSecondaryLabel(sym.Location, "make this binding mutable")
 				return
 			}
+			sym.RequiresMutable = true
 		default:
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 				"invalid assignment target `"+target.Name+"`", ast.LocOf(target), "")
@@ -301,7 +302,10 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
 			return
 		}
-		var sharedReference typeinfo.Type
+		var (
+			sharedReference typeinfo.Type
+			mutableBinding  *symbols.Symbol
+		)
 		if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); ok {
 			if mutable {
 				return
@@ -309,8 +313,11 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			sharedReference = refTarget
 		} else {
 			var mutable bool
-			mutable, sharedReference = c.mutableAddressableExpr(scope, target.Expr)
+			mutable, sharedReference, mutableBinding = c.mutableAddressableExpr(scope, target.Expr)
 			if mutable {
+				if mutableBinding != nil {
+					mutableBinding.RequiresMutable = true
+				}
 				return
 			}
 		}
@@ -359,7 +366,10 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	if shape == indexableMutableSliceView {
 		return true
 	}
-	if mutable, _ := c.mutableAddressableExpr(scope, target.Expr); mutable {
+	if mutable, _, mutableBinding := c.mutableAddressableExpr(scope, target.Expr); mutable {
+		if mutableBinding != nil {
+			mutableBinding.RequiresMutable = true
+		}
 		return true
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,

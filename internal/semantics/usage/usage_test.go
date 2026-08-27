@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/project"
+	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
@@ -40,6 +41,7 @@ fn GetValue() -> i32 { return 42; }`
 		}
 		ctx.AddModule(extMod)
 		collector.Collect(ctx, extMod)
+		binder.Bind(ctx, extMod)
 		resolver.Resolve(ctx, extMod)
 		typechecker.Check(ctx, extMod)
 	}
@@ -66,6 +68,7 @@ fn GetValue() -> i32 { return 42; }`
 
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
+	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	Analyze(ctx, module)
@@ -274,6 +277,7 @@ func TestUsageWarningsFixture(t *testing.T) {
 		diagnostics.WarnUnusedPrivateFunction,
 		diagnostics.WarnUnusedLocal,
 		diagnostics.WarnUnusedParameter,
+		diagnostics.WarnUnmodifiedMutable,
 	}
 	for _, code := range expected {
 		if !hasCode(diag, code) {
@@ -329,5 +333,156 @@ func TestUnusedLocalHasLocation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected unused local warning")
+	}
+}
+
+func TestUnmodifiedMutableLocalSuggestsRemovingModifier(t *testing.T) {
+	src := `fn main() -> i32 {
+	let mut value: i32 = 1;
+	return value;
+}`
+	diag := checkUsageSource(t, src, false)
+	out := diag.EmitAllToString()
+	if !hasCode(diag, diagnostics.WarnUnmodifiedMutable) {
+		t.Fatalf("expected unmodified mutable warning, got:\n%s", out)
+	}
+	for _, text := range []string{
+		"mutable binding `value` is never modified",
+		"remove unnecessary `mut`",
+		"= suggestion:",
+	} {
+		if !strings.Contains(out, text) {
+			t.Fatalf("expected %q in removal suggestion, got:\n%s", text, out)
+		}
+	}
+	for _, item := range diag.Diagnostics() {
+		if item == nil || item.Code != diagnostics.WarnUnmodifiedMutable {
+			continue
+		}
+		if len(item.Extras) == 0 {
+			t.Fatalf("expected W0013 code replacement, got: %#v", item.Extras)
+		}
+		hint := item.Extras[0].CodeHint
+		if len(hint.Lines) != 2 || hint.Lines[0].Prefix != "-" || hint.Lines[0].Code != "mut" ||
+			hint.Lines[1].Prefix != "+" || hint.Lines[1].Code != "" {
+			t.Fatalf("unexpected W0013 code replacement: %#v", hint.Lines)
+		}
+		return
+	}
+	t.Fatal("W0013 diagnostic disappeared while checking replacement")
+}
+
+func TestUnmodifiedMutableCommentAdjacentSuggestionUsesModifierSpan(t *testing.T) {
+	src := `fn main() -> i32 {
+	let mut/* keep mut text */ value = 1;
+	return value;
+}`
+	diag := checkUsageSource(t, src, false)
+	for _, item := range diag.Diagnostics() {
+		if item == nil || item.Code != diagnostics.WarnUnmodifiedMutable {
+			continue
+		}
+		if len(item.Extras) == 0 {
+			t.Fatalf("expected W0013 code replacement, got: %#v", item.Extras)
+		}
+		hint := item.Extras[0].CodeHint
+		if len(hint.Lines) != 2 || hint.Lines[0].Prefix != "-" || hint.Lines[0].Code != "mut" ||
+			hint.Lines[1].Prefix != "+" || hint.Lines[1].Code != "" {
+			t.Fatalf("unexpected W0013 code replacement: %#v", hint.Lines)
+		}
+		return
+	}
+	t.Fatalf("expected W0013, got:\n%s", diag.EmitAllToString())
+}
+
+func TestUnmodifiedMutableParameterWarns(t *testing.T) {
+	src := `fn read(mut value: i32) -> i32 {
+	return value;
+}
+
+fn main() -> i32 {
+	return read(1);
+}`
+	diag := checkUsageSource(t, src, false)
+	if !hasCode(diag, diagnostics.WarnUnmodifiedMutable) {
+		t.Fatalf("expected unmodified mutable parameter warning, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRequiredMutableBindingsDoNotWarn(t *testing.T) {
+	tests := map[string]string{
+		"direct local assignment": `fn main() -> i32 {
+	let mut value = 1;
+	value = 2;
+	return value;
+}`,
+		"direct parameter assignment": `fn replace(mut value: i32) -> i32 {
+	value = 2;
+	return value;
+}
+fn main() -> i32 { return replace(1); }`,
+		"unreachable direct assignment": `fn main() -> i32 {
+	let mut value = 1;
+	return value;
+	value = 2;
+}`,
+		"projected assignment": `struct Box { value: i32 }
+fn main() -> i32 {
+	let mut box = .Box{ value = 1 };
+	box.value = 2;
+	return box.value;
+}`,
+		"explicit mutable borrow": `fn write(_: &mut i32) {}
+fn main() -> i32 {
+	let mut value = 1;
+	write(&mut value);
+	return value;
+}`,
+		"mutable receiver": `struct Counter { value: i32 }
+fn (self: &mut Counter) bump() { self.value = 2; }
+fn main() -> i32 {
+	let mut counter = .Counter{ value = 1 };
+	counter.bump();
+	return counter.value;
+}`,
+		"mutable slice": `fn main() -> i32 {
+	let mut values = [_]i32{1, 2};
+	let view = values[..];
+	view[0] = 2;
+	return values[0];
+}`,
+	}
+
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			diag := checkUsageSource(t, src, false)
+			if diag.HasErrors() || hasCode(diag, diagnostics.WarnUnmodifiedMutable) {
+				t.Fatalf("expected required mutable binding without W0013, got:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestUnusedMutableBindingDoesNotAlsoWarnAsUnmodified(t *testing.T) {
+	src := `fn main() -> i32 {
+	let mut value = 1;
+	return 0;
+}`
+	diag := checkUsageSource(t, src, false)
+	if !hasCode(diag, diagnostics.WarnUnusedLocal) || hasCode(diag, diagnostics.WarnUnmodifiedMutable) {
+		t.Fatalf("expected only unused-local warning, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPointeeMutationDoesNotCountAsBindingMutation(t *testing.T) {
+	src := `struct Box { value: i32 }
+fn main() -> i32 {
+	let mut box = alloc(.Box{ value = 1 });
+	box.value = 2;
+	return box.value;
+}`
+	diag := checkUsageSource(t, src, false)
+	if diag.HasErrors() || !hasCode(diag, diagnostics.WarnUnmodifiedMutable) {
+		t.Fatalf("expected pointer binding W0013 despite pointee mutation, got:\n%s", diag.EmitAllToString())
 	}
 }

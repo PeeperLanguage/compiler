@@ -312,18 +312,23 @@ func (p *Parser) parseLetDecl(isModuleVar bool) ast.Decl {
 	if start == nil {
 		return nil
 	}
-	isMutable := p.match(token.MUT)
+	var mutableLocation *source.Location
+	if p.at(token.MUT) {
+		modifier := p.advance()
+		mutableLocation = source.NewLocation(p.filePath, modifier.Start, modifier.End)
+	}
 	name, ty, value, end, ok := p.parseBindingFields()
 	if !ok {
 		return nil
 	}
 	decl := reg(p, &ast.LetDecl{
-		Name:        name,
-		Type:        ty,
-		Value:       value,
-		IsMutable:   isMutable,
-		IsModuleVar: isModuleVar,
-		Location:    source.NewLocation(p.filePath, start.Start, end.End),
+		Name:            name,
+		Type:            ty,
+		Value:           value,
+		IsMutable:       mutableLocation != nil,
+		MutableLocation: mutableLocation,
+		IsModuleVar:     isModuleVar,
+		Location:        source.NewLocation(p.filePath, start.Start, end.End),
 	})
 	return setDeclSurface(decl, letDeclSurface(decl))
 }

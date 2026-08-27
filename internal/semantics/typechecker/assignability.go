@@ -244,9 +244,9 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 	return fnType
 }
 
-func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (bool, typeinfo.Type) {
+func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (bool, typeinfo.Type, *symbols.Symbol) {
 	if c == nil {
-		return false, nil
+		return false, nil, nil
 	}
 	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)

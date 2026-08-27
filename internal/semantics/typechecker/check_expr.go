@@ -230,7 +230,8 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	}
 	addressable := place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		if mutable, sharedReference := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding); addressable && !mutable {
+		mutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		if addressable && !mutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
 			if sharedReference != nil {
@@ -242,6 +243,9 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
+		}
+		if mutableBinding != nil {
+			mutableBinding.RequiresMutable = true
 		}
 		return &typeinfo.RefType{Mutable: true, Target: valueType}
 	}
@@ -709,8 +713,12 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		}
 	}
 	mutable := shape == indexableMutableSliceView
+	var mutableBinding *symbols.Symbol
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		mutable, _ = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		mutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+	}
+	if mutableBinding != nil {
+		mutableBinding.RequiresMutable = true
 	}
 	return &typeinfo.RefType{
 		Mutable: mutable,

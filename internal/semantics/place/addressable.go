@@ -66,35 +66,51 @@ func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, res
 	return Addressable(scope, base, exprType, resolve)
 }
 
-func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type) {
+func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
 	if scope == nil || expr == nil {
-		return false, nil
+		return false, nil, nil
 	}
 	if e, ok := expr.(*ast.Ident); ok {
 		if e == nil {
-			return false, nil
+			return false, nil, nil
 		}
 		if resolve != nil {
 			if binding, found := resolve(e); found {
 				sym := binding.Symbol
-				return sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable(), nil
+				if sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable() {
+					return true, nil, sym
+				}
+				return false, nil, nil
 			}
 		}
-		return scope.IsMutableBinding(e.Name), nil
+		sym, found := scope.Lookup(e.Name)
+		if found && sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable() {
+			return true, nil, sym
+		}
+		return false, nil, nil
+	}
+	if index, ok := expr.(*ast.IndexExpr); ok {
+		if _, slicing := index.Index.(*ast.RangeExpr); slicing {
+			return MutableAddressable(scope, index.Expr, exprType, resolve)
+		}
 	}
 	base, ok := placeProjectionBase(expr)
 	if !ok {
-		return false, nil
+		return false, nil, nil
 	}
 	if exprType != nil {
-		if _, ok := typeinfo.Underlying(exprType(base)).(*typeinfo.RawPtrType); ok {
-			return true, nil
+		baseType := typeinfo.Underlying(exprType(base))
+		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
+			return true, nil, nil
 		}
-		if target, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(base))); ok {
+		if _, ok := typeinfo.PointerTarget(baseType); ok {
+			return true, nil, nil
+		}
+		if target, mutable, ok := typeinfo.ReferenceTarget(baseType); ok {
 			if mutable {
-				return true, nil
+				return true, nil, nil
 			}
-			return false, target
+			return false, target, nil
 		}
 	}
 	return MutableAddressable(scope, base, exprType, resolve)
