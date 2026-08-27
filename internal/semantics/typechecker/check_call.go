@@ -501,12 +501,7 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 					c.module.Semantics.ResolvedSymbols[clonedID] = resolved
 					c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
 				}
-				if typ := declModule.Semantics.ExprTypes[originalID]; typ != nil {
-					c.module.Semantics.ExprTypes[clonedID] = typ
-				}
-				if implementations := declModule.Semantics.InterfaceImplementations[originalID]; implementations != nil {
-					c.module.Semantics.InterfaceImplementations[clonedID] = implementations
-				}
+				copyExpressionEvidence(c.module.Semantics, declModule.Semantics, clonedID, originalID)
 			}
 		}
 		for clonedID, originalID := range argumentClones {
@@ -516,18 +511,28 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 			if _, ok := c.module.Semantics.ExpandedDefaultBindings[originalID]; ok {
 				c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
 			}
-			if typ := c.module.Semantics.ExprTypes[originalID]; typ != nil {
-				c.module.Semantics.ExprTypes[clonedID] = typ
-			}
-			if implementations := c.module.Semantics.InterfaceImplementations[originalID]; implementations != nil {
-				c.module.Semantics.InterfaceImplementations[clonedID] = implementations
-			}
+			copyExpressionEvidence(c.module.Semantics, c.module.Semantics, clonedID, originalID)
 		}
 		call.Args = append(call.Args, expanded)
 		slotExprs[i] = expanded
 		if params[i].Name != nil {
 			substitutions[params[i].Name.Name] = expanded
 		}
+	}
+}
+
+func copyExpressionEvidence(dst, src *project.SemanticInfo, dstID, srcID ast.NodeID) {
+	if dst == nil || src == nil {
+		return
+	}
+	if typ := src.ExprTypes[srcID]; typ != nil {
+		dst.ExprTypes[dstID] = typ
+	}
+	if implementations := src.InterfaceImplementations[srcID]; implementations != nil {
+		dst.InterfaceImplementations[dstID] = implementations
+	}
+	if conversion, ok := src.ImplicitConversions[srcID]; ok {
+		dst.ImplicitConversions[dstID] = conversion
 	}
 }
 

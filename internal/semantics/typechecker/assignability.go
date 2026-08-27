@@ -12,11 +12,13 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-func (c *checker) assignable(dst, src typeinfo.Type, conversion ast.Expr) bool {
+func (c *checker) assignable(dst, src typeinfo.Type, site ast.Expr) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
-	if typeinfo.Assignable(dst, src) {
+	conversion := typeinfo.CheckCompatibility(dst, src)
+	if conversion.Compatibility == typeinfo.Compatible {
+		c.recordImplicitConversion(site, conversion)
 		return true
 	}
 	if dstTarget, dstMutable, dstRef := typeinfo.ReferenceTarget(typeinfo.Underlying(dst)); dstRef {
@@ -25,7 +27,7 @@ func (c *checker) assignable(dst, src typeinfo.Type, conversion ast.Expr) bool {
 		if allowImplicitInterfaceConversion && srcRef && interfaceRef && (!dstMutable || srcMutable) {
 			implementations, _, ok := c.resolveInterfaceImplementations(iface, srcTarget)
 			if ok {
-				c.storeInterfaceImplementations(conversion, implementations)
+				c.storeInterfaceImplementations(site, implementations)
 			}
 			return ok
 		}
@@ -36,12 +38,21 @@ func (c *checker) assignable(dst, src typeinfo.Type, conversion ast.Expr) bool {
 		if allowImplicitInterfaceConversion && srcOwned && interfaceOwned {
 			implementations, _, ok := c.resolveInterfaceImplementations(iface, srcTarget)
 			if ok {
-				c.storeInterfaceImplementations(conversion, implementations)
+				c.storeInterfaceImplementations(site, implementations)
 			}
 			return ok
 		}
 	}
 	return false
+}
+
+func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Conversion) {
+	if c == nil || c.module == nil || c.module.Semantics == nil || expr == nil ||
+		conversion.Kind == typeinfo.ConversionNone || conversion.Kind == typeinfo.ConversionRecovery ||
+		conversion.Kind == typeinfo.ConversionIdentity || conversion.Compatibility != typeinfo.Compatible {
+		return
+	}
+	c.module.Semantics.ImplicitConversions[expr.ID()] = conversion
 }
 
 func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]project.InterfaceImplementation, []string, bool) {

@@ -76,7 +76,7 @@ func SameType(left, right Type) bool {
 	case *FuncType:
 		return checkFuncCompatibility(l, right) == Compatible
 	case *StructType:
-		return CheckStructCompatibility(l, right) == Compatible
+		return checkStructCompatibility(l, right) == Compatible
 	case *InterfaceType:
 		return checkInterfaceCompatibility(l, right) == Compatible
 	case *EnumType:
@@ -210,17 +210,17 @@ func CommonNumericType(a, b Type) Type {
 	if SameType(a, b) {
 		return a
 	}
-	if CheckNumericCompatibility(a, b) == Compatible {
+	if checkNumericCompatibility(a, b) == Compatible {
 		return a
 	}
-	if CheckNumericCompatibility(b, a) == Compatible {
+	if checkNumericCompatibility(b, a) == Compatible {
 		return b
 	}
 	return nil
 }
 
 func Assignable(dst, src Type) bool {
-	return CheckCompatibility(dst, src) == Compatible
+	return CheckCompatibility(dst, src).Compatibility == Compatible
 }
 
 func ContainsAbstractSelf(t Type) bool {

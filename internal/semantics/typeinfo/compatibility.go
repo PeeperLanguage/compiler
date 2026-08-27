@@ -14,6 +14,26 @@ const (
 	Incompatible
 )
 
+// ConversionKind identifies operation required to materialize conversion.
+type ConversionKind int
+
+const (
+	ConversionNone ConversionKind = iota
+	ConversionRecovery
+	ConversionIdentity
+	ConversionBool
+	ConversionNumeric
+	ConversionReference
+	ConversionOptional
+	ConversionStruct
+)
+
+// Conversion is canonical compatibility result shared by semantic analysis and lowering.
+type Conversion struct {
+	Kind          ConversionKind
+	Compatibility Compatibility
+}
+
 // String returns the string representation of the Compatibility value
 func (c Compatibility) String() string {
 	switch c {
@@ -28,46 +48,41 @@ func (c Compatibility) String() string {
 	}
 }
 
-// CheckCompatibility determines whether src can be used as dst without
+// CheckCompatibility classifies conversion from src to dst without
 // checker-specific context such as method-set lookup.
-func CheckCompatibility(dst, src Type) Compatibility {
+func CheckCompatibility(dst, src Type) Conversion {
 	if dst == nil || src == nil {
-		return Compatible
+		return Conversion{Kind: ConversionRecovery, Compatibility: Compatible}
 	}
 	if IsInvalid(dst) || IsInvalid(src) || IsUnknown(dst) || IsUnknown(src) {
-		return Compatible
+		return Conversion{Kind: ConversionRecovery, Compatibility: Compatible}
 	}
 	if SameType(dst, src) {
-		return Compatible
+		return Conversion{Kind: ConversionIdentity, Compatibility: Compatible}
 	}
-	if compat := CheckNumericCompatibility(dst, src); compat != Incompatible {
-		return compat
+	if _, ok := Underlying(dst).(*BoolType); ok && IsArithmetic(src) {
+		return Conversion{Kind: ConversionBool, Compatibility: ExplicitCastable}
 	}
-	if compat := checkPointerCompatibility(dst, src); compat != Incompatible {
-		return compat
+	if _, _, dstNumeric := NumericInfo(dst); dstNumeric {
+		if _, _, srcNumeric := NumericInfo(src); srcNumeric {
+			return Conversion{Kind: ConversionNumeric, Compatibility: checkNumericCompatibility(dst, src)}
+		}
+	}
+	if _, dstStruct := Underlying(dst).(*StructType); dstStruct {
+		if _, srcStruct := Underlying(src).(*StructType); srcStruct {
+			return Conversion{Kind: ConversionStruct, Compatibility: checkStructCompatibility(dst, src)}
+		}
 	}
 	if compat := checkRefCompatibility(dst, src); compat != Incompatible {
-		return compat
+		return Conversion{Kind: ConversionReference, Compatibility: compat}
 	}
 	if compat := checkOptionalCompatibility(dst, src); compat != Incompatible {
-		return compat
+		return Conversion{Kind: ConversionOptional, Compatibility: compat}
 	}
-	if compat := checkFuncCompatibility(dst, src); compat != Incompatible {
-		return compat
-	}
-	if compat := checkArrayCompatibility(dst, src); compat != Incompatible {
-		return compat
-	}
-	if compat := CheckStructCompatibility(dst, src); compat != Incompatible {
-		return compat
-	}
-	if compat := checkInterfaceCompatibility(dst, src); compat != Incompatible {
-		return compat
-	}
-	return checkEnumCompatibility(dst, src)
+	return Conversion{Kind: ConversionNone, Compatibility: Incompatible}
 }
 
-// CheckNumericCompatibility determines if src type can be converted to dst type
+// checkNumericCompatibility determines if src type can be converted to dst type
 // and returns the type of conversion required.
 //
 // Rules:
@@ -78,7 +93,7 @@ func CheckCompatibility(dst, src Type) Compatibility {
 //   - f32 to f64 is compatible; f64 to f32 is explicit
 //   - Integer, float, and byte are distinct conversion classes
 //   - Cross-class numeric conversions are explicit
-func CheckNumericCompatibility(dst, src Type) Compatibility {
+func checkNumericCompatibility(dst, src Type) Compatibility {
 	// Same type: always compatible
 	if SameType(dst, src) {
 		return Compatible
@@ -116,18 +131,6 @@ func CheckNumericCompatibility(dst, src Type) Compatibility {
 	}
 
 	return Incompatible
-}
-
-func checkPointerCompatibility(dst, src Type) Compatibility {
-	left, ok := Underlying(dst).(*RawPtrType)
-	if !ok || left == nil {
-		return Incompatible
-	}
-	right, ok := Underlying(src).(*RawPtrType)
-	if !ok || right == nil {
-		return Incompatible
-	}
-	return Compatible
 }
 
 func checkRefCompatibility(dst, src Type) Compatibility {
@@ -192,21 +195,7 @@ func checkFuncCompatibility(dst, src Type) Compatibility {
 	return Compatible
 }
 
-func checkArrayCompatibility(dst, src Type) Compatibility {
-	switch left := Underlying(dst).(type) {
-	case *ArrayType:
-		right, ok := Underlying(src).(*ArrayType)
-		if !ok || right == nil {
-			return Incompatible
-		}
-		if left.Len == right.Len && left.Shape == right.Shape && SameType(left.Elem, right.Elem) {
-			return Compatible
-		}
-	}
-	return Incompatible
-}
-
-func CheckStructCompatibility(dst, src Type) Compatibility {
+func checkStructCompatibility(dst, src Type) Compatibility {
 	dstStruct, dstNominal := nominalStructType(dst)
 	srcStruct, srcNominal := nominalStructType(src)
 	left, ok := Underlying(dst).(*StructType)

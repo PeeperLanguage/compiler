@@ -4,23 +4,17 @@ import (
 	"testing"
 )
 
-func TestCheckNumericCompatibility(t *testing.T) {
+func TestNumericConversionClassification(t *testing.T) {
 	tests := []struct {
 		name string
 		dst  Type
 		src  Type
 		want Compatibility
 	}{
-		// === SAME TYPE ===
-		{"same i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: true, Bits: 32}, Compatible},
-		{"same f64", &FloatType{Bits: 64}, &FloatType{Bits: 64}, Compatible},
-		{"same u8", &IntegerType{Signed: false, Bits: 8}, &IntegerType{Signed: false, Bits: 8}, Compatible},
-
 		// === BYTE CLASS ===
 		{"byte to i32", &IntegerType{Signed: true, Bits: 32}, &ByteType{}, ExplicitCastable},
 		{"i32 to byte", &ByteType{}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
 		{"byte to f64", &FloatType{Bits: 64}, &ByteType{}, ExplicitCastable},
-		{"byte to byte", &ByteType{}, &ByteType{}, Compatible},
 		{"u8 to byte", &ByteType{}, &IntegerType{Signed: false, Bits: 8}, ExplicitCastable},
 
 		// === INTEGER WIDENING (same signedness) ===
@@ -72,20 +66,47 @@ func TestCheckNumericCompatibility(t *testing.T) {
 		{"f32 to i32", &IntegerType{Signed: true, Bits: 32}, &FloatType{Bits: 32}, ExplicitCastable},
 		{"f64 to i32", &IntegerType{Signed: true, Bits: 32}, &FloatType{Bits: 64}, ExplicitCastable},
 		{"f32 to u32", &IntegerType{Signed: false, Bits: 32}, &FloatType{Bits: 32}, ExplicitCastable},
-
-		// === NON-NUMERIC ===
-		{"bool to i32", &IntegerType{Signed: true, Bits: 32}, &BoolType{}, Incompatible},
-		{"i32 to bool", &BoolType{}, &IntegerType{Signed: true, Bits: 32}, Incompatible},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CheckNumericCompatibility(tt.dst, tt.src)
-			if got != tt.want {
-				t.Errorf("CheckNumericCompatibility(%v, %v) = %v, want %v",
+			got := CheckCompatibility(tt.dst, tt.src)
+			if got.Kind != ConversionNumeric || got.Compatibility != tt.want {
+				t.Errorf("CheckCompatibility(%v, %v) = %#v, want numeric %v",
 					tt.dst, tt.src, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIdentityConversionClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  Type
+	}{
+		{"i32", &IntegerType{Signed: true, Bits: 32}},
+		{"f64", &FloatType{Bits: 64}},
+		{"byte", &ByteType{}},
+		{"struct", &StructType{Fields: []Field{{Name: "value", Type: &IntegerType{Signed: true, Bits: 32}}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CheckCompatibility(tt.typ, tt.typ)
+			if got.Kind != ConversionIdentity || got.Compatibility != Compatible {
+				t.Fatalf("CheckCompatibility(%v, %v) = %#v, want identity", tt.typ, tt.typ, got)
+			}
+		})
+	}
+}
+
+func TestBoolConversionClassification(t *testing.T) {
+	got := CheckCompatibility(&BoolType{}, &IntegerType{Signed: true, Bits: 32})
+	if got.Kind != ConversionBool || got.Compatibility != ExplicitCastable {
+		t.Fatalf("bool conversion = %#v, want explicit bool conversion", got)
+	}
+	got = CheckCompatibility(&IntegerType{Signed: true, Bits: 32}, &BoolType{})
+	if got.Kind != ConversionNone || got.Compatibility != Incompatible {
+		t.Fatalf("numeric conversion from bool = %#v, want incompatible", got)
 	}
 }
 
@@ -109,30 +130,30 @@ func TestCompatibilityString(t *testing.T) {
 }
 
 func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
-	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &NoneType{}); got != Compatible {
+	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &NoneType{}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
 		t.Fatalf("optional none compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &IntegerType{Signed: true, Bits: 32}); got != Compatible {
+	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &IntegerType{Signed: true, Bits: 32}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
 		t.Fatalf("optional inner compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}, &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}); got != Compatible {
+	if got := CheckCompatibility(&ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}, &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}); got.Compatibility != Compatible {
 		t.Fatalf("array compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&ArrayType{Shape: ArrayOwner, Elem: &StringType{}}, &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}); got != Compatible {
+	if got := CheckCompatibility(&ArrayType{Shape: ArrayOwner, Elem: &StringType{}}, &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}); got.Compatibility != Compatible {
 		t.Fatalf("dynamic array compat = %v, want compatible", got)
 	}
 	if got := CheckCompatibility(
 		&RefType{Target: &ArrayType{Shape: ArraySlice, Elem: &StringType{}}},
 		&RefType{Target: &ArrayType{Shape: ArraySlice, Elem: &StringType{}}},
-	); got != Compatible {
+	); got.Compatibility != Compatible {
 		t.Fatalf("slice-view ref compat = %v, want compatible", got)
 	}
 	shared := &RefType{Target: &IntegerType{Signed: true, Bits: 32}}
 	mutable := &RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}
-	if got := CheckCompatibility(shared, mutable); got != Compatible {
+	if got := CheckCompatibility(shared, mutable); got.Kind != ConversionReference || got.Compatibility != Compatible {
 		t.Fatalf("mutable-to-shared ref compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(mutable, shared); got != Incompatible {
+	if got := CheckCompatibility(mutable, shared); got.Compatibility != Incompatible {
 		t.Fatalf("shared-to-mutable ref compat = %v, want incompatible", got)
 	}
 }
@@ -141,10 +162,10 @@ func TestOptionalCompatibilityAllowsOneLayerPromotion(t *testing.T) {
 	i32 := &IntegerType{Signed: true, Bits: 32}
 	inner := &OptionalType{Inner: i32}
 	outer := &OptionalType{Inner: inner}
-	if CheckCompatibility(outer, inner) != Compatible {
+	if conversion := CheckCompatibility(outer, inner); conversion.Kind != ConversionOptional || conversion.Compatibility != Compatible {
 		t.Fatal("?T must promote into ??T as one intact payload layer")
 	}
-	if CheckCompatibility(inner, inner) != Compatible {
+	if conversion := CheckCompatibility(inner, inner); conversion.Kind != ConversionIdentity || conversion.Compatibility != Compatible {
 		t.Fatal("exact optional carrier assignment must remain compatible")
 	}
 }
@@ -161,25 +182,27 @@ func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
 	namedRight := &DefinedType{Name: "Right", Identity: "test::Right", Kind: DefinedKindStruct, Underlying: reordered}
 
 	tests := []struct {
-		name string
-		dst  Type
-		src  Type
-		want Compatibility
+		name     string
+		dst      Type
+		src      Type
+		wantKind ConversionKind
+		want     Compatibility
 	}{
-		{"anonymous reorder", reordered, left, Compatible},
-		{"named to anonymous", reordered, namedLeft, Compatible},
-		{"anonymous to named", namedLeft, reordered, ExplicitCastable},
-		{"named to different named", namedRight, namedLeft, ExplicitCastable},
-		{"renamed fields", renamed, left, Incompatible},
-		{"different field types", differentType, left, Incompatible},
-		{"extra source field", left, extra, Incompatible},
-		{"missing source field", extra, left, Incompatible},
+		{"anonymous reorder", reordered, left, ConversionIdentity, Compatible},
+		{"named to anonymous", reordered, namedLeft, ConversionStruct, Compatible},
+		{"anonymous to named", namedLeft, reordered, ConversionStruct, ExplicitCastable},
+		{"named to different named", namedRight, namedLeft, ConversionStruct, ExplicitCastable},
+		{"renamed fields", renamed, left, ConversionStruct, Incompatible},
+		{"different field types", differentType, left, ConversionStruct, Incompatible},
+		{"extra source field", left, extra, ConversionStruct, Incompatible},
+		{"missing source field", extra, left, ConversionStruct, Incompatible},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := CheckStructCompatibility(tt.dst, tt.src); got != tt.want {
-				t.Fatalf("CheckStructCompatibility() = %v, want %v", got, tt.want)
+			got := CheckCompatibility(tt.dst, tt.src)
+			if got.Kind != tt.wantKind || got.Compatibility != tt.want {
+				t.Fatalf("CheckCompatibility() = %#v, want kind %v compatibility %v", got, tt.wantKind, tt.want)
 			}
 		})
 	}

@@ -505,6 +505,10 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		resolvedTypeID = loweredTypeID(ctx, module, resolvedType)
 	}
 	expectedTypeID := loweredTypeID(ctx, module, expectedType)
+	conversion, converting := typeinfo.Conversion{}, false
+	if module != nil && module.Semantics != nil {
+		conversion, converting = module.Semantics.ImplicitConversions[expr.ID()]
+	}
 	if module != nil && module.Flow != nil {
 		if test, ok := module.Flow.CaseTests[expr.ID()]; ok {
 			subject, _ := module.TypedASTNodes[test.SubjectID].(ast.Expr)
@@ -522,26 +526,28 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, expr)}
 		}
 	}
-	if innerExpected := optionalPromotionInnerType(module, expectedType, resolvedType, expr); innerExpected != nil {
-		return &ir.VariantMake{
-			Case:       ir.OptionalPresentCase,
-			Payload:    lowerASTExpr(ctx, module, scope, expr, innerExpected),
-			Type:       loweredTypeID(ctx, module, expectedType),
-			SourceInfo: ir.SourceInfo{Location: loc},
+	if expectedType != nil && resolvedType != nil && converting &&
+		conversion.Kind == typeinfo.ConversionOptional && conversion.Compatibility == typeinfo.Compatible {
+		if innerExpected := optionalPromotionInnerType(expectedType, resolvedType, expr); innerExpected != nil {
+			return &ir.VariantMake{
+				Case:       ir.OptionalPresentCase,
+				Payload:    lowerASTExpr(ctx, module, scope, expr, innerExpected),
+				Type:       loweredTypeID(ctx, module, expectedType),
+				SourceInfo: ir.SourceInfo{Location: loc},
+			}
 		}
 	}
 	if ifaceExpr := maybeLowerInterfaceExpr(ctx, module, scope, expr, expectedType); ifaceExpr != nil {
 		return ifaceExpr
 	}
-	if expectedType != nil && resolvedType != nil && !typeinfo.SameType(expectedType, resolvedType) &&
-		typeinfo.CheckNumericCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
-		value := lowerASTExpr(ctx, module, scope, expr, nil)
-		return &ir.Cast{Expr: value, Type: expectedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
-	}
-	if expectedType != nil && resolvedType != nil && expectedTypeID != resolvedTypeID &&
-		typeinfo.CheckStructCompatibility(expectedType, resolvedType) == typeinfo.Compatible {
-		value := lowerASTExpr(ctx, module, scope, expr, nil)
-		return &ir.Cast{Expr: value, Type: expectedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
+	if expectedType != nil && resolvedType != nil && converting && conversion.Compatibility == typeinfo.Compatible {
+		switch conversion.Kind {
+		case typeinfo.ConversionNumeric, typeinfo.ConversionStruct:
+			if expectedTypeID != resolvedTypeID {
+				value := lowerASTExpr(ctx, module, scope, expr, nil)
+				return &ir.Cast{Expr: value, Type: expectedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
+			}
+		}
 	}
 	if construction, ok := module.Semantics.VariantConstructions[expr.ID()]; ok {
 		variant := &ir.VariantMake{
@@ -816,27 +822,18 @@ func lowerOptionalAbsent(ctx *project.CompilerContext, typeID ir.TypeID, loc *so
 	return &ir.VariantMake{Case: ir.OptionalAbsentCase, Type: typeID, SourceInfo: ir.SourceInfo{Location: loc}}
 }
 
-func optionalPromotionInnerType(module *project.Module, expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
+func optionalPromotionInnerType(expectedType, resolvedType typeinfo.Type, expr ast.Expr) typeinfo.Type {
 	if expectedType == nil || resolvedType == nil || expr == nil {
 		return nil
 	}
 	if _, ok := expr.(*ast.NoneLit); ok {
 		return nil
 	}
-	expected, ok := loweredRuntimeType(module, expectedType, nil).(*typeinfo.OptionalType)
-	if !ok || expected == nil || expected.Inner == nil {
+	expected, ok := typeinfo.Underlying(expectedType).(*typeinfo.OptionalType)
+	if !ok || expected == nil || expected.Inner == nil || !typeinfo.SameType(expected.Inner, resolvedType) {
 		return nil
 	}
-	resolved := loweredRuntimeType(module, resolvedType, nil)
-	if typeinfo.SameType(expected, resolved) {
-		return nil
-	}
-	// Typechecker accepts one-layer promotion into optional contexts. HIR keeps
-	// source carrier intact and materializes tagged outer container explicitly.
-	if typeinfo.SameType(expected.Inner, resolved) {
-		return expected.Inner
-	}
-	return nil
+	return expected.Inner
 }
 
 func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {

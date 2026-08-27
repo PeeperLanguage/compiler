@@ -378,6 +378,10 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	}
 
 	commonType := typeinfo.CommonNumericType(left, right)
+	if commonType != nil {
+		c.recordImplicitConversion(node.Left, typeinfo.CheckCompatibility(commonType, left))
+		c.recordImplicitConversion(node.Right, typeinfo.CheckCompatibility(commonType, right))
+	}
 	if commonType == nil && !c.assignable(left, right, node.Right) && !c.assignable(right, left, node.Left) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
@@ -999,14 +1003,10 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	if typeinfo.IsInvalidOrUnknown(exprType) {
 		return &typeinfo.InvalidType{}
 	}
-	if _, ok := targetType.(*typeinfo.BoolType); ok && typeinfo.IsArithmetic(exprType) {
-		return targetType
-	}
-	compat := typeinfo.CheckNumericCompatibility(targetType, exprType)
-	if compat != typeinfo.Incompatible {
-		return targetType
-	}
-	if typeinfo.CheckStructCompatibility(targetType, exprType) != typeinfo.Incompatible {
+	conversion := typeinfo.CheckCompatibility(targetType, exprType)
+	if conversion.Compatibility != typeinfo.Incompatible &&
+		(conversion.Kind == typeinfo.ConversionIdentity || conversion.Kind == typeinfo.ConversionBool ||
+			conversion.Kind == typeinfo.ConversionNumeric || conversion.Kind == typeinfo.ConversionStruct) {
 		return targetType
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCast,
@@ -1043,7 +1043,9 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 			numberTarget = optional.Inner
 		}
 		naturalType := typeinfo.DefaultNumberType(node.Value)
-		if typeinfo.CheckNumericCompatibility(numberTarget, naturalType) == typeinfo.Incompatible {
+		conversion := typeinfo.CheckCompatibility(numberTarget, naturalType)
+		if (conversion.Kind != typeinfo.ConversionIdentity && conversion.Kind != typeinfo.ConversionNumeric) ||
+			conversion.Compatibility == typeinfo.Incompatible {
 			c.ctx.Diagnostics.Add(typeMismatchError(node,
 				fmt.Sprintf("literal `%s` cannot be used as %s", node.Value, typeinfo.TypeText(expected))))
 			return nil

@@ -344,7 +344,7 @@ func TestCompletionPipeIncludesApplicableImportedFunctions(t *testing.T) {
 	}
 }
 
-func TestCompletionDoesNotLeakImportedMethodsWithSameReceiverName(t *testing.T) {
+func TestCompletionDoesNotLeakImportedNominalOperationsWithSameReceiverName(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
 	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
@@ -363,11 +363,11 @@ fn use(value: Value) { value |> __CURSOR__; }
 	state.RootDir = root
 	items := completionAtSource(t, state, mainPath, source)
 	labels := completionLabels(items)
-	if !slices.Contains(labels, "Local") || !slices.Contains(labels, "external::Inspect") {
-		t.Fatalf("completion labels = %v, want current method and imported function", labels)
+	if !slices.Contains(labels, "Local") {
+		t.Fatalf("completion labels = %v, want current method", labels)
 	}
-	if slices.Contains(labels, "Foreign") || slices.Contains(labels, "privateForeign") {
-		t.Fatalf("imported method leaked into completion: %v", labels)
+	if slices.Contains(labels, "external::Inspect") || slices.Contains(labels, "Foreign") || slices.Contains(labels, "privateForeign") {
+		t.Fatalf("imported nominal operation leaked into completion: %v", labels)
 	}
 }
 
