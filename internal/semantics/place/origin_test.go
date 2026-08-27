@@ -116,7 +116,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 				}
 				return nil
 			}
-			mutable, shared := MutableAddressable(scope, projection, exprType, nil)
+			mutable, shared, _ := MutableAddressable(scope, projection, exprType, nil)
 			if mutable != test.want || !typeinfo.SameType(shared, test.shared) {
 				t.Fatalf("MutableAddressable() = (%v, %v), want (%v, %v)", mutable, shared, test.want, test.shared)
 			}

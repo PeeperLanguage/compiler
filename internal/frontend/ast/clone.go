@@ -139,7 +139,7 @@ func clonePathSegments(segments []PathSegment, newID func(NodeID, bool) NodeID, 
 }
 
 func cloneParam(param Param, newID func(NodeID, bool) NodeID, fromArgument bool) Param {
-	cloned := Param{IsMutable: param.IsMutable, Name: cloneIdent(param.Name, newID, fromArgument), Type: cloneTypeExpr(param.Type, newID, fromArgument), Location: param.Location}
+	cloned := Param{IsMutable: param.IsMutable, MutableLocation: param.MutableLocation, Name: cloneIdent(param.Name, newID, fromArgument), Type: cloneTypeExpr(param.Type, newID, fromArgument), Location: param.Location}
 	if param.Default != nil {
 		cloned.Default = param.Default.copyExpr(nil, newID, fromArgument)
 	}

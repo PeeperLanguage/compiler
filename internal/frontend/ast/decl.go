@@ -397,11 +397,12 @@ type EnumVariant struct {
 }
 
 type Param struct {
-	IsMutable bool
-	Name      *Ident
-	Type      TypeExpr
-	Default   Expr
-	Location  *source.Location
+	IsMutable       bool
+	MutableLocation *source.Location
+	Name            *Ident
+	Type            TypeExpr
+	Default         Expr
+	Location        *source.Location
 }
 
 type TypeParam struct {
@@ -412,12 +413,13 @@ type TypeParam struct {
 type LetDecl struct {
 	NodeIDHolder
 	Documented
-	Name        *Ident
-	Type        TypeExpr
-	Value       Expr
-	IsMutable   bool
-	IsModuleVar bool
-	Location    *source.Location
+	Name            *Ident
+	Type            TypeExpr
+	Value           Expr
+	IsMutable       bool
+	MutableLocation *source.Location
+	IsModuleVar     bool
+	Location        *source.Location
 }
 
 func (*LetDecl) declNode()               {}

@@ -14,8 +14,26 @@ fn UnusedPublicFunction() -> i32 {
     return 100;
 }
 
+fn read_unmodified(mut value: i32) -> i32 {
+    return value;
+}
+
+fn replace(mut value: i32) -> i32 {
+    value = 42;
+    return value;
+}
+
+fn keep_unreachable_mut() -> i32 {
+    let mut value = 1;
+    return value;
+    value = 2;
+}
+
 fn main(unused_param: i32, _ignored_param: i32) -> i32 {
+    let mut/* keep mut text */ unmodified = read_unmodified(1);
+    let mut modified = 1;
+    modified = replace(modified);
     let msg: cstr = c"Hello from Peeper runtime ABI!\n";
     write(stdout, msg, 30);
-    return 0;
+    return unmodified + modified + keep_unreachable_mut();
 }

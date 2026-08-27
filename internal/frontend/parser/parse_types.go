@@ -490,12 +490,12 @@ func (p *Parser) parseParams() []ast.Param {
 
 func (p *Parser) parseParam() (ast.Param, bool) {
 	var (
-		mutable       bool
-		modifierStart source.Position
+		mutableLocation *source.Location
+		modifierStart   source.Position
 	)
 	if p.at(token.MUT) {
 		tok := p.advance()
-		mutable = true
+		mutableLocation = source.NewLocation(p.filePath, tok.Start, tok.End)
 		modifierStart = tok.Start
 	}
 	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
@@ -520,16 +520,16 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 			}
 		}
 		startPos := ast.StartOf(name)
-		if mutable {
+		if mutableLocation != nil {
 			startPos = modifierStart
 		}
-		return ast.Param{IsMutable: mutable, Name: name, Type: ty, Default: defaultValue, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
+		return ast.Param{IsMutable: mutableLocation != nil, MutableLocation: mutableLocation, Name: name, Type: ty, Default: defaultValue, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
 	}
 	ty := p.parseTypeExpr()
 	if ty == nil {
 		return ast.Param{}, false
 	}
-	if mutable {
+	if mutableLocation != nil {
 		p.diag.Add(diagnostics.NewError("mutable parameter requires a named binding").
 			WithCode(diagnostics.ErrInvalidDeclaration).
 			WithPrimaryLabel(source.NewLocation(p.filePath, modifierStart, p.prev().End), "add a parameter name after the modifier"))

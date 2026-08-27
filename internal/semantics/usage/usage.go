@@ -62,21 +62,31 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			for _, sym := range scope.Symbols() {
-				if sym.Used || sym.Name == "_" {
+				if sym.Name == "_" {
 					continue
 				}
-				switch sym.Kind {
-				case symbols.SymbolParam:
-					name := "parameter"
-					if sym.IsReceiver {
-						name = "receiver"
+				if !sym.Used {
+					switch sym.Kind {
+					case symbols.SymbolParam:
+						name := "parameter"
+						if sym.IsReceiver {
+							name = "receiver"
+						}
+						ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
+							fmt.Sprintf("unused %s `%s`", name, sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
+					case symbols.SymbolVar, symbols.SymbolConst:
+						ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
+							fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 					}
-					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
-						fmt.Sprintf("unused %s `%s`", name, sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
-				case symbols.SymbolVar, symbols.SymbolConst:
-					ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
-						fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
+					continue
 				}
+				if !sym.IsMutable() || sym.RequiresMutable || sym.MutableLocation == nil {
+					continue
+				}
+				ctx.Diagnostics.AddWarning(diagnostics.WarnUnmodifiedMutable,
+					fmt.Sprintf("mutable binding `%s` is never modified", sym.Name), sym.MutableLocation, "remove unnecessary `mut`").
+					WithCodeReplacement(sym.MutableLocation, "mut", "").
+					WithHelp("remove unnecessary `mut`")
 			}
 		}
 	}
