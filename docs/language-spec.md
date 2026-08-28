@@ -330,7 +330,7 @@ Supported values are signed and unsigned integers, floats, `bool`, `byte`,
 or `false`, and raw pointers use hexadecimal pointer notation. Composite and
 ownership-bearing values are rejected before lowering.
 
-`println` and character formatting are not part of this first output slice.
+Character formatting is not part of this first output slice.
 
 ## Heap Handles
 

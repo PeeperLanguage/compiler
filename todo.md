@@ -54,14 +54,12 @@ Canonical language behavior remains in [`docs/language-spec.md`](docs/language-s
 
 ## P1: stale tracking cleanup
 
-- [ ] Reconcile [#100 Define zero-sized empty structs and anonymous structural values](https://github.com/PeeperLanguage/compiler/issues/100).
-  - Core goal is already implemented: `let marker: struct {} = .{};` checks, lowers, links, and runs with bundled compiler.
-  - Existing runtime coverage also instantiates named empty `ConsumerImpl` in `x_test/runtime_interface_nested`.
-  - Close issue if those semantics are accepted. Otherwise rewrite body to list only missing ABI/ownership/container edge coverage instead of claiming empty structs are unsupported.
-- [ ] Correct stale `docs/language-spec.md` remaining-work section.
-  - Direct borrowed and owned interface carriers are implemented in HIR/MIR/LLVM and runtime fixtures.
-  - Interface returned-reference `from` contracts are implemented and covered by `x_test/type_reference_return_contracts`.
-  - `println` is implemented and covered by `x_test/runtime_println`, despite older text saying it is outside first output slice.
+- [x] Reconcile [#100 Complete empty-struct edge coverage](https://github.com/PeeperLanguage/compiler/issues/100).
+  - Dedicated `x_test/runtime_empty_struct` coverage verifies locals, parameters, returns, fields, fixed arrays, and references.
+  - Issue now tracks only missing ABI, ownership, container, static, and recursive-shape edge coverage.
+- [x] Correct stale `docs/language-spec.md` support claims.
+  - Remaining work now excludes implemented direct interface carriers and returned-reference `from` contracts.
+  - Basic output now consistently includes `println`; character formatting remains unsupported.
 
 ## P2: untracked language-surface decisions
 
@@ -79,11 +77,11 @@ These are unsupported by design today. Create separate issues only when product 
 - [x] [#29 Define string runtime semantics](https://github.com/PeeperLanguage/compiler/issues/29): foundation closed correctly; #81 and #82 hold extensions.
 - [x] [#99 Add `with` variant construction syntax](https://github.com/PeeperLanguage/compiler/issues/99): closed and verified.
 - [x] [#101 Allow dead enum match carriers after mixed arm moves](https://github.com/PeeperLanguage/compiler/issues/101): closed and verified.
-- [x] Listed open issues remain materially accurate. #100 needs closure or scope rewrite because its core example already works.
+- [x] Listed open issues remain materially accurate. #100 now tracks edge coverage instead of core implementation.
 
 ## Audit validation
 
 - `GOCACHE=/tmp/peeper-go-cache CCACHE_DISABLE=1 PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test` — pass.
 - `GOCACHE=/tmp/peeper-go-cache CCACHE_DISABLE=1 go test -count=1 ./internal/frontend/parser ./internal/semantics/typeinfo ./internal/semantics/typechecker ./internal/semantics/ownership ./internal/ir/... ./internal/backend/llvm ./internal/pipeline` — pass.
-- Bundled compiler anonymous empty-struct repro — build and runtime pass.
-- Bundled compiler owned-string equality repro — compiler panic reproduced.
+- Bundled compiler `x_test/runtime_empty_struct` fixture — build and runtime pass.
+- Bundled compiler owned-string equality regression — pass after comparison fix.
