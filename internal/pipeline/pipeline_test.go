@@ -432,6 +432,53 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineRejectsUnsupportedComparisonsBeforeHIR(t *testing.T) {
+	preludeSrc := ``
+	entrySrc := `struct Pair {
+	value: i32
+}
+
+fn invalid(left: Pair, right: Pair) -> bool {
+	return left == right;
+}
+
+fn main() -> i32 {
+	return 0;
+}`
+
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
+	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:   ".",
+		Extension: peeper.SourceExt,
+	}, diag)
+
+	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	prelude.Key = "core:prelude/global"
+	prelude.ImportPath = "prelude/global"
+	prelude.Namespace = "core"
+	prelude.Origin = project.ModuleOriginStdlib
+	ctx.AddModule(prelude)
+
+	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
+	entry.ImportPath = "entry"
+	entry.Origin = project.ModuleOriginLocal
+
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if !diag.HasErrors() {
+		t.Fatal("expected unsupported struct comparison diagnostic")
+	}
+	if entry.HIR != nil {
+		t.Fatalf("unsupported comparison produced HIR: %#v", entry.HIR)
+	}
+	if entry.Phase != phase.Ownership {
+		t.Fatalf("expected pipeline to stop before HIR at Ownership, got phase %v", entry.Phase)
+	}
+}
+
 func TestPipelineRunDoesNotRepeatUsageWarnings(t *testing.T) {
 	const filePath = "repeated_usage" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()

@@ -599,8 +599,18 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				}
 				return b.arithmetic(opcode, left, shiftCount)
 			case "==", "!=", "<", "<=", ">", ">=":
+				if isTypeKind(b.emitter.mod.Types, leftType, ir.TypeString) {
+					if e.Op != "==" && e.Op != "!=" {
+						b.invariant("unsupported string comparison %q", e.Op)
+					}
+					equal := emitStringEqual(b, left, right)
+					if e.Op == "!=" {
+						return b.arithmetic("xor", equal, b.value("true", equal.Layout))
+					}
+					return equal
+				}
 				if isFloatType(b.emitter.mod.Types, leftType) {
-					pred := map[string]string{"==": "oeq", "!=": "one", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
+					pred := map[string]string{"==": "oeq", "!=": "une", "<": "olt", "<=": "ole", ">": "ogt", ">=": "oge"}[e.Op]
 					return b.compare("fcmp", pred, left, right)
 				}
 				return b.compare("icmp", integerComparePredID(b.emitter.mod.Types, e.Op, leftType), left, right)

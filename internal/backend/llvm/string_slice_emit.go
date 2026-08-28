@@ -204,6 +204,59 @@ func emitStringDataAndLength(b *llvmBuilder, value llvmValue) (llvmValue, llvmVa
 	return b.extractField(value, llvmFieldData), b.extractField(value, llvmFieldLength)
 }
 
+func emitStringEqual(b *llvmBuilder, left, right llvmValue) llvmValue {
+	leftData, leftLength := emitStringDataAndLength(b, left)
+	rightData, rightLength := emitStringDataAndLength(b, right)
+
+	id := b.nextID
+	b.nextID++
+	lengthMatchLabel := fmt.Sprintf("string_equal_length_match_%d", id)
+	loopLabel := fmt.Sprintf("string_equal_loop_%d", id)
+	bodyLabel := fmt.Sprintf("string_equal_body_%d", id)
+	continueLabel := fmt.Sprintf("string_equal_continue_%d", id)
+	falseLabel := fmt.Sprintf("string_equal_false_%d", id)
+	trueLabel := fmt.Sprintf("string_equal_true_%d", id)
+	mergeLabel := fmt.Sprintf("string_equal_merge_%d", id)
+
+	lengthEqual := b.compare("icmp", "eq", leftLength, rightLength)
+	b.condBranch(lengthEqual, lengthMatchLabel, falseLabel)
+	b.namedLabel(falseLabel)
+	b.branch(mergeLabel)
+
+	b.namedLabel(lengthMatchLabel)
+	zero := b.value("0", leftLength.Layout)
+	empty := b.compare("icmp", "eq", leftLength, zero)
+	b.condBranch(empty, trueLabel, loopLabel)
+
+	b.namedLabel(loopLabel)
+	index := b.nextValue(leftLength.Layout)
+	nextIndex := b.nextValue(leftLength.Layout)
+	b.definePhi(index,
+		llvmIncoming{Value: zero, Label: lengthMatchLabel},
+		llvmIncoming{Value: nextIndex, Label: continueLabel},
+	)
+	more := b.compare("icmp", "ult", index, leftLength)
+	b.condBranch(more, bodyLabel, trueLabel)
+
+	b.namedLabel(bodyLabel)
+	leftByte := b.load(b.gep(b.pointerPlace(leftData), index, false))
+	rightByte := b.load(b.gep(b.pointerPlace(rightData), index, false))
+	bytesEqual := b.compare("icmp", "eq", leftByte, rightByte)
+	b.condBranch(bytesEqual, continueLabel, falseLabel)
+
+	b.namedLabel(continueLabel)
+	b.defineArithmetic(nextIndex, "add", index, b.value("1", index.Layout))
+	b.branch(loopLabel)
+
+	b.namedLabel(trueLabel)
+	b.branch(mergeLabel)
+	b.namedLabel(mergeLabel)
+	return b.phi(llvmScalarLayout("i1"),
+		llvmIncoming{Value: b.value("false", llvmScalarLayout("i1")), Label: falseLabel},
+		llvmIncoming{Value: b.value("true", llvmScalarLayout("i1")), Label: trueLabel},
+	)
+}
+
 func emitStringSliceView(b *llvmBuilder, view *mir.SliceView) llvmValue {
 	if b == nil || view == nil {
 		return llvmValue{}

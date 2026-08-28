@@ -60,10 +60,20 @@ func IsArithmetic(t Type) bool {
 	}
 }
 
+func IsOrderable(t Type) bool {
+	t = Underlying(t)
+	switch t.(type) {
+	case *IntegerType, *ByteType, *CharType, *FloatType:
+		return true
+	default:
+		return false
+	}
+}
+
 func IsEquatable(t Type) bool {
 	t = Underlying(t)
 	switch t.(type) {
-	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *StringType, *NoneType, *AllocatorType:
+	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *StringType, *NoneType, *AllocatorType:
 		return true
 	case *OptionalType:
 		return true

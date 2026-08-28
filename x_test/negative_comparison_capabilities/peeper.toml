@@ -1,0 +1,6 @@
+name = "negative_comparison_capabilities"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"

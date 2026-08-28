@@ -419,13 +419,15 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 				"string-view comparison is not supported in current compiler stage"))
 			return &typeinfo.InvalidType{}
 		}
-		return &typeinfo.BoolType{}
 	}
 
 	if !c.validBinaryTypes(node.Op, exprType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported operand type for operator `"+node.Op+"`"))
 		return nil
+	}
+	if binaryResultIsBool(node.Op) {
+		return &typeinfo.BoolType{}
 	}
 	return exprType
 }
@@ -1092,7 +1094,7 @@ func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
 	case "==", "!=":
 		return typeinfo.IsEquatable(typ)
 	case "<", "<=", ">", ">=":
-		return typeinfo.IsArithmetic(typ)
+		return typeinfo.IsOrderable(typ)
 	case "&&", "||":
 		return typeinfo.IsCondition(typ)
 	default:

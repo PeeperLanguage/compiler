@@ -458,7 +458,7 @@ func isUnsignedTypeID(types *ir.TypeTable, id ir.TypeID) bool {
 }
 
 func integerComparePredID(types *ir.TypeTable, op string, id ir.TypeID) string {
-	if isUnsignedTypeID(types, id) {
+	if isUnsignedTypeID(types, id) || isTypeKind(types, id, ir.TypeChar) {
 		switch op {
 		case "<":
 			return "ult"
