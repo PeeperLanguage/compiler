@@ -512,6 +512,93 @@ func TestGenerateLLVMIRLowersIntegerBitwiseOperators(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersOwnedStringEqualityAcrossTargets(t *testing.T) {
+	tests := []struct {
+		name   string
+		target target.Info
+		bits   int
+		header string
+	}{
+		{name: "amd64", target: testLinuxAMD64, bits: target.Bits64, header: "{ i8*, i64, i8* }"},
+		{name: "386", target: testLinux386, bits: target.Bits32, header: "{ i8*, i32, i8* }"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(test.bits)
+			result := &mir.RefName{Name: "result", Type: types.boolType}
+			mod := &mir.Module{
+				Name: "test", Types: types.table,
+				Funcs: []*mir.Function{{
+					Name:       "equal",
+					Params:     []ir.Param{{Name: "left", Type: types.stringType}, {Name: "right", Type: types.stringType}},
+					ReturnType: types.boolType,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+							Op: "==", Left: &mir.RefName{Name: "left", Type: types.stringType}, Right: &mir.RefName{Name: "right", Type: types.stringType}, Type: types.boolType,
+						}}},
+						Term: &mir.Ret{Value: result},
+					}},
+				}},
+			}
+			var out string
+			func() {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						t.Fatalf("owned string equality panicked: %v", recovered)
+					}
+				}()
+				out = GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), test.target, false)
+			}()
+			if !strings.Contains(out, "extractvalue "+test.header+" %left, 1") ||
+				!strings.Contains(out, "extractvalue "+test.header+" %right, 1") {
+				t.Fatalf("string equality must extract target-width lengths:\n%s", out)
+			}
+			if !strings.Contains(out, "getelementptr i8, i8*") {
+				t.Fatalf("string equality must compare byte data:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRUsesValueComparisonPredicates(t *testing.T) {
+	types := newLLVMTypeFixture(target.Bits64)
+	f64 := types.table.Intern(ir.Type{Kind: ir.TypeFloat, Bits: 64})
+	char := types.table.Intern(ir.Type{Kind: ir.TypeChar})
+	for _, test := range []struct {
+		name        string
+		typeID      ir.TypeID
+		op          string
+		instruction string
+	}{
+		{name: "float inequality", typeID: f64, op: "!=", instruction: "fcmp une double %left, %right"},
+		{name: "character less-than", typeID: char, op: "<", instruction: "icmp ult i32 %left, %right"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := &mir.RefName{Name: "result", Type: types.boolType}
+			mod := &mir.Module{
+				Name: "test", Types: types.table,
+				Funcs: []*mir.Function{{
+					Name:       "compare",
+					Params:     []ir.Param{{Name: "left", Type: test.typeID}, {Name: "right", Type: test.typeID}},
+					ReturnType: types.boolType,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+							Op: test.op, Left: &mir.RefName{Name: "left", Type: test.typeID}, Right: &mir.RefName{Name: "right", Type: test.typeID}, Type: types.boolType,
+						}}},
+						Term: &mir.Ret{Value: result},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+			if !strings.Contains(out, test.instruction) {
+				t.Fatalf("expected %s, got:\n%s", test.instruction, out)
+			}
+		})
+	}
+}
+
 func TestGenerateLLVMIRGuardsIntegerDivisionAndRemainder(t *testing.T) {
 	tests := []struct {
 		name       string

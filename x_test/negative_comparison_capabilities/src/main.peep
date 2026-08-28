@@ -1,0 +1,51 @@
+struct Pair {
+    value: i32,
+}
+
+fn BadBooleanOrdering(left: bool, right: bool) -> bool {
+    return left < right;
+}
+
+fn BadStringOrdering(left: str, right: str) -> bool {
+    return left < right;
+}
+
+fn BadStructEquality(left: Pair, right: Pair) -> bool {
+    return left == right;
+}
+
+fn BadReferenceEquality(left: &i32, right: &i32) -> bool {
+    return left == right;
+}
+
+fn BadCStringOrdering(left: cstr, right: cstr) -> bool {
+    return left < right;
+}
+
+fn BadRawPointerOrdering(left: rawptr, right: rawptr) -> bool {
+    return left < right;
+}
+
+fn BadAllocatorOrdering(left: Allocator, right: Allocator) -> bool {
+    return left < right;
+}
+
+fn BadOwnedPointerEquality(left: *i32, right: *i32) -> bool {
+    return left == right;
+}
+
+fn BadArrayEquality(left: [2]i32, right: [2]i32) -> bool {
+    return left == right;
+}
+
+iface Reader {
+    fn (&Self) read() -> i32
+}
+
+fn BadInterfaceEquality(left: *Reader, right: *Reader) -> bool {
+    return left == right;
+}
+
+fn main() -> i32 {
+    return 0;
+}

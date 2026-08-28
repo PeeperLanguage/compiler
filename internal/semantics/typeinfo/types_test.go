@@ -107,6 +107,21 @@ func TestAllocatorCapabilities(t *testing.T) {
 	}
 }
 
+func TestComparisonCapabilities(t *testing.T) {
+	if !IsOrderable(&IntegerType{Signed: true, Bits: 32}) ||
+		!IsOrderable(&ByteType{}) ||
+		!IsOrderable(&CharType{}) ||
+		!IsOrderable(&FloatType{Bits: 64}) {
+		t.Fatal("integer, byte, char, and float should be orderable")
+	}
+	if IsOrderable(&BoolType{}) || IsOrderable(&StringType{}) || IsOrderable(&RawPtrType{}) {
+		t.Fatal("bool, string, and rawptr should not be orderable")
+	}
+	if !IsEquatable(&RawPtrType{}) || !IsEquatable(&CharType{}) || !IsEquatable(&BoolType{}) {
+		t.Fatal("rawptr, char, and bool should be equatable")
+	}
+}
+
 func TestReferenceTargetPreservesMutability(t *testing.T) {
 	target := &IntegerType{Signed: true, Bits: 32}
 	got, mutable, ok := ReferenceTarget(&RefType{Mutable: true, Target: target})

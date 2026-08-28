@@ -1294,6 +1294,35 @@ func TestBorrowedViewComparisonsRejectedBeforeLowering(t *testing.T) {
 	}
 }
 
+func TestComparisonCapabilitiesAreValidated(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		src  string
+	}{
+		{name: "boolean ordering", src: `fn compare(left: bool, right: bool) -> bool { return left < right; }`},
+		{name: "string ordering", src: `fn compare(left: str, right: str) -> bool { return left < right; }`},
+		{name: "struct equality", src: `struct Pair { value: i32 }
+fn compare(left: Pair, right: Pair) -> bool { return left == right; }`},
+		{name: "reference equality", src: `fn compare(left: &i32, right: &i32) -> bool { return left == right; }`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.src)
+			if !hasTypeCode(diag, diagnostics.ErrInvalidOperation) {
+				t.Fatalf("expected comparison capability diagnostic, got:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+
+	for _, op := range []string{"<", "<=", ">", ">="} {
+		t.Run("character "+op, func(t *testing.T) {
+			diag := checkTypeSource(t, "fn compare(left: char, right: char) -> bool { return left "+op+" right; }")
+			if diag.HasErrors() {
+				t.Fatalf("character %s comparison rejected:\n%s", op, diag.EmitAllToString())
+			}
+		})
+	}
+}
+
 func TestNestedReferenceParameterRejected(t *testing.T) {
 	src := `fn direct(value: &mut &i32) -> i32 {
 	return 0;

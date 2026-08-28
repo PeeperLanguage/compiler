@@ -1,0 +1,71 @@
+fn MakeNaN(value: f64) -> f64 {
+    return value / value;
+}
+
+fn main() -> i32 {
+    let empty: str = "";
+    println(empty == "");
+    println(empty != "x");
+    if empty == "" {
+    } else {
+        return 1;
+    }
+    if empty != "x" {
+    } else {
+        return 2;
+    }
+
+    let left: str = "same";
+    let right: str = "same";
+    println(left == right);
+    println(left != "different");
+    println(left != "sam");
+    if left != right {
+        return 3;
+    }
+    if left == "different" {
+        return 4;
+    }
+    if left == "sam" {
+        return 5;
+    }
+    if left == right {
+    } else {
+        return 6;
+    }
+
+    let unicode: str = "aéz";
+    println(unicode == "aéz");
+    if unicode != "aéz" {
+        return 7;
+    }
+
+    println(true == true);
+    if true != true {
+        return 8;
+    }
+    println('a' < 'é');
+    if 'a' >= 'é' {
+        return 9;
+    }
+    if 'é' <= 'a' {
+        return 10;
+    }
+
+    let zero: f64 = 0.0;
+    let nan = MakeNaN(zero);
+    println(nan == nan);
+    println(nan != nan);
+    println(nan);
+    if nan == nan {
+        return 11;
+    }
+    if nan != nan {
+    } else {
+        return 12;
+    }
+    if nan < 1.0 || nan <= 1.0 || nan > 1.0 || nan >= 1.0 {
+        return 13;
+    }
+    return 0;
+}

@@ -248,7 +248,10 @@ Numeric literals may carry an attached explicit source type:
 
 `iN` and `uN` accept every LLVM integer width from 1 through 2^23. Floating
 postfixes are limited to `f32` and `f64`; other `fN` forms are reserved for a
-future language-owned floating representation.
+future language-owned floating representation. There is no bare `nan` or `inf`
+literal in the current language surface. IEEE operations may still produce NaN
+or infinity at runtime; these values retain their `f32` or `f64` type and are
+not rounded or coerced to zero.
 
 Signed and unsigned integers share one conversion class. Conversion to a wider
 integer width is implicit regardless of signedness. Same-width signedness
@@ -279,6 +282,24 @@ same finite-width representation. Signed division truncates toward zero. The
 unrepresentable signed case `MIN / -1` wraps to `MIN`, and `MIN % -1` is zero.
 Integer division or remainder by zero traps at runtime. Floating-point division
 and remainder keep IEEE behavior.
+
+Comparison operators are capability-based and checked before lowering:
+
+| Type | `==` | `!=` | `<` | `<=` | `>` | `>=` |
+| --- | --- | --- | --- | --- | --- | --- |
+| signed/unsigned integers, `byte` | yes | yes | yes | yes | yes | yes |
+| `char` | yes | yes | yes | yes | yes | yes |
+| `f32`, `f64` | IEEE equality | IEEE inequality (unordered or unequal) | IEEE ordered | IEEE ordered | IEEE ordered | IEEE ordered |
+| `bool` | yes | yes | no | no | no | no |
+| `cstr`, `rawptr` | handle/address equality | inverse | no | no | no | no |
+| owned `str` | exact byte-content equality | inverse | no | no | no | no |
+
+`char` ordering compares Unicode scalar values. Empty owned strings compare equal;
+string comparison never consumes owners and never compares allocator identity.
+Optional values may only be compared with `none`; references, owned pointers,
+arrays, structs, interfaces, borrowed slices, and borrowed `&str` views reject all
+comparison operators. Named enums use `is` and `match` instead of equality or
+ordering. Rejected comparisons emit diagnostics before HIR generation.
 
 Expression precedence, highest to lowest, is:
 
