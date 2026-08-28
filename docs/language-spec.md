@@ -717,10 +717,16 @@ data[i..=j]   // includes j
 
 ## Remaining Implementation Work
 
-Current branch already parses owned `*T`, opaque `rawptr`, implicit composite
-moves, automatic drop, `iface`, receiver functions, and bare-interface
-rejection. Remaining work:
+The current language model implements owned `*T`, opaque `rawptr`, implicit
+composite moves, automatic drop, direct borrowed and owned interface carriers,
+receiver functions, returned-reference `from` contracts, and bare-interface
+rejection. `alloc(value[, allocator])` preserves allocator provenance through
+owned pointers, arrays, strings, optionals, and owned interfaces.
 
-1. Replace old interface allocation path with direct borrowed and owned carriers.
-2. Add typed allocation construction and allocator selection as separate work.
-3. Add generic interface constraints and returned-reference origin summaries as separate work.
+Remaining work:
+
+1. Add generic interface constraints and generic interface-method support;
+   current type parameters have no constraint checking or monomorphization.
+2. Design scoped allocator contexts, custom allocator descriptor construction,
+   and fallible allocation APIs. The current allocator handle is process-lived
+   and opaque, with default and explicitly supplied descriptors only.
