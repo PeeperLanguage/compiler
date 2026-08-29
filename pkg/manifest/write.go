@@ -59,6 +59,10 @@ func stageFile(path string, data []byte, mode os.FileMode) (string, error) {
 }
 
 func syncDirectory(dir string) error {
+	// Unix directory sync makes the preceding atomic rename durable across a
+	// crash. Windows does not support POSIX directory fsync and may return
+	// ERROR_ACCESS_DENIED here, so file contents remain synced but directory
+	// entry durability cannot be explicitly requested on that platform.
 	if runtime.GOOS == "windows" {
 		return nil
 	}
