@@ -38,7 +38,7 @@ type Module struct {
 	Key string
 	// Module path used by imports.
 	ImportPath string
-	// Absolute source path.
+	// Absolute slash-separated source path.
 	FilePath string
 	// Optional namespace for packaged libraries such as core/vendor.
 	Namespace string
@@ -307,12 +307,13 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	if ctx == nil || module == nil || module.Key == "" {
 		return
 	}
+	module.FilePath = CanonicalPath(module.FilePath)
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
 
 	ctx.modules[module.Key] = module
 	if module.FilePath != "" {
-		ctx.fileIndex[CanonicalPath(module.FilePath)] = module.Key
+		ctx.fileIndex[module.FilePath] = module.Key
 	}
 	if module.Phase >= phase.Collected {
 		for identity := range module.namedTypeDeclarations {

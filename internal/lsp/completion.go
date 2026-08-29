@@ -135,9 +135,10 @@ func (s *ServerState) completionSource(filePath string) (string, error) {
 func (s *ServerState) completionOverlays(currentFile string) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	currentFile = project.CanonicalPath(currentFile)
 	overlays := make(map[string]string, len(s.Cache))
 	for filePath, content := range s.Cache {
-		if project.CanonicalPath(filePath) != project.CanonicalPath(currentFile) {
+		if filePath != currentFile {
 			overlays[filePath] = content
 		}
 	}

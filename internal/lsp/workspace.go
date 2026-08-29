@@ -153,7 +153,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 			if err != nil || resolved == nil || resolved.Origin != project.ModuleOriginLocal {
 				continue
 			}
-			target := project.CanonicalPath(resolved.FilePath)
+			target := resolved.FilePath
 			if _, ok := fileSet[target]; !ok {
 				continue
 			}
@@ -464,11 +464,10 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 		if filepath.Ext(path) != peeper.SourceExt {
 			continue
 		}
-		canonical := project.CanonicalPath(path)
-		if rootDir != "" && !project.PathWithinRoot(rootDir, canonical) {
+		if rootDir != "" && !project.PathWithinRoot(rootDir, path) {
 			continue
 		}
-		fileSet[canonical] = struct{}{}
+		fileSet[path] = struct{}{}
 	}
 
 	files := make([]string, 0, len(fileSet))

@@ -1,6 +1,7 @@
 package project
 
 import (
+	"path/filepath"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -14,6 +15,22 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
+
+func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
+	ctx := New(".", ".peep", nil)
+	filePath := filepath.Join("nested", "..", "main.peep")
+	want := CanonicalPath(filePath)
+	module := &Module{
+		Key:      "local:test",
+		FilePath: filePath,
+	}
+
+	ctx.AddModule(module)
+
+	if module.FilePath != want {
+		t.Fatalf("module path = %q, want canonical %q", module.FilePath, want)
+	}
+}
 
 func moduleWithArtifacts() *Module {
 	return &Module{

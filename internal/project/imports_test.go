@@ -33,8 +33,8 @@ func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	if resolved.Namespace != "vendor" {
 		t.Fatalf("resolved namespace = %q, want %q", resolved.Namespace, "vendor")
 	}
-	if resolved.FilePath != libraryFile {
-		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, libraryFile)
+	if want := CanonicalPath(libraryFile); resolved.FilePath != want {
+		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, want)
 	}
 	if resolved.ImportPath != "json" {
 		t.Fatalf("resolved import path = %q, want %q", resolved.ImportPath, "json")
@@ -77,8 +77,8 @@ func TestResolveImportPathStripsProjectPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveImportPath() error = %v", err)
 	}
-	if resolved.FilePath != utilPath {
-		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, utilPath)
+	if want := CanonicalPath(utilPath); resolved.FilePath != want {
+		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, want)
 	}
 	if resolved.ImportPath != "app/util" {
 		t.Fatalf("resolved import path = %q, want %q", resolved.ImportPath, "app/util")

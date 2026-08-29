@@ -10,14 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/project"
 	"compiler/pkg/peeper"
 )
 
 func completionAtSource(t *testing.T, state *ServerState, filePath, src string) []CompletionItem {
 	t.Helper()
 	clean, position := markerPosition(t, src)
-	state.Cache[project.CanonicalPath(filePath)] = clean
+	state.applyDocumentSnapshot(filePath, &clean, nil)
 	items, err := state.HandleCompletion(CompletionParams{
 		TextDocumentPositionParams: TextDocumentPositionParams{
 			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
