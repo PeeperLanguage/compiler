@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"compiler/internal/target"
 	"compiler/pkg/toml"
 )
 
@@ -124,7 +126,7 @@ func runFixture(t *testing.T, binary string, expectation fixtureExpectation) {
 		return
 	}
 
-	executable := filepath.Join(t.TempDir(), "fixture")
+	executable := filepath.Join(t.TempDir(), "fixture"+target.ExecutableExt(runtime.GOOS))
 	buildArgs := append([]string{"build"}, compilerArgs...)
 	buildArgs = append(buildArgs, "-o", executable, expectation.Dir)
 	stdout, stderr, exitCode := executeFixtureProcess(t, ctx, binary, buildArgs...)
