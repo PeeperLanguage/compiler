@@ -57,7 +57,7 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 			return err
 		}
 	}
-	return replaceArtifactTree(stage, target)
+	return replacePath(stage, target)
 }
 
 func moduleArtifactBase(stage string, module *project.Module) (string, error) {
@@ -76,32 +76,32 @@ func moduleArtifactBase(stage string, module *project.Module) (string, error) {
 	return filepath.Join(stage, origin, identity), nil
 }
 
-func replaceArtifactTree(stage, target string) error {
+func replacePath(stage, target string) error {
 	backup := ""
 	if _, err := os.Stat(target); err == nil {
 		reserved, err := os.MkdirTemp(filepath.Dir(target), "."+filepath.Base(target)+"-backup-")
 		if err != nil {
-			return fmt.Errorf("reserve artifact backup: %w", err)
+			return fmt.Errorf("reserve destination backup: %w", err)
 		}
 		if err := os.Remove(reserved); err != nil {
-			return fmt.Errorf("prepare artifact backup: %w", err)
+			return fmt.Errorf("prepare destination backup: %w", err)
 		}
 		if err := os.Rename(target, reserved); err != nil {
-			return fmt.Errorf("backup artifact tree: %w", err)
+			return fmt.Errorf("backup destination: %w", err)
 		}
 		backup = reserved
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect artifact tree: %w", err)
+		return fmt.Errorf("inspect destination: %w", err)
 	}
 	if err := os.Rename(stage, target); err != nil {
 		if backup != "" {
 			_ = os.Rename(backup, target)
 		}
-		return fmt.Errorf("publish artifact tree: %w", err)
+		return fmt.Errorf("publish staged path: %w", err)
 	}
 	if backup != "" {
 		if err := os.RemoveAll(backup); err != nil {
-			return fmt.Errorf("remove replaced artifact tree: %w", err)
+			return fmt.Errorf("remove replaced destination: %w", err)
 		}
 	}
 	return nil

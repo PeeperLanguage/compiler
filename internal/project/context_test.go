@@ -29,9 +29,10 @@ func TestWithDiagnosticsSharesCompilerStateAndLock(t *testing.T) {
 }
 
 func TestPackagedLibraryBaseForExecutableUsesSiblingLibsDir(t *testing.T) {
-	exePath := filepath.Join("/tmp", "peeper", "build", "bin", "peeper")
-	got := packagedLibraryBaseForExecutable(exePath)
-	want := filepath.Join("/tmp", "peeper", "build", "libs")
+	root := t.TempDir()
+	exePath := filepath.Join(root, "build", "bin", "peeper")
+	got := filepath.Join(peeper.InstallationRootForExecutable(exePath), PACKAGED_LIBS_DIR)
+	want := filepath.Join(root, "build", "libs")
 	if got != want {
 		t.Fatalf("packaged library base = %q, want %q", got, want)
 	}
@@ -67,17 +68,18 @@ func TestContextsKeepIndependentTargetSizedPredeclaredTypes(t *testing.T) {
 }
 
 func TestLibraryRootUsesNamespaceSubdirectory(t *testing.T) {
+	root := t.TempDir()
 	ctx := NewWithConfig(Config{
 		RootDir:        t.TempDir(),
 		Extension:      peeper.SourceExt,
-		LibraryBaseDir: filepath.Join("/tmp", "peeper", "build", "libs"),
+		LibraryBaseDir: filepath.Join(root, "peeper", "build", "libs"),
 	}, nil)
 
 	got, ok := ctx.LibraryRoot("vendor")
 	if !ok {
 		t.Fatal("LibraryRoot() returned no root")
 	}
-	want := filepath.Join("/tmp", "peeper", "build", "libs", "vendor")
+	want := filepath.Join(root, "peeper", "build", "libs", "vendor")
 	if got != want {
 		t.Fatalf("LibraryRoot(vendor) = %q, want %q", got, want)
 	}

@@ -12,13 +12,13 @@ func TestLLVMTriple(t *testing.T) {
 		targetArch string
 		want       string
 	}{
-		{targetOS: "linux", targetArch: "amd64", want: "x86_64-unknown-linux-gnu"},
-		{targetOS: "linux", targetArch: "arm64", want: "aarch64-unknown-linux-gnu"},
-		{targetOS: "windows", targetArch: "amd64", want: "x86_64-pc-windows-msvc"},
+		{targetOS: "linux", targetArch: "amd64", want: "x86_64-unknown-linux-musl"},
+		{targetOS: "linux", targetArch: "arm64", want: "aarch64-unknown-linux-musl"},
+		{targetOS: "windows", targetArch: "amd64", want: "x86_64-w64-windows-gnu"},
 		{targetOS: "darwin", targetArch: "arm64", want: "aarch64-apple-darwin"},
 		{targetOS: "freebsd", targetArch: "386", want: "i386-unknown-freebsd"},
 		{targetOS: "wasip1", targetArch: "wasm", want: "wasm32-unknown-wasi"},
-		{targetOS: "  Linux ", targetArch: " AmD64 ", want: "x86_64-unknown-linux-gnu"},
+		{targetOS: "  Linux ", targetArch: " AmD64 ", want: "x86_64-unknown-linux-musl"},
 	}
 
 	for _, tt := range tests {
@@ -31,6 +31,20 @@ func TestLLVMTriple(t *testing.T) {
 				t.Fatalf("LLVMTriple(%q, %q) = %q, want %q", tt.targetOS, tt.targetArch, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSystemLLVMTripleUsesHostABI(t *testing.T) {
+	for _, test := range []struct{ targetOS, targetArch, want string }{
+		{"linux", "amd64", "x86_64-unknown-linux-gnu"},
+		{"linux", "arm64", "aarch64-unknown-linux-gnu"},
+		{"windows", "amd64", "x86_64-pc-windows-msvc"},
+		{"windows", "arm64", "aarch64-pc-windows-msvc"},
+		{"darwin", "arm64", "aarch64-apple-darwin"},
+	} {
+		if got, err := SystemLLVMTriple(test.targetOS, test.targetArch); err != nil || got != test.want {
+			t.Fatalf("SystemLLVMTriple(%q, %q) = %q, %v; want %q", test.targetOS, test.targetArch, got, err, test.want)
+		}
 	}
 }
 

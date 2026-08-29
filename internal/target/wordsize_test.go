@@ -55,7 +55,7 @@ func TestInfoUsesArchitectureWidthAndTriple(t *testing.T) {
 		want string
 	}{
 		{os: "linux", arch: "386", bits: Bits32, want: "i386-unknown-linux-gnu"},
-		{os: "linux", arch: "amd64", bits: Bits64, want: "x86_64-unknown-linux-gnu"},
+		{os: "linux", arch: "amd64", bits: Bits64, want: "x86_64-unknown-linux-musl"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.arch, func(t *testing.T) {

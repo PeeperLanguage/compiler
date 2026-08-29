@@ -1,0 +1,323 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          test -n "$version"
+          test "v$version" = "$RELEASE_TAG"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  stage:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            llvm-target: X86
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            llvm-target: AArch64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+            llvm-target: X86
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            llvm-target: AArch64
+          - runner: windows-2025
+            os: windows
+            arch: amd64
+            llvm-target: X86
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+            llvm-target: AArch64
+    uses: ./.github/workflows/build-release-host.yml
+    with:
+      runner: ${{ matrix.runner }}
+      os: ${{ matrix.os }}
+      arch: ${{ matrix.arch }}
+      llvm-target: ${{ matrix.llvm-target }}
+      version: ${{ needs.metadata.outputs.version }}
+      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
+
+  package-linux:
+    needs: [metadata, stage]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-linux-${{ matrix.arch }}
+          path: .
+      - run: mkdir -p stage && tar -xzf stage-linux-${{ matrix.arch }}.tar.gz -C stage
+      - run: mkdir -p dist
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: stage/install
+          format: spdx-json
+          output-file: dist/peeper-linux-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Package release components
+        run: scripts/package-release.sh stage/install stage/bootstrap linux "${{ matrix.arch }}" "${{ needs.metadata.outputs.version }}" dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
+  package-macos:
+    needs: [metadata, stage]
+    environment: release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: amd64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-darwin-${{ matrix.arch }}
+          path: .
+      - run: mkdir -p stage && tar -xzf stage-darwin-${{ matrix.arch }}.tar.gz -C stage
+      - name: Import Apple signing identity
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          test -n "$CERTIFICATE_P12"
+          signing_keychain="$RUNNER_TEMP/peeper-signing.keychain-db"
+          certificate="$RUNNER_TEMP/peeper-signing.p12"
+          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$certificate"
+          security create-keychain -p "$CERTIFICATE_PASSWORD" "$signing_keychain"
+          security set-keychain-settings -lut 21600 "$signing_keychain"
+          security unlock-keychain -p "$CERTIFICATE_PASSWORD" "$signing_keychain"
+          security import "$certificate" -k "$signing_keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$signing_keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$CERTIFICATE_PASSWORD" "$signing_keychain"
+          echo "PEEPER_SIGNING_KEYCHAIN=$signing_keychain" >> "$GITHUB_ENV"
+      - name: Sign and notarize macOS binaries
+        env:
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          test -n "$SIGNING_IDENTITY"
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q 'Mach-O'; then
+              codesign --force --options runtime --timestamp --keychain "$PEEPER_SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" "$candidate"
+            fi
+          done < <(find stage/install stage/bootstrap -type f -print0)
+          codesign --verify --strict --verbose=2 stage/install/bin/peeper
+          codesign --verify --strict --verbose=2 stage/bootstrap/peeper-installer
+          ditto -c -k --keepParent stage/install "$RUNNER_TEMP/peeper-install.zip"
+          ditto -c -k --keepParent stage/bootstrap/peeper-installer "$RUNNER_TEMP/peeper-installer.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/peeper-install.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun notarytool submit "$RUNNER_TEMP/peeper-installer.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+      - run: mkdir -p dist
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: stage/install
+          format: spdx-json
+          output-file: dist/peeper-darwin-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Package release components
+        run: scripts/package-release.sh stage/install stage/bootstrap darwin "${{ matrix.arch }}" "${{ needs.metadata.outputs.version }}" dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-darwin-${{ matrix.arch }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove temporary Apple keychain
+        if: always()
+        run: |
+          if [ -n "${PEEPER_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$PEEPER_SIGNING_KEYCHAIN"
+          fi
+
+  package-windows:
+    needs: [metadata, stage]
+    environment: release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: amd64
+            signtool-arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+            signtool-arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-windows-${{ matrix.arch }}
+          path: .
+      - shell: bash
+        run: mkdir -p stage && tar -xzf stage-windows-${{ matrix.arch }}.tar.gz -C stage
+      - name: Authenticode-sign Windows binaries
+        shell: pwsh
+        env:
+          CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          SIGNTOOL_ARCH: ${{ matrix.signtool-arch }}
+        run: |
+          if (-not $env:CERTIFICATE_PFX) { throw "WINDOWS_CERTIFICATE_PFX is empty" }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "peeper-signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CERTIFICATE_PFX))
+          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          $pattern = "\\$($env:SIGNTOOL_ARCH)\\signtool.exe$"
+          $signtool = Get-ChildItem $kits -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match $pattern } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe for $($env:SIGNTOOL_ARCH) is unavailable" }
+          $binaries = Get-ChildItem stage\install,stage\bootstrap -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".dll" }
+          foreach ($binary in $binaries) {
+            & $signtool.FullName sign /sha1 $certificate.Thumbprint /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signing failed for $($binary.FullName)" }
+            & $signtool.FullName verify /pa /v $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signature verification failed for $($binary.FullName)" }
+          }
+          "PEEPER_WINDOWS_CERTIFICATE=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - shell: bash
+        run: mkdir -p dist
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: stage/install
+          format: spdx-json
+          output-file: dist/peeper-windows-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Package release components
+        shell: bash
+        run: scripts/package-release.sh stage/install stage/bootstrap windows "${{ matrix.arch }}" "${{ needs.metadata.outputs.version }}" dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove imported Windows certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:PEEPER_WINDOWS_CERTIFICATE) {
+            Remove-Item "Cert:\CurrentUser\My\$($env:PEEPER_WINDOWS_CERTIFICATE)"
+          }
+
+  publish-draft:
+    needs: [metadata, package-linux, package-macos, package-windows]
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Assemble and sign release index
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          PEEPER_RELEASE_PRIVATE_KEY: ${{ secrets.PEEPER_RELEASE_PRIVATE_KEY }}
+        run: |
+          mkdir -p release-assets
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          go run ./cmd/release-index \
+            -version "$RELEASE_VERSION" \
+            -base-url "$base_url" \
+            dist/*.tar.gz.json dist/*.zip.json \
+            > release-assets/release-manifest.json
+          go run ./cmd/sign-release release-assets/release-manifest.json > release-assets/release-manifest.json.sig
+          find dist -maxdepth 1 -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name 'peeper-installer-*' -o -name '*.spdx.json' \) \
+            -exec cp {} release-assets/ \;
+          (cd release-assets && sha256sum * > SHA256SUMS)
+      - name: Attest release provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release-assets/*
+      - name: Create signed draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > "$RUNNER_TEMP/is-draft" 2>/dev/null; then
+            test "$(cat "$RUNNER_TEMP/is-draft")" = true
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Peeper $GITHUB_REF_NAME" --notes "Signed cross-platform release candidate. Verify installers, checksums, SBOMs, and attestations before publishing."
+          fi
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

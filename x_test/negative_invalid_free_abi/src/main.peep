@@ -1,7 +1,7 @@
-#[extern("malloc")]
+#[extern("peeper_rt_v1_alloc")]
 fn acquire(size: usize) -> *i32;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn BadFree(value: i32);
 
 fn main() -> i32 {

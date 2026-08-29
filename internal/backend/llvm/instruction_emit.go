@@ -99,7 +99,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 		formatSize, arguments = 5, []llvmValue{value}
 	}
 	formatText := fmt.Sprintf("getelementptr inbounds ([%d x i8], [%d x i8]* @.print.%s, i32 0, i32 0)", formatSize, formatSize, formatName)
-	printf := b.value("@printf", llvmFunctionLayout(llvmScalarLayout("i32"), []*llvmLayout{i8Pointer}))
+	printf := b.value("@"+runtimePrintfSymbol, llvmFunctionLayout(llvmScalarLayout("i32"), []*llvmLayout{i8Pointer}))
 	b.variadicCall(printf, []llvmValue{b.value(formatText, i8Pointer)}, arguments)
 	if printInstr.Newline {
 		newline := b.value("getelementptr inbounds ([2 x i8], [2 x i8]* @.print.newline, i32 0, i32 0)", i8Pointer)

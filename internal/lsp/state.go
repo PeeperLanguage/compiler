@@ -185,7 +185,7 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 	}
 
 	for cachedPath, cachedContent := range s.Cache {
-		if project.CanonicalPath(cachedPath) == canonicalEntry {
+		if cachedPath == canonicalEntry {
 			continue
 		}
 		compiler.AddSource(ctx, cachedPath, cachedContent)

@@ -11,6 +11,7 @@ import (
 	"compiler/internal/driver"
 	"compiler/internal/phase"
 	"compiler/internal/project"
+	"compiler/internal/toolchain"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -52,14 +53,29 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 	if len(modules) == 0 {
 		return fmt.Errorf("no modules compiled")
 	}
-
-	llDir, err := os.MkdirTemp("", "peeper-ll-")
-	if err != nil {
-		return fmt.Errorf("create llvm temp dir: %w", err)
+	if !ctx.Target.Valid() {
+		return fmt.Errorf("compiler target is unavailable")
 	}
-	defer os.RemoveAll(llDir)
 
-	llPaths := make([]string, 0, len(modules))
+	artifactDir, err := os.MkdirTemp("", "peeper-link-")
+	if err != nil {
+		return fmt.Errorf("create link artifact directory: %w", err)
+	}
+	defer os.RemoveAll(artifactDir)
+
+	executablePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve compiler executable: %w", err)
+	}
+	profile, err := toolchain.Resolve(executablePath, ctx.Target)
+	if err != nil {
+		return err
+	}
+	if !profile.Managed {
+		fmt.Fprintf(os.Stderr, "warning: no managed Peeper toolchain profile; using %s from PATH\n", profile.ClangPath)
+	}
+
+	objectPaths := make([]string, 0, len(modules))
 	for i, module := range modules {
 		if module == nil {
 			continue
@@ -68,46 +84,49 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 		if ir == "" {
 			return fmt.Errorf("empty LLVM IR for module %s", module.ImportPath)
 		}
-		llPath := filepath.Join(llDir, fmt.Sprintf("mod_%d.ll", i))
+		llPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.ll", i))
 		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
 			return fmt.Errorf("write llvm ir: %w", err)
 		}
-		llPaths = append(llPaths, llPath)
+		objectPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.o", i))
+		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.BuildDebug), "compile LLVM module "+module.ImportPath); err != nil {
+			return err
+		}
+		objectPaths = append(objectPaths, objectPath)
 	}
-	if len(llPaths) == 0 {
+	if len(objectPaths) == 0 {
 		return fmt.Errorf("no LLVM IR emitted")
 	}
-	if !ctx.Target.Valid() {
-		return fmt.Errorf("compiler target is unavailable")
+	responsePath := filepath.Join(artifactDir, "objects.rsp")
+	if err := profile.WriteResponseFile(responsePath, objectPaths); err != nil {
+		return err
 	}
-
-	clangPath, err := exec.LookPath("clang")
+	outputDir := filepath.Dir(outputPath)
+	extension := filepath.Ext(outputPath)
+	base := strings.TrimSuffix(filepath.Base(outputPath), extension)
+	stagedFile, err := os.CreateTemp(outputDir, "."+base+"-link-*"+extension)
 	if err != nil {
-		return fmt.Errorf("clang not found in PATH; install LLVM clang to build LLVM IR")
+		return fmt.Errorf("stage executable output: %w", err)
 	}
-	args := clangArgsForBuild(ctx.Config, ctx.Target.LLVMTriple, llPaths, outputPath)
-	cmd := exec.Command(clangPath, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("clang link failed: %w\n%s", err, strings.TrimSpace(string(out)))
+	stagedPath := stagedFile.Name()
+	if err := stagedFile.Close(); err != nil {
+		return fmt.Errorf("close staged executable: %w", err)
 	}
-	return nil
+	if err := os.Remove(stagedPath); err != nil {
+		return fmt.Errorf("prepare staged executable: %w", err)
+	}
+	defer os.Remove(stagedPath)
+	if err := runCompilerTool(profile.LinkerPath, profile.LinkArgs(responsePath, stagedPath), "link executable"); err != nil {
+		return err
+	}
+	return replacePath(stagedPath, outputPath)
 }
 
-func clangArgsForBuild(cfg project.Config, targetTriple string, llPaths []string, outputPath string) []string {
-	args := make([]string, 0, len(llPaths)*3+6)
-	args = append(args, "-target", targetTriple)
-	if cfg.BuildDebug {
-		args = append(args, "-O0")
-		if cfg.TargetOS == "windows" {
-			args = append(args, "-gcodeview")
-		} else {
-			args = append(args, "-g")
-		}
+func runCompilerTool(path string, args []string, action string) error {
+	cmd := exec.Command(path, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s with %s: %w\n%s", action, filepath.Base(path), err, strings.TrimSpace(string(output)))
 	}
-	for _, llPath := range llPaths {
-		args = append(args, "-x", "ir", llPath)
-	}
-	args = append(args, "-o", outputPath)
-	return args
+	return nil
 }

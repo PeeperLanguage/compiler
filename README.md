@@ -19,7 +19,27 @@ server, and executable source fixtures.
 See the [open roadmap](https://github.com/PeeperLanguage/compiler/issues) for
 unfinished language and runtime work.
 
-## Requirements
+## Binary installation
+
+Signed release candidates target Linux, macOS, and Windows on `amd64` and
+`arm64`. Download matching `peeper-installer-<os>-<arch>` asset from a
+published release, verify it against `SHA256SUMS`, then run it. Windows assets
+use `.exe`.
+
+Installer verifies signed release manifest, downloads compiler, native target,
+and managed LLVM packs, validates every size and SHA-256 digest, then activates
+complete installation atomically. It prints directory to add to `PATH`; it does
+not modify shell or registry configuration.
+
+Installed distributions include Clang, linker, target runtime, and standard
+libraries. macOS cannot redistribute Apple SDK, so Command Line Tools and
+working `xcrun --sdk macosx --show-sdk-path` remain required. Run
+`peeper doctor` after installation.
+
+See [`docs/distribution.md`](docs/distribution.md) for support policy, release
+security, and maintainer setup.
+
+## Source build requirements
 
 - Go version declared in [`go.mod`](go.mod).
 - LLVM Clang available as `clang` for native `build` and `run` commands.
@@ -30,7 +50,7 @@ unfinished language and runtime work.
 ```bash
 git clone https://github.com/PeeperLanguage/compiler.git
 cd compiler
-go run ./scripts/bundle.go
+bash scripts/build.sh
 build/bin/peeper -help
 ```
 
@@ -72,6 +92,7 @@ fn main() {
 | `peeper list` | List direct and transitive dependencies. |
 | `peeper remove <alias>` | Remove one dependency. |
 | `peeper cleanup` | Remove orphaned cached dependencies. |
+| `peeper doctor` | Validate installation, managed toolchain, and runtime. |
 | `peeper lsp` | Start the language server over standard input/output. |
 
 Run `peeper -help` for the complete command list and current aliases.
@@ -115,7 +136,7 @@ phase and representation boundaries.
 go vet ./...
 go test ./...
 go test -race ./...
-go run ./scripts/bundle.go
+bash scripts/build.sh
 PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
 ```
 

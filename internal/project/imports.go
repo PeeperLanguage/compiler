@@ -21,7 +21,7 @@ type ResolvedImport struct {
 	ImportPath string
 	// Source import declaration, when resolved from parsed syntax.
 	Decl *ast.ImportDecl
-	// Absolute source path.
+	// Absolute slash-separated source path.
 	FilePath string
 	// Local, stdlib, or dependency.
 	Origin ModuleOrigin
@@ -326,6 +326,7 @@ func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, 
 	if info.IsDir() {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "import path points to a directory"}
 	}
+	absPath = CanonicalPath(absPath)
 
 	resolvedImportPath, err := ctx.ImportPathForFile(origin, namespace, absPath)
 	if err != nil {

@@ -20,8 +20,8 @@ import (
 	"compiler/pkg/peeper"
 )
 
-// Bundled libraries base directory relative to the installed compiler binary.
-const PACKAGED_LIBS_DIR = "../libs"
+// Bundled libraries base directory relative to the installation root.
+const PACKAGED_LIBS_DIR = "libs"
 
 // Shared state for one compilation.
 type CompilerContext struct {
@@ -221,17 +221,11 @@ func libraryBaseDirFromExecutable() (string, bool) {
 	if err != nil || exePath == "" {
 		return "", false
 	}
-	if resolved, err := filepath.EvalSymlinks(exePath); err == nil && resolved != "" {
-		exePath = resolved
+	root := peeper.InstallationRootForExecutable(exePath)
+	if root == "" {
+		return "", false
 	}
-	return packagedLibraryBaseForExecutable(exePath), true
-}
-
-func packagedLibraryBaseForExecutable(exePath string) string {
-	if exePath == "" {
-		return ""
-	}
-	return filepath.Clean(filepath.Join(filepath.Dir(exePath), PACKAGED_LIBS_DIR))
+	return filepath.Join(root, PACKAGED_LIBS_DIR), true
 }
 
 func (ctx *CompilerContext) LibraryRoot(namespace string) (string, bool) {

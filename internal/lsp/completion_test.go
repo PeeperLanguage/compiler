@@ -16,7 +16,7 @@ import (
 func completionAtSource(t *testing.T, state *ServerState, filePath, src string) []CompletionItem {
 	t.Helper()
 	clean, position := markerPosition(t, src)
-	state.Cache[filePath] = clean
+	state.applyDocumentSnapshot(filePath, &clean, nil)
 	items, err := state.HandleCompletion(CompletionParams{
 		TextDocumentPositionParams: TextDocumentPositionParams{
 			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},

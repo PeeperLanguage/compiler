@@ -1,2 +1,2 @@
-#[extern("printf")]
+#[extern("peeper_rt_v1_printf")]
 fn Printf(_: i32);

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // WriteFileAtomic stages, syncs, and atomically replaces one file.
@@ -58,6 +59,13 @@ func stageFile(path string, data []byte, mode os.FileMode) (string, error) {
 }
 
 func syncDirectory(dir string) error {
+	// Unix directory sync makes the preceding atomic rename durable across a
+	// crash. Windows does not support POSIX directory fsync and may return
+	// ERROR_ACCESS_DENIED here, so file contents remain synced but directory
+	// entry durability cannot be explicitly requested on that platform.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	directory, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("open parent directory: %w", err)

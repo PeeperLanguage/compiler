@@ -4,21 +4,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
 func buildTestCLI(t *testing.T) string {
 	t.Helper()
-	binary := filepath.Join(t.TempDir(), "peeper")
-	build := exec.Command("go", "build", "-o", binary, ".")
+	repositoryRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	build := exec.Command("bash", "scripts/build.sh")
+	build.Dir = repositoryRoot
+	build.Env = append(os.Environ(), "CCACHE_DISABLE=1")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
 	}
-	return binary
+	return filepath.Join(repositoryRoot, "build", "bin", "peeper"+target.ExecutableExt(runtime.GOOS))
 }
 
 func TestInitCommandCreatesRunnableNormalizedProject(t *testing.T) {

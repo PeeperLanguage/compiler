@@ -133,7 +133,8 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 		t.Fatalf("missing cached unrelated module")
 	}
 
-	state.Cache[fileAUtil] = "fn helper() { let x = 1; }\n"
+	updated := "fn helper() { let x = 1; }\n"
+	state.applyDocumentSnapshot(fileAUtil, &updated, nil)
 	if _, mod := state.recompile(fileAUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -165,9 +166,10 @@ fn main() {}`
 		t.Fatalf("initial generic compile failed:\n%s", ctx.Diagnostics.EmitAllToString())
 	}
 
-	state.Cache[entry] = `import "app/container";
+	updated := `import "app/container";
 fn Take(value: container::Box<i32>) {}
 fn main() { let body_only = 1; }`
+	state.applyDocumentSnapshot(entry, &updated, nil)
 	ctx, mod = state.recompile(entry)
 	if mod == nil || ctx == nil {
 		t.Fatal("incremental generic compile returned nil")
@@ -263,7 +265,7 @@ func TestServerStateDoesNotReplayUsageDiagnosticsBeforeBarrier(t *testing.T) {
 		t.Fatal("initial compile missing usage warning")
 	}
 
-	state.Cache[project.CanonicalPath(entry)] = badSource
+	state.applyDocumentSnapshot(entry, &badSource, nil)
 	incremental, mod := state.recompile(entry)
 	if mod == nil || incremental == nil || !incremental.Diagnostics.HasErrors() {
 		t.Fatal("incremental compile missing semantic error")
@@ -274,7 +276,7 @@ func TestServerStateDoesNotReplayUsageDiagnosticsBeforeBarrier(t *testing.T) {
 
 	freshState := NewServerState()
 	freshState.RootDir = root
-	freshState.Cache[project.CanonicalPath(entry)] = badSource
+	freshState.applyDocumentSnapshot(entry, &badSource, nil)
 	fresh, freshMod := freshState.recompile(entry)
 	if freshMod == nil || fresh == nil || !fresh.Diagnostics.HasErrors() {
 		t.Fatal("fresh compile missing semantic error")
@@ -283,7 +285,7 @@ func TestServerStateDoesNotReplayUsageDiagnosticsBeforeBarrier(t *testing.T) {
 		t.Fatal("fresh compile unexpectedly produced usage warning")
 	}
 
-	state.Cache[project.CanonicalPath(entry)] = goodSource
+	state.applyDocumentSnapshot(entry, &goodSource, nil)
 	repaired, mod := state.recompile(entry)
 	if mod == nil || repaired == nil || repaired.Diagnostics.HasErrors() {
 		t.Fatal("repaired incremental compile failed")
@@ -362,7 +364,8 @@ func TestServerStateReusesDependentWhenExportShapeUnchanged(t *testing.T) {
 		t.Fatalf("missing cached dependent module")
 	}
 
-	state.Cache[fileUtil] = "fn helper() { let x = 1; }\n"
+	updated := "fn helper() { let x = 1; }\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -392,7 +395,8 @@ func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 		t.Fatalf("missing cached dependent module")
 	}
 
-	state.Cache[fileUtil] = "fn helper(v: i32) {}\n"
+	updated := "fn helper(v: i32) {}\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -431,7 +435,8 @@ func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing
 	if !found || beforeType == nil || beforeType.Type == nil {
 		t.Fatal("missing cached exported const type")
 	}
-	state.Cache[fileUtil] = "const Value = 1i64;\n"
+	updated := "const Value = 1i64;\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -476,8 +481,8 @@ func TestServerStateRecompileReturnsRequestedWorkspaceModule(t *testing.T) {
 	if mod == nil {
 		t.Fatalf("expected compiled module")
 	}
-	if got := project.CanonicalPath(mod.FilePath); got != project.CanonicalPath(fileUtil) {
-		t.Fatalf("module path = %s, want %s", got, project.CanonicalPath(fileUtil))
+	if want := project.CanonicalPath(fileUtil); mod.FilePath != want {
+		t.Fatalf("module path = %s, want %s", mod.FilePath, want)
 	}
 	if len(mod.AST.Stmts) != 1 {
 		t.Fatalf("util module stmts = %d, want 1", len(mod.AST.Stmts))
@@ -509,7 +514,8 @@ func TestServerStateInvalidatesTransitiveDependentsWhenExportChanges(t *testing.
 		t.Fatalf("missing cached dependents")
 	}
 
-	state.Cache[fileLeaf] = "fn leaf(v: i32) {}\n"
+	updated := "fn leaf(v: i32) {}\n"
+	state.applyDocumentSnapshot(fileLeaf, &updated, nil)
 	if _, mod := state.recompile(fileLeaf); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -538,7 +544,8 @@ func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
 		t.Fatalf("initial compile returned nil module")
 	}
 
-	state.Cache[fileUtil] = "fn helper(v: i32) {}\n"
+	updated := "fn helper(v: i32) {}\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
 	index := newWorkspaceIndex(root)
 	if err := index.rebuild(state.Cache); err != nil {
 		t.Fatalf("rebuild workspace index: %v", err)
@@ -576,10 +583,10 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	beforeMain := index.modules[mainPath]
 	beforeUtilTargets := append([]string(nil), index.modules[utilPath].importTargets...)
 
-	cache := map[string]string{
-		fileUtil: "fn helper() { let body_only = 1; }\n",
-	}
-	if err := index.rebuild(cache); err != nil {
+	state := NewServerState()
+	updated := "fn helper() { let body_only = 1; }\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
+	if err := index.rebuild(state.Cache); err != nil {
 		t.Fatalf("incremental rebuild: %v", err)
 	}
 	if got := index.parsedFiles; got != 1 {
@@ -696,7 +703,8 @@ func TestServerStateKeepsWorkspaceIndexAcrossRecompile(t *testing.T) {
 		t.Fatalf("expected workspace index")
 	}
 
-	state.Cache[fileUtil] = "fn helper() { let body_only = 1; }\n"
+	updated := "fn helper() { let body_only = 1; }\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("incremental compile returned nil module")
 	}
@@ -744,7 +752,7 @@ func TestNavigationRangesUseUTF16AfterNonBMPText(t *testing.T) {
 
 	state := NewServerState()
 	state.RootDir = root
-	state.Cache[entry] = content
+	state.applyDocumentSnapshot(entry, &content, nil)
 	if _, mod := state.recompile(entry); mod == nil {
 		t.Fatalf("expected compiled module")
 	}
