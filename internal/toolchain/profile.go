@@ -256,7 +256,7 @@ func (profile Profile) LinkArgs(responsePath, outputPath string) []string {
 	}
 	args = append(args, "@"+responsePath)
 	if profile.LinkMode == "static" {
-		args = append(args, "-lc", path.Join(profile.Sysroot, "lib", "crtn.o"))
+		args = append(args, "-lc", "-lclang_rt.builtins", path.Join(profile.Sysroot, "lib", "crtn.o"))
 	}
 	return append(args, "-o", outputPath)
 }
