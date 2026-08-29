@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"compiler/pkg/manifest"
@@ -104,7 +105,7 @@ func TestInitCommandPreservesExistingRegularMain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o640 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Fatalf("existing main mode = %o, want 640", info.Mode().Perm())
 	}
 }

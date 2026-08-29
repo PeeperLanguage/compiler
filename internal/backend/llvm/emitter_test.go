@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -2365,7 +2366,7 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 	if !strings.Contains(irText, "call void @Ping(), !dbg !") {
 		t.Fatalf("expected instruction debug location, got:\n%s", irText)
 	}
-	if !strings.Contains(irText, `!DIFile(filename: "test`+peeper.SourceExt+`", directory: "/tmp")`) {
+	if !strings.Contains(irText, `!DIFile(filename: "test`+peeper.SourceExt+`", directory: "`+path.Dir(unixTestPath)+`")`) {
 		t.Fatalf("expected source file metadata, got:\n%s", irText)
 	}
 }

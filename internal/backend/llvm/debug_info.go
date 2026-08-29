@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -36,8 +37,9 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 	if strings.TrimSpace(filePath) == "" {
 		filePath = "unknown" + peeper.SourceExt
 	}
-	fileName := filepath.Base(filePath)
-	dir := filepath.Dir(filePath)
+	filePath = filepath.ToSlash(filePath)
+	fileName := path.Base(filePath)
+	dir := path.Dir(filePath)
 	if dir == "." {
 		dir = ""
 	}
