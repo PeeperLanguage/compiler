@@ -1,15 +1,96 @@
 name: CI
 
 on:
-  push:
   pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+      compiler_source: ${{ steps.detect.outputs.compiler_source }}
+      runtime: ${{ steps.detect.outputs.runtime }}
+      distribution: ${{ steps.detect.outputs.distribution }}
+      toolchain: ${{ steps.detect.outputs.toolchain }}
+      workflow: ${{ steps.detect.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/detect-changes.sh
+
+  quality:
+    name: Quality
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+
+  unit:
+    name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+
+  race:
+    name: Race detector
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./...
+
   native:
     name: Native (${{ matrix.os }}-${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -49,18 +130,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Check formatting
-        if: matrix.os == 'linux' && matrix.arch == 'amd64'
-        run: |
-          unformatted="$(gofmt -l $(git ls-files '*.go'))"
-          if [ -n "$unformatted" ]; then
-            printf '%s\n' "$unformatted"
-            exit 1
-          fi
-      - name: Vet
-        run: go vet ./...
-      - name: Test
-        run: go test ./...
       - name: Build compiler bundle
         env:
           CCACHE_DISABLE: "1"
@@ -72,14 +141,25 @@ jobs:
           PEEPER_BIN: ${{ github.workspace }}/build/bin/peeper${{ matrix.exe }}
         run: go test -count=1 ./x_test
 
-  race:
-    name: Race detector
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [changes, quality, unit, race, native]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go test -race ./...
+      - name: Require applicable checks
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          QUALITY: ${{ needs.quality.result }}
+          UNIT: ${{ needs.unit.result }}
+          RACE: ${{ needs.race.result }}
+          NATIVE: ${{ needs.native.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+        run: |
+          test "$CHANGES" = success
+          test "$QUALITY" = success
+          if [ "$DOCS_ONLY" != true ]; then
+            test "$UNIT" = success
+            test "$RACE" = success
+            test "$NATIVE" = success
+          fi

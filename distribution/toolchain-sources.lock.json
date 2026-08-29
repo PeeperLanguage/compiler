@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "kind": "upstream-sources",
   "assets": [
     {
       "id": "llvm-source",

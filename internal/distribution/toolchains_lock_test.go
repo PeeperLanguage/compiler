@@ -8,13 +8,14 @@ import (
 	"testing"
 )
 
-func TestToolchainLockPinsVerifiableAssets(t *testing.T) {
-	data, err := os.ReadFile("../../distribution/toolchains.lock.json")
+func TestToolchainSourceLockPinsVerifiableAssets(t *testing.T) {
+	data, err := os.ReadFile("../../distribution/toolchain-sources.lock.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var lock struct {
-		SchemaVersion int `json:"schema_version"`
+		SchemaVersion int    `json:"schema_version"`
+		Kind          string `json:"kind"`
 		Assets        []struct {
 			ID           string `json:"id"`
 			Version      string `json:"version"`
@@ -33,6 +34,9 @@ func TestToolchainLockPinsVerifiableAssets(t *testing.T) {
 	}
 	if lock.SchemaVersion != 1 {
 		t.Fatalf("schema version = %d", lock.SchemaVersion)
+	}
+	if lock.Kind != "upstream-sources" {
+		t.Fatalf("lock kind = %q", lock.Kind)
 	}
 	seen := make(map[string]bool)
 	for _, asset := range lock.Assets {

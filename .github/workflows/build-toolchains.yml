@@ -1,0 +1,70 @@
+name: Build Peeper toolchains
+
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: Platform family to manufacture
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - linux
+          - darwin
+          - windows
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select toolchains
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - id: matrix
+        env:
+          FAMILY: ${{ inputs.family }}
+        run: |
+          all='{"include":[{"runner":"ubuntu-24.04","os":"linux","arch":"amd64","llvm_target":"X86"},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","llvm_target":"AArch64"},{"runner":"macos-15-intel","os":"darwin","arch":"amd64","llvm_target":"X86"},{"runner":"macos-15","os":"darwin","arch":"arm64","llvm_target":"AArch64"},{"runner":"windows-2025","os":"windows","arch":"amd64","llvm_target":"X86"},{"runner":"windows-11-arm","os":"windows","arch":"arm64","llvm_target":"AArch64"}]}'
+          case "$FAMILY" in
+            all) matrix="$all" ;;
+            linux|darwin|windows) matrix="$(jq -c --arg family "$FAMILY" '.include |= [.[] | select(.os == $family)]' <<< "$all")" ;;
+            *) exit 2 ;;
+          esac
+          echo "value=$matrix" >> "$GITHUB_OUTPUT"
+
+  toolchain:
+    name: Toolchain ${{ matrix.os }}-${{ matrix.arch }}
+    needs: select
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and validate toolchain
+        run: |
+          bash scripts/build-toolchain.sh \
+            "${{ matrix.os }}" \
+            "${{ matrix.arch }}" \
+            "${{ matrix.llvm_target }}" \
+            toolchains/native \
+            "13.0"
+      - name: Package temporary producer artifact
+        run: |
+          mkdir -p dist
+          tar -cf "dist/peeper-toolchain-${{ matrix.os }}-${{ matrix.arch }}.tar" -C toolchains native
+      - uses: actions/upload-artifact@v7
+        with:
+          name: toolchain-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/peeper-toolchain-${{ matrix.os }}-${{ matrix.arch }}.tar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
