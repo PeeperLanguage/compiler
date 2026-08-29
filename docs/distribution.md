@@ -39,42 +39,54 @@ Installer intentionally leaves `PATH` changes to user. Default install root is
 
 ## CI and release gates
 
-Normal CI uses six native GitHub-hosted runners. Every host runs Go tests,
-builds compiler through `bash scripts/build.sh`, runs `peeper doctor`, and
-executes source fixtures. Race detector remains Linux amd64 gate.
+Normal CI detects change categories first. Formatting and vet run once on Linux
+amd64, unit and race tests run independently, and non-documentation changes fan
+out to all six native hosts. Each native host builds compiler through
+`bash scripts/build.sh`, runs `peeper doctor`, and executes source fixtures with
+that compiler. Documentation-only changes skip native matrix.
 
 Tag workflow performs these additional gates:
 
-1. Build pinned LLVM/musl/llvm-mingw inputs from
-   `distribution/toolchains.lock.json` with exact size and SHA-256 checks.
-2. Compile target runtime with managed toolchain and validate complete staged
-   install on native runner.
-3. Sign every distributed Mach-O or PE executable before packing. macOS payload
-   and bootstrap also pass Apple notarization.
-4. Produce deterministic packs and per-host SPDX JSON SBOMs.
-5. Require all 18 packs, sign release manifest, generate `SHA256SUMS`, and
-   create GitHub provenance attestation.
-6. Create or update draft release only. Human publishes after clean-host review.
+1. Validate tag, version, public key, source lock, required source IDs, duplicate
+   IDs, and focused distribution/toolchain tests in cheap Linux preflight.
+2. Fan out to six independent target flows. Each builds Peeper, obtains verified
+   pinned toolchain inputs, builds runtime/profile, runs doctor and source
+   fixtures, generates SPDX SBOM, and creates deterministic final packs on same
+   native runner.
+3. Require all six target flows, sign release manifest, generate `SHA256SUMS`,
+   create GitHub provenance attestation, and upload draft release.
 
-Build jobs receive no signing secrets. Signing and publication jobs use separate
-protected GitHub environments.
+Build jobs receive no signing secrets. Only protected `release` publication job
+receives Ed25519 private key.
+
+## Toolchain production and bootstrap
+
+`distribution/toolchain-sources.lock.json` pins upstream LLVM source and Linux
+archives, musl source, and llvm-mingw archives with exact size and SHA-256.
+Dispatch-only `Build Peeper toolchains` workflow can manufacture `linux`,
+`darwin`, or `windows` family independently. Linux toolchains always configure
+musl with `--disable-shared` for both architectures and compile/link/run static
+smoke binary. macOS LLVM builds set both `MACOSX_DEPLOYMENT_TARGET` and
+`CMAKE_OSX_DEPLOYMENT_TARGET` to Peeper minimum macOS version.
+
+No immutable Peeper-produced toolchain assets are published yet. Producer
+uploads short-lived workflow artifacts for validation only, while release target
+uses same canonical producer script as functional bootstrap. Complete migration:
+
+1. Dispatch producer for each affected family and inspect validation results.
+2. Publish validated toolchain archives as immutable repository GitHub Release
+   assets under dedicated toolchain release/tag policy.
+3. Record real asset URLs, byte sizes, SHA-256 values, versions, and licenses in
+   new `distribution/toolchains.lock.json`.
+4. Change release target to download and verify finished assets from that lock.
+5. Remove release-side source-build fallback only after all six finished assets
+   exist and one release candidate passes.
 
 ## Repository configuration
 
 Set repository variable:
 
 - `PEEPER_RELEASE_PUBLIC_KEY`: 32-byte Ed25519 public key as lowercase hex.
-
-Configure protected `release-signing` environment with:
-
-- `MACOS_CERTIFICATE_P12`: base64 Developer ID Application PKCS#12;
-- `MACOS_CERTIFICATE_PASSWORD`;
-- `MACOS_SIGNING_IDENTITY`;
-- `MACOS_NOTARY_APPLE_ID`;
-- `MACOS_NOTARY_TEAM_ID`;
-- `MACOS_NOTARY_PASSWORD`: app-specific password;
-- `WINDOWS_CERTIFICATE_PFX`: base64 Authenticode PKCS#12;
-- `WINDOWS_CERTIFICATE_PASSWORD`.
 
 Configure protected `release` environment with:
 
@@ -89,7 +101,7 @@ copy.
 1. Update `pkg/peeper.CompilerVersion` and lockfile intentionally.
 2. Run full local validation and merge clean review.
 3. Create and push signed tag `v<CompilerVersion>`.
-4. Approve protected signing and release environments.
+4. Approve protected release environment.
 5. Inspect draft assets: six bootstraps, 18 packs, six SBOMs, signed manifest,
    checksums, and provenance attestation.
 6. Verify checksums and `gh attestation verify` on downloaded assets.
@@ -97,6 +109,6 @@ copy.
    compile and run source project with network unavailable.
 8. Publish draft only after all checks pass.
 
-Failed platform, signing, notarization, SBOM, manifest, or attestation gate
+Failed platform, signing, SBOM, manifest, or attestation gate
 prevents draft creation. Existing published release is never overwritten by
 workflow rerun.

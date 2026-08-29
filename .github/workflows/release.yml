@@ -9,22 +9,32 @@ permissions:
   contents: read
 
 jobs:
-  metadata:
+  preflight:
+    name: Release preflight
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.value }}
     steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
       - id: version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_PUBLIC_KEY: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
         run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           version="${RELEASE_TAG#v}"
           test -n "$version"
           test "v$version" = "$RELEASE_TAG"
+          [[ "$RELEASE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
+          go test ./internal/distribution ./internal/installer ./internal/toolchain
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
-  stage:
-    needs: metadata
+  targets:
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -59,137 +69,11 @@ jobs:
       os: ${{ matrix.os }}
       arch: ${{ matrix.arch }}
       llvm-target: ${{ matrix.llvm-target }}
-      version: ${{ needs.metadata.outputs.version }}
+      version: ${{ needs.preflight.outputs.version }}
       public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
 
-  package-linux:
-    needs: [metadata, stage]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: stage-linux-${{ matrix.arch }}
-          path: .
-      - run: mkdir -p stage && tar -xzf stage-linux-${{ matrix.arch }}.tar.gz -C stage
-      - run: mkdir -p dist
-      - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
-        with:
-          path: stage/install
-          format: spdx-json
-          output-file: dist/peeper-linux-${{ matrix.arch }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-      - name: Package release components
-        run: scripts/package-release.sh stage/install stage/bootstrap linux "${{ matrix.arch }}" "${{ needs.metadata.outputs.version }}" dist
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-linux-${{ matrix.arch }}
-          path: dist
-          if-no-files-found: error
-          retention-days: 1
-
-  package-macos:
-    needs: [metadata, stage]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15-intel
-            arch: amd64
-          - runner: macos-15
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: stage-darwin-${{ matrix.arch }}
-          path: .
-      - run: mkdir -p stage && tar -xzf stage-darwin-${{ matrix.arch }}.tar.gz -C stage
-      - run: mkdir -p dist
-      - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
-        with:
-          path: stage/install
-          format: spdx-json
-          output-file: dist/peeper-darwin-${{ matrix.arch }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-      - name: Package release components
-        run: scripts/package-release.sh stage/install stage/bootstrap darwin "${{ matrix.arch }}" "${{ needs.metadata.outputs.version }}" dist
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-darwin-${{ matrix.arch }}
-          path: dist
-          if-no-files-found: error
-          retention-days: 1
-
-  package-windows:
-    needs: [metadata, stage]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: windows-2025
-            arch: amd64
-          - runner: windows-11-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: stage-windows-${{ matrix.arch }}
-          path: .
-      - shell: bash
-        run: mkdir -p stage && tar -xzf stage-windows-${{ matrix.arch }}.tar.gz -C stage
-      - shell: bash
-        run: mkdir -p dist
-      - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
-        with:
-          path: stage/install
-          format: spdx-json
-          output-file: dist/peeper-windows-${{ matrix.arch }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-      - name: Package release components
-        shell: bash
-        run: scripts/package-release.sh stage/install stage/bootstrap windows "${{ matrix.arch }}" "${{ needs.metadata.outputs.version }}" dist
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-windows-${{ matrix.arch }}
-          path: dist
-          if-no-files-found: error
-          retention-days: 1
-
   publish-draft:
-    needs: [metadata, package-linux, package-macos, package-windows]
+    needs: [preflight, targets]
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -212,7 +96,7 @@ jobs:
           merge-multiple: true
       - name: Assemble and sign release index
         env:
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
           PEEPER_RELEASE_PRIVATE_KEY: ${{ secrets.PEEPER_RELEASE_PRIVATE_KEY }}
         run: |
           mkdir -p release-assets
