@@ -1,5 +1,5 @@
-#[extern("malloc")]
+#[extern("peeper_rt_v1_alloc")]
 fn Malloc(size: usize) -> rawptr;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn Free(ptr: rawptr);

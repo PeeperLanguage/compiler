@@ -749,11 +749,11 @@ func TestGenerateLLVMIRLowersOwnedPointerDrop(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRReusesExistingFreeDeclaration(t *testing.T) {
+func TestGenerateLLVMIRReusesExistingRuntimeFreeDeclaration(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "free", Params: []ir.Param{{Name: "value", Type: llvmTypes.rawptr}}, ReturnType: llvmTypes.void},
+			{Name: "peeper_rt_v1_free", Params: []ir.Param{{Name: "value", Type: llvmTypes.rawptr}}, ReturnType: llvmTypes.void},
 			{
 				Name:       "release",
 				Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
@@ -767,19 +767,19 @@ func TestGenerateLLVMIRReusesExistingFreeDeclaration(t *testing.T) {
 		},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
-	if count := strings.Count(out, "declare void @free(i8*)"); count != 1 {
+	if count := strings.Count(out, "declare void @peeper_rt_v1_free(i8*)"); count != 1 {
 		t.Fatalf("expected one free declaration, got %d:\n%s", count, out)
 	}
-	if !strings.Contains(out, "call void @free(i8*") {
+	if !strings.Contains(out, "call void @peeper_rt_v1_free(i8*") {
 		t.Fatalf("expected automatic destruction to reuse free declaration, got:\n%s", out)
 	}
 }
 
-func TestGenerateLLVMIRRejectsIncompatibleFreeDeclaration(t *testing.T) {
+func TestGenerateLLVMIRRejectsIncompatibleRuntimeFreeDeclaration(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "free", Params: []ir.Param{{Name: "value", Type: llvmTypes.i32}}, ReturnType: llvmTypes.void},
+			{Name: "peeper_rt_v1_free", Params: []ir.Param{{Name: "value", Type: llvmTypes.i32}}, ReturnType: llvmTypes.void},
 			{
 				Name:       "release",
 				Params:     []ir.Param{{Name: "value", Type: llvmTypes.ownedI32}},
@@ -797,7 +797,7 @@ func TestGenerateLLVMIRRejectsIncompatibleFreeDeclaration(t *testing.T) {
 	if out != "" {
 		t.Fatalf("expected incompatible free ABI to suppress LLVM output, got:\n%s", out)
 	}
-	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `free` must have signature fn(rawptr) -> void") {
+	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `peeper_rt_v1_free` must have signature fn(rawptr) -> void") {
 		t.Fatalf("expected incompatible free ABI diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
@@ -820,12 +820,12 @@ func TestGenerateLLVMIRLowersDynamicArrayAllocation(t *testing.T) {
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{
-		"declare i8* @malloc(i64)",
+		"declare i8* @peeper_rt_v1_alloc(i64)",
 		"@llvm.umul.with.overflow.i64",
 		"ptrtoint i32* getelementptr",
 		"select i1",
 		"i64 1, i64",
-		"call i8* @malloc(i64",
+		"call i8* @peeper_rt_v1_alloc(i64",
 		"icmp eq i8*",
 		"call void @llvm.trap()",
 		"insertvalue { i32*, i64, i64, i8* }",
@@ -851,7 +851,7 @@ func TestGenerateLLVMIRLowersEmptyDynamicArrayWithoutAllocation(t *testing.T) {
 		}},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
-	if strings.Count(out, "call i8* @malloc") != 1 || strings.Contains(out, "umul.with.overflow") {
+	if strings.Count(out, "call i8* @peeper_rt_v1_alloc") != 1 || strings.Contains(out, "umul.with.overflow") {
 		t.Fatalf("empty dynamic array must not allocate storage:\n%s", out)
 	}
 	if !strings.Contains(out, "ret { i32*, i64, i64, i8* }") || !strings.Contains(out, "i64 0, 2") {
@@ -873,7 +873,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 			value: &mir.RefName{Name: "value", Type: llvmTypes.i32},
 			expected: []string{
 				"array_append_capacity_", "@llvm.umul.with.overflow.i64", "array_relocate_loop_",
-				"store i32 %value", "call void @free(i8*",
+				"store i32 %value", "call void @peeper_rt_v1_free(i8*",
 			},
 		},
 		{
@@ -881,7 +881,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 			op:     symbols.CompilerOpReserve,
 			length: &mir.RefName{Name: "size", Type: llvmTypes.usize},
 			expected: []string{
-				"icmp uge i64", "array_reserve_reuse_", "array_relocate_loop_", "call i8* @malloc(i64", "call void @free(i8*",
+				"icmp uge i64", "array_reserve_reuse_", "array_relocate_loop_", "call i8* @peeper_rt_v1_alloc(i64", "call void @peeper_rt_v1_free(i8*",
 			},
 		},
 		{
@@ -899,7 +899,7 @@ func TestGenerateLLVMIRLowersDynamicArrayOwnerOperations(t *testing.T) {
 			mod := dynamicArrayOperationModule(llvmTypes, tt.name, llvmTypes.dynamicI32, tt.op, tt.length, tt.value)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 			for _, expected := range append([]string{
-				"declare i8* @malloc(i64)", "declare void @free(i8*)", "store { i32*, i64, i64, i8* }",
+				"declare i8* @peeper_rt_v1_alloc(i64)", "declare void @peeper_rt_v1_free(i8*)", "store { i32*, i64, i64, i8* }",
 			}, tt.expected...) {
 				if !strings.Contains(out, expected) {
 					t.Fatalf("expected %q in %s IR:\n%s", expected, tt.name, out)
@@ -916,7 +916,7 @@ func TestGenerateLLVMIRLowersDynamicArrayShrink(t *testing.T) {
 		expected  []string
 	}{
 		{name: "scalar", arrayType: llvmTypes.dynamicI32, expected: []string{"array_shrink_drop_", "icmp ult i64", "array_shrink_done_"}},
-		{name: "owner", arrayType: llvmTypes.dynamicDynamicI32, expected: []string{"drop_array_loop_", "icmp ugt i64", "call void @free(i8*"}},
+		{name: "owner", arrayType: llvmTypes.dynamicDynamicI32, expected: []string{"drop_array_loop_", "icmp ugt i64", "call void @peeper_rt_v1_free(i8*"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1001,11 +1001,11 @@ func dynamicArrayOperationModule(types llvmTypeFixture, name string, arrayType i
 	}}}
 }
 
-func TestGenerateLLVMIRReusesCompatibleMallocDeclaration(t *testing.T) {
+func TestGenerateLLVMIRReusesCompatibleRuntimeAllocDeclaration(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.usize}}, ReturnType: llvmTypes.rawptr},
+			{Name: "peeper_rt_v1_alloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.usize}}, ReturnType: llvmTypes.rawptr},
 			{
 				Name:       "values",
 				ReturnType: llvmTypes.dynamicI32,
@@ -1018,24 +1018,24 @@ func TestGenerateLLVMIRReusesCompatibleMallocDeclaration(t *testing.T) {
 		},
 	}
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
-	if count := strings.Count(out, "declare i8* @malloc(i64)"); count != 1 {
+	if count := strings.Count(out, "declare i8* @peeper_rt_v1_alloc(i64)"); count != 1 {
 		t.Fatalf("expected one malloc declaration, got %d:\n%s", count, out)
 	}
 }
 
-func TestGenerateLLVMIRMallocUsesTargetSizedUsize(t *testing.T) {
+func TestGenerateLLVMIRRuntimeAllocUsesTargetSizedUsize(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		info target.Info
 		want string
 	}{
-		{name: "32-bit", info: testLinux386, want: "declare i8* @malloc(i32)"},
-		{name: "64-bit", info: testLinuxAMD64, want: "declare i8* @malloc(i64)"},
+		{name: "32-bit", info: testLinux386, want: "declare i8* @peeper_rt_v1_alloc(i32)"},
+		{name: "64-bit", info: testLinuxAMD64, want: "declare i8* @peeper_rt_v1_alloc(i64)"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			types := newLLVMTypeFixture(tt.info.IndexBits)
 			mod := dynamicArrayAllocModule(types)
-			mod.Funcs = append([]*mir.Function{{Name: "malloc", Params: []ir.Param{{Name: "size", Type: types.usize}}, ReturnType: types.rawptr}}, mod.Funcs...)
+			mod.Funcs = append([]*mir.Function{{Name: "peeper_rt_v1_alloc", Params: []ir.Param{{Name: "size", Type: types.usize}}, ReturnType: types.rawptr}}, mod.Funcs...)
 			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), tt.info, false)
 			if !strings.Contains(out, tt.want) {
 				t.Fatalf("expected %q, got:\n%s", tt.want, out)
@@ -1059,11 +1059,11 @@ func dynamicArrayAllocModule(types llvmTypeFixture) *mir.Module {
 	}
 }
 
-func TestGenerateLLVMIRRejectsIncompatibleMallocDeclaration(t *testing.T) {
+func TestGenerateLLVMIRRejectsIncompatibleRuntimeAllocDeclaration(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{
-			{Name: "malloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.i32}}, ReturnType: llvmTypes.rawptr},
+			{Name: "peeper_rt_v1_alloc", Params: []ir.Param{{Name: "size", Type: llvmTypes.i32}}, ReturnType: llvmTypes.rawptr},
 			{
 				Name:       "values",
 				ReturnType: llvmTypes.dynamicI32,
@@ -1080,7 +1080,7 @@ func TestGenerateLLVMIRRejectsIncompatibleMallocDeclaration(t *testing.T) {
 	if out != "" {
 		t.Fatalf("expected incompatible malloc ABI to suppress LLVM output, got:\n%s", out)
 	}
-	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `malloc` must have signature fn(usize) -> rawptr") {
+	if !strings.Contains(diag.EmitAllToString(), "runtime symbol `peeper_rt_v1_alloc` must have signature fn(usize) -> rawptr") {
 		t.Fatalf("expected incompatible malloc ABI diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
@@ -1378,7 +1378,7 @@ func TestGenerateLLVMIRBorrowedScalarShrinkDoesNotReserveAllocatorRuntime(t *tes
 	if !strings.Contains(out, "declare void @free(i32)") {
 		t.Fatalf("expected unrelated free declaration, got:\n%s", out)
 	}
-	if strings.Contains(out, "@peeper_default_alloc") || strings.Contains(out, "declare i8* @malloc") || strings.Contains(out, "declare void @free(i8*)") {
+	if strings.Contains(out, "@peeper_default_alloc") || strings.Contains(out, "declare i8* @peeper_rt_v1_alloc") || strings.Contains(out, "declare void @peeper_rt_v1_free(i8*)") {
 		t.Fatalf("carrier-only pass-through must not reserve allocator runtime, got:\n%s", out)
 	}
 }
@@ -2243,7 +2243,7 @@ func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
 }
 
 func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
+	targetTriple := testLinuxAMD64.LLVMTriple
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2283,7 +2283,7 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 }
 
 func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
-	const targetTriple = "x86_64-pc-windows-msvc"
+	targetTriple := testWindowsAMD64.LLVMTriple
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,

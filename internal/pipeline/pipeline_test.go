@@ -203,17 +203,17 @@ func TestPipelineCheckAllowsMissingEntrypoint(t *testing.T) {
 	}
 }
 
-func TestPipelineImportsCoreAllocatorRawMallocFree(t *testing.T) {
+func TestPipelineImportsCoreAllocatorRuntimeABI(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")
 	allocatorPath := filepath.Join(libraryBase, "core", peeper.SourceDirName, "allocator"+peeper.SourceExt)
 	if err := os.MkdirAll(filepath.Dir(allocatorPath), 0o755); err != nil {
 		t.Fatalf("mkdir allocator: %v", err)
 	}
-	allocatorSrc := `#[extern("malloc")]
+	allocatorSrc := `#[extern("peeper_rt_v1_alloc")]
 fn Malloc(size: usize) -> rawptr;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn Free(ptr: rawptr);
 `
 	if err := os.WriteFile(allocatorPath, []byte(allocatorSrc), 0o644); err != nil {
@@ -250,10 +250,10 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if !strings.Contains(entry.LLVMIR, "declare i8* @malloc(i64)") {
+	if !strings.Contains(entry.LLVMIR, "declare i8* @peeper_rt_v1_alloc(i64)") {
 		t.Fatalf("expected malloc declaration, LLVM IR:\n%s", entry.LLVMIR)
 	}
-	if !strings.Contains(entry.LLVMIR, "declare void @free(i8*)") {
+	if !strings.Contains(entry.LLVMIR, "declare void @peeper_rt_v1_free(i8*)") {
 		t.Fatalf("expected free declaration, LLVM IR:\n%s", entry.LLVMIR)
 	}
 }
@@ -265,7 +265,7 @@ fn shorten(mut values: []i32) {
 	values |> shrink(0);
 }`, `type Word = i32;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn BadFree(value: Word);`)
 	if !strings.Contains(diag.EmitAllToString(), "runtime requires fn(rawptr) -> void") {
 		t.Fatalf("expected local scalar shrink cleanup to reserve free:\n%s", diag.EmitAllToString())
@@ -279,7 +279,7 @@ fn shorten(values: &mut []i32) {
 	shrink(values, 0);
 }`, `type Word = i32;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn BadFree(value: Word);`)
 	if diag.HasErrors() {
 		t.Fatalf("borrowed scalar shrink must not reserve free:\n%s", diag.EmitAllToString())
@@ -295,7 +295,7 @@ fn shorten(values: &mut []Resource) {
 	shrink(values, 0);
 }`, `type Word = i32;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn BadFree(value: Word);`)
 	if !strings.Contains(diag.EmitAllToString(), "runtime requires fn(rawptr) -> void") {
 		t.Fatalf("expected owner-bearing shrink cleanup to reserve free:\n%s", diag.EmitAllToString())
@@ -310,21 +310,21 @@ fn main() {
 	let values = []i32{1};
 }`, `type Word = i32;
 
-fn printf(value: i32) {}
+fn peeper_rt_v1_printf(value: i32) {}
 
-#[extern("malloc")]
+#[extern("peeper_rt_v1_alloc")]
 fn BadMalloc(size: Word) -> rawptr;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn BadFree(value: Word);`)
 	out := diag.EmitAllToString()
-	for _, symbol := range []string{"malloc", "free"} {
+	for _, symbol := range []string{"peeper_rt_v1_alloc", "peeper_rt_v1_free"} {
 		message := "runtime symbol `" + symbol + "`"
 		if count := strings.Count(out, message); count != 1 {
 			t.Fatalf("expected one %s reservation diagnostic, got %d:\n%s", symbol, count, out)
 		}
 	}
-	if strings.Contains(out, "runtime symbol `printf`") {
+	if strings.Contains(out, "runtime symbol `peeper_rt_v1_printf`") {
 		t.Fatalf("module-mangled printf must not conflict with runtime symbol:\n%s", out)
 	}
 }

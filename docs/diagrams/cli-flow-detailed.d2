@@ -27,9 +27,9 @@ build: {
   target: "resolveBuildTarget"
   diagnostics: "emitAndCheckDiagnostics"
   artifacts: "saveIRs"
-  stage: "moduleArtifactBase / replaceArtifactTree"
+  stage: "moduleArtifactBase / replacePath"
   executable: "buildExecutable"
-  linkerArgs: "clangArgsForBuild"
+  linkerArgs: "toolchain.Profile object/link arguments"
   clang: "clang [external]"
 
   command -> args -> target -> compile.compileEntry -> diagnostics

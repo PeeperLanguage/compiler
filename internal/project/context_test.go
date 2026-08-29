@@ -30,7 +30,7 @@ func TestWithDiagnosticsSharesCompilerStateAndLock(t *testing.T) {
 
 func TestPackagedLibraryBaseForExecutableUsesSiblingLibsDir(t *testing.T) {
 	exePath := filepath.Join("/tmp", "peeper", "build", "bin", "peeper")
-	got := packagedLibraryBaseForExecutable(exePath)
+	got := filepath.Join(peeper.InstallationRootForExecutable(exePath), PACKAGED_LIBS_DIR)
 	want := filepath.Join("/tmp", "peeper", "build", "libs")
 	if got != want {
 		t.Fatalf("packaged library base = %q, want %q", got, want)

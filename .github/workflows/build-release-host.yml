@@ -1,0 +1,202 @@
+name: Build release host
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+      arch:
+        required: true
+        type: string
+      llvm-target:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      public-key:
+        required: true
+        type: string
+      minimum-macos:
+        required: false
+        type: string
+        default: "13.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Stage ${{ inputs.os }}-${{ inputs.arch }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_OS: ${{ inputs.os }}
+      RELEASE_ARCH: ${{ inputs.arch }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_PUBLIC_KEY: ${{ inputs.public-key }}
+      LLVM_TARGET: ${{ inputs.llvm-target }}
+      MINIMUM_MACOS: ${{ inputs.minimum-macos }}
+      CCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build compiler and bootstrap
+        run: |
+          test -n "$RELEASE_PUBLIC_KEY"
+          bash scripts/build.sh
+          expected="v$RELEASE_VERSION"
+          actual="$(build/bin/peeper${{ inputs.os == 'windows' && '.exe' || '' }} --version)"
+          test "$actual" = "$expected"
+          mkdir -p stage/install/bin stage/install/libs stage/bootstrap
+          cp "build/bin/peeper${{ inputs.os == 'windows' && '.exe' || '' }}" stage/install/bin/
+          cp -R build/libs/. stage/install/libs/
+          cp LICENSE stage/install/
+          manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${RELEASE_VERSION}/release-manifest.json"
+          go build -trimpath \
+            -ldflags="-s -w -X=main.releaseManifestURL=$manifest_url -X=main.releasePublicKeyHex=$RELEASE_PUBLIC_KEY" \
+            -o "stage/bootstrap/peeper-installer${{ inputs.os == 'windows' && '.exe' || '' }}" \
+            ./cmd/peeper-installer
+
+      - name: Prepare pinned Linux LLVM and musl
+        if: inputs.os == 'linux'
+        run: |
+          llvm_id="llvm-linux-$RELEASE_ARCH"
+          llvm_url="$(jq -er --arg id "$llvm_id" '.assets[] | select(.id == $id) | .url' distribution/toolchains.lock.json)"
+          llvm_size="$(jq -er --arg id "$llvm_id" '.assets[] | select(.id == $id) | .size' distribution/toolchains.lock.json)"
+          llvm_sha="$(jq -er --arg id "$llvm_id" '.assets[] | select(.id == $id) | .sha256' distribution/toolchains.lock.json)"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/llvm.tar.xz" "$llvm_url"
+          test "$(wc -c < "$RUNNER_TEMP/llvm.tar.xz")" -eq "$llvm_size"
+          printf '%s  %s\n' "$llvm_sha" "$RUNNER_TEMP/llvm.tar.xz" | sha256sum --check
+          mkdir -p stage/install/toolchains/native
+          tar -xJf "$RUNNER_TEMP/llvm.tar.xz" -C stage/install/toolchains/native --strip-components=1
+
+          musl_url="$(jq -er '.assets[] | select(.id == "musl-source") | .url' distribution/toolchains.lock.json)"
+          musl_size="$(jq -er '.assets[] | select(.id == "musl-source") | .size' distribution/toolchains.lock.json)"
+          musl_sha="$(jq -er '.assets[] | select(.id == "musl-source") | .sha256' distribution/toolchains.lock.json)"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/musl.tar.gz" "$musl_url"
+          test "$(wc -c < "$RUNNER_TEMP/musl.tar.gz")" -eq "$musl_size"
+          printf '%s  %s\n' "$musl_sha" "$RUNNER_TEMP/musl.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/musl-source"
+          tar -xzf "$RUNNER_TEMP/musl.tar.gz" -C "$RUNNER_TEMP/musl-source" --strip-components=1
+          triple="$(go env GOARCH | sed -e 's/^amd64$/x86_64/' -e 's/^arm64$/aarch64/')-unknown-linux-musl"
+          clang="$GITHUB_WORKSPACE/stage/install/toolchains/native/bin/clang"
+          (
+            cd "$RUNNER_TEMP/musl-source"
+            CC="$clang --target=$triple" ./configure --prefix=/ --target="$triple"
+            make -j2
+            make DESTDIR="$GITHUB_WORKSPACE/stage/install/toolchains/native/sysroot" install
+          )
+          mkdir -p stage/install/toolchains/native/licenses
+          cp "$RUNNER_TEMP/musl-source/COPYRIGHT" stage/install/toolchains/native/licenses/musl-COPYRIGHT
+          rm -rf stage/install/toolchains/native/include stage/install/toolchains/native/share stage/install/toolchains/native/lib/cmake
+          find stage/install/toolchains/native/lib -maxdepth 1 -type f -name '*.a' -delete
+
+      - name: Build pinned macOS LLVM
+        if: inputs.os == 'darwin'
+        run: |
+          source_url="$(jq -er '.assets[] | select(.id == "llvm-source") | .url' distribution/toolchains.lock.json)"
+          source_size="$(jq -er '.assets[] | select(.id == "llvm-source") | .size' distribution/toolchains.lock.json)"
+          source_sha="$(jq -er '.assets[] | select(.id == "llvm-source") | .sha256' distribution/toolchains.lock.json)"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/llvm-source.tar.xz" "$source_url"
+          test "$(wc -c < "$RUNNER_TEMP/llvm-source.tar.xz")" -eq "$source_size"
+          printf '%s  %s\n' "$source_sha" "$RUNNER_TEMP/llvm-source.tar.xz" | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/llvm-source"
+          tar -xJf "$RUNNER_TEMP/llvm-source.tar.xz" -C "$RUNNER_TEMP/llvm-source" --strip-components=1
+          cmake -G Ninja \
+            -S "$RUNNER_TEMP/llvm-source/llvm" \
+            -B "$RUNNER_TEMP/llvm-build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/stage/install/toolchains/native" \
+            '-DLLVM_ENABLE_PROJECTS=clang;lld' \
+            -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGET" \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF
+          cmake --build "$RUNNER_TEMP/llvm-build" --target install -j 2
+          mkdir -p stage/install/toolchains/native/licenses
+          cp "$RUNNER_TEMP/llvm-source/LICENSE.TXT" stage/install/toolchains/native/licenses/LLVM-LICENSE.txt
+          rm -rf stage/install/toolchains/native/include stage/install/toolchains/native/share stage/install/toolchains/native/lib/cmake
+          find stage/install/toolchains/native/lib -maxdepth 1 -type f -name '*.a' -delete
+
+      - name: Prepare pinned Windows llvm-mingw
+        if: inputs.os == 'windows'
+        run: |
+          asset_id="llvm-mingw-windows-$RELEASE_ARCH"
+          asset_url="$(jq -er --arg id "$asset_id" '.assets[] | select(.id == $id) | .url' distribution/toolchains.lock.json)"
+          asset_size="$(jq -er --arg id "$asset_id" '.assets[] | select(.id == $id) | .size' distribution/toolchains.lock.json)"
+          asset_sha="$(jq -er --arg id "$asset_id" '.assets[] | select(.id == $id) | .sha256' distribution/toolchains.lock.json)"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/llvm-mingw.zip" "$asset_url"
+          test "$(wc -c < "$RUNNER_TEMP/llvm-mingw.zip")" -eq "$asset_size"
+          printf '%s  %s\n' "$asset_sha" "$RUNNER_TEMP/llvm-mingw.zip" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/llvm-mingw" stage/install/toolchains/native
+          tar -xf "$RUNNER_TEMP/llvm-mingw.zip" -C "$RUNNER_TEMP/llvm-mingw"
+          extracted="$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$extracted"
+          cp -R "$extracted"/. stage/install/toolchains/native/
+          mkdir -p stage/install/toolchains/native/licenses
+          cp "$extracted/LICENSE.TXT" stage/install/toolchains/native/licenses/LLVM-MINGW-LICENSE.txt
+          rm -rf stage/install/toolchains/native/share
+
+      - name: Build target runtime
+        run: |
+          case "$RELEASE_OS/$RELEASE_ARCH" in
+            linux/amd64) triple=x86_64-unknown-linux-musl ;;
+            linux/arm64) triple=aarch64-unknown-linux-musl ;;
+            darwin/amd64) triple=x86_64-apple-darwin ;;
+            darwin/arm64) triple=aarch64-apple-darwin ;;
+            windows/amd64) triple=x86_64-w64-windows-gnu ;;
+            windows/arm64) triple=aarch64-w64-windows-gnu ;;
+            *) exit 1 ;;
+          esac
+          suffix=""
+          if [ "$RELEASE_OS" = windows ]; then suffix=.exe; fi
+          clang="$GITHUB_WORKSPACE/stage/install/toolchains/native/bin/clang$suffix"
+          archiver="$GITHUB_WORKSPACE/stage/install/toolchains/native/bin/llvm-ar$suffix"
+          runtime_dir="stage/install/targets/$triple/lib"
+          mkdir -p "$runtime_dir"
+          runtime_args=(-std=c11 -O2 -target "$triple")
+          if [ "$RELEASE_OS" = linux ]; then
+            runtime_args+=(--sysroot "$GITHUB_WORKSPACE/stage/install/toolchains/native/sysroot")
+          elif [ "$RELEASE_OS" = darwin ]; then
+            runtime_args+=(--sysroot "$(xcrun --sdk macosx --show-sdk-path)" "-mmacosx-version-min=$MINIMUM_MACOS")
+          fi
+          "$clang" "${runtime_args[@]}" -c runtime/peeper_rt.c -o "$RUNNER_TEMP/peeper_rt.o"
+          "$archiver" rcs "$runtime_dir/libpeeper_rt_v1.a" "$RUNNER_TEMP/peeper_rt.o"
+          go run ./cmd/release-profile \
+            -root stage/install \
+            -os "$RELEASE_OS" \
+            -arch "$RELEASE_ARCH" \
+            ${{ inputs.os == 'darwin' && format('-minimum-os {0}', inputs.minimum-macos) || '' }}
+
+      - name: Validate managed installation
+        run: |
+          compiler="$GITHUB_WORKSPACE/stage/install/bin/peeper${{ inputs.os == 'windows' && '.exe' || '' }}"
+          "$compiler" doctor --json
+          file "$compiler"
+          PEEPER_BIN="$compiler" go test -count=1 ./x_test
+
+      - name: Preserve staging tree
+        run: tar -czf "stage-$RELEASE_OS-$RELEASE_ARCH.tar.gz" -C stage install bootstrap
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage-${{ inputs.os }}-${{ inputs.arch }}
+          path: stage-${{ inputs.os }}-${{ inputs.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

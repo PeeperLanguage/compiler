@@ -12,6 +12,12 @@ import (
 	"compiler/internal/target"
 )
 
+const (
+	runtimeAllocSymbol  = "peeper_rt_v1_alloc"
+	runtimeFreeSymbol   = "peeper_rt_v1_free"
+	runtimePrintfSymbol = "peeper_rt_v1_printf"
+)
+
 // GenerateLLVMIR is backend entrypoint.
 // It emits module text in LLVM order: static data, helper itabs, declarations,
 // thunks, then function bodies. It also keeps one emitter state object so type
@@ -140,18 +146,18 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	}
 
 	hasDecl := false
-	freeDeclared := false
-	mallocDeclared := false
+	runtimeFreeDeclared := false
+	runtimeAllocDeclared := false
 	for _, fn := range mod.Funcs {
 		if fn == nil {
 			continue
 		}
 		name := ir.SanitizeSymbolName(fn.Name)
-		if name == "free" {
-			freeDeclared = freeDeclared || runtimeFreeDeclaration(mod.Types, fn)
+		if name == runtimeFreeSymbol {
+			runtimeFreeDeclared = runtimeFreeDeclared || runtimeFreeDeclaration(mod.Types, fn)
 		}
-		if name == "malloc" {
-			mallocDeclared = mallocDeclared || runtimeMallocDeclaration(mod.Types, fn)
+		if name == runtimeAllocSymbol {
+			runtimeAllocDeclared = runtimeAllocDeclared || runtimeAllocDeclaration(mod.Types, fn)
 		}
 		if fn.Blocks != nil {
 			continue
@@ -174,15 +180,15 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		b.WriteString("\n")
 	}
 	if printUsed {
-		b.WriteString("declare i32 @printf(i8*, ...)\n\n")
+		fmt.Fprintf(&b, "declare i32 @%s(i8*, ...)\n\n", runtimePrintfSymbol)
 	}
-	if (allocatorRuntimeUsed || freeRuntimeUsed) && !freeDeclared {
-		b.WriteString("declare void @free(i8*)\n\n")
+	if (allocatorRuntimeUsed || freeRuntimeUsed) && !runtimeFreeDeclared {
+		fmt.Fprintf(&b, "declare void @%s(i8*)\n\n", runtimeFreeSymbol)
 	}
 	if allocUsed || allocatorRuntimeUsed {
 		sizeType := emitter.layout(mod.Types.IndexType()).Text
-		if !mallocDeclared {
-			fmt.Fprintf(&b, "declare i8* @malloc(%s)\n", sizeType)
+		if !runtimeAllocDeclared {
+			fmt.Fprintf(&b, "declare i8* @%s(%s)\n", runtimeAllocSymbol, sizeType)
 		}
 		if allocUsed {
 			fmt.Fprintf(&b, "declare { %s, i1 } @llvm.umul.with.overflow.%s(%s, %s)\n\n", sizeType, sizeType, sizeType, sizeType)
@@ -197,7 +203,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 
 	decls := collectCallDecls(mod)
 	for _, decl := range decls {
-		if (allocUsed || allocatorRuntimeUsed) && ir.SanitizeSymbolName(decl.Name) == "malloc" {
+		if (allocUsed || allocatorRuntimeUsed) && ir.SanitizeSymbolName(decl.Name) == runtimeAllocSymbol {
 			continue
 		}
 		b.WriteString("declare ")
@@ -534,30 +540,30 @@ func ValidateRuntimeSymbols(modules []*mir.Module, diag *diagnostics.DiagnosticB
 				continue
 			}
 			switch ir.SanitizeSymbolName(fn.Name) {
-			case "printf":
+			case runtimePrintfSymbol:
 				if printUsed {
 					valid = false
 					if diag != nil {
 						diag.AddError(diagnostics.ErrRedeclaredSymbol,
-							"runtime symbol `printf` is reserved when print is used", fn.Location,
+							"runtime symbol `"+runtimePrintfSymbol+"` is reserved when print is used", fn.Location,
 							"conflicts with print runtime")
 					}
 				}
-			case "free":
+			case runtimeFreeSymbol:
 				if (allocatorRuntimeUsed || freeRuntimeUsed) && !runtimeFreeDeclaration(mod.Types, fn) {
 					valid = false
 					if diag != nil {
 						diag.AddError(diagnostics.ErrRedeclaredSymbol,
-							"runtime symbol `free` must have signature fn(rawptr) -> void", fn.Location,
+							"runtime symbol `"+runtimeFreeSymbol+"` must have signature fn(rawptr) -> void", fn.Location,
 							"runtime requires fn(rawptr) -> void")
 					}
 				}
-			case "malloc":
-				if (allocUsed || allocatorRuntimeUsed) && !runtimeMallocDeclaration(mod.Types, fn) {
+			case runtimeAllocSymbol:
+				if (allocUsed || allocatorRuntimeUsed) && !runtimeAllocDeclaration(mod.Types, fn) {
 					valid = false
 					if diag != nil {
 						diag.AddError(diagnostics.ErrRedeclaredSymbol,
-							"runtime symbol `malloc` must have signature fn(usize) -> rawptr", fn.Location,
+							"runtime symbol `"+runtimeAllocSymbol+"` must have signature fn(usize) -> rawptr", fn.Location,
 							"runtime requires fn(usize) -> rawptr")
 					}
 				}
@@ -601,7 +607,7 @@ func runtimeFreeDeclaration(types *ir.TypeTable, fn *mir.Function) bool {
 	return isVoidType(types, fn.ReturnType) && isTypeKind(types, fn.Params[0].Type, ir.TypeRawPtr)
 }
 
-func runtimeMallocDeclaration(types *ir.TypeTable, fn *mir.Function) bool {
+func runtimeAllocDeclaration(types *ir.TypeTable, fn *mir.Function) bool {
 	if fn == nil || fn.Blocks != nil || len(fn.Params) != 1 {
 		return false
 	}
@@ -707,7 +713,7 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 	fmt.Fprintf(b, "define internal i8* @peeper_default_alloc_fn(i8* %%ctx, %s %%size, i32 %%align) {\n", sizeType)
 	lb := newLLVMBuilder(b, emitter, -1)
 	lb.namedLabel("entry")
-	ptr := lb.call(lb.value("@malloc", llvmFunctionLayout(rawPointer, []*llvmLayout{sizeLayout})), []llvmValue{lb.value("%size", sizeLayout)})
+	ptr := lb.call(lb.value("@"+runtimeAllocSymbol, llvmFunctionLayout(rawPointer, []*llvmLayout{sizeLayout})), []llvmValue{lb.value("%size", sizeLayout)})
 	isNull := lb.compare("icmp", "eq", ptr, lb.value("null", rawPointer))
 	lb.condBranch(isNull, "trap", "done")
 	lb.namedLabel("trap")
@@ -719,7 +725,7 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 	fmt.Fprintf(b, "define internal void @peeper_default_free_fn(i8* %%ctx, i8* %%ptr, %s %%size, i32 %%align) {\n", sizeType)
 	lb = newLLVMBuilder(b, emitter, -1)
 	lb.namedLabel("entry")
-	lb.call(lb.value("@free", llvmFunctionLayout(void, []*llvmLayout{rawPointer})), []llvmValue{lb.value("%ptr", rawPointer)})
+	lb.call(lb.value("@"+runtimeFreeSymbol, llvmFunctionLayout(void, []*llvmLayout{rawPointer})), []llvmValue{lb.value("%ptr", rawPointer)})
 	lb.retVoid(void)
 	b.WriteString("}\n\n")
 }

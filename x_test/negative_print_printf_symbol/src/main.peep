@@ -1,5 +1,5 @@
-#[extern]
-fn printf() -> i32;
+#[extern("peeper_rt_v1_printf")]
+fn RuntimePrintf() -> i32;
 
 fn main() -> i32 {
     print(1);

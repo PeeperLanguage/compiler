@@ -2,11 +2,11 @@ const stdin:  i32 = 0;
 const stdout: i32 = 1;
 const stderr: i32 = 2;
 
-#[extern]
+#[extern("peeper_rt_v1_write")]
 fn write(fd: i32, buf: cstr, n: i32) -> i32;
 
-#[extern]
+#[extern("peeper_rt_v1_read")]
 fn read(fd: i32,  buf: cstr, n: i32) -> i32;
 
-#[extern]
+#[extern("peeper_rt_v1_exit")]
 fn exit(code: i32);

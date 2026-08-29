@@ -28,9 +28,9 @@ var llvmTriples = map[targetKey]string{
 	{OS: "ios", Arch: "amd64"}:       "x86_64-apple-ios",
 	{OS: "ios", Arch: "arm64"}:       "aarch64-apple-ios",
 	{OS: "linux", Arch: "386"}:       "i386-unknown-linux-gnu",
-	{OS: "linux", Arch: "amd64"}:     "x86_64-unknown-linux-gnu",
+	{OS: "linux", Arch: "amd64"}:     "x86_64-unknown-linux-musl",
 	{OS: "linux", Arch: "arm"}:       "arm-unknown-linux-gnu",
-	{OS: "linux", Arch: "arm64"}:     "aarch64-unknown-linux-gnu",
+	{OS: "linux", Arch: "arm64"}:     "aarch64-unknown-linux-musl",
 	{OS: "linux", Arch: "loong64"}:   "loongarch64-unknown-linux-gnu",
 	{OS: "linux", Arch: "mips"}:      "mips-unknown-linux-gnu",
 	{OS: "linux", Arch: "mips64"}:    "mips64-unknown-linux-gnu",
@@ -53,8 +53,27 @@ var llvmTriples = map[targetKey]string{
 	{OS: "solaris", Arch: "amd64"}:   "x86_64-sun-solaris",
 	{OS: "wasip1", Arch: "wasm"}:     "wasm32-unknown-wasi",
 	{OS: "windows", Arch: "386"}:     "i386-pc-windows-msvc",
-	{OS: "windows", Arch: "amd64"}:   "x86_64-pc-windows-msvc",
-	{OS: "windows", Arch: "arm64"}:   "aarch64-pc-windows-msvc",
+	{OS: "windows", Arch: "amd64"}:   "x86_64-w64-windows-gnu",
+	{OS: "windows", Arch: "arm64"}:   "aarch64-w64-windows-gnu",
+}
+
+// SystemLLVMTriple returns the host ABI expected by an unmanaged system Clang.
+func SystemLLVMTriple(targetOS, targetArch string) (string, error) {
+	targetOS = NormalizeOS(targetOS)
+	targetArch = NormalizeArch(targetArch)
+	key := targetKey{OS: targetOS, Arch: targetArch}
+	switch key {
+	case targetKey{OS: "linux", Arch: "amd64"}:
+		return "x86_64-unknown-linux-gnu", nil
+	case targetKey{OS: "linux", Arch: "arm64"}:
+		return "aarch64-unknown-linux-gnu", nil
+	case targetKey{OS: "windows", Arch: "amd64"}:
+		return "x86_64-pc-windows-msvc", nil
+	case targetKey{OS: "windows", Arch: "arm64"}:
+		return "aarch64-pc-windows-msvc", nil
+	default:
+		return LLVMTriple(targetOS, targetArch)
+	}
 }
 
 // LLVMTriple returns the canonical LLVM target triple for a normalized GOOS/GOARCH pair.

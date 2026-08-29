@@ -8,8 +8,41 @@ permissions:
   contents: read
 
 jobs:
-  go:
-    runs-on: ubuntu-latest
+  native:
+    name: Native (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            exe: ""
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            exe: ""
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+            exe: ""
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            exe: ""
+          - runner: windows-2025
+            os: windows
+            arch: amd64
+            exe: .exe
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+            exe: .exe
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v7
@@ -17,6 +50,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Check formatting
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
         run: |
           unformatted="$(gofmt -l $(git ls-files '*.go'))"
           if [ -n "$unformatted" ]; then
@@ -27,18 +61,25 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
-      - name: Race test
-        run: go test -race ./...
+      - name: Build compiler bundle
+        env:
+          CCACHE_DISABLE: "1"
+        run: bash scripts/build.sh
+      - name: Diagnose installation
+        run: "build/bin/peeper${{ matrix.exe }} doctor --json"
+      - name: Run source fixtures
+        env:
+          PEEPER_BIN: ${{ github.workspace }}/build/bin/peeper${{ matrix.exe }}
+        run: go test -count=1 ./x_test
 
-  fixtures:
-    runs-on: ubuntu-latest
+  race:
+    name: Race detector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - name: Bundle compiler
-        run: go run ./scripts/bundle.go
-      - name: Run source fixtures
-        run: PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
+      - run: go test -race ./...

@@ -1,4 +1,4 @@
 type Word = i32;
 
-#[extern("free")]
+#[extern("peeper_rt_v1_free")]
 fn BadFree(value: Word);

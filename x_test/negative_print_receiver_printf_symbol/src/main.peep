@@ -1,6 +1,6 @@
 struct Printer {}
 
-#[extern("printf")]
+#[extern("peeper_rt_v1_printf")]
 fn (_: &Printer) output(value: cstr);
 
 fn main() -> i32 {

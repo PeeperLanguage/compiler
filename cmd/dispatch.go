@@ -84,6 +84,7 @@ var commandRegistry = []commandDefinition{
 	{Name: "list", Aliases: []string{"ls"}, Usage: "list|ls", Description: "list direct and transitive dependencies", Handler: cli.ListCommand},
 	{Name: "cleanup", Aliases: []string{"clean"}, Usage: "cleanup|clean", Description: "remove orphaned cached dependencies", Handler: cli.CleanupCommand},
 	{Name: "orphans", Usage: "orphans", Description: "list orphaned cache and lock entries", Handler: cli.OrphansCommand},
+	{Name: "doctor", Usage: "doctor [--json]", Description: "check compiler installation and native toolchain", MaxArgs: unboundedArgs, Handler: doctorCommand},
 	{Name: "lsp", Usage: "lsp", Description: "start language server", Handler: lspCommand},
 }
 
