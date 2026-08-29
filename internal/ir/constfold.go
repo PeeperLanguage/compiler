@@ -56,6 +56,13 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			}
 		}
 		return &Binary{Op: node.Op, Left: left, Right: right, Type: node.Type, SourceInfo: node.SourceInfo}
+	case *StringConcat:
+		return &StringConcat{
+			Left:       FoldExpr(types, node.Left, env),
+			Right:      FoldExpr(types, node.Right, env),
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
+		}
 	case *Call:
 		return &Call{
 			Callee:     FoldExpr(types, node.Callee, env),
@@ -73,6 +80,13 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return &Len{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *StringChars:
 		return &StringChars{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
+	case *StringFromBytes:
+		return &StringFromBytes{
+			Bytes:      FoldExpr(types, node.Bytes, env),
+			Allocator:  FoldExpr(types, node.Allocator, env),
+			Type:       node.Type,
+			SourceInfo: node.SourceInfo,
+		}
 	case *SliceView:
 		return &SliceView{
 			Source:       FoldPlace(types, node.Source, env),

@@ -6,6 +6,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -107,6 +108,11 @@ func (a *analyzer) checkExpr(
 	case *ast.UnaryExpr:
 		a.checkExpr(scope, e.Expr, st, useRead, loans, false)
 	case *ast.BinaryExpr:
+		if _, concat := a.module.Semantics.StringConcatenations[e.ID()]; concat {
+			a.checkExpr(scope, e.Left, st, useConsume, loans, false)
+			a.checkExpr(scope, e.Right, st, useRead, loans, false)
+			return
+		}
 		a.checkExpr(scope, e.Left, st, useRead, loans, false)
 		a.checkExpr(scope, e.Right, st, useRead, loans, false)
 	case *ast.IsExpr:
@@ -273,6 +279,21 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 					use = useConsume
 				}
 				a.checkExpr(scope, arg, st, use, loans, false)
+			}
+			return
+		}
+		if sym != nil && sym.CompilerOp == symbols.CompilerOpFromBytes {
+			definition, found := intrinsics.LookupFunction(sym.CompilerOp)
+			if !found {
+				panic("missing from_bytes intrinsic definition")
+			}
+			fn := definition.Signature(nil, a.ctx.Target)
+			for i, arg := range call.Args {
+				if i >= len(fn.Params) {
+					a.checkExpr(scope, arg, st, useRead, loans, false)
+					continue
+				}
+				a.checkCallArgument(scope, arg, fn.Params[i], call, st, loans)
 			}
 			return
 		}

@@ -322,6 +322,21 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	if typeinfo.IsInvalidOrUnknown(left) || typeinfo.IsInvalidOrUnknown(right) {
 		return &typeinfo.InvalidType{}
 	}
+	if node.Op == "+" {
+		_, leftString := typeinfo.Underlying(left).(*typeinfo.StringType)
+		_, rightString := typeinfo.Underlying(right).(*typeinfo.StringType)
+		leftView, rightView := isStringView(left), isStringView(right)
+		if leftString || rightString || leftView || rightView {
+			wantRight := &typeinfo.RefType{Target: &typeinfo.StringType{}}
+			if leftString && typeinfo.SameType(right, wantRight) {
+				c.module.Semantics.StringConcatenations[node.ID()] = struct{}{}
+				return &typeinfo.StringType{}
+			}
+			c.ctx.Diagnostics.Add(invalidOperationError(node,
+				"string concatenation requires owned `str` on left and borrowed `&str` on right"))
+			return &typeinfo.InvalidType{}
+		}
+	}
 	leftBase, rightBase := left, right
 	if c.module != nil && c.module.Semantics != nil {
 		if typ := c.module.Semantics.ExprTypes[node.Left.ID()]; typ != nil {

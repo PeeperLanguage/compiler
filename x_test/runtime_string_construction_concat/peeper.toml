@@ -1,0 +1,7 @@
+name = "runtime_string_construction_concat"
+build = "program"
+entry = "src/main.peep"
+
+[test]
+mode = "run"
+outcome = "success"

@@ -174,6 +174,13 @@ type Binary struct {
 	Location *source.Location
 }
 
+type StringConcat struct {
+	Left     ValueRef
+	Right    ValueRef
+	Type     ir.TypeID
+	Location *source.Location
+}
+
 type Move struct {
 	Src      ValueRef
 	Type     ir.TypeID
@@ -242,6 +249,13 @@ type StringChars struct {
 	Value    ValueRef
 	Type     ir.TypeID
 	Location *source.Location
+}
+
+type StringFromBytes struct {
+	Bytes     ValueRef
+	Allocator ValueRef
+	Type      ir.TypeID
+	Location  *source.Location
 }
 
 type Field struct {
@@ -365,6 +379,7 @@ func (i *Ret) Text() string {
 
 func (*Unary) valueExprNode()             {}
 func (*Binary) valueExprNode()            {}
+func (*StringConcat) valueExprNode()      {}
 func (*Move) valueExprNode()              {}
 func (*Cast) valueExprNode()              {}
 func (*AddrOf) valueExprNode()            {}
@@ -372,6 +387,7 @@ func (*SliceView) valueExprNode()         {}
 func (*Load) valueExprNode()              {}
 func (*Len) valueExprNode()               {}
 func (*StringChars) valueExprNode()       {}
+func (*StringFromBytes) valueExprNode()   {}
 func (*Field) valueExprNode()             {}
 func (*StructLit) valueExprNode()         {}
 func (*ArrayLit) valueExprNode()          {}
@@ -399,6 +415,7 @@ func (r *RefName) SourceLocation() *source.Location           { return r.Locatio
 func (v *StringLiteral) SourceLocation() *source.Location     { return v.Location }
 func (v *Unary) SourceLocation() *source.Location             { return v.Location }
 func (v *Binary) SourceLocation() *source.Location            { return v.Location }
+func (v *StringConcat) SourceLocation() *source.Location      { return v.Location }
 func (v *Move) SourceLocation() *source.Location              { return v.Location }
 func (v *Cast) SourceLocation() *source.Location              { return v.Location }
 func (v *AddrOf) SourceLocation() *source.Location            { return v.Location }
@@ -406,6 +423,7 @@ func (v *SliceView) SourceLocation() *source.Location         { return v.Locatio
 func (v *Load) SourceLocation() *source.Location              { return v.Location }
 func (v *Len) SourceLocation() *source.Location               { return v.Location }
 func (v *StringChars) SourceLocation() *source.Location       { return v.Location }
+func (v *StringFromBytes) SourceLocation() *source.Location   { return v.Location }
 func (v *Field) SourceLocation() *source.Location             { return v.Location }
 func (v *StructLit) SourceLocation() *source.Location         { return v.Location }
 func (v *ArrayLit) SourceLocation() *source.Location          { return v.Location }
@@ -429,7 +447,10 @@ func (v *StringLiteral) Text() string {
 func (v *Move) Text() string   { return v.Src.Text() }
 func (v *Unary) Text() string  { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
 func (v *Binary) Text() string { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
-func (v *Cast) Text() string   { return fmt.Sprintf("cast %s to type#%d", v.Arg.Text(), v.Type) }
+func (v *StringConcat) Text() string {
+	return fmt.Sprintf("concat %s, %s", v.Left.Text(), v.Right.Text())
+}
+func (v *Cast) Text() string { return fmt.Sprintf("cast %s to type#%d", v.Arg.Text(), v.Type) }
 func (p *Place) Text() string {
 	if p == nil || p.Root == nil {
 		return ""
@@ -467,6 +488,12 @@ func (v *Load) Text() string { return fmt.Sprintf("load %s", v.Place.Text()) }
 func (v *Len) Text() string  { return fmt.Sprintf("len %s", v.Value.Text()) }
 func (v *StringChars) Text() string {
 	return fmt.Sprintf("chars %s", v.Value.Text())
+}
+func (v *StringFromBytes) Text() string {
+	if v.Allocator != nil {
+		return fmt.Sprintf("from_bytes %s, %s", v.Bytes.Text(), v.Allocator.Text())
+	}
+	return "from_bytes " + v.Bytes.Text()
 }
 func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
 

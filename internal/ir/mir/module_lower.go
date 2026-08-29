@@ -669,6 +669,15 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+	case *ir.StringConcat:
+		left := l.lowerExpr(e.Left, out)
+		right := l.lowerExpr(e.Right, out)
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &StringConcat{
+			Left: left, Right: right, Type: e.TypeID(), Location: e.Origin().Location,
+		}})
+		l.appendInstr(out, &Drop{Value: left, Location: e.Left.Origin().Location})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Call:
 		callee := l.lowerExpr(e.Callee, out)
 		args := make([]ValueRef, 0, len(e.Args))
@@ -716,6 +725,17 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &StringChars{
 			Value: value, Type: e.TypeID(), Location: e.Origin().Location,
+		}})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+	case *ir.StringFromBytes:
+		bytes := l.lowerExpr(e.Bytes, out)
+		var allocator ValueRef
+		if e.Allocator != nil {
+			allocator = l.lowerExpr(e.Allocator, out)
+		}
+		name := l.nextTemp()
+		l.appendInstr(out, &Assign{Name: name, Value: &StringFromBytes{
+			Bytes: bytes, Allocator: allocator, Type: e.TypeID(), Location: e.Origin().Location,
 		}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.AddrOf:

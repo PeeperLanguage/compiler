@@ -1,0 +1,19 @@
+fn OwnedRight(left: str, right: str) {
+    let _ = left + right;
+}
+
+fn BorrowedLeft(left: str, right: str) {
+    let _ = &left + &right;
+}
+
+fn WrongSource(values: &[..]i32) {
+    let _ = from_bytes(values);
+}
+
+fn WrongAllocator(values: &[..]byte) {
+    let _ = from_bytes(values, 1);
+}
+
+fn MissingSource() {
+    let _ = from_bytes();
+}

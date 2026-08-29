@@ -652,6 +652,10 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 					continue
 				}
 				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
+					switch assign.Value.(type) {
+					case *mir.StringFromBytes, *mir.StringConcat:
+						allocatorRuntimeUsed = true
+					}
 					if _, ok := assign.Value.(*mir.Alloc); ok {
 						allocatorRuntimeUsed = true
 						dropUsed = true

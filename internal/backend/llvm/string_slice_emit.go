@@ -204,6 +204,121 @@ func emitStringDataAndLength(b *llvmBuilder, value llvmValue) (llvmValue, llvmVa
 	return b.extractField(value, llvmFieldData), b.extractField(value, llvmFieldLength)
 }
 
+func emitStringFromBytes(b *llvmBuilder, value *mir.StringFromBytes) llvmValue {
+	resultLayout := b.emitter.layout(value.Type)
+	resultType, resultOK := b.emitter.mod.Types.Type(value.Type)
+	refType, refOK := b.emitter.mod.Types.Type(mirRefType(value.Bytes))
+	if !resultOK || resultType.Kind != ir.TypeString || !refOK || refType.Kind != ir.TypeReference {
+		b.emitter.markInvalid("from_bytes requires byte-slice reference and string result")
+		return b.zero(resultLayout)
+	}
+	sliceType, sliceOK := b.emitter.mod.Types.Type(refType.Elem)
+	elemType, elemOK := b.emitter.mod.Types.Type(sliceType.Elem)
+	if !sliceOK || sliceType.Kind != ir.TypeSlice || !elemOK || elemType.Kind != ir.TypeByte {
+		b.emitter.markInvalid("from_bytes requires byte-slice reference")
+		return b.zero(resultLayout)
+	}
+
+	data, length := emitStringDataAndLength(b, emitRef(b, value.Bytes))
+	emitUTF8ValidateAndCount(b, data, emitTargetIndexAsI64(b, length))
+	allocator := allocatorHandleFromRef(b, value.Allocator)
+	storage := emitStringStorage(b, length, allocator)
+	emitByteCopy(b, storage, data, length)
+	return emitStringCarrier(b, value.Type, storage, length, allocator)
+}
+
+func emitStringConcat(b *llvmBuilder, value *mir.StringConcat) llvmValue {
+	resultLayout := b.emitter.layout(value.Type)
+	resultType, resultOK := b.emitter.mod.Types.Type(value.Type)
+	leftType, leftOK := b.emitter.mod.Types.Type(mirRefType(value.Left))
+	rightRef, rightOK := b.emitter.mod.Types.Type(mirRefType(value.Right))
+	if !resultOK || resultType.Kind != ir.TypeString || !leftOK || leftType.Kind != ir.TypeString ||
+		!rightOK || rightRef.Kind != ir.TypeReference || rightRef.Elem != mirRefType(value.Left) {
+		b.emitter.markInvalid("string concatenation requires owned string and borrowed string")
+		return b.zero(resultLayout)
+	}
+
+	left := emitRef(b, value.Left)
+	right := emitRef(b, value.Right)
+	leftData, leftLength := emitStringDataAndLength(b, left)
+	rightData, rightLength := emitStringDataAndLength(b, right)
+	length := b.arithmetic("add", leftLength, rightLength)
+	overflow := b.compare("icmp", "ult", length, leftLength)
+	id := b.nextID
+	b.nextID++
+	failLabel := fmt.Sprintf("string_concat_length_fail_%d", id)
+	readyLabel := fmt.Sprintf("string_concat_length_ready_%d", id)
+	b.condBranch(overflow, failLabel, readyLabel)
+	b.namedLabel(failLabel)
+	b.trap()
+	b.namedLabel(readyLabel)
+
+	leftAllocator := b.extractField(left, llvmFieldAllocator)
+	staticLeft := b.compare("icmp", "eq", leftAllocator, b.value("null", leftAllocator.Layout))
+	allocator := b.selectValue(staticLeft, emitDefaultAllocatorHandle(b), leftAllocator)
+	storage := emitStringStorage(b, length, allocator)
+	emitByteCopy(b, storage, leftData, leftLength)
+	rightDestination := b.pointerValue(b.gep(b.pointerPlace(storage), leftLength, false))
+	emitByteCopy(b, rightDestination, rightData, rightLength)
+	return emitStringCarrier(b, value.Type, storage, length, allocator)
+}
+
+func emitStringStorage(b *llvmBuilder, length, allocator llvmValue) llvmValue {
+	id := b.nextID
+	b.nextID++
+	emptyLabel := fmt.Sprintf("runtime_string_empty_%d", id)
+	allocateLabel := fmt.Sprintf("runtime_string_allocate_%d", id)
+	readyLabel := fmt.Sprintf("runtime_string_ready_%d", id)
+	empty := b.compare("icmp", "eq", length, b.value("0", length.Layout))
+	b.condBranch(empty, emptyLabel, allocateLabel)
+	b.namedLabel(emptyLabel)
+	b.branch(readyLabel)
+	emptyBlock := b.currentLabel
+	b.namedLabel(allocateLabel)
+	allocated := emitAllocatorAllocate(b, allocator, length, b.value("1", llvmScalarLayout("i32")))
+	b.branch(readyLabel)
+	allocatedBlock := b.currentLabel
+	b.namedLabel(readyLabel)
+	return b.phi(allocated.Layout,
+		llvmIncoming{Value: b.value("null", allocated.Layout), Label: emptyBlock},
+		llvmIncoming{Value: allocated, Label: allocatedBlock},
+	)
+}
+
+func emitByteCopy(b *llvmBuilder, destination, source, length llvmValue) {
+	id := b.nextID
+	b.nextID++
+	entryLabel := b.currentLabel
+	loopLabel := fmt.Sprintf("byte_copy_loop_%d", id)
+	bodyLabel := fmt.Sprintf("byte_copy_body_%d", id)
+	continueLabel := fmt.Sprintf("byte_copy_continue_%d", id)
+	doneLabel := fmt.Sprintf("byte_copy_done_%d", id)
+	b.branch(loopLabel)
+	b.namedLabel(loopLabel)
+	nextIndex := b.nextValue(length.Layout)
+	index := b.nextValue(length.Layout)
+	b.definePhi(index,
+		llvmIncoming{Value: b.value("0", length.Layout), Label: entryLabel},
+		llvmIncoming{Value: nextIndex, Label: continueLabel},
+	)
+	more := b.compare("icmp", "ult", index, length)
+	b.condBranch(more, bodyLabel, doneLabel)
+	b.namedLabel(bodyLabel)
+	byteValue := b.load(b.gep(b.pointerPlace(source), index, false))
+	b.store(b.gep(b.pointerPlace(destination), index, false), byteValue)
+	b.branch(continueLabel)
+	b.namedLabel(continueLabel)
+	b.defineArithmetic(nextIndex, "add", index, b.value("1", length.Layout))
+	b.branch(loopLabel)
+	b.namedLabel(doneLabel)
+}
+
+func emitStringCarrier(b *llvmBuilder, typeID ir.TypeID, data, length, allocator llvmValue) llvmValue {
+	carrier := b.insertField(b.zero(b.emitter.layout(typeID)), data, llvmFieldData)
+	carrier = b.insertField(carrier, length, llvmFieldLength)
+	return b.insertField(carrier, allocator, llvmFieldAllocator)
+}
+
 func emitStringEqual(b *llvmBuilder, left, right llvmValue) llvmValue {
 	leftData, leftLength := emitStringDataAndLength(b, left)
 	rightData, rightLength := emitStringDataAndLength(b, right)
@@ -382,7 +497,7 @@ func emitStringChars(b *llvmBuilder, chars *mir.StringChars) llvmValue {
 	data, length := emitStringDataAndLength(b, emitRef(b, chars.Value))
 	lengthI64 := emitTargetIndexAsI64(b, length)
 	indexLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
-	count := emitUTF8CodepointCount(b, data, lengthI64)
+	count := emitUTF8ValidateAndCount(b, data, lengthI64)
 	id := b.nextID
 	b.nextID++
 	countForHeader := count
@@ -446,14 +561,14 @@ func emitStringCharsFill(b *llvmBuilder, data, length, charData, count llvmValue
 	return emitDynamicArrayHeader(b, arrayType, charData, count, count, allocator)
 }
 
-func emitUTF8CodepointCount(b *llvmBuilder, data, length llvmValue) llvmValue {
+func emitUTF8ValidateAndCount(b *llvmBuilder, data, length llvmValue) llvmValue {
 	id := b.nextID
 	b.nextID++
 	entryLabel := b.currentLabel
-	loopLabel := fmt.Sprintf("utf8_count_loop_%d", id)
-	bodyLabel := fmt.Sprintf("utf8_count_body_%d", id)
-	continueLabel := fmt.Sprintf("utf8_count_continue_%d", id)
-	doneLabel := fmt.Sprintf("utf8_count_done_%d", id)
+	loopLabel := fmt.Sprintf("utf8_validate_loop_%d", id)
+	bodyLabel := fmt.Sprintf("utf8_validate_body_%d", id)
+	continueLabel := fmt.Sprintf("utf8_validate_continue_%d", id)
+	doneLabel := fmt.Sprintf("utf8_validate_done_%d", id)
 	b.branch(loopLabel)
 	b.namedLabel(loopLabel)
 	i64 := llvmScalarLayout("i64")

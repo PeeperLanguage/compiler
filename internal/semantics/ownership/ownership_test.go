@@ -2049,3 +2049,40 @@ fn valid(mut value: i32) {
 		t.Fatalf("unexpected returned-call loan diagnostics:\n%s", result.EmitAllToString())
 	}
 }
+
+func TestStringConcatenationConsumesLeftAndPreservesRight(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn Join(left: str, right: str) -> str {
+	let joined = left + &right;
+	println(right);
+	return joined;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected string concatenation ownership diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestStringConcatenationRejectsLeftReuse(t *testing.T) {
+	diag := checkOwnershipSource(t, `fn Bad(left: str, right: str) {
+	let joined = left + &right;
+	println(left);
+	println(joined);
+}`)
+	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected consumed-left diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestStringConcatenationSelfAssignmentDoesNotPlanSecondDrop(t *testing.T) {
+	result := checkOwnershipSource(t, `fn Extend(mut text: str, suffix: str) -> str {
+	text = text + &suffix;
+	return text;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected self-assignment diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
+	assignment := fn.Body.Stmts[0].(*ast.AssignStmt)
+	if _, planned := cleanupPlanForFunction(t, result, fn).BeforeAssign[ir.NodeID(assignment.ID())]; planned {
+		t.Fatal("self-assignment planned a second drop after concatenation consumed the target")
+	}
+}

@@ -82,6 +82,8 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 				return c.typeCollectionCall(scope, node, definition)
 			case intrinsics.FunctionDynamicArrayOwner:
 				return c.typeDynamicArrayOwnerCall(scope, node, definition)
+			case intrinsics.FunctionFromBytes:
+				return c.typeFromBytesCall(scope, node, definition)
 			default:
 				panic(fmt.Sprintf("unsupported intrinsic function kind %d for %q", definition.Kind, definition.Operation))
 			}
@@ -102,6 +104,31 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 	}
 	c.checkCall(scope, nil, node, calleeType, argTypes)
 	return c.callReturnType(node, calleeType)
+}
+
+func (c *checker) typeFromBytesCall(scope *symbols.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
+	if !c.checkOptionalAllocatorArity(scope, node) {
+		return &typeinfo.InvalidType{}
+	}
+
+	fnType := definition.Signature(nil, c.ctx.Target)
+	if fnType == nil {
+		panic("missing from_bytes signature")
+	}
+	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
+	bytesType := c.typeExpr(scope, node.Args[0], fnType.Params[0])
+	if !typeinfo.IsInvalidOrUnknown(bytesType) && !typeinfo.SameType(bytesType, fnType.Params[0]) {
+		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
+			"`from_bytes` requires a shared byte-slice view `&[..]byte`"))
+	}
+	if len(node.Args) == 2 {
+		allocatorType := c.typeExpr(scope, node.Args[1], fnType.Params[1])
+		if !typeinfo.IsInvalidOrUnknown(allocatorType) && !c.assignable(fnType.Params[1], allocatorType, node.Args[1]) {
+			c.ctx.Diagnostics.Add(typeMismatchError(node.Args[1],
+				fmt.Sprintf("cannot implicitly convert %s to Allocator", typeinfo.TypeText(allocatorType))))
+		}
+	}
+	return fnType.Return
 }
 
 func (c *checker) typeCollectionCall(scope *symbols.Scope, node *ast.CallExpr, definition intrinsics.FunctionDefinition) typeinfo.Type {
@@ -187,21 +214,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.Call
 }
 
 func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
-	const minArgs, maxArgs = 1, 2
-	argCount := len(node.Args)
-	if argCount < minArgs || argCount > maxArgs {
-		for _, arg := range node.Args {
-			c.typeExpr(scope, arg, nil)
-		}
-		wantArgs := maxArgs
-		if argCount < minArgs {
-			wantArgs = minArgs
-		}
-		if node.Piped {
-			argCount--
-			wantArgs--
-		}
-		c.ctx.Diagnostics.Add(wrongArgumentCountError(node, argCount, wantArgs))
+	if !c.checkOptionalAllocatorArity(scope, node) {
 		return &typeinfo.InvalidType{}
 	}
 
@@ -233,6 +246,27 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 	}
 
 	return &typeinfo.OwnedPtrType{Target: valueType}
+}
+
+func (c *checker) checkOptionalAllocatorArity(scope *symbols.Scope, node *ast.CallExpr) bool {
+	const minArgs, maxArgs = 1, 2
+	argCount := len(node.Args)
+	if argCount >= minArgs && argCount <= maxArgs {
+		return true
+	}
+	for _, arg := range node.Args {
+		c.typeExpr(scope, arg, nil)
+	}
+	wantArgs := maxArgs
+	if argCount < minArgs {
+		wantArgs = minArgs
+	}
+	if node.Piped {
+		argCount--
+		wantArgs--
+	}
+	c.ctx.Diagnostics.Add(wrongArgumentCountError(node, argCount, wantArgs))
+	return false
 }
 
 func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {

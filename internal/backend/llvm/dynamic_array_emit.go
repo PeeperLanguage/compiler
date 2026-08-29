@@ -36,15 +36,6 @@ func emitDynamicArrayAlloc(b *llvmBuilder, alloc *mir.DynamicArrayAlloc) llvmVal
 func emitDynamicArrayStorageAlloc(b *llvmBuilder, elemType ir.TypeID, capacity, allocator llvmValue) llvmValue {
 	size := emitAllocatorStorageSize(b, elemType, capacity)
 	raw := emitAllocatorAllocate(b, allocator, size, b.value("8", llvmScalarLayout("i32")))
-	missing := b.compare("icmp", "eq", raw, b.value("null", raw.Layout))
-	id := b.nextID
-	b.nextID++
-	failLabel := fmt.Sprintf("array_alloc_fail_%d", id)
-	readyLabel := fmt.Sprintf("array_alloc_ready_%d", id)
-	b.condBranch(missing, failLabel, readyLabel)
-	b.namedLabel(failLabel)
-	b.trap()
-	b.namedLabel(readyLabel)
 	return b.bitcast(raw, llvmPointerLayout(b.emitter.layout(elemType)))
 }
 
@@ -70,15 +61,6 @@ func emitAlloc(b *llvmBuilder, e *mir.Alloc) llvmValue {
 	zeroSize := b.compare("icmp", "eq", size, b.value("0", sizeLayout))
 	normSize := b.selectValue(zeroSize, b.value("1", sizeLayout), size)
 	raw := emitAllocatorAllocate(b, allocReg, normSize, b.value("8", llvmScalarLayout("i32")))
-	isNull := b.compare("icmp", "eq", raw, b.value("null", raw.Layout))
-	id := b.nextID
-	b.nextID++
-	failLabel := fmt.Sprintf("alloc_fail_%d", id)
-	doneLabel := fmt.Sprintf("alloc_done_%d", id)
-	b.condBranch(isNull, failLabel, doneLabel)
-	b.namedLabel(failLabel)
-	b.trap()
-	b.namedLabel(doneLabel)
 
 	dataPtr := b.bitcast(raw, llvmPointerLayout(targetLayout))
 	b.store(b.pointerPlace(dataPtr), emitRef(b, e.Value))
