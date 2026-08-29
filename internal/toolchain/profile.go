@@ -245,9 +245,20 @@ func (profile Profile) LinkArgs(responsePath, outputPath string) []string {
 		args = append(args, "-mmacosx-version-min="+profile.MinimumOS)
 	}
 	if profile.LinkMode == "static" {
-		args = append(args, "-static")
+		// The managed musl sysroot has no GCC installation, so clang's default
+		// GNU-style static link searches for crtbeginT.o/-lgcc/-lgcc_eh that
+		// don't exist here. Bypass that entirely with -nostdlib and supply
+		// musl's own CRT objects and libc directly.
+		args = append(args, "-static", "-nostdlib",
+			path.Join(profile.Sysroot, "lib", "crt1.o"),
+			path.Join(profile.Sysroot, "lib", "crti.o"),
+		)
 	}
-	return append(args, "@"+responsePath, "-o", outputPath)
+	args = append(args, "@"+responsePath)
+	if profile.LinkMode == "static" {
+		args = append(args, "-lc", path.Join(profile.Sysroot, "lib", "crtn.o"))
+	}
+	return append(args, "-o", outputPath)
 }
 
 func discoverAppleSDK() (string, error) {

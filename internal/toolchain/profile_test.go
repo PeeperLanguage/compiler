@@ -266,8 +266,18 @@ func TestProfileBuildArguments(t *testing.T) {
 }
 
 func TestStaticProfileRequestsStaticLink(t *testing.T) {
-	profile := Profile{LLVMTriple: "x86_64-unknown-linux-musl", LinkMode: "static"}
-	want := []string{"-target", "x86_64-unknown-linux-musl", "-static", "@objects.rsp", "-o", "demo"}
+	profile := Profile{LLVMTriple: "x86_64-unknown-linux-musl", Sysroot: "toolchains/native/sysroot", LinkMode: "static"}
+	want := []string{
+		"-target", "x86_64-unknown-linux-musl",
+		"--sysroot", "toolchains/native/sysroot",
+		"-static", "-nostdlib",
+		"toolchains/native/sysroot/lib/crt1.o",
+		"toolchains/native/sysroot/lib/crti.o",
+		"@objects.rsp",
+		"-lc",
+		"toolchains/native/sysroot/lib/crtn.o",
+		"-o", "demo",
+	}
 	if got := profile.LinkArgs("objects.rsp", "demo"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("LinkArgs() = %#v, want %#v", got, want)
 	}
