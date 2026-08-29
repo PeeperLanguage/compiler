@@ -92,9 +92,11 @@ jobs:
           tar -xzf "$RUNNER_TEMP/musl.tar.gz" -C "$RUNNER_TEMP/musl-source" --strip-components=1
           triple="$(go env GOARCH | sed -e 's/^amd64$/x86_64/' -e 's/^arm64$/aarch64/')-unknown-linux-musl"
           clang="$GITHUB_WORKSPACE/stage/install/toolchains/native/bin/clang"
+          archiver="$GITHUB_WORKSPACE/stage/install/toolchains/native/bin/llvm-ar"
+          ranlib="$GITHUB_WORKSPACE/stage/install/toolchains/native/bin/llvm-ranlib"
           (
             cd "$RUNNER_TEMP/musl-source"
-            CC="$clang --target=$triple" ./configure --prefix=/ --target="$triple"
+            CC="$clang --target=$triple" AR="$archiver" RANLIB="$ranlib" ./configure --prefix=/ --target="$triple"
             make -j2
             make DESTDIR="$GITHUB_WORKSPACE/stage/install/toolchains/native/sysroot" install
           )
@@ -144,7 +146,7 @@ jobs:
           test "$(wc -c < "$RUNNER_TEMP/llvm-mingw.zip")" -eq "$asset_size"
           printf '%s  %s\n' "$asset_sha" "$RUNNER_TEMP/llvm-mingw.zip" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/llvm-mingw" stage/install/toolchains/native
-          tar -xf "$RUNNER_TEMP/llvm-mingw.zip" -C "$RUNNER_TEMP/llvm-mingw"
+          unzip -q "$RUNNER_TEMP/llvm-mingw.zip" -d "$RUNNER_TEMP/llvm-mingw"
           extracted="$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d -print -quit)"
           test -n "$extracted"
           cp -R "$extracted"/. stage/install/toolchains/native/
