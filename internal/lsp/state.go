@@ -69,24 +69,6 @@ func (s *ServerState) applyDocumentSnapshot(filePath string, text *string, versi
 	s.diagGeneration++
 }
 
-// normalizeCachePaths keeps in-memory source keys aligned with compiler path
-// keys even when an internal client inserts a native-separator path directly.
-func (s *ServerState) normalizeCachePaths() {
-	if s == nil || len(s.Cache) == 0 {
-		return
-	}
-	for filePath, content := range s.Cache {
-		canonical := project.CanonicalPath(filePath)
-		if canonical == filePath {
-			continue
-		}
-		if _, exists := s.Cache[canonical]; !exists {
-			s.Cache[canonical] = content
-		}
-		delete(s.Cache, filePath)
-	}
-}
-
 func (s *ServerState) diagnosticSnapshot(entryFile string, files []string) *diagnosticSnapshot {
 	if s == nil {
 		return nil
@@ -157,7 +139,6 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 }
 
 func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContext, *project.Module) {
-	s.normalizeCachePaths()
 	canonicalEntry := project.CanonicalPath(entryFile)
 	diagBag := diagnostics.NewDiagnosticBag()
 	sourceProject, err := manifest.ResolveSourceFileProject(entryFile)

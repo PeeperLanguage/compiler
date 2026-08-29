@@ -171,7 +171,7 @@ func markerPosition(t *testing.T, src string) (string, Position) {
 func hoverAtSource(t *testing.T, state *ServerState, filePath, src string) *Hover {
 	t.Helper()
 	clean, pos := markerPosition(t, src)
-	state.Cache[filePath] = clean
+	state.Cache[project.CanonicalPath(filePath)] = clean
 	if _, mod := state.recompile(filePath); mod == nil {
 		t.Fatalf("expected compiled module for %s", filePath)
 	}
@@ -190,7 +190,7 @@ func hoverAtSource(t *testing.T, state *ServerState, filePath, src string) *Hove
 func renameAtSource(t *testing.T, state *ServerState, filePath, src, newName string) *WorkspaceEdit {
 	t.Helper()
 	clean, pos := markerPosition(t, src)
-	state.Cache[filePath] = clean
+	state.Cache[project.CanonicalPath(filePath)] = clean
 	if _, mod := state.recompile(filePath); mod == nil {
 		t.Fatalf("expected compiled module for %s", filePath)
 	}
@@ -247,7 +247,7 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	// 1. Initialize
 	state := NewServerState()
 	state.RootDir = tmpDir
-	state.Cache[filePath] = content
+	state.Cache[project.CanonicalPath(filePath)] = content
 
 	// Run compilation
 	ctx, mod := state.recompile(filePath)
@@ -431,7 +431,7 @@ fn inspect(value: Result) {
 	clean, position := markerPosition(t, src)
 	state := NewServerState()
 	state.RootDir = root
-	state.Cache[filePath] = clean
+	state.Cache[project.CanonicalPath(filePath)] = clean
 	if _, module := state.recompile(filePath); module == nil {
 		t.Fatal("expected compiled enum module")
 	}
@@ -474,7 +474,7 @@ fn inspect(value: result::Alias) {
 	clean, position := markerPosition(t, source)
 	state := NewServerState()
 	state.RootDir = root
-	state.Cache[mainPath] = clean
+	state.Cache[project.CanonicalPath(mainPath)] = clean
 	if _, module := state.recompile(mainPath); module == nil {
 		t.Fatal("expected compiled enum alias module")
 	}
@@ -644,7 +644,7 @@ func TestHoverReusesFreshCompiledSnapshot(t *testing.T) {
 
 	state := NewServerState()
 	state.RootDir = tmpDir
-	state.Cache[filePath] = content
+	state.Cache[project.CanonicalPath(filePath)] = content
 
 	if _, mod := state.recompile(filePath); mod == nil {
 		t.Fatalf("expected compiled module, got nil")
@@ -679,7 +679,7 @@ func TestHoverRecompilesDirtySnapshot(t *testing.T) {
 
 	state := NewServerState()
 	state.RootDir = tmpDir
-	state.Cache[filePath] = initial
+	state.Cache[project.CanonicalPath(filePath)] = initial
 
 	if _, mod := state.recompile(filePath); mod == nil {
 		t.Fatalf("expected compiled module, got nil")
@@ -690,7 +690,7 @@ func TestHoverRecompilesDirtySnapshot(t *testing.T) {
 	}
 
 	clean, pos := markerPosition(t, updated)
-	state.Cache[filePath] = clean
+	state.Cache[project.CanonicalPath(filePath)] = clean
 	hover, err := state.HandleHover(HoverParams{
 		TextDocumentPositionParams: TextDocumentPositionParams{
 			TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
@@ -722,12 +722,12 @@ func TestHoverRecompilesWhenLastSnapshotOnlyHasOverlayStub(t *testing.T) {
 	state.RootDir = root
 
 	cleanFirst, pos := markerPosition(t, firstSrc)
-	state.Cache[firstPath] = cleanFirst
+	state.Cache[project.CanonicalPath(firstPath)] = cleanFirst
 	if _, mod := state.recompile(firstPath); mod == nil {
 		t.Fatalf("expected compiled module for %s", firstPath)
 	}
 
-	state.Cache[secondPath] = secondSrc
+	state.Cache[project.CanonicalPath(secondPath)] = secondSrc
 	if _, mod := state.recompile(secondPath); mod == nil {
 		t.Fatalf("expected compiled module for %s", secondPath)
 	}
@@ -1384,7 +1384,7 @@ func TestHoverDoesNotLeakMethodsFromUnrelatedComponents(t *testing.T) {
 
 	state := NewServerState()
 	state.RootDir = root
-	state.Cache[firstPath] = firstSrc
+	state.Cache[project.CanonicalPath(firstPath)] = firstSrc
 	if _, mod := state.recompile(firstPath); mod == nil {
 		t.Fatalf("expected compiled module for %s", firstPath)
 	}

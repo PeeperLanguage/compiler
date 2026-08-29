@@ -133,7 +133,7 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 		t.Fatalf("missing cached unrelated module")
 	}
 
-	state.Cache[fileAUtil] = "fn helper() { let x = 1; }\n"
+	state.Cache[project.CanonicalPath(fileAUtil)] = "fn helper() { let x = 1; }\n"
 	if _, mod := state.recompile(fileAUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -165,7 +165,7 @@ fn main() {}`
 		t.Fatalf("initial generic compile failed:\n%s", ctx.Diagnostics.EmitAllToString())
 	}
 
-	state.Cache[entry] = `import "app/container";
+	state.Cache[project.CanonicalPath(entry)] = `import "app/container";
 fn Take(value: container::Box<i32>) {}
 fn main() { let body_only = 1; }`
 	ctx, mod = state.recompile(entry)
@@ -362,7 +362,7 @@ func TestServerStateReusesDependentWhenExportShapeUnchanged(t *testing.T) {
 		t.Fatalf("missing cached dependent module")
 	}
 
-	state.Cache[fileUtil] = "fn helper() { let x = 1; }\n"
+	state.Cache[project.CanonicalPath(fileUtil)] = "fn helper() { let x = 1; }\n"
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -392,7 +392,7 @@ func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 		t.Fatalf("missing cached dependent module")
 	}
 
-	state.Cache[fileUtil] = "fn helper(v: i32) {}\n"
+	state.Cache[project.CanonicalPath(fileUtil)] = "fn helper(v: i32) {}\n"
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -431,7 +431,7 @@ func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing
 	if !found || beforeType == nil || beforeType.Type == nil {
 		t.Fatal("missing cached exported const type")
 	}
-	state.Cache[fileUtil] = "const Value = 1i64;\n"
+	state.Cache[project.CanonicalPath(fileUtil)] = "const Value = 1i64;\n"
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -509,7 +509,7 @@ func TestServerStateInvalidatesTransitiveDependentsWhenExportChanges(t *testing.
 		t.Fatalf("missing cached dependents")
 	}
 
-	state.Cache[fileLeaf] = "fn leaf(v: i32) {}\n"
+	state.Cache[project.CanonicalPath(fileLeaf)] = "fn leaf(v: i32) {}\n"
 	if _, mod := state.recompile(fileLeaf); mod == nil {
 		t.Fatalf("recompile returned nil module")
 	}
@@ -538,7 +538,7 @@ func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
 		t.Fatalf("initial compile returned nil module")
 	}
 
-	state.Cache[fileUtil] = "fn helper(v: i32) {}\n"
+	state.Cache[project.CanonicalPath(fileUtil)] = "fn helper(v: i32) {}\n"
 	index := newWorkspaceIndex(root)
 	if err := index.rebuild(state.Cache); err != nil {
 		t.Fatalf("rebuild workspace index: %v", err)
@@ -696,7 +696,7 @@ func TestServerStateKeepsWorkspaceIndexAcrossRecompile(t *testing.T) {
 		t.Fatalf("expected workspace index")
 	}
 
-	state.Cache[fileUtil] = "fn helper() { let body_only = 1; }\n"
+	state.Cache[project.CanonicalPath(fileUtil)] = "fn helper() { let body_only = 1; }\n"
 	if _, mod := state.recompile(fileUtil); mod == nil {
 		t.Fatalf("incremental compile returned nil module")
 	}
@@ -744,7 +744,7 @@ func TestNavigationRangesUseUTF16AfterNonBMPText(t *testing.T) {
 
 	state := NewServerState()
 	state.RootDir = root
-	state.Cache[entry] = content
+	state.Cache[project.CanonicalPath(entry)] = content
 	if _, mod := state.recompile(entry); mod == nil {
 		t.Fatalf("expected compiled module")
 	}

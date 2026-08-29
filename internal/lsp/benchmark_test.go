@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/project"
 	"compiler/pkg/peeper"
 )
 
@@ -35,26 +36,26 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 			runBenchCase(b, "body_only_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
-				state.Cache[fixture.leaf] = fixture.leafBody + "\nfn local_detail() -> i32 { let x = 1; return x; }\n"
+				state.Cache[project.CanonicalPath(fixture.leaf)] = fixture.leafBody + "\nfn local_detail() -> i32 { let x = 1; return x; }\n"
 				return fixture.leaf
 			})
 			runBenchCase(b, "export_shape_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
-				state.Cache[fixture.leaf] = "fn LeafValue(v: i32) -> i32 { return v; }\n"
+				state.Cache[project.CanonicalPath(fixture.leaf)] = "fn LeafValue(v: i32) -> i32 { return v; }\n"
 				return fixture.leaf
 			})
 			runBenchCase(b, "import_set_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
-				state.Cache[fixture.entry] = fixture.entryImport + "import \"extra\";\n" + fixture.entryBody
+				state.Cache[project.CanonicalPath(fixture.entry)] = fixture.entryImport + "import \"extra\";\n" + fixture.entryBody
 				return fixture.entry
 			})
 			runBenchCase(b, "unrelated_component_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				_, _ = state.recompile(fixture.unrelated)
-				state.Cache[fixture.unrelated] = "fn main() -> i32 { return 2; }\n"
+				state.Cache[project.CanonicalPath(fixture.unrelated)] = "fn main() -> i32 { return 2; }\n"
 				return fixture.unrelated
 			})
 			runBenchCase(b, "multi_main_first_root", fixture, func(state *ServerState) string {
