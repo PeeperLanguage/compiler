@@ -283,7 +283,7 @@ func TestWriteResponseFileIncludesRuntimeArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "one.o\n\"" + filepath.Join("object dir", "two.o") + "\"\n\"" + filepath.Join("runtime dir", "libpeeper.a") + "\"\n"
+	want := "one.o\n\"" + filepath.ToSlash(filepath.Join("object dir", "two.o")) + "\"\n\"" + filepath.ToSlash(filepath.Join("runtime dir", "libpeeper.a")) + "\"\n"
 	if string(data) != want {
 		t.Fatalf("response file = %q, want %q", data, want)
 	}

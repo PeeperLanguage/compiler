@@ -329,6 +329,7 @@ func resolveInstalledPath(root, value, field string, required bool) (string, err
 }
 
 func responseArgument(value string) (string, error) {
+	value = filepath.ToSlash(value)
 	if strings.ContainsAny(value, "\r\n") {
 		return "", fmt.Errorf("response file path contains a line break")
 	}
