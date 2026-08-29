@@ -1,0 +1,46 @@
+fn MakeWord() -> str {
+    let bytes = []byte{b'w', b'o', b'r', b'l', b'd'};
+    return bytes[..] |> from_bytes();
+}
+
+fn BuildWithAllocator(bytes: &[..]byte, allocator: Allocator) -> str {
+    return from_bytes(bytes, allocator);
+}
+
+fn main() -> i32 {
+    let empty_bytes = []byte{};
+    let empty = empty_bytes[..] |> from_bytes();
+    if empty |> len() != 0 {
+        return 1;
+    }
+
+    let ascii_bytes = []byte{b'h', b'e', b'l', b'l', b'o'};
+    let ascii = ascii_bytes[..] |> from_bytes();
+    if ascii != "hello" || ascii_bytes[0] != b'h' {
+        return 2;
+    }
+
+    let utf8_bytes = []byte{b'h', 0xc3 as byte, 0xa9 as byte};
+    let utf8 = utf8_bytes[..] |> from_bytes();
+    if utf8 != "hé" || (utf8 |> len()) != 3 {
+        return 3;
+    }
+
+    let suffix: str = " ";
+    let combined = ascii + &suffix;
+    if combined != "hello " || suffix != " " {
+        return 4;
+    }
+
+    let chained = combined + &MakeWord();
+    if chained != "hello world" {
+        return 5;
+    }
+
+    let mut extended = utf8;
+    extended = extended + &"!";
+    if extended != "hé!" {
+        return 6;
+    }
+    return 0;
+}

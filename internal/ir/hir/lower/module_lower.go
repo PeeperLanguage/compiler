@@ -652,6 +652,14 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.AddrOf{Place: lowerPlace(ctx, module, scope, node.Expr), Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.BinaryExpr:
+		if _, concat := module.Semantics.StringConcatenations[node.ID()]; concat {
+			return &ir.StringConcat{
+				Left:       lowerASTExpr(ctx, module, scope, node.Left, &typeinfo.StringType{}),
+				Right:      lowerASTExpr(ctx, module, scope, node.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}),
+				Type:       resolvedTypeID,
+				SourceInfo: ir.SourceInfo{Location: loc},
+			}
+		}
 		leftExpected := expectedType
 		rightExpected := expectedType
 		leftType := exprResolvedType(module, node.Left)
@@ -692,6 +700,8 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 				return lowerCollectionCall(ctx, module, scope, node, compilerCall.Operation)
 			case intrinsics.FunctionDynamicArrayOwner:
 				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, compilerCall.Operation)
+			case intrinsics.FunctionFromBytes:
+				return lowerStringFromBytesCall(ctx, module, scope, node)
 			default:
 				panic(fmt.Sprintf("unsupported intrinsic function kind %d for %q", compilerCall.Kind, compilerCall.Operation))
 			}
@@ -1087,6 +1097,24 @@ func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope 
 		Value:      value,
 		Allocator:  allocator,
 		Type:       resultType,
+		SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)},
+	}
+}
+
+func lowerStringFromBytesCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr) ir.Expr {
+	fnType, _ := exprResolvedType(module, node.Callee).(*typeinfo.FuncType)
+	if fnType == nil || len(fnType.Params) != 2 || len(node.Args) < 1 || len(node.Args) > 2 {
+		panic("validated from_bytes call missing intrinsic signature or arguments")
+	}
+	bytes := lowerASTExpr(ctx, module, scope, node.Args[0], fnType.Params[0])
+	var allocator ir.Expr
+	if len(node.Args) == 2 {
+		allocator = lowerASTExpr(ctx, module, scope, node.Args[1], fnType.Params[1])
+	}
+	return &ir.StringFromBytes{
+		Bytes:      bytes,
+		Allocator:  allocator,
+		Type:       loweredReturnTypeID(ctx, module, fnType.Return),
 		SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)},
 	}
 }

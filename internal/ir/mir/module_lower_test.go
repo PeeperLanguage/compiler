@@ -870,6 +870,62 @@ func TestGenerateMIRLowersStringChars(t *testing.T) {
 	}
 }
 
+func TestGenerateMIRLowersRuntimeStringConstruction(t *testing.T) {
+	byteType := mirTypes.table.Intern(ir.Type{Kind: ir.TypeByte})
+	dynamicBytes := mirTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: byteType})
+	refBytes := mirTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: dynamicBytes})
+	stringType := mirTypes.table.Intern(ir.Type{Kind: ir.TypeString})
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{{
+			Name: "build", Params: []ir.Param{{Name: "bytes", Type: refBytes}}, ReturnType: stringType,
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Return{Value: &ir.StringFromBytes{Bytes: &ir.Ident{Name: "bytes", Type: refBytes}, Type: stringType}},
+			}},
+		}},
+	}
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
+	assign, ok := out.Funcs[0].Blocks[0].Instrs[0].(*Assign)
+	if !ok {
+		t.Fatalf("expected StringFromBytes assignment, got %#v", out.Funcs[0].Blocks[0].Instrs)
+	}
+	constructed, ok := assign.Value.(*StringFromBytes)
+	if !ok || constructed.Bytes.Text() != "bytes" || constructed.Allocator != nil || constructed.Type != stringType {
+		t.Fatalf("MIR StringFromBytes = %#v", assign.Value)
+	}
+}
+
+func TestGenerateMIRAssignsStringConcatBeforeDroppingLeft(t *testing.T) {
+	stringType := mirTypes.table.Intern(ir.Type{Kind: ir.TypeString})
+	refString := mirTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: stringType})
+	mod := &hir.Module{
+		Name: "test", Types: mirTypes.table,
+		Funcs: []*hir.Function{{
+			Name: "join", Params: []ir.Param{{Name: "left", Type: stringType}, {Name: "right", Type: refString}}, ReturnType: stringType,
+			Body: &hir.Block{Stmts: []hir.Stmt{
+				&hir.Binding{Name: "joined", Value: &ir.StringConcat{
+					Left: &ir.Ident{Name: "left", Type: stringType}, Right: &ir.Ident{Name: "right", Type: refString}, Type: stringType,
+				}},
+				&hir.Return{Value: &ir.Ident{Name: "joined", Type: stringType}},
+			}},
+		}},
+	}
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
+	instrs := out.Funcs[0].Blocks[0].Instrs
+	if len(instrs) < 3 {
+		t.Fatalf("expected concat, drop, and binding assignments, got %#v", instrs)
+	}
+	concatAssign, concatOK := instrs[0].(*Assign)
+	drop, dropOK := instrs[1].(*Drop)
+	if !concatOK || !dropOK {
+		t.Fatalf("expected concat assignment then drop, got %#v", instrs[:2])
+	}
+	concat, ok := concatAssign.Value.(*StringConcat)
+	if !ok || concat.Left.Text() != "left" || concat.Right.Text() != "right" || drop.Value.Text() != "left" {
+		t.Fatalf("unexpected concat/drop values: %#v, %#v", concatAssign.Value, drop)
+	}
+}
+
 func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,

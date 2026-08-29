@@ -16,6 +16,7 @@ const (
 	FunctionAlloc FunctionKind = iota + 1
 	FunctionCollection
 	FunctionDynamicArrayOwner
+	FunctionFromBytes
 )
 
 type FunctionDefinition struct {
@@ -33,6 +34,7 @@ var definitions = []FunctionDefinition{
 	{Operation: symbols.CompilerOpLen, Kind: FunctionCollection, signature: collectionSignature},
 	{Operation: symbols.CompilerOpAsBytes, Kind: FunctionCollection, signature: collectionSignature},
 	{Operation: symbols.CompilerOpAsChars, Kind: FunctionCollection, signature: collectionSignature},
+	{Operation: symbols.CompilerOpFromBytes, Kind: FunctionFromBytes, signature: fromBytesSignature},
 }
 
 // Operations returns every operation exposed by compiler-owned functions.
@@ -141,6 +143,21 @@ func allocSignature(op symbols.CompilerOp, baseType typeinfo.Type, _ target.Info
 		Params:     []typeinfo.Type{valueType, &typeinfo.AllocatorType{}},
 		ParamNames: []string{"value", "allocator"},
 		Return:     &typeinfo.OwnedPtrType{Target: valueType},
+	}
+}
+
+func fromBytesSignature(op symbols.CompilerOp, baseType typeinfo.Type, _ target.Info) *typeinfo.FuncType {
+	if op != symbols.CompilerOpFromBytes {
+		panic("missing from_bytes intrinsic signature")
+	}
+	bytes := &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
+	if baseType != nil && !typeinfo.SameType(baseType, bytes) {
+		return nil
+	}
+	return &typeinfo.FuncType{
+		Params:     []typeinfo.Type{bytes, &typeinfo.AllocatorType{}},
+		ParamNames: []string{"bytes", "allocator"},
+		Return:     &typeinfo.StringType{},
 	}
 }
 

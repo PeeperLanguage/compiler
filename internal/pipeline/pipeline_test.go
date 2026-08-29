@@ -2240,6 +2240,7 @@ fn KeepRef(_: &mut i32) {
 fn main() -> i32 {
 	let text: str = "abc";
 	let bytes = text |> as_bytes();
+	let copied = bytes |> from_bytes();
 	let chars = text |> as_chars();
 	let text_length = text |> len();
 	let byte_length = bytes |> len();
@@ -2257,7 +2258,7 @@ fn main() -> i32 {
 	if first != 9 {
 		return 1;
 	}
-	return text_length as i32 + byte_length as i32 + (chars |> len()) as i32 + (values |> len()) as i32 + scalar;
+	return text_length as i32 + byte_length as i32 + (copied |> len()) as i32 + (chars |> len()) as i32 + (values |> len()) as i32 + scalar;
 }`
 
 	targets := []struct {

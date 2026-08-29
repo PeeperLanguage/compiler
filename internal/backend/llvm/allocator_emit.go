@@ -21,7 +21,17 @@ func emitAllocatorAllocate(b *llvmBuilder, handle, size, alignment llvmValue) ll
 	allocRaw := b.load(allocSlot)
 	allocLayout := llvmFunctionLayout(rawPointer, []*llvmLayout{rawPointer, size.Layout, alignment.Layout})
 	allocFn := b.bitcast(allocRaw, allocLayout)
-	return b.call(allocFn, []llvmValue{ctx, size, alignment})
+	allocated := b.call(allocFn, []llvmValue{ctx, size, alignment})
+	missing := b.compare("icmp", "eq", allocated, b.value("null", allocated.Layout))
+	id := b.nextID
+	b.nextID++
+	failLabel := fmt.Sprintf("allocator_allocate_fail_%d", id)
+	readyLabel := fmt.Sprintf("allocator_allocate_ready_%d", id)
+	b.condBranch(missing, failLabel, readyLabel)
+	b.namedLabel(failLabel)
+	b.trap()
+	b.namedLabel(readyLabel)
+	return allocated
 }
 
 func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment llvmValue) {

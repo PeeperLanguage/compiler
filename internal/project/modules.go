@@ -105,6 +105,7 @@ type SemanticInfo struct {
 	ImplicitConversions   map[ast.NodeID]typeinfo.Conversion
 	ImplicitCallArguments map[ast.NodeID]typeinfo.Type
 	CompilerCalls         map[ast.NodeID]CompilerCall
+	StringConcatenations  map[ast.NodeID]struct{}
 	VariantConstructions  map[ast.NodeID]VariantConstruction
 	OperationFunctions    []*symbols.Symbol
 }
@@ -169,6 +170,7 @@ func NewSemanticInfo() *SemanticInfo {
 		ImplicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
 		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
 		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
+		StringConcatenations:     make(map[ast.NodeID]struct{}),
 		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
 		OperationFunctions:       make([]*symbols.Symbol, 0),
 	}

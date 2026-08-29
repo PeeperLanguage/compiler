@@ -1,0 +1,5 @@
+fn Bad(left: str, right: str) {
+    let joined = left + &right;
+    println(left);
+    println(joined);
+}

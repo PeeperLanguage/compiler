@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    let bytes = []byte{0xff as byte};
+    let _ = bytes[..] |> from_bytes();
+    return 0;
+}

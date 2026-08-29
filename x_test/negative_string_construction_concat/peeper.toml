@@ -1,0 +1,7 @@
+name = "negative_string_construction_concat"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["string concatenation requires owned `str` on left and borrowed `&str` on right", "`from_bytes` requires a shared byte-slice view `&[..]byte`", "literal `1` cannot be used as Allocator", "wrong number of arguments"]

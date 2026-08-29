@@ -524,6 +524,8 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 		return v.Type
 	case *mir.Binary:
 		return v.Type
+	case *mir.StringConcat:
+		return v.Type
 	case *mir.Cast:
 		return v.Type
 	case *mir.AddrOf:
@@ -535,6 +537,8 @@ func mirValueType(expr mir.ValueExpr) ir.TypeID {
 	case *mir.Len:
 		return v.Type
 	case *mir.StringChars:
+		return v.Type
+	case *mir.StringFromBytes:
 		return v.Type
 	case *mir.Field:
 		return v.Type

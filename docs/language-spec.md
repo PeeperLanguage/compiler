@@ -49,6 +49,24 @@ Literal forms are explicit at the boundary: `"text"` produces owned `str`,
 `c"text"` produces non-owning `cstr`, `b'X'` produces `byte`, and `'X'`
 produces `char`. These forms are not implicitly interchangeable.
 
+`from_bytes(bytes[, allocator]) -> str` constructs owned runtime text from a
+shared `&[..]byte` view. It validates UTF-8, traps on malformed input, and copies
+the bytes into exact-size storage selected by explicit allocator or default
+allocator. Empty input performs no allocation and produces `{null, 0,
+allocator}`. Source bytes remain borrowed and usable.
+
+`left + right` concatenates only `str + &str`. Operation consumes left owner,
+borrows right, checks target-sized byte-length addition, and returns new `str`.
+Result preserves left allocator; permanent literal storage has no allocator, so
+that case falls back to default allocator. Right remains usable. Empty result
+performs no allocation. Concatenation trusts both strings' existing UTF-8
+invariant and does not validate again.
+
+Runtime construction performs one UTF-8 validation pass, one exact allocation,
+and one byte-copy pass. Concatenation performs one exact allocation and one copy
+pass per operand. Empty paths allocate nothing. No NUL terminator or spare
+capacity is added.
+
 `len` is a compiler-owned free function for strings, arrays, and borrowed
 views. Pipe syntax adapts argument zero like a method receiver: `text |> len()`,
 `fixed |> len()`, or `[]i32{1, 2} |> len()`. It returns string byte length or

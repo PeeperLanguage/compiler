@@ -140,6 +140,20 @@ at heap-storage boundary, including stored safe references under current rules.
 Fallible `try_alloc`, unsafe adoption, custom descriptor construction, and
 scoped allocator contexts remain later work.
 
+### Runtime strings preserve construction provenance
+
+`from_bytes(bytes[, allocator])` stores explicit allocator or default allocator
+in resulting string carrier. Empty construction retains selected allocator while
+using null data and performs no allocation. Non-empty construction validates
+UTF-8 before one exact-size allocation and copy.
+
+`str + &str` consumes left carrier and uses its allocator for result allocation.
+String literals carry null allocator because bytes live in permanent storage;
+concatenating such left operand selects default allocator. Concatenation performs
+checked target-sized length addition, one exact allocation, and one copy per
+operand. Result destruction therefore always releases through allocator that
+created its bytes.
+
 ## Runtime Layouts
 
 `allocator` below means opaque allocator descriptor pointer.

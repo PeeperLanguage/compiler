@@ -573,6 +573,24 @@ func TestGenerateHIRLowersStringCharsIntrinsic(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRLowersRuntimeStringOperations(t *testing.T) {
+	src := `fn Build(bytes: &[..]byte, allocator: Allocator) -> str {
+	return from_bytes(bytes, allocator);
+}
+fn Join(left: str, right: str) -> str {
+	return left + &right;
+}`
+	out := generateTestHIR(t, "hir_runtime_strings_test"+peeper.SourceExt, "hir_runtime_strings_test", src)
+	constructed, ok := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value.(*ir.StringFromBytes)
+	if !ok || out.Types.Text(constructed.Type) != "str" || constructed.Allocator == nil {
+		t.Fatalf("expected explicit StringFromBytes HIR, got %#v", out.Funcs[0].Body.Stmts[0])
+	}
+	concat, ok := out.Funcs[1].Body.Stmts[0].(*hir.Return).Value.(*ir.StringConcat)
+	if !ok || out.Types.Text(concat.Type) != "str" || out.Types.Text(concat.Right.TypeID()) != "&str" {
+		t.Fatalf("expected explicit StringConcat HIR, got %#v", out.Funcs[1].Body.Stmts[0])
+	}
+}
+
 func TestGenerateHIRPreservesTemporaryStringViewOwners(t *testing.T) {
 	src := `fn Make() -> str { return "abc"; }
 fn main() -> i32 {

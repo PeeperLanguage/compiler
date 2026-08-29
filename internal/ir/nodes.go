@@ -115,6 +115,13 @@ type Binary struct {
 	Type  TypeID
 }
 
+type StringConcat struct {
+	SourceInfo
+	Left  Expr
+	Right Expr
+	Type  TypeID
+}
+
 type Call struct {
 	SourceInfo
 	Callee Expr
@@ -177,6 +184,13 @@ type StringChars struct {
 	SourceInfo
 	Value Expr
 	Type  TypeID
+}
+
+type StringFromBytes struct {
+	SourceInfo
+	Bytes     Expr
+	Allocator Expr
+	Type      TypeID
 }
 
 // SliceView shapes array storage into a non-owning reference value.
@@ -282,12 +296,14 @@ var (
 	_ Expr = (*Ident)(nil)
 	_ Expr = (*Unary)(nil)
 	_ Expr = (*Binary)(nil)
+	_ Expr = (*StringConcat)(nil)
 	_ Expr = (*Call)(nil)
 	_ Expr = (*Load)(nil)
 	_ Expr = (*AddrOf)(nil)
 	_ Expr = (*TempBorrow)(nil)
 	_ Expr = (*Len)(nil)
 	_ Expr = (*StringChars)(nil)
+	_ Expr = (*StringFromBytes)(nil)
 	_ Expr = (*SliceView)(nil)
 	_ Expr = (*InterfaceMake)(nil)
 	_ Expr = (*InterfaceCall)(nil)
@@ -330,6 +346,11 @@ func (e *Binary) forEachChild(visit func(Expr)) {
 	visit(e.Left)
 	visit(e.Right)
 }
+func (*StringConcat) exprNode() {}
+func (e *StringConcat) forEachChild(visit func(Expr)) {
+	visit(e.Left)
+	visit(e.Right)
+}
 func (*Call) exprNode() {}
 func (e *Call) forEachChild(visit func(Expr)) {
 	visit(e.Callee)
@@ -347,7 +368,12 @@ func (*Len) exprNode()                               {}
 func (e *Len) forEachChild(visit func(Expr))         { visit(e.Value) }
 func (*StringChars) exprNode()                       {}
 func (e *StringChars) forEachChild(visit func(Expr)) { visit(e.Value) }
-func (*SliceView) exprNode()                         {}
+func (*StringFromBytes) exprNode()                   {}
+func (e *StringFromBytes) forEachChild(visit func(Expr)) {
+	visit(e.Bytes)
+	visit(e.Allocator)
+}
+func (*SliceView) exprNode() {}
 func (e *SliceView) forEachChild(visit func(Expr)) {
 	e.Source.forEachChild(visit)
 	visit(e.Start)
@@ -548,6 +574,19 @@ func (e *Binary) TypeID() TypeID {
 	return e.Type
 }
 
+func (e *StringConcat) String() string {
+	if e == nil || e.Left == nil || e.Right == nil {
+		return "concat(<nil>)"
+	}
+	return fmt.Sprintf("concat(%s, %s)", e.Left.String(), e.Right.String())
+}
+func (e *StringConcat) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
+
 func (e *Call) String() string {
 	if e == nil {
 		return ""
@@ -693,6 +732,22 @@ func (e *StringChars) String() string {
 }
 
 func (e *StringChars) TypeID() TypeID {
+	if e == nil {
+		return InvalidType
+	}
+	return e.Type
+}
+
+func (e *StringFromBytes) String() string {
+	if e == nil || e.Bytes == nil {
+		return "from_bytes(<nil>)"
+	}
+	if e.Allocator != nil {
+		return fmt.Sprintf("from_bytes(%s, %s)", e.Bytes.String(), e.Allocator.String())
+	}
+	return fmt.Sprintf("from_bytes(%s)", e.Bytes.String())
+}
+func (e *StringFromBytes) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
 	}

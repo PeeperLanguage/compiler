@@ -1,0 +1,7 @@
+name = "negative_string_concat_move"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["moved"]

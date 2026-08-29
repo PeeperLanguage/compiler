@@ -626,6 +626,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				return llvmValue{}
 			}
 			return b.arithmetic(opcode, left, right)
+		case *mir.StringConcat:
+			return emitStringConcat(b, e)
 		case *mir.Call:
 			args := make([]llvmValue, len(e.Args))
 			for i, arg := range e.Args {
@@ -655,6 +657,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			return emitSliceView(b, e)
 		case *mir.StringChars:
 			return emitStringChars(b, e)
+		case *mir.StringFromBytes:
+			return emitStringFromBytes(b, e)
 		case *mir.Load:
 			ptr, ok := emitPlacePtr(b, e.Place)
 			if !ok {

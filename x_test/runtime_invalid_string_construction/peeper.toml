@@ -1,0 +1,7 @@
+name = "runtime_invalid_string_construction"
+build = "program"
+entry = "src/main.peep"
+
+[test]
+mode = "run"
+outcome = "failure"

@@ -44,6 +44,7 @@ func TestDefinitionsAreUniqueFreeFunctions(t *testing.T) {
 func TestApplicableFunctionSymbolsUseOperandShape(t *testing.T) {
 	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
 	owner := &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: i32}
+	byteSlice := &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
 	tests := []struct {
 		name string
 		typ  typeinfo.Type
@@ -53,6 +54,7 @@ func TestApplicableFunctionSymbolsUseOperandShape(t *testing.T) {
 		{name: "string", typ: &typeinfo.StringType{}, want: []string{"alloc", "len", "as_bytes", "as_chars"}},
 		{name: "owner", typ: owner, want: []string{"append", "reserve", "resize", "shrink", "alloc", "len"}},
 		{name: "slice", typ: &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: i32}}, want: []string{"alloc", "len"}},
+		{name: "byte slice", typ: byteSlice, want: []string{"alloc", "len", "from_bytes"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -66,6 +68,16 @@ func TestApplicableFunctionSymbolsUseOperandShape(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFromBytesSignature(t *testing.T) {
+	definition, ok := LookupFunction(symbols.CompilerOpFromBytes)
+	fnType := definition.Signature(nil, target.Host())
+	if !ok || definition.Kind != FunctionFromBytes || fnType == nil || len(fnType.Params) != 2 ||
+		typeinfo.TypeText(fnType.Params[0]) != "&[..]byte" || typeinfo.TypeText(fnType.Params[1]) != "Allocator" ||
+		typeinfo.TypeText(fnType.Return) != "str" {
+		t.Fatalf("from_bytes signature = %#v", fnType)
 	}
 }
 

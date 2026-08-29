@@ -3019,3 +3019,59 @@ func TestCanAdaptFirstCallArgumentUsesCallConversionRules(t *testing.T) {
 		t.Fatal("numeric value must not adapt to bool")
 	}
 }
+
+func TestRuntimeStringConstructionAndConcatenationTypes(t *testing.T) {
+	diag := checkTypeSource(t, `fn Build(bytes: &[..]byte, allocator: Allocator) -> str {
+	return from_bytes(bytes, allocator);
+}
+
+fn Join(left: str, right: &str) -> str {
+	return left + right;
+}
+
+fn main() {
+	let bytes = []byte{b'a'};
+	let left = bytes[..] |> from_bytes();
+	let right: str = "b";
+	let _: str = left + &right;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected runtime string diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestRuntimeStringConstructionAndConcatenationRejectUnsupportedForms(t *testing.T) {
+	tests := map[string]struct {
+		source string
+		want   string
+	}{
+		"owned right": {
+			source: `fn Bad(left: str, right: str) { let _ = left + right; }`,
+			want:   "string concatenation requires owned `str` on left and borrowed `&str` on right",
+		},
+		"borrowed left": {
+			source: `fn Bad(left: str, right: str) { let _ = &left + &right; }`,
+			want:   "string concatenation requires owned `str` on left and borrowed `&str` on right",
+		},
+		"wrong source": {
+			source: `fn Bad(values: &[..]i32) { let _ = from_bytes(values); }`,
+			want:   "`from_bytes` requires a shared byte-slice view `&[..]byte`",
+		},
+		"wrong allocator": {
+			source: `fn Bad(values: &[..]byte) { let _ = from_bytes(values, 1); }`,
+			want:   "literal `1` cannot be used as Allocator",
+		},
+		"missing source": {
+			source: `fn Bad() { let _ = from_bytes(); }`,
+			want:   "wrong number of arguments",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if !strings.Contains(diag.EmitAllToString(), test.want) {
+				t.Fatalf("missing %q diagnostic:\n%s", test.want, diag.EmitAllToString())
+			}
+		})
+	}
+}

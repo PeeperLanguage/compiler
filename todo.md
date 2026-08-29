@@ -10,7 +10,7 @@ Canonical language behavior remains in [`docs/language-spec.md`](docs/language-s
 | Type family | Foundation status | Verified support | Known boundary |
 | --- | --- | --- | --- |
 | Primitive | Implemented | `bool`, `byte`, `char`, `cstr`, `rawptr`, `isize`/`usize`, `f32`/`f64`, and `iN`/`uN` widths from 1 through 2^23; literals, conversions, arithmetic, comparisons, bitwise operations, constants, HIR/MIR, and LLVM lowering | `print` rejects integers wider than 64 bits and `char`; arbitrary `fN` and compound bitwise assignments are not language surface |
-| `str` | Foundation implemented | Owned immutable literals, content equality/inequality, moves and drops, allocator-aware carrier, `print`/`println`, `len`, borrowed `&str` ranges, `as_bytes`, `as_chars`, UTF-8 boundary traps, temporary-borrow checks | Runtime construction/concatenation and explicit C/FFI bridges remain open |
+| `str` | Runtime foundation implemented | Owned immutable literals, runtime `from_bytes` construction, `str + &str` concatenation, content equality/inequality, moves and drops, allocator-aware carrier, `print`/`println`, `len`, borrowed `&str` ranges, `as_bytes`, `as_chars`, UTF-8 validation/boundary traps, temporary-borrow checks | Explicit C/FFI bridges remain open |
 | Optional | Foundation implemented | `?T`, `none`, one-layer promotion, full-CFG narrowing, stable-place invalidation, nested optionals, ownership-safe payload use, explicit HIR/MIR variant operations, tagged LLVM layout and drop | Niche layouts remain open; optional-to-optional equality, fallback, unwrap, chaining, and optional patterns are intentionally absent |
 | Enum | V1 baseline implemented | Named/generic/imported enums, payloadless and payload cases, canonical `with` construction, `is` narrowing, exhaustive statement `match`, payload binding/destructuring, ownership cleanup, constants, aliases, recursive indirection, tagged LLVM layout | Advanced patterns, match expressions, contextual construction, protocols, compact layout, and foreign ABI remain open |
 | Struct | Core implemented | Named and anonymous structural types/literals, field access and mutation, methods, nominal/structural conversion rules, ownership/drop, generics, recursive indirection, HIR/MIR/LLVM | Open issue #100 is stale: its exact `struct {}` plus `.{}` example already builds and runs; dedicated edge-matrix coverage may still be useful |
@@ -28,7 +28,7 @@ Canonical language behavior remains in [`docs/language-spec.md`](docs/language-s
 
 ### `str`
 
-- [ ] [#81 Add runtime string construction and concatenation](https://github.com/PeeperLanguage/compiler/issues/81).
+- [x] [#81 Add runtime string construction and concatenation](https://github.com/PeeperLanguage/compiler/issues/81).
 - [ ] [#82 Define explicit string C and FFI bridge](https://github.com/PeeperLanguage/compiler/issues/82).
 
 ### Optional
@@ -75,6 +75,7 @@ These are unsupported by design today. Create separate issues only when product 
 
 - [x] [#28 Add optional narrowing and payload access](https://github.com/PeeperLanguage/compiler/issues/28): closed and verified in source/fixtures.
 - [x] [#29 Define string runtime semantics](https://github.com/PeeperLanguage/compiler/issues/29): foundation closed correctly; #81 and #82 hold extensions.
+- [x] [#81 Add runtime string construction and concatenation](https://github.com/PeeperLanguage/compiler/issues/81): `from_bytes` validates/copies borrowed bytes; `str + &str` consumes left and preserves allocator provenance.
 - [x] [#99 Add `with` variant construction syntax](https://github.com/PeeperLanguage/compiler/issues/99): closed and verified.
 - [x] [#101 Allow dead enum match carriers after mixed arm moves](https://github.com/PeeperLanguage/compiler/issues/101): closed and verified.
 - [x] Listed open issues remain materially accurate. #100 now tracks edge coverage instead of core implementation.

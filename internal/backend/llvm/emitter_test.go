@@ -1660,7 +1660,7 @@ func TestGenerateLLVMIRLowersStringCharsFromBorrowedView(t *testing.T) {
 	for _, expected := range []string{
 		"extractvalue { i8*, i64 } %text, 0",
 		"extractvalue { i8*, i64 } %text, 1",
-		"utf8_count_loop_",
+		"utf8_validate_loop_",
 		"utf8_decode_two_",
 		"utf8_decode_three_",
 		"utf8_decode_four_",
@@ -1674,6 +1674,83 @@ func TestGenerateLLVMIRLowersStringCharsFromBorrowedView(t *testing.T) {
 	}
 	if strings.Contains(out, "load { i8*, i64, i8* }") {
 		t.Fatalf("borrowed string view unexpectedly loaded as owned carrier:\n%s", out)
+	}
+}
+
+func TestGenerateLLVMIRLowersRuntimeStringOperationsAcrossTargets(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    target.Info
+		bits      int
+		indexType string
+	}{
+		{name: "amd64", target: testLinuxAMD64, bits: target.Bits64, indexType: "i64"},
+		{name: "386", target: testLinux386, bits: target.Bits32, indexType: "i32"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(test.bits)
+			byteType := types.table.Intern(ir.Type{Kind: ir.TypeByte})
+			byteSlice := types.table.Intern(ir.Type{Kind: ir.TypeSlice, Elem: byteType})
+			refBytes := types.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: byteSlice})
+			refString := types.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: types.stringType})
+			allocator := types.table.Intern(ir.Type{Kind: ir.TypeAllocator})
+			mod := &mir.Module{
+				Name: "runtime_strings", Types: types.table,
+				Funcs: []*mir.Function{{
+					Name: "build", Params: []ir.Param{
+						{Name: "bytes", Type: refBytes},
+						{Name: "allocator", Type: allocator},
+						{Name: "left", Type: types.stringType},
+						{Name: "right", Type: refString},
+					},
+					ReturnType: types.stringType,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Assign{Name: "constructed", Value: &mir.StringFromBytes{
+								Bytes: &mir.RefName{Name: "bytes", Type: refBytes}, Allocator: &mir.RefName{Name: "allocator", Type: allocator}, Type: types.stringType,
+							}},
+							&mir.Assign{Name: "joined", Value: &mir.StringConcat{
+								Left: &mir.RefName{Name: "left", Type: types.stringType}, Right: &mir.RefName{Name: "right", Type: refString}, Type: types.stringType,
+							}},
+						},
+						Term: &mir.Ret{Value: &mir.RefName{Name: "joined", Type: types.stringType}},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), test.target, false)
+			for _, expected := range []string{
+				"extractvalue { i8*, " + test.indexType + " } %bytes, 1",
+				"utf8_validate_loop_",
+				"string_concat_length_fail_",
+				"runtime_string_empty_",
+				"byte_copy_loop_",
+				"select i1",
+				"i32 1)",
+				"allocator_allocate_fail_",
+			} {
+				if !strings.Contains(out, expected) {
+					t.Fatalf("expected %q in %s runtime-string IR:\n%s", expected, test.name, out)
+				}
+			}
+			if strings.Contains(out, "umul.with.overflow") {
+				t.Fatalf("exact byte allocation must not multiply storage size:\n%s", out)
+			}
+			if test.bits == target.Bits32 && !strings.Contains(out, "zext i32") {
+				t.Fatalf("32-bit byte length must widen only for UTF-8 validation:\n%s", out)
+			}
+
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				t.Skip("clang unavailable for LLVM IR validation")
+			}
+			cmd := exec.Command(clang, "-target", test.target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "runtime-strings.o"), "-")
+			cmd.Stdin = strings.NewReader(out)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s runtime-string LLVM IR is invalid: %v\n%s\n%s", test.name, err, output, out)
+			}
+		})
 	}
 }
 
