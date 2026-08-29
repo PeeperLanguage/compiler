@@ -105,7 +105,6 @@ jobs:
 
   package-macos:
     needs: [metadata, stage]
-    environment: release-signing
     strategy:
       fail-fast: false
       matrix:
@@ -127,41 +126,6 @@ jobs:
           name: stage-darwin-${{ matrix.arch }}
           path: .
       - run: mkdir -p stage && tar -xzf stage-darwin-${{ matrix.arch }}.tar.gz -C stage
-      - name: Import Apple signing identity
-        env:
-          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          test -n "$CERTIFICATE_P12"
-          signing_keychain="$RUNNER_TEMP/peeper-signing.keychain-db"
-          certificate="$RUNNER_TEMP/peeper-signing.p12"
-          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$certificate"
-          security create-keychain -p "$CERTIFICATE_PASSWORD" "$signing_keychain"
-          security set-keychain-settings -lut 21600 "$signing_keychain"
-          security unlock-keychain -p "$CERTIFICATE_PASSWORD" "$signing_keychain"
-          security import "$certificate" -k "$signing_keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -d user -s "$signing_keychain"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$CERTIFICATE_PASSWORD" "$signing_keychain"
-          echo "PEEPER_SIGNING_KEYCHAIN=$signing_keychain" >> "$GITHUB_ENV"
-      - name: Sign and notarize macOS binaries
-        env:
-          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
-        run: |
-          test -n "$SIGNING_IDENTITY"
-          while IFS= read -r -d '' candidate; do
-            if file "$candidate" | grep -q 'Mach-O'; then
-              codesign --force --options runtime --timestamp --keychain "$PEEPER_SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" "$candidate"
-            fi
-          done < <(find stage/install stage/bootstrap -type f -print0)
-          codesign --verify --strict --verbose=2 stage/install/bin/peeper
-          codesign --verify --strict --verbose=2 stage/bootstrap/peeper-installer
-          ditto -c -k --keepParent stage/install "$RUNNER_TEMP/peeper-install.zip"
-          ditto -c -k --keepParent stage/bootstrap/peeper-installer "$RUNNER_TEMP/peeper-installer.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/peeper-install.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
-          xcrun notarytool submit "$RUNNER_TEMP/peeper-installer.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
       - run: mkdir -p dist
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
@@ -179,26 +143,17 @@ jobs:
           path: dist
           if-no-files-found: error
           retention-days: 1
-      - name: Remove temporary Apple keychain
-        if: always()
-        run: |
-          if [ -n "${PEEPER_SIGNING_KEYCHAIN:-}" ]; then
-            security delete-keychain "$PEEPER_SIGNING_KEYCHAIN"
-          fi
 
   package-windows:
     needs: [metadata, stage]
-    environment: release-signing
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: windows-2025
             arch: amd64
-            signtool-arch: x64
           - runner: windows-11-arm
             arch: arm64
-            signtool-arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -213,34 +168,6 @@ jobs:
           path: .
       - shell: bash
         run: mkdir -p stage && tar -xzf stage-windows-${{ matrix.arch }}.tar.gz -C stage
-      - name: Authenticode-sign Windows binaries
-        shell: pwsh
-        env:
-          CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
-          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          SIGNTOOL_ARCH: ${{ matrix.signtool-arch }}
-        run: |
-          if (-not $env:CERTIFICATE_PFX) { throw "WINDOWS_CERTIFICATE_PFX is empty" }
-          $pfxPath = Join-Path $env:RUNNER_TEMP "peeper-signing.pfx"
-          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CERTIFICATE_PFX))
-          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
-          $certificate = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
-          $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
-          $pattern = "\\$($env:SIGNTOOL_ARCH)\\signtool.exe$"
-          $signtool = Get-ChildItem $kits -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -match $pattern } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $signtool) { throw "signtool.exe for $($env:SIGNTOOL_ARCH) is unavailable" }
-          $binaries = Get-ChildItem stage\install,stage\bootstrap -Recurse -File |
-            Where-Object { $_.Extension -in ".exe", ".dll" }
-          foreach ($binary in $binaries) {
-            & $signtool.FullName sign /sha1 $certificate.Thumbprint /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $binary.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signing failed for $($binary.FullName)" }
-            & $signtool.FullName verify /pa /v $binary.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signature verification failed for $($binary.FullName)" }
-          }
-          "PEEPER_WINDOWS_CERTIFICATE=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - shell: bash
         run: mkdir -p dist
       - name: Generate SPDX SBOM
@@ -260,13 +187,6 @@ jobs:
           path: dist
           if-no-files-found: error
           retention-days: 1
-      - name: Remove imported Windows certificate
-        if: always()
-        shell: pwsh
-        run: |
-          if ($env:PEEPER_WINDOWS_CERTIFICATE) {
-            Remove-Item "Cert:\CurrentUser\My\$($env:PEEPER_WINDOWS_CERTIFICATE)"
-          }
 
   publish-draft:
     needs: [metadata, package-linux, package-macos, package-windows]
@@ -311,13 +231,13 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: release-assets/*
-      - name: Create signed draft release
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > "$RUNNER_TEMP/is-draft" 2>/dev/null; then
             test "$(cat "$RUNNER_TEMP/is-draft")" = true
           else
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Peeper $GITHUB_REF_NAME" --notes "Signed cross-platform release candidate. Verify installers, checksums, SBOMs, and attestations before publishing."
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Peeper $GITHUB_REF_NAME" --notes "Open source release candidate signed with a self-managed Ed25519 key. Verify installers, checksums, SBOMs, and GitHub attestations."
           fi
           gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
