@@ -9,7 +9,7 @@ import (
 )
 
 func TestToolchainSourceLockPinsVerifiableAssets(t *testing.T) {
-	data, err := os.ReadFile("toolchain-sources.lock.json")
+	data, err := os.ReadFile("../../toolchains/toolchain-sources.lock.json")
 	if err != nil {
 		t.Fatal(err)
 	}

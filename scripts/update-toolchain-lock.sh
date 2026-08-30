@@ -21,8 +21,8 @@ for target in "${targets[@]}"; do
   fi
 done
 
-shopt -s nullglob
-records=("$records_directory"/*.json)
+shopt -s globstar nullglob
+records=("$records_directory"/**/*.json)
 if [ "${#records[@]}" -eq 0 ]; then
   echo "no selected toolchain records" >&2
   exit 1

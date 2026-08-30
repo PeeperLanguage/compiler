@@ -31,7 +31,7 @@ jobs:
           [[ "$RELEASE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
           GOCACHE="$RUNNER_TEMP/go-cache" CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/installer ./internal/toolchain
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-            go run ./cmd/toolchain-lock -lock pkg/distribution/toolchains.lock.json -os "${target%/*}" -arch "${target#*/}" >/dev/null
+            go run ./cmd/toolchain-lock -lock toolchains/toolchains.lock.json -os "${target%/*}" -arch "${target#*/}" >/dev/null
           done
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
@@ -260,7 +260,7 @@ jobs:
           go run ./cmd/release-index \
             -version "$RELEASE_VERSION" \
             -base-url "$base_url" \
-            -toolchains-lock pkg/distribution/toolchains.lock.json \
+            -toolchains-lock toolchains/toolchains.lock.json \
             dist/*.tar.gz.json dist/*.zip.json \
             > release-assets/release-manifest.json
           find dist -maxdepth 1 -type f \
