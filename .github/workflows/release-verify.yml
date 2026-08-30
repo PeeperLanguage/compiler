@@ -65,6 +65,8 @@ jobs:
           compiler="$GITHUB_WORKSPACE/installation/bin/peeper$suffix"
           "$compiler" doctor --json
           PEEPER_BIN="$compiler" go test -count=1 ./x_test
+      - name: Prepare SBOM output
+        run: mkdir -p dist
       - name: Generate SPDX SBOM from fresh installation
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
