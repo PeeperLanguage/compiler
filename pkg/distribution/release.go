@@ -65,7 +65,7 @@ var supportedReleaseHosts = [...]releaseHost{
 	{os: "windows", arch: "arm64"},
 }
 
-func BuildReleaseManifest(version, baseURL string, artifacts []ReleaseArtifact) (ReleaseManifest, error) {
+func BuildReleaseManifest(version, baseURL string, artifacts []ReleaseArtifact, externalToolchains []ReleaseComponent) (ReleaseManifest, error) {
 	if strings.TrimSpace(version) == "" {
 		return ReleaseManifest{}, fmt.Errorf("release manifest has no version")
 	}
@@ -77,7 +77,7 @@ func BuildReleaseManifest(version, baseURL string, artifacts []ReleaseArtifact) 
 	for _, host := range supportedReleaseHosts {
 		expectedHosts[host] = true
 	}
-	manifest := ReleaseManifest{SchemaVersion: ReleaseManifestVersion, Version: version, Components: make([]ReleaseComponent, 0, len(artifacts))}
+	manifest := ReleaseManifest{SchemaVersion: ReleaseManifestVersion, Version: version, Components: make([]ReleaseComponent, 0, len(artifacts)+len(externalToolchains))}
 	for _, artifact := range artifacts {
 		pack := artifact.Manifest
 		if pack.SchemaVersion != PackManifestVersion {
@@ -98,6 +98,12 @@ func BuildReleaseManifest(version, baseURL string, artifacts []ReleaseArtifact) 
 			ID: pack.Metadata.ID, Kind: pack.Metadata.Kind, Version: pack.Metadata.Version,
 			OS: host.os, Arch: host.arch, URL: artifactURL, Size: pack.Size, SHA256: pack.SHA256, Format: pack.Format,
 		})
+	}
+	for _, component := range externalToolchains {
+		if component.Kind != PackKindToolchain {
+			return ReleaseManifest{}, fmt.Errorf("external component %q is not a toolchain", component.ID)
+		}
+		manifest.Components = append(manifest.Components, component)
 	}
 	sort.Slice(manifest.Components, func(i, j int) bool {
 		left, right := manifest.Components[i], manifest.Components[j]
@@ -245,7 +251,7 @@ func validateReleaseComponent(component ReleaseComponent) error {
 		return fmt.Errorf("release component %q has unsupported kind %q", component.ID, component.Kind)
 	}
 	parsedURL, err := url.Parse(component.URL)
-	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil {
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
 		return fmt.Errorf("release component %q has unsafe URL", component.ID)
 	}
 	if component.Size <= 0 {
@@ -257,6 +263,9 @@ func validateReleaseComponent(component ReleaseComponent) error {
 	}
 	if component.Format.Extension() == "" {
 		return fmt.Errorf("release component %q has unsupported format %q", component.ID, component.Format)
+	}
+	if !strings.HasSuffix(parsedURL.Path, component.Format.Extension()) {
+		return fmt.Errorf("release component %q URL does not match format", component.ID)
 	}
 	return nil
 }

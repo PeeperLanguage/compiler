@@ -57,12 +57,12 @@ jobs:
             printf '%s\n' "$unformatted"
             exit 1
           fi
-      - run: go vet ./...
+      - run: CCACHE_DISABLE=1 go vet ./...
 
   unit:
     name: Unit tests
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.compiler_source == 'true' || needs.changes.outputs.runtime == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -71,12 +71,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./...
+      - run: CCACHE_DISABLE=1 go test ./...
 
   race:
     name: Race detector
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.compiler_source == 'true' || needs.changes.outputs.runtime == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -85,12 +85,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -race ./...
+      - run: CCACHE_DISABLE=1 go test -race ./...
 
   native:
-    name: Native (${{ matrix.os }}-${{ matrix.arch }})
+    name: Native ${{ matrix.os }} ${{ matrix.arch }}
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.compiler_source == 'true' || needs.changes.outputs.runtime == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -141,10 +141,58 @@ jobs:
           PEEPER_BIN: ${{ github.workspace }}/build/bin/peeper${{ matrix.exe }}
         run: go test -count=1 ./x_test
 
+  distribution:
+    name: Distribution tests
+    needs: changes
+    if: needs.changes.outputs.distribution == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/installer ./cmd/distpack ./cmd/distunpack ./cmd/release-index ./cmd/sign-release ./cmd/toolchain-lock
+
+  toolchain_config:
+    name: Toolchain configuration
+    needs: changes
+    if: needs.changes.outputs.toolchain == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check toolchain scripts
+        run: |
+          bash -n scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
+          scripts/toolchain-fingerprint.sh linux amd64 >/dev/null
+          scripts/toolchain-fingerprint.sh linux arm64 >/dev/null
+          scripts/toolchain-fingerprint.sh darwin amd64 13.0 >/dev/null
+          scripts/toolchain-fingerprint.sh darwin arm64 13.0 >/dev/null
+          scripts/toolchain-fingerprint.sh windows amd64 >/dev/null
+          scripts/toolchain-fingerprint.sh windows arm64 >/dev/null
+      - run: CCACHE_DISABLE=1 go test ./internal/toolchain ./pkg/distribution
+
+  workflow:
+    name: Workflow configuration
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check repository scripts referenced by workflows
+        run: bash -n scripts/build.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
+
   ci-success:
     name: CI success
     if: always()
-    needs: [changes, quality, unit, race, native]
+    needs: [changes, quality, unit, race, native, distribution, toolchain_config, workflow]
     runs-on: ubuntu-24.04
     steps:
       - name: Require applicable checks
@@ -154,12 +202,28 @@ jobs:
           UNIT: ${{ needs.unit.result }}
           RACE: ${{ needs.race.result }}
           NATIVE: ${{ needs.native.result }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          DISTRIBUTION: ${{ needs.distribution.result }}
+          TOOLCHAIN: ${{ needs.toolchain_config.result }}
+          WORKFLOW: ${{ needs.workflow.result }}
+          COMPILER_SOURCE: ${{ needs.changes.outputs.compiler_source }}
+          RUNTIME: ${{ needs.changes.outputs.runtime }}
+          DISTRIBUTION_CHANGED: ${{ needs.changes.outputs.distribution }}
+          TOOLCHAIN_CHANGED: ${{ needs.changes.outputs.toolchain }}
+          WORKFLOW_CHANGED: ${{ needs.changes.outputs.workflow }}
         run: |
           test "$CHANGES" = success
           test "$QUALITY" = success
-          if [ "$DOCS_ONLY" != true ]; then
+          if [ "$COMPILER_SOURCE" = true ] || [ "$RUNTIME" = true ]; then
             test "$UNIT" = success
             test "$RACE" = success
             test "$NATIVE" = success
+          fi
+          if [ "$DISTRIBUTION_CHANGED" = true ]; then
+            test "$DISTRIBUTION" = success
+          fi
+          if [ "$TOOLCHAIN_CHANGED" = true ]; then
+            test "$TOOLCHAIN" = success
+          fi
+          if [ "$WORKFLOW_CHANGED" = true ]; then
+            test "$WORKFLOW" = success
           fi

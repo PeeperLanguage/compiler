@@ -27,62 +27,209 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           version="${RELEASE_TAG#v}"
-          test -n "$version"
           test "v$version" = "$RELEASE_TAG"
           [[ "$RELEASE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
-          go test ./internal/distribution ./internal/installer ./internal/toolchain
+          GOCACHE="$RUNNER_TEMP/go-cache" CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/installer ./internal/toolchain
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            go run ./cmd/toolchain-lock -lock pkg/distribution/toolchains.lock.json -os "${target%/*}" -arch "${target#*/}" >/dev/null
+          done
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
-  targets:
+  compiler_linux_amd64:
+    name: Compiler Linux amd64
     needs: preflight
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            os: linux
-            arch: amd64
-            llvm-target: X86
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-            llvm-target: AArch64
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            llvm-target: X86
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-            llvm-target: AArch64
-          - runner: windows-2025
-            os: windows
-            arch: amd64
-            llvm-target: X86
-          - runner: windows-11-arm
-            os: windows
-            arch: arm64
-            llvm-target: AArch64
-    uses: ./.github/workflows/build-release-host.yml
+    uses: ./.github/workflows/release-compiler.yml
     with:
-      runner: ${{ matrix.runner }}
-      os: ${{ matrix.os }}
-      arch: ${{ matrix.arch }}
-      llvm-target: ${{ matrix.llvm-target }}
+      runner: ubuntu-24.04
+      os: linux
+      arch: amd64
       version: ${{ needs.preflight.outputs.version }}
       public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
 
-  publish-draft:
-    needs: [preflight, targets]
-    environment: release
+  compiler_linux_arm64:
+    name: Compiler Linux arm64
+    needs: preflight
+    uses: ./.github/workflows/release-compiler.yml
+    with:
+      runner: ubuntu-24.04-arm
+      os: linux
+      arch: arm64
+      version: ${{ needs.preflight.outputs.version }}
+      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
+
+  compiler_darwin_amd64:
+    name: Compiler macOS amd64
+    needs: preflight
+    uses: ./.github/workflows/release-compiler.yml
+    with:
+      runner: macos-15-intel
+      os: darwin
+      arch: amd64
+      version: ${{ needs.preflight.outputs.version }}
+      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
+
+  compiler_darwin_arm64:
+    name: Compiler macOS arm64
+    needs: preflight
+    uses: ./.github/workflows/release-compiler.yml
+    with:
+      runner: macos-15
+      os: darwin
+      arch: arm64
+      version: ${{ needs.preflight.outputs.version }}
+      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
+
+  compiler_windows_amd64:
+    name: Compiler Windows amd64
+    needs: preflight
+    uses: ./.github/workflows/release-compiler.yml
+    with:
+      runner: windows-2025
+      os: windows
+      arch: amd64
+      version: ${{ needs.preflight.outputs.version }}
+      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
+
+  compiler_windows_arm64:
+    name: Compiler Windows arm64
+    needs: preflight
+    uses: ./.github/workflows/release-compiler.yml
+    with:
+      runner: windows-11-arm
+      os: windows
+      arch: arm64
+      version: ${{ needs.preflight.outputs.version }}
+      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
+
+  runtime_linux_amd64:
+    name: Runtime Linux amd64
+    needs: preflight
+    uses: ./.github/workflows/release-runtime.yml
+    with:
+      runner: ubuntu-24.04
+      os: linux
+      arch: amd64
+      version: ${{ needs.preflight.outputs.version }}
+
+  runtime_linux_arm64:
+    name: Runtime Linux arm64
+    needs: preflight
+    uses: ./.github/workflows/release-runtime.yml
+    with:
+      runner: ubuntu-24.04-arm
+      os: linux
+      arch: arm64
+      version: ${{ needs.preflight.outputs.version }}
+
+  runtime_darwin_amd64:
+    name: Runtime macOS amd64
+    needs: preflight
+    uses: ./.github/workflows/release-runtime.yml
+    with:
+      runner: macos-15-intel
+      os: darwin
+      arch: amd64
+      version: ${{ needs.preflight.outputs.version }}
+      minimum-macos: "13.0"
+
+  runtime_darwin_arm64:
+    name: Runtime macOS arm64
+    needs: preflight
+    uses: ./.github/workflows/release-runtime.yml
+    with:
+      runner: macos-15
+      os: darwin
+      arch: arm64
+      version: ${{ needs.preflight.outputs.version }}
+      minimum-macos: "13.0"
+
+  runtime_windows_amd64:
+    name: Runtime Windows amd64
+    needs: preflight
+    uses: ./.github/workflows/release-runtime.yml
+    with:
+      runner: windows-2025
+      os: windows
+      arch: amd64
+      version: ${{ needs.preflight.outputs.version }}
+
+  runtime_windows_arm64:
+    name: Runtime Windows arm64
+    needs: preflight
+    uses: ./.github/workflows/release-runtime.yml
+    with:
+      runner: windows-11-arm
+      os: windows
+      arch: arm64
+      version: ${{ needs.preflight.outputs.version }}
+
+  verify_linux_amd64:
+    name: Verify Linux amd64
+    needs: [preflight, compiler_linux_amd64, runtime_linux_amd64]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      runner: ubuntu-24.04
+      os: linux
+      arch: amd64
+
+  verify_linux_arm64:
+    name: Verify Linux arm64
+    needs: [preflight, compiler_linux_arm64, runtime_linux_arm64]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      runner: ubuntu-24.04-arm
+      os: linux
+      arch: arm64
+
+  verify_darwin_amd64:
+    name: Verify macOS amd64
+    needs: [preflight, compiler_darwin_amd64, runtime_darwin_amd64]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      runner: macos-15-intel
+      os: darwin
+      arch: amd64
+
+  verify_darwin_arm64:
+    name: Verify macOS arm64
+    needs: [preflight, compiler_darwin_arm64, runtime_darwin_arm64]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      runner: macos-15
+      os: darwin
+      arch: arm64
+
+  verify_windows_amd64:
+    name: Verify Windows amd64
+    needs: [preflight, compiler_windows_amd64, runtime_windows_amd64]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      runner: windows-2025
+      os: windows
+      arch: amd64
+
+  verify_windows_arm64:
+    name: Verify Windows arm64
+    needs: [preflight, compiler_windows_arm64, runtime_windows_arm64]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      runner: windows-11-arm
+      os: windows
+      arch: arm64
+
+  assemble_release:
+    name: Assemble release
+    needs:
+      - preflight
+      - verify_linux_amd64
+      - verify_linux_arm64
+      - verify_darwin_amd64
+      - verify_darwin_arm64
+      - verify_windows_amd64
+      - verify_windows_arm64
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
     permissions:
-      actions: read
-      artifact-metadata: write
-      attestations: write
-      contents: write
-      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v7
@@ -91,31 +238,125 @@ jobs:
           cache: true
       - uses: actions/download-artifact@v8
         with:
-          pattern: release-*
+          pattern: compiler-*
           path: dist
           merge-multiple: true
-      - name: Assemble and sign release index
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: target-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: verify-*
+          path: dist
+          merge-multiple: true
+      - name: Build unsigned release manifest
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-          PEEPER_RELEASE_PRIVATE_KEY: ${{ secrets.PEEPER_RELEASE_PRIVATE_KEY }}
         run: |
-          mkdir -p release-assets
+          mkdir release-assets
           base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
           go run ./cmd/release-index \
             -version "$RELEASE_VERSION" \
             -base-url "$base_url" \
+            -toolchains-lock pkg/distribution/toolchains.lock.json \
             dist/*.tar.gz.json dist/*.zip.json \
             > release-assets/release-manifest.json
-          go run ./cmd/sign-release release-assets/release-manifest.json > release-assets/release-manifest.json.sig
           find dist -maxdepth 1 -type f \
             \( -name '*.tar.gz' -o -name '*.zip' -o -name 'peeper-installer-*' -o -name '*.spdx.json' \) \
             -exec cp {} release-assets/ \;
-          (cd release-assets && sha256sum * > SHA256SUMS)
-      - name: Attest release provenance
-        uses: actions/attest@v4
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assembled
+          path: release-assets
+          if-no-files-found: error
+          compression-level: 0
+
+  sign_release:
+    name: Sign release manifest
+    needs: assemble_release
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assembled
+          path: release-assets
+      - name: Sign exact manifest bytes
+        env:
+          PEEPER_RELEASE_PRIVATE_KEY: ${{ secrets.PEEPER_RELEASE_PRIVATE_KEY }}
+        run: go run ./cmd/sign-release release-assets/release-manifest.json > release-assets/release-manifest.json.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-signed
+          path: release-assets
+          if-no-files-found: error
+          compression-level: 0
+
+  checksums:
+    name: Generate release checksums
+    needs: sign_release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-signed
+          path: release-assets
+      - name: Generate SHA256SUMS
+        run: |
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS
+          )
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-checksummed
+          path: release-assets
+          if-no-files-found: error
+          compression-level: 0
+
+  attest:
+    name: Attest release provenance
+    needs: checksums
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-checksummed
+          path: release-assets
+      - uses: actions/attest@v4
         with:
           subject-path: release-assets/*
-      - name: Create draft release
+
+  publish_draft:
+    name: Publish draft release
+    needs: attest
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-checksummed
+          path: release-assets
+      - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

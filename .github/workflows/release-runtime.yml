@@ -1,0 +1,89 @@
+name: Release target runtime component
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+      arch:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      minimum-macos:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ inputs.os }} ${{ inputs.arch }} runtime
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fetch verified immutable toolchain
+        run: bash scripts/fetch-toolchain.sh "${{ inputs.os }}" "${{ inputs.arch }}" toolchain-install
+      - name: Build target runtime
+        run: |
+          case "${{ inputs.os }}/${{ inputs.arch }}" in
+            linux/amd64) triple=x86_64-unknown-linux-musl ;;
+            linux/arm64) triple=aarch64-unknown-linux-musl ;;
+            darwin/amd64) triple=x86_64-apple-darwin ;;
+            darwin/arm64) triple=aarch64-apple-darwin ;;
+            windows/amd64) triple=x86_64-w64-windows-gnu ;;
+            windows/arm64) triple=aarch64-w64-windows-gnu ;;
+            *) exit 2 ;;
+          esac
+          suffix=""
+          [ "${{ inputs.os }}" = windows ] && suffix=.exe
+          clang="$GITHUB_WORKSPACE/toolchain-install/toolchains/native/bin/clang$suffix"
+          archiver="$GITHUB_WORKSPACE/toolchain-install/toolchains/native/bin/llvm-ar$suffix"
+          runtime_dir="stage/targets/$triple/lib"
+          mkdir -p "$runtime_dir"
+          runtime_args=(-std=c11 -O2 -target "$triple")
+          if [ "${{ inputs.os }}" = linux ]; then
+            runtime_args+=(--sysroot "$GITHUB_WORKSPACE/toolchain-install/toolchains/native/sysroot")
+          elif [ "${{ inputs.os }}" = darwin ]; then
+            runtime_args+=(--sysroot "$(xcrun --sdk macosx --show-sdk-path)" "-mmacosx-version-min=${{ inputs.minimum-macos }}")
+          fi
+          "$clang" "${runtime_args[@]}" -c runtime/peeper_rt.c -o "$RUNNER_TEMP/peeper_rt.o"
+          "$archiver" rcs "$runtime_dir/libpeeper_rt_v1.a" "$RUNNER_TEMP/peeper_rt.o"
+      - name: Package target component
+        run: |
+          format=tar.gz
+          [ "${{ inputs.os }}" = windows ] && format=zip
+          id="target-${{ inputs.os }}-${{ inputs.arch }}-v${{ inputs.version }}"
+          archive="dist/$id.$format"
+          mkdir -p dist
+          go run ./cmd/distpack \
+            -source stage \
+            -output "$archive" \
+            -format "$format" \
+            -kind target \
+            -id "$id" \
+            -version "${{ inputs.version }}" \
+            -os "${{ inputs.os }}" \
+            -arch "${{ inputs.arch }}" \
+            > "$archive.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: target-${{ inputs.os }}-${{ inputs.arch }}
+          path: dist
+          if-no-files-found: error
+          compression-level: 0

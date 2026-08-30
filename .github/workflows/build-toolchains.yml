@@ -4,67 +4,206 @@ on:
   workflow_dispatch:
     inputs:
       family:
-        description: Platform family to manufacture
-        required: true
-        default: all
+        description: Toolchain family to rebuild
         type: choice
+        required: false
+        default: auto
         options:
+          - auto
           - all
           - linux
           - darwin
           - windows
+      force_all:
+        description: Rebuild every supported toolchain
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches:
+      - main
+    paths:
+      - pkg/distribution/toolchain-sources.lock.json
+      - scripts/toolchain-fingerprint.sh
+      - scripts/plan-toolchains.sh
+      - scripts/update-toolchain-lock.sh
+      - scripts/toolchains/**
+      - cmd/release-profile/**
+      - internal/toolchain/**
+      - .github/workflows/build-toolchains.yml
+      - .github/workflows/toolchain-target.yml
 
 permissions:
   contents: read
 
 jobs:
-  select:
-    name: Select toolchains
+  plan:
+    name: Plan affected toolchains
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.matrix.outputs.value }}
-    steps:
-      - id: matrix
-        env:
-          FAMILY: ${{ inputs.family }}
-        run: |
-          all='{"include":[{"runner":"ubuntu-24.04","os":"linux","arch":"amd64","llvm_target":"X86"},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","llvm_target":"AArch64"},{"runner":"macos-15-intel","os":"darwin","arch":"amd64","llvm_target":"X86"},{"runner":"macos-15","os":"darwin","arch":"arm64","llvm_target":"AArch64"},{"runner":"windows-2025","os":"windows","arch":"amd64","llvm_target":"X86"},{"runner":"windows-11-arm","os":"windows","arch":"arm64","llvm_target":"AArch64"}]}'
-          case "$FAMILY" in
-            all) matrix="$all" ;;
-            linux|darwin|windows) matrix="$(jq -c --arg family "$FAMILY" '.include |= [.[] | select(.os == $family)]' <<< "$all")" ;;
-            *) exit 2 ;;
-          esac
-          echo "value=$matrix" >> "$GITHUB_OUTPUT"
-
-  toolchain:
-    name: Toolchain ${{ matrix.os }}-${{ matrix.arch }}
-    needs: select
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
-    defaults:
-      run:
-        shell: bash
+      linux_amd64: ${{ steps.plan.outputs.linux_amd64 }}
+      linux_arm64: ${{ steps.plan.outputs.linux_arm64 }}
+      darwin_amd64: ${{ steps.plan.outputs.darwin_amd64 }}
+      darwin_arm64: ${{ steps.plan.outputs.darwin_arm64 }}
+      windows_amd64: ${{ steps.plan.outputs.windows_amd64 }}
+      windows_arm64: ${{ steps.plan.outputs.windows_arm64 }}
     steps:
       - uses: actions/checkout@v6
-      - name: Build and validate toolchain
-        run: |
-          bash scripts/build-toolchain.sh \
-            "${{ matrix.os }}" \
-            "${{ matrix.arch }}" \
-            "${{ matrix.llvm_target }}" \
-            toolchains/native \
-            "13.0"
-      - name: Package temporary producer artifact
-        run: |
-          mkdir -p dist
-          tar -cf "dist/peeper-toolchain-${{ matrix.os }}-${{ matrix.arch }}.tar" -C toolchains native
-      - uses: actions/upload-artifact@v7
         with:
-          name: toolchain-${{ matrix.os }}-${{ matrix.arch }}
-          path: dist/peeper-toolchain-${{ matrix.os }}-${{ matrix.arch }}.tar
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
+          fetch-depth: 0
+      - id: plan
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+          FORCE_ALL: ${{ inputs.force_all || false }}
+          TOOLCHAIN_FAMILY: ${{ inputs.family || 'auto' }}
+        run: bash scripts/plan-toolchains.sh
+
+  linux_amd64:
+    name: Linux amd64 toolchain
+    needs: plan
+    if: needs.plan.outputs.linux_amd64 == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/toolchain-target.yml
+    with:
+      runner: ubuntu-24.04
+      os: linux
+      arch: amd64
+
+  linux_arm64:
+    name: Linux arm64 toolchain
+    needs: plan
+    if: needs.plan.outputs.linux_arm64 == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/toolchain-target.yml
+    with:
+      runner: ubuntu-24.04-arm
+      os: linux
+      arch: arm64
+
+  darwin_amd64:
+    name: macOS amd64 toolchain
+    needs: plan
+    if: needs.plan.outputs.darwin_amd64 == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/toolchain-target.yml
+    with:
+      runner: macos-15-intel
+      os: darwin
+      arch: amd64
+      llvm-target: X86
+      minimum-macos: "13.0"
+
+  darwin_arm64:
+    name: macOS arm64 toolchain
+    needs: plan
+    if: needs.plan.outputs.darwin_arm64 == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/toolchain-target.yml
+    with:
+      runner: macos-15
+      os: darwin
+      arch: arm64
+      llvm-target: AArch64
+      minimum-macos: "13.0"
+
+  windows_amd64:
+    name: Windows amd64 toolchain
+    needs: plan
+    if: needs.plan.outputs.windows_amd64 == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/toolchain-target.yml
+    with:
+      runner: windows-2025
+      os: windows
+      arch: amd64
+
+  windows_arm64:
+    name: Windows arm64 toolchain
+    needs: plan
+    if: needs.plan.outputs.windows_arm64 == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/toolchain-target.yml
+    with:
+      runner: windows-11-arm
+      os: windows
+      arch: arm64
+
+  update_lock:
+    name: Prepare toolchain lock update
+    if: >-
+      always() && needs.plan.result == 'success' &&
+      (needs.plan.outputs.linux_amd64 == 'true' ||
+       needs.plan.outputs.linux_arm64 == 'true' ||
+       needs.plan.outputs.darwin_amd64 == 'true' ||
+       needs.plan.outputs.darwin_arm64 == 'true' ||
+       needs.plan.outputs.windows_amd64 == 'true' ||
+       needs.plan.outputs.windows_arm64 == 'true')
+    needs:
+      - plan
+      - linux_amd64
+      - linux_arm64
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
+      - windows_arm64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: toolchain-record-*
+          path: records
+          merge-multiple: true
+      - name: Reject failed selected toolchains and merge records
+        env:
+          SELECTED_linux_amd64: ${{ needs.plan.outputs.linux_amd64 }}
+          SELECTED_linux_arm64: ${{ needs.plan.outputs.linux_arm64 }}
+          SELECTED_darwin_amd64: ${{ needs.plan.outputs.darwin_amd64 }}
+          SELECTED_darwin_arm64: ${{ needs.plan.outputs.darwin_arm64 }}
+          SELECTED_windows_amd64: ${{ needs.plan.outputs.windows_amd64 }}
+          SELECTED_windows_arm64: ${{ needs.plan.outputs.windows_arm64 }}
+          RESULT_linux_amd64: ${{ needs.linux_amd64.result }}
+          RESULT_linux_arm64: ${{ needs.linux_arm64.result }}
+          RESULT_darwin_amd64: ${{ needs.darwin_amd64.result }}
+          RESULT_darwin_arm64: ${{ needs.darwin_arm64.result }}
+          RESULT_windows_amd64: ${{ needs.windows_amd64.result }}
+          RESULT_windows_arm64: ${{ needs.windows_arm64.result }}
+        run: bash scripts/update-toolchain-lock.sh pkg/distribution/toolchains.lock.json records
+      - id: changed
+        run: |
+          if git diff --quiet -- pkg/distribution/toolchains.lock.json; then
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open lock update pull request
+        if: steps.changed.outputs.value == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="automation/toolchains-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add pkg/distribution/toolchains.lock.json
+          git commit -m "Update Peeper toolchain lock"
+          git push origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Update Peeper toolchain lock" \
+            --body "Updates immutable Peeper toolchain component records with verified release URLs, sizes, and SHA-256 values."

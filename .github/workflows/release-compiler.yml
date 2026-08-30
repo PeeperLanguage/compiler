@@ -1,0 +1,85 @@
+name: Release compiler component
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+      arch:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      public-key:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ inputs.os }} ${{ inputs.arch }} compiler
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      CCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build compiler without target runtime
+        run: go run ./scripts/bundle.go -runtime=false
+      - name: Verify exact Peeper version
+        run: |
+          suffix=""
+          [ "${{ inputs.os }}" = windows ] && suffix=.exe
+          test "$(build/bin/peeper$suffix --version)" = "v${{ inputs.version }}"
+      - name: Stage compiler component and bootstrap installer
+        env:
+          RELEASE_PUBLIC_KEY: ${{ inputs.public-key }}
+        run: |
+          suffix=""
+          [ "${{ inputs.os }}" = windows ] && suffix=.exe
+          test -n "$RELEASE_PUBLIC_KEY"
+          mkdir -p stage/compiler/bin stage/compiler/libs dist
+          cp "build/bin/peeper$suffix" stage/compiler/bin/
+          cp -R build/libs/. stage/compiler/libs/
+          cp LICENSE stage/compiler/
+          manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ inputs.version }}/release-manifest.json"
+          go build -trimpath \
+            -ldflags="-s -w -X=main.releaseManifestURL=$manifest_url -X=main.releasePublicKeyHex=$RELEASE_PUBLIC_KEY" \
+            -o "dist/peeper-installer-${{ inputs.os }}-${{ inputs.arch }}$suffix" \
+            ./cmd/peeper-installer
+      - name: Package compiler component
+        run: |
+          format=tar.gz
+          [ "${{ inputs.os }}" = windows ] && format=zip
+          id="compiler-${{ inputs.os }}-${{ inputs.arch }}-v${{ inputs.version }}"
+          archive="dist/$id.$format"
+          go run ./cmd/distpack \
+            -source stage/compiler \
+            -output "$archive" \
+            -format "$format" \
+            -kind compiler \
+            -id "$id" \
+            -version "${{ inputs.version }}" \
+            -os "${{ inputs.os }}" \
+            -arch "${{ inputs.arch }}" \
+            > "$archive.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compiler-${{ inputs.os }}-${{ inputs.arch }}
+          path: dist
+          if-no-files-found: error
+          compression-level: 0
