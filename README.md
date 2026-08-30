@@ -5,8 +5,7 @@ repository contains the compiler, bundled library, package tooling, language
 server, and executable source fixtures.
 
 > Peeper is pre-release software. Language, package, and compiler interfaces may
-> change without compatibility guarantees. No stable binary release is currently
-> published.
+> change without compatibility guarantees.
 
 ## Current capabilities
 
@@ -106,39 +105,6 @@ fn main() {
 | `peeper lsp` | Start the language server over standard input/output. |
 
 Run `peeper -help` for the complete command list and current aliases.
-
-## Compiler pipeline
-
-```text
-source
-  -> tokens
-  -> AST
-  -> name and base-type semantics
-  -> CFG
-  -> flow typing and optional narrowing
-  -> definite initialization
-  -> ownership
-  -> project-wide usage analysis
-  -> HIR
-  -> MIR
-  -> LLVM IR
-  -> native linker
-```
-
-Mandatory semantic checks finish before HIR optimization may remove source
-control flow. [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) explains these
-phase and representation boundaries.
-
-## Repository layout
-
-| Path | Contents |
-| --- | --- |
-| `cmd/` | Compiler CLI entrypoint and commands. |
-| `internal/` | Frontend, semantics, IR, LSP, pipeline, and backend packages. |
-| `pkg/` | Reusable manifest, registry, and utility packages. |
-| `_builtin_library/` | Compiler-bundled Peeper library sources. |
-| `x_test/` | Positive, negative, and runtime source fixtures. |
-| `scripts/` | Bundling and repository automation. |
 
 ## Development
 

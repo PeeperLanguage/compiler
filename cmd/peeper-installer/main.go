@@ -48,7 +48,7 @@ func main() {
 	defer stop()
 	result, err := installer.Install(ctx, installer.Config{
 		Client: &http.Client{Timeout: 30 * time.Minute}, ManifestURL: *manifestURL, SignatureURL: *manifestURL + ".sig",
-		PublicKey: publicKey, HostOS: runtime.GOOS, HostArch: runtime.GOARCH, InstallRoot: *installRoot,
+		PublicKey: publicKey, HostOS: runtime.GOOS, HostArch: runtime.GOARCH, InstallRoot: *installRoot, Progress: os.Stderr,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
