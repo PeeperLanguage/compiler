@@ -29,7 +29,7 @@ installer="peeper-installer-${os}-${arch}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-curl --proto '=https' --tlsv1.2 -fsSL "$base_url/$installer" -o "$work/$installer"
+curl --proto '=https' --tlsv1.2 -fL --progress-bar "$base_url/$installer" -o "$work/$installer"
 curl --proto '=https' --tlsv1.2 -fsSL "$base_url/SHA256SUMS" -o "$work/SHA256SUMS"
 
 expected=$(grep "  ${installer}\$" "$work/SHA256SUMS" | cut -d' ' -f1 || true)
