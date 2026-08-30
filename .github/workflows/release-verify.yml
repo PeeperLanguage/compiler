@@ -1,0 +1,81 @@
+name: Verify Peeper component installation
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+      arch:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify ${{ inputs.os }} ${{ inputs.arch }} installation
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: compiler-${{ inputs.os }}-${{ inputs.arch }}
+          path: components/compiler
+      - uses: actions/download-artifact@v8
+        with:
+          name: target-${{ inputs.os }}-${{ inputs.arch }}
+          path: components/target
+      - name: Compose fresh installation from immutable components
+        run: |
+          installation="$GITHUB_WORKSPACE/installation"
+          bash scripts/fetch-toolchain.sh "${{ inputs.os }}" "${{ inputs.arch }}" "$installation"
+          shopt -s nullglob
+          for kind in compiler target; do
+            records=("components/$kind"/*.tar.gz.json "components/$kind"/*.zip.json)
+            test "${#records[@]}" -eq 1
+            record="${records[0]}"
+            archive="${record%.json}"
+            go run ./cmd/distunpack \
+              -archive "$archive" \
+              -format "$(jq -er .format "$record")" \
+              -destination "$installation" \
+              -kind "$(jq -er .metadata.kind "$record")" \
+              -id "$(jq -er .metadata.id "$record")" \
+              -version "$(jq -er .metadata.version "$record")" \
+              -os "${{ inputs.os }}" \
+              -arch "${{ inputs.arch }}"
+          done
+      - name: Diagnose fresh installation and run source fixtures
+        run: |
+          suffix=""
+          [ "${{ inputs.os }}" = windows ] && suffix=.exe
+          compiler="$GITHUB_WORKSPACE/installation/bin/peeper$suffix"
+          "$compiler" doctor --json
+          PEEPER_BIN="$compiler" go test -count=1 ./x_test
+      - name: Generate SPDX SBOM from fresh installation
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: installation
+          format: spdx-json
+          output-file: dist/peeper-${{ inputs.os }}-${{ inputs.arch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: verify-${{ inputs.os }}-${{ inputs.arch }}
+          path: dist
+          if-no-files-found: error
+          compression-level: 0

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -22,13 +23,15 @@ const (
 )
 
 func main() {
-	if err := bundle(); err != nil {
+	includeRuntime := flag.Bool("runtime", true, "build bundled host runtime")
+	flag.Parse()
+	if err := bundle(*includeRuntime); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func bundle() error {
+func bundle(includeRuntime bool) error {
 	bundledBinaryPath := "build/bin/peeper" + target.ExecutableExt(runtime.GOOS)
 	if err := os.RemoveAll(bundledLibsRoot); err != nil {
 		return fmt.Errorf("reset packaged libraries: %w", err)
@@ -36,8 +39,10 @@ func bundle() error {
 	if err := copyDir(devLibrariesRoot, bundledLibsRoot); err != nil {
 		return fmt.Errorf("copy packaged libraries: %w", err)
 	}
-	if err := buildRuntimeArchive(); err != nil {
-		return err
+	if includeRuntime {
+		if err := buildRuntimeArchive(); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(bundledBinaryPath), 0o755); err != nil {
 		return fmt.Errorf("create binary directory: %w", err)

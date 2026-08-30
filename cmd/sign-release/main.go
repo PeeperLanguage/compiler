@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"compiler/internal/distribution"
+	"compiler/pkg/distribution"
 )
 
 func main() {

@@ -1,0 +1,170 @@
+name: Produce immutable Peeper toolchain
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+      arch:
+        required: true
+        type: string
+      llvm-target:
+        required: false
+        type: string
+        default: ""
+      minimum-macos:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Produce ${{ inputs.os }} ${{ inputs.arch }} toolchain
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - id: identity
+        name: Compute immutable identity
+        run: |
+          scripts/toolchain-fingerprint.sh \
+            "${{ inputs.os }}" \
+            "${{ inputs.arch }}" \
+            "${{ inputs.minimum-macos || '13.0' }}" \
+            > identity.json
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' identity.json >> "$GITHUB_OUTPUT"
+      - id: existing
+        name: Verify existing immutable component
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_TAG: ${{ steps.identity.outputs.tag }}
+          COMPONENT_ID: ${{ steps.identity.outputs.id }}
+          COMPONENT_VERSION: ${{ steps.identity.outputs.version }}
+          COMPONENT_OS: ${{ inputs.os }}
+          COMPONENT_ARCH: ${{ inputs.arch }}
+        run: |
+          format=tar.gz
+          [ "$COMPONENT_OS" = windows ] && format=zip
+          archive_name="$COMPONENT_ID.$format"
+          metadata_name="$archive_name.json"
+          if ! gh release view "$COMPONENT_TAG" >/dev/null 2>&1; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release view "$COMPONENT_TAG" --json assets --jq '.assets[].name' | grep -Fx "$archive_name"
+          gh release view "$COMPONENT_TAG" --json assets --jq '.assets[].name' | grep -Fx "$metadata_name"
+          mkdir existing
+          gh release download "$COMPONENT_TAG" -p "$metadata_name" -D existing
+          jq -e \
+            --arg id "$COMPONENT_ID" \
+            --arg version "$COMPONENT_VERSION" \
+            --arg os "$COMPONENT_OS" \
+            --arg arch "$COMPONENT_ARCH" \
+            --arg format "$format" \
+            '.metadata.kind == "toolchain" and .metadata.id == $id and .metadata.version == $version and .metadata.os == $os and .metadata.arch == $arch and .format == $format and (.size | type == "number") and (.sha256 | test("^[0-9a-f]{64}$"))' \
+            "existing/$metadata_name" >/dev/null
+          echo "metadata=existing/$metadata_name" >> "$GITHUB_OUTPUT"
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+      - name: Build and validate toolchain
+        if: steps.existing.outputs.reuse != 'true'
+        run: |
+          case "${{ inputs.os }}" in
+            linux)
+              bash scripts/toolchains/build-linux.sh "${{ inputs.arch }}" stage/toolchains/native
+              ;;
+            darwin)
+              bash scripts/toolchains/build-darwin.sh \
+                "${{ inputs.arch }}" \
+                "${{ inputs.llvm-target }}" \
+                stage/toolchains/native \
+                "${{ inputs.minimum-macos }}"
+              ;;
+            windows)
+              bash scripts/toolchains/build-windows.sh "${{ inputs.arch }}" stage/toolchains/native
+              ;;
+          esac
+      - name: Generate managed toolchain profile
+        if: steps.existing.outputs.reuse != 'true'
+        run: |
+          minimum=()
+          if [ -n "${{ inputs.minimum-macos }}" ]; then
+            minimum=(-minimum-os "${{ inputs.minimum-macos }}")
+          fi
+          go run ./cmd/release-profile \
+            -root stage \
+            -os "${{ inputs.os }}" \
+            -arch "${{ inputs.arch }}" \
+            "${minimum[@]}"
+      - name: Package deterministic toolchain component
+        id: package
+        if: steps.existing.outputs.reuse != 'true'
+        run: |
+          format=tar.gz
+          if [ "${{ inputs.os }}" = windows ]; then
+            format=zip
+          fi
+          archive="dist/${{ steps.identity.outputs.id }}.$format"
+          mkdir -p dist
+          go run ./cmd/distpack \
+            -source stage \
+            -output "$archive" \
+            -format "$format" \
+            -kind toolchain \
+            -id "${{ steps.identity.outputs.id }}" \
+            -version "${{ steps.identity.outputs.version }}" \
+            -os "${{ inputs.os }}" \
+            -arch "${{ inputs.arch }}" \
+            > "$archive.json"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "metadata=$archive.json" >> "$GITHUB_OUTPUT"
+      - name: Publish new immutable component
+        if: steps.existing.outputs.reuse != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_TAG: ${{ steps.identity.outputs.tag }}
+          COMPONENT_ID: ${{ steps.identity.outputs.id }}
+          COMPONENT_VERSION: ${{ steps.identity.outputs.version }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          METADATA: ${{ steps.package.outputs.metadata }}
+        run: |
+          gh release create "$COMPONENT_TAG" \
+            "$ARCHIVE" \
+            "$METADATA" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "Peeper $COMPONENT_ID" \
+            --notes "Immutable Peeper toolchain component $COMPONENT_VERSION."
+      - name: Write toolchain lock record
+        env:
+          COMPONENT_TAG: ${{ steps.identity.outputs.tag }}
+          COMPONENT_ID: ${{ steps.identity.outputs.id }}
+          REUSE: ${{ steps.existing.outputs.reuse }}
+          EXISTING_METADATA: ${{ steps.existing.outputs.metadata }}
+          NEW_METADATA: ${{ steps.package.outputs.metadata }}
+        run: |
+          metadata="$NEW_METADATA"
+          [ "$REUSE" = true ] && metadata="$EXISTING_METADATA"
+          archive_name="$COMPONENT_ID.$(jq -er .format "$metadata")"
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$COMPONENT_TAG/$archive_name"
+          jq --arg url "$url" '{id:.metadata.id,kind:.metadata.kind,version:.metadata.version,os:.metadata.os,arch:.metadata.arch,url:$url,size:.size,sha256:.sha256,format:.format}' "$metadata" > toolchain-record.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: toolchain-record-${{ inputs.os }}-${{ inputs.arch }}
+          path: toolchain-record.json
+          if-no-files-found: error
+          compression-level: 0

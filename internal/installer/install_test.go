@@ -14,8 +14,8 @@ import (
 	"runtime"
 	"testing"
 
-	"compiler/internal/distribution"
 	"compiler/internal/target"
+	"compiler/pkg/distribution"
 )
 
 func TestInstallDownloadsVerifiesAndActivatesRelease(t *testing.T) {

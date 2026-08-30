@@ -12,9 +12,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"compiler/internal/distribution"
 	"compiler/internal/target"
 	"compiler/internal/toolchain"
+	"compiler/pkg/distribution"
 )
 
 const (

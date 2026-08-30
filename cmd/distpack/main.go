@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"compiler/internal/distribution"
+	"compiler/pkg/distribution"
 )
 
 func main() {

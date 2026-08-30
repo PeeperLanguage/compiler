@@ -9,15 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compiler/internal/distribution"
+	"compiler/pkg/distribution"
 )
 
 func main() {
 	version := flag.String("version", "", "release version")
 	baseURL := flag.String("base-url", "", "HTTPS release artifact base URL")
+	toolchainsLock := flag.String("toolchains-lock", "", "finished toolchain lock file")
 	flag.Parse()
-	if flag.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "release index requires pack result files")
+	if flag.NArg() == 0 || *toolchainsLock == "" {
+		fmt.Fprintln(os.Stderr, "release index requires -toolchains-lock and pack result files")
 		os.Exit(2)
 	}
 	artifacts := make([]distribution.ReleaseArtifact, 0, flag.NArg())
@@ -53,7 +54,22 @@ func main() {
 			Manifest: manifest,
 		})
 	}
-	manifest, err := distribution.BuildReleaseManifest(*version, *baseURL, artifacts)
+	lockFile, err := os.Open(*toolchainsLock)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open toolchain lock:", err)
+		os.Exit(1)
+	}
+	lock, err := distribution.ReadToolchainLock(lockFile)
+	closeErr := lockFile.Close()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if closeErr != nil {
+		fmt.Fprintln(os.Stderr, "close toolchain lock:", closeErr)
+		os.Exit(1)
+	}
+	manifest, err := distribution.BuildReleaseManifest(*version, *baseURL, artifacts, lock.Toolchains)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -38,13 +38,16 @@ for file in "${files[@]}"; do
     runtime/*|internal/backend/*|internal/codegen/*) runtime=true ;;
   esac
   case "$file" in
-    distribution/*|scripts/package-release.sh|cmd/distpack/*|cmd/release-index/*|cmd/sign-release/*|internal/distribution/*|internal/installer/*) distribution=true ;;
+    pkg/distribution/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|internal/installer/*) distribution=true ;;
   esac
   case "$file" in
-    distribution/toolchains*|scripts/build-toolchain.sh|internal/toolchain/*) toolchain=true ;;
+    pkg/distribution/toolchain*|scripts/toolchain-*|scripts/toolchains/*|internal/toolchain/*) toolchain=true ;;
   esac
   case "$file" in
-    *.go|*.c|*.h|*.inc|x_test/*) compiler_source=true ;;
+    pkg/distribution/*|internal/installer/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|pkg/distribution/toolchain*|scripts/toolchain-*|scripts/toolchains/*|internal/toolchain/*|.github/workflows/*) ;;
+    runtime/*|internal/backend/*|internal/codegen/*) ;;
+    README.md|docs/*|*.md) ;;
+    *) compiler_source=true ;;
   esac
 done
 

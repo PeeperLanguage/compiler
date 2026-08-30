@@ -96,7 +96,9 @@ func TestVerifyReleaseManifestRejectsUnknownFields(t *testing.T) {
 
 func TestBuildReleaseManifestCreatesDeterministicCompleteHostSets(t *testing.T) {
 	artifacts := completeReleaseArtifacts()
-	manifest, err := BuildReleaseManifest("0.2.0", "https://github.com/PeeperLanguage/peeper/releases/download/v0.2.0", artifacts)
+	toolchains := artifactsByKind(artifacts, PackKindToolchain)
+	artifacts = artifactsWithoutKind(artifacts, PackKindToolchain)
+	manifest, err := BuildReleaseManifest("0.2.0", "https://github.com/PeeperLanguage/peeper/releases/download/v0.2.0", artifacts, toolchains)
 	if err != nil {
 		t.Fatalf("BuildReleaseManifest() error = %v", err)
 	}
@@ -113,9 +115,34 @@ func TestBuildReleaseManifestCreatesDeterministicCompleteHostSets(t *testing.T) 
 
 func TestBuildReleaseManifestRejectsIncompleteHostSet(t *testing.T) {
 	artifacts := completeReleaseArtifacts()
-	_, err := BuildReleaseManifest("0.2.0", "https://example.com/v0.2.0", artifacts[:len(artifacts)-1])
+	toolchains := artifactsByKind(artifacts, PackKindToolchain)
+	artifacts = artifactsWithoutKind(artifacts, PackKindToolchain)
+	_, err := BuildReleaseManifest("0.2.0", "https://example.com/v0.2.0", artifacts[:len(artifacts)-1], toolchains)
 	if err == nil || !strings.Contains(err.Error(), "windows/arm64") {
 		t.Fatalf("BuildReleaseManifest() error = %v", err)
+	}
+}
+
+func TestBuildReleaseManifestKeepsExternalToolchainVersionAndURL(t *testing.T) {
+	artifacts := completeReleaseArtifacts()
+	toolchains := artifactsByKind(artifacts, PackKindToolchain)
+	artifacts = artifactsWithoutKind(artifacts, PackKindToolchain)
+	toolchains[0].Version = "llvm23.1.0-rabc123"
+	toolchains[0].URL = "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-darwin-amd64-abc123/toolchain-darwin-amd64.tar.gz"
+
+	manifest, err := BuildReleaseManifest("0.2.0", "https://example.com/v0.2.0", artifacts, toolchains)
+	if err != nil {
+		t.Fatalf("BuildReleaseManifest() error = %v", err)
+	}
+	var external ReleaseComponent
+	for _, component := range manifest.Components {
+		if component.ID == toolchains[0].ID {
+			external = component
+			break
+		}
+	}
+	if external.Version != "llvm23.1.0-rabc123" || external.URL != toolchains[0].URL {
+		t.Fatalf("external toolchain changed: %#v", external)
 	}
 }
 
@@ -169,4 +196,30 @@ func completeReleaseArtifacts() []ReleaseArtifact {
 		}
 	}
 	return artifacts
+}
+
+func artifactsByKind(artifacts []ReleaseArtifact, kind string) []ReleaseComponent {
+	components := make([]ReleaseComponent, 0, len(supportedReleaseHosts))
+	for _, artifact := range artifacts {
+		if artifact.Manifest.Metadata.Kind != kind {
+			continue
+		}
+		components = append(components, ReleaseComponent{
+			ID: artifact.Manifest.Metadata.ID, Kind: kind, Version: "llvm23.1.0-rfixture",
+			OS: artifact.Manifest.Metadata.OS, Arch: artifact.Manifest.Metadata.Arch,
+			URL:  "https://example.com/toolchains/" + artifact.FileName,
+			Size: artifact.Manifest.Size, SHA256: artifact.Manifest.SHA256, Format: artifact.Manifest.Format,
+		})
+	}
+	return components
+}
+
+func artifactsWithoutKind(artifacts []ReleaseArtifact, kind string) []ReleaseArtifact {
+	filtered := make([]ReleaseArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact.Manifest.Metadata.Kind != kind {
+			filtered = append(filtered, artifact)
+		}
+	}
+	return filtered
 }
