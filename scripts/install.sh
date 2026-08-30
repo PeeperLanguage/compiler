@@ -61,7 +61,9 @@ component_field() {
       -v field="\"$4\": " '
     index($0, kind) && index($0, os) && index($0, arch) {
       if (match($0, field "\"[^\"]*\"")) {
-        print substr($0, RSTART + length(field), RLENGTH - length(field) - 1)
+        value = substr($0, RSTART + length(field), RLENGTH - length(field))
+        gsub(/^"|"$/, "", value)
+        print value
         exit
       }
     }
