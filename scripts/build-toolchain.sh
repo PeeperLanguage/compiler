@@ -28,9 +28,9 @@ download_asset() {
   curl --fail --location --retry 3 --output "$destination" "$url"
   test "$(wc -c < "$destination")" -eq "$size"
   if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s  %s\n' "$sha256" "$destination" | sha256sum --check
+    printf '%s  %s\n' "$sha256" "$destination" | sha256sum -c
   else
-    printf '%s  %s\n' "$sha256" "$destination" | shasum -a 256 --check
+    printf '%s  %s\n' "$sha256" "$destination" | shasum -a 256 -c
   fi
 }
 
@@ -72,12 +72,15 @@ case "$release_os" in
     for object in libc.a crt1.o crti.o crtn.o; do
       test -f "$sysroot/lib/$object"
     done
+    compiler_runtime="$("$clang" -rtlib=compiler-rt --print-libgcc-file-name)"
+    test -f "$compiler_runtime"
+    cp "$compiler_runtime" "$sysroot/lib/libclang_rt.builtins.a"
     smoke="$tmp_root/smoke.c"
-    printf '%s\n' 'int main(void) { return 0; }' > "$smoke"
+    printf '%s\n' '#include <stdio.h>' 'int main(void) { return printf("%Lf\n", (long double)1.0) < 0; }' > "$smoke"
     "$clang" --target="$triple" --sysroot="$sysroot" -c "$smoke" -o "$tmp_root/smoke.o"
     "$clang" --target="$triple" --sysroot="$sysroot" -static -nostdlib \
       "$sysroot/lib/crt1.o" "$sysroot/lib/crti.o" "$tmp_root/smoke.o" \
-      -lc "$sysroot/lib/crtn.o" -o "$tmp_root/smoke"
+      -lc -lclang_rt.builtins "$sysroot/lib/crtn.o" -o "$tmp_root/smoke"
     "$tmp_root/smoke"
     ;;
   darwin)

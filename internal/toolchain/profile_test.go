@@ -275,6 +275,7 @@ func TestStaticProfileRequestsStaticLink(t *testing.T) {
 		"toolchains/native/sysroot/lib/crti.o",
 		"@objects.rsp",
 		"-lc",
+		"-lclang_rt.builtins",
 		"toolchains/native/sysroot/lib/crtn.o",
 		"-o", "demo",
 	}
