@@ -46,17 +46,26 @@ else
     mapfile -t changed_files < <(git diff --name-only "$base" HEAD)
     for file in "${changed_files[@]}"; do
       case "$file" in
-        scripts/toolchains/common.sh|scripts/toolchain-fingerprint.sh|.github/workflows/build-toolchains.yml|cmd/release-profile/*|internal/toolchain/*)
+        scripts/toolchain-fingerprint.sh|cmd/release-profile/*|internal/toolchain/*)
           select_all
           ;;
-        .github/workflows/toolchain-target.yml)
+        .github/workflows/build-toolchains.yml|.github/workflows/toolchain-target.yml)
           # Producer orchestration does not change immutable payload identity.
+          ;;
+        scripts/toolchains/common.sh)
+          old_common="$(git show "$base:$file")"
+          normalized_old="$(sed 's#pkg/distribution/toolchain-sources\.lock\.json#toolchains/toolchain-sources.lock.json#g' <<< "$old_common")"
+          normalized_new="$(sed 's#pkg/distribution/toolchain-sources\.lock\.json#toolchains/toolchain-sources.lock.json#g' "$file")"
+          [ "$normalized_old" = "$normalized_new" ] || select_all
           ;;
         scripts/toolchains/build-linux.sh) select_family linux ;;
         scripts/toolchains/build-darwin.sh) select_family darwin ;;
         scripts/toolchains/build-windows.sh) select_family windows ;;
-        pkg/distribution/toolchain-sources.lock.json)
+        toolchains/toolchain-sources.lock.json)
           old_lock_path="$file"
+          if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
+            old_lock_path=pkg/distribution/toolchain-sources.lock.json
+          fi
           if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
             old_lock_path=distribution/toolchain-sources.lock.json
           fi
@@ -73,7 +82,7 @@ else
               llvm-linux-amd64) linux_amd64=true ;;
               llvm-linux-arm64) linux_arm64=true ;;
               musl-source) select_family linux ;;
-              llvm-source) select_family darwin ;;
+              llvm-source) linux_arm64=true; select_family darwin ;;
               llvm-mingw-windows-amd64) windows_amd64=true ;;
               llvm-mingw-windows-arm64) windows_arm64=true ;;
             esac
@@ -82,6 +91,27 @@ else
       esac
     done
   fi
+fi
+
+if [ "$requested_family" = auto ] && [ "${FORCE_ALL:-false}" != true ] && [ -f toolchains/toolchains.lock.json ]; then
+  for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64; do
+    selected="${!target}"
+    [ "$selected" = true ] || continue
+    target_os="${target%_*}"
+    target_arch="${target##*_}"
+    minimum=()
+    [ "$target_os" = darwin ] && minimum=(13.0)
+    desired_id="$(scripts/toolchain-fingerprint.sh "$target_os" "$target_arch" "${minimum[@]}" | jq -er .id)"
+    locked_id="$(jq -er \
+      --arg os "$target_os" \
+      --arg arch "$target_arch" \
+      '[.toolchains[] | select(.os == $os and .arch == $arch)] | if length == 1 then .[0].id else empty end' \
+      toolchains/toolchains.lock.json 2>/dev/null || true)"
+    if [ "$desired_id" = "$locked_id" ]; then
+      printf -v "$target" false
+      echo "Skipping $target: desired immutable toolchain is already selected." >&2
+    fi
+  done
 fi
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then

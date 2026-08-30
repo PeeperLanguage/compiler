@@ -9,7 +9,7 @@ fi
 target_os="$1"
 target_arch="$2"
 destination="$3"
-lock_file="${TOOLCHAINS_LOCK:-pkg/distribution/toolchains.lock.json}"
+lock_file="${TOOLCHAINS_LOCK:-toolchains/toolchains.lock.json}"
 temporary_root="$(mktemp -d)"
 trap 'rm -rf "$temporary_root"' EXIT
 

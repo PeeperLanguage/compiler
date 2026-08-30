@@ -169,14 +169,14 @@ jobs:
           cache: true
       - name: Check toolchain scripts
         run: |
-          bash -n scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
+          bash -n scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/update-toolchain-sources.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
           scripts/toolchain-fingerprint.sh linux amd64 >/dev/null
           scripts/toolchain-fingerprint.sh linux arm64 >/dev/null
           scripts/toolchain-fingerprint.sh darwin amd64 13.0 >/dev/null
           scripts/toolchain-fingerprint.sh darwin arm64 13.0 >/dev/null
           scripts/toolchain-fingerprint.sh windows amd64 >/dev/null
           scripts/toolchain-fingerprint.sh windows arm64 >/dev/null
-      - run: CCACHE_DISABLE=1 go test ./internal/toolchain ./pkg/distribution ./scripts/toolchains
+      - run: CCACHE_DISABLE=1 go test ./internal/toolchain ./pkg/distribution ./scripts ./scripts/toolchains
 
   workflow:
     name: Workflow configuration
@@ -187,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Check repository scripts referenced by workflows
-        run: bash -n scripts/build.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
+        run: bash -n scripts/build.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/update-toolchain-sources.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
 
   ci-success:
     name: CI success

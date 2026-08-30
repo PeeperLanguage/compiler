@@ -62,11 +62,23 @@ receives Ed25519 private key.
 
 ## Toolchain production and bootstrap
 
-`pkg/distribution/toolchain-sources.lock.json` pins upstream LLVM source and Linux
+`toolchains/toolchain-sources.lock.json` pins upstream LLVM source and Linux
 archives, musl source, and llvm-mingw archives with exact size and SHA-256.
+These files are repository workflow configuration, not compiler package data.
+
+`Check toolchain updates` runs each Monday at 03:23 UTC, but scheduled checks
+stop after the cheap activity gate when compiler code has had no commit in the
+previous 30 days. Manual dispatch bypasses that gate. The checker reads stable
+official LLVM and llvm-mingw release metadata, discovers the latest stable musl
+tag, validates exact asset names, URLs, sizes, and SHA-256 digests, and opens a
+source-lock pull request only when metadata changed. An already-open update pull
+request suppresses duplicate proposals. Unchanged musl is not downloaded.
+
 `Build Peeper toolchains` runs on relevant main changes or dispatch. Its planner
 maps musl to both Linux outputs, architecture-specific Linux/llvm-mingw sources
 to one output, and macOS LLVM source/recipe changes to both macOS outputs.
+Before allocating native runners, the planner compares each selected desired
+fingerprint with the finished lock and skips identities already selected.
 Each selected native job produces `stage/toolchains/native`, generates its
 managed `profile.json`, validates it, distpacks it, and publishes/reuses one
 immutable prerelease asset tagged by full fingerprint. The job uploads only a
@@ -77,11 +89,12 @@ architectures, copy compiler-rt builtins, and compile/link/run static smoke
 binary. macOS LLVM builds set both `MACOSX_DEPLOYMENT_TARGET` and
 `CMAKE_OSX_DEPLOYMENT_TARGET` to Peeper minimum macOS version.
 
-`pkg/distribution/toolchains.lock.json` begins empty and is intentionally not a
-release fallback. Initial bootstrap must run all six producer targets, verify
-their published immutable assets, and merge the generated lock pull request.
-Only real URL, byte size, SHA-256, and component metadata enter that lock.
-Until then release preflight fails before any expensive target job starts.
+`toolchains/toolchains.lock.json` selects exactly one published immutable
+toolchain for each supported host. Toolchain production updates it through a
+generated pull request containing real URLs, byte sizes, SHA-256 values, and
+component metadata. Release preflight rejects incomplete or invalid selections
+before any expensive target job starts. Failed toolchain candidates cannot
+replace this lock, so releases continue consuming the last validated toolchain.
 
 ## Repository configuration
 

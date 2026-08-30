@@ -1,0 +1,82 @@
+name: Check toolchain updates
+
+on:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: toolchain-source-update
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check stable upstream releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: activity
+        name: Check recent compiler activity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          active=false
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            active=true
+          elif git log -1 --since="30 days ago" --format=%H -- \
+            cmd internal pkg runtime x_test scripts/build.sh scripts/bundle.go go.mod go.sum \
+            | grep -q .; then
+            active=true
+          fi
+          echo "active=$active" >> "$GITHUB_OUTPUT"
+          echo "compiler_active=$active" >> "$GITHUB_STEP_SUMMARY"
+      - id: existing
+        name: Check existing source update pull request
+        if: steps.activity.outputs.active == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          exists="$(gh pr list --state open --search 'Update toolchain sources in:title' --json number --jq 'length > 0')"
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+      - name: Resolve stable upstream metadata
+        if: steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/update-toolchain-sources.sh toolchains/toolchain-sources.lock.json candidate-sources.lock.json
+      - id: changed
+        name: Check candidate change
+        if: steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true'
+        run: |
+          changed=false
+          if ! cmp -s toolchains/toolchain-sources.lock.json candidate-sources.lock.json; then
+            changed=true
+          fi
+          echo "value=$changed" >> "$GITHUB_OUTPUT"
+          echo "source_update_available=$changed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Open source update pull request
+        if: steps.changed.outputs.value == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
+          mv candidate-sources.lock.json toolchains/toolchain-sources.lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add toolchains/toolchain-sources.lock.json
+          git commit -m "Update toolchain sources"
+          git push origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Update toolchain sources" \
+            --body "Updates stable upstream toolchain source metadata from official releases. Merging this PR builds only affected immutable toolchains. Failed candidate builds leave the current finished toolchain lock unchanged."

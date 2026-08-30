@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	lockPath := flag.String("lock", "pkg/distribution/toolchains.lock.json", "finished toolchain lock file")
+	lockPath := flag.String("lock", "toolchains/toolchains.lock.json", "finished toolchain lock file")
 	targetOS := flag.String("os", "", "toolchain operating system")
 	targetArch := flag.String("arch", "", "toolchain architecture")
 	flag.Parse()

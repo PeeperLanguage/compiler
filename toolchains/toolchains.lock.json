@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "peeper-toolchains",
+  "toolchains": [
+    {
+      "id": "toolchain-darwin-amd64-llvm23.1.0-rb581d23fdd19",
+      "kind": "toolchain",
+      "version": "llvm23.1.0-rb581d23fdd19",
+      "os": "darwin",
+      "arch": "amd64",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-darwin-amd64-b581d23fdd196cc127585be745dbcd82bd1d2b18b4ff949e20d2eba40e7d898a/toolchain-darwin-amd64-llvm23.1.0-rb581d23fdd19.tar.gz",
+      "size": 670878698,
+      "sha256": "3b98b283f618ccae578bfe6e768ce1188e8c0a37092e2c972ba099e62585fa3d",
+      "format": "tar.gz"
+    },
+    {
+      "id": "toolchain-darwin-arm64-llvm23.1.0-ree89a46e1687",
+      "kind": "toolchain",
+      "version": "llvm23.1.0-ree89a46e1687",
+      "os": "darwin",
+      "arch": "arm64",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-darwin-arm64-ee89a46e1687b8ee6b28429c0ad00ae6053c3e7d1bdf88cd091dd758943d6750/toolchain-darwin-arm64-llvm23.1.0-ree89a46e1687.tar.gz",
+      "size": 642131561,
+      "sha256": "d3b91e7868bd59566e0fd1fa6cc6d455d3dc641b88c44fbb8752960c2018f847",
+      "format": "tar.gz"
+    },
+    {
+      "id": "toolchain-linux-amd64-llvm23.1.0-musl1.2.5-rc281bf0f4b00",
+      "kind": "toolchain",
+      "version": "llvm23.1.0-musl1.2.5-rc281bf0f4b00",
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-amd64-c281bf0f4b0045005884fc25019fe3cc2d17f4a2d834ea334945fdc70da144cb/toolchain-linux-amd64-llvm23.1.0-musl1.2.5-rc281bf0f4b00.tar.gz",
+      "size": 174370889,
+      "sha256": "1d7f7bb7fee30ce7ef2a2a94e83d793996c31d9e2c7758f90807ed37fce7db82",
+      "format": "tar.gz"
+    },
+    {
+      "id": "toolchain-linux-arm64-llvm23.1.0-musl1.2.5-rb4c6f6fbb5cd",
+      "kind": "toolchain",
+      "version": "llvm23.1.0-musl1.2.5-rb4c6f6fbb5cd",
+      "os": "linux",
+      "arch": "arm64",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-arm64-b4c6f6fbb5cd269b92de2e1ffb80448a5e1f05dba10691552956e870e108b8de/toolchain-linux-arm64-llvm23.1.0-musl1.2.5-rb4c6f6fbb5cd.tar.gz",
+      "size": 169983147,
+      "sha256": "d9278895a7771dde024fdc1234b4874ae437276da4fe50b6b97104873dd2670e",
+      "format": "tar.gz"
+    },
+    {
+      "id": "toolchain-windows-amd64-llvm-mingw-20260826-r3129376a9e5b",
+      "kind": "toolchain",
+      "version": "llvm-mingw-20260826-r3129376a9e5b",
+      "os": "windows",
+      "arch": "amd64",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-windows-amd64-3129376a9e5bec1ada065b5980fbe4c9c1c60765f736bf56ca9b1b16e689e67e/toolchain-windows-amd64-llvm-mingw-20260826-r3129376a9e5b.zip",
+      "size": 198230614,
+      "sha256": "afa7dd8e014053c3c3383aaa7ec10844f9231143c8f6a0b866856761c6c72ba2",
+      "format": "zip"
+    },
+    {
+      "id": "toolchain-windows-arm64-llvm-mingw-20260826-r04e478823443",
+      "kind": "toolchain",
+      "version": "llvm-mingw-20260826-r04e478823443",
+      "os": "windows",
+      "arch": "arm64",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-windows-arm64-04e478823443f039428bac58eefa97f838711daa4915893008a4c05c807f527b/toolchain-windows-arm64-llvm-mingw-20260826-r04e478823443.zip",
+      "size": 193783418,
+      "sha256": "017f2cd90f6b00e5da0f8cd6b0e635d31eb76e90e922d7998853c734ffd44feb",
+      "format": "zip"
+    }
+  ]
+}

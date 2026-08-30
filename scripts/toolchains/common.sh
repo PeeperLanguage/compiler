@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-toolchain_sources_lock="${TOOLCHAIN_SOURCES_LOCK:-pkg/distribution/toolchain-sources.lock.json}"
+toolchain_sources_lock="${TOOLCHAIN_SOURCES_LOCK:-toolchains/toolchain-sources.lock.json}"
 
 toolchain_asset_field() {
   jq -er --arg id "$1" --arg field "$2" '.assets[] | select(.id == $id) | .[$field]' "$toolchain_sources_lock"

@@ -23,7 +23,7 @@ on:
     branches:
       - main
     paths:
-      - pkg/distribution/toolchain-sources.lock.json
+      - toolchains/toolchain-sources.lock.json
       - scripts/toolchain-fingerprint.sh
       - scripts/plan-toolchains.sh
       - scripts/update-toolchain-lock.sh
@@ -167,7 +167,7 @@ jobs:
         with:
           pattern: toolchain-record-*
           path: records
-          merge-multiple: true
+          merge-multiple: false
       - name: Reject failed selected toolchains and merge records
         env:
           SELECTED_linux_amd64: ${{ needs.plan.outputs.linux_amd64 }}
@@ -182,10 +182,10 @@ jobs:
           RESULT_darwin_arm64: ${{ needs.darwin_arm64.result }}
           RESULT_windows_amd64: ${{ needs.windows_amd64.result }}
           RESULT_windows_arm64: ${{ needs.windows_arm64.result }}
-        run: bash scripts/update-toolchain-lock.sh pkg/distribution/toolchains.lock.json records
+        run: bash scripts/update-toolchain-lock.sh toolchains/toolchains.lock.json records
       - id: changed
         run: |
-          if git diff --quiet -- pkg/distribution/toolchains.lock.json; then
+          if git diff --quiet -- toolchains/toolchains.lock.json; then
             echo "value=false" >> "$GITHUB_OUTPUT"
           else
             echo "value=true" >> "$GITHUB_OUTPUT"
@@ -199,7 +199,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add pkg/distribution/toolchains.lock.json
+          git add toolchains/toolchains.lock.json
           git commit -m "Update Peeper toolchain lock"
           git push origin "$branch"
           gh pr create \
