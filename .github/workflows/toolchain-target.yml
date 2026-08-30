@@ -131,6 +131,65 @@ jobs:
             > "$archive.json"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "metadata=$archive.json" >> "$GITHUB_OUTPUT"
+      - name: Validate packed Linux toolchain component
+        if: steps.existing.outputs.reuse != 'true' && inputs.os == 'linux'
+        env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          extracted_root="$(mktemp -d "$RUNNER_TEMP/peeper-toolchain-pack-XXXXXX")"
+          go run ./cmd/distunpack \
+            -archive "$ARCHIVE" \
+            -format tar.gz \
+            -destination "$extracted_root" \
+            -kind toolchain \
+            -id "${{ steps.identity.outputs.id }}" \
+            -version "${{ steps.identity.outputs.version }}" \
+            -os linux \
+            -arch "${{ inputs.arch }}"
+          bash scripts/toolchains/build-linux.sh \
+            validate \
+            "${{ inputs.arch }}" \
+            "$extracted_root/toolchains/native"
+      - name: Check release asset
+        if: steps.existing.outputs.reuse != 'true'
+        env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          METADATA: ${{ steps.package.outputs.metadata }}
+          COMPONENT_OS: ${{ inputs.os }}
+        run: |
+          source scripts/toolchains/common.sh
+          archive_size="$(wc -c < "$ARCHIVE")"
+          archive_hash="$(toolchain_sha256 "$ARCHIVE")"
+          expected_size="$(jq -er .size "$METADATA")"
+          expected_hash="$(jq -er .sha256 "$METADATA")"
+          test "$archive_size" -eq "$expected_size"
+          test "$archive_hash" = "$expected_hash"
+
+          echo "=== Final toolchain component ==="
+          echo "component_id=${{ steps.identity.outputs.id }}"
+          echo "component_version=${{ steps.identity.outputs.version }}"
+          echo "component_os=${{ inputs.os }}"
+          echo "component_arch=${{ inputs.arch }}"
+          echo "archive_path=$ARCHIVE"
+          echo "archive_format=$(jq -er .format "$METADATA")"
+          echo "archive_size_bytes=$archive_size"
+          echo "archive_size_human=$(du -h "$ARCHIVE" | cut -f1)"
+          echo "archive_sha256=$archive_hash"
+
+          peeper_asset_limit=1073741824
+          github_asset_limit=2147483648
+          if [ "$archive_size" -ge "$github_asset_limit" ]; then
+            echo "Toolchain archive is too large to publish as one GitHub Release asset." >&2
+            echo "archive_size=$archive_size" >&2
+            echo "github_limit=$github_asset_limit" >&2
+            exit 1
+          fi
+          if [ "$COMPONENT_OS" = linux ] && [ "$archive_size" -ge "$peeper_asset_limit" ]; then
+            echo "Toolchain archive exceeds Peeper's 1 GiB publication safety ceiling." >&2
+            echo "archive_size=$archive_size" >&2
+            echo "peeper_limit=$peeper_asset_limit" >&2
+            exit 1
+          fi
       - name: Publish new immutable component
         if: steps.existing.outputs.reuse != 'true'
         env:
@@ -138,9 +197,17 @@ jobs:
           COMPONENT_TAG: ${{ steps.identity.outputs.tag }}
           COMPONENT_ID: ${{ steps.identity.outputs.id }}
           COMPONENT_VERSION: ${{ steps.identity.outputs.version }}
+          COMPONENT_OS: ${{ inputs.os }}
+          COMPONENT_ARCH: ${{ inputs.arch }}
           ARCHIVE: ${{ steps.package.outputs.archive }}
           METADATA: ${{ steps.package.outputs.metadata }}
         run: |
+          echo "Publishing immutable component $COMPONENT_ID"
+          echo "version=$COMPONENT_VERSION"
+          echo "target=$COMPONENT_OS/$COMPONENT_ARCH"
+          echo "archive=$ARCHIVE"
+          echo "size=$(wc -c < "$ARCHIVE")"
+          echo "sha256=$(jq -er .sha256 "$METADATA")"
           gh release create "$COMPONENT_TAG" \
             "$ARCHIVE" \
             "$METADATA" \

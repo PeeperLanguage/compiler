@@ -46,8 +46,11 @@ else
     mapfile -t changed_files < <(git diff --name-only "$base" HEAD)
     for file in "${changed_files[@]}"; do
       case "$file" in
-        scripts/toolchains/common.sh|scripts/toolchain-fingerprint.sh|.github/workflows/build-toolchains.yml|.github/workflows/toolchain-target.yml|cmd/release-profile/*|internal/toolchain/*)
+        scripts/toolchains/common.sh|scripts/toolchain-fingerprint.sh|.github/workflows/build-toolchains.yml|cmd/release-profile/*|internal/toolchain/*)
           select_all
+          ;;
+        .github/workflows/toolchain-target.yml)
+          # Producer orchestration does not change immutable payload identity.
           ;;
         scripts/toolchains/build-linux.sh) select_family linux ;;
         scripts/toolchains/build-darwin.sh) select_family darwin ;;
