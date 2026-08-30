@@ -15,9 +15,8 @@ import (
 )
 
 const (
-	ReleaseManifestVersion = 1
+	ReleaseManifestVersion = 2
 	PackKindCompiler       = "compiler"
-	PackKindTarget         = "target"
 	PackKindToolchain      = "toolchain"
 )
 
@@ -126,8 +125,8 @@ func BuildReleaseManifest(version, baseURL string, artifacts []ReleaseArtifact, 
 	manifest.InstallSets = make([]InstallSet, 0, len(supportedReleaseHosts))
 	for _, host := range supportedReleaseHosts {
 		componentIDs := componentsByHost[host]
-		if len(componentIDs) != 3 {
-			return ReleaseManifest{}, fmt.Errorf("release requires exactly three components for %s/%s", host.os, host.arch)
+		if len(componentIDs) != 2 {
+			return ReleaseManifest{}, fmt.Errorf("release requires exactly two components for %s/%s", host.os, host.arch)
 		}
 		manifest.InstallSets = append(manifest.InstallSets, InstallSet{OS: host.os, Arch: host.arch, Components: componentIDs})
 	}
@@ -201,7 +200,7 @@ func validateReleaseManifest(manifest ReleaseManifest) (map[releaseHost][]Releas
 		if _, exists := installSets[host]; exists {
 			return nil, fmt.Errorf("release manifest repeats install set for %s/%s", host.os, host.arch)
 		}
-		byKind := make(map[string]ReleaseComponent, 3)
+		byKind := make(map[string]ReleaseComponent, 2)
 		for _, componentID := range installSet.Components {
 			component, ok := components[componentID]
 			if !ok {
@@ -219,8 +218,8 @@ func validateReleaseManifest(manifest ReleaseManifest) (map[releaseHost][]Releas
 			byKind[component.Kind] = component
 			referenced[componentID] = true
 		}
-		ordered := make([]ReleaseComponent, 0, 3)
-		for _, kind := range []string{PackKindCompiler, PackKindTarget, PackKindToolchain} {
+		ordered := make([]ReleaseComponent, 0, 2)
+		for _, kind := range []string{PackKindCompiler, PackKindToolchain} {
 			component, ok := byKind[kind]
 			if !ok {
 				return nil, fmt.Errorf("release set requires exactly one %s component", kind)
@@ -247,7 +246,7 @@ func validateReleaseComponent(component ReleaseComponent) error {
 			return fmt.Errorf("release component %q has no %s", component.ID, field[0])
 		}
 	}
-	if component.Kind != PackKindCompiler && component.Kind != PackKindTarget && component.Kind != PackKindToolchain {
+	if component.Kind != PackKindCompiler && component.Kind != PackKindToolchain {
 		return fmt.Errorf("release component %q has unsupported kind %q", component.ID, component.Kind)
 	}
 	parsedURL, err := url.Parse(component.URL)

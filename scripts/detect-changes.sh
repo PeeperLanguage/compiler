@@ -39,7 +39,7 @@ for file in "${files[@]}"; do
     runtime/*|internal/backend/*|internal/codegen/*) runtime=true; non_compiler=true ;;
   esac
   case "$file" in
-    pkg/distribution/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|internal/installer/*) distribution=true; non_compiler=true ;;
+    pkg/distribution/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|internal/installer/*|scripts/install.sh|scripts/install.ps1) distribution=true; non_compiler=true ;;
   esac
   case "$file" in
     toolchains/*|scripts/fetch-toolchain.sh|scripts/plan-toolchains.sh|scripts/toolchain-fingerprint.sh|scripts/update-toolchain-lock.sh|scripts/update-toolchain-sources.sh|scripts/toolchain*_test.go|scripts/toolchains/*|internal/toolchain/*) toolchain=true; non_compiler=true ;;

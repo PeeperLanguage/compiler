@@ -154,6 +154,10 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/installer ./cmd/distpack ./cmd/distunpack ./cmd/release-index ./cmd/sign-release ./cmd/toolchain-lock
+      - name: Check bootstrap scripts
+        run: |
+          bash -n scripts/install.sh
+          pwsh -NoProfile -Command '$e=$null; [System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1",[ref]$null,[ref]$e) | Out-Null; if ($e.Count -gt 0) { $e; exit 1 }'
 
   toolchain_config:
     name: Toolchain configuration
@@ -187,7 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Check repository scripts referenced by workflows
-        run: bash -n scripts/build.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/update-toolchain-sources.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
+        run: bash -n scripts/build.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/install.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/update-toolchain-sources.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
 
   ci-success:
     name: CI success

@@ -84,46 +84,6 @@ func TestUpdateToolchainSourcesRejectsIncompleteRelease(t *testing.T) {
 	}
 }
 
-func TestPlanToolchainsDoesNotRebuildForLockRelocation(t *testing.T) {
-	repository := t.TempDir()
-	writeTestFile(t, filepath.Join(repository, "scripts", "toolchains", "common.sh"), "toolchain_sources_lock=\"${TOOLCHAIN_SOURCES_LOCK:-pkg/distribution/toolchain-sources.lock.json}\"\n")
-	writeTestFile(t, filepath.Join(repository, ".github", "workflows", "build-toolchains.yml"), "source-lock: pkg/distribution/toolchain-sources.lock.json\n")
-	writeTestFile(t, filepath.Join(repository, "pkg", "distribution", "toolchain-sources.lock.json"), "{\"assets\":[]}\n")
-	runGit(t, repository, "init")
-	runGit(t, repository, "config", "user.name", "Test")
-	runGit(t, repository, "config", "user.email", "test@example.com")
-	runGit(t, repository, "config", "commit.gpgsign", "false")
-	runGit(t, repository, "add", ".")
-	runGit(t, repository, "commit", "-m", "baseline")
-
-	plan, err := os.ReadFile("plan-toolchains.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(repository, "scripts", "plan-toolchains.sh"), string(plan))
-	writeTestFile(t, filepath.Join(repository, "scripts", "toolchains", "common.sh"), "toolchain_sources_lock=\"${TOOLCHAIN_SOURCES_LOCK:-toolchains/toolchain-sources.lock.json}\"\n")
-	writeTestFile(t, filepath.Join(repository, ".github", "workflows", "build-toolchains.yml"), "source-lock: toolchains/toolchain-sources.lock.json\n")
-	writeTestFile(t, filepath.Join(repository, "toolchains", "toolchain-sources.lock.json"), "{\"assets\":[]}\n")
-	if err := os.Remove(filepath.Join(repository, "pkg", "distribution", "toolchain-sources.lock.json")); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, repository, "add", ".")
-	runGit(t, repository, "commit", "-m", "move lock")
-
-	command := exec.Command("bash", "scripts/plan-toolchains.sh")
-	command.Dir = repository
-	command.Env = append(os.Environ(), "GITHUB_OUTPUT=")
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("plan toolchains: %v\n%s", err, output)
-	}
-	for _, target := range []string{"linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64", "windows_amd64", "windows_arm64"} {
-		if !strings.Contains(string(output), target+"=false") {
-			t.Fatalf("plan output missing %s=false:\n%s", target, output)
-		}
-	}
-}
-
 func TestUpdateToolchainLockReadsSeparateArtifactDirectories(t *testing.T) {
 	temporary := t.TempDir()
 	lock := filepath.Join(temporary, "toolchains.lock.json")

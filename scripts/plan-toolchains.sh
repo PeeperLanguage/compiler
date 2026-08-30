@@ -54,26 +54,17 @@ else
           ;;
         scripts/toolchains/common.sh)
           old_common="$(git show "$base:$file")"
-          normalized_old="$(sed 's#pkg/distribution/toolchain-sources\.lock\.json#toolchains/toolchain-sources.lock.json#g' <<< "$old_common")"
-          normalized_new="$(sed 's#pkg/distribution/toolchain-sources\.lock\.json#toolchains/toolchain-sources.lock.json#g' "$file")"
-          [ "$normalized_old" = "$normalized_new" ] || select_all
+          [ "$old_common" = "$(cat "$file")" ] || select_all
           ;;
         scripts/toolchains/build-linux.sh) select_family linux ;;
         scripts/toolchains/build-darwin.sh) select_family darwin ;;
         scripts/toolchains/build-windows.sh) select_family windows ;;
         toolchains/toolchain-sources.lock.json)
-          old_lock_path="$file"
-          if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
-            old_lock_path=pkg/distribution/toolchain-sources.lock.json
-          fi
-          if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
-            old_lock_path=distribution/toolchain-sources.lock.json
-          fi
-          if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
+          if ! git cat-file -e "$base:$file" 2>/dev/null; then
             select_all
             continue
           fi
-          old_lock="$(git show "$base:$old_lock_path")"
+          old_lock="$(git show "$base:$file")"
           for id in llvm-linux-amd64 llvm-linux-arm64 musl-source llvm-source llvm-mingw-windows-amd64 llvm-mingw-windows-arm64; do
             old_entry="$(jq -cS --arg id "$id" '.assets[] | select(.id == $id)' <<< "$old_lock")"
             new_entry="$(jq -cS --arg id "$id" '.assets[] | select(.id == $id)' "$file")"
