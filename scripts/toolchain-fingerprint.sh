@@ -15,7 +15,7 @@ source "$script_root/toolchains/common.sh"
 
 case "$target_os/$target_arch" in
   linux/amd64) source_ids='["llvm-linux-amd64","musl-source"]'; llvm_target=X86; family_recipe=scripts/toolchains/build-linux.sh ;;
-  linux/arm64) source_ids='["llvm-linux-arm64","musl-source"]'; llvm_target=AArch64; family_recipe=scripts/toolchains/build-linux.sh ;;
+  linux/arm64) source_ids='["llvm-linux-arm64","llvm-source","musl-source"]'; llvm_target=AArch64; family_recipe=scripts/toolchains/build-linux.sh ;;
   darwin/amd64) source_ids='["llvm-source"]'; llvm_target=X86; family_recipe=scripts/toolchains/build-darwin.sh ;;
   darwin/arm64) source_ids='["llvm-source"]'; llvm_target=AArch64; family_recipe=scripts/toolchains/build-darwin.sh ;;
   windows/amd64) source_ids='["llvm-mingw-windows-amd64"]'; llvm_target=X86; family_recipe=scripts/toolchains/build-windows.sh ;;
