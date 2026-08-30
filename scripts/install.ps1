@@ -16,7 +16,9 @@ $installer = "peeper-installer-windows-$arch.exe"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "peeper-install-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
+    $ProgressPreference = 'Continue'
     Invoke-WebRequest "$baseUrl/$installer" -OutFile "$work/$installer"
+    $ProgressPreference = 'SilentlyContinue'
     Invoke-WebRequest "$baseUrl/SHA256SUMS" -OutFile "$work/SHA256SUMS"
 
     $expected = $null
