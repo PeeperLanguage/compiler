@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"compiler/internal/target"
@@ -42,6 +44,23 @@ func TestInstallDownloadsVerifiesAndActivatesRelease(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(installRoot, relative)); err != nil {
 			t.Fatalf("installed %s: %v", relative, err)
 		}
+	}
+}
+
+func TestInstallReportsComponentProgress(t *testing.T) {
+	fixture := newReleaseFixture(t)
+	defer fixture.server.Close()
+	installRoot := filepath.Join(t.TempDir(), "peeper")
+	var progress bytes.Buffer
+	_, err := Install(t.Context(), Config{
+		Client: fixture.server.Client(), ManifestURL: fixture.server.URL + "/release-manifest.json", SignatureURL: fixture.server.URL + "/release-manifest.json.sig",
+		PublicKey: fixture.publicKey, HostOS: runtime.GOOS, HostArch: runtime.GOARCH, InstallRoot: installRoot, Progress: &progress,
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !strings.Contains(progress.String(), "Downloading components") || !strings.Contains(progress.String(), "(100%)") {
+		t.Fatalf("progress output missing complete aggregate report: %q", progress.String())
 	}
 }
 

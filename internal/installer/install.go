@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"compiler/internal/target"
 	"compiler/internal/toolchain"
@@ -31,6 +33,8 @@ type Config struct {
 	HostOS       string
 	HostArch     string
 	InstallRoot  string
+	// Progress receives human-readable download progress. Nil disables it.
+	Progress io.Writer
 }
 
 type Result struct {
@@ -83,13 +87,39 @@ func Install(ctx context.Context, config Config) (Result, error) {
 	if err := os.Mkdir(payload, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create installation staging root: %w", err)
 	}
+	totalSize := int64(0)
 	for _, component := range components {
-		archivePath, err := downloadComponent(ctx, client, transaction, component)
+		totalSize += component.Size
+	}
+	progress := newProgressWriter(config.Progress, "components", totalSize)
+	archives := make([]string, len(components))
+	downloadErrs := make([]error, len(components))
+	downloadCtx, cancelDownloads := context.WithCancel(ctx)
+	defer cancelDownloads()
+	var downloads sync.WaitGroup
+	for i, component := range components {
+		downloads.Add(1)
+		go func(i int, component distribution.ReleaseComponent) {
+			defer downloads.Done()
+			archivePath, err := downloadComponent(downloadCtx, client, transaction, component, progress)
+			archives[i], downloadErrs[i] = archivePath, err
+			if err != nil {
+				cancelDownloads()
+			}
+		}(i, component)
+	}
+	downloads.Wait()
+	for _, err := range downloadErrs {
 		if err != nil {
 			return Result{}, err
 		}
+	}
+	if progress != nil {
+		progress.finish()
+	}
+	for i, component := range components {
 		expected := distribution.Metadata{Kind: component.Kind, ID: component.ID, Version: component.Version, OS: component.OS, Arch: component.Arch}
-		if _, err := distribution.ExtractPack(archivePath, component.Format, payload, expected); err != nil {
+		if _, err := distribution.ExtractPack(archives[i], component.Format, payload, expected); err != nil {
 			return Result{}, fmt.Errorf("extract component %q: %w", component.ID, err)
 		}
 	}
@@ -157,7 +187,7 @@ func downloadBytes(ctx context.Context, client *http.Client, requestURL string, 
 	return data, nil
 }
 
-func downloadComponent(ctx context.Context, client *http.Client, transaction string, component distribution.ReleaseComponent) (string, error) {
+func downloadComponent(ctx context.Context, client *http.Client, transaction string, component distribution.ReleaseComponent, progress *progressWriter) (string, error) {
 	if err := validateHTTPSURL(component.URL); err != nil {
 		return "", fmt.Errorf("component %q URL: %w", component.ID, err)
 	}
@@ -186,7 +216,11 @@ func downloadComponent(ctx context.Context, client *http.Client, transaction str
 	}
 	archivePath := archive.Name()
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(archive, hash), io.LimitReader(response.Body, component.Size+1))
+	destination := io.Writer(io.MultiWriter(archive, hash))
+	if progress != nil {
+		destination = progress.writer(destination)
+	}
+	written, copyErr := io.Copy(destination, io.LimitReader(response.Body, component.Size+1))
 	closeErr := archive.Close()
 	if copyErr != nil {
 		return "", fmt.Errorf("download component %q: %w", component.ID, copyErr)
@@ -201,6 +235,70 @@ func downloadComponent(ctx context.Context, client *http.Client, transaction str
 		return "", fmt.Errorf("component %q SHA-256 does not match manifest", component.ID)
 	}
 	return archivePath, nil
+}
+
+// progressWriter reports streamed download progress as one in-place terminal
+// line, throttled so terminals and CI logs are not flooded. It is safe for
+// concurrent component downloads, which share one aggregate report.
+type progressWriter struct {
+	destination io.Writer
+	label       string
+	total       int64
+	mutex       sync.Mutex
+	written     int64
+	lastReport  time.Time
+}
+
+func newProgressWriter(destination io.Writer, label string, total int64) *progressWriter {
+	if destination == nil {
+		return nil
+	}
+	return &progressWriter{destination: destination, label: label, total: total, lastReport: time.Now()}
+}
+
+func (p *progressWriter) writer(destination io.Writer) io.Writer {
+	return writerFunc(func(chunk []byte) (int, error) {
+		if _, err := p.Write(chunk); err != nil {
+			return 0, err
+		}
+		return destination.Write(chunk)
+	})
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(chunk []byte) (int, error) { return f(chunk) }
+
+func (p *progressWriter) Write(chunk []byte) (int, error) {
+	p.mutex.Lock()
+	p.written += int64(len(chunk))
+	report := time.Since(p.lastReport) >= 200*time.Millisecond
+	if report {
+		p.lastReport = time.Now()
+	}
+	written := p.written
+	p.mutex.Unlock()
+	if report {
+		p.render(written)
+	}
+	return len(chunk), nil
+}
+
+func (p *progressWriter) finish() {
+	p.mutex.Lock()
+	written := p.written
+	p.mutex.Unlock()
+	p.render(written)
+	fmt.Fprintln(p.destination)
+}
+
+func (p *progressWriter) render(written int64) {
+	if p.total > 0 {
+		fmt.Fprintf(p.destination, "\rDownloading %s: %.1f/%.1f MB (%d%%)   ",
+			p.label, float64(written)/(1<<20), float64(p.total)/(1<<20), written*100/p.total)
+		return
+	}
+	fmt.Fprintf(p.destination, "\rDownloading %s: %.1f MB   ", p.label, float64(written)/(1<<20))
 }
 
 func validateHTTPSURL(value string) error {
