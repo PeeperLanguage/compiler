@@ -21,17 +21,18 @@ asset_field() {
 
 download_asset() {
   local id="$1" destination="$2"
-  local url size sha256
+  local url size sha256 actual_sha256
   url="$(asset_field "$id" url)"
   size="$(asset_field "$id" size)"
   sha256="$(asset_field "$id" sha256)"
   curl --fail --location --retry 3 --output "$destination" "$url"
   test "$(wc -c < "$destination")" -eq "$size"
-  if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s  %s\n' "$sha256" "$destination" | sha256sum -c
+  if command -v shasum >/dev/null 2>&1; then
+    actual_sha256="$(shasum -a 256 "$destination" | awk '{print $1}')"
   else
-    printf '%s  %s\n' "$sha256" "$destination" | shasum -a 256 -c
+    actual_sha256="$(sha256sum "$destination" | awk '{print $1}')"
   fi
+  test "$actual_sha256" = "$sha256"
 }
 
 mkdir -p "$output_root"
