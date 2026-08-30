@@ -29,7 +29,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           test "v$version" = "$RELEASE_TAG"
           [[ "$RELEASE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
-          GOCACHE="$RUNNER_TEMP/go-cache" CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/installer ./internal/toolchain
+          GOCACHE="$RUNNER_TEMP/go-cache" CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/toolchain
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             go run ./cmd/toolchain-lock -lock toolchains/toolchains.lock.json -os "${target%/*}" -arch "${target#*/}" >/dev/null
           done
@@ -44,7 +44,6 @@ jobs:
       os: linux
       arch: amd64
       version: ${{ needs.preflight.outputs.version }}
-      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
 
   host_linux_arm64:
     name: Host Linux arm64
@@ -55,7 +54,6 @@ jobs:
       os: linux
       arch: arm64
       version: ${{ needs.preflight.outputs.version }}
-      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
 
   host_darwin_amd64:
     name: Host macOS amd64
@@ -66,7 +64,6 @@ jobs:
       os: darwin
       arch: amd64
       version: ${{ needs.preflight.outputs.version }}
-      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
       minimum-macos: "13.0"
 
   host_darwin_arm64:
@@ -78,7 +75,6 @@ jobs:
       os: darwin
       arch: arm64
       version: ${{ needs.preflight.outputs.version }}
-      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
       minimum-macos: "13.0"
 
   host_windows_amd64:
@@ -90,7 +86,6 @@ jobs:
       os: windows
       arch: amd64
       version: ${{ needs.preflight.outputs.version }}
-      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
 
   host_windows_arm64:
     name: Host Windows arm64
@@ -101,7 +96,6 @@ jobs:
       os: windows
       arch: arm64
       version: ${{ needs.preflight.outputs.version }}
-      public-key: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
 
   assemble_release:
     name: Assemble release
@@ -140,7 +134,7 @@ jobs:
             dist/*.tar.gz.json dist/*.zip.json \
             > release-assets/release-manifest.json
           find dist -maxdepth 1 -type f \
-            \( -name '*.tar.gz' -o -name '*.zip' -o -name 'peeper-installer-*' \) \
+            \( -name '*.tar.gz' -o -name '*.zip' \) \
             -exec cp {} release-assets/ \;
           cp scripts/install.sh scripts/install.ps1 release-assets/
       - uses: actions/upload-artifact@v7

@@ -27,12 +27,13 @@ Each host install combines exactly two independently verified packs:
 - toolchain: managed Clang/linker, required sysroot, licenses, and
   `toolchains/native/profile.json`.
 
-Bootstrap install scripts are separate release assets. Signed release manifest
-binds each pack ID, version, URL, archive format, byte length, and SHA-256
-digest to one host install set. Installer verifies Ed25519 signature before
-parsing manifest, downloads only HTTPS assets, rejects unsafe archive paths and
-links, stages on destination filesystem, validates managed profile, then
-atomically activates or rolls back.
+Bootstrap install scripts are the only installers. Each script downloads the
+release manifest, verifies it against `SHA256SUMS`, reads the compiler and
+toolchain pack URLs and SHA-256 digests for the detected host, downloads both
+packs over HTTPS only, verifies every digest, extracts into a staging
+directory on the destination filesystem, then activates the complete
+installation atomically. The manifest is also published with an Ed25519
+signature that auditors can verify out of band.
 
 Installer intentionally leaves `PATH` changes to user. Default install root is
 `~/.peeper` on Unix-like systems and `%LOCALAPPDATA%\Peeper` on Windows.
@@ -57,7 +58,7 @@ Tag workflow performs these additional gates:
    toolchain into a fresh root and runs `peeper doctor` and source fixtures.
    Host jobs do not build LLVM, musl, or llvm-mingw.
 3. Require all six host jobs, then assemble the unsigned manifest and copy
-   host packs, native installers, and bootstrap scripts into release assets.
+   host packs and bootstrap scripts into release assets.
 4. One protected finalization job signs the manifest, generates `SHA256SUMS`,
    and creates or updates the draft release.
 
@@ -120,8 +121,8 @@ copy.
 2. Run full local validation and merge clean review.
 3. Create and push signed tag `v<CompilerVersion>`.
 4. Approve protected release environment.
-5. Inspect draft assets: six host packs, six native installers, two bootstrap
-   scripts, signed manifest, manifest signature, and `SHA256SUMS`. Toolchains
+5. Inspect draft assets: six host packs, two bootstrap scripts, signed
+   manifest, manifest signature, and `SHA256SUMS`. Toolchains
    remain referenced immutable component assets, not duplicate release assets.
 6. Verify checksums on downloaded assets.
 7. Install on clean host for each supported pair; run `peeper doctor`, then

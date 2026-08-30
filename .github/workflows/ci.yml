@@ -153,7 +153,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/installer ./cmd/distpack ./cmd/distunpack ./cmd/release-index ./cmd/sign-release ./cmd/toolchain-lock
+      - run: CCACHE_DISABLE=1 go test ./pkg/distribution ./cmd/distpack ./cmd/distunpack ./cmd/release-index ./cmd/sign-release ./cmd/toolchain-lock
       - name: Check bootstrap scripts
         run: |
           bash -n scripts/install.sh
