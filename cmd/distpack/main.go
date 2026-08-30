@@ -13,7 +13,7 @@ func main() {
 	source := flag.String("source", "", "staged pack root")
 	output := flag.String("output", "", "archive output path")
 	format := flag.String("format", "", "archive format: tar.gz or zip")
-	kind := flag.String("kind", "", "pack kind: compiler, target, or toolchain")
+	kind := flag.String("kind", "", "pack kind: compiler or toolchain")
 	id := flag.String("id", "", "immutable pack identifier")
 	version := flag.String("version", "", "pack version")
 	targetOS := flag.String("os", "", "host operating system")

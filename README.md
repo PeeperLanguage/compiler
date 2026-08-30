@@ -21,20 +21,30 @@ unfinished language and runtime work.
 
 ## Binary installation
 
-Signed release candidates target Linux, macOS, and Windows on `amd64` and
-`arm64`. Download matching `peeper-installer-<os>-<arch>` asset from a
-published release, verify it against `SHA256SUMS`, then run it. Windows assets
-use `.exe`.
+Linux and macOS:
 
-Installer verifies signed release manifest, downloads compiler, native target,
-and managed LLVM packs, validates every size and SHA-256 digest, then activates
-complete installation atomically. It prints directory to add to `PATH`; it does
-not modify shell or registry configuration.
+```
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/PeeperLanguage/compiler/releases/latest/download/install.sh | sh
+```
 
-Installed distributions include Clang, linker, target runtime, and standard
-libraries. macOS cannot redistribute Apple SDK, so Command Line Tools and
-working `xcrun --sdk macosx --show-sdk-path` remain required. Run
-`peeper doctor` after installation.
+Windows PowerShell:
+
+```
+irm https://github.com/PeeperLanguage/compiler/releases/latest/download/install.ps1 | iex
+```
+
+Bootstrap scripts detect `amd64` or `arm64` automatically, download the
+matching native installer from the latest published release, verify it against
+`SHA256SUMS`, and run it. macOS running under Rosetta installs the native
+`arm64` build. macOS requires Command Line Tools and working
+`xcrun --sdk macosx --show-sdk-path`.
+
+Installer verifies signed release manifest, downloads compiler and managed
+LLVM packs, validates every size and SHA-256 digest, then activates complete
+installation atomically. Bootstrap scripts persist the Peeper binary directory
+in the user PATH idempotently; restart your terminal afterward, because a piped
+shell cannot modify its parent environment. Run `peeper doctor` after
+installation.
 
 See [`docs/distribution.md`](docs/distribution.md) for support policy, release
 security, and maintainer setup.

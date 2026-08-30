@@ -118,8 +118,6 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 		fixture.writePack(t, "/compiler.tar.gz", distribution.Metadata{Kind: distribution.PackKindCompiler, ID: "compiler-host", Version: "0.2.0", OS: host.OS, Arch: host.Arch}, func(root string) {
 			writeFixtureFile(t, filepath.Join(root, "bin", "peeper"+target.ExecutableExt(host.OS)), "compiler", 0o755)
 			writeFixtureFile(t, filepath.Join(root, "libs", "core", "src", "global.peep"), "core", 0o644)
-		}),
-		fixture.writePack(t, "/target.tar.gz", distribution.Metadata{Kind: distribution.PackKindTarget, ID: "target-host", Version: "0.2.0", OS: host.OS, Arch: host.Arch}, func(root string) {
 			writeFixtureFile(t, filepath.Join(root, "targets", host.LLVMTriple, "lib", "libpeeper_rt_v1.a"), "runtime", 0o644)
 		}),
 		fixture.writePack(t, "/toolchain.tar.gz", distribution.Metadata{Kind: distribution.PackKindToolchain, ID: "toolchain-host", Version: "23.1.0", OS: host.OS, Arch: host.Arch}, func(root string) {
@@ -146,15 +144,15 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 		}),
 	}
 	for i := range components {
-		data := fixture.responses[[]string{"/compiler.tar.gz", "/target.tar.gz", "/toolchain.tar.gz"}[i]]
-		components[i].URL = fixture.server.URL + []string{"/compiler.tar.gz", "/target.tar.gz", "/toolchain.tar.gz"}[i]
+		data := fixture.responses[[]string{"/compiler.tar.gz", "/toolchain.tar.gz"}[i]]
+		components[i].URL = fixture.server.URL + []string{"/compiler.tar.gz", "/toolchain.tar.gz"}[i]
 		components[i].Size = int64(len(data))
 		components[i].SHA256 = digest(data)
 		components[i].Format = distribution.FormatTarGz
 	}
 	fixture.manifest = distribution.ReleaseManifest{
 		SchemaVersion: distribution.ReleaseManifestVersion, Version: "0.2.0", Components: components,
-		InstallSets: []distribution.InstallSet{{OS: host.OS, Arch: host.Arch, Components: []string{"compiler-host", "target-host", "toolchain-host"}}},
+		InstallSets: []distribution.InstallSet{{OS: host.OS, Arch: host.Arch, Components: []string{"compiler-host", "toolchain-host"}}},
 	}
 	fixture.signManifest(t)
 	return fixture
