@@ -27,28 +27,24 @@ workflow=false
 
 for file in "${files[@]}"; do
   [ -n "$file" ] || continue
+  non_compiler=false
   case "$file" in
-    README.md|docs/*|*.md) ;;
+    README.md|docs/*|*.md) non_compiler=true ;;
     *) docs_only=false ;;
   esac
   case "$file" in
-    .github/workflows/*) workflow=true ;;
+    .github/workflows/*|scripts/detect-changes.sh) workflow=true; non_compiler=true ;;
   esac
   case "$file" in
-    runtime/*|internal/backend/*|internal/codegen/*) runtime=true ;;
+    runtime/*|internal/backend/*|internal/codegen/*) runtime=true; non_compiler=true ;;
   esac
   case "$file" in
-    pkg/distribution/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|internal/installer/*) distribution=true ;;
+    pkg/distribution/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|internal/installer/*) distribution=true; non_compiler=true ;;
   esac
   case "$file" in
-    pkg/distribution/toolchain*|scripts/toolchain-*|scripts/toolchains/*|internal/toolchain/*) toolchain=true ;;
+    pkg/distribution/toolchain*|scripts/fetch-toolchain.sh|scripts/plan-toolchains.sh|scripts/toolchain-fingerprint.sh|scripts/update-toolchain-lock.sh|scripts/toolchains/*|internal/toolchain/*) toolchain=true; non_compiler=true ;;
   esac
-  case "$file" in
-    pkg/distribution/*|internal/installer/*|cmd/distpack/*|cmd/distunpack/*|cmd/release-index/*|cmd/sign-release/*|cmd/toolchain-lock/*|pkg/distribution/toolchain*|scripts/toolchain-*|scripts/toolchains/*|internal/toolchain/*|.github/workflows/*) ;;
-    runtime/*|internal/backend/*|internal/codegen/*) ;;
-    README.md|docs/*|*.md) ;;
-    *) compiler_source=true ;;
-  esac
+  [ "$non_compiler" = true ] || compiler_source=true
 done
 
 if [ "${EVENT_NAME:-}" = workflow_dispatch ] || [ "${#files[@]}" -eq 0 ]; then

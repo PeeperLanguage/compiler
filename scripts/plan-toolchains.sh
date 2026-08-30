@@ -53,7 +53,15 @@ else
         scripts/toolchains/build-darwin.sh) select_family darwin ;;
         scripts/toolchains/build-windows.sh) select_family windows ;;
         pkg/distribution/toolchain-sources.lock.json)
-          old_lock="$(git show "$base:$file")"
+          old_lock_path="$file"
+          if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
+            old_lock_path=distribution/toolchain-sources.lock.json
+          fi
+          if ! git cat-file -e "$base:$old_lock_path" 2>/dev/null; then
+            select_all
+            continue
+          fi
+          old_lock="$(git show "$base:$old_lock_path")"
           for id in llvm-linux-amd64 llvm-linux-arm64 musl-source llvm-source llvm-mingw-windows-amd64 llvm-mingw-windows-arm64; do
             old_entry="$(jq -cS --arg id "$id" '.assets[] | select(.id == $id)' <<< "$old_lock")"
             new_entry="$(jq -cS --arg id "$id" '.assets[] | select(.id == $id)' "$file")"
