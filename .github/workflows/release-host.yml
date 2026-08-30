@@ -15,9 +15,6 @@ on:
       version:
         required: true
         type: string
-      public-key:
-        required: true
-        type: string
       minimum-macos:
         required: false
         type: string
@@ -76,22 +73,14 @@ jobs:
           fi
           "$clang" "${runtime_args[@]}" -c runtime/peeper_rt.c -o "$RUNNER_TEMP/peeper_rt.o"
           "$archiver" rcs "$runtime_dir/libpeeper_rt_v1.a" "$RUNNER_TEMP/peeper_rt.o"
-      - name: Stage compiler component and bootstrap installer
-        env:
-          RELEASE_PUBLIC_KEY: ${{ inputs.public-key }}
+      - name: Stage compiler component
         run: |
           suffix=""
           [ "${{ inputs.os }}" = windows ] && suffix=.exe
-          test -n "$RELEASE_PUBLIC_KEY"
           mkdir -p stage/compiler/bin stage/compiler/libs dist
           cp "build/bin/peeper$suffix" stage/compiler/bin/
           cp -R build/libs/. stage/compiler/libs/
           cp LICENSE stage/compiler/
-          manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ inputs.version }}/release-manifest.json"
-          go build -trimpath \
-            -ldflags="-s -w -X=main.releaseManifestURL=$manifest_url -X=main.releasePublicKeyHex=$RELEASE_PUBLIC_KEY" \
-            -o "dist/peeper-installer-${{ inputs.os }}-${{ inputs.arch }}$suffix" \
-            ./cmd/peeper-installer
       - name: Package compiler component
         run: |
           format=tar.gz
