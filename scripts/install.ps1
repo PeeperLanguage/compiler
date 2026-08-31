@@ -48,9 +48,16 @@ try {
     Download-Component $compiler "$work/compiler.zip"
     Download-Component $toolchain "$work/toolchain.zip"
 
+    # Windows PowerShell 5.1 Expand-Archive fails when extracting into a
+    # non-empty destination, so extract each archive into its own directory
+    # and merge into staging afterwards.
     $staging = Join-Path $work "staging"
-    Expand-Archive "$work/compiler.zip" -DestinationPath $staging
-    Expand-Archive "$work/toolchain.zip" -DestinationPath $staging
+    New-Item -ItemType Directory -Path $staging | Out-Null
+    foreach ($pair in @(@("compiler.zip", "compiler"), @("toolchain.zip", "toolchain"))) {
+        $extractDir = Join-Path $work $pair[1]
+        Expand-Archive "$work/$($pair[0])" -DestinationPath $extractDir
+        Copy-Item -Recurse -Force "$extractDir/*" $staging
+    }
     if (-not (Test-Path (Join-Path $staging "bin\peeper.exe"))) { throw "peeper install: staged installation has no peeper executable" }
     if (-not (Test-Path (Join-Path $staging "toolchains\native\profile.json"))) { throw "peeper install: staged installation has no managed toolchain profile" }
 
