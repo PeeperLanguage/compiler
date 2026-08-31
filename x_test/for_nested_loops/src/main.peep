@@ -1,0 +1,16 @@
+fn main() -> i32 {
+    let mut innerRuns: i32 = 0;
+    for i in 0..3 {
+        for j in 0..4 {
+            if j == 1 {
+                continue;
+            }
+            if j == 3 {
+                break;
+            }
+            innerRuns = innerRuns + 1;
+        }
+    }
+    println(innerRuns);
+    return 0;
+}

@@ -1,0 +1,7 @@
+name = "negative_break_outside_loop"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["break outside loop"]

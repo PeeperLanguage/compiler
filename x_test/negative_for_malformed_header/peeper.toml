@@ -1,0 +1,7 @@
+name = "negative_for_malformed_header"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["P0006", "expected identifier"]

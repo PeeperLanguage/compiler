@@ -115,8 +115,11 @@ type If struct {
 }
 
 type For struct {
+	Init     *Block
 	Cond     ir.Expr
+	Bindings *Block
 	Body     *Block
+	Next     *Block
 	NodeID   NodeID
 	Location *source.Location
 }
@@ -168,7 +171,13 @@ func (s *If) forEachChild(visit func(Stmt)) {
 	visit(s.Then)
 	visit(s.Else)
 }
-func (s *For) forEachChild(visit func(Stmt)) { visit(s.Body) }
+func (s *For) forEachChild(visit func(Stmt)) {
+	for _, segment := range []*Block{s.Init, s.Bindings, s.Body, s.Next} {
+		if segment != nil {
+			visit(segment)
+		}
+	}
+}
 func (s *SwitchVariant) forEachChild(visit func(Stmt)) {
 	for _, variantCase := range s.Cases {
 		visit(variantCase.Body)
@@ -349,7 +358,22 @@ func (s *For) appendText(b *strings.Builder, indent int) {
 		b.WriteString(s.Cond.String())
 	}
 	b.WriteString(" {\n")
+	appendForSegmentText(b, "init", s.Init, indent+1)
+	appendForSegmentText(b, "bindings", s.Bindings, indent+1)
 	appendBlockText(b, s.Body, indent+1)
+	appendForSegmentText(b, "next", s.Next, indent+1)
+	writeIndent(b, indent)
+	b.WriteString("}\n")
+}
+
+func appendForSegmentText(b *strings.Builder, name string, block *Block, indent int) {
+	if block == nil || len(block.Stmts) == 0 {
+		return
+	}
+	writeIndent(b, indent)
+	b.WriteString(name)
+	b.WriteString(" {\n")
+	appendBlockText(b, block, indent+1)
 	writeIndent(b, indent)
 	b.WriteString("}\n")
 }

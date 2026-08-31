@@ -80,12 +80,15 @@ const (
 	BlockNormal BlockOrigin = iota
 	BlockThen
 	BlockElse
+	BlockLoopInit
 	BlockLoop
 	BlockLoopBody
+	BlockLoopLatch
 )
 
 type Block struct {
 	ID           int
+	NodeID       ir.NodeID
 	Origin       BlockOrigin
 	Location     *source.Location
 	Sites        []*Site

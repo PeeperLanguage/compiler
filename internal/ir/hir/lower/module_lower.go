@@ -235,18 +235,7 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 		}
 		out.Stmts = append(out.Stmts, ifStmt)
 	case *ast.ForStmt:
-		var condExpr ir.Expr
-		if node.Cond != nil {
-			condExpr = lowerASTExpr(ctx, module, scope, node.Cond, &typeinfo.BoolType{})
-		}
-		loop := &hir.For{
-			Cond:     condExpr,
-			Body:     &hir.Block{Stmts: make([]hir.Stmt, 0), NodeID: hir.NodeID(node.Body.ID()), Location: ast.LocOf(node.Body)},
-			NodeID:   hir.NodeID(node.ID()),
-			Location: ast.LocOf(node),
-		}
-		appendBlock(module, scope, loop.Body, node.Body, returnType, ctx)
-		out.Stmts = append(out.Stmts, loop)
+		out.Stmts = append(out.Stmts, lowerForStmt(ctx, module, scope, node, returnType))
 	case *ast.MatchStmt:
 		evidence, found := module.Semantics.Matches[node.ID()]
 		if !found || len(evidence.Arms) != len(node.Arms) {
@@ -309,11 +298,130 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 		targetType := exprResolvedType(module, node.Target)
 		valueExpr := lowerASTExpr(ctx, module, scope, node.Value, targetType)
 		out.Stmts = append(out.Stmts, &hir.Assign{Target: targetExpr, Value: valueExpr, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+	case *ast.BreakStmt, *ast.ContinueStmt:
+		// CFG owns loop transfer; no executable HIR statement is needed.
 	case *ast.BadStmt, *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl,
 		*ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
 		out.Stmts = append(out.Stmts, &hir.Invalid{Message: "unsupported statement", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 	default:
 		panic(fmt.Sprintf("HIR lowering: unhandled statement %T", stmt))
+	}
+}
+
+func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.ForStmt, returnType typeinfo.Type) hir.Stmt {
+	location := ast.LocOf(node)
+	loop := &hir.For{
+		Body:     &hir.Block{Stmts: make([]hir.Stmt, 0), NodeID: hir.NodeID(node.Body.ID()), Location: ast.LocOf(node.Body)},
+		NodeID:   hir.NodeID(node.ID()),
+		Location: location,
+	}
+	appendBlock(module, scope, loop.Body, node.Body, returnType, ctx)
+	if node.Iterable == nil {
+		if node.Cond != nil {
+			loop.Cond = lowerASTExpr(ctx, module, scope, node.Cond, &typeinfo.BoolType{})
+		}
+		return loop
+	}
+
+	evidence, found := module.Semantics.ForIterations[node.ID()]
+	if !found || evidence.Cursor == nil || evidence.Value == nil {
+		return &hir.Invalid{Message: "for-in statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: location}
+	}
+	loop.Init = &hir.Block{Stmts: make([]hir.Stmt, 0), Location: location}
+	loop.Bindings = &hir.Block{Stmts: make([]hir.Stmt, 0), Location: location}
+	loop.Next = &hir.Block{Stmts: make([]hir.Stmt, 0), Location: location}
+	boolType := loweredTypeID(ctx, module, &typeinfo.BoolType{})
+
+	switch evidence.Kind {
+	case project.ForIterationRange:
+		rangeExpr, ok := node.Iterable.(*ast.RangeExpr)
+		if !ok || rangeExpr.Start == nil || rangeExpr.End == nil || evidence.End == nil {
+			return &hir.Invalid{Message: "range iteration evidence does not match syntax", NodeID: hir.NodeID(node.ID()), Location: location}
+		}
+		loop.Init.Stmts = append(loop.Init.Stmts,
+			generatedBinding(ctx, module, evidence.Cursor, lowerASTExpr(ctx, module, scope, rangeExpr.Start, evidence.ElementType), location),
+			generatedBinding(ctx, module, evidence.End, lowerASTExpr(ctx, module, scope, rangeExpr.End, evidence.ElementType), location),
+		)
+		if evidence.Ordinal != nil {
+			ordinalType := loweredTypeID(ctx, module, evidence.Ordinal.Type)
+			loop.Init.Stmts = append(loop.Init.Stmts, generatedBinding(ctx, module, evidence.Ordinal,
+				&ir.IntLit{Value: "0", Type: ordinalType, SourceInfo: ir.SourceInfo{Location: location}}, location))
+		}
+		loop.Cond = &ir.Binary{
+			Op: "<", Left: generatedIdent(ctx, module, evidence.Cursor, location), Right: generatedIdent(ctx, module, evidence.End, location), Type: boolType,
+			SourceInfo: ir.SourceInfo{Location: location},
+		}
+		if evidence.Index != nil {
+			loop.Bindings.Stmts = append(loop.Bindings.Stmts,
+				generatedBinding(ctx, module, evidence.Index, generatedIdent(ctx, module, evidence.Ordinal, location), location))
+		}
+		loop.Bindings.Stmts = append(loop.Bindings.Stmts,
+			generatedBinding(ctx, module, evidence.Value, generatedIdent(ctx, module, evidence.Cursor, location), location))
+		loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, evidence.Cursor, location))
+		if evidence.Ordinal != nil {
+			loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, evidence.Ordinal, location))
+		}
+	case project.ForIterationSequence:
+		if evidence.Carrier == nil {
+			return &hir.Invalid{Message: "sequence iteration missing carrier evidence", NodeID: hir.NodeID(node.ID()), Location: location}
+		}
+		carrier := generatedIdent(ctx, module, evidence.Carrier, location)
+		cursor := generatedIdent(ctx, module, evidence.Cursor, location)
+		cursorType := loweredTypeID(ctx, module, evidence.Cursor.Type)
+		elementType := loweredTypeID(ctx, module, evidence.ElementType)
+		loop.Init.Stmts = append(loop.Init.Stmts,
+			generatedBinding(ctx, module, evidence.Carrier,
+				lowerImplicitReferenceValue(ctx, module, scope, node.Iterable, evidence.CarrierType), location),
+			generatedBinding(ctx, module, evidence.Cursor,
+				&ir.IntLit{Value: "0", Type: cursorType, SourceInfo: ir.SourceInfo{Location: location}}, location),
+		)
+		loop.Cond = &ir.Binary{
+			Op: "<", Left: cursor,
+			Right: &ir.Len{Value: carrier, Type: cursorType, SourceInfo: ir.SourceInfo{Location: location}},
+			Type:  boolType, SourceInfo: ir.SourceInfo{Location: location},
+		}
+		if evidence.Index != nil {
+			loop.Bindings.Stmts = append(loop.Bindings.Stmts,
+				generatedBinding(ctx, module, evidence.Index, generatedIdent(ctx, module, evidence.Cursor, location), location))
+		}
+		loop.Bindings.Stmts = append(loop.Bindings.Stmts,
+			generatedBinding(ctx, module, evidence.Value, &ir.Load{Place: &ir.Place{
+				Root: generatedIdent(ctx, module, evidence.Carrier, location),
+				Projections: []ir.PlaceProjection{{
+					Kind: ir.PlaceProjectionIndex, Index: generatedIdent(ctx, module, evidence.Cursor, location), Type: elementType, Location: location,
+				}},
+				Type: elementType, Location: location,
+			}, SourceInfo: ir.SourceInfo{Location: location}}, location))
+		loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, evidence.Cursor, location))
+	default:
+		return &hir.Invalid{Message: "unknown for-in iteration evidence", NodeID: hir.NodeID(node.ID()), Location: location}
+	}
+	return loop
+}
+
+func generatedBinding(ctx *project.CompilerContext, module *project.Module, sym *symbols.Symbol, value ir.Expr, location *source.Location) *hir.Binding {
+	return &hir.Binding{
+		Name: symbolName(module, sym), Type: loweredTypeID(ctx, module, sym.Type), Value: value, SymbolID: sym.ID, Location: location,
+	}
+}
+
+func generatedIdent(ctx *project.CompilerContext, module *project.Module, sym *symbols.Symbol, location *source.Location) *ir.Ident {
+	return &ir.Ident{
+		Name: symbolName(module, sym), Type: loweredTypeID(ctx, module, sym.Type), SymbolID: sym.ID,
+		SourceInfo: ir.SourceInfo{Location: location},
+	}
+}
+
+func incrementSymbol(ctx *project.CompilerContext, module *project.Module, sym *symbols.Symbol, location *source.Location) *hir.Assign {
+	typeID := loweredTypeID(ctx, module, sym.Type)
+	return &hir.Assign{
+		Target: &ir.Place{Root: generatedIdent(ctx, module, sym, location), Type: typeID, Location: location},
+		Value: &ir.Binary{
+			Op: "+", Left: generatedIdent(ctx, module, sym, location),
+			Right: &ir.IntLit{Value: "1", Type: typeID, SourceInfo: ir.SourceInfo{Location: location}},
+			Type:  typeID, SourceInfo: ir.SourceInfo{Location: location},
+		},
+		Location: location,
 	}
 }
 

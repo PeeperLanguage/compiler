@@ -419,7 +419,10 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		return true
 	}
 	if module.Phase < phase.CFG {
-		module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
+		module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
+			MatchCases:          module.Semantics.MatchCases,
+			LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		})
 		cfg.Analyze(module.CFG, phaseDiag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
 			node := module.TypedASTNodes[ast.NodeID(conditionID)]
 			expr, ok := node.(ast.Expr)

@@ -169,10 +169,28 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			r.resolveStmt(scope, node.Else)
 		}
 	case *ast.ForStmt:
+		if node.Iterable != nil {
+			r.resolveExpr(scope, node.Iterable)
+			bodyScope := symbols.NewScope(scope)
+			if node.Index != nil {
+				if binding := r.resolveLocalBinding(bodyScope, node.Index, symbols.SymbolVar, nil, node.Index, ast.LocOf(node.Index)); binding != nil {
+					r.module.Semantics.ResolvedSymbols[node.Index.ID()] = binding
+				}
+			}
+			if node.Value != nil {
+				if binding := r.resolveLocalBinding(bodyScope, node.Value, symbols.SymbolVar, nil, node.Value, ast.LocOf(node.Value)); binding != nil {
+					r.module.Semantics.ResolvedSymbols[node.Value.ID()] = binding
+				}
+			}
+			r.resolveBlock(bodyScope, node.Body)
+			return
+		}
 		if node.Cond != nil {
 			r.resolveExpr(scope, node.Cond)
 		}
 		r.resolveBlock(symbols.NewScope(scope), node.Body)
+	case *ast.BreakStmt, *ast.ContinueStmt:
+		// Legality (inside a loop) is diagnosed by the typechecker.
 	case *ast.MatchStmt:
 		r.resolveExpr(scope, node.Subject)
 		for _, arm := range node.Arms {
@@ -181,8 +199,7 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			}
 			armScope := symbols.NewScope(scope)
 			if arm.Binding != nil && !arm.Discard {
-				r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location)
-				if binding, found := armScope.LookupNode(arm.Binding); found {
+				if binding := r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location); binding != nil {
 					r.module.Semantics.ResolvedSymbols[arm.Binding.ID()] = binding
 				}
 			}
@@ -190,8 +207,7 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 				if field.Discard {
 					continue
 				}
-				r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)
-				if binding, found := armScope.LookupNode(field.Binding); found {
+				if binding := r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location); binding != nil {
 					r.module.Semantics.ResolvedSymbols[field.Binding.ID()] = binding
 				}
 			}
@@ -210,7 +226,7 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 	}
 }
 
-func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
+func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) *symbols.Symbol {
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	if declaration, ok := node.(*ast.LetDecl); ok {
 		sym.MutableLocation = declaration.MutableLocation
@@ -218,12 +234,13 @@ func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, ki
 	sym.Initializing = true
 	if err := scope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(r.ctx.Diagnostics, scope, err.Error(), name.Name, loc)
-		return
+		return nil
 	}
 	if value != nil {
 		r.resolveExpr(scope, value)
 	}
 	sym.Initializing = false
+	return sym
 }
 
 func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {

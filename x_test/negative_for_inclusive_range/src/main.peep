@@ -1,0 +1,3 @@
+fn Invalid() {
+    for value in 0..=5 {}
+}

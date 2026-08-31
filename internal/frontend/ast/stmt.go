@@ -83,6 +83,9 @@ func (s *IfStmt) loc() *source.Location { return s.Location }
 type ForStmt struct {
 	NodeIDHolder
 	Documented
+	Index    *Ident
+	Value    *Ident
+	Iterable Expr
 	Cond     Expr
 	Body     *BlockStmt
 	Location *source.Location
@@ -90,10 +93,31 @@ type ForStmt struct {
 
 func (*ForStmt) stmtNode() {}
 func (s *ForStmt) forEachChild(visit func(Node)) {
+	visit(s.Index)
+	visit(s.Value)
+	visit(s.Iterable)
 	visit(s.Cond)
 	visit(s.Body)
 }
 func (s *ForStmt) loc() *source.Location { return s.Location }
+
+type BreakStmt struct {
+	NodeIDHolder
+	Location *source.Location
+}
+
+func (*BreakStmt) stmtNode()                 {}
+func (s *BreakStmt) forEachChild(func(Node)) {}
+func (s *BreakStmt) loc() *source.Location   { return s.Location }
+
+type ContinueStmt struct {
+	NodeIDHolder
+	Location *source.Location
+}
+
+func (*ContinueStmt) stmtNode()                 {}
+func (s *ContinueStmt) forEachChild(func(Node)) {}
+func (s *ContinueStmt) loc() *source.Location   { return s.Location }
 
 type MatchPatternField struct {
 	Name     *Ident

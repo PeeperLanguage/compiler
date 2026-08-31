@@ -179,7 +179,7 @@ func cfgForHIR(module *hir.Module) *cfg.Module {
 			Location:     fn.Location,
 		})
 	}
-	return cfg.BuildModule(source, nil)
+	return cfg.BuildModule(source, cfg.BuildQueries{})
 }
 
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
@@ -271,16 +271,18 @@ func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
 
 func TestGenerateMIRAppliesOwnershipCleanupPlan(t *testing.T) {
 	tests := []struct {
-		name string
-		body *hir.Block
-		plan *ownershipresult.CleanupPlan
-		want int
+		name        string
+		body        *hir.Block
+		plan        *ownershipresult.CleanupPlan
+		scopeNodeID ir.NodeID
+		want        int
 	}{
 		{
-			name: "scope exit",
-			body: &hir.Block{NodeID: 10},
-			plan: &ownershipresult.CleanupPlan{AfterScope: map[ir.NodeID][]symbols.SymbolID{10: {1}}},
-			want: 1,
+			name:        "scope exit",
+			body:        &hir.Block{NodeID: 10},
+			plan:        &ownershipresult.CleanupPlan{AfterScope: make(map[cfg.SiteID][]symbols.SymbolID)},
+			scopeNodeID: 10,
+			want:        1,
 		},
 		{
 			name: "return",
@@ -317,6 +319,18 @@ func TestGenerateMIRAppliesOwnershipCleanupPlan(t *testing.T) {
 				Body:       tt.body,
 			}}}
 			graphs := cfgForHIR(mod)
+			if tt.scopeNodeID != 0 {
+				for _, block := range graphs.Functions[0].Blocks {
+					if block == nil {
+						continue
+					}
+					for _, site := range block.Sites {
+						if site != nil && site.Kind == cfg.SiteScopeExit && site.NodeID == tt.scopeNodeID {
+							tt.plan.AfterScope[site.ID] = []symbols.SymbolID{1}
+						}
+					}
+				}
+			}
 			plans := ownershipresult.Result{mod.Funcs[0].NodeID: tt.plan}
 			out := GenerateMIR(mod, graphs, plans, nil, nil)
 			if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Blocks) == 0 {
@@ -337,6 +351,58 @@ func TestGenerateMIRAppliesOwnershipCleanupPlan(t *testing.T) {
 				t.Fatalf("instructions = %#v, want cleanup drop", instrs)
 			}
 		})
+	}
+}
+
+func TestGenerateMIRScopesCleanupToExactCFGSite(t *testing.T) {
+	const sharedScopeID ir.NodeID = 30
+	mod := &hir.Module{Name: "test", Types: mirTypes.table, Funcs: []*hir.Function{{
+		Name:       "main",
+		Params:     []ir.Param{{Name: "owner", Type: mirTypes.ownedI32, SymbolID: 1}},
+		ReturnType: mirTypes.void,
+		Body: &hir.Block{Stmts: []hir.Stmt{&hir.If{
+			Cond: &ir.BoolLit{Value: true, Type: mirTypes.boolType},
+			Then: &hir.Block{NodeID: sharedScopeID},
+			Else: &hir.Block{NodeID: sharedScopeID},
+		}}},
+	}}}
+	graphs := cfgForHIR(mod)
+	graph := graphs.Function(mod.Funcs[0].NodeID)
+	var exits []cfg.SiteID
+	for _, block := range graph.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, site := range block.Sites {
+			if site != nil && site.Kind == cfg.SiteScopeExit && site.NodeID == sharedScopeID {
+				exits = append(exits, site.ID)
+			}
+		}
+	}
+	if len(exits) != 2 || exits[0] == exits[1] {
+		t.Fatalf("scope exits = %v, want two distinct sites", exits)
+	}
+	plan := &ownershipresult.CleanupPlan{AfterScope: map[cfg.SiteID][]symbols.SymbolID{
+		exits[0]: {1},
+	}}
+	out := GenerateMIR(mod, graphs, ownershipresult.Result{mod.Funcs[0].NodeID: plan}, nil, nil)
+	if out == nil || len(out.Funcs) != 1 {
+		t.Fatalf("MIR = %#v, want one function", out)
+	}
+	for _, block := range out.Funcs[0].Blocks {
+		drops := 0
+		for _, instr := range block.Instrs {
+			if _, ok := instr.(*Drop); ok {
+				drops++
+			}
+		}
+		want := 0
+		if block.ID == exits[0].Block {
+			want = 1
+		}
+		if drops != want {
+			t.Fatalf("block %d drops = %d, want %d; exits = %v", block.ID, drops, want, exits)
+		}
 	}
 }
 
@@ -1287,7 +1353,13 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 				Body: &hir.Block{
 					Stmts: []hir.Stmt{
 						&hir.For{
+							Init: &hir.Block{Stmts: []hir.Stmt{&hir.Binding{
+								Name: "cursor", Type: mirTypes.i32, Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}, SymbolID: 100,
+							}}},
 							Cond: &ir.IntLit{Value: "1", Type: mirTypes.boolType},
+							Bindings: &hir.Block{Stmts: []hir.Stmt{&hir.Binding{
+								Name: "value", Type: mirTypes.i32, Value: &ir.Ident{Name: "cursor", Type: mirTypes.i32}, SymbolID: 101,
+							}}},
 							Body: &hir.Block{
 								Stmts: []hir.Stmt{
 									&hir.ExprStmt{
@@ -1298,6 +1370,10 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 									},
 								},
 							},
+							Next: &hir.Block{Stmts: []hir.Stmt{&hir.Assign{
+								Target: &ir.Place{Root: &ir.Ident{Name: "cursor", Type: mirTypes.i32}, Type: mirTypes.i32},
+								Value:  &ir.Binary{Op: "+", Left: &ir.Ident{Name: "cursor", Type: mirTypes.i32}, Right: &ir.IntLit{Value: "1", Type: mirTypes.i32}, Type: mirTypes.i32},
+							}}},
 						},
 					},
 				},
@@ -1311,38 +1387,75 @@ func TestGenerateMIRLowersForLoop(t *testing.T) {
 		t.Fatalf("expected one MIR function, got %#v", out)
 	}
 	fn := out.Funcs[0]
-	if len(fn.Blocks) != 4 {
-		t.Fatalf("expected four blocks for loop, got %#v", fn.Blocks)
+	// Canonical loop shape: entry → init → header → body → latch → (header|exit).
+	if len(fn.Blocks) != 6 {
+		t.Fatalf("expected six blocks for loop, got %#v", fn.Blocks)
 	}
-	index := 0
-	for _, block := range graphs.Functions[0].Blocks {
-		if block == nil || block == graphs.Functions[0].Exit || !block.Reachable {
-			continue
+	byID := make(map[int]*Block, len(fn.Blocks))
+	for _, block := range fn.Blocks {
+		byID[block.ID] = block
+	}
+	var header *Block
+	for _, block := range fn.Blocks {
+		if _, ok := block.Term.(*Branch); ok {
+			header = block
+			break
 		}
-		if fn.Blocks[index].ID != block.ID {
-			t.Fatalf("MIR block %d ID = %d, want CFG ID %d", index, fn.Blocks[index].ID, block.ID)
-		}
-		index++
+	}
+	if header == nil {
+		t.Fatalf("expected one loop header branch, got %#v", fn.Blocks)
 	}
 	entry := fn.Blocks[0]
 	entryJump, ok := entry.Term.(*Jump)
 	if !ok {
 		t.Fatalf("expected entry jump terminator, got %#v", entry.Term)
 	}
-	header := fn.Blocks[1]
-	if entryJump.TargetID != header.ID {
-		t.Fatalf("expected jump to loop header, got %#v", entry.Term)
+	init := byID[entryJump.TargetID]
+	if init == nil || init == header {
+		t.Fatalf("expected entry jump to init block, got %#v", entry.Term)
 	}
-	term, ok := header.Term.(*Branch)
-	if !ok {
-		t.Fatalf("expected header branch terminator, got %#v", header.Term)
+	if len(init.Instrs) != 1 {
+		t.Fatalf("init instructions = %#v, want cursor assignment", init.Instrs)
 	}
-	if term.ThenID != fn.Blocks[2].ID || term.ElseID != fn.Blocks[3].ID {
+	if assignment, ok := init.Instrs[0].(*Assign); !ok || assignment.Name != "cursor" {
+		t.Fatalf("init instruction = %#v, want cursor assignment", init.Instrs[0])
+	}
+	initJump, ok := init.Term.(*Jump)
+	if !ok || initJump.TargetID != header.ID {
+		t.Fatalf("expected init jump to header block, got %#v", init.Term)
+	}
+	term := header.Term.(*Branch)
+	body := byID[term.ThenID]
+	exit := byID[term.ElseID]
+	if body == nil || exit == nil || body == exit {
 		t.Fatalf("unexpected loop targets: %#v", term)
 	}
-	bodyTerm, ok := fn.Blocks[2].Term.(*Jump)
-	if !ok || bodyTerm.TargetID != header.ID {
-		t.Fatalf("expected backedge to header block, got %#v", fn.Blocks[2].Term)
+	if len(body.Instrs) < 1 {
+		t.Fatalf("body instructions = %#v, want generated value binding", body.Instrs)
+	}
+	if assignment, ok := body.Instrs[0].(*Assign); !ok || assignment.Name != "value" {
+		t.Fatalf("first body instruction = %#v, want value assignment", body.Instrs[0])
+	}
+	bodyTerm, ok := body.Term.(*Jump)
+	if !ok {
+		t.Fatalf("expected body jump terminator, got %#v", body.Term)
+	}
+	latch := byID[bodyTerm.TargetID]
+	if latch == nil || latch == header {
+		t.Fatalf("expected body jump to latch block, got %#v", body.Term)
+	}
+	if len(latch.Instrs) != 2 {
+		t.Fatalf("latch instructions = %#v, want increment and cursor assignment", latch.Instrs)
+	}
+	if assignment, ok := latch.Instrs[1].(*Assign); !ok || assignment.Name != "cursor" {
+		t.Fatalf("final latch instruction = %#v, want cursor assignment", latch.Instrs[1])
+	}
+	latchTerm, ok := latch.Term.(*Jump)
+	if !ok || latchTerm.TargetID != header.ID {
+		t.Fatalf("expected latch backedge to header block, got %#v", latch.Term)
+	}
+	if _, ok := exit.Term.(*Ret); !ok {
+		t.Fatalf("expected loop exit to return, got %#v", exit.Term)
 	}
 }
 

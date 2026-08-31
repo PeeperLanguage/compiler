@@ -39,7 +39,10 @@ func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
+	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
+		MatchCases:          module.Semantics.MatchCases,
+		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+	})
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
 }

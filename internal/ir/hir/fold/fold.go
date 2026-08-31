@@ -96,7 +96,15 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, env map[string]constvalue.Valu
 		if node.Cond != nil {
 			cond = ir.FoldExpr(types, node.Cond, env)
 		}
-		return []hir.Stmt{&hir.For{Cond: cond, Body: foldBlock(types, node.Body, cloneConstEnv(env)), NodeID: node.NodeID, Location: node.Location}}
+		return []hir.Stmt{&hir.For{
+			Init:     foldBlock(types, node.Init, cloneConstEnv(env)),
+			Cond:     cond,
+			Bindings: foldBlock(types, node.Bindings, cloneConstEnv(env)),
+			Body:     foldBlock(types, node.Body, cloneConstEnv(env)),
+			Next:     foldBlock(types, node.Next, cloneConstEnv(env)),
+			NodeID:   node.NodeID,
+			Location: node.Location,
+		}}
 	case *hir.SwitchVariant:
 		cases := make([]hir.VariantCaseBlock, len(node.Cases))
 		for index, variantCase := range node.Cases {

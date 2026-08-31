@@ -1,0 +1,7 @@
+name = "negative_for_non_iterable"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot iterate over i32"]

@@ -1,0 +1,7 @@
+name = "negative_for_inclusive_range"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["for range requires an exclusive end"]

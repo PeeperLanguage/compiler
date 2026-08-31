@@ -41,7 +41,10 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
+	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
+		MatchCases:          module.Semantics.MatchCases,
+		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -51,6 +54,96 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	}
 	out := GenerateHIR(ctx, module)
 	return out
+}
+
+func TestGenerateHIRLowersRangeForIntoStructuredSegments(t *testing.T) {
+	out := generateTestHIR(t, "hir_for_range_test"+peeper.SourceExt, "hir_for_range_test", `fn main() {
+	for index, value in 1i64..3i64 {}
+}`)
+	loop, ok := out.Funcs[0].Body.Stmts[0].(*hir.For)
+	if !ok {
+		t.Fatalf("range statement = %#v, want hir.For", out.Funcs[0].Body.Stmts[0])
+	}
+	if loop.Init == nil || len(loop.Init.Stmts) != 3 || loop.Bindings == nil || len(loop.Bindings.Stmts) != 2 || loop.Next == nil || len(loop.Next.Stmts) != 2 {
+		t.Fatalf("range segments = init %#v bindings %#v next %#v", loop.Init, loop.Bindings, loop.Next)
+	}
+	cursor := loop.Init.Stmts[0].(*hir.Binding)
+	end := loop.Init.Stmts[1].(*hir.Binding)
+	ordinal := loop.Init.Stmts[2].(*hir.Binding)
+	if out.Types.Text(cursor.Type) != "i64" || out.Types.Text(end.Type) != "i64" || out.Types.Text(ordinal.Type) != "i32" {
+		t.Fatalf("range state types = %s, %s, %s", out.Types.Text(cursor.Type), out.Types.Text(end.Type), out.Types.Text(ordinal.Type))
+	}
+	cond, ok := loop.Cond.(*ir.Binary)
+	if !ok || cond.Op != "<" || cond.Left.TypeID() != cursor.Type || cond.Right.TypeID() != end.Type || out.Types.Text(cond.Type) != "bool" {
+		t.Fatalf("range condition = %#v", loop.Cond)
+	}
+	indexBinding := loop.Bindings.Stmts[0].(*hir.Binding)
+	valueBinding := loop.Bindings.Stmts[1].(*hir.Binding)
+	if out.Types.Text(indexBinding.Type) != "i32" || out.Types.Text(valueBinding.Type) != "i64" {
+		t.Fatalf("range source binding types = %s, %s", out.Types.Text(indexBinding.Type), out.Types.Text(valueBinding.Type))
+	}
+	for index, stmt := range loop.Next.Stmts {
+		assignment, ok := stmt.(*hir.Assign)
+		if !ok || assignment.Target.TypeID() != []ir.TypeID{cursor.Type, ordinal.Type}[index] {
+			t.Fatalf("range increment %d = %#v", index, stmt)
+		}
+	}
+}
+
+func TestGenerateHIRLowersSequenceForIntoStructuredSegments(t *testing.T) {
+	tests := []struct {
+		name          string
+		source        string
+		loopStmtIndex int
+		borrowed      bool
+	}{
+		{name: "fixed array", source: `fn main() { let items = [2]i32{1, 2}; for index, value in items {} }`, loopStmtIndex: 1, borrowed: true},
+		{name: "dynamic array", source: `fn main() { let items = []i32{1, 2}; for index, value in items {} }`, loopStmtIndex: 1, borrowed: true},
+		{name: "slice view", source: `fn Read(items: &[..]i32) { for index, value in items {} }`, loopStmtIndex: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out := generateTestHIR(t, "hir_for_sequence_test"+peeper.SourceExt, "hir_for_sequence_test", test.source)
+			loop := out.Funcs[0].Body.Stmts[test.loopStmtIndex].(*hir.For)
+			if loop.Init == nil || len(loop.Init.Stmts) != 2 || loop.Bindings == nil || len(loop.Bindings.Stmts) != 2 || loop.Next == nil || len(loop.Next.Stmts) != 1 {
+				t.Fatalf("sequence segments = init %#v bindings %#v next %#v", loop.Init, loop.Bindings, loop.Next)
+			}
+			carrier := loop.Init.Stmts[0].(*hir.Binding)
+			_, address := carrier.Value.(*ir.AddrOf)
+			if address != test.borrowed {
+				t.Fatalf("carrier initializer = %T, borrowed=%v", carrier.Value, test.borrowed)
+			}
+			cursor := loop.Init.Stmts[1].(*hir.Binding)
+			cond, ok := loop.Cond.(*ir.Binary)
+			if !ok || cond.Op != "<" || cond.Left.TypeID() != cursor.Type {
+				t.Fatalf("sequence condition = %#v", loop.Cond)
+			}
+			length, ok := cond.Right.(*ir.Len)
+			if !ok || length.Type != cursor.Type {
+				t.Fatalf("sequence length = %#v, cursor type %s", cond.Right, out.Types.Text(cursor.Type))
+			}
+			indexBinding := loop.Bindings.Stmts[0].(*hir.Binding)
+			indexValue, ok := indexBinding.Value.(*ir.Ident)
+			if !ok || indexValue.TypeID() != cursor.Type || indexBinding.Type != cursor.Type {
+				t.Fatalf("sequence index binding = %#v", indexBinding)
+			}
+			valueBinding := loop.Bindings.Stmts[1].(*hir.Binding)
+			load, ok := valueBinding.Value.(*ir.Load)
+			if !ok || load.Place == nil || len(load.Place.Projections) != 1 || load.Place.Projections[0].Kind != ir.PlaceProjectionIndex || load.Place.Projections[0].Index.TypeID() != cursor.Type {
+				t.Fatalf("sequence value binding = %#v", valueBinding)
+			}
+		})
+	}
+}
+
+func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_for_evidence_test"+peeper.SourceExt, "hir_for_evidence_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
+		module.Semantics.ForIterations = make(map[ast.NodeID]project.ForIteration)
+	})
+	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
+	if !ok || !strings.Contains(invalid.Message, "missing semantic evidence") {
+		t.Fatalf("for-in without evidence = %#v", out.Funcs[0].Body.Stmts[0])
+	}
 }
 
 func TestGenerateHIRCallableNamesAreStableAndModuleAware(t *testing.T) {

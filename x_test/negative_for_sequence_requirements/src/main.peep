@@ -1,0 +1,12 @@
+struct Item {
+    value: i32
+}
+
+fn TemporaryStorage() {
+    for value in []i32{1, 2} {}
+}
+
+fn MoveOnlyElements() {
+    let items = [1]Item{.{ value = 1 }};
+    for item in items {}
+}

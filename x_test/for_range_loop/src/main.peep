@@ -1,0 +1,18 @@
+fn main() -> i32 {
+    let mut total: i32 = 0;
+    for i in 0..5 {
+        total = total + i;
+    }
+    let mut typed_start: i64 = 0i64;
+    for value in 0i64..3 {
+        typed_start = typed_start + value;
+    }
+    let mut typed_end: i64 = 0i64;
+    for value in 0..3i64 {
+        typed_end = typed_end + value;
+    }
+    println(total);
+    println(typed_start);
+    println(typed_end);
+    return 0;
+}

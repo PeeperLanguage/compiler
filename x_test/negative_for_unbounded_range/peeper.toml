@@ -1,0 +1,7 @@
+name = "negative_for_unbounded_range"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["P0003", "range iteration requires an end bound"]

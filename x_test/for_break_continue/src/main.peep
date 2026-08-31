@@ -1,0 +1,71 @@
+enum TransferResource {
+    Owned: { value: *i32 },
+    Pending
+}
+
+fn BreakMatch(resource: TransferResource) {
+    for i in 0..1 {
+        match resource {
+            TransferResource::Owned with { value = owned } => {
+                free(owned);
+                break;
+            }
+            TransferResource::Pending => {
+                break;
+            }
+        }
+    }
+}
+
+fn ContinueMatch() {
+    for i in 0..2 {
+        let resource = TransferResource::Owned with .{ value = alloc(i) };
+        match resource {
+            TransferResource::Owned with { value = owned } => {
+                free(owned);
+                continue;
+            }
+            TransferResource::Pending => {
+                continue;
+            }
+        }
+    }
+}
+
+fn NestedBreakMatch() {
+    for outer in 0..2 {
+        for inner in 0..2 {
+            let resource = TransferResource::Owned with .{ value = alloc(outer + inner) };
+            match resource {
+                TransferResource::Owned with { value = owned } => {
+                    free(owned);
+                    break;
+                }
+                TransferResource::Pending => {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn main() -> i32 {
+    let mut seen: i32 = 0;
+    for i in 0..10 {
+        let first = alloc(i);
+        if i == 3 {
+            continue;
+        }
+        let second = alloc(i);
+        if i == 6 {
+            break;
+        }
+        seen = seen + i;
+    }
+    BreakMatch(TransferResource::Owned with .{ value = alloc(7) });
+    BreakMatch(TransferResource::Pending);
+    ContinueMatch();
+    NestedBreakMatch();
+    println(seen);
+    return 0;
+}

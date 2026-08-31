@@ -2,12 +2,13 @@ package ownershipresult
 
 import (
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/symbols"
 )
 
-// CleanupPlan records ownership effects at stable HIR source sites.
+// CleanupPlan records ownership effects at CFG and stable HIR source sites.
 type CleanupPlan struct {
-	AfterScope             map[ir.NodeID][]symbols.SymbolID
+	AfterScope             map[cfg.SiteID][]symbols.SymbolID
 	BeforeReturn           map[ir.NodeID][]symbols.SymbolID
 	BeforeAssign           map[ir.NodeID]struct{}
 	DiscardedValue         map[ir.NodeID]struct{}
