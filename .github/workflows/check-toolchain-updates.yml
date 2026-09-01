@@ -70,8 +70,8 @@ jobs:
         run: |
           branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
           mv candidate-sources.lock.json toolchains/toolchain-sources.lock.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "itsfuad"
+          git config user.email "49100463+itsfuad@users.noreply.github.com"
           git switch -c "$branch"
           git add toolchains/toolchain-sources.lock.json
           git commit -m "Update toolchain sources"
