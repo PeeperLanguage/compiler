@@ -47,7 +47,7 @@ fn (self: Counter) Read() -> i32 { return self.value; }`
 	if !ok || function == nil || function.DefiningModule != want {
 		t.Fatalf("function defining module = %#v, want %#v", function, want)
 	}
-	methods := module.Semantics.MethodSets["Counter"]
+	methods := module.Bindings.MethodsByReceiver["Counter"]
 	if len(methods) != 1 || methods[0] == nil || methods[0].DefiningModule != want {
 		t.Fatalf("method defining module = %#v, want %#v", methods, want)
 	}
@@ -121,7 +121,7 @@ type Alias = Result<i32>;`
 	}
 	enumType := enumDecl.Type.(*ast.EnumType)
 	for index, variant := range enumType.Variants {
-		if module.Semantics.ResolvedSymbols[variant.Name.ID()] != children[index] {
+		if module.Bindings.NodeSymbols[variant.Name.ID()] != children[index] {
 			t.Fatalf("variant %s identifier does not resolve to child symbol", variant.Name.Name)
 		}
 	}

@@ -56,8 +56,8 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 	}
 
 	// 3. Check for unused local variables and parameters
-	if module.Semantics != nil {
-		for _, scope := range module.Semantics.BlockScopes {
+	if module.Bindings != nil {
+		for _, scope := range module.Bindings.BlockScopes {
 			if scope == nil {
 				continue
 			}

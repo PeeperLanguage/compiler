@@ -37,3 +37,11 @@ fn StateCode(status: State<i32> = State<i32>::Ready with .{ value = 42 }) -> i32
 fn IsPending(pending: bool = State<i32>::Pending is State<i32>::Pending) -> bool {
     return pending;
 }
+
+fn Base(value: i32 = 3) -> i32 {
+    return value;
+}
+
+fn Nested(value: i32 = Base()) -> i32 {
+    return value;
+}

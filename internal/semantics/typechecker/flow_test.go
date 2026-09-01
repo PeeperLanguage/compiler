@@ -38,10 +38,10 @@ func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
-	module.TypedASTNodes = ast.Index(module.AST)
+	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Semantics.MatchCases,
-		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		MatchCases:          module.Typechecking.MatchCases,
+		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
@@ -69,7 +69,7 @@ fn Read(choice: Choice) -> i32 {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	leftBranch := fn.Body.Stmts[0].(*ast.IfStmt)
 	leftTest := leftBranch.Cond.(*ast.IsExpr)
-	baseTest, baseFound := module.Semantics.CaseTests[leftTest.ID()]
+	baseTest, baseFound := module.Typechecking.CaseTests[leftTest.ID()]
 	flowTest, flowFound := module.Flow.CaseTests[leftTest.ID()]
 	if !baseFound || !flowFound || baseTest.Case != 0 || flowTest.Case != baseTest.Case ||
 		flowTest.SubjectID != baseTest.SubjectID || flowTest.CaseCount != baseTest.CaseCount {
@@ -333,7 +333,7 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	}
 	state := flowState{variants: []variantStateFact{{origins: []place.Origin{{Root: global}}, cases: []int{1}, caseCount: 2}}}
 	analyzer := flowAnalyzer{
-		module: &project.Module{ModuleScope: moduleScope, Semantics: project.NewSemanticInfo()},
+		module: &project.Module{ModuleScope: moduleScope},
 		result: &flowresult.Result{ExprTypes: make(map[ast.NodeID]typeinfo.Type)},
 	}
 

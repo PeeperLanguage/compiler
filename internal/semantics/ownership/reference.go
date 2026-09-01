@@ -296,7 +296,7 @@ func overlappingLoan(origins []place.Origin, facts []loanFact, exempt *symbols.S
 }
 
 func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
-	if a == nil || a.module == nil || a.module.Semantics == nil {
+	if a == nil || a.module == nil || a.module.Bindings == nil {
 		return nil
 	}
 	for {
@@ -320,7 +320,7 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 			if node == nil {
 				return nil
 			}
-			sym := a.module.Semantics.ResolvedSymbols[node.ID()]
+			sym := a.module.Bindings.NodeSymbols[node.ID()]
 			if _, reference := referenceMutability(sym); reference {
 				return sym
 			}
@@ -336,7 +336,7 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 		return []referenceLoan{}, false
 	}
 	if ident, ok := expr.(*ast.Ident); ok {
-		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+		sym := a.module.Bindings.NodeSymbols[ident.ID()]
 		if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.ContainsStoredReference(typ) {
 			if value, found := st.references[sym]; found {
 				return copyReferenceLoans(value), true
@@ -366,7 +366,7 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 		}
 		return loans, len(loans) > 0
 	}
-	construction, constructed := a.module.Semantics.VariantConstructions[expr.ID()]
+	construction, constructed := a.module.Typechecking.VariantConstructions[expr.ID()]
 	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}
@@ -633,7 +633,7 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast
 func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) bool) []symbolUse {
 	if a == nil || node == nil || node.cfgSite == nil ||
 		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil ||
-		a.module == nil || a.module.Semantics == nil || include == nil {
+		a.module == nil || a.module.Bindings == nil || include == nil {
 		return nil
 	}
 	var expressions []ast.Expr
@@ -660,21 +660,32 @@ func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) b
 	}
 
 	var uses []symbolUse
-	for _, expr := range expressions {
+	var inspectExpr func(ast.Expr)
+	inspectExpr = func(expr ast.Expr) {
 		if expr == nil {
-			continue
+			return
 		}
 		ast.Inspect(expr, func(current ast.Node) bool {
+			if call, ok := current.(*ast.CallExpr); ok && call != nil {
+				inspectExpr(call.Callee)
+				for _, arg := range a.module.Typechecking.CallArgumentsOrSource(call) {
+					inspectExpr(arg)
+				}
+				return false
+			}
 			ident, ok := current.(*ast.Ident)
 			if !ok || ident == nil {
 				return true
 			}
-			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+			sym := a.module.Bindings.NodeSymbols[ident.ID()]
 			if include(sym) {
 				uses = append(uses, symbolUse{symbol: sym, site: ident})
 			}
 			return true
 		})
+	}
+	for _, expr := range expressions {
+		inspectExpr(expr)
 	}
 	return uses
 }

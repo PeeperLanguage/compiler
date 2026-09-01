@@ -48,10 +48,10 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.TypedASTNodes = ast.Index(module.AST)
+	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Semantics.MatchCases,
-		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		MatchCases:          module.Typechecking.MatchCases,
+		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Ownership = Check(ctx, module)
@@ -160,8 +160,8 @@ func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []st
 			}
 		}
 	}
-	if module != nil && module.Semantics != nil {
-		for _, scope := range module.Semantics.BlockScopes {
+	if module != nil && module.Bindings != nil {
+		for _, scope := range module.Bindings.BlockScopes {
 			for _, sym := range scope.Symbols() {
 				if sym != nil {
 					names[sym.ID] = sym.Name

@@ -25,13 +25,13 @@ func SemanticExportFingerprint(module *Module) string {
 			part += fmt.Sprintf(":mutable=%t", sym.IsMutable())
 		}
 		part += semanticExportMetadata(module, sym)
-		if sym.Kind == symbols.SymbolConst && module.Semantics != nil {
-			part += ":value=" + constantKey(module.Semantics.ConstValues[sym.ID])
+		if sym.Kind == symbols.SymbolConst {
+			part += ":value=" + constantKey(module.ConstValues[sym.ID])
 		}
 		parts = append(parts, part)
 	}
-	if module.Semantics != nil {
-		for receiver, methods := range module.Semantics.MethodSets {
+	if module.Bindings != nil {
+		for receiver, methods := range module.Bindings.MethodsByReceiver {
 			for _, method := range methods {
 				if method == nil || !method.IsPub {
 					continue
@@ -76,16 +76,16 @@ func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
 		facts := make([]string, 0)
 		ast.Inspect(param.Default, func(node ast.Node) bool {
 			ident, ok := node.(*ast.Ident)
-			if !ok || ident == nil || module.Semantics == nil {
+			if !ok || ident == nil || module.Bindings == nil {
 				return true
 			}
-			resolved := module.Semantics.ResolvedSymbols[ident.ID()]
+			resolved := module.Bindings.NodeSymbols[ident.ID()]
 			if resolved == nil {
 				return true
 			}
 			fact := resolved.Name + ":" + semanticTypeKey(resolved.Type, make(map[typeinfo.Type]bool))
 			if resolved.Kind == symbols.SymbolConst {
-				fact += "=" + constantKey(module.Semantics.ConstValues[resolved.ID])
+				fact += "=" + constantKey(module.ConstValues[resolved.ID])
 			}
 			facts = append(facts, fact)
 			return true

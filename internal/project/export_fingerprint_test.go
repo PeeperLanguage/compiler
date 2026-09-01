@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -14,16 +15,24 @@ type unexpectedSemanticType struct{}
 func (*unexpectedSemanticType) TypeNode()    {}
 func (*unexpectedSemanticType) Text() string { return "unexpected" }
 
-func fingerprintModule(t *testing.T, exported *symbols.Symbol, semantics *SemanticInfo) *Module {
+func fingerprintModule(
+	t *testing.T,
+	exported *symbols.Symbol,
+	bindings *bindingresult.Result,
+	constValues map[symbols.SymbolID]constvalue.Value,
+) *Module {
 	t.Helper()
 	scope := symbols.NewScope(nil)
 	if err := scope.Declare(exported); err != nil {
 		t.Fatalf("declare export: %v", err)
 	}
-	if semantics == nil {
-		semantics = NewSemanticInfo()
+	if bindings == nil {
+		bindings = bindingresult.New()
 	}
-	return &Module{ModuleScope: scope, Semantics: semantics}
+	if constValues == nil {
+		constValues = make(map[symbols.SymbolID]constvalue.Value)
+	}
+	return &Module{ModuleScope: scope, Bindings: bindings, ConstValues: constValues}
 }
 
 func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) {
@@ -32,9 +41,9 @@ func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) 
 		decl.SetDeclSurface("const:Value::number")
 		sym := symbols.New("Value", symbols.SymbolConst, decl, nil)
 		sym.Type = typ
-		semantic := NewSemanticInfo()
-		semantic.ConstValues[sym.ID], _ = constvalue.NewIntText(value, typeinfo.TypeText(typ))
-		return SemanticExportFingerprint(fingerprintModule(t, sym, semantic))
+		constValues := make(map[symbols.SymbolID]constvalue.Value)
+		constValues[sym.ID], _ = constvalue.NewIntText(value, typeinfo.TypeText(typ))
+		return SemanticExportFingerprint(fingerprintModule(t, sym, nil, constValues))
 	}
 
 	i32One := makeConst(&typeinfo.IntegerType{Signed: true, Bits: 32}, "1")
@@ -48,13 +57,34 @@ func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) 
 	}
 }
 
+func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T) {
+	fingerprint := func(value string) string {
+		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
+		decl.SetDeclSurface("const:Value::number")
+		sym := symbols.New("Value", symbols.SymbolConst, decl, nil)
+		sym.Type = &typeinfo.IntegerType{Signed: true, Bits: 32}
+		scope := symbols.NewScope(nil)
+		if err := scope.Declare(sym); err != nil {
+			t.Fatalf("declare export: %v", err)
+		}
+		constant, _ := constvalue.NewIntText(value, "i32")
+		return SemanticExportFingerprint(&Module{
+			ModuleScope: scope,
+			ConstValues: map[symbols.SymbolID]constvalue.Value{sym.ID: constant},
+		})
+	}
+	if fingerprint("1") == fingerprint("2") {
+		t.Fatal("binding-independent const value did not change semantic fingerprint")
+	}
+}
+
 func TestSemanticExportFingerprintIgnoresFunctionBodyChanges(t *testing.T) {
 	makeFunction := func(body *ast.BlockStmt) string {
 		decl := &ast.FnDecl{Name: &ast.Ident{Name: "Read"}, Body: body}
 		decl.SetDeclSurface("fn::Read:::")
 		sym := symbols.New("Read", symbols.SymbolFunc, decl, nil)
 		sym.Type = &typeinfo.FuncType{Return: &typeinfo.IntegerType{Signed: true, Bits: 32}}
-		return SemanticExportFingerprint(fingerprintModule(t, sym, nil))
+		return SemanticExportFingerprint(fingerprintModule(t, sym, nil, nil))
 	}
 	first := makeFunction(&ast.BlockStmt{})
 	second := makeFunction(&ast.BlockStmt{Stmts: []ast.Stmt{&ast.ReturnStmt{Value: &ast.NumberLit{Value: "1"}}}})
@@ -76,10 +106,11 @@ func TestSemanticExportFingerprintIncludesPrivateFactsUsedByPublicDefault(t *tes
 		fn.Type = &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}}
 		private := symbols.New("limit", symbols.SymbolConst, nil, nil)
 		private.Type = i32
-		semantic := NewSemanticInfo()
-		semantic.ResolvedSymbols[defaultIdent.ID()] = private
-		semantic.ConstValues[private.ID], _ = constvalue.NewIntText(value, "i32")
-		return SemanticExportFingerprint(fingerprintModule(t, fn, semantic))
+		bindings := bindingresult.New()
+		bindings.NodeSymbols[defaultIdent.ID()] = private
+		constValues := make(map[symbols.SymbolID]constvalue.Value)
+		constValues[private.ID], _ = constvalue.NewIntText(value, "i32")
+		return SemanticExportFingerprint(fingerprintModule(t, fn, bindings, constValues))
 	}
 	if makeFunction("1") == makeFunction("2") {
 		t.Fatal("private const used by public default did not change fingerprint")
@@ -90,10 +121,10 @@ func TestSemanticExportFingerprintChangesWithPublicMethodSignature(t *testing.T)
 	makeMethod := func(returnType typeinfo.Type) string {
 		method := symbols.New("Read", symbols.SymbolMethod, nil, nil)
 		method.Type = &typeinfo.FuncType{Return: returnType}
-		semantics := NewSemanticInfo()
-		semantics.MethodSets["Buffer"] = []*symbols.Symbol{method}
+		bindings := bindingresult.New()
+		bindings.MethodsByReceiver["Buffer"] = []*symbols.Symbol{method}
 		return SemanticExportFingerprint(fingerprintModule(t,
-			symbols.New("Buffer", symbols.SymbolType, nil, nil), semantics))
+			symbols.New("Buffer", symbols.SymbolType, nil, nil), bindings, nil))
 	}
 	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
 	i64 := &typeinfo.IntegerType{Signed: true, Bits: 64}
@@ -113,7 +144,7 @@ func TestSemanticExportFingerprintHandlesRecursiveTypesDeterministically(t *test
 		decl.SetDeclSurface("type:Node:recursive")
 		sym := symbols.New("Node", symbols.SymbolType, decl, nil)
 		sym.Type = defined
-		return SemanticExportFingerprint(fingerprintModule(t, sym, nil))
+		return SemanticExportFingerprint(fingerprintModule(t, sym, nil, nil))
 	}
 	if first, second := makeType(), makeType(); first == "" || first != second {
 		t.Fatalf("recursive fingerprints unstable: %q, %q", first, second)

@@ -9,6 +9,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -47,15 +48,15 @@ func (c *checker) assignable(dst, src typeinfo.Type, site ast.Expr) bool {
 }
 
 func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Conversion) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || expr == nil ||
+	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil ||
 		conversion.Kind == typeinfo.ConversionNone || conversion.Kind == typeinfo.ConversionRecovery ||
 		conversion.Kind == typeinfo.ConversionIdentity || conversion.Compatibility != typeinfo.Compatible {
 		return
 	}
-	c.module.Semantics.ImplicitConversions[expr.ID()] = conversion
+	c.module.Typechecking.ImplicitConversions[expr.ID()] = conversion
 }
 
-func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]project.InterfaceImplementation, []string, bool) {
+func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]typecheckresult.InterfaceImplementation, []string, bool) {
 	if c == nil || iface == nil || src == nil {
 		return nil, nil, false
 	}
@@ -67,7 +68,7 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 		}
 		return nil, missing, false
 	}
-	implementations := make([]project.InterfaceImplementation, 0, len(iface.Methods))
+	implementations := make([]typecheckresult.InterfaceImplementation, 0, len(iface.Methods))
 	missing := make([]string, 0)
 	for _, required := range iface.Methods {
 		requiredType := typeinfo.ReplaceAbstractSelf(required.CallableType(), owner)
@@ -92,19 +93,18 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 			missing = append(missing, required.Name)
 			continue
 		}
-		implementations = append(implementations, project.InterfaceImplementation{
-			MethodName: required.Name, Symbol: actual.Symbol,
-			CallableType: actualType, OwnerKey: actual.OwnerKey,
+		implementations = append(implementations, typecheckresult.InterfaceImplementation{
+			Symbol: actual.Symbol, CallableType: actualType,
 		})
 	}
 	return implementations, missing, len(missing) == 0
 }
 
-func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []project.InterfaceImplementation) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || expr == nil {
+func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []typecheckresult.InterfaceImplementation) {
+	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil {
 		return
 	}
-	c.module.Semantics.InterfaceImplementations[expr.ID()] = implementations
+	c.module.Typechecking.InterfaceImplementations[expr.ID()] = implementations
 }
 
 func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
@@ -154,13 +154,12 @@ func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
 }
 
 type callableMember struct {
-	Type     typeinfo.Type
-	Symbol   *symbols.Symbol
-	OwnerKey string
+	Type   typeinfo.Type
+	Symbol *symbols.Symbol
 }
 
 func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
-	if c == nil || c.module == nil || c.module.Semantics == nil {
+	if c == nil {
 		return callableMember{}, false
 	}
 	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
@@ -175,18 +174,18 @@ func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (cal
 }
 
 func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
-	if c == nil || c.module == nil || c.module.Semantics == nil {
+	if c == nil || c.module == nil || c.module.Bindings == nil {
 		return callableMember{}, false
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		methods := c.module.Semantics.MethodSets[key]
+		methods := c.module.Bindings.MethodsByReceiver[key]
 		for _, method := range methods {
 			if method == nil || method.Name != name {
 				continue
 			}
 			typ, ok := symbols.GetSymbolType(method)
 			if ok && typ != nil {
-				return callableMember{Type: typ, Symbol: method, OwnerKey: key}, true
+				return callableMember{Type: typ, Symbol: method}, true
 			}
 		}
 	}
@@ -195,7 +194,7 @@ func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name stri
 
 // availableMethods returns the names of all methods defined on baseType.
 func (c *checker) availableMethods(baseType typeinfo.Type) []string {
-	if c == nil || c.module == nil || c.module.Semantics == nil {
+	if c == nil {
 		return nil
 	}
 	var names []string
@@ -204,10 +203,12 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 			names = append(names, m.Name)
 		}
 	}
-	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		for _, method := range c.module.Semantics.MethodSets[key] {
-			if method != nil {
-				names = append(names, method.Name)
+	if c.module != nil && c.module.Bindings != nil {
+		for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
+			for _, method := range c.module.Bindings.MethodsByReceiver[key] {
+				if method != nil {
+					names = append(names, method.Name)
+				}
 			}
 		}
 	}
@@ -250,7 +251,7 @@ func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (b
 	}
 	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
-	}, c.expandedDefaultBinding)
+	}, c.module.ExpandedDefaultBinding)
 }
 
 func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr ast.Expr) (ast.Node, string, bool) {
@@ -293,8 +294,8 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 		return &typeinfo.InvalidType{}
 	}
 	var sym *symbols.Symbol
-	if c.module != nil && c.module.Semantics != nil {
-		sym = c.module.Semantics.ResolvedSymbols[node.ID()]
+	if c.module != nil && c.module.Bindings != nil {
+		sym = c.module.Bindings.NodeSymbols[node.ID()]
 	}
 	if sym == nil {
 		qualifier, member, imported := node.ImportValueMember()

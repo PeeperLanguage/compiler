@@ -308,19 +308,17 @@ func TestTypeFromSyntaxPreservesReferenceReturnContract(t *testing.T) {
 func TestReturnOriginSourcesMapDirectAndMethodSlots(t *testing.T) {
 	first := &ast.Ident{Name: "first"}
 	second := &ast.Ident{Name: "second"}
-	direct := &ast.CallExpr{Callee: &ast.Ident{Name: "choose"}, Args: []ast.Expr{first, second}}
+	args := []ast.Expr{first, second}
+	direct := &ast.CallExpr{Callee: &ast.Ident{Name: "choose"}}
 	fn := &FuncType{ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0, -1, 2}}}
-	if got := ReturnOriginSources(direct, fn); !slices.Equal(got, []ast.Expr{second, first}) {
+	if got := ReturnOriginSources(direct, args, fn); !slices.Equal(got, []ast.Expr{second, first}) {
 		t.Fatalf("direct return sources = %#v", got)
 	}
 
 	receiver := &ast.Ident{Name: "receiver"}
-	method := &ast.CallExpr{
-		Callee: &ast.SelectorExpr{Expr: receiver, Name: &ast.Ident{Name: "choose"}},
-		Args:   []ast.Expr{first, second},
-	}
+	method := &ast.CallExpr{Callee: &ast.SelectorExpr{Expr: receiver, Name: &ast.Ident{Name: "choose"}}}
 	fn.ReturnOrigins.Sources = []int{0, 2, 3, -1}
-	if got := ReturnOriginSources(method, fn); !slices.Equal(got, []ast.Expr{receiver, second}) {
+	if got := ReturnOriginSources(method, args, fn); !slices.Equal(got, []ast.Expr{receiver, second}) {
 		t.Fatalf("method return sources = %#v", got)
 	}
 }

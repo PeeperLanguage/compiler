@@ -11,10 +11,12 @@ import (
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/flowresult"
-	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -65,7 +67,7 @@ type Module struct {
 	Phase phase.Phase
 	// Parsed syntax tree.
 	AST *ast.Module
-	// TypedASTNodes indexes final AST after semantic expansion.
+	// TypedASTNodes indexes source and typechecker-generated expressions.
 	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
 	HIR       *hir.Module
@@ -79,84 +81,14 @@ type Module struct {
 	// Generic declaration syntax and semantic shells produced by collection.
 	// Fresh incremental contexts reindex this immutable phase artifact.
 	namedTypeDeclarations map[string]namedTypeDeclaration
-	// Grouped semantic analysis metadata.
-	Semantics *SemanticInfo
+	// Staged symbol/scope graph for current semantic generation.
+	Bindings *bindingresult.Result
+	// Finalized module constants plus mutable constant-query cache.
+	ConstValues map[symbols.SymbolID]constvalue.Value
+	// Base typechecker result for current semantic generation.
+	Typechecking *typecheckresult.Result
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
-}
-
-type SemanticInfo struct {
-	BlockScopes     map[ast.NodeID]*symbols.Scope
-	ResolvedSymbols map[ast.NodeID]*symbols.Symbol
-	// ExpandedDefaultBindings marks cloned NodeIDs injected by
-	// call-site default expansion. These idents must resolve
-	// through the declaration module's ResolvedSymbols instead of
-	// caller scope. The Binding.Local gate prevents pointer-escape
-	// misclassification.
-	ExpandedDefaultBindings  map[ast.NodeID]struct{}
-	ExprTypes                map[ast.NodeID]typeinfo.Type
-	CaseTests                map[ast.NodeID]flowresult.CaseTest
-	Matches                  map[ast.NodeID]flowresult.Match
-	ConstValues              map[symbols.SymbolID]constvalue.Value
-	MethodSets               map[string][]*symbols.Symbol
-	MethodSymbol             map[ast.NodeID]*symbols.Symbol
-	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
-	// ImplicitConversions is typechecker proof consumed directly by HIR.
-	ImplicitConversions   map[ast.NodeID]typeinfo.Conversion
-	ImplicitCallArguments map[ast.NodeID]typeinfo.Type
-	CompilerCalls         map[ast.NodeID]CompilerCall
-	StringConcatenations  map[ast.NodeID]struct{}
-	VariantConstructions  map[ast.NodeID]VariantConstruction
-	ForIterations         map[ast.NodeID]ForIteration
-	OperationFunctions    []*symbols.Symbol
-}
-
-// VariantConstruction is typechecker proof consumed by HIR without resolving
-// source paths or revalidating constructor fields.
-type VariantConstruction struct {
-	EnumType typeinfo.Type
-	Case     int
-	Payload  typeinfo.Type
-	Value    ast.Expr
-}
-
-type ForIterationKind uint8
-
-const (
-	ForIterationRange ForIterationKind = iota
-	ForIterationSequence
-)
-
-// ForIteration is typechecker-owned evidence consumed by HIR lowering.
-// Generated symbols carry hidden loop state; source bindings remain body-scoped.
-type ForIteration struct {
-	Kind            ForIterationKind
-	GuaranteedEntry bool
-
-	ElementType typeinfo.Type
-	CarrierType typeinfo.Type
-	Carrier     *symbols.Symbol
-	Cursor      *symbols.Symbol
-	End         *symbols.Symbol
-	Ordinal     *symbols.Symbol
-	Index       *symbols.Symbol
-	Value       *symbols.Symbol
-}
-
-// CompilerCall is typechecker-owned dispatch evidence consumed by HIR.
-type CompilerCall struct {
-	Operation symbols.CompilerOp
-	Kind      intrinsics.FunctionKind
-}
-
-// InterfaceImplementation is typechecker proof that one declared method can
-// materialize an interface slot. HIR consumes this proof without resolving the
-// concrete method set again.
-type InterfaceImplementation struct {
-	MethodName   string
-	Symbol       *symbols.Symbol
-	CallableType *typeinfo.FuncType
-	OwnerKey     string
 }
 
 func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
@@ -179,63 +111,54 @@ func (m *Module) TypeDeclarationIdentity(name string) string {
 	return m.Key + "::" + name
 }
 
-func NewSemanticInfo() *SemanticInfo {
-	return &SemanticInfo{
-		BlockScopes:              make(map[ast.NodeID]*symbols.Scope),
-		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
-		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
-		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
-		CaseTests:                make(map[ast.NodeID]flowresult.CaseTest),
-		Matches:                  make(map[ast.NodeID]flowresult.Match),
-		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
-		MethodSets:               make(map[string][]*symbols.Symbol),
-		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
-		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
-		ImplicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
-		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
-		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
-		StringConcatenations:     make(map[ast.NodeID]struct{}),
-		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
-		ForIterations:            make(map[ast.NodeID]ForIteration),
-		OperationFunctions:       make([]*symbols.Symbol, 0),
+// ExpandedDefaultBinding resolves declaration-module symbols paired with generated
+// default-expression markers. Local remains false for caller escape analysis.
+func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
+	if m == nil || m.Bindings == nil || m.Typechecking == nil || ident == nil {
+		return place.Binding{}, false
 	}
+	if _, ok := m.Typechecking.ExpandedDefaultBindings[ident.ID()]; !ok {
+		return place.Binding{}, false
+	}
+	return place.Binding{Symbol: m.Bindings.NodeSymbols[ident.ID()]}, true
 }
 
-// MatchCases exposes resolved case indexes without leaking match artifacts
-// into CFG's source-topology package.
-// ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
-// body before its first condition check.
-func (s *SemanticInfo) ForLoopGuaranteedEntry(id ast.NodeID) bool {
-	if s == nil {
-		return false
+// RebuildTypedASTIndex publishes canonical node lookup after typechecking.
+func (m *Module) RebuildTypedASTIndex() {
+	if m == nil {
+		return
 	}
-	iteration, found := s.ForIterations[id]
-	return found && iteration.GuaranteedEntry
-}
-
-func (s *SemanticInfo) MatchCases(id ast.NodeID) ([]int, bool) {
-	if s == nil {
-		return nil, false
+	m.TypedASTNodes = ast.Index(m.AST)
+	if m.Typechecking == nil {
+		return
 	}
-	match, found := s.Matches[id]
-	if !found {
-		return nil, false
-	}
-	cases := make([]int, len(match.Arms))
-	for index, arm := range match.Arms {
-		if arm.Case < 0 || arm.Case >= len(match.Cases) {
-			return nil, false
+	for _, args := range m.Typechecking.EffectiveCallArguments {
+		for _, arg := range args {
+			ast.Inspect(arg, func(node ast.Node) bool {
+				if node != nil {
+					m.TypedASTNodes[node.ID()] = node
+				}
+				return true
+			})
 		}
-		cases[index] = arm.Case
 	}
-	return cases, true
 }
 
 func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
-	m.Semantics = NewSemanticInfo()
+	m.Bindings = bindingresult.New()
+	m.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
+	m.Typechecking = nil
+}
+
+// BaseExprType returns canonical base typechecker evidence when available.
+func (m *Module) BaseExprType(id ast.NodeID) typeinfo.Type {
+	if m == nil || m.Typechecking == nil {
+		return nil
+	}
+	return m.Typechecking.ExprTypes[id]
 }
 
 // EffectiveExprType returns per-use flow refinement when available and falls
@@ -249,10 +172,7 @@ func (m *Module) EffectiveExprType(id ast.NodeID) typeinfo.Type {
 			return typ
 		}
 	}
-	if m.Semantics == nil {
-		return nil
-	}
-	return m.Semantics.ExprTypes[id]
+	return m.BaseExprType(id)
 }
 
 // resetToPhase retains artifacts through phase and invalidates downstream data.
@@ -263,12 +183,14 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 	m.Phase = retained
 	if retained <= phase.Parsed {
 		m.ModuleScope = nil
-		m.Semantics = nil
+		m.Bindings = nil
+		m.ConstValues = nil
 	}
 	if retained < phase.Collected {
 		m.namedTypeDeclarations = nil
 	}
 	if retained < phase.Typechecked {
+		m.Typechecking = nil
 		m.SemanticExportFingerprint = ""
 		m.TypedASTNodes = nil
 	}

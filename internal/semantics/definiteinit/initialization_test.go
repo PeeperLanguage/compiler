@@ -37,10 +37,10 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.TypedASTNodes = ast.Index(module.AST)
+	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Semantics.MatchCases,
-		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		MatchCases:          module.Typechecking.MatchCases,
+		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
@@ -58,9 +58,9 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		fn,
 		graph,
 		module.TypedASTNodes,
-		module.Semantics.BlockScopes,
-		module.Semantics.ResolvedSymbols,
-		module.Semantics.Matches,
+		module.Bindings.BlockScopes,
+		module.Bindings.NodeSymbols,
+		module.Typechecking.Matches,
 		diag,
 	)
 	return result, diag, module
@@ -185,7 +185,7 @@ fn choose(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	binding := module.Semantics.ResolvedSymbols[match.Arms[0].Fields[0].Binding.ID()]
+	binding := module.Bindings.NodeSymbols[match.Arms[0].Fields[0].Binding.ID()]
 	returnID := ir.NodeID(match.Arms[0].Body.Stmts[0].ID())
 	for _, block := range module.CFG.Function(ir.NodeID(fn.ID())).Blocks {
 		for _, cfgSite := range block.Sites {

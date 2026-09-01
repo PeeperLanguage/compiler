@@ -13,6 +13,7 @@ import (
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -33,11 +34,10 @@ func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
 }
 
 func moduleWithArtifacts() *Module {
-	return &Module{
+	module := &Module{
 		Phase:                     phase.Backend,
 		SemanticExportFingerprint: "semantic API",
 		ModuleScope:               symbols.NewScope(nil),
-		Semantics:                 NewSemanticInfo(),
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		HIR:                       &hir.Module{},
 		CFG:                       &cfg.Module{Functions: []*cfg.Graph{{}}},
@@ -46,38 +46,46 @@ func moduleWithArtifacts() *Module {
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
 	}
+	module.ResetSemanticData()
+	module.Typechecking = typecheckresult.New()
+	module.Typechecking.ExprTypes[1] = typeinfo.DefaultIntegerType()
+	return module
 }
 
 func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 	tests := []struct {
-		phase     phase.Phase
-		scope     bool
-		semantics bool
-		exportAPI bool
-		astNodes  bool
-		hir       bool
-		cfg       bool
-		flow      bool
-		ownership bool
-		mir       bool
-		llvm      bool
+		phase        phase.Phase
+		scope        bool
+		bindings     bool
+		constValues  bool
+		typechecking bool
+		exportAPI    bool
+		astNodes     bool
+		hir          bool
+		cfg          bool
+		flow         bool
+		ownership    bool
+		mir          bool
+		llvm         bool
 	}{
 		{phase: phase.Parsed},
-		{phase: phase.Typechecked, scope: true, semantics: true, exportAPI: true, astNodes: true},
-		{phase: phase.CFG, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: phase.FlowTyped, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.Ownership, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.Usage, scope: true, semantics: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.HIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.MIR, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, semantics: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Typechecked, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true},
+		{phase: phase.CFG, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true},
+		{phase: phase.FlowTyped, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
+		{phase: phase.DefiniteInit, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
+		{phase: phase.Ownership, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.Usage, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.HIR, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.MIR, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
 		module.resetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
-			(module.Semantics != nil) != test.semantics || (module.HIR != nil) != test.hir ||
+			(module.Bindings != nil) != test.bindings || (module.ConstValues != nil) != test.constValues ||
+			(module.Typechecking != nil) != test.typechecking ||
+			(module.HIR != nil) != test.hir ||
 			(module.TypedASTNodes != nil) != test.astNodes ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
@@ -87,6 +95,51 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.LLVMIR != "") != test.llvm {
 			t.Fatalf("phase %v reset = %#v", test.phase, module)
 		}
+	}
+}
+
+func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
+	module := &Module{Typechecking: typecheckresult.New()}
+	module.ResetSemanticData()
+	if module.Bindings == nil || module.Bindings.BlockScopes == nil || module.Bindings.NodeSymbols == nil ||
+		module.Bindings.MethodsByReceiver == nil || module.Bindings.MethodsByDecl == nil ||
+		module.Bindings.OperationFunctions == nil || module.ConstValues == nil || module.Typechecking != nil {
+		t.Fatalf("semantic reset = %#v", module)
+	}
+}
+
+func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
+	module := moduleWithArtifacts()
+	base := module.BaseExprType(1)
+	if base == nil {
+		t.Fatal("typechecked module has no base expression type")
+	}
+	if got := module.EffectiveExprType(1); got != module.Flow.ExprTypes[1] {
+		t.Fatalf("effective type = %#v, want flow refinement", got)
+	}
+
+	module.Flow = nil
+	if got := module.EffectiveExprType(1); got != base {
+		t.Fatalf("effective type without flow = %#v, want base type %#v", got, base)
+	}
+	module.resetToPhase(phase.Typechecked)
+	if module.BaseExprType(1) != base {
+		t.Fatal("typechecked reset discarded base expression type")
+	}
+	module.resetToPhase(phase.Parsed)
+	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
+		t.Fatal("parsed reset retained expression type evidence")
+	}
+}
+
+func TestModuleExprTypeEvidenceHandlesMissingTypecheckResult(t *testing.T) {
+	var module *Module
+	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
+		t.Fatal("nil module returned expression type evidence")
+	}
+	module = &Module{}
+	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
+		t.Fatal("module without typecheck result returned expression type evidence")
 	}
 }
 

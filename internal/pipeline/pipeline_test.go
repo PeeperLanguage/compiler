@@ -887,11 +887,11 @@ fn main() -> i32 { return Value; }
 	if !ok {
 		t.Fatal("failed to construct stale const value")
 	}
-	entry.Semantics.ConstValues[sym.ID] = stale
+	entry.ConstValues[sym.ID] = stale
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
-	if got := entry.Semantics.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+	if got := entry.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
 	}
 }
@@ -924,9 +924,9 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	if !found || readySymbol == nil {
 		t.Fatal("missing const symbol Ready")
 	}
-	ready, ok := entry.Semantics.ConstValues[readySymbol.ID].(*constvalue.VariantConst)
+	ready, ok := entry.ConstValues[readySymbol.ID].(*constvalue.VariantConst)
 	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
-		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Semantics.ConstValues[readySymbol.ID])
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.ConstValues[readySymbol.ID])
 	}
 	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
 	if !ok || code.Text() != "7" {
@@ -975,9 +975,9 @@ func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, 
 	if !found || sym == nil {
 		t.Fatalf("missing const symbol %s", name)
 	}
-	value, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.BoolConst)
+	value, ok := module.ConstValues[sym.ID].(*constvalue.BoolConst)
 	if !ok || value == nil || value.Bool() != want {
-		t.Fatalf("%s = %#v, want bool %t", name, module.Semantics.ConstValues[sym.ID], want)
+		t.Fatalf("%s = %#v, want bool %t", name, module.ConstValues[sym.ID], want)
 	}
 }
 
@@ -2509,7 +2509,7 @@ fn main() -> i32 {
 			}
 
 			observed := make(map[symbols.CompilerOp]struct{})
-			for _, symbol := range entry.Semantics.ResolvedSymbols {
+			for _, symbol := range entry.Bindings.NodeSymbols {
 				if symbol != nil && symbol.CompilerOp != "" {
 					observed[symbol.CompilerOp] = struct{}{}
 				}

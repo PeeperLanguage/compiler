@@ -5,8 +5,8 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 )
 
 type state map[symbols.SymbolID]struct{}
@@ -29,7 +29,7 @@ func Check(
 	nodes map[ast.NodeID]ast.Node,
 	blockScopes map[ast.NodeID]*symbols.Scope,
 	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
-	matches map[ast.NodeID]flowresult.Match,
+	matches map[ast.NodeID]typecheckresult.Match,
 	diag *diagnostics.DiagnosticBag,
 ) {
 	if graphs == nil {
@@ -53,7 +53,7 @@ func analyzeFunction(
 	nodes map[ast.NodeID]ast.Node,
 	blockScopes map[ast.NodeID]*symbols.Scope,
 	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
-	matches map[ast.NodeID]flowresult.Match,
+	matches map[ast.NodeID]typecheckresult.Match,
 	diag *diagnostics.DiagnosticBag,
 ) *functionResult {
 	sites, order, tracked := indexSites(fn, graph, nodes, blockScopes)
@@ -99,7 +99,7 @@ func analyzeFunction(
 				match, found := matches[ast.NodeID(node.cfgSite.NodeID)]
 				if found {
 					if arm, armFound := match.Arm(edge.Case); armFound {
-						for _, field := range arm.Fields {
+						for _, field := range arm.Bindings {
 							if field.Binding == nil {
 								continue
 							}

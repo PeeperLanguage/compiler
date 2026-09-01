@@ -39,7 +39,7 @@ func (b *binder) bindModule() {
 		}
 		return true
 	})
-	slices.SortFunc(b.module.Semantics.OperationFunctions, func(left, right *symbols.Symbol) int {
+	slices.SortFunc(b.module.Bindings.OperationFunctions, func(left, right *symbols.Symbol) int {
 		return cmp.Compare(left.Name, right.Name)
 	})
 	b.validateTypeDeclCycles()
@@ -52,7 +52,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	}
 	fnType := typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
 	if fn.Receiver != nil {
-		if sym := b.module.Semantics.MethodSymbol[fn.ID()]; sym != nil {
+		if sym := b.module.Bindings.MethodsByDecl[fn.ID()]; sym != nil {
 			sym.BindType(fnType)
 		}
 		return
@@ -60,7 +60,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if sym := b.moduleScopeSymbol(fn.Name.Name); sym != nil {
 		sym.BindType(fnType)
 		if len(fnType.Params) > 0 {
-			b.module.Semantics.OperationFunctions = append(b.module.Semantics.OperationFunctions, sym)
+			b.module.Bindings.OperationFunctions = append(b.module.Bindings.OperationFunctions, sym)
 		}
 	}
 }

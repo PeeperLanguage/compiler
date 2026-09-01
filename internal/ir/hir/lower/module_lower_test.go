@@ -18,6 +18,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
@@ -40,10 +41,10 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.TypedASTNodes = ast.Index(module.AST)
+	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Semantics.MatchCases,
-		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		MatchCases:          module.Typechecking.MatchCases,
+		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
@@ -138,7 +139,7 @@ func TestGenerateHIRLowersSequenceForIntoStructuredSegments(t *testing.T) {
 
 func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_for_evidence_test"+peeper.SourceExt, "hir_for_evidence_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
-		module.Semantics.ForIterations = make(map[ast.NodeID]project.ForIteration)
+		module.Typechecking.ForIterations = make(map[ast.NodeID]typecheckresult.ForIteration)
 	})
 	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
 	if !ok || !strings.Contains(invalid.Message, "missing semantic evidence") {
@@ -1097,7 +1098,7 @@ fn main() -> i32 {
 	return reader.read();
 }`
 	out := generateTestHIR(t, "hir_interface_evidence_test"+peeper.SourceExt, "hir_interface_evidence_test", src,
-		func(module *project.Module) { module.Semantics.MethodSets = nil })
+		func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
 	mainFn := out.Funcs[len(out.Funcs)-1]
 	binding, ok := mainFn.Body.Stmts[1].(*hir.Binding)
 	if !ok {
@@ -1126,7 +1127,7 @@ fn main() -> i32 {
 	return use(&counter);
 }`
 	out := generateTestHIR(t, "hir_default_interface_evidence_test"+peeper.SourceExt, "hir_default_interface_evidence_test", src,
-		func(module *project.Module) { module.Semantics.MethodSets = nil })
+		func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
 	mainFn := out.Funcs[len(out.Funcs)-1]
 	ret := mainFn.Body.Stmts[1].(*hir.Return)
 	call := ret.Value.(*ir.Call)
@@ -1189,7 +1190,7 @@ fn (self: &Counter) Read() -> i32 { return self.value; }
 fn main() -> i32 {
 	let counter: Counter = .{ value = 7 };
 	return counter.Read();
-}`, func(module *project.Module) { module.Semantics.MethodSets = nil })
+}`, func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
 	mainFn := out.Funcs[len(out.Funcs)-1]
 	ret := mainFn.Body.Stmts[1].(*hir.Return)
 	call, ok := ret.Value.(*ir.Call)
@@ -1307,6 +1308,29 @@ fn Read(result: Result) -> i32 {
 	ident, ok := ret.Value.(*ir.Ident)
 	if !ok || ident.Name != binding.Name {
 		t.Fatalf("pattern return = %#v, binding = %#v", ret.Value, binding)
+	}
+}
+
+func TestGenerateHIRRejectsInvalidMatchProjectionEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_invalid_match_projection_test"+peeper.SourceExt, "hir_invalid_match_projection_test", `enum Result {
+	Ok: { value: i32 },
+}
+fn Read(result: Result) -> i32 {
+	match result {
+		Result::Ok with { value = payload } => { return payload; }
+	}
+}`, func(module *project.Module) {
+		for _, match := range module.Typechecking.Matches {
+			match.Arms[0].Bindings[0].Projection = typecheckresult.MatchProjectionInvalid
+			return
+		}
+	})
+	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
+		t.Fatalf("unexpected HIR shape: %#v", out)
+	}
+	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
+	if !ok || invalid.Message != "match binding has invalid projection" {
+		t.Fatalf("invalid match evidence lowered as %#v", out.Funcs[0].Body.Stmts[0])
 	}
 }
 

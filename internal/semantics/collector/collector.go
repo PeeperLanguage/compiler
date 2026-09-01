@@ -74,7 +74,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		}
 		targetKey := typeinfo.TypeText(targetType)
 		var previous *symbols.Symbol
-		for _, item := range c.module.Semantics.MethodSets[targetKey] {
+		for _, item := range c.module.Bindings.MethodsByReceiver[targetKey] {
 			if item != nil && item.Name == fn.Name.Name {
 				previous = item
 				break
@@ -88,8 +88,8 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
 		sym.DefiningModule = c.module.DefiningModuleKey()
 		sym.Scope = symbols.NewScope(c.module.ModuleScope)
-		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
-		c.module.Semantics.MethodSymbol[fn.ID()] = sym
+		c.module.Bindings.MethodsByReceiver[targetKey] = append(c.module.Bindings.MethodsByReceiver[targetKey], sym)
+		c.module.Bindings.MethodsByDecl[fn.ID()] = sym
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
@@ -157,7 +157,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 					problems.ReportRedeclaration(c.ctx.Diagnostics, sym.Scope, err.Error(), variant.Name.Name, variant.Name.Location)
 					continue
 				}
-				c.module.Semantics.ResolvedSymbols[variant.Name.ID()] = variantSymbol
+				c.module.Bindings.NodeSymbols[variant.Name.ID()] = variantSymbol
 			}
 		}
 	}

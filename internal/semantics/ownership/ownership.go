@@ -9,10 +9,10 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
-	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -57,7 +57,7 @@ type state struct {
 // value-flow rules from becoming ad hoc type rules.
 func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil || module.CFG == nil {
+	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.CFG == nil {
 		return result
 	}
 	for _, graph := range module.CFG.Functions {
@@ -89,7 +89,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 		case *ast.FnDecl:
 			var sym *symbols.Symbol
 			if node.Receiver != nil {
-				sym = module.Semantics.MethodSymbol[node.ID()]
+				sym = module.Bindings.MethodsByDecl[node.ID()]
 			} else {
 				sym, _ = module.ModuleScope.Lookup(node.Name.Name)
 			}
@@ -107,7 +107,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 }
 
 func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.Graph, cleanup *ownershipresult.CleanupPlan) {
-	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
+	if ctx == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
 	sites, order := indexSites(module, cfgFn, scope)
@@ -127,7 +127,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
-	if module == nil || module.Semantics == nil || cfgFn == nil || scope == nil {
+	if module == nil || module.Bindings == nil || cfgFn == nil || scope == nil {
 		return sites, order
 	}
 	nodes := module.TypedASTNodes
@@ -139,7 +139,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) 
 			if flowSite == nil {
 				continue
 			}
-			resolvedScope := module.Semantics.BlockScopes[ast.NodeID(flowSite.ScopeID)]
+			resolvedScope := module.Bindings.BlockScopes[ast.NodeID(flowSite.ScopeID)]
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}
@@ -196,8 +196,8 @@ func (a *analyzer) run() {
 		next := copyState(a.inStates[id])
 		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockNormal {
 			loopID := ast.NodeID(node.cfgBlock.NodeID)
-			if evidence, found := a.module.Semantics.ForIterations[loopID]; found &&
-				evidence.Kind == project.ForIterationSequence && evidence.Carrier != nil {
+			if evidence, found := a.module.Typechecking.ForIterations[loopID]; found &&
+				evidence.Kind == typecheckresult.ForIterationSequence && evidence.Carrier != nil {
 				releaseIterationLoans(next, nil, loopID)
 			}
 		}
@@ -248,7 +248,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		if !ok || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
 			continue
 		}
-		match, found := a.module.Semantics.Matches[matchStmt.ID()]
+		match, found := a.module.Typechecking.Matches[matchStmt.ID()]
 		if !found {
 			continue
 		}
@@ -542,8 +542,8 @@ func (a *analyzer) applyStmt(node *site, st state) {
 			a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 			break
 		}
-		evidence, found := a.module.Semantics.ForIterations[s.ID()]
-		if !found || evidence.Kind != project.ForIterationSequence || evidence.Carrier == nil {
+		evidence, found := a.module.Typechecking.ForIterations[s.ID()]
+		if !found || evidence.Kind != typecheckresult.ForIterationSequence || evidence.Carrier == nil {
 			a.checkExpr(scope, s.Iterable, st, useRead, loans, false)
 			break
 		}
@@ -551,7 +551,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		a.checkStorageAccess(s.Iterable, loans, storageSharedBorrow)
 		origins := a.originsForExpr(s.Iterable)
 		if ident, ok := s.Iterable.(*ast.Ident); ok {
-			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+			sym := a.module.Bindings.NodeSymbols[ident.ID()]
 			if value, found := st.references[sym]; found {
 				origins = referenceOrigins(value)
 			}
@@ -572,7 +572,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, found := a.module.Semantics.Matches[ast.NodeID(node.cfgSite.NodeID)]
+	match, found := a.module.Typechecking.Matches[ast.NodeID(node.cfgSite.NodeID)]
 	if !found {
 		return
 	}
@@ -585,10 +585,14 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		return
 	}
 	movesCarrier := matchArmMovesCarrier(arm)
-	listed := make(map[int]bool, len(arm.Fields))
-	for _, field := range arm.Fields {
-		if !field.WholePayload {
+	listed := make(map[int]bool, len(arm.Bindings))
+	for _, field := range arm.Bindings {
+		switch field.Projection {
+		case typecheckresult.MatchPayloadField:
 			listed[field.Field] = field.Discard
+		case typecheckresult.MatchWholePayload:
+		default:
+			panic("ownership: invalid match binding projection")
 		}
 	}
 	if movesCarrier && carrier == nil {
@@ -605,8 +609,8 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		delete(st.live, carrier)
 		delete(st.references, carrier)
 		a.cleanup.MatchCarrierMoves[ir.NodeID(arm.BodyID)] = carrier.ID
-		if len(arm.Fields) == 1 && arm.Fields[0].WholePayload {
-			if arm.Fields[0].Discard && typeinfo.NeedsDrop(arm.Fields[0].Type) {
+		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == typecheckresult.MatchWholePayload {
+			if arm.Bindings[0].Discard && typeinfo.NeedsDrop(arm.Bindings[0].Type) {
 				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.BodyID)] = struct{}{}
 			}
 		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
@@ -623,7 +627,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			}
 		}
 	}
-	for _, field := range arm.Fields {
+	for _, field := range arm.Bindings {
 		binding := field.Binding
 		if binding == nil {
 			continue
@@ -644,21 +648,21 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	}
 }
 
-func (a *analyzer) matchSubjectCarrier(match flowresult.Match) (ast.Expr, *symbols.Symbol) {
+func (a *analyzer) matchSubjectCarrier(match typecheckresult.Match) (ast.Expr, *symbols.Symbol) {
 	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
 	ident, direct := subject.(*ast.Ident)
 	if !direct {
 		return subject, nil
 	}
-	carrier := a.module.Semantics.ResolvedSymbols[ident.ID()]
+	carrier := a.module.Bindings.NodeSymbols[ident.ID()]
 	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
 		return subject, nil
 	}
 	return subject, carrier
 }
 
-func matchArmMovesCarrier(arm flowresult.MatchArm) bool {
-	for _, field := range arm.Fields {
+func matchArmMovesCarrier(arm typecheckresult.MatchArm) bool {
+	for _, field := range arm.Bindings {
 		if !typeinfo.IsImplicitCopyType(field.Type) {
 			return true
 		}

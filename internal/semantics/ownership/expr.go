@@ -34,7 +34,7 @@ func (a *analyzer) checkExpr(
 	switch e := expr.(type) {
 	case *ast.Ident:
 		a.checkIdent(scope, e, st, use)
-		sym := a.module.Semantics.ResolvedSymbols[e.ID()]
+		sym := a.module.Bindings.NodeSymbols[e.ID()]
 		if _, reference := referenceMutability(sym); reference {
 			loans.useReference(sym)
 			return
@@ -108,7 +108,7 @@ func (a *analyzer) checkExpr(
 	case *ast.UnaryExpr:
 		a.checkExpr(scope, e.Expr, st, useRead, loans, false)
 	case *ast.BinaryExpr:
-		if _, concat := a.module.Semantics.StringConcatenations[e.ID()]; concat {
+		if _, concat := a.module.Typechecking.StringConcatenations[e.ID()]; concat {
 			a.checkExpr(scope, e.Left, st, useConsume, loans, false)
 			a.checkExpr(scope, e.Right, st, useRead, loans, false)
 			return
@@ -130,16 +130,6 @@ func (a *analyzer) checkLiteralFields(scope *symbols.Scope, fields []ast.StructL
 	for _, field := range fields {
 		a.checkExpr(scope, field.Value, st, useConsume, loans, false)
 	}
-}
-
-func (a *analyzer) expandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
-	if a == nil || a.module == nil || a.module.Semantics == nil || ident == nil {
-		return place.Binding{}, false
-	}
-	if _, ok := a.module.Semantics.ExpandedDefaultBindings[ident.ID()]; !ok {
-		return place.Binding{}, false
-	}
-	return place.Binding{Symbol: a.module.Semantics.ResolvedSymbols[ident.ID()]}, true
 }
 
 func (a *analyzer) checkAddressExpr(
@@ -171,8 +161,8 @@ func (a *analyzer) checkIdent(scope *symbols.Scope, ident *ast.Ident, st state, 
 	}
 	var sym *symbols.Symbol
 	var ok bool
-	if a.module != nil && a.module.Semantics != nil {
-		sym = a.module.Semantics.ResolvedSymbols[ident.ID()]
+	if a.module != nil && a.module.Bindings != nil {
+		sym = a.module.Bindings.NodeSymbols[ident.ID()]
 		ok = sym != nil
 	}
 	if !ok {
@@ -257,6 +247,7 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 	if call == nil {
 		return
 	}
+	args := a.module.Typechecking.CallArgumentsOrSource(call)
 	temporaryMark := len(loans.temporary)
 	reservationMark := len(loans.reserved)
 	defer func() {
@@ -264,16 +255,16 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 		loans.reserved = loans.reserved[:reservationMark]
 	}()
 	if selector, ok := call.Callee.(*ast.SelectorExpr); ok && selector != nil {
-		if a.checkMethodCall(scope, selector, call, st, loans) {
+		if a.checkMethodCall(scope, selector, call, args, st, loans) {
 			a.activateCallReservations(call, reservationMark, loans)
 		}
 		return
 	}
 	a.checkExpr(scope, call.Callee, st, useRead, loans, false)
 	if ident, ok := call.Callee.(*ast.Ident); ok && ident != nil {
-		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+		sym := a.module.Bindings.NodeSymbols[ident.ID()]
 		if sym != nil && sym.CompilerOp == symbols.CompilerOpAlloc {
-			for i, arg := range call.Args {
+			for i, arg := range args {
 				use := useRead
 				if i == 0 {
 					use = useConsume
@@ -288,7 +279,7 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 				panic("missing from_bytes intrinsic definition")
 			}
 			fn := definition.Signature(nil, a.ctx.Target)
-			for i, arg := range call.Args {
+			for i, arg := range args {
 				if i >= len(fn.Params) {
 					a.checkExpr(scope, arg, st, useRead, loans, false)
 					continue
@@ -299,13 +290,13 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 		}
 	}
 	fn, ok := a.exprType(call.Callee).(*typeinfo.FuncType)
-	if !ok || fn == nil || len(call.Args) != len(fn.Params) {
-		for _, arg := range call.Args {
+	if !ok || fn == nil || len(args) != len(fn.Params) {
+		for _, arg := range args {
 			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
 		return
 	}
-	for i, arg := range call.Args {
+	for i, arg := range args {
 		a.checkCallArgument(scope, arg, fn.Params[i], call, st, loans)
 	}
 	a.activateCallReservations(call, reservationMark, loans)
@@ -315,6 +306,7 @@ func (a *analyzer) checkMethodCall(
 	scope *symbols.Scope,
 	selector *ast.SelectorExpr,
 	call *ast.CallExpr,
+	args []ast.Expr,
 	st state,
 	loans *loanContext,
 ) bool {
@@ -323,19 +315,19 @@ func (a *analyzer) checkMethodCall(
 		if selector != nil {
 			a.checkExpr(scope, selector.Expr, st, useRead, loans, false)
 		}
-		for _, arg := range call.Args {
+		for _, arg := range args {
 			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
 		return false
 	}
 	a.checkCallArgument(scope, selector.Expr, fn.Params[0], call, st, loans)
-	if len(call.Args)+1 != len(fn.Params) {
-		for _, arg := range call.Args {
+	if len(args)+1 != len(fn.Params) {
+		for _, arg := range args {
 			a.checkExpr(scope, arg, st, useRead, loans, false)
 		}
 		return false
 	}
-	for i, arg := range call.Args {
+	for i, arg := range args {
 		a.checkCallArgument(scope, arg, fn.Params[i+1], call, st, loans)
 	}
 	return true
@@ -452,7 +444,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 		if e.Mode != ast.AddressRaw {
 			return pointerOrigin{}, false
 		}
-		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType, a.expandedDefaultBinding)
+		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType, a.module.ExpandedDefaultBinding)
 		if !ok || root == nil {
 			return pointerOrigin{}, false
 		}
@@ -482,8 +474,8 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 		}
 		var sym *symbols.Symbol
 		var found bool
-		if a.module != nil && a.module.Semantics != nil {
-			sym = a.module.Semantics.ResolvedSymbols[e.ID()]
+		if a.module != nil && a.module.Bindings != nil {
+			sym = a.module.Bindings.NodeSymbols[e.ID()]
 			found = sym != nil
 		}
 		if !found {

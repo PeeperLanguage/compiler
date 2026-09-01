@@ -77,7 +77,7 @@ func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl) {
 }
 
 func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, current int, expr ast.Expr) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || fn == nil || expr == nil {
+	if c == nil || c.module == nil || c.module.Bindings == nil || fn == nil || expr == nil {
 		return
 	}
 	params := fn.ParamsWithReceiver()
@@ -95,7 +95,7 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 		if !ok || ident == nil {
 			return true
 		}
-		sym := c.module.Semantics.ResolvedSymbols[ident.ID()]
+		sym := c.module.Bindings.NodeSymbols[ident.ID()]
 		index, isParam := paramIndexes[sym]
 		if !isParam || index >= current || index < 0 || index >= len(params) {
 			return true
@@ -429,7 +429,10 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	if decl.Name == nil {
 		return
 	}
-	for _, method := range c.module.Semantics.MethodSets[decl.Name.Name] {
+	if c.module == nil || c.module.Bindings == nil {
+		return
+	}
+	for _, method := range c.module.Bindings.MethodsByReceiver[decl.Name.Name] {
 		if method == nil || dataFields[method.Name] == nil {
 			continue
 		}

@@ -16,6 +16,7 @@ import (
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
 )
@@ -37,8 +38,8 @@ func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinf
 	if base == nil || expr == nil {
 		return base
 	}
-	if c.module != nil && c.module.Semantics != nil && c.flow == nil {
-		c.module.Semantics.ExprTypes[expr.ID()] = base
+	if c.module != nil && c.module.Typechecking != nil && c.flow == nil {
+		c.module.Typechecking.ExprTypes[expr.ID()] = base
 	}
 	resolved := c.effectiveExpressionType(scope, expr, base, expected)
 	if c.flow != nil && resolved != nil {
@@ -84,8 +85,8 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 	case *ast.Ident:
 		var sym *symbols.Symbol
 		var ok bool
-		if c.module != nil && c.module.Semantics != nil {
-			sym = c.module.Semantics.ResolvedSymbols[node.ID()]
+		if c.module != nil && c.module.Bindings != nil {
+			sym = c.module.Bindings.NodeSymbols[node.ID()]
 			ok = sym != nil
 		}
 		if !ok {
@@ -228,9 +229,9 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	exprType := func(expr ast.Expr) typeinfo.Type {
 		return c.module.EffectiveExprType(expr.ID())
 	}
-	addressable := place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+	addressable := place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		mutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		mutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 		if addressable && !mutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
@@ -329,7 +330,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		if leftString || rightString || leftView || rightView {
 			wantRight := &typeinfo.RefType{Target: &typeinfo.StringType{}}
 			if leftString && typeinfo.SameType(right, wantRight) {
-				c.module.Semantics.StringConcatenations[node.ID()] = struct{}{}
+				c.module.Typechecking.StringConcatenations[node.ID()] = struct{}{}
 				return &typeinfo.StringType{}
 			}
 			c.ctx.Diagnostics.Add(invalidOperationError(node,
@@ -338,11 +339,11 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 	}
 	leftBase, rightBase := left, right
-	if c.module != nil && c.module.Semantics != nil {
-		if typ := c.module.Semantics.ExprTypes[node.Left.ID()]; typ != nil {
+	if c.module != nil {
+		if typ := c.module.BaseExprType(node.Left.ID()); typ != nil {
 			leftBase = typ
 		}
-		if typ := c.module.Semantics.ExprTypes[node.Right.ID()]; typ != nil {
+		if typ := c.module.BaseExprType(node.Right.ID()); typ != nil {
 			rightBase = typ
 		}
 	}
@@ -456,7 +457,7 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 		return &typeinfo.InvalidType{}
 	}
 	if c.flow != nil {
-		test, found := c.module.Semantics.CaseTests[node.ID()]
+		test, found := c.module.Typechecking.CaseTests[node.ID()]
 		if !found {
 			return &typeinfo.InvalidType{}
 		}
@@ -488,15 +489,15 @@ type resolvedNamedVariant struct {
 // identity. Expanded defaults retain declaration-module symbols even when their
 // cloned syntax is typechecked inside a caller module.
 func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedVariant, bool) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || path == nil {
+	if c == nil || c.module == nil || c.module.Bindings == nil || path == nil {
 		return resolvedNamedVariant{}, false
 	}
 	typePath, caseName, ok := path.EnumVariantMember()
-	caseSymbol := c.module.Semantics.ResolvedSymbols[path.ID()]
+	caseSymbol := c.module.Bindings.NodeSymbols[path.ID()]
 	if !ok || caseName == nil || caseSymbol == nil || caseSymbol.Kind != symbols.SymbolVariant || caseSymbol.Name != caseName.Name {
 		return resolvedNamedVariant{}, false
 	}
-	qualifierSymbol := c.module.Semantics.ResolvedSymbols[typePath.ID()]
+	qualifierSymbol := c.module.Bindings.NodeSymbols[typePath.ID()]
 	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
 		return resolvedNamedVariant{}, false
 	}
@@ -595,8 +596,8 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 		return field.Type
 	}
 	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {
-		if method.Symbol != nil {
-			c.module.Semantics.ResolvedSymbols[node.Name.ID()] = method.Symbol
+		if method.Symbol != nil && c.module.Bindings != nil {
+			c.module.Bindings.NodeSymbols[node.Name.ID()] = method.Symbol
 		}
 		return method.Type
 	}
@@ -723,7 +724,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		return c.typeExpr(scope, expr, nil)
 	}
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		if !place.Addressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
+		if !place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 				"slicing requires addressable array storage"))
 			return &typeinfo.InvalidType{}
@@ -732,7 +733,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 	mutable := shape == indexableMutableSliceView
 	var mutableBinding *symbols.Symbol
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		mutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		mutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 	}
 	if mutableBinding != nil {
 		mutableBinding.RequiresMutable = true
@@ -909,7 +910,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(site), "remove `with` and its value")
 			return &typeinfo.InvalidType{}
 		}
-		c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
+		c.module.Typechecking.VariantConstructions[site.ID()] = typecheckresult.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
 		return resolved.EnumType
 	}
 	if !initialized {
@@ -932,7 +933,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 			fmt.Sprintf("cannot assign %s to enum variant payload of type %s", typeinfo.TypeText(valueType), typeinfo.TypeText(resolved.Case.Payload)), ast.LocOf(value), "")
 		return &typeinfo.InvalidType{}
 	}
-	c.module.Semantics.VariantConstructions[site.ID()] = project.VariantConstruction{
+	c.module.Typechecking.VariantConstructions[site.ID()] = typecheckresult.VariantConstruction{
 		EnumType: resolved.EnumType,
 		Case:     resolved.CaseIndex,
 		Payload:  resolved.Case.Payload,

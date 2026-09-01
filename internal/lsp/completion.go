@@ -88,7 +88,7 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 		return []CompletionItem{}, nil
 	}
 	ctx, module := s.currentCompiledModule(filePath)
-	if ctx == nil || module == nil || module.Semantics == nil {
+	if ctx == nil || module == nil {
 		return []CompletionItem{}, nil
 	}
 	parsed := parseCompletionContext(sourceText, params.Position)
@@ -104,7 +104,7 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 		return qualifiedCompletionItems(ctx, module, parsed.qualifier, parsed.prefix, replacement), nil
 	case completionOperation:
 		sentinelCtx, sentinelModule := compileCompletionSource(ctx.Config, s.completionOverlays(filePath), filePath, parsed.sentinel)
-		if sentinelCtx == nil || sentinelModule == nil || sentinelModule.Semantics == nil {
+		if sentinelCtx == nil || sentinelModule == nil || sentinelModule.Bindings == nil {
 			return []CompletionItem{}, nil
 		}
 		rewrite := Range{Start: positionAtOffset(sourceText, parsed.rewriteStart), End: replacement.End}
@@ -379,7 +379,7 @@ func isCompletionBoundary(ch byte) bool {
 }
 
 func lexicalCompletionItems(module *project.Module, cursor source.Position, prefix string, replacement Range) []CompletionItem {
-	if module == nil || module.ModuleScope == nil || module.Semantics == nil {
+	if module == nil || module.ModuleScope == nil || module.Bindings == nil {
 		return []CompletionItem{}
 	}
 	scope := completionScope(module, cursor.Line, cursor.Column)
@@ -414,7 +414,7 @@ func completionScope(module *project.Module, line, col int) *symbols.Scope {
 		if !ok || !locContains(ast.LocOf(block), line, col) {
 			return true
 		}
-		if blockScope := module.Semantics.BlockScopes[block.ID()]; blockScope != nil {
+		if blockScope := module.Bindings.BlockScopes[block.ID()]; blockScope != nil {
 			scope = blockScope
 		}
 		return true
@@ -528,7 +528,7 @@ func completionQualifierSegments(qualifier string) []string {
 }
 
 func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Module, cursor source.Position, replacement Range) ([]CompletionItem, bool) {
-	if module == nil || module.Semantics == nil {
+	if module == nil || module.Typechecking == nil {
 		return nil, false
 	}
 	var match *ast.MatchStmt
@@ -686,7 +686,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		}
 	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		for _, method := range module.Semantics.MethodSets[key] {
+		for _, method := range module.Bindings.MethodsByReceiver[key] {
 			if method == nil {
 				continue
 			}
@@ -703,7 +703,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, pipe, preserveArguments)
 		}
 	}
-	for _, function := range operationFunctionsWithPrefix(module.Semantics.OperationFunctions, prefix) {
+	for _, function := range operationFunctionsWithPrefix(module.Bindings.OperationFunctions, prefix) {
 		fnType, callable := function.Type.(*typeinfo.FuncType)
 		if !callable {
 			continue
@@ -717,10 +717,10 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 			continue
 		}
 		imported, found := ctx.ModuleByKey(resolved.Key)
-		if !found || imported == nil || imported.Semantics == nil {
+		if !found || imported == nil || imported.Bindings == nil {
 			continue
 		}
-		for _, function := range operationFunctionsWithPrefix(imported.Semantics.OperationFunctions, prefix) {
+		for _, function := range operationFunctionsWithPrefix(imported.Bindings.OperationFunctions, prefix) {
 			fnType, callable := function.Type.(*typeinfo.FuncType)
 			if !function.IsPub || !callable {
 				continue

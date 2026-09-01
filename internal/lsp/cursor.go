@@ -88,18 +88,20 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, po
 }
 
 func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
-	if ident == nil {
+	if ident == nil || module == nil {
 		return nil
 	}
-	if module != nil && module.Semantics != nil {
-		if sym := module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil {
+	if module.Bindings != nil {
+		if sym := module.Bindings.NodeSymbols[ident.ID()]; sym != nil {
 			return sym
 		}
 	}
 	parent := parents[ident.ID()]
 	if parent == nil {
-		if sym, ok := module.ModuleScope.Lookup(ident.Name); ok {
-			return sym
+		if module.ModuleScope != nil {
+			if sym, ok := module.ModuleScope.Lookup(ident.Name); ok {
+				return sym
+			}
 		}
 		return nil
 	}
@@ -145,8 +147,8 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	var scope *symbols.Scope
 	curr := parent
 	for curr != nil {
-		if block, ok := curr.(*ast.BlockStmt); ok {
-			if s, ok := module.Semantics.BlockScopes[block.ID()]; ok && s != nil {
+		if block, ok := curr.(*ast.BlockStmt); ok && module.Bindings != nil {
+			if s, ok := module.Bindings.BlockScopes[block.ID()]; ok && s != nil {
 				scope = s
 				break
 			}
@@ -163,7 +165,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 			}
 			curr = parents[curr.ID()]
 		}
-		if containingFn != nil {
+		if containingFn != nil && module.ModuleScope != nil {
 			if sym, ok := module.ModuleScope.Lookup(containingFn.Name.Name); ok && sym != nil && sym.Scope != nil {
 				scope = sym.Scope
 			}
@@ -181,7 +183,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 }
 
 func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
-	if sel == nil || ident == nil || module == nil || ctx == nil || module.Semantics == nil {
+	if sel == nil || ident == nil || module == nil || ctx == nil {
 		return nil
 	}
 	baseType, ok := selectorBaseType(sel.Expr, parents, module, ctx)
@@ -191,8 +193,11 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	if fieldSym := lookupStructFieldSymbol(baseType, ident.Name, ctx); fieldSym != nil {
 		return fieldSym
 	}
+	if module.Bindings == nil {
+		return nil
+	}
 	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		if methods, ok := module.Semantics.MethodSets[key]; ok {
+		if methods, ok := module.Bindings.MethodsByReceiver[key]; ok {
 			for _, method := range methods {
 				if method != nil && method.Name == ident.Name {
 					return method
@@ -204,7 +209,7 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 }
 
 func selectorBaseType(expr ast.Expr, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
-	if expr == nil || module == nil || module.Semantics == nil {
+	if expr == nil || module == nil {
 		return nil, false
 	}
 	baseType, ok := normalizedSelectorBaseType(module.EffectiveExprType(expr.ID()))

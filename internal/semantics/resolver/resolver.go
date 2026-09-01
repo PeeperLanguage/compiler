@@ -7,6 +7,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/problems"
 	"compiler/internal/project"
+	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
@@ -20,8 +21,8 @@ func (r *resolver) resolveModule() {
 	if r == nil || r.module == nil || r.module.AST == nil {
 		return
 	}
-	if r.module.Semantics == nil {
-		r.module.Semantics = project.NewSemanticInfo()
+	if r.module.Bindings == nil {
+		r.module.Bindings = bindingresult.New()
 	}
 	r.markPendingTopLevelBindings()
 	ast.ForEachDecl(r.module.AST, func(decl ast.Decl) bool {
@@ -77,7 +78,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	}
 	var sym *symbols.Symbol
 	if fn.Receiver != nil {
-		sym = r.module.Semantics.MethodSymbol[fn.ID()]
+		sym = r.module.Bindings.MethodsByDecl[fn.ID()]
 	} else {
 		sym, _ = r.module.ModuleScope.Lookup(fn.Name.Name)
 	}
@@ -119,7 +120,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 				name = fn.Receiver.Name.Name
 			}
 			if source, ok := funcScope.Lookup(name); ok && source != nil && source.Kind == symbols.SymbolParam {
-				r.module.Semantics.ResolvedSymbols[origin.ID()] = source
+				r.module.Bindings.NodeSymbols[origin.ID()] = source
 				source.Used = true
 			}
 		}
@@ -133,7 +134,7 @@ func (r *resolver) resolveBlock(scope *symbols.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
-	r.module.Semantics.BlockScopes[block.ID()] = scope
+	r.module.Bindings.BlockScopes[block.ID()] = scope
 	for _, stmt := range block.Stmts {
 		r.resolveStmt(scope, stmt)
 	}
@@ -174,12 +175,12 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			bodyScope := symbols.NewScope(scope)
 			if node.Index != nil {
 				if binding := r.resolveLocalBinding(bodyScope, node.Index, symbols.SymbolVar, nil, node.Index, ast.LocOf(node.Index)); binding != nil {
-					r.module.Semantics.ResolvedSymbols[node.Index.ID()] = binding
+					r.module.Bindings.NodeSymbols[node.Index.ID()] = binding
 				}
 			}
 			if node.Value != nil {
 				if binding := r.resolveLocalBinding(bodyScope, node.Value, symbols.SymbolVar, nil, node.Value, ast.LocOf(node.Value)); binding != nil {
-					r.module.Semantics.ResolvedSymbols[node.Value.ID()] = binding
+					r.module.Bindings.NodeSymbols[node.Value.ID()] = binding
 				}
 			}
 			r.resolveBlock(bodyScope, node.Body)
@@ -200,7 +201,7 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			armScope := symbols.NewScope(scope)
 			if arm.Binding != nil && !arm.Discard {
 				if binding := r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location); binding != nil {
-					r.module.Semantics.ResolvedSymbols[arm.Binding.ID()] = binding
+					r.module.Bindings.NodeSymbols[arm.Binding.ID()] = binding
 				}
 			}
 			for _, field := range arm.Fields {
@@ -208,7 +209,7 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 					continue
 				}
 				if binding := r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location); binding != nil {
-					r.module.Semantics.ResolvedSymbols[field.Binding.ID()] = binding
+					r.module.Bindings.NodeSymbols[field.Binding.ID()] = binding
 				}
 			}
 			r.resolveBlock(armScope, arm.Body)
@@ -263,7 +264,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
-			r.module.Semantics.ResolvedSymbols[node.ID()] = sym
+			r.module.Bindings.NodeSymbols[node.ID()] = sym
 			sym.Used = true
 			if sym.Kind == symbols.SymbolImport {
 				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", ast.LocOf(node), "")
@@ -387,7 +388,7 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution, allowTypeAr
 	if !ok {
 		return false
 	}
-	r.module.Semantics.ResolvedSymbols[node.ID()] = resolved
+	r.module.Bindings.NodeSymbols[node.ID()] = resolved
 	return true
 }
 
@@ -443,9 +444,9 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 	qualifierSymbol.Used = true
 	enumSymbol.Used = true
 	variant.Used = true
-	r.module.Semantics.ResolvedSymbols[enumName.ID()] = qualifierSymbol
-	r.module.Semantics.ResolvedSymbols[path.ID()] = variant
-	r.module.Semantics.ResolvedSymbols[caseName.ID()] = variant
+	r.module.Bindings.NodeSymbols[enumName.ID()] = qualifierSymbol
+	r.module.Bindings.NodeSymbols[path.ID()] = variant
+	r.module.Bindings.NodeSymbols[caseName.ID()] = variant
 	return true
 }
 

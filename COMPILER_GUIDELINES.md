@@ -19,7 +19,10 @@ design, do not follow it silently. Report conflict and evidence so maintainer ca
 decide whether guideline or design must change.
 
 Current ownership, pointer, copy, and optional design lives in
-[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md).
+[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md). Planned work for
+mechanically enforced phase contracts, traversal completeness, artifact validation,
+and contributor change points lives in
+[docs/compiler-framework/README.md](docs/compiler-framework/README.md).
 
 ## 1. Priorities
 

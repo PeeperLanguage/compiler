@@ -3,8 +3,8 @@ package typechecker
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
-	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -51,16 +51,6 @@ func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context str
 	return &typeinfo.InvalidType{}
 }
 
-func (c *checker) expandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || ident == nil {
-		return place.Binding{}, false
-	}
-	if _, ok := c.module.Semantics.ExpandedDefaultBindings[ident.ID()]; !ok {
-		return place.Binding{}, false
-	}
-	return place.Binding{Symbol: c.module.Semantics.ResolvedSymbols[ident.ID()]}, true
-}
-
 func (c *checker) checkModule() {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return
@@ -102,7 +92,9 @@ func (c *checker) checkModule() {
 			}
 			var sym *symbols.Symbol
 			if node.Receiver != nil {
-				sym = c.module.Semantics.MethodSymbol[node.ID()]
+				if c.module.Bindings != nil {
+					sym = c.module.Bindings.MethodsByDecl[node.ID()]
+				}
 				c.checkReceiverFunction(node)
 			} else {
 				sym, _ = c.module.ModuleScope.Lookup(node.Name.Name)
@@ -120,6 +112,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 	if module == nil || ctx == nil {
 		return
 	}
+	module.Typechecking = typecheckresult.New()
 	(&checker{ctx: ctx, module: module}).checkModule()
 }
 

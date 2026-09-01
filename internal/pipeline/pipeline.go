@@ -412,7 +412,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	if module.Phase < phase.Typechecked {
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
-		module.TypedASTNodes = ast.Index(module.AST)
+		module.RebuildTypedASTIndex()
 		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
 		module.Phase = phase.Typechecked
 		ctx.Metrics.AddPhaseAdvance()
@@ -420,8 +420,8 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	}
 	if module.Phase < phase.CFG {
 		module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-			MatchCases:          module.Semantics.MatchCases,
-			LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+			MatchCases:          module.Typechecking.MatchCases,
+			LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 		})
 		cfg.Analyze(module.CFG, phaseDiag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
 			node := module.TypedASTNodes[ast.NodeID(conditionID)]
@@ -432,7 +432,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			value, ok := consteval.EvaluateExpr(
 				phaseCtx,
 				module,
-				module.Semantics.BlockScopes[ast.NodeID(scopeID)],
+				module.Bindings.BlockScopes[ast.NodeID(scopeID)],
 				expr,
 				&typeinfo.BoolType{},
 			)
@@ -455,9 +455,9 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		definiteinit.Check(
 			module.CFG,
 			module.TypedASTNodes,
-			module.Semantics.BlockScopes,
-			module.Semantics.ResolvedSymbols,
-			module.Semantics.Matches,
+			module.Bindings.BlockScopes,
+			module.Bindings.NodeSymbols,
+			module.Typechecking.Matches,
 			phaseDiag,
 		)
 		module.Phase = phase.DefiniteInit
@@ -493,7 +493,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Semantics.ConstValues)
+		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.ConstValues)
 		module.Phase = phase.MIR
 		ctx.Metrics.AddPhaseAdvance()
 		return true

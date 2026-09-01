@@ -15,6 +15,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/numeric"
@@ -48,7 +49,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		}
 		var sym *symbols.Symbol
 		if fn.Receiver != nil {
-			sym = module.Semantics.MethodSymbol[fn.ID()]
+			sym = module.Bindings.MethodsByDecl[fn.ID()]
 		} else {
 			sym, _ = module.ModuleScope.Lookup(fn.Name.Name)
 		}
@@ -159,8 +160,8 @@ func appendBlock(module *project.Module, parentScope *symbols.Scope, out *hir.Bl
 	out.Location = ast.LocOf(block)
 	out.NodeID = hir.NodeID(block.ID())
 	scope := parentScope
-	if module.Semantics != nil {
-		if s, ok := module.Semantics.BlockScopes[block.ID()]; ok && s != nil {
+	if module.Bindings != nil {
+		if s, ok := module.Bindings.BlockScopes[block.ID()]; ok && s != nil {
 			scope = s
 		}
 	}
@@ -237,7 +238,7 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 	case *ast.ForStmt:
 		out.Stmts = append(out.Stmts, lowerForStmt(ctx, module, scope, node, returnType))
 	case *ast.MatchStmt:
-		evidence, found := module.Semantics.Matches[node.ID()]
+		evidence, found := module.Typechecking.Matches[node.ID()]
 		if !found || len(evidence.Arms) != len(node.Arms) {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "match statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
@@ -257,13 +258,22 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 			if arm.Payload != nil {
 				caseBlock.PayloadType = loweredTypeID(ctx, module, arm.Payload)
 			}
-			for _, field := range arm.Fields {
+			for _, field := range arm.Bindings {
+				wholePayload := false
+				switch field.Projection {
+				case typecheckresult.MatchPayloadField:
+				case typecheckresult.MatchWholePayload:
+					wholePayload = true
+				default:
+					out.Stmts = append(out.Stmts, &hir.Invalid{Message: "match binding has invalid projection", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
+					return
+				}
 				if field.Binding == nil {
 					continue
 				}
 				caseBlock.Bindings = append(caseBlock.Bindings, hir.VariantBinding{
 					FieldIndex:   field.Field,
-					WholePayload: field.WholePayload,
+					WholePayload: wholePayload,
 					Name:         symbolName(module, field.Binding),
 					Type:         loweredTypeID(ctx, module, field.Type),
 					SymbolID:     field.Binding.ID,
@@ -323,7 +333,7 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 		return loop
 	}
 
-	evidence, found := module.Semantics.ForIterations[node.ID()]
+	evidence, found := module.Typechecking.ForIterations[node.ID()]
 	if !found || evidence.Cursor == nil || evidence.Value == nil {
 		return &hir.Invalid{Message: "for-in statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: location}
 	}
@@ -333,7 +343,7 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 	boolType := loweredTypeID(ctx, module, &typeinfo.BoolType{})
 
 	switch evidence.Kind {
-	case project.ForIterationRange:
+	case typecheckresult.ForIterationRange:
 		rangeExpr, ok := node.Iterable.(*ast.RangeExpr)
 		if !ok || rangeExpr.Start == nil || rangeExpr.End == nil || evidence.End == nil {
 			return &hir.Invalid{Message: "range iteration evidence does not match syntax", NodeID: hir.NodeID(node.ID()), Location: location}
@@ -361,7 +371,7 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 		if evidence.Ordinal != nil {
 			loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, evidence.Ordinal, location))
 		}
-	case project.ForIterationSequence:
+	case typecheckresult.ForIterationSequence:
 		if evidence.Carrier == nil {
 			return &hir.Invalid{Message: "sequence iteration missing carrier evidence", NodeID: hir.NodeID(node.ID()), Location: location}
 		}
@@ -539,7 +549,7 @@ func lowerReferenceValue(ctx *project.CompilerContext, module *project.Module, s
 	exprType := func(node ast.Expr) typeinfo.Type {
 		return exprResolvedType(module, node)
 	}
-	if !place.Addressable(scope, expr, exprType, expandedDefaultBindingResolver(module)) {
+	if !place.Addressable(scope, expr, exprType, module.ExpandedDefaultBinding) {
 		return &ir.TempBorrow{
 			Value:      lowerASTExpr(ctx, module, scope, expr, target),
 			Slice:      borrowAsView,
@@ -614,8 +624,8 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	}
 	expectedTypeID := loweredTypeID(ctx, module, expectedType)
 	conversion, converting := typeinfo.Conversion{}, false
-	if module != nil && module.Semantics != nil {
-		conversion, converting = module.Semantics.ImplicitConversions[expr.ID()]
+	if module != nil && module.Typechecking != nil {
+		conversion, converting = module.Typechecking.ImplicitConversions[expr.ID()]
 	}
 	if module != nil && module.Flow != nil {
 		if test, ok := module.Flow.CaseTests[expr.ID()]; ok {
@@ -657,7 +667,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			}
 		}
 	}
-	if construction, ok := module.Semantics.VariantConstructions[expr.ID()]; ok {
+	if construction, ok := module.Typechecking.VariantConstructions[expr.ID()]; ok {
 		variant := &ir.VariantMake{
 			Case: construction.Case,
 			Type: loweredTypeID(ctx, module, construction.EnumType),
@@ -707,8 +717,8 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 
 	case *ast.ScopeResolution:
 		var sym *symbols.Symbol
-		if module != nil && module.Semantics != nil {
-			sym = module.Semantics.ResolvedSymbols[node.ID()]
+		if module != nil && module.Bindings != nil {
+			sym = module.Bindings.NodeSymbols[node.ID()]
 		}
 		if sym == nil {
 			if qualifier, member, imported := node.ImportValueMember(); imported {
@@ -760,7 +770,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.AddrOf{Place: lowerPlace(ctx, module, scope, node.Expr), Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.BinaryExpr:
-		if _, concat := module.Semantics.StringConcatenations[node.ID()]; concat {
+		if _, concat := module.Typechecking.StringConcatenations[node.ID()]; concat {
 			return &ir.StringConcat{
 				Left:       lowerASTExpr(ctx, module, scope, node.Left, &typeinfo.StringType{}),
 				Right:      lowerASTExpr(ctx, module, scope, node.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}),
@@ -800,35 +810,39 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: t, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.CallExpr:
-		if compilerCall, ok := module.Semantics.CompilerCalls[node.ID()]; ok {
+		effectiveArgs, ok := module.Typechecking.EffectiveCallArguments[node.ID()]
+		if !ok {
+			return &ir.InvalidExpr{Message: "call missing effective argument evidence", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
+		}
+		if compilerCall, ok := module.Typechecking.CompilerCalls[node.ID()]; ok {
 			switch compilerCall.Kind {
 			case intrinsics.FunctionAlloc:
-				return lowerAllocCall(ctx, module, scope, node)
+				return lowerAllocCall(ctx, module, scope, node, effectiveArgs)
 			case intrinsics.FunctionCollection:
-				return lowerCollectionCall(ctx, module, scope, node, compilerCall.Operation)
+				return lowerCollectionCall(ctx, module, scope, node, effectiveArgs, compilerCall.Operation)
 			case intrinsics.FunctionDynamicArrayOwner:
-				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, compilerCall.Operation)
+				return lowerDynamicArrayOwnerCall(ctx, module, scope, node, effectiveArgs, compilerCall.Operation)
 			case intrinsics.FunctionFromBytes:
-				return lowerStringFromBytesCall(ctx, module, scope, node)
+				return lowerStringFromBytesCall(ctx, module, scope, node, effectiveArgs)
 			default:
 				panic(fmt.Sprintf("unsupported intrinsic function kind %d for %q", compilerCall.Kind, compilerCall.Operation))
 			}
 		}
 		if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
-			return lowerSelectorMethodCall(ctx, module, scope, selector, node)
+			return lowerSelectorMethodCall(ctx, module, scope, selector, node, effectiveArgs)
 		}
 		calleeExpr := lowerASTExpr(ctx, module, scope, node.Callee, nil)
-		args := make([]ir.Expr, 0, len(node.Args))
+		args := make([]ir.Expr, 0, len(effectiveArgs))
 		var fnType *typeinfo.FuncType
 		if resolved := exprResolvedType(module, node.Callee); resolved != nil {
 			fnType, _ = typeinfo.Underlying(resolved).(*typeinfo.FuncType)
 		}
-		for _, arg := range node.Args {
+		for _, arg := range effectiveArgs {
 			var paramExpected typeinfo.Type
 			if fnType != nil && len(args) < len(fnType.Params) {
 				paramExpected = fnType.Params[len(args)]
 			}
-			if implicit := module.Semantics.ImplicitCallArguments[arg.ID()]; implicit != nil {
+			if implicit := module.Typechecking.ImplicitCallArguments[arg.ID()]; implicit != nil {
 				args = append(args, lowerImplicitReferenceValue(ctx, module, scope, arg, implicit))
 			} else {
 				args = append(args, lowerASTExpr(ctx, module, scope, arg, paramExpected))
@@ -897,14 +911,14 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	}
 }
 
-func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, call *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, call *ast.CallExpr, effectiveArgs []ast.Expr, op symbols.CompilerOp) ir.Expr {
 	fnType, _ := exprResolvedType(module, call.Callee).(*typeinfo.FuncType)
-	if fnType == nil || len(fnType.Params) != 1 {
-		return &ir.InvalidExpr{Message: "collection function type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)}}
+	if fnType == nil || len(fnType.Params) != 1 || len(effectiveArgs) != 1 {
+		return &ir.InvalidExpr{Message: "collection function type or arguments missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)}}
 	}
-	value := call.Args[0]
+	value := effectiveArgs[0]
 	var receiver ir.Expr
-	if implicit := module.Semantics.ImplicitCallArguments[value.ID()]; implicit != nil {
+	if implicit := module.Typechecking.ImplicitCallArguments[value.ID()]; implicit != nil {
 		receiver = lowerImplicitReferenceValue(ctx, module, scope, value, implicit)
 	} else {
 		receiver = lowerASTExpr(ctx, module, scope, value, fnType.Params[0])
@@ -954,14 +968,14 @@ func optionalPromotionInnerType(expectedType, resolvedType typeinfo.Type, expr a
 	return expected.Inner
 }
 
-func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) ir.Expr {
+func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr, effectiveArgs []ast.Expr) ir.Expr {
 	if module == nil || selector == nil || selector.Expr == nil || selector.Name == nil {
 		return &ir.InvalidExpr{Message: "invalid selector call", Type: ir.InvalidType}
 	}
 	baseType := exprResolvedType(module, selector.Expr)
 	if iface, slot, ok := lookupInterfaceMethod(module, baseType, selector.Name.Name); ok {
-		args := make([]ir.Expr, 0, len(call.Args))
-		for i, arg := range call.Args {
+		args := make([]ir.Expr, 0, len(effectiveArgs))
+		for i, arg := range effectiveArgs {
 			var argExpected typeinfo.Type
 			if i+1 < len(iface.Params) {
 				argExpected = iface.Params[i+1].Type
@@ -982,7 +996,7 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 			SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 		}
 	}
-	methodSym := module.Semantics.ResolvedSymbols[selector.Name.ID()]
+	methodSym := module.Bindings.NodeSymbols[selector.Name.ID()]
 	fnType, _ := exprResolvedType(module, selector).(*typeinfo.FuncType)
 	if methodSym == nil || fnType == nil || len(fnType.Params) == 0 {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: ir.InvalidType}
@@ -991,14 +1005,14 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 		return &ir.InvalidExpr{Message: "selector method receiver missing", Type: ir.InvalidType}
 	}
 	var baseExpr ir.Expr
-	if implicit := module.Semantics.ImplicitCallArguments[selector.Expr.ID()]; implicit != nil {
+	if implicit := module.Typechecking.ImplicitCallArguments[selector.Expr.ID()]; implicit != nil {
 		baseExpr = lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, implicit)
 	} else {
 		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, nil)
 	}
-	args := make([]ir.Expr, 0, len(call.Args)+1)
+	args := make([]ir.Expr, 0, len(effectiveArgs)+1)
 	args = append(args, baseExpr)
-	for i, arg := range call.Args {
+	for i, arg := range effectiveArgs {
 		var argExpected typeinfo.Type
 		if i+1 < len(fnType.Params) {
 			argExpected = fnType.Params[i+1]
@@ -1036,7 +1050,7 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		exprType := func(expr ast.Expr) typeinfo.Type {
 			return exprResolvedType(module, expr)
 		}
-		if throughPtr || place.Addressable(scope, selector.Expr, exprType, expandedDefaultBindingResolver(module)) {
+		if throughPtr || place.Addressable(scope, selector.Expr, exprType, module.ExpandedDefaultBinding) {
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
 		}
 		return &ir.Field{
@@ -1150,14 +1164,14 @@ func lowerArrayLiteralExpr(ctx *project.CompilerContext, module *project.Module,
 	}
 }
 
-func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr, op symbols.CompilerOp) ir.Expr {
+func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr, effectiveArgs []ast.Expr, op symbols.CompilerOp) ir.Expr {
 	fnType, _ := typeinfo.Underlying(exprResolvedType(module, node.Callee)).(*typeinfo.FuncType)
-	if fnType == nil || len(fnType.Params) != len(node.Args) || len(node.Args) < 2 {
-		return &ir.InvalidExpr{Message: "dynamic-array operation type missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
+	if fnType == nil || len(fnType.Params) != len(effectiveArgs) || len(effectiveArgs) < 2 {
+		return &ir.InvalidExpr{Message: "dynamic-array operation type or arguments missing", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
-	args := make([]ir.Expr, 0, len(node.Args))
-	for i, arg := range node.Args {
-		if implicit := module.Semantics.ImplicitCallArguments[arg.ID()]; implicit != nil {
+	args := make([]ir.Expr, 0, len(effectiveArgs))
+	for i, arg := range effectiveArgs {
+		if implicit := module.Typechecking.ImplicitCallArguments[arg.ID()]; implicit != nil {
 			args = append(args, lowerImplicitReferenceValue(ctx, module, scope, arg, implicit))
 		} else {
 			args = append(args, lowerASTExpr(ctx, module, scope, arg, fnType.Params[i]))
@@ -1191,14 +1205,14 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 	return out
 }
 
-func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr) ir.Expr {
-	if len(node.Args) < 1 || len(node.Args) > 2 {
-		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 arguments", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
+func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr, effectiveArgs []ast.Expr) ir.Expr {
+	if len(effectiveArgs) < 1 || len(effectiveArgs) > 2 {
+		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 effective arguments", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}
 	}
-	value := lowerASTExpr(ctx, module, scope, node.Args[0], nil)
+	value := lowerASTExpr(ctx, module, scope, effectiveArgs[0], nil)
 	var allocator ir.Expr
-	if len(node.Args) > 1 {
-		allocator = lowerASTExpr(ctx, module, scope, node.Args[1], &typeinfo.AllocatorType{})
+	if len(effectiveArgs) > 1 {
+		allocator = lowerASTExpr(ctx, module, scope, effectiveArgs[1], &typeinfo.AllocatorType{})
 	}
 	resultType := loweredTypeID(ctx, module, exprResolvedType(module, node))
 	return &ir.AllocExpr{
@@ -1209,15 +1223,15 @@ func lowerAllocCall(ctx *project.CompilerContext, module *project.Module, scope 
 	}
 }
 
-func lowerStringFromBytesCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr) ir.Expr {
+func lowerStringFromBytesCall(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.CallExpr, effectiveArgs []ast.Expr) ir.Expr {
 	fnType, _ := exprResolvedType(module, node.Callee).(*typeinfo.FuncType)
-	if fnType == nil || len(fnType.Params) != 2 || len(node.Args) < 1 || len(node.Args) > 2 {
-		panic("validated from_bytes call missing intrinsic signature or arguments")
+	if fnType == nil || len(fnType.Params) != 2 || len(effectiveArgs) < 1 || len(effectiveArgs) > 2 {
+		panic("validated from_bytes call missing intrinsic signature or effective arguments")
 	}
-	bytes := lowerASTExpr(ctx, module, scope, node.Args[0], fnType.Params[0])
+	bytes := lowerASTExpr(ctx, module, scope, effectiveArgs[0], fnType.Params[0])
 	var allocator ir.Expr
-	if len(node.Args) == 2 {
-		allocator = lowerASTExpr(ctx, module, scope, node.Args[1], fnType.Params[1])
+	if len(effectiveArgs) == 2 {
+		allocator = lowerASTExpr(ctx, module, scope, effectiveArgs[1], fnType.Params[1])
 	}
 	return &ir.StringFromBytes{
 		Bytes:      bytes,
@@ -1239,8 +1253,8 @@ func lowerIdentExpr(ctx *project.CompilerContext, module *project.Module, scope 
 		return &ir.InvalidExpr{Message: "nil identifier", Type: ir.InvalidType}
 	}
 	var sym *symbols.Symbol
-	if module != nil && module.Semantics != nil {
-		sym = module.Semantics.ResolvedSymbols[node.ID()]
+	if module != nil && module.Bindings != nil {
+		sym = module.Bindings.NodeSymbols[node.ID()]
 	}
 	if sym == nil && scope != nil {
 		sym, _ = scope.Lookup(node.Name)
@@ -1341,18 +1355,6 @@ func callableName(module *project.Module, sym *symbols.Symbol) (string, bool) {
 		b.WriteByte('_')
 	}
 	return b.String(), false
-}
-
-func expandedDefaultBindingResolver(module *project.Module) place.BindingResolver {
-	return func(ident *ast.Ident) (place.Binding, bool) {
-		if module == nil || module.Semantics == nil || ident == nil {
-			return place.Binding{}, false
-		}
-		if _, ok := module.Semantics.ExpandedDefaultBindings[ident.ID()]; !ok {
-			return place.Binding{}, false
-		}
-		return place.Binding{Symbol: module.Semantics.ResolvedSymbols[ident.ID()]}, true
-	}
 }
 
 func shouldDiscardBindingValue(sym *symbols.Symbol) bool {

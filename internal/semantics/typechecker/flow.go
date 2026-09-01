@@ -10,6 +10,7 @@ import (
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -78,7 +79,7 @@ func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult
 		ResolvedStorageOrigins: make(map[ast.NodeID][]place.Origin),
 		ResolvedValueOrigins:   make(map[ast.NodeID][]place.Origin),
 	}
-	if ctx == nil || module == nil || module.CFG == nil || module.Semantics == nil || module.ModuleScope == nil {
+	if ctx == nil || module == nil || module.CFG == nil || module.Bindings == nil || module.ModuleScope == nil {
 		return result
 	}
 	for _, graph := range module.CFG.Functions {
@@ -91,7 +92,7 @@ func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult
 		}
 		var sym *symbols.Symbol
 		if fn.Receiver != nil {
-			sym = module.Semantics.MethodSymbol[fn.ID()]
+			sym = module.Bindings.MethodsByDecl[fn.ID()]
 		} else if fn.Name != nil {
 			sym, _ = module.ModuleScope.Lookup(fn.Name.Name)
 		}
@@ -233,28 +234,28 @@ func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, cas
 	if c == nil || node == nil || subject == nil {
 		return
 	}
-	test := flowresult.CaseTest{
+	test := typecheckresult.CaseTest{
 		SubjectID: subject.ID(), Case: caseIndex, CaseWhenTrue: caseWhenTrue,
 		CaseCount: caseCount, Family: family,
 	}
 	if c.flow == nil {
-		if c.module != nil && c.module.Semantics != nil {
-			c.module.Semantics.CaseTests[node.ID()] = test
+		if c.module != nil && c.module.Typechecking != nil {
+			c.module.Typechecking.CaseTests[node.ID()] = test
 		}
 		return
 	}
-	base, found := c.module.Semantics.CaseTests[node.ID()]
+	base, found := c.module.Typechecking.CaseTests[node.ID()]
 	if !found || base.SubjectID != subject.ID() {
 		return
 	}
-	test = base
+	refined := flowresult.CaseTest{CaseTest: base}
 	if payload, ok := c.flow.result.Payloads[subject.ID()]; ok {
 		storage := c.flow.result.ResolvedStorageOrigins[subject.ID()]
 		if payload.AppliesTo(storage) {
-			test.PayloadPath = append([]int(nil), payload.Cases...)
+			refined.PayloadPath = append([]int(nil), payload.Cases...)
 		}
 	}
-	c.flow.result.CaseTests[node.ID()] = test
+	c.flow.result.CaseTests[node.ID()] = refined
 	if c.flow.events != nil {
 		c.flow.events.next++
 		c.flow.events.tests[node.ID()] = c.flow.events.next
@@ -284,7 +285,7 @@ func (c *checker) recordFlowResolution(expr ast.Expr, resolution place.Resolutio
 }
 
 func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowState) place.Resolution {
-	if c == nil || c.module == nil || c.module.Semantics == nil {
+	if c == nil || c.module == nil {
 		return place.Resolution{}
 	}
 	return place.Resolve(scope, expr, place.ResolveOptions{
@@ -297,9 +298,9 @@ func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowS
 					return typ
 				}
 			}
-			return c.module.Semantics.ExprTypes[node.ID()]
+			return c.module.BaseExprType(node.ID())
 		},
-		ResolveBinding: c.expandedDefaultBinding,
+		ResolveBinding: c.module.ExpandedDefaultBinding,
 		ReferenceOrigins: func(storage []place.Origin) []place.Origin {
 			return originValues(st.references, storage)
 		},
@@ -310,19 +311,20 @@ func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowS
 			if call == nil || call.Callee == nil {
 				return nil
 			}
-			calleeType := c.module.Semantics.ExprTypes[call.Callee.ID()]
+			calleeType := c.module.BaseExprType(call.Callee.ID())
 			if c.flow != nil && c.flow.result.ExprTypes[call.Callee.ID()] != nil {
 				calleeType = c.flow.result.ExprTypes[call.Callee.ID()]
 			}
 			fn, _ := typeinfo.Underlying(calleeType).(*typeinfo.FuncType)
 			var origins []place.Origin
-			for _, source := range typeinfo.ReturnOriginSources(call, fn) {
+			args := c.module.Typechecking.CallArgumentsOrSource(call)
+			for _, source := range typeinfo.ReturnOriginSources(call, args, fn) {
 				origins = place.MergeOrigins(origins, c.resolveFlowPlace(scope, source, st).ValueOrigins)
 			}
 			return origins
 		},
 		ConstantIndex: func(index ast.Expr) (string, bool) {
-			expected := c.module.Semantics.ExprTypes[index.ID()]
+			expected := c.module.BaseExprType(index.ID())
 			if !typeinfo.IsIntegral(expected) {
 				expected = typeinfo.DefaultIntegerType()
 			}
@@ -451,7 +453,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 	if a == nil || site == nil || st == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, found := a.module.Semantics.Matches[ast.NodeID(site.NodeID)]
+	match, found := a.module.Typechecking.Matches[ast.NodeID(site.NodeID)]
 	if !found {
 		return
 	}
@@ -459,7 +461,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 	if subject == nil {
 		return
 	}
-	scope := a.module.Semantics.BlockScopes[ast.NodeID(site.ScopeID)]
+	scope := a.module.Bindings.BlockScopes[ast.NodeID(site.ScopeID)]
 	if scope == nil {
 		scope = a.functionScope
 	}
@@ -469,7 +471,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 		restrictVariantFact(st, variantStateFact{
 			origins:      resolution.StorageOrigins,
 			cases:        []int{edge.Case},
-			caseCount:    len(match.Cases),
+			caseCount:    match.CaseCount,
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
 		})
 	}
@@ -478,17 +480,21 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 		return
 	}
 	payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
-	for _, field := range arm.Fields {
-		if field.Binding == nil {
-			continue
-		}
+	for _, field := range arm.Bindings {
 		fieldOrigins := payloadOrigins
-		if !field.WholePayload {
+		switch field.Projection {
+		case typecheckresult.MatchPayloadField:
 			payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType)
 			if !payloadFound || payload == nil || field.Field < 0 || field.Field >= len(payload.Fields) {
 				continue
 			}
 			fieldOrigins = place.FieldOrigins(payloadOrigins, payload.Fields[field.Field].Name)
+		case typecheckresult.MatchWholePayload:
+		default:
+			panic("flow typechecking: invalid match binding projection")
+		}
+		if field.Binding == nil {
+			continue
 		}
 		bindingOrigins := []place.Origin{{Root: field.Binding}}
 		valueOrigins := fieldOrigins
@@ -564,7 +570,7 @@ func (a *flowAnalyzer) applySite(site *cfg.Site, st *flowState) *flowExpressionE
 	if site == nil || st == nil {
 		return events
 	}
-	scope := a.module.Semantics.BlockScopes[ast.NodeID(site.ScopeID)]
+	scope := a.module.Bindings.BlockScopes[ast.NodeID(site.ScopeID)]
 	if scope == nil {
 		scope = a.functionScope
 	}
@@ -583,7 +589,7 @@ func (a *flowAnalyzer) applySite(site *cfg.Site, st *flowState) *flowExpressionE
 	case cfg.SiteScopeExit:
 		block, _ := a.module.TypedASTNodes[ast.NodeID(site.NodeID)].(*ast.BlockStmt)
 		if block != nil {
-			blockScope := a.module.Semantics.BlockScopes[block.ID()]
+			blockScope := a.module.Bindings.BlockScopes[block.ID()]
 			if blockScope == nil {
 				return events
 			}
@@ -614,7 +620,7 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 		invalidateVariantOrigins(st, resolution.StorageOrigins)
 		typ := a.result.ExprTypes[node.Target.ID()]
 		if typ == nil {
-			typ = a.module.Semantics.ExprTypes[node.Target.ID()]
+			typ = a.module.BaseExprType(node.Target.ID())
 		}
 		a.updateOriginPlace(c, scope, resolution.StorageOrigins, typ, node.Value, sourceState, st)
 	}
@@ -625,7 +631,7 @@ func (a *flowAnalyzer) assignedSymbol(scope *symbols.Scope, expr ast.Expr) *symb
 	if !ok || ident == nil {
 		return nil
 	}
-	if sym := a.module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil {
+	if sym := a.module.Bindings.NodeSymbols[ident.ID()]; sym != nil {
 		return sym
 	}
 	sym, _ := scope.Lookup(ident.Name)
@@ -674,7 +680,7 @@ func (a *flowAnalyzer) updateOriginPlace(
 		}
 		return
 	}
-	construction, constructed := a.module.Semantics.VariantConstructions[value.ID()]
+	construction, constructed := a.module.Typechecking.VariantConstructions[value.ID()]
 	if !constructed || construction.Payload == nil || construction.Case < 0 {
 		source := c.resolveFlowPlace(scope, value, sourceState)
 		a.copyStoredOriginPlace(storage, source.ValueOrigins, typ, sourceState, st)
@@ -729,10 +735,10 @@ func (a *flowAnalyzer) invalidateCall(c *checker, scope *symbols.Scope, call *as
 	}
 	calleeType := a.result.ExprTypes[call.Callee.ID()]
 	if calleeType == nil {
-		calleeType = a.module.Semantics.ExprTypes[call.Callee.ID()]
+		calleeType = a.module.BaseExprType(call.Callee.ID())
 	}
 	fn, _ := typeinfo.Underlying(calleeType).(*typeinfo.FuncType)
-	args := append([]ast.Expr(nil), call.Args...)
+	args := a.module.Typechecking.CallArgumentsOrSource(call)
 	if selector, method := call.Callee.(*ast.SelectorExpr); method && selector != nil {
 		args = append([]ast.Expr{selector.Expr}, args...)
 	}
@@ -792,7 +798,7 @@ func (a *flowAnalyzer) applyConditionEdge(site *cfg.Site, edge cfg.EdgeKind, st 
 	if condition == nil {
 		return
 	}
-	scope := a.module.Semantics.BlockScopes[ast.NodeID(site.ScopeID)]
+	scope := a.module.Bindings.BlockScopes[ast.NodeID(site.ScopeID)]
 	if scope == nil {
 		scope = a.functionScope
 	}

@@ -82,7 +82,7 @@ fn main() {
 	okPath := fn.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit).Case
 	pendingPath := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.ScopeResolution)
 	for _, path := range []*ast.ScopeResolution{okPath, pendingPath} {
-		sym := module.Semantics.ResolvedSymbols[path.ID()]
+		sym := module.Bindings.NodeSymbols[path.ID()]
 		if sym == nil {
 			t.Fatalf("resolved %s = nil, want child variant symbol", path.TypeText())
 		}
@@ -90,7 +90,7 @@ fn main() {
 		if sym.Kind != symbols.SymbolVariant || !variant || sym.Name != path.Segments[len(path.Segments)-1].Name.Name {
 			t.Fatalf("resolved %s = %#v, want child variant symbol", path.TypeText(), sym)
 		}
-		if module.Semantics.ResolvedSymbols[path.Segments[len(path.Segments)-1].Name.ID()] != sym {
+		if module.Bindings.NodeSymbols[path.Segments[len(path.Segments)-1].Name.ID()] != sym {
 			t.Fatalf("final segment of %s does not resolve to variant symbol", path.TypeText())
 		}
 	}
@@ -123,7 +123,7 @@ fn main() {
 			t.Fatalf("invalid variant path %s", path.TypeText())
 		}
 		canonical, _ := result.Scope.LookupLocal(caseName.Name)
-		if got := module.Semantics.ResolvedSymbols[path.ID()]; got == nil || got != canonical {
+		if got := module.Bindings.NodeSymbols[path.ID()]; got == nil || got != canonical {
 			t.Fatalf("resolved %s = %#v, want canonical %#v", path.TypeText(), got, canonical)
 		}
 	}
@@ -171,11 +171,11 @@ fn Read(result: Result) -> i32 {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	binding := match.Arms[0].Fields[0].Binding
 	use := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-	bindingSymbol := module.Semantics.ResolvedSymbols[binding.ID()]
-	if bindingSymbol == nil || module.Semantics.ResolvedSymbols[use.ID()] != bindingSymbol {
-		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Semantics.ResolvedSymbols[use.ID()])
+	bindingSymbol := module.Bindings.NodeSymbols[binding.ID()]
+	if bindingSymbol == nil || module.Bindings.NodeSymbols[use.ID()] != bindingSymbol {
+		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Bindings.NodeSymbols[use.ID()])
 	}
-	if _, found := module.Semantics.BlockScopes[match.Arms[0].Body.ID()].Lookup("payload"); !found {
+	if _, found := module.Bindings.BlockScopes[match.Arms[0].Body.ID()].Lookup("payload"); !found {
 		t.Fatal("pattern binding missing from arm body scope")
 	}
 }

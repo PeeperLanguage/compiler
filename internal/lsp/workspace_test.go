@@ -562,6 +562,85 @@ func TestWorkspaceReusePhasesDowngradesDependentToParsed(t *testing.T) {
 	}
 }
 
+func TestServerStateParsedResetRebuildsImportedDefaultProvenance(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileExternal := filepath.Join(root, peeper.SourceDirName, "external"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, `import "app/external";
+
+fn main() -> i32 {
+	return external::Read();
+}
+`)
+	const external = `const value: i32 = 7;
+
+fn Read(input: i32 = value) -> i32 {
+	return input;
+}
+`
+	writeWorkspaceFile(t, fileExternal, external)
+
+	state := NewServerState()
+	state.RootDir = root
+	ctx, mod := state.recompile(fileMain)
+	if ctx == nil || mod == nil {
+		t.Fatal("initial compile returned nil context or module")
+	}
+	if ctx.Diagnostics.HasErrors() {
+		t.Fatalf("initial compile diagnostics:\n%s", ctx.Diagnostics.EmitAllToString())
+	}
+
+	updated := external + "\nfn Added() {}\n"
+	state.applyDocumentSnapshot(fileExternal, &updated, nil)
+	ctx, mod = state.recompile(fileExternal)
+	if ctx == nil || mod == nil {
+		t.Fatal("incremental compile returned nil context or module")
+	}
+	if got := state.LastMetrics.ModulesDowngraded; got != 1 {
+		t.Fatalf("modules downgraded = %d, want 1 dependent reset to Parsed", got)
+	}
+	if ctx.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics after dependent Parsed reset:\n%s", ctx.Diagnostics.EmitAllToString())
+	}
+
+	mainModule := state.modules[project.CanonicalPath(fileMain)]
+	if mainModule == nil {
+		t.Fatal("missing recompiled dependent module")
+	}
+	if mainModule.Phase != phase.Backend {
+		t.Fatalf("dependent phase = %v, want %v", mainModule.Phase, phase.Backend)
+	}
+	var call *ast.CallExpr
+	for _, stmt := range mainModule.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			candidate, ok := node.(*ast.CallExpr)
+			if ok && ast.ExprText(candidate.Callee) == "external::Read" {
+				call = candidate
+				return false
+			}
+			return call == nil
+		})
+		if call != nil {
+			break
+		}
+	}
+	if call == nil || len(call.Args) != 0 {
+		t.Fatalf("source call after reset = %#v, want zero source arguments", call)
+	}
+	effectiveArgs := mainModule.Typechecking.EffectiveCallArguments[call.ID()]
+	if len(effectiveArgs) != 1 {
+		t.Fatalf("effective arguments after reset = %#v, want one rebuilt default", effectiveArgs)
+	}
+	ident, ok := effectiveArgs[0].(*ast.Ident)
+	if !ok || mainModule.Bindings == nil || mainModule.Bindings.NodeSymbols[ident.ID()] == nil {
+		t.Fatalf("rebuilt default = %#v, want resolved imported identifier", effectiveArgs[0])
+	}
+	if _, ok := mainModule.Typechecking.ExpandedDefaultBindings[ident.ID()]; !ok {
+		t.Fatalf("rebuilt default identifier %d missing declaration-binding provenance", ident.ID())
+	}
+}
+
 func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")

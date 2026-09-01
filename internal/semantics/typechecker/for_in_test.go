@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/target"
 )
@@ -24,7 +24,7 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	binding := module.Semantics.ResolvedSymbols[loop.Value.ID()]
+	binding := module.Bindings.NodeSymbols[loop.Value.ID()]
 	if binding == nil {
 		t.Fatal("missing resolved loop binding")
 	}
@@ -41,7 +41,7 @@ return total;
 	if reference == nil {
 		t.Fatal("missing loop binding reference")
 	}
-	if resolved := module.Semantics.ResolvedSymbols[reference.ID()]; resolved != binding {
+	if resolved := module.Bindings.NodeSymbols[reference.ID()]; resolved != binding {
 		t.Fatalf("loop reference resolved to %#v, want declaration symbol %#v", resolved, binding)
 	}
 }
@@ -60,14 +60,14 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	evidence, ok := module.Semantics.ForIterations[loop.ID()]
+	evidence, ok := module.Typechecking.ForIterations[loop.ID()]
 	if !ok {
 		t.Fatal("missing range iteration evidence")
 	}
-	if evidence.Kind != project.ForIterationRange || evidence.Cursor == nil || evidence.End == nil || evidence.Ordinal == nil {
+	if evidence.Kind != typecheckresult.ForIterationRange || evidence.Cursor == nil || evidence.End == nil || evidence.Ordinal == nil {
 		t.Fatalf("range iteration evidence = %#v", evidence)
 	}
-	if evidence.Index != module.Semantics.ResolvedSymbols[loop.Index.ID()] || evidence.Value != module.Semantics.ResolvedSymbols[loop.Value.ID()] {
+	if evidence.Index != module.Bindings.NodeSymbols[loop.Index.ID()] || evidence.Value != module.Bindings.NodeSymbols[loop.Value.ID()] {
 		t.Fatal("range evidence does not preserve source binding symbols")
 	}
 	for name, symbol := range map[string]string{
@@ -98,7 +98,7 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 			}
 			fn := module.AST.Stmts[0].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
-			evidence, found := module.Semantics.ForIterations[loop.ID()]
+			evidence, found := module.Typechecking.ForIterations[loop.ID()]
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
@@ -132,7 +132,7 @@ return 0i64;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
-	evidence := module.Semantics.ForIterations[loop.ID()]
+	evidence := module.Typechecking.ForIterations[loop.ID()]
 	for name, typ := range map[string]typeinfo.Type{
 		"element": evidence.ElementType,
 		"cursor":  evidence.Cursor.Type,
@@ -163,7 +163,7 @@ func TestCheckForInRecordsGuaranteedRangeEntry(t *testing.T) {
 			}
 			fn := module.AST.Stmts[0].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
-			evidence, found := module.Semantics.ForIterations[loop.ID()]
+			evidence, found := module.Typechecking.ForIterations[loop.ID()]
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
@@ -189,11 +189,11 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[2].(*ast.ForStmt)
-	evidence, ok := module.Semantics.ForIterations[loop.ID()]
+	evidence, ok := module.Typechecking.ForIterations[loop.ID()]
 	if !ok {
 		t.Fatal("missing sequence iteration evidence")
 	}
-	if evidence.Kind != project.ForIterationSequence || evidence.Carrier == nil || evidence.Cursor == nil {
+	if evidence.Kind != typecheckresult.ForIterationSequence || evidence.Carrier == nil || evidence.Cursor == nil {
 		t.Fatalf("sequence iteration evidence = %#v", evidence)
 	}
 	if got := typeinfo.TypeText(evidence.Carrier.Type); got != "&[3]i32" {
@@ -331,7 +331,7 @@ func TestRejectedForInDoesNotPublishIterationEvidence(t *testing.T) {
 			if loop == nil {
 				t.Fatal("missing recovered for-in loop")
 			}
-			if _, found := module.Semantics.ForIterations[loop.ID()]; found {
+			if _, found := module.Typechecking.ForIterations[loop.ID()]; found {
 				t.Fatal("rejected for-in loop retained semantic evidence")
 			}
 		})
@@ -350,7 +350,7 @@ func TestRejectedForInStillChecksBody(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
-	if _, found := module.Semantics.ForIterations[loop.ID()]; found {
+	if _, found := module.Typechecking.ForIterations[loop.ID()]; found {
 		t.Fatal("rejected loop retained semantic evidence")
 	}
 }
