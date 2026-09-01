@@ -25,25 +25,25 @@
       "format": "tar.gz"
     },
     {
-      "id": "toolchain-linux-amd64-llvm23.1.0-musl1.2.5-rc281bf0f4b00",
+      "id": "toolchain-linux-amd64-llvm23.1.0-musl1.2.6-r863426eafaf9",
       "kind": "toolchain",
-      "version": "llvm23.1.0-musl1.2.5-rc281bf0f4b00",
+      "version": "llvm23.1.0-musl1.2.6-r863426eafaf9",
       "os": "linux",
       "arch": "amd64",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-amd64-c281bf0f4b0045005884fc25019fe3cc2d17f4a2d834ea334945fdc70da144cb/toolchain-linux-amd64-llvm23.1.0-musl1.2.5-rc281bf0f4b00.tar.gz",
-      "size": 174370889,
-      "sha256": "1d7f7bb7fee30ce7ef2a2a94e83d793996c31d9e2c7758f90807ed37fce7db82",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-amd64-863426eafaf9dea7178ad035e457f0fab9ffc7de2672ddc465552d9f9c3ccbe0/toolchain-linux-amd64-llvm23.1.0-musl1.2.6-r863426eafaf9.tar.gz",
+      "size": 174373136,
+      "sha256": "5ef5217708de263c28dc489bfbffc9237ac661b22f993c4ad17b4286523e2d5a",
       "format": "tar.gz"
     },
     {
-      "id": "toolchain-linux-arm64-llvm23.1.0-musl1.2.5-rb4c6f6fbb5cd",
+      "id": "toolchain-linux-arm64-llvm23.1.0-musl1.2.6-r8742d2b61969",
       "kind": "toolchain",
-      "version": "llvm23.1.0-musl1.2.5-rb4c6f6fbb5cd",
+      "version": "llvm23.1.0-musl1.2.6-r8742d2b61969",
       "os": "linux",
       "arch": "arm64",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-arm64-b4c6f6fbb5cd269b92de2e1ffb80448a5e1f05dba10691552956e870e108b8de/toolchain-linux-arm64-llvm23.1.0-musl1.2.5-rb4c6f6fbb5cd.tar.gz",
-      "size": 169983147,
-      "sha256": "d9278895a7771dde024fdc1234b4874ae437276da4fe50b6b97104873dd2670e",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-arm64-8742d2b61969a6fb9466f2301858906854464af61a826bf03c6b661327aadd33/toolchain-linux-arm64-llvm23.1.0-musl1.2.6-r8742d2b61969.tar.gz",
+      "size": 169987028,
+      "sha256": "1366fb99049f8ba3b0dfed538258f033f45876877be2d9f3c6cb8ad2b906bce3",
       "format": "tar.gz"
     },
     {
