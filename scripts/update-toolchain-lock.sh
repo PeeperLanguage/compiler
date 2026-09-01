@@ -29,6 +29,7 @@ if [ "${#records[@]}" -eq 0 ]; then
 fi
 
 records_json="$(jq -sc 'sort_by(.os, .arch)' "${records[@]}")"
+previous_versions="$(jq -r '.toolchains | map({key: (.os + "-" + .arch), value: .version}) | from_entries' "$lock_file")"
 temporary="$(mktemp "${lock_file}.tmp.XXXXXX")"
 trap 'rm -f "$temporary"' EXIT
 jq --argjson records "$records_json" '
@@ -39,6 +40,16 @@ jq --argjson records "$records_json" '
 ' "$lock_file" > "$temporary"
 mv "$temporary" "$lock_file"
 trap - EXIT
+
+# PR summary fragment: which toolchain records this run replaced.
+jq -rn --argjson records "$records_json" --argjson prev "$previous_versions" '
+  $records[]
+  | (.os + "-" + .arch) as $target
+  | if ($prev[$target] // null) == null then "- \($target): added \(.version)"
+    elif $prev[$target] != .version then "- \($target): \($prev[$target]) → \(.version)"
+    else empty
+    end
+' > "$lock_file.summary"
 
 for target in "${targets[@]}"; do
   target_os="${target%_*}"

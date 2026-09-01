@@ -195,9 +195,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          {
+            echo "Records rebuilt toolchain artifacts."
+            echo
+            cat toolchains/toolchains.lock.json.summary
+            echo
+            echo "All selected builds passed."
+            echo "Run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          } > pr-body.md
           branch="automation/toolchains-${GITHUB_RUN_ID}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "itsfuad"
+          git config user.email "fuad.cs22@gmail.com"
           git switch -c "$branch"
           git add toolchains/toolchains.lock.json
           git commit -m "Update Peeper toolchain lock"
@@ -206,4 +214,6 @@ jobs:
             --base main \
             --head "$branch" \
             --title "Update Peeper toolchain lock" \
-            --body "Updates immutable Peeper toolchain component records with verified release URLs, sizes, and SHA-256 values."
+            --label "Toolchain Update" \
+            --reviewer itsfuad \
+            --body-file pr-body.md
