@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/moduleid"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -30,14 +31,12 @@ func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveImportPath() error = %v", err)
 	}
-	if resolved.Namespace != "vendor" {
-		t.Fatalf("resolved namespace = %q, want %q", resolved.Namespace, "vendor")
+	wantID := moduleid.ID{Origin: string(ModuleOriginStdlib), Namespace: "vendor", ImportPath: "json"}
+	if resolved.ID != wantID {
+		t.Fatalf("resolved ID = %#v, want %#v", resolved.ID, wantID)
 	}
 	if want := CanonicalPath(libraryFile); resolved.FilePath != want {
 		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, want)
-	}
-	if resolved.ImportPath != "json" {
-		t.Fatalf("resolved import path = %q, want %q", resolved.ImportPath, "json")
 	}
 }
 
@@ -77,11 +76,12 @@ func TestResolveImportPathStripsProjectPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveImportPath() error = %v", err)
 	}
+	wantID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "app/util"}
+	if resolved.ID != wantID {
+		t.Fatalf("resolved ID = %#v, want %#v", resolved.ID, wantID)
+	}
 	if want := CanonicalPath(utilPath); resolved.FilePath != want {
 		t.Fatalf("resolved file path = %q, want %q", resolved.FilePath, want)
-	}
-	if resolved.ImportPath != "app/util" {
-		t.Fatalf("resolved import path = %q, want %q", resolved.ImportPath, "app/util")
 	}
 }
 

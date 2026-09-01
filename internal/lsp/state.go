@@ -282,7 +282,7 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 	}
 	for _, module := range s.modules {
 		if module != nil {
-			ctx.SetSemanticExportBaseline(module.Key, module.SemanticExportFingerprint)
+			ctx.SetSemanticExportBaseline(module.ID, module.SemanticExportFingerprint)
 		}
 	}
 	reusePhases := map[string]phase.Phase{}
@@ -322,10 +322,10 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		// Cached artifacts may be ahead of this run's project barrier. Keep their
 		// later diagnostics inactive so failures can retain them for a future run
 		// without publishing them in the current one.
-		ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.Key, phase.None, min(retainedPhase, phase.Ownership), true)
+		ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.ID.String(), phase.None, min(retainedPhase, phase.Ownership), true)
 		if retainedPhase > phase.Ownership {
-			ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.Key, phase.Usage, retainedPhase, false)
-			deferredDiagnostics[reused.Key] = retainedPhase
+			ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.ID.String(), phase.Usage, retainedPhase, false)
+			deferredDiagnostics[reused.ID.String()] = retainedPhase
 		}
 	}
 	return deferredDiagnostics
@@ -369,8 +369,8 @@ func (s *ServerState) captureModules(ctx *project.CompilerContext) {
 			}
 		}
 		if existing := s.modules[module.FilePath]; existing != nil &&
-			existing.Origin == project.ModuleOriginStdlib &&
-			module.Origin == project.ModuleOriginLocal {
+			existing.ID.Origin == string(project.ModuleOriginStdlib) &&
+			module.ID.Origin == string(project.ModuleOriginLocal) {
 			continue
 		}
 		s.modules[module.FilePath] = module

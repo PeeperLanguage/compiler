@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -36,12 +37,11 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "ownership_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "ownership_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)

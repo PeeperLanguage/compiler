@@ -15,6 +15,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -348,17 +349,8 @@ func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	if mod == nil {
 		t.Fatalf("expected compiled bundled library module")
 	}
-	if mod.Origin != project.ModuleOriginStdlib {
-		t.Fatalf("origin = %q, want %q", mod.Origin, project.ModuleOriginStdlib)
-	}
-	if mod.Namespace != "core" {
-		t.Fatalf("namespace = %q, want %q", mod.Namespace, "core")
-	}
-	if mod.Key != "core:prelude/global" {
-		t.Fatalf("key = %q, want %q", mod.Key, "core:prelude/global")
-	}
-	if mod.ImportPath != "prelude/global" {
-		t.Fatalf("import path = %q, want %q", mod.ImportPath, "prelude/global")
+	if mod.ID != prelude.ModuleID() {
+		t.Fatalf("module ID = %#v, want canonical prelude ID %#v", mod.ID, prelude.ModuleID())
 	}
 }
 

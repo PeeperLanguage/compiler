@@ -17,7 +17,9 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
@@ -27,11 +29,13 @@ import (
 
 func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
 	return &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
-		FilePath:   filePath,
-		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID: moduleid.ID{
+			Origin:     string(project.ModuleOriginLocal),
+			ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
+		},
+		FilePath: filePath,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 }
 
@@ -46,15 +50,11 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	ctx := project.NewWithConfig(cfg, diag)
 
 	// Register the prelude so the pipeline loader can find it.
-	prelude := parseModuleSource(preludePath, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource(preludePath, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID()
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -88,10 +88,8 @@ func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string)
 		Extension:   peeper.SourceExt,
 	}, diag)
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: "app/main",
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: entryPath,
 	}
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -456,12 +454,10 @@ fn main() -> i32 {
 		LibraryBaseDir: libraryBase,
 	}, diag)
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: "entry",
-		FilePath:   entryPath,
-		Content:    entrySrc,
-		Origin:     project.ModuleOriginLocal,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
+		FilePath: entryPath,
+		Content:  entrySrc,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 
 	if err := Run(ctx, entry); err != nil {
@@ -566,16 +562,12 @@ fn main() -> i32 {
 		Extension: peeper.SourceExt,
 	}, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID()
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -612,16 +604,12 @@ fn main() -> i32 {
 		Extension: peeper.SourceExt,
 	}, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID()
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -674,16 +662,12 @@ fn main() -> i32 {
 		Extension: peeper.SourceExt,
 	}, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID()
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -707,7 +691,6 @@ fn main() -> i32 { return 0; }`)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	entry := parseModuleSource(filePath, `fn unused() {}
 fn main() -> i32 { return 0; }`, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("first Pipeline.Run: %v", err)
@@ -744,7 +727,6 @@ func TestPipelineRunReplacesStaleFinalizeDiagnostics(t *testing.T) {
 	diag.AddSourceContent(filePath, sourceText)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	entry := parseModuleSource(filePath, sourceText, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("Pipeline.Run: %v", err)
@@ -777,16 +759,12 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID()
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -808,7 +786,6 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx.AddModule(entry)
 
@@ -864,13 +841,12 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
-func TestTypecheckedPhaseFinalizesModuleConstValues(t *testing.T) {
+func TestTypecheckedPhasePublishesModuleConstants(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
 	entry := parseModuleSource(entryPath, `const Value = 1;
 fn main() -> i32 { return Value; }
 `, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -887,12 +863,15 @@ fn main() -> i32 { return Value; }
 	if !ok {
 		t.Fatal("failed to construct stale const value")
 	}
-	entry.ConstValues[sym.ID] = stale
+	entry.Constants.QueryCache[sym.ID] = stale
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
-	if got := entry.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+	if got := entry.Constants.ModuleValues[sym.ID]; got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
+	}
+	if _, found := entry.Constants.QueryCache[sym.ID]; found {
+		t.Fatal("published module constant remains duplicated in query cache")
 	}
 }
 
@@ -908,7 +887,6 @@ const Waiting: Status = Status::Waiting;
 const ReadyIsReady: bool = Ready is Status::Ready;
 const WaitingIsReady: bool = Waiting is Status::Ready;
 `, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -924,9 +902,9 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	if !found || readySymbol == nil {
 		t.Fatal("missing const symbol Ready")
 	}
-	ready, ok := entry.ConstValues[readySymbol.ID].(*constvalue.VariantConst)
+	ready, ok := entry.Constants.ModuleValues[readySymbol.ID].(*constvalue.VariantConst)
 	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
-		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.ConstValues[readySymbol.ID])
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Constants.ModuleValues[readySymbol.ID])
 	}
 	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
 	if !ok || code.Text() != "7" {
@@ -949,7 +927,6 @@ fn main() -> i32 {
 	return 0;
 }
 `, diag)
-	entry.Origin = project.ModuleOriginLocal
 	ctx := project.NewWithConfig(project.Config{
 		RootDir:           ".",
 		Extension:         peeper.SourceExt,
@@ -975,9 +952,9 @@ func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, 
 	if !found || sym == nil {
 		t.Fatalf("missing const symbol %s", name)
 	}
-	value, ok := module.ConstValues[sym.ID].(*constvalue.BoolConst)
+	value, ok := module.Constants.ModuleValues[sym.ID].(*constvalue.BoolConst)
 	if !ok || value == nil || value.Bool() != want {
-		t.Fatalf("%s = %#v, want bool %t", name, module.ConstValues[sym.ID], want)
+		t.Fatalf("%s = %#v, want bool %t", name, module.Constants.ModuleValues[sym.ID], want)
 	}
 }
 
@@ -989,7 +966,6 @@ func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 		return 7;
 	}
 }`, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -1019,7 +995,6 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 	}
 	return 0;
 }`, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -1085,22 +1060,22 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 		module *project.Module
 		want   string
 	}{
-		{name: "blocked prerequisite", module: &project.Module{Key: "local:main", Phase: phase.Resolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: phase.Ownership}, want: "ownership phase"},
-		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: phase.HIR}, want: "HIR phase"},
+		{name: "blocked prerequisite", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
+		{name: "missing HIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
+		{name: "missing MIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.HIR}, want: "HIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}}, phase.Backend)
+			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[moduleid.ID]struct{}{test.module.ID: {}}, phase.Backend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "local:main", Phase: phase.Backend}}, map[string]struct{}{"local:main": {}}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]struct{}{moduleid.ID{ImportPath: "local:main"}: {}}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "overlay:stub", Phase: phase.None}}, map[string]struct{}{"local:main": {}}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]struct{}{moduleid.ID{ImportPath: "local:main"}: {}}, phase.Backend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }
@@ -1108,7 +1083,6 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 func TestPipelineDiagnosticStopReturnsNormally(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	entry := parseModuleSource("invalid"+peeper.SourceExt, "fn main() -> Missing { return 0; }", diag)
-	entry.Origin = project.ModuleOriginLocal
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("diagnostic-driven stop returned pipeline error: %v", err)
@@ -1181,7 +1155,6 @@ fn main() -> i32 {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1205,19 +1178,15 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)
 
 	imported := parseModuleSource("util"+peeper.SourceExt, "fn Helper() -> i32 { return 1; }", diag)
-	imported.Origin = project.ModuleOriginLocal
 	imported.Phase = phase.Parsed
 	ctx.AddModule(imported)
 
 	entry := parseModuleSource("main"+peeper.SourceExt, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	entry.Imports = map[string]project.ResolvedImport{
 		"util": {
-			Key:        imported.Key,
-			ImportPath: "util",
-			FilePath:   imported.FilePath,
-			Origin:     project.ModuleOriginLocal,
+			ID:       imported.ID,
+			FilePath: imported.FilePath,
 		},
 	}
 	ctx.AddModule(entry)
@@ -1249,12 +1218,17 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry.Phase = phase.Resolved
 	if moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatalf("resolved importer should wait for const-evaluated import before consteval")
+		t.Fatal("resolved importer should wait for typechecked import before consteval")
 	}
 
 	imported.Phase = phase.ConstEval
+	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+		t.Fatal("resolved importer should not read provisional import constants")
+	}
+
+	imported.Phase = phase.Typechecked
 	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatalf("resolved importer should be ready for consteval when import is const-evaluated")
+		t.Fatal("resolved importer should be ready for consteval when import constants are published")
 	}
 }
 
@@ -1278,10 +1252,8 @@ fn main() -> i32 {
 	}
 
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
-		ImportPath: "app/main",
-		FilePath:   mainPath,
-		Origin:     project.ModuleOriginLocal,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: mainPath,
 	}
 
 	if err := os.WriteFile(utilPath, []byte(utilSrc), 0o644); err != nil {
@@ -1349,10 +1321,8 @@ fn Value() -> i32 {
 	mainPath := filepath.Join(srcDir, peeper.MainFileName)
 	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
-		ImportPath: "app/main",
-		FilePath:   mainPath,
-		Origin:     project.ModuleOriginLocal,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: mainPath,
 	}
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1625,7 +1595,6 @@ fn main() -> i32 {
 				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
 			}, diag)
 			entry := parseModuleSource(filePath, src, diag)
-			entry.Origin = project.ModuleOriginLocal
 			if err := Run(ctx, entry); err != nil {
 				t.Fatalf("pipeline.Run returned error: %v", err)
 			}
@@ -1757,7 +1726,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1854,7 +1822,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1938,7 +1905,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -2035,7 +2001,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -2500,7 +2465,6 @@ fn main() -> i32 {
 				TargetArch: compilerTarget.arch,
 			}, diag)
 			entry := parseModuleSource(filePath, src, diag)
-			entry.Origin = project.ModuleOriginLocal
 			if err := Run(ctx, entry); err != nil {
 				t.Fatalf("pipeline.Run returned error: %v", err)
 			}

@@ -115,7 +115,7 @@ add a uniform `Pass.Run` abstraction that hides these differences.
 | Parsed syntax | `Module.AST` | parser | semantic phases, CFG, HIR |
 | Module symbols | `Module.ModuleScope` | collector and binder | resolver onward |
 | Staged binding graph | `Module.Bindings` / `bindingresult.Result` | collector through typechecker | CFG, flow, ownership, HIR, LSP |
-| Constant values and query cache | `Module.ConstValues` | const evaluation and later constant queries | fingerprinting, CFG, flow, HIR, MIR |
+| Constant evaluation | `Module.Constants` / `constantresult.Result` | const evaluation and later constant queries | fingerprinting, CFG, flow, HIR, MIR |
 | Base typechecker evidence | `Module.Typechecking` / `typecheckresult.Result` | base typechecker | CFG, consteval, flow, definite-init, ownership, HIR |
 | Typed AST index | `Module.TypedASTNodes` | pipeline after typecheck | CFG-sensitive phases |
 | Control-flow graph | `Module.CFG` | CFG builder | flow, definite-init, ownership, MIR |
@@ -128,6 +128,35 @@ add a uniform `Pass.Run` abstraction that hides these differences.
 `project.Module` is a source-unit aggregate. It is not itself a phase result.
 Framework work should split mixed result ownership where useful without wrapping the
 aggregate or forcing every artifact into a generic result interface.
+
+### Module identity
+
+**Current.** `moduleid.ID` is the one canonical module identity. It is a comparable
+value of `Origin`, `Namespace`, `Dependency`, and `ImportPath`, and it is the key for
+`ctx.modules`, `ctx.fileIndex`, `ctx.semanticExportBaselines`, import resolution,
+`symbols.Symbol.DefiningModule`, and type-declaration identity.
+
+Identity is logical, not positional: it survives filesystem relocation, and file path
+is a secondary index only. Path-based `Module.Key`, `symbols.DefiningModuleKey`,
+`ModuleKeyFor`, `ModuleByKey`, and loader-side identity backfill no longer exist.
+
+`ID.Valid()` is the single identity predicate and requires both `Origin` and
+`ImportPath`. That is what keeps map keys distinct: an identity carrying only an
+origin would collapse every local module onto one entry. Do not add an `IsZero()`
+counterpart; a partially populated identity is invalid, not empty.
+
+String-only boundaries take `ID.String()`, which length-frames each component in hex
+so no delimiter collision is possible. Graph node IDs and diagnostics module scoping
+are such boundaries and consume the encoding rather than the struct. `internal/diagnostics`
+still names these parameters `moduleKey`; it is deliberately identity-agnostic and
+that rename is outstanding terminology debt.
+
+Module construction derives identity once, in `CompilerContext.NewModuleForFile` or
+`prelude.ModuleID()`. `NewModuleForFile` returns nil when no import path can be
+derived, so callers must establish project root containment first; `cmd/build.go`
+and both LSP entry paths do this through `manifest.ResolveSourceFileProject` and
+`manifest.PathWithinSourceDir`, and report a source-root diagnostic rather than an
+identity failure.
 
 ### Structural traversal
 
@@ -150,14 +179,15 @@ walkers only after concrete consumers need identical traversal semantics.
 
 ### Existing phase-owned results
 
-**Current.** Four semantic results have purposeful packages or direct owners:
+**Current.** Five semantic results have purposeful packages or direct owners:
 
 - `bindingresult.Result` owns block scopes, node-to-symbol bindings, method receiver/declaration indexes, and operation-function catalog over one staged symbol graph. Collector initializes it; collector, binder, resolver, and typechecker complete it; reset to `Parsed` discards it.
-- `typecheckresult.Result` owns base expression types, effective call arguments, generated-default binding markers, implicit conversions, implicit call arguments, interface implementation slots, intrinsic dispatch, string concatenation classification, variant construction, base case tests, and match evidence for one base-typecheck generation. It also owns `CaseTest` and match evidence models. `typechecker.Check` publishes a fresh result; reset below `Typechecked` discards it.
+- `constantresult.Result` physically separates authoritative post-typecheck `ModuleValues` from mutable pretypecheck/local `QueryCache` entries. `FinalizeValues` republishes top-level constants without retaining duplicate cache entries; fingerprints and MIR consume only `ModuleValues`. Foreign constant queries resolve the defining module and read its published values without copying into consumer cache.
+- `typecheckresult.Result` owns base expression types, effective call arguments, generated-default binding markers, implicit conversions, implicit call arguments, interface implementation slots, intrinsic dispatch, string concatenation classification, variant construction, base case tests, match evidence, and for-iteration evidence for one base-typecheck generation. It also owns `CaseTest`, match, and iteration evidence models. `typechecker.Check` publishes a fresh result; reset below `Typechecked` discards it.
 - `flowresult.Result` owns flow-refined types, origins, payload access, flow-sensitive case tests, and variant-field evidence. Its case-test entries use the earlier `typecheckresult.CaseTest` model while remaining a distinct flow result map.
 - `internal/semantics/ownershipresult` owns cleanup plans consumed by MIR.
 
-`project.SemanticInfo` has been removed. `Module.ConstValues` remains one mutable map combining finalized module constants with later query-cache entries; separating those lifetimes is remaining semantic-result migration target.
+`project.SemanticInfo` and mixed `Module.ConstValues` storage have been removed. All semantic evidence and constant-evaluation artifacts now have explicit owners and reset contracts.
 
 ### Existing validation
 
@@ -216,7 +246,7 @@ code or repository policy:
 
 ## Workstream 1: Separate phase-owned semantic results
 
-**Current.** Field inventory and approved ownership/lifetime decisions are tracked in [`semantic-results.md`](semantic-results.md). Completed migration slices extracted all base-typechecker evidence into `typecheckresult.Result` and the staged collection/binding/resolution graph into `bindingresult.Result`. `SemanticInfo` no longer exists. Remaining constant work must split finalized module values from mutable query cache without duplicate storage.
+**Complete.** Field inventory and approved ownership/lifetime decisions are tracked in [`semantic-results.md`](semantic-results.md). Base-typechecker evidence lives in `typecheckresult.Result`; staged collection/binding/resolution state lives in `bindingresult.Result`; authoritative constants and mutable evaluator cache live in separate maps inside `constantresult.Result`. Module bindings carry defining identity, and dependencies reach `Typechecked` before consumer constant evaluation so foreign reads are authoritative and race-free. `SemanticInfo`, mixed `Module.ConstValues`, compatibility maps, and forwarding accessors no longer exist.
 
 For each field record:
 
@@ -369,10 +399,10 @@ edge/site APIs express required fact directly. If they do, keep them. If two or 
 consumers need same missing structured-control fact, propose smallest immutable
 descriptor owned by CFG construction.
 
-Condition and infinite loops on current `main` are initial verification corpus.
-Range/sequence loops and `break`/`continue` are contingent on PR #124 or later
-merged language work and must be re-audited against resulting code before shaping
-public CFG evidence.
+Condition, infinite, range, and sequence loops plus `break`/`continue` are current
+verification corpus. CFG construction consumes typechecker-owned guaranteed-entry
+evidence through `cfg.BuildQueries`; any public construct metadata must be justified
+against these merged topology and query contracts.
 
 Builder-local active target state remains construction state, not public CFG
 evidence. Rename or restructure it only when touched by concrete behavior change;
@@ -450,10 +480,11 @@ For each evidence type with a kind/tag plus nullable or optional fields, record:
 - whether constructor, validator, separate variants, or simpler flat shape best
   protects actual invariant.
 
-PR #124 introduces for-iteration evidence on its feature branch. After it merges,
-inspect exact merged artifact and consumers before choosing package or type shape.
-Range/sequence plans, guaranteed-entry proof, and target-sized cursors are not
-current `main` contracts and must not be encoded here in advance.
+For-iteration evidence now lives in `typecheckresult.Result`. It records range or
+sequence kind, guaranteed-entry proof, target-sized cursor state, hidden carrier
+symbols, and source binding symbols. CFG, ownership, and HIR consume this published
+evidence directly. Remaining work must validate its nullable kind-dependent fields
+or replace them with smaller validated variants without duplicating semantic proof.
 
 Candidate evidence includes conversions, compiler calls, interface conformance,
 variant construction, and merged for-iteration evidence. Typechecker remains owner

@@ -4,14 +4,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/bindingresult"
+	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
@@ -36,20 +37,12 @@ const GraphEdgeImport graph.EdgeKind = "import"
 
 // Source unit shared by every compiler phase.
 type Module struct {
-	// Unique graph identity.
-	Key string
-	// Module path used by imports.
-	ImportPath string
+	// Canonical semantic, import, graph, and ownership identity.
+	ID moduleid.ID
 	// Absolute slash-separated source path.
 	FilePath string
-	// Optional namespace for packaged libraries such as core/vendor.
-	Namespace string
 	// User-selected entry module.
 	IsEntry bool
-	// Local, stdlib, or dependency.
-	Origin ModuleOrigin
-	// Dependency alias, when any.
-	Dependency string
 	// Loaded source text.
 	Content string
 	// ContentProvided distinguishes an explicit empty source from a module that
@@ -83,32 +76,20 @@ type Module struct {
 	namedTypeDeclarations map[string]namedTypeDeclaration
 	// Staged symbol/scope graph for current semantic generation.
 	Bindings *bindingresult.Result
-	// Finalized module constants plus mutable constant-query cache.
-	ConstValues map[symbols.SymbolID]constvalue.Value
+	// Constant-evaluation artifacts for current semantic generation.
+	Constants *constantresult.Result
 	// Base typechecker result for current semantic generation.
 	Typechecking *typecheckresult.Result
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 }
 
-func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
-	if m == nil {
-		return symbols.DefiningModuleKey{}
-	}
-	return symbols.DefiningModuleKey{
-		Origin:     string(m.Origin),
-		Namespace:  m.Namespace,
-		Dependency: m.Dependency,
-		ImportPath: m.ImportPath,
-	}
-}
-
 // TypeDeclarationIdentity anchors nominal type identity at its declaring module.
 func (m *Module) TypeDeclarationIdentity(name string) string {
-	if m == nil || m.Key == "" || name == "" {
+	if m == nil || !m.ID.Valid() || name == "" {
 		return name
 	}
-	return m.Key + "::" + name
+	return m.ID.String() + "::" + name
 }
 
 // ExpandedDefaultBinding resolves declaration-module symbols paired with generated
@@ -149,7 +130,7 @@ func (m *Module) ResetSemanticData() {
 		return
 	}
 	m.Bindings = bindingresult.New()
-	m.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
+	m.Constants = constantresult.New()
 	m.Typechecking = nil
 }
 
@@ -184,7 +165,7 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 	if retained <= phase.Parsed {
 		m.ModuleScope = nil
 		m.Bindings = nil
-		m.ConstValues = nil
+		m.Constants = nil
 	}
 	if retained < phase.Collected {
 		m.namedTypeDeclarations = nil
@@ -238,39 +219,48 @@ func PathWithinRoot(rootPath, path string) bool {
 	return strings.HasPrefix(path, rootPath+"/")
 }
 
-// NewModuleForFile builds one file-backed module with canonical origin,
-// namespace, key, and import path derived from compiler config.
+// NewModuleForFile builds one file-backed module with canonical identity derived from compiler config.
 func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	if ctx == nil || filePath == "" {
 		return nil
 	}
 	origin, namespace := ctx.ModuleOriginForFile(filePath)
-	module := &Module{
-		Key:             ModuleKeyFor(origin, filePath),
+	importPath, err := ctx.ImportPathForFile(origin, namespace, filePath)
+	if err != nil {
+		return nil
+	}
+	return &Module{
+		ID: moduleid.ID{
+			Origin:     string(origin),
+			Namespace:  namespace,
+			ImportPath: importPath,
+		},
 		FilePath:        filePath,
-		Namespace:       namespace,
-		Origin:          origin,
 		Content:         content,
 		ContentProvided: true,
 	}
-	if importPath, err := ctx.ImportPathForFile(origin, namespace, filePath); err == nil {
-		module.ImportPath = importPath
-	}
-	return module
 }
 
 // Register a module in shared compiler state.
 func (ctx *CompilerContext) AddModule(module *Module) {
-	if ctx == nil || module == nil || module.Key == "" {
+	if ctx == nil || module == nil || !module.ID.Valid() {
 		return
 	}
 	module.FilePath = CanonicalPath(module.FilePath)
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
 
-	ctx.modules[module.Key] = module
+	if previous := ctx.modules[module.ID]; previous != nil && previous.FilePath != "" && previous.FilePath != module.FilePath {
+		if ctx.fileIndex[previous.FilePath] == module.ID {
+			delete(ctx.fileIndex, previous.FilePath)
+		}
+	}
+	if previousID, found := ctx.fileIndex[module.FilePath]; module.FilePath != "" && found && previousID != module.ID {
+		panic("module file registered with multiple identities")
+	}
+	ctx.modules[module.ID] = module
 	if module.FilePath != "" {
-		ctx.fileIndex[module.FilePath] = module.Key
+		ctx.fileIndex[module.FilePath] = module.ID
 	}
 	if module.Phase >= phase.Collected {
 		for identity := range module.namedTypeDeclarations {
@@ -279,35 +269,35 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	}
 }
 
-// Lookup by graph identity.
-func (ctx *CompilerContext) ModuleByKey(key string) (*Module, bool) {
-	if ctx == nil || key == "" {
+// ModuleByID resolves canonical module identity.
+func (ctx *CompilerContext) ModuleByID(id moduleid.ID) (*Module, bool) {
+	if ctx == nil || !id.Valid() {
 		return nil, false
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	module, ok := ctx.modules[key]
+	module, ok := ctx.modules[id]
 	return module, ok
 }
 
 // SetSemanticExportBaseline records prior semantic API state for incremental comparison.
-func (ctx *CompilerContext) SetSemanticExportBaseline(key, fingerprint string) {
-	if ctx == nil || key == "" || fingerprint == "" {
+func (ctx *CompilerContext) SetSemanticExportBaseline(id moduleid.ID, fingerprint string) {
+	if ctx == nil || !id.Valid() || fingerprint == "" {
 		return
 	}
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
-	ctx.semanticExportBaselines[key] = fingerprint
+	ctx.semanticExportBaselines[id] = fingerprint
 }
 
 // SemanticExportBaseline returns prior semantic API state when supplied by a client.
-func (ctx *CompilerContext) SemanticExportBaseline(key string) (string, bool) {
-	if ctx == nil || key == "" {
+func (ctx *CompilerContext) SemanticExportBaseline(id moduleid.ID) (string, bool) {
+	if ctx == nil || !id.Valid() {
 		return "", false
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	fingerprint, ok := ctx.semanticExportBaselines[key]
+	fingerprint, ok := ctx.semanticExportBaselines[id]
 	return fingerprint, ok
 }
 
@@ -318,11 +308,11 @@ func (ctx *CompilerContext) ModuleByFile(filePath string) (*Module, bool) {
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	key, ok := ctx.fileIndex[CanonicalPath(filePath)]
+	id, ok := ctx.fileIndex[CanonicalPath(filePath)]
 	if !ok {
 		return nil, false
 	}
-	module, ok := ctx.modules[key]
+	module, ok := ctx.modules[id]
 	return module, ok
 }
 

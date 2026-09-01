@@ -1,6 +1,6 @@
 # Semantic Result Ownership Inventory
 
-Status: **design approved; migration active**.
+Status: **migration complete**.
 
 This document records baseline `project.SemanticInfo` ownership before framework migration. It is the Step 1 design record for the [compiler framework roadmap](README.md). Facts below came from inspected producers, consumers, reset paths, scheduler prerequisites, and incremental LSP reuse. Approved migration progress is recorded below; baseline tables remain for rationale and traceability.
 
@@ -15,28 +15,32 @@ Completed slices:
 5. Base `CaseTests` and `Matches` moved into `typecheckresult.Result`, along with `CaseTest`, `Match`, `MatchArm`, `MatchBinding`, explicit match projections, and canonical `MatchCases` validation. `flowresult.Result.CaseTests` uses `flowresult.CaseTest`, which embeds base case evidence and owns flow-only payload paths.
 6. Base `ExprTypes` moved into `typecheckresult.Result`. `Module.BaseExprType` is canonical base lookup; `Module.EffectiveExprType` gives flow evidence precedence and falls back to base evidence. `flowresult.Result.ExprTypes` remains distinct flow-refined evidence.
 7. Staged collection, binding, resolution, and type-dependent symbol evidence moved into `bindingresult.Result`: `BlockScopes`, `NodeSymbols`, `MethodsByReceiver`, `MethodsByDecl`, and `OperationFunctions`. Generated defaults and selectors write the same canonical node-symbol table; no precedence accessor or duplicate map exists.
-8. `SemanticInfo` was deleted. Constant storage moved directly to `Module.ConstValues` without changing behavior or lifetime. Dedicated constant migration remains: finalized module constants and mutable query cache still require separate ownership.
+8. `SemanticInfo` and mixed `Module.ConstValues` storage were deleted. `Module.Constants` now owns `constantresult.Result`, physically separating authoritative post-typecheck `ModuleValues` from mutable pretypecheck/local `QueryCache` entries. `FinalizeValues` republishes top-level constants without duplicate cache entries; fingerprints and MIR consume only authoritative values. Module bindings carry defining identity, so foreign queries read owner publication without copying into consumer cache.
 9. Typechecker evidence cleanup removed redundant interface method name/owner keys, replaced copied match case descriptors with `CaseCount`, moved `PayloadPath` to flow-owned evidence, and made match field/whole-payload projection explicit with an invalid sentinel consumed exhaustively.
 
-All dedicated typechecker and staged binding fields/models have explicit owners. Constant-result separation remains unmigrated.
+All inventoried semantic fields and constant-evaluation artifacts now have explicit owners. Semantic-result migration is complete.
 
 ## Current lifecycle
 
 `collector.collectModule` calls `Module.ResetSemanticData`, publishing fresh
-`Module.Bindings` and `Module.ConstValues` at start of one semantic generation.
-Collector, binder, resolver, and typechecker stage one shared binding/scope graph;
-constant evaluation and later CFG/flow/HIR queries mutate the separate constant map.
+`Module.Bindings` and `Module.Constants` at start of one semantic generation.
+Collector, binder, resolver, and typechecker stage one shared binding/scope graph.
+Eager constant evaluation stores provisional top-level values in `QueryCache`;
+`FinalizeValues` recomputes them with final types and publishes them exclusively in
+`ModuleValues`. Imports and prelude reach `Typechecked` before consumer constant
+evaluation; foreign symbols read defining-module publication directly. Later
+CFG/flow/HIR queries may add only consumer-local entries to `QueryCache`.
 
 `Module.resetToPhase` follows approved production contract:
 
 ```text
-retained <= Parsed  -> clear ModuleScope, Bindings, ConstValues, and later results
+retained <= Parsed  -> clear ModuleScope, Bindings, Constants, and later results
 exact later reuse   -> retain completed artifacts without phase re-entry
 ```
 
-Intermediate semantic re-entry remains unsupported because shared symbol objects and
-constant cache cannot be rewound independently. Production invalidation uses exact
-artifact reuse or resets to `Parsed`.
+Intermediate semantic re-entry remains unsupported because shared symbol objects
+cannot be rewound independently. Production invalidation uses exact artifact reuse
+or resets to `Parsed`; that reset discards both constant stores together.
 
 ## Baseline field ownership matrix
 
@@ -321,12 +325,14 @@ Option 2 adds maps and query policy. It is acceptable only if it removes ambigui
 rather than spreading lookups. Option 3 may produce cleanest contract but has largest
 behavioral scope.
 
-### Candidate C: constant result
+### Implemented C: constant result
 
-Distinguish published module constants from evaluator working cache. One staged
-artifact remains possible, but API must expose which entries are authoritative and
-which may appear after typecheck. Downstream fingerprint and MIR consumers need
-finalized module values; CFG/HIR queries need mutable cache.
+`constantresult.Result` owns physically separate `ModuleValues` and `QueryCache`
+maps. A top-level symbol lives in the query cache during eager pretypecheck
+evaluation, then moves to authoritative module values during finalization. Local and
+lazy entries remain cache-only. Foreign symbols resolve their defining module and
+read its published values without consumer caching. Fingerprinting and MIR consume
+only module values; CFG/HIR queries evaluate without duplicating published entries.
 
 ### Candidate D: typechecker result
 
@@ -354,7 +360,7 @@ without creating wrapper accessors.
    reset or reject unsafe intermediate retention.
 3. **Extract approved typechecker proof group at smallest safe migration size.** Move
    fields and all consumers together; delete old maps immediately.
-4. **Make authoritative module constants distinct from post-typecheck query cache.**
+4. **Completed:** authoritative module constants are distinct from post-typecheck query cache.
 5. **Resolve binding-table ownership.** Do not label current multi-writer map as
    resolver-only result.
 6. **Move callable catalog only if resulting boundary reduces coupling and does not

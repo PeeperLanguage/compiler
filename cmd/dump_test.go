@@ -5,13 +5,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 )
 
 func TestSaveIRsKeepsSameBasenameModulesDistinctAndReplacesOldTree(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: t.TempDir()}, nil)
-	ctx.AddModule(&project.Module{Key: "one", FilePath: "/one/common.peep", ImportPath: "app/one/common", Origin: project.ModuleOriginLocal, LLVMIR: "one"})
-	ctx.AddModule(&project.Module{Key: "two", FilePath: "/two/common.peep", ImportPath: "app/two/common", Origin: project.ModuleOriginLocal, LLVMIR: "two"})
+	ctx.AddModule(&project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/one/common"}, FilePath: "/one/common.peep", LLVMIR: "one"})
+	ctx.AddModule(&project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/two/common"}, FilePath: "/two/common.peep", LLVMIR: "two"})
 	target := filepath.Join(t.TempDir(), "_gen")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)

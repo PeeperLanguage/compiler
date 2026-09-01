@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -12,6 +13,10 @@ import (
 
 // Auto-loaded Peeper prelude file within the stdlib root.
 const GlobalPreludeFile = "global" + peeper.SourceExt
+
+func ModuleID() moduleid.ID {
+	return moduleid.ID{Origin: string(project.ModuleOriginStdlib), Namespace: "core", ImportPath: "prelude/global"}
+}
 
 func globalPreludePath(ctx *project.CompilerContext) (string, bool) {
 	if ctx == nil {
@@ -26,19 +31,16 @@ func globalPreludePath(ctx *project.CompilerContext) (string, bool) {
 
 // ModuleForFile returns the canonical prelude module identity when a file path
 // points at the auto-loaded global prelude source. Direct-open and overlay
-// paths must reuse this exact key/import-path so the same file does not appear
-// twice in compiler and LSP caches.
+// paths must reuse this exact identity so the same file does not appear twice
+// in compiler and LSP caches.
 func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*project.Module, bool) {
 	preludePath, ok := globalPreludePath(ctx)
 	if !ok || project.CanonicalPath(preludePath) != project.CanonicalPath(filePath) {
 		return nil, false
 	}
 	return &project.Module{
-		Key:             "core:prelude/global",
-		ImportPath:      "prelude/global",
+		ID:              ModuleID(),
 		FilePath:        preludePath,
-		Namespace:       "core",
-		Origin:          project.ModuleOriginStdlib,
 		Content:         content,
 		ContentProvided: true,
 	}, true

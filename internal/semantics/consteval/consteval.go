@@ -5,15 +5,18 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
 )
 
 type evaluator struct {
-	ctx        *project.CompilerContext
-	module     *project.Module
-	inProgress map[symbols.SymbolID]struct{}
+	ctx                 *project.CompilerContext
+	module              *project.Module
+	constants           *constantresult.Result
+	inProgress          map[symbols.SymbolID]struct{}
+	publishModuleValues bool
 }
 
 // Evaluate performs the eager semantic const prepass after name resolution.
@@ -23,33 +26,24 @@ func Evaluate(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
-	if module.ConstValues == nil {
-		module.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
-	}
-	e := &evaluator{
-		ctx:        ctx,
-		module:     module,
-		inProgress: make(map[symbols.SymbolID]struct{}),
-	}
-	for _, sym := range module.ModuleScope.Symbols() {
-		if sym != nil && sym.Kind == symbols.SymbolConst {
-			e.evalConstSymbol(sym, module.ModuleScope)
-		}
-	}
+	e := newEvaluator(ctx, module, false)
+	e.evalModuleConstants()
 }
 
-// FinalizeValues recomputes module constants after typechecking assigns final
-// symbol types. Local const cache entries remain available to later queries.
+// FinalizeValues recomputes and publishes authoritative module constants after
+// typechecking assigns final symbol types. Local query-cache entries remain mutable.
 func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
+	e := newEvaluator(ctx, module, true)
+	clear(e.constants.ModuleValues)
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
-			delete(module.ConstValues, sym.ID)
+			delete(e.constants.QueryCache, sym.ID)
 		}
 	}
-	Evaluate(ctx, module)
+	e.evalModuleConstants()
 }
 
 // EvaluateExpr computes one semantic constant using expected type information
@@ -61,22 +55,47 @@ func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	if scope == nil && module.ModuleScope == nil {
 		return nil, false
 	}
-	if module.ConstValues == nil {
-		module.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
-	}
-	e := &evaluator{
-		ctx:        ctx,
-		module:     module,
-		inProgress: make(map[symbols.SymbolID]struct{}),
-	}
+	e := newEvaluator(ctx, module, false)
 	return e.evalExpr(scope, expr, expected)
+}
+
+func newEvaluator(ctx *project.CompilerContext, module *project.Module, publishModuleValues bool) *evaluator {
+	if module.Constants == nil {
+		module.Constants = constantresult.New()
+	}
+	return &evaluator{
+		ctx:                 ctx,
+		module:              module,
+		constants:           module.Constants,
+		inProgress:          make(map[symbols.SymbolID]struct{}),
+		publishModuleValues: publishModuleValues,
+	}
+}
+
+func (e *evaluator) evalModuleConstants() {
+	for _, sym := range e.module.ModuleScope.Symbols() {
+		if sym != nil && sym.Kind == symbols.SymbolConst {
+			e.evalConstSymbol(sym, e.module.ModuleScope)
+		}
+	}
 }
 
 func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (constvalue.Value, bool) {
 	if e == nil || e.module == nil || sym == nil {
 		return nil, false
 	}
-	if value, ok := e.module.ConstValues[sym.ID]; ok {
+	if ownerID := sym.DefiningModule; ownerID.Valid() && ownerID != e.module.ID {
+		owner, found := e.ctx.ModuleByID(ownerID)
+		if !found || owner.Constants == nil {
+			return nil, false
+		}
+		value, found := owner.Constants.ModuleValues[sym.ID]
+		return value, found
+	}
+	if value, ok := e.constants.ModuleValues[sym.ID]; ok {
+		return value, true
+	}
+	if value, ok := e.constants.QueryCache[sym.ID]; ok {
 		return value, true
 	}
 	if _, ok := e.inProgress[sym.ID]; ok {
@@ -111,7 +130,14 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 	if !ok {
 		return nil, false
 	}
-	e.module.ConstValues[sym.ID] = value
+	if e.publishModuleValues {
+		if topLevel, found := e.module.ModuleScope.LookupLocal(sym.Name); found && topLevel != nil && topLevel.ID == sym.ID {
+			e.constants.ModuleValues[sym.ID] = value
+			delete(e.constants.QueryCache, sym.ID)
+			return value, true
+		}
+	}
+	e.constants.QueryCache[sym.ID] = value
 	return value, true
 }
 

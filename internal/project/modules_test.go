@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
@@ -21,15 +22,56 @@ func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
 	ctx := New(".", ".peep", nil)
 	filePath := filepath.Join("nested", "..", "main.peep")
 	want := CanonicalPath(filePath)
-	module := &Module{
-		Key:      "local:test",
-		FilePath: filePath,
-	}
+	id := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "test"}
+	module := &Module{ID: id, FilePath: filePath}
 
 	ctx.AddModule(module)
 
 	if module.FilePath != want {
 		t.Fatalf("module path = %q, want canonical %q", module.FilePath, want)
+	}
+	byID, foundByID := ctx.ModuleByID(id)
+	byFile, foundByFile := ctx.ModuleByFile(filePath)
+	if !foundByID || !foundByFile || byID != module || byFile != module {
+		t.Fatalf("module lookups by ID/file = (%p, %t), (%p, %t), want %p", byID, foundByID, byFile, foundByFile, module)
+	}
+}
+
+func TestCompilerContextRejectsZeroModuleID(t *testing.T) {
+	ctx := New(".", ".peep", nil)
+	module := &Module{FilePath: "zero.peep"}
+
+	ctx.AddModule(module)
+
+	if len(ctx.Modules()) != 0 {
+		t.Fatalf("modules after zero-ID add = %#v", ctx.Modules())
+	}
+	if _, found := ctx.ModuleByID(moduleid.ID{}); found {
+		t.Fatal("zero ID resolved a module")
+	}
+	if _, found := ctx.ModuleByFile(module.FilePath); found {
+		t.Fatal("rejected zero-ID module remained in file index")
+	}
+}
+
+func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
+	ctx := New(".", ".peep", nil)
+	firstID := moduleid.ID{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "value"}
+	secondID := moduleid.ID{Origin: "local", Namespace: "a", Dependency: "bc", ImportPath: "value"}
+	first := &Module{ID: firstID}
+	second := &Module{ID: secondID}
+
+	ctx.AddModule(first)
+	ctx.AddModule(second)
+
+	if firstID.String() == secondID.String() {
+		t.Fatalf("component-distinct IDs collide: %q", firstID.String())
+	}
+	if got, found := ctx.ModuleByID(firstID); !found || got != first {
+		t.Fatalf("first module lookup = (%p, %t), want %p", got, found, first)
+	}
+	if got, found := ctx.ModuleByID(secondID); !found || got != second {
+		t.Fatalf("second module lookup = (%p, %t), want %p", got, found, second)
 	}
 }
 
@@ -57,7 +99,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		phase        phase.Phase
 		scope        bool
 		bindings     bool
-		constValues  bool
+		constants    bool
 		typechecking bool
 		exportAPI    bool
 		astNodes     bool
@@ -69,21 +111,21 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		llvm         bool
 	}{
 		{phase: phase.Parsed},
-		{phase: phase.Typechecked, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true},
-		{phase: phase.CFG, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: phase.FlowTyped, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.Ownership, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.Usage, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.HIR, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, constValues: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true},
+		{phase: phase.CFG, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true},
+		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
+		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
+		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.HIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true},
+		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
 		module.resetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
-			(module.Bindings != nil) != test.bindings || (module.ConstValues != nil) != test.constValues ||
+			(module.Bindings != nil) != test.bindings || (module.Constants != nil) != test.constants ||
 			(module.Typechecking != nil) != test.typechecking ||
 			(module.HIR != nil) != test.hir ||
 			(module.TypedASTNodes != nil) != test.astNodes ||
@@ -103,7 +145,8 @@ func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
 	module.ResetSemanticData()
 	if module.Bindings == nil || module.Bindings.BlockScopes == nil || module.Bindings.NodeSymbols == nil ||
 		module.Bindings.MethodsByReceiver == nil || module.Bindings.MethodsByDecl == nil ||
-		module.Bindings.OperationFunctions == nil || module.ConstValues == nil || module.Typechecking != nil {
+		module.Bindings.OperationFunctions == nil || module.Constants == nil || module.Constants.ModuleValues == nil ||
+		module.Constants.QueryCache == nil || module.Typechecking != nil {
 		t.Fatalf("semantic reset = %#v", module)
 	}
 }
@@ -157,12 +200,14 @@ func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 
 func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.T) {
 	bag := diagnostics.NewDiagnosticBag()
-	bag.BeginPhase(phase.Parsed, "a").Add(diagnostics.NewWarning("a parse"))
-	bag.BeginPhase(phase.Typechecked, "a").Add(diagnostics.NewError("a type"))
-	bag.BeginPhase(phase.Typechecked, "b").Add(diagnostics.NewError("b type"))
+	aID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "a"}
+	bID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "b"}
+	bag.BeginPhase(phase.Parsed, aID.String()).Add(diagnostics.NewWarning("a parse"))
+	bag.BeginPhase(phase.Typechecked, aID.String()).Add(diagnostics.NewError("a type"))
+	bag.BeginPhase(phase.Typechecked, bID.String()).Add(diagnostics.NewError("b type"))
 	ctx := New(".", ".peep", bag)
 	module := moduleWithArtifacts()
-	module.Key = "a"
+	module.ID = aID
 
 	ctx.ResetModule(module, phase.Parsed)
 
@@ -177,17 +222,19 @@ func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.
 
 func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
 	ctx := New(".", ".peep", nil)
-	module := &Module{Key: "owner"}
+	ownerID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"}
+	otherID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "other"}
+	module := &Module{ID: ownerID}
 	ctx.typeInstances["owner::Box<i32>"] = namedTypeInstance{
-		ownerModuleKey: module.Key,
-		typ:            &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
+		ownerModuleID: ownerID,
+		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
 	}
 	ctx.typeInstances["other::Box<i32>"] = namedTypeInstance{
-		ownerModuleKey: "other",
-		typ:            &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
+		ownerModuleID: otherID,
+		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
 	}
 
-	ctx.ResetModule(&Module{Key: module.Key}, phase.Parsed)
+	ctx.ResetModule(&Module{ID: module.ID}, phase.Parsed)
 
 	if _, found := ctx.typeInstances["owner::Box<i32>"]; found {
 		t.Fatal("reset retained instance owned by reset module")
@@ -198,7 +245,10 @@ func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
 }
 
 func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
-	module := &Module{Key: "owner", Phase: phase.Collected}
+	module := &Module{
+		ID:    moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"},
+		Phase: phase.Collected,
+	}
 	base := &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box", Kind: typeinfo.DefinedKindStruct}
 	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}}
 	original := New(".", ".peep", nil)

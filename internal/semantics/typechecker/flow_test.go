@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -26,12 +27,11 @@ func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "flow_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "flow_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)

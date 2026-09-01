@@ -9,6 +9,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -29,12 +30,11 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "typechecker_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -58,12 +58,11 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 
 	extAST := parser.New(externalPath, lexer.New(externalPath, externalSrc, diag).Tokenize(), diag).ParseModule()
 	extModule := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, externalPath),
-		ImportPath: "external",
-		FilePath:   externalPath,
-		Content:    externalSrc,
-		AST:        extAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
+		FilePath: externalPath,
+		Content:  externalSrc,
+		AST:      extAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(extModule)
 	collector.Collect(ctx, extModule)
@@ -73,17 +72,14 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "typechecker_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
 		Imports: map[string]project.ResolvedImport{
 			"external": {
-				Key:        extModule.Key,
-				ImportPath: "external",
-				FilePath:   externalPath,
-				Origin:     project.ModuleOriginLocal,
+				ID:       extModule.ID,
+				FilePath: externalPath,
 			},
 		},
 	}
@@ -169,12 +165,11 @@ func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "typechecker_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)

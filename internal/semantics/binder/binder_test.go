@@ -11,6 +11,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/symbols"
@@ -28,7 +29,7 @@ fn Alpha(value: Value, extra: i32) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
@@ -90,7 +91,7 @@ struct B { a: A }`,
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
 			module := &project.Module{
-				Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath,
 				Content:  test.source,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
@@ -124,7 +125,7 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
@@ -207,7 +208,7 @@ fn Use(alias: Choice<MyInt>, canonical: Choice<i32>) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
@@ -254,7 +255,7 @@ fn Use(value: &Swap<i32, str>) {}`,
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
 			module := &project.Module{
-				Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath,
 				Content:  test.source,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
@@ -300,7 +301,7 @@ func TestBindRequiresExactNamedTypeArguments(t *testing.T) {
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
 			module := &project.Module{
-				Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath,
 				Content:  test.source,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),

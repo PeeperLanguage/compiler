@@ -15,6 +15,10 @@ func SemanticExportFingerprint(module *Module) string {
 	if module == nil || module.ModuleScope == nil {
 		return ast.FingerprintParts(nil)
 	}
+	var moduleValues map[symbols.SymbolID]constvalue.Value
+	if module.Constants != nil {
+		moduleValues = module.Constants.ModuleValues
+	}
 	parts := make([]string, 0)
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym == nil || !sym.IsPub {
@@ -24,9 +28,9 @@ func SemanticExportFingerprint(module *Module) string {
 		if sym.Kind == symbols.SymbolVar {
 			part += fmt.Sprintf(":mutable=%t", sym.IsMutable())
 		}
-		part += semanticExportMetadata(module, sym)
+		part += semanticExportMetadata(module, sym, moduleValues)
 		if sym.Kind == symbols.SymbolConst {
-			part += ":value=" + constantKey(module.ConstValues[sym.ID])
+			part += ":value=" + constantKey(moduleValues[sym.ID])
 		}
 		parts = append(parts, part)
 	}
@@ -37,14 +41,14 @@ func SemanticExportFingerprint(module *Module) string {
 					continue
 				}
 				parts = append(parts, "method:"+receiver+":"+method.Name+":"+
-					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(module, method))
+					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(module, method, moduleValues))
 			}
 		}
 	}
 	return ast.FingerprintParts(parts)
 }
 
-func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
+func semanticExportMetadata(module *Module, sym *symbols.Symbol, moduleValues map[symbols.SymbolID]constvalue.Value) string {
 	decl, ok := sym.ASTNode.(ast.Decl)
 	if !ok || decl == nil {
 		return ""
@@ -85,7 +89,7 @@ func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
 			}
 			fact := resolved.Name + ":" + semanticTypeKey(resolved.Type, make(map[typeinfo.Type]bool))
 			if resolved.Kind == symbols.SymbolConst {
-				fact += "=" + constantKey(module.ConstValues[resolved.ID])
+				fact += "=" + constantKey(moduleValues[resolved.ID])
 			}
 			facts = append(facts, fact)
 			return true

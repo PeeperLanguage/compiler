@@ -444,10 +444,10 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		return sortCompletionItems(items)
 	}
 	resolved, ok := module.Imports[qualifier]
-	if !ok || resolved.DependencyAlias != "" {
+	if !ok || resolved.ID.Dependency != "" {
 		return []CompletionItem{}
 	}
-	imported, ok := ctx.ModuleByKey(resolved.Key)
+	imported, ok := ctx.ModuleByID(resolved.ID)
 	if !ok || imported == nil || imported.ModuleScope == nil {
 		return []CompletionItem{}
 	}
@@ -561,7 +561,7 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Modul
 	if owner != module {
 		aliases := make([]string, 0)
 		for alias, imported := range module.Imports {
-			if imported.Key == owner.Key {
+			if imported.ID == owner.ID {
 				aliases = append(aliases, alias)
 			}
 		}
@@ -713,10 +713,10 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		}
 	}
 	for alias, resolved := range module.Imports {
-		if resolved.DependencyAlias != "" {
+		if resolved.ID.Dependency != "" {
 			continue
 		}
-		imported, found := ctx.ModuleByKey(resolved.Key)
+		imported, found := ctx.ModuleByID(resolved.ID)
 		if !found || imported == nil || imported.Bindings == nil {
 			continue
 		}

@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -23,12 +24,11 @@ func checkResolveSource(t *testing.T, src string) (*project.Module, *diagnostics
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "resolver_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "resolver_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)

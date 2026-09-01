@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/moduleid"
 	"compiler/internal/source"
 )
 
@@ -49,13 +50,6 @@ type Type interface {
 	Text() string
 }
 
-type DefiningModuleKey struct {
-	Origin     string
-	Namespace  string
-	Dependency string
-	ImportPath string
-}
-
 type Symbol struct {
 	ID              SymbolID
 	Name            string
@@ -68,7 +62,7 @@ type Symbol struct {
 	Used            bool
 	RequiresMutable bool
 	CompilerOp      CompilerOp
-	DefiningModule  DefiningModuleKey
+	DefiningModule  moduleid.ID
 	Location        *source.Location
 	MutableLocation *source.Location
 	ASTNode         ast.Node

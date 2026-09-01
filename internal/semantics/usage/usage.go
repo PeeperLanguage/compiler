@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 )
@@ -25,7 +26,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 
 	// 2. Check for unused private module-level symbols (functions, types, constants, variables)
 	// Do not warn about prelude/global symbols since they represent a library
-	if module.Key != "core:prelude/global" {
+	if module.ID != prelude.ModuleID() {
 		for _, sym := range module.ModuleScope.Symbols() {
 			if sym.Kind == symbols.SymbolImport {
 				continue

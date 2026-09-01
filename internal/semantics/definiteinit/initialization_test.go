@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -25,12 +26,11 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	diag.AddSourceContent(filePath, source)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "definite_init_test",
-		FilePath:   filePath,
-		Content:    source,
-		AST:        parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "definite_init_test"},
+		FilePath: filePath,
+		Content:  source,
+		AST:      parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)

@@ -12,6 +12,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -28,13 +29,15 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: importPath,
-		FilePath:   filePath,
-		IsEntry:    true,
-		Content:    src,
-		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID: moduleid.ID{
+			Origin:     string(project.ModuleOriginLocal),
+			ImportPath: importPath,
+		},
+		FilePath: filePath,
+		IsEntry:  true,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -172,9 +175,9 @@ fn (self: Counter) Read() -> i32 { return self.value; }`
 
 func TestCallableNameFramesModuleIdentityComponents(t *testing.T) {
 	first := symbols.New("Value", symbols.SymbolFunc, nil, nil)
-	first.DefiningModule = symbols.DefiningModuleKey{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "sample/value"}
+	first.DefiningModule = moduleid.ID{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "sample/value"}
 	second := symbols.New("Value", symbols.SymbolFunc, nil, nil)
-	second.DefiningModule = symbols.DefiningModuleKey{Origin: "local", Namespace: "a", Dependency: "bc", ImportPath: "sample/value"}
+	second.DefiningModule = moduleid.ID{Origin: "local", Namespace: "a", Dependency: "bc", ImportPath: "sample/value"}
 	firstName, _ := callableName(nil, first)
 	secondName, _ := callableName(nil, second)
 	if firstName == secondName {
@@ -364,7 +367,7 @@ fn read(value: ?i32, other: Holder) -> i32 {
 }
 
 func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
-	consumer := &project.Module{Key: "local:consumer.peep", ModuleScope: symbols.NewScope(nil)}
+	consumer := &project.Module{ID: moduleid.ID{Origin: "local", ImportPath: "consumer.peep"}, ModuleScope: symbols.NewScope(nil)}
 	typ := &typeinfo.DefinedType{
 		Name:       "Status",
 		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}}},

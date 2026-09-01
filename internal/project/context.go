@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
@@ -41,12 +42,12 @@ type CompilerContext struct {
 	// Predeclared symbols visible before user/prelude code.
 	GlobalScope *symbols.Scope
 
-	// Module key -> module.
-	modules map[string]*Module
-	// Canonical file path -> module key.
-	fileIndex map[string]string
+	// Canonical module identity -> module.
+	modules map[moduleid.ID]*Module
+	// Canonical file path -> module identity.
+	fileIndex map[string]moduleid.ID
 	// Prior semantic API fingerprints supplied by incremental clients.
-	semanticExportBaselines map[string]string
+	semanticExportBaselines map[moduleid.ID]string
 	// Named declaration identity -> collected module declaration index.
 	typeDeclarations map[string]*Module
 	// Concrete semantic application identity -> canonical instance.
@@ -170,9 +171,9 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Graph:                 graph.New(GraphEdgeImport),
 		mu:                    &sync.RWMutex{},
 
-		modules:                 make(map[string]*Module),
-		fileIndex:               make(map[string]string),
-		semanticExportBaselines: make(map[string]string),
+		modules:                 make(map[moduleid.ID]*Module),
+		fileIndex:               make(map[string]moduleid.ID),
+		semanticExportBaselines: make(map[moduleid.ID]string),
 		typeDeclarations:        make(map[string]*Module),
 		typeInstances:           make(map[string]namedTypeInstance),
 	}
@@ -196,7 +197,7 @@ func (ctx *CompilerContext) ResetModule(module *Module, retained phase.Phase) {
 	module.resetToPhase(retained)
 	ctx.mu.Lock()
 	for identity, instance := range ctx.typeInstances {
-		if instance.ownerModuleKey == module.Key {
+		if instance.ownerModuleID == module.ID {
 			if !instance.complete && instance.ready != nil {
 				close(instance.ready)
 			}
@@ -205,14 +206,14 @@ func (ctx *CompilerContext) ResetModule(module *Module, retained phase.Phase) {
 	}
 	if retained < phase.Collected {
 		for identity, owner := range ctx.typeDeclarations {
-			if owner != nil && owner.Key == module.Key {
+			if owner != nil && owner.ID == module.ID {
 				delete(ctx.typeDeclarations, identity)
 			}
 		}
 	}
 	ctx.mu.Unlock()
-	if ctx.Diagnostics != nil && module.Key != "" {
-		ctx.Diagnostics.DiscardModuleAfter(module.Key, retained)
+	if ctx.Diagnostics != nil && module.ID.Valid() {
+		ctx.Diagnostics.DiscardModuleAfter(module.ID.String(), retained)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -15,10 +16,10 @@ type namedTypeDeclaration struct {
 }
 
 type namedTypeInstance struct {
-	ownerModuleKey string
-	typ            *typeinfo.DefinedType
-	ready          chan struct{}
-	complete       bool
+	ownerModuleID moduleid.ID
+	typ           *typeinfo.DefinedType
+	ready         chan struct{}
+	complete      bool
 }
 
 type typeInstantiationFrame struct {
@@ -136,9 +137,9 @@ func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, argument
 	// Cache provisional shell before substitution. Recursive pointer/reference
 	// applications resolve back to this exact object.
 	ctx.typeInstances[identity] = namedTypeInstance{
-		ownerModuleKey: declarationModule.Key,
-		typ:            instance,
-		ready:          make(chan struct{}),
+		ownerModuleID: declarationModule.ID,
+		typ:           instance,
+		ready:         make(chan struct{}),
 	}
 	ctx.mu.Unlock()
 

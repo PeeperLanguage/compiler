@@ -61,17 +61,17 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 }
 
 func moduleArtifactBase(stage string, module *project.Module) (string, error) {
-	origin := string(module.Origin)
+	origin := module.ID.Origin
 	if origin == "" {
 		origin = string(project.ModuleOriginLocal)
 	}
-	identity := strings.TrimSpace(module.ImportPath)
+	identity := strings.TrimSpace(module.ID.ImportPath)
 	if identity == "" {
 		return "", fmt.Errorf("module %q has no import identity", module.FilePath)
 	}
 	identity = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(identity, ":", "/")))
 	if identity == "." || filepath.IsAbs(identity) || identity == ".." || strings.HasPrefix(identity, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("invalid module import identity %q", module.ImportPath)
+		return "", fmt.Errorf("invalid module import identity %q", module.ID.ImportPath)
 	}
 	return filepath.Join(stage, origin, identity), nil
 }

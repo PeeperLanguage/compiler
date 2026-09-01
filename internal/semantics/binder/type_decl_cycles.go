@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 )
@@ -20,7 +21,7 @@ func (b *binder) registerTypeDecl(name string, typ ast.TypeExpr) {
 	if b == nil || b.ctx == nil || b.ctx.Graph == nil || b.module == nil || name == "" {
 		return
 	}
-	owner := typeDeclNodeID(b.module.Key, name)
+	owner := typeDeclNodeID(b.module.ID, name)
 	// Value edges require full layout; indirect references do not force target expansion.
 	b.addTypeDeclEdges(owner, typ, false)
 }
@@ -34,7 +35,7 @@ func (b *binder) validateTypeDeclCycles() {
 		if sym == nil || sym.Kind != symbols.SymbolType {
 			continue
 		}
-		nodeIDs = append(nodeIDs, typeDeclNodeID(b.module.Key, sym.Name))
+		nodeIDs = append(nodeIDs, typeDeclNodeID(b.module.ID, sym.Name))
 	}
 	if len(nodeIDs) == 0 {
 		return
@@ -69,11 +70,11 @@ func (b *binder) validateTypeDeclCycles() {
 	}
 }
 
-func typeDeclNodeID(moduleKey, name string) graph.NodeID {
-	if moduleKey == "" || name == "" {
+func typeDeclNodeID(moduleID moduleid.ID, name string) graph.NodeID {
+	if !moduleID.Valid() || name == "" {
 		return ""
 	}
-	return graph.NodeID("type:" + moduleKey + ":" + name)
+	return graph.NodeID("type:" + moduleID.String() + ":" + name)
 }
 
 func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect bool) {
@@ -145,7 +146,7 @@ func (b *binder) lookupTypeDeclNodeID(name string) graph.NodeID {
 	if !ok || sym == nil || sym.Kind != symbols.SymbolType {
 		return ""
 	}
-	return typeDeclNodeID(b.module.Key, sym.Name)
+	return typeDeclNodeID(b.module.ID, sym.Name)
 }
 
 func (b *binder) lookupQualifiedTypeDeclNodeID(node *ast.ScopeResolution) graph.NodeID {
@@ -160,7 +161,7 @@ func (b *binder) lookupQualifiedTypeDeclNodeID(node *ast.ScopeResolution) graph.
 	if !ok || resolved.Module == nil || resolved.Symbol == nil || resolved.Symbol.Kind != symbols.SymbolType {
 		return ""
 	}
-	return typeDeclNodeID(resolved.Module.Key, resolved.Symbol.Name)
+	return typeDeclNodeID(resolved.Module.ID, resolved.Symbol.Name)
 }
 
 func typeDeclNameFromNodeID(id graph.NodeID) string {

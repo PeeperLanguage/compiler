@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -14,13 +15,14 @@ import (
 
 func TestWithDiagnosticsSharesCompilerStateAndLock(t *testing.T) {
 	ctx := New(".", ".peep", diagnostics.NewDiagnosticBag())
-	scopedBag := ctx.Diagnostics.BeginPhase(phase.Typechecked, "main")
+	id := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"}
+	scopedBag := ctx.Diagnostics.BeginPhase(phase.Typechecked, id.String())
 	scoped := ctx.WithDiagnostics(scopedBag)
-	module := &Module{Key: "main"}
+	module := &Module{ID: id}
 	scoped.AddModule(module)
 	scoped.Diagnostics.Add(diagnostics.NewError("typed"))
 
-	if got, ok := ctx.ModuleByKey("main"); !ok || got != module {
+	if got, ok := ctx.ModuleByID(id); !ok || got != module {
 		t.Fatal("scoped context did not share module index")
 	}
 	if got := ctx.Diagnostics.Diagnostics(); len(got) != 1 || got[0].Message != "typed" {

@@ -27,7 +27,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		return nil
 	}
 	out := &hir.Module{
-		Name:     module.ImportPath,
+		Name:     module.ID.ImportPath,
 		FilePath: module.FilePath,
 		Types:    ctx.Types,
 		Externs:  make([]hir.Extern, 0),
@@ -1324,7 +1324,7 @@ func callableName(module *project.Module, sym *symbols.Symbol) (string, bool) {
 			return name, true
 		}
 	}
-	if module != nil && module.IsEntry && sym.Kind == symbols.SymbolFunc && sym.Name == "main" && sym.DefiningModule == module.DefiningModuleKey() {
+	if module != nil && module.IsEntry && sym.Kind == symbols.SymbolFunc && sym.Name == "main" && sym.DefiningModule == module.ID {
 		return "main", false
 	}
 	receiver := ""

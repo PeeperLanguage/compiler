@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 )
@@ -18,7 +19,7 @@ import (
 type moduleLoader struct {
 	ctx       *project.CompilerContext
 	mu        sync.Mutex
-	scheduled map[string]struct{}
+	scheduled map[moduleid.ID]struct{}
 	wg        sync.WaitGroup
 }
 
@@ -38,20 +39,19 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	if l == nil || l.ctx == nil || module == nil {
 		return
 	}
-	l.ensureModuleIdentity(module)
-	if module.Key == "" {
+	if !module.ID.Valid() {
 		return
 	}
 
 	l.mu.Lock()
-	if _, ok := l.scheduled[module.Key]; ok {
+	if _, ok := l.scheduled[module.ID]; ok {
 		l.mu.Unlock()
 		return
 	}
-	l.scheduled[module.Key] = struct{}{}
+	l.scheduled[module.ID] = struct{}{}
 	l.mu.Unlock()
 
-	if existing, ok := l.ctx.ModuleByKey(module.Key); ok && existing != module {
+	if existing, ok := l.ctx.ModuleByID(module.ID); ok {
 		module = existing
 	} else {
 		l.ctx.AddModule(module)
@@ -61,26 +61,12 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	go l.loadModule(module)
 }
 
-func (l *moduleLoader) ensureModuleIdentity(module *project.Module) {
-	if module == nil || l == nil || l.ctx == nil {
-		return
-	}
-	if module.Key == "" && module.FilePath != "" {
-		module.Key = project.ModuleKeyFor(module.Origin, module.FilePath)
-	}
-	if module.ImportPath == "" && module.FilePath != "" {
-		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.Namespace, module.FilePath); err == nil {
-			module.ImportPath = importPath
-		}
-	}
-}
-
 func (l *moduleLoader) loadModule(module *project.Module) {
 	defer l.wg.Done()
 	if module == nil || l == nil {
 		return
 	}
-	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.Key)
+	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.ID.String())
 	if module.AST != nil {
 		if module.ImportFingerprint == "" {
 			module.ImportFingerprint = module.AST.ImportFingerprint
@@ -107,7 +93,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
 	module.ContentHash = ast.HashText(module.Content)
-	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.Key)
+	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.ID.String())
 	toks := lexer.New(module.FilePath, module.Content, parseDiag).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
@@ -137,12 +123,12 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.addImportResolveError(diag, imp, err)
 			continue
 		}
-		alias := importAlias(imp, resolved.ImportPath)
+		alias := importAlias(imp, resolved.ID.ImportPath)
 		if alias == "" {
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "missing import alias")
 			continue
 		}
-		if existing, ok := module.Imports[alias]; ok && existing.Key != resolved.Key {
+		if existing, ok := module.Imports[alias]; ok && existing.ID != resolved.ID {
 			l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
 		}
@@ -150,20 +136,14 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
 		if l.ctx.Graph != nil {
-			l.ctx.Graph.AddEdge(graph.NodeID(module.Key), graph.NodeID(resolved.Key))
+			l.ctx.Graph.AddEdge(graph.NodeID(module.ID.String()), graph.NodeID(resolved.ID.String()))
 		}
 
-		if existing, ok := l.ctx.ModuleByKey(resolved.Key); ok {
+		if existing, ok := l.ctx.ModuleByID(resolved.ID); ok {
 			l.enqueue(existing)
 			continue
 		}
-		l.enqueue(&project.Module{
-			Key:        resolved.Key,
-			ImportPath: resolved.ImportPath,
-			FilePath:   resolved.FilePath,
-			Namespace:  resolved.Namespace,
-			Origin:     resolved.Origin,
-		})
+		l.enqueue(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath})
 	}
 }
 

@@ -120,7 +120,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 		if imported && memberNode == ident {
 			qualifier := qualifierNode.Name
 			if imp, ok := module.Imports[qualifier]; ok {
-				if mod, ok := ctx.ModuleByKey(imp.Key); ok && mod.ModuleScope != nil {
+				if mod, ok := ctx.ModuleByID(imp.ID); ok && mod.ModuleScope != nil {
 					if sym, ok := mod.ModuleScope.LookupLocal(ident.Name); ok {
 						return sym
 					}

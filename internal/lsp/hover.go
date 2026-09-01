@@ -559,12 +559,12 @@ func renderHoverSubject(subject *hoverSubject) string {
 		if subject.ResolvedImport == nil {
 			return ""
 		}
-		name := subject.ResolvedImport.ImportPath
+		name := subject.ResolvedImport.ID.ImportPath
 		if ident, ok := subject.Node.(*ast.Ident); ok && ident != nil && ident.Name != "" {
 			name = ident.Name
 		}
 		importSymbol := &symbols.Symbol{Name: name, Kind: symbols.SymbolImport}
-		text = renderSymbol(importSymbol, symbolRenderContext{ImportPath: subject.ResolvedImport.ImportPath})
+		text = renderSymbol(importSymbol, symbolRenderContext{ImportPath: subject.ResolvedImport.ID.ImportPath})
 	case hoverSubjectAttribute:
 		if subject.Attribute == nil {
 			return ""

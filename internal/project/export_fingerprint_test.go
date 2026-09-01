@@ -6,6 +6,7 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/bindingresult"
+	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -29,10 +30,11 @@ func fingerprintModule(
 	if bindings == nil {
 		bindings = bindingresult.New()
 	}
-	if constValues == nil {
-		constValues = make(map[symbols.SymbolID]constvalue.Value)
+	constants := constantresult.New()
+	if constValues != nil {
+		constants.ModuleValues = constValues
 	}
-	return &Module{ModuleScope: scope, Bindings: bindings, ConstValues: constValues}
+	return &Module{ModuleScope: scope, Bindings: bindings, Constants: constants}
 }
 
 func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) {
@@ -68,13 +70,32 @@ func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T
 			t.Fatalf("declare export: %v", err)
 		}
 		constant, _ := constvalue.NewIntText(value, "i32")
-		return SemanticExportFingerprint(&Module{
-			ModuleScope: scope,
-			ConstValues: map[symbols.SymbolID]constvalue.Value{sym.ID: constant},
-		})
+		constants := constantresult.New()
+		constants.ModuleValues[sym.ID] = constant
+		return SemanticExportFingerprint(&Module{ModuleScope: scope, Constants: constants})
 	}
 	if fingerprint("1") == fingerprint("2") {
 		t.Fatal("binding-independent const value did not change semantic fingerprint")
+	}
+}
+
+func TestSemanticExportFingerprintIgnoresQueryCache(t *testing.T) {
+	fingerprint := func(value string) string {
+		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
+		decl.SetDeclSurface("const:Value::number")
+		sym := symbols.New("Value", symbols.SymbolConst, decl, nil)
+		sym.Type = &typeinfo.IntegerType{Signed: true, Bits: 32}
+		scope := symbols.NewScope(nil)
+		if err := scope.Declare(sym); err != nil {
+			t.Fatalf("declare export: %v", err)
+		}
+		constant, _ := constvalue.NewIntText(value, "i32")
+		constants := constantresult.New()
+		constants.QueryCache[sym.ID] = constant
+		return SemanticExportFingerprint(&Module{ModuleScope: scope, Constants: constants})
+	}
+	if fingerprint("1") != fingerprint("2") {
+		t.Fatal("query-cache-only value changed semantic fingerprint")
 	}
 }
 
