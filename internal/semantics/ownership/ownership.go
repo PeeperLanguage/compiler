@@ -17,10 +17,11 @@ import (
 )
 
 type site struct {
-	cfgSite *cfg.Site
-	stmt    ast.Stmt
-	block   *ast.BlockStmt
-	scope   *symbols.Scope
+	cfgSite  *cfg.Site
+	cfgBlock *cfg.Block
+	stmt     ast.Stmt
+	block    *ast.BlockStmt
+	scope    *symbols.Scope
 }
 
 type analyzer struct {
@@ -36,7 +37,7 @@ type analyzer struct {
 	inStates               map[cfg.SiteID]state
 	symbolLiveIn           map[cfg.SiteID]map[*symbols.Symbol]ast.Node
 	symbolLiveOut          map[cfg.SiteID]map[*symbols.Symbol]ast.Node
-	deadMatchCarrierAtExit map[ast.NodeID]*symbols.Symbol
+	deadMatchCarrierAtExit map[cfg.SiteID]*symbols.Symbol
 }
 
 type pointerOrigin struct {
@@ -64,7 +65,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			continue
 		}
 		result[graph.NodeID] = &ownershipresult.CleanupPlan{
-			AfterScope:             make(map[ir.NodeID][]symbols.SymbolID),
+			AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
 			BeforeReturn:           make(map[ir.NodeID][]symbols.SymbolID),
 			BeforeAssign:           make(map[ir.NodeID]struct{}),
 			DiscardedValue:         make(map[ir.NodeID]struct{}),
@@ -142,7 +143,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) 
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}
-			indexed := &site{cfgSite: flowSite, scope: resolvedScope}
+			indexed := &site{cfgSite: flowSite, cfgBlock: block, scope: resolvedScope}
 			switch flowSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
 				if stmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(ast.Stmt); ok && stmt != nil {
@@ -193,6 +194,13 @@ func (a *analyzer) run() {
 		queued[id] = false
 		node := a.sites[id]
 		next := copyState(a.inStates[id])
+		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockNormal {
+			loopID := ast.NodeID(node.cfgBlock.NodeID)
+			if evidence, found := a.module.Semantics.ForIterations[loopID]; found &&
+				evidence.Kind == project.ForIterationSequence && evidence.Carrier != nil {
+				releaseIterationLoans(next, nil, loopID)
+			}
+		}
 		if node != nil {
 			switch node.cfgSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
@@ -227,11 +235,11 @@ func (a *analyzer) run() {
 }
 
 func (a *analyzer) planDeadMatchCarrierCleanup() {
-	a.deadMatchCarrierAtExit = make(map[ast.NodeID]*symbols.Symbol)
-	scopeExits := make(map[ast.NodeID]*site)
+	a.deadMatchCarrierAtExit = make(map[cfg.SiteID]*symbols.Symbol)
+	scopeExits := make(map[ast.NodeID][]*site)
 	for _, node := range a.sites {
 		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil {
-			scopeExits[node.block.ID()] = node
+			scopeExits[node.block.ID()] = append(scopeExits[node.block.ID()], node)
 		}
 	}
 
@@ -249,32 +257,47 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 			continue
 		}
 
-		fallingBodies := make([]ast.NodeID, 0, len(match.Arms))
-		var join cfg.SiteID
-		joinFound := false
-		movesCarrier := false
+		exitsByJoin := make(map[cfg.SiteID][]*site)
+		movesByJoin := make(map[cfg.SiteID]bool)
+		armsByJoin := make(map[cfg.SiteID]map[ast.NodeID]struct{})
 		for _, arm := range match.Arms {
-			exit := scopeExits[arm.BodyID]
-			if exit == nil || exit.cfgSite == nil || len(exit.cfgSite.Successors) != 1 {
+			for _, exit := range scopeExits[arm.BodyID] {
+				if exit == nil || exit.cfgSite == nil || len(exit.cfgSite.Successors) != 1 {
+					continue
+				}
+				join := exit.cfgSite.Successors[0].To
+				for {
+					joinNode := a.sites[join]
+					if joinNode == nil || joinNode.cfgSite == nil {
+						break
+					}
+					if joinNode.cfgSite.Kind != cfg.SiteScopeExit {
+						exitsByJoin[join] = append(exitsByJoin[join], exit)
+						if armsByJoin[join] == nil {
+							armsByJoin[join] = make(map[ast.NodeID]struct{})
+						}
+						armsByJoin[join][arm.BodyID] = struct{}{}
+						movesByJoin[join] = movesByJoin[join] || matchArmMovesCarrier(arm)
+						break
+					}
+					if len(joinNode.cfgSite.Successors) != 1 {
+						break
+					}
+					join = joinNode.cfgSite.Successors[0].To
+				}
+			}
+		}
+
+		for join, arms := range armsByJoin {
+			if len(arms) < 2 || !movesByJoin[join] {
 				continue
 			}
-			armJoin := exit.cfgSite.Successors[0].To
-			if joinFound && armJoin != join {
-				panic("match ownership cleanup requires one shared falling-arm join")
+			if _, live := a.symbolLiveIn[join][carrier]; live {
+				continue
 			}
-			join = armJoin
-			joinFound = true
-			fallingBodies = append(fallingBodies, arm.BodyID)
-			movesCarrier = movesCarrier || matchArmMovesCarrier(arm)
-		}
-		if !joinFound || len(fallingBodies) < 2 || !movesCarrier {
-			continue
-		}
-		if _, live := a.symbolLiveIn[join][carrier]; live {
-			continue
-		}
-		for _, bodyID := range fallingBodies {
-			a.deadMatchCarrierAtExit[bodyID] = carrier
+			for _, exit := range exitsByJoin[join] {
+				a.deadMatchCarrierAtExit[exit.cfgSite.ID] = carrier
+			}
 		}
 	}
 }
@@ -288,6 +311,27 @@ func copyState(src state) state {
 		dst.references[sym] = copyReferenceLoans(value)
 	}
 	return dst
+}
+
+// releaseIterationLoans ends synthetic carrier borrows when control leaves
+// their loop. A zero loop ID releases all active loops, as required by return.
+func releaseIterationLoans(st state, loans *loanContext, loopID ast.NodeID) {
+	matches := func(loan referenceLoan) bool {
+		return loan.loop != 0 && (loopID == 0 || loan.loop == loopID)
+	}
+	for holder, active := range st.references {
+		remaining := slices.DeleteFunc(active, matches)
+		if len(remaining) == 0 {
+			delete(st.references, holder)
+			continue
+		}
+		st.references[holder] = remaining
+	}
+	if loans != nil {
+		loans.persistent = slices.DeleteFunc(loans.persistent, func(fact loanFact) bool {
+			return matches(fact.loan)
+		})
+	}
 }
 
 func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (state, bool) {
@@ -353,13 +397,13 @@ func newState() state {
 }
 
 func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
-	if a == nil || node == nil || node.block == nil || node.scope == nil {
+	if a == nil || node == nil || node.cfgSite == nil || node.block == nil || node.scope == nil {
 		return
 	}
 	a.checkScopeDestruction(node.scope, node.block, loans)
-	delete(a.cleanup.AfterScope, ir.NodeID(node.block.ID()))
+	delete(a.cleanup.AfterScope, node.cfgSite.ID)
 	cleanup := cleanupSymbols(node.scope, st)
-	if carrier := a.deadMatchCarrierAtExit[node.block.ID()]; carrier != nil {
+	if carrier := a.deadMatchCarrierAtExit[node.cfgSite.ID]; carrier != nil {
 		if _, live := st.live[carrier]; live {
 			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block, loans)
 			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.NeedsDrop(typ) {
@@ -371,7 +415,7 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 		}
 	}
 	if len(cleanup) > 0 {
-		a.cleanup.AfterScope[ir.NodeID(node.block.ID())] = symbolIDs(cleanup)
+		a.cleanup.AfterScope[node.cfgSite.ID] = symbolIDs(cleanup)
 	}
 	clearScopeOwnership(node.scope, st)
 }
@@ -484,6 +528,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		a.checkPointerEscape(scope, s.Value, st)
 		a.validateReferenceReturn(scope, s, st)
 		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
+		releaseIterationLoans(st, loans, 0)
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
 		a.checkExpr(scope, s.Expr, st, useRead, loans, false)
@@ -493,7 +538,31 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	case *ast.IfStmt:
 		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
 	case *ast.ForStmt:
-		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
+		if s.Iterable == nil {
+			a.checkExpr(scope, s.Cond, st, useRead, loans, false)
+			break
+		}
+		evidence, found := a.module.Semantics.ForIterations[s.ID()]
+		if !found || evidence.Kind != project.ForIterationSequence || evidence.Carrier == nil {
+			a.checkExpr(scope, s.Iterable, st, useRead, loans, false)
+			break
+		}
+		a.checkExpr(scope, s.Iterable, st, useRead, loans, true)
+		a.checkStorageAccess(s.Iterable, loans, storageSharedBorrow)
+		origins := a.originsForExpr(s.Iterable)
+		if ident, ok := s.Iterable.(*ast.Ident); ok {
+			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
+			if value, found := st.references[sym]; found {
+				origins = referenceOrigins(value)
+			}
+		} else if value, hasValue := a.referenceValueForExpr(s.Iterable, st); hasValue {
+			origins = referenceOrigins(value)
+		}
+		if len(origins) > 0 {
+			st.references[evidence.Carrier] = []referenceLoan{{
+				id: loanID{node: s.Iterable}, origins: origins, site: s.Iterable, loop: s.ID(),
+			}}
+		}
 	case *ast.MatchStmt:
 		a.checkExpr(scope, s.Subject, st, useRead, loans, false)
 	}
@@ -527,7 +596,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(subject), "")
 	}
 	if movesCarrier && carrier != nil {
-		moveSite, _ := a.module.TypedASTNodes[arm.ArmID].(ast.Node)
+		moveSite, _ := a.module.TypedASTNodes[arm.ArmID]
 		if moveSite == nil {
 			moveSite = subject
 		}

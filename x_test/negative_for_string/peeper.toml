@@ -1,0 +1,7 @@
+name = "negative_for_string"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["string iteration requires"]

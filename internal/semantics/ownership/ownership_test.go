@@ -49,7 +49,10 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
+	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
+		MatchCases:          module.Semantics.MatchCases,
+		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
@@ -121,6 +124,31 @@ func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDec
 		t.Fatalf("cleanup plan for %q missing", fn.Name.Name)
 	}
 	return plan
+}
+
+func scopeExitSiteID(t *testing.T, graph *cfg.Graph, blockID ast.NodeID) cfg.SiteID {
+	t.Helper()
+	var id cfg.SiteID
+	found := false
+	for _, block := range graph.Blocks {
+		if block == nil || !block.Reachable {
+			continue
+		}
+		for _, site := range block.Sites {
+			if site == nil || site.Kind != cfg.SiteScopeExit || site.NodeID != ir.NodeID(blockID) {
+				continue
+			}
+			if found {
+				t.Fatalf("multiple scope exits for block %d", blockID)
+			}
+			id = site.ID
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("scope exit for block %d missing", blockID)
+	}
+	return id
 }
 
 func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []string {
@@ -215,7 +243,7 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	plan := cleanupPlanForFunction(t, result, fn)
 	staleID := ir.NodeID(999999)
-	plan.AfterScope[staleID] = []symbols.SymbolID{999999}
+	plan.AfterScope[cfg.SiteID{Block: 999999, Index: 999999}] = []symbols.SymbolID{999999}
 	plan.BeforeReturn[staleID] = []symbols.SymbolID{999999}
 	plan.BeforeAssign[staleID] = struct{}{}
 	plan.DiscardedValue[staleID] = struct{}{}
@@ -247,11 +275,13 @@ fn second() { let two = make(); }`)
 	if len(firstPlan.AfterScope) != 1 || len(secondPlan.AfterScope) != 1 {
 		t.Fatalf("unexpected function cleanup plans: first=%#v second=%#v", firstPlan, secondPlan)
 	}
-	if _, found := firstPlan.AfterScope[ir.NodeID(second.Body.ID())]; found {
-		t.Fatalf("first function received second function cleanup")
+	firstGraph := result.module.CFG.Function(ir.NodeID(first.ID()))
+	secondGraph := result.module.CFG.Function(ir.NodeID(second.ID()))
+	if got := cleanupSymbolNames(result.module, firstPlan.AfterScope[scopeExitSiteID(t, firstGraph, first.Body.ID())]); !slices.Equal(got, []string{"one"}) {
+		t.Fatalf("first function cleanup = %v, want [one]", got)
 	}
-	if _, found := secondPlan.AfterScope[ir.NodeID(first.Body.ID())]; found {
-		t.Fatalf("second function received first function cleanup")
+	if got := cleanupSymbolNames(result.module, secondPlan.AfterScope[scopeExitSiteID(t, secondGraph, second.Body.ID())]); !slices.Equal(got, []string{"two"}) {
+		t.Fatalf("second function cleanup = %v, want [two]", got)
 	}
 }
 
@@ -312,12 +342,84 @@ fn main() {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	nested := fn.Body.Stmts[1].(*ast.BlockStmt)
+	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
 	plan := cleanupPlanForFunction(t, result, fn)
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(nested.ID())]); !slices.Equal(got, []string{"nested"}) {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, nested.ID())]); !slices.Equal(got, []string{"nested"}) {
 		t.Fatalf("nested cleanup = %v, want [nested]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(fn.Body.ID())]); !slices.Equal(got, []string{"last", "first"}) {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, fn.Body.ID())]); !slices.Equal(got, []string{"last", "first"}) {
 		t.Fatalf("function cleanup = %v, want [last first]", got)
+	}
+}
+
+func TestCleanupPlanDistinguishesLoopExitSites(t *testing.T) {
+	result := checkOwnershipSource(t, `fn make() -> *i32;
+fn main() {
+	for i in 0..3 {
+		let first = make();
+		if i == 0 { continue; }
+		let second = make();
+		if i == 1 { break; }
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected loop cleanup diagnostics:\n%s", result.EmitAllToString())
+	}
+
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	loop := fn.Body.Stmts[0].(*ast.ForStmt)
+	continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
+	breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
+	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	plan := cleanupPlanForFunction(t, result, fn)
+
+	var continueExit, breakExit, fallthroughExit cfg.SiteID
+	continueFound := false
+	breakFound := false
+	fallthroughFound := false
+	for _, block := range graph.Blocks {
+		if block == nil || !block.Reachable {
+			continue
+		}
+		hasContinue := false
+		hasBreak := false
+		var exit *cfg.Site
+		for _, site := range block.Sites {
+			if site == nil {
+				continue
+			}
+			hasContinue = hasContinue || site.NodeID == ir.NodeID(continueStmt.ID())
+			hasBreak = hasBreak || site.NodeID == ir.NodeID(breakStmt.ID())
+			if site.Kind == cfg.SiteScopeExit && site.NodeID == ir.NodeID(loop.Body.ID()) {
+				exit = site
+			}
+		}
+		if exit == nil {
+			continue
+		}
+		switch {
+		case hasContinue:
+			continueExit, continueFound = exit.ID, true
+		case hasBreak:
+			breakExit, breakFound = exit.ID, true
+		default:
+			fallthroughExit, fallthroughFound = exit.ID, true
+		}
+	}
+	if !continueFound || !breakFound || !fallthroughFound {
+		t.Fatalf("loop exits missing: continue=%v break=%v fallthrough=%v", continueFound, breakFound, fallthroughFound)
+	}
+	if continueExit == breakExit || continueExit == fallthroughExit || breakExit == fallthroughExit {
+		t.Fatalf("loop exits share CFG identity: continue=%v break=%v fallthrough=%v", continueExit, breakExit, fallthroughExit)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[continueExit]); !slices.Equal(got, []string{"first"}) {
+		t.Fatalf("continue cleanup = %v, want [first]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[breakExit]); !slices.Equal(got, []string{"second", "first"}) {
+		t.Fatalf("break cleanup = %v, want [second first]", got)
+	}
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[fallthroughExit]); !slices.Equal(got, []string{"second", "first"}) {
+		t.Fatalf("fallthrough cleanup = %v, want [second first]", got)
 	}
 }
 
@@ -332,6 +434,20 @@ func TestReturnCleanupSuppressesMovedResult(t *testing.T) {
 	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
 	if got := cleanupSymbolNames(result.module, cleanupPlanForFunction(t, result, fn).BeforeReturn[ir.NodeID(ret.ID())]); !slices.Equal(got, []string{"spare"}) {
 		t.Fatalf("return cleanup = %v, want [spare]", got)
+	}
+}
+
+func TestReturnExpressionEndsOrdinaryReferenceLoansBeforeCleanup(t *testing.T) {
+	result := checkOwnershipSource(t, `fn ranges(xs: [4]i32) -> i32 {
+	let prefix = xs[..2];
+	let suffix = xs[2..];
+	let middle = xs[1..3];
+	let inclusive = xs[1..=2];
+	let full = xs[..];
+	return prefix[0] + suffix[0] + middle[0] + inclusive[0] + full[0];
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected return diagnostics:\n%s", result.EmitAllToString())
 	}
 }
 
@@ -659,15 +775,145 @@ fn valid(resource: Resource) {
 	function, _ := result.module.ModuleScope.Lookup("valid")
 	resource, _ := function.Scope.Lookup("resource")
 	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
-	pendingBodyID := ir.NodeID(match.Arms[1].Body.ID())
+	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
 	if got := plan.MatchCarrierMoves[ownedBodyID]; got != resource.ID {
 		t.Fatalf("owned arm carrier move = %d, want %d", got, resource.ID)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[pendingBodyID]); !slices.Equal(got, []string{"resource"}) {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
 		t.Fatalf("pending arm cleanup = %v, want [resource]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(fn.Body.ID())]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, fn.Body.ID())]); slices.Contains(got, "resource") {
 		t.Fatalf("dead carrier remains in function cleanup: %v", got)
+	}
+}
+
+func TestExternalMoveOnlyMatchCarrierConvergesThroughGuaranteedLoopEntry(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn valid(resource: Resource) {
+	for i in 0..1 {
+		match resource {
+			Resource::Owned with { value = owned } => {
+				free(owned);
+				break;
+			}
+			Resource::Pending => {
+				break;
+			}
+		}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected guaranteed-entry diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestExternalMoveOnlyMatchCarrierRequiresGuaranteedLoopEntry(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		header string
+		params string
+	}{
+		{name: "empty constant range", header: "1..1"},
+		{name: "runtime range", header: "start..end", params: ", start: i32, end: i32"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn invalid(resource: Resource`+test.params+`) {
+	for i in `+test.header+` {
+		match resource {
+			Resource::Owned with { value = owned } => {
+				free(owned);
+				break;
+			}
+			Resource::Pending => {
+				break;
+			}
+		}
+	}
+}`)
+			if !hasOwnershipCode(result, diagnostics.ErrInvalidAssignment) ||
+				!strings.Contains(result.EmitAllToString(), "ownership state differs across control-flow paths") {
+				t.Fatalf("expected zero-entry convergence diagnostic, got:\n%s", result.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestDeadMoveOnlyMatchCarrierConvergesThroughLoopTransfers(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		transfer string
+	}{
+		{name: "break", transfer: "break"},
+		{name: "continue", transfer: "continue"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn valid() {
+	for i in 0..2 {
+		let resource = Resource::Owned with .{ value = alloc(i) };
+		match resource {
+			Resource::Owned with { value = owned } => {
+				free(owned);
+				`+test.transfer+`;
+			}
+			Resource::Pending => {
+				`+test.transfer+`;
+			}
+		}
+	}
+}`)
+			if result.HasErrors() {
+				t.Fatalf("unexpected match %s diagnostics:\n%s", test.transfer, result.EmitAllToString())
+			}
+
+			fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+			loop := fn.Body.Stmts[0].(*ast.ForStmt)
+			match := loop.Body.Stmts[1].(*ast.MatchStmt)
+			plan := cleanupPlanForFunction(t, result, fn)
+			graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+			if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
+				t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
+			}
+			if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
+				t.Fatalf("preserving arm cleanup = %v, want [resource]", got)
+			}
+		})
+	}
+}
+
+func TestDeadMoveOnlyMatchCarrierConvergesThroughNestedLoopBreak(t *testing.T) {
+	result := checkOwnershipSource(t, `enum Resource {
+	Owned: { value: *i32 },
+	Pending
+}
+fn valid() {
+	for outer in 0..2 {
+		for inner in 0..2 {
+			let resource = Resource::Owned with .{ value = alloc(outer + inner) };
+			match resource {
+				Resource::Owned with { value = owned } => {
+					free(owned);
+					break;
+				}
+				Resource::Pending => {
+					break;
+				}
+			}
+		}
+	}
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected nested match break diagnostics:\n%s", result.EmitAllToString())
 	}
 }
 
@@ -802,14 +1048,14 @@ fn valid(resource: Resource) {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	plan := cleanupPlanForFunction(t, result, fn)
 	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
-	pendingBodyID := ir.NodeID(match.Arms[1].Body.ID())
+	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
 	if got := plan.MatchFieldDrops[ownedBodyID]; !slices.Equal(got, []int{0}) {
 		t.Fatalf("owned discard drops = %v, want [0]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[ownedBodyID]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
 		t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[pendingBodyID]); !slices.Equal(got, []string{"resource"}) {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
 		t.Fatalf("preserving arm cleanup = %v, want [resource]", got)
 	}
 }
@@ -999,10 +1245,11 @@ fn consume(resource: Resource) {
 	if got := plan.MatchCarrierMoves[bodyID]; got != resource.ID {
 		t.Fatalf("match carrier move = %d, want %d", got, resource.ID)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {
+	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {
 		t.Fatalf("arm binding cleanup = %v, want [selected]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[ir.NodeID(fn.Body.ID())]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, fn.Body.ID())]); slices.Contains(got, "resource") {
 		t.Fatalf("consumed carrier remains in function cleanup: %v", got)
 	}
 }
@@ -1824,6 +2071,111 @@ fn main(flag: bool) {
 }`)
 	if !hasOwnershipCode(diag, diagnostics.ErrUseAfterMove) {
 		t.Fatalf("expected use-after-diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestForInRejectsMovedIterable(t *testing.T) {
+	result := checkOwnershipSource(t, `fn Take(_: []i32) {}
+fn bad(values: []i32) {
+	Take(values);
+	for value in values {}
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
+		t.Fatalf("expected moved iterable diagnostic, got:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestForInKeepsSequenceStorageSharedBorrowed(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "fixed mutation before break", src: `fn bad(mut values: [2]i32) {
+	for value in values {
+		values[0] = 3;
+		break;
+	}
+}`},
+		{name: "dynamic append before break", src: `fn bad(mut values: []i32) {
+	for value in values {
+		append(&mut values, 3);
+		break;
+	}
+}`},
+		{name: "dynamic move before break", src: `fn Take(_: []i32) {}
+fn bad(values: []i32) {
+	for value in values {
+		Take(values);
+		break;
+	}
+}`},
+		{name: "slice backing mutation before break", src: `fn bad(mut values: [2]i32) {
+	let view = values[..];
+	for value in view {
+		values[0] = 3;
+		break;
+	}
+}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := checkOwnershipSource(t, test.src)
+			if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+				t.Fatalf("expected iteration borrow conflict, got:\n%s", result.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestForInLoanEndsBeforeLoopExitStatements(t *testing.T) {
+	result := checkOwnershipSource(t, `fn valid(mut fixed: [2]i32, mut dynamic: []i32) {
+	for value in fixed { break; }
+	fixed[0] = 3;
+	for value in dynamic { break; }
+	append(&mut dynamic, 4);
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics after loop exits:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestForInLoanEndsBeforeReturnCleanup(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "fixed", src: `fn valid(values: [2]i32) {
+	for value in values { return; }
+}`},
+		{name: "dynamic", src: `fn valid(values: []i32) {
+	for value in values { return; }
+}`},
+		{name: "slice", src: `fn valid(values: &[..]i32) {
+	for value in values { return; }
+}`},
+		{name: "nested", src: `fn valid(first: [2]i32, second: []i32) {
+	for outer in first {
+		for inner in second { return; }
+	}
+}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := checkOwnershipSource(t, test.src)
+			if result.HasErrors() {
+				t.Fatalf("unexpected return cleanup diagnostics:\n%s", result.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestForInReturnExpressionStillUsesActiveLoan(t *testing.T) {
+	result := checkOwnershipSource(t, `fn invalid(values: []i32) -> []i32 {
+	for value in values { return values; }
+	return []i32{};
+}`)
+	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
+		t.Fatalf("expected return expression borrow conflict, got:\n%s", result.EmitAllToString())
 	}
 }
 

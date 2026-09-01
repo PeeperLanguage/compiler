@@ -1,0 +1,7 @@
+name = "negative_for_sequence_requirements"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["for-in requires addressable array storage", "for-in requires copyable sequence elements"]

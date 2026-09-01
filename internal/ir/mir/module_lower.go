@@ -127,7 +127,9 @@ func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.R
 		}
 		statements := make(map[ir.NodeID]hir.Stmt)
 		hir.InspectStmt(hirFn.Body, func(stmt hir.Stmt) bool {
-			statements[hir.NodeIDOf(stmt)] = stmt
+			if id := hir.NodeIDOf(stmt); id != 0 {
+				statements[id] = stmt
+			}
 			return true
 		})
 		fn, ok := lowerCFGFunction(out, hirFn, graph, statements, ownership[hirFn.NodeID])
@@ -207,6 +209,7 @@ func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, sta
 			}
 		}
 	}
+	// Loop segments have no AST sites; CFG block origin places their execution.
 	for _, source := range graph.Blocks {
 		block := blocks[source]
 		if block == nil {
@@ -217,6 +220,29 @@ func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, sta
 		if entry, found := l.variantEntries[source]; found && !l.lowerVariantBindings(entry) {
 			return nil, false
 		}
+		if forStmt, ok := statements[source.NodeID].(*hir.For); ok {
+			var segment *hir.Block
+			switch source.Origin {
+			case cfg.BlockLoopInit:
+				segment = forStmt.Init
+			case cfg.BlockLoopBody:
+				segment = forStmt.Bindings
+			case cfg.BlockLoopLatch:
+				segment = forStmt.Next
+			}
+			if segment != nil {
+				for _, stmt := range segment.Stmts {
+					if binding, ok := stmt.(*hir.Binding); ok && binding.SymbolID != 0 {
+						l.symbolValues[binding.SymbolID] = &RefName{Name: binding.Name, Type: binding.Type, Location: binding.Location}
+					}
+				}
+				for _, stmt := range segment.Stmts {
+					if !l.lowerCFGStmt(stmt) {
+						return nil, false
+					}
+				}
+			}
+		}
 		for _, site := range source.Sites {
 			switch site.Kind {
 			case cfg.SiteStatement:
@@ -226,7 +252,7 @@ func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, sta
 			case cfg.SiteScopeExit:
 				if l.cleanup != nil {
 					l.location = site.Location
-					l.appendPlannedDrops(l.cleanup.AfterScope[site.NodeID], &block.Instrs)
+					l.appendPlannedDrops(l.cleanup.AfterScope[site.ID], &block.Instrs)
 				}
 			}
 		}

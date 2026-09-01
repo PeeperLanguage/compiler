@@ -707,8 +707,8 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		return &typeinfo.InvalidType{}
 	}
 	if isStringSequence(baseType) {
-		c.checkRangeBound(scope, rangeIndex.Start)
-		c.checkRangeBound(scope, rangeIndex.End)
+		c.checkRangeBound(scope, rangeIndex.Start, typeinfo.DefaultIntegerType())
+		c.checkRangeBound(scope, rangeIndex.End, typeinfo.DefaultIntegerType())
 		return &typeinfo.RefType{Target: &typeinfo.StringType{}}
 	}
 	elem, shape, ok := indexableSequence(baseType)
@@ -717,8 +717,8 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 			"slicing requires array or slice value"))
 		return &typeinfo.InvalidType{}
 	}
-	c.checkRangeBound(scope, rangeIndex.Start)
-	c.checkRangeBound(scope, rangeIndex.End)
+	c.checkRangeBound(scope, rangeIndex.Start, typeinfo.DefaultIntegerType())
+	c.checkRangeBound(scope, rangeIndex.End, typeinfo.DefaultIntegerType())
 	exprType := func(expr ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, expr, nil)
 	}
@@ -796,19 +796,20 @@ func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, 
 	return nil, 0, false
 }
 
-func (c *checker) checkRangeBound(scope *symbols.Scope, expr ast.Expr) {
+func (c *checker) checkRangeBound(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	if c == nil || expr == nil {
-		return
+		return nil
 	}
-	boundType := c.typeExpr(scope, expr, typeinfo.DefaultIntegerType())
+	boundType := c.typeExpr(scope, expr, expected)
 	boundType = c.requireValueType(expr, boundType, "range bound")
 	if typeinfo.IsInvalidOrUnknown(boundType) {
-		return
+		return boundType
 	}
 	if !typeinfo.IsIntegral(boundType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(expr,
 			"range bound must be an integer"))
 	}
+	return boundType
 }
 
 func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expected typeinfo.Type) typeinfo.Type {

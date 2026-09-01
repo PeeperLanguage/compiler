@@ -49,6 +49,37 @@ func TestInspectStmtTraversesStructuredChildren(t *testing.T) {
 	}
 }
 
+func TestForHIRKeepsGeneratedSegmentsInTraversalAndText(t *testing.T) {
+	loop := &For{
+		Init:     &Block{Stmts: []Stmt{&Binding{Name: "cursor"}}},
+		Cond:     &ir.Ident{Name: "more"},
+		Bindings: &Block{Stmts: []Stmt{&Binding{Name: "value"}}},
+		Body:     &Block{NodeID: 6, Stmts: []Stmt{&ExprStmt{Value: &ir.Ident{Name: "work"}, NodeID: 7}}},
+		Next:     &Block{Stmts: []Stmt{&Assign{Target: &ir.Place{Root: &ir.Ident{Name: "cursor"}}, Value: &ir.Ident{Name: "next"}}}},
+		NodeID:   1,
+	}
+	visited := make([]NodeID, 0)
+	InspectStmt(loop, func(stmt Stmt) bool {
+		visited = append(visited, NodeIDOf(stmt))
+		return true
+	})
+	wantVisited := []NodeID{1, 0, 0, 0, 0, 6, 7, 0, 0}
+	if len(visited) != len(wantVisited) {
+		t.Fatalf("visited loop nodes = %v, want %v", visited, wantVisited)
+	}
+	for index := range wantVisited {
+		if visited[index] != wantVisited[index] {
+			t.Fatalf("visited loop nodes = %v, want %v", visited, wantVisited)
+		}
+	}
+	var text strings.Builder
+	loop.appendText(&text, 0)
+	wantText := "for more {\n  init {\n    let cursor\n  }\n  bindings {\n    let value\n  }\n  work\n  next {\n    cursor = next\n  }\n}\n"
+	if got := text.String(); got != wantText {
+		t.Fatalf("loop text = %q, want %q", got, wantText)
+	}
+}
+
 func TestSwitchVariantHIRKeepsCaseBlocksAndText(t *testing.T) {
 	switchStmt := &SwitchVariant{
 		Value: &ir.Ident{Name: "status"},

@@ -1,0 +1,18 @@
+enum Resource {
+    Owned: { value: *i32 },
+    Pending
+}
+
+fn Invalid(resource: Resource, start: i32, end: i32) {
+    for i in start..end {
+        match resource {
+            Resource::Owned with { value = owned } => {
+                free(owned);
+                break;
+            }
+            Resource::Pending => {
+                break;
+            }
+        }
+    }
+}

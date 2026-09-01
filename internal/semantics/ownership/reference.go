@@ -23,6 +23,7 @@ type referenceLoan struct {
 	origins []place.Origin
 	mutable bool
 	site    ast.Node
+	loop    ast.NodeID
 }
 
 type symbolUse struct {
@@ -76,9 +77,17 @@ func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
 	for _, use := range a.symbolUseSequence(node, referenceHoldingSymbol) {
 		ctx.remaining[use.symbol]++
 	}
-	for sym, keepingAlive := range a.symbolLiveIn[node.cfgSite.ID] {
-		value, tracked := st.references[sym]
-		if !tracked {
+	for sym, value := range st.references {
+		keepingAlive, live := a.symbolLiveIn[node.cfgSite.ID][sym]
+		if !live {
+			for _, loan := range value {
+				if loan.loop != 0 {
+					live = true
+					break
+				}
+			}
+		}
+		if !live {
 			continue
 		}
 		for _, loan := range value {
@@ -516,7 +525,7 @@ func sameReferenceLoans(left, right []referenceLoan) bool {
 			return false
 		}
 		rightLoan := right[index]
-		if leftLoan.mutable != rightLoan.mutable || leftLoan.site != rightLoan.site ||
+		if leftLoan.mutable != rightLoan.mutable || leftLoan.site != rightLoan.site || leftLoan.loop != rightLoan.loop ||
 			!place.SameOrigins(leftLoan.origins, rightLoan.origins) {
 			return false
 		}

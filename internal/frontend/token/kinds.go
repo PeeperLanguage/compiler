@@ -92,6 +92,7 @@ const (
 	RAWPTR   Kind = "rawptr"
 	AS       Kind = "as"
 	IS       Kind = "is"
+	IN       Kind = "in"
 	WITH     Kind = "with"
 	MUT      Kind = "mut"
 	ATOMIC   Kind = "atomic"

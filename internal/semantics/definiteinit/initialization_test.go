@@ -38,7 +38,10 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
 	module.TypedASTNodes = ast.Index(module.AST)
-	module.CFG = cfg.BuildModule(module.AST, module.Semantics.MatchCases)
+	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
+		MatchCases:          module.Semantics.MatchCases,
+		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+	})
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
 		t.Fatal("choose function symbol missing")
@@ -122,6 +125,31 @@ func TestInitializationLoopMayExecuteZeroTimes(t *testing.T) {
 }`)
 	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
 		t.Fatalf("expected uninitialized diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestInitializationUsesGuaranteedRangeEntry(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		rangeText string
+		wantError bool
+	}{
+		{name: "guaranteed entry", rangeText: "0..1"},
+		{name: "empty range", rangeText: "0..0", wantError: true},
+		{name: "runtime range", rangeText: "start..end", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag, _ := analyzeInitializationSource(t, `fn choose(start: i32, end: i32) -> i32 {
+	let mut value: i32;
+	for item in `+test.rangeText+` {
+		value = item;
+	}
+	return value;
+}`)
+			if got := hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable); got != test.wantError {
+				t.Fatalf("uninitialized diagnostic = %v, want %v:\n%s", got, test.wantError, diag.EmitAllToString())
+			}
+		})
 	}
 }
 

@@ -107,6 +107,7 @@ type SemanticInfo struct {
 	CompilerCalls         map[ast.NodeID]CompilerCall
 	StringConcatenations  map[ast.NodeID]struct{}
 	VariantConstructions  map[ast.NodeID]VariantConstruction
+	ForIterations         map[ast.NodeID]ForIteration
 	OperationFunctions    []*symbols.Symbol
 }
 
@@ -117,6 +118,29 @@ type VariantConstruction struct {
 	Case     int
 	Payload  typeinfo.Type
 	Value    ast.Expr
+}
+
+type ForIterationKind uint8
+
+const (
+	ForIterationRange ForIterationKind = iota
+	ForIterationSequence
+)
+
+// ForIteration is typechecker-owned evidence consumed by HIR lowering.
+// Generated symbols carry hidden loop state; source bindings remain body-scoped.
+type ForIteration struct {
+	Kind            ForIterationKind
+	GuaranteedEntry bool
+
+	ElementType typeinfo.Type
+	CarrierType typeinfo.Type
+	Carrier     *symbols.Symbol
+	Cursor      *symbols.Symbol
+	End         *symbols.Symbol
+	Ordinal     *symbols.Symbol
+	Index       *symbols.Symbol
+	Value       *symbols.Symbol
 }
 
 // CompilerCall is typechecker-owned dispatch evidence consumed by HIR.
@@ -172,12 +196,23 @@ func NewSemanticInfo() *SemanticInfo {
 		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
 		StringConcatenations:     make(map[ast.NodeID]struct{}),
 		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
+		ForIterations:            make(map[ast.NodeID]ForIteration),
 		OperationFunctions:       make([]*symbols.Symbol, 0),
 	}
 }
 
 // MatchCases exposes resolved case indexes without leaking match artifacts
 // into CFG's source-topology package.
+// ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
+// body before its first condition check.
+func (s *SemanticInfo) ForLoopGuaranteedEntry(id ast.NodeID) bool {
+	if s == nil {
+		return false
+	}
+	iteration, found := s.ForIterations[id]
+	return found && iteration.GuaranteedEntry
+}
+
 func (s *SemanticInfo) MatchCases(id ast.NodeID) ([]int, bool) {
 	if s == nil {
 		return nil, false

@@ -4,18 +4,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/target"
 	"compiler/pkg/peeper"
 )
 
@@ -29,7 +35,7 @@ func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *p
 	}
 }
 
-func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string) *diagnostics.DiagnosticBag {
+func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string, afterRun ...func(*project.Module)) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const preludePath = "core/global" + peeper.SourceExt
 	const entryPath = "entry" + peeper.SourceExt
@@ -52,6 +58,9 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	for _, inspect := range afterRun {
+		inspect(entry)
 	}
 	return diag
 }
@@ -139,6 +148,217 @@ fn invalid(point: Point) {
 		}
 	}
 	t.Fatalf("expected use-after-move diagnostic from constant false branch, got:\n%s", diag.EmitAllToString())
+}
+
+func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
+	for _, test := range []struct {
+		arch     string
+		typeText string
+		llvmType string
+	}{
+		{arch: "386", typeText: "u32", llvmType: "i32"},
+		{arch: "amd64", typeText: "u64", llvmType: "i64"},
+	} {
+		t.Run(test.arch, func(t *testing.T) {
+			targetInfo, err := target.New("linux", test.arch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir:    ".",
+				Extension:  peeper.SourceExt,
+				TargetOS:   "linux",
+				TargetArch: test.arch,
+			}, "", `fn main() {
+	let items = [1]i32{1};
+	for index, value in items {}
+}`, func(entry *project.Module) {
+				if entry.HIR == nil || entry.MIR == nil || len(entry.HIR.Funcs) != 1 || len(entry.HIR.Funcs[0].Body.Stmts) != 2 {
+					t.Fatalf("pipeline artifacts missing: HIR=%v MIR=%v", entry.HIR != nil, entry.MIR != nil)
+				}
+				loop, ok := entry.HIR.Funcs[0].Body.Stmts[1].(*hir.For)
+				if !ok || loop.Init == nil || len(loop.Init.Stmts) != 2 || loop.Bindings == nil || len(loop.Bindings.Stmts) != 2 {
+					t.Fatalf("loop = %#v, want sequence segments", entry.HIR.Funcs[0].Body.Stmts[1])
+				}
+				cursor := loop.Init.Stmts[1].(*hir.Binding)
+				index := loop.Bindings.Stmts[0].(*hir.Binding)
+				if gotCursor, gotIndex := entry.HIR.Types.Text(cursor.Type), entry.HIR.Types.Text(index.Type); gotCursor != test.typeText || gotIndex != test.typeText {
+					t.Fatalf("cursor/index types = %s/%s, want %s/%s", gotCursor, gotIndex, test.typeText, test.typeText)
+				}
+				indexValue, ok := index.Value.(*ir.Ident)
+				if !ok || indexValue.Type != cursor.Type {
+					t.Fatalf("index binding = %#v, want direct cursor value", index)
+				}
+				cond, ok := loop.Cond.(*ir.Binary)
+				if !ok {
+					t.Fatalf("condition = %#v, want binary bounds check", loop.Cond)
+				}
+				length, ok := cond.Right.(*ir.Len)
+				if !ok || cond.Left.TypeID() != cursor.Type || length.Type != cursor.Type {
+					t.Fatalf("condition = %#v, want target-sized cursor and length", cond)
+				}
+
+				refType := func(ref mir.ValueRef) ir.TypeID {
+					switch value := ref.(type) {
+					case *mir.RefConst:
+						return value.Type
+					case *mir.RefName:
+						return value.Type
+					default:
+						return ir.InvalidType
+					}
+				}
+				foundCompare := false
+				foundIndexMove := false
+				foundProjection := false
+				for _, function := range entry.MIR.Funcs {
+					for _, block := range function.Blocks {
+						for _, instruction := range block.Instrs {
+							assign, ok := instruction.(*mir.Assign)
+							if !ok {
+								continue
+							}
+							switch value := assign.Value.(type) {
+							case *mir.Binary:
+								if value.Op == "<" && refType(value.Left) == cursor.Type && refType(value.Right) == cursor.Type {
+									foundCompare = true
+								}
+							case *mir.Move:
+								if assign.Name == index.Name && value.Type == cursor.Type && refType(value.Src) == cursor.Type {
+									foundIndexMove = true
+								}
+							case *mir.Load:
+								if value.Place != nil && len(value.Place.Projections) == 1 && value.Place.Projections[0].Kind == mir.PlaceProjectionIndex &&
+									refType(value.Place.Projections[0].Index) == cursor.Type {
+									foundProjection = true
+								}
+							}
+						}
+					}
+				}
+				if !foundCompare || !foundIndexMove || !foundProjection {
+					t.Fatalf("MIR target-width evidence missing: compare=%v index=%v projection=%v\n%s", foundCompare, foundIndexMove, foundProjection, entry.MIR.Text())
+				}
+				if !strings.Contains(entry.LLVMIR, "icmp ult "+test.llvmType) || strings.Contains(entry.LLVMIR, "trunc i64") {
+					t.Fatalf("LLVM index width invalid for %s:\n%s", test.arch, entry.LLVMIR)
+				}
+				clang, err := exec.LookPath("clang")
+				if err != nil {
+					t.Skip("clang unavailable for LLVM IR validation")
+				}
+				cmd := exec.Command(clang, "-target", targetInfo.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "for-loop.o"), "-")
+				cmd.Stdin = strings.NewReader(entry.LLVMIR)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s for-loop LLVM is invalid: %v\n%s\n%s", test.arch, err, output, entry.LLVMIR)
+				}
+			})
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn main() {
+	for i in 0..3 {
+		let first = alloc(i);
+		if i == 0 { continue; }
+		let second = alloc(i);
+		if i == 1 { break; }
+	}
+}`, func(entry *project.Module) {
+		fn := entry.AST.Stmts[0].(*ast.FnDecl)
+		loop := fn.Body.Stmts[0].(*ast.ForStmt)
+		continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
+		breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
+		graph := entry.CFG.Function(ir.NodeID(fn.ID()))
+		if graph == nil || entry.MIR == nil {
+			t.Fatalf("pipeline artifacts missing: CFG=%v MIR=%v", graph != nil, entry.MIR != nil)
+		}
+
+		var continueExit, breakExit, fallthroughExit cfg.SiteID
+		var continueFound, breakFound, fallthroughFound bool
+		for _, block := range graph.Blocks {
+			if block == nil || !block.Reachable {
+				continue
+			}
+			var exit *cfg.Site
+			hasContinue := false
+			hasBreak := false
+			for _, site := range block.Sites {
+				if site == nil {
+					continue
+				}
+				hasContinue = hasContinue || site.NodeID == ir.NodeID(continueStmt.ID())
+				hasBreak = hasBreak || site.NodeID == ir.NodeID(breakStmt.ID())
+				if site.Kind == cfg.SiteScopeExit && site.NodeID == ir.NodeID(loop.Body.ID()) {
+					exit = site
+				}
+			}
+			if exit == nil {
+				continue
+			}
+			switch {
+			case hasContinue:
+				continueExit, continueFound = exit.ID, true
+			case hasBreak:
+				breakExit, breakFound = exit.ID, true
+			default:
+				fallthroughExit, fallthroughFound = exit.ID, true
+			}
+		}
+		if !continueFound || !breakFound || !fallthroughFound {
+			t.Fatalf("loop exits missing: continue=%v break=%v fallthrough=%v", continueFound, breakFound, fallthroughFound)
+		}
+
+		var mirFn *mir.Function
+		for _, function := range entry.MIR.Funcs {
+			if function.Name == "main" {
+				mirFn = function
+				break
+			}
+		}
+		if mirFn == nil {
+			t.Fatal("main MIR function missing")
+		}
+		dropNames := func(blockID int) []string {
+			var names []string
+			for _, block := range mirFn.Blocks {
+				if block.ID != blockID {
+					continue
+				}
+				for _, instruction := range block.Instrs {
+					drop, ok := instruction.(*mir.Drop)
+					if !ok {
+						continue
+					}
+					name, ok := drop.Value.(*mir.RefName)
+					if !ok {
+						t.Fatalf("drop value = %#v, want named owner", drop.Value)
+					}
+					names = append(names, strings.SplitN(name.Name, "$", 2)[0])
+				}
+			}
+			return names
+		}
+		for _, test := range []struct {
+			name string
+			site cfg.SiteID
+			want []string
+		}{
+			{name: "continue", site: continueExit, want: []string{"first"}},
+			{name: "break", site: breakExit, want: []string{"second", "first"}},
+			{name: "fallthrough", site: fallthroughExit, want: []string{"second", "first"}},
+		} {
+			if got := dropNames(test.site.Block); !slices.Equal(got, test.want) {
+				t.Fatalf("%s MIR drops = %v, want %v\n%s", test.name, got, test.want, entry.MIR.Text())
+			}
+		}
+	})
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
 }
 
 func TestPipelineRequiresBuildEntrypoint(t *testing.T) {

@@ -3,9 +3,11 @@ package typechecker
 import (
 	"fmt"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -81,6 +83,10 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ForStmt:
+		if node.Iterable != nil {
+			c.checkForInStmt(scope, node, returnType)
+			return
+		}
 		if node.Cond != nil {
 			condType := c.typeExpr(scope, node.Cond, nil)
 			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
@@ -90,7 +96,21 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		if c.siteOnly {
 			return
 		}
+		c.loopDepth++
 		c.checkBlock(scope, node.Body, returnType)
+		c.loopDepth--
+	case *ast.BreakStmt, *ast.ContinueStmt:
+		if c.siteOnly {
+			return
+		}
+		if c.loopDepth == 0 {
+			jump := "break"
+			if _, ok := stmt.(*ast.ContinueStmt); ok {
+				jump = "continue"
+			}
+			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+				jump+" outside loop", ast.LocOf(stmt), "`"+jump+"` exits or restarts the innermost for loop")
+		}
 	case *ast.MatchStmt:
 		c.checkMatchStmt(scope, node, returnType)
 	case *ast.ExprStmt:
@@ -477,6 +497,170 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 		sym.BindType(declType)
 	} else {
 		sym.BindType(valType)
+	}
+}
+
+// checkForInStmt types a `for x in iterable` loop. The iterable may be a range
+// expression or an indexable sequence; strings are rejected because string
+// element access requires an explicit as_bytes/as_chars view.
+func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, returnType typeinfo.Type) {
+	indexType := typeinfo.DefaultIntegerType()
+	evidence := project.ForIteration{}
+	if node.Index != nil {
+		evidence.Index = c.module.Semantics.ResolvedSymbols[node.Index.ID()]
+	}
+	if node.Value != nil {
+		evidence.Value = c.module.Semantics.ResolvedSymbols[node.Value.ID()]
+	}
+	valid := node.Value != nil && node.Value.Name != "" && evidence.Value != nil
+	if node.Index != nil && (node.Index.Name == "" || evidence.Index == nil) {
+		valid = false
+	}
+
+	var elemType typeinfo.Type
+	if rangeExpr, ok := node.Iterable.(*ast.RangeExpr); ok {
+		evidence.Kind = project.ForIterationRange
+		if !rangeExpr.EndExclusive {
+			valid = false
+			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "for range requires an exclusive end; use `..` instead of `..=`"))
+		}
+		_, badStart := rangeExpr.Start.(*ast.BadExpr)
+		if rangeExpr.Start == nil || badStart {
+			valid = false
+			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires a start bound"))
+		}
+		_, badEnd := rangeExpr.End.(*ast.BadExpr)
+		if rangeExpr.End == nil || badEnd {
+			valid = false
+			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires an end bound"))
+		}
+
+		defaultType := typeinfo.DefaultIntegerType()
+		startNumber, startLiteral := rangeExpr.Start.(*ast.NumberLit)
+		endNumber, endLiteral := rangeExpr.End.(*ast.NumberLit)
+		startUntyped := startLiteral && startNumber.ExplicitType == ""
+		endUntyped := endLiteral && endNumber.ExplicitType == ""
+		var startType, endType typeinfo.Type
+		if startUntyped && !endUntyped {
+			endType = c.checkRangeBound(scope, rangeExpr.End, defaultType)
+			startType = c.checkRangeBound(scope, rangeExpr.Start, endType)
+		} else {
+			startType = c.checkRangeBound(scope, rangeExpr.Start, defaultType)
+			endExpected := defaultType
+			if endUntyped && !typeinfo.IsInvalidOrUnknown(startType) {
+				endExpected = startType
+			}
+			endType = c.checkRangeBound(scope, rangeExpr.End, endExpected)
+		}
+		if typeinfo.IsInvalidOrUnknown(startType) || typeinfo.IsInvalidOrUnknown(endType) ||
+			!typeinfo.IsIntegral(startType) || !typeinfo.IsIntegral(endType) {
+			valid = false
+		} else {
+			elemType = typeinfo.CommonNumericType(startType, endType)
+			if elemType == nil || !typeinfo.IsIntegral(elemType) {
+				valid = false
+				c.ctx.Diagnostics.Add(typeMismatchError(rangeExpr,
+					"range bounds of type "+typeinfo.TypeText(startType)+" and "+typeinfo.TypeText(endType)+" have no common integer type"))
+			} else {
+				if !c.assignable(elemType, startType, rangeExpr.Start) || !c.assignable(elemType, endType, rangeExpr.End) {
+					valid = false
+				}
+			}
+		}
+		if valid {
+			startValue, startFound := consteval.EvaluateExpr(c.ctx, c.module, scope, rangeExpr.Start, elemType)
+			endValue, endFound := consteval.EvaluateExpr(c.ctx, c.module, scope, rangeExpr.End, elemType)
+			start, startIntegral := startValue.(*constvalue.IntConst)
+			end, endIntegral := endValue.(*constvalue.IntConst)
+			if startFound && endFound && startIntegral && endIntegral && start.Int().Cmp(end.Int()) < 0 {
+				evidence.GuaranteedEntry = true
+			}
+		}
+		evidence.ElementType = elemType
+	} else {
+		evidence.Kind = project.ForIterationSequence
+		var ok bool
+		indexType, ok = typeinfo.NumericTypeFromName("usize", c.ctx.Target)
+		if !ok {
+			panic("missing builtin usize type")
+		}
+		iterableType := c.typeExpr(scope, node.Iterable, nil)
+		iterableType = c.requireValueType(node.Iterable, iterableType, "iterable")
+
+		if typeinfo.IsInvalidOrUnknown(iterableType) {
+			valid = false
+		} else if isStringSequence(iterableType) {
+			valid = false
+			c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
+				"string iteration requires `value |> as_bytes()` or `value |> as_chars()`"))
+		} else if elem, shape, ok := indexableSequence(iterableType); ok {
+			elemType = elem
+			if shape == indexableFixedArray || shape == indexableDynamicArray {
+				exprType := func(expr ast.Expr) typeinfo.Type {
+					return c.typeExpr(scope, expr, nil)
+				}
+				if !place.Addressable(scope, node.Iterable, exprType, c.expandedDefaultBinding) {
+					valid = false
+					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
+						"for-in requires addressable array storage"))
+				}
+			}
+			if !typeinfo.IsImplicitCopyType(elem) {
+				valid = false
+				c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
+					"for-in requires copyable sequence elements; iterate indexes and borrow move-only elements explicitly"))
+			}
+			if _, array := typeinfo.Underlying(iterableType).(*typeinfo.ArrayType); array {
+				evidence.CarrierType = &typeinfo.RefType{Target: iterableType}
+			} else {
+				evidence.CarrierType = iterableType
+			}
+			evidence.ElementType = elem
+		} else {
+			valid = false
+			c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
+				"cannot iterate over "+typeinfo.TypeText(iterableType)))
+		}
+	}
+	if node.Index != nil {
+		c.bindLoopVariable(node.Index, indexType)
+	}
+	if node.Value != nil {
+		c.bindLoopVariable(node.Value, elemType)
+	}
+	if c.siteOnly {
+		return
+	}
+	delete(c.module.Semantics.ForIterations, node.ID())
+	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
+		location := ast.LocOf(node)
+		evidence.Cursor = symbols.New("$for.cursor", symbols.SymbolVar, nil, location)
+		if evidence.Kind == project.ForIterationRange {
+			evidence.Cursor.BindType(elemType)
+			evidence.End = symbols.New("$for.end", symbols.SymbolVar, nil, location)
+			evidence.End.BindType(elemType)
+			if node.Index != nil {
+				evidence.Ordinal = symbols.New("$for.ordinal", symbols.SymbolVar, nil, location)
+				evidence.Ordinal.BindType(indexType)
+			}
+		} else {
+			evidence.Cursor.BindType(indexType)
+			evidence.Carrier = symbols.New("$for.carrier", symbols.SymbolVar, nil, location)
+			evidence.Carrier.BindType(evidence.CarrierType)
+		}
+		c.module.Semantics.ForIterations[node.ID()] = evidence
+	}
+	c.loopDepth++
+	c.checkBlock(scope, node.Body, returnType)
+	c.loopDepth--
+}
+
+func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {
+	if typ == nil {
+		return
+	}
+	if sym := c.module.Semantics.ResolvedSymbols[name.ID()]; sym != nil {
+		sym.BindType(typ)
 	}
 }
 

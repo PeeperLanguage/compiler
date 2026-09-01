@@ -60,6 +60,10 @@ func (p *Parser) parseStmt(isModuleLevel bool) ast.Stmt {
 		stmt = p.parseIfStmt()
 	case token.FOR:
 		stmt = p.parseForStmt()
+	case token.BREAK:
+		stmt = p.parseLoopJumpStmt(token.BREAK)
+	case token.CONTINUE:
+		stmt = p.parseLoopJumpStmt(token.CONTINUE)
 	case token.MATCH:
 		stmt = p.parseMatchStmt()
 	case token.RETURN:
@@ -180,9 +184,36 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	if start == nil {
 		return nil
 	}
-	var cond ast.Expr
+	var index, value *ast.Ident
+	var iterable, cond ast.Expr
 	if !p.at(token.LBRACE) {
-		cond = p.parseExprWithControlHeader(precLowest, true)
+		head := p.parseExprWithControlHeader(precLowest, true)
+		switch {
+		case head != nil && p.at(token.IN):
+			p.advance()
+			iterable = p.parseIndexOperand()
+			value = p.forInBindingName(head)
+		case head != nil && p.at(token.COMMA):
+			// `for i, v in expr` — comma commits to the two-binding form even
+			// when recovery must preserve an invalid header for later phases.
+			p.advance()
+			index = p.forInBindingName(head)
+			value = p.parseIdent()
+			if value == nil {
+				current := p.current()
+				value = reg(p, &ast.Ident{Name: "", Location: source.NewLocation(p.filePath, current.Start, current.End)})
+			}
+			if p.match(token.IN) {
+				iterable = p.parseIndexOperand()
+			} else {
+				p.consume(token.IN, "expected 'in' after loop variables")
+				current := p.current()
+				iterable = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, current.Start, current.End)})
+				p.synchronize(token.LBRACE)
+			}
+		default:
+			cond = head
+		}
 	}
 	var body *ast.BlockStmt
 	if p.at(token.LBRACE) {
@@ -190,11 +221,16 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	}
 	if body == nil {
 		prev := p.lastNonNilToken(*start)
-		if cond != nil {
+		if iterable != nil {
+			prev.End = ast.EndOf(iterable)
+		} else if cond != nil {
 			prev.End = ast.EndOf(cond)
 		}
 		p.diag.Add(diagnostics.NewError("missing for body").WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "expected '{' here"))
 		return reg(p, &ast.ForStmt{
+			Index:    index,
+			Value:    value,
+			Iterable: iterable,
 			Cond:     cond,
 			Location: source.NewLocation(p.filePath, start.Start, prev.End),
 		})
@@ -204,10 +240,44 @@ func (p *Parser) parseForStmt() ast.Stmt {
 		endTok.End = *ast.LocOf(body).End
 	}
 	return reg(p, &ast.ForStmt{
+		Index:    index,
+		Value:    value,
+		Iterable: iterable,
 		Cond:     cond,
 		Body:     body,
 		Location: source.NewLocation(p.filePath, start.Start, endTok.End),
 	})
+}
+
+// forInBindingName converts the leading expression of a for-in header into a
+// loop binding name. Non-identifier heads get a diagnostic and a registered
+// recovery binding so later phase maps retain unique node IDs.
+func (p *Parser) forInBindingName(head ast.Expr) *ast.Ident {
+	if ident, ok := head.(*ast.Ident); ok {
+		return ident
+	}
+	p.diag.Add(diagnostics.NewError("invalid loop variable").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(ast.LocOf(head), "expected an identifier before 'in'"))
+	return reg(p, &ast.Ident{Name: "", Location: ast.LocOf(head)})
+}
+
+// parseLoopJumpStmt parses `break;` / `continue;`. Loop labels are parsed and
+// rejected so the diagnostic points at the label instead of a generic syntax
+// error; labeled jumps are planned for a later release.
+func (p *Parser) parseLoopJumpStmt(kind token.Kind) ast.Stmt {
+	start := p.consume(kind, "expected "+string(kind))
+	if start == nil {
+		return nil
+	}
+	if p.at(token.IDENT) {
+		label := p.advance()
+		p.diag.Add(diagnostics.NewError("labeled "+string(kind)+" is not supported yet").WithCode(diagnostics.ErrInvalidStatement).WithPrimaryLabel(source.NewLocation(p.filePath, label.Start, label.End), "loop labels are planned for a later release"))
+	}
+	p.consume(token.SEMICOLON, "")
+	loc := source.NewLocation(p.filePath, start.Start, start.End)
+	if kind == token.BREAK {
+		return reg(p, &ast.BreakStmt{Location: loc})
+	}
+	return reg(p, &ast.ContinueStmt{Location: loc})
 }
 
 func (p *Parser) parseMatchStmt() ast.Stmt {

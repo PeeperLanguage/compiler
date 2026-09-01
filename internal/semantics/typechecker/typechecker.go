@@ -16,6 +16,7 @@ type checker struct {
 	payloadContext      int
 	optionalTestContext int
 	wholeCarrierExpr    ast.Expr
+	loopDepth           int
 }
 
 // Concrete references convert to satisfied interface borrows, while owned

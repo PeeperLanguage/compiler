@@ -1,0 +1,4 @@
+fn Invalid() {
+    let values = [2]i32{1, 2};
+    for index, in values {}
+}

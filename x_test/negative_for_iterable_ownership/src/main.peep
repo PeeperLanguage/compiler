@@ -1,0 +1,14 @@
+fn Take(_: []i32) {}
+
+fn Moved() {
+    let values = []i32{1, 2};
+    Take(values);
+    for value in values {}
+}
+
+fn Mutated() {
+    let mut values = []i32{1, 2};
+    for value in values {
+        values |> append(3);
+    }
+}

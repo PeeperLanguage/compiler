@@ -1,0 +1,7 @@
+name = "negative_for_iterable_ownership"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0034", "value used after move", "T0037"]

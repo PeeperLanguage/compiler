@@ -34,6 +34,41 @@ func TestApplyTypedExpressionFoldingPreservesConstantBranches(t *testing.T) {
 	}
 }
 
+func TestApplyTypedExpressionFoldingFoldsAllForSegments(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	add := func(left, right string) ir.Expr {
+		return &ir.Binary{Op: "+", Left: &ir.IntLit{Value: left, Type: i32}, Right: &ir.IntLit{Value: right, Type: i32}, Type: i32}
+	}
+	loop := &hir.For{
+		Init:     &hir.Block{NodeID: 2, Stmts: []hir.Stmt{&hir.Binding{Value: add("1", "1")}}},
+		Cond:     &ir.Binary{Op: "<", Left: add("1", "1"), Right: &ir.IntLit{Value: "3", Type: i32}, Type: types.Intern(ir.Type{Kind: ir.TypeBool})},
+		Bindings: &hir.Block{NodeID: 3, Stmts: []hir.Stmt{&hir.Binding{Value: add("2", "2")}}},
+		Body:     &hir.Block{NodeID: 4, Stmts: []hir.Stmt{&hir.ExprStmt{Value: add("3", "3")}}},
+		Next:     &hir.Block{NodeID: 5, Stmts: []hir.Stmt{&hir.Assign{Target: &ir.Place{Root: &ir.Ident{Name: "cursor", Type: i32}, Type: i32}, Value: add("4", "4")}}},
+		NodeID:   1,
+	}
+	mod := &hir.Module{Types: types, Funcs: []*hir.Function{{Name: "main", Body: &hir.Block{Stmts: []hir.Stmt{loop}}}}}
+
+	out := ApplyTypedExpressionFolding(mod)
+	folded := out.Funcs[0].Body.Stmts[0].(*hir.For)
+	values := []ir.Expr{
+		folded.Init.Stmts[0].(*hir.Binding).Value,
+		folded.Bindings.Stmts[0].(*hir.Binding).Value,
+		folded.Body.Stmts[0].(*hir.ExprStmt).Value,
+		folded.Next.Stmts[0].(*hir.Assign).Value,
+	}
+	for index, value := range values {
+		literal, ok := value.(*ir.IntLit)
+		if !ok || literal.Value != []string{"2", "4", "6", "8"}[index] {
+			t.Fatalf("folded segment %d = %#v", index, value)
+		}
+	}
+	if folded.Init.NodeID != 2 || folded.Bindings.NodeID != 3 || folded.Body.NodeID != 4 || folded.Next.NodeID != 5 {
+		t.Fatalf("folded loop segment identities = %#v", folded)
+	}
+}
+
 func TestApplyTypedExpressionFoldingPreservesStatementsAfterReturn(t *testing.T) {
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
