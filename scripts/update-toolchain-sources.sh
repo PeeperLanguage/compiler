@@ -156,4 +156,17 @@ if [ "$musl_version" != "$current_musl_version" ]; then
     "https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT?h=v$musl_version"
 fi
 
-jq -S . "$candidate" > "$output_lock"
+# Canonical serialization: logical key order, optional signature_url last among
+# asset identity fields. Must stay byte-stable so no-change runs produce an
+# identical file instead of a formatting-only diff.
+jq '
+  {
+    schema_version: .schema_version,
+    kind: .kind,
+    assets: [.assets[] |
+      ({id, version, url, size, sha256} +
+       (if .signature_url then {signature_url} else {} end) +
+       {license, license_url})
+    ]
+  }
+' "$candidate" > "$output_lock"
