@@ -68,6 +68,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          {
+            echo "Updates stable upstream toolchain source metadata from official releases."
+            echo
+            echo "Auto-generated from workflow run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            cat candidate-sources.lock.json.summary
+            echo
+            echo "### Risk notes"
+            echo "- Candidate builds run on merge; failure leaves the finished toolchain lock unchanged."
+            echo "- Review upstream changelogs for changed sources before merging."
+            echo
+            echo "### Validation"
+            echo "- [ ] Candidate toolchain builds pass (triggered on merge)"
+          } > pr-body.md
           branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
           mv candidate-sources.lock.json toolchains/toolchain-sources.lock.json
           git config user.name "itsfuad"
@@ -80,4 +94,6 @@ jobs:
             --base main \
             --head "$branch" \
             --title "Update toolchain sources" \
-            --body "Updates stable upstream toolchain source metadata from official releases. Merging this PR builds only affected immutable toolchains. Failed candidate builds leave the current finished toolchain lock unchanged."
+            --label "Toolchain Update" \
+            --reviewer itsfuad \
+            --body-file pr-body.md

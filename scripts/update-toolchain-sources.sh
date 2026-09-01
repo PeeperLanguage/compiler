@@ -15,6 +15,10 @@ temporary_root="$(mktemp -d)"
 trap 'rm -rf "$temporary_root"' EXIT
 candidate="$temporary_root/toolchain-sources.lock.json"
 cp "$current_lock" "$candidate"
+changed_summary="$temporary_root/changed.md"
+unchanged_summary="$temporary_root/unchanged.md"
+: > "$changed_summary"
+: > "$unchanged_summary"
 
 read_release() {
   local repository="$1" override="$2" destination="$3"
@@ -36,6 +40,8 @@ release_asset() {
 
 replace_asset() {
   local id="$1" version="$2" url="$3" size="$4" sha256="$5" signature_url="$6" license_url="$7"
+  local previous updated
+  previous="$(jq -er --arg id "$id" '.assets[] | select(.id == $id) | .version' "$candidate")"
   local updated="$temporary_root/updated.json"
   jq \
     --arg id "$id" \
@@ -61,6 +67,11 @@ replace_asset() {
       end
     ' "$candidate" > "$updated"
   mv "$updated" "$candidate"
+  if [ "$previous" != "$version" ]; then
+    printf '| %s | %s | %s |\n' "$id" "$previous" "$version" >> "$changed_summary"
+  else
+    printf '| %s | %s |\n' "$id" "$previous" >> "$unchanged_summary"
+  fi
 }
 
 require_not_older() {
@@ -154,6 +165,8 @@ if [ "$musl_version" != "$current_musl_version" ]; then
     "$musl_sha256" \
     "" \
     "https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT?h=v$musl_version"
+else
+  printf '| musl-source | %s |\n' "$current_musl_version" >> "$unchanged_summary"
 fi
 
 # Canonical serialization: logical key order, optional signature_url last among
@@ -170,3 +183,12 @@ jq '
     ]
   }
 ' "$candidate" > "$output_lock"
+
+# PR summary fragment: survives the temp-dir cleanup trap, consumed by the
+# update workflow when composing the pull request body.
+{
+  printf '### Changed\n\n| Source | From | To |\n|---|---|---|\n'
+  cat "$changed_summary"
+  printf '\n### Unchanged\n\n| Source | Version |\n|---|---|\n'
+  cat "$unchanged_summary"
+} > "$output_lock.summary"
