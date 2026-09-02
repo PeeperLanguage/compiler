@@ -468,7 +468,26 @@ func (r *resolver) lookupImportedMember(qualifierNode, memberNode *ast.Ident, si
 		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(site), "use of unexported symbol").
 			WithSecondaryLabel(resolved.Symbol.Location, "defined here").
 			WithNote("symbols with uppercase are exported otherwise private")
+		r.reportGlobalQualifier(resolved.Symbol, qualifier, site)
 		return nil, false
 	}
+	r.reportGlobalQualifier(resolved.Symbol, qualifier, site)
 	return resolved.Symbol, true
+}
+
+// reportGlobalQualifier notes when a qualified name is the exact symbol already
+// injected into global scope, so the `alias::` prefix adds nothing. Comparing
+// symbol identity rather than name keeps a same-named unrelated export quiet.
+func (r *resolver) reportGlobalQualifier(sym *symbols.Symbol, qualifier string, site ast.Node) {
+	if sym == nil || r.ctx == nil || r.ctx.GlobalScope == nil {
+		return
+	}
+	global, found := r.ctx.GlobalScope.Lookup(sym.Name)
+	if !found || global == nil || global.ID != sym.ID {
+		return
+	}
+	r.ctx.Diagnostics.Add(diagnostics.NewInfo("`"+sym.Name+"` is already in scope without `"+qualifier+"::`").
+		WithCode(diagnostics.InfoRedundantGlobalQualifier).
+		WithPrimaryLabel(ast.LocOf(site), "drop the `"+qualifier+"::` prefix").
+		WithNote("global symbols are always in scope"))
 }

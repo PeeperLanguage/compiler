@@ -474,6 +474,93 @@ fn main() -> i32 {
 	}
 }
 
+// preludeQualifierPipeline compiles one entry against a real temp library root so
+// `core:` imports resolve for real, and returns the resulting diagnostics.
+func preludeQualifierPipeline(t *testing.T, libraryFile, librarySrc, entrySrc string) *diagnostics.DiagnosticBag {
+	t.Helper()
+	root := t.TempDir()
+	libraryBase := filepath.Join(root, "libs")
+	libraryPath := filepath.Join(libraryBase, "core", peeper.SourceDirName, libraryFile+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(libraryPath), 0o755); err != nil {
+		t.Fatalf("mkdir library: %v", err)
+	}
+	if err := os.WriteFile(libraryPath, []byte(librarySrc), 0o644); err != nil {
+		t.Fatalf("write library: %v", err)
+	}
+	entryPath := filepath.Join(root, "entry"+peeper.SourceExt)
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:        root,
+		Extension:      peeper.SourceExt,
+		LibraryBaseDir: libraryBase,
+	}, diag)
+	// Production loads the prelude in the driver; do the same so global symbols
+	// reach global scope and redundant qualification is observable.
+	if err := prelude.Load(ctx); err != nil {
+		t.Fatalf("load prelude: %v", err)
+	}
+	entry := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
+		FilePath: entryPath,
+		Content:  entrySrc,
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	return diag
+}
+
+func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPipelineNotesRedundantPreludeImportAndQualifier(t *testing.T) {
+	diag := preludeQualifierPipeline(t, "global", `fn Ping() -> i32 {
+	return 7;
+}
+`, `import "core:global";
+
+fn main() -> i32 {
+	return global::Ping() - 7;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("redundant prelude use must stay compilable:\n%s", diag.EmitAllToString())
+	}
+	if !hasDiagnosticCode(diag, diagnostics.InfoRedundantPreludeImport) {
+		t.Fatalf("explicit prelude import produced no style note:\n%s", diag.EmitAllToString())
+	}
+	if !hasDiagnosticCode(diag, diagnostics.InfoRedundantGlobalQualifier) {
+		t.Fatalf("global-qualified prelude symbol produced no style note:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineKeepsOrdinaryLibraryQualifierQuiet(t *testing.T) {
+	// A non-prelude library is qualified legitimately, so neither style note applies.
+	diag := preludeQualifierPipeline(t, "util", `fn Helper() -> i32 {
+	return 3;
+}
+`, `import "core:util";
+
+fn main() -> i32 {
+	return util::Helper() - 3;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("ordinary library import failed:\n%s", diag.EmitAllToString())
+	}
+	if hasDiagnosticCode(diag, diagnostics.InfoRedundantPreludeImport) {
+		t.Fatalf("ordinary import reported as automatic:\n%s", diag.EmitAllToString())
+	}
+	if hasDiagnosticCode(diag, diagnostics.InfoRedundantGlobalQualifier) {
+		t.Fatalf("ordinary qualifier reported as redundant:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineScalarShrinkOwnedParameterReservesForeignFree(t *testing.T) {
 	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
 

@@ -13,6 +13,7 @@ import (
 	"compiler/internal/graph"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 )
 
@@ -131,6 +132,14 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 		if existing, ok := module.Imports[alias]; ok && existing.ID != resolved.ID {
 			l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
+		}
+		// The prelude is injected into global scope for every module, so naming it
+		// in an import list adds nothing. Style note only: the import still works.
+		if resolved.ID == prelude.ModuleID(l.ctx) {
+			diag.Add(diagnostics.NewInfo("`"+rawPath+"` is imported automatically").
+				WithCode(diagnostics.InfoRedundantPreludeImport).
+				WithPrimaryLabel(ast.LocOf(imp), "remove this import").
+				WithNote("global symbols are always in scope without an import"))
 		}
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
