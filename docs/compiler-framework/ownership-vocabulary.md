@@ -119,6 +119,10 @@ Rules:
 
 ### 2.2 Use kind (per value use, published once by the typechecker)
 
+The `UseKind` vocabulary lives in `typeinfo` beside `OwnershipCapability`
+(the per-use counterpart of the per-type capability); the published map
+lives in the typecheck result:
+
 ```go
 type UseKind uint8
 
@@ -127,13 +131,8 @@ const (
     UseCopy                 // value copied; source unchanged
     UseMove                 // value consumed; source dead
 )
-```
 
-Published in `typecheckresult.Result`:
-
-```go
-// ValueUses classifies every ownership-relevant value use for one generation.
-// Ownership consumes this; it never re-derives from AST shape.
+// Published in typecheckresult.Result:
 ValueUses map[ast.NodeID]UseKind
 ```
 

@@ -277,7 +277,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 							armsByJoin[join] = make(map[ast.NodeID]struct{})
 						}
 						armsByJoin[join][arm.BodyID] = struct{}{}
-						movesByJoin[join] = movesByJoin[join] || matchArmMovesCarrier(arm)
+						movesByJoin[join] = movesByJoin[join] || arm.CarrierUse == typeinfo.UseMove
 						break
 					}
 					if len(joinNode.cfgSite.Successors) != 1 {
@@ -498,9 +498,9 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	case *ast.AssignStmt:
 		reference, hasReference := a.referenceValueForExpr(s.Value, st)
 		delete(a.cleanup.BeforeAssign, ir.NodeID(s.ID()))
-		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
+		a.checkExpr(scope, s.Value, st, typeinfo.UseMove, loans, false)
 		if _, ok := s.Target.(*ast.Ident); !ok {
-			a.checkExpr(scope, s.Target, st, useRead, loans, true)
+			a.checkExpr(scope, s.Target, st, typeinfo.UseRead, loans, true)
 			a.checkStorageAccess(s.Target, loans, storageMutate)
 			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
 				a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
@@ -527,27 +527,27 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	case *ast.ReturnStmt:
 		a.checkPointerEscape(scope, s.Value, st)
 		a.validateReferenceReturn(scope, s, st)
-		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
+		a.checkExpr(scope, s.Value, st, typeinfo.UseMove, loans, false)
 		releaseIterationLoans(st, loans, 0)
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
-		a.checkExpr(scope, s.Expr, st, useRead, loans, false)
+		a.checkExpr(scope, s.Expr, st, typeinfo.UseRead, loans, false)
 		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.NeedsDrop(a.exprType(s.Expr)) {
 			a.cleanup.DiscardedValue[ir.NodeID(s.Expr.ID())] = struct{}{}
 		}
 	case *ast.IfStmt:
-		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
+		a.checkExpr(scope, s.Cond, st, typeinfo.UseRead, loans, false)
 	case *ast.ForStmt:
 		if s.Iterable == nil {
-			a.checkExpr(scope, s.Cond, st, useRead, loans, false)
+			a.checkExpr(scope, s.Cond, st, typeinfo.UseRead, loans, false)
 			break
 		}
 		evidence, found := a.module.Typechecking.ForIterations[s.ID()]
 		if !found || evidence.Kind != typecheckresult.ForIterationSequence || evidence.Carrier == nil {
-			a.checkExpr(scope, s.Iterable, st, useRead, loans, false)
+			a.checkExpr(scope, s.Iterable, st, typeinfo.UseRead, loans, false)
 			break
 		}
-		a.checkExpr(scope, s.Iterable, st, useRead, loans, true)
+		a.checkExpr(scope, s.Iterable, st, typeinfo.UseRead, loans, true)
 		a.checkStorageAccess(s.Iterable, loans, storageSharedBorrow)
 		origins := a.originsForExpr(s.Iterable)
 		if ident, ok := s.Iterable.(*ast.Ident); ok {
@@ -564,7 +564,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 			}}
 		}
 	case *ast.MatchStmt:
-		a.checkExpr(scope, s.Subject, st, useRead, loans, false)
+		a.checkExpr(scope, s.Subject, st, typeinfo.UseRead, loans, false)
 	}
 }
 
@@ -584,7 +584,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if subject == nil {
 		return
 	}
-	movesCarrier := matchArmMovesCarrier(arm)
+	movesCarrier := arm.CarrierUse == typeinfo.UseMove
 	listed := make(map[int]bool, len(arm.Bindings))
 	for _, field := range arm.Bindings {
 		switch field.Projection {
@@ -661,15 +661,6 @@ func (a *analyzer) matchSubjectCarrier(match typecheckresult.Match) (ast.Expr, *
 	return subject, carrier
 }
 
-func matchArmMovesCarrier(arm typecheckresult.MatchArm) bool {
-	for _, field := range arm.Bindings {
-		if !typeinfo.IsImplicitCopyType(field.Type) {
-			return true
-		}
-	}
-	return false
-}
-
 func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
 	ids := make([]symbols.SymbolID, 0, len(values))
 	for _, sym := range values {
@@ -685,7 +676,7 @@ func (a *analyzer) applyBinding(scope *symbols.Scope, stmt ast.Stmt, value ast.E
 		return
 	}
 	reference, hasReference := a.referenceValueForExpr(value, st)
-	a.checkExpr(scope, value, st, useConsume, loans, false)
+	a.checkExpr(scope, value, st, typeinfo.UseMove, loans, false)
 	sym, found := scope.LookupNode(stmt)
 	if !found || sym == nil {
 		return

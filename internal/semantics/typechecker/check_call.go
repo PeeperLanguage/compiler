@@ -123,6 +123,11 @@ func (c *checker) typeFromBytesCall(scope *symbols.Scope, node *ast.CallExpr, de
 		panic("missing from_bytes signature")
 	}
 	c.module.Typechecking.ExprTypes[node.Callee.ID()] = fnType
+	for i, arg := range node.Args {
+		if i < len(fnType.Params) {
+			c.publishValueUse(arg, fnType.Params[i])
+		}
+	}
 	bytesType := c.typeExpr(scope, node.Args[0], fnType.Params[0])
 	if !typeinfo.IsInvalidOrUnknown(bytesType) && !typeinfo.SameType(bytesType, fnType.Params[0]) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
@@ -251,8 +256,29 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 			c.ctx.Diagnostics.Add(d)
 		}
 	}
+	if c.module != nil && c.module.Typechecking != nil {
+		c.module.Typechecking.ValueUses[node.Args[0].ID()] = typeinfo.UseMove
+		if len(node.Args) > 1 {
+			c.module.Typechecking.ValueUses[node.Args[1].ID()] = typeinfo.UseRead
+		}
+	}
 
 	return &typeinfo.OwnedPtrType{Target: valueType}
+}
+
+// publishValueUse records the ownership use kind a parameter position imposes
+// on its argument, keyed by the argument expression the ownership analyzer
+// walks. Reference parameters publish UseRead: the kind is recorded for
+// completeness, while the borrow machinery in ownership still governs them.
+func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
+	if c == nil || arg == nil || paramType == nil || c.module == nil || c.module.Typechecking == nil {
+		return
+	}
+	use := typeinfo.UseMove
+	if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference || typeinfo.IsImplicitCopyType(paramType) {
+		use = typeinfo.UseRead
+	}
+	c.module.Typechecking.ValueUses[arg.ID()] = use
 }
 
 func (c *checker) checkOptionalAllocatorArity(scope *symbols.Scope, node *ast.CallExpr) bool {
@@ -392,6 +418,10 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 		paramType := fnType.Params[i]
 		if paramType == nil {
 			continue
+		}
+		c.publishValueUse(implicitExpr, paramType)
+		if argIndex >= 0 {
+			c.publishValueUse(argExpr, paramType)
 		}
 		if implicitExpr != nil && c.acceptImplicitCallArgument(scope, implicitExpr, argType, paramType) {
 			c.module.Typechecking.ImplicitCallArguments[implicitExpr.ID()] = paramType

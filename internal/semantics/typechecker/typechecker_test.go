@@ -22,6 +22,129 @@ import (
 	"compiler/pkg/peeper"
 )
 
+func TestCheckCallPublishesValueUses(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Box { value: i32 }
+fn Take(box: Box) -> i32 { return box.value; }
+fn Read(v: i32) -> i32 { return v; }
+fn Borrow(b: &Box) -> i32 { return b.value; }
+fn main() -> i32 {
+	let stack = .Box { value = 1 };
+	let copied = Read(5);
+	let borrowed = Borrow(&stack);
+	let moved = Take(stack);
+	return copied + borrowed + moved;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	type callUse struct {
+		param int
+		use   typeinfo.UseKind
+		found bool
+	}
+	walk := func(visit func(ast.Node) bool) {
+		for _, stmt := range module.AST.Stmts {
+			ast.Inspect(stmt, visit)
+		}
+	}
+	uses := make(map[string][]callUse)
+	walk(func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		callee, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		for _, arg := range call.Args {
+			kind, found := module.Typechecking.ValueUses[arg.ID()]
+			uses[callee.Name] = append(uses[callee.Name], callUse{use: kind, found: found})
+		}
+		return true
+	})
+	for _, arg := range uses["Read"] {
+		if !arg.found || arg.use != typeinfo.UseRead {
+			t.Fatalf("copyable parameter argument = %+v, want published UseRead", arg)
+		}
+	}
+	for _, arg := range uses["Take"] {
+		if !arg.found || arg.use != typeinfo.UseMove {
+			t.Fatalf("owned parameter argument = %+v, want published UseMove", arg)
+		}
+	}
+	for _, arg := range uses["Borrow"] {
+		if !arg.found || arg.use != typeinfo.UseRead {
+			t.Fatalf("reference parameter argument = %+v, want published UseRead", arg)
+		}
+	}
+	if len(uses["Take"]) != 1 || len(uses["Read"]) != 1 || len(uses["Borrow"]) != 1 {
+		t.Fatalf("unexpected call counts: %#v", uses)
+	}
+}
+
+func TestCheckAllocPublishesConsumingUse(t *testing.T) {
+	module, diag := checkTypeModule(t, `fn main() -> i32 {
+	let heap = alloc(7);
+	return 0;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	published := 0
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			lit, ok := node.(*ast.NumberLit)
+			if !ok {
+				return true
+			}
+			kind, found := module.Typechecking.ValueUses[lit.ID()]
+			if !found {
+				return true
+			}
+			published++
+			if kind != typeinfo.UseMove {
+				t.Fatalf("alloc operand = %v, want UseMove", kind)
+			}
+			return true
+		})
+	}
+	if published != 1 {
+		t.Fatalf("alloc operand published uses = %d, want 1", published)
+	}
+}
+
+func TestCheckMatchPublishesCarrierUse(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Box { value: i32 }
+enum Resource {
+	Owned: { box: Box },
+	Free,
+}
+fn main() -> i32 {
+	let resource = Resource::Owned with .{ box = .Box { value = 1 } };
+	match resource {
+		Resource::Owned with { box = b } => { return b.value; }
+		Resource::Free => { return 0; }
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if len(module.Typechecking.Matches) != 1 {
+		t.Fatalf("published matches = %d, want 1", len(module.Typechecking.Matches))
+	}
+	for _, match := range module.Typechecking.Matches {
+		for _, arm := range match.Arms {
+			if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
+				t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
+			}
+			if arm.Case == 1 && arm.CarrierUse != typeinfo.UseRead {
+				t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
+			}
+		}
+	}
+}
+
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const filePath = "typechecker_test" + peeper.SourceExt

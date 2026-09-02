@@ -12,19 +12,11 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-type useKind uint8
-
-const (
-	useRead useKind = iota
-	useCopy
-	useConsume
-)
-
 func (a *analyzer) checkExpr(
 	scope *symbols.Scope,
 	expr ast.Expr,
 	st state,
-	use useKind,
+	use typeinfo.UseKind,
 	loans *loanContext,
 	projectionBase bool,
 ) {
@@ -61,8 +53,8 @@ func (a *analyzer) checkExpr(
 			return
 		}
 		_, slicing := e.Index.(*ast.RangeExpr)
-		a.checkExpr(scope, e.Expr, st, useRead, loans, true)
-		a.checkExpr(scope, e.Index, st, useRead, loans, false)
+		a.checkExpr(scope, e.Expr, st, typeinfo.UseRead, loans, true)
+		a.checkExpr(scope, e.Index, st, typeinfo.UseRead, loans, false)
 		if !projectionBase {
 			access := storageAccessForUse(a.exprType(e), use)
 			if slicing {
@@ -79,7 +71,7 @@ func (a *analyzer) checkExpr(
 		if a.planProjectionBaseDrop(e, e.Expr) {
 			return
 		}
-		if use != useRead && ownershipTrackedType(a.exprType(e)) {
+		if use != typeinfo.UseRead && ownershipTrackedType(a.exprType(e)) {
 			if a.partialVariantPayloadMove(e) {
 				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 					"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(e), "")
@@ -89,36 +81,36 @@ func (a *analyzer) checkExpr(
 				"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", ast.LocOf(e), "")
 		}
 	case *ast.RangeExpr:
-		a.checkExpr(scope, e.Start, st, useRead, loans, false)
-		a.checkExpr(scope, e.End, st, useRead, loans, false)
+		a.checkExpr(scope, e.Start, st, typeinfo.UseRead, loans, false)
+		a.checkExpr(scope, e.End, st, typeinfo.UseRead, loans, false)
 	case *ast.StructLit:
 		a.checkLiteralFields(scope, e.Fields, st, loans)
 	case *ast.VariantLit:
-		a.checkExpr(scope, e.Payload, st, useConsume, loans, false)
+		a.checkExpr(scope, e.Payload, st, typeinfo.UseMove, loans, false)
 	case *ast.ArrayLit:
 		for _, value := range e.Values {
-			a.checkExpr(scope, value, st, useConsume, loans, false)
+			a.checkExpr(scope, value, st, typeinfo.UseMove, loans, false)
 		}
 	case *ast.CallExpr:
 		a.checkCall(scope, e, st, loans)
 	case *ast.FreeExpr:
-		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
+		a.checkExpr(scope, e.Expr, st, typeinfo.UseMove, loans, false)
 	case *ast.PrintExpr:
-		a.checkExpr(scope, e.Expr, st, useRead, loans, false)
+		a.checkExpr(scope, e.Expr, st, typeinfo.UseRead, loans, false)
 	case *ast.UnaryExpr:
-		a.checkExpr(scope, e.Expr, st, useRead, loans, false)
+		a.checkExpr(scope, e.Expr, st, typeinfo.UseRead, loans, false)
 	case *ast.BinaryExpr:
 		if _, concat := a.module.Typechecking.StringConcatenations[e.ID()]; concat {
-			a.checkExpr(scope, e.Left, st, useConsume, loans, false)
-			a.checkExpr(scope, e.Right, st, useRead, loans, false)
+			a.checkExpr(scope, e.Left, st, typeinfo.UseMove, loans, false)
+			a.checkExpr(scope, e.Right, st, typeinfo.UseRead, loans, false)
 			return
 		}
-		a.checkExpr(scope, e.Left, st, useRead, loans, false)
-		a.checkExpr(scope, e.Right, st, useRead, loans, false)
+		a.checkExpr(scope, e.Left, st, typeinfo.UseRead, loans, false)
+		a.checkExpr(scope, e.Right, st, typeinfo.UseRead, loans, false)
 	case *ast.IsExpr:
-		a.checkExpr(scope, e.Value, st, useRead, loans, false)
+		a.checkExpr(scope, e.Value, st, typeinfo.UseRead, loans, false)
 	case *ast.AsExpr:
-		a.checkExpr(scope, e.Expr, st, useConsume, loans, false)
+		a.checkExpr(scope, e.Expr, st, typeinfo.UseMove, loans, false)
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit, *ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		return
 	default:
@@ -128,7 +120,7 @@ func (a *analyzer) checkExpr(
 
 func (a *analyzer) checkLiteralFields(scope *symbols.Scope, fields []ast.StructLitField, st state, loans *loanContext) {
 	for _, field := range fields {
-		a.checkExpr(scope, field.Value, st, useConsume, loans, false)
+		a.checkExpr(scope, field.Value, st, typeinfo.UseMove, loans, false)
 	}
 }
 
@@ -142,20 +134,20 @@ func (a *analyzer) checkAddressExpr(
 	if expr == nil {
 		return
 	}
-	a.checkExpr(scope, expr.Expr, st, useRead, loans, true)
+	a.checkExpr(scope, expr.Expr, st, typeinfo.UseRead, loans, true)
 	if expr.Mode != ast.AddressRaw {
 		a.checkStorageAccess(expr.Expr, loans, access)
 	}
 }
 
-func storageAccessForUse(typ typeinfo.Type, use useKind) storageAccess {
-	if use == useConsume && ownershipTrackedType(typ) {
+func storageAccessForUse(typ typeinfo.Type, use typeinfo.UseKind) storageAccess {
+	if use == typeinfo.UseMove && ownershipTrackedType(typ) {
 		return storageConsume
 	}
 	return storageRead
 }
 
-func (a *analyzer) checkIdent(scope *symbols.Scope, ident *ast.Ident, st state, use useKind) {
+func (a *analyzer) checkIdent(scope *symbols.Scope, ident *ast.Ident, st state, use typeinfo.UseKind) {
 	if scope == nil || ident == nil {
 		return
 	}
@@ -183,7 +175,7 @@ func (a *analyzer) checkIdent(scope *symbols.Scope, ident *ast.Ident, st state, 
 		return
 	}
 	switch use {
-	case useCopy:
+	case typeinfo.UseCopy:
 		if symType, ok := symbols.GetSymbolType(sym); ok {
 			if _, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && mutable {
 				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -193,7 +185,7 @@ func (a *analyzer) checkIdent(scope *symbols.Scope, ident *ast.Ident, st state, 
 		}
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires a consuming context", ast.LocOf(ident), "")
-	case useConsume:
+	case typeinfo.UseMove:
 		st.moved[sym] = ident
 		delete(st.live, sym)
 	}
@@ -203,17 +195,17 @@ func (a *analyzer) checkSelector(
 	scope *symbols.Scope,
 	selector *ast.SelectorExpr,
 	st state,
-	use useKind,
+	use typeinfo.UseKind,
 	loans *loanContext,
 ) {
 	if selector == nil {
 		return
 	}
-	a.checkExpr(scope, selector.Expr, st, useRead, loans, true)
+	a.checkExpr(scope, selector.Expr, st, typeinfo.UseRead, loans, true)
 	if a.planProjectionBaseDrop(selector, selector.Expr) {
 		return
 	}
-	if use == useRead {
+	if use == typeinfo.UseRead {
 		return
 	}
 	if ownershipTrackedType(a.exprType(selector)) {
@@ -260,16 +252,12 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 		}
 		return
 	}
-	a.checkExpr(scope, call.Callee, st, useRead, loans, false)
+	a.checkExpr(scope, call.Callee, st, typeinfo.UseRead, loans, false)
 	if ident, ok := call.Callee.(*ast.Ident); ok && ident != nil {
 		sym := a.module.Bindings.NodeSymbols[ident.ID()]
 		if sym != nil && sym.CompilerOp == symbols.CompilerOpAlloc {
-			for i, arg := range args {
-				use := useRead
-				if i == 0 {
-					use = useConsume
-				}
-				a.checkExpr(scope, arg, st, use, loans, false)
+			for _, arg := range args {
+				a.checkExpr(scope, arg, st, a.publishedUse(arg, nil), loans, false)
 			}
 			return
 		}
@@ -281,7 +269,7 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 			fn := definition.Signature(nil, a.ctx.Target)
 			for i, arg := range args {
 				if i >= len(fn.Params) {
-					a.checkExpr(scope, arg, st, useRead, loans, false)
+					a.checkExpr(scope, arg, st, typeinfo.UseRead, loans, false)
 					continue
 				}
 				a.checkCallArgument(scope, arg, fn.Params[i], call, st, loans)
@@ -292,7 +280,7 @@ func (a *analyzer) checkCall(scope *symbols.Scope, call *ast.CallExpr, st state,
 	fn, ok := a.exprType(call.Callee).(*typeinfo.FuncType)
 	if !ok || fn == nil || len(args) != len(fn.Params) {
 		for _, arg := range args {
-			a.checkExpr(scope, arg, st, useRead, loans, false)
+			a.checkExpr(scope, arg, st, typeinfo.UseRead, loans, false)
 		}
 		return
 	}
@@ -313,17 +301,17 @@ func (a *analyzer) checkMethodCall(
 	fn, ok := a.exprType(selector).(*typeinfo.FuncType)
 	if !ok || fn == nil || selector == nil || call == nil {
 		if selector != nil {
-			a.checkExpr(scope, selector.Expr, st, useRead, loans, false)
+			a.checkExpr(scope, selector.Expr, st, typeinfo.UseRead, loans, false)
 		}
 		for _, arg := range args {
-			a.checkExpr(scope, arg, st, useRead, loans, false)
+			a.checkExpr(scope, arg, st, typeinfo.UseRead, loans, false)
 		}
 		return false
 	}
 	a.checkCallArgument(scope, selector.Expr, fn.Params[0], call, st, loans)
 	if len(args)+1 != len(fn.Params) {
 		for _, arg := range args {
-			a.checkExpr(scope, arg, st, useRead, loans, false)
+			a.checkExpr(scope, arg, st, typeinfo.UseRead, loans, false)
 		}
 		return false
 	}
@@ -343,11 +331,7 @@ func (a *analyzer) checkCallArgument(
 ) {
 	_, mutable, reference := typeinfo.ReferenceValueTarget(paramType)
 	if !reference {
-		use := useConsume
-		if typeinfo.IsImplicitCopyType(paramType) {
-			use = useRead
-		}
-		a.checkExpr(scope, arg, st, use, loans, false)
+		a.checkExpr(scope, arg, st, a.publishedUse(arg, paramType), loans, false)
 		return
 	}
 	access := storageSharedBorrow
@@ -357,7 +341,7 @@ func (a *analyzer) checkCallArgument(
 	if explicitBorrow, explicit := arg.(*ast.AddressExpr); explicit {
 		a.checkAddressExpr(scope, explicitBorrow, st, loans, access)
 	} else {
-		a.checkExpr(scope, arg, st, useRead, loans, true)
+		a.checkExpr(scope, arg, st, typeinfo.UseRead, loans, true)
 		a.checkStorageAccess(arg, loans, access)
 	}
 	origins := a.originsForExpr(arg)
@@ -379,6 +363,23 @@ func (a *analyzer) checkCallArgument(
 		return
 	}
 	loans.addTemporary([]referenceLoan{loan}, call)
+}
+
+// publishedUse maps the typechecker's published use kind for this argument
+// publishedUse resolves the ownership use kind for one value use: the
+// typechecker's published classification when present, otherwise the
+// capability fallback for diagnostics-continued paths. The ownership
+// validator will enforce presence for error-free programs.
+func (a *analyzer) publishedUse(arg ast.Expr, paramType typeinfo.Type) typeinfo.UseKind {
+	if a.module != nil && a.module.Typechecking != nil {
+		if kind, ok := a.module.Typechecking.ValueUses[arg.ID()]; ok {
+			return kind
+		}
+	}
+	if paramType == nil || typeinfo.IsImplicitCopyType(paramType) {
+		return typeinfo.UseRead
+	}
+	return typeinfo.UseMove
 }
 
 func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {

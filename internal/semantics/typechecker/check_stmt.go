@@ -250,6 +250,14 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 				}
 			}
 		}
+		carrierUse := typeinfo.UseRead
+		for _, field := range armEvidence.Bindings {
+			if !typeinfo.IsImplicitCopyType(field.Type) {
+				carrierUse = typeinfo.UseMove
+				break
+			}
+		}
+		armEvidence.CarrierUse = carrierUse
 		evidence.Arms = append(evidence.Arms, armEvidence)
 		c.checkBlock(scope, arm.Body, returnType)
 	}

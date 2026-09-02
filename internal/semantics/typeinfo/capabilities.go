@@ -445,3 +445,18 @@ func OwnershipCapabilityOf(t Type) OwnershipCapability {
 		return OwnershipCapability{Copy: CopyExplicit, Drop: drop}
 	}
 }
+
+// UseKind is the ownership classification of one value use: what happens to
+// the value at a specific expression, as decided by the typechecker and
+// consumed by ownership and lowering. It is the per-use counterpart of
+// OwnershipCapability: the capability constrains which use kinds are legal.
+type UseKind uint8
+
+const (
+	// UseRead: the value is observed; its owner keeps it.
+	UseRead UseKind = iota
+	// UseCopy: the value is duplicated; the source keeps it.
+	UseCopy
+	// UseMove: the value is consumed; the source is dead afterwards.
+	UseMove
+)

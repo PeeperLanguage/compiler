@@ -45,6 +45,10 @@ type MatchArm struct {
 	Case     int
 	Payload  typeinfo.Type
 	Bindings []MatchBinding
+	// CarrierUse is the published use kind applied to the match subject
+	// carrier when this arm is selected: UseMove when the arm binds any
+	// move-only payload part, UseRead when everything binds by copy.
+	CarrierUse typeinfo.UseKind
 }
 
 type MatchBinding struct {
@@ -115,6 +119,10 @@ type Result struct {
 	Matches                  map[ast.NodeID]Match
 	ForIterations            map[ast.NodeID]ForIteration
 	ExprTypes                map[ast.NodeID]typeinfo.Type
+	// ValueUses classifies every ownership-relevant value use, keyed by the
+	// used expression's node ID. Reference parameters publish UseRead; the
+	// borrow machinery in ownership still governs them.
+	ValueUses map[ast.NodeID]typeinfo.UseKind
 }
 
 func New() *Result {
@@ -131,6 +139,7 @@ func New() *Result {
 		Matches:                  make(map[ast.NodeID]Match),
 		ForIterations:            make(map[ast.NodeID]ForIteration),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
+		ValueUses:                make(map[ast.NodeID]typeinfo.UseKind),
 	}
 }
 
