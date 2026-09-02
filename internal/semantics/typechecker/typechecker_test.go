@@ -114,6 +114,40 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 	}
 }
 
+// Ownership reads the published kind for alloc rather than deriving it, and its
+// fallback for a missing entry is a read. An operand that produces no value type
+// exits typing early, so publication must already have happened by then or the
+// move is silently lost.
+func TestCheckAllocPublishesConsumingUseForUntypedOperand(t *testing.T) {
+	module, _ := checkTypeModule(t, `fn Nothing() {}
+
+fn main() -> i32 {
+	let heap = alloc(Nothing());
+	return 0;
+}`)
+	published := 0
+	for _, stmt := range module.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			kind, found := module.Typechecking.ValueUses[call.ID()]
+			if !found {
+				return true
+			}
+			published++
+			if kind != typeinfo.UseMove {
+				t.Fatalf("alloc operand = %v, want UseMove", kind)
+			}
+			return true
+		})
+	}
+	if published != 1 {
+		t.Fatalf("alloc operand published uses = %d, want 1", published)
+	}
+}
+
 func TestCheckMatchPublishesCarrierUse(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Box { value: i32 }
 enum Resource {

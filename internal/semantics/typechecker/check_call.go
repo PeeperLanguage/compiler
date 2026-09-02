@@ -230,6 +230,16 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 		return &typeinfo.InvalidType{}
 	}
 
+	// The intrinsic has no parameter types to classify against, so the use kinds
+	// are published from its own semantics, before any type-dependent exit: the
+	// analyzer consumes them on diagnostics-continued paths too.
+	if c.module != nil && c.module.Typechecking != nil {
+		c.module.Typechecking.ValueUses[node.Args[0].ID()] = typeinfo.UseMove
+		if len(node.Args) > 1 {
+			c.module.Typechecking.ValueUses[node.Args[1].ID()] = typeinfo.UseRead
+		}
+	}
+
 	valueType := c.typeExpr(scope, node.Args[0], nil)
 	if valueType == nil {
 		return &typeinfo.InvalidType{}
@@ -254,12 +264,6 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 					typeinfo.TypeText(allocatorValueType), typeinfo.TypeText(allocType)))
 			c.addInterfaceHint(d, allocType, allocatorValueType)
 			c.ctx.Diagnostics.Add(d)
-		}
-	}
-	if c.module != nil && c.module.Typechecking != nil {
-		c.module.Typechecking.ValueUses[node.Args[0].ID()] = typeinfo.UseMove
-		if len(node.Args) > 1 {
-			c.module.Typechecking.ValueUses[node.Args[1].ID()] = typeinfo.UseRead
 		}
 	}
 
