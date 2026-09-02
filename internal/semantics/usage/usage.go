@@ -26,7 +26,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 
 	// 2. Check for unused private module-level symbols (functions, types, constants, variables)
 	// Do not warn about prelude/global symbols since they represent a library
-	if module.ID != prelude.ModuleID() {
+	if module.ID != prelude.ModuleID(ctx) {
 		for _, sym := range module.ModuleScope.Symbols() {
 			if sym.Kind == symbols.SymbolImport {
 				continue

@@ -1,9 +1,11 @@
 package project
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir/cfg"
@@ -248,15 +250,23 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	}
 	module.FilePath = CanonicalPath(module.FilePath)
 	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
 
 	if previous := ctx.modules[module.ID]; previous != nil && previous.FilePath != "" && previous.FilePath != module.FilePath {
 		if ctx.fileIndex[previous.FilePath] == module.ID {
 			delete(ctx.fileIndex, previous.FilePath)
 		}
 	}
+	// One source file must not carry two logical identities. Import paths and
+	// library-root configuration can both reach this, so it is a user-facing
+	// diagnostic rather than an internal error. Keep the first registration.
 	if previousID, found := ctx.fileIndex[module.FilePath]; module.FilePath != "" && found && previousID != module.ID {
-		panic("module file registered with multiple identities")
+		ctx.mu.Unlock()
+		if ctx.Diagnostics != nil {
+			ctx.Diagnostics.AddError(diagnostics.ErrAmbiguousImport, fmt.Sprintf(
+				"module file %s is already registered as %s and cannot also be %s",
+				module.FilePath, previousID.ImportPath, module.ID.ImportPath), nil, "")
+		}
+		return
 	}
 	ctx.modules[module.ID] = module
 	if module.FilePath != "" {
@@ -267,6 +277,7 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 			ctx.typeDeclarations[identity] = module
 		}
 	}
+	ctx.mu.Unlock()
 }
 
 // ModuleByID resolves canonical module identity.

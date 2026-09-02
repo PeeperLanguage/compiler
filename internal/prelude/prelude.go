@@ -14,15 +14,33 @@ import (
 // Auto-loaded Peeper prelude file within the stdlib root.
 const GlobalPreludeFile = "global" + peeper.SourceExt
 
-func ModuleID() moduleid.ID {
-	return moduleid.ID{Origin: string(project.ModuleOriginStdlib), Namespace: "core", ImportPath: "prelude/global"}
+// Library namespace owning the auto-loaded prelude.
+const preludeNamespace = "core"
+
+// ModuleID derives canonical prelude identity from the resolved prelude file so
+// it matches what ResolveImportPath produces for the same source. A hardcoded
+// import path would register the file under an identity no import can reproduce.
+func ModuleID(ctx *project.CompilerContext) moduleid.ID {
+	preludePath, ok := globalPreludePath(ctx)
+	if !ok {
+		return moduleid.ID{}
+	}
+	importPath, err := ctx.ImportPathForFile(project.ModuleOriginStdlib, preludeNamespace, project.CanonicalPath(preludePath))
+	if err != nil {
+		return moduleid.ID{}
+	}
+	return moduleid.ID{
+		Origin:     string(project.ModuleOriginStdlib),
+		Namespace:  preludeNamespace,
+		ImportPath: importPath,
+	}
 }
 
 func globalPreludePath(ctx *project.CompilerContext) (string, bool) {
 	if ctx == nil {
 		return "", false
 	}
-	coreRoot, ok := ctx.LibraryRoot("core")
+	coreRoot, ok := ctx.LibraryRoot(preludeNamespace)
 	if !ok || coreRoot == "" {
 		return "", false
 	}
@@ -39,7 +57,7 @@ func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*pro
 		return nil, false
 	}
 	return &project.Module{
-		ID:              ModuleID(),
+		ID:              ModuleID(ctx),
 		FilePath:        preludePath,
 		Content:         content,
 		ContentProvided: true,

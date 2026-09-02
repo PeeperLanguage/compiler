@@ -152,11 +152,23 @@ still names these parameters `moduleKey`; it is deliberately identity-agnostic a
 that rename is outstanding terminology debt.
 
 Module construction derives identity once, in `CompilerContext.NewModuleForFile` or
-`prelude.ModuleID()`. `NewModuleForFile` returns nil when no import path can be
+`prelude.ModuleID(ctx)`. `NewModuleForFile` returns nil when no import path can be
 derived, so callers must establish project root containment first; `cmd/build.go`
 and both LSP entry paths do this through `manifest.ResolveSourceFileProject` and
 `manifest.PathWithinSourceDir`, and report a source-root diagnostic rather than an
 identity failure.
+
+Every identity must be derivable from the file it names. `prelude.ModuleID` resolves
+the prelude path and runs it back through `ImportPathForFile`, so the auto-loaded
+prelude registers under exactly the identity `ResolveImportPath` produces for an
+explicit `core:global` import. A hardcoded import path here registers the file under
+an identity no import can reproduce, and the same file then arrives twice under two
+identities.
+
+`AddModule` enforces one identity per file. That conflict is reachable from user
+source and from library-root configuration, so it emits an `ErrAmbiguousImport`
+diagnostic and keeps the first registration rather than panicking; identity
+conflicts are user-facing errors, not impossible states.
 
 ### Structural traversal
 

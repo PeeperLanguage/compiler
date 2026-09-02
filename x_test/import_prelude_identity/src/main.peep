@@ -1,0 +1,7 @@
+// The auto-loaded prelude must register under the same identity an explicit
+// import resolves to, so importing it directly stays a normal compile.
+import "core:global";
+
+fn main() -> i32 {
+    return 0;
+}

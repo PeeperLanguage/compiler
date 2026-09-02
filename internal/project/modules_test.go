@@ -54,6 +54,37 @@ func TestCompilerContextRejectsZeroModuleID(t *testing.T) {
 	}
 }
 
+func TestCompilerContextReportsConflictingFileIdentity(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := New(".", ".peep", diag)
+	const shared = "shared.peep"
+	firstID := moduleid.ID{Origin: "stdlib", Namespace: "core", ImportPath: "global"}
+	secondID := moduleid.ID{Origin: "stdlib", Namespace: "core", ImportPath: "prelude/global"}
+	first := &Module{ID: firstID, FilePath: shared}
+
+	ctx.AddModule(first)
+	ctx.AddModule(&Module{ID: secondID, FilePath: shared})
+
+	// Two identities for one file is reachable from imports and library-root
+	// configuration, so it must diagnose rather than abort the compiler.
+	found := false
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrAmbiguousImport {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("conflicting file identity produced no ambiguous-import diagnostic: %s", diag.EmitAllToString())
+	}
+	if got, ok := ctx.ModuleByFile(first.FilePath); !ok || got != first {
+		t.Fatal("first registration was not retained after identity conflict")
+	}
+	if _, ok := ctx.ModuleByID(secondID); ok {
+		t.Fatal("conflicting identity was registered")
+	}
+}
+
 func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
 	ctx := New(".", ".peep", nil)
 	firstID := moduleid.ID{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "value"}

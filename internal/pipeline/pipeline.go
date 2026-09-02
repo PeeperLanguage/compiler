@@ -51,7 +51,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 		scheduled: make(map[moduleid.ID]struct{}),
 	}
 	preludeID := moduleid.ID{}
-	if preludeMod, ok := ctx.ModuleByID(preludepkg.ModuleID()); ok {
+	if preludeMod, ok := ctx.ModuleByID(preludepkg.ModuleID(ctx)); ok {
 		if err := loader.Load(preludeMod); err != nil {
 			return err
 		}

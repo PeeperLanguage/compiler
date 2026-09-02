@@ -349,8 +349,8 @@ func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	if mod == nil {
 		t.Fatalf("expected compiled bundled library module")
 	}
-	if mod.ID != prelude.ModuleID() {
-		t.Fatalf("module ID = %#v, want canonical prelude ID %#v", mod.ID, prelude.ModuleID())
+	if mod.ID != prelude.ModuleID(ctx) {
+		t.Fatalf("module ID = %#v, want canonical prelude ID %#v", mod.ID, prelude.ModuleID(ctx))
 	}
 }
 

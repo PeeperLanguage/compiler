@@ -51,7 +51,7 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 
 	// Register the prelude so the pipeline loader can find it.
 	preludeModule := parseModuleSource(preludePath, preludeSrc, diag)
-	preludeModule.ID = prelude.ModuleID()
+	preludeModule.ID = prelude.ModuleID(ctx)
 	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
@@ -563,7 +563,7 @@ fn main() -> i32 {
 	}, diag)
 
 	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	preludeModule.ID = prelude.ModuleID()
+	preludeModule.ID = prelude.ModuleID(ctx)
 	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
@@ -605,7 +605,7 @@ fn main() -> i32 {
 	}, diag)
 
 	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	preludeModule.ID = prelude.ModuleID()
+	preludeModule.ID = prelude.ModuleID(ctx)
 	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
@@ -663,7 +663,7 @@ fn main() -> i32 {
 	}, diag)
 
 	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	preludeModule.ID = prelude.ModuleID()
+	preludeModule.ID = prelude.ModuleID(ctx)
 	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
@@ -760,7 +760,7 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	ctx := project.NewWithConfig(cfg, diag)
 
 	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	preludeModule.ID = prelude.ModuleID()
+	preludeModule.ID = prelude.ModuleID(ctx)
 	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)

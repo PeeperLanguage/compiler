@@ -1,0 +1,6 @@
+name = "import_prelude_identity"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"
