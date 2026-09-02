@@ -900,8 +900,8 @@ func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing Buffer type")
 	}
-	if !typeinfo.IsNoCopyType(typ) {
-		t.Fatalf("Buffer should default to no-copy")
+	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyNever {
+		t.Fatalf("Buffer should default to no-copy, got %v", got.Copy)
 	}
 }
 
@@ -964,8 +964,8 @@ func TestRawPointerFieldStructSupportsExplicitCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing View type")
 	}
-	if typeinfo.IsImplicitCopyType(typ) || typeinfo.IsNoCopyType(typ) {
-		t.Fatalf("View should implicitly and support explicit copy")
+	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyExplicit || got.Drop {
+		t.Fatalf("View should support explicit copy without drop, got %v", got)
 	}
 }
 

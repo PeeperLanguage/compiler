@@ -83,14 +83,17 @@ func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	if IsImplicitCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
 		t.Fatalf("struct should not copy implicitly")
 	}
-	if IsNoCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
-		t.Fatalf("scalar-only struct should support structural copy")
+	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "value", Type: i32}}}); got.Copy != CopyExplicit {
+		t.Fatalf("scalar-only struct should support structural copy, got %v", got.Copy)
 	}
-	if !IsNoCopyType(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}) {
-		t.Fatalf("owned pointer should propagate nocopy through struct")
+	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}); got.Copy != CopyNever || !got.Drop {
+		t.Fatalf("owned pointer should propagate nocopy and drop through struct, got %v", got)
 	}
-	if !IsNoCopyType(&ArrayType{Shape: ArrayOwner, Elem: i32}) {
-		t.Fatalf("dynamic array should be intrinsically nocopy")
+	if got := OwnershipCapabilityOf(&ArrayType{Shape: ArrayOwner, Elem: i32}); got.Copy != CopyNever || !got.Drop {
+		t.Fatalf("dynamic array should be intrinsically nocopy, got %v", got)
+	}
+	if got := OwnershipCapabilityOf(&NoneType{}); got.Copy != CopyImplicit {
+		t.Fatalf("none should copy implicitly, got %v", got.Copy)
 	}
 }
 
@@ -492,11 +495,11 @@ func TestNamedEnumPayloadCapabilitiesFollowEveryCaseField(t *testing.T) {
 		}}},
 	}}}
 
-	if !IsImplicitCopyType(copyable) || IsNoCopyType(copyable) || NeedsDrop(copyable) {
-		t.Fatal("scalar enum payload should remain copyable and require no drop")
+	if got := OwnershipCapabilityOf(copyable); got.Copy != CopyImplicit || got.Drop {
+		t.Fatalf("scalar enum payload should remain copyable and require no drop, got %v", got)
 	}
-	if IsImplicitCopyType(owned) || !IsNoCopyType(owned) || !NeedsDrop(owned) {
-		t.Fatal("owned enum payload should be move-only and require drop")
+	if got := OwnershipCapabilityOf(owned); got.Copy != CopyNever || !got.Drop {
+		t.Fatalf("owned enum payload should be move-only and require drop, got %v", got)
 	}
 	if IsSizedType(unsized) || IsLowerableType(unsized) {
 		t.Fatal("enum payload capabilities must reject unsized cases")

@@ -101,7 +101,7 @@ func IsImplicitCopyType(t Type) bool {
 			return check(defined.Underlying, enumPayload)
 		}
 		switch typ := Underlying(current).(type) {
-		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
+		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType, *NoneType:
 			return true
 		case *RefType:
 			return typ != nil && !typ.Mutable
@@ -207,7 +207,11 @@ func IsSizedType(t Type) bool {
 	return check(t)
 }
 
-func IsNoCopyType(t Type) bool {
+// noCopyType reports whether the type contains owned runtime state, so copies
+// are forbidden outright. It is the CopyNever half of the ownership capability
+// and is intentionally unexported: consumers classify through
+// OwnershipCapabilityOf instead of re-deriving.
+func noCopyType(t Type) bool {
 	seen := make(map[*DefinedType]bool)
 	var check func(Type) bool
 	check = func(current Type) bool {
@@ -217,6 +221,7 @@ func IsNoCopyType(t Type) bool {
 				return false
 			}
 			seen[typ] = true
+			defer delete(seen, typ)
 			return check(typ.Underlying)
 		}
 		switch typ := Underlying(current).(type) {
@@ -352,7 +357,7 @@ func IsLowerableType(t Type) bool {
 
 // NeedsDrop reports whether normal scope cleanup must destroy runtime-owned
 // state reachable through a value. Move-only borrows and plain composites do
-// not need destruction; this is intentionally narrower than IsNoCopyType.
+// not need destruction; this is intentionally narrower than noCopyType.
 func NeedsDrop(t Type) bool {
 	seen := make(map[*DefinedType]bool)
 	var check func(Type) bool
@@ -395,4 +400,48 @@ func NeedsDrop(t Type) bool {
 		return false
 	}
 	return check(t)
+}
+
+// CopyClass classifies how a value of a type may be duplicated.
+type CopyClass uint8
+
+const (
+	// CopyImplicit: a read use copies the value; it is never moved.
+	CopyImplicit CopyClass = iota
+	// CopyExplicit: a plain use moves the value; an explicit copy
+	// operation exists for types that want one.
+	CopyExplicit
+	// CopyNever: a plain use moves the value; no copy operation exists.
+	CopyNever
+)
+
+// OwnershipCapability is the single classification new code should consume:
+// how a type duplicates (Copy) and whether scope cleanup must destroy it
+// (Drop). It composes the established predicates, which remain the exact
+// behavioral source; this type exists so callers stop re-deriving decisions
+// from their negations.
+//
+// Deliberate asymmetries preserved from the current language semantics:
+//   - top-level structs and arrays never copy implicitly (bulk storage),
+//     while enum payloads of copyable fields do;
+//   - Interface values never copy implicitly but do not yet require source-
+//     level drop (owned-interface drop activation is tracked separately);
+//   - TypeParameterType is conservatively move-on-use until instantiation-
+//     aware capability queries arrive with generic support.
+type OwnershipCapability struct {
+	Copy CopyClass
+	Drop bool
+}
+
+// OwnershipCapabilityOf classifies a type's ownership behavior.
+func OwnershipCapabilityOf(t Type) OwnershipCapability {
+	drop := NeedsDrop(t)
+	switch {
+	case IsImplicitCopyType(t):
+		return OwnershipCapability{Copy: CopyImplicit, Drop: drop}
+	case noCopyType(t):
+		return OwnershipCapability{Copy: CopyNever, Drop: drop}
+	default:
+		return OwnershipCapability{Copy: CopyExplicit, Drop: drop}
+	}
 }
