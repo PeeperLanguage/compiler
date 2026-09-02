@@ -11,13 +11,11 @@ import (
 )
 
 // SemanticExportFingerprint identifies compiler-visible semantic facts exported by module.
-func SemanticExportFingerprint(module *Module) string {
+// Constant values resolve through their defining module, so an exported default that
+// references an imported constant still changes when that constant changes.
+func SemanticExportFingerprint(ctx *CompilerContext, module *Module) string {
 	if module == nil || module.ModuleScope == nil {
 		return ast.FingerprintParts(nil)
-	}
-	var moduleValues map[symbols.SymbolID]constvalue.Value
-	if module.Constants != nil {
-		moduleValues = module.Constants.ModuleValues
 	}
 	parts := make([]string, 0)
 	for _, sym := range module.ModuleScope.Symbols() {
@@ -28,9 +26,9 @@ func SemanticExportFingerprint(module *Module) string {
 		if sym.Kind == symbols.SymbolVar {
 			part += fmt.Sprintf(":mutable=%t", sym.IsMutable())
 		}
-		part += semanticExportMetadata(module, sym, moduleValues)
+		part += semanticExportMetadata(ctx, module, sym)
 		if sym.Kind == symbols.SymbolConst {
-			part += ":value=" + constantKey(moduleValues[sym.ID])
+			part += ":value=" + constantKey(ctx.PublishedConstant(module, sym))
 		}
 		parts = append(parts, part)
 	}
@@ -41,14 +39,14 @@ func SemanticExportFingerprint(module *Module) string {
 					continue
 				}
 				parts = append(parts, "method:"+receiver+":"+method.Name+":"+
-					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(module, method, moduleValues))
+					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(ctx, module, method))
 			}
 		}
 	}
 	return ast.FingerprintParts(parts)
 }
 
-func semanticExportMetadata(module *Module, sym *symbols.Symbol, moduleValues map[symbols.SymbolID]constvalue.Value) string {
+func semanticExportMetadata(ctx *CompilerContext, module *Module, sym *symbols.Symbol) string {
 	decl, ok := sym.ASTNode.(ast.Decl)
 	if !ok || decl == nil {
 		return ""
@@ -89,7 +87,7 @@ func semanticExportMetadata(module *Module, sym *symbols.Symbol, moduleValues ma
 			}
 			fact := resolved.Name + ":" + semanticTypeKey(resolved.Type, make(map[typeinfo.Type]bool))
 			if resolved.Kind == symbols.SymbolConst {
-				fact += "=" + constantKey(moduleValues[resolved.ID])
+				fact += "=" + constantKey(ctx.PublishedConstant(module, resolved))
 			}
 			facts = append(facts, fact)
 			return true

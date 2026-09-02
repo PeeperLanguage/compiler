@@ -424,7 +424,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
 		module.RebuildTypedASTIndex()
-		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
+		module.SemanticExportFingerprint = project.SemanticExportFingerprint(ctx, module)
 		module.Phase = phase.Typechecked
 		ctx.Metrics.AddPhaseAdvance()
 		return true

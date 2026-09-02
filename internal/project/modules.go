@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
@@ -278,6 +279,34 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 		}
 	}
 	ctx.mu.Unlock()
+}
+
+// PublishedConstant returns the authoritative value of a constant symbol,
+// resolving symbols owned by another module through their defining identity, and
+// nil when no value is published. Constant evaluation never publishes a nil value,
+// so nil is the absent case and no separate found flag is needed.
+// Query-cache entries are excluded on purpose: only published module values are
+// stable enough for cross-module reads and export fingerprints.
+func (ctx *CompilerContext) PublishedConstant(module *Module, sym *symbols.Symbol) constvalue.Value {
+	if sym == nil {
+		return nil
+	}
+	owner := module
+	// Only the cross-module hop needs a context; a local value stays readable
+	// from the module alone so callers without a registry still fingerprint.
+	if ownerID := sym.DefiningModule; ownerID.Valid() && (module == nil || ownerID != module.ID) {
+		if ctx == nil {
+			return nil
+		}
+		found := false
+		if owner, found = ctx.ModuleByID(ownerID); !found {
+			return nil
+		}
+	}
+	if owner == nil || owner.Constants == nil {
+		return nil
+	}
+	return owner.Constants.ModuleValues[sym.ID]
 }
 
 // ModuleByID resolves canonical module identity.

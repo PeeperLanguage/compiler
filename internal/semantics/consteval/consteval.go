@@ -85,12 +85,8 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 		return nil, false
 	}
 	if ownerID := sym.DefiningModule; ownerID.Valid() && ownerID != e.module.ID {
-		owner, found := e.ctx.ModuleByID(ownerID)
-		if !found || owner.Constants == nil {
-			return nil, false
-		}
-		value, found := owner.Constants.ModuleValues[sym.ID]
-		return value, found
+		value := e.ctx.PublishedConstant(e.module, sym)
+		return value, value != nil
 	}
 	if value, ok := e.constants.ModuleValues[sym.ID]; ok {
 		return value, true
