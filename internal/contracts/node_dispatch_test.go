@@ -20,39 +20,81 @@ import (
 	"testing"
 )
 
-// dispatchSite is one function that switches over ast.Stmt.
+// decision is the classification a phase must make for a node kind it does not
+// implement a case for. A kind with a case is handled by definition. Whether a
+// case body handles or rejects is not distinguishable from the source shape at
+// this tier; compile-time visitor interfaces are needed to separate those.
+type decision uint8
+
+const (
+	// traverse: canonical child walk is sufficient, no phase-specific semantics.
+	traverse decision = iota
+	// ignore: node is intentionally irrelevant at this site.
+	ignore
+	// reject: node is invalid here and another phase reports it.
+	reject
+)
+
+func (d decision) String() string {
+	switch d {
+	case traverse:
+		return "traverse"
+	case ignore:
+		return "ignore"
+	case reject:
+		return "reject"
+	}
+	return "unknown"
+}
+
+type classification struct {
+	decision decision
+	reason   string
+}
+
+// dispatchSite is one function that switches over an AST family.
 type dispatchSite struct {
 	file string
 	fn   string
-	// omitted lists statement kinds this site intentionally does not handle,
-	// each with the reason it is safe. An empty list means fully exhaustive.
-	omitted map[string]string
-	// inertDeclarations adds the shared parser-rejected declaration reason. Set
-	// it on sites that only ever see statements the parser actually produces
-	// inside a block, rather than repeating one rule at every such site.
+	// omitted classifies kinds this site implements no case for. An empty map
+	// means the site is fully exhaustive.
+	omitted map[string]classification
+	// inertDeclarations adds the shared declaration-statement classification.
+	// Set it on CFG-site consumers rather than repeating one rule at each.
 	inertDeclarations bool
 }
 
-// Declarations all implement stmtNode, but the parser rejects every one except
-// a binding inside a block with "unsupported statement" (P0004). They therefore
-// never reach a CFG site or a lowering position in a well-formed tree.
-var parserRejectedInStatementPosition = []string{
+// Declarations all implement stmtNode, and parseStmt really does build FnDecl,
+// StructDecl, InterfaceDecl, EnumDecl and TypeAliasDecl nodes inside a block.
+// The resolver reports them as unsupported statements and HIR lowers them to
+// hir.Invalid, but CFG through ownership are not error-gated, so the nodes do
+// reach those sites. They are skipped because a declaration evaluates no
+// expression and performs no assignment at a CFG site, not because they are
+// absent.
+var declarationStatements = []string{
 	"ImportDecl", "FnDecl", "TypeAliasDecl", "StructDecl",
 	"InterfaceDecl", "EnumDecl", "BadDecl",
 }
 
-const parserRejectedReason = "parser rejects this declaration in statement position (P0004)"
+const (
+	decomposedByCFGReason = "blocks are decomposed by CFG construction and are never a site statement"
+	elsePositionReason    = "parseIfStmt produces only a block or else-if in else position; the default rejects anything else"
+	noConditionReason     = "carries no branch condition"
+)
 
-// omissions returns the site's declared omissions including the shared rule.
-func (d dispatchSite) omissions() map[string]string {
-	merged := make(map[string]string, len(d.omitted)+len(parserRejectedInStatementPosition))
-	for kind, reason := range d.omitted {
-		merged[kind] = reason
+const declarationStatementReason = "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"
+
+// omissions returns the site's declared classifications including the shared
+// declaration-statement rule.
+func (d dispatchSite) omissions() map[string]classification {
+	merged := make(map[string]classification, len(d.omitted)+len(declarationStatements))
+	for kind, entry := range d.omitted {
+		merged[kind] = entry
 	}
 	if d.inertDeclarations {
-		for _, kind := range parserRejectedInStatementPosition {
+		for _, kind := range declarationStatements {
 			if _, declared := merged[kind]; !declared {
-				merged[kind] = parserRejectedReason
+				merged[kind] = classification{decision: ignore, reason: declarationStatementReason}
 			}
 		}
 	}
@@ -69,10 +111,10 @@ var statementSites = []dispatchSite{
 	{
 		file: "ir/hir/lower/module_lower.go",
 		fn:   "lowerElse",
-		omitted: map[string]string{
-			"BreakStmt":    "parser only produces a block or else-if in else position",
-			"ContinueStmt": "parser only produces a block or else-if in else position",
-			"MatchStmt":    "parser only produces a block or else-if in else position",
+		omitted: map[string]classification{
+			"BreakStmt":    {reject, elsePositionReason},
+			"ContinueStmt": {reject, elsePositionReason},
+			"MatchStmt":    {reject, elsePositionReason},
 		},
 	},
 	// The remaining sites run per CFG site, where control flow is already
@@ -82,53 +124,53 @@ var statementSites = []dispatchSite{
 		file:              "semantics/ownership/ownership.go",
 		fn:                "applyStmt",
 		inertDeclarations: true,
-		omitted: map[string]string{
-			"BlockStmt":    "blocks are decomposed by CFG construction and are never a site statement",
-			"BadStmt":      "recovery node carries no ownership effect",
-			"BreakStmt":    "transfer is a CFG edge, not a site-level ownership effect",
-			"ContinueStmt": "transfer is a CFG edge, not a site-level ownership effect",
+		omitted: map[string]classification{
+			"BlockStmt":    {ignore, decomposedByCFGReason},
+			"BadStmt":      {ignore, "recovery node carries no ownership effect"},
+			"BreakStmt":    {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
+			"ContinueStmt": {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
 		},
 	},
 	{
 		file:              "semantics/ownership/reference.go",
 		fn:                "symbolUseSequence",
 		inertDeclarations: true,
-		omitted: map[string]string{
-			"BlockStmt":    "blocks are decomposed by CFG construction and are never a site statement",
-			"BadStmt":      "recovery node evaluates no expression",
-			"BreakStmt":    "evaluates no expression",
-			"ContinueStmt": "evaluates no expression",
+		omitted: map[string]classification{
+			"BlockStmt":    {ignore, decomposedByCFGReason},
+			"BadStmt":      {ignore, "recovery node evaluates no expression"},
+			"BreakStmt":    {ignore, "evaluates no expression"},
+			"ContinueStmt": {ignore, "evaluates no expression"},
 		},
 	},
 	{
 		file:              "semantics/definiteinit/initialization.go",
 		fn:                "checkReads",
 		inertDeclarations: true,
-		omitted: map[string]string{
-			"BlockStmt":    "blocks are decomposed by CFG construction and are never a site statement",
-			"BadStmt":      "recovery node reads nothing",
-			"IfStmt":       "condition arrives separately through the CFG site condition",
-			"ForStmt":      "condition arrives separately through the CFG site condition",
-			"MatchStmt":    "subject arrives separately through the CFG site condition",
-			"BreakStmt":    "reads nothing",
-			"ContinueStmt": "reads nothing",
+		omitted: map[string]classification{
+			"BlockStmt":    {ignore, decomposedByCFGReason},
+			"BadStmt":      {ignore, "recovery node reads nothing"},
+			"IfStmt":       {ignore, "condition arrives separately through the CFG site condition"},
+			"ForStmt":      {ignore, "condition arrives separately through the CFG site condition"},
+			"MatchStmt":    {ignore, "subject arrives separately through the CFG site condition"},
+			"BreakStmt":    {ignore, "reads nothing"},
+			"ContinueStmt": {ignore, "reads nothing"},
 		},
 	},
 	{
 		file:              "semantics/typechecker/flow.go",
 		fn:                "applyConditionEdge",
 		inertDeclarations: true,
-		omitted: map[string]string{
-			"BlockStmt":    "carries no branch condition",
-			"ExprStmt":     "carries no branch condition",
-			"AssignStmt":   "carries no branch condition",
-			"ReturnStmt":   "carries no branch condition",
-			"BadStmt":      "carries no branch condition",
-			"BreakStmt":    "carries no branch condition",
-			"ContinueStmt": "carries no branch condition",
-			"MatchStmt":    "match narrowing uses case tests, not a true/false condition edge",
-			"LetDecl":      "carries no branch condition",
-			"ConstDecl":    "carries no branch condition",
+		omitted: map[string]classification{
+			"BlockStmt":    {ignore, noConditionReason},
+			"ExprStmt":     {ignore, noConditionReason},
+			"AssignStmt":   {ignore, noConditionReason},
+			"ReturnStmt":   {ignore, noConditionReason},
+			"BadStmt":      {ignore, noConditionReason},
+			"BreakStmt":    {ignore, noConditionReason},
+			"ContinueStmt": {ignore, noConditionReason},
+			"MatchStmt":    {ignore, "match narrowing uses case tests, not a true/false condition edge"},
+			"LetDecl":      {ignore, noConditionReason},
+			"ConstDecl":    {ignore, noConditionReason},
 		},
 	},
 }
@@ -178,11 +220,6 @@ func declaredKinds(t *testing.T, marker string) []string {
 	}
 	slices.Sort(kinds)
 	return kinds
-}
-
-func declaredStatementKinds(t *testing.T) []string {
-	t.Helper()
-	return declaredKinds(t, "stmtNode")
 }
 
 // handledKinds returns the ast.X kinds named by type-switch cases in fn.
@@ -241,15 +278,10 @@ var expressionSites = []dispatchSite{
 	{
 		file: "ir/hir/lower/module_lower.go",
 		fn:   "lowerASTExpr",
-		omitted: map[string]string{
-			"RangeExpr": "a range is only a loop iterable or a slice index, lowered by its parent, never a standalone value",
+		omitted: map[string]classification{
+			"RangeExpr": {traverse, "a range is only a loop iterable or a slice index, lowered by its parent, never a standalone value"},
 		},
 	},
-}
-
-func declaredExpressionKinds(t *testing.T) []string {
-	t.Helper()
-	return declaredKinds(t, "exprNode")
 }
 
 func assertSitesDecide(t *testing.T, sites []dispatchSite, kinds []string) {
@@ -260,9 +292,9 @@ func assertSitesDecide(t *testing.T, sites []dispatchSite, kinds []string) {
 			omitted := site.omissions()
 			for _, kind := range kinds {
 				if slices.Contains(handled, kind) {
-					if reason, declared := omitted[kind]; declared {
-						t.Errorf("%s handles %s but still declares it omitted (%q); delete the entry",
-							site.fn, kind, reason)
+					if entry, declared := omitted[kind]; declared {
+						t.Errorf("%s handles %s but still classifies it %s (%q); delete the entry",
+							site.fn, kind, entry.decision, entry.reason)
 					}
 					continue
 				}
@@ -276,24 +308,27 @@ func assertSitesDecide(t *testing.T, sites []dispatchSite, kinds []string) {
 }
 
 func TestEveryStatementKindHasAPhaseDecision(t *testing.T) {
-	assertSitesDecide(t, statementSites, declaredStatementKinds(t))
+	assertSitesDecide(t, statementSites, declaredKinds(t, "stmtNode"))
 }
 
 func TestEveryExpressionKindHasAPhaseDecision(t *testing.T) {
-	assertSitesDecide(t, expressionSites, declaredExpressionKinds(t))
+	assertSitesDecide(t, expressionSites, declaredKinds(t, "exprNode"))
 }
 
 // A reason that no longer names a real statement kind is stale and must not
 // silently excuse a future kind of the same name.
 func TestOmissionReasonsNameRealNodeKinds(t *testing.T) {
-	kinds := append(declaredStatementKinds(t), declaredExpressionKinds(t)...)
+	kinds := append(declaredKinds(t, "stmtNode"), declaredKinds(t, "exprNode")...)
 	for _, site := range append(slices.Clone(statementSites), expressionSites...) {
-		for kind, reason := range site.omissions() {
+		for kind, entry := range site.omissions() {
 			if !slices.Contains(kinds, kind) {
-				t.Errorf("%s declares omitted kind %s that no longer exists", site.fn, kind)
+				t.Errorf("%s classifies kind %s that no longer exists", site.fn, kind)
 			}
-			if strings.TrimSpace(reason) == "" {
-				t.Errorf("%s omits %s without a reason", site.fn, kind)
+			if strings.TrimSpace(entry.reason) == "" {
+				t.Errorf("%s classifies %s as %s without a reason", site.fn, kind, entry.decision)
+			}
+			if entry.decision.String() == "unknown" {
+				t.Errorf("%s classifies %s with an invalid decision", site.fn, kind)
 			}
 		}
 	}
