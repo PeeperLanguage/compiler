@@ -25,15 +25,11 @@ func ModuleID(ctx *project.CompilerContext) moduleid.ID {
 	if !ok {
 		return moduleid.ID{}
 	}
-	importPath, err := ctx.ImportPathForFile(project.ModuleOriginStdlib, preludeNamespace, project.CanonicalPath(preludePath))
+	id, err := ctx.IdentityForFile(project.ModuleOriginStdlib, preludeNamespace, project.CanonicalPath(preludePath))
 	if err != nil {
 		return moduleid.ID{}
 	}
-	return moduleid.ID{
-		Origin:     string(project.ModuleOriginStdlib),
-		Namespace:  preludeNamespace,
-		ImportPath: importPath,
-	}
+	return id
 }
 
 func globalPreludePath(ctx *project.CompilerContext) (string, bool) {

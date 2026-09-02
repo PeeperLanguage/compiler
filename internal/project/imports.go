@@ -309,19 +309,12 @@ func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, 
 	}
 	absPath = CanonicalPath(absPath)
 
-	resolvedImportPath, err := ctx.ImportPathForFile(origin, namespace, absPath)
+	id, err := ctx.IdentityForFile(origin, namespace, absPath)
 	if err != nil {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
 	}
 
-	return &ResolvedImport{
-		ID: moduleid.ID{
-			Origin:     string(origin),
-			Namespace:  namespace,
-			ImportPath: resolvedImportPath,
-		},
-		FilePath: absPath,
-	}, nil
+	return &ResolvedImport{ID: id, FilePath: absPath}, nil
 }
 
 func splitNamespacedImportPath(importPath string) (string, string, bool) {

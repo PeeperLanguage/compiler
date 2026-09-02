@@ -222,22 +222,34 @@ func PathWithinRoot(rootPath, path string) bool {
 	return strings.HasPrefix(path, rootPath+"/")
 }
 
+// IdentityForFile assembles canonical module identity for a file. Every producer
+// of a moduleid.ID goes through here so origin, namespace and derived import path
+// cannot drift apart. Assembling identity separately is what let the prelude
+// register under an import path no import could reproduce.
+func (ctx *CompilerContext) IdentityForFile(origin ModuleOrigin, namespace, filePath string) (moduleid.ID, error) {
+	importPath, err := ctx.ImportPathForFile(origin, namespace, filePath)
+	if err != nil {
+		return moduleid.ID{}, err
+	}
+	return moduleid.ID{
+		Origin:     string(origin),
+		Namespace:  namespace,
+		ImportPath: importPath,
+	}, nil
+}
+
 // NewModuleForFile builds one file-backed module with canonical identity derived from compiler config.
 func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	if ctx == nil || filePath == "" {
 		return nil
 	}
 	origin, namespace := ctx.ModuleOriginForFile(filePath)
-	importPath, err := ctx.ImportPathForFile(origin, namespace, filePath)
+	id, err := ctx.IdentityForFile(origin, namespace, filePath)
 	if err != nil {
 		return nil
 	}
 	return &Module{
-		ID: moduleid.ID{
-			Origin:     string(origin),
-			Namespace:  namespace,
-			ImportPath: importPath,
-		},
+		ID:              id,
 		FilePath:        filePath,
 		Content:         content,
 		ContentProvided: true,
