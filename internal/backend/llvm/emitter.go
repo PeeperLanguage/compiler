@@ -290,37 +290,31 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					continue
 				}
 				lb.setLocation(instr.SourceLocation())
-				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
-					val := emitValueExpr(lb, assign.Value)
-					if ptr, ok := lb.localPtrs[assign.Name]; ok {
+				// Emitting nothing for an unrecognized instruction silently drops
+				// program behavior, so every MIR instruction must be classified
+				// here. A missing case is a compiler bug, not invalid source.
+				switch typed := instr.(type) {
+				case *mir.Assign:
+					val := emitValueExpr(lb, typed.Value)
+					if ptr, ok := lb.localPtrs[typed.Name]; ok {
 						lb.store(ptr, val)
 					} else {
-						lb.locals[assign.Name] = val
+						lb.locals[typed.Name] = val
 					}
-					continue
-				}
-				if store, ok := instr.(*mir.Store); ok && store != nil {
-					emitStore(lb, store)
-					continue
-				}
-				if printInstr, ok := instr.(*mir.Print); ok && printInstr != nil {
-					emitPrint(lb, printInstr)
-					continue
-				}
-				if dropInstr, ok := instr.(*mir.Drop); ok && dropInstr != nil {
-					emitDrop(lb, dropInstr)
-					continue
-				}
-				if operation, ok := instr.(*mir.DynamicArrayOp); ok && operation != nil {
-					emitDynamicArrayOp(lb, operation)
-					continue
-				}
-				if call, ok := instr.(*mir.Call); ok && call != nil {
-					emitDiscardedCall(lb, call)
-					continue
-				}
-				if call, ok := instr.(*mir.InterfaceCall); ok && call != nil {
-					emitDiscardedInterfaceCall(lb, call)
+				case *mir.Store:
+					emitStore(lb, typed)
+				case *mir.Print:
+					emitPrint(lb, typed)
+				case *mir.Drop:
+					emitDrop(lb, typed)
+				case *mir.DynamicArrayOp:
+					emitDynamicArrayOp(lb, typed)
+				case *mir.Call:
+					emitDiscardedCall(lb, typed)
+				case *mir.InterfaceCall:
+					emitDiscardedInterfaceCall(lb, typed)
+				default:
+					panic(fmt.Sprintf("LLVM emission: unhandled MIR instruction %T", instr))
 				}
 			}
 			if block.Term != nil {
@@ -345,6 +339,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					}
 					val := emitRef(lb, term.Value)
 					lb.ret(val, returnLayout)
+				default:
+					// A block without an emitted terminator is malformed LLVM IR.
+					panic(fmt.Sprintf("LLVM emission: unhandled MIR terminator %T", block.Term))
 				}
 			}
 			lb.setLocation(nil)
