@@ -365,7 +365,6 @@ func (a *analyzer) checkCallArgument(
 	loans.addTemporary([]referenceLoan{loan}, call)
 }
 
-// publishedUse maps the typechecker's published use kind for this argument
 // publishedUse resolves the ownership use kind for one value use: the
 // typechecker's published classification when present, otherwise the
 // capability fallback for diagnostics-continued paths. The ownership
