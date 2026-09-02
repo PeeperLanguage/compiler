@@ -48,7 +48,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 
 	loader := &moduleLoader{
 		ctx:       ctx,
-		scheduled: make(map[moduleid.ID]struct{}),
+		scheduled: make(map[moduleid.ID]string),
 	}
 	preludeID := moduleid.ID{}
 	if preludeMod, ok := ctx.ModuleByID(preludepkg.ModuleID(ctx)); ok {
@@ -263,7 +263,7 @@ func injectPreludeSymbols(ctx *project.CompilerContext, prelude *project.Module,
 
 // requireScheduledModulesAtLeast reports scheduled modules that stalled before
 // a required project-wide phase barrier without user diagnostics.
-func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[moduleid.ID]struct{}, phase phase.Phase) error {
+func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[moduleid.ID]string, phase phase.Phase) error {
 	for _, module := range modules {
 		if module == nil || module.Phase >= phase {
 			continue

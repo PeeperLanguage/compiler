@@ -1153,16 +1153,16 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[moduleid.ID]struct{}{test.module.ID: {}}, phase.Backend)
+			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[moduleid.ID]string{test.module.ID: ""}, phase.Backend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]struct{}{moduleid.ID{ImportPath: "local:main"}: {}}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]struct{}{moduleid.ID{ImportPath: "local:main"}: {}}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }
@@ -3185,5 +3185,54 @@ fn invalid(holder: &mut Holder) -> i32 {
 				t.Fatalf("expected %s diagnostic, got:\n%s", tt.code, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestModuleLoaderReportsSameIdentityFromDifferentFiles(t *testing.T) {
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
+	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(root, peeper.SourceExt, diag)
+	loader := &moduleLoader{
+		ctx:       ctx,
+		scheduled: make(map[moduleid.ID]string),
+	}
+	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
+
+	loader.enqueue(&project.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+	loader.enqueue(&project.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+
+	ambiguous := 0
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrAmbiguousImport {
+			ambiguous++
+		}
+	}
+	if ambiguous != 1 {
+		t.Fatalf("ambiguous-import diagnostics = %d, want 1:\n%s", ambiguous, diag.EmitAllToString())
+	}
+}
+
+func TestModuleLoaderSamePathDoubleEnqueueIsQuietDedupe(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "shared"+peeper.SourceExt)
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(root, peeper.SourceExt, diag)
+	loader := &moduleLoader{
+		ctx:       ctx,
+		scheduled: make(map[moduleid.ID]string),
+	}
+	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
+
+	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+
+	if diag.HasErrors() {
+		t.Fatalf("same-path dedupe produced diagnostics:\n%s", diag.EmitAllToString())
 	}
 }

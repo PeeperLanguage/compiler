@@ -284,9 +284,14 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 		}
 		return
 	}
+	previous := ctx.modules[module.ID]
 	ctx.modules[module.ID] = module
 	if module.FilePath != "" {
 		ctx.fileIndex[module.FilePath] = module.ID
+	} else if previous != nil && previous.FilePath != "" && ctx.fileIndex[previous.FilePath] == module.ID {
+		// A pathless replacement must not leave the old file pointing at the
+		// identity it no longer names.
+		delete(ctx.fileIndex, previous.FilePath)
 	}
 	if module.Phase >= phase.Collected {
 		for identity := range module.namedTypeDeclarations {

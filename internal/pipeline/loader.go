@@ -20,7 +20,7 @@ import (
 type moduleLoader struct {
 	ctx       *project.CompilerContext
 	mu        sync.Mutex
-	scheduled map[moduleid.ID]struct{}
+	scheduled map[moduleid.ID]string
 	wg        sync.WaitGroup
 }
 
@@ -45,11 +45,18 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	}
 
 	l.mu.Lock()
-	if _, ok := l.scheduled[module.ID]; ok {
+	scheduledPath, ok := l.scheduled[module.ID]
+	if ok {
 		l.mu.Unlock()
+		// A same-identity enqueue from a different file must reach the registry
+		// so its conflict policy emits ErrAmbiguousImport instead of a silent
+		// dedupe hiding the identity conflict.
+		if module.FilePath != "" && scheduledPath != "" && scheduledPath != module.FilePath {
+			l.ctx.AddModule(module)
+		}
 		return
 	}
-	l.scheduled[module.ID] = struct{}{}
+	l.scheduled[module.ID] = module.FilePath
 	l.mu.Unlock()
 
 	if existing, ok := l.ctx.ModuleByID(module.ID); ok {
@@ -152,11 +159,10 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			// Two distinct files deriving one identity must not silently resolve
 			// to whichever loaded first. Extensions compare case-insensitively
 			// while the import path keeps the file's own case, so foo.peep and
-			// foo.PEEP can both reduce to the same logical identity.
-			if existing.FilePath != "" && resolved.FilePath != "" &&
-				existing.FilePath != project.CanonicalPath(resolved.FilePath) {
-				l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport,
-					"import resolves to "+resolved.FilePath+" but identity is already registered for "+existing.FilePath)
+			// foo.PEEP can both reduce to the same logical identity. The registry
+			// owns the conflict policy and emits the diagnostic.
+			if existing.FilePath != "" && existing.FilePath != project.CanonicalPath(resolved.FilePath) {
+				l.ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath})
 				continue
 			}
 			l.enqueue(existing)

@@ -350,3 +350,19 @@ func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
 		t.Fatal("reset below collection retained context declaration index")
 	}
 }
+
+func TestCompilerContextPathlessReplacementClearsFileIndex(t *testing.T) {
+	ctx := New(".", ".peep", nil)
+	id := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "x"}
+
+	ctx.AddModule(&Module{ID: id, FilePath: "x.peep"})
+	ctx.AddModule(&Module{ID: id})
+
+	if _, found := ctx.ModuleByFile("x.peep"); found {
+		t.Fatal("stale file index survived pathless replacement")
+	}
+	module, found := ctx.ModuleByID(id)
+	if !found || module == nil || module.FilePath != "" {
+		t.Fatalf("ModuleByID = %#v, want pathless replacement module", module)
+	}
+}
