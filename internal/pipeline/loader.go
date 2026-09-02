@@ -160,9 +160,12 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			// to whichever loaded first. Extensions compare case-insensitively
 			// while the import path keeps the file's own case, so foo.peep and
 			// foo.PEEP can both reduce to the same logical identity. The registry
-			// owns the conflict policy and emits the diagnostic.
+			// owns the conflict policy; only this site knows which import caused
+			// it, so it labels the diagnostic the registry recorded.
 			if existing.FilePath != "" && existing.FilePath != project.CanonicalPath(resolved.FilePath) {
-				l.ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath})
+				if conflict := l.ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath}); conflict != nil {
+					conflict.WithPrimaryLabel(ast.LocOf(imp), "conflicting import")
+				}
 				continue
 			}
 			l.enqueue(existing)

@@ -62,8 +62,13 @@ func TestCompilerContextReportsConflictingFileIdentity(t *testing.T) {
 	secondID := moduleid.ID{Origin: "stdlib", Namespace: "core", ImportPath: "prelude/global"}
 	first := &Module{ID: firstID, FilePath: shared}
 
-	ctx.AddModule(first)
-	ctx.AddModule(&Module{ID: secondID, FilePath: shared})
+	if reported := ctx.AddModule(first); reported != nil {
+		t.Fatalf("clean registration returned a conflict: %#v", reported)
+	}
+	conflict := ctx.AddModule(&Module{ID: secondID, FilePath: shared})
+	if conflict == nil {
+		t.Fatal("conflicting registration returned no diagnostic for the caller to label")
+	}
 
 	// Two identities for one file is reachable from imports and library-root
 	// configuration, so it must diagnose rather than abort the compiler.
@@ -96,7 +101,9 @@ func TestCompilerContextRejectsIdentityRelocationWithoutCorruptingIndexes(t *tes
 
 	// Moving A onto B's file must be rejected, and rejection must not disturb
 	// the indexes A already owns.
-	ctx.AddModule(&Module{ID: idA, FilePath: "b.peep"})
+	if conflict := ctx.AddModule(&Module{ID: idA, FilePath: "b.peep"}); conflict == nil {
+		t.Fatal("rejected relocation returned no diagnostic for the caller to label")
+	}
 
 	if got, ok := ctx.ModuleByID(idA); !ok || got != first {
 		t.Fatal("rejected relocation lost the original module registration")

@@ -24,6 +24,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/target"
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
@@ -3214,6 +3215,57 @@ func TestModuleLoaderReportsSameIdentityFromDifferentFiles(t *testing.T) {
 	if ambiguous != 1 {
 		t.Fatalf("ambiguous-import diagnostics = %d, want 1:\n%s", ambiguous, diag.EmitAllToString())
 	}
+}
+
+// An identity conflict reached through an import must name the import that
+// caused it, so the reader has somewhere to go. The registry detects the
+// conflict; the loader owns the source site.
+func TestModuleLoaderLabelsImportSiteOnIdentityConflict(t *testing.T) {
+	root := t.TempDir()
+	srcDir := manifest.SourceDir(root)
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	sharedPath := filepath.Join(srcDir, "shared"+peeper.SourceExt)
+	if err := os.WriteFile(sharedPath, []byte("fn Helper() {}\n"), 0o600); err != nil {
+		t.Fatalf("write shared module: %v", err)
+	}
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:     root,
+		ProjectName: "app",
+		Extension:   peeper.SourceExt,
+	}, diag)
+
+	resolved, err := ctx.ResolveImportPath("app/shared")
+	if err != nil {
+		t.Fatalf("resolve import: %v", err)
+	}
+	// Claim the identity for a different file so the import below conflicts.
+	ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: filepath.Join(srcDir, "other"+peeper.SourceExt)})
+
+	entryPath := filepath.Join(srcDir, "entry"+peeper.SourceExt)
+	entrySrc := "import \"app/shared\";\n"
+	diag.AddSourceContent(entryPath, entrySrc)
+	importer := parseModuleSource(entryPath, entrySrc, diag)
+	loader := &moduleLoader{ctx: ctx, scheduled: make(map[moduleid.ID]string)}
+	loader.resolveImports(importer, diag)
+	loader.wg.Wait()
+
+	for _, item := range diag.Diagnostics() {
+		if item == nil || item.Code != diagnostics.ErrAmbiguousImport {
+			continue
+		}
+		if len(item.Labels) == 0 || item.Labels[0].Location == nil {
+			t.Fatalf("ambiguous-import diagnostic carries no primary label:\n%s", diag.EmitAllToString())
+		}
+		if item.FilePath != project.CanonicalPath(entryPath) {
+			t.Fatalf("diagnostic file = %q, want %q", item.FilePath, project.CanonicalPath(entryPath))
+		}
+		return
+	}
+	t.Fatalf("no ambiguous-import diagnostic:\n%s", diag.EmitAllToString())
 }
 
 func TestModuleLoaderSamePathDoubleEnqueueIsQuietDedupe(t *testing.T) {

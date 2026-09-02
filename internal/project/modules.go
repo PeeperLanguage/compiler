@@ -256,10 +256,13 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	}
 }
 
-// Register a module in shared compiler state.
-func (ctx *CompilerContext) AddModule(module *Module) {
+// Register a module in shared compiler state. The identity conflict is detected
+// and reported here so registration policy stays in one place; the recorded
+// diagnostic is returned so a caller holding the offending source site can label
+// it. Returns nil when the module registers cleanly.
+func (ctx *CompilerContext) AddModule(module *Module) *diagnostics.Diagnostic {
 	if ctx == nil || module == nil || !module.ID.Valid() {
-		return
+		return nil
 	}
 	module.FilePath = CanonicalPath(module.FilePath)
 	ctx.mu.Lock()
@@ -279,10 +282,13 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	}
 	if conflict != "" {
 		ctx.mu.Unlock()
-		if ctx.Diagnostics != nil {
-			ctx.Diagnostics.AddError(diagnostics.ErrAmbiguousImport, conflict, nil, "")
+		if ctx.Diagnostics == nil {
+			return nil
 		}
-		return
+		// Reported without a location: the registry knows the identities in
+		// conflict, not which source site caused the registration. A caller
+		// holding that site labels the returned diagnostic.
+		return ctx.Diagnostics.AddError(diagnostics.ErrAmbiguousImport, conflict, nil, "")
 	}
 	previous := ctx.modules[module.ID]
 	ctx.modules[module.ID] = module
@@ -299,6 +305,7 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 		}
 	}
 	ctx.mu.Unlock()
+	return nil
 }
 
 // PublishedConstant returns the authoritative value of a constant symbol,
