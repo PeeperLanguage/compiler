@@ -149,6 +149,16 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 		}
 
 		if existing, ok := l.ctx.ModuleByID(resolved.ID); ok {
+			// Two distinct files deriving one identity must not silently resolve
+			// to whichever loaded first. Extensions compare case-insensitively
+			// while the import path keeps the file's own case, so foo.peep and
+			// foo.PEEP can both reduce to the same logical identity.
+			if existing.FilePath != "" && resolved.FilePath != "" &&
+				existing.FilePath != project.CanonicalPath(resolved.FilePath) {
+				l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport,
+					"import resolves to "+resolved.FilePath+" but identity is already registered for "+existing.FilePath)
+				continue
+			}
 			l.enqueue(existing)
 			continue
 		}

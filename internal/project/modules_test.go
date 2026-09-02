@@ -85,6 +85,55 @@ func TestCompilerContextReportsConflictingFileIdentity(t *testing.T) {
 	}
 }
 
+func TestCompilerContextRejectsIdentityRelocationWithoutCorruptingIndexes(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := New(".", ".peep", diag)
+	idA := moduleid.ID{Origin: "local", ImportPath: "a"}
+	idB := moduleid.ID{Origin: "local", ImportPath: "b"}
+	first := &Module{ID: idA, FilePath: "a.peep"}
+	ctx.AddModule(first)
+	ctx.AddModule(&Module{ID: idB, FilePath: "b.peep"})
+
+	// Moving A onto B's file must be rejected, and rejection must not disturb
+	// the indexes A already owns.
+	ctx.AddModule(&Module{ID: idA, FilePath: "b.peep"})
+
+	if got, ok := ctx.ModuleByID(idA); !ok || got != first {
+		t.Fatal("rejected relocation lost the original module registration")
+	}
+	if got, ok := ctx.ModuleByFile(first.FilePath); !ok || got != first {
+		t.Fatalf("rejected relocation removed the original file index entry: %#v", ctx.Modules())
+	}
+	found := false
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrAmbiguousImport {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("relocation conflict produced no diagnostic: %s", diag.EmitAllToString())
+	}
+}
+
+func TestCompilerContextRejectsSecondFileForSameIdentity(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := New(".", ".peep", diag)
+	id := moduleid.ID{Origin: "local", ImportPath: "foo"}
+	first := &Module{ID: id, FilePath: "foo.peep"}
+	ctx.AddModule(first)
+
+	// Case-differing extensions reduce to one logical identity; the second file
+	// must not silently take over the identity.
+	ctx.AddModule(&Module{ID: id, FilePath: "foo.PEEP"})
+
+	if got, ok := ctx.ModuleByID(id); !ok || got != first {
+		t.Fatal("second file for one identity replaced the first registration")
+	}
+	if _, ok := ctx.ModuleByFile("foo.PEEP"); ok {
+		t.Fatal("rejected file was indexed")
+	}
+}
+
 func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
 	ctx := New(".", ".peep", nil)
 	firstID := moduleid.ID{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "value"}

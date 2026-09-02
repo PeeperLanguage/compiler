@@ -252,20 +252,23 @@ func (ctx *CompilerContext) AddModule(module *Module) {
 	module.FilePath = CanonicalPath(module.FilePath)
 	ctx.mu.Lock()
 
-	if previous := ctx.modules[module.ID]; previous != nil && previous.FilePath != "" && previous.FilePath != module.FilePath {
-		if ctx.fileIndex[previous.FilePath] == module.ID {
-			delete(ctx.fileIndex, previous.FilePath)
-		}
-	}
-	// One source file must not carry two logical identities. Import paths and
-	// library-root configuration can both reach this, so it is a user-facing
-	// diagnostic rather than an internal error. Keep the first registration.
+	// Identity and file must agree in both directions, and both checks run
+	// before any index is touched so a rejected registration cannot leave the
+	// registry half-updated. Import paths and library-root configuration can
+	// both reach these, so they are user-facing diagnostics, not compiler bugs.
+	conflict := ""
 	if previousID, found := ctx.fileIndex[module.FilePath]; module.FilePath != "" && found && previousID != module.ID {
+		conflict = fmt.Sprintf("module file %s is already registered as %s and cannot also be %s",
+			module.FilePath, previousID.ImportPath, module.ID.ImportPath)
+	} else if previous := ctx.modules[module.ID]; previous != nil && module.FilePath != "" &&
+		previous.FilePath != "" && previous.FilePath != module.FilePath {
+		conflict = fmt.Sprintf("module identity %s is already registered for file %s and cannot also name %s",
+			module.ID.ImportPath, previous.FilePath, module.FilePath)
+	}
+	if conflict != "" {
 		ctx.mu.Unlock()
 		if ctx.Diagnostics != nil {
-			ctx.Diagnostics.AddError(diagnostics.ErrAmbiguousImport, fmt.Sprintf(
-				"module file %s is already registered as %s and cannot also be %s",
-				module.FilePath, previousID.ImportPath, module.ID.ImportPath), nil, "")
+			ctx.Diagnostics.AddError(diagnostics.ErrAmbiguousImport, conflict, nil, "")
 		}
 		return
 	}
