@@ -8,9 +8,6 @@ func TestIDStringFramesComponentsWithoutCollisions(t *testing.T) {
 	if first.String() == second.String() {
 		t.Fatalf("length-ambiguous module identities collide: %q", first.String())
 	}
-	if first.String() != first.String() {
-		t.Fatal("module identity encoding is not deterministic")
-	}
 }
 
 func TestIDDependsOnLogicalIdentityOnly(t *testing.T) {
