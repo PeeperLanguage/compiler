@@ -60,6 +60,12 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 	return replacePath(stage, target)
 }
 
+// emptyIdentityComponent marks an absent namespace or dependency so every
+// canonical component occupies its own path segment. Dropping empty components
+// instead would let distinct identities share one artifact path, for example
+// namespace "a" with import path "b/c" against no namespace with "a/b/c".
+const emptyIdentityComponent = "_"
+
 func moduleArtifactBase(stage string, module *project.Module) (string, error) {
 	origin := module.ID.Origin
 	if origin == "" {
@@ -73,7 +79,25 @@ func moduleArtifactBase(stage string, module *project.Module) (string, error) {
 	if identity == "." || filepath.IsAbs(identity) || identity == ".." || strings.HasPrefix(identity, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid module import identity %q", module.ID.ImportPath)
 	}
-	return filepath.Join(stage, origin, identity), nil
+	// Every canonical identity component participates, so two identities that
+	// differ only by namespace or dependency cannot write the same artifacts.
+	return filepath.Join(stage, origin,
+		identityComponent(module.ID.Namespace),
+		identityComponent(module.ID.Dependency),
+		identity), nil
+}
+
+func identityComponent(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return emptyIdentityComponent
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(value))
+	if cleaned == "." || cleaned == ".." || filepath.IsAbs(cleaned) ||
+		strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return emptyIdentityComponent
+	}
+	return cleaned
 }
 
 func replacePath(stage, target string) error {
