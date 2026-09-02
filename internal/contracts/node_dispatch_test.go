@@ -1,18 +1,16 @@
 // Package contracts owns the phase-coverage contract for AST node handling.
 //
-// Structural traversal is already centralized in ast.Inspect and friends, which
-// prevents a forgotten child walk. It cannot prevent a forgotten *semantic*
-// decision: adding a statement kind and never teaching a phase about it. These
-// tests read the real sources and compare every declared statement kind against
-// every phase that dispatches on statements, so an omission fails immediately
-// instead of surfacing as wrong output much later.
+// Child-field completeness is enforced separately in child_traversal_test.go.
+// These tests cover the semantic layer: they read the real sources and compare
+// every declared statement and expression kind against every phase that
+// dispatches on them, so an omission fails immediately instead of surfacing as
+// wrong output much later.
 package contracts
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -33,6 +31,9 @@ const (
 	ignore
 	// reject: node is invalid here and another phase reports it.
 	reject
+	// contextual: the parent construct owns the node's handling; reaching this
+	// dispatcher directly is an internal invariant violation.
+	contextual
 )
 
 func (d decision) String() string {
@@ -43,6 +44,8 @@ func (d decision) String() string {
 		return "ignore"
 	case reject:
 		return "reject"
+	case contextual:
+		return "contextual"
 	}
 	return "unknown"
 }
@@ -59,7 +62,7 @@ type dispatchSite struct {
 	// omitted classifies kinds this site implements no case for. An empty map
 	// means the site is fully exhaustive.
 	omitted map[string]classification
-	// inertDeclarations adds the shared declaration-statement classification.
+	// inertDeclarations adds the shared declaration-statement classifications.
 	// Set it on CFG-site consumers rather than repeating one rule at each.
 	inertDeclarations bool
 }
@@ -70,19 +73,23 @@ type dispatchSite struct {
 // hir.Invalid, but CFG through ownership are not error-gated, so the nodes do
 // reach those sites. They are skipped because a declaration evaluates no
 // expression and performs no assignment at a CFG site, not because they are
-// absent.
-var declarationStatements = []string{
-	"ImportDecl", "FnDecl", "TypeAliasDecl", "StructDecl",
-	"InterfaceDecl", "EnumDecl", "BadDecl",
+// absent. ImportDecl is only produced at module level and BadDecl is never
+// produced by the parser; both are tolerated for synthetic trees.
+var declarationStatements = map[string]classification{
+	"FnDecl":        {ignore, "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"},
+	"TypeAliasDecl": {ignore, "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"},
+	"StructDecl":    {ignore, "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"},
+	"InterfaceDecl": {ignore, "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"},
+	"EnumDecl":      {ignore, "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"},
+	"ImportDecl":    {ignore, "the parser only produces import declarations at module level, never as a block statement"},
+	"BadDecl":       {ignore, "the parser never produces BadDecl; it is tolerated for synthetic trees"},
 }
 
 const (
 	decomposedByCFGReason = "blocks are decomposed by CFG construction and are never a site statement"
-	elsePositionReason    = "parseIfStmt produces only a block or else-if in else position; the default rejects anything else"
+	elsePositionReason    = "parseIfStmt produces only a block or else-if in else position; anything else is an internal invariant violation (the default panics)"
 	noConditionReason     = "carries no branch condition"
 )
-
-const declarationStatementReason = "reaches this site after the resolver reports an unsupported statement, and evaluates no expression here"
 
 // omissions returns the site's declared classifications including the shared
 // declaration-statement rule.
@@ -92,9 +99,9 @@ func (d dispatchSite) omissions() map[string]classification {
 		merged[kind] = entry
 	}
 	if d.inertDeclarations {
-		for _, kind := range declarationStatements {
+		for kind, entry := range declarationStatements {
 			if _, declared := merged[kind]; !declared {
-				merged[kind] = classification{decision: ignore, reason: declarationStatementReason}
+				merged[kind] = entry
 			}
 		}
 	}
@@ -184,45 +191,26 @@ func internalDir(t *testing.T) string {
 	return filepath.Dir(filepath.Dir(thisFile))
 }
 
-// declaredKinds scans the whole AST package for types implementing marker, so
-// the contract tracks the real node set. Scanning the package rather than one
-// file matters: every declaration also implements stmtNode, so statement kinds
-// are split across stmt.go and decl.go.
+// declaredKinds returns every AST type implementing the marker method, tracked
+// through the shared AST package loader so both contracts see one node set.
 func declaredKinds(t *testing.T, marker string) []string {
 	t.Helper()
-	dir := filepath.Join(internalDir(t), "frontend", "ast")
-	pkgs, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", dir, err)
-	}
-	kinds := make([]string, 0)
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Name.Name != marker || fn.Recv == nil || len(fn.Recv.List) != 1 {
-					continue
-				}
-				star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
-				if !ok {
-					continue
-				}
-				if name, ok := star.X.(*ast.Ident); ok {
-					kinds = append(kinds, name.Name)
-				}
-			}
-		}
-	}
+	pkg := loadASTPackage(t)
+	kinds := slices.Clone(pkg.markers[marker])
 	if len(kinds) == 0 {
-		t.Fatalf("no types implement %s in %s", marker, dir)
+		t.Fatalf("no types implement %s in the ast package", marker)
 	}
 	slices.Sort(kinds)
 	return kinds
 }
 
-// handledKinds returns the ast.X kinds named by type-switch cases in fn.
+// handledKinds returns the ast.X kinds named by type-switch cases whose operand
+// is the function's statement/expression input. That input is either a direct
+// parameter, a CFG-site payload selected from a parameter (node.stmt), or a
+// local extracted from a site through a comma-ok assertion to ast.Stmt.
+// Switches on other derived values (a callee extracted from an expression, a
+// loop variable) are a different decision and are excluded, so an unrelated
+// nested switch cannot fake coverage.
 func handledKinds(t *testing.T, file, fn string) []string {
 	t.Helper()
 	path := filepath.Join(internalDir(t), filepath.FromSlash(file))
@@ -230,40 +218,155 @@ func handledKinds(t *testing.T, file, fn string) []string {
 	if err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
-	handled := make([]string, 0)
-	found := false
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		decl, ok := node.(*ast.FuncDecl)
-		if !ok || decl.Name.Name != fn {
-			return true
-		}
-		found = true
-		ast.Inspect(decl, func(inner ast.Node) bool {
-			clause, ok := inner.(*ast.CaseClause)
-			if !ok {
-				return true
-			}
-			for _, expr := range clause.List {
-				star, ok := expr.(*ast.StarExpr)
-				if !ok {
-					continue
-				}
-				selector, ok := star.X.(*ast.SelectorExpr)
-				if !ok {
-					continue
-				}
-				if pkg, ok := selector.X.(*ast.Ident); ok && pkg.Name == "ast" {
-					handled = append(handled, selector.Sel.Name)
-				}
-			}
-			return true
-		})
-		return false
-	})
-	if !found {
+	decl := findFuncDecl(parsed, fn)
+	if decl == nil {
 		t.Fatalf("function %s not found in %s", fn, file)
 	}
+	params := paramNames(decl)
+	stmtLocals := stmtAssertionLocals(decl)
+	astLocal := importLocalName(parsed, "compiler/internal/frontend/ast")
+	handled := make([]string, 0)
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		switchStmt, ok := node.(*ast.TypeSwitchStmt)
+		if !ok {
+			return true
+		}
+		// Do not descend: switches on derived values inside this switch are not
+		// part of this function's dispatch contract.
+		if isDispatchOperand(switchOperandExpr(switchStmt), params, stmtLocals) {
+			for _, stmt := range switchStmt.Body.List {
+				clause, ok := stmt.(*ast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, expr := range clause.List {
+					star, ok := expr.(*ast.StarExpr)
+					if !ok {
+						continue
+					}
+					selector, ok := star.X.(*ast.SelectorExpr)
+					if !ok {
+						continue
+					}
+					if pkg, ok := selector.X.(*ast.Ident); ok && pkg.Name == astLocal {
+						handled = append(handled, selector.Sel.Name)
+					}
+				}
+			}
+		}
+		return false
+	})
 	return handled
+}
+
+// isDispatchOperand reports whether a type-switch operand is the function's
+// statement/expression input under the rule documented on handledKinds.
+func isDispatchOperand(operand ast.Expr, params, stmtLocals map[string]bool) bool {
+	if operand == nil {
+		return false
+	}
+	switch typed := operand.(type) {
+	case *ast.Ident:
+		return params[typed.Name] || stmtLocals[typed.Name]
+	case *ast.SelectorExpr:
+		base, ok := typed.X.(*ast.Ident)
+		return ok && params[base.Name] && typed.Sel.Name == "stmt"
+	}
+	return false
+}
+
+// stmtAssertionLocals returns locals assigned through a comma-ok assertion to
+// ast.Stmt, the canonical CFG-site statement extraction.
+func stmtAssertionLocals(fn *ast.FuncDecl) map[string]bool {
+	locals := map[string]bool{}
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 2 || len(assign.Rhs) != 1 {
+			return true
+		}
+		assert, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := assert.Type.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		if !ok || pkg.Name != "ast" || selector.Sel.Name != "Stmt" {
+			return true
+		}
+		if ident, ok := assign.Lhs[0].(*ast.Ident); ok {
+			locals[ident.Name] = true
+		}
+		return true
+	})
+	return locals
+}
+
+func findFuncDecl(file *ast.File, name string) *ast.FuncDecl {
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == name {
+			return fn
+		}
+	}
+	return nil
+}
+
+func paramNames(fn *ast.FuncDecl) map[string]bool {
+	params := map[string]bool{}
+	if fn.Type.Params == nil {
+		return params
+	}
+	for _, field := range fn.Type.Params.List {
+		for _, name := range field.Names {
+			params[name.Name] = true
+		}
+	}
+	return params
+}
+
+// switchOperandExpr returns the expression a type switch asserts on, for both
+// `switch x := y.(type)` and `switch y.(type)` forms.
+func switchOperandExpr(switchStmt *ast.TypeSwitchStmt) ast.Expr {
+	switch assign := switchStmt.Assign.(type) {
+	case *ast.AssignStmt:
+		if len(assign.Rhs) != 1 {
+			return nil
+		}
+		assert, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
+		if !ok {
+			return nil
+		}
+		return assert.X
+	case *ast.ExprStmt:
+		assert, ok := assign.X.(*ast.TypeAssertExpr)
+		if !ok {
+			return nil
+		}
+		return assert.X
+	}
+	return nil
+}
+
+// importLocalName resolves the local name the file uses for the package at the
+// given import path, so the case-type filter does not hardcode an alias.
+func importLocalName(file *ast.File, importPath string) string {
+	for _, imp := range file.Imports {
+		if strings.Trim(imp.Path.Value, `"`) != importPath {
+			continue
+		}
+		if imp.Name != nil {
+			return imp.Name.Name
+		}
+		break
+	}
+	// Unaliased imports bind the package name, which is the path's last segment.
+	if index := strings.LastIndex(importPath, "/"); index >= 0 {
+		return importPath[index+1:]
+	}
+	return importPath
 }
 
 // Expression dispatch is split between sites that must be total and narrow
@@ -279,7 +382,7 @@ var expressionSites = []dispatchSite{
 		file: "ir/hir/lower/module_lower.go",
 		fn:   "lowerASTExpr",
 		omitted: map[string]classification{
-			"RangeExpr": {traverse, "a range is only a loop iterable or a slice index, lowered by its parent, never a standalone value"},
+			"RangeExpr": {contextual, "a range is lowered by its parent construct (loop iterable or slice index); this dispatcher must never receive one directly"},
 		},
 	},
 }

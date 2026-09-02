@@ -46,6 +46,15 @@ type Attribute struct {
 	Location *source.Location
 }
 
+func (a *Attribute) forEachChild(visit func(Node)) {
+	if a == nil {
+		return
+	}
+	for _, arg := range a.Args {
+		visit(arg)
+	}
+}
+
 const (
 	AttributeExtern   = "extern"
 	AttributeTest     = "test"
@@ -120,6 +129,15 @@ func FunctionLinkName(fn *FnDecl, defaultName string) (string, bool) {
 
 type Attributed struct {
 	Attributes []Attribute
+}
+
+func (a *Attributed) forEachChild(visit func(Node)) {
+	if a == nil {
+		return
+	}
+	for _, attr := range a.Attributes {
+		attr.forEachChild(visit)
+	}
 }
 
 func (a *Attributed) SetAttributes(attrs []Attribute) {
