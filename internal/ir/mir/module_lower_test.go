@@ -243,29 +243,57 @@ func TestGenerateMIRDoesNotAssignUninitializedBinding(t *testing.T) {
 	}
 }
 
-func TestGenerateMIRLowersReturnCleanupBeforeTerminator(t *testing.T) {
+// A return computes its value before unwinding the scopes it exits, which is
+// why return cleanup is planned separately from CFG scope-exit sites: a
+// scope-exit site emits its drops before the terminator runs, so a returned
+// value read from a dropped local would be freed first.
+func TestGenerateMIRComputesReturnValueBeforePlannedCleanup(t *testing.T) {
 	mod := &hir.Module{
 		Name: "test", Types: mirTypes.table,
 		Funcs: []*hir.Function{{
 			Name:       "release",
+			Params:     []ir.Param{{Name: "owner", Type: mirTypes.ownedI32, SymbolID: 1}},
 			ReturnType: mirTypes.i32,
 			Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{
-				Value:   &ir.IntLit{Value: "7", Type: mirTypes.i32},
-				Cleanup: []ir.Expr{&ir.Drop{Value: &ir.Ident{Name: "owner", Type: mirTypes.ownedI32}}},
+				NodeID: 20,
+				Value: &ir.Binary{
+					Op:    "+",
+					Left:  &ir.Ident{Name: "left", Type: mirTypes.i32},
+					Right: &ir.IntLit{Value: "7", Type: mirTypes.i32},
+					Type:  mirTypes.i32,
+				},
 			}}},
 		}},
 	}
-	out := GenerateMIR(mod, cfgForHIR(mod), nil, nil, nil)
+	// CFG construction assigns function identity, so the plan is keyed after it.
+	graphs := cfgForHIR(mod)
+	plans := ownershipresult.Result{mod.Funcs[0].NodeID: &ownershipresult.CleanupPlan{
+		BeforeReturn: map[ir.NodeID][]symbols.SymbolID{20: {1}},
+	}}
+
+	out := GenerateMIR(mod, graphs, plans, nil, nil)
 	block := out.Funcs[0].Blocks[0]
-	if len(block.Instrs) != 1 {
-		t.Fatalf("expected one cleanup instruction, got %#v", block.Instrs)
+	value, drop := -1, -1
+	for index, instr := range block.Instrs {
+		switch instr.(type) {
+		case *Assign:
+			if value < 0 {
+				value = index
+			}
+		case *Drop:
+			if drop < 0 {
+				drop = index
+			}
+		}
 	}
-	if _, ok := block.Instrs[0].(*Drop); !ok {
-		t.Fatalf("expected MIR drop, got %#v", block.Instrs[0])
+	if value < 0 || drop < 0 {
+		t.Fatalf("instructions = %#v, want the return value and its planned drop", block.Instrs)
 	}
-	ret, ok := block.Term.(*Ret)
-	if !ok || ret.Value.Text() != "7" {
-		t.Fatalf("expected preserved return value, got %#v", block.Term)
+	if value > drop {
+		t.Fatalf("planned drop at %d precedes return value at %d: %#v", drop, value, block.Instrs)
+	}
+	if _, ok := block.Term.(*Ret); !ok {
+		t.Fatalf("terminator = %#v, want return", block.Term)
 	}
 }
 
