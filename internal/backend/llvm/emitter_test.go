@@ -284,6 +284,16 @@ func requireLLVMInvariant(t *testing.T, emit func()) {
 	emit()
 }
 
+type unknownMIRNode struct{}
+
+func (*unknownMIRNode) Text() string                     { return "unknown" }
+func (*unknownMIRNode) SourceLocation() *source.Location { return nil }
+
+var (
+	_ mir.Instr      = (*unknownMIRNode)(nil)
+	_ mir.Terminator = (*unknownMIRNode)(nil)
+)
+
 func TestLLVMLayoutsNameBuiltInCarrierFields(t *testing.T) {
 	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface})
 	ownedInterface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: interfaceType})
@@ -344,6 +354,42 @@ func TestTypedLLVMBuilderRejectsOperandMismatches(t *testing.T) {
 				b := newLLVMBuilder(&strings.Builder{}, nil, -1)
 				emit(b)
 			})
+		})
+	}
+}
+
+func TestGenerateLLVMIRPanicsForUnknownMIRNodes(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		block *mir.Block
+		want  string
+	}{
+		{
+			name:  "instruction",
+			block: &mir.Block{Instrs: []mir.Instr{&unknownMIRNode{}}},
+			want:  "LLVM emission: unhandled MIR instruction *llvm.unknownMIRNode",
+		},
+		{
+			name:  "terminator",
+			block: &mir.Block{Term: &unknownMIRNode{}},
+			want:  "LLVM emission: unhandled MIR terminator *llvm.unknownMIRNode",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != tt.want {
+					t.Fatalf("GenerateLLVMIR panic = %#v; want %q", recovered, tt.want)
+				}
+			}()
+			GenerateLLVMIR(&mir.Module{
+				Name:  "unknown-node",
+				Types: llvmTypes.table,
+				Funcs: []*mir.Function{{
+					Name:       "test",
+					ReturnType: llvmTypes.void,
+					Blocks:     []*mir.Block{tt.block},
+				}},
+			}, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 		})
 	}
 }
