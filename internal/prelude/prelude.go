@@ -52,8 +52,14 @@ func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*pro
 	if !ok || project.CanonicalPath(preludePath) != project.CanonicalPath(filePath) {
 		return nil, false
 	}
+	id := ModuleID(ctx)
+	if !id.Valid() {
+		// Without derivable identity the module can never register, so reporting
+		// success here would hand callers a module every path silently drops.
+		return nil, false
+	}
 	return &project.Module{
-		ID:              ModuleID(ctx),
+		ID:              id,
 		FilePath:        preludePath,
 		Content:         content,
 		ContentProvided: true,
@@ -76,7 +82,10 @@ func Load(ctx *project.CompilerContext) error {
 		}
 		return fmt.Errorf("load prelude %s: %w", preludePath, err)
 	}
-	module, _ := ModuleForFile(ctx, preludePath, string(content))
+	module, ok := ModuleForFile(ctx, preludePath, string(content))
+	if !ok {
+		return fmt.Errorf("load prelude %s: no derivable module identity", preludePath)
+	}
 	ctx.AddModule(module)
 	return nil
 }
