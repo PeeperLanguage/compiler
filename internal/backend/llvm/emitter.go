@@ -317,32 +317,35 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					panic(fmt.Sprintf("LLVM emission: unhandled MIR instruction %T", instr))
 				}
 			}
-			if block.Term != nil {
-				returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
-				lb.setLocation(block.Term.SourceLocation())
-				switch term := block.Term.(type) {
-				case *mir.Jump:
-					lb.branch(fmt.Sprintf("b%d", term.TargetID))
-				case *mir.Branch:
-					cond := emitCondRef(lb, term.Cond)
-					lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
-				case *mir.SwitchVariant:
-					emitVariantSwitch(lb, term)
-				case *mir.Ret:
-					if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
-						if returnLayout.Kind != llvmLayoutVoid {
-							lb.ret(lb.value("0", returnLayout), returnLayout)
-						} else {
-							lb.retVoid(returnLayout)
-						}
-						continue
+			// Both terminator invariants are compiler bugs, not invalid source:
+			// every block carries a terminator, and every terminator kind emits
+			// one. Skipping either silently produces unterminated LLVM IR.
+			if block.Term == nil {
+				panic(fmt.Sprintf("LLVM emission: block b%d has no terminator", block.ID))
+			}
+			returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
+			lb.setLocation(block.Term.SourceLocation())
+			switch term := block.Term.(type) {
+			case *mir.Jump:
+				lb.branch(fmt.Sprintf("b%d", term.TargetID))
+			case *mir.Branch:
+				cond := emitCondRef(lb, term.Cond)
+				lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
+			case *mir.SwitchVariant:
+				emitVariantSwitch(lb, term)
+			case *mir.Ret:
+				if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
+					if returnLayout.Kind != llvmLayoutVoid {
+						lb.ret(lb.value("0", returnLayout), returnLayout)
+					} else {
+						lb.retVoid(returnLayout)
 					}
-					val := emitRef(lb, term.Value)
-					lb.ret(val, returnLayout)
-				default:
-					// A block without an emitted terminator is malformed LLVM IR.
-					panic(fmt.Sprintf("LLVM emission: unhandled MIR terminator %T", block.Term))
+					continue
 				}
+				val := emitRef(lb, term.Value)
+				lb.ret(val, returnLayout)
+			default:
+				panic(fmt.Sprintf("LLVM emission: unhandled MIR terminator %T", block.Term))
 			}
 			lb.setLocation(nil)
 		}

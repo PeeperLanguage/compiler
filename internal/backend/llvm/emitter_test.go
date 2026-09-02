@@ -374,6 +374,13 @@ func TestGenerateLLVMIRPanicsForUnknownMIRNodes(t *testing.T) {
 			block: &mir.Block{Term: &unknownMIRNode{}},
 			want:  "LLVM emission: unhandled MIR terminator *llvm.unknownMIRNode",
 		},
+		{
+			// A block that reaches emission with no terminator would otherwise
+			// produce an unterminated basic block and no compiler-side signal.
+			name:  "missing terminator",
+			block: &mir.Block{ID: 7},
+			want:  "LLVM emission: block b7 has no terminator",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
