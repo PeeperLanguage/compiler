@@ -195,6 +195,32 @@ Invariants:
 
 Invalid source remains diagnostics; validator failure is a compiler bug.
 
+**As implemented (slice 4).** `Validate(types, bindings, graphs)` runs in the
+pipeline after every ownership pass, skipped when the module already has errors,
+and reports failure as `ICE0002` rather than a source diagnostic. Invariants 2,
+4 and 5 are implemented as written; 5 collapses into 4, since a stale entry is
+exactly a key that no longer names a program point.
+
+Invariant 1 is implemented over the sites that actually need publication: a use
+kind is published where the decision requires type information the typechecker
+holds — call arguments, intrinsic operands, match carriers — and the validator
+requires an entry for every argument in `EffectiveCallArguments`. The remaining
+uses are structural: a binding moves, a condition reads, an index reads. Those
+follow from syntactic position alone, so publishing them would add ceremony
+without adding knowledge, and the validator does not demand entries for them.
+
+Invariant 3 is **deferred**. Proving that a symbol is dropped exactly once per
+path is a CFG dataflow walk — the analysis ownership already performs. Repeating
+it inside the validator would make the validator a second implementation of the
+thing it checks, which §6 rules out. Double-drop stays covered behaviorally by
+the ownership suite and the `x_test` drop fixtures.
+
+`publishedUse`'s capability fallback is retained, not removed. It is reachable
+only where the typechecker exited before publishing, which means the program
+already has diagnostics; raising a compiler-bug error there would blame the
+compiler for source the user was already told is invalid. The validator is the
+single place that treats a missing classification as a bug.
+
 ## 4. Migration slices
 
 Each slice keeps the full suite green and is independently reviewable.

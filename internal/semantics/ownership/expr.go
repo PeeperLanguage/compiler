@@ -366,9 +366,15 @@ func (a *analyzer) checkCallArgument(
 }
 
 // publishedUse resolves the ownership use kind for one value use: the
-// typechecker's published classification when present, otherwise the
-// capability fallback for diagnostics-continued paths. The ownership
-// validator will enforce presence for error-free programs.
+// typechecker's published classification when present, otherwise the capability
+// fallback.
+//
+// The fallback is reachable only on diagnostics-continued paths, where the
+// typechecker exited before publishing. It stays deliberately: ownership still
+// runs on broken source, and turning an absent classification into an internal
+// error here would report a compiler bug for a program the user has already been
+// told is invalid. For error-free programs the absence is a compiler bug, and
+// ownershipresult.Validate is the one place that says so.
 func (a *analyzer) publishedUse(arg ast.Expr, paramType typeinfo.Type) typeinfo.UseKind {
 	if a.module != nil && a.module.Typechecking != nil {
 		if kind, ok := a.module.Typechecking.ValueUses[arg.ID()]; ok {

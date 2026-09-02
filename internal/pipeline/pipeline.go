@@ -477,6 +477,15 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	}
 	if module.Phase < phase.Ownership {
 		module.Ownership = ownership.Check(phaseCtx, module)
+		// Published evidence is only checkable once the module is otherwise
+		// error-free: broken source legitimately leaves evidence incomplete,
+		// and reporting that as a compiler bug would bury the real diagnostic.
+		if !phaseDiag.HasErrors() {
+			if err := module.Ownership.Validate(module.Typechecking, module.Bindings, module.CFG); err != nil {
+				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+					"ownership evidence is inconsistent: "+err.Error(), nil, "")
+			}
+		}
 		module.Phase = phase.Ownership
 		ctx.Metrics.AddPhaseAdvance()
 		return true
