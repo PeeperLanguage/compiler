@@ -68,28 +68,56 @@ func (m Match) Arm(caseIndex int) (MatchArm, bool) {
 	return MatchArm{}, false
 }
 
-type ForIterationKind uint8
-
-const (
-	ForIterationRange ForIterationKind = iota
-	ForIterationSequence
-)
-
 // ForIteration records typechecker-owned loop lowering and CFG evidence.
 // Generated symbols carry hidden loop state; source bindings remain body-scoped.
+//
+// Evidence is published only for a loop that typed cleanly, so a record that
+// exists is complete: Cursor, Value and ElementType are always set, and Plan
+// carries exactly one iteration kind. Consumers switch on the plan and read its
+// fields; they must not re-check them, because a nil there would be a compiler
+// bug rather than a shape the source can produce.
 type ForIteration struct {
-	Kind            ForIterationKind
 	GuaranteedEntry bool
 
 	ElementType typeinfo.Type
-	CarrierType typeinfo.Type
-	Carrier     *symbols.Symbol
 	Cursor      *symbols.Symbol
-	End         *symbols.Symbol
-	Ordinal     *symbols.Symbol
-	Index       *symbols.Symbol
 	Value       *symbols.Symbol
+	// Index is nil unless the source binds an index name.
+	Index *symbols.Symbol
+
+	// Plan carries the iteration kind and that kind's state as one value.
+	// There is no separate kind tag to disagree with the state, and no way to
+	// hold both kinds at once.
+	Plan IterationPlan
 }
+
+// IterationPlan is the state one iteration kind needs. The interface is closed
+// by its unexported method: only the two plans below implement it, so a
+// consumer's type switch over both is exhaustive and a third kind cannot be
+// introduced outside this package.
+type IterationPlan interface {
+	iterationPlan()
+}
+
+// RangeIteration is the state of a `for i in a..b` loop. Limit holds the
+// evaluated exclusive upper bound; Ordinal counts iterations and is non-nil
+// exactly when ForIteration.Index is.
+type RangeIteration struct {
+	Limit   *symbols.Symbol
+	Ordinal *symbols.Symbol
+}
+
+func (*RangeIteration) iterationPlan() {}
+
+// SequenceIteration is the state of a `for v in seq` loop. Carrier holds the
+// iterated storage for the loop's lifetime, borrowed when CarrierType is a
+// reference; the cursor indexes through it.
+type SequenceIteration struct {
+	Carrier     *symbols.Symbol
+	CarrierType typeinfo.Type
+}
+
+func (*SequenceIteration) iterationPlan() {}
 
 // VariantConstruction records resolved enum construction without later path or field resolution.
 type VariantConstruction struct {

@@ -64,16 +64,20 @@ return total;
 	if !ok {
 		t.Fatal("missing range iteration evidence")
 	}
-	if evidence.Kind != typecheckresult.ForIterationRange || evidence.Cursor == nil || evidence.End == nil || evidence.Ordinal == nil {
+	plan, isRange := evidence.Plan.(*typecheckresult.RangeIteration)
+	if !isRange {
 		t.Fatalf("range iteration evidence = %#v", evidence)
+	}
+	if evidence.Cursor == nil || plan.Limit == nil || plan.Ordinal == nil {
+		t.Fatalf("range iteration evidence is incomplete = %#v", evidence)
 	}
 	if evidence.Index != module.Bindings.NodeSymbols[loop.Index.ID()] || evidence.Value != module.Bindings.NodeSymbols[loop.Value.ID()] {
 		t.Fatal("range evidence does not preserve source binding symbols")
 	}
 	for name, symbol := range map[string]string{
 		"cursor":  typeinfo.TypeText(evidence.Cursor.Type),
-		"end":     typeinfo.TypeText(evidence.End.Type),
-		"ordinal": typeinfo.TypeText(evidence.Ordinal.Type),
+		"end":     typeinfo.TypeText(plan.Limit.Type),
+		"ordinal": typeinfo.TypeText(plan.Ordinal.Type),
 		"index":   typeinfo.TypeText(evidence.Index.Type),
 		"value":   typeinfo.TypeText(evidence.Value.Type),
 	} {
@@ -105,7 +109,7 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 			for name, typ := range map[string]typeinfo.Type{
 				"element": evidence.ElementType,
 				"cursor":  evidence.Cursor.Type,
-				"end":     evidence.End.Type,
+				"end":     evidence.Plan.(*typecheckresult.RangeIteration).Limit.Type,
 				"value":   evidence.Value.Type,
 			} {
 				if got := typeinfo.TypeText(typ); got != "i64" {
@@ -136,7 +140,7 @@ return 0i64;
 	for name, typ := range map[string]typeinfo.Type{
 		"element": evidence.ElementType,
 		"cursor":  evidence.Cursor.Type,
-		"end":     evidence.End.Type,
+		"end":     evidence.Plan.(*typecheckresult.RangeIteration).Limit.Type,
 		"value":   evidence.Value.Type,
 	} {
 		if got := typeinfo.TypeText(typ); got != "i64" {
@@ -193,10 +197,14 @@ return total;
 	if !ok {
 		t.Fatal("missing sequence iteration evidence")
 	}
-	if evidence.Kind != typecheckresult.ForIterationSequence || evidence.Carrier == nil || evidence.Cursor == nil {
+	plan, isSequence := evidence.Plan.(*typecheckresult.SequenceIteration)
+	if !isSequence {
 		t.Fatalf("sequence iteration evidence = %#v", evidence)
 	}
-	if got := typeinfo.TypeText(evidence.Carrier.Type); got != "&[3]i32" {
+	if evidence.Cursor == nil || plan.Carrier == nil {
+		t.Fatalf("sequence iteration evidence is incomplete = %#v", evidence)
+	}
+	if got := typeinfo.TypeText(plan.Carrier.Type); got != "&[3]i32" {
 		t.Fatalf("carrier type = %s, want &[3]i32", got)
 	}
 	wantCursor, ok := typeinfo.NumericTypeFromName("usize", target.Host())

@@ -526,8 +526,9 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	}
 
 	var elemType typeinfo.Type
-	if rangeExpr, ok := node.Iterable.(*ast.RangeExpr); ok {
-		evidence.Kind = typecheckresult.ForIterationRange
+	var carrierType typeinfo.Type
+	rangeExpr, isRange := node.Iterable.(*ast.RangeExpr)
+	if isRange {
 		if !rangeExpr.EndExclusive {
 			valid = false
 			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "for range requires an exclusive end; use `..` instead of `..=`"))
@@ -586,7 +587,6 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 		}
 		evidence.ElementType = elemType
 	} else {
-		evidence.Kind = typecheckresult.ForIterationSequence
 		var ok bool
 		indexType, ok = typeinfo.NumericTypeFromName("usize", c.ctx.Target)
 		if !ok {
@@ -619,9 +619,9 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 					"for-in requires copyable sequence elements; iterate indexes and borrow move-only elements explicitly"))
 			}
 			if _, array := typeinfo.Underlying(iterableType).(*typeinfo.ArrayType); array {
-				evidence.CarrierType = &typeinfo.RefType{Target: iterableType}
+				carrierType = &typeinfo.RefType{Target: iterableType}
 			} else {
-				evidence.CarrierType = iterableType
+				carrierType = iterableType
 			}
 			evidence.ElementType = elem
 		} else {
@@ -643,18 +643,22 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
 		location := ast.LocOf(node)
 		evidence.Cursor = symbols.New("$for.cursor", symbols.SymbolVar, nil, location)
-		if evidence.Kind == typecheckresult.ForIterationRange {
+		if isRange {
 			evidence.Cursor.BindType(elemType)
-			evidence.End = symbols.New("$for.end", symbols.SymbolVar, nil, location)
-			evidence.End.BindType(elemType)
-			if node.Index != nil {
-				evidence.Ordinal = symbols.New("$for.ordinal", symbols.SymbolVar, nil, location)
-				evidence.Ordinal.BindType(indexType)
+			plan := &typecheckresult.RangeIteration{
+				Limit: symbols.New("$for.end", symbols.SymbolVar, nil, location),
 			}
+			plan.Limit.BindType(elemType)
+			if node.Index != nil {
+				plan.Ordinal = symbols.New("$for.ordinal", symbols.SymbolVar, nil, location)
+				plan.Ordinal.BindType(indexType)
+			}
+			evidence.Plan = plan
 		} else {
 			evidence.Cursor.BindType(indexType)
-			evidence.Carrier = symbols.New("$for.carrier", symbols.SymbolVar, nil, location)
-			evidence.Carrier.BindType(evidence.CarrierType)
+			carrier := symbols.New("$for.carrier", symbols.SymbolVar, nil, location)
+			carrier.BindType(carrierType)
+			evidence.Plan = &typecheckresult.SequenceIteration{Carrier: carrier, CarrierType: carrierType}
 		}
 		c.module.Typechecking.ForIterations[node.ID()] = evidence
 	}

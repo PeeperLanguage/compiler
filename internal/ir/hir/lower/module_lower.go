@@ -333,8 +333,10 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 		return loop
 	}
 
+	// Published evidence is complete by construction: the typechecker publishes
+	// only for a loop that typed cleanly. Absence is the one case to handle.
 	evidence, found := module.Typechecking.ForIterations[node.ID()]
-	if !found || evidence.Cursor == nil || evidence.Value == nil {
+	if !found {
 		return &hir.Invalid{Message: "for-in statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: location}
 	}
 	loop.Init = &hir.Block{Stmts: make([]hir.Stmt, 0), Location: location}
@@ -342,46 +344,45 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 	loop.Next = &hir.Block{Stmts: make([]hir.Stmt, 0), Location: location}
 	boolType := loweredTypeID(ctx, module, &typeinfo.BoolType{})
 
-	switch evidence.Kind {
-	case typecheckresult.ForIterationRange:
+	switch plan := evidence.Plan.(type) {
+	case *typecheckresult.RangeIteration:
+		// Range evidence is published only for a RangeExpr iterable with both
+		// bounds present, so the assertion cannot fail for a published loop.
 		rangeExpr, ok := node.Iterable.(*ast.RangeExpr)
-		if !ok || rangeExpr.Start == nil || rangeExpr.End == nil || evidence.End == nil {
+		if !ok {
 			return &hir.Invalid{Message: "range iteration evidence does not match syntax", NodeID: hir.NodeID(node.ID()), Location: location}
 		}
 		loop.Init.Stmts = append(loop.Init.Stmts,
 			generatedBinding(ctx, module, evidence.Cursor, lowerASTExpr(ctx, module, scope, rangeExpr.Start, evidence.ElementType), location),
-			generatedBinding(ctx, module, evidence.End, lowerASTExpr(ctx, module, scope, rangeExpr.End, evidence.ElementType), location),
+			generatedBinding(ctx, module, plan.Limit, lowerASTExpr(ctx, module, scope, rangeExpr.End, evidence.ElementType), location),
 		)
-		if evidence.Ordinal != nil {
-			ordinalType := loweredTypeID(ctx, module, evidence.Ordinal.Type)
-			loop.Init.Stmts = append(loop.Init.Stmts, generatedBinding(ctx, module, evidence.Ordinal,
+		if plan.Ordinal != nil {
+			ordinalType := loweredTypeID(ctx, module, plan.Ordinal.Type)
+			loop.Init.Stmts = append(loop.Init.Stmts, generatedBinding(ctx, module, plan.Ordinal,
 				&ir.IntLit{Value: "0", Type: ordinalType, SourceInfo: ir.SourceInfo{Location: location}}, location))
 		}
 		loop.Cond = &ir.Binary{
-			Op: "<", Left: generatedIdent(ctx, module, evidence.Cursor, location), Right: generatedIdent(ctx, module, evidence.End, location), Type: boolType,
+			Op: "<", Left: generatedIdent(ctx, module, evidence.Cursor, location), Right: generatedIdent(ctx, module, plan.Limit, location), Type: boolType,
 			SourceInfo: ir.SourceInfo{Location: location},
 		}
 		if evidence.Index != nil {
 			loop.Bindings.Stmts = append(loop.Bindings.Stmts,
-				generatedBinding(ctx, module, evidence.Index, generatedIdent(ctx, module, evidence.Ordinal, location), location))
+				generatedBinding(ctx, module, evidence.Index, generatedIdent(ctx, module, plan.Ordinal, location), location))
 		}
 		loop.Bindings.Stmts = append(loop.Bindings.Stmts,
 			generatedBinding(ctx, module, evidence.Value, generatedIdent(ctx, module, evidence.Cursor, location), location))
 		loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, evidence.Cursor, location))
-		if evidence.Ordinal != nil {
-			loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, evidence.Ordinal, location))
+		if plan.Ordinal != nil {
+			loop.Next.Stmts = append(loop.Next.Stmts, incrementSymbol(ctx, module, plan.Ordinal, location))
 		}
-	case typecheckresult.ForIterationSequence:
-		if evidence.Carrier == nil {
-			return &hir.Invalid{Message: "sequence iteration missing carrier evidence", NodeID: hir.NodeID(node.ID()), Location: location}
-		}
-		carrier := generatedIdent(ctx, module, evidence.Carrier, location)
+	case *typecheckresult.SequenceIteration:
+		carrier := generatedIdent(ctx, module, plan.Carrier, location)
 		cursor := generatedIdent(ctx, module, evidence.Cursor, location)
 		cursorType := loweredTypeID(ctx, module, evidence.Cursor.Type)
 		elementType := loweredTypeID(ctx, module, evidence.ElementType)
 		loop.Init.Stmts = append(loop.Init.Stmts,
-			generatedBinding(ctx, module, evidence.Carrier,
-				lowerImplicitReferenceValue(ctx, module, scope, node.Iterable, evidence.CarrierType), location),
+			generatedBinding(ctx, module, plan.Carrier,
+				lowerImplicitReferenceValue(ctx, module, scope, node.Iterable, plan.CarrierType), location),
 			generatedBinding(ctx, module, evidence.Cursor,
 				&ir.IntLit{Value: "0", Type: cursorType, SourceInfo: ir.SourceInfo{Location: location}}, location),
 		)
@@ -396,7 +397,7 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 		}
 		loop.Bindings.Stmts = append(loop.Bindings.Stmts,
 			generatedBinding(ctx, module, evidence.Value, &ir.Load{Place: &ir.Place{
-				Root: generatedIdent(ctx, module, evidence.Carrier, location),
+				Root: generatedIdent(ctx, module, plan.Carrier, location),
 				Projections: []ir.PlaceProjection{{
 					Kind: ir.PlaceProjectionIndex, Index: generatedIdent(ctx, module, evidence.Cursor, location), Type: elementType, Location: location,
 				}},

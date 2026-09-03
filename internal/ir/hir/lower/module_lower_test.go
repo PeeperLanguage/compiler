@@ -150,6 +150,22 @@ func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 	}
 }
 
+// A published record with no plan is the one malformed shape the type still
+// admits: IterationPlan is closed, so a consumer's switch over the two plans is
+// exhaustive, but a zero Plan is reachable if a producer ever publishes early.
+func TestGenerateHIRRejectsForInWithoutAnIterationPlan(t *testing.T) {
+	out := generateTestHIR(t, "hir_for_plan_test"+peeper.SourceExt, "hir_for_plan_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
+		for id, evidence := range module.Typechecking.ForIterations {
+			evidence.Plan = nil
+			module.Typechecking.ForIterations[id] = evidence
+		}
+	})
+	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
+	if !ok || !strings.Contains(invalid.Message, "unknown for-in iteration evidence") {
+		t.Fatalf("for-in without an iteration plan = %#v", out.Funcs[0].Body.Stmts[0])
+	}
+}
+
 func TestGenerateHIRCallableNamesAreStableAndModuleAware(t *testing.T) {
 	const src = `struct Counter { value: i32 }
 fn Value() -> i32 { return 1; }

@@ -195,8 +195,8 @@ func (a *analyzer) run() {
 		next := copyState(a.inStates[id])
 		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockNormal {
 			loopID := ast.NodeID(node.cfgBlock.NodeID)
-			if evidence, found := a.module.Typechecking.ForIterations[loopID]; found &&
-				evidence.Kind == typecheckresult.ForIterationSequence && evidence.Carrier != nil {
+			evidence, found := a.module.Typechecking.ForIterations[loopID]
+			if _, sequence := evidence.Plan.(*typecheckresult.SequenceIteration); found && sequence {
 				releaseIterationLoans(next, nil, loopID)
 			}
 		}
@@ -541,8 +541,11 @@ func (a *analyzer) applyStmt(node *site, st state) {
 			a.checkExpr(scope, s.Cond, st, typeinfo.UseRead, loans, false)
 			break
 		}
-		evidence, found := a.module.Typechecking.ForIterations[s.ID()]
-		if !found || evidence.Kind != typecheckresult.ForIterationSequence || evidence.Carrier == nil {
+		// A range loop borrows nothing; only a sequence loop holds the iterated
+		// storage for the loop's lifetime through its published carrier.
+		evidence := a.module.Typechecking.ForIterations[s.ID()]
+		sequence, isSequence := evidence.Plan.(*typecheckresult.SequenceIteration)
+		if !isSequence {
 			a.checkExpr(scope, s.Iterable, st, typeinfo.UseRead, loans, false)
 			break
 		}
@@ -558,7 +561,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 			origins = referenceOrigins(value)
 		}
 		if len(origins) > 0 {
-			st.references[evidence.Carrier] = []referenceLoan{{
+			st.references[sequence.Carrier] = []referenceLoan{{
 				id: loanID{node: s.Iterable}, origins: origins, site: s.Iterable, loop: s.ID(),
 			}}
 		}
