@@ -540,6 +540,11 @@ validation, and fixture checks until contributor updates all required owners.
 Use this matrix before implementation. Mark each row **changed**, **verified
 unchanged**, or **not applicable with reason**.
 
+The matrix states the question each area asks. [`change-paths.md`](change-paths.md)
+answers where to go: it walks the real file sequence for three change shapes, traced
+from commits already in the repository, and names what catches you when a stop is
+missed — including the stops where nothing does.
+
 | Area | Required question |
 | --- | --- |
 | Lexer/token model | Does syntax require token or lexical-state change? |

@@ -38,6 +38,11 @@ These files are canonical; do not copy their rules into new documents:
 - [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler phase,
   representation, traversal, and incremental-analysis guidance.
 
+For a change that touches the pipeline, read
+[`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
+first. It walks the files a new syntax construct, an internal lowering change, or a
+new type must visit, and names the test that fails at each stop you skip.
+
 `AGENTS.md` contains automation workflow, not additional human-facing code
 policy.
 
