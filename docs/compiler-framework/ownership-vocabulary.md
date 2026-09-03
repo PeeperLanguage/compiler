@@ -1,6 +1,9 @@
 # Ownership Vocabulary Design
 
-Status: **proposal — needs maintainer approval on vocabulary before any code**.
+Status: **approved; slices 1-4 implemented**. The vocabulary and decisions
+D1-D7 in section 5 are settled. Sections 2 and 4 state the design; each carries
+an *As implemented* note recording what actually landed and what was deferred.
+Trust the notes over the design text where they differ.
 
 This document defines the ownership decision vocabulary that makes lifetime
 handling automatic for future features. Design goal, stated by the maintainer:
@@ -117,6 +120,22 @@ Rules:
   "what needs drop" (fixes G2/G3/G9).
 - Cycle guards are uniform (fixes G8).
 
+**As implemented (slice 1).** The dependency runs the other way round from the
+design text. `OwnershipCapabilityOf` (`typeinfo/capabilities.go:437`) *composes*
+`NeedsDrop`, `IsImplicitCopyType` and `noCopyType` rather than being the walker
+they derive from. That was deliberate — it makes the consolidation behavior-
+preserving by construction, so the existing suite proves it — but it means the
+single-walker half of the design is still outstanding. New code consumes
+`OwnershipCapabilityOf`; the three predicates remain the behavioral source.
+
+`IsNoCopyType` is unexported to `noCopyType`, not deleted, so D6 is half done:
+the capability struct is the only public spelling, but a second implementation
+of the copy question still exists behind it.
+
+Landed as written: G6 (`NoneType` joins the implicit-copy set,
+`capabilities.go:104`) and G8 (the cycle guard releases with `defer delete`,
+`capabilities.go:100`).
+
 ### 2.2 Use kind (per value use, published once by the typechecker)
 
 The `UseKind` vocabulary lives in `typeinfo` beside `OwnershipCapability`
@@ -229,6 +248,19 @@ Each slice keeps the full suite green and is independently reviewable.
    re-point `IsImplicitCopyType`/`NeedsDrop` at it; resolve D1–D5; delete
    backend `typeNeedsDrop` (MIR already carries obligations); fix G6/G8.
    No behavior change intended; existing suite + fixtures prove it.
+
+   **Deferred out of slice 1: the backend `typeNeedsDrop` deletion.** It still
+   exists at `backend/llvm/drop_emit.go:303` with ten call sites across
+   `drop_emit.go` and `emitter.go`. So **G2** (two implementations of "what
+   needs drop") and **G3** (owned-interface drop policy living only in the
+   backend) are both still open, and **D2** is unimplemented — an owned
+   interface is still raw-freed by a backend special case rather than by a
+   source-published obligation.
+
+   Deleting the walker is not a plumbing change: it moves drop policy for
+   owned interfaces into the source language, which is observable behavior and
+   needs `x_test` fixtures of its own. It is scheduled as separate work, not as
+   a leftover of this slice.
 2. **Publish use kinds** — typechecker publishes `ValueUses` for call
    arguments, bindings, assignments, returns, concat operands, match arms.
    Ownership consumes; delete the re-derivations listed in §2.2. Largest
