@@ -124,7 +124,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 	found := make([]*Block, 0)
 	seen := make(map[*Block]bool)
 	for block := range reachesExit {
-		if block.Origin != BlockNormal {
+		if structuredControl(block.Origin) {
 			if !seen[block] {
 				found = append(found, block)
 				seen[block] = true
@@ -140,7 +140,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 				continue
 			}
 			traceSeen[current] = true
-			if current.Origin != BlockNormal {
+			if structuredControl(current.Origin) {
 				if !seen[current] {
 					found = append(found, current)
 					seen[current] = true
@@ -152,6 +152,21 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 	}
 	sortMissingBranches(found)
 	return found
+}
+
+// structuredControl reports whether a block is part of a structured construct
+// rather than a plain continuation. Missing-return reporting walks back to the
+// nearest such block to name the branch that falls through. A loop exit is a
+// continuation despite carrying a loop role: the code after the loop lives
+// there, and reporting it would name the wrong branch.
+func structuredControl(origin BlockOrigin) bool {
+	switch origin {
+	case BlockNormal, BlockLoopExit:
+		return false
+	case BlockThen, BlockElse, BlockLoopInit, BlockLoop, BlockLoopBody, BlockLoopLatch:
+		return true
+	}
+	return true
 }
 
 func filterMostSpecificBranches(blocks []*Block) []*Block {

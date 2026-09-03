@@ -203,7 +203,7 @@ func TestBuildModuleCreatesForInLoopBlocksWithSynthesizedCondition(t *testing.T)
 	header := loopBlock(t, graph, 30, BlockLoop)
 	loopBody := loopBlock(t, graph, 30, BlockLoopBody)
 	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	exit := loopBlock(t, graph, 30, BlockNormal)
+	exit := loopBlock(t, graph, 30, BlockLoopExit)
 
 	entryJump, ok := graph.Entry.Terminator.(*Jump)
 	if !ok || entryJump.Target != init {
@@ -329,7 +329,7 @@ func TestBuildModuleNestedLoopJumpsUseInnermostTargets(t *testing.T) {
 	}
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{outer}}
 	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	innerExit := loopBlock(t, graph, 40, BlockNormal)
+	innerExit := loopBlock(t, graph, 40, BlockLoopExit)
 	innerLatch := loopBlock(t, graph, 40, BlockLoopLatch)
 	outerLatch := loopBlock(t, graph, 30, BlockLoopLatch)
 	foundBreak := false
@@ -418,7 +418,7 @@ func TestBuildModuleInfiniteLoopBreakMakesExitReachable(t *testing.T) {
 	init := loopBlock(t, graph, 30, BlockLoopInit)
 	loopBody := loopBlock(t, graph, 30, BlockLoopBody)
 	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	exit := loopBlock(t, graph, 30, BlockNormal)
+	exit := loopBlock(t, graph, 30, BlockLoopExit)
 	initJump, initOK := init.Terminator.(*Jump)
 	latchJump, latchOK := latch.Terminator.(*Jump)
 	if !initOK || initJump.Target != loopBody || !latchOK || latchJump.Target != loopBody {
@@ -524,4 +524,29 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 		}
 	}
 	return false
+}
+
+// Missing-return reporting walks back to the nearest structured-control block
+// to name the branch that falls through, so this classification decides which
+// span a user sees. A loop exit carries a loop role but is a continuation: the
+// code after the loop lives there.
+func TestStructuredControlClassifiesEveryBlockOrigin(t *testing.T) {
+	for _, test := range []struct {
+		origin BlockOrigin
+		name   string
+		want   bool
+	}{
+		{BlockNormal, "normal", false},
+		{BlockLoopExit, "loop exit", false},
+		{BlockThen, "then", true},
+		{BlockElse, "else", true},
+		{BlockLoopInit, "loop init", true},
+		{BlockLoop, "loop header", true},
+		{BlockLoopBody, "loop body", true},
+		{BlockLoopLatch, "loop latch", true},
+	} {
+		if got := structuredControl(test.origin); got != test.want {
+			t.Errorf("structuredControl(%s) = %t, want %t", test.name, got, test.want)
+		}
+	}
 }

@@ -193,7 +193,10 @@ func (a *analyzer) run() {
 		queued[id] = false
 		node := a.sites[id]
 		next := copyState(a.inStates[id])
-		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockNormal {
+		// Leaving a sequence loop releases the loans its carrier held. The CFG
+		// names the exit block's role, so this asks which loop is being left
+		// rather than inferring it from a block that carries no other role.
+		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockLoopExit {
 			loopID := ast.NodeID(node.cfgBlock.NodeID)
 			evidence, found := a.module.Typechecking.ForIterations[loopID]
 			if _, sequence := evidence.Plan.(*typecheckresult.SequenceIteration); found && sequence {

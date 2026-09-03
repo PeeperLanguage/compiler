@@ -84,6 +84,12 @@ const (
 	BlockLoop
 	BlockLoopBody
 	BlockLoopLatch
+	// BlockLoopExit is the continuation a loop leaves to. It carries the loop's
+	// NodeID like the roles above, so a consumer can ask which loop it exits,
+	// but it is not part of the loop's structure: the code after the loop lives
+	// here. Before it existed, exiting a loop was identified by the absence of a
+	// role plus a NodeID that happened to name one.
+	BlockLoopExit
 )
 
 type Block struct {

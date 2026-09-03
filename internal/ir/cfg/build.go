@@ -187,7 +187,7 @@ func (b *builder) buildStmt(stmt ast.Stmt, current *Block, scopeID ir.NodeID) *B
 		init := b.newBlock(BlockLoopInit, ast.LocOf(node))
 		bodyBlock := b.newBlock(BlockLoopBody, ast.LocOf(node))
 		latch := b.newBlock(BlockLoopLatch, ast.LocOf(node))
-		exit := b.newBlock(BlockNormal, ast.LocOf(node))
+		exit := b.newBlock(BlockLoopExit, ast.LocOf(node))
 		init.NodeID = loopID
 		bodyBlock.NodeID = loopID
 		latch.NodeID = loopID
