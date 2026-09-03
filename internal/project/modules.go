@@ -299,6 +299,23 @@ func (ctx *CompilerContext) AddModule(module *Module) *diagnostics.Diagnostic {
 		// identity it no longer names.
 		delete(ctx.fileIndex, previous.FilePath)
 	}
+	// ctx.typeDeclarations is derived state: the authoritative copy of a generic
+	// declaration lives on the module that collection registered it from. A
+	// context therefore has to rebuild the index for every module it takes in,
+	// and registration is the only place that happens.
+	//
+	// The LSP is what makes this load-bearing. Each request builds a fresh
+	// context and re-registers modules retained from the previous run, so the
+	// index starts empty while the retained modules still carry declarations
+	// collection will not produce again. Without this, instantiateType finds no
+	// owner and tells the user to recompile a module that is perfectly fine.
+	// Replacing a module for an identity needs it too, since the index holds
+	// pointers and would otherwise keep naming the superseded object.
+	//
+	// Below Collected the map is nil, so the phase check states the rule rather
+	// than changing the outcome: only a collected module owns declarations. Its
+	// mirror is in ResetModule, which drops these entries when a module resets
+	// below Collected.
 	if module.Phase >= phase.Collected {
 		for identity := range module.namedTypeDeclarations {
 			ctx.typeDeclarations[identity] = module
