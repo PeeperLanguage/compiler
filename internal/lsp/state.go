@@ -335,8 +335,8 @@ func activateReusableDiagnostics(ctx *project.CompilerContext, retainedPhases ma
 	if ctx == nil || ctx.Diagnostics == nil || ctx.CompletedProjectPhase < phase.Usage {
 		return
 	}
-	for moduleKey, retainedPhase := range retainedPhases {
-		ctx.Diagnostics.ActivateModuleRange(moduleKey, phase.Usage, retainedPhase)
+	for moduleScope, retainedPhase := range retainedPhases {
+		ctx.Diagnostics.ActivateModuleRange(moduleScope, phase.Usage, retainedPhase)
 	}
 }
 

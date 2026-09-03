@@ -25,7 +25,11 @@ type DiagnosticBag struct {
 	mu          *sync.Mutex
 	sourceCache *SourceCache
 	phase       phase.Phase
-	moduleKey   string
+	// moduleScope groups diagnostics by the module that produced them. It is an
+	// opaque string on purpose: this package must not depend on how module
+	// identity is spelled, so callers pass moduleid.ID.String() and the bag
+	// only ever compares and sorts it.
+	moduleScope string
 }
 
 type diagnosticGroup struct {
@@ -43,37 +47,37 @@ func NewDiagnosticBag() *DiagnosticBag {
 }
 
 // BeginPhase replaces one producing phase/module group and returns its writer.
-func (db *DiagnosticBag) BeginPhase(producingPhase phase.Phase, moduleKey string) *DiagnosticBag {
-	scoped := db.AppendPhase(producingPhase, moduleKey)
+func (db *DiagnosticBag) BeginPhase(producingPhase phase.Phase, moduleScope string) *DiagnosticBag {
+	scoped := db.AppendPhase(producingPhase, moduleScope)
 	db.mu.Lock()
 	if db.groups[producingPhase] == nil {
 		db.groups[producingPhase] = make(map[string]diagnosticGroup)
 	}
-	db.groups[producingPhase][moduleKey] = diagnosticGroup{active: true}
+	db.groups[producingPhase][moduleScope] = diagnosticGroup{active: true}
 	db.mu.Unlock()
 	return scoped
 }
 
 // AppendPhase returns a writer that continues one producing phase/module group.
-func (db *DiagnosticBag) AppendPhase(producingPhase phase.Phase, moduleKey string) *DiagnosticBag {
+func (db *DiagnosticBag) AppendPhase(producingPhase phase.Phase, moduleScope string) *DiagnosticBag {
 	return &DiagnosticBag{
 		groups:      db.groups,
 		mu:          db.mu,
 		sourceCache: db.sourceCache,
 		phase:       producingPhase,
-		moduleKey:   moduleKey,
+		moduleScope: moduleScope,
 	}
 }
 
 // DiscardModuleAfter removes diagnostics invalidated by a module phase reset.
-func (db *DiagnosticBag) DiscardModuleAfter(moduleKey string, retained phase.Phase) {
+func (db *DiagnosticBag) DiscardModuleAfter(moduleScope string, retained phase.Phase) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	for producingPhase, modules := range db.groups {
 		if producingPhase <= retained {
 			continue
 		}
-		delete(modules, moduleKey)
+		delete(modules, moduleScope)
 		if len(modules) == 0 {
 			delete(db.groups, producingPhase)
 		}
@@ -82,7 +86,7 @@ func (db *DiagnosticBag) DiscardModuleAfter(moduleKey string, retained phase.Pha
 
 // CopyModuleRange replaces one module's destination groups inside an inclusive
 // phase range. Inactive groups remain reusable but do not affect compilation or output.
-func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleKey string, first, last phase.Phase, active bool) {
+func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleScope string, first, last phase.Phase, active bool) {
 	if source == nil || db.mu == source.mu || first > last {
 		return
 	}
@@ -92,7 +96,7 @@ func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleKey string
 		if producingPhase < first || producingPhase > last {
 			continue
 		}
-		if group, ok := modules[moduleKey]; ok {
+		if group, ok := modules[moduleScope]; ok {
 			copiedGroups[producingPhase] = diagnosticGroup{
 				diagnostics: append([]*Diagnostic(nil), group.diagnostics...),
 				active:      active,
@@ -107,7 +111,7 @@ func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleKey string
 		if producingPhase < first || producingPhase > last {
 			continue
 		}
-		delete(modules, moduleKey)
+		delete(modules, moduleScope)
 		if len(modules) == 0 {
 			delete(db.groups, producingPhase)
 		}
@@ -116,12 +120,12 @@ func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleKey string
 		if db.groups[producingPhase] == nil {
 			db.groups[producingPhase] = make(map[string]diagnosticGroup)
 		}
-		db.groups[producingPhase][moduleKey] = group
+		db.groups[producingPhase][moduleScope] = group
 	}
 }
 
 // ActivateModuleRange publishes retained groups after their project barrier succeeds.
-func (db *DiagnosticBag) ActivateModuleRange(moduleKey string, first, last phase.Phase) {
+func (db *DiagnosticBag) ActivateModuleRange(moduleScope string, first, last phase.Phase) {
 	if first > last {
 		return
 	}
@@ -131,12 +135,12 @@ func (db *DiagnosticBag) ActivateModuleRange(moduleKey string, first, last phase
 		if producingPhase < first || producingPhase > last {
 			continue
 		}
-		group, ok := modules[moduleKey]
+		group, ok := modules[moduleScope]
 		if !ok {
 			continue
 		}
 		group.active = true
-		modules[moduleKey] = group
+		modules[moduleScope] = group
 	}
 }
 
@@ -186,10 +190,10 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	if db.groups[db.phase] == nil {
 		db.groups[db.phase] = make(map[string]diagnosticGroup)
 	}
-	group := db.groups[db.phase][db.moduleKey]
+	group := db.groups[db.phase][db.moduleScope]
 	group.diagnostics = append(group.diagnostics, diag)
 	group.active = true
-	db.groups[db.phase][db.moduleKey] = group
+	db.groups[db.phase][db.moduleScope] = group
 }
 
 // AddError adds an error diagnostic to the bag and returns it for chaining/customization.
@@ -260,13 +264,13 @@ func (db *DiagnosticBag) Diagnostics() []*Diagnostic {
 	result := make([]*Diagnostic, 0)
 	for _, producingPhase := range phases {
 		modules := db.groups[producingPhase]
-		moduleKeys := make([]string, 0, len(modules))
-		for moduleKey := range modules {
-			moduleKeys = append(moduleKeys, moduleKey)
+		moduleScopes := make([]string, 0, len(modules))
+		for moduleScope := range modules {
+			moduleScopes = append(moduleScopes, moduleScope)
 		}
-		slices.Sort(moduleKeys)
-		for _, moduleKey := range moduleKeys {
-			group := modules[moduleKey]
+		slices.Sort(moduleScopes)
+		for _, moduleScope := range moduleScopes {
+			group := modules[moduleScope]
 			if group.active {
 				result = append(result, group.diagnostics...)
 			}
