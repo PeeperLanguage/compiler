@@ -87,6 +87,7 @@ const (
 	// Internal compiler errors (ICE prefix). ICE0001 is the generic marker in
 	// diagnostic.go; codes here name a specific broken compiler invariant.
 	ErrInvalidEvidence = "ICE0002"
+	ErrInvalidTopology = "ICE0003"
 
 	// Style/Info codes (S prefix)
 	InfoTrailingComma            = "S0001"

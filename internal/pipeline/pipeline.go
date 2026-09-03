@@ -434,6 +434,14 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			MatchCases:          module.Typechecking.MatchCases,
 			LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 		})
+		// Structure is checkable regardless of source validity: CFG construction
+		// promises the same topology for a program that will not compile, and a
+		// malformed graph misleads every phase that reads it, including Analyze
+		// just below.
+		if err := module.CFG.Validate(); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidTopology,
+				"control-flow topology is malformed: "+err.Error(), nil, "")
+		}
 		cfg.Analyze(module.CFG, phaseDiag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
 			node := module.TypedASTNodes[ast.NodeID(conditionID)]
 			expr, ok := node.(ast.Expr)
