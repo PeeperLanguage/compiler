@@ -30,7 +30,6 @@ type CleanupPlan struct {
 	BeforeAssign           map[ir.NodeID]struct{}
 	DiscardedValue         map[ir.NodeID]struct{}
 	ProjectionBase         map[ir.NodeID]struct{}
-	MatchCarrierMoves      map[ir.NodeID]symbols.SymbolID
 	MatchFieldDrops        map[ir.NodeID][]int
 	MatchWholePayloadDrops map[ir.NodeID]struct{}
 }

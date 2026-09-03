@@ -37,7 +37,6 @@ func emptyPlan() *CleanupPlan {
 		BeforeAssign:           make(map[ir.NodeID]struct{}),
 		DiscardedValue:         make(map[ir.NodeID]struct{}),
 		ProjectionBase:         make(map[ir.NodeID]struct{}),
-		MatchCarrierMoves:      make(map[ir.NodeID]symbols.SymbolID),
 		MatchFieldDrops:        make(map[ir.NodeID][]int),
 		MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 	}

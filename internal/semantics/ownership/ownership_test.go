@@ -248,14 +248,13 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.BeforeAssign[staleID] = struct{}{}
 	plan.DiscardedValue[staleID] = struct{}{}
 	plan.ProjectionBase[staleID] = struct{}{}
-	plan.MatchCarrierMoves[staleID] = 999999
 	plan.MatchFieldDrops[staleID] = []int{0}
 	plan.MatchWholePayloadDrops[staleID] = struct{}{}
 
 	result.module.Ownership = Check(result.ctx, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
-		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 || len(plan.MatchCarrierMoves) != 0 ||
+		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 ||
 		len(plan.MatchFieldDrops) != 0 || len(plan.MatchWholePayloadDrops) != 0 {
 		t.Fatalf("stale ownership plans survived rerun: %#v", plan)
 	}
@@ -772,12 +771,11 @@ fn valid(resource: Resource) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	plan := cleanupPlanForFunction(t, result, fn)
-	function, _ := result.module.ModuleScope.Lookup("valid")
-	resource, _ := function.Scope.Lookup("resource")
-	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
 	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
-	if got := plan.MatchCarrierMoves[ownedBodyID]; got != resource.ID {
-		t.Fatalf("owned arm carrier move = %d, want %d", got, resource.ID)
+	// The owned arm consumes the carrier, so leaving it must not drop the
+	// carrier again; the pending arm never consumes it, so leaving there must.
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
+		t.Fatalf("consumed carrier dropped on the owned arm: %v", got)
 	}
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
 		t.Fatalf("pending arm cleanup = %v, want [resource]", got)
@@ -1239,11 +1237,6 @@ fn consume(resource: Resource) {
 	bodyID := ir.NodeID(match.Arms[0].Body.ID())
 	if got := plan.MatchFieldDrops[bodyID]; !slices.Equal(got, []int{2, 1}) {
 		t.Fatalf("match field drops = %v, want [2 1]", got)
-	}
-	function, _ := result.module.ModuleScope.Lookup("consume")
-	resource, _ := function.Scope.Lookup("resource")
-	if got := plan.MatchCarrierMoves[bodyID]; got != resource.ID {
-		t.Fatalf("match carrier move = %d, want %d", got, resource.ID)
 	}
 	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {

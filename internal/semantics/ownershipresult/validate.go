@@ -137,12 +137,6 @@ func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Resu
 	for nodeID := range plan.ProjectionBase {
 		problems = append(problems, validateTypedNode(types, fnID, "projection base", nodeID)...)
 	}
-	for nodeID, symbolID := range plan.MatchCarrierMoves {
-		problems = append(problems, validateArmBody(bindings, fnID, "match carrier move", nodeID)...)
-		if symbolID == 0 {
-			problems = append(problems, fmt.Sprintf("function %d moves an unidentified match carrier at %d", fnID, nodeID))
-		}
-	}
 	for nodeID := range plan.MatchWholePayloadDrops {
 		problems = append(problems, validateArmBody(bindings, fnID, "match payload drop", nodeID)...)
 	}

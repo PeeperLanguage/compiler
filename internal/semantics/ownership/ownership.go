@@ -70,7 +70,6 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			BeforeAssign:           make(map[ir.NodeID]struct{}),
 			DiscardedValue:         make(map[ir.NodeID]struct{}),
 			ProjectionBase:         make(map[ir.NodeID]struct{}),
-			MatchCarrierMoves:      make(map[ir.NodeID]symbols.SymbolID),
 			MatchFieldDrops:        make(map[ir.NodeID][]int),
 			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
@@ -608,7 +607,6 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		st.moved[carrier] = moveSite
 		delete(st.live, carrier)
 		delete(st.references, carrier)
-		a.cleanup.MatchCarrierMoves[ir.NodeID(arm.BodyID)] = carrier.ID
 		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == typecheckresult.MatchWholePayload {
 			if arm.Bindings[0].Discard && typeinfo.NeedsDrop(arm.Bindings[0].Type) {
 				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.BodyID)] = struct{}{}
