@@ -67,12 +67,20 @@ type Block struct {
 	Term   Terminator
 }
 
+// Instr and Terminator are sealed by their marker methods. Without them the two
+// interfaces are structurally identical, so a terminator satisfies Instr and an
+// instruction satisfies Terminator, and lowering can put either in the other's
+// position with nothing to catch it until the backend panics. The markers also
+// keep the set closed to this package, so the backend's exhaustive switches
+// cannot be outflanked by a node declared elsewhere.
 type Instr interface {
+	instrNode()
 	Text() string
 	SourceLocation() *source.Location
 }
 
 type Terminator interface {
+	termNode()
 	Text() string
 	SourceLocation() *source.Location
 }
@@ -376,6 +384,19 @@ func (i *Ret) Text() string {
 	}
 	return "ret " + i.Value.Text()
 }
+
+func (*Assign) instrNode()         {}
+func (*Store) instrNode()          {}
+func (*Print) instrNode()          {}
+func (*Drop) instrNode()           {}
+func (*DynamicArrayOp) instrNode() {}
+func (*Call) instrNode()           {}
+func (*InterfaceCall) instrNode()  {}
+
+func (*Jump) termNode()          {}
+func (*Branch) termNode()        {}
+func (*SwitchVariant) termNode() {}
+func (*Ret) termNode()           {}
 
 func (*Unary) valueExprNode()             {}
 func (*Binary) valueExprNode()            {}

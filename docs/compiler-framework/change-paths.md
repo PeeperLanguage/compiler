@@ -131,8 +131,10 @@ five blocks.
 Lower normalized control flow and consume the cleanup plan. `hir.For` is read in
 `lowerCFGFunction` (to find the loop a CFG block belongs to) and in
 `lowerCFGTerminator` (to emit the header and latch).
-*Catches you:* — nothing. MIR has no dispatch contract; `mir.Instr` and
-`mir.Terminator` are unsealed.
+*Catches you:* **Automatic**, partly — `mir.Instr` and `mir.Terminator` are sealed by
+unexported markers, so the set is closed to the `mir` package and an instruction can no
+longer be used where a terminator belongs. What still catches nothing is forgetting to
+classify a new node in the backend: MIR has no dispatch contract.
 
 **14. Backend** — `backend/llvm/`
 **The for-loop change touched no backend file at all.** This is the single most
@@ -214,7 +216,7 @@ lowering carry an opinion of its own; the third recorded an opinion nothing cons
 
 | Concern | Guard |
 | --- | --- |
-| New MIR instruction or terminator | **Loud** — `GenerateLLVMIR` panics; `TestGenerateLLVMIRPanicsForUnknownMIRNodes` |
+| New MIR instruction or terminator | **Loud** — `GenerateLLVMIR` panics on an unclassified node |
 | Block emitted with no terminator | **Loud** — panics: `LLVM emission: block bN has no terminator` |
 | Operand/type mismatch in emission | **Visible** — `TestTypedLLVMBuilderRejectsOperandMismatches` |
 | Ownership evidence inconsistent with CFG or types | **Loud** — `ICE0002` from `ownershipresult.Validate` at the phase boundary |
@@ -225,9 +227,14 @@ lowering carry an opinion of its own; the third recorded an opinion nothing cons
 
 ## Walk 3 — adding a type
 
-A new `typeinfo.Type` is the change shape with the **weakest** automatic coverage,
-because the type family has no dispatch contract. Read this walk as a checklist you
-must run manually.
+A new `typeinfo.Type` is the change shape with the **weakest** automatic coverage. The
+contract added for AST type *syntax* does not help here: `typeinfo.Type` is the semantic
+type model, a different family with no contract of its own. Read this walk as a
+checklist you must run manually.
+
+If your type also needs new syntax to write it, that syntax node joins the `typeNode`
+family and `TestEveryTypeKindHasAPhaseDecision` will hold you to `TypeFromSyntax` and
+the binder's `addTypeDeclEdges`.
 
 **1. Declare it** — `semantics/typeinfo/types.go`
 Implement `Type`: `TypeNode()` and `Text() string`.
@@ -280,6 +287,7 @@ representation, cover both 32- and 64-bit.
 | `TestEverySubStructureFieldIsExpanded` | Sub-structure fields are expanded | `internal/contracts` |
 | `TestEveryStatementKindHasAPhaseDecision` | 19 statement kinds × 9 phase sites | `internal/contracts` |
 | `TestEveryExpressionKindHasAPhaseDecision` | 23 expression kinds × 4 phase sites | `internal/contracts` |
+| `TestEveryTypeKindHasAPhaseDecision` | 12 type-syntax kinds × 2 phase sites | `internal/contracts` |
 | `TestOmissionReasonsNameRealNodeKinds` | Inert-kind reasons stay true | `internal/contracts` |
 | `ownershipresult.Validate` → `ICE0002` | Published ownership evidence matches CFG and types | pipeline, after ownership |
 | `llvm.ValidateRuntimeSymbols` | Reserved runtime symbols, extern ownership | pipeline, after backend emission |
@@ -292,10 +300,12 @@ representation, cover both 32- and 64-bit.
 Stated plainly, because a contributor deserves to know which parts of the walk are on
 the honor system:
 
-- **Type kinds have no dispatch contract.** Adding a `typeinfo.Type` and forgetting
-  capability, lowering, or fingerprinting compiles and passes.
-- **HIR and MIR have no dispatch contract**, and `mir.Instr`/`mir.Terminator` are
-  unsealed, so exhaustiveness is a runtime panic rather than a compile error.
+- **Semantic type kinds have no dispatch contract.** AST type *syntax* is covered by
+  `TestEveryTypeKindHasAPhaseDecision`, but adding a `typeinfo.Type` and forgetting
+  capability, lowering, or fingerprinting still compiles and passes.
+- **HIR and MIR have no dispatch contract.** `mir.Instr`/`mir.Terminator` are sealed,
+  so the node set is closed and the two cannot be confused, but nothing proves the
+  backend classifies every member; that is still a runtime panic.
 - **No structural validator exists for HIR or MIR.** CFG topology and ownership
   evidence have boundary validators; the two lowered representations do not, so a
   malformed HIR or MIR artifact is caught only when the backend trips over it.

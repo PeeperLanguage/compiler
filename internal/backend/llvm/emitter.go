@@ -292,7 +292,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				lb.setLocation(instr.SourceLocation())
 				// Emitting nothing for an unrecognized instruction silently drops
 				// program behavior, so every MIR instruction must be classified
-				// here. A missing case is a compiler bug, not invalid source.
+				// here. mir.Instr is sealed, so the only way to reach the
+				// default is to add an instruction inside the mir package and
+				// not classify it here: a compiler bug, not invalid source.
 				switch typed := instr.(type) {
 				case *mir.Assign:
 					val := emitValueExpr(lb, typed.Value)
@@ -320,6 +322,8 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 			// Both terminator invariants are compiler bugs, not invalid source:
 			// every block carries a terminator, and every terminator kind emits
 			// one. Skipping either silently produces unterminated LLVM IR.
+			// mir.Terminator is sealed, so the unhandled-kind default below can
+			// only be reached from inside the mir package.
 			if block.Term == nil {
 				panic(fmt.Sprintf("LLVM emission: block b%d has no terminator", block.ID))
 			}

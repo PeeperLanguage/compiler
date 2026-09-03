@@ -284,16 +284,6 @@ func requireLLVMInvariant(t *testing.T, emit func()) {
 	emit()
 }
 
-type unknownMIRNode struct{}
-
-func (*unknownMIRNode) Text() string                     { return "unknown" }
-func (*unknownMIRNode) SourceLocation() *source.Location { return nil }
-
-var (
-	_ mir.Instr      = (*unknownMIRNode)(nil)
-	_ mir.Terminator = (*unknownMIRNode)(nil)
-)
-
 func TestLLVMLayoutsNameBuiltInCarrierFields(t *testing.T) {
 	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface})
 	ownedInterface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: interfaceType})
@@ -358,25 +348,17 @@ func TestTypedLLVMBuilderRejectsOperandMismatches(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRPanicsForUnknownMIRNodes(t *testing.T) {
+// mir.Instr and mir.Terminator are sealed, so a node this package could pass to
+// emission no longer exists: the earlier fabricated one cannot implement either
+// interface. What remains reachable is a block that carries no terminator at
+// all, which would otherwise emit an unterminated basic block with no signal.
+func TestGenerateLLVMIRPanicsForMalformedMIRBlocks(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		block *mir.Block
 		want  string
 	}{
 		{
-			name:  "instruction",
-			block: &mir.Block{Instrs: []mir.Instr{&unknownMIRNode{}}},
-			want:  "LLVM emission: unhandled MIR instruction *llvm.unknownMIRNode",
-		},
-		{
-			name:  "terminator",
-			block: &mir.Block{Term: &unknownMIRNode{}},
-			want:  "LLVM emission: unhandled MIR terminator *llvm.unknownMIRNode",
-		},
-		{
-			// A block that reaches emission with no terminator would otherwise
-			// produce an unterminated basic block and no compiler-side signal.
 			name:  "missing terminator",
 			block: &mir.Block{ID: 7},
 			want:  "LLVM emission: block b7 has no terminator",
