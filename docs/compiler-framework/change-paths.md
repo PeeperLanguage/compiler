@@ -75,8 +75,14 @@ variables get a body scope.
 **6. Typechecker** — `semantics/typechecker/check_stmt.go`, `checkStmt`
 The semantic rule, and — the important part — **the evidence you publish**. `checkStmt`
 delegates to `checkForInStmt`, which publishes
-`typecheckresult.Result.ForIterations[node.ID()]`: the iteration kind, element type,
-generated cursor/end/carrier symbols, and guaranteed-entry proof.
+`typecheckresult.Result.ForIterations[node.ID()]`: element type, the generated cursor
+and value symbols, guaranteed-entry proof, and an `IterationPlan` holding the kind
+together with that kind's own state.
+
+> Publish evidence that cannot be malformed. `IterationPlan` is a closed interface, so
+> a loop cannot claim one iteration kind while carrying another's state, and consumers
+> need no defensive checks. Prefer this over a kind tag beside optional fields.
+
 
 > **This is the load-bearing step.** Everything downstream consumes this evidence
 > rather than re-reading the source. If you publish nothing here, every later phase
