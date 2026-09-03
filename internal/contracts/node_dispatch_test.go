@@ -387,6 +387,16 @@ var expressionSites = []dispatchSite{
 	},
 }
 
+// Type syntax reaches two phases that must decide per kind, and both failures
+// are silent: an unresolved kind becomes an invalid type rather than an error,
+// and a kind missing from declaration-cycle detection hides a recursive type
+// until layout recurses forever. Parsing and printing walk type syntax too, but
+// they consume the node's own TypeText rather than dispatching on its kind.
+var typeSites = []dispatchSite{
+	{file: "semantics/typeinfo/syntax.go", fn: "TypeFromSyntax"},
+	{file: "semantics/binder/type_decl_cycles.go", fn: "addTypeDeclEdges"},
+}
+
 func assertSitesDecide(t *testing.T, sites []dispatchSite, kinds []string) {
 	t.Helper()
 	for _, site := range sites {
@@ -418,11 +428,17 @@ func TestEveryExpressionKindHasAPhaseDecision(t *testing.T) {
 	assertSitesDecide(t, expressionSites, declaredKinds(t, "exprNode"))
 }
 
+func TestEveryTypeKindHasAPhaseDecision(t *testing.T) {
+	assertSitesDecide(t, typeSites, declaredKinds(t, "typeNode"))
+}
+
 // A reason that no longer names a real statement kind is stale and must not
 // silently excuse a future kind of the same name.
 func TestOmissionReasonsNameRealNodeKinds(t *testing.T) {
 	kinds := append(declaredKinds(t, "stmtNode"), declaredKinds(t, "exprNode")...)
-	for _, site := range append(slices.Clone(statementSites), expressionSites...) {
+	kinds = append(kinds, declaredKinds(t, "typeNode")...)
+	sites := slices.Concat(statementSites, expressionSites, typeSites)
+	for _, site := range sites {
 		for kind, entry := range site.omissions() {
 			if !slices.Contains(kinds, kind) {
 				t.Errorf("%s classifies kind %s that no longer exists", site.fn, kind)
