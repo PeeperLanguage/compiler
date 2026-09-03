@@ -444,7 +444,7 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		return sortCompletionItems(items)
 	}
 	resolved, ok := module.Imports[qualifier]
-	if !ok || resolved.ID.Dependency != "" {
+	if !ok {
 		return []CompletionItem{}
 	}
 	imported, ok := ctx.ModuleByID(resolved.ID)
@@ -713,9 +713,6 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		}
 	}
 	for alias, resolved := range module.Imports {
-		if resolved.ID.Dependency != "" {
-			continue
-		}
 		imported, found := ctx.ModuleByID(resolved.ID)
 		if !found || imported == nil || imported.Bindings == nil {
 			continue
