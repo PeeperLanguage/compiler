@@ -432,6 +432,33 @@ Acceptance criteria:
   duplicated logic;
 - no descriptor is added when existing typed edges and sites already suffice.
 
+### As investigated
+
+Every topology query outside `internal/ir/cfg` was inspected. **No loop descriptor
+is warranted.** What the audit found:
+
+| Query | Consumer | Verdict |
+| --- | --- | --- |
+| Block role within a loop | `mir/module_lower.go` maps `BlockLoopInit`/`Body`/`Latch` to the matching `hir.For` segment | Direct. `BlockOrigin` answers exactly the question asked; keep. |
+| Terminator kind | MIR lowering, definite-init | Direct typed switch on `cfg.Jump`/`Branch`/`Return`/`SwitchVariant`. No gap. |
+| Edge meaning | flow typing, ownership, definite-init | Direct. `EdgeTrue`/`EdgeFalse`/`EdgeVariantCase` carry branch meaning independently of adjacency order. No gap. |
+| Site adjacency | flow, definite-init, ownership | Ordinary dataflow over `Site.Successors`/`Predecessors`. Legitimate use, not inference. |
+| "Am I leaving a sequence loop?" | ownership | **Was inferred** from `BlockNormal` plus a `NodeID` naming a loop — true only because the exit was the one loop block left unlabelled. Fixed by adding `BlockLoopExit`, the smallest change that removes the inference. |
+| "Where do these match arms converge?" | ownership | **Still inferred**, by walking single successors past scope-exit sites until a non-scope-exit site is reached. Recorded, not fixed — see below. |
+
+The match-join walk in `semantics/ownership/ownership.go` is a real inference: CFG
+construction creates the join block and then discards that knowledge. It is left in
+place deliberately. Ownership needs the join *site* at which carrier liveness is
+checked, not the block, so a block-origin label would not remove the walk; the fix
+would be a published join site, which is a descriptor rather than a label. With one
+consumer and no second phase needing the same fact, it does not meet the bar above.
+Revisit if a second consumer appears.
+
+`BlockLoopExit` also made explicit something previously implicit: missing-return
+reporting distinguished structured control from plain continuations by comparing
+against `BlockNormal`. That comparison is now `structuredControl`, so adding an origin
+requires classifying it rather than silently changing which span a user sees.
+
 ## Workstream 5: Naming and generated artifact subsystems
 
 **Target.** Separate naming policy from typed artifact construction.
