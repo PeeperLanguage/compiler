@@ -96,6 +96,9 @@ If CFG construction needs a semantic fact, it takes it as a **query**, not by im
 the typechecker: `cfg.BuildQueries{MatchCases, LoopGuaranteedEntry}`.
 `LoopGuaranteedEntry` exists exactly because a loop with a proven-nonempty range must
 not report its body as conditionally skipped.
+*Catches you:* **Loud** — `cfg.Module.Validate` reports `ICE0003` when the topology you
+build is malformed: an unterminated reachable block, an edge kind disagreeing with its
+terminator, an adjacency recorded from only one side, or a stale reachable flag.
 
 **8. Flow typing** — `semantics/typechecker/flow.go`, `applyConditionEdge`
 Which facts differ on the true and false edges? A `for` header carries no narrowing
@@ -281,6 +284,7 @@ representation, cover both 32- and 64-bit.
 | `ownershipresult.Validate` → `ICE0002` | Published ownership evidence matches CFG and types | pipeline, after ownership |
 | `llvm.ValidateRuntimeSymbols` | Reserved runtime symbols, extern ownership | pipeline, after backend emission |
 | `GenerateLLVMIR` panics | Unhandled MIR node; block with no terminator | backend emission |
+| `cfg.Module.Validate` → `ICE0003` | Block and site identity, termination, edge kind vs terminator, adjacency in both directions, reachability | pipeline, after CFG construction |
 | `cfg.Analyze` | Unreachable code, constant conditions, missing return — **user diagnostics, not structure** | after CFG |
 
 ## Where nothing catches you
@@ -292,9 +296,9 @@ the honor system:
   capability, lowering, or fingerprinting compiles and passes.
 - **HIR and MIR have no dispatch contract**, and `mir.Instr`/`mir.Terminator` are
   unsealed, so exhaustiveness is a runtime panic rather than a compile error.
-- **No structural validator exists for CFG, HIR, or MIR.** `cfg.Analyze` reports user
-  problems; it checks no invariant of the graph itself. Ownership is the only artifact
-  with a boundary validator.
+- **No structural validator exists for HIR or MIR.** CFG topology and ownership
+  evidence have boundary validators; the two lowered representations do not, so a
+  malformed HIR or MIR artifact is caught only when the backend trips over it.
 - **Nothing requires a fixture.** A construct can reach the backend with no end-to-end
   coverage at all.
 - **Nothing requires an LSP update**, so a new construct can be invisible to hover and
