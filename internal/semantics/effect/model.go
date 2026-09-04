@@ -13,6 +13,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -53,6 +54,18 @@ type Write struct {
 	Node ast.NodeID
 }
 
+// Place identifies storage: a root binding and the projections taken from it to
+// reach the value being used.
+//
+// Projections are reused from the canonical place walk rather than restated, so
+// a consumer that already reasons about origins needs no translation. Empty
+// projections mean the whole binding. A consumer that only cares which binding
+// was touched reads Root and ignores the rest.
+type Place struct {
+	Root        *symbols.Symbol
+	Projections []place.OriginProjection
+}
+
 // Use reads a binding's value. Node is the reading identifier rather than the
 // enclosing statement, so a diagnostic anchors on the read itself.
 //
@@ -60,7 +73,7 @@ type Write struct {
 // node back to syntax just to report against it. Define and Write carry no
 // location because no current diagnostic anchors on them.
 type Use struct {
-	Symbol   *symbols.Symbol
+	Place    Place
 	Node     ast.NodeID
 	Location *source.Location
 	// Kind is what happens to the value here: observed, duplicated, or

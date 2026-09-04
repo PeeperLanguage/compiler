@@ -634,8 +634,8 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast
 				recordUse(op.Symbol, op.Node)
 			}
 		case effect.Use:
-			if trackedLiveSymbol(op.Symbol) {
-				recordUse(op.Symbol, op.Node)
+			if trackedLiveSymbol(op.Place.Root) {
+				recordUse(op.Place.Root, op.Node)
 			}
 		}
 	}
@@ -656,14 +656,14 @@ func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) b
 	uses := make([]symbolUse, 0, len(ops))
 	for _, op := range ops {
 		use, isUse := op.(effect.Use)
-		if !isUse || !include(use.Symbol) {
+		if !isUse || !include(use.Place.Root) {
 			continue
 		}
 		syntax, found := a.module.TypedASTNodes[use.Node]
 		if !found {
 			continue
 		}
-		uses = append(uses, symbolUse{symbol: use.Symbol, site: syntax})
+		uses = append(uses, symbolUse{symbol: use.Place.Root, site: syntax})
 	}
 	return uses
 }

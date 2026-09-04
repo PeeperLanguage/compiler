@@ -71,7 +71,7 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 		case Write:
 			problems = append(problems, validateNode(where, "write", op.Symbol == nil, op.Node, nodes)...)
 		case Use:
-			problems = append(problems, validateNode(where, "use", op.Symbol == nil, op.Node, nodes)...)
+			problems = append(problems, validateNode(where, "use", op.Place.Root == nil, op.Node, nodes)...)
 			if op.Location == nil {
 				problems = append(problems, where+" is a use with no source location to report against")
 			}

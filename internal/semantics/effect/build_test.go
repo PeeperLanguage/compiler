@@ -14,6 +14,7 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/effect"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
@@ -102,7 +103,7 @@ func describe(op effect.Op) string {
 	case effect.Write:
 		return "write " + op.Symbol.Name
 	case effect.Use:
-		return "use " + op.Symbol.Name
+		return "use " + op.Place.Root.Name
 	}
 	return "unknown"
 }
@@ -231,5 +232,49 @@ fn choose(outcome: Result) -> i32 {
 	}
 	if !sameOps(got, want) {
 		t.Fatalf("published %v, want %v", got, want)
+	}
+}
+
+// A use of a field or an element names that place, not the whole aggregate.
+// Ownership needs the distinction: moving out of `pair.left` is a different
+// decision from moving `pair`, and its diagnostics say so.
+func TestBuildPublishesProjectedPlaces(t *testing.T) {
+	result, module := buildEffects(t, `struct Pair { left: i32, right: i32 }
+
+fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
+	return pair.left + values[index];
+}`)
+	symbol, found := module.ModuleScope.Lookup("read")
+	if !found {
+		t.Fatal("function read missing")
+	}
+	fn := symbol.ASTNode.(*ast.FnDecl)
+	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+	if graph == nil {
+		t.Fatal("function read has no CFG")
+	}
+
+	projected := make([]string, 0)
+	for _, block := range graph.Blocks {
+		for _, site := range block.Sites {
+			for _, op := range result.At(graph.NodeID, site.ID) {
+				use, ok := op.(effect.Use)
+				if !ok || len(use.Place.Projections) == 0 {
+					continue
+				}
+				for _, step := range use.Place.Projections {
+					switch step.Kind {
+					case place.OriginField:
+						projected = append(projected, use.Place.Root.Name+"."+step.Field)
+					case place.OriginIndex:
+						projected = append(projected, use.Place.Root.Name+"[]")
+					}
+				}
+			}
+		}
+	}
+	want := []string{"pair.left", "values[]"}
+	if !sameOps(projected, want) {
+		t.Fatalf("projected places = %v, want %v", projected, want)
 	}
 }

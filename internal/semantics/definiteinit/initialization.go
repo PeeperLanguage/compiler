@@ -173,18 +173,18 @@ func apply(current state, op effect.Op) {
 }
 
 func reportUninitializedRead(use effect.Use, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
-	if use.Symbol == nil {
+	if use.Place.Root == nil {
 		return
 	}
-	name, local := tracked[use.Symbol.ID]
+	name, local := tracked[use.Place.Root.ID]
 	if !local {
 		return
 	}
-	if _, present := current[use.Symbol.ID]; present {
+	if _, present := current[use.Place.Root.ID]; present {
 		return
 	}
 	if name == "" {
-		name = use.Symbol.Name
+		name = use.Place.Root.Name
 	}
 	name = ir.StripSymbolInstance(name)
 	msg := "symbol `" + name + "` used before it's initialized"

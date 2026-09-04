@@ -41,7 +41,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "use with no source location",
 			damage: func(result effect.Result, fn ir.NodeID, site cfg.SiteID) {
-				result[fn][site] = []effect.Op{effect.Use{Symbol: &symbols.Symbol{Name: "x"}, Node: 1}}
+				result[fn][site] = []effect.Op{effect.Use{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: 1}}
 			},
 			want: "is a use with no source location to report against",
 		},

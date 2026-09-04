@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -241,15 +242,27 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 		return
 	case *ast.Ident:
 		if sym := b.queries.Symbols[node.ID()]; sym != nil {
-			b.emit(site, Use{Symbol: sym, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
+			b.emit(site, Use{Place: Place{Root: sym}, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
 		}
 	case *ast.AddressExpr:
 		b.emit(site, Borrow{Node: node.ID(), Location: ast.LocOf(node), Mutable: node.Mode == ast.AddressMutable})
 		b.value(site, node.Expr, typeinfo.UseRead)
 	case *ast.SelectorExpr:
-		// A field selection reads the aggregate it projects from.
+		// A field of a place is itself a place, so the use lands on the
+		// projection rather than on the whole aggregate. A consumer that only
+		// cares which binding was touched still reads the root.
+		if projected, ok := b.placeOf(node); ok {
+			b.emit(site, Use{Place: projected, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
+			return
+		}
 		b.value(site, node.Expr, typeinfo.UseRead)
 	case *ast.IndexExpr:
+		if projected, ok := b.placeOf(node); ok {
+			b.emit(site, Use{Place: projected, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
+			// The index is a separate value, not part of the place.
+			b.value(site, node.Index, typeinfo.UseRead)
+			return
+		}
 		b.value(site, node.Expr, typeinfo.UseRead)
 		b.value(site, node.Index, typeinfo.UseRead)
 	case *ast.RangeExpr:
@@ -312,4 +325,44 @@ func (b *builder) argumentKind(argument ast.Expr) typeinfo.UseKind {
 		return kind
 	}
 	return typeinfo.UseRead
+}
+
+// placeOf resolves an expression to the storage it names, following the same
+// shapes the canonical place walk recognises. It reports false for anything
+// that produces a value without naming storage, such as a call result.
+func (b *builder) placeOf(expr ast.Expr) (Place, bool) {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		sym := b.queries.Symbols[node.ID()]
+		if sym == nil {
+			return Place{}, false
+		}
+		return Place{Root: sym}, true
+	case *ast.SelectorExpr:
+		if node.Name == nil {
+			return Place{}, false
+		}
+		return b.project(node.Expr, place.OriginProjection{
+			Kind:  place.OriginField,
+			Field: node.Name.Name,
+		})
+	case *ast.IndexExpr:
+		return b.project(node.Expr, place.OriginProjection{Kind: place.OriginIndex})
+	default:
+		return Place{}, false
+	}
+}
+
+func (b *builder) project(base ast.Expr, step place.OriginProjection) (Place, bool) {
+	rooted, ok := b.placeOf(base)
+	if !ok {
+		return Place{}, false
+	}
+	// Copy rather than append in place: sibling projections off one base must
+	// not share backing storage.
+	projections := make([]place.OriginProjection, 0, len(rooted.Projections)+1)
+	projections = append(projections, rooted.Projections...)
+	projections = append(projections, step)
+	rooted.Projections = projections
+	return rooted, true
 }
