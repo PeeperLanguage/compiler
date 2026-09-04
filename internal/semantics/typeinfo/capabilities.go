@@ -415,11 +415,9 @@ const (
 	CopyNever
 )
 
-// OwnershipCapability is the single classification new code should consume:
-// how a type duplicates (Copy) and whether scope cleanup must destroy it
-// (Drop). It composes the established predicates, which remain the exact
-// behavioral source; this type exists so callers stop re-deriving decisions
-// from their negations.
+// OwnershipCapability is the canonical classification: how a type duplicates
+// (Copy) and whether scope cleanup must destroy it (Drop). One traversal
+// answers both, so the two cannot drift apart.
 //
 // Deliberate asymmetries preserved from the current language semantics:
 //   - top-level structs and arrays never copy implicitly (bulk storage),
@@ -433,17 +431,9 @@ type OwnershipCapability struct {
 	Drop bool
 }
 
-// OwnershipCapabilityOf classifies a type's ownership behavior.
+// OwnershipCapabilityOf classifies a type's ownership behavior in one traversal.
 func OwnershipCapabilityOf(t Type) OwnershipCapability {
-	drop := NeedsDrop(t)
-	switch {
-	case IsImplicitCopyType(t):
-		return OwnershipCapability{Copy: CopyImplicit, Drop: drop}
-	case noCopyType(t):
-		return OwnershipCapability{Copy: CopyNever, Drop: drop}
-	default:
-		return OwnershipCapability{Copy: CopyExplicit, Drop: drop}
-	}
+	return ownershipCapability(t)
 }
 
 // UseKind is the ownership classification of one value use: what happens to
