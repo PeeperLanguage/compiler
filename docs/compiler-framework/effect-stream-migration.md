@@ -313,9 +313,9 @@ recoverable from the stream:
   being a `RangeExpr`. A `Place` with an `OriginIndex` projection does not say whether the
   index was a range.
 
-Closing either means publishing one more fact from the typechecker, which already knows
-both. Until then, migrating `checkExpr` would leave ownership deriving some decisions from
-the stream and some from syntax, which is the double-derivation this work exists to remove.
+There is a third, found only by attempting the port: `Write` carries a symbol, but an
+assignment to a projection needs a place. See the port specification below, which lists all
+three together because they land with the port rather than before it.
 
 ## Migrated so far
 
@@ -351,12 +351,60 @@ same class will recur:
 - a method callee was published as a field projection of the receiver, naming a field that
   does not exist.
 
-## Picking up the expression walk
+## Replacing the expression walk
 
-1. Publish reference-parameter position and slicing, from the typechecker, which knows both.
-2. Port `checkIdent`, the partial-move diagnostics, storage-access classification and loan
-   bookkeeping onto `applyUse` / `applyBorrow`, driven by the site's operations.
-3. Delete `checkExpr`. Ownership keeps its statement policy; that is policy, not enumeration.
+Every function involved has been read. It is one indivisible change, not a sequence of
+small ones, because each piece below is unobservable until the others are in place. Land
+it as a single commit or not at all: publishing the facts first leaves channels nobody
+reads, which is what commit `7ec06e9` had to delete.
 
-Do not start step 2 before step 1. The suite is a strong net — it caught every mistake
-listed above — but a half-ported loan analysis is the worst state to hand over.
+### Facts to publish, with the port
+
+- **Reference-parameter position.** A reference parameter makes its argument take a borrow
+  access rather than a read. `Use{Kind: UseRead}` is published for that *and* for an
+  implicit-copy argument, so the two are indistinguishable. The typechecker has the
+  parameter type at `publishValueUse`; publish presence plus mutability.
+- **Slicing.** `a[0..2]` takes a borrow access, mutable when the slice's own type is a
+  mutable reference. The producer can see both — the index being a `RangeExpr` and the
+  result type — so this needs no typechecker change, only an expression-type query.
+- **`Write` must carry a `Place`.** `a.b = x` writes a projection. It is published today as
+  `Use{Kind: UseRead}`, but ownership gives an assignment target `storageMutate`. Without a
+  place on `Write`, driving that from operations either loses the mutate or performs a read
+  access and a mutate access where there was one.
+
+### Shape of the consumer
+
+`applyStmt` keeps its statement policy and stops calling `checkExpr`. Policy splits around
+evaluation: what must observe state *before* the site's values are computed (an
+assignment's reference capture, a return's escape checks) runs first, then the operation
+loop, then what follows (target handling, cleanup planning, the loop carrier loan).
+
+The loop itself:
+
+- `CallBegin` pushes the temporary and reservation marks; `CallEnd` activates reservations
+  and truncates both. Calls nest, so the marks are a stack.
+- `Use` with no projections drives the move state and the use-after-move and copy
+  diagnostics; with projections it drives the partial-move diagnostics; rooted at a
+  temporary it drives projection-base planning.
+- `Borrow` drives the storage access. Shared or mutable comes from the operation; a mutable
+  borrow **inside a call bracket** is a reservation rather than a borrow, which is why the
+  bracket has to be in the vocabulary.
+- `projectionBase` disappears. It existed so a base and its projection did not both take a
+  storage access; one operation for the projected place replaces both.
+
+The helpers do not need rewriting. `checkStorageAccess`, `originsForExpr`, `referenceHolder`
+and `activateCallReservations` all take an `ast.Expr`, which is recoverable from the
+operation's node.
+
+### What this deletes
+
+`checkExpr`, `checkIdent`, `checkSelector`, `checkAddressExpr`, `checkLiteralFields`,
+`checkCall`, `checkMethodCall` and `checkCallArgument`. Every distinction they draw is
+already decided by the typechecker: the intrinsic special cases in `checkCall` exist only
+to reach the right parameter types, and the kinds those produce are published already.
+
+### Before starting
+
+Read this whole file. The suite is a strong net and caught every mistake this work made,
+but ownership is the compiler's most delicate analysis and a half-ported loan model is the
+worst possible state to hand over. Do not begin without room to finish.
