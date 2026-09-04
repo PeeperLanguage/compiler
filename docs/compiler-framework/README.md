@@ -572,6 +572,11 @@ answers where to go: it walks the real file sequence for three change shapes, tr
 from commits already in the repository, and names what catches you when a stop is
 missed — including the stops where nothing does.
 
+Four of those stops are pure mechanism: they rediscover read and write meaning the
+typechecker already decided.
+[`effect-stream-migration.md`](effect-stream-migration.md) is the in-progress plan to
+publish that meaning once and let the analyses consume it instead.
+
 | Area | Required question |
 | --- | --- |
 | Lexer/token model | Does syntax require token or lexical-state change? |
