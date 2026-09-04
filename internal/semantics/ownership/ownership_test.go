@@ -15,6 +15,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
@@ -54,6 +55,12 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
+	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
+		Symbols:       module.Bindings.NodeSymbols,
+		Scopes:        module.Bindings.BlockScopes,
+		CallArguments: module.Typechecking.CallArgumentsOrSource,
+		ArmBindings:   module.Typechecking.ArmBindings,
+	})
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
 }
@@ -84,6 +91,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
+		effects:       result.module.Effects[cfgFn.NodeID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,

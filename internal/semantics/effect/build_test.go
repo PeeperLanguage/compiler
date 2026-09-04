@@ -219,15 +219,12 @@ fn choose(outcome: Result) -> i32 {
 	}
 }`)
 	got := publishedOps(t, result, module, "choose")
-	// The match subject is deliberately absent. Definite initialization attaches
-	// a site condition for a branch terminator only, so a match on an
-	// uninitialized value is not diagnosed today. Publishing that read here
-	// would start rejecting code that currently compiles, so it is registered as
-	// a behavior change in docs/compiler-framework/effect-stream-migration.md
-	// and left for separate approval. Change this expectation only together with
-	// that decision.
+	// The subject is published at the match's own site. Ownership's liveness
+	// needs it, and publishing it also closed the gap where definite
+	// initialization never checked a match subject for initialization.
 	want := []string{
 		"define outcome",
+		"use outcome",
 		"define payload", "use payload",
 	}
 	if !sameOps(got, want) {

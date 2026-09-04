@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -30,6 +31,7 @@ type analyzer struct {
 	graph                  *cfg.Graph
 	sites                  map[cfg.SiteID]*site
 	order                  []cfg.SiteID
+	effects                effect.SiteOps
 	cleanup                *ownershipresult.CleanupPlan
 	function               *ast.FnDecl
 	functionScope          *symbols.Scope
@@ -57,7 +59,7 @@ type state struct {
 // value-flow rules from becoming ad hoc type rules.
 func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.CFG == nil {
+	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
 		return result
 	}
 	for _, graph := range module.CFG.Functions {
@@ -116,6 +118,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
+		effects:       module.Effects[cfgFn.NodeID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,

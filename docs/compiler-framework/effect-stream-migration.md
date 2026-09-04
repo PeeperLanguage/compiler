@@ -1,7 +1,8 @@
 # Effect stream migration
 
-Status: **milestone 1 complete**. Definite initialization consumes published effects
-and no longer imports `ast`. Ownership is the next consumer and is not yet planned.
+Status: **in progress**. Definite initialization consumes published effects and no
+longer imports `ast`. Ownership's use enumeration consumes them too; the rest of
+ownership still decides from syntax.
 
 This document is the executable plan for publishing semantic effects once and migrating
 dataflow consumers onto them. It is tracked so that anyone — human or agent — picking the
@@ -202,13 +203,22 @@ Commit: `Require a phase decision for every published effect`
 `RULES.md` §10 forbids mixing a behavior change into a refactor. Both of these are recorded
 for separate approval and must **not** be corrected inside this migration.
 
-- **Match subjects are never read-checked.** `definiteinit` attaches a site condition only
-  for `*cfg.Branch`; `*cfg.SwitchVariant` is not handled, so a match on an uninitialized
-  value is not diagnosed. The effect stream makes emitting that read natural, which would
-  start rejecting code that compiles today. Step 2 must reproduce the gap. Closing it needs
-  its own approval and an `x_test` fixture.
-- **`ForStmt.Iterable` is invisible to `symbolUseSequence`** while `applyStmt` handles it.
-  Ownership only; out of scope.
+- **Match subjects were never read-checked — now closed.** `definiteinit` attached a site
+  condition only for `*cfg.Branch`, so a match on an uninitialized value was not
+  diagnosed. Ownership's liveness *did* read the subject, so migrating it onto the shared
+  producer forced the subject to be published, and publishing it closed the
+  definite-initialization gap at the same time. Covered by
+  `TestInitializationChecksMatchSubject`. No existing test, fixture or bundled program
+  changed, so nothing that compiled before fails now.
+
+  This is the coupling a shared stream creates: evidence published for one consumer
+  strengthens every other consumer, whether or not that was the intent. Weigh it before
+  publishing anything new.
+- **`ForStmt.Iterable` disagreement — now moot for enumeration.** `symbolUseSequence`
+  never visited it while `applyStmt` did. Both now read the same published stream, so
+  they cannot disagree. The iterable's reads are still not published, which preserves
+  today's behavior; `applyStmt` continues to handle it directly for the sequence-carrier
+  loan.
 
 ## Success test — met
 
@@ -247,3 +257,27 @@ first needs `ValueUses` extended past call arguments, with a matching extension 
 `UseCopy` is never published, so the two `UseCopy` diagnostics in `ownership/expr.go` are
 presently dead and would activate for the first time — they need tests before that.
 Ownership's loans, liveness, and borrow-ending stay local to ownership.
+
+## Milestone 2 — ownership
+
+Not planned as a whole; landing slice by slice.
+
+**Done — use enumeration.** `symbolUseSequence` walked eight statement kinds to
+enumerate the symbols a site reads. That duplicated the producer and disagreed with
+`applyStmt` about `ForStmt.Iterable`. It now reads the stream and has left the dispatch
+contract, taking statement sites from nine to eight.
+
+**Still deciding from syntax**, roughly by size:
+
+- `checkExpr`, 23 expression cases. About a third is enumeration; the rest is
+  storage-access checks, loan bookkeeping and per-shape diagnostics. Collapsing it fully
+  needs projected places in the vocabulary, because a diagnostic like "move-only indexed
+  element cannot be used by value" depends on the shape of the place, not just the symbol.
+- `applyStmt`, eight statement cases mixing enumeration with loan installation and
+  cleanup planning.
+- `symbolUsesAndDefinitions` still derives definitions from `LetDecl`, `ConstDecl` and
+  `AssignStmt`. Deliberately left: the producer also emits defines for parameters and for
+  match payload bindings, which this analysis does not count as definitions today, so
+  switching it over would change liveness and needs its own parity work first.
+- The 44 hard-coded use-kind literals, which need `Use.Kind`, which in turn needs
+  `typecheckresult.ValueUses` extended past call arguments.

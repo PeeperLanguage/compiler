@@ -214,3 +214,35 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	}
 	return false
 }
+
+// A match subject is a read like any other. This was previously undiagnosed:
+// the analysis attached a site condition for a branch terminator only, so
+// nothing checked the subject of a match. Publishing the subject as an ordinary
+// read closed the gap, and this analysis learned nothing about matches to get it.
+func TestInitializationChecksMatchSubject(t *testing.T) {
+	_, diag, _ := analyzeInitializationSource(t, `enum Outcome {
+	Ok: { value: i32 },
+	Pending,
+}
+
+fn choose(flag: bool) -> i32 {
+	let mut outcome: Outcome;
+	if flag {
+		outcome = Outcome::Pending;
+	}
+	match outcome {
+		Outcome::Ok with { value = payload } => {
+			return payload;
+		}
+		Outcome::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized match subject diagnostic:\n%s", diag.EmitAllToString())
+	}
+	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `outcome` used before it's initialized") {
+		t.Fatalf("diagnostic does not name the match subject:\n%s", got)
+	}
+}

@@ -168,12 +168,12 @@ by review, not by a test. This is the largest honest gap in the pipeline.
 ### What Walk 1 forced automatically
 
 Adding one `stmtNode` implementation enrolls the kind in
-`TestEveryStatementKindHasAPhaseDecision`, which then fails at **all nine** statement
+`TestEveryStatementKindHasAPhaseDecision`, which then fails at **all eight** statement
 dispatch sites until each one either handles the kind or declares why it is inert:
 
 ```
 resolveStmt · checkStmt · buildStmt · appendStmt · lowerElse
-applyStmt · symbolUseSequence · publishStmt · applyConditionEdge
+applyStmt · publishStmt · applyConditionEdge
 ```
 
 An `exprNode` enrolls in `TestEveryExpressionKindHasAPhaseDecision` across four sites:

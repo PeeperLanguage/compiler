@@ -179,10 +179,14 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 		b.reads(site, node.Expr)
 	case *ast.ReturnStmt:
 		b.reads(site, node.Value)
-	case *ast.IfStmt, *ast.ForStmt, *ast.MatchStmt:
-		// Control-flow statements reach this producer at their terminator site.
-		// The condition or subject is published there, from the terminator, so
-		// that a site carries exactly the reads that happen at it.
+	case *ast.MatchStmt:
+		// A match reaches this producer at its terminator site, and at a plain
+		// statement site when semantic evidence was too incomplete for CFG to
+		// decompose it. Publishing the subject here covers both.
+		b.reads(site, node.Subject)
+	case *ast.IfStmt, *ast.ForStmt:
+		// A branch condition is published from the terminator, which names it
+		// directly, so a site carries exactly the reads that happen at it.
 	case *ast.BlockStmt:
 		// Blocks are decomposed by CFG construction; a scope-exit site names one
 		// but evaluates nothing.

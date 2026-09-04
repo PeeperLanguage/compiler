@@ -138,17 +138,6 @@ var statementSites = []dispatchSite{
 			"ContinueStmt": {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
 		},
 	},
-	{
-		file:              "semantics/ownership/reference.go",
-		fn:                "symbolUseSequence",
-		inertDeclarations: true,
-		omitted: map[string]classification{
-			"BlockStmt":    {ignore, decomposedByCFGReason},
-			"BadStmt":      {ignore, "recovery node evaluates no expression"},
-			"BreakStmt":    {ignore, "evaluates no expression"},
-			"ContinueStmt": {ignore, "evaluates no expression"},
-		},
-	},
 	// The effect producer replaced definiteinit.checkReads as the site that reads
 	// meaning out of a statement. It is exhaustive: every kind has a case, so it
 	// declares no omissions, and a new kind fails here first.

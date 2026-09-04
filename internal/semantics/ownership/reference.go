@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -630,62 +631,28 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast
 	return uses, definitions
 }
 
+// symbolUseSequence returns the symbols this site reads, in evaluation order.
+//
+// It reads published effects rather than walking the statement itself. The
+// walk it replaced enumerated eight statement kinds and missed ForStmt.Iterable,
+// which applyStmt does handle, so liveness and borrow-ending saw a different
+// program than the effect analysis did. One producer means they cannot disagree.
 func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) bool) []symbolUse {
-	if a == nil || node == nil || node.cfgSite == nil ||
-		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil ||
-		a.module == nil || a.module.Bindings == nil || include == nil {
+	if a == nil || a.module == nil || node == nil || node.cfgSite == nil || include == nil {
 		return nil
 	}
-	var expressions []ast.Expr
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		expressions = append(expressions, stmt.Value)
-	case *ast.ConstDecl:
-		expressions = append(expressions, stmt.Value)
-	case *ast.AssignStmt:
-		expressions = append(expressions, stmt.Value)
-		if _, binding := stmt.Target.(*ast.Ident); !binding {
-			expressions = append(expressions, stmt.Target)
+	ops := a.effects[node.cfgSite.ID]
+	uses := make([]symbolUse, 0, len(ops))
+	for _, op := range ops {
+		use, isUse := op.(effect.Use)
+		if !isUse || !include(use.Symbol) {
+			continue
 		}
-	case *ast.ReturnStmt:
-		expressions = append(expressions, stmt.Value)
-	case *ast.ExprStmt:
-		expressions = append(expressions, stmt.Expr)
-	case *ast.IfStmt:
-		expressions = append(expressions, stmt.Cond)
-	case *ast.ForStmt:
-		expressions = append(expressions, stmt.Cond)
-	case *ast.MatchStmt:
-		expressions = append(expressions, stmt.Subject)
-	}
-
-	var uses []symbolUse
-	var inspectExpr func(ast.Expr)
-	inspectExpr = func(expr ast.Expr) {
-		if expr == nil {
-			return
+		syntax, found := a.module.TypedASTNodes[use.Node]
+		if !found {
+			continue
 		}
-		ast.Inspect(expr, func(current ast.Node) bool {
-			if call, ok := current.(*ast.CallExpr); ok && call != nil {
-				inspectExpr(call.Callee)
-				for _, arg := range a.module.Typechecking.CallArgumentsOrSource(call) {
-					inspectExpr(arg)
-				}
-				return false
-			}
-			ident, ok := current.(*ast.Ident)
-			if !ok || ident == nil {
-				return true
-			}
-			sym := a.module.Bindings.NodeSymbols[ident.ID()]
-			if include(sym) {
-				uses = append(uses, symbolUse{symbol: sym, site: ident})
-			}
-			return true
-		})
-	}
-	for _, expr := range expressions {
-		inspectExpr(expr)
+		uses = append(uses, symbolUse{symbol: use.Symbol, site: syntax})
 	}
 	return uses
 }
