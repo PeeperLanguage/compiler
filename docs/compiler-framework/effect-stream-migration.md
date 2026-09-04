@@ -1,6 +1,7 @@
 # Effect stream migration
 
-Status: **in progress**. Milestone 1 of an unknown number.
+Status: **milestone 1 complete**. Definite initialization consumes published effects
+and no longer imports `ast`. Ownership is the next consumer and is not yet planned.
 
 This document is the executable plan for publishing semantic effects once and migrating
 dataflow consumers onto them. It is tracked so that anyone — human or agent — picking the
@@ -15,13 +16,16 @@ Adding a language feature should need parser, scope, and type rules, and nothing
 Today every later phase re-derives the same meaning from AST shape. `change-paths.md`
 records nine statement dispatch sites and four expression sites for one new node kind.
 
-Four of the nine are pure mechanism — they rediscover read/write meaning the typechecker
-already decided:
+Four of the nine were pure mechanism — they rediscovered read/write meaning the
+typechecker already decided:
 
 ```
 ownership.applyStmt · ownership.symbolUseSequence
 definiteinit.checkReads · typechecker.applyConditionEdge
 ```
+
+`definiteinit.checkReads` is gone; the producer took its place in the contract. The other
+three remain.
 
 Two concrete failures this causes today:
 
@@ -57,7 +61,9 @@ than a phase with its own analysis.
 
 Three operations. `Define` brings a binding into existence and records whether it is also
 initialized; `Write` stores to a binding that already exists; `Use` reads one. Each carries
-the `*symbols.Symbol` and the `ast.NodeID` that anchors a diagnostic.
+its `*symbols.Symbol` and the `ast.NodeID` it came from. `Use` also carries a
+`*source.Location`, so a consumer reports against a read without resolving the node back to
+syntax. `Define` and `Write` carry none, because no current diagnostic anchors on them.
 
 `Op` is sealed by an unexported marker method, the same idiom as `cfg.Terminator` and
 `typecheckresult.IterationPlan`. Go cannot make a consumer's type switch exhaustive, so
@@ -78,9 +84,11 @@ these has a recorded trigger instead:
 
 ### Result and phase
 
-`Result.Ops` is `map[ir.NodeID]map[cfg.SiteID][]Op` — function identity outer, site inner,
-copying `flowresult.Result.SiteFacts`. A `cfg.SiteID` is `{Block, Index}` and is only
-meaningful relative to one graph, so the outer key is required.
+`Result` is `map[ir.NodeID]SiteOps` and `SiteOps` is `map[cfg.SiteID][]Op` — function
+identity outer, site inner, following `flowresult.Result.SiteFacts`. A `cfg.SiteID` is
+`{Block, Index}` and is only meaningful relative to one graph, so the outer key is
+required. It is a bare map type rather than a struct with one field, matching
+`ownershipresult.Result`, because `RULES.md` §1 forbids the single-field wrapper.
 
 New phase `Effects`, placed after `FlowTyped` and before `DefiniteInit`:
 
@@ -104,21 +112,27 @@ Each step ends with its gate green and one commit. Do not start a step before th
 gate passes. Prefix every command with
 `GOCACHE=/tmp/peeper-maintainability-go-cache CCACHE_DISABLE=1`.
 
-### Step 1 — vocabulary and artifact slot
+### Step 1 — vocabulary and artifact slot — **done**
 
-`effect/model.go` with `Op`, `Define`, `Write`, `Use`, `Result`, `New`, `At`. `New`
-allocates every map so consumers never nil-check. Add `phase.Effects` with its `String`
-case; add `Module.Effects` with an ownership comment; add the `resetToPhase` clause in phase
-order; add the `nextModulePhase` and `importPrerequisitePhase` cases.
+`effect/model.go` with `Op`, `Define`, `Write`, `Use`, `Result`, `SiteOps` and `At`. Add
+`phase.Effects` with its `String` case; add `Module.Effects` with an ownership comment; add
+the `resetToPhase` clause in phase order.
+
+The phase transitions deliberately land in step 2, not here: without a production block a
+module advances through `Effects` while actually running definite init, and its diagnostics
+get tagged with the wrong phase.
 
 Gate: `go build ./...`, `go vet ./...`, tests for `internal/project`, `internal/pipeline`,
 `internal/phase`.
 Commit: `Add semantic effect artifact and phase slot`
 
-### Step 2 — producer
+### Step 2 — producer — **done**
 
-`effect/build.go` with `Build(module) *Result`. Walk reachable blocks and their sites,
-mirroring `definiteinit.indexSites` for site, scope, and statement rehydration.
+`effect/build.go` with `Build(graphs, nodes, BuildQueries)`. Passing a `*project.Module`
+would make `project` and this package import each other; `cfg.BuildQueries` establishes the
+alternative, so the producer declares the narrow accessors it needs and the owning artifacts
+supply matching methods. `typecheckresult.ArmBindings` was added for that reason, joining
+`MatchCases` and `ForLoopGuaranteedEntry`.
 
 Emit in evaluation order: parameters as initialized defines at the entry site; `LetDecl` and
 `ConstDecl` as reads of the value then a define; `AssignStmt` as reads of the value then a
@@ -126,10 +140,19 @@ write for an ident target, or reads of both for a projection target; `ExprStmt` 
 `ReturnStmt` as reads; a `*cfg.Branch` terminator site as reads of its condition; match arm
 bindings as initialized defines at the arm body's entry site.
 
-Resolve every identifier through `module.Bindings.NodeSymbols`, never `Scope.Lookup` by
-name — name lookup walks parent scopes and can bind the wrong symbol under shadowing.
+**References** resolve through `Bindings.NodeSymbols`. **Definitions do not**: the
+resolver indexes references only, so a declaration name and an assignment target are absent
+from that map and resolve through the site's scope, exactly as definite initialization did.
+Reproducing that split is what keeps the step free of behavior change. Unifying it needs
+separate approval, because scope lookup by name walks parents and can bind a shadowed
+symbol.
+
 Intercept `*ast.CallExpr` and walk `Typechecking.CallArgumentsOrSource(call)` so
 default-expanded arguments are covered.
+
+Effects a site inherits on entry — parameters, match payload bindings — are published in a
+leading pass, because a site's operations are read in evaluation order and an arm body may
+read the payload it binds.
 
 The producer is now the single place that inspects syntax for this meaning, so it takes
 `cfg.buildStmt`'s policy: `default: panic`.
@@ -137,23 +160,30 @@ The producer is now the single place that inspects syntax for this meaning, so i
 Gate: full `go test -count=1 ./...`. Nothing consumes the artifact yet, so nothing may change.
 Commit: `Publish semantic effects for every CFG site`
 
-### Step 3 — migrate definite initialization
+### Step 3 — migrate definite initialization — **done**
 
-`Check(graphs *cfg.Module, effects *effect.Result, diag *diagnostics.DiagnosticBag)`.
-Delete `indexSites`, `transfer`, and `checkReads`.
+`Check(graphs *cfg.Module, effects effect.Result, diag *diagnostics.DiagnosticBag)`.
+Delete the three AST switches.
 
 Preserve exactly, all pinned by existing tests: the set lattice with **intersection** join
 (a must-analysis); optimistic first arrival, intersect afterwards, requeue only on change;
-the FIFO worklist; reads checked against `In` state, not `Out`; the report loop iterating
-site order rather than worklist order; reachability by both `block.Reachable` and
-non-arrival; `tracked` as the diagnosable universe; and the single `T0039` diagnostic
-verbatim, anchored at the reading identifier, with no deduplication.
+the FIFO worklist; the report loop iterating site order rather than worklist order;
+reachability by both `block.Reachable` and non-arrival; `tracked` as the diagnosable
+universe; and the single `T0039` diagnostic verbatim, anchored at the reading identifier,
+with no deduplication.
+
+One representation change: effects are replayed in evaluation order within a site rather
+than every read being checked against the state before the whole site. That is what lets
+parameters and match bindings arrive as ordinary defines instead of being seeded
+separately. It agrees with the old behavior everywhere, because reads are always published
+before the define or write they precede. The visible consequence is that a match binding
+lands in a site's `Out` rather than its `In`.
 
 Gate: focused tests, then full suite, then `go run ./scripts/bundle.go` and the `x_test`
 fixtures. **Zero diagnostic changes.**
 Commit: `Consume published effects in definite initialization`
 
-### Step 4 — contract and validator
+### Step 4 — contract and validator — **done**
 
 Add the producer to `statementSites` in `internal/contracts/node_dispatch_test.go` with
 `inertDeclarations: true`; remove the `checkReads` entry, whose function no longer exists.
@@ -180,10 +210,20 @@ for separate approval and must **not** be corrected inside this migration.
 - **`ForStmt.Iterable` is invisible to `symbolUseSequence`** while `applyStmt` handles it.
   Ownership only; out of scope.
 
-## Success test
+## Success test — met
 
-`definiteinit` contains no `switch` over AST types and imports `ast` only for `ast.NodeID`.
-Diagnostics are byte-identical to before.
+`definiteinit/initialization.go` contains no `switch` over AST types and does not import
+`ast` at all. Diagnostics are unchanged: the full suite, race on project, pipeline and
+lsp, the bundle, and the `x_test` fixtures all pass without modification.
+
+What a contributor adding a statement kind now sees, in order:
+
+1. `cfg.buildStmt` panics if the kind reaches CFG construction unplaced.
+2. `contracts.TestEveryStatementKindHasAPhaseDecision` fails with
+   `publishStmt makes no decision about ast.YourStmt`.
+3. `effect.Result.Validate` raises `ICE0002` if what is published is malformed.
+
+Definite initialization needs no change at any point.
 
 ## Picking this up cold
 
