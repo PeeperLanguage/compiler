@@ -186,7 +186,11 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 		}
 	case *ast.ExprStmt:
 		b.value(site, node.Expr, typeinfo.UseRead)
-		b.emit(site, Discard{Node: node.Expr.ID(), Location: ast.LocOf(node.Expr)})
+		b.emit(site, Discard{
+			Place:    b.placeOrTemporary(node.Expr),
+			Node:     node.Expr.ID(),
+			Location: ast.LocOf(node.Expr),
+		})
 	case *ast.ReturnStmt:
 		b.value(site, node.Value, typeinfo.UseMove)
 	case *ast.MatchStmt:
@@ -256,19 +260,12 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 		// A field of a place is itself a place, so the use lands on the
 		// projection rather than on the whole aggregate. A consumer that only
 		// cares which binding was touched still reads the root.
-		if projected, ok := b.placeOf(node); ok {
-			b.emit(site, Use{Place: projected, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
-			return
-		}
-		b.value(site, node.Expr, typeinfo.UseRead)
+		b.projection(site, node, node.Expr, place.OriginProjection{
+			Kind: place.OriginField, Field: fieldName(node),
+		}, kind)
 	case *ast.IndexExpr:
-		if projected, ok := b.placeOf(node); ok {
-			b.emit(site, Use{Place: projected, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
-			// The index is a separate value, not part of the place.
-			b.value(site, node.Index, typeinfo.UseRead)
-			return
-		}
-		b.value(site, node.Expr, typeinfo.UseRead)
+		b.projection(site, node, node.Expr, place.OriginProjection{Kind: place.OriginIndex}, kind)
+		// The index is a separate value, not part of the place.
 		b.value(site, node.Index, typeinfo.UseRead)
 	case *ast.RangeExpr:
 		b.value(site, node.Start, typeinfo.UseRead)
@@ -372,4 +369,41 @@ func (b *builder) project(base ast.Expr, step place.OriginProjection) (Place, bo
 	projections = append(projections, step)
 	rooted.Projections = projections
 	return rooted, true
+}
+
+func fieldName(selector *ast.SelectorExpr) string {
+	if selector == nil || selector.Name == nil {
+		return ""
+	}
+	return selector.Name.Name
+}
+
+// projection publishes a use of one projected place. When the base names
+// storage the use roots at that binding; otherwise the base is a temporary,
+// which still has its own effects and is walked before the projection is
+// published.
+func (b *builder) projection(site cfg.SiteID, whole, base ast.Expr, step place.OriginProjection, kind typeinfo.UseKind) {
+	if rooted, ok := b.project(base, step); ok {
+		b.emit(site, Use{Place: rooted, Node: whole.ID(), Location: ast.LocOf(whole), Kind: kind})
+		return
+	}
+	b.value(site, base, typeinfo.UseRead)
+	b.emit(site, Use{
+		Place:    Place{Temporary: base.ID(), Projections: []place.OriginProjection{step}},
+		Node:     whole.ID(),
+		Location: ast.LocOf(whole),
+		Kind:     kind,
+	})
+}
+
+// placeOrTemporary names what an expression denotes: the binding it reaches, or
+// the expression itself when it produces a value that lives nowhere.
+func (b *builder) placeOrTemporary(expr ast.Expr) Place {
+	if expr == nil {
+		return Place{}
+	}
+	if rooted, ok := b.placeOf(expr); ok {
+		return rooted
+	}
+	return Place{Temporary: expr.ID()}
 }

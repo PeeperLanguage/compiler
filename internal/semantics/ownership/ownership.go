@@ -489,6 +489,28 @@ func (a *analyzer) checkScopeDestruction(scope *symbols.Scope, site ast.Node, lo
 	}
 }
 
+// planDiscardedDrops records a drop for each value the site produces and throws
+// away.
+//
+// Only a temporary is discarded in the sense that matters: a value that names
+// no binding has nobody left to own it, so the drop happens here. A discarded
+// expression that names storage still belongs to that storage. The producer
+// makes the distinction, so this no longer asks the syntax.
+func (a *analyzer) planDiscardedDrops(node *site) {
+	if a == nil || a.cleanup == nil || node == nil || node.cfgSite == nil {
+		return
+	}
+	for _, op := range a.effects[node.cfgSite.ID] {
+		discard, isDiscard := op.(effect.Discard)
+		if !isDiscard || discard.Place.Root != nil {
+			continue
+		}
+		if typeinfo.OwnershipCapabilityOf(a.module.EffectiveExprType(discard.Node)).Drop {
+			a.cleanup.DiscardedValue[ir.NodeID(discard.Node)] = struct{}{}
+		}
+	}
+}
+
 func (a *analyzer) applyStmt(node *site, st state) {
 	if a == nil || node == nil || node.scope == nil || node.stmt == nil {
 		return
@@ -537,9 +559,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
 		a.checkExpr(scope, s.Expr, st, typeinfo.UseRead, loans, false)
-		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.OwnershipCapabilityOf(a.exprType(s.Expr)).Drop {
-			a.cleanup.DiscardedValue[ir.NodeID(s.Expr.ID())] = struct{}{}
-		}
+		a.planDiscardedDrops(node)
 	case *ast.IfStmt:
 		a.checkExpr(scope, s.Cond, st, typeinfo.UseRead, loans, false)
 	case *ast.ForStmt:

@@ -72,7 +72,8 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 		case Write:
 			problems = append(problems, validateNode(where, "write", op.Symbol == nil, op.Node, nodes)...)
 		case Use:
-			problems = append(problems, validateNode(where, "use", op.Place.Root == nil, op.Node, nodes)...)
+			problems = append(problems, validatePlace(where, "use", op.Place)...)
+			problems = append(problems, validateNode(where, "use", false, op.Node, nodes)...)
 			if op.Location == nil {
 				problems = append(problems, where+" is a use with no source location to report against")
 			}
@@ -82,6 +83,7 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 				problems = append(problems, where+" is a borrow with no source location to report against")
 			}
 		case Discard:
+			problems = append(problems, validatePlace(where, "discard", op.Place)...)
 			problems = append(problems, validateNode(where, "discard", false, op.Node, nodes)...)
 			if op.Location == nil {
 				problems = append(problems, where+" is a discard with no source location to report against")
@@ -108,6 +110,20 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 		problems = append(problems, fmt.Sprintf("function %d site %v leaves call %d open", fn, site, unclosed))
 	}
 	return problems
+}
+
+// validatePlace enforces that a place names exactly one root. A place with
+// neither names nothing; one with both would let a consumer reach two different
+// answers depending on which field it read.
+func validatePlace(where, kind string, at Place) []string {
+	switch {
+	case at.Root == nil && at.Temporary == 0:
+		return []string{fmt.Sprintf("%s is a %s whose place names neither a binding nor a temporary", where, kind)}
+	case at.Root != nil && at.Temporary != 0:
+		return []string{fmt.Sprintf("%s is a %s whose place names both binding %s and temporary %d",
+			where, kind, at.Root.Name, at.Temporary)}
+	}
+	return nil
 }
 
 func validateNode(where, kind string, missingSymbol bool, node ast.NodeID, nodes map[ast.NodeID]ast.Node) []string {

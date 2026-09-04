@@ -62,7 +62,16 @@ type Write struct {
 // projections mean the whole binding. A consumer that only cares which binding
 // was touched reads Root and ignores the rest.
 type Place struct {
-	Root        *symbols.Symbol
+	// Root is the binding the storage belongs to. It is nil for a temporary:
+	// a value that never lives in a binding, such as a call result.
+	Root *symbols.Symbol
+	// Temporary names the expression that produced the value when Root is nil.
+	// Exactly one of Root and Temporary is set, which the validator enforces.
+	//
+	// Ownership needs the distinction because a temporary has nobody to own it:
+	// a projection out of one has to be bound before use, and a discarded one
+	// dies where it is produced.
+	Temporary   ast.NodeID
 	Projections []place.OriginProjection
 }
 
@@ -111,6 +120,9 @@ type CallEnd struct {
 // Discard is a value produced and dropped, as an expression statement does.
 // The value never reaches a binding, so anything owned in it dies here.
 type Discard struct {
+	// Place is what was discarded, so a consumer can tell a dropped temporary
+	// from a statement that merely names storage.
+	Place    Place
 	Node     ast.NodeID
 	Location *source.Location
 }

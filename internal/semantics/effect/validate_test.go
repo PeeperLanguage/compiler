@@ -32,11 +32,21 @@ func TestValidateReportsDefects(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "operation with no symbol",
+			name: "place naming no root at all",
 			damage: func(result effect.Result, fn ir.NodeID, site cfg.SiteID) {
 				result[fn][site] = []effect.Op{effect.Use{Node: 1}}
 			},
-			want: "is a use with no symbol",
+			want: "names neither a binding nor a temporary",
+		},
+		{
+			name: "place naming two roots",
+			damage: func(result effect.Result, fn ir.NodeID, site cfg.SiteID) {
+				result[fn][site] = []effect.Op{effect.Use{
+					Place: effect.Place{Root: &symbols.Symbol{Name: "x"}, Temporary: 1},
+					Node:  1,
+				}}
+			},
+			want: "names both binding x and temporary",
 		},
 		{
 			name: "use with no source location",
