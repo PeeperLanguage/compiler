@@ -34,6 +34,15 @@ type Define struct {
 	// itself belongs.
 	Node        ast.NodeID
 	Initialized bool
+	// OnEntry marks a binding that already exists when the site begins rather
+	// than being established by it: a function parameter, or a match payload
+	// binding, which the case edge creates before the arm body runs.
+	//
+	// Operations at a site are read in evaluation order, so a consumer that
+	// replays them needs no distinction. One that treats a site as a set does:
+	// liveness must not conclude a binding is dead before a site that merely
+	// receives it.
+	OnEntry bool
 }
 
 // Write stores to a binding that already exists.

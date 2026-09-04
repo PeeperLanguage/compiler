@@ -77,7 +77,7 @@ func (b *builder) buildFunction(fn *ast.FnDecl) {
 			if !found || sym == nil {
 				continue
 			}
-			b.emit(entry, Define{Symbol: sym, Node: param.Name.ID(), Initialized: true})
+			b.emit(entry, Define{Symbol: sym, Node: param.Name.ID(), Initialized: true, OnEntry: true})
 		}
 	}
 	// Bindings that a site inherits on entry are published before that site's
@@ -148,7 +148,7 @@ func (b *builder) buildMatchArms(site *cfg.Site, terminator *cfg.SwitchVariant) 
 			if sym == nil {
 				continue
 			}
-			b.emit(edge.To, Define{Symbol: sym, Node: ast.NodeID(terminator.NodeID), Initialized: true})
+			b.emit(edge.To, Define{Symbol: sym, Node: ast.NodeID(terminator.NodeID), Initialized: true, OnEntry: true})
 		}
 	}
 }

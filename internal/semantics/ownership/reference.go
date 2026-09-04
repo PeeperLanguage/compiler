@@ -590,42 +590,53 @@ func (a *analyzer) computeSymbolLiveness() {
 	}
 }
 
+// symbolUsesAndDefinitions reports what one site defines and what it reads,
+// both from published effects.
+//
+// A write also counts as a use when the written symbol needs dropping: the
+// pre-assignment drop reads the old value, so the target must stay live up to
+// the assignment that replaces it. That is ownership policy and stays here.
 func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
 	uses := make(map[*symbols.Symbol]ast.Node)
 	definitions := make(map[*symbols.Symbol]struct{})
-	if a == nil || node == nil || node.cfgSite == nil ||
-		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil {
+	if a == nil || a.module == nil || node == nil || node.cfgSite == nil {
 		return uses, definitions
 	}
-	addDefinition := func(binding ast.Node) {
-		if node.scope == nil || binding == nil {
+	recordUse := func(sym *symbols.Symbol, at ast.NodeID) {
+		syntax, found := a.module.TypedASTNodes[at]
+		if !found {
 			return
 		}
-		if sym, found := node.scope.LookupNode(binding); found && trackedLiveSymbol(sym) {
-			definitions[sym] = struct{}{}
+		if previous, seen := uses[sym]; seen {
+			uses[sym] = earlierNode(previous, syntax)
+			return
 		}
+		uses[sym] = syntax
 	}
-
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		addDefinition(stmt)
-	case *ast.ConstDecl:
-		addDefinition(stmt)
-	case *ast.AssignStmt:
-		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
-			if sym, found := node.scope.Lookup(target.Name); found && trackedLiveSymbol(sym) {
-				definitions[sym] = struct{}{}
-				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
-					uses[sym] = target
-				}
+	for _, op := range a.effects[node.cfgSite.ID] {
+		switch op := op.(type) {
+		case effect.Define:
+			// A binding that merely arrives at this site was established by the
+			// edge into it, so killing liveness here would end a borrow one site
+			// too early.
+			if op.OnEntry {
+				continue
 			}
-		}
-	}
-	for _, use := range a.symbolUseSequence(node, trackedLiveSymbol) {
-		if previous, found := uses[use.symbol]; !found {
-			uses[use.symbol] = use.site
-		} else {
-			uses[use.symbol] = earlierNode(previous, use.site)
+			if trackedLiveSymbol(op.Symbol) {
+				definitions[op.Symbol] = struct{}{}
+			}
+		case effect.Write:
+			if !trackedLiveSymbol(op.Symbol) {
+				continue
+			}
+			definitions[op.Symbol] = struct{}{}
+			if typ, typed := symbols.GetSymbolType(op.Symbol); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
+				recordUse(op.Symbol, op.Node)
+			}
+		case effect.Use:
+			if trackedLiveSymbol(op.Symbol) {
+				recordUse(op.Symbol, op.Node)
+			}
 		}
 	}
 	return uses, definitions
