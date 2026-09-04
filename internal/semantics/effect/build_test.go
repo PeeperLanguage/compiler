@@ -53,6 +53,8 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 		ArmBindings:         module.Typechecking.ArmBindings,
 		StringConcatenation: module.Typechecking.StringConcatenation,
 		ValueUse:            module.Typechecking.ValueUse,
+		ExprType:            module.EffectiveExprType,
+		ReferenceArgument:   module.Typechecking.ReferenceArgument,
 	})
 	if result == nil {
 		t.Fatal("Build published no result")
@@ -101,7 +103,7 @@ func describe(op effect.Op) string {
 		}
 		return "declare " + op.Symbol.Name
 	case effect.Write:
-		return "write " + op.Symbol.Name
+		return "write " + op.Place.Root.Name
 	case effect.Use:
 		return "use " + op.Place.Root.Name
 	}
@@ -305,27 +307,30 @@ fn choose(point: Point) -> i32 {
 	fn := symbol.ASTNode.(*ast.FnDecl)
 	graph := module.CFG.Function(ir.NodeID(fn.ID()))
 
-	var receiver, field *effect.Use
+	var receiver *effect.Borrow
+	var field *effect.Use
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
 			for _, op := range result.At(graph.NodeID, site.ID) {
-				use, ok := op.(effect.Use)
-				if !ok || use.Place.Root == nil {
-					continue
-				}
-				switch use.Place.Root.Name {
-				case "point":
-					copied := use
-					receiver = &copied
-				case "duplicate":
-					copied := use
-					field = &copied
+				switch op := op.(type) {
+				case effect.Borrow:
+					if op.Place.Root != nil && op.Place.Root.Name == "point" {
+						copied := op
+						receiver = &copied
+					}
+				case effect.Use:
+					if op.Place.Root != nil && op.Place.Root.Name == "duplicate" {
+						copied := op
+						field = &copied
+					}
 				}
 			}
 		}
 	}
-	if receiver == nil || len(receiver.Place.Projections) != 0 {
-		t.Fatalf("receiver use = %+v, want a whole binding with no projection", receiver)
+	// The receiver parameter is `&Point`, so the call borrows the receiver
+	// rather than reading it, and it borrows the whole binding.
+	if receiver == nil || len(receiver.Place.Projections) != 0 || receiver.Mutable {
+		t.Fatalf("receiver borrow = %+v, want a shared borrow of a whole binding", receiver)
 	}
 	if field == nil || len(field.Place.Projections) != 1 {
 		t.Fatalf("field use = %+v, want one projection", field)

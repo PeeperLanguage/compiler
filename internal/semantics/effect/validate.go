@@ -70,7 +70,8 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 		case Define:
 			problems = append(problems, validateNode(where, "define", op.Symbol == nil, op.Node, nodes)...)
 		case Write:
-			problems = append(problems, validateNode(where, "write", op.Symbol == nil, op.Node, nodes)...)
+			problems = append(problems, validatePlace(where, "write", op.Place)...)
+			problems = append(problems, validateNode(where, "write", false, op.Node, nodes)...)
 		case Use:
 			problems = append(problems, validatePlace(where, "use", op.Place)...)
 			problems = append(problems, validateNode(where, "use", false, op.Node, nodes)...)
@@ -78,6 +79,7 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 				problems = append(problems, where+" is a use with no source location to report against")
 			}
 		case Borrow:
+			problems = append(problems, validatePlace(where, "borrow", op.Place)...)
 			problems = append(problems, validateNode(where, "borrow", false, op.Node, nodes)...)
 			if op.Location == nil {
 				problems = append(problems, where+" is a borrow with no source location to report against")

@@ -34,6 +34,13 @@ type BuildQueries struct {
 	// made one. Call arguments have one; most positions do not, and the walk
 	// decides those from the position itself.
 	ValueUse func(ast.NodeID) (typeinfo.UseKind, bool)
+	// ExprType is the flow-refined type of an expression, which decides whether
+	// a slice borrows mutably.
+	ExprType func(ast.NodeID) typeinfo.Type
+	// ReferenceArgument reports an argument whose parameter is a reference, and
+	// whether that reference is mutable. The borrow exists because of the
+	// parameter type rather than because the source wrote an ampersand.
+	ReferenceArgument func(ast.NodeID) (mutable bool, found bool)
 }
 
 // Build publishes the semantic effects of every reachable CFG site.
@@ -175,15 +182,7 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 		b.buildBinding(site, scope, node, node.Value)
 	case *ast.AssignStmt:
 		b.value(site, node.Value, typeinfo.UseMove)
-		ident, direct := node.Target.(*ast.Ident)
-		if !direct || ident == nil {
-			b.value(site, node.Target, typeinfo.UseRead)
-			return
-		}
-		sym, found := scope.Lookup(ident.Name)
-		if found && sym != nil {
-			b.emit(site, Write{Symbol: sym, Node: ident.ID()})
-		}
+		b.writeTarget(site, scope, node.Target)
 	case *ast.ExprStmt:
 		b.value(site, node.Expr, typeinfo.UseRead)
 		b.emit(site, Discard{
@@ -254,8 +253,7 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 			b.emit(site, Use{Place: Place{Root: sym}, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
 		}
 	case *ast.AddressExpr:
-		b.emit(site, Borrow{Node: node.ID(), Location: ast.LocOf(node), Mutable: node.Mode == ast.AddressMutable})
-		b.value(site, node.Expr, typeinfo.UseRead)
+		b.borrow(site, node, node.Expr, node.Mode == ast.AddressMutable, node.Mode == ast.AddressRaw)
 	case *ast.SelectorExpr:
 		// A field of a place is itself a place, so the use lands on the
 		// projection rather than on the whole aggregate. A consumer that only
@@ -264,6 +262,16 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 			Kind: place.OriginField, Field: fieldName(node),
 		}, kind)
 	case *ast.IndexExpr:
+		// Slicing does not read an element out; it borrows a run of the
+		// sequence, mutably when the slice itself is a mutable reference.
+		// A full range writes no bounds at all, so the index may be absent
+		// rather than an empty range.
+		_, ranged := node.Index.(*ast.RangeExpr)
+		if ranged || node.Index == nil {
+			b.value(site, node.Index, typeinfo.UseRead)
+			b.borrow(site, node, node.Expr, b.mutableReference(node.ID()), false)
+			return
+		}
 		b.projection(site, node, node.Expr, place.OriginProjection{Kind: place.OriginIndex}, kind)
 		// The index is a separate value, not part of the place.
 		b.value(site, node.Index, typeinfo.UseRead)
@@ -283,10 +291,10 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 	case *ast.CallExpr:
 		b.emit(site, CallBegin{Node: node.ID(), Location: ast.LocOf(node)})
 		if selector, method := node.Callee.(*ast.SelectorExpr); method && selector != nil {
-			// A method callee names a method, not storage. The value the call
-			// uses is the receiver, and it is used the way the receiver
-			// parameter demands, which the typechecker published.
-			b.value(site, selector.Expr, b.argumentKind(selector.Expr))
+			// A method callee names a method, not storage. The receiver is the
+			// value the call uses, and it is used the way the receiver
+			// parameter demands, borrow included, exactly like any argument.
+			b.argument(site, selector.Expr)
 		} else {
 			b.value(site, node.Callee, typeinfo.UseRead)
 		}
@@ -295,7 +303,7 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 			arguments = b.queries.CallArguments(node)
 		}
 		for _, argument := range arguments {
-			b.value(site, argument, b.argumentKind(argument))
+			b.argument(site, argument)
 		}
 		b.emit(site, CallEnd{Node: node.ID()})
 	case *ast.FreeExpr:
@@ -413,4 +421,103 @@ func (b *builder) placeOrTemporary(expr ast.Expr) Place {
 		return rooted
 	}
 	return Place{Temporary: expr.ID()}
+}
+
+// writeTarget publishes the store an assignment performs.
+//
+// A projection target still evaluates the values inside it — an index is read
+// to reach the element it selects — so those are published before the write
+// itself.
+func (b *builder) writeTarget(site cfg.SiteID, scope *symbols.Scope, target ast.Expr) {
+	switch node := target.(type) {
+	case *ast.Ident:
+		sym, found := scope.Lookup(node.Name)
+		if !found || sym == nil {
+			return
+		}
+		b.emit(site, Write{Place: Place{Root: sym}, Node: node.ID(), Location: ast.LocOf(node)})
+	case *ast.SelectorExpr:
+		b.writeProjection(site, node, node.Expr, place.OriginProjection{
+			Kind: place.OriginField, Field: fieldName(node),
+		})
+	case *ast.IndexExpr:
+		b.value(site, node.Index, typeinfo.UseRead)
+		b.writeProjection(site, node, node.Expr, place.OriginProjection{Kind: place.OriginIndex})
+	default:
+		// Anything else is not a place; the typechecker rejects it as a target,
+		// and its own effects are all it contributes here.
+		b.value(site, target, typeinfo.UseRead)
+	}
+}
+
+func (b *builder) writeProjection(site cfg.SiteID, whole, base ast.Expr, step place.OriginProjection) {
+	if rooted, ok := b.project(base, step); ok {
+		b.emit(site, Write{Place: rooted, Node: whole.ID(), Location: ast.LocOf(whole)})
+		return
+	}
+	b.value(site, base, typeinfo.UseRead)
+	b.emit(site, Write{
+		Place:    Place{Temporary: base.ID(), Projections: []place.OriginProjection{step}},
+		Node:     whole.ID(),
+		Location: ast.LocOf(whole),
+	})
+}
+
+// mutableReference reports whether an expression's own type is a mutable
+// reference, which is what makes a slice of it a mutable borrow.
+func (b *builder) mutableReference(id ast.NodeID) bool {
+	if b.queries.ExprType == nil {
+		return false
+	}
+	_, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(b.queries.ExprType(id)))
+	return reference && mutable
+}
+
+// argument publishes what one call argument does.
+//
+// A reference parameter borrows, whether or not the source wrote an ampersand,
+// and that borrow is the argument's whole effect: publishing a read beside it
+// would charge the same place twice. Everything else is an ordinary value use.
+func (b *builder) argument(site cfg.SiteID, argument ast.Expr) {
+	if argument == nil {
+		return
+	}
+	mutable, borrows := false, false
+	if b.queries.ReferenceArgument != nil {
+		mutable, borrows = b.queries.ReferenceArgument(argument.ID())
+	}
+	if !borrows {
+		b.value(site, argument, b.argumentKind(argument))
+		return
+	}
+	operand := argument
+	if address, explicit := argument.(*ast.AddressExpr); explicit {
+		operand = address.Expr
+	}
+	// Values evaluated to reach the place, such as an index, still happen.
+	if index, indexed := operand.(*ast.IndexExpr); indexed {
+		b.value(site, index.Index, typeinfo.UseRead)
+	}
+	b.emit(site, Borrow{
+		Place:    b.placeOrTemporary(operand),
+		Node:     argument.ID(),
+		Location: ast.LocOf(argument),
+		Mutable:  mutable,
+		Argument: true,
+	})
+}
+
+// borrow publishes a reference taken to a place. Values inside the operand that
+// are evaluated to reach it, such as an index, are published first.
+func (b *builder) borrow(site cfg.SiteID, whole, operand ast.Expr, mutable, raw bool) {
+	if index, indexed := operand.(*ast.IndexExpr); indexed {
+		b.value(site, index.Index, typeinfo.UseRead)
+	}
+	b.emit(site, Borrow{
+		Place:    b.placeOrTemporary(operand),
+		Node:     whole.ID(),
+		Location: ast.LocOf(whole),
+		Mutable:  mutable,
+		Raw:      raw,
+	})
 }

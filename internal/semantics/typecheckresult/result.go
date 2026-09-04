@@ -151,6 +151,14 @@ type Result struct {
 	// used expression's node ID. Reference parameters publish UseRead; the
 	// borrow machinery in ownership still governs them.
 	ValueUses map[ast.NodeID]typeinfo.UseKind
+	// ReferenceArguments records an argument whose parameter is a reference.
+	// Presence is the fact; the value reports whether that reference is mutable,
+	// which separates a shared borrow from a mutable reservation.
+	//
+	// The borrow follows from the parameter type, so it is invisible in the
+	// argument: passing a reference-typed value to a reference parameter writes
+	// no ampersand and produces no address expression.
+	ReferenceArguments map[ast.NodeID]bool
 }
 
 func New() *Result {
@@ -168,6 +176,7 @@ func New() *Result {
 		ForIterations:            make(map[ast.NodeID]ForIteration),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
 		ValueUses:                make(map[ast.NodeID]typeinfo.UseKind),
+		ReferenceArguments:       make(map[ast.NodeID]bool),
 	}
 }
 
@@ -210,6 +219,16 @@ func (r *Result) ValueUse(id ast.NodeID) (typeinfo.UseKind, bool) {
 	}
 	kind, found := r.ValueUses[id]
 	return kind, found
+}
+
+// ReferenceArgument reports whether an argument's parameter is a reference and,
+// when it is, whether that reference is mutable.
+func (r *Result) ReferenceArgument(id ast.NodeID) (mutable bool, found bool) {
+	if r == nil {
+		return false, false
+	}
+	mutable, found = r.ReferenceArguments[id]
+	return mutable, found
 }
 
 // ArmBindings exposes the payload symbols one match arm binds, without leaking

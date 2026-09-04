@@ -58,7 +58,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "operation naming an unknown node",
 			damage: func(result effect.Result, fn ir.NodeID, site cfg.SiteID) {
-				result[fn][site] = []effect.Op{effect.Write{Symbol: &symbols.Symbol{Name: "x"}, Node: 999999}}
+				result[fn][site] = []effect.Op{effect.Write{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: 999999}}
 			},
 			want: "which is not in the typed AST",
 		},

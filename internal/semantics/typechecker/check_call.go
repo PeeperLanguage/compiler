@@ -279,10 +279,17 @@ func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
 		return
 	}
 	use := typeinfo.UseMove
-	if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
+	_, mutable, reference := typeinfo.ReferenceValueTarget(paramType)
+	if reference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 		use = typeinfo.UseRead
 	}
 	c.module.Typechecking.ValueUses[arg.ID()] = use
+	// A reference parameter borrows its argument. The use kind cannot carry
+	// that: an implicit-copy argument publishes UseRead too, so a consumer could
+	// not tell a borrow from a plain read.
+	if reference {
+		c.module.Typechecking.ReferenceArguments[arg.ID()] = mutable
+	}
 }
 
 func (c *checker) checkOptionalAllocatorArity(scope *symbols.Scope, node *ast.CallExpr) bool {

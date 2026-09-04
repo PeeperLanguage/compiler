@@ -47,11 +47,14 @@ type Define struct {
 	OnEntry bool
 }
 
-// Write stores to a binding that already exists.
+// Write stores to storage that already exists. It names a place for the same
+// reason Use does: `a.b = x` writes a field, and an assignment target takes a
+// mutating access whether it is a whole binding or a projection out of one.
 type Write struct {
-	Symbol *symbols.Symbol
+	Place Place
 	// Node is the assignment target.
-	Node ast.NodeID
+	Node     ast.NodeID
+	Location *source.Location
 }
 
 // Place identifies storage: a root binding and the projections taken from it to
@@ -94,10 +97,22 @@ type Use struct {
 // Borrow takes a reference to a place rather than reading its value. Mutable
 // separates `&mut x` from `&x`, which is the difference that decides whether a
 // second borrow conflicts.
+//
+// It names the place it borrows, so it is the whole access: a consumer that saw
+// both a borrow and a separate read of the same place would charge that place
+// twice.
 type Borrow struct {
+	Place    Place
 	Node     ast.NodeID
 	Location *source.Location
 	Mutable  bool
+	// Argument marks a borrow handed to a call. It outlives the expression that
+	// wrote it, because the callee holds it for as long as the call runs, so a
+	// consumer tracking loans records one rather than only checking an access.
+	Argument bool
+	// Raw marks taking a raw pointer. It reads the place but takes no tracked
+	// reference to it, so it neither conflicts with a borrow nor creates one.
+	Raw bool
 }
 
 // CallBegin and CallEnd bracket the operations a call evaluates. Everything

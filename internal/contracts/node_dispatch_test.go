@@ -85,6 +85,12 @@ var declarationStatements = map[string]classification{
 	"BadDecl":       {ignore, "the parser never produces BadDecl; it is tolerated for synthetic trees"},
 }
 
+// applyStmt now owns only the policy a statement carries beyond evaluating its
+// expressions. A statement whose whole effect is evaluating something has
+// nothing left to do there: the published effects carry it.
+const evaluatedFromEffectsReason = "the condition or subject is evaluated from published effects, and the " +
+	"statement carries no ownership policy of its own"
+
 const (
 	decomposedByCFGReason = "blocks are decomposed by CFG construction and are never a site statement"
 	elsePositionReason    = "parseIfStmt produces only a block or else-if in else position; anything else is an internal invariant violation (the default panics)"
@@ -136,6 +142,8 @@ var statementSites = []dispatchSite{
 			"BadStmt":      {ignore, "recovery node carries no ownership effect"},
 			"BreakStmt":    {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
 			"ContinueStmt": {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
+			"IfStmt":       {ignore, evaluatedFromEffectsReason},
+			"MatchStmt":    {ignore, evaluatedFromEffectsReason},
 		},
 	},
 	// The effect producer replaced definiteinit.checkReads as the site that reads
@@ -356,7 +364,9 @@ func importLocalName(file *ast.File, importPath string) string {
 var expressionSites = []dispatchSite{
 	{file: "semantics/resolver/resolver.go", fn: "resolveExpr"},
 	{file: "semantics/typechecker/check_expr.go", fn: "typeExprBase"},
-	{file: "semantics/ownership/expr.go", fn: "checkExpr"},
+	// Ownership no longer walks expressions. The producer decides what each one
+	// does to a binding, once, and ownership consumes that.
+	{file: "semantics/effect/build.go", fn: "value"},
 	{
 		file: "ir/hir/lower/module_lower.go",
 		fn:   "lowerASTExpr",

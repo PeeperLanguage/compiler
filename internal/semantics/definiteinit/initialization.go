@@ -8,6 +8,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/source"
 )
 
 type state map[symbols.SymbolID]struct{}
@@ -140,8 +141,13 @@ func checkReads(ops []effect.Op, initialized state, tracked map[symbols.SymbolID
 	}
 	current := copyState(initialized)
 	for _, op := range ops {
-		if use, ok := op.(effect.Use); ok {
-			reportUninitializedRead(use, current, tracked, diag)
+		switch op := op.(type) {
+		case effect.Use:
+			reportUninitializedRead(op.Place, op.Location, current, tracked, diag)
+		case effect.Borrow:
+			// Borrowing storage that holds nothing yet is the same error as
+			// reading it.
+			reportUninitializedRead(op.Place, op.Location, current, tracked, diag)
 		}
 		apply(current, op)
 	}
@@ -156,15 +162,14 @@ func apply(current state, op effect.Op) {
 			current[op.Symbol.ID] = struct{}{}
 		}
 	case effect.Write:
-		if op.Symbol != nil {
-			current[op.Symbol.ID] = struct{}{}
+		if op.Place.Root != nil {
+			current[op.Place.Root.ID] = struct{}{}
 		}
 	case effect.Use:
 		// A read leaves initialization state unchanged.
 	case effect.Borrow:
-		// Taking a reference changes no initialization state. The place being
-		// borrowed is published separately as a read, so an uninitialized
-		// borrow is still reported through that.
+		// Taking a reference changes no initialization state, but it does read
+		// the place, which is reported where reads are checked.
 	case effect.Discard:
 		// A discarded value changes no initialization state.
 	case effect.CallBegin, effect.CallEnd:
@@ -175,25 +180,25 @@ func apply(current state, op effect.Op) {
 	}
 }
 
-func reportUninitializedRead(use effect.Use, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
-	if use.Place.Root == nil {
+func reportUninitializedRead(at effect.Place, location *source.Location, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+	if at.Root == nil {
 		return
 	}
-	name, local := tracked[use.Place.Root.ID]
+	name, local := tracked[at.Root.ID]
 	if !local {
 		return
 	}
-	if _, present := current[use.Place.Root.ID]; present {
+	if _, present := current[at.Root.ID]; present {
 		return
 	}
 	if name == "" {
-		name = use.Place.Root.Name
+		name = at.Root.Name
 	}
 	name = ir.StripSymbolInstance(name)
 	msg := "symbol `" + name + "` used before it's initialized"
 	diag.Add(diagnostics.NewError(msg).
 		WithCode(diagnostics.ErrUninitializedVariable).
-		WithPrimaryLabel(use.Location, msg).
+		WithPrimaryLabel(location, msg).
 		WithHelp("assign a value before reading this symbol"))
 }
 

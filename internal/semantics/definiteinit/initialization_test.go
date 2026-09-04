@@ -62,6 +62,8 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		ArmBindings:         module.Typechecking.ArmBindings,
 		StringConcatenation: module.Typechecking.StringConcatenation,
 		ValueUse:            module.Typechecking.ValueUse,
+		ExprType:            module.EffectiveExprType,
+		ReferenceArgument:   module.Typechecking.ReferenceArgument,
 	})
 	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module

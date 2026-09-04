@@ -626,14 +626,18 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast
 				definitions[op.Symbol] = struct{}{}
 			}
 		case effect.Write:
-			if !trackedLiveSymbol(op.Symbol) {
+			if op.Place.Root == nil || !trackedLiveSymbol(op.Place.Root) {
 				continue
 			}
-			definitions[op.Symbol] = struct{}{}
-			if typ, typed := symbols.GetSymbolType(op.Symbol); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
-				recordUse(op.Symbol, op.Node)
+			definitions[op.Place.Root] = struct{}{}
+			if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
+				recordUse(op.Place.Root, op.Node)
 			}
 		case effect.Use:
+			if trackedLiveSymbol(op.Place.Root) {
+				recordUse(op.Place.Root, op.Node)
+			}
+		case effect.Borrow:
 			if trackedLiveSymbol(op.Place.Root) {
 				recordUse(op.Place.Root, op.Node)
 			}
@@ -655,15 +659,27 @@ func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) b
 	ops := a.effects[node.cfgSite.ID]
 	uses := make([]symbolUse, 0, len(ops))
 	for _, op := range ops {
-		use, isUse := op.(effect.Use)
-		if !isUse || !include(use.Place.Root) {
+		// Borrowing a place uses the binding it belongs to, exactly as reading
+		// it does: the loan has to outlive the borrow, so the last borrow is a
+		// last use.
+		var at effect.Place
+		var node ast.NodeID
+		switch op := op.(type) {
+		case effect.Use:
+			at, node = op.Place, op.Node
+		case effect.Borrow:
+			at, node = op.Place, op.Node
+		default:
 			continue
 		}
-		syntax, found := a.module.TypedASTNodes[use.Node]
+		if !include(at.Root) {
+			continue
+		}
+		syntax, found := a.module.TypedASTNodes[node]
 		if !found {
 			continue
 		}
-		uses = append(uses, symbolUse{symbol: use.Place.Root, site: syntax})
+		uses = append(uses, symbolUse{symbol: at.Root, site: syntax})
 	}
 	return uses
 }

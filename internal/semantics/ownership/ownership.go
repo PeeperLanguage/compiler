@@ -517,83 +517,113 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	}
 	scope := node.scope
 	loans := a.newLoanContext(node, st)
+
+	// Policy that has to observe state before the site's values are evaluated.
+	var boundReference []referenceLoan
+	boundHasReference := false
 	switch s := node.stmt.(type) {
 	case *ast.LetDecl:
-		a.applyBinding(scope, s, s.Value, st, loans)
+		boundReference, boundHasReference = a.referenceValueForExpr(s.Value, st)
 	case *ast.ConstDecl:
-		a.applyBinding(scope, s, s.Value, st, loans)
+		boundReference, boundHasReference = a.referenceValueForExpr(s.Value, st)
 	case *ast.AssignStmt:
-		reference, hasReference := a.referenceValueForExpr(s.Value, st)
+		boundReference, boundHasReference = a.referenceValueForExpr(s.Value, st)
 		delete(a.cleanup.BeforeAssign, ir.NodeID(s.ID()))
-		a.checkExpr(scope, s.Value, st, typeinfo.UseMove, loans, false)
-		if _, ok := s.Target.(*ast.Ident); !ok {
-			a.checkExpr(scope, s.Target, st, typeinfo.UseRead, loans, true)
-			a.checkStorageAccess(s.Target, loans, storageMutate)
-			if typeinfo.OwnershipCapabilityOf(a.exprType(s.Target)).Drop {
-				a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
-			}
-		}
-		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
-			if sym, found := scope.Lookup(target.Name); found {
-				if _, referenceTarget := referenceMutability(sym); !referenceTarget {
-					a.checkStorageAccess(target, loans, storageMutate)
-				}
-				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
-					if _, live := st.live[sym]; live {
-						a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
-					}
-				}
-				if ownershipTrackedSymbol(sym) {
-					delete(st.moved, sym)
-					st.live[sym] = struct{}{}
-				}
-				a.updatePointerSymbol(sym, scope, s.Value, st)
-				a.updateReferenceSymbol(sym, reference, hasReference, st)
-			}
-		}
 	case *ast.ReturnStmt:
 		a.checkPointerEscape(scope, s.Value, st)
 		a.validateReferenceReturn(scope, s, st)
-		a.checkExpr(scope, s.Value, st, typeinfo.UseMove, loans, false)
+	}
+
+	// Evaluation itself, from published effects.
+	a.applyEffects(node, st, loans)
+
+	// Policy that follows evaluation.
+	switch s := node.stmt.(type) {
+	case *ast.LetDecl:
+		a.applyBinding(scope, s, s.Value, st, boundReference, boundHasReference)
+	case *ast.ConstDecl:
+		a.applyBinding(scope, s, s.Value, st, boundReference, boundHasReference)
+	case *ast.AssignStmt:
+		a.applyAssignTarget(scope, s, st, loans, boundReference, boundHasReference)
+	case *ast.ReturnStmt:
 		releaseIterationLoans(st, loans, 0)
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
-		a.checkExpr(scope, s.Expr, st, typeinfo.UseRead, loans, false)
 		a.planDiscardedDrops(node)
-	case *ast.IfStmt:
-		a.checkExpr(scope, s.Cond, st, typeinfo.UseRead, loans, false)
 	case *ast.ForStmt:
-		if s.Iterable == nil {
-			a.checkExpr(scope, s.Cond, st, typeinfo.UseRead, loans, false)
-			break
+		a.applyLoopCarrier(s, st, loans)
+	}
+}
+
+// applyAssignTarget records what replacing a value does to the storage that
+// held it: the old value is dropped, the binding is live again, and any pointer
+// or reference it carried is refreshed.
+func (a *analyzer) applyAssignTarget(
+	scope *symbols.Scope,
+	s *ast.AssignStmt,
+	st state,
+	loans *loanContext,
+	reference []referenceLoan,
+	hasReference bool,
+) {
+	if _, direct := s.Target.(*ast.Ident); !direct {
+		a.checkStorageAccess(s.Target, loans, storageMutate)
+		if typeinfo.OwnershipCapabilityOf(a.exprType(s.Target)).Drop {
+			a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 		}
-		// A range loop borrows nothing; only a sequence loop holds the iterated
-		// storage for the loop's lifetime through its published carrier.
-		evidence := a.module.Typechecking.ForIterations[s.ID()]
-		sequence, isSequence := evidence.Plan.(*typecheckresult.SequenceIteration)
-		if !isSequence {
-			a.checkExpr(scope, s.Iterable, st, typeinfo.UseRead, loans, false)
-			break
+		return
+	}
+	target := s.Target.(*ast.Ident)
+	if scope == nil {
+		return
+	}
+	sym, found := scope.Lookup(target.Name)
+	if !found {
+		return
+	}
+	if _, referenceTarget := referenceMutability(sym); !referenceTarget {
+		a.checkStorageAccess(target, loans, storageMutate)
+	}
+	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
+		if _, live := st.live[sym]; live {
+			a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 		}
-		a.checkExpr(scope, s.Iterable, st, typeinfo.UseRead, loans, true)
-		a.checkStorageAccess(s.Iterable, loans, storageSharedBorrow)
-		origins := a.originsForExpr(s.Iterable)
-		if ident, ok := s.Iterable.(*ast.Ident); ok {
-			sym := a.module.Bindings.NodeSymbols[ident.ID()]
-			if value, found := st.references[sym]; found {
-				origins = referenceOrigins(value)
-			}
-		} else if value, hasValue := a.referenceValueForExpr(s.Iterable, st); hasValue {
+	}
+	if ownershipTrackedSymbol(sym) {
+		delete(st.moved, sym)
+		st.live[sym] = struct{}{}
+	}
+	a.updatePointerSymbol(sym, scope, s.Value, st)
+	a.updateReferenceSymbol(sym, reference, hasReference, st)
+}
+
+// applyLoopCarrier installs the borrow a sequence loop holds on the storage it
+// walks. A range loop borrows nothing.
+func (a *analyzer) applyLoopCarrier(s *ast.ForStmt, st state, loans *loanContext) {
+	if s.Iterable == nil {
+		return
+	}
+	evidence := a.module.Typechecking.ForIterations[s.ID()]
+	sequence, isSequence := evidence.Plan.(*typecheckresult.SequenceIteration)
+	if !isSequence {
+		return
+	}
+	a.checkStorageAccess(s.Iterable, loans, storageSharedBorrow)
+	origins := a.originsForExpr(s.Iterable)
+	if ident, ok := s.Iterable.(*ast.Ident); ok {
+		sym := a.module.Bindings.NodeSymbols[ident.ID()]
+		if value, found := st.references[sym]; found {
 			origins = referenceOrigins(value)
 		}
-		if len(origins) > 0 {
-			st.references[sequence.Carrier] = []referenceLoan{{
-				id: loanID{node: s.Iterable}, origins: origins, site: s.Iterable, loop: s.ID(),
-			}}
-		}
-	case *ast.MatchStmt:
-		a.checkExpr(scope, s.Subject, st, typeinfo.UseRead, loans, false)
+	} else if value, hasValue := a.referenceValueForExpr(s.Iterable, st); hasValue {
+		origins = referenceOrigins(value)
 	}
+	if len(origins) == 0 {
+		return
+	}
+	st.references[sequence.Carrier] = []referenceLoan{{
+		id: loanID{node: s.Iterable}, origins: origins, site: s.Iterable, loop: s.ID(),
+	}}
 }
 
 func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
@@ -698,12 +728,20 @@ func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
 	return ids
 }
 
-func (a *analyzer) applyBinding(scope *symbols.Scope, stmt ast.Stmt, value ast.Expr, st state, loans *loanContext) {
+// applyBinding records what declaring a binding does to ownership state. Its
+// initializer was already evaluated from published effects; what remains is the
+// binding itself becoming live and taking on whatever the value carried.
+func (a *analyzer) applyBinding(
+	scope *symbols.Scope,
+	stmt ast.Stmt,
+	value ast.Expr,
+	st state,
+	reference []referenceLoan,
+	hasReference bool,
+) {
 	if scope == nil || stmt == nil {
 		return
 	}
-	reference, hasReference := a.referenceValueForExpr(value, st)
-	a.checkExpr(scope, value, st, typeinfo.UseMove, loans, false)
 	sym, found := scope.LookupNode(stmt)
 	if !found || sym == nil {
 		return

@@ -483,6 +483,8 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			ArmBindings:         module.Typechecking.ArmBindings,
 			StringConcatenation: module.Typechecking.StringConcatenation,
 			ValueUse:            module.Typechecking.ValueUse,
+			ExprType:            module.EffectiveExprType,
+			ReferenceArgument:   module.Typechecking.ReferenceArgument,
 		})
 		if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
 			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
