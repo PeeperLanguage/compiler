@@ -62,10 +62,6 @@ func (b *builder) emit(site cfg.SiteID, op Op) {
 	b.ops[site] = append(b.ops[site], op)
 }
 
-func (b *builder) symbolOf(id ast.NodeID) *symbols.Symbol {
-	return b.queries.Symbols[id]
-}
-
 func (b *builder) buildFunction(fn *ast.FnDecl) {
 	if b.graph.Entry == nil || len(b.graph.Entry.Sites) == 0 {
 		return
@@ -232,7 +228,11 @@ func (b *builder) reads(site cfg.SiteID, expr ast.Expr) {
 		ast.Inspect(current, func(node ast.Node) bool {
 			if call, ok := node.(*ast.CallExpr); ok && call != nil {
 				walk(call.Callee)
-				for _, arg := range b.callArguments(call) {
+				arguments := call.Args
+				if b.queries.CallArguments != nil {
+					arguments = b.queries.CallArguments(call)
+				}
+				for _, arg := range arguments {
 					walk(arg)
 				}
 				return false
@@ -241,18 +241,11 @@ func (b *builder) reads(site cfg.SiteID, expr ast.Expr) {
 			if !ok || ident == nil {
 				return true
 			}
-			if sym := b.symbolOf(ident.ID()); sym != nil {
+			if sym := b.queries.Symbols[ident.ID()]; sym != nil {
 				b.emit(site, Use{Symbol: sym, Node: ident.ID(), Location: ast.LocOf(ident)})
 			}
 			return true
 		})
 	}
 	walk(expr)
-}
-
-func (b *builder) callArguments(call *ast.CallExpr) []ast.Expr {
-	if b.queries.CallArguments == nil {
-		return call.Args
-	}
-	return b.queries.CallArguments(call)
 }
