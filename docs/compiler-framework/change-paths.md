@@ -234,10 +234,10 @@ lowering carry an opinion of its own; the third recorded an opinion nothing cons
 
 ## Walk 3 — adding a type
 
-A new `typeinfo.Type` is the change shape with the **weakest** automatic coverage. The
-contract added for AST type *syntax* does not help here: `typeinfo.Type` is the semantic
-type model, a different family with no contract of its own. Read this walk as a
-checklist you must run manually.
+A new `typeinfo.Type` is the semantic type model — a different family from AST type
+*syntax*, and it has its own contract. `contracts.TestEverySemanticTypeKindHasAPhaseDecision`
+holds you to the three sites where a missing case is silently wrong rather than loudly
+rejected. The rest of this walk is still a manual checklist.
 
 If your type also needs new syntax to write it, that syntax node joins the `typeNode`
 family and `TestEveryTypeKindHasAPhaseDecision` will hold you to `TypeFromSyntax` and
@@ -255,17 +255,22 @@ This is the step that decides whether your type is safe by default. The governin
 > Contains a reference, pointer, or allocation inside → move. Check the type, apply
 > the rule. No per-type policy tables.
 
-Answer, in this file: `IsImplicitCopyType`, `noCopyType`, `NeedsDrop`, and the
-composite `OwnershipCapabilityOf`. Also consider `IsSizedType`, `IsLowerableType`,
-`IsEquatable`, `IsOrderable`, `IsArithmetic`, `IsIntegral`, `IsCondition`.
+Answer it in one place: `ownershipCapability` in `capability_walk.go`, which decides
+copy class and drop obligation in a single traversal. `OwnershipCapabilityOf` is the
+public query over it. `IsImplicitCopyType`, `noCopyType` and `NeedsDrop` no longer exist.
+Also consider `IsSizedType`, `IsLowerableType`, `IsEquatable`, `IsOrderable`,
+`IsArithmetic`, `IsIntegral`, `IsCondition`.
 Get this right and ownership, cleanup, and drop emission follow with no further work —
 that is the whole point of the capability model.
-*Catches you:* — nothing. A `default:` branch will quietly classify your type as
-non-copyable, which is safe but may be wrong.
+*Catches you:* **Visible** — `TestEverySemanticTypeKindHasAPhaseDecision/ownershipCapability`
+fails naming your kind and what the site decides. Its `default:` still answers move-on-use
+with no drop, so the contract is what stops that silent answer standing in for a decision.
 
 **3. HIR type lowering** — `ir/hir/lower/lower_types.go`
 The largest type switch in the compiler (~31 cases). Map your type to an `ir.TypeID`.
-*Catches you:* — nothing; unmapped types fall to `ir.InvalidType`.
+*Catches you:* **Visible** — `TestEverySemanticTypeKindHasAPhaseDecision/intern` fails
+naming your kind. Unmapped types still fall to `ir.InvalidType`, so the contract is the
+only thing between you and a silently invalid runtime type.
 
 **4. Export fingerprint** — `project/export_fingerprint.go`, `semanticTypeKey`
 Incremental correctness. If your type is not keyed distinctly, a dependent module can
@@ -307,9 +312,12 @@ representation, cover both 32- and 64-bit.
 Stated plainly, because a contributor deserves to know which parts of the walk are on
 the honor system:
 
-- **Semantic type kinds have no dispatch contract.** AST type *syntax* is covered by
-  `TestEveryTypeKindHasAPhaseDecision`, but adding a `typeinfo.Type` and forgetting
-  capability, lowering, or fingerprinting still compiles and passes.
+- **Semantic type kinds are covered at three sites, not everywhere.**
+  `TestEverySemanticTypeKindHasAPhaseDecision` holds capability, type identity and HIR
+  lowering. `IsSizedType`, `IsLowerableType` and the LSP hover formatters are deliberately
+  outside it, because their defaults reject or degrade rather than answer wrongly.
+  Fingerprinting needs no contract: `Text()` is an interface method, so the compiler
+  enforces it.
 - **HIR and MIR have no dispatch contract.** `mir.Instr`/`mir.Terminator` are sealed,
   so the node set is closed and the two cannot be confused, but nothing proves the
   backend classifies every member; that is still a runtime panic.
