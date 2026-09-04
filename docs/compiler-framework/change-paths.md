@@ -105,9 +105,16 @@ Which facts differ on the true and false edges? A `for` header carries no narrow
 condition, so it is classified `ignore` with that reason — an explicit decision, not
 an omission.
 
-**9. Definite initialization** — `semantics/definiteinit/initialization.go`, `checkReads`
-Which storage does the construct read? Classified `ignore` for `ForStmt`: the condition
-arrives separately through the CFG site condition, so reading it here would double-count.
+**9. Semantic effects** — `semantics/effect/build.go`, `publishStmt`
+What does the construct define, write, and read, and in what order? This is the only
+stop that reads meaning out of a statement. Publish it once here and definite
+initialization needs nothing: it consumes `Define`, `Write` and `Use` and no longer
+switches on an AST kind at all.
+*Catches you:* **Visible** — `contracts.TestEveryStatementKindHasAPhaseDecision` fails
+with `publishStmt makes no decision about ast.YourStmt`. The published artifact is then
+shape-checked by `effect.Result.Validate`, which raises `ICE0002` if an operation names
+no symbol, names a node absent from the typed AST, or lands at a site the graph does not
+contain. See [`effect-stream-migration.md`](effect-stream-migration.md).
 
 **10. Ownership** — `semantics/ownership/ownership.go` (`applyStmt`) and
 `semantics/ownership/reference.go` (`symbolUseSequence`)
@@ -166,7 +173,7 @@ dispatch sites until each one either handles the kind or declares why it is iner
 
 ```
 resolveStmt · checkStmt · buildStmt · appendStmt · lowerElse
-applyStmt · symbolUseSequence · checkReads · applyConditionEdge
+applyStmt · symbolUseSequence · publishStmt · applyConditionEdge
 ```
 
 An `exprNode` enrolls in `TestEveryExpressionKindHasAPhaseDecision` across four sites:

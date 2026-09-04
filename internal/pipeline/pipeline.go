@@ -482,6 +482,10 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			CallArguments: module.Typechecking.CallArgumentsOrSource,
 			ArmBindings:   module.Typechecking.ArmBindings,
 		})
+		if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+				"published semantic effects are malformed: "+err.Error(), nil, "")
+		}
 		module.Phase = phase.Effects
 		ctx.Metrics.AddPhaseAdvance()
 		return true
