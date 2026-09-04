@@ -44,7 +44,7 @@ func Build(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node, queries BuildQueri
 		if fn == nil {
 			continue
 		}
-		b := &builder{nodes: nodes, queries: queries, graph: graph, ops: make(map[cfg.SiteID][]Op)}
+		b := &builder{nodes: nodes, queries: queries, graph: graph, ops: make(SiteOps)}
 		b.buildFunction(fn)
 		result[graph.NodeID] = b.ops
 	}
@@ -55,7 +55,7 @@ type builder struct {
 	nodes   map[ast.NodeID]ast.Node
 	queries BuildQueries
 	graph   *cfg.Graph
-	ops     map[cfg.SiteID][]Op
+	ops     SiteOps
 }
 
 func (b *builder) emit(site cfg.SiteID, op Op) {
@@ -115,7 +115,7 @@ func (b *builder) eachSite(visit func(*cfg.Block, *cfg.Site)) {
 func (b *builder) buildSite(block *cfg.Block, site *cfg.Site) {
 	stmt, _ := b.nodes[ast.NodeID(site.NodeID)].(ast.Stmt)
 	if stmt != nil {
-		b.buildStmt(site.ID, b.queries.Scopes[ast.NodeID(site.ScopeID)], stmt)
+		b.publishStmt(site.ID, b.queries.Scopes[ast.NodeID(site.ScopeID)], stmt)
 	}
 	if site.Kind != cfg.SiteTerminator {
 		return
@@ -157,12 +157,12 @@ func (b *builder) buildMatchArms(site *cfg.Site, terminator *cfg.SwitchVariant) 
 	}
 }
 
-// buildStmt publishes one statement's effects in evaluation order.
+// publishStmt publishes one statement's effects in evaluation order.
 //
 // CFG construction panics on a statement it does not place, and this is now the
 // single producer of statement meaning, so it takes the same policy: a new kind
 // must be handled here or declared inert in internal/contracts.
-func (b *builder) buildStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.Stmt) {
+func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.Stmt) {
 	switch node := stmt.(type) {
 	case *ast.LetDecl:
 		b.buildBinding(site, scope, node, node.Value)
@@ -242,7 +242,7 @@ func (b *builder) reads(site cfg.SiteID, expr ast.Expr) {
 				return true
 			}
 			if sym := b.symbolOf(ident.ID()); sym != nil {
-				b.emit(site, Use{Symbol: sym, Node: ident.ID()})
+				b.emit(site, Use{Symbol: sym, Node: ident.ID(), Location: ast.LocOf(ident)})
 			}
 			return true
 		})

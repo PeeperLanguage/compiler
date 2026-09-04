@@ -14,6 +14,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
@@ -54,15 +55,13 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	if graph == nil {
 		t.Fatal("choose function CFG missing")
 	}
-	result := analyzeFunction(
-		fn,
-		graph,
-		module.TypedASTNodes,
-		module.Bindings.BlockScopes,
-		module.Bindings.NodeSymbols,
-		module.Typechecking.Matches,
-		diag,
-	)
+	effects := effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
+		Symbols:       module.Bindings.NodeSymbols,
+		Scopes:        module.Bindings.BlockScopes,
+		CallArguments: module.Typechecking.CallArgumentsOrSource,
+		ArmBindings:   module.Typechecking.ArmBindings,
+	})
+	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module
 }
 
@@ -192,8 +191,14 @@ fn choose(result: Result) -> i32 {
 			if cfgSite.NodeID != returnID {
 				continue
 			}
-			if _, initialized := result.In[cfgSite.ID][binding.ID]; !initialized {
-				t.Fatalf("pattern binding absent at arm return: state=%#v", result.In[cfgSite.ID])
+			// The binding is published as an initialized define at the arm
+			// block's first site, which is this return's own site, so it lands
+			// in Out rather than In. It used to be applied on the case edge and
+			// so appeared in In. The read of `payload` in the arm body is
+			// covered either way, because a site's effects are replayed in
+			// evaluation order and the define precedes the read.
+			if _, initialized := result.Out[cfgSite.ID][binding.ID]; !initialized {
+				t.Fatalf("pattern binding absent at arm return: state=%#v", result.Out[cfgSite.ID])
 			}
 			return
 		}

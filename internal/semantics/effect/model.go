@@ -14,6 +14,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/source"
 )
 
 // Op is one semantic effect on one binding.
@@ -44,9 +45,14 @@ type Write struct {
 
 // Use reads a binding's value. Node is the reading identifier rather than the
 // enclosing statement, so a diagnostic anchors on the read itself.
+//
+// Location travels with the operation so a consumer never has to resolve the
+// node back to syntax just to report against it. Define and Write carry no
+// location because no current diagnostic anchors on them.
 type Use struct {
-	Symbol *symbols.Symbol
-	Node   ast.NodeID
+	Symbol   *symbols.Symbol
+	Node     ast.NodeID
+	Location *source.Location
 }
 
 func (Define) effectOp() {}
@@ -58,7 +64,10 @@ func (Use) effectOp()    {}
 // A cfg.SiteID is only meaningful relative to one graph, so function identity
 // is the outer key. Slice order is evaluation order; consumers must not reorder
 // it.
-type Result map[ir.NodeID]map[cfg.SiteID][]Op
+type Result map[ir.NodeID]SiteOps
+
+// SiteOps holds one function's effects, keyed by the site they happen at.
+type SiteOps map[cfg.SiteID][]Op
 
 // At returns the effects published for one site, in evaluation order.
 func (r Result) At(fn ir.NodeID, site cfg.SiteID) []Op {

@@ -149,20 +149,10 @@ var statementSites = []dispatchSite{
 			"ContinueStmt": {ignore, "evaluates no expression"},
 		},
 	},
-	{
-		file:              "semantics/definiteinit/initialization.go",
-		fn:                "checkReads",
-		inertDeclarations: true,
-		omitted: map[string]classification{
-			"BlockStmt":    {ignore, decomposedByCFGReason},
-			"BadStmt":      {ignore, "recovery node reads nothing"},
-			"IfStmt":       {ignore, "condition arrives separately through the CFG site condition"},
-			"ForStmt":      {ignore, "condition arrives separately through the CFG site condition"},
-			"MatchStmt":    {ignore, "subject arrives separately through the CFG site condition"},
-			"BreakStmt":    {ignore, "reads nothing"},
-			"ContinueStmt": {ignore, "reads nothing"},
-		},
-	},
+	// The effect producer replaced definiteinit.checkReads as the site that reads
+	// meaning out of a statement. It is exhaustive: every kind has a case, so it
+	// declares no omissions, and a new kind fails here first.
+	{file: "semantics/effect/build.go", fn: "publishStmt"},
 	{
 		file:              "semantics/typechecker/flow.go",
 		fn:                "applyConditionEdge",

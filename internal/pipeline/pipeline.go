@@ -487,14 +487,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		return true
 	}
 	if module.Phase < phase.DefiniteInit {
-		definiteinit.Check(
-			module.CFG,
-			module.TypedASTNodes,
-			module.Bindings.BlockScopes,
-			module.Bindings.NodeSymbols,
-			module.Typechecking.Matches,
-			phaseDiag,
-		)
+		definiteinit.Check(module.CFG, module.Effects, phaseDiag)
 		module.Phase = phase.DefiniteInit
 		ctx.Metrics.AddPhaseAdvance()
 		return true
