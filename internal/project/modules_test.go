@@ -11,6 +11,7 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
@@ -171,6 +172,7 @@ func moduleWithArtifacts() *Module {
 		HIR:                       &hir.Module{},
 		CFG:                       &cfg.Module{Functions: []*cfg.Graph{{}}},
 		Flow:                      &flowresult.Result{ExprTypes: map[ast.NodeID]typeinfo.Type{1: typeinfo.DefaultIntegerType()}},
+		Effects:                   effect.Result{1: {cfg.SiteID{}: {effect.Use{}}}},
 		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
@@ -193,6 +195,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		hir          bool
 		cfg          bool
 		flow         bool
+		effects      bool
 		ownership    bool
 		mir          bool
 		llvm         bool
@@ -201,12 +204,12 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true},
 		{phase: phase.CFG, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true},
 		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.HIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, effects: true},
+		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.HIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
@@ -219,6 +222,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
 			(module.Flow != nil) != test.flow ||
+			(module.Effects != nil) != test.effects ||
 			(module.Ownership != nil) != test.ownership ||
 			(module.MIR != nil) != test.mir ||
 			(module.LLVMIR != "") != test.llvm {

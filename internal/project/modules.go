@@ -16,6 +16,7 @@ import (
 	"compiler/internal/phase"
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/constantresult"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
@@ -66,9 +67,12 @@ type Module struct {
 	// TypedASTNodes indexes source and typechecker-generated expressions.
 	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
-	HIR       *hir.Module
-	CFG       *cfg.Module
-	Flow      *flowresult.Result
+	HIR  *hir.Module
+	CFG  *cfg.Module
+	Flow *flowresult.Result
+	// Effects is the published semantic meaning of each CFG site, produced once
+	// and consumed by the dataflow analyses.
+	Effects   effect.Result
 	Ownership ownershipresult.Result
 	MIR       *mir.Module
 	LLVMIR    string
@@ -183,6 +187,9 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 	}
 	if retained < phase.FlowTyped {
 		m.Flow = nil
+	}
+	if retained < phase.Effects {
+		m.Effects = nil
 	}
 	if retained < phase.Ownership {
 		m.Ownership = nil
