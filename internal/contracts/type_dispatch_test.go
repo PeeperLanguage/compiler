@@ -8,10 +8,6 @@
 package contracts
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -75,13 +71,13 @@ var typeKindSites = []typeDispatchSite{
 }
 
 func TestEverySemanticTypeKindHasAPhaseDecision(t *testing.T) {
-	kinds := declaredTypeKinds(t)
+	kinds := declaredMarkerKinds(t, "semantics/typeinfo/types.go", "TypeNode")
 	if len(kinds) < 10 {
 		t.Fatalf("found %d semantic type kinds, expected the full family", len(kinds))
 	}
 	for _, site := range typeKindSites {
 		t.Run(site.fn, func(t *testing.T) {
-			handled := handledTypeKinds(t, site.file, site.fn, kinds)
+			handled := handledKindsIn(t, site.file, site.fn, "compiler/internal/semantics/typeinfo", "typeinfo", kinds)
 			for _, kind := range kinds {
 				entry, classified := site.omitted[kind]
 				if slices.Contains(handled, kind) {
@@ -101,7 +97,7 @@ func TestEverySemanticTypeKindHasAPhaseDecision(t *testing.T) {
 }
 
 func TestSemanticTypeOmissionReasonsNameRealKinds(t *testing.T) {
-	kinds := declaredTypeKinds(t)
+	kinds := declaredMarkerKinds(t, "semantics/typeinfo/types.go", "TypeNode")
 	for _, site := range typeKindSites {
 		for kind, entry := range site.omitted {
 			if !slices.Contains(kinds, kind) {
@@ -115,101 +111,4 @@ func TestSemanticTypeOmissionReasonsNameRealKinds(t *testing.T) {
 			}
 		}
 	}
-}
-
-// declaredTypeKinds returns every type implementing typeinfo.Type, found by its
-// TypeNode marker method exactly as the AST families are found by theirs.
-func declaredTypeKinds(t *testing.T) []string {
-	t.Helper()
-	path := filepath.Join(internalDir(t), "semantics", "typeinfo", "types.go")
-	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	kinds := make([]string, 0)
-	for _, decl := range parsed.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "TypeNode" {
-			continue
-		}
-		if name, ok := receiverTypeName(fn); ok {
-			kinds = append(kinds, name)
-		}
-	}
-	slices.Sort(kinds)
-	return kinds
-}
-
-// handledTypeKinds collects the kinds a function distinguishes, from both type
-// switch cases and single type assertions.
-//
-// This is looser than the AST contract, which requires the switch operand to be
-// a parameter. These functions switch on a derived value — Underlying(t) — and
-// some peel DefinedType with an assertion before switching. Filtering the names
-// to declared kinds is what keeps it honest: a switch over anything else
-// contributes nothing.
-func handledTypeKinds(t *testing.T, file, fn string, kinds []string) []string {
-	t.Helper()
-	path := filepath.Join(internalDir(t), filepath.FromSlash(file))
-	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	decl := findFuncDecl(parsed, fn)
-	if decl == nil {
-		t.Fatalf("function %s not found in %s", fn, file)
-	}
-	// A site inside package typeinfo names its kinds unqualified; one outside it
-	// names them through the import's local alias.
-	inTypeinfo := parsed.Name != nil && parsed.Name.Name == "typeinfo"
-	local := importLocalName(parsed, "compiler/internal/semantics/typeinfo")
-	handled := make([]string, 0)
-	record := func(expr ast.Expr) {
-		star, ok := expr.(*ast.StarExpr)
-		if !ok {
-			return
-		}
-		var name string
-		switch target := star.X.(type) {
-		case *ast.Ident:
-			if !inTypeinfo {
-				return
-			}
-			name = target.Name
-		case *ast.SelectorExpr:
-			if inTypeinfo {
-				return
-			}
-			pkg, ok := target.X.(*ast.Ident)
-			if !ok || pkg.Name != local {
-				return
-			}
-			name = target.Sel.Name
-		default:
-			return
-		}
-		if slices.Contains(kinds, name) && !slices.Contains(handled, name) {
-			handled = append(handled, name)
-		}
-	}
-	ast.Inspect(decl.Body, func(node ast.Node) bool {
-		switch current := node.(type) {
-		case *ast.TypeSwitchStmt:
-			for _, stmt := range current.Body.List {
-				clause, ok := stmt.(*ast.CaseClause)
-				if !ok {
-					continue
-				}
-				for _, expr := range clause.List {
-					record(expr)
-				}
-			}
-		case *ast.TypeAssertExpr:
-			if current.Type != nil {
-				record(current.Type)
-			}
-		}
-		return true
-	})
-	return handled
 }

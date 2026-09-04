@@ -5,8 +5,9 @@ package mir
 // what keep a node in the set its position requires: drop a marker, or move a
 // node between the sets, and this file stops compiling.
 //
-// This is membership only. That the backend classifies every member is a
-// separate contract, and one the repository does not yet have for MIR.
+// This is membership only. That every member is actually classified — by MIR
+// lowering and by the backend — is a separate contract, held by
+// contracts.TestEveryLoweredNodeKindHasAPhaseDecision.
 var (
 	_ Instr = (*Assign)(nil)
 	_ Instr = (*Store)(nil)

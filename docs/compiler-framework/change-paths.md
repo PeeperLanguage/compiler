@@ -132,7 +132,9 @@ If you add a HIR node, it needs `forEachChild` and `appendText` there too.
 **12. HIR folding** — `ir/hir/fold/fold.go`, `foldStmt`
 Constant folding over typed HIR. `hir.For` is handled so folding descends into all
 five blocks.
-*Catches you:* — nothing. HIR has no dispatch contract and no validator.
+*Catches you:* **Visible** — `contracts.TestEveryLoweredNodeKindHasAPhaseDecision`
+fails with `foldStmt makes no decision about hir.YourStmt`. HIR still has no structural
+validator, so a malformed HIR artifact is caught only when a later phase trips over it.
 
 **13. MIR lowering** — `ir/mir/module_lower.go`
 Lower normalized control flow and consume the cleanup plan. `hir.For` is read in
@@ -140,8 +142,9 @@ Lower normalized control flow and consume the cleanup plan. `hir.For` is read in
 `lowerCFGTerminator` (to emit the header and latch).
 *Catches you:* **Automatic**, partly — `mir.Instr` and `mir.Terminator` are sealed by
 unexported markers, so the set is closed to the `mir` package and an instruction can no
-longer be used where a terminator belongs. What still catches nothing is forgetting to
-classify a new node in the backend: MIR has no dispatch contract.
+longer be used where a terminator belongs. Coverage is **Visible**:
+`TestEveryLoweredNodeKindHasAPhaseDecision` holds `lowerCFGStmt`, `appendInstr` and
+`setBlockTerm`, so a new node that nothing lowers or stamps fails by name.
 
 **14. Backend** — `backend/llvm/`
 **The for-loop change touched no backend file at all.** This is the single most
@@ -318,12 +321,11 @@ the honor system:
   outside it, because their defaults reject or degrade rather than answer wrongly.
   Fingerprinting needs no contract: `Text()` is an interface method, so the compiler
   enforces it.
-- **HIR and MIR have no dispatch contract.** `mir.Instr`/`mir.Terminator` are sealed,
-  so the node set is closed and the two cannot be confused, but nothing proves the
-  backend classifies every member; that is still a runtime panic.
-- **No structural validator exists for HIR or MIR.** CFG topology and ownership
-  evidence have boundary validators; the two lowered representations do not, so a
-  malformed HIR or MIR artifact is caught only when the backend trips over it.
+- **No structural validator exists for HIR or MIR.** Every node kind now has to be
+  classified at lowering and in the backend, but nothing checks the *shape* of a
+  lowered artifact: CFG topology and ownership evidence have boundary validators, the
+  two lowered representations do not, so a malformed HIR or MIR is still caught only
+  when the backend trips over it.
 - **Nothing requires a fixture.** A construct can reach the backend with no end-to-end
   coverage at all.
 - **Nothing requires an LSP update**, so a new construct can be invisible to hover and
