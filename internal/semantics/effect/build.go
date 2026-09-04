@@ -194,7 +194,12 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 		// statement site when semantic evidence was too incomplete for CFG to
 		// decompose it. Publishing the subject here covers both.
 		b.value(site, node.Subject, typeinfo.UseRead)
-	case *ast.IfStmt, *ast.ForStmt:
+	case *ast.ForStmt:
+		// The condition is published from the terminator, which names it
+		// directly. The iterated sequence is evaluated by the loop itself and
+		// belongs here.
+		b.value(site, node.Iterable, typeinfo.UseRead)
+	case *ast.IfStmt:
 		// A branch condition is published from the terminator, which names it
 		// directly, so a site carries exactly the reads that happen at it.
 	case *ast.BlockStmt:

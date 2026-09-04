@@ -248,3 +248,25 @@ fn choose(flag: bool) -> i32 {
 		t.Fatalf("diagnostic does not name the match subject:\n%s", got)
 	}
 }
+
+// A loop's iterated sequence is a read like any other. It was previously
+// unchecked here: the analysis saw only a statement's own expressions and a
+// branch condition, and a for statement carries neither. Ownership always read
+// it, so publishing it once closed the gap for initialization too.
+func TestInitializationChecksLoopIterable(t *testing.T) {
+	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut limit: i32;
+	if flag {
+		limit = 3;
+	}
+	for i in 0..limit {
+	}
+	return 0;
+}`)
+	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized loop bound diagnostic:\n%s", diag.EmitAllToString())
+	}
+	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `limit` used before it's initialized") {
+		t.Fatalf("diagnostic does not name the loop bound:\n%s", got)
+	}
+}
