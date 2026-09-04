@@ -279,6 +279,7 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 			b.value(site, element, typeinfo.UseMove)
 		}
 	case *ast.CallExpr:
+		b.emit(site, CallBegin{Node: node.ID(), Location: ast.LocOf(node)})
 		b.value(site, node.Callee, typeinfo.UseRead)
 		arguments := node.Args
 		if b.queries.CallArguments != nil {
@@ -287,6 +288,7 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 		for _, argument := range arguments {
 			b.value(site, argument, b.argumentKind(argument))
 		}
+		b.emit(site, CallEnd{Node: node.ID()})
 	case *ast.FreeExpr:
 		b.value(site, node.Expr, typeinfo.UseMove)
 	case *ast.PrintExpr:

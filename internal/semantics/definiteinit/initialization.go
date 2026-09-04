@@ -167,6 +167,9 @@ func apply(current state, op effect.Op) {
 		// borrow is still reported through that.
 	case effect.Discard:
 		// A discarded value changes no initialization state.
+	case effect.CallBegin, effect.CallEnd:
+		// A call boundary bounds temporaries, which initialization does not
+		// track. Its arguments are published as ordinary reads between them.
 	default:
 		panic(fmt.Sprintf("definiteinit: unhandled effect %T", op))
 	}

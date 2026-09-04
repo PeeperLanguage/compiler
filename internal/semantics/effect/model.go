@@ -91,6 +91,23 @@ type Borrow struct {
 	Mutable  bool
 }
 
+// CallBegin and CallEnd bracket the operations a call evaluates. Everything
+// between them happens while the call is in progress.
+//
+// The bracket is a fact about evaluation, not one analysis's bookkeeping: a
+// temporary created while computing an argument lives until the call completes,
+// and a reservation taken for a receiver activates when the call starts. Any
+// consumer modelling temporaries needs that boundary, and a flat sequence of
+// uses cannot express it. Calls nest, so the pair nests too.
+type CallBegin struct {
+	Node     ast.NodeID
+	Location *source.Location
+}
+
+type CallEnd struct {
+	Node ast.NodeID
+}
+
 // Discard is a value produced and dropped, as an expression statement does.
 // The value never reaches a binding, so anything owned in it dies here.
 type Discard struct {
@@ -98,11 +115,13 @@ type Discard struct {
 	Location *source.Location
 }
 
-func (Define) effectOp()  {}
-func (Write) effectOp()   {}
-func (Use) effectOp()     {}
-func (Borrow) effectOp()  {}
-func (Discard) effectOp() {}
+func (Define) effectOp()    {}
+func (Write) effectOp()     {}
+func (Use) effectOp()       {}
+func (Borrow) effectOp()    {}
+func (Discard) effectOp()   {}
+func (CallBegin) effectOp() {}
+func (CallEnd) effectOp()   {}
 
 // Result holds published effects for one semantic generation.
 //

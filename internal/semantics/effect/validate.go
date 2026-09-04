@@ -63,6 +63,7 @@ func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) erro
 
 func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]ast.Node) []string {
 	problems := make([]string, 0)
+	open := make([]ast.NodeID, 0)
 	for index, op := range ops {
 		where := fmt.Sprintf("function %d site %v operation %d", fn, site, index)
 		switch op := op.(type) {
@@ -85,9 +86,26 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 			if op.Location == nil {
 				problems = append(problems, where+" is a discard with no source location to report against")
 			}
+		case CallBegin:
+			problems = append(problems, validateNode(where, "call start", false, op.Node, nodes)...)
+			open = append(open, op.Node)
+		case CallEnd:
+			// A consumer restores state saved at the matching start, so an
+			// unbalanced or crossed pair would restore the wrong mark.
+			if len(open) == 0 {
+				problems = append(problems, fmt.Sprintf("%s ends a call that never started", where))
+				continue
+			}
+			if last := open[len(open)-1]; last != op.Node {
+				problems = append(problems, fmt.Sprintf("%s ends call %d while call %d is still open", where, op.Node, last))
+			}
+			open = open[:len(open)-1]
 		default:
 			problems = append(problems, fmt.Sprintf("%s has unknown effect kind %T", where, op))
 		}
+	}
+	for _, unclosed := range open {
+		problems = append(problems, fmt.Sprintf("function %d site %v leaves call %d open", fn, site, unclosed))
 	}
 	return problems
 }
