@@ -1,8 +1,8 @@
 # Effect stream migration
 
-Status: **in progress**. Definite initialization consumes published effects and no
-longer imports `ast`. Ownership's use enumeration consumes them too; the rest of
-ownership still decides from syntax.
+Status: **in progress**. Definite initialization is fully migrated. Ownership consumes
+published effects for use enumeration, liveness definitions and discarded values; its
+expression walk still reads syntax, blocked on two facts nobody publishes yet.
 
 This document is the executable plan for publishing semantic effects once and migrating
 dataflow consumers onto them. It is tracked so that anyone — human or agent — picking the
@@ -60,28 +60,42 @@ than a phase with its own analysis.
 
 ### Vocabulary
 
-Three operations. `Define` brings a binding into existence and records whether it is also
-initialized; `Write` stores to a binding that already exists; `Use` reads one. Each carries
-its `*symbols.Symbol` and the `ast.NodeID` it came from. `Use` also carries a
-`*source.Location`, so a consumer reports against a read without resolving the node back to
-syntax. `Define` and `Write` carry none, because no current diagnostic anchors on them.
+It started at three operations and grew to seven, each time because a consumer needed the
+distinction. `Define` brings a binding into existence; `Write` stores to one that already
+exists; `Use` reads a place; `Borrow` takes a reference to one; `Discard` throws a value
+away; `CallBegin` and `CallEnd` bracket a call. The section below records what each
+addition bought.
+
+Every operation carries the `ast.NodeID` it came from. `Use`, `Borrow` and `Discard` also
+carry a `*source.Location`, so a consumer reports against them without resolving the node
+back to syntax. `Define` and `Write` carry none, because no current diagnostic anchors on
+them.
 
 `Op` is sealed by an unexported marker method, the same idiom as `cfg.Terminator` and
 `typecheckresult.IterationPlan`. Go cannot make a consumer's type switch exhaustive, so
 `internal/contracts` carries that half.
 
-### Deliberately absent
+### What the vocabulary grew, and why
 
-Adding a channel before a consumer needs it is what commit `7ec06e9` had to delete. Each of
-these has a recorded trigger instead:
+Adding a channel before a consumer needs it is what commit `7ec06e9` had to delete, so
+each of these was held back until a consumer actually asked. All were added by migrating
+ownership, and each arrived with the consumer that needed it in the same change:
+
+| Added | Because |
+| --- | --- |
+| `Use.Kind` | ownership decided read/copy/move at forty-four hardcoded literals. The kind now comes from the position, and for a call argument from the typechecker's published decision |
+| `Borrow` | a reference is not a read, and shared versus mutable is what decides whether a second borrow conflicts |
+| `Discard` | a value produced and thrown away dies where it is produced, when nothing owns it |
+| `Place` with projections | moving out of `pair.left` is a different decision from moving `pair`, with its own diagnostic |
+| `Place.Temporary` | ownership keys two policies on a value that lives in no binding, which a binding-rooted place could not name |
+| `CallBegin` / `CallEnd` | a call is a lifetime: argument temporaries die when it completes, receiver reservations activate when it starts |
+| `Define.OnEntry` | a parameter and a match payload binding exist before their site runs, and liveness must not treat that as a definition within the site |
+
+Still absent, with its trigger recorded:
 
 | Absent | Add when |
 | --- | --- |
-| `Borrow` | ownership migrates and needs shared/mutable borrow distinct from read |
-| `Discard` | ownership migrates and needs the `DiscardedValue` cleanup channel |
-| `Use.Kind` (read/copy/move) | ownership migrates **and** `typecheckresult.ValueUses` covers more than call arguments. Today it covers only those, so a `Kind` field now would carry false data for roughly twenty constructs |
-| `Place` with projections | field- or index-level initialization tracking is wanted. Definite initialization tracks whole symbols only |
-| `Region` (deferred/repeated body) | a construct exists whose body does not execute at its syntactic position — a lambda. CFG back-edges already give "runs 0..N times" for loops, so a loop does not justify it |
+| `Region` (deferred or repeated body) | a construct exists whose body does not execute at its syntactic position — a lambda. CFG back-edges already give "runs 0..N times" for a loop, so a loop does not justify it |
 
 ### Result and phase
 
@@ -249,35 +263,100 @@ Definite initialization needs no change at any point.
 7. If a gate fails for a reason this document does not predict, stop and report it. Do not
    improvise around a failing gate.
 
-## After milestone 1
+## Vocabulary as it stands
 
-Ownership is the next consumer. It needs `Borrow`, `Discard`, and `Use.Kind`; `Use.Kind`
-first needs `ValueUses` extended past call arguments, with a matching extension to
-`ownershipresult.validateValueUses`, which today enforces only the call-argument case.
-`UseCopy` is never published, so the two `UseCopy` diagnostics in `ownership/expr.go` are
-presently dead and would activate for the first time — they need tests before that.
-Ownership's loans, liveness, and borrow-ending stay local to ownership.
+```
+Define{Place-less: Symbol, Node, Initialized, OnEntry}
+Write{Symbol, Node}
+Use{Place, Node, Location, Kind}
+Borrow{Node, Location, Mutable}
+Discard{Place, Node, Location}
+CallBegin{Node, Location} / CallEnd{Node}
 
-## Milestone 2 — ownership
+Place{Root *symbols.Symbol | Temporary ast.NodeID, Projections []place.OriginProjection}
+```
 
-Not planned as a whole; landing slice by slice.
+Exactly one of `Place.Root` and `Place.Temporary` is set; the validator enforces it, and
+checks that call brackets balance and do not cross.
 
-**Done — use enumeration.** `symbolUseSequence` walked eight statement kinds to
-enumerate the symbols a site reads. That duplicated the producer and disagreed with
-`applyStmt` about `ForStmt.Iterable`. It now reads the stream and has left the dispatch
-contract, taking statement sites from nine to eight.
+## Four boundaries, found by attempting the work
 
-**Still deciding from syntax**, roughly by size:
+Each was discovered by trying to migrate a consumer and watching a real test fail, not by
+reading. Three are closed.
 
-- `checkExpr`, 23 expression cases. About a third is enumeration; the rest is
-  storage-access checks, loan bookkeeping and per-shape diagnostics. Collapsing it fully
-  needs projected places in the vocabulary, because a diagnostic like "move-only indexed
-  element cannot be used by value" depends on the shape of the place, not just the symbol.
-- `applyStmt`, eight statement cases mixing enumeration with loan installation and
-  cleanup planning.
-- `symbolUsesAndDefinitions` still derives definitions from `LetDecl`, `ConstDecl` and
-  `AssignStmt`. Deliberately left: the producer also emits defines for parameters and for
-  match payload bindings, which this analysis does not count as definitions today, so
-  switching it over would change liveness and needs its own parity work first.
-- The 44 hard-coded use-kind literals, which need `Use.Kind`, which in turn needs
-  `typecheckresult.ValueUses` extended past call arguments.
+1. **Bindings established by an edge, not a site — closed.** A parameter exists before the
+   entry site runs; a match payload binding is created by its case edge. Definite
+   initialization never noticed, because it replays a site's operations in order.
+   Liveness treats a site as a set, so counting those as definitions killed a borrow one
+   site early. `Define.OnEntry` records the difference.
+2. **A call is a lifetime, not a position — closed.** Temporaries created while computing
+   an argument live until the call completes; a reservation for a receiver activates when
+   the call starts. `CallBegin`/`CallEnd` bracket it, and nest.
+3. **Temporaries are places too — closed.** A value that lives in no binding could not be
+   named, but ownership keys two policies on exactly that case. `Place.Temporary` names
+   the producing expression.
+4. **Two facts nobody publishes — open.** See below.
+
+## What blocks the expression walk
+
+`ownership.checkExpr` cannot yet be replaced, because two decisions it makes are not
+recoverable from the stream:
+
+- **Reference-parameter position.** `Read(reference)` where the parameter is `&i32` takes
+  a shared-borrow storage access, not a plain read, *because of the parameter type*. The
+  stream publishes `Use{Kind: UseRead}`, which is also what an implicit-copy argument
+  publishes, so the two cannot be told apart. Note this is not an implicit borrow: Peeper
+  rejects `Read(value)` with `cannot implicitly convert i32 to &i32`. Implicit adaptation
+  happens only for a method receiver or a piped first argument, and the typechecker
+  already records that in `ImplicitCallArguments` — evidence that is published and unread.
+- **Slicing.** `a[0..2]` forces a shared or mutable borrow access, decided by the index
+  being a `RangeExpr`. A `Place` with an `OriginIndex` projection does not say whether the
+  index was a range.
+
+Closing either means publishing one more fact from the typechecker, which already knows
+both. Until then, migrating `checkExpr` would leave ownership deriving some decisions from
+the stream and some from syntax, which is the double-derivation this work exists to remove.
+
+## Migrated so far
+
+| Consumer | State |
+| --- | --- |
+| definite initialization | fully migrated; no AST switch, does not import `ast` |
+| ownership use enumeration | `symbolUseSequence` reads the stream |
+| ownership liveness definitions | `symbolUsesAndDefinitions` reads the stream |
+| ownership discarded values | reads `Discard.Place`; `IsPlaceExpr` gone from `ownership.go` |
+| ownership expression walk | **not migrated** — 20 AST cases, blocked above |
+| ownership statement policy | 10 AST cases, and most is policy rather than enumeration |
+| usage | needs no migration; it has no AST switch and no state |
+
+## Behavior this surfaced
+
+Publishing evidence for one consumer strengthens every other consumer. Two real gaps
+closed as a side effect, each covered by a test and neither breaking an existing fixture:
+
+- a `match` on an uninitialized subject was never diagnosed;
+- a loop over an uninitialized bound or sequence was never diagnosed.
+
+Weigh that before publishing anything new: it is a feature, but it is also a behavior
+change that arrives without being asked for.
+
+## Bugs introduced by this work, and fixed
+
+Recorded because each was found by probing the real stream rather than by review, and the
+same class will recur:
+
+- match arm bindings were emitted while walking the match terminator, so they could land
+  after the arm body's own operations at the same site;
+- counting edge-established bindings as definitions ended a borrow one site early;
+- a method callee was published as a field projection of the receiver, naming a field that
+  does not exist.
+
+## Picking up the expression walk
+
+1. Publish reference-parameter position and slicing, from the typechecker, which knows both.
+2. Port `checkIdent`, the partial-move diagnostics, storage-access classification and loan
+   bookkeeping onto `applyUse` / `applyBorrow`, driven by the site's operations.
+3. Delete `checkExpr`. Ownership keeps its statement policy; that is policy, not enumeration.
+
+Do not start step 2 before step 1. The suite is a strong net — it caught every mistake
+listed above — but a half-ported loan analysis is the worst state to hand over.
