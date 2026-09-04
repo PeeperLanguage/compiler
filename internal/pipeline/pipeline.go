@@ -24,6 +24,7 @@ import (
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/definiteinit"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
@@ -335,6 +336,8 @@ func nextModulePhase(current phase.Phase) phase.Phase {
 	case phase.CFG:
 		return phase.FlowTyped
 	case phase.FlowTyped:
+		return phase.Effects
+	case phase.Effects:
 		return phase.DefiniteInit
 	case phase.DefiniteInit:
 		return phase.Ownership
@@ -367,8 +370,10 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 		return phase.Typechecked
 	case phase.FlowTyped:
 		return phase.CFG
-	case phase.DefiniteInit:
+	case phase.Effects:
 		return phase.FlowTyped
+	case phase.DefiniteInit:
+		return phase.Effects
 	case phase.Ownership:
 		return phase.DefiniteInit
 	case phase.Usage:
@@ -467,6 +472,17 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	if module.Phase < phase.FlowTyped {
 		module.Flow = typechecker.CheckFlow(phaseCtx, module)
 		module.Phase = phase.FlowTyped
+		ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
+	if module.Phase < phase.Effects {
+		module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
+			Symbols:       module.Bindings.NodeSymbols,
+			Scopes:        module.Bindings.BlockScopes,
+			CallArguments: module.Typechecking.CallArgumentsOrSource,
+			ArmBindings:   module.Typechecking.ArmBindings,
+		})
+		module.Phase = phase.Effects
 		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}

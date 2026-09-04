@@ -885,6 +885,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.Typechecked,
 		phase.CFG,
 		phase.FlowTyped,
+		phase.Effects,
 		phase.DefiniteInit,
 		phase.Ownership,
 	}
@@ -900,6 +901,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		}
 		if wantPhase == phase.FlowTyped && entry.Flow == nil {
 			t.Fatal("flow-typed phase must retain canonical result")
+		}
+		if wantPhase == phase.Effects && entry.Effects == nil {
+			t.Fatal("effects phase must retain published site effects")
 		}
 		if wantPhase < phase.HIR && entry.HIR != nil {
 			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)

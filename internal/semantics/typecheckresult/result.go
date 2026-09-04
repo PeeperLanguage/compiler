@@ -191,6 +191,30 @@ func (r *Result) MatchCases(id ast.NodeID) ([]int, bool) {
 	return cases, true
 }
 
+// ArmBindings exposes the payload symbols one match arm binds, without leaking
+// match artifacts into the effect producer. A discarded binding still binds
+// storage, so it is reported like any other.
+func (r *Result) ArmBindings(match ast.NodeID, caseIndex int) []*symbols.Symbol {
+	if r == nil {
+		return nil
+	}
+	evidence, found := r.Matches[match]
+	if !found {
+		return nil
+	}
+	arm, found := evidence.Arm(caseIndex)
+	if !found {
+		return nil
+	}
+	bound := make([]*symbols.Symbol, 0, len(arm.Bindings))
+	for _, binding := range arm.Bindings {
+		if binding.Binding != nil {
+			bound = append(bound, binding.Binding)
+		}
+	}
+	return bound
+}
+
 // ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
 // body before its first condition check.
 func (r *Result) ForLoopGuaranteedEntry(id ast.NodeID) bool {
