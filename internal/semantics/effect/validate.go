@@ -75,6 +75,16 @@ func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]a
 			if op.Location == nil {
 				problems = append(problems, where+" is a use with no source location to report against")
 			}
+		case Borrow:
+			problems = append(problems, validateNode(where, "borrow", false, op.Node, nodes)...)
+			if op.Location == nil {
+				problems = append(problems, where+" is a borrow with no source location to report against")
+			}
+		case Discard:
+			problems = append(problems, validateNode(where, "discard", false, op.Node, nodes)...)
+			if op.Location == nil {
+				problems = append(problems, where+" is a discard with no source location to report against")
+			}
 		default:
 			problems = append(problems, fmt.Sprintf("%s has unknown effect kind %T", where, op))
 		}

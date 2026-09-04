@@ -14,6 +14,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
 
@@ -62,11 +63,33 @@ type Use struct {
 	Symbol   *symbols.Symbol
 	Node     ast.NodeID
 	Location *source.Location
+	// Kind is what happens to the value here: observed, duplicated, or
+	// consumed. The producer decides it from the position the value occupies
+	// and, for a call argument, from the typechecker's published decision.
+	Kind typeinfo.UseKind
 }
 
-func (Define) effectOp() {}
-func (Write) effectOp()  {}
-func (Use) effectOp()    {}
+// Borrow takes a reference to a place rather than reading its value. Mutable
+// separates `&mut x` from `&x`, which is the difference that decides whether a
+// second borrow conflicts.
+type Borrow struct {
+	Node     ast.NodeID
+	Location *source.Location
+	Mutable  bool
+}
+
+// Discard is a value produced and dropped, as an expression statement does.
+// The value never reaches a binding, so anything owned in it dies here.
+type Discard struct {
+	Node     ast.NodeID
+	Location *source.Location
+}
+
+func (Define) effectOp()  {}
+func (Write) effectOp()   {}
+func (Use) effectOp()     {}
+func (Borrow) effectOp()  {}
+func (Discard) effectOp() {}
 
 // Result holds published effects for one semantic generation.
 //

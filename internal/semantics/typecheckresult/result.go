@@ -191,6 +191,27 @@ func (r *Result) MatchCases(id ast.NodeID) ([]int, bool) {
 	return cases, true
 }
 
+// StringConcatenation reports whether a binary expression was resolved as a
+// string concatenation, which consumes its left operand.
+func (r *Result) StringConcatenation(id ast.NodeID) bool {
+	if r == nil {
+		return false
+	}
+	_, found := r.StringConcatenations[id]
+	return found
+}
+
+// ValueUse exposes the use kind the typechecker decided for one expression.
+// Coverage is call arguments today, so an absent answer is normal rather than
+// a missing decision.
+func (r *Result) ValueUse(id ast.NodeID) (typeinfo.UseKind, bool) {
+	if r == nil {
+		return typeinfo.UseRead, false
+	}
+	kind, found := r.ValueUses[id]
+	return kind, found
+}
+
 // ArmBindings exposes the payload symbols one match arm binds, without leaking
 // match artifacts into the effect producer. A discarded binding still binds
 // storage, so it is reported like any other.

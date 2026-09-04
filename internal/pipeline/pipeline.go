@@ -477,10 +477,12 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	}
 	if module.Phase < phase.Effects {
 		module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-			Symbols:       module.Bindings.NodeSymbols,
-			Scopes:        module.Bindings.BlockScopes,
-			CallArguments: module.Typechecking.CallArgumentsOrSource,
-			ArmBindings:   module.Typechecking.ArmBindings,
+			Symbols:             module.Bindings.NodeSymbols,
+			Scopes:              module.Bindings.BlockScopes,
+			CallArguments:       module.Typechecking.CallArgumentsOrSource,
+			ArmBindings:         module.Typechecking.ArmBindings,
+			StringConcatenation: module.Typechecking.StringConcatenation,
+			ValueUse:            module.Typechecking.ValueUse,
 		})
 		if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
 			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,

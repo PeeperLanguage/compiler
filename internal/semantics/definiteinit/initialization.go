@@ -161,6 +161,12 @@ func apply(current state, op effect.Op) {
 		}
 	case effect.Use:
 		// A read leaves initialization state unchanged.
+	case effect.Borrow:
+		// Taking a reference changes no initialization state. The place being
+		// borrowed is published separately as a read, so an uninitialized
+		// borrow is still reported through that.
+	case effect.Discard:
+		// A discarded value changes no initialization state.
 	default:
 		panic(fmt.Sprintf("definiteinit: unhandled effect %T", op))
 	}

@@ -46,10 +46,12 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	result := effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-		Symbols:       module.Bindings.NodeSymbols,
-		Scopes:        module.Bindings.BlockScopes,
-		CallArguments: module.Typechecking.CallArgumentsOrSource,
-		ArmBindings:   module.Typechecking.ArmBindings,
+		Symbols:             module.Bindings.NodeSymbols,
+		Scopes:              module.Bindings.BlockScopes,
+		CallArguments:       module.Typechecking.CallArgumentsOrSource,
+		ArmBindings:         module.Typechecking.ArmBindings,
+		StringConcatenation: module.Typechecking.StringConcatenation,
+		ValueUse:            module.Typechecking.ValueUse,
 	})
 	if result == nil {
 		t.Fatal("Build published no result")

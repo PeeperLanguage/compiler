@@ -6,6 +6,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 )
 
 // BuildQueries supplies the published facts this producer needs. Like
@@ -25,6 +26,13 @@ type BuildQueries struct {
 	CallArguments func(*ast.CallExpr) []ast.Expr
 	// ArmBindings returns the payload symbols one match arm binds.
 	ArmBindings func(match ast.NodeID, caseIndex int) []*symbols.Symbol
+	// StringConcatenation reports a binary expression the typechecker resolved
+	// as string concatenation, which consumes its left operand.
+	StringConcatenation func(ast.NodeID) bool
+	// ValueUse returns the typechecker's decision for one expression, where it
+	// made one. Call arguments have one; most positions do not, and the walk
+	// decides those from the position itself.
+	ValueUse func(ast.NodeID) (typeinfo.UseKind, bool)
 }
 
 // Build publishes the semantic effects of every reachable CFG site.
@@ -119,7 +127,7 @@ func (b *builder) buildSite(block *cfg.Block, site *cfg.Site) {
 	switch terminator := block.Terminator.(type) {
 	case *cfg.Branch:
 		if condition, ok := b.nodes[ast.NodeID(terminator.ConditionID)].(ast.Expr); ok {
-			b.reads(site.ID, condition)
+			b.value(site.ID, condition, typeinfo.UseRead)
 		}
 	case *cfg.SwitchVariant:
 		// Arm payload bindings are published in the leading pass above; the
@@ -165,10 +173,10 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 	case *ast.ConstDecl:
 		b.buildBinding(site, scope, node, node.Value)
 	case *ast.AssignStmt:
-		b.reads(site, node.Value)
+		b.value(site, node.Value, typeinfo.UseMove)
 		ident, direct := node.Target.(*ast.Ident)
 		if !direct || ident == nil {
-			b.reads(site, node.Target)
+			b.value(site, node.Target, typeinfo.UseRead)
 			return
 		}
 		sym, found := scope.Lookup(ident.Name)
@@ -176,14 +184,15 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 			b.emit(site, Write{Symbol: sym, Node: ident.ID()})
 		}
 	case *ast.ExprStmt:
-		b.reads(site, node.Expr)
+		b.value(site, node.Expr, typeinfo.UseRead)
+		b.emit(site, Discard{Node: node.Expr.ID(), Location: ast.LocOf(node.Expr)})
 	case *ast.ReturnStmt:
-		b.reads(site, node.Value)
+		b.value(site, node.Value, typeinfo.UseMove)
 	case *ast.MatchStmt:
 		// A match reaches this producer at its terminator site, and at a plain
 		// statement site when semantic evidence was too incomplete for CFG to
 		// decompose it. Publishing the subject here covers both.
-		b.reads(site, node.Subject)
+		b.value(site, node.Subject, typeinfo.UseRead)
 	case *ast.IfStmt, *ast.ForStmt:
 		// A branch condition is published from the terminator, which names it
 		// directly, so a site carries exactly the reads that happen at it.
@@ -206,7 +215,7 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 // buildBinding publishes a declaration's initializer reads before the define
 // they initialize, so `let x = x` reads an outer binding rather than itself.
 func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.Stmt, value ast.Expr) {
-	b.reads(site, value)
+	b.value(site, value, typeinfo.UseMove)
 	if scope == nil {
 		return
 	}
@@ -217,39 +226,90 @@ func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.S
 	b.emit(site, Define{Symbol: sym, Node: decl.ID(), Initialized: value != nil})
 }
 
-// reads publishes one Use per identifier the expression evaluates, in traversal
-// order. Call arguments come from published call evidence so that arguments the
-// typechecker expanded from defaults are covered.
-func (b *builder) reads(site cfg.SiteID, expr ast.Expr) {
-	if expr == nil {
+// value publishes what one expression does to the bindings it names.
+//
+// It mirrors the propagation ownership used to perform itself: a position
+// decides the kind, and the kind travels down to the identifier that carries
+// the value. A projection reads its base, a literal moves what it stores, and a
+// call argument takes the typechecker's published decision.
+//
+// This is the expression dispatch site for published effects. A new expression
+// kind must be handled here or declared inert in internal/contracts.
+func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
+	switch node := expr.(type) {
+	case nil:
 		return
-	}
-	var walk func(ast.Expr)
-	walk = func(current ast.Expr) {
-		if current == nil {
+	case *ast.Ident:
+		if sym := b.queries.Symbols[node.ID()]; sym != nil {
+			b.emit(site, Use{Symbol: sym, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
+		}
+	case *ast.AddressExpr:
+		b.emit(site, Borrow{Node: node.ID(), Location: ast.LocOf(node), Mutable: node.Mode == ast.AddressMutable})
+		b.value(site, node.Expr, typeinfo.UseRead)
+	case *ast.SelectorExpr:
+		// A field selection reads the aggregate it projects from.
+		b.value(site, node.Expr, typeinfo.UseRead)
+	case *ast.IndexExpr:
+		b.value(site, node.Expr, typeinfo.UseRead)
+		b.value(site, node.Index, typeinfo.UseRead)
+	case *ast.RangeExpr:
+		b.value(site, node.Start, typeinfo.UseRead)
+		b.value(site, node.End, typeinfo.UseRead)
+	case *ast.StructLit:
+		for _, field := range node.Fields {
+			b.value(site, field.Value, typeinfo.UseMove)
+		}
+	case *ast.VariantLit:
+		b.value(site, node.Payload, typeinfo.UseMove)
+	case *ast.ArrayLit:
+		for _, element := range node.Values {
+			b.value(site, element, typeinfo.UseMove)
+		}
+	case *ast.CallExpr:
+		b.value(site, node.Callee, typeinfo.UseRead)
+		arguments := node.Args
+		if b.queries.CallArguments != nil {
+			arguments = b.queries.CallArguments(node)
+		}
+		for _, argument := range arguments {
+			b.value(site, argument, b.argumentKind(argument))
+		}
+	case *ast.FreeExpr:
+		b.value(site, node.Expr, typeinfo.UseMove)
+	case *ast.PrintExpr:
+		b.value(site, node.Expr, typeinfo.UseRead)
+	case *ast.UnaryExpr:
+		b.value(site, node.Expr, typeinfo.UseRead)
+	case *ast.BinaryExpr:
+		if b.queries.StringConcatenation != nil && b.queries.StringConcatenation(node.ID()) {
+			// Concatenation consumes the left operand into the result.
+			b.value(site, node.Left, typeinfo.UseMove)
+			b.value(site, node.Right, typeinfo.UseRead)
 			return
 		}
-		ast.Inspect(current, func(node ast.Node) bool {
-			if call, ok := node.(*ast.CallExpr); ok && call != nil {
-				walk(call.Callee)
-				arguments := call.Args
-				if b.queries.CallArguments != nil {
-					arguments = b.queries.CallArguments(call)
-				}
-				for _, arg := range arguments {
-					walk(arg)
-				}
-				return false
-			}
-			ident, ok := node.(*ast.Ident)
-			if !ok || ident == nil {
-				return true
-			}
-			if sym := b.queries.Symbols[ident.ID()]; sym != nil {
-				b.emit(site, Use{Symbol: sym, Node: ident.ID(), Location: ast.LocOf(ident)})
-			}
-			return true
-		})
+		b.value(site, node.Left, typeinfo.UseRead)
+		b.value(site, node.Right, typeinfo.UseRead)
+	case *ast.IsExpr:
+		b.value(site, node.Value, typeinfo.UseRead)
+	case *ast.AsExpr:
+		b.value(site, node.Expr, typeinfo.UseMove)
+	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit,
+		*ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
+		// These name no binding whose value is used.
+	default:
+		panic(fmt.Sprintf("effect: unhandled AST expression %T", expr))
 	}
-	walk(expr)
+}
+
+// argumentKind takes the typechecker's decision where it made one. An absent
+// decision means the call did not resolve, which is invalid source continuing
+// through the phase, and a read is the answer that claims least.
+func (b *builder) argumentKind(argument ast.Expr) typeinfo.UseKind {
+	if argument == nil || b.queries.ValueUse == nil {
+		return typeinfo.UseRead
+	}
+	if kind, found := b.queries.ValueUse(argument.ID()); found {
+		return kind
+	}
+	return typeinfo.UseRead
 }
