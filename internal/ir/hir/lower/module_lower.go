@@ -1362,7 +1362,7 @@ func shouldDiscardBindingValue(sym *symbols.Symbol) bool {
 	if sym == nil || sym.Used {
 		return false
 	}
-	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
+	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 		return false
 	}
 	switch node := sym.ASTNode.(type) {

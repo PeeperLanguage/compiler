@@ -140,7 +140,7 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if e.module.Typechecking != nil {
 		if construction, ok := e.module.Typechecking.VariantConstructions[expr.ID()]; ok {
-			if !typeinfo.IsImplicitCopyType(construction.EnumType) {
+			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
 				return nil, false
 			}
 			descriptor, variant := typeinfo.VariantDescriptorOf(construction.EnumType)

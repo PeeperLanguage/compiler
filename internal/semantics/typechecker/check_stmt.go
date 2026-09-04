@@ -145,7 +145,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		return
 	}
 	evidenceComplete := true
-	if typeinfo.NeedsDrop(subjectType) && !place.IsPlaceExpr(node.Subject) {
+	if typeinfo.OwnershipCapabilityOf(subjectType).Drop && !place.IsPlaceExpr(node.Subject) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
 			"ownership-bearing match subject must be a named place").
 			WithHelp("bind subject to a local before matching it"))
@@ -252,7 +252,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		}
 		carrierUse := typeinfo.UseRead
 		for _, field := range armEvidence.Bindings {
-			if !typeinfo.IsImplicitCopyType(field.Type) {
+			if typeinfo.OwnershipCapabilityOf(field.Type).Copy != typeinfo.CopyImplicit {
 				carrierUse = typeinfo.UseMove
 				break
 			}
@@ -613,7 +613,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 						"for-in requires addressable array storage"))
 				}
 			}
-			if !typeinfo.IsImplicitCopyType(elem) {
+			if typeinfo.OwnershipCapabilityOf(elem).Copy != typeinfo.CopyImplicit {
 				valid = false
 				c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
 					"for-in requires copyable sequence elements; iterate indexes and borrow move-only elements explicitly"))

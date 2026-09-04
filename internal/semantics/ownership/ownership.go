@@ -408,7 +408,7 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	if carrier := a.deadMatchCarrierAtExit[node.cfgSite.ID]; carrier != nil {
 		if _, live := st.live[carrier]; live {
 			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block, loans)
-			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.NeedsDrop(typ) {
+			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 				cleanup = append(cleanup, carrier)
 			}
 			st.moved[carrier] = node.block
@@ -448,7 +448,7 @@ func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
 			continue
 		}
 		typ, ok := symbols.GetSymbolType(sym)
-		if ok && typeinfo.NeedsDrop(typ) {
+		if ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 			cleanup = append(cleanup, sym)
 		}
 	}
@@ -504,7 +504,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		if _, ok := s.Target.(*ast.Ident); !ok {
 			a.checkExpr(scope, s.Target, st, typeinfo.UseRead, loans, true)
 			a.checkStorageAccess(s.Target, loans, storageMutate)
-			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
+			if typeinfo.OwnershipCapabilityOf(a.exprType(s.Target)).Drop {
 				a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 			}
 		}
@@ -513,7 +513,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 				if _, referenceTarget := referenceMutability(sym); !referenceTarget {
 					a.checkStorageAccess(target, loans, storageMutate)
 				}
-				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
+				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 					if _, live := st.live[sym]; live {
 						a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
 					}
@@ -534,7 +534,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	case *ast.ExprStmt:
 		a.checkExpr(scope, s.Expr, st, typeinfo.UseRead, loans, false)
-		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.NeedsDrop(a.exprType(s.Expr)) {
+		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.OwnershipCapabilityOf(a.exprType(s.Expr)).Drop {
 			a.cleanup.DiscardedValue[ir.NodeID(s.Expr.ID())] = struct{}{}
 		}
 	case *ast.IfStmt:
@@ -614,7 +614,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		delete(st.live, carrier)
 		delete(st.references, carrier)
 		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == typecheckresult.MatchWholePayload {
-			if arm.Bindings[0].Discard && typeinfo.NeedsDrop(arm.Bindings[0].Type) {
+			if arm.Bindings[0].Discard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).Drop {
 				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.BodyID)] = struct{}{}
 			}
 		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
@@ -622,7 +622,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			for fieldIndex := len(payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
 				field := payload.Fields[fieldIndex]
 				discarded, selected := listed[fieldIndex]
-				if typeinfo.NeedsDrop(field.Type) && (!selected || discarded) {
+				if typeinfo.OwnershipCapabilityOf(field.Type).Drop && (!selected || discarded) {
 					drops = append(drops, fieldIndex)
 				}
 			}

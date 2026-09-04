@@ -74,13 +74,13 @@ func TestSliceIsUnsizedButSliceReferenceIsSized(t *testing.T) {
 
 func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	i32 := &IntegerType{Signed: true, Bits: 32}
-	if !IsImplicitCopyType(i32) || !IsImplicitCopyType(&RawPtrType{}) || !IsImplicitCopyType(&RefType{Target: i32}) {
+	if OwnershipCapabilityOf(i32).Copy != CopyImplicit || OwnershipCapabilityOf(&RawPtrType{}).Copy != CopyImplicit || OwnershipCapabilityOf(&RefType{Target: i32}).Copy != CopyImplicit {
 		t.Fatalf("scalar, raw pointer, and shared reference should copy implicitly")
 	}
-	if !IsImplicitCopyType(&OptionalType{Inner: i32}) || IsImplicitCopyType(&OptionalType{Inner: &StructType{}}) {
+	if OwnershipCapabilityOf(&OptionalType{Inner: i32}).Copy != CopyImplicit || OwnershipCapabilityOf(&OptionalType{Inner: &StructType{}}).Copy == CopyImplicit {
 		t.Fatalf("optional copyability should follow payload copyability")
 	}
-	if IsImplicitCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
+	if OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "value", Type: i32}}}).Copy == CopyImplicit {
 		t.Fatalf("struct should not copy implicitly")
 	}
 	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "value", Type: i32}}}); got.Copy != CopyExplicit {
@@ -102,7 +102,7 @@ func TestAllocatorCapabilities(t *testing.T) {
 	if !IsSizedType(allocator) {
 		t.Fatal("allocator must be sized")
 	}
-	if !IsImplicitCopyType(allocator) {
+	if OwnershipCapabilityOf(allocator).Copy != CopyImplicit {
 		t.Fatal("allocator must copy implicitly")
 	}
 	if !IsEquatable(allocator) {
@@ -435,8 +435,8 @@ func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NeedsDrop(tc.typ); got != tc.want {
-				t.Fatalf("NeedsDrop(%s) = %v, want %v", TypeText(tc.typ), got, tc.want)
+			if got := OwnershipCapabilityOf(tc.typ).Drop; got != tc.want {
+				t.Fatalf("drop obligation for %s = %v, want %v", TypeText(tc.typ), got, tc.want)
 			}
 		})
 	}

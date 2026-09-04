@@ -217,7 +217,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.Call
 		argTypes = append(argTypes, c.typeExpr(scope, arg, fnType.Params[i+1]))
 	}
 	c.checkCall(scope, nil, node, fnType, node.Args, argTypes)
-	if op == symbols.CompilerOpResize && !typeinfo.IsImplicitCopyType(array.Elem) {
+	if op == symbols.CompilerOpResize && typeinfo.OwnershipCapabilityOf(array.Elem).Copy != typeinfo.CopyImplicit {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"resize requires implicitly copyable elements; grow Category B arrays with append",
 			ast.LocOf(node), "")
@@ -279,7 +279,7 @@ func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
 		return
 	}
 	use := typeinfo.UseMove
-	if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference || typeinfo.IsImplicitCopyType(paramType) {
+	if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 		use = typeinfo.UseRead
 	}
 	c.module.Typechecking.ValueUses[arg.ID()] = use

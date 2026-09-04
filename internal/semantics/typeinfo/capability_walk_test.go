@@ -1,6 +1,7 @@
 package typeinfo
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -47,25 +48,57 @@ func capabilityMatrix() []Type {
 	return matrix
 }
 
-// The single traversal must answer exactly what the three separate predicates
-// answer today. This is the parity proof that has to pass before any caller is
-// migrated or any predicate deleted.
-func TestOwnershipCapabilityWalkMatchesEstablishedPredicates(t *testing.T) {
+// capabilityGolden records the answer for every type in capabilityMatrix, in
+// matrix order, as a copy-class letter (i implicit, e explicit, n never)
+// followed by a drop marker (+ or -).
+//
+// It was captured from the traversal at the point a differential test proved it
+// agreed with IsImplicitCopyType, noCopyType and NeedsDrop on every entry.
+// Those predicates are gone, so this table is what preserves their coverage. It
+// records decided language behavior, not whatever the code happens to do now: a
+// diff here means an ownership rule changed and wants a deliberate decision.
+const capabilityGolden = "i-i-i-i-i-i-i-i-i-n+n-n+i-n-e-e-e-i-n+e-e-e-i-i-i-n+e-e-e-i-i-i-n+e-e-e-" +
+	"i-i-i-n+e-e-e-i-i-i-n+e-e-e-i-i-i-n+e-e-e-i-i-i-n+e-e-e-i-i-i-n+e-e-e-i-" +
+	"i-i-n+e-e-e-i-i-n+n+n+n+n+n+n+n-n+n-n-n-n-n-n+n+n+n+n+n+n+i-n+e-e-e-i-i-" +
+	"n-n+n-n-n-n-n-e-n+e-e-e-e-e-e-n+e-e-e-e-e-e-n+e-e-e-e-e-i-n+e-e-e-i-" +
+	"i-n+n+n+n+n+n+n+e-n+e-e-e-e-e-e-n+e-e-e-i-e-e-n+e-e-e-i-e-i-n+e-e-e-i-i-" +
+	"i-n+e-e-e-i-i-" +
+	"n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+" +
+	"n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+" +
+	"n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+"
+
+func TestOwnershipCapabilityMatchesGolden(t *testing.T) {
 	matrix := capabilityMatrix()
-	if len(matrix) < 100 {
-		t.Fatalf("matrix has %d types, too few to be meaningful", len(matrix))
+	if len(matrix)*2 != len(capabilityGolden) {
+		t.Fatalf("matrix has %d types but golden covers %d; regenerate deliberately",
+			len(matrix), len(capabilityGolden)/2)
 	}
-	for index, typ := range matrix {
-		want := OwnershipCapability{Copy: CopyExplicit, Drop: NeedsDrop(typ)}
-		switch {
-		case IsImplicitCopyType(typ):
-			want.Copy = CopyImplicit
-		case noCopyType(typ):
-			want.Copy = CopyNever
-		}
+	var b strings.Builder
+	for _, typ := range matrix {
 		got := ownershipCapability(typ)
-		if got != want {
-			t.Errorf("type %d (%s): walk = %+v, predicates = %+v", index, TypeText(typ), got, want)
+		switch got.Copy {
+		case CopyImplicit:
+			b.WriteByte('i')
+		case CopyExplicit:
+			b.WriteByte('e')
+		case CopyNever:
+			b.WriteByte('n')
+		}
+		if got.Drop {
+			b.WriteByte('+')
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	got := b.String()
+	if got == capabilityGolden {
+		return
+	}
+	for i, typ := range matrix {
+		want := capabilityGolden[i*2 : i*2+2]
+		if got[i*2:i*2+2] != want {
+			t.Errorf("type %d (%s): capability = %s, golden = %s",
+				i, TypeText(typ), got[i*2:i*2+2], want)
 		}
 	}
 }
@@ -79,15 +112,11 @@ func TestOwnershipCapabilityWalkTerminatesOnRecursiveType(t *testing.T) {
 		{Name: "value", Type: &IntegerType{}},
 	}}
 
-	want := OwnershipCapability{Copy: CopyExplicit, Drop: NeedsDrop(node)}
-	switch {
-	case IsImplicitCopyType(node):
-		want.Copy = CopyImplicit
-	case noCopyType(node):
-		want.Copy = CopyNever
-	}
+	// Bulk storage never copies implicitly, and the guard firing on the second
+	// visit is what makes the self-reference terminate without a drop claim.
+	want := OwnershipCapability{Copy: CopyExplicit}
 	if got := ownershipCapability(node); got != want {
-		t.Fatalf("recursive type: walk = %+v, predicates = %+v", got, want)
+		t.Fatalf("recursive type: capability = %+v, want %+v", got, want)
 	}
 }
 

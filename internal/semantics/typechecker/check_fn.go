@@ -101,7 +101,7 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 			return true
 		}
 		paramType := typeinfo.TypeFromSyntax(params[index].Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-		if typeinfo.IsImplicitCopyType(paramType) {
+		if typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 			return true
 		}
 		if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference {

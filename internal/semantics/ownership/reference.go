@@ -614,7 +614,7 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast
 		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
 			if sym, found := node.scope.Lookup(target.Name); found && trackedLiveSymbol(sym) {
 				definitions[sym] = struct{}{}
-				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.NeedsDrop(typ) {
+				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
 					uses[sym] = target
 				}
 			}

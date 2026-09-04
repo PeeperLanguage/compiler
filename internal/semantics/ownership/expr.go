@@ -223,10 +223,10 @@ func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
 	if a == nil || a.cleanup == nil || projection == nil || base == nil {
 		return false
 	}
-	if place.IsPlaceExpr(base) || !typeinfo.NeedsDrop(a.exprType(base)) {
+	if place.IsPlaceExpr(base) || !typeinfo.OwnershipCapabilityOf(a.exprType(base)).Drop {
 		return false
 	}
-	if typeinfo.NeedsDrop(a.exprType(projection)) {
+	if typeinfo.OwnershipCapabilityOf(a.exprType(projection)).Drop {
 		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"ownership-bearing projection from temporary must be bound before use", ast.LocOf(projection), "")
 		return true
@@ -381,7 +381,7 @@ func (a *analyzer) publishedUse(arg ast.Expr, paramType typeinfo.Type) typeinfo.
 			return kind
 		}
 	}
-	if paramType == nil || typeinfo.IsImplicitCopyType(paramType) {
+	if paramType == nil || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 		return typeinfo.UseRead
 	}
 	return typeinfo.UseMove
@@ -515,7 +515,7 @@ func ownershipTrackedSymbol(sym *symbols.Symbol) bool {
 }
 
 func ownershipTrackedType(t typeinfo.Type) bool {
-	if t == nil || typeinfo.IsImplicitCopyType(t) {
+	if t == nil || typeinfo.OwnershipCapabilityOf(t).Copy == typeinfo.CopyImplicit {
 		return false
 	}
 	return true

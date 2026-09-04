@@ -88,52 +88,6 @@ func IsCondition(t Type) bool {
 	return ok
 }
 
-func IsImplicitCopyType(t Type) bool {
-	visiting := make(map[*DefinedType]bool)
-	var check func(Type, bool) bool
-	check = func(current Type, enumPayload bool) bool {
-		if defined, ok := current.(*DefinedType); ok {
-			if defined == nil || visiting[defined] {
-				return false
-			}
-			visiting[defined] = true
-			defer delete(visiting, defined)
-			return check(defined.Underlying, enumPayload)
-		}
-		switch typ := Underlying(current).(type) {
-		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType, *NoneType:
-			return true
-		case *RefType:
-			return typ != nil && !typ.Mutable
-		case *OptionalType:
-			return typ != nil && check(typ.Inner, false)
-		case *StructType:
-			if typ == nil || !enumPayload {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if !check(field.Type, false) {
-					return false
-				}
-			}
-			return true
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload, true) {
-					return false
-				}
-			}
-			return true
-		default:
-			return false
-		}
-	}
-	return check(t, false)
-}
-
 func IsSizedType(t Type) bool {
 	visiting := make(map[*DefinedType]bool)
 	var check func(Type) bool
@@ -203,56 +157,6 @@ func IsSizedType(t Type) bool {
 		default:
 			return false
 		}
-	}
-	return check(t)
-}
-
-// noCopyType reports whether the type contains owned runtime state, so copies
-// are forbidden outright. It is the CopyNever half of the ownership capability
-// and is intentionally unexported: consumers classify through
-// OwnershipCapabilityOf instead of re-deriving.
-func noCopyType(t Type) bool {
-	seen := make(map[*DefinedType]bool)
-	var check func(Type) bool
-	check = func(current Type) bool {
-		switch typ := current.(type) {
-		case *DefinedType:
-			if typ == nil || seen[typ] {
-				return false
-			}
-			seen[typ] = true
-			defer delete(seen, typ)
-			return check(typ.Underlying)
-		}
-		switch typ := Underlying(current).(type) {
-		case *OwnedPtrType, *StringType, *InterfaceType:
-			return true
-		case *RefType:
-			return typ != nil && typ.Mutable
-		case *OptionalType:
-			return typ != nil && check(typ.Inner)
-		case *ArrayType:
-			return typ != nil && (typ.Shape == ArrayOwner || check(typ.Elem))
-		case *StructType:
-			if typ == nil {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if check(field.Type) {
-					return true
-				}
-			}
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && check(variant.Payload) {
-					return true
-				}
-			}
-		}
-		return false
 	}
 	return check(t)
 }
@@ -353,53 +257,6 @@ func IsLowerableType(t Type) bool {
 		}
 	}
 	return check(t, false)
-}
-
-// NeedsDrop reports whether normal scope cleanup must destroy runtime-owned
-// state reachable through a value. Move-only borrows and plain composites do
-// not need destruction; this is intentionally narrower than noCopyType.
-func NeedsDrop(t Type) bool {
-	seen := make(map[*DefinedType]bool)
-	var check func(Type) bool
-	check = func(current Type) bool {
-		switch typ := current.(type) {
-		case *DefinedType:
-			if typ == nil || seen[typ] {
-				return false
-			}
-			seen[typ] = true
-			defer delete(seen, typ)
-			return check(typ.Underlying)
-		}
-		switch typ := Underlying(current).(type) {
-		case *OwnedPtrType, *StringType:
-			return true
-		case *OptionalType:
-			return typ != nil && check(typ.Inner)
-		case *ArrayType:
-			return typ != nil && (typ.Shape == ArrayOwner || check(typ.Elem))
-		case *StructType:
-			if typ == nil {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if check(field.Type) {
-					return true
-				}
-			}
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && check(variant.Payload) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return check(t)
 }
 
 // CopyClass classifies how a value of a type may be duplicated.
