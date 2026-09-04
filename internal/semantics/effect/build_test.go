@@ -278,3 +278,62 @@ fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 		t.Fatalf("projected places = %v, want %v", projected, want)
 	}
 }
+
+// A method callee names a method, not storage. Publishing `point.copy` as a
+// field projection of point would claim a field that does not exist, and would
+// hand ownership a projected place where the real effect is a use of the
+// receiver.
+//
+// The receiver is also where an implicit borrow lives: nothing in this source
+// says `&`, but the receiver parameter is `&Point`, so passing `point` borrows
+// it. The typechecker records that in ImplicitCallArguments.
+func TestBuildPublishesMethodReceiverAsWholeUse(t *testing.T) {
+	result, module := buildEffects(t, `struct Point { x: i32, y: i32 }
+
+fn (self: &Point) copy() -> Point {
+	return .{x = self.x, y = self.y};
+}
+
+fn choose(point: Point) -> i32 {
+	let duplicate = point.copy();
+	return duplicate.x;
+}`)
+	symbol, found := module.ModuleScope.Lookup("choose")
+	if !found {
+		t.Fatal("function choose missing")
+	}
+	fn := symbol.ASTNode.(*ast.FnDecl)
+	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+
+	var receiver, field *effect.Use
+	for _, block := range graph.Blocks {
+		for _, site := range block.Sites {
+			for _, op := range result.At(graph.NodeID, site.ID) {
+				use, ok := op.(effect.Use)
+				if !ok || use.Place.Root == nil {
+					continue
+				}
+				switch use.Place.Root.Name {
+				case "point":
+					copied := use
+					receiver = &copied
+				case "duplicate":
+					copied := use
+					field = &copied
+				}
+			}
+		}
+	}
+	if receiver == nil || len(receiver.Place.Projections) != 0 {
+		t.Fatalf("receiver use = %+v, want a whole binding with no projection", receiver)
+	}
+	if field == nil || len(field.Place.Projections) != 1 {
+		t.Fatalf("field use = %+v, want one projection", field)
+	}
+	// The receiver parameter is a reference, so the typechecker recorded the
+	// adaptation. That evidence is what a future consumer reads to know the
+	// call borrows rather than moves.
+	if len(module.Typechecking.ImplicitCallArguments) == 0 {
+		t.Fatal("expected the implicit receiver borrow to be published")
+	}
+}

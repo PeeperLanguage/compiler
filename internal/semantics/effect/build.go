@@ -282,7 +282,14 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 		}
 	case *ast.CallExpr:
 		b.emit(site, CallBegin{Node: node.ID(), Location: ast.LocOf(node)})
-		b.value(site, node.Callee, typeinfo.UseRead)
+		if selector, method := node.Callee.(*ast.SelectorExpr); method && selector != nil {
+			// A method callee names a method, not storage. The value the call
+			// uses is the receiver, and it is used the way the receiver
+			// parameter demands, which the typechecker published.
+			b.value(site, selector.Expr, b.argumentKind(selector.Expr))
+		} else {
+			b.value(site, node.Callee, typeinfo.UseRead)
+		}
 		arguments := node.Args
 		if b.queries.CallArguments != nil {
 			arguments = b.queries.CallArguments(node)
