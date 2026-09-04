@@ -84,6 +84,21 @@ func (b *builder) buildFunction(fn *ast.FnDecl) {
 			b.emit(entry, Define{Symbol: sym, Node: param.Name.ID(), Initialized: true})
 		}
 	}
+	// Bindings that a site inherits on entry are published before that site's
+	// own effects, because a site's operations are read in evaluation order and
+	// an arm body may read the payload it binds.
+	b.eachSite(func(block *cfg.Block, site *cfg.Site) {
+		if site.Kind != cfg.SiteTerminator {
+			return
+		}
+		if terminator, ok := block.Terminator.(*cfg.SwitchVariant); ok {
+			b.buildMatchArms(site, terminator)
+		}
+	})
+	b.eachSite(b.buildSite)
+}
+
+func (b *builder) eachSite(visit func(*cfg.Block, *cfg.Site)) {
 	for _, block := range b.graph.Blocks {
 		if block == nil || !block.Reachable {
 			continue
@@ -92,7 +107,7 @@ func (b *builder) buildFunction(fn *ast.FnDecl) {
 			if site == nil {
 				continue
 			}
-			b.buildSite(block, site)
+			visit(block, site)
 		}
 	}
 }
@@ -111,7 +126,8 @@ func (b *builder) buildSite(block *cfg.Block, site *cfg.Site) {
 			b.reads(site.ID, condition)
 		}
 	case *cfg.SwitchVariant:
-		b.buildMatchArms(site, terminator)
+		// Arm payload bindings are published in the leading pass above; the
+		// subject itself is read at the match statement's own site.
 	case *cfg.Jump, *cfg.Return:
 		// A jump carries no condition, and a return's value is read at the
 		// return statement's own site.

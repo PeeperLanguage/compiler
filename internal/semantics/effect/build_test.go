@@ -196,3 +196,41 @@ func TestBuildPublishesBranchConditionAtTerminatorSite(t *testing.T) {
 		t.Fatalf("published %v, want %v", got, want)
 	}
 }
+
+// An arm's payload binding is published before that arm body's own effects,
+// because the body may read the payload it binds. The binding is published at
+// the arm block's first site rather than on the case edge, which is equivalent
+// because CFG construction gives every arm a fresh block reached only by its
+// own case edge.
+func TestBuildPublishesArmBindingBeforeArmBodyEffects(t *testing.T) {
+	result, module := buildEffects(t, `enum Result {
+	Ok: { value: i32 },
+	Pending,
+}
+
+fn choose(outcome: Result) -> i32 {
+	match outcome {
+		Result::Ok with { value = payload } => {
+			return payload;
+		}
+		Result::Pending => {
+			return 0;
+		}
+	}
+}`)
+	got := publishedOps(t, result, module, "choose")
+	// The match subject is deliberately absent. Definite initialization attaches
+	// a site condition for a branch terminator only, so a match on an
+	// uninitialized value is not diagnosed today. Publishing that read here
+	// would start rejecting code that currently compiles, so it is registered as
+	// a behavior change in docs/compiler-framework/effect-stream-migration.md
+	// and left for separate approval. Change this expectation only together with
+	// that decision.
+	want := []string{
+		"define outcome",
+		"define payload", "use payload",
+	}
+	if !sameOps(got, want) {
+		t.Fatalf("published %v, want %v", got, want)
+	}
+}
