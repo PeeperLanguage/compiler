@@ -195,6 +195,9 @@ func (a *analyzer) applyWriteEffect(
 		if op.Owner != 0 && typeinfo.OwnershipCapabilityOf(a.exprType(target)).Drop {
 			a.cleanup.BeforeAssign[ir.NodeID(op.Owner)] = struct{}{}
 		}
+		if op.Value != 0 {
+			a.replaceReferenceField(target, references[op.Value], st)
+		}
 		return
 	}
 

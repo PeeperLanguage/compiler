@@ -21,6 +21,9 @@ type loanID struct {
 }
 
 type referenceLoan struct {
+	// path identifies the slot within the holder, not the borrowed storage.
+	// One loan can occupy multiple enum fields and survive replacement of one.
+	path    []place.OriginProjection
 	id      loanID
 	origins []place.Origin
 	mutable bool
@@ -147,8 +150,13 @@ func (a *analyzer) checkStorageAccess(
 	if a == nil || expr == nil || loans == nil {
 		return
 	}
+	origins := a.originsForExpr(expr)
+	if access == storageMutate && a.module != nil && a.module.Flow != nil {
+		// Replacing a reference slot mutates the carrier, not its old referent.
+		origins = a.module.Flow.ResolvedStorageOrigins[expr.ID()]
+	}
 	a.reportLoanConflict(
-		a.originsForExpr(expr),
+		origins,
 		a.referenceHolder(expr),
 		access,
 		expr,
@@ -328,7 +336,7 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	}
 	if ident, ok := expr.(*ast.Ident); ok {
 		sym := a.module.Bindings.NodeSymbols[ident.ID()]
-		if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.ContainsStoredReference(typ) {
+		if referenceHoldingSymbol(sym) {
 			if value, found := st.references[sym]; found {
 				return copyReferenceLoans(value), true
 			}
@@ -336,6 +344,20 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	}
 	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
 	if ok {
+		if _, projected := expr.(*ast.SelectorExpr); projected && a.module.Flow != nil {
+			var value []referenceLoan
+			for _, storage := range a.module.Flow.ResolvedStorageOrigins[expr.ID()] {
+				for _, loan := range st.references[storage.Root] {
+					if slices.Equal(loan.path, storage.Projections) {
+						loan.path = nil
+						value = append(value, loan)
+					}
+				}
+			}
+			if len(value) > 0 {
+				return copyReferenceLoans(value), true
+			}
+		}
 		origins := a.originsForExpr(expr)
 		if len(origins) == 0 {
 			return []referenceLoan{}, false
@@ -350,8 +372,14 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	if literal, ok := expr.(*ast.StructLit); ok {
 		var loans []referenceLoan
 		for _, field := range literal.Fields {
+			if field.Name == nil {
+				continue
+			}
 			fieldLoans, found := a.referenceValueForExpr(field.Value, st)
 			if found {
+				for i := range fieldLoans {
+					fieldLoans[i].path = append([]place.OriginProjection{{Kind: place.OriginField, Field: field.Name.Name}}, fieldLoans[i].path...)
+				}
 				loans = append(loans, fieldLoans...)
 			}
 		}
@@ -361,7 +389,39 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}
-	return a.referenceValueForExpr(construction.Value, st)
+	loans, found := a.referenceValueForExpr(construction.Value, st)
+	for i := range loans {
+		loans[i].path = append([]place.OriginProjection{{Kind: place.OriginVariantPayload, Case: construction.Case}}, loans[i].path...)
+	}
+	return loans, found
+}
+
+// replaceReferenceField consumes flow's exact storage identity. Accepted local
+// enum reference fields are direct/optional; nested reference aggregates remain
+// rejected by typechecking. Other holders and sibling slots retain their loans.
+func (a *analyzer) replaceReferenceField(target ast.Expr, value storedReference, st state) {
+	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(target)); !reference || a.module.Flow == nil {
+		return
+	}
+	storage := a.module.Flow.ResolvedStorageOrigins[target.ID()]
+	if len(storage) != 1 || len(storage[0].Projections) == 0 {
+		return
+	}
+	destination := storage[0]
+	if !referenceHoldingSymbol(destination.Root) {
+		return
+	}
+	var kept []referenceLoan
+	for _, loan := range st.references[destination.Root] {
+		if !slices.Equal(loan.path, destination.Projections) {
+			kept = append(kept, loan)
+		}
+	}
+	for _, loan := range copyReferenceLoans(value.loans) {
+		loan.path = slices.Clone(destination.Projections)
+		kept = append(kept, loan)
+	}
+	a.updateReferenceSymbol(destination.Root, kept, len(kept) > 0, st)
 }
 
 func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
@@ -453,6 +513,7 @@ func copyReferenceLoans(value []referenceLoan) []referenceLoan {
 	copy(copyValue, value)
 	for i := range copyValue {
 		copyValue[i].origins = place.CloneOrigins(copyValue[i].origins)
+		copyValue[i].path = slices.Clone(copyValue[i].path)
 	}
 	return copyValue
 }
@@ -480,9 +541,10 @@ func mergeReferenceValues(dst, src map[*symbols.Symbol][]referenceLoan) bool {
 			continue
 		}
 		for _, srcLoan := range srcValue {
-			index := referenceLoanIndex(dstValue, srcLoan.id)
+			index := referenceLoanIndex(dstValue, srcLoan)
 			if index < 0 {
 				srcLoan.origins = place.CloneOrigins(srcLoan.origins)
+				srcLoan.path = slices.Clone(srcLoan.path)
 				dstValue = append(dstValue, srcLoan)
 				changed = true
 				continue
@@ -511,7 +573,7 @@ func sameReferenceLoans(left, right []referenceLoan) bool {
 		return false
 	}
 	for _, leftLoan := range left {
-		index := referenceLoanIndex(right, leftLoan.id)
+		index := referenceLoanIndex(right, leftLoan)
 		if index < 0 {
 			return false
 		}
@@ -524,9 +586,9 @@ func sameReferenceLoans(left, right []referenceLoan) bool {
 	return true
 }
 
-func referenceLoanIndex(loans []referenceLoan, id loanID) int {
+func referenceLoanIndex(loans []referenceLoan, candidate referenceLoan) int {
 	for i := range loans {
-		if loans[i].id == id {
+		if loans[i].id == candidate.id && slices.Equal(loans[i].path, candidate.path) {
 			return i
 		}
 	}
@@ -627,6 +689,10 @@ func (v *livenessEffectVisitor) VisitDefine(op effect.Define) {
 
 func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
 	if op.Place.Root == nil || !trackedLiveSymbol(op.Place.Root) {
+		return
+	}
+	if len(op.Place.Projections) > 0 {
+		v.recordUse(op.Place.Root, op.Node)
 		return
 	}
 	v.definitions[op.Place.Root] = struct{}{}

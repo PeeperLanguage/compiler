@@ -326,7 +326,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			return
 		}
 	case *ast.SelectorExpr:
-		baseType := c.typeExpr(scope, target.Expr, nil)
+		baseType := c.recordedExprType(target.Expr)
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
 			return
 		}
@@ -376,7 +376,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	if typeinfo.IsInvalidOrUnknown(targetType) {
 		return true
 	}
-	baseType := c.typeExpr(scope, target.Expr, nil)
+	baseType := c.recordedExprType(target.Expr)
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return true
 	}

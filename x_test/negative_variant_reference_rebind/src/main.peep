@@ -1,0 +1,58 @@
+enum Resource { Borrowed: { value: &i32, sibling: &i32 }, Empty }
+enum Optional { Borrowed: { value: ?&i32 }, Empty }
+enum Mutable { Borrowed: { value: &mut i32 }, Empty }
+fn Read(_: &i32) {}
+fn ReadOptional(_: ?&i32) {}
+fn Write(_: &mut i32) {}
+
+fn NewLoan(mut first: i32, mut second: i32) {
+    let mut resource = Resource::Borrowed with .{ value = &first, sibling = &first };
+    if resource is Resource::Borrowed {
+        resource.value = &second;
+        second = 3;
+        Read(resource.value);
+    }
+}
+fn SiblingLoan(mut first: i32, mut second: i32) {
+    let reference = &first;
+    let mut resource = Resource::Borrowed with .{ value = reference, sibling = reference };
+    if resource is Resource::Borrowed {
+        resource.value = &second;
+        first = 3;
+        Read(resource.sibling);
+    }
+}
+fn CopiedLoan(mut first: i32, mut second: i32) {
+    let mut resource = Resource::Borrowed with .{ value = &first, sibling = &first };
+    if resource is Resource::Borrowed {
+        let copy = resource.value;
+        resource.value = &second;
+        resource.sibling = &second;
+        first = 3;
+        Read(copy);
+    }
+}
+fn OptionalLoan(mut first: i32, mut second: i32) {
+    let mut resource = Optional::Borrowed with .{ value = &first };
+    if resource is Optional::Borrowed {
+        resource.value = &second;
+        second = 3;
+        ReadOptional(resource.value);
+    }
+}
+fn MutableLoan(mut first: i32, mut second: i32) {
+    let mut resource = Mutable::Borrowed with .{ value = &mut first };
+    if resource is Mutable::Borrowed {
+        resource.value = &mut second;
+        second = 3;
+        Write(resource.value);
+    }
+}
+fn LoopLoan(mut first: i32, mut second: i32, flag: bool) {
+    let mut resource = Resource::Borrowed with .{ value = &first, sibling = &first };
+    if resource is Resource::Borrowed {
+        for flag { resource.value = &second; }
+        second = 3;
+        Read(resource.value);
+    }
+}

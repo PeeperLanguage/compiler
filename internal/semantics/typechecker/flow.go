@@ -285,22 +285,26 @@ func (c *checker) recordFlowResolution(expr ast.Expr, resolution place.Resolutio
 	c.flow.result.ResolvedValueOrigins[id] = place.CloneOrigins(resolution.ValueOrigins)
 }
 
+// recordedExprType reads an already typed operand without replaying calls or
+// erasing the payload evidence established while typing its enclosing place.
+func (c *checker) recordedExprType(expr ast.Expr) typeinfo.Type {
+	if expr == nil {
+		return nil
+	}
+	if c.flow != nil {
+		if typ := c.flow.result.ExprTypes[expr.ID()]; typ != nil {
+			return typ
+		}
+	}
+	return c.module.BaseExprType(expr.ID())
+}
+
 func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowState) place.Resolution {
 	if c == nil || c.module == nil {
 		return place.Resolution{}
 	}
 	return place.Resolve(scope, expr, place.ResolveOptions{
-		ExprType: func(node ast.Expr) typeinfo.Type {
-			if node == nil {
-				return nil
-			}
-			if c.flow != nil {
-				if typ := c.flow.result.ExprTypes[node.ID()]; typ != nil {
-					return typ
-				}
-			}
-			return c.module.BaseExprType(node.ID())
-		},
+		ExprType:       c.recordedExprType,
 		ResolveBinding: c.module.ExpandedDefaultBinding,
 		ReferenceOrigins: func(storage []place.Origin) []place.Origin {
 			return originValues(st.references, storage)
@@ -312,10 +316,7 @@ func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowS
 			if call == nil || call.Callee == nil {
 				return nil
 			}
-			calleeType := c.module.BaseExprType(call.Callee.ID())
-			if c.flow != nil && c.flow.result.ExprTypes[call.Callee.ID()] != nil {
-				calleeType = c.flow.result.ExprTypes[call.Callee.ID()]
-			}
+			calleeType := c.recordedExprType(call.Callee)
 			fn, _ := typeinfo.Underlying(calleeType).(*typeinfo.FuncType)
 			var origins []place.Origin
 			args := c.module.Typechecking.CallArgumentsOrSource(call)

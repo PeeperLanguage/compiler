@@ -1,0 +1,8 @@
+name = "negative_variant_reference_rebind"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0037", "cannot mutate storage while it is borrowed"]
+stderr_excludes = ["T0010", "T0007", "panic", "llvm invariant"]
