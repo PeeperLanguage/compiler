@@ -97,7 +97,7 @@ func semanticExportMetadata(ctx *CompilerContext, module *Module, sym *symbols.S
 	return metadata
 }
 
-func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
+func semanticTypeKey(typ typeinfo.Type, visiting map[typeinfo.Type]bool) string {
 	semantic, ok := typ.(typeinfo.Type)
 	if !ok || semantic == nil {
 		return ""

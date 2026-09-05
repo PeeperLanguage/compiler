@@ -12,11 +12,6 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-type unexpectedSemanticType struct{}
-
-func (*unexpectedSemanticType) TypeNode()    {}
-func (*unexpectedSemanticType) Text() string { return "unexpected" }
-
 func fingerprintModule(
 	t *testing.T,
 	exported *symbols.Symbol,
@@ -265,15 +260,6 @@ func TestSemanticTypeKeyIncludesNamedEnumIdentity(t *testing.T) {
 	if semanticTypeKey(left, make(map[typeinfo.Type]bool)) == semanticTypeKey(right, make(map[typeinfo.Type]bool)) {
 		t.Fatal("named enum identity did not change semantic type key")
 	}
-}
-
-func TestSemanticTypeKeyRejectsUnknownType(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("semanticTypeKey accepted unknown semantic type")
-		}
-	}()
-	semanticTypeKey(&unexpectedSemanticType{}, make(map[typeinfo.Type]bool))
 }
 
 func TestConstantKeyIncludesTypeAndValue(t *testing.T) {

@@ -265,6 +265,24 @@ func (r *Result) ForLoopGuaranteedEntry(id ast.NodeID) bool {
 	return found && iteration.GuaranteedEntry
 }
 
+// SequenceCarrier exposes the hidden carrier a typed sequence loop keeps for
+// the loop lifetime. Range loops have no carrier. Consumers ask this query
+// instead of inspecting the concrete iteration plan themselves.
+func (r *Result) SequenceCarrier(id ast.NodeID) (*symbols.Symbol, bool) {
+	if r == nil {
+		return nil, false
+	}
+	iteration, found := r.ForIterations[id]
+	if !found {
+		return nil, false
+	}
+	sequence, ok := iteration.Plan.(*SequenceIteration)
+	if !ok || sequence == nil || sequence.Carrier == nil {
+		return nil, false
+	}
+	return sequence.Carrier, true
+}
+
 // CallArgumentsOrSource returns published effective arguments when available.
 // Semantic phases that continue after diagnostics use source arguments when
 // typechecking could not publish complete call evidence.

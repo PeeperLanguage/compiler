@@ -21,11 +21,13 @@ import (
 
 // Op is one semantic effect on one binding.
 //
-// The set is closed by the unexported marker method, so no kind can be
-// introduced outside this package. Go cannot make a consumer's type switch
-// exhaustive; internal/contracts carries that half.
+// The set is closed by unexported methods, so no kind can be introduced
+// outside this package. visit(Visitor) supplies the other half of the contract:
+// a new semantic operation extends Visitor and therefore breaks every exhaustive
+// consumer at compile time until it makes an explicit decision.
 type Op interface {
 	effectOp()
+	visit(Visitor)
 }
 
 // Define brings a binding into existence. Initialized separates `let x = e`,
@@ -34,7 +36,12 @@ type Define struct {
 	Symbol *symbols.Symbol
 	// Node is the declaration, which is where a diagnostic about the binding
 	// itself belongs.
-	Node        ast.NodeID
+	Node ast.NodeID
+	// Value names the initializer whose value enters Symbol. It is zero for a
+	// declaration without an initializer and for OnEntry bindings. Consumers
+	// that track reference/pointer provenance can therefore update the binding
+	// from this operation without rediscovering declaration syntax.
+	Value       ast.NodeID
 	Initialized bool
 	// OnEntry marks a binding that already exists when the site begins rather
 	// than being established by it: a function parameter, or a match payload
@@ -53,7 +60,13 @@ type Define struct {
 type Write struct {
 	Place Place
 	// Node is the assignment target.
-	Node     ast.NodeID
+	Node ast.NodeID
+	// Owner is the source construct performing the replacement. Cleanup plans
+	// key pre-assignment drops by this identity, while Node remains the target
+	// expression used for diagnostics and place typing.
+	Owner ast.NodeID
+	// Value is the expression whose value is stored into Place.
+	Value    ast.NodeID
 	Location *source.Location
 }
 
@@ -102,8 +115,13 @@ type Use struct {
 // both a borrow and a separate read of the same place would charge that place
 // twice.
 type Borrow struct {
-	Place    Place
+	Place Place
+	// Node is the source expression that creates the borrow (an AddressExpr or
+	// an adapted call argument). Operand is the place expression actually
+	// borrowed. Keeping both identities means consumers never have to peel
+	// syntax to rediscover that relationship.
 	Node     ast.NodeID
+	Operand  ast.NodeID
 	Location *source.Location
 	Mutable  bool
 	// Argument marks a borrow handed to a call. It outlives the expression that
@@ -113,6 +131,18 @@ type Borrow struct {
 	// Raw marks taking a raw pointer. It reads the place but takes no tracked
 	// reference to it, so it neither conflicts with a borrow nor creates one.
 	Raw bool
+}
+
+// Iterate records the long-lived shared access a sequence loop holds on its
+// iterable storage. The ordinary Use for the iterable is still published in
+// evaluation order; Iterate adds only the lifetime fact that lasts until the
+// loop exit. Range loops publish no Iterate operation.
+type Iterate struct {
+	Loop     ast.NodeID
+	Place    Place
+	Node     ast.NodeID
+	Carrier  *symbols.Symbol
+	Location *source.Location
 }
 
 // CallBegin and CallEnd bracket the operations a call evaluates. Everything
@@ -146,6 +176,7 @@ func (Define) effectOp()    {}
 func (Write) effectOp()     {}
 func (Use) effectOp()       {}
 func (Borrow) effectOp()    {}
+func (Iterate) effectOp()   {}
 func (Discard) effectOp()   {}
 func (CallBegin) effectOp() {}
 func (CallEnd) effectOp()   {}

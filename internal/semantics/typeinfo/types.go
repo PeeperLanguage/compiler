@@ -8,6 +8,8 @@ import (
 type Type interface {
 	TypeNode()
 	Text() string
+	forEachChild(func(TypeChild) bool) bool
+	ownershipShape() ownershipShape
 }
 
 type InvalidType struct{}

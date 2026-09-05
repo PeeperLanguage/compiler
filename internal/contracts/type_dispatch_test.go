@@ -34,21 +34,6 @@ type typeDispatchSite struct {
 // diagnostic rather than a wrong answer.
 var typeKindSites = []typeDispatchSite{
 	{
-		file: "semantics/typeinfo/capability_walk.go",
-		fn:   "ownershipCapability",
-		why:  "how the type copies and whether scope cleanup must destroy it",
-		omitted: map[string]classification{
-			"InvalidType": {ignore, "a recovery type makes no capability claim; invalid source never reaches ownership"},
-			"UnknownType": {ignore, "an unresolved type makes no capability claim; resolution replaces it first"},
-			"NamedType":   {ignore, "a bare name carries no structure to classify; it is replaced by the type it names"},
-			"TypeParameterType": {ignore, "conservatively move-on-use with no drop until instantiation-aware " +
-				"queries arrive with generic support, as OwnershipCapability documents"},
-			"FuncType": {ignore, "a function value is a code pointer owning no storage, so the walk's default of " +
-				"move-on-use with no drop is safe. Whether it should copy implicitly is an open language " +
-				"question, not a missing case"},
-		},
-	},
-	{
 		file: "semantics/typeinfo/relations.go",
 		fn:   "SameType",
 		why:  "whether two types are the same type",
@@ -56,6 +41,11 @@ var typeKindSites = []typeDispatchSite{
 			"DefinedType": {contextual, "nominal identity is settled before the switch by sameNominalStruct, and " +
 				"Underlying peels the definition away for the structural comparison that follows"},
 		},
+	},
+	{
+		file: "project/export_fingerprint.go",
+		fn:   "semanticTypeKey",
+		why:  "which stable semantic identity participates in exported API fingerprints",
 	},
 	{
 		file: "ir/hir/lower/lower_types.go",
@@ -69,6 +59,11 @@ var typeKindSites = []typeDispatchSite{
 		},
 	},
 }
+
+// Semantic Type itself is now the compile-time extension contract: Type is
+// sealed by unexported forEachChild and ownershipShape methods, so a new type
+// cannot enter semantic code without declaring both canonical structure and
+// ownership composition. No source-inspection test is needed for that boundary.
 
 func TestEverySemanticTypeKindHasAPhaseDecision(t *testing.T) {
 	kinds := declaredMarkerKinds(t, "semantics/typeinfo/types.go", "TypeNode")

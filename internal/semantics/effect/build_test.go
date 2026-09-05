@@ -55,6 +55,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 		ValueUse:            module.Typechecking.ValueUse,
 		ExprType:            module.EffectiveExprType,
 		ReferenceArgument:   module.Typechecking.ReferenceArgument,
+		SequenceCarrier:     module.Typechecking.SequenceCarrier,
 	})
 	if result == nil {
 		t.Fatal("Build published no result")
@@ -106,8 +107,24 @@ func describe(op effect.Op) string {
 		return "write " + op.Place.Root.Name
 	case effect.Use:
 		return "use " + op.Place.Root.Name
+	case effect.Iterate:
+		if op.Place.Root == nil {
+			return "iterate temporary"
+		}
+		return "iterate " + op.Place.Root.Name
 	}
 	return "unknown"
+}
+
+func TestBuildPublishesSequenceIterationLifetime(t *testing.T) {
+	result, module := buildEffects(t, `fn walk(values: [2]i32) {
+	for value in values {}
+}`)
+	got := publishedOps(t, result, module, "walk")
+	want := []string{"define values", "use values", "iterate values"}
+	if !sameOps(got, want) {
+		t.Fatalf("published %v, want %v", got, want)
+	}
 }
 
 func sameOps(got, want []string) bool {

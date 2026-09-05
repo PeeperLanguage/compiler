@@ -3,7 +3,6 @@ package cfg
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -150,6 +149,9 @@ func validateVariantCases(fn *Graph, block *Block, term *SwitchVariant) []string
 // same graph as one walking forwards.
 func validateBlockAdjacency(fn *Graph) []string {
 	problems := make([]string, 0)
+	if fn.BlockEdges == nil {
+		return append(problems, fmt.Sprintf("function %d has no block topology", fn.NodeID))
+	}
 	forward := make(map[[2]int]bool)
 	for _, block := range fn.Blocks {
 		if block.Terminator == nil {
@@ -161,24 +163,20 @@ func validateBlockAdjacency(fn *Graph) []string {
 			}
 		}
 	}
-	recorded := make(map[[2]int]bool)
 	for _, block := range fn.Blocks {
-		for _, predecessor := range block.Predecessors {
-			if predecessor == nil {
-				problems = append(problems, fmt.Sprintf("function %d block b%d lists a nil predecessor", fn.NodeID, block.ID))
-				continue
+		for _, edge := range fn.BlockEdges.OutEdges(block.ID) {
+			pair := [2]int{edge.From, edge.To}
+			if edge.From != block.ID {
+				problems = append(problems, fmt.Sprintf("function %d block b%d owns an edge leaving b%d", fn.NodeID, block.ID, edge.From))
 			}
-			pair := [2]int{predecessor.ID, block.ID}
 			if !forward[pair] {
-				problems = append(problems, fmt.Sprintf("function %d block b%d lists b%d as a predecessor, which does not transfer to it", fn.NodeID, block.ID, predecessor.ID))
+				problems = append(problems, fmt.Sprintf("function %d block topology records b%d -> b%d, but the terminator does not", fn.NodeID, edge.From, edge.To))
 			}
-			recorded[pair] = true
+			delete(forward, pair)
 		}
 	}
 	for pair := range forward {
-		if !recorded[pair] {
-			problems = append(problems, fmt.Sprintf("function %d block b%d transfers to b%d, which does not list it as a predecessor", fn.NodeID, pair[0], pair[1]))
-		}
+		problems = append(problems, fmt.Sprintf("function %d block b%d transfers to b%d, which is absent from block topology", fn.NodeID, pair[0], pair[1]))
 	}
 	return problems
 }
@@ -216,11 +214,13 @@ func validateSites(fn *Graph) []string {
 
 func validateSiteEdges(fn *Graph) []string {
 	problems := make([]string, 0)
-	recorded := make(map[Edge]bool)
+	if fn.SiteEdges == nil {
+		return append(problems, fmt.Sprintf("function %d has no site topology", fn.NodeID))
+	}
 	for _, block := range fn.Blocks {
 		last := len(block.Sites) - 1
 		for index, site := range block.Sites {
-			for _, edge := range site.Successors {
+			for _, edge := range fn.SiteEdges.OutEdges(site.ID) {
 				if edge.From != site.ID {
 					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] owns an edge leaving %v", fn.NodeID, block.ID, index, edge.From))
 				}
@@ -231,9 +231,8 @@ func validateSiteEdges(fn *Graph) []string {
 				if kind, ok := expectedEdgeKind(block, index == last, edge.Kind); !ok {
 					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] leaves on a %s edge, but %s", fn.NodeID, block.ID, index, edgeKindName(edge.Kind), kind))
 				}
-				recorded[edge] = true
 			}
-			for _, edge := range site.Predecessors {
+			for _, edge := range fn.SiteEdges.InEdges(site.ID) {
 				if edge.To != site.ID {
 					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] records an edge arriving at %v", fn.NodeID, block.ID, index, edge.To))
 				}
@@ -241,27 +240,6 @@ func validateSiteEdges(fn *Graph) []string {
 					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] arrives from %v, which is not a site", fn.NodeID, block.ID, index, edge.From))
 				}
 			}
-		}
-	}
-	if len(problems) > 0 {
-		return problems
-	}
-	// Both directions must describe the same edge set, so a consumer walking
-	// predecessors sees every transfer a successor walk would.
-	for _, block := range fn.Blocks {
-		for index, site := range block.Sites {
-			for _, edge := range site.Predecessors {
-				if !recorded[edge] {
-					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] arrives on an edge %v does not send", fn.NodeID, block.ID, index, edge.From))
-				}
-			}
-		}
-	}
-	for edge := range recorded {
-		target := siteAt(fn, edge.To)
-		found := slices.Contains(target.Predecessors, edge)
-		if !found {
-			problems = append(problems, fmt.Sprintf("function %d site %v sends an edge %v does not record", fn.NodeID, edge.From, edge.To))
 		}
 	}
 	return problems

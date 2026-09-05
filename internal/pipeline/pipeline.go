@@ -485,6 +485,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			ValueUse:            module.Typechecking.ValueUse,
 			ExprType:            module.EffectiveExprType,
 			ReferenceArgument:   module.Typechecking.ReferenceArgument,
+			SequenceCarrier:     module.Typechecking.SequenceCarrier,
 		})
 		if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
 			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,

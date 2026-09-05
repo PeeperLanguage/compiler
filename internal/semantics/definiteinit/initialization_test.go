@@ -64,6 +64,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		ValueUse:            module.Typechecking.ValueUse,
 		ExprType:            module.EffectiveExprType,
 		ReferenceArgument:   module.Typechecking.ReferenceArgument,
+		SequenceCarrier:     module.Typechecking.SequenceCarrier,
 	})
 	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module

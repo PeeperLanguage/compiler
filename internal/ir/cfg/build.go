@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"compiler/internal/frontend/ast"
+	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/source"
 )
@@ -309,11 +310,15 @@ func finalizeGraph(fn *Graph) {
 		}
 	}
 	markReachable(fn.Entry, make(map[int]bool))
-	rebuildPredecessors(fn)
+	rebuildBlockTopology(fn)
 	finalizeSites(fn)
 }
 
 func finalizeSites(fn *Graph) {
+	if fn == nil {
+		return
+	}
+	fn.SiteEdges = graphcore.NewDirected(func(edge Edge) (SiteID, SiteID) { return edge.From, edge.To })
 	for _, block := range fn.Blocks {
 		if block == nil {
 			continue
@@ -339,8 +344,6 @@ func finalizeSites(fn *Graph) {
 		}
 		for index, site := range block.Sites {
 			site.ID = SiteID{Block: block.ID, Index: index}
-			site.Successors = nil
-			site.Predecessors = nil
 		}
 	}
 	for _, block := range fn.Blocks {
@@ -348,20 +351,20 @@ func finalizeSites(fn *Graph) {
 			continue
 		}
 		for index := 0; index+1 < len(block.Sites); index++ {
-			connectSites(block.Sites[index], block.Sites[index+1], EdgeNormal, 0)
+			connectSites(fn, block.Sites[index], block.Sites[index+1], EdgeNormal, 0)
 		}
 		last := block.Sites[len(block.Sites)-1]
 		switch term := block.Terminator.(type) {
 		case *Jump:
-			connectBlockSite(last, term.Target, EdgeNormal, 0)
+			connectBlockSite(fn, last, term.Target, EdgeNormal, 0)
 		case *Branch:
-			connectBlockSite(last, term.TrueTarget, EdgeTrue, 0)
-			connectBlockSite(last, term.FalseTarget, EdgeFalse, 0)
+			connectBlockSite(fn, last, term.TrueTarget, EdgeTrue, 0)
+			connectBlockSite(fn, last, term.FalseTarget, EdgeFalse, 0)
 		case *Return:
-			connectBlockSite(last, fn.Exit, EdgeReturn, 0)
+			connectBlockSite(fn, last, fn.Exit, EdgeReturn, 0)
 		case *SwitchVariant:
 			for _, target := range term.Targets {
-				connectBlockSite(last, target.Target, EdgeVariantCase, target.Case)
+				connectBlockSite(fn, last, target.Target, EdgeVariantCase, target.Case)
 			}
 		case nil:
 		default:
@@ -370,25 +373,18 @@ func finalizeSites(fn *Graph) {
 	}
 }
 
-func connectBlockSite(from *Site, target *Block, kind EdgeKind, caseIndex int) {
+func connectBlockSite(fn *Graph, from *Site, target *Block, kind EdgeKind, caseIndex int) {
 	if target == nil || len(target.Sites) == 0 {
 		return
 	}
-	connectSites(from, target.Sites[0], kind, caseIndex)
+	connectSites(fn, from, target.Sites[0], kind, caseIndex)
 }
 
-func connectSites(from, to *Site, kind EdgeKind, caseIndex int) {
-	if from == nil || to == nil {
+func connectSites(fn *Graph, from, to *Site, kind EdgeKind, caseIndex int) {
+	if fn == nil || fn.SiteEdges == nil || from == nil || to == nil {
 		return
 	}
-	for _, existing := range from.Successors {
-		if existing.To == to.ID && existing.Kind == kind && existing.Case == caseIndex {
-			return
-		}
-	}
-	edge := Edge{From: from.ID, To: to.ID, Kind: kind, Case: caseIndex}
-	from.Successors = append(from.Successors, edge)
-	to.Predecessors = append(to.Predecessors, edge)
+	fn.SiteEdges.AddEdge(Edge{From: from.ID, To: to.ID, Kind: kind, Case: caseIndex})
 }
 
 func markReachable(block *Block, seen map[int]bool) {
@@ -405,19 +401,18 @@ func markReachable(block *Block, seen map[int]bool) {
 	}
 }
 
-func rebuildPredecessors(fn *Graph) {
-	for _, block := range fn.Blocks {
-		if block != nil {
-			block.Predecessors = nil
-		}
+func rebuildBlockTopology(fn *Graph) {
+	if fn == nil {
+		return
 	}
+	fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })
 	for _, block := range fn.Blocks {
 		if block == nil || block.Terminator == nil {
 			continue
 		}
 		for _, successor := range block.Terminator.Successors() {
 			if successor != nil {
-				successor.Predecessors = append(successor.Predecessors, block)
+				fn.BlockEdges.AddEdge(BlockEdge{From: block.ID, To: successor.ID})
 			}
 		}
 	}

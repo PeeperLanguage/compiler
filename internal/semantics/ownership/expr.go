@@ -39,11 +39,11 @@ func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
 	return a.module.EffectiveExprType(expr.ID())
 }
 
-func (a *analyzer) partialVariantPayloadMove(expr ast.Expr) bool {
-	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
+func (a *analyzer) partialVariantPayloadMove(id ast.NodeID) bool {
+	if a == nil || a.module == nil || a.module.Flow == nil || id == 0 {
 		return false
 	}
-	payload, ok := a.module.Flow.Payloads[expr.ID()]
+	payload, ok := a.module.Flow.Payloads[id]
 	return ok && len(payload.Cases) > 0 && !payload.Direct
 }
 

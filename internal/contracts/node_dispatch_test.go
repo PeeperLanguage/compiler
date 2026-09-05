@@ -85,16 +85,8 @@ var declarationStatements = map[string]classification{
 	"BadDecl":       {ignore, "the parser never produces BadDecl; it is tolerated for synthetic trees"},
 }
 
-// applyStmt now owns only the policy a statement carries beyond evaluating its
-// expressions. A statement whose whole effect is evaluating something has
-// nothing left to do there: the published effects carry it.
-const evaluatedFromEffectsReason = "the condition or subject is evaluated from published effects, and the " +
-	"statement carries no ownership policy of its own"
-
 const (
-	decomposedByCFGReason = "blocks are decomposed by CFG construction and are never a site statement"
-	elsePositionReason    = "parseIfStmt produces only a block or else-if in else position; anything else is an internal invariant violation (the default panics)"
-	noConditionReason     = "carries no branch condition"
+	elsePositionReason = "parseIfStmt produces only a block or else-if in else position; anything else is an internal invariant violation (the default panics)"
 )
 
 // omissions returns the site's declared classifications including the shared
@@ -130,43 +122,10 @@ var statementSites = []dispatchSite{
 			"MatchStmt":    {reject, elsePositionReason},
 		},
 	},
-	// The remaining sites run per CFG site, where control flow is already
-	// decomposed into blocks and edges. They extract the expressions a statement
-	// evaluates at that site, so statements carrying no expression are inert.
-	{
-		file:              "semantics/ownership/ownership.go",
-		fn:                "applyStmt",
-		inertDeclarations: true,
-		omitted: map[string]classification{
-			"BlockStmt":    {ignore, decomposedByCFGReason},
-			"BadStmt":      {ignore, "recovery node carries no ownership effect"},
-			"BreakStmt":    {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
-			"ContinueStmt": {ignore, "transfer is a CFG edge, not a site-level ownership effect"},
-			"IfStmt":       {ignore, evaluatedFromEffectsReason},
-			"MatchStmt":    {ignore, evaluatedFromEffectsReason},
-		},
-	},
 	// The effect producer replaced definiteinit.checkReads as the site that reads
 	// meaning out of a statement. It is exhaustive: every kind has a case, so it
 	// declares no omissions, and a new kind fails here first.
 	{file: "semantics/effect/build.go", fn: "publishStmt"},
-	{
-		file:              "semantics/typechecker/flow.go",
-		fn:                "applyConditionEdge",
-		inertDeclarations: true,
-		omitted: map[string]classification{
-			"BlockStmt":    {ignore, noConditionReason},
-			"ExprStmt":     {ignore, noConditionReason},
-			"AssignStmt":   {ignore, noConditionReason},
-			"ReturnStmt":   {ignore, noConditionReason},
-			"BadStmt":      {ignore, noConditionReason},
-			"BreakStmt":    {ignore, noConditionReason},
-			"ContinueStmt": {ignore, noConditionReason},
-			"MatchStmt":    {ignore, "match narrowing uses case tests, not a true/false condition edge"},
-			"LetDecl":      {ignore, noConditionReason},
-			"ConstDecl":    {ignore, noConditionReason},
-		},
-	},
 }
 
 func internalDir(t *testing.T) string {

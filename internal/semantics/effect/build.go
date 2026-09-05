@@ -41,6 +41,10 @@ type BuildQueries struct {
 	// whether that reference is mutable. The borrow exists because of the
 	// parameter type rather than because the source wrote an ampersand.
 	ReferenceArgument func(ast.NodeID) (mutable bool, found bool)
+	// SequenceCarrier reports the hidden carrier a typed sequence loop keeps for
+	// the loop lifetime. Range loops return found=false. This is typechecker
+	// evidence; the effect producer must not rediscover iteration kind.
+	SequenceCarrier func(ast.NodeID) (carrier *symbols.Symbol, found bool)
 }
 
 // Build publishes the semantic effects of every reachable CFG site.
@@ -135,7 +139,7 @@ func (b *builder) buildSite(block *cfg.Block, site *cfg.Site) {
 	switch terminator := block.Terminator.(type) {
 	case *cfg.Branch:
 		if condition, ok := b.nodes[ast.NodeID(terminator.ConditionID)].(ast.Expr); ok {
-			b.value(site.ID, condition, typeinfo.UseRead)
+			b.value(site.ID, b.queries.Scopes[ast.NodeID(site.ScopeID)], condition, typeinfo.UseRead)
 		}
 	case *cfg.SwitchVariant:
 		// Arm payload bindings are published in the leading pass above; the
@@ -156,7 +160,7 @@ func (b *builder) buildMatchArms(site *cfg.Site, terminator *cfg.SwitchVariant) 
 	if b.queries.ArmBindings == nil {
 		return
 	}
-	for _, edge := range site.Successors {
+	for _, edge := range b.graph.SiteEdges.OutEdges(site.ID) {
 		if edge.Kind != cfg.EdgeVariantCase {
 			continue
 		}
@@ -181,27 +185,37 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 	case *ast.ConstDecl:
 		b.buildBinding(site, scope, node, node.Value)
 	case *ast.AssignStmt:
-		b.value(site, node.Value, typeinfo.UseMove)
-		b.writeTarget(site, scope, node.Target)
+		b.value(site, scope, node.Value, typeinfo.UseMove)
+		b.writeTarget(site, scope, node.Target, node.ID(), node.Value)
 	case *ast.ExprStmt:
-		b.value(site, node.Expr, typeinfo.UseRead)
+		b.value(site, scope, node.Expr, typeinfo.UseRead)
 		b.emit(site, Discard{
-			Place:    b.placeOrTemporary(node.Expr),
+			Place:    b.placeOrTemporary(scope, node.Expr),
 			Node:     node.Expr.ID(),
 			Location: ast.LocOf(node.Expr),
 		})
 	case *ast.ReturnStmt:
-		b.value(site, node.Value, typeinfo.UseMove)
+		b.value(site, scope, node.Value, typeinfo.UseMove)
 	case *ast.MatchStmt:
 		// A match reaches this producer at its terminator site, and at a plain
 		// statement site when semantic evidence was too incomplete for CFG to
 		// decompose it. Publishing the subject here covers both.
-		b.value(site, node.Subject, typeinfo.UseRead)
+		b.value(site, scope, node.Subject, typeinfo.UseRead)
 	case *ast.ForStmt:
 		// The condition is published from the terminator, which names it
 		// directly. The iterated sequence is evaluated by the loop itself and
-		// belongs here.
-		b.value(site, node.Iterable, typeinfo.UseRead)
+		// belongs here. A typed sequence loop additionally holds a shared access
+		// to its iterable until the loop exit; publish that lifetime fact here
+		// instead of making ownership recognize ForStmt.
+		b.value(site, scope, node.Iterable, typeinfo.UseRead)
+		if node.Iterable != nil && b.queries.SequenceCarrier != nil {
+			if carrier, found := b.queries.SequenceCarrier(node.ID()); found && carrier != nil {
+				b.emit(site, Iterate{
+					Loop: node.ID(), Place: b.placeOrTemporary(scope, node.Iterable),
+					Node: node.Iterable.ID(), Carrier: carrier, Location: ast.LocOf(node.Iterable),
+				})
+			}
+		}
 	case *ast.IfStmt:
 		// A branch condition is published from the terminator, which names it
 		// directly, so a site carries exactly the reads that happen at it.
@@ -224,7 +238,7 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 // buildBinding publishes a declaration's initializer reads before the define
 // they initialize, so `let x = x` reads an outer binding rather than itself.
 func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.Stmt, value ast.Expr) {
-	b.value(site, value, typeinfo.UseMove)
+	b.value(site, scope, value, typeinfo.UseMove)
 	if scope == nil {
 		return
 	}
@@ -232,7 +246,11 @@ func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.S
 	if !found || sym == nil {
 		return
 	}
-	b.emit(site, Define{Symbol: sym, Node: decl.ID(), Initialized: value != nil})
+	valueID := ast.NodeID(0)
+	if value != nil {
+		valueID = value.ID()
+	}
+	b.emit(site, Define{Symbol: sym, Node: decl.ID(), Value: valueID, Initialized: value != nil})
 }
 
 // value publishes what one expression does to the bindings it names.
@@ -244,7 +262,7 @@ func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.S
 //
 // This is the expression dispatch site for published effects. A new expression
 // kind must be handled here or declared inert in internal/contracts.
-func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
+func (b *builder) value(site cfg.SiteID, scope *symbols.Scope, expr ast.Expr, kind typeinfo.UseKind) {
 	switch node := expr.(type) {
 	case nil:
 		return
@@ -253,14 +271,16 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 			b.emit(site, Use{Place: Place{Root: sym}, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
 		}
 	case *ast.AddressExpr:
-		b.borrow(site, node, node.Expr, node.Mode == ast.AddressMutable, node.Mode == ast.AddressRaw)
+		b.borrow(site, scope, node, node.Expr, node.Mode == ast.AddressMutable, node.Mode == ast.AddressRaw)
 	case *ast.SelectorExpr:
 		// A field of a place is itself a place, so the use lands on the
-		// projection rather than on the whole aggregate. A consumer that only
-		// cares which binding was touched still reads the root.
-		b.projection(site, node, node.Expr, place.OriginProjection{
-			Kind: place.OriginField, Field: fieldName(node),
-		}, kind)
+		// projection rather than on the whole aggregate. Structural projection
+		// shape comes from place.Project, the canonical place grammar.
+		projection, ok := place.Project(node)
+		if !ok {
+			return
+		}
+		b.projection(site, scope, node, projection.Base, projection.Step, kind)
 	case *ast.IndexExpr:
 		// Slicing does not read an element out; it borrows a run of the
 		// sequence, mutably when the slice itself is a mutable reference.
@@ -268,25 +288,29 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 		// rather than an empty range.
 		_, ranged := node.Index.(*ast.RangeExpr)
 		if ranged || node.Index == nil {
-			b.value(site, node.Index, typeinfo.UseRead)
-			b.borrow(site, node, node.Expr, b.mutableReference(node.ID()), false)
+			b.value(site, scope, node.Index, typeinfo.UseRead)
+			b.borrow(site, scope, node, node.Expr, b.mutableReference(node.ID()), false)
 			return
 		}
-		b.projection(site, node, node.Expr, place.OriginProjection{Kind: place.OriginIndex}, kind)
+		projection, ok := place.Project(node)
+		if !ok {
+			return
+		}
+		b.projection(site, scope, node, projection.Base, projection.Step, kind)
 		// The index is a separate value, not part of the place.
-		b.value(site, node.Index, typeinfo.UseRead)
+		b.value(site, scope, projection.Index, typeinfo.UseRead)
 	case *ast.RangeExpr:
-		b.value(site, node.Start, typeinfo.UseRead)
-		b.value(site, node.End, typeinfo.UseRead)
+		b.value(site, scope, node.Start, typeinfo.UseRead)
+		b.value(site, scope, node.End, typeinfo.UseRead)
 	case *ast.StructLit:
 		for _, field := range node.Fields {
-			b.value(site, field.Value, typeinfo.UseMove)
+			b.value(site, scope, field.Value, typeinfo.UseMove)
 		}
 	case *ast.VariantLit:
-		b.value(site, node.Payload, typeinfo.UseMove)
+		b.value(site, scope, node.Payload, typeinfo.UseMove)
 	case *ast.ArrayLit:
 		for _, element := range node.Values {
-			b.value(site, element, typeinfo.UseMove)
+			b.value(site, scope, element, typeinfo.UseMove)
 		}
 	case *ast.CallExpr:
 		b.emit(site, CallBegin{Node: node.ID(), Location: ast.LocOf(node)})
@@ -294,37 +318,37 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
 			// A method callee names a method, not storage. The receiver is the
 			// value the call uses, and it is used the way the receiver
 			// parameter demands, borrow included, exactly like any argument.
-			b.argument(site, selector.Expr)
+			b.argument(site, scope, selector.Expr)
 		} else {
-			b.value(site, node.Callee, typeinfo.UseRead)
+			b.value(site, scope, node.Callee, typeinfo.UseRead)
 		}
 		arguments := node.Args
 		if b.queries.CallArguments != nil {
 			arguments = b.queries.CallArguments(node)
 		}
 		for _, argument := range arguments {
-			b.argument(site, argument)
+			b.argument(site, scope, argument)
 		}
 		b.emit(site, CallEnd{Node: node.ID()})
 	case *ast.FreeExpr:
-		b.value(site, node.Expr, typeinfo.UseMove)
+		b.value(site, scope, node.Expr, typeinfo.UseMove)
 	case *ast.PrintExpr:
-		b.value(site, node.Expr, typeinfo.UseRead)
+		b.value(site, scope, node.Expr, typeinfo.UseRead)
 	case *ast.UnaryExpr:
-		b.value(site, node.Expr, typeinfo.UseRead)
+		b.value(site, scope, node.Expr, typeinfo.UseRead)
 	case *ast.BinaryExpr:
 		if b.queries.StringConcatenation != nil && b.queries.StringConcatenation(node.ID()) {
 			// Concatenation consumes the left operand into the result.
-			b.value(site, node.Left, typeinfo.UseMove)
-			b.value(site, node.Right, typeinfo.UseRead)
+			b.value(site, scope, node.Left, typeinfo.UseMove)
+			b.value(site, scope, node.Right, typeinfo.UseRead)
 			return
 		}
-		b.value(site, node.Left, typeinfo.UseRead)
-		b.value(site, node.Right, typeinfo.UseRead)
+		b.value(site, scope, node.Left, typeinfo.UseRead)
+		b.value(site, scope, node.Right, typeinfo.UseRead)
 	case *ast.IsExpr:
-		b.value(site, node.Value, typeinfo.UseRead)
+		b.value(site, scope, node.Value, typeinfo.UseRead)
 	case *ast.AsExpr:
-		b.value(site, node.Expr, typeinfo.UseMove)
+		b.value(site, scope, node.Expr, typeinfo.UseMove)
 	case *ast.ScopeResolution, *ast.NumberLit, *ast.StringLit, *ast.ByteLit,
 		*ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.BadExpr:
 		// These name no binding whose value is used.
@@ -346,63 +370,38 @@ func (b *builder) argumentKind(argument ast.Expr) typeinfo.UseKind {
 	return typeinfo.UseRead
 }
 
-// placeOf resolves an expression to the storage it names, following the same
-// shapes the canonical place walk recognises. It reports false for anything
-// that produces a value without naming storage, such as a call result.
-func (b *builder) placeOf(expr ast.Expr) (Place, bool) {
-	switch node := expr.(type) {
-	case *ast.Ident:
-		sym := b.queries.Symbols[node.ID()]
-		if sym == nil {
-			return Place{}, false
-		}
-		return Place{Root: sym}, true
-	case *ast.SelectorExpr:
-		if node.Name == nil {
-			return Place{}, false
-		}
-		return b.project(node.Expr, place.OriginProjection{
-			Kind:  place.OriginField,
-			Field: node.Name.Name,
-		})
-	case *ast.IndexExpr:
-		return b.project(node.Expr, place.OriginProjection{Kind: place.OriginIndex})
-	default:
-		return Place{}, false
-	}
-}
-
-func (b *builder) project(base ast.Expr, step place.OriginProjection) (Place, bool) {
-	rooted, ok := b.placeOf(base)
+// placeOf resolves a syntactic place through the canonical place structure.
+// The place package owns selector/index decomposition; this producer only maps
+// the root identifier to its already-resolved symbol.
+func (b *builder) placeOf(scope *symbols.Scope, expr ast.Expr) (Place, bool) {
+	root, projections, ok := place.Decompose(expr)
 	if !ok {
 		return Place{}, false
 	}
-	// Copy rather than append in place: sibling projections off one base must
-	// not share backing storage.
-	projections := make([]place.OriginProjection, 0, len(rooted.Projections)+1)
-	projections = append(projections, rooted.Projections...)
-	projections = append(projections, step)
-	rooted.Projections = projections
-	return rooted, true
-}
-
-func fieldName(selector *ast.SelectorExpr) string {
-	if selector == nil || selector.Name == nil {
-		return ""
+	ident, ok := root.(*ast.Ident)
+	if !ok || ident == nil {
+		return Place{}, false
 	}
-	return selector.Name.Name
+	sym := b.queries.Symbols[ident.ID()]
+	if sym == nil && scope != nil {
+		sym, _ = scope.Lookup(ident.Name)
+	}
+	if sym == nil {
+		return Place{}, false
+	}
+	return Place{Root: sym, Projections: append([]place.OriginProjection(nil), projections...)}, true
 }
 
 // projection publishes a use of one projected place. When the base names
 // storage the use roots at that binding; otherwise the base is a temporary,
 // which still has its own effects and is walked before the projection is
 // published.
-func (b *builder) projection(site cfg.SiteID, whole, base ast.Expr, step place.OriginProjection, kind typeinfo.UseKind) {
-	if rooted, ok := b.project(base, step); ok {
+func (b *builder) projection(site cfg.SiteID, scope *symbols.Scope, whole, base ast.Expr, step place.OriginProjection, kind typeinfo.UseKind) {
+	if rooted, ok := b.placeOf(scope, whole); ok {
 		b.emit(site, Use{Place: rooted, Node: whole.ID(), Location: ast.LocOf(whole), Kind: kind})
 		return
 	}
-	b.value(site, base, typeinfo.UseRead)
+	b.value(site, scope, base, typeinfo.UseRead)
 	b.emit(site, Use{
 		Place:    Place{Temporary: base.ID(), Projections: []place.OriginProjection{step}},
 		Node:     whole.ID(),
@@ -413,11 +412,11 @@ func (b *builder) projection(site cfg.SiteID, whole, base ast.Expr, step place.O
 
 // placeOrTemporary names what an expression denotes: the binding it reaches, or
 // the expression itself when it produces a value that lives nowhere.
-func (b *builder) placeOrTemporary(expr ast.Expr) Place {
+func (b *builder) placeOrTemporary(scope *symbols.Scope, expr ast.Expr) Place {
 	if expr == nil {
 		return Place{}
 	}
-	if rooted, ok := b.placeOf(expr); ok {
+	if rooted, ok := b.placeOf(scope, expr); ok {
 		return rooted
 	}
 	return Place{Temporary: expr.ID()}
@@ -428,37 +427,49 @@ func (b *builder) placeOrTemporary(expr ast.Expr) Place {
 // A projection target still evaluates the values inside it — an index is read
 // to reach the element it selects — so those are published before the write
 // itself.
-func (b *builder) writeTarget(site cfg.SiteID, scope *symbols.Scope, target ast.Expr) {
-	switch node := target.(type) {
-	case *ast.Ident:
-		sym, found := scope.Lookup(node.Name)
-		if !found || sym == nil {
+func (b *builder) writeTarget(site cfg.SiteID, scope *symbols.Scope, target ast.Expr, owner ast.NodeID, value ast.Expr) {
+	valueID := ast.NodeID(0)
+	if value != nil {
+		valueID = value.ID()
+	}
+	if ident, ok := target.(*ast.Ident); ok {
+		if ident == nil || scope == nil {
 			return
 		}
-		b.emit(site, Write{Place: Place{Root: sym}, Node: node.ID(), Location: ast.LocOf(node)})
-	case *ast.SelectorExpr:
-		b.writeProjection(site, node, node.Expr, place.OriginProjection{
-			Kind: place.OriginField, Field: fieldName(node),
-		})
-	case *ast.IndexExpr:
-		b.value(site, node.Index, typeinfo.UseRead)
-		b.writeProjection(site, node, node.Expr, place.OriginProjection{Kind: place.OriginIndex})
-	default:
-		// Anything else is not a place; the typechecker rejects it as a target,
-		// and its own effects are all it contributes here.
-		b.value(site, target, typeinfo.UseRead)
-	}
-}
-
-func (b *builder) writeProjection(site cfg.SiteID, whole, base ast.Expr, step place.OriginProjection) {
-	if rooted, ok := b.project(base, step); ok {
-		b.emit(site, Write{Place: rooted, Node: whole.ID(), Location: ast.LocOf(whole)})
+		sym := b.queries.Symbols[ident.ID()]
+		if sym == nil {
+			sym, _ = scope.Lookup(ident.Name)
+		}
+		if sym != nil {
+			b.emit(site, Write{Place: Place{Root: sym}, Node: ident.ID(), Owner: owner, Value: valueID, Location: ast.LocOf(ident)})
+		}
 		return
 	}
-	b.value(site, base, typeinfo.UseRead)
+
+	projection, projected := place.Project(target)
+	if !projected {
+		// Anything else is not a place; the typechecker rejects it as a target,
+		// and its own effects are all it contributes here.
+		b.value(site, scope, target, typeinfo.UseRead)
+		return
+	}
+	if projection.Index != nil {
+		b.value(site, scope, projection.Index, typeinfo.UseRead)
+	}
+	b.writeProjection(site, scope, target, projection.Base, projection.Step, owner, valueID)
+}
+
+func (b *builder) writeProjection(site cfg.SiteID, scope *symbols.Scope, whole, base ast.Expr, step place.OriginProjection, owner, value ast.NodeID) {
+	if rooted, ok := b.placeOf(scope, whole); ok {
+		b.emit(site, Write{Place: rooted, Node: whole.ID(), Owner: owner, Value: value, Location: ast.LocOf(whole)})
+		return
+	}
+	b.value(site, scope, base, typeinfo.UseRead)
 	b.emit(site, Write{
 		Place:    Place{Temporary: base.ID(), Projections: []place.OriginProjection{step}},
 		Node:     whole.ID(),
+		Owner:    owner,
+		Value:    value,
 		Location: ast.LocOf(whole),
 	})
 }
@@ -478,7 +489,7 @@ func (b *builder) mutableReference(id ast.NodeID) bool {
 // A reference parameter borrows, whether or not the source wrote an ampersand,
 // and that borrow is the argument's whole effect: publishing a read beside it
 // would charge the same place twice. Everything else is an ordinary value use.
-func (b *builder) argument(site cfg.SiteID, argument ast.Expr) {
+func (b *builder) argument(site cfg.SiteID, scope *symbols.Scope, argument ast.Expr) {
 	if argument == nil {
 		return
 	}
@@ -487,7 +498,7 @@ func (b *builder) argument(site cfg.SiteID, argument ast.Expr) {
 		mutable, borrows = b.queries.ReferenceArgument(argument.ID())
 	}
 	if !borrows {
-		b.value(site, argument, b.argumentKind(argument))
+		b.value(site, scope, argument, b.argumentKind(argument))
 		return
 	}
 	operand := argument
@@ -495,12 +506,13 @@ func (b *builder) argument(site cfg.SiteID, argument ast.Expr) {
 		operand = address.Expr
 	}
 	// Values evaluated to reach the place, such as an index, still happen.
-	if index, indexed := operand.(*ast.IndexExpr); indexed {
-		b.value(site, index.Index, typeinfo.UseRead)
+	if projection, projected := place.Project(operand); projected && projection.Index != nil {
+		b.value(site, scope, projection.Index, typeinfo.UseRead)
 	}
 	b.emit(site, Borrow{
-		Place:    b.placeOrTemporary(operand),
+		Place:    b.placeOrTemporary(scope, operand),
 		Node:     argument.ID(),
+		Operand:  operand.ID(),
 		Location: ast.LocOf(argument),
 		Mutable:  mutable,
 		Argument: true,
@@ -509,13 +521,14 @@ func (b *builder) argument(site cfg.SiteID, argument ast.Expr) {
 
 // borrow publishes a reference taken to a place. Values inside the operand that
 // are evaluated to reach it, such as an index, are published first.
-func (b *builder) borrow(site cfg.SiteID, whole, operand ast.Expr, mutable, raw bool) {
-	if index, indexed := operand.(*ast.IndexExpr); indexed {
-		b.value(site, index.Index, typeinfo.UseRead)
+func (b *builder) borrow(site cfg.SiteID, scope *symbols.Scope, whole, operand ast.Expr, mutable, raw bool) {
+	if projection, projected := place.Project(operand); projected && projection.Index != nil {
+		b.value(site, scope, projection.Index, typeinfo.UseRead)
 	}
 	b.emit(site, Borrow{
-		Place:    b.placeOrTemporary(operand),
+		Place:    b.placeOrTemporary(scope, operand),
 		Node:     whole.ID(),
+		Operand:  operand.ID(),
 		Location: ast.LocOf(whole),
 		Mutable:  mutable,
 		Raw:      raw,

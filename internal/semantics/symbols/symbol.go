@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/moduleid"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
 
@@ -45,16 +46,11 @@ const (
 	SymbolUnknown Kind = "unknown"
 )
 
-type Type interface {
-	TypeNode()
-	Text() string
-}
-
 type Symbol struct {
 	ID              SymbolID
 	Name            string
 	Kind            Kind
-	Type            Type
+	Type            typeinfo.Type
 	IsPub           bool
 	Mutable         bool
 	IsReceiver      bool
@@ -80,7 +76,7 @@ func New(name string, kind Kind, node ast.Node, location *source.Location) *Symb
 	}
 }
 
-func (s *Symbol) BindType(typ Type) bool {
+func (s *Symbol) BindType(typ typeinfo.Type) bool {
 	if s == nil || typ == nil {
 		return false
 	}
@@ -91,7 +87,7 @@ func (s *Symbol) BindType(typ Type) bool {
 // SymbolType returns the semantic type stored on sym, or (nil, false) if sym
 // carries no type.
 // This is the canonical single-source-of-truth lookup shared across all passes.
-func GetSymbolType(sym *Symbol) (Type, bool) {
+func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 	if sym == nil || sym.Type == nil {
 		return nil, false
 	}

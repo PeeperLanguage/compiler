@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	graphcore "compiler/internal/graph"
 	"compiler/internal/source"
 )
 
@@ -96,16 +97,16 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		{
 			name: "a predecessor records a transfer that does not exist",
 			damage: func(fn *Graph) {
-				fn.Exit.Predecessors = append(fn.Exit.Predecessors, fn.Blocks[2])
+				fn.BlockEdges.AddEdge(BlockEdge{From: fn.Blocks[2].ID, To: fn.Exit.ID})
 			},
-			want: "as a predecessor, which does not transfer to it",
+			want: "but the terminator does not",
 		},
 		{
 			name: "a transfer goes unrecorded by its target",
 			damage: func(fn *Graph) {
-				fn.Exit.Predecessors = nil
+				fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })
 			},
-			want: "which does not list it as a predecessor",
+			want: "absent from block topology",
 		},
 		{
 			name: "a site carries the wrong identity",
@@ -132,16 +133,20 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		{
 			name: "a site edge points at no site",
 			damage: func(fn *Graph) {
-				last := fn.Entry.Sites[len(fn.Entry.Sites)-1]
-				last.Successors[0].To = SiteID{Block: 42, Index: 0}
+				rewriteFirstSiteEdge(fn, func(edge Edge) Edge {
+					edge.To = SiteID{Block: 42, Index: 0}
+					return edge
+				})
 			},
 			want: "which is not a site",
 		},
 		{
 			name: "a branch leaves on a plain sequence edge",
 			damage: func(fn *Graph) {
-				last := fn.Entry.Sites[len(fn.Entry.Sites)-1]
-				last.Successors[0].Kind = EdgeNormal
+				rewriteFirstSiteEdge(fn, func(edge Edge) Edge {
+					edge.Kind = EdgeNormal
+					return edge
+				})
 			},
 			want: "a branch leaves only on a true or false edge",
 		},
@@ -176,7 +181,7 @@ func TestValidateReportsDefectsDeterministically(t *testing.T) {
 	for attempt := 0; attempt < 8; attempt++ {
 		module := branchingModule(t)
 		fn := module.Functions[0]
-		fn.Exit.Predecessors = nil
+		fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })
 		for _, block := range fn.Blocks {
 			block.Reachable = !block.Reachable
 		}
@@ -192,6 +197,23 @@ func TestValidateReportsDefectsDeterministically(t *testing.T) {
 			t.Fatalf("report %d = %q, want %q", attempt, err.Error(), first)
 		}
 	}
+}
+
+func rewriteFirstSiteEdge(fn *Graph, rewrite func(Edge) Edge) {
+	replacement := graphcore.NewDirected(func(edge Edge) (SiteID, SiteID) { return edge.From, edge.To })
+	rewritten := false
+	for _, block := range fn.Blocks {
+		for _, site := range block.Sites {
+			for _, edge := range fn.SiteEdges.OutEdges(site.ID) {
+				if !rewritten {
+					edge = rewrite(edge)
+					rewritten = true
+				}
+				replacement.AddEdge(edge)
+			}
+		}
+	}
+	fn.SiteEdges = replacement
 }
 
 func TestValidateAcceptsAnEmptyModule(t *testing.T) {

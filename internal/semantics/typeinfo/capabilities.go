@@ -119,7 +119,12 @@ func IsSizedType(t Type) bool {
 			}
 			visiting[defined] = true
 			defer delete(visiting, defined)
-			return check(defined.Underlying)
+			result := false
+			ForEachChild(defined, func(child TypeChild) bool {
+				result = check(child.Type)
+				return false
+			})
+			return result
 		}
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
@@ -133,7 +138,15 @@ func IsSizedType(t Type) bool {
 		case *RawPtrType:
 			return typ != nil
 		case *OptionalType:
-			return typ != nil && check(typ.Inner)
+			if typ == nil {
+				return false
+			}
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type)
+				return false
+			})
+			return result
 		case *ArrayType:
 			if typ == nil || typ.Elem == nil {
 				return false
@@ -141,37 +154,42 @@ func IsSizedType(t Type) bool {
 			if typ.Shape == ArraySlice {
 				return false
 			}
-			return check(typ.Elem)
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type)
+				return false
+			})
+			return result
 		case *StructType:
 			if typ == nil {
 				return false
 			}
-			for _, field := range typ.Fields {
-				if !check(field.Type) {
-					return false
-				}
-			}
-			return true
+			allSized := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allSized = check(child.Type)
+				return allSized
+			})
+			return allSized
 		case *EnumType:
 			if typ == nil {
 				return false
 			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload) {
-					return false
-				}
-			}
-			return true
+			allSized := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allSized = check(child.Type)
+				return allSized
+			})
+			return allSized
 		case *FuncType:
 			if typ == nil {
 				return false
 			}
-			for _, param := range typ.Params {
-				if !check(param) {
-					return false
-				}
-			}
-			return typ.Return == nil || check(typ.Return)
+			allSized := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allSized = check(child.Type)
+				return allSized
+			})
+			return allSized
 		default:
 			return false
 		}
@@ -216,19 +234,35 @@ func IsLowerableType(t Type) bool {
 			}
 			return check(typ.Target, true)
 		case *OptionalType:
-			return typ != nil && typ.Inner != nil && check(typ.Inner, throughIndirection)
+			if typ == nil || typ.Inner == nil {
+				return false
+			}
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type, throughIndirection)
+				return false
+			})
+			return result
 		case *ArrayType:
-			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem, throughIndirection)
+			if typ == nil || typ.Shape == ArraySlice || typ.Shape != ArrayOwner && typ.Len == "" || typ.Elem == nil {
+				return false
+			}
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type, throughIndirection)
+				return false
+			})
+			return result
 		case *StructType:
 			if typ == nil {
 				return false
 			}
-			for _, field := range typ.Fields {
-				if !check(field.Type, throughIndirection) {
-					return false
-				}
-			}
-			return true
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allLowerable = check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		case *InterfaceType:
 			if typ == nil {
 				return false
@@ -237,39 +271,36 @@ func IsLowerableType(t Type) bool {
 				if len(method.Params) == 0 {
 					return false
 				}
-				for i, param := range method.Params {
-					if i == 0 {
-						continue
-					}
-					if ContainsAbstractSelf(param.Type) || !check(param.Type, throughIndirection) {
-						return false
-					}
-				}
-				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return, throughIndirection)) {
-					return false
-				}
 			}
-			return true
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				if child.Relation == TypeChildMethodReceiver {
+					return true
+				}
+				allLowerable = !ContainsAbstractSelf(child.Type) && check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		case *FuncType:
 			if typ == nil {
 				return false
 			}
-			for _, param := range typ.Params {
-				if !check(param, throughIndirection) {
-					return false
-				}
-			}
-			return typ.Return == nil || check(typ.Return, throughIndirection)
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allLowerable = check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		case *EnumType:
 			if typ == nil {
 				return false
 			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload, throughIndirection) {
-					return false
-				}
-			}
-			return true
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allLowerable = check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		default:
 			return false
 		}

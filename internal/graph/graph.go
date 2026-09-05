@@ -1,26 +1,27 @@
 package graph
 
-import (
-	"slices"
-	"sync"
-)
+import "sync"
 
 type NodeID string
 
 type EdgeKind string
 
+type edge struct {
+	from NodeID
+	to   NodeID
+	kind EdgeKind
+}
+
 type Graph struct {
 	mu       sync.RWMutex
 	edgeKind EdgeKind
-	out      map[NodeID]map[EdgeKind]map[NodeID]struct{}
-	in       map[NodeID]map[EdgeKind]map[NodeID]struct{}
+	directed *Directed[NodeID, edge]
 }
 
 func New(edgeKind EdgeKind) *Graph {
 	return &Graph{
 		edgeKind: edgeKind,
-		out:      make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
-		in:       make(map[NodeID]map[EdgeKind]map[NodeID]struct{}),
+		directed: NewDirected(func(edge edge) (NodeID, NodeID) { return edge.from, edge.to }),
 	}
 }
 
@@ -37,8 +38,7 @@ func (g *Graph) AddEdge(from, to NodeID, kinds ...EdgeKind) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.addEdgeLocked(g.out, from, kind, to)
-	g.addEdgeLocked(g.in, to, kind, from)
+	g.directed.AddEdge(edge{from: from, to: to, kind: kind})
 }
 
 func (g *Graph) Successors(id NodeID, kinds ...EdgeKind) []NodeID {
@@ -47,7 +47,7 @@ func (g *Graph) Successors(id NodeID, kinds ...EdgeKind) []NodeID {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return successorSnapshot(g.out[id], kindSet(kinds, g.edgeKind))
+	return g.directed.Successors(id, g.edgeFilter(kinds))
 }
 
 func (g *Graph) Predecessors(id NodeID, kinds ...EdgeKind) []NodeID {
@@ -56,7 +56,7 @@ func (g *Graph) Predecessors(id NodeID, kinds ...EdgeKind) []NodeID {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return successorSnapshot(g.in[id], kindSet(kinds, g.edgeKind))
+	return g.directed.Predecessors(id, g.edgeFilter(kinds))
 }
 
 func (g *Graph) OutDegree(id NodeID, kinds ...EdgeKind) int {
@@ -65,7 +65,7 @@ func (g *Graph) OutDegree(id NodeID, kinds ...EdgeKind) int {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return degree(g.out[id], kindSet(kinds, g.edgeKind))
+	return g.directed.OutDegree(id, g.edgeFilter(kinds))
 }
 
 func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
@@ -74,7 +74,7 @@ func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return degree(g.in[id], kindSet(kinds, g.edgeKind))
+	return g.directed.InDegree(id, g.edgeFilter(kinds))
 }
 
 func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID) {
@@ -83,57 +83,7 @@ func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID)
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-
-	index := make(map[NodeID]struct{}, len(ids))
-	for _, id := range ids {
-		if id != "" {
-			index[id] = struct{}{}
-		}
-	}
-	if len(index) == 0 {
-		return nil, nil
-	}
-
-	const (
-		visitNone = iota
-		visitTemp
-		visitDone
-	)
-
-	state := make(map[NodeID]uint8, len(index))
-	order := make([]NodeID, 0, len(index))
-	stack := make([]NodeID, 0, len(index))
-	cycles := make([][]NodeID, 0)
-	allowedKinds := kindSet(kinds, g.edgeKind)
-
-	var visit func(NodeID)
-	visit = func(id NodeID) {
-		switch state[id] {
-		case visitTemp:
-			cycles = append(cycles, extractCycle(stack, id))
-			return
-		case visitDone:
-			return
-		}
-		state[id] = visitTemp
-		stack = append(stack, id)
-		for _, next := range successorSnapshot(g.out[id], allowedKinds) {
-			if _, ok := index[next]; ok {
-				visit(next)
-			}
-		}
-		stack = stack[:len(stack)-1]
-		state[id] = visitDone
-		order = append(order, id)
-	}
-
-	for _, id := range ids {
-		if id != "" {
-			visit(id)
-		}
-	}
-
-	return order, cycles
+	return g.directed.TopoSort(ids, g.edgeFilter(kinds))
 }
 
 func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]NodeID {
@@ -142,64 +92,18 @@ func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]N
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-
-	index := make(map[NodeID]struct{}, len(ids))
-	for _, id := range ids {
-		if id != "" {
-			index[id] = struct{}{}
-		}
-	}
-	if len(index) == 0 {
-		return nil
-	}
-
-	allowedKinds := kindSet(kinds, g.edgeKind)
-	visited := make(map[NodeID]struct{}, len(index))
-	components := make([][]NodeID, 0)
-	for _, start := range ids {
-		if start == "" {
-			continue
-		}
-		if _, ok := visited[start]; ok {
-			continue
-		}
-		queue := []NodeID{start}
-		visited[start] = struct{}{}
-		component := make([]NodeID, 0)
-		for len(queue) > 0 {
-			current := queue[0]
-			queue = queue[1:]
-			component = append(component, current)
-			neighbors := successorSnapshot(g.out[current], allowedKinds)
-			neighbors = append(neighbors, successorSnapshot(g.in[current], allowedKinds)...)
-			for _, next := range neighbors {
-				if _, ok := index[next]; !ok {
-					continue
-				}
-				if _, ok := visited[next]; ok {
-					continue
-				}
-				visited[next] = struct{}{}
-				queue = append(queue, next)
-			}
-		}
-		components = append(components, component)
-	}
-	return components
+	return g.directed.WeaklyConnectedComponents(ids, g.edgeFilter(kinds))
 }
 
-func (g *Graph) addEdgeLocked(index map[NodeID]map[EdgeKind]map[NodeID]struct{}, from NodeID, kind EdgeKind, to NodeID) {
-	edgesByKind, ok := index[from]
-	if !ok {
-		edgesByKind = make(map[EdgeKind]map[NodeID]struct{})
-		index[from] = edgesByKind
+func (g *Graph) edgeFilter(kinds []EdgeKind) func(edge) bool {
+	allowed := kindSet(kinds, g.edgeKind)
+	if len(allowed) == 0 {
+		return nil
 	}
-	edges, ok := edgesByKind[kind]
-	if !ok {
-		edges = make(map[NodeID]struct{})
-		edgesByKind[kind] = edges
+	return func(candidate edge) bool {
+		_, ok := allowed[candidate.kind]
+		return ok
 	}
-	edges[to] = struct{}{}
 }
 
 func kindSet(kinds []EdgeKind, defaultKind EdgeKind) map[EdgeKind]struct{} {
@@ -215,53 +119,5 @@ func kindSet(kinds []EdgeKind, defaultKind EdgeKind) map[EdgeKind]struct{} {
 			allowed[kind] = struct{}{}
 		}
 	}
-	if len(allowed) == 0 {
-		return nil
-	}
 	return allowed
-}
-
-func successorSnapshot(edgesByKind map[EdgeKind]map[NodeID]struct{}, allowed map[EdgeKind]struct{}) []NodeID {
-	if len(edgesByKind) == 0 {
-		return nil
-	}
-	result := make([]NodeID, 0)
-	for kind, edges := range edgesByKind {
-		if len(allowed) > 0 {
-			if _, ok := allowed[kind]; !ok {
-				continue
-			}
-		}
-		for id := range edges {
-			result = append(result, id)
-		}
-	}
-	return result
-}
-
-func degree(edgesByKind map[EdgeKind]map[NodeID]struct{}, allowed map[EdgeKind]struct{}) int {
-	if len(edgesByKind) == 0 {
-		return 0
-	}
-	total := 0
-	for kind, edges := range edgesByKind {
-		if len(allowed) > 0 {
-			if _, ok := allowed[kind]; !ok {
-				continue
-			}
-		}
-		total += len(edges)
-	}
-	return total
-}
-
-func extractCycle(stack []NodeID, target NodeID) []NodeID {
-	for i := range slices.Backward(stack) {
-		if stack[i] == target {
-			cycle := append([]NodeID{}, stack[i:]...)
-			cycle = append(cycle, target)
-			return cycle
-		}
-	}
-	return []NodeID{target}
 }

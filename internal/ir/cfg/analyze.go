@@ -131,7 +131,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 			}
 			continue
 		}
-		queue := append([]*Block(nil), block.Predecessors...)
+		queue := predecessorBlocks(fn, block)
 		traceSeen := make(map[*Block]bool)
 		for len(queue) > 0 {
 			current := queue[0]
@@ -147,11 +147,25 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 				}
 				continue
 			}
-			queue = append(queue, current.Predecessors...)
+			queue = append(queue, predecessorBlocks(fn, current)...)
 		}
 	}
 	sortMissingBranches(found)
 	return found
+}
+
+func predecessorBlocks(fn *Graph, block *Block) []*Block {
+	if fn == nil || fn.BlockEdges == nil || block == nil {
+		return nil
+	}
+	ids := fn.BlockEdges.Predecessors(block.ID, nil)
+	blocks := make([]*Block, 0, len(ids))
+	for _, id := range ids {
+		if id >= 0 && id < len(fn.Blocks) {
+			blocks = append(blocks, fn.Blocks[id])
+		}
+	}
+	return blocks
 }
 
 // structuredControl reports whether a block is part of a structured construct

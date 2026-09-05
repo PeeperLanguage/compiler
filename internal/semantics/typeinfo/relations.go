@@ -290,66 +290,38 @@ func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool
 		}
 		seen[key] = struct{}{}
 
-		switch typ := current.(type) {
-		case *DefinedType:
-			return traversal.followDefined && typ != nil && visit(typ.Underlying, stored)
-		case *OwnedPtrType:
-			return typ != nil && visit(typ.Target, true)
-		case *RefType:
-			if traversal.referenceLeaf {
+		matched := false
+		ForEachChild(current, func(child TypeChild) bool {
+			childStored, follow := traversedChildState(child.Relation, stored, traversal)
+			if !follow {
+				return true
+			}
+			if visit(child.Type, childStored) {
+				matched = true
 				return false
 			}
-			return typ != nil && visit(typ.Target, stored)
-		case *OptionalType:
-			return typ != nil && visit(typ.Inner, stored)
-		case *ArrayType:
-			return typ != nil && visit(typ.Elem, true)
-		case *FuncType:
-			if typ == nil || !traversal.followCallable {
-				return false
-			}
-			for _, param := range typ.Params {
-				if visit(param, false) {
-					return true
-				}
-			}
-			return visit(typ.Return, false)
-		case *StructType:
-			if typ == nil {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if visit(field.Type, true) {
-					return true
-				}
-			}
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if visit(variant.Payload, true) {
-					return true
-				}
-			}
-		case *InterfaceType:
-			if typ == nil || !traversal.followCallable {
-				return false
-			}
-			for _, method := range typ.Methods {
-				for _, param := range method.Params {
-					if visit(param.Type, false) {
-						return true
-					}
-				}
-				if visit(method.Return, false) {
-					return true
-				}
-			}
-		}
-		return false
+			return true
+		})
+		return matched
 	}
 	return visit(t, false)
+}
+
+func traversedChildState(relation TypeChildRelation, stored bool, traversal typeTraversal) (bool, bool) {
+	switch relation {
+	case TypeChildUnderlying:
+		return stored, traversal.followDefined
+	case TypeChildOwnedTarget, TypeChildArrayElement, TypeChildStructField, TypeChildEnumPayload:
+		return true, true
+	case TypeChildBorrowedTarget:
+		return stored, !traversal.referenceLeaf
+	case TypeChildOptionalPayload:
+		return stored, true
+	case TypeChildMethodReceiver, TypeChildCallableParameter, TypeChildCallableReturn:
+		return false, traversal.followCallable
+	default:
+		panic("typeinfo: unknown semantic type child relation")
+	}
 }
 
 func ReplaceAbstractSelf(t Type, ownerType Type) Type {

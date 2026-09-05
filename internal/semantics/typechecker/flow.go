@@ -3,6 +3,7 @@ package typechecker
 import (
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
+	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
@@ -381,34 +382,32 @@ func (a *flowAnalyzer) run() {
 	}
 	entry := a.graph.Entry.Sites[0].ID
 	a.inStates[entry] = entryState
-	queue := []cfg.SiteID{entry}
-	queued := map[cfg.SiteID]bool{entry: true}
+	work := graphcore.NewWorklist(entry)
 	for _, id := range order {
-		if id == entry || len(a.sites[id].Predecessors) != 0 {
+		if id == entry || a.graph.SiteEdges.InDegree(id, nil) != 0 {
 			continue
 		}
 		a.inStates[id] = copyFlowState(entryState)
-		queue = append(queue, id)
-		queued[id] = true
+		work.Add(id)
 	}
 	for {
-		if len(queue) == 0 {
+		id, pending := work.Next()
+		if !pending {
+			seeded := false
 			for _, id := range order {
 				if _, visited := a.inStates[id]; visited || !disconnected[id] {
 					continue
 				}
 				a.inStates[id] = copyFlowState(entryState)
-				queue = append(queue, id)
-				queued[id] = true
+				work.Add(id)
+				seeded = true
 				break
 			}
-			if len(queue) == 0 {
+			if !seeded {
 				break
 			}
+			continue
 		}
-		id := queue[0]
-		queue = queue[1:]
-		queued[id] = false
 		site := a.sites[id]
 		if site == nil {
 			continue
@@ -420,7 +419,7 @@ func (a *flowAnalyzer) run() {
 		a.result.SiteFacts[a.graph.NodeID][id] = snapshotFlowState(input)
 		next := copyFlowState(input)
 		events := a.applySite(site, &next)
-		for _, edge := range site.Successors {
+		for _, edge := range a.graph.SiteEdges.OutEdges(site.ID) {
 			if a.sites[edge.To] == nil {
 				continue
 			}
@@ -441,10 +440,7 @@ func (a *flowAnalyzer) run() {
 				continue
 			}
 			a.inStates[edge.To] = merged
-			if !queued[edge.To] {
-				queue = append(queue, edge.To)
-				queued[edge.To] = true
-			}
+			work.Add(edge.To)
 		}
 	}
 }
@@ -784,17 +780,25 @@ func (a *flowAnalyzer) rawPointerOrigins(c *checker, scope *symbols.Scope, expr 
 }
 
 func (a *flowAnalyzer) applyConditionEdge(site *cfg.Site, edge cfg.EdgeKind, st *flowState, events *flowExpressionEvents) {
-	if st == nil || (edge != cfg.EdgeTrue && edge != cfg.EdgeFalse) {
+	if a == nil || a.graph == nil || site == nil || st == nil ||
+		(edge != cfg.EdgeTrue && edge != cfg.EdgeFalse) {
 		return
 	}
-	stmt, _ := a.module.TypedASTNodes[ast.NodeID(site.NodeID)].(ast.Stmt)
-	var condition ast.Expr
-	switch node := stmt.(type) {
-	case *ast.IfStmt:
-		condition = node.Cond
-	case *ast.ForStmt:
-		condition = node.Cond
+	// CFG owns control topology. Once a source construct has become a Branch,
+	// flow analysis must consume the branch's published condition identity
+	// rather than rediscovering whether the source statement was an if or loop.
+	if site.ID.Block < 0 || site.ID.Block >= len(a.graph.Blocks) {
+		return
 	}
+	block := a.graph.Blocks[site.ID.Block]
+	if block == nil {
+		return
+	}
+	branch, ok := block.Terminator.(*cfg.Branch)
+	if !ok || branch == nil || branch.ConditionID == 0 {
+		return
+	}
+	condition, _ := a.module.TypedASTNodes[ast.NodeID(branch.ConditionID)].(ast.Expr)
 	if condition == nil {
 		return
 	}

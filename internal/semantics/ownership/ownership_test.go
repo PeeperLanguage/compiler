@@ -64,6 +64,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 		ValueUse:            module.Typechecking.ValueUse,
 		ExprType:            module.EffectiveExprType,
 		ReferenceArgument:   module.Typechecking.ReferenceArgument,
+		SequenceCarrier:     module.Typechecking.SequenceCarrier,
 	})
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}

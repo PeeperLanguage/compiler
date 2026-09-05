@@ -62,56 +62,102 @@ func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) erro
 }
 
 func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]ast.Node) []string {
-	problems := make([]string, 0)
-	open := make([]ast.NodeID, 0)
+	visitor := &validationVisitor{fn: fn, site: site, nodes: nodes}
 	for index, op := range ops {
-		where := fmt.Sprintf("function %d site %v operation %d", fn, site, index)
-		switch op := op.(type) {
-		case Define:
-			problems = append(problems, validateNode(where, "define", op.Symbol == nil, op.Node, nodes)...)
-		case Write:
-			problems = append(problems, validatePlace(where, "write", op.Place)...)
-			problems = append(problems, validateNode(where, "write", false, op.Node, nodes)...)
-		case Use:
-			problems = append(problems, validatePlace(where, "use", op.Place)...)
-			problems = append(problems, validateNode(where, "use", false, op.Node, nodes)...)
-			if op.Location == nil {
-				problems = append(problems, where+" is a use with no source location to report against")
-			}
-		case Borrow:
-			problems = append(problems, validatePlace(where, "borrow", op.Place)...)
-			problems = append(problems, validateNode(where, "borrow", false, op.Node, nodes)...)
-			if op.Location == nil {
-				problems = append(problems, where+" is a borrow with no source location to report against")
-			}
-		case Discard:
-			problems = append(problems, validatePlace(where, "discard", op.Place)...)
-			problems = append(problems, validateNode(where, "discard", false, op.Node, nodes)...)
-			if op.Location == nil {
-				problems = append(problems, where+" is a discard with no source location to report against")
-			}
-		case CallBegin:
-			problems = append(problems, validateNode(where, "call start", false, op.Node, nodes)...)
-			open = append(open, op.Node)
-		case CallEnd:
-			// A consumer restores state saved at the matching start, so an
-			// unbalanced or crossed pair would restore the wrong mark.
-			if len(open) == 0 {
-				problems = append(problems, fmt.Sprintf("%s ends a call that never started", where))
-				continue
-			}
-			if last := open[len(open)-1]; last != op.Node {
-				problems = append(problems, fmt.Sprintf("%s ends call %d while call %d is still open", where, op.Node, last))
-			}
-			open = open[:len(open)-1]
-		default:
-			problems = append(problems, fmt.Sprintf("%s has unknown effect kind %T", where, op))
-		}
+		visitor.index = index
+		Visit(op, visitor)
 	}
-	for _, unclosed := range open {
-		problems = append(problems, fmt.Sprintf("function %d site %v leaves call %d open", fn, site, unclosed))
+	for _, unclosed := range visitor.open {
+		visitor.problems = append(visitor.problems, fmt.Sprintf("function %d site %v leaves call %d open", fn, site, unclosed))
 	}
-	return problems
+	return visitor.problems
+}
+
+type validationVisitor struct {
+	fn       ir.NodeID
+	site     cfg.SiteID
+	index    int
+	nodes    map[ast.NodeID]ast.Node
+	problems []string
+	open     []ast.NodeID
+}
+
+func (v *validationVisitor) where() string {
+	return fmt.Sprintf("function %d site %v operation %d", v.fn, v.site, v.index)
+}
+
+func (v *validationVisitor) VisitDefine(op Define) {
+	where := v.where()
+	v.problems = append(v.problems, validateNode(where, "define", op.Symbol == nil, op.Node, v.nodes)...)
+	if op.Value != 0 {
+		v.problems = append(v.problems, validateNode(where, "define value", false, op.Value, v.nodes)...)
+	}
+}
+
+func (v *validationVisitor) VisitWrite(op Write) {
+	where := v.where()
+	v.problems = append(v.problems, validatePlace(where, "write", op.Place)...)
+	v.problems = append(v.problems, validateNode(where, "write", false, op.Node, v.nodes)...)
+	v.problems = append(v.problems, validateNode(where, "write owner", false, op.Owner, v.nodes)...)
+	if op.Value != 0 {
+		v.problems = append(v.problems, validateNode(where, "write value", false, op.Value, v.nodes)...)
+	}
+}
+
+func (v *validationVisitor) VisitUse(op Use) {
+	where := v.where()
+	v.problems = append(v.problems, validatePlace(where, "use", op.Place)...)
+	v.problems = append(v.problems, validateNode(where, "use", false, op.Node, v.nodes)...)
+	if op.Location == nil {
+		v.problems = append(v.problems, where+" is a use with no source location to report against")
+	}
+}
+
+func (v *validationVisitor) VisitBorrow(op Borrow) {
+	where := v.where()
+	v.problems = append(v.problems, validatePlace(where, "borrow", op.Place)...)
+	v.problems = append(v.problems, validateNode(where, "borrow", false, op.Node, v.nodes)...)
+	v.problems = append(v.problems, validateNode(where, "borrow operand", false, op.Operand, v.nodes)...)
+	if op.Location == nil {
+		v.problems = append(v.problems, where+" is a borrow with no source location to report against")
+	}
+}
+
+func (v *validationVisitor) VisitIterate(op Iterate) {
+	where := v.where()
+	v.problems = append(v.problems, validatePlace(where, "iteration", op.Place)...)
+	v.problems = append(v.problems, validateNode(where, "iteration", op.Carrier == nil, op.Node, v.nodes)...)
+	v.problems = append(v.problems, validateNode(where, "iteration owner", false, op.Loop, v.nodes)...)
+	if op.Location == nil {
+		v.problems = append(v.problems, where+" is an iteration with no source location to report against")
+	}
+}
+
+func (v *validationVisitor) VisitDiscard(op Discard) {
+	where := v.where()
+	v.problems = append(v.problems, validatePlace(where, "discard", op.Place)...)
+	v.problems = append(v.problems, validateNode(where, "discard", false, op.Node, v.nodes)...)
+	if op.Location == nil {
+		v.problems = append(v.problems, where+" is a discard with no source location to report against")
+	}
+}
+
+func (v *validationVisitor) VisitCallBegin(op CallBegin) {
+	where := v.where()
+	v.problems = append(v.problems, validateNode(where, "call start", false, op.Node, v.nodes)...)
+	v.open = append(v.open, op.Node)
+}
+
+func (v *validationVisitor) VisitCallEnd(op CallEnd) {
+	where := v.where()
+	if len(v.open) == 0 {
+		v.problems = append(v.problems, fmt.Sprintf("%s ends a call that never started", where))
+		return
+	}
+	if last := v.open[len(v.open)-1]; last != op.Node {
+		v.problems = append(v.problems, fmt.Sprintf("%s ends call %d while call %d is still open", where, op.Node, last))
+	}
+	v.open = v.open[:len(v.open)-1]
 }
 
 // validatePlace enforces that a place names exactly one root. A place with
