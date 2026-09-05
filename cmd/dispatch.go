@@ -36,7 +36,8 @@ func exitOnCommandError(err error) {
 	if errors.Is(err, errAlreadyReported) {
 		os.Exit(exitCodeError)
 	}
-	if status, ok := errors.AsType[programExitStatus](err); ok {
+	var status programExitStatus
+	if errors.As(err, &status) {
 		os.Exit(int(status))
 	}
 	colors.RED.Fprintln(os.Stderr, err)

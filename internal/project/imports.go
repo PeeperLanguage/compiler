@@ -129,7 +129,7 @@ func (ctx *CompilerContext) importCandidateRoot(prefix string) (root, sourcePref
 }
 
 func hasHiddenImportSegment(path string) bool {
-	for segment := range strings.SplitSeq(path, "/") {
+	for _, segment := range strings.Split(path, "/") {
 		if strings.HasPrefix(segment, ".") {
 			return true
 		}
@@ -340,8 +340,7 @@ func validateImportPath(importPath string) error {
 	if filepath.IsAbs(importPath) || strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
 		return fmt.Errorf("import path must be root-relative")
 	}
-	parts := strings.SplitSeq(importPath, "/")
-	for part := range parts {
+	for _, part := range strings.Split(importPath, "/") {
 		if part == "" || part == "." || part == ".." {
 			return fmt.Errorf("import path must be root-relative")
 		}

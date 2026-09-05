@@ -246,7 +246,9 @@ func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Dura
 	version := s.diagVersion[filePath]
 	s.mu.Unlock()
 
-	s.diagWG.Go(func() {
+	s.diagWG.Add(1)
+	go func() {
+		defer s.diagWG.Done()
 		// Full-sync edits arrive as whole-file snapshots. Delay diagnostics so a
 		// burst of keystrokes collapses into one recompile instead of one per edit.
 		time.Sleep(delay)
@@ -263,7 +265,7 @@ func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Dura
 			}
 			s.mu.Unlock()
 		}
-	})
+	}()
 }
 
 func (s *ServerState) waitForScheduledDiagnostics() error {
