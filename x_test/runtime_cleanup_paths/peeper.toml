@@ -1,0 +1,13 @@
+name = "runtime_cleanup_paths"
+build = "program"
+entry = "src/main.peep"
+
+# type_automatic_cleanup_plan covers the same paths in check mode, which proves
+# the plan is accepted but never executes it. This runs them: a drop emitted
+# twice aborts in the allocator, and a drop emitted for storage that was moved
+# away corrupts the heap, so reaching the final marker is the exactly-once
+# evidence.
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["scope", "replace", "discard", "projection", "nested", "match", "done"]
