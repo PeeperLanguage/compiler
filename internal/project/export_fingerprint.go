@@ -98,17 +98,16 @@ func semanticExportMetadata(ctx *CompilerContext, module *Module, sym *symbols.S
 }
 
 func semanticTypeKey(typ typeinfo.Type, visiting map[typeinfo.Type]bool) string {
-	semantic, ok := typ.(typeinfo.Type)
-	if !ok || semantic == nil {
+	if typ == nil {
 		return ""
 	}
-	if visiting[semantic] {
-		return "recursive(" + typeinfo.TypeText(semantic) + ")"
+	if visiting[typ] {
+		return "recursive(" + typeinfo.TypeText(typ) + ")"
 	}
-	visiting[semantic] = true
-	defer delete(visiting, semantic)
+	visiting[typ] = true
+	defer delete(visiting, typ)
 
-	switch node := semantic.(type) {
+	switch node := typ.(type) {
 	case *typeinfo.DefinedType:
 		parameters := make([]string, len(node.TypeParameters))
 		for index, parameter := range node.TypeParameters {
@@ -166,9 +165,9 @@ func semanticTypeKey(typ typeinfo.Type, visiting map[typeinfo.Type]bool) string 
 		*typeinfo.ByteType, *typeinfo.CharType, *typeinfo.FloatType, *typeinfo.BoolType,
 		*typeinfo.CStrType, *typeinfo.StringType, *typeinfo.NoneType, *typeinfo.AllocatorType,
 		*typeinfo.NamedType, *typeinfo.RawPtrType:
-		return typeinfo.TypeText(semantic)
+		return typeinfo.TypeText(typ)
 	default:
-		panic(fmt.Sprintf("export fingerprint: unhandled semantic type %T", semantic))
+		panic(fmt.Sprintf("export fingerprint: unhandled semantic type %T", typ))
 	}
 }
 

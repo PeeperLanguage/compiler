@@ -91,6 +91,43 @@ func TestTypeStructureDrivesRecursiveContainment(t *testing.T) {
 	}
 }
 
+func TestLeafTypeTraversalCompletesWithoutYield(t *testing.T) {
+	for _, typ := range []Type{
+		&InvalidType{}, &UnknownType{}, &IntegerType{}, &ByteType{}, &CharType{},
+		&FloatType{}, &BoolType{}, &CStrType{}, &StringType{}, &NoneType{},
+		&AllocatorType{}, &NamedType{}, &TypeParameterType{}, &RawPtrType{},
+	} {
+		if !typ.forEachChild(func(TypeChild) bool {
+			t.Errorf("leaf %T yielded a child", typ)
+			return false
+		}) || !typ.forEachChild(nil) {
+			t.Errorf("leaf %T traversal did not complete", typ)
+		}
+	}
+}
+
+func TestNilTypeTraversalAndOwnership(t *testing.T) {
+	for _, typ := range []Type{
+		nil, (*InvalidType)(nil), (*UnknownType)(nil), (*IntegerType)(nil),
+		(*ByteType)(nil), (*CharType)(nil), (*FloatType)(nil), (*BoolType)(nil),
+		(*CStrType)(nil), (*StringType)(nil), (*NoneType)(nil), (*AllocatorType)(nil),
+		(*NamedType)(nil), (*TypeParameterType)(nil), (*RawPtrType)(nil),
+		(*DefinedType)(nil), (*OwnedPtrType)(nil), (*RefType)(nil),
+		(*OptionalType)(nil), (*ArrayType)(nil), (*FuncType)(nil),
+		(*StructType)(nil), (*InterfaceType)(nil), (*EnumType)(nil),
+	} {
+		if !ForEachChild(typ, func(TypeChild) bool {
+			t.Errorf("nil %T yielded a child", typ)
+			return false
+		}) {
+			t.Errorf("nil %T traversal did not complete", typ)
+		}
+		if got := ownershipCapability(typ); got != (OwnershipCapability{Copy: CopyExplicit}) {
+			t.Errorf("nil %T capability = %+v; want explicit copy, no drop", typ, got)
+		}
+	}
+}
+
 func TestForEachChildAcceptsTypedNilTypes(t *testing.T) {
 	var optional *OptionalType
 	var typ Type = optional

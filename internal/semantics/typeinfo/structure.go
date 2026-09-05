@@ -55,22 +55,20 @@ func isNilType(typ Type) bool {
 	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
-func noTypeChildren(func(TypeChild) bool) bool { return true }
-
-func (*InvalidType) forEachChild(yield func(TypeChild) bool) bool       { return noTypeChildren(yield) }
-func (*UnknownType) forEachChild(yield func(TypeChild) bool) bool       { return noTypeChildren(yield) }
-func (*IntegerType) forEachChild(yield func(TypeChild) bool) bool       { return noTypeChildren(yield) }
-func (*ByteType) forEachChild(yield func(TypeChild) bool) bool          { return noTypeChildren(yield) }
-func (*CharType) forEachChild(yield func(TypeChild) bool) bool          { return noTypeChildren(yield) }
-func (*FloatType) forEachChild(yield func(TypeChild) bool) bool         { return noTypeChildren(yield) }
-func (*BoolType) forEachChild(yield func(TypeChild) bool) bool          { return noTypeChildren(yield) }
-func (*CStrType) forEachChild(yield func(TypeChild) bool) bool          { return noTypeChildren(yield) }
-func (*StringType) forEachChild(yield func(TypeChild) bool) bool        { return noTypeChildren(yield) }
-func (*NoneType) forEachChild(yield func(TypeChild) bool) bool          { return noTypeChildren(yield) }
-func (*AllocatorType) forEachChild(yield func(TypeChild) bool) bool     { return noTypeChildren(yield) }
-func (*NamedType) forEachChild(yield func(TypeChild) bool) bool         { return noTypeChildren(yield) }
-func (*TypeParameterType) forEachChild(yield func(TypeChild) bool) bool { return noTypeChildren(yield) }
-func (*RawPtrType) forEachChild(yield func(TypeChild) bool) bool        { return noTypeChildren(yield) }
+func (*InvalidType) forEachChild(func(TypeChild) bool) bool       { return true }
+func (*UnknownType) forEachChild(func(TypeChild) bool) bool       { return true }
+func (*IntegerType) forEachChild(func(TypeChild) bool) bool       { return true }
+func (*ByteType) forEachChild(func(TypeChild) bool) bool          { return true }
+func (*CharType) forEachChild(func(TypeChild) bool) bool          { return true }
+func (*FloatType) forEachChild(func(TypeChild) bool) bool         { return true }
+func (*BoolType) forEachChild(func(TypeChild) bool) bool          { return true }
+func (*CStrType) forEachChild(func(TypeChild) bool) bool          { return true }
+func (*StringType) forEachChild(func(TypeChild) bool) bool        { return true }
+func (*NoneType) forEachChild(func(TypeChild) bool) bool          { return true }
+func (*AllocatorType) forEachChild(func(TypeChild) bool) bool     { return true }
+func (*NamedType) forEachChild(func(TypeChild) bool) bool         { return true }
+func (*TypeParameterType) forEachChild(func(TypeChild) bool) bool { return true }
+func (*RawPtrType) forEachChild(func(TypeChild) bool) bool        { return true }
 
 func (t *DefinedType) forEachChild(yield func(TypeChild) bool) bool {
 	if t == nil {
