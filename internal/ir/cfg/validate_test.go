@@ -102,6 +102,47 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 			want: "but the terminator does not",
 		},
 		{
+			name:   "block edge with foreign source",
+			damage: func(fn *Graph) { fn.BlockEdges.AddEdge(BlockEdge{From: 99, To: fn.Exit.ID}) },
+			want:   "but the terminator does not",
+		},
+		{
+			name:   "block edge with foreign target",
+			damage: func(fn *Graph) { fn.BlockEdges.AddEdge(BlockEdge{From: fn.Entry.ID, To: 99}) },
+			want:   "but the terminator does not",
+		},
+		{
+			name:   "entirely foreign block edge",
+			damage: func(fn *Graph) { fn.BlockEdges.AddEdge(BlockEdge{From: 98, To: 99}) },
+			want:   "but the terminator does not",
+		},
+		{
+			name:   "entirely foreign site edge",
+			damage: func(fn *Graph) { fn.SiteEdges.AddEdge(Edge{From: SiteID{Block: 98}, To: SiteID{Block: 99}}) },
+			want:   "which is not a site",
+		},
+		{
+			name: "missing site edges",
+			damage: func(fn *Graph) {
+				fn.SiteEdges = graphcore.NewDirected(func(edge Edge) (SiteID, SiteID) { return edge.From, edge.To })
+			},
+			want: "absent from site topology",
+		},
+		{
+			name: "branch edge names wrong valid target",
+			damage: func(fn *Graph) {
+				rewriteFirstSiteEdge(fn, func(edge Edge) Edge { edge.To = fn.Entry.Sites[0].ID; return edge })
+			},
+			want: "not described by its block sites or terminator",
+		},
+		{
+			name: "branch edge carries spurious case metadata",
+			damage: func(fn *Graph) {
+				rewriteFirstSiteEdge(fn, func(edge Edge) Edge { edge.Case = 99; return edge })
+			},
+			want: "not described by its block sites or terminator",
+		},
+		{
 			name: "a transfer goes unrecorded by its target",
 			damage: func(fn *Graph) {
 				fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })
@@ -148,7 +189,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 					return edge
 				})
 			},
-			want: "a branch leaves only on a true or false edge",
+			want: "not described by its block sites or terminator",
 		},
 		{
 			name: "reachability disagrees with entry traversal",

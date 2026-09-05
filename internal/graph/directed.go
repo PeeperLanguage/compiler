@@ -42,6 +42,20 @@ func (g *Directed[Node, Edge]) AddEdge(edge Edge) bool {
 	return true
 }
 
+// Edges returns a snapshot of every stored edge, including disconnected edges
+// whose endpoints a domain validator may not recognize. Source order is
+// unspecified; within a source, insertion order is preserved.
+func (g *Directed[Node, Edge]) Edges() []Edge {
+	if g == nil {
+		return nil
+	}
+	var edges []Edge
+	for _, outgoing := range g.out {
+		edges = append(edges, outgoing...)
+	}
+	return edges
+}
+
 // OutEdges returns outgoing edges in insertion order. The returned slice is a
 // snapshot so consumers cannot corrupt the graph's reverse index accidentally.
 func (g *Directed[Node, Edge]) OutEdges(id Node) []Edge {

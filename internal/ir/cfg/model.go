@@ -20,6 +20,10 @@ func (m *Module) Function(id ir.NodeID) *Graph {
 	return m.byNodeID[id]
 }
 
+// Graph is finalized by BuildModule. Terminators and ordered block sites define
+// control flow; BlockEdges and SiteEdges are derived traversal indexes. Consumers
+// must not mutate topology after publication: rebuild the CFG before publishing
+// a new generation, since site IDs and downstream evidence depend on it.
 type Graph struct {
 	NodeID         ir.NodeID
 	Name           string

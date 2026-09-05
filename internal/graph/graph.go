@@ -1,6 +1,9 @@
 package graph
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 type NodeID string
 
@@ -83,7 +86,7 @@ func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID)
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.directed.TopoSort(ids, g.edgeFilter(kinds))
+	return g.directed.TopoSort(nonEmptyNodeIDs(ids), g.edgeFilter(kinds))
 }
 
 func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]NodeID {
@@ -92,7 +95,23 @@ func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]N
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.directed.WeaklyConnectedComponents(ids, g.edgeFilter(kinds))
+	return g.directed.WeaklyConnectedComponents(nonEmptyNodeIDs(ids), g.edgeFilter(kinds))
+}
+
+// Empty IDs are invalid only in the domain facade, not in Directed.
+func nonEmptyNodeIDs(ids []NodeID) []NodeID {
+	first := slices.Index(ids, NodeID(""))
+	if first < 0 {
+		return ids
+	}
+	filtered := make([]NodeID, first, len(ids)-1)
+	copy(filtered, ids[:first])
+	for _, id := range ids[first+1:] {
+		if id != "" {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
 }
 
 func (g *Graph) edgeFilter(kinds []EdgeKind) func(edge) bool {

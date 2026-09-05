@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/effect"
@@ -90,6 +91,55 @@ func TestValidateReportsDefects(t *testing.T) {
 				t.Fatalf("Validate() = %v, want a report containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateRejectsWrongExpressionIdentity(t *testing.T) {
+	result, module := buildEffects(t, validationSource)
+	fn, site := anySite(t, result)
+	function := module.TypedASTNodes[ast.NodeID(fn)].(*ast.FnDecl)
+	expr := function.Params[0].Name
+	target := function.Body.Stmts[1].(*ast.AssignStmt).Target
+	root := effect.Place{Root: &symbols.Symbol{Name: "count"}}
+	for _, test := range []struct {
+		name string
+		ops  []effect.Op
+	}{
+		{"define value", []effect.Op{effect.Define{Symbol: root.Root, Node: function.ID(), Value: expr.ID(), Initialized: true}}},
+		{"write target", []effect.Op{effect.Write{Place: root, Node: expr.ID(), Owner: function.Body.ID()}}},
+		{"write value", []effect.Op{effect.Write{Place: root, Node: target.ID(), Owner: function.Body.ID(), Value: expr.ID()}}},
+		{"use", []effect.Op{effect.Use{Place: root, Node: expr.ID(), Location: ast.LocOf(expr)}}},
+		{"borrow", []effect.Op{effect.Borrow{Place: root, Node: expr.ID(), Operand: target.ID(), Location: ast.LocOf(expr)}}},
+		{"borrow operand", []effect.Op{effect.Borrow{Place: root, Node: target.ID(), Operand: expr.ID(), Location: ast.LocOf(target)}}},
+		{"iteration", []effect.Op{effect.Iterate{Place: root, Node: expr.ID(), Loop: function.Body.ID(), Carrier: root.Root, Location: ast.LocOf(expr)}}},
+		{"discard", []effect.Op{effect.Discard{Place: root, Node: expr.ID(), Location: ast.LocOf(expr)}}},
+		{"call start", []effect.Op{effect.CallBegin{Node: expr.ID(), Location: ast.LocOf(expr)}, effect.CallEnd{Node: expr.ID()}}},
+		{"temporary", []effect.Op{effect.Use{Place: effect.Place{Temporary: expr.ID()}, Node: target.ID(), Location: ast.LocOf(target)}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			published := effect.Result{fn: effect.SiteOps{site: test.ops}}
+			if err := published.Validate(module.CFG, module.TypedASTNodes); err != nil {
+				t.Fatalf("well-shaped operation rejected: %v", err)
+			}
+			nodes := make(map[ast.NodeID]ast.Node, len(module.TypedASTNodes))
+			for id, node := range module.TypedASTNodes {
+				nodes[id] = node
+			}
+			nodes[expr.ID()] = &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: expr.ID()}}
+			if err := published.Validate(module.CFG, nodes); err == nil || !strings.Contains(err.Error(), "unexpected node type") {
+				t.Fatalf("wrong expression identity: got %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsNilIndexedNode(t *testing.T) {
+	result, module := buildEffects(t, validationSource)
+	for id := range module.TypedASTNodes {
+		module.TypedASTNodes[id] = nil
+	}
+	if err := result.Validate(module.CFG, module.TypedASTNodes); err == nil {
+		t.Fatal("nil indexed nodes accepted")
 	}
 }
 

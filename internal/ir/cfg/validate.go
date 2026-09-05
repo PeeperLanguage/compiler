@@ -163,17 +163,12 @@ func validateBlockAdjacency(fn *Graph) []string {
 			}
 		}
 	}
-	for _, block := range fn.Blocks {
-		for _, edge := range fn.BlockEdges.OutEdges(block.ID) {
-			pair := [2]int{edge.From, edge.To}
-			if edge.From != block.ID {
-				problems = append(problems, fmt.Sprintf("function %d block b%d owns an edge leaving b%d", fn.NodeID, block.ID, edge.From))
-			}
-			if !forward[pair] {
-				problems = append(problems, fmt.Sprintf("function %d block topology records b%d -> b%d, but the terminator does not", fn.NodeID, edge.From, edge.To))
-			}
-			delete(forward, pair)
+	for _, edge := range fn.BlockEdges.Edges() {
+		pair := [2]int{edge.From, edge.To}
+		if !forward[pair] {
+			problems = append(problems, fmt.Sprintf("function %d block topology records b%d -> b%d, but the terminator does not", fn.NodeID, edge.From, edge.To))
 		}
+		delete(forward, pair)
 	}
 	for pair := range forward {
 		problems = append(problems, fmt.Sprintf("function %d block b%d transfers to b%d, which is absent from block topology", fn.NodeID, pair[0], pair[1]))
@@ -217,58 +212,53 @@ func validateSiteEdges(fn *Graph) []string {
 	if fn.SiteEdges == nil {
 		return append(problems, fmt.Sprintf("function %d has no site topology", fn.NodeID))
 	}
+	// Check the derived index against source topology, not against another
+	// adjacency index. A return has no block successor, but does have a site
+	// edge to the function exit.
+	expected := make(map[Edge]bool)
 	for _, block := range fn.Blocks {
 		last := len(block.Sites) - 1
-		for index, site := range block.Sites {
-			for _, edge := range fn.SiteEdges.OutEdges(site.ID) {
-				if edge.From != site.ID {
-					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] owns an edge leaving %v", fn.NodeID, block.ID, index, edge.From))
-				}
-				if siteAt(fn, edge.To) == nil {
-					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] transfers to %v, which is not a site", fn.NodeID, block.ID, index, edge.To))
-					continue
-				}
-				if kind, ok := expectedEdgeKind(block, index == last, edge.Kind); !ok {
-					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] leaves on a %s edge, but %s", fn.NodeID, block.ID, index, edgeKindName(edge.Kind), kind))
-				}
-			}
-			for _, edge := range fn.SiteEdges.InEdges(site.ID) {
-				if edge.To != site.ID {
-					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] records an edge arriving at %v", fn.NodeID, block.ID, index, edge.To))
-				}
-				if siteAt(fn, edge.From) == nil {
-					problems = append(problems, fmt.Sprintf("function %d site b%d[%d] arrives from %v, which is not a site", fn.NodeID, block.ID, index, edge.From))
-				}
+		for index := range last {
+			expected[Edge{From: block.Sites[index].ID, To: block.Sites[index+1].ID, Kind: EdgeNormal}] = true
+		}
+		expect := func(target *Block, kind EdgeKind, caseIndex int) {
+			if target != nil && ownsBlock(fn, target) {
+				expected[Edge{From: block.Sites[last].ID, To: target.Sites[0].ID, Kind: kind, Case: caseIndex}] = true
 			}
 		}
+		switch term := block.Terminator.(type) {
+		case *Jump:
+			expect(term.Target, EdgeNormal, 0)
+		case *Branch:
+			expect(term.TrueTarget, EdgeTrue, 0)
+			expect(term.FalseTarget, EdgeFalse, 0)
+		case *Return:
+			expect(fn.Exit, EdgeReturn, 0)
+		case *SwitchVariant:
+			for _, target := range term.Targets {
+				expect(target.Target, EdgeVariantCase, target.Case)
+			}
+		case nil:
+		default:
+			problems = append(problems, fmt.Sprintf("function %d block b%d has unknown terminator %T", fn.NodeID, block.ID, term))
+		}
+	}
+	for _, edge := range fn.SiteEdges.Edges() {
+		if siteAt(fn, edge.From) == nil {
+			problems = append(problems, fmt.Sprintf("function %d edge leaves %v, which is not a site", fn.NodeID, edge.From))
+		}
+		if siteAt(fn, edge.To) == nil {
+			problems = append(problems, fmt.Sprintf("function %d edge transfers to %v, which is not a site", fn.NodeID, edge.To))
+		}
+		if !expected[edge] {
+			problems = append(problems, fmt.Sprintf("function %d site edge %v -> %v (%s, case %d) is not described by its block sites or terminator", fn.NodeID, edge.From, edge.To, edgeKindName(edge.Kind), edge.Case))
+		}
+		delete(expected, edge)
+	}
+	for edge := range expected {
+		problems = append(problems, fmt.Sprintf("function %d site edge %v -> %v (%s, case %d) is absent from site topology", fn.NodeID, edge.From, edge.To, edgeKindName(edge.Kind), edge.Case))
 	}
 	return problems
-}
-
-// expectedEdgeKind reports whether one outgoing edge kind is legal at a site.
-// Edges between sites within a block are plain sequence; only the block's last
-// site leaves on the terminator, and then the kind must name that terminator's
-// meaning. It returns the expectation to quote when the kind is wrong.
-func expectedEdgeKind(block *Block, last bool, kind EdgeKind) (string, bool) {
-	if !last {
-		if kind == EdgeNormal {
-			return "", true
-		}
-		return "a site inside a block leaves only on a normal edge", false
-	}
-	switch block.Terminator.(type) {
-	case *Jump:
-		return "a jump leaves only on a normal edge", kind == EdgeNormal
-	case *Branch:
-		return "a branch leaves only on a true or false edge", kind == EdgeTrue || kind == EdgeFalse
-	case *Return:
-		return "a return leaves only on a return edge", kind == EdgeReturn
-	case *SwitchVariant:
-		return "a variant switch leaves only on a variant-case edge", kind == EdgeVariantCase
-	case nil:
-		return "a block with no terminator leaves on no edge", false
-	}
-	return "", true
 }
 
 // validateReachability checks the flag consumers trust against the traversal it

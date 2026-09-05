@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -9,6 +10,46 @@ const (
 	testEdgeImport   EdgeKind = "import"
 	testEdgeMetadata EdgeKind = "metadata"
 )
+
+func TestAlgorithmsIgnoreEmptyNodeIDs(t *testing.T) {
+	g := New(testEdgeImport)
+	g.AddEdge("a", "b")
+	g.AddEdge("b", "a", testEdgeMetadata)
+	for _, tc := range []struct {
+		name  string
+		ids   []NodeID
+		kinds []EdgeKind
+	}{
+		{name: "nil"},
+		{name: "empty", ids: []NodeID{}},
+		{name: "all empty", ids: []NodeID{"", ""}},
+		{name: "mixed duplicates isolated", ids: []NodeID{"", "a", "", "b", "a", "isolated", ""}},
+		{name: "metadata", ids: []NodeID{"", "a", "b", "isolated", ""}, kinds: []EdgeKind{testEdgeMetadata}},
+		{name: "cycle", ids: []NodeID{"", "a", "b", "a", ""}, kinds: []EdgeKind{testEdgeImport, testEdgeMetadata}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := slices.Clone(tc.ids)
+			var valid []NodeID
+			for _, id := range tc.ids {
+				if id != "" {
+					valid = append(valid, id)
+				}
+			}
+			wantOrder, wantCycles := g.TopoSort(valid, tc.kinds...)
+			order, cycles := g.TopoSort(tc.ids, tc.kinds...)
+			if !reflect.DeepEqual(order, wantOrder) || !reflect.DeepEqual(cycles, wantCycles) {
+				t.Errorf("topology = %v, %v; want %v, %v", order, cycles, wantOrder, wantCycles)
+			}
+			wantComponents := g.WeaklyConnectedComponents(valid, tc.kinds...)
+			if got := g.WeaklyConnectedComponents(tc.ids, tc.kinds...); !reflect.DeepEqual(got, wantComponents) {
+				t.Errorf("components = %v; want %v", got, wantComponents)
+			}
+			if !reflect.DeepEqual(tc.ids, original) {
+				t.Errorf("caller IDs changed: %v; want %v", tc.ids, original)
+			}
+		})
+	}
+}
 
 func TestTopoSortOrdersImportDependencies(t *testing.T) {
 	g := New(testEdgeImport)
