@@ -38,10 +38,11 @@ These files are canonical; do not copy their rules into new documents:
 - [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler phase,
   representation, traversal, and incremental-analysis guidance.
 
-For a change that touches the pipeline, read
+For a change that touches the compiler pipeline or semantic model, read
+[`docs/compiler-architecture.md`](docs/compiler-architecture.md) first. It defines
+the canonical mechanisms, representation boundaries, and extension paths.
 [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
-first. It walks the files a new syntax construct, an internal lowering change, or a
-new type must visit, and names the test that fails at each stop you skip.
+is the concrete file-by-file companion for common changes.
 
 `AGENTS.md` contains automation workflow, not additional human-facing code
 policy.

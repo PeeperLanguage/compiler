@@ -19,10 +19,12 @@ design, do not follow it silently. Report conflict and evidence so maintainer ca
 decide whether guideline or design must change.
 
 Current ownership, pointer, copy, and optional design lives in
-[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md). Planned work for
-mechanically enforced phase contracts, traversal completeness, artifact validation,
-and contributor change points lives in
-[docs/compiler-framework/README.md](docs/compiler-framework/README.md).
+[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md). The implemented
+compiler architecture, canonical structural mechanisms, semantic evidence boundaries,
+and contributor extension rules live in
+[docs/compiler-architecture.md](docs/compiler-architecture.md). Migration history and
+supporting analysis live under
+[docs/compiler-framework/](docs/compiler-framework/README.md).
 
 ## 1. Priorities
 
@@ -142,6 +144,12 @@ fail clearly rather than be skipped silently.
 
 Semantic switches remain appropriate when each node kind requires distinct
 behavior. Centralize structural recursion, not semantic decisions.
+
+Current canonical mechanisms are `ast.Inspect` for AST recursion,
+`typeinfo.ForEachChild` for semantic-type structure, `place.Project`/`Decompose`
+for storage projections, `graph.Directed` for topology, and `graph.Worklist` for
+fixed-point scheduling. Analyses should extend these owners instead of creating a
+parallel walk, adjacency store, or queue/queued-set implementation.
 
 Before adding a walker or lookup:
 

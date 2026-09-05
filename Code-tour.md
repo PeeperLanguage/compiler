@@ -8,9 +8,10 @@ Every code sample here is **simplified** — real signatures carry more paramete
 error handling. Each one names the file it came from so you can read the real thing.
 
 Related reading: [`RULES.md`](RULES.md) for what code is acceptable,
-[`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) for phase discipline, and
-[`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md) for
-the file-by-file walk when you are *changing* something rather than learning it.
+[`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) for phase discipline,
+[`docs/compiler-architecture.md`](docs/compiler-architecture.md) for the canonical
+architecture, and [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
+for the file-by-file walk when you are *changing* something rather than learning it.
 
 ---
 
@@ -562,8 +563,8 @@ flowchart TD
 | Guard | Where | Catches |
 | --- | --- | --- |
 | Child traversal contract | `internal/contracts` | a node field missing from `forEachChild` |
-| Statement/expression contract | `internal/contracts` | a node kind no phase decides about |
-| Semantic type contract | `internal/contracts` | a `typeinfo.Type` with no capability, identity or lowering |
+| Syntax-boundary dispatch contract | `internal/contracts` | a new node kind omitted by a true syntax-aware owner |
+| Semantic type contract | Go type system + `internal/contracts` | missing child/ownership structure or a required representation decision |
 | Lowered node contract | `internal/contracts` | an HIR/MIR kind nothing lowers or emits |
 | `cfg.Validate` | `internal/ir/cfg` | malformed topology |
 | `effect.Validate` | `internal/semantics/effect` | operations with no symbol, unbalanced calls |
@@ -575,8 +576,9 @@ A contract failure reads like this:
 publishStmt makes no decision about ast.YieldStmt; add a case or declare why the kind is inert
 ```
 
-Every omission must be either handled or **classified** — `traverse`, `ignore`, `reject`
-or `contextual` — with a written reason that is itself checked for staleness.
+At true closed extension points, every omission must be handled or deliberately
+classified. Generic downstream analyses should not grow AST classifications at all;
+they consume canonical CFG/type/place/effect evidence instead.
 
 ---
 
@@ -597,8 +599,9 @@ Steps 1–6 are unavoidable: where a name lives and what types are legal *is* th
 Step 7 is what buys you definite initialization, ownership, liveness, drops and usage
 **for free** — they consume operations and never learn your construct exists.
 
-`docs/compiler-framework/change-paths.md` walks this in full, including the stops where
-nothing catches you.
+`docs/compiler-architecture.md` defines why these boundaries exist;
+`docs/compiler-framework/change-paths.md` gives the concrete edit path and the guard
+at each true extension point.
 
 ---
 
@@ -626,4 +629,4 @@ nothing catches you.
 | What does the typechecker publish? | `internal/semantics/typecheckresult/result.go` |
 | Why is a value moved/dropped here? | `internal/semantics/effect`, then `internal/semantics/ownership` |
 | What does the backend emit for X? | `internal/backend/llvm/emitter.go` |
-| How do I add a node kind safely? | `internal/contracts`, and run the suite |
+| How do I add a node kind safely? | `docs/compiler-architecture.md`, then the owning syntax boundary |
