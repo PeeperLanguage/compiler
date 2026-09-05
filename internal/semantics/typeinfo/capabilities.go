@@ -88,6 +88,24 @@ func IsCondition(t Type) bool {
 	return ok
 }
 
+// IsSizedType and IsLowerableType are deliberately separate walkers, and a
+// consolidation pass should leave them that way.
+//
+// They look alike — both recurse over the same structure with a cycle guard —
+// but they share neither the guard nor its meaning. Sized keys its guard on
+// *DefinedType and answers false on a cycle, because a type that contains
+// itself inline has no size. Lowerable keys on the underlying type and answers
+// whatever the recursion reached it through, because a self-referential type
+// *is* representable when the cycle passes through a pointer. A linked list is
+// lowerable and not sized, and one traversal cannot hold both answers without
+// carrying two guards.
+//
+// They also disagree on ordinary types for real reasons: an interface has no
+// inline size but does lower, and a type parameter is sized before
+// instantiation but has nothing to emit.
+//
+// Copy and drop were merged into one traversal because they genuinely share a
+// walk and a cycle rule. These do not.
 func IsSizedType(t Type) bool {
 	visiting := make(map[*DefinedType]bool)
 	var check func(Type) bool

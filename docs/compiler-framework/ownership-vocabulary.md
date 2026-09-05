@@ -54,17 +54,17 @@ re-derived in ownership from AST shapes plus hardcoded per-node rules**:
 
 Capability model gaps (each is a place where "auto" silently breaks):
 
-| # | Gap |
-| --- | --- |
-| G1 | `IsNoCopyType` is dead in production; move-only is re-derived as `!IsImplicitCopyType` everywhere — but structs with only scalar fields are neither implicit-copy nor no-copy (explicit-copy middle class), so the negation is not equivalent |
-| G2 | `NeedsDrop` implemented twice: `typeinfo/capabilities.go:356` and backend `drop_emit.go:303-373` over the IR type table — they agree today, drift tomorrow |
-| G3 | Owned interface values: source says no-drop, backend raw-frees through a `TypeOwnedPtr`-to-interface special case — drop policy lives only in the backend |
-| G4 | `FuncType` has no ownership character (closure move-only? nothing answers) |
-| G5 | `TypeParameterType` treated move-only even when instantiated with a copyable argument — generics over `T` cannot copy |
-| G6 | `NoneType` not implicit-copyable — `none` is move-on-use |
-| G7 | Enum-payload copyability is non-compositional: same struct copyable as variant payload, move-only standalone (intentional, but must be stated as vocabulary, not accident) |
-| G8 | Cycle-guard inconsistency in `IsNoCopyType` (`seen` never deleted on exit) |
-| G9 | "Dynamic array owns" encoded three times (implicit-copy, no-copy, needs-drop, plus backend `Length == ""`) |
+| # | Gap | Status |
+| --- | --- | --- |
+| G1 | `IsNoCopyType` is dead in production; move-only is re-derived as `!IsImplicitCopyType` everywhere — but structs with only scalar fields are neither implicit-copy nor no-copy (explicit-copy middle class), so the negation is not equivalent | **Closed.** All three predicates are deleted. `OwnershipCapability.Copy` names the three classes directly, so there is nothing left to negate |
+| G2 | `NeedsDrop` implemented twice: `typeinfo/capabilities.go:356` and backend `drop_emit.go:303-373` over the IR type table — they agree today, drift tomorrow | **Closed as misfiled.** They answer different questions over different type universes: ownership decides *whether* a value is dropped and publishes that as a `mir.Drop`; the backend walk only decides how deep to expand one it was already handed, and can never originate a drop. Stated at `typeNeedsDrop` and in [`type-capabilities.md`](type-capabilities.md) |
+| G3 | Owned interface values: source says no-drop, backend raw-frees through a `TypeOwnedPtr`-to-interface special case — drop policy lives only in the backend | **Open.** This one is a real policy decision made in the backend, and unlike G2 it is not expansion |
+| G4 | `FuncType` has no ownership character (closure move-only? nothing answers) | Open — waits on lambdas existing |
+| G5 | `TypeParameterType` treated move-only even when instantiated with a copyable argument — generics over `T` cannot copy | Open — a language decision, not a refactor |
+| G6 | `NoneType` not implicit-copyable — `none` is move-on-use | Open — a language decision |
+| G7 | Enum-payload copyability is non-compositional: same struct copyable as variant payload, move-only standalone (intentional, but must be stated as vocabulary, not accident) | **Stated.** Carried explicitly as the `enumPayload` flag through `ownershipCapability`, so it is now vocabulary rather than an accident of two predicates disagreeing |
+| G8 | Cycle-guard inconsistency in `IsNoCopyType` (`seen` never deleted on exit) | **Closed.** One walk, one guard |
+| G9 | "Dynamic array owns" encoded three times (implicit-copy, no-copy, needs-drop, plus backend `Length == ""`) | **Closed on the source side.** One `*ArrayType` case in `capability_walk.go`. The backend still recognises the shape, which is expansion, per G2 |
 
 Cleanup machinery fragilities found along the way:
 

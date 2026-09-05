@@ -572,10 +572,12 @@ answers where to go: it walks the real file sequence for three change shapes, tr
 from commits already in the repository, and names what catches you when a stop is
 missed — including the stops where nothing does.
 
-Four of those stops are pure mechanism: they rediscover read and write meaning the
-typechecker already decided.
-[`effect-stream-migration.md`](effect-stream-migration.md) is the in-progress plan to
-publish that meaning once and let the analyses consume it instead.
+Four of those stops were pure mechanism: they rediscovered read and write meaning
+the typechecker had already decided.
+[`effect-stream-migration.md`](effect-stream-migration.md) records how that meaning
+became a published artifact instead, and what the migration cost.
+[`type-capabilities.md`](type-capabilities.md) does the same for derived type
+questions: what became one walker, and which lookalikes must stay separate.
 
 | Area | Required question |
 | --- | --- |

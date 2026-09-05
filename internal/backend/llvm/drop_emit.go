@@ -300,6 +300,25 @@ const (
 	typePropertyNeedsRawFree
 )
 
+// typeNeedsDrop is not a second implementation of the source-level drop
+// obligation, and it must not become one.
+//
+// typeinfo.OwnershipCapabilityOf decides *whether a value is dropped at all*.
+// That decision reaches here already made, as a mir.Drop instruction; emitDrop
+// is only ever entered from one, and every other call below is this function
+// recursing into a drop that was already ordered. What it answers is narrower:
+// given that this value is being dropped, does its runtime representation hold
+// anything worth walking into. It reads the lowered ir.TypeTable, so it can see
+// representation choices that no source type mentions, and it cannot see source
+// policy such as an explicit-copy class.
+//
+// The other caller decides an ABI shim rather than a drop: a declared-only
+// function whose signature carries owned storage needs one. Also physical.
+//
+// So a type may be reachable here and not carry a source-level drop obligation
+// without either side being wrong. If you ever need this to answer "should this
+// be dropped", you are in the wrong phase: ownership owns that, and the answer
+// belongs in the mir.Drop it emits.
 func typeNeedsDrop(types *ir.TypeTable, id ir.TypeID) bool {
 	return typeHasRuntimeProperty(types, id, typePropertyNeedsDrop, make(map[ir.TypeID]bool))
 }
