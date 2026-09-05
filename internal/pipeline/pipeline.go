@@ -527,6 +527,10 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			return false
 		}
 		module.HIR = fold.ApplyTypedExpressionFolding(modhir)
+		if err := module.HIR.Validate(); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+				"lowered HIR is malformed: "+err.Error(), nil, "")
+		}
 		module.Phase = phase.HIR
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -539,6 +543,10 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			return false
 		}
 		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Constants.ModuleValues)
+		if err := module.MIR.Validate(); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+				"lowered MIR is malformed: "+err.Error(), nil, "")
+		}
 		module.Phase = phase.MIR
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -547,6 +555,12 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		return false
 	}
 	if module.Phase >= phase.Backend {
+		return false
+	}
+	// Emission assumes the MIR it is handed is well formed, and says so by
+	// panicking. The validator above is what makes that assumption safe, so
+	// nothing may reach emission once an error is recorded.
+	if diag != nil && diag.HasErrors() {
 		return false
 	}
 	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, ctx.Target, ctx.Config.BuildDebug)
