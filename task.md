@@ -1,5 +1,13 @@
 # Compiler Maintainability Migration Handoff
 
+> Historical migration proposal, retained below without rewriting its original scope.
+> Current implementation contract: [`docs/compiler-architecture.md`](docs/compiler-architecture.md)
+> and [`COMPILER_FRAMEWORK_REPORT.md`](COMPILER_FRAMEWORK_REPORT.md). The old branch/workflow,
+> effects-based usage target and blanket reflection ban below are not current delivery
+> requirements: usage remains lexical; bounded typed-nil capability reflection is retained.
+> New reference-bearing shapes still require provenance audits even when effects exist.
+> Go baseline is 1.23.2. This history authorizes no branch changes, commits or shipping.
+
 ## Objective
 
 Make Peeper compiler clean, readable, and difficult to extend incorrectly.

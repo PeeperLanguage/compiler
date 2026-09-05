@@ -22,7 +22,10 @@ used for everything. Final design combines:
 
 Detailed contract: [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
 
-## Shipped architecture changes
+## Implemented architecture
+
+This describes current source, including local correctness follow-up; it does not
+assert that uncommitted work is released or that roadmap milestones are complete.
 
 ### Semantic type structure
 
@@ -39,7 +42,10 @@ walks.
 `graph.Directed` owns ordered outgoing/incoming indexes. Existing graph users and
 CFG use this kernel while CFG retains typed branch/case semantics.
 
-Result: no separate CFG successor/predecessor store can drift from reverse edges.
+Result: adjacency/reverse-adjacency mechanics have one owner. CFG terminators and
+ordered sites remain canonical topology; block/site indexes are derived, frozen by
+consumer convention, and rebuilt together for topology changes. Validators inspect
+all stored edges, including foreign components, and exact site-edge metadata.
 
 ### Shared fixed-point scheduling
 
@@ -71,12 +77,34 @@ published as an effect instead of rediscovered from `ForStmt` and typechecker pl
 shape. Definite initialization and ownership/liveness consume the same ordered
 effect stream.
 
+### Bounded ownership provenance and lexical usage
+
+Ownership still captures accepted reference-bearing value shapes before effects
+can move them, using existing loans, flow origins, reference types and semantic
+variant constructions. Holder-relative loan paths distinguish stored slots from
+borrowed origins and loan IDs. Exact projected direct/optional enum reference-field
+replacement preserves siblings and copied holders; carrier-level liveness remains
+conservative. This is not a general aggregate provenance framework, nor support for
+nested stored-reference aggregates. New reference-bearing shapes require an audit.
+
+Usage warnings remain lexical: `semantics/usage` consumes symbol usage/mutability
+flags from resolution, type/import lookup and typechecking, not reachable runtime
+effects. Migrating them would require a separate warning-policy decision.
+
 ### Contract cleanup
 
 Contracts that only verified duplicated downstream AST switches were removed.
 Remaining contracts guard real closed extension points such as semantic type
 identity/lowering/fingerprinting. Artifact validators remain primary guards for
-cross-phase evidence.
+cross-phase evidence shape/identity. They do not prove that a handled syntax case
+published every required operation: producer ordering tests and executable source
+fixtures cover semantic publication. Sealed type methods enforce presence, not
+correct child enumeration. Empty effect artifacts can be valid.
+
+Leaf type traversal methods return directly; exported fingerprints use their
+existing `Type` parameter without a redundant assertion. Bounded pointer reflection
+in `isNilType` remains to preserve typed-nil capability answers. No nil-only
+interface or exhaustive replacement dispatcher is introduced.
 
 ### Go baseline
 
@@ -86,7 +114,8 @@ were replaced with equivalent 1.23 code; no compiler semantics required Go 1.26.
 ## Extension result
 
 For a new syntax construct expressed using existing semantic actions, expected
-work is concentrated in syntax-aware owners:
+work is concentrated in syntax-aware owners, provided existing provenance shapes
+also suffice:
 
 ```text
 AST/parser -> resolver/typechecker as needed -> CFG/effects as needed -> HIR
@@ -117,6 +146,11 @@ GOTOOLCHAIN=local go vet ./...
 GOTOOLCHAIN=local go test -race <concurrency-sensitive compiler packages>
 ```
 
-plus source fixtures and repository-specific build validation. Passing tests alone
+plus a fresh `go run ./scripts/bundle.go` followed by full `x_test` with explicit
+absolute `PEEPER_BIN`. Run full tests, bundle and executable fixtures sequentially:
+they share build artifacts. Without `PEEPER_BIN`, fixture execution is skipped.
+See architecture verification commands for focused graph/project/pipeline races.
+
+Passing tests alone
 is not enough; architecture audit must also confirm canonical kernels have not
 been bypassed.
