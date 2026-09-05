@@ -77,17 +77,17 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
 	}
+	for _, sym := range module.ModuleScope.Symbols() {
+		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst) {
+			continue
+		}
+		if ownershipTrackedSymbol(sym) {
+			ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+				"ownership-tracked module bindings are not supported", ast.LocOf(sym.ASTNode), "")
+		}
+	}
 	for _, stmt := range module.AST.Stmts {
 		switch node := stmt.(type) {
-		case *ast.LetDecl, *ast.ConstDecl:
-			sym, found := module.ModuleScope.LookupNode(node)
-			if !found || sym == nil {
-				continue
-			}
-			if ownershipTrackedSymbol(sym) {
-				ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-					"ownership-tracked module bindings are not supported", ast.LocOf(node), "")
-			}
 		case *ast.FnDecl:
 			var sym *symbols.Symbol
 			if node.Receiver != nil {
