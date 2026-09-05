@@ -1,0 +1,26 @@
+struct Cell { value: i32 }
+
+fn Read(matrix: [2][2]i32) -> i32 {
+    let mut read_index: i32;
+    return matrix[read_index][0];
+}
+
+fn Write(mut matrix: [2][2]i32) {
+    let mut write_index: i32;
+    matrix[write_index][0] = 1;
+}
+
+fn Borrow(matrix: [2][2]i32) {
+    let mut borrow_index: i32;
+    let view = &matrix[borrow_index][0];
+}
+
+fn Field(cells: [2]Cell) -> i32 {
+    let mut field_index: i32;
+    return cells[field_index].value;
+}
+
+fn Slice(matrix: [2][2][2]i32) {
+    let mut slice_index: i32;
+    let view = matrix[slice_index][0][..];
+}

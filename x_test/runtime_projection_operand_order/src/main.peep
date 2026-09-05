@@ -1,0 +1,47 @@
+struct Trace { order: i32 }
+struct Cell { value: i32 }
+
+fn mark(trace: &mut Trace, digit: i32) -> i32 {
+    trace.order = trace.order * 10 + digit;
+    return 0;
+}
+
+fn make(trace: &mut Trace) -> [2]i32 {
+    trace.order = trace.order * 10 + 1;
+    return [2]i32{7, 8};
+}
+
+fn (cell: &Cell) read() -> i32 {
+    return cell.value;
+}
+
+fn main() -> i32 {
+    let mut trace = .Trace{order = 0};
+    let mut matrix = [2][2]i32{[2]i32{7, 8}, [2]i32{9, 10}};
+    let value = matrix[mark(&mut trace, 1)][mark(&mut trace, 2)];
+    if value != 7 || trace.order != 12 { return 1; }
+
+    trace.order = 0;
+    matrix[mark(&mut trace, 2)][mark(&mut trace, 3)] = mark(&mut trace, 1);
+    if matrix[0][0] != 0 || trace.order != 123 { return 2; }
+
+    trace.order = 0;
+    let cells = [2][2]Cell{[2]Cell{.{value = 3}, .{value = 4}}, [2]Cell{.{value = 5}, .{value = 6}}};
+    let selected = cells[mark(&mut trace, 1)][mark(&mut trace, 2)].read();
+    if selected != 3 || trace.order != 12 { return 3; }
+
+    trace.order = 0;
+    {
+        let view = matrix[mark(&mut trace, 1)][mark(&mut trace, 2)..mark(&mut trace, 3) + 1];
+        if view[0] != 0 || trace.order != 123 { return 4; }
+    }
+
+    trace.order = 0;
+    let temporary = make(&mut trace)[mark(&mut trace, 2)];
+    if temporary != 7 || trace.order != 12 { return 5; }
+
+    trace.order = 0;
+    let pointer: rawptr = @matrix[mark(&mut trace, 1)][mark(&mut trace, 2)];
+    if pointer != @matrix[0][0] || trace.order != 12 { return 6; }
+    return 0;
+}

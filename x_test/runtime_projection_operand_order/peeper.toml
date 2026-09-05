@@ -1,0 +1,6 @@
+name = "runtime_projection_operand_order"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

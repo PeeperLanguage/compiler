@@ -60,6 +60,12 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 	if result == nil {
 		t.Fatal("Build published no result")
 	}
+	if err := module.CFG.Validate(); err != nil {
+		t.Fatalf("constructed CFG rejected: %v", err)
+	}
+	if err := result.Validate(module.CFG, module.TypedASTNodes); err != nil {
+		t.Fatalf("published effects rejected: %v", err)
+	}
 	return result, module
 }
 
@@ -106,7 +112,21 @@ func describe(op effect.Op) string {
 	case effect.Write:
 		return "write " + op.Place.Root.Name
 	case effect.Use:
+		if op.Place.Root == nil {
+			return "use temporary"
+		}
 		return "use " + op.Place.Root.Name
+	case effect.Borrow:
+		if op.Place.Root == nil {
+			return "borrow temporary"
+		}
+		return "borrow " + op.Place.Root.Name
+	case effect.CallBegin:
+		return "call"
+	case effect.CallEnd:
+		return "end"
+	case effect.Discard:
+		return "discard"
 	case effect.Iterate:
 		if op.Place.Root == nil {
 			return "iterate temporary"
@@ -114,6 +134,82 @@ func describe(op effect.Op) string {
 		return "iterate " + op.Place.Root.Name
 	}
 	return "unknown"
+}
+
+func TestBuildPublishesProjectionOperands(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		want   []string
+	}{
+		{
+			name:   "nested read",
+			source: `fn probe(matrix: [2][2]i32, i: i32, j: i32) -> i32 { return matrix[i][j]; }`,
+			want:   []string{"define matrix", "define i", "define j", "use i", "use j", "use matrix"},
+		},
+		{
+			name: "field after index",
+			source: `struct Row { field: i32 }
+fn probe(rows: [2]Row, i: i32) -> i32 { return rows[i].field; }`,
+			want: []string{"define rows", "define i", "use i", "use rows"},
+		},
+		{
+			name:   "write after RHS",
+			source: `fn probe(mut matrix: [2][2]i32, i: i32, j: i32, value: i32) { matrix[i][j] = value; }`,
+			want:   []string{"define matrix", "define i", "define j", "define value", "use value", "use i", "use j", "write matrix"},
+		},
+		{
+			name:   "explicit borrow",
+			source: `fn probe(matrix: [2][2]i32, i: i32, j: i32) { let view = &matrix[i][j]; }`,
+			want:   []string{"define matrix", "define i", "define j", "use i", "use j", "borrow matrix", "define view"},
+		},
+		{
+			name: "implicit borrow",
+			source: `struct Cell { value: i32 }
+fn (cell: &Cell) take() -> i32 { return cell.value; }
+fn probe(matrix: [2][2]Cell, i: i32, j: i32) -> i32 { return matrix[i][j].take(); }`,
+			want: []string{"define matrix", "define i", "define j", "call", "use i", "use j", "borrow matrix", "end"},
+		},
+		{
+			name:   "slice bounds after base",
+			source: `fn probe(matrix: [2][2]i32, i: i32, start: i32, end: i32) { let view = matrix[i][start..end]; }`,
+			want:   []string{"define matrix", "define i", "define start", "define end", "use i", "use start", "use end", "borrow matrix", "define view"},
+		},
+		{
+			name:   "full slice",
+			source: `fn probe(matrix: [2][2]i32, i: i32) { let view = matrix[i][..]; }`,
+			want:   []string{"define matrix", "define i", "use i", "borrow matrix", "define view"},
+		},
+		{
+			name: "calls in indexes",
+			source: `fn first() -> i32 { return 0; }
+fn second() -> i32 { return 1; }
+fn probe(matrix: [2][2]i32) -> i32 { return matrix[first()][second()]; }`,
+			want: []string{"define matrix", "call", "use first", "end", "call", "use second", "end", "use matrix"},
+		},
+		{
+			name: "temporary receiver",
+			source: `struct Cell { value: i32 }
+fn (cell: &Cell) take() -> i32 { return cell.value; }
+fn make() -> Cell { return .Cell{value = 1}; }
+fn probe() -> i32 { return make().take(); }`,
+			want: []string{"call", "call", "use make", "end", "borrow temporary", "end"},
+		},
+		{
+			name: "temporary base",
+			source: `fn make() -> [2]i32 { return [2]i32{1, 2}; }
+fn probe(i: i32) -> i32 { return make()[i]; }`,
+			want: []string{"define i", "call", "use make", "end", "use i", "use temporary"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, module := buildEffects(t, test.source)
+			got := publishedOps(t, result, module, "probe")
+			if !sameOps(got, test.want) {
+				t.Fatalf("published %v, want %v", got, test.want)
+			}
+		})
+	}
 }
 
 func TestBuildPublishesSequenceIterationLifetime(t *testing.T) {

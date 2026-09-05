@@ -1,0 +1,9 @@
+fn Write(_: &mut i32) -> i32 { return 0; }
+fn Read(_: &i32) {}
+
+fn Conflict(matrix: [2][2]i32, mut value: i32) -> i32 {
+    let reference = &value;
+    let selected = matrix[Write(&mut value)][0];
+    Read(reference);
+    return selected;
+}
