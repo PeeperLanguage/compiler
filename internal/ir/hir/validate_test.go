@@ -28,6 +28,16 @@ func TestValidateAcceptsWellFormedModule(t *testing.T) {
 	}
 }
 
+// A typed nil wraps a nil pointer in a non-nil interface, so it must be treated
+// like a plain nil optional slot rather than dereferenced as a real statement.
+func TestValidateAcceptsTypedNilOptionalSlot(t *testing.T) {
+	module := wellFormedHIR()
+	module.Funcs[0].Body.Stmts[0].(*If).Else = (*Block)(nil)
+	if err := module.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil for a typed-nil optional else", err)
+	}
+}
+
 func TestValidateReportsDefects(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -60,6 +70,16 @@ func TestValidateReportsDefects(t *testing.T) {
 				m.Funcs[0].Body.Stmts[2].(*SwitchVariant).Cases[0].Body = nil
 			},
 			want: "has a case 0 with no body",
+		},
+		{
+			name:   "typed-nil block statement in a block",
+			damage: func(m *Module) { m.Funcs[0].Body.Stmts[3] = (*Block)(nil) },
+			want:   "holds a nil statement at block index 3",
+		},
+		{
+			name:   "typed-nil return statement in a block",
+			damage: func(m *Module) { m.Funcs[0].Body.Stmts[3] = (*Return)(nil) },
+			want:   "holds a nil statement at block index 3",
 		},
 		{
 			name:   "nil function",

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"compiler/pkg/typednil"
 )
 
 const maxReportedProblems = 10
@@ -68,11 +70,11 @@ func validateFunction(fn *Function) []string {
 	}
 	for _, block := range fn.Blocks {
 		for index, instr := range block.Instrs {
-			if instr == nil {
+			if typednil.IsNil(instr) {
 				problems = append(problems, fmt.Sprintf("function %s block b%d holds a nil instruction at %d", fn.Name, block.ID, index))
 			}
 		}
-		if block.Term == nil {
+		if typednil.IsNil(block.Term) {
 			// Emission would otherwise fall off the end of a block.
 			problems = append(problems, fmt.Sprintf("function %s block b%d has no terminator", fn.Name, block.ID))
 			continue

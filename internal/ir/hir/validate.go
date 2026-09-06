@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"compiler/pkg/typednil"
 )
 
 const maxReportedProblems = 10
@@ -46,19 +48,20 @@ func (m *Module) Validate() error {
 	return errors.New(strings.Join(problems, "; "))
 }
 
-// validateStmt walks through the canonical child traversal rather than a switch
-// of its own, so a new statement kind is covered here the moment it declares its
-// children. What it adds is the checks a traversal cannot make: an empty slot is
-// invisible to a walk that skips nils.
+// validateStmt checks what a child traversal cannot see: an empty slot is
+// invisible to a walk that skips nils. It enumerates statement kinds with an
+// explicit switch rather than forEachChild so nil slots and required bodies are
+// reported with their role; a new statement kind with children must extend this
+// switch to keep that reporting.
 func validateStmt(fn string, stmt Stmt) []string {
 	problems := make([]string, 0)
-	if stmt == nil {
+	if typednil.IsNil(stmt) {
 		return append(problems, fmt.Sprintf("function %s holds a nil statement", fn))
 	}
 	switch node := stmt.(type) {
 	case *Block:
 		for index, child := range node.Stmts {
-			if child == nil {
+			if typednil.IsNil(child) {
 				problems = append(problems, fmt.Sprintf("function %s holds a nil statement at block index %d", fn, index))
 				continue
 			}
@@ -66,7 +69,7 @@ func validateStmt(fn string, stmt Stmt) []string {
 		}
 	case *If:
 		problems = append(problems, validateBody(fn, "if", node.Then)...)
-		if node.Else != nil {
+		if !typednil.IsNil(node.Else) {
 			problems = append(problems, validateStmt(fn, node.Else)...)
 		}
 	case *For:

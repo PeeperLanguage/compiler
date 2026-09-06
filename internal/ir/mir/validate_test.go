@@ -68,6 +68,16 @@ func TestValidateReportsDefects(t *testing.T) {
 			want:   "holds a nil instruction at 0",
 		},
 		{
+			name:   "typed-nil terminator",
+			damage: func(m *Module) { m.Funcs[0].Blocks[1].Term = (*Jump)(nil) },
+			want:   "block b1 has no terminator",
+		},
+		{
+			name:   "typed-nil instruction",
+			damage: func(m *Module) { m.Funcs[0].Blocks[0].Instrs = []Instr{(*Store)(nil)} },
+			want:   "holds a nil instruction at 0",
+		},
+		{
 			name: "one case selected twice",
 			damage: func(m *Module) {
 				m.Funcs[0].Blocks[0].Term = &SwitchVariant{Targets: []VariantTarget{
