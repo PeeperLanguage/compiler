@@ -17,6 +17,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
+	"compiler/pkg/typednil"
 )
 
 type Parser struct {
@@ -772,7 +773,7 @@ func (p *Parser) nextID() ast.NodeID {
 }
 
 func reg[T ast.Node](p *Parser, n T) T {
-	if !ast.IsNilNode(n) {
+	if !typednil.IsNil(n) {
 		n.SetID(p.nextID())
 	}
 	return n

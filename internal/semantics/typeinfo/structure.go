@@ -1,7 +1,5 @@
 package typeinfo
 
-import "reflect"
-
 // TypeChildRelation describes why one semantic type contains another. The
 // relation is structural evidence, not an analysis result: ownership, sizing,
 // lowerability, substitution, and future queries may interpret the same child
@@ -41,18 +39,6 @@ func ForEachChild(typ Type, yield func(TypeChild) bool) bool {
 		return true
 	}
 	return typ.forEachChild(yield)
-}
-
-// isNilType handles a typed-nil pointer stored in the Type interface without
-// enumerating concrete type kinds. Type is sealed to this package and all
-// current implementations are pointer types, but the kind guard keeps this
-// helper correct if a value implementation is ever introduced.
-func isNilType(typ Type) bool {
-	if typ == nil {
-		return true
-	}
-	value := reflect.ValueOf(typ)
-	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
 func (*InvalidType) forEachChild(func(TypeChild) bool) bool       { return true }

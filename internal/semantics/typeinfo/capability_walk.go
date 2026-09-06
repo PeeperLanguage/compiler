@@ -1,5 +1,7 @@
 package typeinfo
 
+import "compiler/pkg/typednil"
+
 // ownershipShapeKind describes how a semantic type contributes copy/drop
 // behavior. It is part of the sealed Type contract: a new type must declare
 // both its structural children and how ownership composes across them.
@@ -91,7 +93,7 @@ func ownershipCapability(t Type) OwnershipCapability {
 
 	var walk func(Type, bool) capabilityFacts
 	walk = func(current Type, enumPayload bool) capabilityFacts {
-		if current == nil || isNilType(current) || visiting[current] {
+		if current == nil || typednil.IsNil(current) || visiting[current] {
 			return capabilityFacts{}
 		}
 		shape := current.ownershipShape()
