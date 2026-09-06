@@ -336,7 +336,7 @@ func returnOriginContract(clause *ast.ReturnOriginClause, params []ast.Param, ha
 	return contract
 }
 
-func ReturnOriginSources(call *ast.CallExpr, fn *FuncType) []ast.Expr {
+func ReturnOriginSources(call *ast.CallExpr, args []ast.Expr, fn *FuncType) []ast.Expr {
 	if call == nil || call.Callee == nil || fn == nil || fn.ReturnOrigins == nil {
 		return nil
 	}
@@ -346,11 +346,11 @@ func ReturnOriginSources(call *ast.CallExpr, fn *FuncType) []ast.Expr {
 		if methodCall {
 			if slot == 0 {
 				sources = append(sources, selector.Expr)
-			} else if slot > 0 && slot <= len(call.Args) {
-				sources = append(sources, call.Args[slot-1])
+			} else if slot > 0 && slot <= len(args) {
+				sources = append(sources, args[slot-1])
 			}
-		} else if slot >= 0 && slot < len(call.Args) {
-			sources = append(sources, call.Args[slot])
+		} else if slot >= 0 && slot < len(args) {
+			sources = append(sources, args[slot])
 		}
 	}
 	return sources

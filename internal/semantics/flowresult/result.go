@@ -8,6 +8,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -42,12 +43,8 @@ func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
 }
 
 type CaseTest struct {
-	SubjectID    ast.NodeID
-	Case         int
-	CaseWhenTrue bool
-	CaseCount    int
-	PayloadPath  []int
-	Family       typeinfo.VariantFamily
+	typecheckresult.CaseTest
+	PayloadPath []int
 }
 
 type VariantFieldAccess struct {
@@ -56,41 +53,6 @@ type VariantFieldAccess struct {
 	Payload *typeinfo.StructType
 	Field   int
 	Type    typeinfo.Type
-}
-
-// Match is typechecker-owned case and binding evidence consumed by CFG and
-// later semantic phases without resolving source paths again.
-type Match struct {
-	SubjectID ast.NodeID
-	EnumType  typeinfo.Type
-	Cases     []typeinfo.VariantCase
-	Arms      []MatchArm
-}
-
-type MatchArm struct {
-	ArmID   ast.NodeID
-	BodyID  ast.NodeID
-	Case    int
-	Payload typeinfo.Type
-	Fields  []MatchField
-}
-
-type MatchField struct {
-	Field        int
-	WholePayload bool
-	Type         typeinfo.Type
-	Binding      *symbols.Symbol
-	Discard      bool
-}
-
-// Arm returns resolved evidence for one case-labelled CFG edge.
-func (m Match) Arm(caseIndex int) (MatchArm, bool) {
-	for _, arm := range m.Arms {
-		if arm.Case == caseIndex {
-			return arm, true
-		}
-	}
-	return MatchArm{}, false
 }
 
 type Result struct {

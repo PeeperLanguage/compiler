@@ -10,9 +10,11 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
@@ -25,22 +27,21 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	diag.AddSourceContent(filePath, source)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "definite_init_test",
-		FilePath:   filePath,
-		Content:    source,
-		AST:        parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "definite_init_test"},
+		FilePath: filePath,
+		Content:  source,
+		AST:      parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.TypedASTNodes = ast.Index(module.AST)
+	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Semantics.MatchCases,
-		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		MatchCases:          module.Typechecking.MatchCases,
+		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
@@ -54,15 +55,18 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	if graph == nil {
 		t.Fatal("choose function CFG missing")
 	}
-	result := analyzeFunction(
-		fn,
-		graph,
-		module.TypedASTNodes,
-		module.Semantics.BlockScopes,
-		module.Semantics.ResolvedSymbols,
-		module.Semantics.Matches,
-		diag,
-	)
+	effects := effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
+		Symbols:             module.Bindings.NodeSymbols,
+		Scopes:              module.Bindings.BlockScopes,
+		CallArguments:       module.Typechecking.CallArgumentsOrSource,
+		ArmBindings:         module.Typechecking.ArmBindings,
+		StringConcatenation: module.Typechecking.StringConcatenation,
+		ValueUse:            module.Typechecking.ValueUse,
+		ExprType:            module.EffectiveExprType,
+		ReferenceArgument:   module.Typechecking.ReferenceArgument,
+		SequenceCarrier:     module.Typechecking.SequenceCarrier,
+	})
+	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module
 }
 
@@ -185,15 +189,21 @@ fn choose(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	binding := module.Semantics.ResolvedSymbols[match.Arms[0].Fields[0].Binding.ID()]
+	binding := module.Bindings.NodeSymbols[match.Arms[0].Fields[0].Binding.ID()]
 	returnID := ir.NodeID(match.Arms[0].Body.Stmts[0].ID())
 	for _, block := range module.CFG.Function(ir.NodeID(fn.ID())).Blocks {
 		for _, cfgSite := range block.Sites {
 			if cfgSite.NodeID != returnID {
 				continue
 			}
-			if _, initialized := result.In[cfgSite.ID][binding.ID]; !initialized {
-				t.Fatalf("pattern binding absent at arm return: state=%#v", result.In[cfgSite.ID])
+			// The binding is published as an initialized define at the arm
+			// block's first site, which is this return's own site, so it lands
+			// in Out rather than In. It used to be applied on the case edge and
+			// so appeared in In. The read of `payload` in the arm body is
+			// covered either way, because a site's effects are replayed in
+			// evaluation order and the define precedes the read.
+			if _, initialized := result.Out[cfgSite.ID][binding.ID]; !initialized {
+				t.Fatalf("pattern binding absent at arm return: state=%#v", result.Out[cfgSite.ID])
 			}
 			return
 		}
@@ -208,4 +218,58 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 		}
 	}
 	return false
+}
+
+// A match subject is a read like any other. This was previously undiagnosed:
+// the analysis attached a site condition for a branch terminator only, so
+// nothing checked the subject of a match. Publishing the subject as an ordinary
+// read closed the gap, and this analysis learned nothing about matches to get it.
+func TestInitializationChecksMatchSubject(t *testing.T) {
+	_, diag, _ := analyzeInitializationSource(t, `enum Outcome {
+	Ok: { value: i32 },
+	Pending,
+}
+
+fn choose(flag: bool) -> i32 {
+	let mut outcome: Outcome;
+	if flag {
+		outcome = Outcome::Pending;
+	}
+	match outcome {
+		Outcome::Ok with { value = payload } => {
+			return payload;
+		}
+		Outcome::Pending => {
+			return 0;
+		}
+	}
+}`)
+	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized match subject diagnostic:\n%s", diag.EmitAllToString())
+	}
+	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `outcome` used before it's initialized") {
+		t.Fatalf("diagnostic does not name the match subject:\n%s", got)
+	}
+}
+
+// A loop's iterated sequence is a read like any other. It was previously
+// unchecked here: the analysis saw only a statement's own expressions and a
+// branch condition, and a for statement carries neither. Ownership always read
+// it, so publishing it once closed the gap for initialization too.
+func TestInitializationChecksLoopIterable(t *testing.T) {
+	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	let mut limit: i32;
+	if flag {
+		limit = 3;
+	}
+	for i in 0..limit {
+	}
+	return 0;
+}`)
+	if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("expected uninitialized loop bound diagnostic:\n%s", diag.EmitAllToString())
+	}
+	if got := diag.EmitAllToString(); !strings.Contains(got, "symbol `limit` used before it's initialized") {
+		t.Fatalf("diagnostic does not name the loop bound:\n%s", got)
+	}
 }

@@ -1,0 +1,8 @@
+name = "negative_projection_borrow_conflict"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0037", "cannot activate mutable borrow while storage is borrowed"]
+stderr_excludes = ["T0039"]

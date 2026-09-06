@@ -15,13 +15,16 @@ import (
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	preludepkg "compiler/internal/prelude"
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/definiteinit"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
@@ -37,6 +40,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	}
 
 	entry.IsEntry = true
+	// Explicit entry content must replace any overlay stub registered for same ID.
 	ctx.AddModule(entry)
 	ctx.CompletedProjectPhase = phase.Load
 	diag := ctx.Diagnostics
@@ -45,14 +49,14 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 
 	loader := &moduleLoader{
 		ctx:       ctx,
-		scheduled: make(map[string]struct{}),
+		scheduled: make(map[moduleid.ID]string),
 	}
-	preludeKey := ""
-	if preludeMod, ok := ctx.ModuleByKey("core:prelude/global"); ok {
+	preludeID := moduleid.ID{}
+	if preludeMod, ok := ctx.ModuleByID(preludepkg.ModuleID(ctx)); ok {
 		if err := loader.Load(preludeMod); err != nil {
 			return err
 		}
-		preludeKey = preludeMod.Key
+		preludeID = preludeMod.ID
 	}
 	if err := loader.Load(entry); err != nil {
 		return err
@@ -60,11 +64,11 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 
 	// Ensure topo-sort puts prelude first by making all non-prelude modules
 	// depend on it. This removes the need for any special-case ordering logic.
-	if preludeKey != "" {
+	if preludeID.Valid() {
 		for _, mod := range ctx.Modules() {
-			if mod != nil && mod.Key != preludeKey {
+			if mod != nil && mod.ID != preludeID {
 				if ctx.Graph != nil {
-					ctx.Graph.AddEdge(graph.NodeID(mod.Key), graph.NodeID(preludeKey))
+					ctx.Graph.AddEdge(graph.NodeID(mod.ID.String()), graph.NodeID(preludeID.String()))
 				}
 			}
 		}
@@ -74,10 +78,10 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	moduleIndex := make(map[graph.NodeID]*project.Module, len(modules))
 	moduleIDs := make([]graph.NodeID, 0, len(modules))
 	for _, mod := range modules {
-		if mod == nil || mod.Key == "" {
+		if mod == nil || !mod.ID.Valid() {
 			continue
 		}
-		id := graph.NodeID(mod.Key)
+		id := graph.NodeID(mod.ID.String())
 		moduleIDs = append(moduleIDs, id)
 		moduleIndex[id] = mod
 	}
@@ -95,9 +99,15 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 			if len(cycle) > 0 {
 				parts := make([]string, 0, len(cycle))
 				for _, id := range cycle {
-					if id != "" {
-						parts = append(parts, string(id))
+					module := moduleIndex[id]
+					if module == nil {
+						continue
 					}
+					name := module.FilePath
+					if name == "" {
+						name = module.ID.ImportPath
+					}
+					parts = append(parts, name)
 				}
 				msg = "cyclic import detected: " + strings.Join(parts, " -> ")
 			}
@@ -109,13 +119,13 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	orderedModules := make([]*project.Module, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		module := moduleIndex[id]
-		if module != nil && module.Key != "" {
+		if module != nil && module.ID.Valid() {
 			orderedModules = append(orderedModules, module)
 		}
 	}
 	var prelude *project.Module
-	if preludeKey != "" {
-		prelude = moduleIndex[graph.NodeID(preludeKey)]
+	if preludeID.Valid() {
+		prelude = moduleIndex[graph.NodeID(preludeID.String())]
 	}
 	preludeInjected := advanceModulesThrough(ctx, orderedModules, prelude, prelude == nil, phase.Ownership, diag)
 	ctx.CompletedProjectPhase = phase.Ownership
@@ -129,7 +139,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 		if module == nil || module.Phase < phase.Ownership || module.Phase >= phase.Usage {
 			continue
 		}
-		usageDiag := diag.BeginPhase(phase.Usage, module.Key)
+		usageDiag := diag.BeginPhase(phase.Usage, module.ID.String())
 		usage.Analyze(ctx.WithDiagnostics(usageDiag), module)
 		module.Phase = phase.Usage
 		ctx.Metrics.AddPhaseAdvance()
@@ -139,7 +149,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	}
 	ctx.CompletedProjectPhase = phase.Usage
 	if ctx.Config.RequireEntrypoint {
-		validateProgramEntrypoint(entry, diag.AppendPhase(phase.Usage, entry.Key))
+		validateProgramEntrypoint(entry, diag.AppendPhase(phase.Usage, entry.ID.String()))
 		if diag.HasErrors() {
 			return nil
 		}
@@ -239,7 +249,7 @@ func injectPreludeSymbols(ctx *project.CompilerContext, prelude *project.Module,
 	if ctx == nil || ctx.GlobalScope == nil || prelude == nil || prelude.ModuleScope == nil {
 		return
 	}
-	preludeDiag := diag.AppendPhase(phase.Collected, prelude.Key)
+	preludeDiag := diag.AppendPhase(phase.Collected, prelude.ID.String())
 	for _, sym := range prelude.ModuleScope.Symbols() {
 		if err := ctx.GlobalScope.Declare(sym); err == nil {
 			continue
@@ -254,15 +264,15 @@ func injectPreludeSymbols(ctx *project.CompilerContext, prelude *project.Module,
 
 // requireScheduledModulesAtLeast reports scheduled modules that stalled before
 // a required project-wide phase barrier without user diagnostics.
-func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[string]struct{}, phase phase.Phase) error {
+func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[moduleid.ID]string, phase phase.Phase) error {
 	for _, module := range modules {
 		if module == nil || module.Phase >= phase {
 			continue
 		}
-		if _, ok := scheduled[module.Key]; !ok {
+		if _, ok := scheduled[module.ID]; !ok {
 			continue
 		}
-		name := module.Key
+		name := module.ID.ImportPath
 		if name == "" {
 			name = module.FilePath
 		}
@@ -287,7 +297,7 @@ func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *proj
 		return true
 	}
 	for _, imp := range module.Imports {
-		imported, ok := ctx.ModuleByKey(imp.Key)
+		imported, ok := ctx.ModuleByID(imp.ID)
 		if !ok || imported == nil || imported.Phase < required {
 			return false
 		}
@@ -296,14 +306,16 @@ func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *proj
 }
 
 func preludeReadyForPhase(module, prelude *project.Module, preludeInjected bool, next phase.Phase) bool {
-	if module == nil || prelude == nil || module.Key == prelude.Key {
+	if module == nil || prelude == nil || module.ID == prelude.ID {
 		return true
 	}
 	switch next {
 	case phase.Collected, phase.Bound:
 		return true
-	default:
+	case phase.Resolved:
 		return preludeInjected && prelude.Phase >= phase.Resolved
+	default:
+		return preludeInjected && prelude.Phase >= phase.Typechecked
 	}
 }
 
@@ -324,6 +336,8 @@ func nextModulePhase(current phase.Phase) phase.Phase {
 	case phase.CFG:
 		return phase.FlowTyped
 	case phase.FlowTyped:
+		return phase.Effects
+	case phase.Effects:
 		return phase.DefiniteInit
 	case phase.DefiniteInit:
 		return phase.Ownership
@@ -347,7 +361,7 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 	case phase.Bound:
 		return phase.Bound
 	case phase.ConstEval:
-		return phase.ConstEval
+		return phase.Typechecked
 	case phase.Typechecked:
 		return phase.Typechecked
 	case phase.Resolved:
@@ -356,8 +370,10 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 		return phase.Typechecked
 	case phase.FlowTyped:
 		return phase.CFG
-	case phase.DefiniteInit:
+	case phase.Effects:
 		return phase.FlowTyped
+	case phase.DefiniteInit:
+		return phase.Effects
 	case phase.Ownership:
 		return phase.DefiniteInit
 	case phase.Usage:
@@ -383,7 +399,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	if next == phase.None || next == phase.Usage {
 		return false
 	}
-	phaseDiag := diag.BeginPhase(next, module.Key)
+	phaseDiag := diag.BeginPhase(next, module.ID.String())
 	phaseCtx := ctx.WithDiagnostics(phaseDiag)
 	if module.Phase < phase.Collected {
 		collector.Collect(phaseCtx, module)
@@ -412,17 +428,25 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	if module.Phase < phase.Typechecked {
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
-		module.TypedASTNodes = ast.Index(module.AST)
-		module.SemanticExportFingerprint = project.SemanticExportFingerprint(module)
+		module.RebuildTypedASTIndex()
+		module.SemanticExportFingerprint = project.SemanticExportFingerprint(ctx, module)
 		module.Phase = phase.Typechecked
 		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.CFG {
 		module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-			MatchCases:          module.Semantics.MatchCases,
-			LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+			MatchCases:          module.Typechecking.MatchCases,
+			LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 		})
+		// Structure is checkable regardless of source validity: CFG construction
+		// promises the same topology for a program that will not compile, and a
+		// malformed graph misleads every phase that reads it, including Analyze
+		// just below.
+		if err := module.CFG.Validate(); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidTopology,
+				"control-flow topology is malformed: "+err.Error(), nil, "")
+		}
 		cfg.Analyze(module.CFG, phaseDiag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
 			node := module.TypedASTNodes[ast.NodeID(conditionID)]
 			expr, ok := node.(ast.Expr)
@@ -432,7 +456,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			value, ok := consteval.EvaluateExpr(
 				phaseCtx,
 				module,
-				module.Semantics.BlockScopes[ast.NodeID(scopeID)],
+				module.Bindings.BlockScopes[ast.NodeID(scopeID)],
 				expr,
 				&typeinfo.BoolType{},
 			)
@@ -451,21 +475,43 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
+	if module.Phase < phase.Effects {
+		module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
+			Symbols:             module.Bindings.NodeSymbols,
+			Scopes:              module.Bindings.BlockScopes,
+			CallArguments:       module.Typechecking.CallArgumentsOrSource,
+			ArmBindings:         module.Typechecking.ArmBindings,
+			StringConcatenation: module.Typechecking.StringConcatenation,
+			ValueUse:            module.Typechecking.ValueUse,
+			ExprType:            module.EffectiveExprType,
+			ReferenceArgument:   module.Typechecking.ReferenceArgument,
+			SequenceCarrier:     module.Typechecking.SequenceCarrier,
+		})
+		if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+				"published semantic effects are malformed: "+err.Error(), nil, "")
+		}
+		module.Phase = phase.Effects
+		ctx.Metrics.AddPhaseAdvance()
+		return true
+	}
 	if module.Phase < phase.DefiniteInit {
-		definiteinit.Check(
-			module.CFG,
-			module.TypedASTNodes,
-			module.Semantics.BlockScopes,
-			module.Semantics.ResolvedSymbols,
-			module.Semantics.Matches,
-			phaseDiag,
-		)
+		definiteinit.Check(module.CFG, module.Effects, phaseDiag)
 		module.Phase = phase.DefiniteInit
 		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
 	if module.Phase < phase.Ownership {
 		module.Ownership = ownership.Check(phaseCtx, module)
+		// Published evidence is only checkable once the module is otherwise
+		// error-free: broken source legitimately leaves evidence incomplete,
+		// and reporting that as a compiler bug would bury the real diagnostic.
+		if !phaseDiag.HasErrors() {
+			if err := module.Ownership.Validate(module.Typechecking, module.Bindings, module.CFG); err != nil {
+				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+					"ownership evidence is inconsistent: "+err.Error(), nil, "")
+			}
+		}
 		module.Phase = phase.Ownership
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -482,6 +528,10 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			return false
 		}
 		module.HIR = fold.ApplyTypedExpressionFolding(modhir)
+		if err := module.HIR.Validate(); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+				"lowered HIR is malformed: "+err.Error(), nil, "")
+		}
 		module.Phase = phase.HIR
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -493,7 +543,11 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Semantics.ConstValues)
+		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Constants.ModuleValues)
+		if err := module.MIR.Validate(); err != nil {
+			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+				"lowered MIR is malformed: "+err.Error(), nil, "")
+		}
 		module.Phase = phase.MIR
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -502,6 +556,12 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		return false
 	}
 	if module.Phase >= phase.Backend {
+		return false
+	}
+	// Emission assumes the MIR it is handed is well formed, and says so by
+	// panicking. The validator above is what makes that assumption safe, so
+	// nothing may reach emission once an error is recorded.
+	if diag != nil && diag.HasErrors() {
 		return false
 	}
 	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, ctx.Target, ctx.Config.BuildDebug)
@@ -518,15 +578,21 @@ func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*proj
 	}
 	queue := make([]graph.NodeID, 0)
 	seen := make(map[graph.NodeID]struct{})
+	modules := make(map[graph.NodeID]*project.Module)
+	for _, module := range ctx.Modules() {
+		if module != nil && module.ID.Valid() {
+			modules[graph.NodeID(module.ID.String())] = module
+		}
+	}
 	for _, module := range advanced {
 		if module == nil || module.Phase != phase.Typechecked {
 			continue
 		}
-		baseline, ok := ctx.SemanticExportBaseline(module.Key)
+		baseline, ok := ctx.SemanticExportBaseline(module.ID)
 		if !ok || baseline == module.SemanticExportFingerprint {
 			continue
 		}
-		id := graph.NodeID(module.Key)
+		id := graph.NodeID(module.ID.String())
 		queue = append(queue, id)
 		seen[id] = struct{}{}
 	}
@@ -539,7 +605,7 @@ func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*proj
 			}
 			seen[dependentID] = struct{}{}
 			queue = append(queue, dependentID)
-			dependent, found := ctx.ModuleByKey(string(dependentID))
+			dependent, found := modules[dependentID]
 			if !found || dependent == nil || dependent.Phase < phase.Typechecked {
 				continue
 			}

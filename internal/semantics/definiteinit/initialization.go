@@ -2,11 +2,12 @@ package definiteinit
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
+	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/semantics/flowresult"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/source"
 )
 
 type state map[symbols.SymbolID]struct{}
@@ -16,22 +17,11 @@ type functionResult struct {
 	Out map[cfg.SiteID]state
 }
 
-type site struct {
-	cfgSite   *cfg.Site
-	stmt      ast.Stmt
-	condition ast.Expr
-	scope     *symbols.Scope
-}
-
 // Check diagnoses reads not initialized on every reachable CFG predecessor.
-func Check(
-	graphs *cfg.Module,
-	nodes map[ast.NodeID]ast.Node,
-	blockScopes map[ast.NodeID]*symbols.Scope,
-	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
-	matches map[ast.NodeID]flowresult.Match,
-	diag *diagnostics.DiagnosticBag,
-) {
+//
+// It consumes published effects and never inspects syntax, so a new construct
+// that defines, writes, or reads a binding needs no case here.
+func Check(graphs *cfg.Module, effects effect.Result, diag *diagnostics.DiagnosticBag) {
 	if graphs == nil {
 		return
 	}
@@ -39,76 +29,39 @@ func Check(
 		if graph == nil {
 			continue
 		}
-		fn, _ := nodes[ast.NodeID(graph.NodeID)].(*ast.FnDecl)
-		if fn == nil {
-			continue
-		}
-		analyzeFunction(fn, graph, nodes, blockScopes, resolvedSymbols, matches, diag)
+		analyzeFunction(graph, effects[graph.NodeID], diag)
 	}
 }
 
-func analyzeFunction(
-	fn *ast.FnDecl,
-	graph *cfg.Graph,
-	nodes map[ast.NodeID]ast.Node,
-	blockScopes map[ast.NodeID]*symbols.Scope,
-	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
-	matches map[ast.NodeID]flowresult.Match,
-	diag *diagnostics.DiagnosticBag,
-) *functionResult {
-	sites, order, tracked := indexSites(fn, graph, nodes, blockScopes)
+func analyzeFunction(graph *cfg.Graph, ops effect.SiteOps, diag *diagnostics.DiagnosticBag) *functionResult {
 	result := &functionResult{In: make(map[cfg.SiteID]state), Out: make(map[cfg.SiteID]state)}
 	if graph == nil || graph.Entry == nil || len(graph.Entry.Sites) == 0 {
 		return result
 	}
+	sites, order := indexSites(graph)
+	tracked := trackedSymbols(ops, order)
+
+	// Parameters and match payload bindings arrive as initialized defines at the
+	// site that receives them, so entry needs no seeded state of its own.
 	entry := graph.Entry.Sites[0].ID
-	entryState := make(state)
-	if fn != nil && fn.Body != nil {
-		functionScope := blockScopes[fn.Body.ID()]
-		for _, param := range fn.ParamsWithReceiver() {
-			if param.Name == nil {
-				continue
-			}
-			symbol, found := functionScope.Lookup(param.Name.Name)
-			if !found || symbol == nil {
-				continue
-			}
-			entryState[symbol.ID] = struct{}{}
-			tracked[symbol.ID] = symbol.Name
+	result.In[entry] = make(state)
+	work := graphcore.NewWorklist(entry)
+	for {
+		id, pending := work.Next()
+		if !pending {
+			break
 		}
-	}
-	result.In[entry] = entryState
-	queue := []cfg.SiteID{entry}
-	queued := map[cfg.SiteID]bool{entry: true}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		queued[id] = false
-		node := sites[id]
-		if node == nil {
+		site := sites[id]
+		if site == nil {
 			continue
 		}
-		out := transfer(node, result.In[id])
+		out := transfer(ops[id], result.In[id])
 		result.Out[id] = out
-		for _, edge := range node.cfgSite.Successors {
+		for _, edge := range graph.SiteEdges.OutEdges(site.ID) {
 			if sites[edge.To] == nil {
 				continue
 			}
 			edgeState := copyState(out)
-			if edge.Kind == cfg.EdgeVariantCase {
-				match, found := matches[ast.NodeID(node.cfgSite.NodeID)]
-				if found {
-					if arm, armFound := match.Arm(edge.Case); armFound {
-						for _, field := range arm.Fields {
-							if field.Binding == nil {
-								continue
-							}
-							edgeState[field.Binding.ID] = struct{}{}
-							tracked[field.Binding.ID] = field.Binding.Name
-						}
-					}
-				}
-			}
 			current, exists := result.In[edge.To]
 			merged := edgeState
 			if exists {
@@ -118,162 +71,150 @@ func analyzeFunction(
 				continue
 			}
 			result.In[edge.To] = merged
-			if !queued[edge.To] {
-				queue = append(queue, edge.To)
-				queued[edge.To] = true
-			}
+			work.Add(edge.To)
 		}
 	}
+	// Reporting walks declaration order rather than worklist order so diagnostics
+	// are deterministic. A site absent from In was never reached.
 	for _, id := range order {
 		if initialized, reachable := result.In[id]; reachable {
-			checkReads(sites[id], initialized, tracked, resolvedSymbols, diag)
+			checkReads(ops[id], initialized, tracked, diag)
 		}
 	}
 	return result
 }
 
-func indexSites(
-	fn *ast.FnDecl,
-	graph *cfg.Graph,
-	nodes map[ast.NodeID]ast.Node,
-	blockScopes map[ast.NodeID]*symbols.Scope,
-) (map[cfg.SiteID]*site, []cfg.SiteID, map[symbols.SymbolID]string) {
-	sites := make(map[cfg.SiteID]*site)
+func indexSites(graph *cfg.Graph) (map[cfg.SiteID]*cfg.Site, []cfg.SiteID) {
+	sites := make(map[cfg.SiteID]*cfg.Site)
 	order := make([]cfg.SiteID, 0)
-	tracked := make(map[symbols.SymbolID]string)
-	if fn == nil || graph == nil {
-		return sites, order, tracked
-	}
 	for _, block := range graph.Blocks {
 		if block == nil || !block.Reachable {
 			continue
 		}
-		for _, cfgSite := range block.Sites {
-			if cfgSite == nil {
+		for _, site := range block.Sites {
+			if site == nil {
 				continue
 			}
-			indexed := &site{
-				cfgSite: cfgSite,
-				scope:   blockScopes[ast.NodeID(cfgSite.ScopeID)],
-			}
-			if stmt, ok := nodes[ast.NodeID(cfgSite.NodeID)].(ast.Stmt); ok {
-				indexed.stmt = stmt
-			}
-			if branch, ok := block.Terminator.(*cfg.Branch); ok && cfgSite.Kind == cfg.SiteTerminator {
-				indexed.condition, _ = nodes[ast.NodeID(branch.ConditionID)].(ast.Expr)
-			}
-			switch binding := indexed.stmt.(type) {
-			case *ast.LetDecl:
-				if indexed.scope != nil {
-					if symbol, found := indexed.scope.LookupNode(binding); found && symbol != nil {
-						tracked[symbol.ID] = symbol.Name
-					}
-				}
-			case *ast.ConstDecl:
-				if indexed.scope != nil {
-					if symbol, found := indexed.scope.LookupNode(binding); found && symbol != nil {
-						tracked[symbol.ID] = symbol.Name
-					}
-				}
-			}
-			sites[cfgSite.ID] = indexed
-			order = append(order, cfgSite.ID)
+			sites[site.ID] = site
+			order = append(order, site.ID)
 		}
 	}
-	return sites, order, tracked
+	return sites, order
 }
 
-func transfer(node *site, in state) state {
-	out := copyState(in)
-	if node == nil || node.scope == nil {
-		return out
+// trackedSymbols is the diagnosable universe: a binding this function defines.
+// A symbol with no define belongs to an enclosing scope and is never reported.
+func trackedSymbols(ops effect.SiteOps, order []cfg.SiteID) map[symbols.SymbolID]string {
+	tracked := make(map[symbols.SymbolID]string)
+	visitor := &initializationVisitor{tracked: tracked}
+	for _, id := range order {
+		for _, op := range ops[id] {
+			effect.Visit(op, visitor)
+		}
 	}
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		if stmt.Value != nil {
-			if symbol, found := node.scope.LookupNode(stmt); found && symbol != nil {
-				out[symbol.ID] = struct{}{}
-			}
-		}
-	case *ast.ConstDecl:
-		if stmt.Value != nil {
-			if symbol, found := node.scope.LookupNode(stmt); found && symbol != nil {
-				out[symbol.ID] = struct{}{}
-			}
-		}
-	case *ast.AssignStmt:
-		if ident, direct := stmt.Target.(*ast.Ident); direct && ident != nil {
-			if symbol, found := node.scope.Lookup(ident.Name); found && symbol != nil {
-				out[symbol.ID] = struct{}{}
-			}
-		}
+	return tracked
+}
+
+// transfer applies one site's effects in evaluation order. The lattice only
+// gains initialized symbols, and the join intersects, so the fixed point
+// terminates.
+func transfer(ops []effect.Op, in state) state {
+	out := copyState(in)
+	visitor := &initializationVisitor{current: out, applyState: true}
+	for _, op := range ops {
+		effect.Visit(op, visitor)
 	}
 	return out
 }
 
-func checkReads(
-	node *site,
-	initialized state,
-	tracked map[symbols.SymbolID]string,
-	resolvedSymbols map[ast.NodeID]*symbols.Symbol,
-	diag *diagnostics.DiagnosticBag,
-) {
-	if node == nil || diag == nil {
+// checkReads reports a read of a tracked binding that is not initialized at
+// that point. It replays the site's effects so a define earlier in the same
+// site covers a read later in it.
+func checkReads(ops []effect.Op, initialized state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+	if diag == nil {
 		return
 	}
-	checkExpr := func(expr ast.Expr) {
-		ast.Inspect(expr, func(node ast.Node) bool {
-			ident, ok := node.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			symbol := resolvedSymbols[ident.ID()]
-			if symbol == nil {
-				return true
-			}
-			name, local := tracked[symbol.ID]
-			if !local {
-				return true
-			}
-			if _, present := initialized[symbol.ID]; present {
-				return true
-			}
-			if name == "" {
-				name = ident.Name
-			}
-			name = ir.StripSymbolInstance(name)
-			msg := "symbol `" + name + "` used before it's initialized"
-			diag.Add(diagnostics.NewError(msg).
-				WithCode(diagnostics.ErrUninitializedVariable).
-				WithPrimaryLabel(ast.LocOf(ident), msg).
-				WithHelp("assign a value before reading this symbol"))
-			return true
-		})
+	visitor := &initializationVisitor{
+		current: initialized, tracked: tracked, diag: diag,
+		applyState: true, reportReads: true,
 	}
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		checkExpr(stmt.Value)
-	case *ast.ConstDecl:
-		checkExpr(stmt.Value)
-	case *ast.AssignStmt:
-		checkExpr(stmt.Value)
-		if _, direct := stmt.Target.(*ast.Ident); !direct {
-			checkExpr(stmt.Target)
-		}
-	case *ast.ExprStmt:
-		checkExpr(stmt.Expr)
-	case *ast.ReturnStmt:
-		checkExpr(stmt.Value)
+	visitor.current = copyState(initialized)
+	for _, op := range ops {
+		effect.Visit(op, visitor)
 	}
-	checkExpr(node.condition)
+}
+
+// initializationVisitor is the exhaustive semantic-operation contract for
+// definite initialization. Adding a new effect does not compile until this
+// analysis explicitly classifies it.
+type initializationVisitor struct {
+	current     state
+	tracked     map[symbols.SymbolID]string
+	diag        *diagnostics.DiagnosticBag
+	applyState  bool
+	reportReads bool
+}
+
+func (v *initializationVisitor) VisitDefine(op effect.Define) {
+	if op.Symbol != nil && v.tracked != nil {
+		v.tracked[op.Symbol.ID] = op.Symbol.Name
+	}
+	if v.applyState && op.Initialized && op.Symbol != nil {
+		v.current[op.Symbol.ID] = struct{}{}
+	}
+}
+
+func (v *initializationVisitor) VisitWrite(op effect.Write) {
+	if v.applyState && op.Place.Root != nil {
+		v.current[op.Place.Root.ID] = struct{}{}
+	}
+}
+
+func (v *initializationVisitor) VisitUse(op effect.Use) {
+	if v.reportReads {
+		reportUninitializedRead(op.Place, op.Location, v.current, v.tracked, v.diag)
+	}
+}
+
+func (v *initializationVisitor) VisitBorrow(op effect.Borrow) {
+	if v.reportReads {
+		reportUninitializedRead(op.Place, op.Location, v.current, v.tracked, v.diag)
+	}
+}
+
+func (*initializationVisitor) VisitIterate(effect.Iterate)     {}
+func (*initializationVisitor) VisitDiscard(effect.Discard)     {}
+func (*initializationVisitor) VisitCallBegin(effect.CallBegin) {}
+func (*initializationVisitor) VisitCallEnd(effect.CallEnd)     {}
+
+func reportUninitializedRead(at effect.Place, location *source.Location, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+	if at.Root == nil {
+		return
+	}
+	name, local := tracked[at.Root.ID]
+	if !local {
+		return
+	}
+	if _, present := current[at.Root.ID]; present {
+		return
+	}
+	if name == "" {
+		name = at.Root.Name
+	}
+	name = ir.StripSymbolInstance(name)
+	msg := "symbol `" + name + "` used before it's initialized"
+	diag.Add(diagnostics.NewError(msg).
+		WithCode(diagnostics.ErrUninitializedVariable).
+		WithPrimaryLabel(location, msg).
+		WithHelp("assign a value before reading this symbol"))
 }
 
 func copyState(current state) state {
-	copy := make(state, len(current))
+	copied := make(state, len(current))
 	for symbol := range current {
-		copy[symbol] = struct{}{}
+		copied[symbol] = struct{}{}
 	}
-	return copy
+	return copied
 }
 
 func intersectState(left, right state) state {

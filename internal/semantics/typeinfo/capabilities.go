@@ -88,52 +88,24 @@ func IsCondition(t Type) bool {
 	return ok
 }
 
-func IsImplicitCopyType(t Type) bool {
-	visiting := make(map[*DefinedType]bool)
-	var check func(Type, bool) bool
-	check = func(current Type, enumPayload bool) bool {
-		if defined, ok := current.(*DefinedType); ok {
-			if defined == nil || visiting[defined] {
-				return false
-			}
-			visiting[defined] = true
-			defer delete(visiting, defined)
-			return check(defined.Underlying, enumPayload)
-		}
-		switch typ := Underlying(current).(type) {
-		case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *AllocatorType:
-			return true
-		case *RefType:
-			return typ != nil && !typ.Mutable
-		case *OptionalType:
-			return typ != nil && check(typ.Inner, false)
-		case *StructType:
-			if typ == nil || !enumPayload {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if !check(field.Type, false) {
-					return false
-				}
-			}
-			return true
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload, true) {
-					return false
-				}
-			}
-			return true
-		default:
-			return false
-		}
-	}
-	return check(t, false)
-}
-
+// IsSizedType and IsLowerableType are deliberately separate walkers, and a
+// consolidation pass should leave them that way.
+//
+// They look alike — both recurse over the same structure with a cycle guard —
+// but they share neither the guard nor its meaning. Sized keys its guard on
+// *DefinedType and answers false on a cycle, because a type that contains
+// itself inline has no size. Lowerable keys on the underlying type and answers
+// whatever the recursion reached it through, because a self-referential type
+// *is* representable when the cycle passes through a pointer. A linked list is
+// lowerable and not sized, and one traversal cannot hold both answers without
+// carrying two guards.
+//
+// They also disagree on ordinary types for real reasons: an interface has no
+// inline size but does lower, and a type parameter is sized before
+// instantiation but has nothing to emit.
+//
+// Copy and drop were merged into one traversal because they genuinely share a
+// walk and a cycle rule. These do not.
 func IsSizedType(t Type) bool {
 	visiting := make(map[*DefinedType]bool)
 	var check func(Type) bool
@@ -147,7 +119,12 @@ func IsSizedType(t Type) bool {
 			}
 			visiting[defined] = true
 			defer delete(visiting, defined)
-			return check(defined.Underlying)
+			result := false
+			ForEachChild(defined, func(child TypeChild) bool {
+				result = check(child.Type)
+				return false
+			})
+			return result
 		}
 		switch typ := Underlying(current).(type) {
 		case *InvalidType, *UnknownType, *InterfaceType:
@@ -161,7 +138,15 @@ func IsSizedType(t Type) bool {
 		case *RawPtrType:
 			return typ != nil
 		case *OptionalType:
-			return typ != nil && check(typ.Inner)
+			if typ == nil {
+				return false
+			}
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type)
+				return false
+			})
+			return result
 		case *ArrayType:
 			if typ == nil || typ.Elem == nil {
 				return false
@@ -169,85 +154,45 @@ func IsSizedType(t Type) bool {
 			if typ.Shape == ArraySlice {
 				return false
 			}
-			return check(typ.Elem)
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type)
+				return false
+			})
+			return result
 		case *StructType:
 			if typ == nil {
 				return false
 			}
-			for _, field := range typ.Fields {
-				if !check(field.Type) {
-					return false
-				}
-			}
-			return true
+			allSized := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allSized = check(child.Type)
+				return allSized
+			})
+			return allSized
 		case *EnumType:
 			if typ == nil {
 				return false
 			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload) {
-					return false
-				}
-			}
-			return true
+			allSized := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allSized = check(child.Type)
+				return allSized
+			})
+			return allSized
 		case *FuncType:
 			if typ == nil {
 				return false
 			}
-			for _, param := range typ.Params {
-				if !check(param) {
-					return false
-				}
-			}
-			return typ.Return == nil || check(typ.Return)
+			allSized := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allSized = check(child.Type)
+				return allSized
+			})
+			return allSized
 		default:
 			return false
 		}
-	}
-	return check(t)
-}
-
-func IsNoCopyType(t Type) bool {
-	seen := make(map[*DefinedType]bool)
-	var check func(Type) bool
-	check = func(current Type) bool {
-		switch typ := current.(type) {
-		case *DefinedType:
-			if typ == nil || seen[typ] {
-				return false
-			}
-			seen[typ] = true
-			return check(typ.Underlying)
-		}
-		switch typ := Underlying(current).(type) {
-		case *OwnedPtrType, *StringType, *InterfaceType:
-			return true
-		case *RefType:
-			return typ != nil && typ.Mutable
-		case *OptionalType:
-			return typ != nil && check(typ.Inner)
-		case *ArrayType:
-			return typ != nil && (typ.Shape == ArrayOwner || check(typ.Elem))
-		case *StructType:
-			if typ == nil {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if check(field.Type) {
-					return true
-				}
-			}
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && check(variant.Payload) {
-					return true
-				}
-			}
-		}
-		return false
 	}
 	return check(t)
 }
@@ -289,19 +234,35 @@ func IsLowerableType(t Type) bool {
 			}
 			return check(typ.Target, true)
 		case *OptionalType:
-			return typ != nil && typ.Inner != nil && check(typ.Inner, throughIndirection)
+			if typ == nil || typ.Inner == nil {
+				return false
+			}
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type, throughIndirection)
+				return false
+			})
+			return result
 		case *ArrayType:
-			return typ != nil && typ.Shape != ArraySlice && (typ.Shape == ArrayOwner || typ.Len != "") && typ.Elem != nil && check(typ.Elem, throughIndirection)
+			if typ == nil || typ.Shape == ArraySlice || typ.Shape != ArrayOwner && typ.Len == "" || typ.Elem == nil {
+				return false
+			}
+			result := false
+			ForEachChild(typ, func(child TypeChild) bool {
+				result = check(child.Type, throughIndirection)
+				return false
+			})
+			return result
 		case *StructType:
 			if typ == nil {
 				return false
 			}
-			for _, field := range typ.Fields {
-				if !check(field.Type, throughIndirection) {
-					return false
-				}
-			}
-			return true
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allLowerable = check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		case *InterfaceType:
 			if typ == nil {
 				return false
@@ -310,39 +271,36 @@ func IsLowerableType(t Type) bool {
 				if len(method.Params) == 0 {
 					return false
 				}
-				for i, param := range method.Params {
-					if i == 0 {
-						continue
-					}
-					if ContainsAbstractSelf(param.Type) || !check(param.Type, throughIndirection) {
-						return false
-					}
-				}
-				if method.Return != nil && (ContainsAbstractSelf(method.Return) || !check(method.Return, throughIndirection)) {
-					return false
-				}
 			}
-			return true
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				if child.Relation == TypeChildMethodReceiver {
+					return true
+				}
+				allLowerable = !ContainsAbstractSelf(child.Type) && check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		case *FuncType:
 			if typ == nil {
 				return false
 			}
-			for _, param := range typ.Params {
-				if !check(param, throughIndirection) {
-					return false
-				}
-			}
-			return typ.Return == nil || check(typ.Return, throughIndirection)
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allLowerable = check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		case *EnumType:
 			if typ == nil {
 				return false
 			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && !check(variant.Payload, throughIndirection) {
-					return false
-				}
-			}
-			return true
+			allLowerable := true
+			ForEachChild(typ, func(child TypeChild) bool {
+				allLowerable = check(child.Type, throughIndirection)
+				return allLowerable
+			})
+			return allLowerable
 		default:
 			return false
 		}
@@ -350,49 +308,51 @@ func IsLowerableType(t Type) bool {
 	return check(t, false)
 }
 
-// NeedsDrop reports whether normal scope cleanup must destroy runtime-owned
-// state reachable through a value. Move-only borrows and plain composites do
-// not need destruction; this is intentionally narrower than IsNoCopyType.
-func NeedsDrop(t Type) bool {
-	seen := make(map[*DefinedType]bool)
-	var check func(Type) bool
-	check = func(current Type) bool {
-		switch typ := current.(type) {
-		case *DefinedType:
-			if typ == nil || seen[typ] {
-				return false
-			}
-			seen[typ] = true
-			defer delete(seen, typ)
-			return check(typ.Underlying)
-		}
-		switch typ := Underlying(current).(type) {
-		case *OwnedPtrType, *StringType:
-			return true
-		case *OptionalType:
-			return typ != nil && check(typ.Inner)
-		case *ArrayType:
-			return typ != nil && (typ.Shape == ArrayOwner || check(typ.Elem))
-		case *StructType:
-			if typ == nil {
-				return false
-			}
-			for _, field := range typ.Fields {
-				if check(field.Type) {
-					return true
-				}
-			}
-		case *EnumType:
-			if typ == nil {
-				return false
-			}
-			for _, variant := range typ.Cases {
-				if variant.Payload != nil && check(variant.Payload) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return check(t)
+// CopyClass classifies how a value of a type may be duplicated.
+type CopyClass uint8
+
+const (
+	// CopyImplicit: a read use copies the value; it is never moved.
+	CopyImplicit CopyClass = iota
+	// CopyExplicit: a plain use moves the value; an explicit copy
+	// operation exists for types that want one.
+	CopyExplicit
+	// CopyNever: a plain use moves the value; no copy operation exists.
+	CopyNever
+)
+
+// OwnershipCapability is the canonical classification: how a type duplicates
+// (Copy) and whether scope cleanup must destroy it (Drop). One traversal
+// answers both, so the two cannot drift apart.
+//
+// Deliberate asymmetries preserved from the current language semantics:
+//   - top-level structs and arrays never copy implicitly (bulk storage),
+//     while enum payloads of copyable fields do;
+//   - Interface values never copy implicitly but do not yet require source-
+//     level drop (owned-interface drop activation is tracked separately);
+//   - TypeParameterType is conservatively move-on-use until instantiation-
+//     aware capability queries arrive with generic support.
+type OwnershipCapability struct {
+	Copy CopyClass
+	Drop bool
 }
+
+// OwnershipCapabilityOf classifies a type's ownership behavior in one traversal.
+func OwnershipCapabilityOf(t Type) OwnershipCapability {
+	return ownershipCapability(t)
+}
+
+// UseKind is the ownership classification of one value use: what happens to
+// the value at a specific expression, as decided by the typechecker and
+// consumed by ownership and lowering. It is the per-use counterpart of
+// OwnershipCapability: the capability constrains which use kinds are legal.
+type UseKind uint8
+
+const (
+	// UseRead: the value is observed; its owner keeps it.
+	UseRead UseKind = iota
+	// UseCopy: the value is duplicated; the source keeps it.
+	UseCopy
+	// UseMove: the value is consumed; the source is dead afterwards.
+	UseMove
+)

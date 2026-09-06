@@ -74,7 +74,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		}
 		targetKey := typeinfo.TypeText(targetType)
 		var previous *symbols.Symbol
-		for _, item := range c.module.Semantics.MethodSets[targetKey] {
+		for _, item := range c.module.Bindings.MethodsByReceiver[targetKey] {
 			if item != nil && item.Name == fn.Name.Name {
 				previous = item
 				break
@@ -86,14 +86,14 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 			return
 		}
 		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
-		sym.DefiningModule = c.module.DefiningModuleKey()
+		sym.DefiningModule = c.module.ID
 		sym.Scope = symbols.NewScope(c.module.ModuleScope)
-		c.module.Semantics.MethodSets[targetKey] = append(c.module.Semantics.MethodSets[targetKey], sym)
-		c.module.Semantics.MethodSymbol[fn.ID()] = sym
+		c.module.Bindings.MethodsByReceiver[targetKey] = append(c.module.Bindings.MethodsByReceiver[targetKey], sym)
+		c.module.Bindings.MethodsByDecl[fn.ID()] = sym
 		return
 	}
 	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
-	sym.DefiningModule = c.module.DefiningModuleKey()
+	sym.DefiningModule = c.module.ID
 	sym.Scope = symbols.NewScope(c.module.ModuleScope)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
@@ -152,12 +152,12 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 				}
 				variantSymbol := symbols.New(variant.Name.Name, symbols.SymbolVariant, variant.Name, variant.Name.Location)
 				variantSymbol.Type = defined
-				variantSymbol.DefiningModule = c.module.DefiningModuleKey()
+				variantSymbol.DefiningModule = c.module.ID
 				if err := sym.Scope.Declare(variantSymbol); err != nil {
 					problems.ReportRedeclaration(c.ctx.Diagnostics, sym.Scope, err.Error(), variant.Name.Name, variant.Name.Location)
 					continue
 				}
-				c.module.Semantics.ResolvedSymbols[variant.Name.ID()] = variantSymbol
+				c.module.Bindings.NodeSymbols[variant.Name.ID()] = variantSymbol
 			}
 		}
 	}
@@ -169,6 +169,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 		return
 	}
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
+	sym.DefiningModule = c.module.ID
 	sym.Type = &typeinfo.UnknownType{} // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)

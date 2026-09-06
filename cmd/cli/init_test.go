@@ -14,7 +14,7 @@ func TestInitCommandRejectsInvalidNamesWithoutArtifacts(t *testing.T) {
 	for _, name := range []string{"1app", "bad/name", "_app"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
-			t.Chdir(root)
+			chdirForTest(t, root)
 			if err := InitCommand([]string{name}); err == nil {
 				t.Fatalf("InitCommand(%q) succeeded", name)
 			}
@@ -67,7 +67,7 @@ func TestInitCommandPreflightsPathConflictsBeforeWriting(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			t.Chdir(root)
+			chdirForTest(t, root)
 			test.setup(t)
 			if err := InitCommand([]string{"app"}); err == nil {
 				t.Fatal("InitCommand succeeded")
@@ -81,7 +81,7 @@ func TestInitCommandPreflightsPathConflictsBeforeWriting(t *testing.T) {
 
 func TestInitCommandPreservesExistingRegularMain(t *testing.T) {
 	root := t.TempDir()
-	t.Chdir(root)
+	chdirForTest(t, root)
 	if err := os.Mkdir(peeper.SourceDirName, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestInitCommandPreservesExistingRegularMain(t *testing.T) {
 
 func TestInitCommandNormalizesWhitespace(t *testing.T) {
 	root := t.TempDir()
-	t.Chdir(root)
+	chdirForTest(t, root)
 	if err := InitCommand([]string{"Hello Peeper"}); err != nil {
 		t.Fatalf("InitCommand: %v", err)
 	}

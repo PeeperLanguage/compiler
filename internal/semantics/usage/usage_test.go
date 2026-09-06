@@ -9,6 +9,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
@@ -32,12 +33,11 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 fn GetValue() -> i32 { return 42; }`
 		extAST := parser.New("external"+peeper.SourceExt, lexer.New("external"+peeper.SourceExt, extSrc, diag).Tokenize(), diag).ParseModule()
 		extMod := &project.Module{
-			Key:        "local:external" + peeper.SourceExt,
-			ImportPath: "external",
-			FilePath:   "external" + peeper.SourceExt,
-			Content:    extSrc,
-			AST:        extAST,
-			Imports:    make(map[string]project.ResolvedImport),
+			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
+			FilePath: "external" + peeper.SourceExt,
+			Content:  extSrc,
+			AST:      extAST,
+			Imports:  make(map[string]project.ResolvedImport),
 		}
 		ctx.AddModule(extMod)
 		collector.Collect(ctx, extMod)
@@ -49,20 +49,17 @@ fn GetValue() -> i32 { return 42; }`
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	modAST := parser.New(filePath, stream, diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "usage_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "usage_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 
 	if setupImports {
 		module.Imports["external"] = project.ResolvedImport{
-			Key:        "local:external" + peeper.SourceExt,
-			ImportPath: "external",
-			FilePath:   "external" + peeper.SourceExt,
-			Origin:     project.ModuleOriginLocal,
+			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
+			FilePath: "external" + peeper.SourceExt,
 		}
 	}
 

@@ -150,7 +150,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 				continue
 			}
 			resolved, err := ctx.ResolveImportPath(rawPath)
-			if err != nil || resolved == nil || resolved.Origin != project.ModuleOriginLocal {
+			if err != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
 				continue
 			}
 			target := resolved.FilePath
@@ -212,7 +212,7 @@ func (w *workspaceIndex) syntheticEntry(filePath string) (string, string, bool) 
 	}
 	builder.WriteString("fn WorkspaceEntry() {}\n")
 
-	virtualPath := filepath.Join(w.rootDir, ".peeper-lsp", "__workspace__"+peeper.SourceExt)
+	virtualPath := filepath.Join(manifest.SourceDir(w.rootDir), ".peeper-lsp", "__workspace__"+peeper.SourceExt)
 	return virtualPath, builder.String(), true
 }
 

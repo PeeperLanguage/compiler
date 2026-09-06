@@ -290,62 +290,66 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					continue
 				}
 				lb.setLocation(instr.SourceLocation())
-				if assign, ok := instr.(*mir.Assign); ok && assign != nil {
-					val := emitValueExpr(lb, assign.Value)
-					if ptr, ok := lb.localPtrs[assign.Name]; ok {
+				// Emitting nothing for an unrecognized instruction silently drops
+				// program behavior, so every MIR instruction must be classified
+				// here. mir.Instr is sealed, so the only way to reach the
+				// default is to add an instruction inside the mir package and
+				// not classify it here: a compiler bug, not invalid source.
+				switch typed := instr.(type) {
+				case *mir.Assign:
+					val := emitValueExpr(lb, typed.Value)
+					if ptr, ok := lb.localPtrs[typed.Name]; ok {
 						lb.store(ptr, val)
 					} else {
-						lb.locals[assign.Name] = val
+						lb.locals[typed.Name] = val
 					}
-					continue
-				}
-				if store, ok := instr.(*mir.Store); ok && store != nil {
-					emitStore(lb, store)
-					continue
-				}
-				if printInstr, ok := instr.(*mir.Print); ok && printInstr != nil {
-					emitPrint(lb, printInstr)
-					continue
-				}
-				if dropInstr, ok := instr.(*mir.Drop); ok && dropInstr != nil {
-					emitDrop(lb, dropInstr)
-					continue
-				}
-				if operation, ok := instr.(*mir.DynamicArrayOp); ok && operation != nil {
-					emitDynamicArrayOp(lb, operation)
-					continue
-				}
-				if call, ok := instr.(*mir.Call); ok && call != nil {
-					emitDiscardedCall(lb, call)
-					continue
-				}
-				if call, ok := instr.(*mir.InterfaceCall); ok && call != nil {
-					emitDiscardedInterfaceCall(lb, call)
+				case *mir.Store:
+					emitStore(lb, typed)
+				case *mir.Print:
+					emitPrint(lb, typed)
+				case *mir.Drop:
+					emitDrop(lb, typed)
+				case *mir.DynamicArrayOp:
+					emitDynamicArrayOp(lb, typed)
+				case *mir.Call:
+					emitDiscardedCall(lb, typed)
+				case *mir.InterfaceCall:
+					emitDiscardedInterfaceCall(lb, typed)
+				default:
+					panic(fmt.Sprintf("LLVM emission: unhandled MIR instruction %T", instr))
 				}
 			}
-			if block.Term != nil {
-				returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
-				lb.setLocation(block.Term.SourceLocation())
-				switch term := block.Term.(type) {
-				case *mir.Jump:
-					lb.branch(fmt.Sprintf("b%d", term.TargetID))
-				case *mir.Branch:
-					cond := emitCondRef(lb, term.Cond)
-					lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
-				case *mir.SwitchVariant:
-					emitVariantSwitch(lb, term)
-				case *mir.Ret:
-					if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
-						if returnLayout.Kind != llvmLayoutVoid {
-							lb.ret(lb.value("0", returnLayout), returnLayout)
-						} else {
-							lb.retVoid(returnLayout)
-						}
-						continue
+			// Both terminator invariants are compiler bugs, not invalid source:
+			// every block carries a terminator, and every terminator kind emits
+			// one. Skipping either silently produces unterminated LLVM IR.
+			// mir.Terminator is sealed, so the unhandled-kind default below can
+			// only be reached from inside the mir package.
+			if block.Term == nil {
+				panic(fmt.Sprintf("LLVM emission: block b%d has no terminator", block.ID))
+			}
+			returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
+			lb.setLocation(block.Term.SourceLocation())
+			switch term := block.Term.(type) {
+			case *mir.Jump:
+				lb.branch(fmt.Sprintf("b%d", term.TargetID))
+			case *mir.Branch:
+				cond := emitCondRef(lb, term.Cond)
+				lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
+			case *mir.SwitchVariant:
+				emitVariantSwitch(lb, term)
+			case *mir.Ret:
+				if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
+					if returnLayout.Kind != llvmLayoutVoid {
+						lb.ret(lb.value("0", returnLayout), returnLayout)
+					} else {
+						lb.retVoid(returnLayout)
 					}
-					val := emitRef(lb, term.Value)
-					lb.ret(val, returnLayout)
+					continue
 				}
+				val := emitRef(lb, term.Value)
+				lb.ret(val, returnLayout)
+			default:
+				panic(fmt.Sprintf("LLVM emission: unhandled MIR terminator %T", block.Term))
 			}
 			lb.setLocation(nil)
 		}

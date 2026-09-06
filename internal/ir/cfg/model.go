@@ -1,6 +1,7 @@
 package cfg
 
 import (
+	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/source"
 )
@@ -19,6 +20,10 @@ func (m *Module) Function(id ir.NodeID) *Graph {
 	return m.byNodeID[id]
 }
 
+// Graph is finalized by BuildModule. Terminators and ordered block sites define
+// control flow; BlockEdges and SiteEdges are derived traversal indexes. Consumers
+// must not mutate topology after publication: rebuild the CFG before publishing
+// a new generation, since site IDs and downstream evidence depend on it.
 type Graph struct {
 	NodeID         ir.NodeID
 	Name           string
@@ -28,6 +33,11 @@ type Graph struct {
 	Entry          *Block
 	Exit           *Block
 	Blocks         []*Block
+	// SiteEdges is the canonical ordered site topology. Edge values retain CFG
+	// branch meaning; the shared graph kernel owns forward/reverse adjacency.
+	SiteEdges *graphcore.Directed[SiteID, Edge]
+	// BlockEdges is the canonical block topology derived from terminators.
+	BlockEdges *graphcore.Directed[int, BlockEdge]
 }
 
 // SiteID identifies one ordered semantic program point within a CFG block.
@@ -54,6 +64,11 @@ type Edge struct {
 	Case int
 }
 
+type BlockEdge struct {
+	From int
+	To   int
+}
+
 type SiteKind uint8
 
 const (
@@ -65,13 +80,11 @@ const (
 
 // Site records source identity and lexical scope at one CFG program point.
 type Site struct {
-	ID           SiteID
-	Kind         SiteKind
-	NodeID       ir.NodeID
-	ScopeID      ir.NodeID
-	Location     *source.Location
-	Successors   []Edge
-	Predecessors []Edge
+	ID       SiteID
+	Kind     SiteKind
+	NodeID   ir.NodeID
+	ScopeID  ir.NodeID
+	Location *source.Location
 }
 
 type BlockOrigin uint8
@@ -84,17 +97,22 @@ const (
 	BlockLoop
 	BlockLoopBody
 	BlockLoopLatch
+	// BlockLoopExit is the continuation a loop leaves to. It carries the loop's
+	// NodeID like the roles above, so a consumer can ask which loop it exits,
+	// but it is not part of the loop's structure: the code after the loop lives
+	// here. Before it existed, exiting a loop was identified by the absence of a
+	// role plus a NodeID that happened to name one.
+	BlockLoopExit
 )
 
 type Block struct {
-	ID           int
-	NodeID       ir.NodeID
-	Origin       BlockOrigin
-	Location     *source.Location
-	Sites        []*Site
-	Terminator   Terminator
-	Predecessors []*Block
-	Reachable    bool
+	ID         int
+	NodeID     ir.NodeID
+	Origin     BlockOrigin
+	Location   *source.Location
+	Sites      []*Site
+	Terminator Terminator
+	Reachable  bool
 }
 
 type Terminator interface {

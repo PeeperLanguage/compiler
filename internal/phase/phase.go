@@ -23,6 +23,9 @@ const (
 	CFG
 	// FlowTyped includes CFG-refined expression types and place origins.
 	FlowTyped
+	// Effects publishes the ordered semantic meaning of each CFG site, which
+	// the dataflow analyses consume instead of re-reading syntax.
+	Effects
 	// DefiniteInit records completion of diagnostic-only initialization checks.
 	DefiniteInit
 	// Ownership includes ownership cleanup results.
@@ -60,6 +63,8 @@ func (phase Phase) String() string {
 		return "CFG"
 	case FlowTyped:
 		return "flow-typed"
+	case Effects:
+		return "effects"
 	case DefiniteInit:
 		return "definite-init"
 	case Ownership:

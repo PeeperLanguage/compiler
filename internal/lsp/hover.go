@@ -419,12 +419,12 @@ func documentedDeclAncestor(node ast.Node, parents map[ast.NodeID]ast.Node) ast.
 }
 
 func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module) *symbols.Symbol {
-	if ident == nil || module == nil || module.Semantics == nil {
+	if ident == nil || module == nil || module.Bindings == nil {
 		return nil
 	}
 	parent := parents[ident.ID()]
 	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident && fn.Receiver != nil {
-		if sym, ok := module.Semantics.MethodSymbol[fn.ID()]; ok && sym != nil {
+		if sym, ok := module.Bindings.MethodsByDecl[fn.ID()]; ok && sym != nil {
 			return sym
 		}
 	}
@@ -479,11 +479,11 @@ func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type, keys []str
 	seen := make(map[string]struct{})
 	var methods []*symbols.Symbol
 	for _, module := range ctx.Modules() {
-		if module == nil || module.Semantics == nil {
+		if module == nil || module.Bindings == nil {
 			continue
 		}
 		for key := range keySet {
-			for _, sym := range module.Semantics.MethodSets[key] {
+			for _, sym := range module.Bindings.MethodsByReceiver[key] {
 				if sym == nil {
 					continue
 				}
@@ -506,7 +506,7 @@ func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type, keys []str
 }
 
 func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
-	if cc == nil || cc.node == nil || cc.module == nil || cc.module.Semantics == nil {
+	if cc == nil || cc.node == nil || cc.module == nil || cc.module.Typechecking == nil {
 		return nil
 	}
 	if _, ok := cc.node.(ast.Expr); !ok {
@@ -559,12 +559,12 @@ func renderHoverSubject(subject *hoverSubject) string {
 		if subject.ResolvedImport == nil {
 			return ""
 		}
-		name := subject.ResolvedImport.ImportPath
+		name := subject.ResolvedImport.ID.ImportPath
 		if ident, ok := subject.Node.(*ast.Ident); ok && ident != nil && ident.Name != "" {
 			name = ident.Name
 		}
 		importSymbol := &symbols.Symbol{Name: name, Kind: symbols.SymbolImport}
-		text = renderSymbol(importSymbol, symbolRenderContext{ImportPath: subject.ResolvedImport.ImportPath})
+		text = renderSymbol(importSymbol, symbolRenderContext{ImportPath: subject.ResolvedImport.ID.ImportPath})
 	case hoverSubjectAttribute:
 		if subject.Attribute == nil {
 			return ""

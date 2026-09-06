@@ -124,14 +124,14 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 	found := make([]*Block, 0)
 	seen := make(map[*Block]bool)
 	for block := range reachesExit {
-		if block.Origin != BlockNormal {
+		if structuredControl(block.Origin) {
 			if !seen[block] {
 				found = append(found, block)
 				seen[block] = true
 			}
 			continue
 		}
-		queue := append([]*Block(nil), block.Predecessors...)
+		queue := predecessorBlocks(fn, block)
 		traceSeen := make(map[*Block]bool)
 		for len(queue) > 0 {
 			current := queue[0]
@@ -140,18 +140,47 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 				continue
 			}
 			traceSeen[current] = true
-			if current.Origin != BlockNormal {
+			if structuredControl(current.Origin) {
 				if !seen[current] {
 					found = append(found, current)
 					seen[current] = true
 				}
 				continue
 			}
-			queue = append(queue, current.Predecessors...)
+			queue = append(queue, predecessorBlocks(fn, current)...)
 		}
 	}
 	sortMissingBranches(found)
 	return found
+}
+
+func predecessorBlocks(fn *Graph, block *Block) []*Block {
+	if fn == nil || fn.BlockEdges == nil || block == nil {
+		return nil
+	}
+	ids := fn.BlockEdges.Predecessors(block.ID, nil)
+	blocks := make([]*Block, 0, len(ids))
+	for _, id := range ids {
+		if id >= 0 && id < len(fn.Blocks) {
+			blocks = append(blocks, fn.Blocks[id])
+		}
+	}
+	return blocks
+}
+
+// structuredControl reports whether a block is part of a structured construct
+// rather than a plain continuation. Missing-return reporting walks back to the
+// nearest such block to name the branch that falls through. A loop exit is a
+// continuation despite carrying a loop role: the code after the loop lives
+// there, and reporting it would name the wrong branch.
+func structuredControl(origin BlockOrigin) bool {
+	switch origin {
+	case BlockNormal, BlockLoopExit:
+		return false
+	case BlockThen, BlockElse, BlockLoopInit, BlockLoop, BlockLoopBody, BlockLoopLatch:
+		return true
+	}
+	return true
 }
 
 func filterMostSpecificBranches(blocks []*Block) []*Block {

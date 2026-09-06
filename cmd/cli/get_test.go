@@ -102,7 +102,7 @@ mock_path = "./mock"
 	mustWriteGetTest(t, filepath.Join(mockPackage, "src", "pkg.peep"), "original")
 	mustWriteGetTest(t, filepath.Join(cachePackage, manifest.FileName), "name = \"stale\"\nbuild = \"lib\"\n")
 	mustWriteGetTest(t, filepath.Join(cachePackage, "src", "pkg.peep"), "unlocked-cache")
-	t.Chdir(root)
+	chdirForTest(t, root)
 
 	if err := installAllDependencies(); err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ build = "lib"
 child = "github.com/acme/child"
 `)
 	mustWriteGetTest(t, filepath.Join(root, "mock", "acme", "child-v1.0.0", manifest.FileName), "name = \"child\"\nbuild = \"lib\"\n")
-	t.Chdir(root)
+	chdirForTest(t, root)
 
 	if err := installAllDependencies(); err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ mock_path = "./mock"
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Chdir(root)
+			chdirForTest(t, root)
 
 			err = installAllDependencies()
 			if test.wantError {

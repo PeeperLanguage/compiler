@@ -11,9 +11,11 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
@@ -36,24 +38,34 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "ownership_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "ownership_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.TypedASTNodes = ast.Index(module.AST)
+	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Semantics.MatchCases,
-		LoopGuaranteedEntry: module.Semantics.ForLoopGuaranteedEntry,
+		MatchCases:          module.Typechecking.MatchCases,
+		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
+	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
+		Symbols:             module.Bindings.NodeSymbols,
+		Scopes:              module.Bindings.BlockScopes,
+		CallArguments:       module.Typechecking.CallArgumentsOrSource,
+		ArmBindings:         module.Typechecking.ArmBindings,
+		StringConcatenation: module.Typechecking.StringConcatenation,
+		ValueUse:            module.Typechecking.ValueUse,
+		ExprType:            module.EffectiveExprType,
+		ReferenceArgument:   module.Typechecking.ReferenceArgument,
+		SequenceCarrier:     module.Typechecking.SequenceCarrier,
+	})
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
 }
@@ -84,6 +96,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
+		effects:       result.module.Effects[cfgFn.NodeID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
@@ -160,8 +173,8 @@ func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []st
 			}
 		}
 	}
-	if module != nil && module.Semantics != nil {
-		for _, scope := range module.Semantics.BlockScopes {
+	if module != nil && module.Bindings != nil {
+		for _, scope := range module.Bindings.BlockScopes {
 			for _, sym := range scope.Symbols() {
 				if sym != nil {
 					names[sym.ID] = sym.Name
@@ -248,14 +261,13 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.BeforeAssign[staleID] = struct{}{}
 	plan.DiscardedValue[staleID] = struct{}{}
 	plan.ProjectionBase[staleID] = struct{}{}
-	plan.MatchCarrierMoves[staleID] = 999999
 	plan.MatchFieldDrops[staleID] = []int{0}
 	plan.MatchWholePayloadDrops[staleID] = struct{}{}
 
 	result.module.Ownership = Check(result.ctx, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
-		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 || len(plan.MatchCarrierMoves) != 0 ||
+		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 ||
 		len(plan.MatchFieldDrops) != 0 || len(plan.MatchWholePayloadDrops) != 0 {
 		t.Fatalf("stale ownership plans survived rerun: %#v", plan)
 	}
@@ -772,12 +784,11 @@ fn valid(resource: Resource) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	plan := cleanupPlanForFunction(t, result, fn)
-	function, _ := result.module.ModuleScope.Lookup("valid")
-	resource, _ := function.Scope.Lookup("resource")
-	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
 	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
-	if got := plan.MatchCarrierMoves[ownedBodyID]; got != resource.ID {
-		t.Fatalf("owned arm carrier move = %d, want %d", got, resource.ID)
+	// The owned arm consumes the carrier, so leaving it must not drop the
+	// carrier again; the pending arm never consumes it, so leaving there must.
+	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
+		t.Fatalf("consumed carrier dropped on the owned arm: %v", got)
 	}
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
 		t.Fatalf("pending arm cleanup = %v, want [resource]", got)
@@ -1239,11 +1250,6 @@ fn consume(resource: Resource) {
 	bodyID := ir.NodeID(match.Arms[0].Body.ID())
 	if got := plan.MatchFieldDrops[bodyID]; !slices.Equal(got, []int{2, 1}) {
 		t.Fatalf("match field drops = %v, want [2 1]", got)
-	}
-	function, _ := result.module.ModuleScope.Lookup("consume")
-	resource, _ := function.Scope.Lookup("resource")
-	if got := plan.MatchCarrierMoves[bodyID]; got != resource.ID {
-		t.Fatalf("match carrier move = %d, want %d", got, resource.ID)
 	}
 	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {

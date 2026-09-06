@@ -82,14 +82,14 @@ func buildExecutable(ctx *project.CompilerContext, entry *project.Module, output
 		}
 		ir := strings.TrimSpace(module.LLVMIR)
 		if ir == "" {
-			return fmt.Errorf("empty LLVM IR for module %s", module.ImportPath)
+			return fmt.Errorf("empty LLVM IR for module %s", module.ID.ImportPath)
 		}
 		llPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.ll", i))
 		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
 			return fmt.Errorf("write llvm ir: %w", err)
 		}
 		objectPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.o", i))
-		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.BuildDebug), "compile LLVM module "+module.ImportPath); err != nil {
+		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.BuildDebug), "compile LLVM module "+module.ID.ImportPath); err != nil {
 			return err
 		}
 		objectPaths = append(objectPaths, objectPath)

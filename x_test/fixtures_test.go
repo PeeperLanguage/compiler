@@ -152,7 +152,8 @@ func executeFixtureProcess(t *testing.T, ctx context.Context, command string, ar
 	if err == nil {
 		return stdout.String(), stderr.String(), 0
 	}
-	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		return stdout.String(), stderr.String(), exitErr.ExitCode()
 	}
 	t.Fatalf("execute %s: %v", command, err)

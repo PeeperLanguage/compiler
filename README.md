@@ -18,6 +18,15 @@ server, and executable source fixtures.
 See the [open roadmap](https://github.com/PeeperLanguage/compiler/issues) for
 unfinished language and runtime work.
 
+## Learning the compiler
+
+[`Code-tour.md`](Code-tour.md) walks one `.peep` file through every phase to a native
+binary, with diagrams and the real entry points at each stop.
+
+[`docs/compiler-architecture.md`](docs/compiler-architecture.md) explains the canonical
+compiler mechanisms and how to extend syntax, semantic types, graphs, and analyses
+without reintroducing duplicated walks or phase logic.
+
 ## Binary installation
 
 Linux and macOS:

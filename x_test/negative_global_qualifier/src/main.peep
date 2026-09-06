@@ -1,0 +1,8 @@
+// Global symbols are already in scope, so qualifying one is redundant. This
+// symbol is also private, so the qualified form additionally fails to resolve.
+import "core:global";
+
+fn main() -> i32 {
+    global::exit(0);
+    return 0;
+}

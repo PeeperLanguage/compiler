@@ -2,23 +2,13 @@ package ast
 
 import (
 	"compiler/internal/source"
-	"reflect"
+	"compiler/pkg/typednil"
 )
-
-// IsNilNode handles the Go interface nil trap: a non-nil interface holding a
-// nil pointer is not equal to nil, so a plain `n == nil` check is insufficient.
-func IsNilNode(n Node) bool {
-	if n == nil {
-		return true
-	}
-	v := reflect.ValueOf(n)
-	return v.Kind() == reflect.Pointer && v.IsNil()
-}
 
 // LocOf safely returns the location of a node, handling nil interfaces
 // and nil pointer receivers without panicking.
 func LocOf(n Node) *source.Location {
-	if IsNilNode(n) {
+	if typednil.IsNil(n) {
 		return nil
 	}
 	return n.loc()

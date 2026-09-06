@@ -10,6 +10,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -55,8 +56,13 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 }
 
 func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
-	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil {
-		if sym := c.module.Semantics.ResolvedSymbols[path.ID()]; sym != nil && sym.Kind == symbols.SymbolVariant {
+	effectiveArgs := c.module.Typechecking.CallArgumentsOrSource(node)
+	if c.flow == nil {
+		effectiveArgs = append([]ast.Expr(nil), node.Args...)
+		c.module.Typechecking.EffectiveCallArguments[node.ID()] = effectiveArgs
+	}
+	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil && c.module.Bindings != nil {
+		if sym := c.module.Bindings.NodeSymbols[path.ID()]; sym != nil && sym.Kind == symbols.SymbolVariant {
 			for _, arg := range node.Args {
 				c.typeExpr(scope, arg, nil)
 			}
@@ -68,13 +74,13 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 	if selector, ok := node.Callee.(*ast.SelectorExpr); ok && selector != nil {
 		return c.typeSelectorCall(scope, selector, node)
 	}
-	if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil {
-		if sym := c.module.Semantics.ResolvedSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
+	if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil && c.module.Bindings != nil {
+		if sym := c.module.Bindings.NodeSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
 			definition, found := intrinsics.LookupFunction(sym.CompilerOp)
 			if !found {
 				panic(fmt.Sprintf("missing intrinsic definition for compiler operation %q", sym.CompilerOp))
 			}
-			c.module.Semantics.CompilerCalls[node.ID()] = project.CompilerCall{Operation: definition.Operation, Kind: definition.Kind}
+			c.module.Typechecking.CompilerCalls[node.ID()] = typecheckresult.CompilerCall{Operation: definition.Operation, Kind: definition.Kind}
 			switch definition.Kind {
 			case intrinsics.FunctionAlloc:
 				return c.typeAllocCall(scope, node)
@@ -90,19 +96,20 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 		}
 	}
 	calleeType := c.typePayloadExpr(scope, node.Callee, nil)
-	if sym := c.callableSymbol(node.Callee); sym != nil {
-		c.expandCallDefaults(node, sym, c.callableModule(node.Callee))
+	if sym := c.callableSymbol(node.Callee); sym != nil && c.flow == nil {
+		effectiveArgs = c.expandCallDefaults(node, effectiveArgs, sym, c.callableModule(node.Callee))
+		c.module.Typechecking.EffectiveCallArguments[node.ID()] = effectiveArgs
 	}
-	argTypes := make([]typeinfo.Type, 0, len(node.Args))
+	argTypes := make([]typeinfo.Type, 0, len(effectiveArgs))
 	fnType, _ := calleeType.(*typeinfo.FuncType)
-	for i, arg := range node.Args {
+	for i, arg := range effectiveArgs {
 		var paramExpected typeinfo.Type
 		if fnType != nil && i < len(fnType.Params) {
 			paramExpected = fnType.Params[i]
 		}
 		argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 	}
-	c.checkCall(scope, nil, node, calleeType, argTypes)
+	c.checkCall(scope, nil, node, calleeType, effectiveArgs, argTypes)
 	return c.callReturnType(node, calleeType)
 }
 
@@ -115,7 +122,12 @@ func (c *checker) typeFromBytesCall(scope *symbols.Scope, node *ast.CallExpr, de
 	if fnType == nil {
 		panic("missing from_bytes signature")
 	}
-	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
+	c.module.Typechecking.ExprTypes[node.Callee.ID()] = fnType
+	for i, arg := range node.Args {
+		if i < len(fnType.Params) {
+			c.publishValueUse(arg, fnType.Params[i])
+		}
+	}
 	bytesType := c.typeExpr(scope, node.Args[0], fnType.Params[0])
 	if !typeinfo.IsInvalidOrUnknown(bytesType) && !typeinfo.SameType(bytesType, fnType.Params[0]) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
@@ -153,8 +165,8 @@ func (c *checker) typeCollectionCall(scope *symbols.Scope, node *ast.CallExpr, d
 			fmt.Sprintf("`%s` does not support %s", definition.Operation, typeinfo.TypeText(baseType))))
 		return &typeinfo.InvalidType{}
 	}
-	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
-	c.checkCall(scope, nil, node, fnType, []typeinfo.Type{baseType})
+	c.module.Typechecking.ExprTypes[node.Callee.ID()] = fnType
+	c.checkCall(scope, nil, node, fnType, node.Args, []typeinfo.Type{baseType})
 	return c.callReturnType(node, fnType)
 }
 
@@ -198,14 +210,14 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.Call
 		panic(fmt.Sprintf("missing dynamic-array signature for %q", op))
 	}
 
-	c.module.Semantics.ExprTypes[node.Callee.ID()] = fnType
+	c.module.Typechecking.ExprTypes[node.Callee.ID()] = fnType
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
 	argTypes = append(argTypes, firstArgType)
 	for i, arg := range node.Args[1:] {
 		argTypes = append(argTypes, c.typeExpr(scope, arg, fnType.Params[i+1]))
 	}
-	c.checkCall(scope, nil, node, fnType, argTypes)
-	if op == symbols.CompilerOpResize && !typeinfo.IsImplicitCopyType(array.Elem) {
+	c.checkCall(scope, nil, node, fnType, node.Args, argTypes)
+	if op == symbols.CompilerOpResize && typeinfo.OwnershipCapabilityOf(array.Elem).Copy != typeinfo.CopyImplicit {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"resize requires implicitly copyable elements; grow Category B arrays with append",
 			ast.LocOf(node), "")
@@ -216,6 +228,16 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.Call
 func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
 	if !c.checkOptionalAllocatorArity(scope, node) {
 		return &typeinfo.InvalidType{}
+	}
+
+	// The intrinsic has no parameter types to classify against, so the use kinds
+	// are published from its own semantics, before any type-dependent exit: the
+	// analyzer consumes them on diagnostics-continued paths too.
+	if c.module != nil && c.module.Typechecking != nil {
+		c.module.Typechecking.ValueUses[node.Args[0].ID()] = typeinfo.UseMove
+		if len(node.Args) > 1 {
+			c.module.Typechecking.ValueUses[node.Args[1].ID()] = typeinfo.UseRead
+		}
 	}
 
 	valueType := c.typeExpr(scope, node.Args[0], nil)
@@ -248,6 +270,28 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 	return &typeinfo.OwnedPtrType{Target: valueType}
 }
 
+// publishValueUse records the ownership use kind a parameter position imposes
+// on its argument, keyed by the argument expression the ownership analyzer
+// walks. Reference parameters publish UseRead: the kind is recorded for
+// completeness, while the borrow machinery in ownership still governs them.
+func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
+	if c == nil || arg == nil || paramType == nil || c.module == nil || c.module.Typechecking == nil {
+		return
+	}
+	use := typeinfo.UseMove
+	_, mutable, reference := typeinfo.ReferenceValueTarget(paramType)
+	if reference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
+		use = typeinfo.UseRead
+	}
+	c.module.Typechecking.ValueUses[arg.ID()] = use
+	// A reference parameter borrows its argument. The use kind cannot carry
+	// that: an implicit-copy argument publishes UseRead too, so a consumer could
+	// not tell a borrow from a plain read.
+	if reference {
+		c.module.Typechecking.ReferenceArguments[arg.ID()] = mutable
+	}
+}
+
 func (c *checker) checkOptionalAllocatorArity(scope *symbols.Scope, node *ast.CallExpr) bool {
 	const minArgs, maxArgs = 1, 2
 	argCount := len(node.Args)
@@ -277,26 +321,30 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 	method, ok := c.lookupCallableMember(baseType, selector.Name.Name)
 	if ok {
 		methodType, methodSym := method.Type, method.Symbol
-		if methodSym != nil && methodSym.CompilerOp == "" {
-			c.expandCallDefaults(call, methodSym, c.module)
+		effectiveArgs := c.module.Typechecking.EffectiveCallArguments[call.ID()]
+		if methodSym != nil && methodSym.CompilerOp == "" && c.flow == nil {
+			effectiveArgs = c.expandCallDefaults(call, effectiveArgs, methodSym, c.module)
+			c.module.Typechecking.EffectiveCallArguments[call.ID()] = effectiveArgs
 		}
-		if c.module != nil && c.module.Semantics != nil {
-			c.module.Semantics.ExprTypes[selector.ID()] = methodType
-			if methodSym != nil {
-				c.module.Semantics.ResolvedSymbols[selector.Name.ID()] = methodSym
+		if c.module != nil {
+			if c.module.Typechecking != nil {
+				c.module.Typechecking.ExprTypes[selector.ID()] = methodType
+			}
+			if methodSym != nil && c.module.Bindings != nil {
+				c.module.Bindings.NodeSymbols[selector.Name.ID()] = methodSym
 			}
 		}
-		argTypes := make([]typeinfo.Type, 0, len(call.Args)+1)
+		argTypes := make([]typeinfo.Type, 0, len(effectiveArgs)+1)
 		argTypes = append(argTypes, baseType)
 		fnType, _ := methodType.(*typeinfo.FuncType)
-		for i, arg := range call.Args {
+		for i, arg := range effectiveArgs {
 			var paramExpected typeinfo.Type
 			if fnType != nil && i+1 < len(fnType.Params) {
 				paramExpected = fnType.Params[i+1]
 			}
 			argTypes = append(argTypes, c.typeExpr(scope, arg, paramExpected))
 		}
-		c.checkCall(scope, selector.Expr, call, methodType, argTypes)
+		c.checkCall(scope, selector.Expr, call, methodType, effectiveArgs, argTypes)
 		return c.callReturnType(call, methodType)
 	}
 	if field, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
@@ -318,7 +366,7 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 	return &typeinfo.InvalidType{}
 }
 
-func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, args []typeinfo.Type) {
+func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExpr *ast.CallExpr, calleeType typeinfo.Type, argExprs []ast.Expr, args []typeinfo.Type) {
 	if c == nil || callExpr == nil || calleeType == nil {
 		return
 	}
@@ -354,17 +402,26 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 		return
 	}
 	for i, argType := range args {
+		argIndex := i - callArgOffset
+		var argExpr ast.Expr
+		if argIndex >= 0 && argIndex < len(argExprs) {
+			argExpr = argExprs[argIndex]
+		}
 		var implicitExpr ast.Expr
 		if i == 0 {
 			if receiverExpr != nil {
 				implicitExpr = receiverExpr
-			} else if callExpr.Piped && len(callExpr.Args) > 0 {
-				implicitExpr = callExpr.Args[0]
+			} else if callExpr.Piped && len(argExprs) > 0 {
+				implicitExpr = argExprs[0]
 			}
 		}
 		if argType == nil {
 			if i >= callArgOffset {
-				c.ctx.Diagnostics.Add(invalidExpressionError(callExpr.Args[i-callArgOffset],
+				site := ast.Node(callExpr)
+				if argExpr != nil {
+					site = argExpr
+				}
+				c.ctx.Diagnostics.Add(invalidExpressionError(site,
 					"argument requires a value-producing expression"))
 			}
 			continue
@@ -373,8 +430,12 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 		if paramType == nil {
 			continue
 		}
+		c.publishValueUse(implicitExpr, paramType)
+		if argIndex >= 0 {
+			c.publishValueUse(argExpr, paramType)
+		}
 		if implicitExpr != nil && c.acceptImplicitCallArgument(scope, implicitExpr, argType, paramType) {
-			c.module.Semantics.ImplicitCallArguments[implicitExpr.ID()] = paramType
+			c.module.Typechecking.ImplicitCallArguments[implicitExpr.ID()] = paramType
 			continue
 		}
 		site := ast.Node(callExpr)
@@ -382,9 +443,9 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 		if implicitExpr != nil {
 			conversion = implicitExpr
 		}
-		if i >= callArgOffset && i-callArgOffset < len(callExpr.Args) {
-			conversion = callExpr.Args[i-callArgOffset]
-			site = conversion
+		if argExpr != nil {
+			conversion = argExpr
+			site = argExpr
 		}
 		if !c.assignable(paramType, argType, conversion) {
 			d := typeMismatchError(site,
@@ -406,7 +467,7 @@ func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr
 	}
 	addressable := place.Addressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
-	}, c.expandedDefaultBinding)
+	}, c.module.ExpandedDefaultBinding)
 	var mutableBinding *symbols.Symbol
 	if mutable {
 		addressable, _, mutableBinding = c.mutableAddressableExpr(scope, expr)
@@ -445,8 +506,8 @@ func (c *checker) callableSymbol(callee ast.Expr) *symbols.Symbol {
 	}
 	switch node := callee.(type) {
 	case *ast.Ident:
-		if c.module.Semantics != nil {
-			return c.module.Semantics.ResolvedSymbols[node.ID()]
+		if c.module.Bindings != nil {
+			return c.module.Bindings.NodeSymbols[node.ID()]
 		}
 	case *ast.ScopeResolution:
 		qualifier, member, imported := node.ImportValueMember()
@@ -473,13 +534,14 @@ func (c *checker) callableModule(callee ast.Expr) *project.Module {
 	return c.module
 }
 
-func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, declModule *project.Module) {
-	if c == nil || c.module == nil || c.module.Semantics == nil || call == nil || sym == nil {
-		return
+func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *symbols.Symbol, declModule *project.Module) []ast.Expr {
+	effectiveArgs := append([]ast.Expr(nil), args...)
+	if c == nil || c.module == nil || c.module.Bindings == nil || c.module.Typechecking == nil || call == nil || sym == nil {
+		return effectiveArgs
 	}
 	fn, ok := sym.ASTNode.(*ast.FnDecl)
 	if !ok || fn == nil {
-		return
+		return effectiveArgs
 	}
 	params := fn.ParamsWithReceiver()
 	offset := 0
@@ -495,16 +557,21 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 			break
 		}
 	}
-	provided := len(call.Args) + offset
+	provided := len(effectiveArgs) + offset
 	if firstDefault < 0 || provided < firstDefault || provided >= len(params) {
-		return
+		return effectiveArgs
+	}
+	for i := provided; i < len(params); i++ {
+		if params[i].Default == nil {
+			return effectiveArgs
+		}
 	}
 	substitutions := make(map[string]ast.Expr, len(params))
 	slotExprs := make([]ast.Expr, len(params))
 	if receiver != nil && len(slotExprs) > 0 {
 		slotExprs[0] = receiver
 	}
-	for i, arg := range call.Args {
+	for i, arg := range effectiveArgs {
 		slot := i + offset
 		if slot >= len(slotExprs) {
 			break
@@ -518,9 +585,6 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 		substitutions[params[i].Name.Name] = slotExprs[i]
 	}
 	for i := provided; i < len(params); i++ {
-		if params[i].Default == nil {
-			return
-		}
 		ast.Inspect(params[i].Default, func(node ast.Node) bool {
 			ident, ok := node.(*ast.Ident)
 			if !ok || ident == nil {
@@ -533,44 +597,48 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, sym *symbols.Symbol, de
 			return true
 		})
 		expanded, defaultClones, argumentClones := ast.SubstituteExpr(params[i].Default, substitutions)
-		if declModule != nil && declModule.Semantics != nil {
+		if declModule != nil && declModule.Bindings != nil {
 			for clonedID, originalID := range defaultClones {
-				if resolved := declModule.Semantics.ResolvedSymbols[originalID]; resolved != nil {
-					c.module.Semantics.ResolvedSymbols[clonedID] = resolved
-					c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
+				if resolved := declModule.Bindings.NodeSymbols[originalID]; resolved != nil {
+					c.module.Bindings.NodeSymbols[clonedID] = resolved
+					c.module.Typechecking.ExpandedDefaultBindings[clonedID] = struct{}{}
 				}
-				copyExpressionEvidence(c.module.Semantics, declModule.Semantics, clonedID, originalID)
+				copyExpressionEvidence(c.module, declModule, clonedID, originalID)
 			}
 		}
 		for clonedID, originalID := range argumentClones {
-			if resolved := c.module.Semantics.ResolvedSymbols[originalID]; resolved != nil {
-				c.module.Semantics.ResolvedSymbols[clonedID] = resolved
+			if resolved := c.module.Bindings.NodeSymbols[originalID]; resolved != nil {
+				c.module.Bindings.NodeSymbols[clonedID] = resolved
 			}
-			if _, ok := c.module.Semantics.ExpandedDefaultBindings[originalID]; ok {
-				c.module.Semantics.ExpandedDefaultBindings[clonedID] = struct{}{}
+			if _, ok := c.module.Typechecking.ExpandedDefaultBindings[originalID]; ok {
+				c.module.Typechecking.ExpandedDefaultBindings[clonedID] = struct{}{}
 			}
-			copyExpressionEvidence(c.module.Semantics, c.module.Semantics, clonedID, originalID)
+			copyExpressionEvidence(c.module, c.module, clonedID, originalID)
 		}
-		call.Args = append(call.Args, expanded)
+		effectiveArgs = append(effectiveArgs, expanded)
 		slotExprs[i] = expanded
 		if params[i].Name != nil {
 			substitutions[params[i].Name.Name] = expanded
 		}
 	}
+	return effectiveArgs
 }
 
-func copyExpressionEvidence(dst, src *project.SemanticInfo, dstID, srcID ast.NodeID) {
-	if dst == nil || src == nil {
+func copyExpressionEvidence(dst, src *project.Module, dstID, srcID ast.NodeID) {
+	if dst == nil || dst.Typechecking == nil || src == nil {
 		return
 	}
-	if typ := src.ExprTypes[srcID]; typ != nil {
-		dst.ExprTypes[dstID] = typ
+	if typ := src.BaseExprType(srcID); typ != nil {
+		dst.Typechecking.ExprTypes[dstID] = typ
 	}
-	if implementations := src.InterfaceImplementations[srcID]; implementations != nil {
-		dst.InterfaceImplementations[dstID] = implementations
+	if src.Typechecking == nil {
+		return
 	}
-	if conversion, ok := src.ImplicitConversions[srcID]; ok {
-		dst.ImplicitConversions[dstID] = conversion
+	if implementations := src.Typechecking.InterfaceImplementations[srcID]; implementations != nil {
+		dst.Typechecking.InterfaceImplementations[dstID] = implementations
+	}
+	if conversion, ok := src.Typechecking.ImplicitConversions[srcID]; ok {
+		dst.Typechecking.ImplicitConversions[dstID] = conversion
 	}
 }
 

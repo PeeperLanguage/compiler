@@ -348,6 +348,41 @@ func TestTypedLLVMBuilderRejectsOperandMismatches(t *testing.T) {
 	}
 }
 
+// mir.Instr and mir.Terminator are sealed, so a node this package could pass to
+// emission no longer exists: the earlier fabricated one cannot implement either
+// interface. What remains reachable is a block that carries no terminator at
+// all, which would otherwise emit an unterminated basic block with no signal.
+func TestGenerateLLVMIRPanicsForMalformedMIRBlocks(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		block *mir.Block
+		want  string
+	}{
+		{
+			name:  "missing terminator",
+			block: &mir.Block{ID: 7},
+			want:  "LLVM emission: block b7 has no terminator",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != tt.want {
+					t.Fatalf("GenerateLLVMIR panic = %#v; want %q", recovered, tt.want)
+				}
+			}()
+			GenerateLLVMIR(&mir.Module{
+				Name:  "unknown-node",
+				Types: llvmTypes.table,
+				Funcs: []*mir.Function{{
+					Name:       "test",
+					ReturnType: llvmTypes.void,
+					Blocks:     []*mir.Block{tt.block},
+				}},
+			}, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+		})
+	}
+}
+
 func TestLLVMEmitterRejectsUnknownMIROperators(t *testing.T) {
 	emitter := &llvmEmitter{mod: &mir.Module{Types: llvmTypes.table}}
 	operand := &mir.RefConst{Value: "1", Type: llvmTypes.i32}
@@ -2873,7 +2908,7 @@ func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) 
 		t.Fatalf("expected narrow unsigned index widening, got:\n%s", irText)
 	}
 	gep := ""
-	for line := range strings.SplitSeq(irText, "\n") {
+	for _, line := range strings.Split(irText, "\n") {
 		if strings.Contains(line, "getelementptr i32") {
 			gep = line
 			break

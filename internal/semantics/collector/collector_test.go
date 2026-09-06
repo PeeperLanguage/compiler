@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -17,27 +18,28 @@ import (
 var _ func(*collector, ast.TypeDecl) = (*collector).collectConcreteTypeDecl
 var _ func(*collector, *ast.Ident, symbols.Kind, ast.Node) = (*collector).collectModuleBinding
 
-func TestCallableSymbolsKeepDefiningModuleKey(t *testing.T) {
+func TestCallableSymbolsKeepDefiningModuleIdentity(t *testing.T) {
 	const filePath = "collector_callable_module_test" + peeper.SourceExt
 	const src = `struct Counter { value: i32 }
 fn Value() -> i32 { return 1; }
 fn (self: Counter) Read() -> i32 { return self.value; }`
 	diag := diagnostics.NewDiagnosticBag()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginDependency, filePath),
-		ImportPath: "math/counter",
-		FilePath:   filePath,
-		Namespace:  "vendor",
-		Origin:     project.ModuleOriginDependency,
-		Dependency: "mathlib",
-		Content:    src,
-		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID: moduleid.ID{
+			Origin:     string(project.ModuleOriginDependency),
+			Namespace:  "vendor",
+			Dependency: "mathlib",
+			ImportPath: "math/counter",
+		},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 	ctx := project.New(".", peeper.SourceExt, diag)
 	Collect(ctx, module)
 
-	want := symbols.DefiningModuleKey{
+	want := moduleid.ID{
 		Origin:     string(project.ModuleOriginDependency),
 		Namespace:  "vendor",
 		Dependency: "mathlib",
@@ -47,7 +49,7 @@ fn (self: Counter) Read() -> i32 { return self.value; }`
 	if !ok || function == nil || function.DefiningModule != want {
 		t.Fatalf("function defining module = %#v, want %#v", function, want)
 	}
-	methods := module.Semantics.MethodSets["Counter"]
+	methods := module.Bindings.MethodsByReceiver["Counter"]
 	if len(methods) != 1 || methods[0] == nil || methods[0].DefiningModule != want {
 		t.Fatalf("method defining module = %#v, want %#v", methods, want)
 	}
@@ -58,7 +60,7 @@ func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
 	const src = `enum Status { Ready }`
 	diag := diagnostics.NewDiagnosticBag()
 	module := &project.Module{
-		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
@@ -75,7 +77,7 @@ func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
 	if !ok || defined == nil {
 		t.Fatalf("collected enum type = %T, want DefinedType", sym.Type)
 	}
-	want := module.Key + "::Status"
+	want := module.ID.String() + "::Status"
 	if defined.Identity != want {
 		t.Fatalf("collected enum identity = %q, want %q", defined.Identity, want)
 	}
@@ -90,7 +92,7 @@ func TestCollectedEnumOwnsOrderedVariantSymbols(t *testing.T) {
 type Alias = Result<i32>;`
 	diag := diagnostics.NewDiagnosticBag()
 	module := &project.Module{
-		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
@@ -121,7 +123,7 @@ type Alias = Result<i32>;`
 	}
 	enumType := enumDecl.Type.(*ast.EnumType)
 	for index, variant := range enumType.Variants {
-		if module.Semantics.ResolvedSymbols[variant.Name.ID()] != children[index] {
+		if module.Bindings.NodeSymbols[variant.Name.ID()] != children[index] {
 			t.Fatalf("variant %s identifier does not resolve to child symbol", variant.Name.Name)
 		}
 	}
@@ -136,7 +138,7 @@ func TestCollectedEnumRejectsDuplicateVariants(t *testing.T) {
 	const src = `enum Status { Ready, Ready }`
 	diag := diagnostics.NewDiagnosticBag()
 	module := &project.Module{
-		Key:      project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
@@ -166,18 +168,15 @@ fn main() -> i32 {
 	}
 
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "collector_import_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "collector_import_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
 		Imports: map[string]project.ResolvedImport{
 			"external": {
-				Key:        "local:external" + peeper.SourceExt,
-				ImportPath: "external",
-				FilePath:   "external" + peeper.SourceExt,
-				Origin:     project.ModuleOriginLocal,
-				Decl:       modAST.Imports[0],
+				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
+				FilePath: "external" + peeper.SourceExt,
+				Decl:     modAST.Imports[0],
 			},
 		},
 	}
@@ -210,12 +209,11 @@ fn Platform() -> i32 {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux"}, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "collector_target_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "collector_target_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 
 	Collect(ctx, module)
@@ -249,12 +247,11 @@ func TestTargetOSImplMethodsStillCollide(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux"}, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: "collector_method_target_test",
-		FilePath:   filePath,
-		Content:    src,
-		AST:        modAST,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "collector_method_target_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      modAST,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 
 	Collect(ctx, module)

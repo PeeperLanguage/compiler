@@ -1,0 +1,7 @@
+name = "negative_projection_uninitialized"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0039", "symbol `read_index` used before it's initialized", "symbol `write_index` used before it's initialized", "symbol `borrow_index` used before it's initialized", "symbol `field_index` used before it's initialized", "symbol `slice_index` used before it's initialized"]

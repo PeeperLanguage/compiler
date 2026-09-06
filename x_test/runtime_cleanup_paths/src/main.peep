@@ -1,0 +1,69 @@
+struct Box {
+    value: i32,
+    ptr: *i32
+}
+
+enum Carrier {
+    Owned: { held: *i32 },
+    Empty
+}
+
+fn MakeBox() -> Box {
+    return .Box{ value = 7, ptr = alloc(0) };
+}
+
+// A projection out of a temporary: the base is owned by nobody, so its cleanup
+// belongs to the site that produced it.
+fn ReadTemporaryField() -> i32 {
+    return MakeBox().value;
+}
+
+// Replacing a live owned value drops the old one before the new one lands.
+fn ReplaceOwned() {
+    let mut held = alloc(0);
+    let next = alloc(0);
+    held = next;
+    println("replace");
+}
+
+// A value produced and thrown away dies where it is produced.
+fn DiscardTemporary() {
+    alloc(0);
+    .Box{ value = 0, ptr = alloc(0) };
+    println("discard");
+}
+
+// An owned value inside an aggregate is destroyed with it.
+fn NestedOwned() {
+    let box = .Box{ value = 1, ptr = alloc(0) };
+    println("nested");
+}
+
+// A payload the arm does not bind is dropped on that arm's edge.
+fn MatchCarrier(carrier: Carrier) {
+    match carrier {
+        Carrier::Owned with { held = _ } => {
+            println("match");
+        }
+        Carrier::Empty => {
+            println("match");
+        }
+    }
+}
+
+fn main() -> i32 {
+    {
+        let scoped = alloc(0);
+        println("scope");
+    }
+    ReplaceOwned();
+    DiscardTemporary();
+    let _ = ReadTemporaryField();
+    println("projection");
+    NestedOwned();
+    MatchCarrier(Carrier::Owned with .{ held = alloc(0) });
+    let early = alloc(0);
+    free(early);
+    println("done");
+    return 0;
+}

@@ -17,21 +17,26 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/target"
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
 func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
 	return &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, filePath),
-		ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
-		FilePath:   filePath,
-		AST:        parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:    make(map[string]project.ResolvedImport),
+		ID: moduleid.ID{
+			Origin:     string(project.ModuleOriginLocal),
+			ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
+		},
+		FilePath: filePath,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 }
 
@@ -46,15 +51,11 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	ctx := project.NewWithConfig(cfg, diag)
 
 	// Register the prelude so the pipeline loader can find it.
-	prelude := parseModuleSource(preludePath, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource(preludePath, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID(ctx)
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -88,10 +89,8 @@ func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string)
 		Extension:   peeper.SourceExt,
 	}, diag)
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: "app/main",
-		FilePath:   entryPath,
-		Origin:     project.ModuleOriginLocal,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: entryPath,
 	}
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -456,12 +455,10 @@ fn main() -> i32 {
 		LibraryBaseDir: libraryBase,
 	}, diag)
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, entryPath),
-		ImportPath: "entry",
-		FilePath:   entryPath,
-		Content:    entrySrc,
-		Origin:     project.ModuleOriginLocal,
-		Imports:    make(map[string]project.ResolvedImport),
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
+		FilePath: entryPath,
+		Content:  entrySrc,
+		Imports:  make(map[string]project.ResolvedImport),
 	}
 
 	if err := Run(ctx, entry); err != nil {
@@ -475,6 +472,93 @@ fn main() -> i32 {
 	}
 	if !strings.Contains(entry.LLVMIR, "declare void @peeper_rt_v1_free(i8*)") {
 		t.Fatalf("expected free declaration, LLVM IR:\n%s", entry.LLVMIR)
+	}
+}
+
+// preludeQualifierPipeline compiles one entry against a real temp library root so
+// `core:` imports resolve for real, and returns the resulting diagnostics.
+func preludeQualifierPipeline(t *testing.T, libraryFile, librarySrc, entrySrc string) *diagnostics.DiagnosticBag {
+	t.Helper()
+	root := t.TempDir()
+	libraryBase := filepath.Join(root, "libs")
+	libraryPath := filepath.Join(libraryBase, "core", peeper.SourceDirName, libraryFile+peeper.SourceExt)
+	if err := os.MkdirAll(filepath.Dir(libraryPath), 0o755); err != nil {
+		t.Fatalf("mkdir library: %v", err)
+	}
+	if err := os.WriteFile(libraryPath, []byte(librarySrc), 0o644); err != nil {
+		t.Fatalf("write library: %v", err)
+	}
+	entryPath := filepath.Join(root, "entry"+peeper.SourceExt)
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:        root,
+		Extension:      peeper.SourceExt,
+		LibraryBaseDir: libraryBase,
+	}, diag)
+	// Production loads the prelude in the driver; do the same so global symbols
+	// reach global scope and redundant qualification is observable.
+	if err := prelude.Load(ctx); err != nil {
+		t.Fatalf("load prelude: %v", err)
+	}
+	entry := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
+		FilePath: entryPath,
+		Content:  entrySrc,
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	return diag
+}
+
+func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPipelineNotesRedundantPreludeImportAndQualifier(t *testing.T) {
+	diag := preludeQualifierPipeline(t, "global", `fn Ping() -> i32 {
+	return 7;
+}
+`, `import "core:global";
+
+fn main() -> i32 {
+	return global::Ping() - 7;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("redundant prelude use must stay compilable:\n%s", diag.EmitAllToString())
+	}
+	if !hasDiagnosticCode(diag, diagnostics.InfoRedundantPreludeImport) {
+		t.Fatalf("explicit prelude import produced no style note:\n%s", diag.EmitAllToString())
+	}
+	if !hasDiagnosticCode(diag, diagnostics.InfoRedundantGlobalQualifier) {
+		t.Fatalf("global-qualified prelude symbol produced no style note:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineKeepsOrdinaryLibraryQualifierQuiet(t *testing.T) {
+	// A non-prelude library is qualified legitimately, so neither style note applies.
+	diag := preludeQualifierPipeline(t, "util", `fn Helper() -> i32 {
+	return 3;
+}
+`, `import "core:util";
+
+fn main() -> i32 {
+	return util::Helper() - 3;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("ordinary library import failed:\n%s", diag.EmitAllToString())
+	}
+	if hasDiagnosticCode(diag, diagnostics.InfoRedundantPreludeImport) {
+		t.Fatalf("ordinary import reported as automatic:\n%s", diag.EmitAllToString())
+	}
+	if hasDiagnosticCode(diag, diagnostics.InfoRedundantGlobalQualifier) {
+		t.Fatalf("ordinary qualifier reported as redundant:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -566,16 +650,12 @@ fn main() -> i32 {
 		Extension: peeper.SourceExt,
 	}, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID(ctx)
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -612,16 +692,12 @@ fn main() -> i32 {
 		Extension: peeper.SourceExt,
 	}, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID(ctx)
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -674,16 +750,12 @@ fn main() -> i32 {
 		Extension: peeper.SourceExt,
 	}, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID(ctx)
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -707,7 +779,6 @@ fn main() -> i32 { return 0; }`)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	entry := parseModuleSource(filePath, `fn unused() {}
 fn main() -> i32 { return 0; }`, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("first Pipeline.Run: %v", err)
@@ -744,7 +815,6 @@ func TestPipelineRunReplacesStaleFinalizeDiagnostics(t *testing.T) {
 	diag.AddSourceContent(filePath, sourceText)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	entry := parseModuleSource(filePath, sourceText, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("Pipeline.Run: %v", err)
@@ -777,16 +847,12 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	diag.AddSourceContent("entry"+peeper.SourceExt, entrySrc)
 	ctx := project.NewWithConfig(cfg, diag)
 
-	prelude := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
-	prelude.Key = "core:prelude/global"
-	prelude.ImportPath = "prelude/global"
-	prelude.Namespace = "core"
-	prelude.Origin = project.ModuleOriginStdlib
-	ctx.AddModule(prelude)
+	preludeModule := parseModuleSource("core/global"+peeper.SourceExt, preludeSrc, diag)
+	preludeModule.ID = prelude.ModuleID(ctx)
+	ctx.AddModule(preludeModule)
 
 	entry := parseModuleSource("entry"+peeper.SourceExt, entrySrc, diag)
-	entry.ImportPath = "entry"
-	entry.Origin = project.ModuleOriginLocal
+	entry.ID.ImportPath = "entry"
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -808,7 +874,6 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx.AddModule(entry)
 
@@ -820,6 +885,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.Typechecked,
 		phase.CFG,
 		phase.FlowTyped,
+		phase.Effects,
 		phase.DefiniteInit,
 		phase.Ownership,
 	}
@@ -835,6 +901,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		}
 		if wantPhase == phase.FlowTyped && entry.Flow == nil {
 			t.Fatal("flow-typed phase must retain canonical result")
+		}
+		if wantPhase == phase.Effects && entry.Effects == nil {
+			t.Fatal("effects phase must retain published site effects")
 		}
 		if wantPhase < phase.HIR && entry.HIR != nil {
 			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)
@@ -864,13 +933,12 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 }
 
-func TestTypecheckedPhaseFinalizesModuleConstValues(t *testing.T) {
+func TestTypecheckedPhasePublishesModuleConstants(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
 	entry := parseModuleSource(entryPath, `const Value = 1;
 fn main() -> i32 { return Value; }
 `, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -887,12 +955,15 @@ fn main() -> i32 { return Value; }
 	if !ok {
 		t.Fatal("failed to construct stale const value")
 	}
-	entry.Semantics.ConstValues[sym.ID] = stale
+	entry.Constants.QueryCache[sym.ID] = stale
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
-	if got := entry.Semantics.ConstValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+	if got := entry.Constants.ModuleValues[sym.ID]; got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
+	}
+	if _, found := entry.Constants.QueryCache[sym.ID]; found {
+		t.Fatal("published module constant remains duplicated in query cache")
 	}
 }
 
@@ -908,7 +979,6 @@ const Waiting: Status = Status::Waiting;
 const ReadyIsReady: bool = Ready is Status::Ready;
 const WaitingIsReady: bool = Waiting is Status::Ready;
 `, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -924,9 +994,9 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	if !found || readySymbol == nil {
 		t.Fatal("missing const symbol Ready")
 	}
-	ready, ok := entry.Semantics.ConstValues[readySymbol.ID].(*constvalue.VariantConst)
+	ready, ok := entry.Constants.ModuleValues[readySymbol.ID].(*constvalue.VariantConst)
 	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
-		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Semantics.ConstValues[readySymbol.ID])
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Constants.ModuleValues[readySymbol.ID])
 	}
 	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
 	if !ok || code.Text() != "7" {
@@ -949,7 +1019,6 @@ fn main() -> i32 {
 	return 0;
 }
 `, diag)
-	entry.Origin = project.ModuleOriginLocal
 	ctx := project.NewWithConfig(project.Config{
 		RootDir:           ".",
 		Extension:         peeper.SourceExt,
@@ -975,9 +1044,9 @@ func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, 
 	if !found || sym == nil {
 		t.Fatalf("missing const symbol %s", name)
 	}
-	value, ok := module.Semantics.ConstValues[sym.ID].(*constvalue.BoolConst)
+	value, ok := module.Constants.ModuleValues[sym.ID].(*constvalue.BoolConst)
 	if !ok || value == nil || value.Bool() != want {
-		t.Fatalf("%s = %#v, want bool %t", name, module.Semantics.ConstValues[sym.ID], want)
+		t.Fatalf("%s = %#v, want bool %t", name, module.Constants.ModuleValues[sym.ID], want)
 	}
 }
 
@@ -989,7 +1058,6 @@ func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 		return 7;
 	}
 }`, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -1019,7 +1087,6 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 	}
 	return 0;
 }`, diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
@@ -1085,22 +1152,22 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 		module *project.Module
 		want   string
 	}{
-		{name: "blocked prerequisite", module: &project.Module{Key: "local:main", Phase: phase.Resolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &project.Module{Key: "local:main", Phase: phase.Ownership}, want: "ownership phase"},
-		{name: "missing MIR", module: &project.Module{Key: "local:main", Phase: phase.HIR}, want: "HIR phase"},
+		{name: "blocked prerequisite", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
+		{name: "missing HIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
+		{name: "missing MIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.HIR}, want: "HIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[string]struct{}{test.module.Key: {}}, phase.Backend)
+			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[moduleid.ID]string{test.module.ID: ""}, phase.Backend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "local:main", Phase: phase.Backend}}, map[string]struct{}{"local:main": {}}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{Key: "overlay:stub", Phase: phase.None}}, map[string]struct{}{"local:main": {}}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }
@@ -1108,7 +1175,6 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 func TestPipelineDiagnosticStopReturnsNormally(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	entry := parseModuleSource("invalid"+peeper.SourceExt, "fn main() -> Missing { return 0; }", diag)
-	entry.Origin = project.ModuleOriginLocal
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("diagnostic-driven stop returned pipeline error: %v", err)
@@ -1181,7 +1247,6 @@ fn main() -> i32 {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1205,19 +1270,15 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: "."}, diag)
 
 	imported := parseModuleSource("util"+peeper.SourceExt, "fn Helper() -> i32 { return 1; }", diag)
-	imported.Origin = project.ModuleOriginLocal
 	imported.Phase = phase.Parsed
 	ctx.AddModule(imported)
 
 	entry := parseModuleSource("main"+peeper.SourceExt, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
-	entry.Origin = project.ModuleOriginLocal
 	entry.Phase = phase.Parsed
 	entry.Imports = map[string]project.ResolvedImport{
 		"util": {
-			Key:        imported.Key,
-			ImportPath: "util",
-			FilePath:   imported.FilePath,
-			Origin:     project.ModuleOriginLocal,
+			ID:       imported.ID,
+			FilePath: imported.FilePath,
 		},
 	}
 	ctx.AddModule(entry)
@@ -1249,12 +1310,17 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry.Phase = phase.Resolved
 	if moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatalf("resolved importer should wait for const-evaluated import before consteval")
+		t.Fatal("resolved importer should wait for typechecked import before consteval")
 	}
 
 	imported.Phase = phase.ConstEval
+	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+		t.Fatal("resolved importer should not read provisional import constants")
+	}
+
+	imported.Phase = phase.Typechecked
 	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatalf("resolved importer should be ready for consteval when import is const-evaluated")
+		t.Fatal("resolved importer should be ready for consteval when import constants are published")
 	}
 }
 
@@ -1278,10 +1344,8 @@ fn main() -> i32 {
 	}
 
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
-		ImportPath: "app/main",
-		FilePath:   mainPath,
-		Origin:     project.ModuleOriginLocal,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: mainPath,
 	}
 
 	if err := os.WriteFile(utilPath, []byte(utilSrc), 0o644); err != nil {
@@ -1349,10 +1413,8 @@ fn Value() -> i32 {
 	mainPath := filepath.Join(srcDir, peeper.MainFileName)
 	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
 	entry := &project.Module{
-		Key:        project.ModuleKeyFor(project.ModuleOriginLocal, mainPath),
-		ImportPath: "app/main",
-		FilePath:   mainPath,
-		Origin:     project.ModuleOriginLocal,
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: mainPath,
 	}
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1625,7 +1687,6 @@ fn main() -> i32 {
 				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
 			}, diag)
 			entry := parseModuleSource(filePath, src, diag)
-			entry.Origin = project.ModuleOriginLocal
 			if err := Run(ctx, entry); err != nil {
 				t.Fatalf("pipeline.Run returned error: %v", err)
 			}
@@ -1757,7 +1818,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1854,7 +1914,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1938,7 +1997,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -2035,7 +2093,6 @@ fn main() -> i32 {
 	diag.AddSourceContent(entryPath, entrySrc)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	entry := parseModuleSource(entryPath, entrySrc, diag)
-	entry.Origin = project.ModuleOriginLocal
 
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -2500,7 +2557,6 @@ fn main() -> i32 {
 				TargetArch: compilerTarget.arch,
 			}, diag)
 			entry := parseModuleSource(filePath, src, diag)
-			entry.Origin = project.ModuleOriginLocal
 			if err := Run(ctx, entry); err != nil {
 				t.Fatalf("pipeline.Run returned error: %v", err)
 			}
@@ -2509,7 +2565,7 @@ fn main() -> i32 {
 			}
 
 			observed := make(map[symbols.CompilerOp]struct{})
-			for _, symbol := range entry.Semantics.ResolvedSymbols {
+			for _, symbol := range entry.Bindings.NodeSymbols {
 				if symbol != nil && symbol.CompilerOp != "" {
 					observed[symbol.CompilerOp] = struct{}{}
 				}
@@ -3134,5 +3190,105 @@ fn invalid(holder: &mut Holder) -> i32 {
 				t.Fatalf("expected %s diagnostic, got:\n%s", tt.code, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestModuleLoaderReportsSameIdentityFromDifferentFiles(t *testing.T) {
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
+	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(root, peeper.SourceExt, diag)
+	loader := &moduleLoader{
+		ctx:       ctx,
+		scheduled: make(map[moduleid.ID]string),
+	}
+	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
+
+	loader.enqueue(&project.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+	loader.enqueue(&project.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+
+	ambiguous := 0
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.ErrAmbiguousImport {
+			ambiguous++
+		}
+	}
+	if ambiguous != 1 {
+		t.Fatalf("ambiguous-import diagnostics = %d, want 1:\n%s", ambiguous, diag.EmitAllToString())
+	}
+}
+
+// An identity conflict reached through an import must name the import that
+// caused it, so the reader has somewhere to go. The registry detects the
+// conflict; the loader owns the source site.
+func TestModuleLoaderLabelsImportSiteOnIdentityConflict(t *testing.T) {
+	root := t.TempDir()
+	srcDir := manifest.SourceDir(root)
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	sharedPath := filepath.Join(srcDir, "shared"+peeper.SourceExt)
+	if err := os.WriteFile(sharedPath, []byte("fn Helper() {}\n"), 0o600); err != nil {
+		t.Fatalf("write shared module: %v", err)
+	}
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.NewWithConfig(project.Config{
+		RootDir:     root,
+		ProjectName: "app",
+		Extension:   peeper.SourceExt,
+	}, diag)
+
+	resolved, err := ctx.ResolveImportPath("app/shared")
+	if err != nil {
+		t.Fatalf("resolve import: %v", err)
+	}
+	// Claim the identity for a different file so the import below conflicts.
+	ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: filepath.Join(srcDir, "other"+peeper.SourceExt)})
+
+	entryPath := filepath.Join(srcDir, "entry"+peeper.SourceExt)
+	entrySrc := "import \"app/shared\";\n"
+	diag.AddSourceContent(entryPath, entrySrc)
+	importer := parseModuleSource(entryPath, entrySrc, diag)
+	loader := &moduleLoader{ctx: ctx, scheduled: make(map[moduleid.ID]string)}
+	loader.resolveImports(importer, diag)
+	loader.wg.Wait()
+
+	for _, item := range diag.Diagnostics() {
+		if item == nil || item.Code != diagnostics.ErrAmbiguousImport {
+			continue
+		}
+		if len(item.Labels) == 0 || item.Labels[0].Location == nil {
+			t.Fatalf("ambiguous-import diagnostic carries no primary label:\n%s", diag.EmitAllToString())
+		}
+		if item.FilePath != project.CanonicalPath(entryPath) {
+			t.Fatalf("diagnostic file = %q, want %q", item.FilePath, project.CanonicalPath(entryPath))
+		}
+		return
+	}
+	t.Fatalf("no ambiguous-import diagnostic:\n%s", diag.EmitAllToString())
+}
+
+func TestModuleLoaderSamePathDoubleEnqueueIsQuietDedupe(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "shared"+peeper.SourceExt)
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(root, peeper.SourceExt, diag)
+	loader := &moduleLoader{
+		ctx:       ctx,
+		scheduled: make(map[moduleid.ID]string),
+	}
+	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
+
+	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.wg.Wait()
+
+	if diag.HasErrors() {
+		t.Fatalf("same-path dedupe produced diagnostics:\n%s", diag.EmitAllToString())
 	}
 }

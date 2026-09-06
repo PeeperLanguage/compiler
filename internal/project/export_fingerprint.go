@@ -11,7 +11,9 @@ import (
 )
 
 // SemanticExportFingerprint identifies compiler-visible semantic facts exported by module.
-func SemanticExportFingerprint(module *Module) string {
+// Constant values resolve through their defining module, so an exported default that
+// references an imported constant still changes when that constant changes.
+func SemanticExportFingerprint(ctx *CompilerContext, module *Module) string {
 	if module == nil || module.ModuleScope == nil {
 		return ast.FingerprintParts(nil)
 	}
@@ -24,27 +26,27 @@ func SemanticExportFingerprint(module *Module) string {
 		if sym.Kind == symbols.SymbolVar {
 			part += fmt.Sprintf(":mutable=%t", sym.IsMutable())
 		}
-		part += semanticExportMetadata(module, sym)
-		if sym.Kind == symbols.SymbolConst && module.Semantics != nil {
-			part += ":value=" + constantKey(module.Semantics.ConstValues[sym.ID])
+		part += semanticExportMetadata(ctx, module, sym)
+		if sym.Kind == symbols.SymbolConst {
+			part += ":value=" + constantKey(ctx.PublishedConstant(module, sym))
 		}
 		parts = append(parts, part)
 	}
-	if module.Semantics != nil {
-		for receiver, methods := range module.Semantics.MethodSets {
+	if module.Bindings != nil {
+		for receiver, methods := range module.Bindings.MethodsByReceiver {
 			for _, method := range methods {
 				if method == nil || !method.IsPub {
 					continue
 				}
 				parts = append(parts, "method:"+receiver+":"+method.Name+":"+
-					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(module, method))
+					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(ctx, module, method))
 			}
 		}
 	}
 	return ast.FingerprintParts(parts)
 }
 
-func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
+func semanticExportMetadata(ctx *CompilerContext, module *Module, sym *symbols.Symbol) string {
 	decl, ok := sym.ASTNode.(ast.Decl)
 	if !ok || decl == nil {
 		return ""
@@ -76,16 +78,16 @@ func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
 		facts := make([]string, 0)
 		ast.Inspect(param.Default, func(node ast.Node) bool {
 			ident, ok := node.(*ast.Ident)
-			if !ok || ident == nil || module.Semantics == nil {
+			if !ok || ident == nil || module.Bindings == nil {
 				return true
 			}
-			resolved := module.Semantics.ResolvedSymbols[ident.ID()]
+			resolved := module.Bindings.NodeSymbols[ident.ID()]
 			if resolved == nil {
 				return true
 			}
 			fact := resolved.Name + ":" + semanticTypeKey(resolved.Type, make(map[typeinfo.Type]bool))
 			if resolved.Kind == symbols.SymbolConst {
-				fact += "=" + constantKey(module.Semantics.ConstValues[resolved.ID])
+				fact += "=" + constantKey(ctx.PublishedConstant(module, resolved))
 			}
 			facts = append(facts, fact)
 			return true
@@ -95,18 +97,17 @@ func semanticExportMetadata(module *Module, sym *symbols.Symbol) string {
 	return metadata
 }
 
-func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
-	semantic, ok := typ.(typeinfo.Type)
-	if !ok || semantic == nil {
+func semanticTypeKey(typ typeinfo.Type, visiting map[typeinfo.Type]bool) string {
+	if typ == nil {
 		return ""
 	}
-	if visiting[semantic] {
-		return "recursive(" + typeinfo.TypeText(semantic) + ")"
+	if visiting[typ] {
+		return "recursive(" + typeinfo.TypeText(typ) + ")"
 	}
-	visiting[semantic] = true
-	defer delete(visiting, semantic)
+	visiting[typ] = true
+	defer delete(visiting, typ)
 
-	switch node := semantic.(type) {
+	switch node := typ.(type) {
 	case *typeinfo.DefinedType:
 		parameters := make([]string, len(node.TypeParameters))
 		for index, parameter := range node.TypeParameters {
@@ -164,9 +165,9 @@ func semanticTypeKey(typ symbols.Type, visiting map[typeinfo.Type]bool) string {
 		*typeinfo.ByteType, *typeinfo.CharType, *typeinfo.FloatType, *typeinfo.BoolType,
 		*typeinfo.CStrType, *typeinfo.StringType, *typeinfo.NoneType, *typeinfo.AllocatorType,
 		*typeinfo.NamedType, *typeinfo.RawPtrType:
-		return typeinfo.TypeText(semantic)
+		return typeinfo.TypeText(typ)
 	default:
-		panic(fmt.Sprintf("export fingerprint: unhandled semantic type %T", semantic))
+		panic(fmt.Sprintf("export fingerprint: unhandled semantic type %T", typ))
 	}
 }
 

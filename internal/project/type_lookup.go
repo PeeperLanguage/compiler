@@ -30,7 +30,7 @@ func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedM
 	if impSym, ok := currentModule.ModuleScope.LookupLocal(importedModule); ok && impSym != nil {
 		impSym.Used = true
 	}
-	imported, ok := ctx.ModuleByKey(imp.Key)
+	imported, ok := ctx.ModuleByID(imp.ID)
 	if !ok || imported == nil || imported.ModuleScope == nil {
 		return out, false
 	}
@@ -66,7 +66,7 @@ func CanonicalEnumDeclaration(ctx *CompilerContext, typ typeinfo.Type) (*Module,
 		if owner == nil {
 			instance, found := ctx.typeInstances[defined.Identity]
 			if found && instance.typ == defined && instance.complete {
-				owner = ctx.modules[instance.ownerModuleKey]
+				owner = ctx.modules[instance.ownerModuleID]
 			}
 		}
 		return owner

@@ -61,23 +61,18 @@ func foldStmt(types *ir.TypeTable, stmt hir.Stmt, env map[string]constvalue.Valu
 		return []hir.Stmt{&hir.ExprStmt{Value: ir.FoldExpr(types, node.Value, env), NodeID: node.NodeID, ValueNodeID: node.ValueNodeID, Location: node.Location}}
 	case *hir.Assign:
 		return []hir.Stmt{&hir.Assign{
-			Target:     ir.FoldPlace(types, node.Target, env),
-			Value:      ir.FoldExpr(types, node.Value, env),
-			DropTarget: node.DropTarget,
-			NodeID:     node.NodeID,
-			Location:   node.Location,
+			Target:   ir.FoldPlace(types, node.Target, env),
+			Value:    ir.FoldExpr(types, node.Value, env),
+			NodeID:   node.NodeID,
+			Location: node.Location,
 		}}
 	case *hir.Invalid:
 		return []hir.Stmt{node}
 	case *hir.Return:
-		cleanup := make([]ir.Expr, 0, len(node.Cleanup))
-		for _, expr := range node.Cleanup {
-			cleanup = append(cleanup, ir.FoldExpr(types, expr, env))
-		}
 		if node.Value == nil {
-			return []hir.Stmt{&hir.Return{Cleanup: cleanup, NodeID: node.NodeID, Location: node.Location}}
+			return []hir.Stmt{&hir.Return{NodeID: node.NodeID, Location: node.Location}}
 		}
-		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(types, node.Value, env), Cleanup: cleanup, NodeID: node.NodeID, Location: node.Location}}
+		return []hir.Stmt{&hir.Return{Value: ir.FoldExpr(types, node.Value, env), NodeID: node.NodeID, Location: node.Location}}
 	case *hir.If:
 		thenBlock := foldBlock(types, node.Then, env)
 		var elseStmt hir.Stmt

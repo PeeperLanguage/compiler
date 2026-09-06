@@ -6,13 +6,15 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
-	"compiler/internal/semantics/flowresult"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -30,6 +32,7 @@ type analyzer struct {
 	graph                  *cfg.Graph
 	sites                  map[cfg.SiteID]*site
 	order                  []cfg.SiteID
+	effects                effect.SiteOps
 	cleanup                *ownershipresult.CleanupPlan
 	function               *ast.FnDecl
 	functionScope          *symbols.Scope
@@ -57,7 +60,7 @@ type state struct {
 // value-flow rules from becoming ad hoc type rules.
 func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Semantics == nil || module.CFG == nil {
+	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
 		return result
 	}
 	for _, graph := range module.CFG.Functions {
@@ -70,26 +73,25 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 			BeforeAssign:           make(map[ir.NodeID]struct{}),
 			DiscardedValue:         make(map[ir.NodeID]struct{}),
 			ProjectionBase:         make(map[ir.NodeID]struct{}),
-			MatchCarrierMoves:      make(map[ir.NodeID]symbols.SymbolID),
 			MatchFieldDrops:        make(map[ir.NodeID][]int),
 			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
 	}
+	for _, sym := range module.ModuleScope.Symbols() {
+		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst) {
+			continue
+		}
+		if ownershipTrackedSymbol(sym) {
+			ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+				"ownership-tracked module bindings are not supported", ast.LocOf(sym.ASTNode), "")
+		}
+	}
 	for _, stmt := range module.AST.Stmts {
 		switch node := stmt.(type) {
-		case *ast.LetDecl, *ast.ConstDecl:
-			sym, found := module.ModuleScope.LookupNode(node)
-			if !found || sym == nil {
-				continue
-			}
-			if ownershipTrackedSymbol(sym) {
-				ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-					"ownership-tracked module bindings are not supported", ast.LocOf(node), "")
-			}
 		case *ast.FnDecl:
 			var sym *symbols.Symbol
 			if node.Receiver != nil {
-				sym = module.Semantics.MethodSymbol[node.ID()]
+				sym = module.Bindings.MethodsByDecl[node.ID()]
 			} else {
 				sym, _ = module.ModuleScope.Lookup(node.Name.Name)
 			}
@@ -107,7 +109,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 }
 
 func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.Graph, cleanup *ownershipresult.CleanupPlan) {
-	if ctx == nil || module == nil || module.Semantics == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
+	if ctx == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
 	sites, order := indexSites(module, cfgFn, scope)
@@ -117,6 +119,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
+		effects:       module.Effects[cfgFn.NodeID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
@@ -127,7 +130,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
-	if module == nil || module.Semantics == nil || cfgFn == nil || scope == nil {
+	if module == nil || module.Bindings == nil || cfgFn == nil || scope == nil {
 		return sites, order
 	}
 	nodes := module.TypedASTNodes
@@ -139,7 +142,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) 
 			if flowSite == nil {
 				continue
 			}
-			resolvedScope := module.Semantics.BlockScopes[ast.NodeID(flowSite.ScopeID)]
+			resolvedScope := module.Bindings.BlockScopes[ast.NodeID(flowSite.ScopeID)]
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}
@@ -186,20 +189,19 @@ func (a *analyzer) run() {
 	}
 	entry := a.graph.Entry.Sites[0].ID
 	a.inStates = map[cfg.SiteID]state{entry: entryState}
-	queue := []cfg.SiteID{entry}
-	queued := map[cfg.SiteID]bool{entry: true}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		queued[id] = false
+	work := graphcore.NewWorklist(entry)
+	for {
+		id, pending := work.Next()
+		if !pending {
+			break
+		}
 		node := a.sites[id]
 		next := copyState(a.inStates[id])
-		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockNormal {
-			loopID := ast.NodeID(node.cfgBlock.NodeID)
-			if evidence, found := a.module.Semantics.ForIterations[loopID]; found &&
-				evidence.Kind == project.ForIterationSequence && evidence.Carrier != nil {
-				releaseIterationLoans(next, nil, loopID)
-			}
+		// Loop-owned loans are keyed by loop identity. Range loops publish no
+		// Iterate effect, so releasing by loop ID is harmless and avoids asking
+		// typechecker what kind of loop produced this CFG exit.
+		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockLoopExit {
+			releaseIterationLoans(next, nil, ast.NodeID(node.cfgBlock.NodeID))
 		}
 		if node != nil {
 			switch node.cfgSite.Kind {
@@ -211,7 +213,7 @@ func (a *analyzer) run() {
 				a.applyBlockExit(node, next, a.newLoanContext(node, next))
 			}
 		}
-		for _, edge := range node.cfgSite.Successors {
+		for _, edge := range a.graph.SiteEdges.OutEdges(node.cfgSite.ID) {
 			succ := edge.To
 			if a.sites[succ] == nil {
 				continue
@@ -226,10 +228,7 @@ func (a *analyzer) run() {
 				continue
 			}
 			a.inStates[succ] = merged
-			if !queued[succ] {
-				queue = append(queue, succ)
-				queued[succ] = true
-			}
+			work.Add(succ)
 		}
 	}
 }
@@ -244,11 +243,10 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 	}
 
 	for _, node := range a.sites {
-		matchStmt, ok := node.stmt.(*ast.MatchStmt)
-		if !ok || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
+		if node == nil || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
 			continue
 		}
-		match, found := a.module.Semantics.Matches[matchStmt.ID()]
+		match, found := a.module.Typechecking.Matches[ast.NodeID(node.cfgSite.NodeID)]
 		if !found {
 			continue
 		}
@@ -262,10 +260,14 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		armsByJoin := make(map[cfg.SiteID]map[ast.NodeID]struct{})
 		for _, arm := range match.Arms {
 			for _, exit := range scopeExits[arm.BodyID] {
-				if exit == nil || exit.cfgSite == nil || len(exit.cfgSite.Successors) != 1 {
+				if exit == nil || exit.cfgSite == nil {
 					continue
 				}
-				join := exit.cfgSite.Successors[0].To
+				edges := a.graph.SiteEdges.OutEdges(exit.cfgSite.ID)
+				if len(edges) != 1 {
+					continue
+				}
+				join := edges[0].To
 				for {
 					joinNode := a.sites[join]
 					if joinNode == nil || joinNode.cfgSite == nil {
@@ -277,13 +279,14 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 							armsByJoin[join] = make(map[ast.NodeID]struct{})
 						}
 						armsByJoin[join][arm.BodyID] = struct{}{}
-						movesByJoin[join] = movesByJoin[join] || matchArmMovesCarrier(arm)
+						movesByJoin[join] = movesByJoin[join] || arm.CarrierUse == typeinfo.UseMove
 						break
 					}
-					if len(joinNode.cfgSite.Successors) != 1 {
+					edges = a.graph.SiteEdges.OutEdges(joinNode.cfgSite.ID)
+					if len(edges) != 1 {
 						break
 					}
-					join = joinNode.cfgSite.Successors[0].To
+					join = edges[0].To
 				}
 			}
 		}
@@ -339,7 +342,7 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (s
 		return copyState(src), true
 	}
 	node := a.sites[nodeID]
-	if node == nil || node.cfgSite == nil || len(node.cfgSite.Predecessors) <= 1 {
+	if node == nil || node.cfgSite == nil || a.graph.SiteEdges.InDegree(node.cfgSite.ID, nil) <= 1 {
 		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) &&
 			sameReferenceValues(dst.references, src.references) {
 			return dst, false
@@ -406,7 +409,7 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	if carrier := a.deadMatchCarrierAtExit[node.cfgSite.ID]; carrier != nil {
 		if _, live := st.live[carrier]; live {
 			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block, loans)
-			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.NeedsDrop(typ) {
+			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 				cleanup = append(cleanup, carrier)
 			}
 			st.moved[carrier] = node.block
@@ -446,7 +449,7 @@ func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
 			continue
 		}
 		typ, ok := symbols.GetSymbolType(sym)
-		if ok && typeinfo.NeedsDrop(typ) {
+		if ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 			cleanup = append(cleanup, sym)
 		}
 	}
@@ -484,87 +487,54 @@ func (a *analyzer) checkScopeDestruction(scope *symbols.Scope, site ast.Node, lo
 	}
 }
 
+// planDiscardedDrops records a drop for each value the site produces and throws
+// away.
+//
+// Only a temporary is discarded in the sense that matters: a value that names
+// no binding has nobody left to own it, so the drop happens here. A discarded
+// expression that names storage still belongs to that storage. The producer
+// makes the distinction, so this no longer asks the syntax.
+func (a *analyzer) planDiscardedDrops(node *site) {
+	if a == nil || a.cleanup == nil || node == nil || node.cfgSite == nil {
+		return
+	}
+	for _, op := range a.effects[node.cfgSite.ID] {
+		discard, isDiscard := op.(effect.Discard)
+		if !isDiscard || discard.Place.Root != nil {
+			continue
+		}
+		if typeinfo.OwnershipCapabilityOf(a.module.EffectiveExprType(discard.Node)).Drop {
+			a.cleanup.DiscardedValue[ir.NodeID(discard.Node)] = struct{}{}
+		}
+	}
+}
+
 func (a *analyzer) applyStmt(node *site, st state) {
 	if a == nil || node == nil || node.scope == nil || node.stmt == nil {
 		return
 	}
 	scope := node.scope
 	loans := a.newLoanContext(node, st)
-	switch s := node.stmt.(type) {
-	case *ast.LetDecl:
-		a.applyBinding(scope, s, s.Value, st, loans)
-	case *ast.ConstDecl:
-		a.applyBinding(scope, s, s.Value, st, loans)
-	case *ast.AssignStmt:
-		reference, hasReference := a.referenceValueForExpr(s.Value, st)
-		delete(a.cleanup.BeforeAssign, ir.NodeID(s.ID()))
-		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
-		if _, ok := s.Target.(*ast.Ident); !ok {
-			a.checkExpr(scope, s.Target, st, useRead, loans, true)
-			a.checkStorageAccess(s.Target, loans, storageMutate)
-			if typeinfo.NeedsDrop(a.exprType(s.Target)) {
-				a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
-			}
-		}
-		if target, ok := s.Target.(*ast.Ident); ok && scope != nil {
-			if sym, found := scope.Lookup(target.Name); found {
-				if _, referenceTarget := referenceMutability(sym); !referenceTarget {
-					a.checkStorageAccess(target, loans, storageMutate)
-				}
-				if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.NeedsDrop(typ) {
-					if _, live := st.live[sym]; live {
-						a.cleanup.BeforeAssign[ir.NodeID(s.ID())] = struct{}{}
-					}
-				}
-				if ownershipTrackedSymbol(sym) {
-					delete(st.moved, sym)
-					st.live[sym] = struct{}{}
-				}
-				a.updatePointerSymbol(sym, scope, s.Value, st)
-				a.updateReferenceSymbol(sym, reference, hasReference, st)
-			}
-		}
-	case *ast.ReturnStmt:
+
+	// Return provenance has to be checked against the incoming state, before
+	// evaluating the returned value can move its source. Storage transitions for
+	// declarations and assignments are published effects and require no syntax
+	// cases here.
+	if s, ok := node.stmt.(*ast.ReturnStmt); ok {
 		a.checkPointerEscape(scope, s.Value, st)
 		a.validateReferenceReturn(scope, s, st)
-		a.checkExpr(scope, s.Value, st, useConsume, loans, false)
+	}
+
+	// Evaluation and generic storage transitions come from published effects.
+	a.applyEffects(node, st, loans)
+	a.planDiscardedDrops(node)
+
+	// Return remains the one ownership statement policy whose checks straddle
+	// evaluation: provenance is validated above before the value can move, while
+	// cleanup happens after its effects have executed.
+	if s, ok := node.stmt.(*ast.ReturnStmt); ok {
 		releaseIterationLoans(st, loans, 0)
 		a.cleanupBeforeReturn(scope, s, st, loans)
-	case *ast.ExprStmt:
-		a.checkExpr(scope, s.Expr, st, useRead, loans, false)
-		if s.Expr != nil && !place.IsPlaceExpr(s.Expr) && typeinfo.NeedsDrop(a.exprType(s.Expr)) {
-			a.cleanup.DiscardedValue[ir.NodeID(s.Expr.ID())] = struct{}{}
-		}
-	case *ast.IfStmt:
-		a.checkExpr(scope, s.Cond, st, useRead, loans, false)
-	case *ast.ForStmt:
-		if s.Iterable == nil {
-			a.checkExpr(scope, s.Cond, st, useRead, loans, false)
-			break
-		}
-		evidence, found := a.module.Semantics.ForIterations[s.ID()]
-		if !found || evidence.Kind != project.ForIterationSequence || evidence.Carrier == nil {
-			a.checkExpr(scope, s.Iterable, st, useRead, loans, false)
-			break
-		}
-		a.checkExpr(scope, s.Iterable, st, useRead, loans, true)
-		a.checkStorageAccess(s.Iterable, loans, storageSharedBorrow)
-		origins := a.originsForExpr(s.Iterable)
-		if ident, ok := s.Iterable.(*ast.Ident); ok {
-			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
-			if value, found := st.references[sym]; found {
-				origins = referenceOrigins(value)
-			}
-		} else if value, hasValue := a.referenceValueForExpr(s.Iterable, st); hasValue {
-			origins = referenceOrigins(value)
-		}
-		if len(origins) > 0 {
-			st.references[evidence.Carrier] = []referenceLoan{{
-				id: loanID{node: s.Iterable}, origins: origins, site: s.Iterable, loop: s.ID(),
-			}}
-		}
-	case *ast.MatchStmt:
-		a.checkExpr(scope, s.Subject, st, useRead, loans, false)
 	}
 }
 
@@ -572,7 +542,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, found := a.module.Semantics.Matches[ast.NodeID(node.cfgSite.NodeID)]
+	match, found := a.module.Typechecking.Matches[ast.NodeID(node.cfgSite.NodeID)]
 	if !found {
 		return
 	}
@@ -584,11 +554,15 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if subject == nil {
 		return
 	}
-	movesCarrier := matchArmMovesCarrier(arm)
-	listed := make(map[int]bool, len(arm.Fields))
-	for _, field := range arm.Fields {
-		if !field.WholePayload {
+	movesCarrier := arm.CarrierUse == typeinfo.UseMove
+	listed := make(map[int]bool, len(arm.Bindings))
+	for _, field := range arm.Bindings {
+		switch field.Projection {
+		case typecheckresult.MatchPayloadField:
 			listed[field.Field] = field.Discard
+		case typecheckresult.MatchWholePayload:
+		default:
+			panic("ownership: invalid match binding projection")
 		}
 	}
 	if movesCarrier && carrier == nil {
@@ -604,9 +578,8 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		st.moved[carrier] = moveSite
 		delete(st.live, carrier)
 		delete(st.references, carrier)
-		a.cleanup.MatchCarrierMoves[ir.NodeID(arm.BodyID)] = carrier.ID
-		if len(arm.Fields) == 1 && arm.Fields[0].WholePayload {
-			if arm.Fields[0].Discard && typeinfo.NeedsDrop(arm.Fields[0].Type) {
+		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == typecheckresult.MatchWholePayload {
+			if arm.Bindings[0].Discard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).Drop {
 				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.BodyID)] = struct{}{}
 			}
 		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
@@ -614,7 +587,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			for fieldIndex := len(payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
 				field := payload.Fields[fieldIndex]
 				discarded, selected := listed[fieldIndex]
-				if typeinfo.NeedsDrop(field.Type) && (!selected || discarded) {
+				if typeinfo.OwnershipCapabilityOf(field.Type).Drop && (!selected || discarded) {
 					drops = append(drops, fieldIndex)
 				}
 			}
@@ -623,7 +596,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			}
 		}
 	}
-	for _, field := range arm.Fields {
+	for _, field := range arm.Bindings {
 		binding := field.Binding
 		if binding == nil {
 			continue
@@ -644,26 +617,17 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	}
 }
 
-func (a *analyzer) matchSubjectCarrier(match flowresult.Match) (ast.Expr, *symbols.Symbol) {
+func (a *analyzer) matchSubjectCarrier(match typecheckresult.Match) (ast.Expr, *symbols.Symbol) {
 	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
 	ident, direct := subject.(*ast.Ident)
 	if !direct {
 		return subject, nil
 	}
-	carrier := a.module.Semantics.ResolvedSymbols[ident.ID()]
+	carrier := a.module.Bindings.NodeSymbols[ident.ID()]
 	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
 		return subject, nil
 	}
 	return subject, carrier
-}
-
-func matchArmMovesCarrier(arm flowresult.MatchArm) bool {
-	for _, field := range arm.Fields {
-		if !typeinfo.IsImplicitCopyType(field.Type) {
-			return true
-		}
-	}
-	return false
 }
 
 func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
@@ -674,22 +638,4 @@ func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {
 		}
 	}
 	return ids
-}
-
-func (a *analyzer) applyBinding(scope *symbols.Scope, stmt ast.Stmt, value ast.Expr, st state, loans *loanContext) {
-	if scope == nil || stmt == nil {
-		return
-	}
-	reference, hasReference := a.referenceValueForExpr(value, st)
-	a.checkExpr(scope, value, st, useConsume, loans, false)
-	sym, found := scope.LookupNode(stmt)
-	if !found || sym == nil {
-		return
-	}
-	a.updatePointerSymbol(sym, scope, value, st)
-	a.updateReferenceSymbol(sym, reference, hasReference, st)
-	if ownershipTrackedSymbol(sym) {
-		delete(st.moved, sym)
-		st.live[sym] = struct{}{}
-	}
 }

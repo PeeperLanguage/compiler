@@ -1,0 +1,54 @@
+struct Box { value: i32 }
+enum Resource { Borrowed: { value: &Box, sibling: &Box }, Empty }
+enum Optional { Borrowed: { value: ?&Box }, Empty }
+enum Mutable { Borrowed: { value: &mut Box }, Empty }
+
+fn Read(reference: &Box) -> i32 { return reference.value; }
+fn Write(reference: &mut Box) { reference.value = 30; }
+
+fn main() -> i32 {
+    let mut first: Box = .{ value = 10 };
+    let mut second: Box = .{ value = 20 };
+    let reference = &first;
+    let mut resource = Resource::Borrowed with .{ value = reference, sibling = reference };
+    if resource is Resource::Borrowed {
+        let duplicate = resource;
+        resource.value = resource.value;
+        resource.value = &second;
+        if Read(resource.value) != 20 || Read(resource.sibling) != 10 { return 1; }
+        match duplicate {
+            Resource::Borrowed with { value = old } => { if Read(old) != 10 { return 2; } }
+            Resource::Empty => { return 3; }
+        }
+        resource.sibling = &second;
+        first.value = 11;
+        for index in 0..2 {
+            if index == 0 { resource.value = &first; } else { resource.value = &second; }
+        }
+        resource.value = &second;
+        first.value = 12;
+        match resource {
+            Resource::Borrowed with { value = current, sibling = sibling } => {
+                if Read(current) != 20 || Read(sibling) != 20 { return 4; }
+            }
+            Resource::Empty => { return 5; }
+        }
+    }
+    let mut optional = Optional::Borrowed with .{ value = &first };
+    if optional is Optional::Borrowed {
+        optional.value = none;
+        first.value = 13;
+        if optional.value != none { return 6; }
+    }
+    let mut mutable = Mutable::Borrowed with .{ value = &mut first };
+    if mutable is Mutable::Borrowed {
+        mutable.value = &mut second;
+        first.value = 14;
+        Write(mutable.value);
+    }
+    if first.value != 14 || second.value != 30 { return 7; }
+    let mut values = [2]i32{1, 2};
+    values[0] = 7;
+    if values[0] != 7 { return 8; }
+    return 0;
+}

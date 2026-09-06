@@ -84,10 +84,17 @@ const (
 	ErrAmbiguousImport   = "M0005"
 	ErrInvalidEntrypoint = "M0006"
 
+	// Internal compiler errors (ICE prefix). ICE0001 is the generic marker in
+	// diagnostic.go; codes here name a specific broken compiler invariant.
+	ErrInvalidEvidence = "ICE0002"
+	ErrInvalidTopology = "ICE0003"
+
 	// Style/Info codes (S prefix)
-	InfoTrailingComma        = "S0001"
-	InfoUnnecessarySemicolon = "S0002"
-	InfoRedundantComma       = "S0003"
+	InfoTrailingComma            = "S0001"
+	InfoUnnecessarySemicolon     = "S0002"
+	InfoRedundantComma           = "S0003"
+	InfoRedundantPreludeImport   = "S0004"
+	InfoRedundantGlobalQualifier = "S0005"
 
 	// Warnings (W prefix)
 	WarnUnreachableCode        = "W0001"

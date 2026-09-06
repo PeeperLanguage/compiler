@@ -74,23 +74,26 @@ func TestSliceIsUnsizedButSliceReferenceIsSized(t *testing.T) {
 
 func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	i32 := &IntegerType{Signed: true, Bits: 32}
-	if !IsImplicitCopyType(i32) || !IsImplicitCopyType(&RawPtrType{}) || !IsImplicitCopyType(&RefType{Target: i32}) {
+	if OwnershipCapabilityOf(i32).Copy != CopyImplicit || OwnershipCapabilityOf(&RawPtrType{}).Copy != CopyImplicit || OwnershipCapabilityOf(&RefType{Target: i32}).Copy != CopyImplicit {
 		t.Fatalf("scalar, raw pointer, and shared reference should copy implicitly")
 	}
-	if !IsImplicitCopyType(&OptionalType{Inner: i32}) || IsImplicitCopyType(&OptionalType{Inner: &StructType{}}) {
+	if OwnershipCapabilityOf(&OptionalType{Inner: i32}).Copy != CopyImplicit || OwnershipCapabilityOf(&OptionalType{Inner: &StructType{}}).Copy == CopyImplicit {
 		t.Fatalf("optional copyability should follow payload copyability")
 	}
-	if IsImplicitCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
+	if OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "value", Type: i32}}}).Copy == CopyImplicit {
 		t.Fatalf("struct should not copy implicitly")
 	}
-	if IsNoCopyType(&StructType{Fields: []Field{{Name: "value", Type: i32}}}) {
-		t.Fatalf("scalar-only struct should support structural copy")
+	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "value", Type: i32}}}); got.Copy != CopyExplicit {
+		t.Fatalf("scalar-only struct should support structural copy, got %v", got.Copy)
 	}
-	if !IsNoCopyType(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}) {
-		t.Fatalf("owned pointer should propagate nocopy through struct")
+	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}); got.Copy != CopyNever || !got.Drop {
+		t.Fatalf("owned pointer should propagate nocopy and drop through struct, got %v", got)
 	}
-	if !IsNoCopyType(&ArrayType{Shape: ArrayOwner, Elem: i32}) {
-		t.Fatalf("dynamic array should be intrinsically nocopy")
+	if got := OwnershipCapabilityOf(&ArrayType{Shape: ArrayOwner, Elem: i32}); got.Copy != CopyNever || !got.Drop {
+		t.Fatalf("dynamic array should be intrinsically nocopy, got %v", got)
+	}
+	if got := OwnershipCapabilityOf(&NoneType{}); got.Copy != CopyImplicit {
+		t.Fatalf("none should copy implicitly, got %v", got.Copy)
 	}
 }
 
@@ -99,7 +102,7 @@ func TestAllocatorCapabilities(t *testing.T) {
 	if !IsSizedType(allocator) {
 		t.Fatal("allocator must be sized")
 	}
-	if !IsImplicitCopyType(allocator) {
+	if OwnershipCapabilityOf(allocator).Copy != CopyImplicit {
 		t.Fatal("allocator must copy implicitly")
 	}
 	if !IsEquatable(allocator) {
@@ -308,19 +311,17 @@ func TestTypeFromSyntaxPreservesReferenceReturnContract(t *testing.T) {
 func TestReturnOriginSourcesMapDirectAndMethodSlots(t *testing.T) {
 	first := &ast.Ident{Name: "first"}
 	second := &ast.Ident{Name: "second"}
-	direct := &ast.CallExpr{Callee: &ast.Ident{Name: "choose"}, Args: []ast.Expr{first, second}}
+	args := []ast.Expr{first, second}
+	direct := &ast.CallExpr{Callee: &ast.Ident{Name: "choose"}}
 	fn := &FuncType{ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0, -1, 2}}}
-	if got := ReturnOriginSources(direct, fn); !slices.Equal(got, []ast.Expr{second, first}) {
+	if got := ReturnOriginSources(direct, args, fn); !slices.Equal(got, []ast.Expr{second, first}) {
 		t.Fatalf("direct return sources = %#v", got)
 	}
 
 	receiver := &ast.Ident{Name: "receiver"}
-	method := &ast.CallExpr{
-		Callee: &ast.SelectorExpr{Expr: receiver, Name: &ast.Ident{Name: "choose"}},
-		Args:   []ast.Expr{first, second},
-	}
+	method := &ast.CallExpr{Callee: &ast.SelectorExpr{Expr: receiver, Name: &ast.Ident{Name: "choose"}}}
 	fn.ReturnOrigins.Sources = []int{0, 2, 3, -1}
-	if got := ReturnOriginSources(method, fn); !slices.Equal(got, []ast.Expr{receiver, second}) {
+	if got := ReturnOriginSources(method, args, fn); !slices.Equal(got, []ast.Expr{receiver, second}) {
 		t.Fatalf("method return sources = %#v", got)
 	}
 }
@@ -434,8 +435,8 @@ func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NeedsDrop(tc.typ); got != tc.want {
-				t.Fatalf("NeedsDrop(%s) = %v, want %v", TypeText(tc.typ), got, tc.want)
+			if got := OwnershipCapabilityOf(tc.typ).Drop; got != tc.want {
+				t.Fatalf("drop obligation for %s = %v, want %v", TypeText(tc.typ), got, tc.want)
 			}
 		})
 	}
@@ -494,11 +495,11 @@ func TestNamedEnumPayloadCapabilitiesFollowEveryCaseField(t *testing.T) {
 		}}},
 	}}}
 
-	if !IsImplicitCopyType(copyable) || IsNoCopyType(copyable) || NeedsDrop(copyable) {
-		t.Fatal("scalar enum payload should remain copyable and require no drop")
+	if got := OwnershipCapabilityOf(copyable); got.Copy != CopyImplicit || got.Drop {
+		t.Fatalf("scalar enum payload should remain copyable and require no drop, got %v", got)
 	}
-	if IsImplicitCopyType(owned) || !IsNoCopyType(owned) || !NeedsDrop(owned) {
-		t.Fatal("owned enum payload should be move-only and require drop")
+	if got := OwnershipCapabilityOf(owned); got.Copy != CopyNever || !got.Drop {
+		t.Fatalf("owned enum payload should be move-only and require drop, got %v", got)
 	}
 	if IsSizedType(unsized) || IsLowerableType(unsized) {
 		t.Fatal("enum payload capabilities must reject unsized cases")

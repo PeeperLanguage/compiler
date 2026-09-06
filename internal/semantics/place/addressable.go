@@ -27,12 +27,76 @@ type Binding struct {
 // escape source.
 type BindingResolver func(*ast.Ident) (Binding, bool)
 
-func IsPlaceExpr(expr ast.Expr) bool {
-	if node, ok := expr.(*ast.Ident); ok {
-		return node != nil
+// Projection describes one syntactic projection from a base expression.
+//
+// This is the canonical structural definition of Peeper place projections.
+// Consumers that only need to know how selector/index syntax is nested must use
+// this API rather than maintaining their own AST switches. Semantic place
+// resolution remains in Resolve, which enriches these structural projections
+// with pointer, reference, optional-payload, and stable-index information.
+type Projection struct {
+	Base  ast.Expr
+	Step  OriginProjection
+	Index ast.Expr
+}
+
+// Project reports the direct projection represented by expr. Slices are not
+// places: they borrow a range rather than select one independently addressable
+// element, so an IndexExpr containing a RangeExpr is deliberately rejected.
+func Project(expr ast.Expr) (Projection, bool) {
+	switch node := expr.(type) {
+	case *ast.SelectorExpr:
+		if node == nil || node.Expr == nil || node.Name == nil {
+			return Projection{}, false
+		}
+		return Projection{
+			Base: node.Expr,
+			Step: OriginProjection{Kind: OriginField, Field: node.Name.Name},
+		}, true
+	case *ast.IndexExpr:
+		if node == nil || node.Expr == nil || node.Index == nil {
+			return Projection{}, false
+		}
+		if _, slicing := node.Index.(*ast.RangeExpr); slicing {
+			return Projection{}, false
+		}
+		return Projection{
+			Base:  node.Expr,
+			Step:  OriginProjection{Kind: OriginIndex},
+			Index: node.Index,
+		}, true
+	default:
+		return Projection{}, false
 	}
-	base, ok := placeProjectionBase(expr)
-	return ok && IsPlaceExpr(base)
+}
+
+// Decompose peels every selector/index projection and returns the expression at
+// the root plus the projection path in source order. It does not require that
+// the root be an identifier: `make().field` therefore decomposes successfully
+// and lets callers distinguish a temporary root from named storage themselves.
+func Decompose(expr ast.Expr) (ast.Expr, []OriginProjection, bool) {
+	if expr == nil {
+		return nil, nil, false
+	}
+	projection, projected := Project(expr)
+	if !projected {
+		return expr, nil, true
+	}
+	root, path, ok := Decompose(projection.Base)
+	if !ok {
+		return nil, nil, false
+	}
+	path = append(path, projection.Step)
+	return root, path, true
+}
+
+func IsPlaceExpr(expr ast.Expr) bool {
+	root, _, ok := Decompose(expr)
+	if !ok {
+		return false
+	}
+	ident, identified := root.(*ast.Ident)
+	return identified && ident != nil
 }
 
 func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
@@ -51,10 +115,11 @@ func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, res
 		sym, found := scope.Lookup(e.Name)
 		return found && addressableSymbol(sym)
 	}
-	base, ok := placeProjectionBase(expr)
+	projection, ok := Project(expr)
 	if !ok {
 		return false
 	}
+	base := projection.Base
 	if exprType != nil {
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); ok {
 			return true
@@ -63,7 +128,7 @@ func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, res
 			return true
 		}
 	}
-	return Addressable(scope, base, exprType, resolve)
+	return Addressable(scope, projection.Base, exprType, resolve)
 }
 
 func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
@@ -94,10 +159,11 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 			return MutableAddressable(scope, index.Expr, exprType, resolve)
 		}
 	}
-	base, ok := placeProjectionBase(expr)
+	projection, ok := Project(expr)
 	if !ok {
 		return false, nil, nil
 	}
+	base := projection.Base
 	if exprType != nil {
 		baseType := typeinfo.Underlying(exprType(base))
 		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
@@ -143,36 +209,17 @@ func LocalRoot(scope, moduleScope *symbols.Scope, expr ast.Expr, exprType ExprTy
 		}
 		return nil, false
 	}
-	base, ok := placeProjectionBase(expr)
+	projection, ok := Project(expr)
 	if !ok {
 		return nil, false
 	}
+	base := projection.Base
 	if exprType != nil {
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); ok {
 			return nil, false
 		}
 	}
 	return LocalRoot(scope, moduleScope, base, exprType, resolve)
-}
-
-func placeProjectionBase(expr ast.Expr) (ast.Expr, bool) {
-	switch node := expr.(type) {
-	case *ast.SelectorExpr:
-		if node == nil || node.Expr == nil {
-			return nil, false
-		}
-		return node.Expr, true
-	case *ast.IndexExpr:
-		if node == nil || node.Expr == nil || node.Index == nil {
-			return nil, false
-		}
-		if _, slicing := node.Index.(*ast.RangeExpr); slicing {
-			return nil, false
-		}
-		return node.Expr, true
-	default:
-		return nil, false
-	}
 }
 
 func addressableSymbol(sym *symbols.Symbol) bool {

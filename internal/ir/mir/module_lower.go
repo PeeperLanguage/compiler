@@ -424,11 +424,11 @@ func (l *lowerer) lowerCFGStmt(stmt hir.Stmt) bool {
 		if target == nil || target.Root == nil {
 			return false
 		}
-		dropTarget := node.DropTarget
+		// The ownership cleanup plan is the only source of drop obligations over
+		// source values; lowering never decides one for itself.
+		dropTarget := false
 		if l.cleanup != nil {
-			if _, planned := l.cleanup.BeforeAssign[node.NodeID]; planned {
-				dropTarget = true
-			}
+			_, dropTarget = l.cleanup.BeforeAssign[node.NodeID]
 		}
 		if ident, direct := target.Root.(*ir.Ident); direct && len(target.Projections) == 0 {
 			if dropTarget {
@@ -544,9 +544,6 @@ func (l *lowerer) lowerCFGTerminator(source, exit *cfg.Block, blocks map[*cfg.Bl
 		temporaryMark := len(l.temporaryDrops)
 		value := l.lowerExpr(ret.Value, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		for _, cleanup := range ret.Cleanup {
-			l.lowerExpr(cleanup, &l.current.Instrs)
-		}
 		if l.cleanup != nil {
 			l.appendPlannedDrops(l.cleanup.BeforeReturn[term.NodeID], &l.current.Instrs)
 		}

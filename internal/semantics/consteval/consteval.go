@@ -5,15 +5,18 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/project"
+	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
 )
 
 type evaluator struct {
-	ctx        *project.CompilerContext
-	module     *project.Module
-	inProgress map[symbols.SymbolID]struct{}
+	ctx                 *project.CompilerContext
+	module              *project.Module
+	constants           *constantresult.Result
+	inProgress          map[symbols.SymbolID]struct{}
+	publishModuleValues bool
 }
 
 // Evaluate performs the eager semantic const prepass after name resolution.
@@ -23,36 +26,24 @@ func Evaluate(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
-	if module.Semantics == nil {
-		module.Semantics = project.NewSemanticInfo()
-	}
-	if module.Semantics.ConstValues == nil {
-		module.Semantics.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
-	}
-	e := &evaluator{
-		ctx:        ctx,
-		module:     module,
-		inProgress: make(map[symbols.SymbolID]struct{}),
-	}
-	for _, sym := range module.ModuleScope.Symbols() {
-		if sym != nil && sym.Kind == symbols.SymbolConst {
-			e.evalConstSymbol(sym, module.ModuleScope)
-		}
-	}
+	e := newEvaluator(ctx, module, false)
+	e.evalModuleConstants()
 }
 
-// FinalizeValues recomputes module constants after typechecking assigns final
-// symbol types. Local const cache entries remain available to later queries.
+// FinalizeValues recomputes and publishes authoritative module constants after
+// typechecking assigns final symbol types. Local query-cache entries remain mutable.
 func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
-	if ctx == nil || module == nil || module.ModuleScope == nil || module.Semantics == nil {
+	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
+	e := newEvaluator(ctx, module, true)
+	clear(e.constants.ModuleValues)
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
-			delete(module.Semantics.ConstValues, sym.ID)
+			delete(e.constants.QueryCache, sym.ID)
 		}
 	}
-	Evaluate(ctx, module)
+	e.evalModuleConstants()
 }
 
 // EvaluateExpr computes one semantic constant using expected type information
@@ -64,25 +55,43 @@ func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	if scope == nil && module.ModuleScope == nil {
 		return nil, false
 	}
-	if module.Semantics == nil {
-		module.Semantics = project.NewSemanticInfo()
-	}
-	if module.Semantics.ConstValues == nil {
-		module.Semantics.ConstValues = make(map[symbols.SymbolID]constvalue.Value)
-	}
-	e := &evaluator{
-		ctx:        ctx,
-		module:     module,
-		inProgress: make(map[symbols.SymbolID]struct{}),
-	}
+	e := newEvaluator(ctx, module, false)
 	return e.evalExpr(scope, expr, expected)
 }
 
+func newEvaluator(ctx *project.CompilerContext, module *project.Module, publishModuleValues bool) *evaluator {
+	if module.Constants == nil {
+		module.Constants = constantresult.New()
+	}
+	return &evaluator{
+		ctx:                 ctx,
+		module:              module,
+		constants:           module.Constants,
+		inProgress:          make(map[symbols.SymbolID]struct{}),
+		publishModuleValues: publishModuleValues,
+	}
+}
+
+func (e *evaluator) evalModuleConstants() {
+	for _, sym := range e.module.ModuleScope.Symbols() {
+		if sym != nil && sym.Kind == symbols.SymbolConst {
+			e.evalConstSymbol(sym, e.module.ModuleScope)
+		}
+	}
+}
+
 func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (constvalue.Value, bool) {
-	if e == nil || e.module == nil || e.module.Semantics == nil || sym == nil {
+	if e == nil || e.module == nil || sym == nil {
 		return nil, false
 	}
-	if value, ok := e.module.Semantics.ConstValues[sym.ID]; ok {
+	if ownerID := sym.DefiningModule; ownerID.Valid() && ownerID != e.module.ID {
+		value := e.ctx.PublishedConstant(e.module, sym)
+		return value, value != nil
+	}
+	if value, ok := e.constants.ModuleValues[sym.ID]; ok {
+		return value, true
+	}
+	if value, ok := e.constants.QueryCache[sym.ID]; ok {
 		return value, true
 	}
 	if _, ok := e.inProgress[sym.ID]; ok {
@@ -117,56 +126,68 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 	if !ok {
 		return nil, false
 	}
-	e.module.Semantics.ConstValues[sym.ID] = value
+	if e.publishModuleValues {
+		if topLevel, found := e.module.ModuleScope.LookupLocal(sym.Name); found && topLevel != nil && topLevel.ID == sym.ID {
+			e.constants.ModuleValues[sym.ID] = value
+			delete(e.constants.QueryCache, sym.ID)
+			return value, true
+		}
+	}
+	e.constants.QueryCache[sym.ID] = value
 	return value, true
 }
 
 func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
-	if construction, ok := e.module.Semantics.VariantConstructions[expr.ID()]; ok {
-		if !typeinfo.IsImplicitCopyType(construction.EnumType) {
-			return nil, false
-		}
-		descriptor, variant := typeinfo.VariantDescriptorOf(construction.EnumType)
-		if !variant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
-			return nil, false
-		}
-		if construction.Value != nil {
-			if literal, ok := construction.Value.(*ast.StructLit); ok {
-				payload, structured := typeinfo.Underlying(construction.Payload).(*typeinfo.StructType)
-				if !structured || payload == nil {
-					return nil, false
-				}
-				valuesByName := make(map[string]ast.Expr, len(literal.Fields))
-				for _, field := range literal.Fields {
-					if field.Name != nil {
-						valuesByName[field.Name.Name] = field.Value
-					}
-				}
-				fields := make([]constvalue.Value, len(payload.Fields))
-				for index, field := range payload.Fields {
-					valueExpr := valuesByName[field.Name]
-					value, ok := e.evalExpr(scope, valueExpr, field.Type)
-					if !ok {
-						return nil, false
-					}
-					fields[index] = value
-				}
-				return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
-			}
-			value, ok := e.evalExpr(scope, construction.Value, construction.Payload)
-			if !ok {
+	if e.module.Typechecking != nil {
+		if construction, ok := e.module.Typechecking.VariantConstructions[expr.ID()]; ok {
+			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
 				return nil, false
 			}
-			return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, []constvalue.Value{value})
+			descriptor, variant := typeinfo.VariantDescriptorOf(construction.EnumType)
+			if !variant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
+				return nil, false
+			}
+			if construction.Value != nil {
+				if literal, ok := construction.Value.(*ast.StructLit); ok {
+					payload, structured := typeinfo.Underlying(construction.Payload).(*typeinfo.StructType)
+					if !structured || payload == nil {
+						return nil, false
+					}
+					valuesByName := make(map[string]ast.Expr, len(literal.Fields))
+					for _, field := range literal.Fields {
+						if field.Name != nil {
+							valuesByName[field.Name.Name] = field.Value
+						}
+					}
+					fields := make([]constvalue.Value, len(payload.Fields))
+					for index, field := range payload.Fields {
+						valueExpr := valuesByName[field.Name]
+						value, ok := e.evalExpr(scope, valueExpr, field.Type)
+						if !ok {
+							return nil, false
+						}
+						fields[index] = value
+					}
+					return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
+				}
+				value, ok := e.evalExpr(scope, construction.Value, construction.Payload)
+				if !ok {
+					return nil, false
+				}
+				return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, []constvalue.Value{value})
+			}
+			return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, nil)
 		}
-		return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, nil)
 	}
 	if node, ok := expr.(*ast.IsExpr); ok {
-		test, found := e.module.Semantics.CaseTests[node.ID()]
+		if e.module.Typechecking == nil {
+			return nil, false
+		}
+		test, found := e.module.Typechecking.CaseTests[node.ID()]
 		if !found || test.Family != typeinfo.VariantFamilyNamed {
 			return nil, false
 		}
-		value, ok := e.evalExpr(scope, node.Value, e.module.Semantics.ExprTypes[node.Value.ID()])
+		value, ok := e.evalExpr(scope, node.Value, e.module.BaseExprType(node.Value.ID()))
 		variant, constant := value.(*constvalue.VariantConst)
 		if !ok || !constant || variant == nil {
 			return nil, false

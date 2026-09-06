@@ -2,12 +2,12 @@ package ir
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 	"compiler/pkg/ascii"
+	"compiler/pkg/typednil"
 )
 
 // NodeID identifies source syntax without retaining an AST object in IR.
@@ -433,11 +433,7 @@ func (p *Place) forEachChild(visit func(Expr)) {
 // WithOrigin applies provenance at compiler phase boundaries, including
 // synthetic expressions returned by helper lowerers.
 func WithOrigin(expr Expr, info SourceInfo) Expr {
-	if expr == nil {
-		return nil
-	}
-	value := reflect.ValueOf(expr)
-	if value.Kind() == reflect.Pointer && value.IsNil() {
+	if typednil.IsNil(expr) {
 		return expr
 	}
 	expr.setOrigin(info)

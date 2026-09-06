@@ -88,19 +88,21 @@ func TestBuildModuleCreatesCanonicalSiteAdjacency(t *testing.T) {
 		t.Fatalf("entry sites = %#v, want one branch site", graph.Entry.Sites)
 	}
 	branchSite := graph.Entry.Sites[0]
-	if branchSite.Kind != SiteTerminator || branchSite.NodeID != 30 || len(branchSite.Successors) != 2 {
+	branchEdges := graph.SiteEdges.OutEdges(branchSite.ID)
+	if branchSite.Kind != SiteTerminator || branchSite.NodeID != 30 || len(branchEdges) != 2 {
 		t.Fatalf("branch site = %#v, want two branch successors", branchSite)
 	}
 	wantKinds := map[EdgeKind]bool{EdgeTrue: false, EdgeFalse: false}
-	for _, successor := range branchSite.Successors {
+	for _, successor := range branchEdges {
 		wantKinds[successor.Kind] = true
 		site := graph.Blocks[successor.To.Block].Sites[successor.To.Index]
-		if len(site.Predecessors) != 1 || site.Predecessors[0].From != branchSite.ID || site.Predecessors[0].Kind != successor.Kind {
-			t.Fatalf("site %#v predecessors = %v, want branch %#v", site.ID, site.Predecessors, branchSite.ID)
+		predecessors := graph.SiteEdges.InEdges(site.ID)
+		if len(predecessors) != 1 || predecessors[0].From != branchSite.ID || predecessors[0].Kind != successor.Kind {
+			t.Fatalf("site %#v predecessors = %v, want branch %#v", site.ID, predecessors, branchSite.ID)
 		}
 	}
 	if !wantKinds[EdgeTrue] || !wantKinds[EdgeFalse] {
-		t.Fatalf("branch edge kinds = %#v, want true and false", branchSite.Successors)
+		t.Fatalf("branch edge kinds = %#v, want true and false", branchEdges)
 	}
 }
 
@@ -116,10 +118,11 @@ func TestFinalizeSitesLabelsVariantCaseEdges(t *testing.T) {
 	}}
 	graph := &Graph{Entry: entry, Exit: &Block{ID: 3}, Blocks: []*Block{entry, first, second}}
 	finalizeSites(graph)
-	if len(entry.Sites) != 1 || len(entry.Sites[0].Successors) != 2 {
+	edges := graph.SiteEdges.OutEdges(entry.Sites[0].ID)
+	if len(entry.Sites) != 1 || len(edges) != 2 {
 		t.Fatalf("switch sites = %#v", entry.Sites)
 	}
-	for caseIndex, edge := range entry.Sites[0].Successors {
+	for caseIndex, edge := range edges {
 		if edge.Kind != EdgeVariantCase || edge.Case != caseIndex {
 			t.Fatalf("switch edge %d = %#v", caseIndex, edge)
 		}
@@ -159,8 +162,8 @@ func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
 	if len(join.Sites) == 0 || join.Sites[0].NodeID != 40 {
 		t.Fatalf("match join sites = %#v, want following statement", join.Sites)
 	}
-	if len(graph.Entry.Sites) != 1 || len(graph.Entry.Sites[0].Successors) != 2 ||
-		graph.Entry.Sites[0].Successors[0].Case != 1 || graph.Entry.Sites[0].Successors[1].Case != 0 {
+	caseEdges := graph.SiteEdges.OutEdges(graph.Entry.Sites[0].ID)
+	if len(graph.Entry.Sites) != 1 || len(caseEdges) != 2 || caseEdges[0].Case != 1 || caseEdges[1].Case != 0 {
 		t.Fatalf("match case edges = %#v", graph.Entry.Sites)
 	}
 }
@@ -203,7 +206,7 @@ func TestBuildModuleCreatesForInLoopBlocksWithSynthesizedCondition(t *testing.T)
 	header := loopBlock(t, graph, 30, BlockLoop)
 	loopBody := loopBlock(t, graph, 30, BlockLoopBody)
 	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	exit := loopBlock(t, graph, 30, BlockNormal)
+	exit := loopBlock(t, graph, 30, BlockLoopExit)
 
 	entryJump, ok := graph.Entry.Terminator.(*Jump)
 	if !ok || entryJump.Target != init {
@@ -329,7 +332,7 @@ func TestBuildModuleNestedLoopJumpsUseInnermostTargets(t *testing.T) {
 	}
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{outer}}
 	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	innerExit := loopBlock(t, graph, 40, BlockNormal)
+	innerExit := loopBlock(t, graph, 40, BlockLoopExit)
 	innerLatch := loopBlock(t, graph, 40, BlockLoopLatch)
 	outerLatch := loopBlock(t, graph, 30, BlockLoopLatch)
 	foundBreak := false
@@ -418,7 +421,7 @@ func TestBuildModuleInfiniteLoopBreakMakesExitReachable(t *testing.T) {
 	init := loopBlock(t, graph, 30, BlockLoopInit)
 	loopBody := loopBlock(t, graph, 30, BlockLoopBody)
 	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	exit := loopBlock(t, graph, 30, BlockNormal)
+	exit := loopBlock(t, graph, 30, BlockLoopExit)
 	initJump, initOK := init.Terminator.(*Jump)
 	latchJump, latchOK := latch.Terminator.(*Jump)
 	if !initOK || initJump.Target != loopBody || !latchOK || latchJump.Target != loopBody {
@@ -442,10 +445,10 @@ func TestAnalyzeDoesNotRebuildFinalizedTopology(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
 	module := BuildModule(testModule(body, nil), BuildQueries{})
 	graph := module.Functions[0]
-	before := append([]*Block(nil), graph.Entry.Predecessors...)
+	before := graph.BlockEdges.InEdges(graph.Entry.ID)
 	graph.Entry.Sites = nil
 	Analyze(module, diagnostics.NewDiagnosticBag(), nil)
-	if graph.Entry.Sites != nil || !reflect.DeepEqual(graph.Entry.Predecessors, before) {
+	if graph.Entry.Sites != nil || !reflect.DeepEqual(graph.BlockEdges.InEdges(graph.Entry.ID), before) {
 		t.Fatalf("Analyze mutated finalized topology: entry = %#v", graph.Entry)
 	}
 }
@@ -524,4 +527,29 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 		}
 	}
 	return false
+}
+
+// Missing-return reporting walks back to the nearest structured-control block
+// to name the branch that falls through, so this classification decides which
+// span a user sees. A loop exit carries a loop role but is a continuation: the
+// code after the loop lives there.
+func TestStructuredControlClassifiesEveryBlockOrigin(t *testing.T) {
+	for _, test := range []struct {
+		origin BlockOrigin
+		name   string
+		want   bool
+	}{
+		{BlockNormal, "normal", false},
+		{BlockLoopExit, "loop exit", false},
+		{BlockThen, "then", true},
+		{BlockElse, "else", true},
+		{BlockLoopInit, "loop init", true},
+		{BlockLoop, "loop header", true},
+		{BlockLoopBody, "loop body", true},
+		{BlockLoopLatch, "loop latch", true},
+	} {
+		if got := structuredControl(test.origin); got != test.want {
+			t.Errorf("structuredControl(%s) = %t, want %t", test.name, got, test.want)
+		}
+	}
 }

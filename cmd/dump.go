@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"compiler/internal/project"
@@ -60,20 +61,58 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 	return replacePath(stage, target)
 }
 
+// emptyIdentityComponent marks an absent namespace or dependency so every
+// canonical component occupies its own path segment. Dropping empty components
+// instead would let distinct identities share one artifact path, for example
+// namespace "a" with import path "b/c" against no namespace with "a/b/c".
+const emptyIdentityComponent = "_"
+
 func moduleArtifactBase(stage string, module *project.Module) (string, error) {
-	origin := string(module.Origin)
+	origin := module.ID.Origin
 	if origin == "" {
 		origin = string(project.ModuleOriginLocal)
 	}
-	identity := strings.TrimSpace(module.ImportPath)
+	identity := module.ID.ImportPath
 	if identity == "" {
 		return "", fmt.Errorf("module %q has no import identity", module.FilePath)
 	}
-	identity = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(identity, ":", "/")))
-	if identity == "." || filepath.IsAbs(identity) || identity == ".." || strings.HasPrefix(identity, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("invalid module import identity %q", module.ImportPath)
+	segments := strings.Split(identity, "/")
+	if slices.Contains(segments, "") {
+		return "", fmt.Errorf("invalid module import identity %q", identity)
 	}
-	return filepath.Join(stage, origin, identity), nil
+	// Every canonical identity component participates, so two identities that
+	// differ only by namespace or dependency cannot write the same artifacts.
+	parts := make([]string, 0, len(segments)+4)
+	parts = append(parts, stage,
+		identityComponent(origin),
+		identityComponent(module.ID.Namespace),
+		identityComponent(module.ID.Dependency))
+	for _, segment := range segments {
+		parts = append(parts, identityComponent(segment))
+	}
+	return filepath.Join(parts...), nil
+}
+
+func identityComponent(value string) string {
+	if value == "" {
+		return emptyIdentityComponent
+	}
+	var encoded strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		// Escape a leading '.' so "." and ".." cannot form dot segments, and
+		// escape a lone "_" so it cannot collide with the empty marker.
+		if i == 0 && (c == '.' || (c == '_' && len(value) == 1)) {
+			fmt.Fprintf(&encoded, "%%%02X", c)
+			continue
+		}
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' {
+			encoded.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&encoded, "%%%02X", c)
+	}
+	return encoded.String()
 }
 
 func replacePath(stage, target string) error {

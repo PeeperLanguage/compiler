@@ -1,0 +1,7 @@
+name = "negative_global_qualifier"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["M0004", "S0005"]

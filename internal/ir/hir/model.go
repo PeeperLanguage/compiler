@@ -86,11 +86,10 @@ type ExprStmt struct {
 }
 
 type Assign struct {
-	Target     *ir.Place
-	Value      ir.Expr
-	DropTarget bool
-	NodeID     NodeID
-	Location   *source.Location
+	Target   *ir.Place
+	Value    ir.Expr
+	NodeID   NodeID
+	Location *source.Location
 }
 
 type Invalid struct {
@@ -101,7 +100,6 @@ type Invalid struct {
 
 type Return struct {
 	Value    ir.Expr
-	Cleanup  []ir.Expr
 	NodeID   NodeID
 	Location *source.Location
 }
@@ -300,9 +298,6 @@ func (s *ExprStmt) appendText(b *strings.Builder, indent int) {
 
 func (s *Assign) appendText(b *strings.Builder, indent int) {
 	writeIndent(b, indent)
-	if s.DropTarget {
-		b.WriteString("drop-before ")
-	}
 	b.WriteString(s.Target.String())
 	b.WriteString(" = ")
 	b.WriteString(s.Value.String())
@@ -320,11 +315,6 @@ func (s *Invalid) appendText(b *strings.Builder, indent int) {
 }
 
 func (s *Return) appendText(b *strings.Builder, indent int) {
-	for _, cleanup := range s.Cleanup {
-		writeIndent(b, indent)
-		b.WriteString(cleanup.String())
-		b.WriteString("\n")
-	}
 	writeIndent(b, indent)
 	b.WriteString("return")
 	if s != nil && s.Value != nil {

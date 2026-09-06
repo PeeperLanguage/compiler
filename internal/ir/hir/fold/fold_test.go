@@ -86,31 +86,6 @@ func TestApplyTypedExpressionFoldingPreservesStatementsAfterReturn(t *testing.T)
 	}
 }
 
-func TestApplyTypedExpressionFoldingPreservesReturnCleanup(t *testing.T) {
-	types := ir.NewTypeTable()
-	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
-	ownedI32 := types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32})
-	mod := &hir.Module{Funcs: []*hir.Function{{
-		Name: "main",
-		Body: &hir.Block{Stmts: []hir.Stmt{&hir.Return{
-			Value: &ir.IntLit{Value: "0", Type: i32},
-			Cleanup: []ir.Expr{&ir.Drop{Value: &ir.Ident{
-				Name: "owner",
-				Type: ownedI32,
-			}}},
-		}}},
-	}}, Types: types}
-
-	out := ApplyTypedExpressionFolding(mod)
-	ret, ok := out.Funcs[0].Body.Stmts[0].(*hir.Return)
-	if !ok || len(ret.Cleanup) != 1 {
-		t.Fatalf("folded return cleanup = %#v, want one expression", ret)
-	}
-	if _, ok := ret.Cleanup[0].(*ir.Drop); !ok {
-		t.Fatalf("folded cleanup = %#v, want drop", ret.Cleanup[0])
-	}
-}
-
 func TestApplyTypedExpressionFoldingPreservesPlaceRootAndFoldsIndexes(t *testing.T) {
 	types := ir.NewTypeTable()
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
@@ -164,9 +139,8 @@ func TestApplyTypedExpressionFoldingFoldsAssignments(t *testing.T) {
 					}},
 					Type: i32,
 				},
-				Value:      &ir.Binary{Op: "+", Left: &ir.IntLit{Value: "20", Type: i32}, Right: &ir.IntLit{Value: "22", Type: i32}, Type: i32},
-				DropTarget: true,
-				NodeID:     31,
+				Value:  &ir.Binary{Op: "+", Left: &ir.IntLit{Value: "20", Type: i32}, Right: &ir.IntLit{Value: "22", Type: i32}, Type: i32},
+				NodeID: 31,
 			},
 		}},
 	}}, Types: types}
@@ -177,7 +151,7 @@ func TestApplyTypedExpressionFoldingFoldsAssignments(t *testing.T) {
 	index, indexOK := assignment.Target.Projections[0].Index.(*ir.IntLit)
 	value, valueOK := assignment.Value.(*ir.IntLit)
 	if !rootOK || root.Name != "items" || !indexOK || index.Value != "1" || !valueOK || value.Value != "42" ||
-		!assignment.DropTarget || assignment.NodeID != 31 {
+		assignment.NodeID != 31 {
 		t.Fatalf("folded assignment = %#v, want preserved target with folded index and value", assignment)
 	}
 }

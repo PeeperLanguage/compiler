@@ -467,6 +467,7 @@ type FnDecl struct {
 func (*FnDecl) declNode() {}
 func (*FnDecl) stmtNode() {}
 func (d *FnDecl) forEachChild(visit func(Node)) {
+	d.Attributed.forEachChild(visit)
 	visit(d.Name)
 	if d.Receiver != nil {
 		inspectParam(*d.Receiver, visit)
@@ -503,6 +504,7 @@ type TypeAliasDecl struct {
 func (*TypeAliasDecl) declNode() {}
 func (*TypeAliasDecl) stmtNode() {}
 func (d *TypeAliasDecl) forEachChild(visit func(Node)) {
+	d.Attributed.forEachChild(visit)
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -532,6 +534,7 @@ type StructDecl struct {
 func (*StructDecl) declNode() {}
 func (*StructDecl) stmtNode() {}
 func (d *StructDecl) forEachChild(visit func(Node)) {
+	d.Attributed.forEachChild(visit)
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -560,6 +563,7 @@ type InterfaceDecl struct {
 func (*InterfaceDecl) declNode() {}
 func (*InterfaceDecl) stmtNode() {}
 func (d *InterfaceDecl) forEachChild(visit func(Node)) {
+	d.Attributed.forEachChild(visit)
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)
@@ -588,6 +592,7 @@ type EnumDecl struct {
 func (*EnumDecl) declNode() {}
 func (*EnumDecl) stmtNode() {}
 func (d *EnumDecl) forEachChild(visit func(Node)) {
+	d.Attributed.forEachChild(visit)
 	visit(d.Name)
 	inspectTypeParams(d.TypeParams, visit)
 	visit(d.Type)

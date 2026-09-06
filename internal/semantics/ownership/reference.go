@@ -6,8 +6,10 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	graphcore "compiler/internal/graph"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/project"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -19,6 +21,9 @@ type loanID struct {
 }
 
 type referenceLoan struct {
+	// path identifies the slot within the holder, not the borrowed storage.
+	// One loan can occupy multiple enum fields and survive replacement of one.
+	path    []place.OriginProjection
 	id      loanID
 	origins []place.Origin
 	mutable bool
@@ -145,8 +150,13 @@ func (a *analyzer) checkStorageAccess(
 	if a == nil || expr == nil || loans == nil {
 		return
 	}
+	origins := a.originsForExpr(expr)
+	if access == storageMutate && a.module != nil && a.module.Flow != nil {
+		// Replacing a reference slot mutates the carrier, not its old referent.
+		origins = a.module.Flow.ResolvedStorageOrigins[expr.ID()]
+	}
 	a.reportLoanConflict(
-		a.originsForExpr(expr),
+		origins,
 		a.referenceHolder(expr),
 		access,
 		expr,
@@ -215,7 +225,7 @@ func (a *analyzer) reportLoanConflict(
 	addLoanConflictLabels(diag, conflict, reservedConflict, nil)
 }
 
-func (a *analyzer) activateCallReservations(call *ast.CallExpr, mark int, loans *loanContext) {
+func (a *analyzer) activateCallReservations(call ast.Node, mark int, loans *loanContext) {
 	if a == nil || call == nil || loans == nil || mark >= len(loans.reserved) {
 		return
 	}
@@ -296,39 +306,28 @@ func overlappingLoan(origins []place.Origin, facts []loanFact, exempt *symbols.S
 }
 
 func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
-	if a == nil || a.module == nil || a.module.Semantics == nil {
+	if a == nil || a.module == nil || a.module.Bindings == nil || expr == nil {
 		return nil
 	}
-	for {
-		switch node := expr.(type) {
-		case *ast.AddressExpr:
-			if node == nil {
-				return nil
-			}
-			expr = node.Expr
-		case *ast.SelectorExpr:
-			if node == nil {
-				return nil
-			}
-			expr = node.Expr
-		case *ast.IndexExpr:
-			if node == nil {
-				return nil
-			}
-			expr = node.Expr
-		case *ast.Ident:
-			if node == nil {
-				return nil
-			}
-			sym := a.module.Semantics.ResolvedSymbols[node.ID()]
-			if _, reference := referenceMutability(sym); reference {
-				return sym
-			}
-			return nil
-		default:
+	if address, taken := expr.(*ast.AddressExpr); taken {
+		if address == nil {
 			return nil
 		}
+		expr = address.Expr
 	}
+	root, _, ok := place.Decompose(expr)
+	if !ok {
+		return nil
+	}
+	ident, ok := root.(*ast.Ident)
+	if !ok || ident == nil {
+		return nil
+	}
+	sym := a.module.Bindings.NodeSymbols[ident.ID()]
+	if _, reference := referenceMutability(sym); reference {
+		return sym
+	}
+	return nil
 }
 
 func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLoan, bool) {
@@ -336,8 +335,8 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 		return []referenceLoan{}, false
 	}
 	if ident, ok := expr.(*ast.Ident); ok {
-		sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
-		if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.ContainsStoredReference(typ) {
+		sym := a.module.Bindings.NodeSymbols[ident.ID()]
+		if referenceHoldingSymbol(sym) {
 			if value, found := st.references[sym]; found {
 				return copyReferenceLoans(value), true
 			}
@@ -345,6 +344,20 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	}
 	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
 	if ok {
+		if _, projected := expr.(*ast.SelectorExpr); projected && a.module.Flow != nil {
+			var value []referenceLoan
+			for _, storage := range a.module.Flow.ResolvedStorageOrigins[expr.ID()] {
+				for _, loan := range st.references[storage.Root] {
+					if slices.Equal(loan.path, storage.Projections) {
+						loan.path = nil
+						value = append(value, loan)
+					}
+				}
+			}
+			if len(value) > 0 {
+				return copyReferenceLoans(value), true
+			}
+		}
 		origins := a.originsForExpr(expr)
 		if len(origins) == 0 {
 			return []referenceLoan{}, false
@@ -359,18 +372,56 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	if literal, ok := expr.(*ast.StructLit); ok {
 		var loans []referenceLoan
 		for _, field := range literal.Fields {
+			if field.Name == nil {
+				continue
+			}
 			fieldLoans, found := a.referenceValueForExpr(field.Value, st)
 			if found {
+				for i := range fieldLoans {
+					fieldLoans[i].path = append([]place.OriginProjection{{Kind: place.OriginField, Field: field.Name.Name}}, fieldLoans[i].path...)
+				}
 				loans = append(loans, fieldLoans...)
 			}
 		}
 		return loans, len(loans) > 0
 	}
-	construction, constructed := a.module.Semantics.VariantConstructions[expr.ID()]
+	construction, constructed := a.module.Typechecking.VariantConstructions[expr.ID()]
 	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}
-	return a.referenceValueForExpr(construction.Value, st)
+	loans, found := a.referenceValueForExpr(construction.Value, st)
+	for i := range loans {
+		loans[i].path = append([]place.OriginProjection{{Kind: place.OriginVariantPayload, Case: construction.Case}}, loans[i].path...)
+	}
+	return loans, found
+}
+
+// replaceReferenceField consumes flow's exact storage identity. Accepted local
+// enum reference fields are direct/optional; nested reference aggregates remain
+// rejected by typechecking. Other holders and sibling slots retain their loans.
+func (a *analyzer) replaceReferenceField(target ast.Expr, value storedReference, st state) {
+	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(target)); !reference || a.module.Flow == nil {
+		return
+	}
+	storage := a.module.Flow.ResolvedStorageOrigins[target.ID()]
+	if len(storage) != 1 || len(storage[0].Projections) == 0 {
+		return
+	}
+	destination := storage[0]
+	if !referenceHoldingSymbol(destination.Root) {
+		return
+	}
+	var kept []referenceLoan
+	for _, loan := range st.references[destination.Root] {
+		if !slices.Equal(loan.path, destination.Projections) {
+			kept = append(kept, loan)
+		}
+	}
+	for _, loan := range copyReferenceLoans(value.loans) {
+		loan.path = slices.Clone(destination.Projections)
+		kept = append(kept, loan)
+	}
+	a.updateReferenceSymbol(destination.Root, kept, len(kept) > 0, st)
 }
 
 func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
@@ -462,6 +513,7 @@ func copyReferenceLoans(value []referenceLoan) []referenceLoan {
 	copy(copyValue, value)
 	for i := range copyValue {
 		copyValue[i].origins = place.CloneOrigins(copyValue[i].origins)
+		copyValue[i].path = slices.Clone(copyValue[i].path)
 	}
 	return copyValue
 }
@@ -489,9 +541,10 @@ func mergeReferenceValues(dst, src map[*symbols.Symbol][]referenceLoan) bool {
 			continue
 		}
 		for _, srcLoan := range srcValue {
-			index := referenceLoanIndex(dstValue, srcLoan.id)
+			index := referenceLoanIndex(dstValue, srcLoan)
 			if index < 0 {
 				srcLoan.origins = place.CloneOrigins(srcLoan.origins)
+				srcLoan.path = slices.Clone(srcLoan.path)
 				dstValue = append(dstValue, srcLoan)
 				changed = true
 				continue
@@ -520,7 +573,7 @@ func sameReferenceLoans(left, right []referenceLoan) bool {
 		return false
 	}
 	for _, leftLoan := range left {
-		index := referenceLoanIndex(right, leftLoan.id)
+		index := referenceLoanIndex(right, leftLoan)
 		if index < 0 {
 			return false
 		}
@@ -533,9 +586,9 @@ func sameReferenceLoans(left, right []referenceLoan) bool {
 	return true
 }
 
-func referenceLoanIndex(loans []referenceLoan, id loanID) int {
+func referenceLoanIndex(loans []referenceLoan, candidate referenceLoan) int {
 	for i := range loans {
-		if loans[i].id == id {
+		if loans[i].id == candidate.id && slices.Equal(loans[i].path, candidate.path) {
 			return i
 		}
 	}
@@ -548,23 +601,22 @@ func (a *analyzer) computeSymbolLiveness() {
 	}
 	a.symbolLiveIn = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
 	a.symbolLiveOut = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
-	queue := make([]cfg.SiteID, 0, len(a.order))
-	queued := make(map[cfg.SiteID]bool, len(a.order))
+	work := graphcore.NewWorklist[cfg.SiteID]()
 	for _, id := range slices.Backward(a.order) {
-		queue = append(queue, id)
-		queued[id] = true
+		work.Add(id)
 	}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		queued[id] = false
+	for {
+		id, pending := work.Next()
+		if !pending {
+			break
+		}
 
 		out := make(map[*symbols.Symbol]ast.Node)
 		node := a.sites[id]
 		if node == nil || node.cfgSite == nil {
 			continue
 		}
-		for _, edge := range node.cfgSite.Successors {
+		for _, edge := range a.graph.SiteEdges.OutEdges(node.cfgSite.ID) {
 			mergeSymbolLiveSets(out, a.symbolLiveIn[edge.To])
 		}
 		uses, definitions := a.symbolUsesAndDefinitions(node)
@@ -579,105 +631,135 @@ func (a *analyzer) computeSymbolLiveness() {
 		}
 		a.symbolLiveIn[id] = in
 		a.symbolLiveOut[id] = out
-		for _, edge := range node.cfgSite.Predecessors {
-			pred := edge.From
-			if !queued[pred] {
-				queue = append(queue, pred)
-				queued[pred] = true
-			}
+		for _, edge := range a.graph.SiteEdges.InEdges(node.cfgSite.ID) {
+			work.Add(edge.From)
 		}
 	}
 }
 
+// symbolUsesAndDefinitions reports what one site defines and what it reads,
+// both from published effects.
+//
+// A write also counts as a use when the written symbol needs dropping: the
+// pre-assignment drop reads the old value, so the target must stay live up to
+// the assignment that replaces it. That is ownership policy and stays here.
 func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
-	uses := make(map[*symbols.Symbol]ast.Node)
-	definitions := make(map[*symbols.Symbol]struct{})
-	if a == nil || node == nil || node.cfgSite == nil ||
-		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil {
-		return uses, definitions
+	visitor := &livenessEffectVisitor{
+		a:           a,
+		uses:        make(map[*symbols.Symbol]ast.Node),
+		definitions: make(map[*symbols.Symbol]struct{}),
 	}
-	addDefinition := func(binding ast.Node) {
-		if node.scope == nil || binding == nil {
-			return
-		}
-		if sym, found := node.scope.LookupNode(binding); found && trackedLiveSymbol(sym) {
-			definitions[sym] = struct{}{}
-		}
+	if a == nil || a.module == nil || node == nil || node.cfgSite == nil {
+		return visitor.uses, visitor.definitions
 	}
-
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		addDefinition(stmt)
-	case *ast.ConstDecl:
-		addDefinition(stmt)
-	case *ast.AssignStmt:
-		if target, ok := stmt.Target.(*ast.Ident); ok && node.scope != nil {
-			if sym, found := node.scope.Lookup(target.Name); found && trackedLiveSymbol(sym) {
-				definitions[sym] = struct{}{}
-				if typ, typed := symbols.GetSymbolType(sym); typed && typeinfo.NeedsDrop(typ) {
-					uses[sym] = target
-				}
-			}
-		}
+	for _, op := range a.effects[node.cfgSite.ID] {
+		effect.Visit(op, visitor)
 	}
-	for _, use := range a.symbolUseSequence(node, trackedLiveSymbol) {
-		if previous, found := uses[use.symbol]; !found {
-			uses[use.symbol] = use.site
-		} else {
-			uses[use.symbol] = earlierNode(previous, use.site)
-		}
-	}
-	return uses, definitions
+	return visitor.uses, visitor.definitions
 }
 
+type livenessEffectVisitor struct {
+	a           *analyzer
+	uses        map[*symbols.Symbol]ast.Node
+	definitions map[*symbols.Symbol]struct{}
+}
+
+func (v *livenessEffectVisitor) recordUse(sym *symbols.Symbol, at ast.NodeID) {
+	if sym == nil || v.a == nil || v.a.module == nil {
+		return
+	}
+	syntax, found := v.a.module.TypedASTNodes[at]
+	if !found {
+		return
+	}
+	if previous, seen := v.uses[sym]; seen {
+		v.uses[sym] = earlierNode(previous, syntax)
+		return
+	}
+	v.uses[sym] = syntax
+}
+
+func (v *livenessEffectVisitor) VisitDefine(op effect.Define) {
+	// A binding that merely arrives at this site was established by the edge
+	// into it, so killing liveness here would end a borrow one site too early.
+	if !op.OnEntry && trackedLiveSymbol(op.Symbol) {
+		v.definitions[op.Symbol] = struct{}{}
+	}
+}
+
+func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
+	if op.Place.Root == nil || !trackedLiveSymbol(op.Place.Root) {
+		return
+	}
+	if len(op.Place.Projections) > 0 {
+		v.recordUse(op.Place.Root, op.Node)
+		return
+	}
+	v.definitions[op.Place.Root] = struct{}{}
+	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
+		v.recordUse(op.Place.Root, op.Node)
+	}
+}
+
+func (v *livenessEffectVisitor) VisitUse(op effect.Use) {
+	if trackedLiveSymbol(op.Place.Root) {
+		v.recordUse(op.Place.Root, op.Node)
+	}
+}
+
+func (v *livenessEffectVisitor) VisitBorrow(op effect.Borrow) {
+	if trackedLiveSymbol(op.Place.Root) {
+		v.recordUse(op.Place.Root, op.Node)
+	}
+}
+
+func (*livenessEffectVisitor) VisitIterate(effect.Iterate)     {}
+func (*livenessEffectVisitor) VisitDiscard(effect.Discard)     {}
+func (*livenessEffectVisitor) VisitCallBegin(effect.CallBegin) {}
+func (*livenessEffectVisitor) VisitCallEnd(effect.CallEnd)     {}
+
+// symbolUseSequence returns the symbols this site reads, in evaluation order.
+//
+// It reads published effects rather than walking the statement itself. The
+// walk it replaced enumerated eight statement kinds and missed ForStmt.Iterable,
+// which applyStmt does handle, so liveness and borrow-ending saw a different
+// program than the effect analysis did. One producer means they cannot disagree.
 func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) bool) []symbolUse {
-	if a == nil || node == nil || node.cfgSite == nil ||
-		(node.cfgSite.Kind != cfg.SiteStatement && node.cfgSite.Kind != cfg.SiteTerminator) || node.stmt == nil ||
-		a.module == nil || a.module.Semantics == nil || include == nil {
+	if a == nil || a.module == nil || node == nil || node.cfgSite == nil || include == nil {
 		return nil
 	}
-	var expressions []ast.Expr
-	switch stmt := node.stmt.(type) {
-	case *ast.LetDecl:
-		expressions = append(expressions, stmt.Value)
-	case *ast.ConstDecl:
-		expressions = append(expressions, stmt.Value)
-	case *ast.AssignStmt:
-		expressions = append(expressions, stmt.Value)
-		if _, binding := stmt.Target.(*ast.Ident); !binding {
-			expressions = append(expressions, stmt.Target)
-		}
-	case *ast.ReturnStmt:
-		expressions = append(expressions, stmt.Value)
-	case *ast.ExprStmt:
-		expressions = append(expressions, stmt.Expr)
-	case *ast.IfStmt:
-		expressions = append(expressions, stmt.Cond)
-	case *ast.ForStmt:
-		expressions = append(expressions, stmt.Cond)
-	case *ast.MatchStmt:
-		expressions = append(expressions, stmt.Subject)
+	visitor := &useSequenceEffectVisitor{a: a, include: include}
+	for _, op := range a.effects[node.cfgSite.ID] {
+		effect.Visit(op, visitor)
 	}
-
-	var uses []symbolUse
-	for _, expr := range expressions {
-		if expr == nil {
-			continue
-		}
-		ast.Inspect(expr, func(current ast.Node) bool {
-			ident, ok := current.(*ast.Ident)
-			if !ok || ident == nil {
-				return true
-			}
-			sym := a.module.Semantics.ResolvedSymbols[ident.ID()]
-			if include(sym) {
-				uses = append(uses, symbolUse{symbol: sym, site: ident})
-			}
-			return true
-		})
-	}
-	return uses
+	return visitor.uses
 }
+
+type useSequenceEffectVisitor struct {
+	a       *analyzer
+	include func(*symbols.Symbol) bool
+	uses    []symbolUse
+}
+
+func (v *useSequenceEffectVisitor) record(at effect.Place, node ast.NodeID) {
+	if !v.include(at.Root) {
+		return
+	}
+	syntax, found := v.a.module.TypedASTNodes[node]
+	if !found {
+		return
+	}
+	v.uses = append(v.uses, symbolUse{symbol: at.Root, site: syntax})
+}
+
+func (*useSequenceEffectVisitor) VisitDefine(effect.Define)       {}
+func (*useSequenceEffectVisitor) VisitWrite(effect.Write)         {}
+func (v *useSequenceEffectVisitor) VisitUse(op effect.Use)        { v.record(op.Place, op.Node) }
+func (v *useSequenceEffectVisitor) VisitBorrow(op effect.Borrow)  { v.record(op.Place, op.Node) }
+func (*useSequenceEffectVisitor) VisitIterate(effect.Iterate)     {}
+func (*useSequenceEffectVisitor) VisitDiscard(effect.Discard)     {}
+func (*useSequenceEffectVisitor) VisitCallBegin(effect.CallBegin) {}
+func (*useSequenceEffectVisitor) VisitCallEnd(effect.CallEnd)     {}
 
 func mergeSymbolLiveSets(dst, src map[*symbols.Symbol]ast.Node) {
 	for sym, site := range src {

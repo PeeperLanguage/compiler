@@ -11,14 +11,16 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 )
 
 type moduleLoader struct {
 	ctx       *project.CompilerContext
 	mu        sync.Mutex
-	scheduled map[string]struct{}
+	scheduled map[moduleid.ID]string
 	wg        sync.WaitGroup
 }
 
@@ -38,20 +40,26 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	if l == nil || l.ctx == nil || module == nil {
 		return
 	}
-	l.ensureModuleIdentity(module)
-	if module.Key == "" {
+	if !module.ID.Valid() {
 		return
 	}
 
 	l.mu.Lock()
-	if _, ok := l.scheduled[module.Key]; ok {
+	scheduledPath, ok := l.scheduled[module.ID]
+	if ok {
 		l.mu.Unlock()
+		// A same-identity enqueue from a different file must reach the registry
+		// so its conflict policy emits ErrAmbiguousImport instead of a silent
+		// dedupe hiding the identity conflict.
+		if module.FilePath != "" && scheduledPath != "" && scheduledPath != module.FilePath {
+			l.ctx.AddModule(module)
+		}
 		return
 	}
-	l.scheduled[module.Key] = struct{}{}
+	l.scheduled[module.ID] = module.FilePath
 	l.mu.Unlock()
 
-	if existing, ok := l.ctx.ModuleByKey(module.Key); ok && existing != module {
+	if existing, ok := l.ctx.ModuleByID(module.ID); ok {
 		module = existing
 	} else {
 		l.ctx.AddModule(module)
@@ -61,26 +69,12 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	go l.loadModule(module)
 }
 
-func (l *moduleLoader) ensureModuleIdentity(module *project.Module) {
-	if module == nil || l == nil || l.ctx == nil {
-		return
-	}
-	if module.Key == "" && module.FilePath != "" {
-		module.Key = project.ModuleKeyFor(module.Origin, module.FilePath)
-	}
-	if module.ImportPath == "" && module.FilePath != "" {
-		if importPath, err := l.ctx.ImportPathForFile(module.Origin, module.Namespace, module.FilePath); err == nil {
-			module.ImportPath = importPath
-		}
-	}
-}
-
 func (l *moduleLoader) loadModule(module *project.Module) {
 	defer l.wg.Done()
 	if module == nil || l == nil {
 		return
 	}
-	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.Key)
+	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.ID.String())
 	if module.AST != nil {
 		if module.ImportFingerprint == "" {
 			module.ImportFingerprint = module.AST.ImportFingerprint
@@ -107,7 +101,7 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
 	module.ContentHash = ast.HashText(module.Content)
-	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.Key)
+	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.ID.String())
 	toks := lexer.New(module.FilePath, module.Content, parseDiag).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
@@ -137,33 +131,47 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.addImportResolveError(diag, imp, err)
 			continue
 		}
-		alias := importAlias(imp, resolved.ImportPath)
+		alias := importAlias(imp, resolved.ID.ImportPath)
 		if alias == "" {
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "missing import alias")
 			continue
 		}
-		if existing, ok := module.Imports[alias]; ok && existing.Key != resolved.Key {
+		if existing, ok := module.Imports[alias]; ok && existing.ID != resolved.ID {
 			l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
+		}
+		// The prelude is injected into global scope for every module, so naming it
+		// in an import list adds nothing. Style note only: the import still works.
+		if resolved.ID == prelude.ModuleID(l.ctx) {
+			diag.Add(diagnostics.NewInfo("`"+rawPath+"` is imported automatically").
+				WithCode(diagnostics.InfoRedundantPreludeImport).
+				WithPrimaryLabel(ast.LocOf(imp), "remove this import").
+				WithNote("global symbols are always in scope without an import"))
 		}
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
 		if l.ctx.Graph != nil {
-			l.ctx.Graph.AddEdge(graph.NodeID(module.Key), graph.NodeID(resolved.Key))
+			l.ctx.Graph.AddEdge(graph.NodeID(module.ID.String()), graph.NodeID(resolved.ID.String()))
 		}
 
-		if existing, ok := l.ctx.ModuleByKey(resolved.Key); ok {
+		if existing, ok := l.ctx.ModuleByID(resolved.ID); ok {
+			// Two distinct files deriving one identity must not silently resolve
+			// to whichever loaded first. Extensions compare case-insensitively
+			// while the import path keeps the file's own case, so foo.peep and
+			// foo.PEEP can both reduce to the same logical identity. The registry
+			// owns the conflict policy; only this site knows which import caused
+			// it, so it labels the diagnostic the registry recorded.
+			if existing.FilePath != "" && existing.FilePath != project.CanonicalPath(resolved.FilePath) {
+				if conflict := l.ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath}); conflict != nil {
+					conflict.WithPrimaryLabel(ast.LocOf(imp), "conflicting import")
+				}
+				continue
+			}
 			l.enqueue(existing)
 			continue
 		}
-		l.enqueue(&project.Module{
-			Key:        resolved.Key,
-			ImportPath: resolved.ImportPath,
-			FilePath:   resolved.FilePath,
-			Namespace:  resolved.Namespace,
-			Origin:     resolved.Origin,
-		})
+		l.enqueue(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath})
 	}
 }
 

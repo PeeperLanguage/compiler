@@ -1,20 +1,27 @@
 package project
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	"compiler/internal/constvalue"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/bindingresult"
+	"compiler/internal/semantics/constantresult"
+	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/flowresult"
-	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/ownershipresult"
+	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -34,20 +41,12 @@ const GraphEdgeImport graph.EdgeKind = "import"
 
 // Source unit shared by every compiler phase.
 type Module struct {
-	// Unique graph identity.
-	Key string
-	// Module path used by imports.
-	ImportPath string
+	// Canonical semantic, import, graph, and ownership identity.
+	ID moduleid.ID
 	// Absolute slash-separated source path.
 	FilePath string
-	// Optional namespace for packaged libraries such as core/vendor.
-	Namespace string
 	// User-selected entry module.
 	IsEntry bool
-	// Local, stdlib, or dependency.
-	Origin ModuleOrigin
-	// Dependency alias, when any.
-	Dependency string
 	// Loaded source text.
 	Content string
 	// ContentProvided distinguishes an explicit empty source from a module that
@@ -65,12 +64,15 @@ type Module struct {
 	Phase phase.Phase
 	// Parsed syntax tree.
 	AST *ast.Module
-	// TypedASTNodes indexes final AST after semantic expansion.
+	// TypedASTNodes indexes source and typechecker-generated expressions.
 	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
-	HIR       *hir.Module
-	CFG       *cfg.Module
-	Flow      *flowresult.Result
+	HIR  *hir.Module
+	CFG  *cfg.Module
+	Flow *flowresult.Result
+	// Effects is the published semantic meaning of each CFG site, produced once
+	// and consumed by the dataflow analyses.
+	Effects   effect.Result
 	Ownership ownershipresult.Result
 	MIR       *mir.Module
 	LLVMIR    string
@@ -79,163 +81,72 @@ type Module struct {
 	// Generic declaration syntax and semantic shells produced by collection.
 	// Fresh incremental contexts reindex this immutable phase artifact.
 	namedTypeDeclarations map[string]namedTypeDeclaration
-	// Grouped semantic analysis metadata.
-	Semantics *SemanticInfo
+	// Staged symbol/scope graph for current semantic generation.
+	Bindings *bindingresult.Result
+	// Constant-evaluation artifacts for current semantic generation.
+	Constants *constantresult.Result
+	// Base typechecker result for current semantic generation.
+	Typechecking *typecheckresult.Result
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 }
 
-type SemanticInfo struct {
-	BlockScopes     map[ast.NodeID]*symbols.Scope
-	ResolvedSymbols map[ast.NodeID]*symbols.Symbol
-	// ExpandedDefaultBindings marks cloned NodeIDs injected by
-	// call-site default expansion. These idents must resolve
-	// through the declaration module's ResolvedSymbols instead of
-	// caller scope. The Binding.Local gate prevents pointer-escape
-	// misclassification.
-	ExpandedDefaultBindings  map[ast.NodeID]struct{}
-	ExprTypes                map[ast.NodeID]typeinfo.Type
-	CaseTests                map[ast.NodeID]flowresult.CaseTest
-	Matches                  map[ast.NodeID]flowresult.Match
-	ConstValues              map[symbols.SymbolID]constvalue.Value
-	MethodSets               map[string][]*symbols.Symbol
-	MethodSymbol             map[ast.NodeID]*symbols.Symbol
-	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
-	// ImplicitConversions is typechecker proof consumed directly by HIR.
-	ImplicitConversions   map[ast.NodeID]typeinfo.Conversion
-	ImplicitCallArguments map[ast.NodeID]typeinfo.Type
-	CompilerCalls         map[ast.NodeID]CompilerCall
-	StringConcatenations  map[ast.NodeID]struct{}
-	VariantConstructions  map[ast.NodeID]VariantConstruction
-	ForIterations         map[ast.NodeID]ForIteration
-	OperationFunctions    []*symbols.Symbol
-}
-
-// VariantConstruction is typechecker proof consumed by HIR without resolving
-// source paths or revalidating constructor fields.
-type VariantConstruction struct {
-	EnumType typeinfo.Type
-	Case     int
-	Payload  typeinfo.Type
-	Value    ast.Expr
-}
-
-type ForIterationKind uint8
-
-const (
-	ForIterationRange ForIterationKind = iota
-	ForIterationSequence
-)
-
-// ForIteration is typechecker-owned evidence consumed by HIR lowering.
-// Generated symbols carry hidden loop state; source bindings remain body-scoped.
-type ForIteration struct {
-	Kind            ForIterationKind
-	GuaranteedEntry bool
-
-	ElementType typeinfo.Type
-	CarrierType typeinfo.Type
-	Carrier     *symbols.Symbol
-	Cursor      *symbols.Symbol
-	End         *symbols.Symbol
-	Ordinal     *symbols.Symbol
-	Index       *symbols.Symbol
-	Value       *symbols.Symbol
-}
-
-// CompilerCall is typechecker-owned dispatch evidence consumed by HIR.
-type CompilerCall struct {
-	Operation symbols.CompilerOp
-	Kind      intrinsics.FunctionKind
-}
-
-// InterfaceImplementation is typechecker proof that one declared method can
-// materialize an interface slot. HIR consumes this proof without resolving the
-// concrete method set again.
-type InterfaceImplementation struct {
-	MethodName   string
-	Symbol       *symbols.Symbol
-	CallableType *typeinfo.FuncType
-	OwnerKey     string
-}
-
-func (m *Module) DefiningModuleKey() symbols.DefiningModuleKey {
-	if m == nil {
-		return symbols.DefiningModuleKey{}
-	}
-	return symbols.DefiningModuleKey{
-		Origin:     string(m.Origin),
-		Namespace:  m.Namespace,
-		Dependency: m.Dependency,
-		ImportPath: m.ImportPath,
-	}
-}
-
 // TypeDeclarationIdentity anchors nominal type identity at its declaring module.
 func (m *Module) TypeDeclarationIdentity(name string) string {
-	if m == nil || m.Key == "" || name == "" {
+	if m == nil || !m.ID.Valid() || name == "" {
 		return name
 	}
-	return m.Key + "::" + name
+	return m.ID.String() + "::" + name
 }
 
-func NewSemanticInfo() *SemanticInfo {
-	return &SemanticInfo{
-		BlockScopes:              make(map[ast.NodeID]*symbols.Scope),
-		ResolvedSymbols:          make(map[ast.NodeID]*symbols.Symbol),
-		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
-		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
-		CaseTests:                make(map[ast.NodeID]flowresult.CaseTest),
-		Matches:                  make(map[ast.NodeID]flowresult.Match),
-		ConstValues:              make(map[symbols.SymbolID]constvalue.Value),
-		MethodSets:               make(map[string][]*symbols.Symbol),
-		MethodSymbol:             make(map[ast.NodeID]*symbols.Symbol),
-		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
-		ImplicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
-		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
-		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
-		StringConcatenations:     make(map[ast.NodeID]struct{}),
-		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
-		ForIterations:            make(map[ast.NodeID]ForIteration),
-		OperationFunctions:       make([]*symbols.Symbol, 0),
+// ExpandedDefaultBinding resolves declaration-module symbols paired with generated
+// default-expression markers. Local remains false for caller escape analysis.
+func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
+	if m == nil || m.Bindings == nil || m.Typechecking == nil || ident == nil {
+		return place.Binding{}, false
 	}
+	if _, ok := m.Typechecking.ExpandedDefaultBindings[ident.ID()]; !ok {
+		return place.Binding{}, false
+	}
+	return place.Binding{Symbol: m.Bindings.NodeSymbols[ident.ID()]}, true
 }
 
-// MatchCases exposes resolved case indexes without leaking match artifacts
-// into CFG's source-topology package.
-// ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
-// body before its first condition check.
-func (s *SemanticInfo) ForLoopGuaranteedEntry(id ast.NodeID) bool {
-	if s == nil {
-		return false
+// RebuildTypedASTIndex publishes canonical node lookup after typechecking.
+func (m *Module) RebuildTypedASTIndex() {
+	if m == nil {
+		return
 	}
-	iteration, found := s.ForIterations[id]
-	return found && iteration.GuaranteedEntry
-}
-
-func (s *SemanticInfo) MatchCases(id ast.NodeID) ([]int, bool) {
-	if s == nil {
-		return nil, false
+	m.TypedASTNodes = ast.Index(m.AST)
+	if m.Typechecking == nil {
+		return
 	}
-	match, found := s.Matches[id]
-	if !found {
-		return nil, false
-	}
-	cases := make([]int, len(match.Arms))
-	for index, arm := range match.Arms {
-		if arm.Case < 0 || arm.Case >= len(match.Cases) {
-			return nil, false
+	for _, args := range m.Typechecking.EffectiveCallArguments {
+		for _, arg := range args {
+			ast.Inspect(arg, func(node ast.Node) bool {
+				if node != nil {
+					m.TypedASTNodes[node.ID()] = node
+				}
+				return true
+			})
 		}
-		cases[index] = arm.Case
 	}
-	return cases, true
 }
 
 func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
-	m.Semantics = NewSemanticInfo()
+	m.Bindings = bindingresult.New()
+	m.Constants = constantresult.New()
+	m.Typechecking = nil
+}
+
+// BaseExprType returns canonical base typechecker evidence when available.
+func (m *Module) BaseExprType(id ast.NodeID) typeinfo.Type {
+	if m == nil || m.Typechecking == nil {
+		return nil
+	}
+	return m.Typechecking.ExprTypes[id]
 }
 
 // EffectiveExprType returns per-use flow refinement when available and falls
@@ -249,10 +160,7 @@ func (m *Module) EffectiveExprType(id ast.NodeID) typeinfo.Type {
 			return typ
 		}
 	}
-	if m.Semantics == nil {
-		return nil
-	}
-	return m.Semantics.ExprTypes[id]
+	return m.BaseExprType(id)
 }
 
 // resetToPhase retains artifacts through phase and invalidates downstream data.
@@ -263,12 +171,14 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 	m.Phase = retained
 	if retained <= phase.Parsed {
 		m.ModuleScope = nil
-		m.Semantics = nil
+		m.Bindings = nil
+		m.Constants = nil
 	}
 	if retained < phase.Collected {
 		m.namedTypeDeclarations = nil
 	}
 	if retained < phase.Typechecked {
+		m.Typechecking = nil
 		m.SemanticExportFingerprint = ""
 		m.TypedASTNodes = nil
 	}
@@ -277,6 +187,9 @@ func (m *Module) resetToPhase(retained phase.Phase) {
 	}
 	if retained < phase.FlowTyped {
 		m.Flow = nil
+	}
+	if retained < phase.Effects {
+		m.Effects = nil
 	}
 	if retained < phase.Ownership {
 		m.Ownership = nil
@@ -316,76 +229,166 @@ func PathWithinRoot(rootPath, path string) bool {
 	return strings.HasPrefix(path, rootPath+"/")
 }
 
-// NewModuleForFile builds one file-backed module with canonical origin,
-// namespace, key, and import path derived from compiler config.
+// IdentityForFile assembles canonical module identity for a file. Every producer
+// of a moduleid.ID goes through here so origin, namespace and derived import path
+// cannot drift apart. Assembling identity separately is what let the prelude
+// register under an import path no import could reproduce.
+func (ctx *CompilerContext) IdentityForFile(origin ModuleOrigin, namespace, filePath string) (moduleid.ID, error) {
+	importPath, err := ctx.ImportPathForFile(origin, namespace, filePath)
+	if err != nil {
+		return moduleid.ID{}, err
+	}
+	return moduleid.ID{
+		Origin:     string(origin),
+		Namespace:  namespace,
+		ImportPath: importPath,
+	}, nil
+}
+
+// NewModuleForFile builds one file-backed module with canonical identity derived from compiler config.
 func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *Module {
 	if ctx == nil || filePath == "" {
 		return nil
 	}
 	origin, namespace := ctx.ModuleOriginForFile(filePath)
-	module := &Module{
-		Key:             ModuleKeyFor(origin, filePath),
+	id, err := ctx.IdentityForFile(origin, namespace, filePath)
+	if err != nil {
+		return nil
+	}
+	return &Module{
+		ID:              id,
 		FilePath:        filePath,
-		Namespace:       namespace,
-		Origin:          origin,
 		Content:         content,
 		ContentProvided: true,
 	}
-	if importPath, err := ctx.ImportPathForFile(origin, namespace, filePath); err == nil {
-		module.ImportPath = importPath
-	}
-	return module
 }
 
-// Register a module in shared compiler state.
-func (ctx *CompilerContext) AddModule(module *Module) {
-	if ctx == nil || module == nil || module.Key == "" {
-		return
+// Register a module in shared compiler state. The identity conflict is detected
+// and reported here so registration policy stays in one place; the recorded
+// diagnostic is returned so a caller holding the offending source site can label
+// it. Returns nil when the module registers cleanly.
+func (ctx *CompilerContext) AddModule(module *Module) *diagnostics.Diagnostic {
+	if ctx == nil || module == nil || !module.ID.Valid() {
+		return nil
 	}
 	module.FilePath = CanonicalPath(module.FilePath)
 	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
 
-	ctx.modules[module.Key] = module
-	if module.FilePath != "" {
-		ctx.fileIndex[module.FilePath] = module.Key
+	// Identity and file must agree in both directions, and both checks run
+	// before any index is touched so a rejected registration cannot leave the
+	// registry half-updated. Import paths and library-root configuration can
+	// both reach these, so they are user-facing diagnostics, not compiler bugs.
+	conflict := ""
+	if previousID, found := ctx.fileIndex[module.FilePath]; module.FilePath != "" && found && previousID != module.ID {
+		conflict = fmt.Sprintf("module file %s is already registered as %s and cannot also be %s",
+			module.FilePath, previousID.ImportPath, module.ID.ImportPath)
+	} else if previous := ctx.modules[module.ID]; previous != nil && module.FilePath != "" &&
+		previous.FilePath != "" && previous.FilePath != module.FilePath {
+		conflict = fmt.Sprintf("module identity %s is already registered for file %s and cannot also name %s",
+			module.ID.ImportPath, previous.FilePath, module.FilePath)
 	}
+	if conflict != "" {
+		ctx.mu.Unlock()
+		if ctx.Diagnostics == nil {
+			return nil
+		}
+		// Reported without a location: the registry knows the identities in
+		// conflict, not which source site caused the registration. A caller
+		// holding that site labels the returned diagnostic.
+		return ctx.Diagnostics.AddError(diagnostics.ErrAmbiguousImport, conflict, nil, "")
+	}
+	previous := ctx.modules[module.ID]
+	ctx.modules[module.ID] = module
+	if module.FilePath != "" {
+		ctx.fileIndex[module.FilePath] = module.ID
+	} else if previous != nil && previous.FilePath != "" && ctx.fileIndex[previous.FilePath] == module.ID {
+		// A pathless replacement must not leave the old file pointing at the
+		// identity it no longer names.
+		delete(ctx.fileIndex, previous.FilePath)
+	}
+	// ctx.typeDeclarations is derived state: the authoritative copy of a generic
+	// declaration lives on the module that collection registered it from. A
+	// context therefore has to rebuild the index for every module it takes in,
+	// and registration is the only place that happens.
+	//
+	// The LSP is what makes this load-bearing. Each request builds a fresh
+	// context and re-registers modules retained from the previous run, so the
+	// index starts empty while the retained modules still carry declarations
+	// collection will not produce again. Without this, instantiateType finds no
+	// owner and tells the user to recompile a module that is perfectly fine.
+	// Replacing a module for an identity needs it too, since the index holds
+	// pointers and would otherwise keep naming the superseded object.
+	//
+	// Below Collected the map is nil, so the phase check states the rule rather
+	// than changing the outcome: only a collected module owns declarations. Its
+	// mirror is in ResetModule, which drops these entries when a module resets
+	// below Collected.
 	if module.Phase >= phase.Collected {
 		for identity := range module.namedTypeDeclarations {
 			ctx.typeDeclarations[identity] = module
 		}
 	}
+	ctx.mu.Unlock()
+	return nil
 }
 
-// Lookup by graph identity.
-func (ctx *CompilerContext) ModuleByKey(key string) (*Module, bool) {
-	if ctx == nil || key == "" {
+// PublishedConstant returns the authoritative value of a constant symbol,
+// resolving symbols owned by another module through their defining identity, and
+// nil when no value is published. Constant evaluation never publishes a nil value,
+// so nil is the absent case and no separate found flag is needed.
+// Query-cache entries are excluded on purpose: only published module values are
+// stable enough for cross-module reads and export fingerprints.
+func (ctx *CompilerContext) PublishedConstant(module *Module, sym *symbols.Symbol) constvalue.Value {
+	if sym == nil {
+		return nil
+	}
+	owner := module
+	// Only the cross-module hop needs a context; a local value stays readable
+	// from the module alone so callers without a registry still fingerprint.
+	if ownerID := sym.DefiningModule; ownerID.Valid() && (module == nil || ownerID != module.ID) {
+		if ctx == nil {
+			return nil
+		}
+		found := false
+		if owner, found = ctx.ModuleByID(ownerID); !found {
+			return nil
+		}
+	}
+	if owner == nil || owner.Constants == nil {
+		return nil
+	}
+	return owner.Constants.ModuleValues[sym.ID]
+}
+
+// ModuleByID resolves canonical module identity.
+func (ctx *CompilerContext) ModuleByID(id moduleid.ID) (*Module, bool) {
+	if ctx == nil || !id.Valid() {
 		return nil, false
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	module, ok := ctx.modules[key]
+	module, ok := ctx.modules[id]
 	return module, ok
 }
 
 // SetSemanticExportBaseline records prior semantic API state for incremental comparison.
-func (ctx *CompilerContext) SetSemanticExportBaseline(key, fingerprint string) {
-	if ctx == nil || key == "" || fingerprint == "" {
+func (ctx *CompilerContext) SetSemanticExportBaseline(id moduleid.ID, fingerprint string) {
+	if ctx == nil || !id.Valid() || fingerprint == "" {
 		return
 	}
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
-	ctx.semanticExportBaselines[key] = fingerprint
+	ctx.semanticExportBaselines[id] = fingerprint
 }
 
 // SemanticExportBaseline returns prior semantic API state when supplied by a client.
-func (ctx *CompilerContext) SemanticExportBaseline(key string) (string, bool) {
-	if ctx == nil || key == "" {
+func (ctx *CompilerContext) SemanticExportBaseline(id moduleid.ID) (string, bool) {
+	if ctx == nil || !id.Valid() {
 		return "", false
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	fingerprint, ok := ctx.semanticExportBaselines[key]
+	fingerprint, ok := ctx.semanticExportBaselines[id]
 	return fingerprint, ok
 }
 
@@ -396,11 +399,11 @@ func (ctx *CompilerContext) ModuleByFile(filePath string) (*Module, bool) {
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	key, ok := ctx.fileIndex[CanonicalPath(filePath)]
+	id, ok := ctx.fileIndex[CanonicalPath(filePath)]
 	if !ok {
 		return nil, false
 	}
-	module, ok := ctx.modules[key]
+	module, ok := ctx.modules[id]
 	return module, ok
 }
 

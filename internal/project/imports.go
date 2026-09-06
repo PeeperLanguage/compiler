@@ -9,26 +9,19 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/moduleid"
 	"compiler/pkg/manifest"
 	"compiler/pkg/remotes"
 )
 
 // Canonical file-backed import after resolver lookup.
 type ResolvedImport struct {
-	// Stable graph identity.
-	Key string
-	// Module path as written in source.
-	ImportPath string
+	// Canonical imported module identity.
+	ID moduleid.ID
 	// Source import declaration, when resolved from parsed syntax.
 	Decl *ast.ImportDecl
 	// Absolute slash-separated source path.
 	FilePath string
-	// Local, stdlib, or dependency.
-	Origin ModuleOrigin
-	// Optional namespace for packaged libraries such as core/vendor.
-	Namespace string
-	// Manifest alias for dependency imports.
-	DependencyAlias string
 }
 
 // ImportCandidate is one source-level import path visible from a compiler
@@ -50,18 +43,6 @@ func (e *ImportError) Error() string {
 		return ""
 	}
 	return e.Msg
-}
-
-// ModuleKeyFor builds a stable module key for a file path and origin.
-func ModuleKeyFor(origin ModuleOrigin, filePath string) string {
-	if filePath == "" {
-		return ""
-	}
-	prefix := string(origin)
-	if prefix == "" {
-		prefix = string(ModuleOriginLocal)
-	}
-	return prefix + ":" + CanonicalPath(filePath)
 }
 
 // ImportCandidates returns immediate import paths matching prefix. Import root
@@ -148,7 +129,7 @@ func (ctx *CompilerContext) importCandidateRoot(prefix string) (root, sourcePref
 }
 
 func hasHiddenImportSegment(path string) bool {
-	for segment := range strings.SplitSeq(path, "/") {
+	for _, segment := range strings.Split(path, "/") {
 		if strings.HasPrefix(segment, ".") {
 			return true
 		}
@@ -328,18 +309,12 @@ func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, 
 	}
 	absPath = CanonicalPath(absPath)
 
-	resolvedImportPath, err := ctx.ImportPathForFile(origin, namespace, absPath)
+	id, err := ctx.IdentityForFile(origin, namespace, absPath)
 	if err != nil {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
 	}
 
-	return &ResolvedImport{
-		Key:        ModuleKeyFor(origin, absPath),
-		ImportPath: resolvedImportPath,
-		FilePath:   absPath,
-		Origin:     origin,
-		Namespace:  namespace,
-	}, nil
+	return &ResolvedImport{ID: id, FilePath: absPath}, nil
 }
 
 func splitNamespacedImportPath(importPath string) (string, string, bool) {
@@ -365,8 +340,7 @@ func validateImportPath(importPath string) error {
 	if filepath.IsAbs(importPath) || strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
 		return fmt.Errorf("import path must be root-relative")
 	}
-	parts := strings.SplitSeq(importPath, "/")
-	for part := range parts {
+	for _, part := range strings.Split(importPath, "/") {
 		if part == "" || part == "." || part == ".." {
 			return fmt.Errorf("import path must be root-relative")
 		}
