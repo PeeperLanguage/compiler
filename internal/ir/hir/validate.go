@@ -75,10 +75,9 @@ func validateStmt(fn string, stmt Stmt) []string {
 	case *For:
 		// Init, Bindings and Next are optional; a loop with no body is not.
 		problems = append(problems, validateBody(fn, "loop", node.Body)...)
-		for role, part := range map[string]*Block{"loop init": node.Init, "loop bindings": node.Bindings, "loop next": node.Next} {
+		for _, part := range []*Block{node.Init, node.Bindings, node.Next} {
 			if part != nil {
 				problems = append(problems, validateStmt(fn, part)...)
-				_ = role
 			}
 		}
 	case *SwitchVariant:
