@@ -120,14 +120,25 @@ func (m *Module) RebuildTypedASTIndex() {
 	if m.Typechecking == nil {
 		return
 	}
+	indexGenerated := func(node ast.Node) bool {
+		if sourceLoop, ok := node.(*ast.ForStmt); ok {
+			// An outer expansion still contains original nested loops. Do not
+			// overwrite their checked trees depending on map traversal order.
+			if sourceLoop.Iterable != nil && m.Typechecking.CheckedIterations[sourceLoop.ID()] != nil {
+				return false
+			}
+		}
+		if node != nil {
+			m.TypedASTNodes[node.ID()] = node
+		}
+		return true
+	}
+	for _, loop := range m.Typechecking.CheckedIterations {
+		ast.Inspect(loop, indexGenerated)
+	}
 	for _, args := range m.Typechecking.EffectiveCallArguments {
 		for _, arg := range args {
-			ast.Inspect(arg, func(node ast.Node) bool {
-				if node != nil {
-					m.TypedASTNodes[node.ID()] = node
-				}
-				return true
-			})
+			ast.Inspect(arg, indexGenerated)
 		}
 	}
 }

@@ -508,9 +508,9 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	}
 }
 
-// checkForInStmt types a `for x in iterable` loop. The iterable may be a range
-// expression or an indexable sequence; strings are rejected because string
-// element access requires an explicit as_bytes/as_chars view.
+// checkForInStmt types a `for x in iterable` loop over a range, indexable
+// sequence, or optional-producing call. Strings require an explicit
+// as_bytes/as_chars view.
 func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, returnType typeinfo.Type) {
 	indexType := typeinfo.DefaultIntegerType()
 	evidence := typecheckresult.ForIteration{}
@@ -625,9 +625,32 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			}
 			evidence.ElementType = elem
 		} else {
+			if valid && !c.siteOnly {
+				call, callExpr := node.Iterable.(*ast.CallExpr)
+				optional, optionalResult := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
+				switch {
+				case !callExpr:
+					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+typeinfo.TypeText(iterableType)).
+						WithHelp("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
+						WithNote("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
+				case !optionalResult || optional.Inner == nil:
+					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "iterator call must return an optional item").
+						WithHelp("return an optional type, such as `?i32`: return an item to continue, or `none` to end the loop"))
+				case node.Index != nil:
+					c.ctx.Diagnostics.Add(invalidExpressionError(node.Index, "iterator loops provide an item, not an index").
+						WithHelp("use `for item in producer()`; if you need an index, maintain a separate counter"))
+				default:
+					c.expandCallIteration(scope, node)
+				}
+				if checked := c.module.Typechecking.CheckedIterations[node.ID()]; checked != nil {
+					previous := c.reusedCall
+					c.reusedCall = call
+					c.checkStmt(scope, checked, returnType)
+					c.reusedCall = previous
+					return
+				}
+			}
 			valid = false
-			c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
-				"cannot iterate over "+typeinfo.TypeText(iterableType)))
 		}
 	}
 	if node.Index != nil {
@@ -665,6 +688,95 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	c.loopDepth++
 	c.checkBlock(scope, node.Body, returnType)
 	c.loopDepth--
+}
+
+// expandCallIteration publishes ordinary checked statements before flow and
+// ownership. Keeping the entire source call inside the loop repeats its receiver
+// and arguments on every attempt, including the terminating attempt.
+func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
+	location := ast.LocOf(node)
+	expansion := &ast.BlockStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		Location:     location,
+	}
+	resultName := fmt.Sprintf("$for.result.%d", node.ID())
+	result := &ast.LetDecl{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		Name: &ast.Ident{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			Name:         resultName,
+			Location:     location,
+		},
+		Value:    node.Iterable,
+		Location: location,
+	}
+	stop := &ast.IfStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		Cond: &ast.BinaryExpr{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			Left: &ast.Ident{
+				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+				Name:         resultName,
+				Location:     location,
+			},
+			Op: "==",
+			Right: &ast.NoneLit{
+				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+				Location:     location,
+			},
+			Location: location,
+		},
+		Then: &ast.BlockStmt{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			Stmts: []ast.Stmt{&ast.BreakStmt{
+				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+				Location:     location,
+			}},
+			Location: location,
+		},
+		Location: location,
+	}
+	item := &ast.LetDecl{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		Name:         node.Value,
+		Value: &ast.Ident{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			Name:         resultName,
+			Location:     location,
+		},
+		Location: location,
+	}
+	body := *node.Body
+	body.Stmts = append([]ast.Stmt{item}, node.Body.Stmts...)
+	checked := &ast.ForStmt{
+		NodeIDHolder: node.NodeIDHolder,
+		Body: &ast.BlockStmt{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			Stmts:        []ast.Stmt{result, stop, &body},
+			Location:     location,
+		},
+		Location: location,
+	}
+	expansion.Stmts = append(expansion.Stmts, checked)
+	bodyScope := c.module.Bindings.BlockScopes[node.Body.ID()]
+	expansionScope := symbols.NewScope(scope)
+	c.module.Bindings.BlockScopes[expansion.ID()] = expansionScope
+	iterationScope := bodyScope.InsertParent(expansionScope)
+
+	c.module.Bindings.BlockScopes[checked.Body.ID()] = iterationScope
+	c.module.Bindings.BlockScopes[stop.Then.ID()] = symbols.NewScope(iterationScope)
+	resultSymbol := symbols.New(resultName, symbols.SymbolVar, result, location)
+	resultSymbol.Used = true
+	if err := iterationScope.Declare(resultSymbol); err != nil {
+		panic(err)
+	}
+	c.module.Bindings.NodeSymbols[result.Name.ID()] = resultSymbol
+	c.module.Bindings.NodeSymbols[stop.Cond.(*ast.BinaryExpr).Left.ID()] = resultSymbol
+	c.module.Bindings.NodeSymbols[item.Value.ID()] = resultSymbol
+
+	itemSymbol := c.module.Bindings.NodeSymbols[node.Value.ID()]
+	itemSymbol.ASTNode = item
+	c.module.Typechecking.CheckedIterations[node.ID()] = expansion
 }
 
 func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {

@@ -48,6 +48,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
+		CheckedIterations:   module.Typechecking.CheckedIterations,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
@@ -58,6 +59,71 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	}
 	out := GenerateHIR(ctx, module)
 	return out
+}
+
+func TestGenerateHIRConsumesCallIteratorEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_iterator_test"+peeper.SourceExt, "hir_iterator_test", `struct Cursor {}
+fn (self: &mut Cursor) Next() -> ?i32 { return none; }
+fn main() {
+	let mut cursor = Cursor.{};
+	for item in cursor.Next() { if item == 1 { continue; } }
+}`, func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
+	var loop *hir.For
+	for _, fn := range out.Funcs {
+		for _, stmt := range fn.Body.Stmts {
+			if expansion, ok := stmt.(*hir.Block); ok {
+				loop, _ = expansion.Stmts[len(expansion.Stmts)-1].(*hir.For)
+			}
+		}
+	}
+	if loop == nil || loop.Init != nil || loop.Cond != nil || loop.Next != nil || loop.Bindings != nil {
+		t.Fatalf("custom loop unexpectedly has numeric segments: %#v", loop)
+	}
+	result := loop.Body.Stmts[0].(*hir.Binding)
+	if _, ok := result.Value.(*ir.Call); !ok {
+		t.Fatalf("advancement = %T, want static call", result.Value)
+	}
+	if _, ok := loop.Body.Stmts[1].(*hir.If); !ok {
+		t.Fatalf("missing optional exhaustion branch: %#v", loop.Body.Stmts)
+	}
+}
+
+func TestGenerateHIRCallIteratorUsesOrdinaryInterfaceDispatch(t *testing.T) {
+	out := generateTestHIR(t, "hir_iterator_interface_test"+peeper.SourceExt, "hir_iterator_interface_test", `iface Producer { fn (&mut Self) Take(value: i32) -> ?i32 }
+fn Iterate(producer: &mut Producer) { for item in producer.Take(1) {} }`)
+	fn := out.Funcs[len(out.Funcs)-1]
+	expansion := fn.Body.Stmts[0].(*hir.Block)
+	loop := expansion.Stmts[0].(*hir.For)
+	call := loop.Body.Stmts[0].(*hir.Binding).Value
+	if _, ok := call.(*ir.InterfaceCall); !ok {
+		t.Fatalf("explicit method call = %T, want ordinary interface dispatch", call)
+	}
+}
+
+func TestGenerateHIRKeepsIteratorArgumentsInsideLoop(t *testing.T) {
+	for _, call := range []string{"Produce(Value())", "Value() |> Produce()"} {
+		t.Run(call, func(t *testing.T) {
+			out := generateTestHIR(t, "hir_iterator_arguments_test"+peeper.SourceExt, "hir_iterator_arguments_test", `fn Value() -> i32 { return 1; }
+fn Produce(value: i32) -> ?i32 { return none; }
+fn main() { for item in `+call+` {} }`)
+			main := out.Funcs[len(out.Funcs)-1]
+			if len(main.Body.Stmts) != 1 {
+				t.Fatalf("producer escaped loop: %#v", main.Body.Stmts)
+			}
+			expansion := main.Body.Stmts[0].(*hir.Block)
+			if len(expansion.Stmts) != 1 {
+				t.Fatalf("argument captured before loop: %#v", expansion.Stmts)
+			}
+			loop := expansion.Stmts[0].(*hir.For)
+			producer := loop.Body.Stmts[0].(*hir.Binding).Value.(*ir.Call)
+			if len(producer.Args) != 1 {
+				t.Fatalf("producer arguments = %#v", producer.Args)
+			}
+			if _, ok := producer.Args[0].(*ir.Call); !ok {
+				t.Fatalf("argument evaluation = %T, want nested call", producer.Args[0])
+			}
+		})
+	}
 }
 
 func TestGenerateHIRLowersRangeForIntoStructuredSegments(t *testing.T) {
@@ -481,18 +547,19 @@ func TestGenerateHIRPreservesExplicitOptionalCarrierInsideProof(t *testing.T) {
 	}
 }
 
-func TestGenerateHIRPromotesOneOptionalLayer(t *testing.T) {
-	out := generateTestHIR(t, "hir_optional_promotion_test"+peeper.SourceExt, "hir_optional_promotion_test", `fn promote(inner: ?i32) -> ? ?i32 {
+func TestGenerateHIRPreservesRedundantOptionalCarrierIdentity(t *testing.T) {
+	out := generateTestHIR(t, "hir_optional_identity_test"+peeper.SourceExt, "hir_optional_identity_test", `fn keep(inner: ?i32) -> ? ?i32 {
 	return inner;
 }`)
-	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
-	outer, ok := ret.Value.(*ir.VariantMake)
-	if !ok || out.Types.Text(outer.TypeID()) != "??i32" {
-		t.Fatalf("promotion = %#v, want outer ??i32 VariantMake", ret.Value)
+	fn := out.Funcs[0]
+	ret := fn.Body.Stmts[0].(*hir.Return)
+	carrier, ok := ret.Value.(*ir.Ident)
+	if !ok || carrier.SymbolID != fn.Params[0].SymbolID {
+		t.Fatalf("return = %#v, want unchanged parameter carrier, not VariantMake", ret.Value)
 	}
-	payload, ok := outer.Payload.(*ir.Ident)
-	if !ok || out.Types.Text(payload.TypeID()) != "?i32" {
-		t.Fatalf("promotion payload = %#v, want intact ?i32 carrier", outer.Payload)
+	if carrier.TypeID() != fn.Params[0].Type || carrier.TypeID() != fn.ReturnType || out.Types.Text(carrier.TypeID()) != "?i32" {
+		t.Fatalf("carrier type = %s (%d), parameter = %d, return = %d; want one shared ?i32 type",
+			out.Types.Text(carrier.TypeID()), carrier.TypeID(), fn.Params[0].Type, fn.ReturnType)
 	}
 }
 

@@ -322,7 +322,7 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.OptionalType{Inner: loweredRuntimeType(module, typ.Inner, seen)}
+		return typeinfo.NewOptional(loweredRuntimeType(module, typ.Inner, seen))
 	case *typeinfo.ArrayType:
 		if typ == nil {
 			return nil

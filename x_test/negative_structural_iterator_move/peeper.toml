@@ -1,0 +1,7 @@
+name = "negative_structural_iterator_move"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["moved"]

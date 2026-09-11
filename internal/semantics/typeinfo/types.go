@@ -277,6 +277,26 @@ func TypeParameterBindings(parameters []*TypeParameterType, arguments []Type) ma
 	return bindings
 }
 
+// NewOptional collapses consecutive optional layers, including transparent
+// aliases, without crossing nominal or pointer/array boundaries. Callers must
+// resolve alias dependencies before construction; nominal recursive shells may
+// remain incomplete.
+func NewOptional(inner Type) Type {
+	seen := make(map[Type]bool)
+	for {
+		inner = Unalias(inner)
+		optional, ok := inner.(*OptionalType)
+		if !ok || optional == nil {
+			return &OptionalType{Inner: inner}
+		}
+		if seen[optional] {
+			return &InvalidType{}
+		}
+		seen[optional] = true
+		inner = optional.Inner
+	}
+}
+
 // Unalias returns canonical transparent-alias storage without erasing nominal
 // structs, interfaces, or enums. Invalid alias cycles terminate as invalid.
 func Unalias(t Type) Type {

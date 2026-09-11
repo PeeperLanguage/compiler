@@ -182,12 +182,11 @@ fn main() -> i32 {
         return 7;
     }
     let outer: ? ?i32 = inner;
-    if outer != none {
-        if outer != none {
-            if outer != 13 {
-                return 7;
-            }
-        }
+    if outer == none {
+        return 7;
+    }
+    if outer != 13 {
+        return 7;
     }
 
     let ownerResult = TakeOptional(Token.{value = 23});

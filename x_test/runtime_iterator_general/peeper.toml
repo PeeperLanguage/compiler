@@ -1,0 +1,6 @@
+name = "runtime_iterator_general"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

@@ -23,6 +23,14 @@ func NewScope(parent *Scope) *Scope {
 	}
 }
 
+// InsertParent adds a generated scope between this scope and its lexical
+// parent without invalidating resolved child symbols. An explicit parent keeps
+// repeated semantic checks from nesting stale generated scopes.
+func (s *Scope) InsertParent(parent *Scope) *Scope {
+	s.parent = NewScope(parent)
+	return s.parent
+}
+
 func (s *Scope) Parent() *Scope {
 	if s == nil {
 		return nil

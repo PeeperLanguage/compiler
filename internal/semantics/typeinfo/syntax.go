@@ -94,7 +94,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
-		return &OptionalType{Inner: TypeFromSyntax(typ.Inner, opts)}
+		return NewOptional(TypeFromSyntax(typ.Inner, opts))
 	case *ast.ArrayType:
 		if typ == nil {
 			return nil

@@ -97,7 +97,8 @@ func runTimedLSPChanges(t *testing.T, root, filePath, initial string, changes []
 			},
 			ContentChanges: []TextDocumentContentChangeEvent{{Text: text}},
 		})
-		time.Sleep(diagnosticsDebounceDelay + 25*time.Millisecond)
+		// Race-instrumented compilation can outlast the debounce interval.
+		time.Sleep(diagnosticsDebounceDelay + 250*time.Millisecond)
 	}
 	if err := inputWriter.Close(); err != nil {
 		t.Fatalf("close LSP input: %v", err)
@@ -490,6 +491,24 @@ fn inspect(value: result::Alias) {
 	}
 	if got := len(edit.Changes[DocumentURI(pathToURI(mainPath))]); got != 2 {
 		t.Fatalf("alias-qualified use edits = %#v, want two", edit.Changes)
+	}
+}
+
+func TestHoverShowsCallIteratorItemType(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	src := `struct Item { value: i32 }
+struct Cursor {}
+fn (self: &Cursor) Next() -> ?Item { return none; }
+fn main() {
+	let cursor = Cursor.{};
+	for item in cursor.Next() { return __CURSOR__item.value; }
+}`
+	state := NewServerState()
+	state.RootDir = root
+	hover := hoverAtSource(t, state, filePath, src)
+	if hover == nil || !strings.Contains(hover.Contents.Value, "(var) item: Item") {
+		t.Fatalf("iterator item hover = %#v, want Item", hover)
 	}
 }
 

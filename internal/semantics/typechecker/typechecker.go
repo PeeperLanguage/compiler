@@ -17,6 +17,9 @@ type checker struct {
 	optionalTestContext int
 	wholeCarrierExpr    ast.Expr
 	loopDepth           int
+	// reusedCall is the already-checked source call embedded at the root of a
+	// generated producer loop. Nested calls and flow visits still check normally.
+	reusedCall *ast.CallExpr
 }
 
 // Concrete references convert to satisfied interface borrows, while owned

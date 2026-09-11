@@ -1,0 +1,23 @@
+struct WrongReturn {}
+fn (self: &WrongReturn) Next() -> i32 { return 1; }
+
+struct Cursor {}
+fn (self: &mut Cursor) Next() -> ?i32 { return none; }
+fn Produce(value: bool) -> ?i32 { return none; }
+
+iface Erased { fn (&mut Self) Next() -> ?i32 }
+fn RejectBareErased(cursor: &mut Erased) { for item in cursor {} }
+
+fn main() {
+    let wrong = WrongReturn.{};
+    for item in wrong.Next() { let invalid: bool = 1; }
+    let mut cursor = Cursor.{};
+    for item in cursor {}
+    for index, item in cursor.Next() {}
+    let immutable = Cursor.{};
+    for item in immutable.Next() {}
+    let optional: ?i32 = none;
+    for item in optional {}
+    for item in Produce {}
+    for item in Produce(1) {}
+}

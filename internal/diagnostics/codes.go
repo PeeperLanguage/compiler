@@ -95,6 +95,7 @@ const (
 	InfoRedundantComma           = "S0003"
 	InfoRedundantPreludeImport   = "S0004"
 	InfoRedundantGlobalQualifier = "S0005"
+	InfoRedundantOptional        = "S0006"
 
 	// Warnings (W prefix)
 	WarnUnreachableCode        = "W0001"

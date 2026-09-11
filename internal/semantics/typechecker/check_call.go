@@ -56,6 +56,11 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 }
 
 func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
+	if c.flow == nil && c.reusedCall == node {
+		if typ, checked := c.module.Typechecking.ExprTypes[node.ID()]; checked {
+			return typ
+		}
+	}
 	effectiveArgs := c.module.Typechecking.CallArgumentsOrSource(node)
 	if c.flow == nil {
 		effectiveArgs = append([]ast.Expr(nil), node.Args...)

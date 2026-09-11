@@ -350,7 +350,7 @@ func ReplaceAbstractSelf(t Type, ownerType Type) Type {
 		if typ == nil {
 			return nil
 		}
-		return &OptionalType{Inner: ReplaceAbstractSelf(typ.Inner, ownerType)}
+		return NewOptional(ReplaceAbstractSelf(typ.Inner, ownerType))
 	case *ArrayType:
 		if typ == nil {
 			return nil

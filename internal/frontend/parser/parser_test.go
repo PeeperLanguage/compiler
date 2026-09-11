@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -2638,5 +2639,97 @@ func TestEmitterNewFormatNoSeverityPrefix(t *testing.T) {
 	// Should contain location marker
 	if !strings.Contains(out, "test"+peeper.SourceExt+":1:1") {
 		t.Fatalf("expected location in output:\n%s", out)
+	}
+}
+
+func TestParseOptionalMarkersPreservesSyntaxAndTokens(t *testing.T) {
+	for _, spelling := range []string{"?i32", "??i32", "???i32", "????i32", "? ?i32", "?? ?i32"} {
+		t.Run(spelling, func(t *testing.T) {
+			src := "fn value() -> " + spelling + " { return none; }"
+			diag := diagnostics.NewDiagnosticBag()
+			stream := lexer.New("test.peep", src, diag).Tokenize()
+			original := append(stream[:0:0], stream...)
+			mod := New("test.peep", stream, diag).ParseModule()
+			if diag.HasErrors() {
+				t.Fatalf("unexpected parser errors: %s", diag.EmitAllToString())
+			}
+			if !reflect.DeepEqual(stream, original) {
+				t.Fatal("optional parsing mutated lexer tokens")
+			}
+			typ := mod.Stmts[0].(*ast.FnDecl).ReturnType
+			for index, char := range src {
+				if char != '?' {
+					continue
+				}
+				optional, ok := typ.(*ast.OptionalType)
+				if !ok || ast.StartOf(optional).Index != index {
+					t.Fatalf("missing source optional at %d: %#v", index, typ)
+				}
+				typ = optional.Inner
+			}
+			if named, ok := typ.(*ast.NamedType); !ok || named.Name != "i32" {
+				t.Fatalf("unexpected payload syntax: %#v", typ)
+			}
+		})
+	}
+}
+
+func TestParseRedundantOptionalSyntax(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		notes  int
+	}{
+		{"double", "type Value = ??i32;", 1},
+		{"triple", "type Value = ???i32;", 2},
+		{"spaced", "type Value = ? ?i32;", 1},
+		{"spaced triple", "type Value = ? ? ?i32;", 2},
+		{"single", "type Value = ?i32;", 0},
+		{"alias", "type Maybe = ?i32; type Value = ?Maybe;", 0},
+		{"forward alias", "type Value = ?Maybe; type Maybe = ?i32;", 0},
+		{"generic", "type Maybe<T> = ?T; type Value = Maybe<?i32>; type Again = ?Value;", 0},
+		{"generic source once", "type Maybe<T> = ??T; type A = Maybe<i32>; type B = Maybe<bool>;", 1},
+		{"array boundary", "type Value = ?[2]?i32;", 0},
+		{"reference boundary", "type Value = ?&?i32;", 0},
+		{"field", "struct Box { value: ??i32 }", 1},
+		{"parameter and return", "fn Read(value: ??i32) -> ? ?i32 { return value; }", 2},
+		{"local", "fn main() { let value: ???i32 = none; }", 2},
+		{"function type", "type Callback = fn(value: ??i32) -> ??i32;", 2},
+		{"coalescing", "fn Read(value: ?i32) { let result = value ?? 7; }", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			if diag.HasErrors() != (test.name == "coalescing") {
+				t.Fatalf("unexpected error state:\n%s", diag.EmitAllToString())
+			}
+			notes := 0
+			positions := make(map[int]bool)
+			for _, item := range diag.Diagnostics() {
+				if item.Code != diagnostics.InfoRedundantOptional {
+					continue
+				}
+				notes++
+				if item.Severity != diagnostics.Info {
+					t.Fatalf("severity = %v, want info", item.Severity)
+				}
+				if len(item.Labels) != 1 || !strings.Contains(item.Labels[0].Message, "remove redundant `?`") {
+					t.Fatalf("missing removal advice: %#v", item)
+				}
+				loc := item.Labels[0].Location
+				if loc == nil || loc.Start == nil || loc.End == nil {
+					t.Fatal("missing source span")
+				}
+				if loc.End.Index != loc.Start.Index+1 || test.source[loc.Start.Index:loc.End.Index] != "?" {
+					t.Fatalf("span must select one redundant question mark: %v", loc)
+				}
+				if positions[loc.Start.Index] {
+					t.Fatalf("duplicate diagnostic at %v", loc)
+				}
+				positions[loc.Start.Index] = true
+			}
+			if notes != test.notes {
+				t.Fatalf("notes = %d, want %d:\n%s", notes, test.notes, diag.EmitAllToString())
+			}
+		})
 	}
 }

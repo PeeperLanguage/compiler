@@ -1,0 +1,6 @@
+name = "runtime_structural_iterator"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

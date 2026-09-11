@@ -1,0 +1,83 @@
+struct Cursor { value: i32, limit: i32 }
+fn (self: &mut Cursor) Next() -> ?i32 {
+    if self.value >= self.limit { return none; }
+    let value = self.value;
+    self.value = self.value + 1;
+    return value;
+}
+
+struct Holder { cursor: Cursor, marker: i32 }
+
+fn Sum(cursor: &mut Cursor) -> i32 {
+    let mut total: i32 = 0;
+    for item in cursor.Next() { total = total + item; }
+    return total;
+}
+
+struct Pair { left: i32, right: i32 }
+struct PairCursor { value: i32, limit: i32 }
+fn (self: &mut PairCursor) Next() -> ?Pair {
+    if self.value >= self.limit { return none; }
+    let value = self.value;
+    self.value = self.value + 1;
+    return Pair.{ left = value, right = value + 10 };
+}
+
+struct OwnerCursor { value: i32, limit: i32 }
+fn (self: &mut OwnerCursor) Next() -> ?*i32 {
+    if self.value >= self.limit { return none; }
+    let value = self.value;
+    self.value = self.value + 1;
+    return alloc(value);
+}
+
+struct RefCursor { value: i32, done: bool }
+fn (self: &mut RefCursor) Next() -> ?&i32 from self {
+    if self.done { return none; }
+    self.done = true;
+    return &self.value;
+}
+
+fn main() -> i32 {
+    let mut holder = Holder.{ cursor = Cursor.{ value = 0, limit = 3 }, marker = 9 };
+    let mut fieldTotal: i32 = 0;
+    for item in holder.cursor.Next() { fieldTotal = fieldTotal + item; }
+    if fieldTotal != 3 || holder.cursor.value != 3 || holder.marker != 9 { return 1; }
+
+    let mut cursors = [2]Cursor{
+        Cursor.{ value = 0, limit = 2 },
+        Cursor.{ value = 10, limit = 12 }
+    };
+    let mut selected: i32 = 0;
+    let mut index: i32 = 0;
+    for item in cursors[index].Next() {
+        selected = selected + item;
+        index = 1;
+    }
+    if selected != 21 || cursors[0].value != 1 || cursors[1].value != 12 { return 2; }
+
+    let mut parameter = Cursor.{ value = 2, limit = 5 };
+    if Sum(&mut parameter) != 9 || parameter.value != 5 { return 3; }
+
+    let mut pairs = PairCursor.{ value = 0, limit = 2 };
+    let mut pairTotal: i32 = 0;
+    for pair in pairs.Next() { pairTotal = pairTotal + pair.left + pair.right; }
+    if pairTotal != 22 { return 4; }
+
+    let mut owners = OwnerCursor.{ value = 0, limit = 3 };
+    let mut ownerCount: i32 = 0;
+    for owned in owners.Next() {
+        ownerCount = ownerCount + 1;
+        free(owned);
+    }
+    if ownerCount != 3 { return 5; }
+
+    let mut refs = RefCursor.{ value = 42, done = false };
+    let mut referenced: i32 = 0;
+    for reference in refs.Next() {
+        let item: &i32 = reference;
+        referenced = referenced + 1;
+    }
+    if referenced != 1 { return 7; }
+    return 0;
+}

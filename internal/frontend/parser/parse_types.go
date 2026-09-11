@@ -20,7 +20,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	switch tok.Kind {
 	case token.AMP:
 		return p.parseRefTypeExpr()
-	case token.QUESTION:
+	case token.QUESTION, token.QQ:
 		return p.parseOptionalTypeExpr()
 	case token.ASTERISK:
 		return p.parseOwnedPtrTypeExpr()
@@ -147,18 +147,35 @@ func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
 }
 
 func (p *Parser) parseOptionalTypeExpr() ast.TypeExpr {
-	start := p.consume(token.QUESTION, "expected '?' in optional type")
-	if start == nil {
-		return nil
+	markers := make([]source.Position, 0, 2)
+	for p.at(token.QUESTION) || p.at(token.QQ) {
+		marker := p.advance()
+		markers = append(markers, marker.Start)
+		if marker.Kind == token.QQ {
+			second := marker.Start
+			second.Advance("?")
+			markers = append(markers, second)
+		}
 	}
 	inner := p.parseTypeExpr()
 	if inner == nil {
 		return nil
 	}
-	return reg(p, &ast.OptionalType{
-		Inner:    inner,
-		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(inner)),
-	})
+	for index := len(markers) - 1; index >= 0; index-- {
+		inner = reg(p, &ast.OptionalType{
+			Inner:    inner,
+			Location: source.NewLocation(p.filePath, markers[index], ast.EndOf(inner)),
+		})
+	}
+	for _, start := range markers[:len(markers)-1] {
+		end := start
+		end.Advance("?")
+		p.diag.Add(diagnostics.NewInfo("redundant optional marker").
+			WithCode(diagnostics.InfoRedundantOptional).
+			WithPrimaryLabel(source.NewLocation(p.filePath, start, end), "remove redundant `?`").
+			WithNote("nested optional types are the same as a single optional type"))
+	}
+	return inner
 }
 
 func (p *Parser) parseOwnedPtrTypeExpr() ast.TypeExpr {

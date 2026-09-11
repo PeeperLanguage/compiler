@@ -4,6 +4,12 @@ import "sync/atomic"
 
 var nextSyntheticNodeID atomic.Uint32
 
+// NewSyntheticNodeID shares one identity space across checked expansions and
+// default-argument clones, disjoint from parser-assigned nodes.
+func NewSyntheticNodeID() NodeID {
+	return NodeID(nextSyntheticNodeID.Add(1) | (1 << 31))
+}
+
 // SubstituteExpr clones an expression for call-site expansion. Parameter
 // identifiers are replaced with their already-evaluated argument expressions;
 // every cloned node gets a separate high-range ID so semantic caches cannot
@@ -18,11 +24,8 @@ func SubstituteExpr(expr Expr, substitutions map[string]Expr) (cloned Expr, defa
 	}
 	defaultClones = make(map[NodeID]NodeID)
 	argumentClones = make(map[NodeID]NodeID)
-	cloneID := func() NodeID {
-		return NodeID(nextSyntheticNodeID.Add(1) | (1 << 31))
-	}
 	newID := func(original NodeID, fromArgument bool) NodeID {
-		id := cloneID()
+		id := NewSyntheticNodeID()
 		if fromArgument {
 			argumentClones[id] = original
 		} else {

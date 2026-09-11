@@ -1,0 +1,6 @@
+name = "runtime_optional_redundancy"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

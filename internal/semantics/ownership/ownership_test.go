@@ -53,6 +53,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
+		CheckedIterations:   module.Typechecking.CheckedIterations,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
@@ -68,6 +69,84 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	})
 	module.Ownership = Check(ctx, module)
 	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
+}
+
+func TestCallIterationUsesOrdinaryCallGuards(t *testing.T) {
+	for _, test := range []struct {
+		name, receiver, before, body, after, diagnostic string
+	}{
+		{name: "mutable receiver", receiver: "&mut Cursor"},
+		{name: "shared receiver", receiver: "&Cursor"},
+		{name: "body access between advances", receiver: "&mut Cursor", body: "cursor.value = item;"},
+		{name: "consuming backedge", receiver: "Cursor", diagnostic: "moved"},
+		{name: "consuming single attempt", receiver: "Cursor", body: "break;"},
+		{name: "moved source", receiver: "&mut Cursor", before: "Consume(cursor);", diagnostic: "moved"},
+		{name: "body move before backedge", receiver: "&mut Cursor", body: "Consume(cursor);", diagnostic: "moved"},
+		{name: "live conflicting borrow", receiver: "&mut Cursor", before: "let borrowed = &cursor;", after: "let value = borrowed.value;", diagnostic: "borrow"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, implicit := range []bool{false, true} {
+				loop := "for { let result = cursor.Next(); if result == none { break; } let item: i32 = result; " + test.body + " }"
+				if implicit {
+					loop = "for item in cursor.Next() { " + test.body + " }"
+				}
+				result := checkOwnershipSource(t, "struct Cursor { value: i32, limit: i32 }\nfn (self: "+test.receiver+") Next() -> ?i32 { return none; }\nfn Consume(cursor: Cursor) {}\nfn main() { let mut cursor = Cursor.{ value = 0, limit = 3 }; "+test.before+loop+test.after+" }")
+				if test.diagnostic == "" {
+					if result.HasErrors() {
+						t.Fatalf("implicit=%v unexpected diagnostics:\n%s", implicit, result.EmitAllToString())
+					}
+				} else if !result.HasErrors() || !strings.Contains(result.EmitAllToString(), test.diagnostic) {
+					t.Fatalf("implicit=%v expected %q:\n%s", implicit, test.diagnostic, result.EmitAllToString())
+				}
+			}
+		})
+	}
+}
+
+func TestIteratorFactoryArgumentCleanup(t *testing.T) {
+	for _, body := range []string{"", "continue;", "break;", "return;"} {
+		t.Run(body, func(t *testing.T) {
+			for _, expanded := range []bool{false, true} {
+				loop := "for { let result = Produce(Make()); if result == none { break; } let item: i32 = result; " + body + " }"
+				if expanded {
+					loop = "for item in Produce(Make()) { " + body + " }"
+				}
+				result := checkOwnershipSource(t, `struct Argument { held: *i32, value: i32 }
+fn Make() -> Argument { return Argument.{ held = alloc(1), value = 0 }; }
+fn Produce(argument: Argument) -> ?i32 {
+	if argument.value == 0 { return none; }
+	return argument.value;
+}
+fn main() { `+loop+` }`)
+				if result.HasErrors() {
+					t.Fatalf("expanded=%v unexpected diagnostics:\n%s", expanded, result.EmitAllToString())
+				}
+				producer := result.module.AST.Stmts[2].(*ast.FnDecl)
+				plan := cleanupPlanForFunction(t, result, producer)
+				returns := []*ast.ReturnStmt{
+					producer.Body.Stmts[0].(*ast.IfStmt).Then.Stmts[0].(*ast.ReturnStmt),
+					producer.Body.Stmts[1].(*ast.ReturnStmt),
+				}
+				for _, ret := range returns {
+					if got := cleanupSymbolNames(result.module, plan.BeforeReturn[ir.NodeID(ret.ID())]); !slices.Equal(got, []string{"argument"}) {
+						t.Fatalf("expanded=%v argument cleanup = %v, want [argument]", expanded, got)
+					}
+				}
+				if expanded {
+					fn := result.module.AST.Stmts[3].(*ast.FnDecl)
+					sourceLoop := fn.Body.Stmts[0].(*ast.ForStmt)
+					expansion := result.module.Typechecking.CheckedIterations[sourceLoop.ID()]
+					if len(expansion.Stmts) != 1 {
+						t.Fatal("factory argument captured outside repeated call")
+					}
+					checked := expansion.Stmts[0].(*ast.ForStmt)
+					if checked.Body.Stmts[0].(*ast.LetDecl).Value != sourceLoop.Iterable {
+						t.Fatal("producer call replaced instead of checked unchanged")
+					}
+				}
+			}
+		})
+	}
 }
 
 func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string) *analyzer {

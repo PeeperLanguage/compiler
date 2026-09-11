@@ -233,6 +233,68 @@ fn Use(alias: Choice<MyInt>, canonical: Choice<i32>) {}`
 	}
 }
 
+func TestBindCompletesGenericArgumentDependencies(t *testing.T) {
+	for _, source := range []string{
+		`type Early = Box<Maybe>; struct Box<T> { value: T } type Maybe = ?Later; type Later = ?i32;`,
+		`type Early = Box<Maybe>; struct Box<T> { value: T } type Maybe = Optional<Later>; type Optional<T> = ?T; type Later = ?i32;`,
+		`type Early = Box<Maybe>; type Maybe = ?Later; struct Box<Later> { value: Later } type Later = ?i32;`,
+		`struct Node { link: ?Link } type Link = ?*Node; type Early = Box<Maybe>; struct Box<T> { value: T } type Maybe = ?i32;`,
+		`type Link = ?*Node; struct Node { link: ?Link } type Early = Box<Maybe>; struct Box<T> { value: T } type Maybe = ?i32;`,
+		`type Linked = Node<i32>; struct Node<T> { link: ?Link } type Link = ?*Node<i32>; type Early = Box<Maybe>; struct Box<T> { value: T } type Maybe = ?i32;`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			const filePath = "binder_forward_optional_test" + peeper.SourceExt
+			source += ` fn Use(early: Early, canonical: Box<?i32>) {}`
+			diag := diagnostics.NewDiagnosticBag()
+			ctx := project.New(".", peeper.SourceExt, diag)
+			module := &project.Module{
+				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
+				FilePath: filePath, Content: source,
+				AST:     parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
+				Imports: make(map[string]project.ResolvedImport),
+			}
+			collector.Collect(ctx, module)
+			Bind(ctx, module)
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+			use, ok := module.ModuleScope.LookupLocal("Use")
+			if !ok {
+				t.Fatal("missing Use function")
+			}
+			fn := use.Type.(*typeinfo.FuncType)
+			if typeinfo.Unalias(fn.Params[0]) != fn.Params[1] {
+				t.Fatal("forward alias split canonical generic instance")
+			}
+			field := typeinfo.Underlying(fn.Params[0]).(*typeinfo.StructType).Fields[0].Type
+			optional, ok := typeinfo.Unalias(field).(*typeinfo.OptionalType)
+			if !ok || typeinfo.TypeText(optional.Inner) != "i32" {
+				t.Fatalf("field = %s, want one optional i32", typeinfo.TypeText(field))
+			}
+			seen := make(map[typeinfo.Type]bool)
+			var check func(typeinfo.Type)
+			check = func(typ typeinfo.Type) {
+				if typ == nil || seen[typ] {
+					return
+				}
+				seen[typ] = true
+				if optional, ok := typ.(*typeinfo.OptionalType); ok {
+					if _, nested := typeinfo.Unalias(optional.Inner).(*typeinfo.OptionalType); nested {
+						t.Error("completed type retains nested optional carriers")
+					}
+				}
+				typeinfo.ForEachChild(typ, func(child typeinfo.TypeChild) bool {
+					check(child.Type)
+					return true
+				})
+			}
+			for _, sym := range module.ModuleScope.Symbols() {
+				check(sym.Type)
+			}
+		})
+	}
+}
+
 func TestBindRejectsExpandingGenericRecursion(t *testing.T) {
 	if os.Getenv("PEEPER_TEST_EXPANDING_GENERIC_RECURSION") == "1" {
 		tests := []struct {

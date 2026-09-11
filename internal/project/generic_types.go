@@ -1,6 +1,7 @@
 package project
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,7 @@ type namedTypeDeclaration struct {
 
 type namedTypeInstance struct {
 	ownerModuleID moduleid.ID
+	base          *typeinfo.DefinedType
 	typ           *typeinfo.DefinedType
 	ready         chan struct{}
 	complete      bool
@@ -138,6 +140,7 @@ func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, argument
 	// applications resolve back to this exact object.
 	ctx.typeInstances[identity] = namedTypeInstance{
 		ownerModuleID: declarationModule.ID,
+		base:          base,
 		typ:           instance,
 		ready:         make(chan struct{}),
 	}
@@ -149,18 +152,74 @@ func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, argument
 		applicationText:     applicationText,
 		node:                node,
 	})
-	opts := TypeSyntaxOptions(ctx, declarationModule, nil, true)
-	opts.TypeParameters = typeinfo.TypeParameterBindings(base.TypeParameters, canonicalArguments)
-	opts.Instantiate = func(nestedBase *typeinfo.DefinedType, nestedArguments []typeinfo.Type, nestedNode ast.TypeExpr) typeinfo.Type {
-		return ctx.instantiateType(nestedBase, nestedArguments, nestedNode, chain)
-	}
-	instance.Underlying = typeinfo.TypeFromSyntax(declaration.syntax.UnderlyingType(), opts)
+	instance.Underlying = ctx.typeInstanceUnderlying(declarationModule, declaration, instance, chain)
 	valid := !typeinfo.ContainsInvalid(instance.Underlying)
 	ctx.finishTypeInstance(identity, instance, valid)
 	if !valid {
 		return &typeinfo.InvalidType{}
 	}
 	return instance
+}
+
+func (ctx *CompilerContext) typeInstanceUnderlying(declarationModule *Module, declaration namedTypeDeclaration, instance *typeinfo.DefinedType, chain []typeInstantiationFrame) typeinfo.Type {
+	opts := TypeSyntaxOptions(ctx, declarationModule, nil, true)
+	opts.TypeParameters = typeinfo.TypeParameterBindings(declaration.base.TypeParameters, instance.TypeArguments)
+	opts.Instantiate = func(nestedBase *typeinfo.DefinedType, nestedArguments []typeinfo.Type, nestedNode ast.TypeExpr) typeinfo.Type {
+		return ctx.instantiateType(nestedBase, nestedArguments, nestedNode, chain)
+	}
+	return typeinfo.TypeFromSyntax(declaration.syntax.UnderlyingType(), opts)
+}
+
+// CompleteTypeInstances rebuilds cached instances in place after binder fills
+// every shell in a legal declaration cycle. Pointer identity remains stable for
+// recursive references and existing cache consumers.
+func (ctx *CompilerContext) CompleteTypeInstances(bases []*typeinfo.DefinedType) {
+	if ctx == nil || len(bases) == 0 {
+		return
+	}
+	selected := make(map[*typeinfo.DefinedType]bool, len(bases))
+	for _, base := range bases {
+		if base != nil && len(base.TypeParameters) > 0 {
+			selected[base] = true
+		}
+	}
+	if len(selected) == 0 {
+		return
+	}
+
+	ctx.mu.RLock()
+	identities := make([]string, 0)
+	for identity, cached := range ctx.typeInstances {
+		if cached.complete && cached.typ != nil && selected[cached.base] {
+			identities = append(identities, identity)
+		}
+	}
+	ctx.mu.RUnlock()
+	slices.Sort(identities)
+
+	for _, identity := range identities {
+		ctx.mu.RLock()
+		cached := ctx.typeInstances[identity]
+		declarationModule := ctx.typeDeclarations[cached.base.Identity]
+		declaration := namedTypeDeclaration{}
+		if declarationModule != nil {
+			declaration = declarationModule.namedTypeDeclarations[cached.base.Identity]
+		}
+		ctx.mu.RUnlock()
+		if declarationModule == nil || declaration.syntax == nil || declaration.base != cached.base {
+			continue
+		}
+		chain := []typeInstantiationFrame{{
+			declarationIdentity: cached.base.Identity,
+			applicationIdentity: identity,
+			applicationText:     cached.typ.Text(),
+			node:                declaration.syntax.UnderlyingType(),
+		}}
+		underlying := ctx.typeInstanceUnderlying(declarationModule, declaration, cached.typ, chain)
+		if !typeinfo.ContainsInvalid(underlying) {
+			cached.typ.Underlying = underlying
+		}
+	}
 }
 
 // finishTypeInstance publishes or removes one provisional cache entry and

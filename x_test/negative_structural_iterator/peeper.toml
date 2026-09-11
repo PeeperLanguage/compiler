@@ -1,0 +1,8 @@
+name = "negative_structural_iterator"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["must return an optional item", "provide an item, not an index", "mutable", "cannot iterate over", "cannot be used as bool", "maintain a separate counter", "explicit call returning an optional item", "a bare optional value is not a producer"]
+stderr_excludes = ["structural iteration", "local concrete cursor", "scalar items", "$for."]

@@ -438,6 +438,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 		module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 			MatchCases:          module.Typechecking.MatchCases,
 			LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
+			CheckedIterations:   module.Typechecking.CheckedIterations,
 		})
 		// Structure is checkable regardless of source validity: CFG construction
 		// promises the same topology for a program that will not compile, and a

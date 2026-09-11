@@ -42,6 +42,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
+		CheckedIterations:   module.Typechecking.CheckedIterations,
 	})
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -134,6 +135,31 @@ func describe(op effect.Op) string {
 		return "iterate " + op.Place.Root.Name
 	}
 	return "unknown"
+}
+
+func TestCallIterationPublishesOrdinaryReceiverCall(t *testing.T) {
+	result, module := buildEffects(t, `struct Cursor {}
+fn (self: &mut Cursor) Next() -> ?i32 { return none; }
+fn probe() {
+	let mut cursor = Cursor.{};
+	for item in cursor.Next() { if item == 1 { continue; } }
+}`)
+	calls, ends, borrows := 0, 0, 0
+	for _, op := range publishedOps(t, result, module, "probe") {
+		switch op {
+		case "call":
+			calls++
+		case "end":
+			ends++
+		case "borrow cursor":
+			borrows++
+		case "iterate cursor":
+			t.Fatal("custom iteration acquired a builtin sequence lifetime")
+		}
+	}
+	if calls != 1 || ends != 1 || borrows != 1 {
+		t.Fatalf("advancement effects: calls=%d ends=%d borrows=%d", calls, ends, borrows)
+	}
 }
 
 func TestBuildPublishesProjectionOperands(t *testing.T) {

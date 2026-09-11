@@ -42,9 +42,61 @@ func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
+		CheckedIterations:   module.Typechecking.CheckedIterations,
 	})
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
+}
+
+func TestCallIterationPublishesCheckedOperations(t *testing.T) {
+	module, diag := checkFlowSource(t, `struct Cursor { value: i32, limit: i32 }
+fn (self: &mut Cursor) Next() -> ?i32 { return none; }
+fn main() {
+	let mut cursor = Cursor.{ value = 0, limit = 3 };
+	for cursor in cursor.Next() {
+		let item: i32 = cursor;
+		let mut inner = Cursor.{ value = item, limit = 3 };
+		for value in inner.Next() { if value == 1 { continue; } }
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if len(module.Typechecking.CheckedIterations) != 2 || len(module.Typechecking.ForIterations) != 0 {
+		t.Fatalf("iteration evidence = %#v", module.Typechecking)
+	}
+	if err := module.CFG.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for id, expansion := range module.Typechecking.CheckedIterations {
+		loop := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
+		if module.TypedASTNodes[expansion.ID()] != expansion {
+			t.Fatal("source scope not indexed")
+		}
+		if module.TypedASTNodes[id] != loop || loop.Iterable != nil || loop.Cond != nil {
+			t.Fatalf("checked loop not indexed: %#v", loop)
+		}
+		result := loop.Body.Stmts[0].(*ast.LetDecl)
+		call := result.Value.(*ast.CallExpr)
+		selector := call.Callee.(*ast.SelectorExpr)
+		if module.Bindings.NodeSymbols[selector.Name.ID()] == nil {
+			t.Fatal("missing static method evidence")
+		}
+		if mutable, found := module.Typechecking.ReferenceArguments[selector.Expr.ID()]; !found || !mutable {
+			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
+		}
+		body := loop.Body.Stmts[2].(*ast.BlockStmt)
+		item := body.Stmts[0].(*ast.LetDecl)
+		if got := typeinfo.TypeText(module.Bindings.NodeSymbols[item.Name.ID()].Type); got != "i32" {
+			t.Fatalf("item type = %s", got)
+		}
+		ast.Inspect(expansion, func(node ast.Node) bool {
+			if node != nil && module.TypedASTNodes[node.ID()] == nil {
+				t.Errorf("generated node %T/%d not indexed", node, node.ID())
+			}
+			return true
+		})
+	}
 }
 
 func TestNamedEnumCaseTestsRefineExactFields(t *testing.T) {

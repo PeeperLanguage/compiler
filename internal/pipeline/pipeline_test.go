@@ -2604,8 +2604,9 @@ fn main() -> i32 {
 
 func TestPipelineAcceptsOptionalNarrowingAcrossCFGAndStablePlaces(t *testing.T) {
 	tests := []struct {
-		name string
-		src  string
+		name          string
+		src           string
+		redundantInfo bool
 	}{
 		{
 			name: "polarity and reversed operands",
@@ -2668,31 +2669,33 @@ fn fields(outer: Outer, holder: Holder, index: usize) -> i32 {
 }`,
 		},
 		{
-			name: "nested optional proofs",
+			name:          "redundant optional needs one proof",
+			redundantInfo: true,
 			src: `fn nested(value: ? ?i32) -> i32 {
 	if value != none {
-		if value != none {
-			return value;
-		}
+		return value;
 	}
 	return 0;
 }`,
 		},
 		{
-			name: "nested optional test in eager boolean",
+			name:          "redundant optional test in eager boolean",
+			redundantInfo: true,
 			src: `fn nested(value: ? ?i32, enabled: bool) -> bool {
 	return value != none && enabled;
 }`,
 		},
 		{
 			name: "nested inferred carrier and shadowed identity",
-			src: `fn inferred(value: ? ?i32) -> i32 {
+			src: `struct Holder { field: ?i32, fallback: i32 }
+
+fn inferred(value: ?Holder) -> i32 {
 	if value == none {
 		return 0;
 	}
-	let inner = value;
+	let inner = value.field;
 	if inner == none {
-		return 0;
+		return value.fallback;
 	}
 	return inner;
 }
@@ -2919,6 +2922,9 @@ fn valid(owner: ?*Holder) -> i32 {
 			if diag.HasErrors() {
 				t.Fatalf("optional narrowing failed:\n%s", diag.EmitAllToString())
 			}
+			if got := hasDiagnosticCode(diag, diagnostics.InfoRedundantOptional); got != tt.redundantInfo {
+				t.Fatalf("redundant optional info = %v, want %v:\n%s", got, tt.redundantInfo, diag.EmitAllToString())
+			}
 		})
 	}
 }
@@ -2949,18 +2955,20 @@ fn invalid(value: ?Holder) -> i32 { return value.Get(); }`,
 }`,
 		},
 		{
-			name: "join recheck clears stale nested payload evidence",
+			name: "join recheck clears stale field payload evidence",
 			code: "T0041",
-			src: `fn invalid(value: ? ?i32) -> i32 {
-	if value != none {
+			src: `struct Holder { field: ?i32, other: ?i32 }
+
+fn invalid(value: Holder) -> i32 {
+	if value.field != none {
 	} else {
 		print(0);
 		print(1);
 	}
-	if value == none {
+	if value.other == none {
 		return 0;
 	}
-	return value;
+	return value.field;
 }`,
 		},
 		{

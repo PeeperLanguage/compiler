@@ -236,6 +236,12 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 		}
 		out.Stmts = append(out.Stmts, ifStmt)
 	case *ast.ForStmt:
+		if node.Iterable != nil {
+			if checked := module.Typechecking.CheckedIterations[node.ID()]; checked != nil {
+				appendStmt(module, scope, out, checked, returnType, ctx)
+				return
+			}
+		}
 		out.Stmts = append(out.Stmts, lowerForStmt(ctx, module, scope, node, returnType))
 	case *ast.MatchStmt:
 		evidence, found := module.Typechecking.Matches[node.ID()]

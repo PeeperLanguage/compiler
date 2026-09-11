@@ -146,7 +146,14 @@ type Result struct {
 	CaseTests                map[ast.NodeID]CaseTest
 	Matches                  map[ast.NodeID]Match
 	ForIterations            map[ast.NodeID]ForIteration
-	ExprTypes                map[ast.NodeID]typeinfo.Type
+	// CheckedIterations contains optional-producing calls expanded into ordinary checked
+	// statements before CFG/flow/effects/ownership. These loops have no numeric
+	// cursor and never appear in the builtin ForIterations table. Source syntax
+	// stays unchanged; CFG, typed-node indexing and HIR consume this same tree.
+	// Each block contains the checked loop, which retains the source loop's ID.
+	// The block has its own scope ID; the whole call runs inside the loop.
+	CheckedIterations map[ast.NodeID]*ast.BlockStmt
+	ExprTypes         map[ast.NodeID]typeinfo.Type
 	// ValueUses classifies every ownership-relevant value use, keyed by the
 	// used expression's node ID. Reference parameters publish UseRead; the
 	// borrow machinery in ownership still governs them.
@@ -174,6 +181,7 @@ func New() *Result {
 		CaseTests:                make(map[ast.NodeID]CaseTest),
 		Matches:                  make(map[ast.NodeID]Match),
 		ForIterations:            make(map[ast.NodeID]ForIteration),
+		CheckedIterations:        make(map[ast.NodeID]*ast.BlockStmt),
 		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
 		ValueUses:                make(map[ast.NodeID]typeinfo.UseKind),
 		ReferenceArguments:       make(map[ast.NodeID]bool),

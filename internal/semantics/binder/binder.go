@@ -24,11 +24,18 @@ func Bind(ctx *project.CompilerContext, module *project.Module) {
 }
 
 func (b *binder) bindModule() {
-	ast.ForEachDecl(b.module.AST, func(decl ast.Decl) bool {
-		if typeDecl, ok := decl.(ast.TypeDecl); ok {
-			b.bindTypeDecl(typeDecl)
-			return true
+	ordered, completionCycle := b.typeDeclarationOrder()
+	for _, decl := range ordered {
+		b.bindTypeDecl(decl)
+	}
+	completed := make([]*typeinfo.DefinedType, 0, len(completionCycle))
+	for _, decl := range completionCycle {
+		if defined := b.bindTypeDecl(decl); defined != nil {
+			completed = append(completed, defined)
 		}
+	}
+	b.ctx.CompleteTypeInstances(completed)
+	ast.ForEachDecl(b.module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
 			b.bindFunctionDecl(node)
@@ -42,7 +49,6 @@ func (b *binder) bindModule() {
 	slices.SortFunc(b.module.Bindings.OperationFunctions, func(left, right *symbols.Symbol) int {
 		return cmp.Compare(left.Name, right.Name)
 	})
-	b.validateTypeDeclCycles()
 }
 
 // Bind function and top-level declaration signatures into module scope.
@@ -84,18 +90,18 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 
 // Bind named type declarations using one stable shell per symbol.
 // Recursive self-references must see same DefinedType object.
-func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
+func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
 	if b == nil || b.module == nil || decl == nil {
-		return
+		return nil
 	}
 	name := decl.DeclName()
 	typ := decl.UnderlyingType()
 	if name == nil || name.Name == "" {
-		return
+		return nil
 	}
 	sym := b.moduleScopeSymbol(name.Name)
 	if sym == nil {
-		return
+		return nil
 	}
 	defined, ok := sym.Type.(*typeinfo.DefinedType)
 	if ok && defined != nil {
@@ -112,7 +118,7 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) {
 	opts := project.TypeSyntaxOptions(b.ctx, b.module, nil, true)
 	opts.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
 	defined.Underlying = typeinfo.TypeFromSyntax(typ, opts)
-	b.registerTypeDecl(name.Name, typ)
+	return defined
 }
 
 func (b *binder) moduleScopeSymbol(name string) *symbols.Symbol {

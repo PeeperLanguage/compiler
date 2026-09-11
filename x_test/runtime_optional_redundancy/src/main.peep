@@ -1,0 +1,51 @@
+type Maybe = ?i32;
+type Optional<T> = ?T;
+
+type Early = Box<i32>;
+struct Box<T> { value: ?Later }
+type Later = ?i32;
+
+fn Read(box: &Early) -> i32 {
+    if box.value == none { return 0; }
+    return box.value;
+}
+
+type Linked = Node<i32>;
+struct Node<T> { link: ?Link }
+type Link = ?*Node<i32>;
+
+fn TakeLink(link: ?Link) -> *Node<i32> {
+    if link == none { return alloc(Node<i32>.{ link = none }); }
+    return link;
+}
+
+fn Some() -> ?i32 { return 42; }
+fn Wrapped() -> ?Maybe { return Some(); }
+fn Absent() -> ?Optional<?i32> { return none; }
+
+fn main() -> i32 {
+    let double: ??i32 = Wrapped();
+    if double == none { return 1; }
+    if double != 42 { return 2; }
+
+    let triple: ???i32 = Some();
+    if triple == none { return 3; }
+    if triple != 42 { return 4; }
+
+    let spaced: ? ?i32 = Some();
+    if spaced == none { return 5; }
+    if spaced != 42 { return 6; }
+
+    let generic: Optional<?i32> = Wrapped();
+    if generic == none { return 7; }
+    if generic != 42 { return 8; }
+
+    let absent: ??i32 = Absent();
+    if absent != none { return 9; }
+
+    let present = Early.{ value = 42 };
+    if Read(&present) != 42 { return 10; }
+    let empty = Early.{ value = none };
+    if Read(&empty) != 0 { return 11; }
+    return 0;
+}

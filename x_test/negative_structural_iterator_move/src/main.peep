@@ -1,0 +1,14 @@
+struct Consumed { value: i32, limit: i32 }
+fn (self: Consumed) Next() -> ?i32 { return self.value; }
+
+struct Cursor { value: i32, limit: i32 }
+fn (self: &mut Cursor) Next() -> ?i32 { return none; }
+fn Consume(cursor: Cursor) {}
+
+fn main() {
+    let consumed = Consumed.{ value = 0, limit = 2 };
+    for item in consumed.Next() {}
+    let mut moved = Cursor.{ value = 0, limit = 2 };
+    Consume(moved);
+    for item in moved.Next() {}
+}

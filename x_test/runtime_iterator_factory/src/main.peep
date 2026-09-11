@@ -1,0 +1,93 @@
+struct Argument { held: *i32, serial: i32 }
+struct Counts { made: i32, ticks: i32, phase: i32, errors: i32 }
+struct Cursor { value: i32, limit: i32, calls: i32 }
+
+fn Make(counts: &mut Counts) -> Argument {
+    if counts.phase == 1 { counts.errors = counts.errors + 1; }
+    counts.phase = 1;
+    counts.made = counts.made + 1;
+    return Argument.{ held = alloc(7), serial = counts.made };
+}
+
+fn Tick(counts: &mut Counts) -> i32 {
+    if counts.phase != 1 { counts.errors = counts.errors + 1; }
+    counts.phase = 2;
+    counts.ticks = counts.ticks + 1;
+    return counts.made;
+}
+
+// The owned argument uses ordinary parameter cleanup on present and none returns.
+fn Produce(argument: Argument, tick: i32, cursor: &mut Cursor, offset: i32 = 0) -> ?i32 {
+    cursor.calls = cursor.calls + 1;
+    if argument.serial != tick { return 1000; }
+    if cursor.value >= cursor.limit { return none; }
+    let value = cursor.value;
+    cursor.value = cursor.value + 1;
+    return value + offset;
+}
+
+// Separate loop spellings are deliberate: compare normal calls against expansion.
+fn Run(expanded: bool, mode: i32, limit: i32, counts: &mut Counts) -> i32 {
+    let mut cursor = Cursor.{ value = 0, limit = limit, calls = 0 };
+    let mut total: i32 = 0;
+    if expanded {
+        for item in Produce(Make(counts), Tick(counts), &mut cursor) {
+            if item == 1000 || cursor.calls > 10 { return -100; }
+            let owned = alloc(item);
+            if mode == 1 { return item + 10; }
+            if mode == 2 { break; }
+            if item == 1 { continue; }
+            total = total + item;
+        }
+    } else {
+        for {
+            let result = Produce(Make(counts), Tick(counts), &mut cursor);
+            if result == none { break; }
+            let item: i32 = result;
+            if item == 1000 || cursor.calls > 10 { return -100; }
+            let owned = alloc(item);
+            if mode == 1 { return item + 10; }
+            if mode == 2 { break; }
+            if item == 1 { continue; }
+            total = total + item;
+        }
+    }
+    return total * 100 + cursor.calls;
+}
+
+fn NestedReturn(counts: &mut Counts) -> i32 {
+    let mut outer = Cursor.{ value = 0, limit = 2, calls = 0 };
+    for left in Produce(Make(counts), Tick(counts), &mut outer) {
+        let mut inner = Cursor.{ value = 0, limit = 3, calls = 0 };
+        for right in Produce(Make(counts), Tick(counts), &mut inner) {
+            return left + right;
+        }
+    }
+    return -1;
+}
+
+fn main() -> i32 {
+    for mode in 0..3 {
+        let mut expanded = Counts.{ made = 0, ticks = 0, phase = 0, errors = 0 };
+        let mut explicit = Counts.{ made = 0, ticks = 0, phase = 0, errors = 0 };
+        let actual = Run(true, mode, 4, &mut expanded);
+        let expected = Run(false, mode, 4, &mut explicit);
+        if actual != expected || actual < 0 { return 1; }
+        if expanded.made != explicit.made || expanded.ticks != explicit.ticks { return 2; }
+        if expanded.errors != 0 || explicit.errors != 0 || expanded.phase != 2 { return 3; }
+        if mode == 0 {
+            if actual != 505 || expanded.made != 5 || expanded.ticks != 5 { return 4; }
+        } else {
+            if expanded.made != 1 || expanded.ticks != 1 { return 5; }
+            if mode == 1 && actual != 10 { return 6; }
+            if mode == 2 && actual != 1 { return 7; }
+        }
+    }
+    let mut empty = Counts.{ made = 0, ticks = 0, phase = 0, errors = 0 };
+    if Run(true, 0, 0, &mut empty) != 1 { return 8; }
+    if empty.made != 1 || empty.ticks != 1 || empty.errors != 0 { return 9; }
+    let mut nested = Counts.{ made = 0, ticks = 0, phase = 0, errors = 0 };
+    if NestedReturn(&mut nested) != 0 { return 10; }
+    if nested.made != 2 || nested.ticks != 2 || nested.errors != 0 { return 11; }
+    return 0;
+}

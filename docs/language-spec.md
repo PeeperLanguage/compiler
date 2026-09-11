@@ -91,6 +91,44 @@ must be ordered, within the byte length, and on UTF-8 codepoint boundaries.
 Invalid bounds or boundaries trap at runtime. The owner remains responsible
 for backing storage and is dropped exactly once.
 
+## Iteration
+
+`for item in source` supports built-in ranges and sequences. Their source is
+evaluated once, including when a call produces a sequence.
+
+Custom iteration uses an explicit call returning `?T`:
+
+```peep
+fn Produce(counter: &mut Counter, limit: i32) -> ?i32 {
+    if counter.value >= limit { return none; }
+    let value = counter.value;
+    counter.value = counter.value + 1;
+    return value;
+}
+
+for item in Produce(&mut counter, 10) {
+    println(item);
+}
+```
+
+Every attempt evaluates the entire call, including its callee, receiver, and
+arguments, using ordinary call evaluation order. A present result binds an item
+of type `T`; `none` terminates the loop. The terminating attempt also evaluates
+all arguments. `continue` starts another attempt; `break` and `return` do not.
+No source or argument is implicitly captured for the lifetime of the loop.
+
+Free functions, explicit method calls of any name (for example
+`counter.Take(10)`), and pipe calls (`counter |> Produce(10)`) use canonical call
+checking. There is no implicit `Next` method protocol or added runtime interface
+protocol. Explicit calls retain ordinary dispatch, argument, move, borrow,
+reference-provenance, effect, and cleanup semantics.
+
+Custom loops provide one item binding, not an index. Maintain a separate counter
+when needed. Bare optional values, function values without a call, and objects
+with a `Next` method are not producers. Write the call explicitly. Optionals are
+idempotent (`??T` is `?T`), so an optional result does not encode a separate
+optional item layer.
+
 ## Generic Named Types
 
 Structs, enums, interfaces, and transparent type aliases may declare type
@@ -116,16 +154,19 @@ and monomorphization are not part of current language surface.
 ## Optional Values And Flow Narrowing
 
 `?T` contains either one `T` value or `none`. `none` is valid only where an
-optional type is expected. A `T` value promotes to `?T`; this permits one-layer
-promotion such as `?T` to `??T` when the outer optional is expected. Assigning
+optional type is expected. A `T` value promotes to `?T`. Optionals are
+idempotent: `??T` and `? ?T` mean `?T`, with no extra absence state. Explicit
+syntactic nesting emits informational diagnostic `S0006`, asking to remove each
+redundant `?`. Nesting revealed through aliases, generic substitution, or
+wrapping an optional function result silently canonicalizes to `?T`. Assigning
 or passing a whole optional to an explicit optional destination preserves its
 carrier type instead of reading its payload.
 
 Comparing a stable optional place with `none` establishes presence on one CFG
 edge. `x != none` proves presence on the true edge; `x == none` proves presence
 on the false edge. Reversed operands have identical meaning. Each proof unwraps
-one optional layer, so nested optionals require one proof per layer. A proven
-ordinary value use has payload type `T`; an unproven use retains `?T` and cannot
+the optional carrier; redundant optional markers do not require extra proofs.
+A proven ordinary value use has payload type `T`; an unproven use retains `?T` and cannot
 stand in for `T`.
 
 Stable places are variables, field and nested-field projections, constant-folded

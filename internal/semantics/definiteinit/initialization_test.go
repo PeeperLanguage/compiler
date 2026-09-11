@@ -42,6 +42,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
+		CheckedIterations:   module.Typechecking.CheckedIterations,
 	})
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
@@ -68,6 +69,20 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	})
 	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module
+}
+
+func TestCallIterationDoesNotGuaranteeEntry(t *testing.T) {
+	_, diag, _ := analyzeInitializationSource(t, `struct Cursor {}
+fn (self: &Cursor) Next() -> ?i32 { return none; }
+fn choose() -> i32 {
+	let cursor = Cursor.{};
+	let mut result: i32;
+	for item in cursor.Next() { result = item; }
+	return result;
+}`)
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "used before it's initialized") {
+		t.Fatalf("expected zero-entry uninitialized diagnostic:\n%s", diag.EmitAllToString())
+	}
 }
 
 func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
