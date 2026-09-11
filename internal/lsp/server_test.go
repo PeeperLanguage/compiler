@@ -97,7 +97,8 @@ func runTimedLSPChanges(t *testing.T, root, filePath, initial string, changes []
 			},
 			ContentChanges: []TextDocumentContentChangeEvent{{Text: text}},
 		})
-		time.Sleep(diagnosticsDebounceDelay + 25*time.Millisecond)
+		// Race-instrumented compilation can outlast the debounce interval.
+		time.Sleep(diagnosticsDebounceDelay + 250*time.Millisecond)
 	}
 	if err := inputWriter.Close(); err != nil {
 		t.Fatalf("close LSP input: %v", err)
