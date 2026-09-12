@@ -5,8 +5,7 @@ Read that document first: the goal is **not** to make every phase acknowledge ev
 syntax node. The goal is to edit the few owners of unique semantics and let canonical
 structure/evidence drive the rest.
 
-Mandatory repository policy remains [`RULES.md`](../../RULES.md); durable compiler
-principles remain [`COMPILER_GUIDELINES.md`](../../COMPILER_GUIDELINES.md).
+Mandatory engineering requirements live in [`RULES.md`](../../RULES.md); compiler design-review guidance lives in [`COMPILER_GUIDELINES.md`](../../COMPILER_GUIDELINES.md). Current architecture claims in this guide must be verified against source.
 
 ## The rule for every change
 

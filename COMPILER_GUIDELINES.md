@@ -1,29 +1,26 @@
 # Compiler Engineering Guidelines
 
-This document defines durable principles for implementing Peeper compiler code.
-It does not define language syntax, language semantics, package layout, or phase
-order.
+This document offers optional compiler-specific design-review heuristics. Mandatory requirements live in `RULES.md`. These heuristics do not define language syntax, semantics, package layout, phase order, or required representations.
 
-Repository authority is split deliberately:
+Guidance is split by concern:
 
-- [RULES.md](RULES.md) defines mandatory code quality, architecture, testing,
-  branch, and commit rules.
+- [RULES.md](RULES.md) defines mandatory, durable engineering requirements.
 - [AGENTS.md](AGENTS.md) defines agent workflow and review gates.
 - [docs/language-spec.md](docs/language-spec.md) and focused design documents
-  define language behavior.
-- Current source, verified dependencies, and approved design plans determine
-  pipeline order.
+  record approved language intent.
+- Architecture maps record current source structure.
+
+None of these documents proves technical correctness through precedence. Verify claims against explicit requirements, source, tests, and engineering purpose.
 
 When this document conflicts with verified compiler correctness or an approved
 design, do not follow it silently. Report conflict and evidence so maintainer can
 decide whether guideline or design must change.
 
-Current ownership, pointer, copy, and optional design lives in
-[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md). The implemented
-compiler architecture, canonical structural mechanisms, semantic evidence boundaries,
-and contributor extension rules live in
-[docs/compiler-architecture.md](docs/compiler-architecture.md). Migration history and
-supporting analysis live under
+Current ownership, pointer, copy, and optional design is recorded in
+[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md). Current compiler
+structure and semantic evidence boundaries are described in
+[docs/compiler-architecture.md](docs/compiler-architecture.md). Verify both against
+source. Migration history and supporting analysis live under
 [docs/compiler-framework/](docs/compiler-framework/README.md).
 
 ## 1. Priorities
@@ -42,8 +39,7 @@ known to require replacement are not.
 
 ## 2. Establish Ownership Before Implementation
 
-Every compiler responsibility needs one canonical owner. Before changing code,
-identify:
+When one owner would prevent divergent decisions, identify:
 
 - input artifact;
 - output artifact or observable effect;
@@ -60,9 +56,9 @@ contract.
 Package names should describe current responsibility. Exact directory layout may
 change as ownership becomes clearer; this document does not freeze it.
 
-## 3. Preserve Representation Boundaries
+## 3. Evaluate Representation Boundaries
 
-Each representation should contain facts appropriate to its layer:
+A useful starting point is keeping facts near code that can establish them. Current examples are:
 
 - lexer produces tokens;
 - parser and AST preserve source syntax and locations;
@@ -71,17 +67,11 @@ Each representation should contain facts appropriate to its layer:
 - lowering preserves established facts while changing representation;
 - backend layout and code generation own physical representation.
 
-Do not put semantic conclusions into syntax nodes for convenience. Prefer
-explicit semantic artifacts or side tables keyed by stable identity.
+Treat semantic conclusions stored in syntax nodes as coupling risk. Explicit semantic artifacts or side tables keyed by stable identity are often clearer, but compare them with direct alternatives.
 
-Later stages must consume evidence already established by an earlier owner.
-They must not rescan source to rediscover method selection, symbol identity,
-type decisions, ownership facts, or other resolved semantics.
+Repeatedly rediscovering already established method selection, symbol identity, type decisions, or ownership facts is also coupling risk. Prefer reuse when one producer can publish trustworthy evidence without creating a heavier boundary.
 
-Semantic identity and physical layout are separate. Source-visible field order,
-symbol identity, and diagnostic mapping remain stable even when backend layout
-uses different slots or offsets. Layout must provide explicit mapping rather
-than mutating semantic order.
+Current compiler separates semantic identity from physical layout. Any redesign must preserve source-visible field meaning, symbol identity, diagnostics, and backend correctness even if mapping mechanism changes.
 
 ## 4. Derive Phase Order From Dependencies
 
@@ -110,46 +100,27 @@ arbitrary total order to hide dependency.
 
 ## 5. Make Control Flow Explicit
 
-Control-flow-sensitive rules belong on a representation that understands
-reachability and predecessors. Examples include return completeness, definite
-initialization, ownership state, and tagged-variant narrowing.
+Control-flow-sensitive rules need evidence about reachability and predecessors. Current examples include return completeness, definite initialization, ownership state, and tagged-variant narrowing.
 
-Control-flow edges must carry semantic kinds when analyses depend on branch
-meaning. Consumers must not infer true/false, return, unwind, or cleanup meaning
-from successor order.
+When analyses depend on true/false, return, unwind, or cleanup meaning, represent that meaning explicitly rather than relying on successor order.
 
-Terminating paths must not contribute facts to continuation joins. Unreachable
-paths must not corrupt facts for reachable paths.
+Any representation must keep terminating paths from contributing facts to continuation joins and unreachable paths from corrupting reachable facts.
 
-CFG topology should remain a control-flow artifact. Analysis outputs such as
-cleanup plans or narrowing facts belong to their analyses unless they are part
-of graph topology itself.
+Current CFG separates topology from cleanup and narrowing outputs. Keep or replace that split based on which ownership makes invariants easiest to understand and validate.
 
-Tagged-variant narrowing produces `Module.Flow` after CFG construction and
-before definite initialization and ownership. Downstream phases query effective
-per-use types and consume recorded case-test, payload, field, match, and origin
-evidence. They must not re-detect `none`, `is`, variant constructors, or match
-patterns from AST shape or backend text. Optional syntax and named enums share
-case-set flow without losing distinct source semantics.
+Current tagged-variant narrowing flow is documented in architecture maps. When reviewing it, verify that downstream consumers use established evidence rather than independently re-detecting equivalent source facts. Shared representation is useful only while optional syntax and named enums retain their distinct semantics.
 
 ## 6. Centralize Structural Traversal
 
 Do not duplicate exhaustive AST, HIR, MIR, expression, place, type, or member
 walks for analyses that only need traversal.
 
-Node-owning packages should expose canonical traversal so adding a node has one
-structural update point. Prefer designs that make missing child coverage fail
-compilation or a focused completeness test. Unknown sealed node kinds should
-fail clearly rather than be skipped silently.
+A node-owning package can expose structural traversal when this removes repeated recursion. Prefer designs that make missing child coverage fail compilation or a focused completeness test. Unknown closed node kinds should fail clearly rather than be skipped silently.
 
 Semantic switches remain appropriate when each node kind requires distinct
 behavior. Centralize structural recursion, not semantic decisions.
 
-Current canonical mechanisms are `ast.Inspect` for AST recursion,
-`typeinfo.ForEachChild` for semantic-type structure, `place.Project`/`Decompose`
-for storage projections, `graph.Directed` for topology, and `graph.Worklist` for
-fixed-point scheduling. Analyses should extend these owners instead of creating a
-parallel walk, adjacency store, or queue/queued-set implementation.
+Before adding traversal, projection, graph, or fixed-point machinery, inspect current mechanisms documented in architecture maps. Reuse them when contracts match; replace or keep local logic when evidence shows a clearer design.
 
 Before adding a walker or lookup:
 
@@ -159,9 +130,7 @@ Before adding a walker or lookup:
 4. extend canonical implementation when behavior is shared;
 5. keep local logic only when semantics genuinely differ.
 
-Do not introduce a generic dataflow framework from similar-looking worklists
-alone. Extract one only after several analyses demonstrate stable shared solver
-mechanics without hiding their state, join, direction, edge, or diagnostic rules.
+Do not introduce a generic dataflow framework from similar-looking worklists alone. Compare alternatives first. Shared solver is justified only when several analyses demonstrate stable common mechanics without hiding state, join, direction, edge, or diagnostic rules.
 
 ## 7. Preserve Behavior During Refactors
 

@@ -183,6 +183,64 @@ func TestInitializationAcceptsDirectAssignment(t *testing.T) {
 	}
 }
 
+func TestInitializationRejectsProjectedWriteBeforeWholeAssignment(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "nested field",
+			source: `struct Inner { value: i32 }
+struct Outer { inner: Inner }
+fn choose() -> i32 {
+	let mut outer: Outer;
+	outer.inner.value = 7;
+	return 0;
+}`,
+		},
+		{
+			name: "constant index",
+			source: `fn choose() -> i32 {
+	let mut values: [2]i32;
+	values[0] = 7;
+	return 0;
+}`,
+		},
+		{
+			name: "runtime index",
+			source: `fn choose(index: i32) -> i32 {
+	let mut values: [2]i32;
+	values[index] = 7;
+	return 0;
+}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag, _ := analyzeInitializationSource(t, test.source)
+			if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
+				t.Fatalf("expected projected write diagnostic:\n%s", diag.EmitAllToString())
+			}
+			if output := diag.EmitAllToString(); !strings.Contains(output, "assign a complete value to this symbol before writing through a projection") {
+				t.Fatalf("projected write diagnostic lacks whole-value guidance:\n%s", output)
+			}
+		})
+	}
+}
+
+func TestInitializationAcceptsProjectedWriteAfterWholeAssignment(t *testing.T) {
+	_, diag, _ := analyzeInitializationSource(t, `struct Pair { left: i32, right: i32 }
+fn choose() -> i32 {
+	let mut pair: Pair;
+	pair = .{ left = 1, right = 2 };
+	pair.left = 7;
+	return pair.left;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestInitializationDefinesMatchPatternBindingOnCaseEdge(t *testing.T) {
 	result, diag, module := analyzeInitializationSource(t, `enum Result {
 	Ok: { value: i32 },

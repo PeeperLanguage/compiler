@@ -1,637 +1,198 @@
-# Coding Rules
+# Compiler Engineering Rules
 
-This file defines mandatory engineering rules for the `compiler` repository.
+This file defines mandatory, durable engineering requirements for the `compiler` repository.
 
-These rules apply to humans and agents. For agent workflow, see [AGENTS.md](./AGENTS.md). For Go-specific idioms and linter rules, see [go-style.md](./go-style.md).
+Guidance is separated by concern:
 
-If files conflict, use this order:
+- [`RULES.md`](./RULES.md): code quality, validation, branch, and commit requirements.
+- [`AGENTS.md`](./AGENTS.md): agent workflow, gates, local plans, and handoff requirements.
+- [`go-style.md`](./go-style.md): Go-specific idioms and linter guidance.
+- [`RULEBOOK.md`](./RULEBOOK.md): optional design-review questions.
+- [`docs/architecture/`](./docs/architecture/): source-verified snapshots of current implementation.
 
-1. `RULES.md` for repository code quality, compiler architecture, testing, branch, and commit rules.
-2. `go-style.md` for Go idioms and linter patterns.
-3. `AGENTS.md` for agent workflow only.
-4. Personal style skills for general preference only.
+No document's self-declared precedence proves a technical or semantic claim correct. When guidance conflicts, inspect explicit requirements, source behavior, tests, and engineering purpose; resolve conflict rather than silently choosing one file.
 
----
+## 1. Reuse before writing
 
-## 1) Core principle - no pass-through wrappers, no duplicated logic, no stale aliases
+Before adding, replacing, renaming, removing, or simplifying code, search for existing implementations, callers, tests, diagnostics, and related backend or phase behavior.
 
-Before creating, renaming, replacing, removing, or simplifying any function, search for existing similar code first.
+Use existing code directly when behavior is identical. Extend canonical owner when behavior is nearly identical and one implementation can remain clear.
 
-Use existing functions directly if behavior is identical.
+Do not add or keep:
 
-Do not add or keep a function that only forwards arguments or returns results unchanged.
+- pass-through wrappers;
+- old-name compatibility wrappers after local callers migrate;
+- aliases without present domain purpose;
+- signatures that retain ignored parameters unless a real interface or public API contract requires them;
+- duplicated semantic decisions;
+- one-field wrappers without present domain distinction, invariant, ownership boundary, or public API contract;
+- helpers used once unless they clarify genuinely complex logic or protect non-obvious invariant;
+- abstraction whose only purpose is avoiding call-site updates.
 
-Do not add struct which only has one single field. There is no point of that then. For future work, explicitly add comments so its not removed by later cleanup.
+Possible future work is not sufficient justification.
 
-Do not create aliases without any valid reason.
+## 2. Helpers and shared logic
 
-Do not keep an old local function name as a wrapper around a new canonical function.
+New helper is allowed only when it:
 
-Do not keep an old function signature while ignoring one or more parameters.
+- removes repeated logic used in at least two places;
+- centralizes domain logic that must stay consistent;
+- protects non-obvious invariant;
+- crosses real ownership, lifetime, phase, or API boundary; or
+- makes genuinely complex logic easier to read, test, or maintain.
 
-### Why
+Keep one canonical implementation when independent copies could diverge, especially for type relations and formatting, symbol lookup, name mangling, receiver or parameter shaping, ABI decisions, constant evaluation, diagnostics, and reusable semantic checks.
 
-Pass-through wrappers and stale aliases are harmful because they:
+Do not centralize merely because code looks similar. Distinct language semantics, transfer functions, validation responsibilities, or backend rules may need explicit implementations.
 
-- increase maintenance cost
-- add unnecessary call indirection
-- hide the real implementation
-- create multiple sources of truth
-- make behavior harder to audit
-- preserve obsolete API shapes after behavior has changed
-- can silently remove validation, diagnostics, mutation, caching, logging, or invariant checks
-- can mislead future developers into thinking old behavior still exists
+## 3. Function replacement and behavior preservation
 
-Code clarity matters more than reducing the number of edited call sites. If clean design requires updating all call sites, update all call sites.
+Before replacing or deleting function, identify everything it owns:
 
-### Good
+- validation and diagnostics;
+- mutation and caching;
+- normalization and conversion;
+- logging and fallback handling;
+- invariant checks;
+- phase-specific or backend-specific behavior.
 
-```go
-result := calculateTotal(items)
-```
+Then:
 
-```go
-func formatPrice(p float64) string {
-	return fmt.Sprintf("$%.2f", p)
-}
+1. update callers to canonical implementation;
+2. remove obsolete wrapper, alias, and unused parameters;
+3. preserve, move, or intentionally remove every owned behavior;
+4. add tests for preserved or deliberately changed behavior;
+5. explain intentional behavior changes in review and commit rationale.
 
-display1 := formatPrice(100)
-display2 := formatPrice(200)
-```
+Code is not equivalent merely because remaining return value matches. Never make code look simpler by hiding behavior.
 
-### Bad
+## 4. Architecture changes
 
-```go
-func getTotal(items []Item) int {
-	return calculateTotal(items) // pointless wrapper
-}
-```
+Compiler architecture is reviewable. Current phase order, package boundaries, result models, identity schemes, and lowering strategy belong in source-verified architecture documents, not permanent coding rules.
 
-```go
-display1 := fmt.Sprintf("$%.2f", price1) // duplicated formatting logic
-display2 := fmt.Sprintf("$%.2f", price2)
-```
+For architecture or compiler-flow changes:
 
----
+1. preserve observable language behavior and verified correctness invariants unless approved design change says otherwise;
+2. understand current producers, consumers, validation, diagnostics, mutation, caching, and failure paths before moving responsibility;
+3. keep one source of truth for semantic decision when recomputation can diverge;
+4. use explicit handoffs when they clarify real boundary, but do not require result model or interface where direct code is clearer;
+5. generate artifacts from real input transformations; never hardcode sample output or fake intermediate artifacts;
+6. avoid knowingly blocking approved near-term requirements without adding speculative abstractions for hypothetical features;
+7. record deliberate architecture changes and migration boundaries;
+8. track intentionally missing or tactical work in repository issue or design tracking, including affected behavior and completion or removal impact;
+9. validate every affected producer and consumer, including supported backends.
 
-## 2) Function replacement rule
+Do not bypass verified correctness boundary merely to reduce diff. Do not preserve boundary merely because existing document names it.
 
-When replacing an old function with a new canonical function:
+## 5. Naming, structure, and control flow
 
-1. Delete the old function if it becomes a pure wrapper.
-2. Update call sites to use the canonical function directly.
-3. Remove unused parameters from the call path.
-4. Verify whether the old function had extra behavior.
-5. Preserve, move, or intentionally remove that behavior with tests and commit rationale.
+Name code by domain behavior. Avoid vague names such as `handle`, `processData`, `helper`, `doThing`, and `fixStuff` unless domain gives them precise meaning.
 
-### Bad
+Prefer:
 
-```go
-func foldExpr(expr ir.Expr, diag *diagnostics.DiagnosticBag, env map[string]ir.ConstValue) ir.Expr {
-	return ir.FoldExpr(expr, env)
-}
-```
+- short, single-purpose functions;
+- flat control flow and early returns when clearer;
+- ordinary `if`, `switch`, and `for range` over clever compression;
+- data-driven handling when it removes repeated decisions;
+- explicit mutation, evaluation order, ownership transitions, and cleanup;
+- comments that explain why, invariant, boundary, or unusual tradeoff.
 
-This is forbidden even though the signatures differ.
+Do not comment what code already states.
 
-Problems:
+## 6. Change scope
 
-- It only calls `ir.FoldExpr`.
-- It keeps old local name `foldExpr`.
-- It ignores `diag`.
-- It falsely suggests diagnostics still happen.
-- It hides canonical implementation.
-- It avoids updating call sites.
-- It leaves stale API shape in codebase.
+Keep diffs minimal and task-focused. Do not mix unrelated refactors, scatter workarounds across callers, or add special cases that hide known defect.
 
-### Good
+Fix defect at source layer when possible. Use workaround only with explicit approval and tracked removal work.
 
-```go
-folded := ir.FoldExpr(expr, env)
-```
+Remove dead code and migration debris in same change. Do not trade correctness for fewer edited files.
 
-Use the canonical function directly at the call site.
+## 7. Errors, diagnostics, and panics
 
----
+Preserve root-cause context and error identity. When wrapping Go error, use `%w` so callers can use `errors.Is` and `errors.As`.
 
-## 3) Behavior preservation rule
+Reuse shared diagnostic codes, phrasing, and construction when failure class is same. Keep source location and relevant type/name context.
 
-A function is not equivalent to another function if it performs additional work.
+Return errors for expected failures such as invalid user input, missing files, parse/type/import failures, and expected validation failures.
 
-Additional work includes:
+Use `panic` only for broken internal invariants such as unreachable branches, impossible IR states, guaranteed-non-nil violations, or unhandled closed node/effect kinds. Never use panic instead of expected error propagation, and never silently ignore internal invariant violation.
 
-- diagnostics
-- validation
-- mutation
-- caching
-- logging
-- normalization
-- type conversion
-- fallback handling
-- invariant checks
-- backend-specific behavior
-- phase-specific compiler behavior
+## 8. Go style
 
-### Example
+Follow [`go-style.md`](./go-style.md). At minimum:
 
-```go
-func foldExpr(expr ir.Expr, diag *diagnostics.DiagnosticBag, env map[string]ir.ConstValue) ir.Expr {
-	folded := ir.FoldExpr(expr, env)
-	checkConstantArrayIndex(folded, diag)
-	return folded
-}
-```
+- run `gofmt` on touched Go files;
+- keep imports clean;
+- prefer simple, idiomatic Go;
+- avoid global mutable state unless ownership and synchronization require it;
+- avoid package variables unless they represent immutable definitions or approved shared state.
 
-This function is not equivalent to:
+## 9. Testing and validation
 
-```go
-ir.FoldExpr(expr, env)
-```
+Behavior changes require focused tests near changed subsystem and regression coverage for previous failure.
 
-because it also checks constant array indexes and emits diagnostics.
+Language behavior changes require:
 
-This replacement is unsafe:
+- positive Peeper source fixture under `x_test/`;
+- negative fixtures for rejected semantics when applicable;
+- focused Go tests for affected evidence and invariants;
+- validation with bundled `build/bin/peeper`.
 
-```go
-func foldExpr(expr ir.Expr, diag *diagnostics.DiagnosticBag, env map[string]ir.ConstValue) ir.Expr {
-	return ir.FoldExpr(expr, env)
-}
-```
+Additional requirements:
 
-It silently removes diagnostics while keeping the old function name and signature.
+- validate every affected backend;
+- validate every affected supported target width for target-sized integers, lengths, indexes, pointers, layouts, or ABI carriers;
+- ensure operands used by one backend instruction have matching backend types;
+- reject target-sized values that cannot be represented without loss; never rely on backend truncation to make invalid source compile;
+- require every semantically accepted construct, synthesized member, and conformance to be materializable by all affected lowering and backend stages;
+- when semantic discovery changes accepted methods or conformance, validate accepted/rejected behavior through all affected lowering and backend stages, not typechecker alone;
+- run `go run ./scripts/bundle.go` when packaging or bundled libraries may be affected.
 
-Before simplifying, deleting, or replacing such a function, verify one of the following:
+Minimum validation before commit:
 
-- extra behavior was moved to a new canonical location
-- extra behavior is obsolete and intentionally removed
-- all affected call sites now perform required behavior explicitly
-- focused regression test proves intended behavior
-- commit rationale explains why behavior changed
+- `gofmt` on touched Go files;
+- focused `go test` commands for touched packages;
+- `go test ./...` when change scope or repository policy requires full validation;
+- targeted source fixture or smoke validation for language/runtime changes;
+- affected backend and target validation;
+- bundle validation when packaging or built-ins change;
+- `git diff --check`.
 
-Never remove behavior just because the remaining function body looks simpler.
+Do not claim validation passed unless command ran and passed. Do not make tests pass by deleting meaningful checks.
 
----
+## 10. Commit and branch hygiene
 
-## 4) Helper creation rule
+Do not commit without explicit approval.
 
-A new helper is allowed only if at least one condition is true:
+Use imperative, present-tense commit subject under 72 characters. Keep one logical change per commit. Include only relevant source, tests, and documentation. Do not commit generated binaries, build artifacts, or temporary repro files.
 
-- It removes repeated logic used in 2 or more places.
-- It centralizes domain logic that must stay consistent.
-- It protects a non-obvious invariant.
-- It crosses a real architectural boundary.
-- It makes genuinely complex logic easier to read, test, or maintain.
+Mention important behavior changes and justify non-obvious helpers or compromises in commit body.
 
-Examples of domain logic that may deserve a helper:
+Do not implement feature directly on `main` or `master`. Use `feature/<name>` for features and `fix/<name>` for fixes. Check branch before editing.
 
-- type text formatting
-- symbol lookup
-- name mangling
-- receiver shaping
-- parameter shape conversion
-- ABI decisions
-- diagnostic construction
-- constant evaluation
-- constant validation
-- backend-independent semantic checks
-- backend-specific lowering rules
+## 11. Review checklist
 
-A new helper is not allowed when:
+Before completion, verify:
 
-- it only renames an existing function
-- it only forwards parameters unchanged
-- it only returns another function's result unchanged
-- it preserves an old signature while ignoring parameters
-- it is used once and does not clarify genuinely complex logic
-- it hides removed behavior
-- it exists only to avoid updating call sites
-- it duplicates logic already available elsewhere
+- [ ] Existing implementation and callers were searched before writing.
+- [ ] No pass-through wrapper, stale alias, unjustified ignored parameter, or unjustified one-field wrapper was introduced.
+- [ ] New helpers satisfy Section 2.
+- [ ] No duplicated semantic decision remains in touched area when one owner is clearer.
+- [ ] Diagnostics, validation, mutation, caching, normalization, logging, fallback behavior, and invariants were preserved or intentionally changed.
+- [ ] Verified correctness boundaries were preserved or changed with rationale and tests.
+- [ ] Generated artifacts come from real transformations.
+- [ ] Error chains and diagnostic context remain intact.
+- [ ] Panics represent only internal invariant failures.
+- [ ] Tests prove behavior or invariant, not only absence of crash.
+- [ ] Language changes include required `x_test/` fixtures.
+- [ ] Affected backends and target widths were validated.
+- [ ] Formatting and focused tests pass.
+- [ ] Bundle and executable fixture validation ran when required.
+- [ ] Diff contains no unrelated work or generated artifacts.
+- [ ] Commit message and branch comply when commit is requested.
 
-When in doubt, prefer the existing canonical function.
+If any item cannot be answered clearly, change is not ready.
 
----
+## 12. Golden rule
 
-## 5) Search-before-write rule
-
-Before writing new logic, search for existing implementations.
-
-Search for:
-
-- same function name
-- similar helper names
-- same diagnostic message
-- same type formatting logic
-- same mangle/symbol logic
-- same backend behavior
-- same lowering behavior
-- same validation behavior
-- same test cases
-
-Do not create new logic until you know whether a canonical implementation already exists.
-
-If existing behavior is identical, reuse it directly.
-
-If existing behavior is almost identical, consider whether the existing function should be extended or generalized instead of creating a second implementation.
-
----
-
-## 6) One canonical implementation rule
-
-If multiple phases or backends share identical logic, move it to a shared location.
-
-Keep one canonical implementation for:
-
-- type text formatting
-- symbol lookup
-- name mangling
-- receiver shaping
-- parameter conversion
-- ABI decisions
-- constant folding
-- constant validation
-- diagnostic text
-- reusable semantic checks
-
-Do not copy the same logic into several packages.
-
-Do not fix the same bug in multiple call sites if it can be fixed at the source layer.
-
----
-
-## 7) Compiler pipeline architecture
-
-For compiler-flow work such as `parser`, `collector`, `resolver`, `typechecker`, `HIR`, `HIR lowering`, `MIR`, and `codegen`:
-
-1. Keep the real phase chain. Do not collapse multiple phases into one ad-hoc function.
-2. Keep phase outputs as explicit data models. If a phase exists in the architecture, represent it in code and handoff.
-3. Do not fake artifacts. `.hir`, `.mir`, and backend IR must come from actual lowering of the previous phase model.
-4. Do not hardcode/manual-output a sample case. Output must be generated from AST/semantic inputs.
-5. If scope is intentionally limited, state exact boundary in code comments, local plan, and close-out notes.
-6. If a request implies future constructs such as multi-function, calls, scopes, loops, arrays, slices, optionals, strings, ownership, allocator provenance, or IR architecture, design touched code to extend without rewrite.
-7. Missing phase work must be tracked as an explicit TODO item in repo docs, issue tracker, or local plan notes with impact statement.
-8. Feature discovery and conformance checks must match downstream lowerability. A compiler-synthesized or intrinsic member may satisfy an interface only when HIR, MIR, and every affected backend can materialize and lower that member; otherwise reject the conformance during semantic analysis.
-9. Semantic analysis owns resolved implementation evidence. Later phases must consume that evidence instead of repeating member or method-set discovery.
-10. Target validation owns representability constraints such as target-sized lengths and indexes. Reject invalid source programs before HIR instead of relying on backend truncation.
-11. Backend layout descriptors own physical representation. Backend values and addresses must carry physical type or pointee evidence, and value-producing instructions must validate operands before emitting text.
-12. Built-in runtime carriers use canonical named layout fields. Numeric field indexes remain valid only for user aggregates whose indexes come from IR.
-
-Do not satisfy compiler requests with temporary shortcut paths that bypass intended phase boundaries.
-
----
-
-## 8) Naming and structure
-
-Name functions by behavior, not by location or temporary intent.
-
-Avoid vague names:
-
-- `handle`
-- `processData`
-- `helper`
-- `helper2`
-- `doThing`
-- `fixStuff`
-
-Keep functions short and single-purpose.
-
-Prefer flat code over deeply nested code.
-
-Prefer data-driven logic over repeated copied `if` or `switch` blocks.
-
-Add comments only when they explain:
-
-- why code exists
-- what invariant must hold
-- what phase boundary matters
-- what assumption future maintainers must preserve
-- why an unusual implementation is intentional
-
-Do not add comments that merely repeat obvious code.
-
----
-
-## 9) Refactor safety rule
-
-After renaming, removing, splitting, or merging functions:
-
-- Re-check every edited function against its declared purpose.
-- Verify the function body still matches its name.
-- Verify the function body still matches its parameters.
-- Verify the function body still matches its return type.
-- Remove stale logic copied from the old function.
-- Remove unused parameters.
-- Remove obsolete wrappers.
-- Update call sites directly.
-- Run relevant tests.
-
-Do not leave refactor debris.
-
-### Bad
-
-```go
-func checkConstantArrayIndex(expr ir.Expr, diag *diagnostics.DiagnosticBag) {
-	// diagnostic traversal logic...
-
-	return ir.FoldExpr(expr, env)
-}
-```
-
-This is invalid because:
-
-- function has no return type
-- `env` is not in scope
-- function name says it checks diagnostics, not folds expressions
-- folding logic leaked into a validation function
-
-### Good
-
-```go
-func checkConstantArrayIndex(expr ir.Expr, diag *diagnostics.DiagnosticBag) {
-	// diagnostic traversal logic only
-}
-```
-
-Each function must keep one clear responsibility.
-
----
-
-## 10) Change scope discipline
-
-Keep diffs minimal and task-focused.
-
-Do not refactor unrelated areas in the same change.
-
-Do not scatter workaround code across multiple call sites.
-
-Fix bugs at the source layer whenever possible.
-
-Do not add conditional checks or special cases to hide a known bug.
-
-Use a workaround only when explicitly approved and tracked with a follow-up removal task.
-
-Remove dead code immediately after migration.
-
-When removing or replacing a function:
-
-- Search all call sites.
-- Update call sites to the canonical implementation.
-- Do not preserve the old function as a wrapper.
-- Do not keep unused parameters.
-- Do not keep obsolete behavior accidentally.
-- Do not remove behavior silently.
-
----
-
-## 11) Error handling and diagnostics
-
-Preserve root-cause context in all error messages.
-
-Use `%w`, not `%v`, when wrapping errors so callers can use `errors.Is` and `errors.As`.
-
-Do not hide failures behind generic wrappers.
-
-### Bad
-
-```go
-return fmt.Errorf("something went wrong")
-```
-
-### Good
-
-```go
-return fmt.Errorf("resolving import %q: %w", path, err)
-```
-
-Reuse shared diagnostic phrasing and constants where available.
-
-Do not create slightly different diagnostic messages for the same failure.
-
-Centralize repeated diagnostic construction when the same diagnostic is emitted from multiple places.
-
----
-
-## 12) Panics vs errors
-
-Return `error` for conditions callers are expected to handle.
-
-Use `panic` only for internal invariant violations that indicate a compiler bug.
-
-Use `panic` for:
-
-- unreachable branches
-- impossible IR states
-- unexpected nil values in guaranteed-non-nil positions
-- unhandled enum or node kinds that indicate incomplete compiler implementation
-
-Return `error` for:
-
-- bad user input
-- missing files
-- parse failures
-- type mismatches
-- invalid imports
-- expected validation failures
-
-### Correct panic
-
-```go
-default:
-	panic(fmt.Sprintf("unhandled node kind %T in codegen", node))
-```
-
-### Correct error
-
-```go
-if tok.Kind != TokenIdent {
-	return nil, fmt.Errorf("expected identifier, got %s", tok)
-}
-```
-
-Never use `panic` as a substitute for proper error propagation.
-
-Never silently ignore an internal invariant violation.
-
----
-
-## 13) Go code style
-
-See [go-style.md](./go-style.md) for all Go-specific idioms, linter rules, and code patterns.
-
-At minimum:
-
-- Run `gofmt` on all touched Go files.
-- Keep imports clean.
-- Prefer simple, idiomatic Go.
-- Avoid clever code when straightforward code is clearer.
-- Avoid global state unless truly necessary.
-- Avoid package-level variables unless they represent immutable shared definitions or approved state.
-
----
-
-## 14) Testing requirements
-
-For behavior changes:
-
-- Add or update focused tests near the changed subsystem.
-- Add regression tests for bugs that previously failed.
-- Validate both relevant backends when backend behavior is affected.
-- When lowering target-sized integers, lengths, indexes, pointers, or ABI carriers, validate every supported target width affected by the change. Operands used by one backend instruction must have matching backend types; width-normalization changes require a 32-bit regression when 32-bit targets are supported.
-- When semantic discovery changes method availability or interface conformance, add an end-to-end accepted or rejected regression through HIR and backend generation. Typechecker-only coverage is insufficient.
-- Run targeted Peeper smoke/repro tests if language or runtime behavior changed.
-- Run `go run ./scripts/bundle.go` with no args to bundle compiler and packaged libraries when packaging or bundled libraries may be affected.
-
-A passing bundle run exits with code `0`, copies `_builtin_library` into `build/libs/`, and produces `build/bin/peeper`.
-
-### When removing, renaming, or replacing a function
-
-Verify:
-
-- all call sites were searched
-- call sites use canonical function directly where appropriate
-- no stale wrapper remains
-- no parameter is silently ignored
-- old behavior was checked for diagnostics, validation, mutation, caching, logging, and invariant checks
-- preserved behavior has tests
-- intentionally removed behavior is explained in commit rationale
-- tests prove intended behavior
-
-Do not accept a refactor that only makes tests pass by deleting checks.
-
-### Minimum validation before commit
-
-- `gofmt` on all touched Go files.
-- `go test ./...` for touched packages.
-- Targeted smoke/repro test if language or runtime behavior changed.
-- Backend validation when backend behavior is affected.
-- `go run ./scripts/bundle.go` when compiler packaging or bundled libraries may be affected.
-
----
-
-## 15) Commit hygiene
-
-Write commit messages in imperative mood and present tense.
-
-Good:
-
-```text
-Fix type resolution for nullable pointers
-```
-
-Bad:
-
-```text
-Fixed type resolution for nullable pointers
-```
-
-Bad:
-
-```text
-Fixes type resolution for nullable pointers
-```
-
-Rules:
-
-- Keep subject line under 72 characters.
-- Commit only relevant source, test, and documentation files.
-- Do not commit generated binaries.
-- Do not commit build artifacts.
-- Do not commit temporary repro executables.
-- One logical change per commit.
-- Do not bundle unrelated fixes.
-- Mention important behavior changes in the commit body.
-- Justify any new helper in the commit body.
-
----
-
-## 16) Branch protection
-
-Do not put new feature implementations on `main` or `master`.
-
-Use `feature/<name>` for new features.
-
-Use `fix/<name>` for bug fixes.
-
-Before starting work, check the current branch.
-
-If task is a feature or bug fix and current branch is `main` or `master`, create the correct branch first.
-
----
-
-## 17) Agent note
-
-Agents must also follow [AGENTS.md](./AGENTS.md).
-
-Keep agent workflow details in `AGENTS.md`. Keep code quality and architecture rules here.
-
----
-
-## 18) Human review checklist
-
-Before merge, verify:
-
-- [ ] No pass-through wrappers were introduced.
-- [ ] No old function was kept only as a renamed wrapper around a new function.
-- [ ] No wrapper silently ignores parameters from an old signature.
-- [ ] No stale local alias remains after refactor.
-- [ ] All call sites were updated to use canonical functions directly where appropriate.
-- [ ] No duplicated logic remains in touched areas.
-- [ ] Shared logic was centralized when repeated.
-- [ ] Existing diagnostics were preserved or intentionally moved/removed.
-- [ ] Existing validation was preserved or intentionally moved/removed.
-- [ ] Existing mutation/caching/logging behavior was preserved or intentionally moved/removed.
-- [ ] Existing invariant checks were preserved or intentionally moved/removed.
-- [ ] Any behavior removal is justified in commit rationale.
-- [ ] Compiler phase boundaries are preserved.
-- [ ] Semantic method and interface acceptance matches downstream HIR, MIR, and backend lowerability.
-- [ ] No fake `.hir`, `.mir`, or backend IR artifact was introduced.
-- [ ] Error messages preserve root-cause context with `%w`.
-- [ ] `panic` is only used for internal invariant violations.
-- [ ] Tests cover changed behavior.
-- [ ] Regression tests cover previous failure modes.
-- [ ] Backend behavior was validated where relevant.
-- [ ] Target-sized backend operands were validated on every supported width affected by the change.
-- [ ] `gofmt` passes.
-- [ ] `go test` passes for touched packages.
-- [ ] Bundle/smoke validation was run when needed.
-- [ ] No unrelated files were included.
-- [ ] No generated binaries or build artifacts were included.
-- [ ] Commit message is imperative, specific, and under 72 characters.
-
----
-
-## 19) Function replacement review checklist
-
-Use this checklist whenever a function is removed, renamed, replaced, or simplified.
-
-```text
-Function replacement check:
-- What function changed?
-- What was old behavior?
-- Did old function call another function directly?
-- Did old function also perform diagnostics?
-- Did old function also perform validation?
-- Did old function mutate state?
-- Did old function cache anything?
-- Did old function log anything?
-- Did old function protect an invariant?
-- Did old function normalize or convert data?
-- Did old function have backend-specific behavior?
-- Did old function have phase-specific compiler behavior?
-- Is any parameter now unused?
-- If yes, why does that parameter still exist?
-- Can call sites use canonical function directly?
-- If yes, were call sites updated directly?
-- If no, what real boundary requires keeping a wrapper?
-- Was removed behavior preserved, moved, or intentionally deleted?
-- What test proves intended behavior?
-```
-
-If this checklist cannot be answered clearly, refactor is not ready.
-
----
-
-## 20) Golden rule
-
-Do not make code look simpler by hiding behavior.
-
-Make code actually simpler by removing stale layers, updating call sites, preserving important behavior, and keeping one clear canonical implementation.
+Make code actually simpler: remove stale layers, update callers, preserve important behavior, and keep one clear implementation for each decision that needs one owner.

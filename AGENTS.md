@@ -2,9 +2,9 @@
 
 This file defines how agents must work in this repository.
 
-`RULES.md` defines what code is acceptable. Follow it for every code change. If this file conflicts with `RULES.md`, `RULES.md` wins for code quality, architecture, testing, branch, and commit rules.
+`RULES.md` defines durable code-quality and delivery requirements. `AGENTS.md` owns agent workflow only. Specifications and architecture documents record language decisions and current design, but every claim must still be checked against explicit user requirements, source, tests, and engineering purpose.
 
-Human-facing project rules belong in `RULES.md`. Agent-only workflow, gates, local plans, GitHub automation, and response style belong here.
+When documents conflict, do not let a file's self-declared precedence settle technical correctness. Identify the conflict, inspect evidence, and ask for a decision when required. Human-facing engineering rules belong in `RULES.md`; agent-only gates, local plans, GitHub automation, and response style belong here.
 
 ---
 
@@ -34,7 +34,7 @@ Immediately before every code edit or `apply_patch`:
    - behavior preservation
    - function replacement
    - change scope
-   - compiler pipeline architecture, if relevant
+   - relevant source, specifications, and architecture documents
    - testing requirements
 2. Re-answer the pre-change questions against the current diff.
 3. Check every planned new or changed function against:
@@ -53,18 +53,18 @@ Do not rely on earlier turn notes or earlier same-turn checks. Re-run this gate 
 
 ## 3) Agent hard constraints
 
-Full authority stays in `RULES.md`. Sections 2 and 7 enforce the shared reuse, wrapper (including old-name wrappers), alias, parameter, duplication, helper, and behavior-preservation constraints before and after every patch.
+Use `RULES.md` for durable engineering checks. Treat representation, package, and phase-boundary claims in every document as designs that may be reviewed and changed deliberately.
 
 - Reduce local repetition without harming clarity; leave no obviously cleanup-needed touched code.
 - Optimize for readability and maintainability, not only correctness.
 - Keep diffs minimal and task-focused; do not mix unrelated refactors.
-- Do not bypass intended compiler phase boundaries.
+- Do not bypass a verified correctness boundary merely to reduce edits.
 
 ---
 
 ## 4) Stepwise workflow
 
-1. Keep a persistent local tracking file with the `*.localplan.md` naming pattern. Do not commit it.
+1. Keep a persistent local tracking file with the `*.localplan.md` naming pattern. Do not commit it. For explicitly read-only work, read an existing plan but do not create or modify one unless the user authorizes writes.
 2. Implement one approved step at a time.
 3. Stop after each step and wait for review, unless user explicitly asks for multiple steps in one pass.
 4. Commit only after explicit approval.

@@ -728,6 +728,29 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `fn main() {}`, diag)
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	for entry.Phase < phase.FlowTyped {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
+		}
+	}
+	diag.AddError(diagnostics.ErrInvalidAssignment, "source error", nil, "")
+	entry.Bindings.NodeSymbols = nil
+	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Effects {
+		t.Fatalf("phase = %v, want Effects", entry.Phase)
+	}
+	if hasDiagnosticCode(diag, diagnostics.ErrInvalidEvidence) {
+		t.Fatalf("source-error recovery reported invalid evidence:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineRejectsUnsupportedComparisonsBeforeHIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Pair {

@@ -95,8 +95,8 @@ type Place struct {
 // enclosing statement, so a diagnostic anchors on the read itself.
 //
 // Location travels with the operation so a consumer never has to resolve the
-// node back to syntax just to report against it. Define and Write carry no
-// location because no current diagnostic anchors on them.
+// node back to syntax just to report against it. Write carries the same evidence
+// for assignment-access diagnostics; Define currently needs no location.
 type Use struct {
 	Place    Place
 	Node     ast.NodeID

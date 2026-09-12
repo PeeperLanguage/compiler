@@ -159,7 +159,7 @@ func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, ref
 		a.updatePointerSymbol(op.Symbol, node.scope, nil, st)
 		a.updateReferenceSymbol(op.Symbol, nil, false, st)
 	}
-	if ownershipTrackedSymbol(op.Symbol) {
+	if ownershipTrackedSymbol(op.Symbol) && (op.Initialized || op.OnEntry) {
 		delete(st.moved, op.Symbol)
 		st.live[op.Symbol] = struct{}{}
 	}

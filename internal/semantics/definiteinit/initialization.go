@@ -78,7 +78,7 @@ func analyzeFunction(graph *cfg.Graph, ops effect.SiteOps, diag *diagnostics.Dia
 	// are deterministic. A site absent from In was never reached.
 	for _, id := range order {
 		if initialized, reachable := result.In[id]; reachable {
-			checkReads(ops[id], initialized, tracked, diag)
+			checkAccesses(ops[id], initialized, tracked, diag)
 		}
 	}
 	return result
@@ -127,16 +127,16 @@ func transfer(ops []effect.Op, in state) state {
 	return out
 }
 
-// checkReads reports a read of a tracked binding that is not initialized at
-// that point. It replays the site's effects so a define earlier in the same
-// site covers a read later in it.
-func checkReads(ops []effect.Op, initialized state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+// checkAccesses reports reads, borrows, and projected writes against tracked
+// bindings that are not initialized at that point. It replays the site's effects
+// so an initialized define or whole-root write covers a later access.
+func checkAccesses(ops []effect.Op, initialized state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
 	if diag == nil {
 		return
 	}
 	visitor := &initializationVisitor{
 		current: initialized, tracked: tracked, diag: diag,
-		applyState: true, reportReads: true,
+		applyState: true, reportAccesses: true,
 	}
 	visitor.current = copyState(initialized)
 	for _, op := range ops {
@@ -148,11 +148,11 @@ func checkReads(ops []effect.Op, initialized state, tracked map[symbols.SymbolID
 // definite initialization. Adding a new effect does not compile until this
 // analysis explicitly classifies it.
 type initializationVisitor struct {
-	current     state
-	tracked     map[symbols.SymbolID]string
-	diag        *diagnostics.DiagnosticBag
-	applyState  bool
-	reportReads bool
+	current        state
+	tracked        map[symbols.SymbolID]string
+	diag           *diagnostics.DiagnosticBag
+	applyState     bool
+	reportAccesses bool
 }
 
 func (v *initializationVisitor) VisitDefine(op effect.Define) {
@@ -165,20 +165,32 @@ func (v *initializationVisitor) VisitDefine(op effect.Define) {
 }
 
 func (v *initializationVisitor) VisitWrite(op effect.Write) {
-	if v.applyState && op.Place.Root != nil {
+	if op.Place.Root == nil {
+		return
+	}
+	if len(op.Place.Projections) > 0 {
+		if v.reportAccesses {
+			reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
+				"assign a complete value to this symbol before writing through a projection")
+		}
+		return
+	}
+	if v.applyState {
 		v.current[op.Place.Root.ID] = struct{}{}
 	}
 }
 
 func (v *initializationVisitor) VisitUse(op effect.Use) {
-	if v.reportReads {
-		reportUninitializedRead(op.Place, op.Location, v.current, v.tracked, v.diag)
+	if v.reportAccesses {
+		reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
+			"assign a value before reading this symbol")
 	}
 }
 
 func (v *initializationVisitor) VisitBorrow(op effect.Borrow) {
-	if v.reportReads {
-		reportUninitializedRead(op.Place, op.Location, v.current, v.tracked, v.diag)
+	if v.reportAccesses {
+		reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
+			"assign a value before reading this symbol")
 	}
 }
 
@@ -187,7 +199,7 @@ func (*initializationVisitor) VisitDiscard(effect.Discard)     {}
 func (*initializationVisitor) VisitCallBegin(effect.CallBegin) {}
 func (*initializationVisitor) VisitCallEnd(effect.CallEnd)     {}
 
-func reportUninitializedRead(at effect.Place, location *source.Location, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+func reportUninitializedAccess(at effect.Place, location *source.Location, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag, help string) {
 	if at.Root == nil {
 		return
 	}
@@ -206,7 +218,7 @@ func reportUninitializedRead(at effect.Place, location *source.Location, current
 	diag.Add(diagnostics.NewError(msg).
 		WithCode(diagnostics.ErrUninitializedVariable).
 		WithPrimaryLabel(location, msg).
-		WithHelp("assign a value before reading this symbol"))
+		WithHelp(help))
 }
 
 func copyState(current state) state {

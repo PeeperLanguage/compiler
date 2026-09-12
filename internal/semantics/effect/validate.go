@@ -22,7 +22,7 @@ const maxReportedProblems = 10
 // contracts check node-kind coverage, not what each case publishes. Required
 // operations and their order are covered by producer tests and source fixtures.
 func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) error {
-	if len(r) == 0 {
+	if len(r) == 0 && graphs == nil {
 		return nil
 	}
 	problems := make([]string, 0)
@@ -33,6 +33,9 @@ func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) erro
 				continue
 			}
 			sitesByFunction[graph.NodeID] = graphSites(graph)
+			if _, found := r[graph.NodeID]; !found {
+				problems = append(problems, fmt.Sprintf("function %d has a control-flow graph but no published effects", graph.NodeID))
+			}
 		}
 	}
 	for fn, siteOps := range r {

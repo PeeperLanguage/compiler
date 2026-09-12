@@ -1,8 +1,6 @@
 # Peeper Language Specification Draft
 
-This file is the canonical draft for the current Peeper language model.
-Implementation notes and older pressure-test docs must follow this file, not the
-other way around.
+This draft records current intended Peeper language behavior. Explicitly approved language decisions should be reflected here, in implementation, and in tests. Conflicts among those sources require review; this file's wording alone does not settle them.
 
 ## Core Model
 
@@ -38,6 +36,33 @@ Core rules:
 | `[]T` | Dynamic array value | Implicit move; never copyable |
 | `&[..]T` | Shared slice view | Copyable temporary view |
 | `&mut [..]T` | Mutable exclusive slice view | Implicit transfer; never copyable |
+
+## Definite Initialization
+
+A declaration without initializer creates uninitialized storage. It does not implicitly produce zero, `false`, `none`, a null pointer, an empty aggregate, or any other value.
+
+```peep
+let mut count: i32;
+count = 0;
+
+let mut item: ?i32;
+item = none;
+```
+
+Before storage receives a complete value, it cannot be read, borrowed, moved, projected, passed to a call, used as a receiver, or destroyed. A whole-value assignment initializes it. Uninitialized storage owns no value and receives no cleanup.
+
+Partial initialization is not supported. A field, index, or other projected write cannot initialize an uninitialized root:
+
+```peep
+struct Pair { left: i32, right: i32 }
+
+let mut pair: Pair;
+pair.left = 1; // rejected: `pair` has no complete value
+pair = Pair.{ left = 1, right = 2 }; // initializes `pair`
+pair.left = 3; // valid after complete initialization
+```
+
+This rule applies uniformly to scalars, aggregates, optionals, references, raw pointers, and owned values. Zero-like values remain explicit source expressions rather than declaration defaults.
 
 `str` is a builtin owned immutable text type. Its binding owns the string value,
 but indexing cannot mutate its contents. A mutable binding may be reassigned to
@@ -642,8 +667,7 @@ fn bad(source: &i32) -> &i32 from source {
 }
 ```
 
-Returning references is rejected until `from` checking is implemented. Safe
-self-referential aggregates remain forbidden. Externally borrowed aggregate
+Safe self-referential aggregates remain forbidden. Externally borrowed aggregate
 fields may be designed later without changing this callable contract.
 
 ## Borrowed Temporaries
@@ -774,9 +798,12 @@ data[i..=j]   // includes j
 
 `..<` is not part of the target language.
 
-## Remaining Implementation Work
+## Implementation Status
 
-The current language model implements owned `*T`, opaque `rawptr`, implicit
+This non-normative snapshot records implementation status when this section was
+last reviewed. Verify it against source, tests, and issue tracking.
+
+The current implementation includes owned `*T`, opaque `rawptr`, implicit
 composite moves, automatic drop, direct borrowed and owned interface carriers,
 receiver functions, returned-reference `from` contracts, and bare-interface
 rejection. `alloc(value[, allocator])` preserves allocator provenance through

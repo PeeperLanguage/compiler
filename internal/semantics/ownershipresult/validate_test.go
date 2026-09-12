@@ -16,13 +16,15 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
+const validationGraphSource = "fn main() -> i32 {\n\treturn 0;\n}\n"
+
 // buildGraph produces real CFG topology so the validator is checked against the
 // artifact it actually receives, not a hand-shaped stand-in.
-func buildGraph(t *testing.T) (*cfg.Module, ir.NodeID) {
+func buildGraph(t *testing.T, sourceText string) (*cfg.Module, ir.NodeID) {
 	t.Helper()
 	const file = "validate_test" + ".peep"
 	diag := diagnostics.NewDiagnosticBag()
-	source := parser.New(file, lexer.New(file, "fn main() -> i32 {\n\treturn 0;\n}\n", diag).Tokenize(), diag).ParseModule()
+	source := parser.New(file, lexer.New(file, sourceText, diag).Tokenize(), diag).ParseModule()
 	graphs := cfg.BuildModule(source, cfg.BuildQueries{})
 	if graphs == nil || len(graphs.Functions) == 0 {
 		t.Fatalf("no CFG built: %s", diag.EmitAllToString())
@@ -43,7 +45,7 @@ func emptyPlan() *CleanupPlan {
 }
 
 func TestValidateAcceptsConsistentEvidence(t *testing.T) {
-	graphs, fnID := buildGraph(t)
+	graphs, fnID := buildGraph(t, validationGraphSource)
 	result := Result{fnID: emptyPlan()}
 	if err := result.Validate(typecheckresult.New(), bindingresult.New(), graphs); err != nil {
 		t.Fatalf("consistent evidence rejected: %v", err)
@@ -51,7 +53,7 @@ func TestValidateAcceptsConsistentEvidence(t *testing.T) {
 }
 
 func TestValidateRejectsEvidenceGaps(t *testing.T) {
-	graphs, fnID := buildGraph(t)
+	graphs, fnID := buildGraph(t, validationGraphSource)
 	argument := &ast.Ident{Name: "value"}
 	argument.SetID(41)
 
@@ -134,15 +136,26 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 }
 
 func TestValidateRejectsPlanWithoutCFG(t *testing.T) {
-	graphs, fnID := buildGraph(t)
+	graphs, fnID := buildGraph(t, validationGraphSource)
 	err := Result{fnID + 1000: emptyPlan()}.Validate(typecheckresult.New(), bindingresult.New(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "no CFG") {
 		t.Fatalf("error = %v, want a missing-CFG report", err)
 	}
 }
 
+func TestValidateRejectsMissingFunctionPlan(t *testing.T) {
+	graphs, firstID := buildGraph(t, `fn first() {}
+fn second() {}`)
+	if len(graphs.Functions) != 2 {
+		t.Fatalf("CFG functions = %d, want 2", len(graphs.Functions))
+	}
+	if err := (Result{firstID: emptyPlan()}).Validate(typecheckresult.New(), bindingresult.New(), graphs); err == nil || !strings.Contains(err.Error(), "no published cleanup plan") {
+		t.Fatalf("error = %v, want missing-function evidence error", err)
+	}
+}
+
 func TestValidateRejectsNilPlan(t *testing.T) {
-	graphs, fnID := buildGraph(t)
+	graphs, fnID := buildGraph(t, validationGraphSource)
 	err := Result{fnID: nil}.Validate(typecheckresult.New(), bindingresult.New(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "nil cleanup plan") {
 		t.Fatalf("error = %v, want a nil-plan report", err)
@@ -152,7 +165,7 @@ func TestValidateRejectsNilPlan(t *testing.T) {
 // Plans and evidence are maps, so an unsorted report would name different
 // problems on different runs for one broken module.
 func TestValidateReportsProblemsDeterministically(t *testing.T) {
-	graphs, fnID := buildGraph(t)
+	graphs, fnID := buildGraph(t, validationGraphSource)
 	first := ""
 	for attempt := 0; attempt < 8; attempt++ {
 		types := typecheckresult.New()

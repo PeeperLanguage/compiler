@@ -324,6 +324,25 @@ func TestRawPointerCopyAllowed(t *testing.T) {
 	}
 }
 
+func TestUninitializedOwnedBindingDoesNotPlanCleanup(t *testing.T) {
+	result := checkOwnershipSource(t, `fn main() {
+	let mut value: *i32;
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
+	plan := cleanupPlanForFunction(t, result, fn)
+	for site, ids := range plan.AfterScope {
+		if len(ids) != 0 {
+			t.Fatalf("uninitialized binding cleanup at %v = %v", site, cleanupSymbolNames(result.module, ids))
+		}
+	}
+	if len(plan.BeforeReturn) != 0 {
+		t.Fatalf("uninitialized binding return cleanup = %#v", plan.BeforeReturn)
+	}
+}
+
 func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	result := checkOwnershipSource(t, `fn main() {
 	let value: i32 = 1;

@@ -7,11 +7,7 @@ need.
 Every code sample here is **simplified** — real signatures carry more parameters and more
 error handling. Each one names the file it came from so you can read the real thing.
 
-Related reading: [`RULES.md`](RULES.md) for what code is acceptable,
-[`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) for phase discipline,
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) for the canonical
-architecture, and [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
-for the file-by-file walk when you are *changing* something rather than learning it.
+Related reading: [`RULES.md`](RULES.md) for mandatory engineering requirements, [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) for design-review guidance, [`docs/compiler-architecture.md`](docs/compiler-architecture.md) for current architecture, and [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md) for a file-by-file change guide. Verify mutable details against source.
 
 ---
 
@@ -408,8 +404,7 @@ flowchart LR
     OW --> CP["CleanupPlan"]
 ```
 
-They share **evidence, not machinery**. Each keeps its own lattice, join direction and
-diagnostics — `COMPILER_GUIDELINES.md` §6 explicitly forbids extracting a shared solver.
+They currently share **evidence, not solver machinery**. Each has distinct lattice, join direction, and diagnostics. A shared solver would need to reduce real duplication without hiding those differences.
 
 **Definite initialization** is a must-analysis: a symbol is initialized only if it is
 initialized on *every* path, so the join is intersection.

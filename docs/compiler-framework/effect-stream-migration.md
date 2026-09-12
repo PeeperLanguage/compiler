@@ -46,9 +46,7 @@ One producer translates AST into ordered semantic effects, keyed by CFG site. Co
 effects, never syntax. A construct that maps onto existing effects needs no case in any
 consumer.
 
-This shares **evidence**, not a solver. `COMPILER_GUIDELINES.md` §6 forbids extracting a
-generic dataflow framework from similar-looking worklists. Each analysis keeps its own
-lattice, join, direction, and diagnostics. Only the facts are shared.
+This design shares **evidence**, not a solver. Each analysis keeps its own lattice, join, direction, and diagnostics. A generic dataflow framework would be justified only if it removed proven shared mechanics without hiding those differences.
 
 ### Package
 

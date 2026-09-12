@@ -26,6 +26,18 @@ func TestValidateAcceptsPublishedEffects(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsMissingFunctionEffects(t *testing.T) {
+	result, module := buildEffects(t, `fn first() {}
+fn second() {}`)
+	if len(module.CFG.Functions) != 2 {
+		t.Fatalf("CFG functions = %d, want 2", len(module.CFG.Functions))
+	}
+	delete(result, module.CFG.Functions[1].NodeID)
+	if err := result.Validate(module.CFG, module.TypedASTNodes); err == nil || !strings.Contains(err.Error(), "no published effects") {
+		t.Fatalf("Validate() = %v, want missing-function evidence error", err)
+	}
+}
+
 func TestValidateReportsDefects(t *testing.T) {
 	tests := []struct {
 		name   string

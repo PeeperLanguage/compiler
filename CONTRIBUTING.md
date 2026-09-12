@@ -30,22 +30,17 @@ build/bin/peeper -version
 
 ## Project rules
 
-These files are canonical; do not copy their rules into new documents:
+Use each guidance file for its stated concern; do not copy its rules into new documents:
 
-- [`RULES.md`](RULES.md): mandatory architecture, code-quality, testing, branch,
-  and commit rules.
+- [`RULES.md`](RULES.md): mandatory, durable code-quality and delivery requirements.
 - [`go-style.md`](go-style.md): Go-specific style and lint guidance.
-- [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler phase,
-  representation, traversal, and incremental-analysis guidance.
+- [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler design-review guidance.
 
-For a change that touches the compiler pipeline or semantic model, read
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) first. It defines
-the canonical mechanisms, representation boundaries, and extension paths.
+For a change that touches compiler flow or semantic model, inspect current implementation and read [`docs/compiler-architecture.md`](docs/compiler-architecture.md) as a source-verified snapshot, not permanent design authority.
 [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
 is the concrete file-by-file companion for common changes.
 
-`AGENTS.md` contains automation workflow, not additional human-facing code
-policy.
+`AGENTS.md` contains agent workflow, not additional human-facing code policy. Conflicts among guidance, source, tests, and explicit requirements require review.
 
 ## Change workflow
 

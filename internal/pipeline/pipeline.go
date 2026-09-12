@@ -488,9 +488,13 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			ReferenceArgument:   module.Typechecking.ReferenceArgument,
 			SequenceCarrier:     module.Typechecking.SequenceCarrier,
 		})
-		if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
-			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
-				"published semantic effects are malformed: "+err.Error(), nil, "")
+		// Broken source can legitimately leave effect evidence incomplete; report
+		// evidence shape only for an otherwise clean module.
+		if !phaseDiag.HasErrors() {
+			if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
+				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+					"published semantic effects are malformed: "+err.Error(), nil, "")
+			}
 		}
 		module.Phase = phase.Effects
 		ctx.Metrics.AddPhaseAdvance()

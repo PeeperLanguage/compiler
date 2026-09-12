@@ -32,14 +32,23 @@ const maxReportedProblems = 10
 // make the validator a second implementation of the thing it checks rather than
 // a check on published shape.
 func (r Result) Validate(types *typecheckresult.Result, bindings *bindingresult.Result, graphs *cfg.Module) error {
-	if len(r) == 0 {
+	if len(r) == 0 && graphs == nil {
 		return nil
 	}
 	if types == nil || bindings == nil || graphs == nil {
 		return errors.New("ownership published a cleanup plan without typechecking, binding, or CFG evidence")
 	}
 
-	problems := validateValueUses(types)
+	problems := make([]string, 0)
+	for _, graph := range graphs.Functions {
+		if graph == nil {
+			continue
+		}
+		if _, found := r[graph.NodeID]; !found {
+			problems = append(problems, fmt.Sprintf("function %d has a control-flow graph but no published cleanup plan", graph.NodeID))
+		}
+	}
+	problems = append(problems, validateValueUses(types)...)
 	for fnID, plan := range r {
 		problems = append(problems, validatePlan(fnID, plan, types, bindings, graphs)...)
 	}
