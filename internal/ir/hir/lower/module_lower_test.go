@@ -126,6 +126,23 @@ fn Read(box: Box) -> i32 { return box.value; }`, func(module *project.Module) {
 	}
 }
 
+func TestGenerateHIRRequiresStructLiteralOrderingEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_struct_literal_evidence_test"+peeper.SourceExt, "hir_struct_literal_evidence_test", `struct Pair {
+	left: i32,
+	right: i32,
+}
+fn Read() -> Pair { return Pair.{ right = 2, left = 1 }; }`, func(module *project.Module) {
+		fn := module.AST.Stmts[1].(*ast.FnDecl)
+		literal := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.StructLit)
+		module.Typechecking.ForgetStructLiteralFields(literal.ID())
+	})
+	returned := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value
+	invalid, ok := returned.(*ir.InvalidExpr)
+	if !ok || !strings.Contains(invalid.Message, "ordered field evidence") {
+		t.Fatalf("struct literal without ordering evidence = %#v, want invalid expression", returned)
+	}
+}
+
 func TestGenerateHIRRequiresResolvedExternSignature(t *testing.T) {
 	out := generateTestHIR(t, "hir_signature_evidence_test"+peeper.SourceExt, "hir_signature_evidence_test", `fn Read() -> i32;`, func(module *project.Module) {
 		symbol, _ := module.ModuleScope.Lookup("Read")
@@ -587,12 +604,11 @@ fn read(value: ?i32, other: Holder) -> i32 {
 }
 
 func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
-	consumer := &project.Module{ID: moduleid.ID{Origin: "local", ImportPath: "consumer.peep"}, ModuleScope: symbols.NewScope(nil)}
 	typ := &typeinfo.DefinedType{
 		Name:       "Status",
 		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}}},
 	}
-	lowered, ok := loweredRuntimeType(consumer, typ, nil).(*typeinfo.DefinedType)
+	lowered, ok := loweredRuntimeType(typ, nil).(*typeinfo.DefinedType)
 	if !ok || lowered == nil {
 		t.Fatalf("lowered type = %T, want DefinedType", lowered)
 	}
@@ -1004,6 +1020,24 @@ func TestGenerateHIRPreservesMixedShiftCountType(t *testing.T) {
 	}
 	if out.Types.Text(binary.Right.TypeID()) != "u16" {
 		t.Fatalf("shift count type = %s, want preserved u16", out.Types.Text(binary.Right.TypeID()))
+	}
+}
+
+func TestGenerateHIRUsesPublishedNumericConversionForComparison(t *testing.T) {
+	out := generateTestHIR(t, "hir_numeric_compare_test"+peeper.SourceExt, "hir_numeric_compare_test", `fn less(left: i8, right: i16) -> bool {
+	return left < right;
+}`)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	binary, ok := ret.Value.(*ir.Binary)
+	if !ok || binary.Op != "<" {
+		t.Fatalf("comparison = %#v, want binary <", ret.Value)
+	}
+	cast, ok := binary.Left.(*ir.Cast)
+	if !ok || out.Types.Text(cast.Type) != "i16" || out.Types.Text(cast.Expr.TypeID()) != "i8" {
+		t.Fatalf("left operand = %#v, want published i8-to-i16 conversion", binary.Left)
+	}
+	if out.Types.Text(binary.Right.TypeID()) != "i16" {
+		t.Fatalf("right operand type = %s, want i16", out.Types.Text(binary.Right.TypeID()))
 	}
 }
 
@@ -1453,11 +1487,11 @@ func TestLoweredTypeIDUsesSharedVariantDescriptor(t *testing.T) {
 	types := ir.NewTypeTable()
 	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
-	optionalID := loweredTypeID(ctx, nil, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	optionalID := loweredTypeID(ctx, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
 	if direct := types.Intern(ir.OptionalVariant(i32)); optionalID != direct {
 		t.Fatalf("semantic optional ID = %d, direct optional ID = %d", optionalID, direct)
 	}
-	enumID := loweredTypeID(ctx, nil, &typeinfo.DefinedType{
+	enumID := loweredTypeID(ctx, &typeinfo.DefinedType{
 		Name:       "Status",
 		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
 	})
@@ -1610,7 +1644,7 @@ func TestLoweredTypeIDDoesNotPublishNamedTypeWithInvalidChild(t *testing.T) {
 			Name: "missing", Type: &typeinfo.NamedType{Name: "Missing"},
 		}}},
 	}
-	if id := loweredTypeID(ctx, nil, broken); id != ir.InvalidType {
+	if id := loweredTypeID(ctx, broken); id != ir.InvalidType {
 		t.Fatalf("invalid named descriptor lowered as TypeID %d", id)
 	}
 	if ids := types.NamedTypeIDs(); len(ids) != 0 {

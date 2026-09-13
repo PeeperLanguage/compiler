@@ -4,25 +4,22 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/project"
-	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func loweredTypeID(ctx *project.CompilerContext, module *project.Module, t typeinfo.Type) ir.TypeID {
+func loweredTypeID(ctx *project.CompilerContext, t typeinfo.Type) ir.TypeID {
 	if ctx == nil || ctx.Types == nil || t == nil {
 		return ir.InvalidType
 	}
-	interner := runtimeTypeInterner{
-		ctx: ctx, module: module, active: make(map[string]ir.TypeID),
-	}
+	interner := runtimeTypeInterner{ctx: ctx, active: make(map[string]ir.TypeID)}
 	return interner.intern(t)
 }
 
-func loweredReturnTypeID(ctx *project.CompilerContext, module *project.Module, t typeinfo.Type) ir.TypeID {
+func loweredReturnTypeID(ctx *project.CompilerContext, t typeinfo.Type) ir.TypeID {
 	if t == nil {
 		return ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
 	}
-	return loweredTypeID(ctx, module, t)
+	return loweredTypeID(ctx, t)
 }
 
 // runtimeTypeInterner is semantic-to-IR type construction state. Named
@@ -30,16 +27,12 @@ func loweredReturnTypeID(ctx *project.CompilerContext, module *project.Module, t
 // recursion closes on one canonical TypeID.
 type runtimeTypeInterner struct {
 	ctx    *project.CompilerContext
-	module *project.Module
 	active map[string]ir.TypeID
 }
 
 func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 	if l == nil || l.ctx == nil || l.ctx.Types == nil || t == nil {
 		return ir.InvalidType
-	}
-	if l.module != nil {
-		t = resolveNamedType(l.module.ModuleScope, t)
 	}
 	if defined, ok := t.(*typeinfo.DefinedType); ok {
 		return l.internDefined(defined)
@@ -255,38 +248,14 @@ func (l *runtimeTypeInterner) invalid(message string) ir.TypeID {
 	return ir.InvalidType
 }
 
-// resolveNamedType performs a single-hop scope lookup for a NamedType so the
-// lowerer can collapse source-level aliases before runtime layout work.
-// Runtime normalization and IR interning share it here to avoid importing
-// symbol tables from the leaf typeinfo package.
-func resolveNamedType(scope *symbols.Scope, t typeinfo.Type) typeinfo.Type {
-	if scope == nil || t == nil {
-		return t
-	}
-	named, ok := t.(*typeinfo.NamedType)
-	if !ok || named == nil {
-		return t
-	}
-	sym, found := scope.Lookup(named.Name)
-	if found && sym != nil && sym.Kind == symbols.SymbolType {
-		if resolved, ok := symbols.GetSymbolType(sym); ok && resolved != nil {
-			return resolved
-		}
-	}
-	return t
-}
-
 // loweredRuntimeType strips semantic-only named layers and preserves recursive
 // shells so MIR sees runtime layout, not source-level aliases.
-func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}) typeinfo.Type {
+func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}) typeinfo.Type {
 	if seen == nil {
 		seen = make(map[*typeinfo.DefinedType]struct{})
 	}
 	if t == nil {
 		return nil
-	}
-	if module != nil {
-		t = resolveNamedType(module.ModuleScope, t)
 	}
 	switch typ := t.(type) {
 	case *typeinfo.DefinedType:
@@ -302,12 +271,12 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		if enum, ok := typeinfo.Underlying(typ.Underlying).(*typeinfo.EnumType); ok {
 			return &typeinfo.DefinedType{Name: typ.Name, Identity: typ.Identity, Underlying: enum}
 		}
-		return loweredRuntimeType(module, typ.Underlying, seen)
+		return loweredRuntimeType(typ.Underlying, seen)
 	case *typeinfo.OwnedPtrType:
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.OwnedPtrType{Target: loweredRuntimeType(module, typ.Target, seen)}
+		return &typeinfo.OwnedPtrType{Target: loweredRuntimeType(typ.Target, seen)}
 	case *typeinfo.RawPtrType:
 		if typ == nil {
 			return nil
@@ -317,24 +286,24 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.RefType{Mutable: typ.Mutable, Target: loweredRuntimeType(module, typ.Target, seen)}
+		return &typeinfo.RefType{Mutable: typ.Mutable, Target: loweredRuntimeType(typ.Target, seen)}
 	case *typeinfo.OptionalType:
 		if typ == nil {
 			return nil
 		}
-		return typeinfo.NewOptional(loweredRuntimeType(module, typ.Inner, seen))
+		return typeinfo.NewOptional(loweredRuntimeType(typ.Inner, seen))
 	case *typeinfo.ArrayType:
 		if typ == nil {
 			return nil
 		}
-		return &typeinfo.ArrayType{Len: typ.Len, Shape: typ.Shape, Elem: loweredRuntimeType(module, typ.Elem, seen)}
+		return &typeinfo.ArrayType{Len: typ.Len, Shape: typ.Shape, Elem: loweredRuntimeType(typ.Elem, seen)}
 	case *typeinfo.StructType:
 		if typ == nil {
 			return nil
 		}
 		fields := make([]typeinfo.Field, 0, len(typ.Fields))
 		for _, field := range typ.Fields {
-			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(module, field.Type, seen)})
+			fields = append(fields, typeinfo.Field{Name: field.Name, Type: loweredRuntimeType(field.Type, seen)})
 		}
 		return &typeinfo.StructType{Fields: fields}
 	case *typeinfo.InterfaceType:
@@ -347,13 +316,13 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 			for _, param := range method.Params {
 				params = append(params, typeinfo.Field{
 					Name: param.Name,
-					Type: loweredRuntimeType(module, param.Type, seen),
+					Type: loweredRuntimeType(param.Type, seen),
 				})
 			}
 			methods = append(methods, typeinfo.Method{
 				Name:   method.Name,
 				Params: params,
-				Return: loweredRuntimeType(module, method.Return, seen),
+				Return: loweredRuntimeType(method.Return, seen),
 			})
 		}
 		return &typeinfo.InterfaceType{Methods: methods}
@@ -363,10 +332,10 @@ func loweredRuntimeType(module *project.Module, t typeinfo.Type, seen map[*typei
 		}
 		params := make([]typeinfo.Type, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, loweredRuntimeType(module, param, seen))
+			params = append(params, loweredRuntimeType(param, seen))
 		}
 		// defensive slice copy to prevent sharing original backing array
-		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(module, typ.Return, seen)}
+		return &typeinfo.FuncType{Params: params, Return: loweredRuntimeType(typ.Return, seen)}
 	default:
 		return typeinfo.Underlying(t)
 	}

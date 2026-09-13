@@ -12,7 +12,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	if expectedType == nil {
 		return nil
 	}
-	expectedRuntime := loweredRuntimeType(module, expectedType, nil)
+	expectedRuntime := loweredRuntimeType(expectedType, nil)
 	iface, ok := typeinfo.InterfaceTypeOf(expectedRuntime)
 	if !ok {
 		return nil
@@ -21,7 +21,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	if resolved == nil {
 		return nil
 	}
-	resolvedRuntime := loweredRuntimeType(module, resolved, nil)
+	resolvedRuntime := loweredRuntimeType(resolved, nil)
 	if _, ok := typeinfo.InterfaceTypeOf(resolvedRuntime); ok {
 		return nil
 	}
@@ -46,24 +46,24 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 			return &ir.InvalidExpr{Message: "unsupported interface method shape", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 		}
 		slots = append(slots, ir.InterfaceSlot{
-			InterfaceType: loweredTypeID(ctx, module, expectedType),
+			InterfaceType: loweredTypeID(ctx, expectedType),
 			MethodName:    method.Name,
 			SlotType:      slotType,
 			FuncName:      symbolName(module, implementation.Symbol),
-			FuncType:      loweredTypeID(ctx, module, implementation.CallableType),
-			DataType:      loweredTypeID(ctx, module, dataType),
+			FuncType:      loweredTypeID(ctx, implementation.CallableType),
+			DataType:      loweredTypeID(ctx, dataType),
 		})
 	}
 	return &ir.InterfaceMake{
 		Value:      lowerASTExpr(ctx, module, scope, expr, nil),
 		Slots:      slots,
-		Type:       loweredTypeID(ctx, module, expectedType),
+		Type:       loweredTypeID(ctx, expectedType),
 		SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)},
 	}
 }
 
 func lookupInterfaceMethod(module *project.Module, baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
-	iface, ok := typeinfo.InterfaceTypeOf(loweredRuntimeType(module, baseType, nil))
+	iface, ok := typeinfo.InterfaceTypeOf(loweredRuntimeType(baseType, nil))
 	if !ok {
 		return nil, -1, false
 	}
@@ -101,14 +101,14 @@ func lowerInterfaceSlotValueType(ctx *project.CompilerContext, module *project.M
 	if t == nil {
 		return ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid}), true
 	}
-	runtimeType := loweredRuntimeType(module, t, nil)
+	runtimeType := loweredRuntimeType(t, nil)
 	if _, ok := typeinfo.InterfaceTypeOf(runtimeType); ok {
-		return loweredTypeID(ctx, module, runtimeType), true
+		return loweredTypeID(ctx, runtimeType), true
 	}
 	if typeinfo.ContainsAbstractSelf(runtimeType) {
 		return ir.InvalidType, false
 	}
-	typ := loweredTypeID(ctx, module, runtimeType)
+	typ := loweredTypeID(ctx, runtimeType)
 	if typ == ir.InvalidType {
 		return ir.InvalidType, false
 	}

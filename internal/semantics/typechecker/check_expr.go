@@ -700,6 +700,10 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 	if !ok || indexConst == nil {
 		return elem
 	}
+	c.module.Typechecking.RecordConstantIndex(node.ID(), typecheckresult.ConstantIndex{
+		Text: indexConst.Text(),
+		Type: indexType,
+	})
 	length, lengthErr := strconv.Atoi(array.Len)
 	indexText := indexConst.Text()
 	indexValue, indexErr := strconv.Atoi(indexText)
@@ -831,12 +835,18 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 				"composite literal type must be struct", ast.LocOf(node.Type), "")
 			return &typeinfo.InvalidType{}
 		}
-		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		ordered, valid := c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		if valid {
+			c.module.Typechecking.RecordStructLiteralFields(node.ID(), ordered)
+		}
 		return targetType
 	}
 	targetStruct, targetType := c.expectedStructType(expected)
 	if targetStruct != nil {
-		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		ordered, valid := c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		if valid {
+			c.module.Typechecking.RecordStructLiteralFields(node.ID(), ordered)
+		}
 		return targetType
 	}
 	return c.typeStructLitAnonymous(scope, node)
@@ -968,6 +978,13 @@ func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructL
 		}
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
 	}
+	ordered := make([]ast.Expr, 0, len(node.Fields))
+	for _, field := range node.Fields {
+		if field.Name != nil && field.Name.Name != "" && field.Value != nil {
+			ordered = append(ordered, field.Value)
+		}
+	}
+	c.module.Typechecking.RecordStructLiteralFields(node.ID(), ordered)
 	return &typeinfo.StructType{Fields: fields}
 }
 

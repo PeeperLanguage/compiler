@@ -127,6 +127,13 @@ type VariantConstruction struct {
 	Value    ast.Expr
 }
 
+// ConstantIndex records the typechecked value of a fixed-array index so lowering
+// does not invoke constant evaluation again.
+type ConstantIndex struct {
+	Text string
+	Type typeinfo.Type
+}
+
 // StructFieldAccess records ordinary field selection after pointer/reference normalization.
 type StructFieldAccess struct {
 	Field           int
@@ -156,6 +163,8 @@ type expressionEvidence struct {
 	implicitConversions      map[ast.NodeID]typeinfo.Conversion
 	stringConcatenations     map[ast.NodeID]struct{}
 	structFields             map[ast.NodeID]StructFieldAccess
+	constantIndexes          map[ast.NodeID]ConstantIndex
+	structLiteralFields      map[ast.NodeID][]ast.Expr
 	variantConstructions     map[ast.NodeID]VariantConstruction
 	valueUses                map[ast.NodeID]typeinfo.UseKind
 	referenceArguments       map[ast.NodeID]bool
@@ -183,6 +192,8 @@ func New() *Result {
 			implicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
 			stringConcatenations:     make(map[ast.NodeID]struct{}),
 			structFields:             make(map[ast.NodeID]StructFieldAccess),
+			constantIndexes:          make(map[ast.NodeID]ConstantIndex),
+			structLiteralFields:      make(map[ast.NodeID][]ast.Expr),
 			variantConstructions:     make(map[ast.NodeID]VariantConstruction),
 			valueUses:                make(map[ast.NodeID]typeinfo.UseKind),
 			referenceArguments:       make(map[ast.NodeID]bool),
@@ -305,6 +316,42 @@ func (r *Result) StructField(id ast.NodeID) (StructFieldAccess, bool) {
 func (r *Result) ForgetStructField(id ast.NodeID) {
 	if r != nil {
 		delete(r.expressions.structFields, id)
+	}
+}
+
+func (r *Result) RecordConstantIndex(id ast.NodeID, value ConstantIndex) {
+	if r == nil || id == 0 || value.Text == "" || value.Type == nil {
+		return
+	}
+	r.expressions.constantIndexes[id] = value
+}
+
+func (r *Result) ConstantIndex(id ast.NodeID) (ConstantIndex, bool) {
+	if r == nil || id == 0 {
+		return ConstantIndex{}, false
+	}
+	value, ok := r.expressions.constantIndexes[id]
+	return value, ok
+}
+
+func (r *Result) RecordStructLiteralFields(id ast.NodeID, fields []ast.Expr) {
+	if r == nil || id == 0 || fields == nil {
+		return
+	}
+	r.expressions.structLiteralFields[id] = append([]ast.Expr(nil), fields...)
+}
+
+func (r *Result) StructLiteralFields(id ast.NodeID) ([]ast.Expr, bool) {
+	if r == nil || id == 0 {
+		return nil, false
+	}
+	fields, ok := r.expressions.structLiteralFields[id]
+	return append([]ast.Expr(nil), fields...), ok
+}
+
+func (r *Result) ForgetStructLiteralFields(id ast.NodeID) {
+	if r != nil {
+		delete(r.expressions.structLiteralFields, id)
 	}
 }
 
