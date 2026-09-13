@@ -260,11 +260,12 @@ calls intervene.
 - `PayloadAccess` records carrier origins, payload case path, and direct-carrier status.
 - `CaseTest` extends base case evidence with a payload path.
 - `VariantFieldAccess` records carrier node, case, payload struct, field, and type.
-- `Result.SiteFacts` maps function node then CFG site to snapshots.
-- `ExprTypes` stores flow-refined expression types.
-- `Payloads`, `CaseTests`, and `VariantFields` store path evidence.
-- `ResolvedStorageOrigins` and `ResolvedValueOrigins` are the direct origin queries
-  consumed mainly by ownership and later lowering/tooling.
+- `RecordExprType` / `ExprType` publish and query flow-refined expression types.
+- `RecordPayload`, `RecordCaseTest`, and `RecordVariantField` publish path evidence.
+- `RecordOrigins` / `Origins` publish one atomic storage-and-value origin resolution;
+  `StorageOrigins` and `ValueOrigins` are convenience queries over that fact.
+- `RecordAggregateSlots` / `AggregateSlots` publish direct aggregate slot decomposition
+  used by ownership without reconstructing struct or variant storage from syntax.
 
 ## CFG contract
 

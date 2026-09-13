@@ -129,7 +129,7 @@ This is the spine of the compiler. Each module carries a `Phase`, and
 ```mermaid
 flowchart TD
     Setup --> Load --> Parsed --> Collected --> Bound --> Resolved
-    Resolved --> ConstEval --> Typechecked --> CFG --> FlowTyped
+    Resolved --> Typechecked --> CFG --> FlowTyped
     FlowTyped --> Effects --> DefiniteInit --> Ownership --> Usage
     Usage --> HIR --> MIR --> Backend --> Finalize
 ```
@@ -156,8 +156,7 @@ scheduler enforces that by advancing everyone one rung at a time.
 | `Collected` | top-level symbols, method sets | `Bindings`, `ModuleScope` |
 | `Bound` | operator/interface bindings | `Bindings` |
 | `Resolved` | every identifier → symbol | `Bindings` occurrence index |
-| `ConstEval` | compile-time constants | `Constants` |
-| `Typechecked` | types and typing decisions | `Typechecking`, `TypedASTNodes` |
+| `Typechecked` | types, typing decisions, finalized module constants | `Typechecking`, `Constants`, `TypedASTNodes` |
 | `CFG` | blocks, sites, edges | `CFG` |
 | `FlowTyped` | per-use narrowing | `Flow` |
 | `Effects` | ordered semantic effects | `Effects` |

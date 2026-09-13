@@ -11,7 +11,7 @@ Completed slices:
 1. Parsed AST remains immutable during default expansion. `typecheckresult.Result` publishes source-plus-default arguments through its call-evidence API, and `Module.RebuildTypedASTIndex` indexes source and generated expression trees.
 2. `Module.Typechecking` now owns one `typecheckresult.Result` per base-typecheck generation. Expression, call, and control indexes are private; semantic phases publish/query evidence through named operations. The old `project.SemanticInfo` compatibility maps remain deleted.
 3. `typechecker.Check` publishes a fresh result, `resetToPhase` discards it below `Typechecked`, partial semantic consumers use its canonical effective-argument fallback, and HIR consumes its evidence strictly.
-4. Intrinsic dispatch, string concatenation classification, and variant construction evidence moved into the same result. `CompilerCall` and `VariantConstruction` moved with their maps; eager constant evaluation treats a missing pre-typecheck result exactly like the previous empty proof map.
+4. Intrinsic dispatch, string concatenation classification, and variant construction evidence moved into the same result. `CompilerCall` and `VariantConstruction` moved with their maps; constant queries tolerate a missing pre-typecheck result exactly like the previous empty proof map.
 5. Base `CaseTests` and `Matches` moved into `typecheckresult.Result`, along with `CaseTest`, `Match`, `MatchArm`, `MatchBinding`, explicit match projections, and canonical `MatchCases` validation. `flowresult.Result` publishes refined `CaseTest` evidence through its flow API; that type embeds base case evidence and owns flow-only payload paths.
 6. Base expression types moved behind `typecheckresult.Result.RecordExprType` / `ExprType`. `Module.BaseExprType` is canonical base lookup; `Module.EffectiveExprType` gives flow evidence precedence and falls back to base evidence. `flowresult.Result.ExprType` remains distinct flow-refined evidence.
 7. Staged collection, binding, resolution, and type-dependent symbol evidence moved behind `bindingresult.Result` operations. Syntax identity, scopes, nominal method sets, and operation-function catalogs are owned there; generated defaults and selectors publish through the same binding API. Method sets are keyed by semantic receiver identity rather than display text, and declaration lookup no longer needs a parallel method-declaration index.
@@ -25,11 +25,13 @@ All inventoried semantic fields and constant-evaluation artifacts now have expli
 `collector.collectModule` calls `Module.ResetSemanticData`, publishing fresh
 `Module.Bindings` and `Module.Constants` at start of one semantic generation.
 Collector, binder, resolver, and typechecker stage one shared binding/scope graph.
-Eager constant evaluation stores provisional top-level values in `QueryCache`;
-`FinalizeValues` recomputes them with final types and publishes them exclusively in
-`ModuleValues`. Imports and prelude reach `Typechecked` before consumer constant
-evaluation; foreign symbols read defining-module publication directly. Later
-CFG/flow/HIR queries may add only consumer-local entries to `QueryCache`.
+Constant queries performed while typechecking use `QueryCache` lazily when a semantic
+decision needs a compile-time value. After base typechecking, `FinalizeValues`
+recomputes top-level constants with final symbol types and publishes them exclusively
+in `ModuleValues`, removing their provisional cache entries. Imports and prelude reach
+`Typechecked` before consumer constant evaluation, so foreign symbols read defining-
+module publication directly. Later CFG/flow/HIR queries may add only consumer-local
+entries to `QueryCache`.
 
 `Module.resetToPhase` follows approved production contract:
 
