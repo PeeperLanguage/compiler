@@ -440,6 +440,15 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	if sym == nil {
 		return
 	}
+	// Checked expansions may publish a generated declaration occurrence for an
+	// already-existing source symbol. In that case the source declaration owns
+	// the binding type; the generated occurrence must check its initializer
+	// against that type instead of re-inferring and overwriting the symbol.
+	if declType == nil && sym.ASTNode != nil && sym.ASTNode != node {
+		if established, ok := symbols.GetSymbolType(sym); ok && established != nil && !typeinfo.IsInvalidOrUnknown(established) {
+			declType = established
+		}
+	}
 	if declType != nil && c.rejectUnsizedType(declType, typeNode, "binding") {
 		sym.BindType(&typeinfo.InvalidType{})
 		return
@@ -651,6 +660,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 					c.expandCallIteration(scope, node)
 				}
 				if checked := c.module.Typechecking.CheckedIteration(node.ID()); checked != nil {
+					c.bindLoopVariable(node.Value, optional.Inner)
 					previous := c.reusedCall
 					c.reusedCall = call
 					c.checkStmt(scope, checked, returnType)

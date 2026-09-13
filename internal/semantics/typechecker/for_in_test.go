@@ -180,6 +180,33 @@ fn main() { let mut cursor = Cursor.{ value = 1 }; __LOOP__ }`,
 	}
 }
 
+func TestCallIterationPublishesPayloadTypeForSourceBinding(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Item { value: i32 }
+struct Cursor {}
+fn (self: &Cursor) Next() -> ?Item { return none; }
+fn main() {
+	let cursor = Cursor.{};
+	for item in cursor.Next() { let value: i32 = item.value; }
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[3].(*ast.FnDecl)
+	loop := fn.Body.Stmts[1].(*ast.ForStmt)
+	sym := module.Bindings.Symbol(loop.Value)
+	if sym == nil {
+		t.Fatal("missing source iterator binding symbol")
+	}
+	if got := typeinfo.TypeText(sym.Type); got != "Item" {
+		t.Fatalf("source iterator binding type = %s, want Item", got)
+	}
+	body := loop.Body.Stmts[0].(*ast.LetDecl)
+	selector := body.Value.(*ast.SelectorExpr)
+	if got := typeinfo.TypeText(module.BaseExprType(selector.Expr.ID())); got != "Item" {
+		t.Fatalf("source iterator occurrence type = %s, want Item", got)
+	}
+}
+
 func TestRejectedCallIterationStillChecksBody(t *testing.T) {
 	for _, test := range []struct{ header, diagnostic string }{
 		{"item in cursor.Next()", "must return an optional item"},
