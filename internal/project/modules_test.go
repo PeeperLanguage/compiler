@@ -235,9 +235,14 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
 	module := &Module{Typechecking: typecheckresult.New()}
 	module.ResetSemanticData()
-	if module.Bindings == nil || module.Bindings.OperationFunctions() == nil || module.Constants == nil || module.Constants.ModuleValues == nil ||
-		module.Constants.QueryCache == nil || module.Typechecking != nil {
+	if module.Bindings == nil || module.Bindings.OperationFunctions() == nil || module.Constants == nil || module.Typechecking != nil {
 		t.Fatalf("semantic reset = %#v", module)
+	}
+	if module.Constants.Published(0) != nil {
+		t.Fatal("semantic reset retained a published constant")
+	}
+	if _, ok := module.Constants.Cached(0); ok {
+		t.Fatal("semantic reset retained a cached constant")
 	}
 }
 

@@ -15,7 +15,7 @@ Completed slices:
 5. Base `CaseTests` and `Matches` moved into `typecheckresult.Result`, along with `CaseTest`, `Match`, `MatchArm`, `MatchBinding`, explicit match projections, and canonical `MatchCases` validation. `flowresult.Result` publishes refined `CaseTest` evidence through its flow API; that type embeds base case evidence and owns flow-only payload paths.
 6. Base expression types moved behind `typecheckresult.Result.RecordExprType` / `ExprType`. `Module.BaseExprType` is canonical base lookup; `Module.EffectiveExprType` gives flow evidence precedence and falls back to base evidence. `flowresult.Result.ExprType` remains distinct flow-refined evidence.
 7. Staged collection, binding, resolution, and type-dependent symbol evidence moved behind `bindingresult.Result` operations. Syntax identity, scopes, nominal method sets, and operation-function catalogs are owned there; generated defaults and selectors publish through the same binding API. Method sets are keyed by semantic receiver identity rather than display text, and declaration lookup no longer needs a parallel method-declaration index.
-8. `SemanticInfo` and mixed `Module.ConstValues` storage were deleted. `Module.Constants` now owns `constantresult.Result`, physically separating authoritative post-typecheck `ModuleValues` from mutable pretypecheck/local `QueryCache` entries. `FinalizeValues` republishes top-level constants without duplicate cache entries; fingerprints and MIR consume only authoritative values. Module bindings carry defining identity, so foreign queries read owner publication without copying into consumer cache.
+8. `SemanticInfo` and mixed `Module.ConstValues` storage were deleted. `Module.Constants` now owns `constantresult.Result`, physically separating authoritative published module values from mutable lazy query-cache entries behind behavioral methods. `FinalizeValues` republishes top-level constants without duplicate cache entries; fingerprints and MIR consume only authoritative values. Module bindings carry defining identity, so foreign queries read owner publication without copying into consumer cache.
 9. Typechecker evidence cleanup removed redundant interface method name/owner keys, replaced copied match case descriptors with `CaseCount`, moved `PayloadPath` to flow-owned evidence, and made match field/whole-payload projection explicit with an invalid sentinel consumed exhaustively.
 
 All inventoried semantic fields and constant-evaluation artifacts now have explicit owners. Semantic-result migration is complete.
@@ -25,13 +25,13 @@ All inventoried semantic fields and constant-evaluation artifacts now have expli
 `collector.collectModule` calls `Module.ResetSemanticData`, publishing fresh
 `Module.Bindings` and `Module.Constants` at start of one semantic generation.
 Collector, binder, resolver, and typechecker stage one shared binding/scope graph.
-Constant queries performed while typechecking use `QueryCache` lazily when a semantic
+Constant queries performed while typechecking use the query cache lazily when a semantic
 decision needs a compile-time value. After base typechecking, `FinalizeValues`
 recomputes top-level constants with final symbol types and publishes them exclusively
-in `ModuleValues`, removing their provisional cache entries. Imports and prelude reach
+through `Publish`, removing their provisional cache entries. Imports and prelude reach
 `Typechecked` before consumer constant evaluation, so foreign symbols read defining-
 module publication directly. Later CFG/flow/HIR queries may add only consumer-local
-entries to `QueryCache`.
+entries to the query cache.
 
 `Module.resetToPhase` follows approved production contract:
 
@@ -328,12 +328,13 @@ behavioral scope.
 
 ### Implemented C: constant result
 
-`constantresult.Result` owns physically separate `ModuleValues` and `QueryCache`
-maps. A top-level symbol lives in the query cache during eager pretypecheck
-evaluation, then moves to authoritative module values during finalization. Local and
-lazy entries remain cache-only. Foreign symbols resolve their defining module and
-read its published values without consumer caching. Fingerprinting and MIR consume
-only module values; CFG/HIR queries evaluate without duplicating published entries.
+`constantresult.Result` owns physically separate published-value and lazy-query
+stores behind `Publish` / `Published` and `Cache` / `Cached` operations. Typechecking
+may populate lazy entries only when a constant query is needed; finalization
+recomputes top-level constants with final symbol types and publishes them atomically,
+removing any provisional entry for the same symbol. Foreign symbols resolve their
+defining module and read its published value without consumer caching. Fingerprinting
+and MIR consume only published values; CFG/HIR queries do not duplicate them.
 
 ### Candidate D: typechecker result
 

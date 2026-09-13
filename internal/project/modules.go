@@ -361,7 +361,7 @@ func (ctx *CompilerContext) PublishedConstant(module *Module, sym *symbols.Symbo
 	if owner == nil || owner.Constants == nil {
 		return nil
 	}
-	return owner.Constants.ModuleValues[sym.ID]
+	return owner.Constants.Published(sym.ID)
 }
 
 // ModuleByID resolves canonical module identity.

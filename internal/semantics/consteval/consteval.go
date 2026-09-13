@@ -27,10 +27,10 @@ func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
 		return
 	}
 	e := newEvaluator(ctx, module, true)
-	clear(e.constants.ModuleValues)
+	e.constants.ClearPublished()
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
-			delete(e.constants.QueryCache, sym.ID)
+			e.constants.DiscardCached(sym.ID)
 		}
 	}
 	e.evalModuleConstants()
@@ -78,10 +78,10 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 		value := e.ctx.PublishedConstant(e.module, sym)
 		return value, value != nil
 	}
-	if value, ok := e.constants.ModuleValues[sym.ID]; ok {
+	if value := e.constants.Published(sym.ID); value != nil {
 		return value, true
 	}
-	if value, ok := e.constants.QueryCache[sym.ID]; ok {
+	if value, ok := e.constants.Cached(sym.ID); ok {
 		return value, true
 	}
 	if _, ok := e.inProgress[sym.ID]; ok {
@@ -118,12 +118,11 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 	}
 	if e.publishModuleValues {
 		if topLevel, found := e.module.ModuleScope.LookupLocal(sym.Name); found && topLevel != nil && topLevel.ID == sym.ID {
-			e.constants.ModuleValues[sym.ID] = value
-			delete(e.constants.QueryCache, sym.ID)
+			e.constants.Publish(sym.ID, value)
 			return value, true
 		}
 	}
-	e.constants.QueryCache[sym.ID] = value
+	e.constants.Cache(sym.ID, value)
 	return value, true
 }
 

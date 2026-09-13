@@ -70,6 +70,12 @@ var mirTypes = func() mirTypeFixture {
 	}
 }()
 
+func constantLookup(values map[symbols.SymbolID]constvalue.Value) func(symbols.SymbolID) constvalue.Value {
+	return func(id symbols.SymbolID) constvalue.Value {
+		return values[id]
+	}
+}
+
 // cfgForHIR gives synthetic HIR unit fixtures source-shaped control flow.
 // Production always builds CFG from typed AST before HIR exists.
 func cfgForHIR(module *hir.Module) *cfg.Module {
@@ -448,9 +454,9 @@ func TestGenerateMIRStaticDataUsesSemanticConstValues(t *testing.T) {
 		t.Fatal("NewString failed")
 	}
 
-	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, constantLookup(map[symbols.SymbolID]constvalue.Value{
 		sym.ID: value,
-	})
+	}))
 	if out == nil || len(out.StaticData) != 2 {
 		t.Fatalf("expected byte backing and typed static entry, got %#v", out)
 	}
@@ -477,9 +483,9 @@ func TestGenerateMIRStaticDataFormatsFloatConstValues(t *testing.T) {
 		t.Fatal("NewFloatText failed")
 	}
 
-	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, constantLookup(map[symbols.SymbolID]constvalue.Value{
 		sym.ID: value,
-	})
+	}))
 	if out == nil || len(out.StaticData) != 1 {
 		t.Fatalf("expected one static entry, got %#v", out)
 	}
@@ -518,7 +524,7 @@ func TestGenerateMIRStaticDataPreservesTypedVariantConst(t *testing.T) {
 	if !ok {
 		t.Fatal("NewVariant failed")
 	}
-	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, map[symbols.SymbolID]constvalue.Value{sym.ID: value})
+	out := GenerateMIR(mod, cfgForHIR(mod), nil, scope, constantLookup(map[symbols.SymbolID]constvalue.Value{sym.ID: value}))
 	if out == nil || len(out.StaticData) != 1 {
 		t.Fatalf("expected one static entry, got %#v", out)
 	}

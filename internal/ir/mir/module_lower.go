@@ -75,7 +75,7 @@ func (l *lowerer) structCastFields(arg ValueRef, target ir.TypeID, loc *source.L
 	return fields, len(sourceFields) == 0
 }
 
-func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *symbols.Scope, constValues map[symbols.SymbolID]constvalue.Value) *Module {
+func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.Result, scope *symbols.Scope, constantValue func(symbols.SymbolID) constvalue.Value) *Module {
 	if in == nil || graphs == nil {
 		return nil
 	}
@@ -94,7 +94,10 @@ func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.R
 				continue
 			}
 			if sym.Kind == symbols.SymbolConst {
-				value := constValues[sym.ID]
+				var value constvalue.Value
+				if constantValue != nil {
+					value = constantValue(sym.ID)
+				}
 				internConstantStrings(out, value)
 				entry, ok := staticEntryForConst(in.Types, sym, value)
 				if ok {

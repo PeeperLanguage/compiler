@@ -968,14 +968,14 @@ fn main() -> i32 { return Value; }
 	if !ok {
 		t.Fatal("failed to construct stale const value")
 	}
-	entry.Constants.QueryCache[sym.ID] = stale
+	entry.Constants.Cache(sym.ID, stale)
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
-	if got := entry.Constants.ModuleValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+	if got := entry.Constants.Published(sym.ID); got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
 	}
-	if _, found := entry.Constants.QueryCache[sym.ID]; found {
+	if _, found := entry.Constants.Cached(sym.ID); found {
 		t.Fatal("published module constant remains duplicated in query cache")
 	}
 }
@@ -1007,9 +1007,10 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	if !found || readySymbol == nil {
 		t.Fatal("missing const symbol Ready")
 	}
-	ready, ok := entry.Constants.ModuleValues[readySymbol.ID].(*constvalue.VariantConst)
+	readyValue := entry.Constants.Published(readySymbol.ID)
+	ready, ok := readyValue.(*constvalue.VariantConst)
 	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
-		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Constants.ModuleValues[readySymbol.ID])
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", readyValue)
 	}
 	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
 	if !ok || code.Text() != "7" {
@@ -1057,9 +1058,10 @@ func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, 
 	if !found || sym == nil {
 		t.Fatalf("missing const symbol %s", name)
 	}
-	value, ok := module.Constants.ModuleValues[sym.ID].(*constvalue.BoolConst)
+	published := module.Constants.Published(sym.ID)
+	value, ok := published.(*constvalue.BoolConst)
 	if !ok || value == nil || value.Bool() != want {
-		t.Fatalf("%s = %#v, want bool %t", name, module.Constants.ModuleValues[sym.ID], want)
+		t.Fatalf("%s = %#v, want bool %t", name, published, want)
 	}
 }
 

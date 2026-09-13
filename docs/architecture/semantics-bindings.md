@@ -208,7 +208,7 @@ instantiation. It is part of binding/type construction, not resolver lookup.
   nested applications through the same cache.
 - `CompleteTypeInstances` rebuilds legal cached instances in place after binder
   fills declaration shells; pointer identity remains stable.
-- This cache is separate from `constantresult.QueryCache`.
+- This cache is separate from constant evaluation's lazy query cache.
 
 ## Resolver
 
@@ -414,13 +414,12 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 
 `internal/semantics/consteval/consteval.go` evaluates semantic constants.
 
-- `Evaluate` performs the eager prepass after name resolution.
 - `EvaluateExpr` evaluates one expression with optional expected type context.
 - `FinalizeValues` recomputes module constants after final symbol types exist.
 - `evaluator.inProgress` is keyed by `symbols.SymbolID` and detects cycles.
 - A module constant read from another module uses `ctx.PublishedConstant`.
-- Local module constants use module values or the query cache before evaluation.
-- Top-level authoritative values enter `ModuleValues` only during finalization.
+- Local module constants query published values first, then the lazy query cache.
+- Top-level authoritative values are published only during finalization.
 - Expected numeric types influence literal construction and identifier adaptation.
 - Numeric literals use default or explicit numeric types and target-aware parsing.
 - Boolean and string literals produce typed constant values.
@@ -433,13 +432,16 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 - Constant enum `is` tests use typechecker `CaseTests` evidence.
 - A failed fold is not silently treated as a constant.
 
-`internal/semantics/constantresult/result.go` separates caches:
+`internal/semantics/constantresult/result.go` separates the two lifetimes behind
+behavioral operations:
 
-- `ModuleValues` is authoritative, exported through the declaring module, and
-  included in semantic export facts.
-- `QueryCache` stores lazy or expected-type-sensitive results for current analysis.
+- `Publish` / `Published` own authoritative module values exported through the
+  declaring module and included in semantic export facts.
+- `Cache` / `Cached` own lazy or expected-type-sensitive results for current analysis.
+- Publishing a symbol removes its provisional cached value, so one declaration cannot
+  remain represented in both lifetimes after finalization.
 - Query-cache-only changes do not alter semantic export fingerprints.
-- Both maps use `symbols.SymbolID` keys.
+- Storage is private and keyed by `symbols.SymbolID`.
 
 ## Constant values
 
@@ -481,14 +483,13 @@ contract for later phases.
    cache cycles.
 4. Resolver creates lexical child scopes, declares local symbols, resolves names,
    imports, enum paths, defaults, and initialization boundaries.
-5. Const evaluation computes available values using symbol IDs, type evidence, and
-   canonical `constvalue` folding.
-6. Typechecking writes expression types and all later-phase decisions into
-   `typecheckresult.Result` keyed by `NodeID`.
-7. Final constant evaluation recomputes typed module constants and publishes only
-   `ModuleValues` for cross-module use.
-8. Place resolution, CFG, flow, effects, ownership, HIR, MIR, and backend consume
+5. Typechecking writes expression types and all later-phase decisions into
+   `typecheckresult.Result` keyed by `NodeID`, performing lazy constant queries only
+   where a typing decision needs one.
+6. Constant finalization recomputes typed module constants and publishes authoritative
+   values for cross-module use.
+7. Place resolution, CFG, flow, effects, ownership, HIR, MIR, and backend consume
    these artifacts through explicit queries.
-9. No downstream phase should perform a second independent name lookup, type
+8. No downstream phase should perform a second independent name lookup, type
    adaptation, variant-case discovery, intrinsic dispatch, or constant fold when
    the corresponding result already exists.

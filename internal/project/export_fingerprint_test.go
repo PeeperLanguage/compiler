@@ -27,8 +27,8 @@ func fingerprintModule(
 		bindings = bindingresult.New()
 	}
 	constants := constantresult.New()
-	if constValues != nil {
-		constants.ModuleValues = constValues
+	for id, value := range constValues {
+		constants.Publish(id, value)
 	}
 	return &Module{ModuleScope: scope, Bindings: bindings, Constants: constants}
 }
@@ -67,7 +67,7 @@ func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T
 		}
 		constant, _ := constvalue.NewIntText(value, "i32")
 		constants := constantresult.New()
-		constants.ModuleValues[sym.ID] = constant
+		constants.Publish(sym.ID, constant)
 		return SemanticExportFingerprint(nil, &Module{ModuleScope: scope, Constants: constants})
 	}
 	if fingerprint("1") == fingerprint("2") {
@@ -87,7 +87,7 @@ func TestSemanticExportFingerprintIgnoresQueryCache(t *testing.T) {
 		}
 		constant, _ := constvalue.NewIntText(value, "i32")
 		constants := constantresult.New()
-		constants.QueryCache[sym.ID] = constant
+		constants.Cache(sym.ID, constant)
 		return SemanticExportFingerprint(nil, &Module{ModuleScope: scope, Constants: constants})
 	}
 	if fingerprint("1") != fingerprint("2") {
@@ -146,7 +146,8 @@ func TestSemanticExportFingerprintTracksImportedConstantInDefault(t *testing.T) 
 		imported.Type = i32
 		imported.DefiningModule = ownerID
 		ownerConstants := constantresult.New()
-		ownerConstants.ModuleValues[imported.ID], _ = constvalue.NewIntText(value, "i32")
+		published, _ := constvalue.NewIntText(value, "i32")
+		ownerConstants.Publish(imported.ID, published)
 		ctx.AddModule(&Module{ID: ownerID, FilePath: "lib.peep", Constants: ownerConstants})
 
 		defaultIdent := &ast.Ident{Name: "K"}

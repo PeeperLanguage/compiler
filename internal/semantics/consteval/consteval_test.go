@@ -45,7 +45,7 @@ func TestFinalizeValuesInitializesOnlyConstantResult(t *testing.T) {
 
 	FinalizeValues(project.New(".", peeper.SourceExt, diag), module)
 
-	if module.Constants == nil || module.Constants.ModuleValues == nil || module.Constants.QueryCache == nil {
+	if module.Constants == nil {
 		t.Fatal("FinalizeValues did not initialize constant result")
 	}
 	if module.Bindings != nil {
@@ -194,19 +194,19 @@ func TestFinalizeValuesRecomputesLazyConstantsWithFinalSymbolTypes(t *testing.T)
 	if _, ok := newEvaluator(ctx, module, false).evalConstSymbol(sym, module.ModuleScope); !ok {
 		t.Fatal("failed to lazily evaluate Value")
 	}
-	if _, found := module.Constants.QueryCache[sym.ID]; !found {
+	if _, found := module.Constants.Cached(sym.ID); !found {
 		t.Fatal("lazy constant missing query-cache value")
 	}
-	if _, found := module.Constants.ModuleValues[sym.ID]; found {
+	if module.Constants.Published(sym.ID) != nil {
 		t.Fatal("lazy query published authoritative module value before finalization")
 	}
 	sym.BindType(&typeinfo.IntegerType{Signed: true, Bits: 64})
 	FinalizeValues(ctx, module)
 	assertIntConst(t, module, "Value", "1", "i64")
-	if _, found := module.Constants.QueryCache[sym.ID]; found {
+	if _, found := module.Constants.Cached(sym.ID); found {
 		t.Fatal("finalized module constant remains duplicated in query cache")
 	}
-	if _, found := module.Constants.ModuleValues[sym.ID]; !found {
+	if module.Constants.Published(sym.ID) == nil {
 		t.Fatal("finalized module constant was not published")
 	}
 }
@@ -232,14 +232,14 @@ fn main() {
 	if !found || localSymbol == nil {
 		t.Fatal("missing local constant symbol")
 	}
-	if _, found := module.Constants.QueryCache[localSymbol.ID]; !found {
+	if _, found := module.Constants.Cached(localSymbol.ID); !found {
 		t.Fatal("local constant missing query-cache entry")
 	}
-	if _, found := module.Constants.ModuleValues[localSymbol.ID]; found {
+	if module.Constants.Published(localSymbol.ID) != nil {
 		t.Fatal("local constant leaked into authoritative module values")
 	}
 	top, _ := module.ModuleScope.LookupLocal("Top")
-	if _, found := module.Constants.QueryCache[top.ID]; found {
+	if _, found := module.Constants.Cached(top.ID); found {
 		t.Fatal("published module constant was duplicated by local query")
 	}
 }
@@ -284,14 +284,15 @@ func TestEvaluateReadsForeignPublishedConstantWithoutConsumerCache(t *testing.T)
 	if _, ok := newEvaluator(ctx, consumer, false).evalConstSymbol(local, consumer.ModuleScope); !ok {
 		t.Fatal("failed to lazily evaluate imported constant")
 	}
-	value, ok := consumer.Constants.QueryCache[local.ID].(*constvalue.IntConst)
+	cached, _ := consumer.Constants.Cached(local.ID)
+	value, ok := cached.(*constvalue.IntConst)
 	if !ok || value == nil || value.Text() != "7" {
-		t.Fatalf("consumer value = %#v, want 7", consumer.Constants.QueryCache[local.ID])
+		t.Fatalf("consumer value = %#v, want 7", cached)
 	}
-	if _, found := consumer.Constants.QueryCache[shared.ID]; found {
+	if _, found := consumer.Constants.Cached(shared.ID); found {
 		t.Fatal("foreign constant duplicated in consumer query cache")
 	}
-	if _, found := owner.Constants.ModuleValues[shared.ID]; !found {
+	if owner.Constants.Published(shared.ID) == nil {
 		t.Fatal("owner lost published constant")
 	}
 	if diag.HasErrors() {
@@ -340,10 +341,11 @@ func assertIntConst(t *testing.T, module *project.Module, name, want, wantType s
 }
 
 func evaluatedConst(module *project.Module, id symbols.SymbolID) constvalue.Value {
-	if value := module.Constants.ModuleValues[id]; value != nil {
+	if value := module.Constants.Published(id); value != nil {
 		return value
 	}
-	return module.Constants.QueryCache[id]
+	value, _ := module.Constants.Cached(id)
+	return value
 }
 
 func assertBoolConst(t *testing.T, module *project.Module, name string, want bool) {
