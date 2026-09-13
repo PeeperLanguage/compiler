@@ -101,9 +101,11 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 		}
 	}
 	calleeType := c.typePayloadExpr(scope, node.Callee, nil)
-	if sym := c.callableSymbol(node.Callee); sym != nil && c.flow == nil {
-		effectiveArgs = c.expandCallDefaults(node, effectiveArgs, sym, c.callableModule(node.Callee))
-		c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
+	if c.flow == nil {
+		if sym, declModule := c.defaultCallDeclaration(node.Callee); sym != nil {
+			effectiveArgs = c.expandCallDefaults(node, effectiveArgs, sym, declModule)
+			c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
+		}
 	}
 	argTypes := make([]typeinfo.Type, 0, len(effectiveArgs))
 	fnType, _ := calleeType.(*typeinfo.FuncType)
@@ -505,38 +507,24 @@ func (c *checker) matchesImplicitCallTarget(target, arg typeinfo.Type) bool {
 		typeinfo.SameType(slice.Elem, array.Elem)
 }
 
-func (c *checker) callableSymbol(callee ast.Expr) *symbols.Symbol {
+func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *project.Module) {
 	if c == nil || c.module == nil || callee == nil {
-		return nil
+		return nil, nil
 	}
 	switch node := callee.(type) {
 	case *ast.Ident:
 		if c.module.Bindings != nil {
-			return c.module.Bindings.Symbol(node)
+			return c.module.Bindings.Symbol(node), c.module
 		}
 	case *ast.ScopeResolution:
 		qualifier, member, imported := node.ImportValueMember()
 		if imported {
 			if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name); ok {
-				return resolved.Symbol
+				return resolved.Symbol, resolved.Module
 			}
 		}
 	}
-	return nil
-}
-
-func (c *checker) callableModule(callee ast.Expr) *project.Module {
-	if c == nil || c.module == nil {
-		return nil
-	}
-	if node, ok := callee.(*ast.ScopeResolution); ok && node != nil {
-		if qualifier, member, imported := node.ImportValueMember(); imported {
-			if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name); ok && resolved.Module != nil {
-				return resolved.Module
-			}
-		}
-	}
-	return c.module
+	return nil, nil
 }
 
 func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *symbols.Symbol, declModule *project.Module) []ast.Expr {
