@@ -108,7 +108,7 @@ func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) 
 	if _, ok := m.Typechecking.ExpandedDefaultBindings[ident.ID()]; !ok {
 		return place.Binding{}, false
 	}
-	return place.Binding{Symbol: m.Bindings.NodeSymbols[ident.ID()]}, true
+	return place.Binding{Symbol: m.Bindings.Symbol(ident)}, true
 }
 
 // RebuildTypedASTIndex publishes canonical node lookup after typechecking.

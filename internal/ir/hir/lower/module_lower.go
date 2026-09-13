@@ -47,12 +47,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		if !ok || fn == nil || fn.Name == nil {
 			return true
 		}
-		var sym *symbols.Symbol
-		if fn.Receiver != nil {
-			sym = module.Bindings.MethodsByDecl[fn.ID()]
-		} else {
-			sym, _ = module.ModuleScope.Lookup(fn.Name.Name)
-		}
+		sym := module.Bindings.Symbol(fn.Name)
 		if sym == nil {
 			return true
 		}
@@ -93,7 +88,7 @@ func lowerExternSignature(ctx *project.CompilerContext, module *project.Module, 
 		}
 		var symbolID symbols.SymbolID
 		if param.Name != nil {
-			if sym := module.Bindings.NodeSymbols[param.Name.ID()]; sym != nil {
+			if sym := module.Bindings.Symbol(param.Name); sym != nil {
 				symbolID = sym.ID
 			}
 		}
@@ -133,7 +128,7 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		var symbolID symbols.SymbolID
 		var paramType typeinfo.Type
 		if param.Name != nil {
-			sym := module.Bindings.NodeSymbols[param.Name.ID()]
+			sym := module.Bindings.Symbol(param.Name)
 			if sym != nil {
 				name = symbolName(module, sym)
 				symbolID = sym.ID
@@ -158,7 +153,7 @@ func appendBlock(module *project.Module, parentScope *symbols.Scope, out *hir.Bl
 	out.NodeID = hir.NodeID(block.ID())
 	scope := parentScope
 	if module.Bindings != nil {
-		if s, ok := module.Bindings.BlockScopes[block.ID()]; ok && s != nil {
+		if s := module.Bindings.Scope(block); s != nil {
 			scope = s
 		}
 	}
@@ -181,7 +176,7 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing name", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		sym := module.Bindings.NodeSymbols[node.Name.ID()]
+		sym := module.Bindings.Symbol(node.Name)
 		if sym == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
@@ -201,7 +196,7 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing name", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		sym := module.Bindings.NodeSymbols[node.Name.ID()]
+		sym := module.Bindings.Symbol(node.Name)
 		if sym == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
@@ -703,7 +698,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	case *ast.ScopeResolution:
 		var sym *symbols.Symbol
 		if module != nil && module.Bindings != nil {
-			sym = module.Bindings.NodeSymbols[node.ID()]
+			sym = module.Bindings.Symbol(node)
 		}
 		if sym != nil {
 			return &ir.Ident{Name: symbolName(module, sym), Type: resolvedTypeID, SymbolID: sym.ID, SourceInfo: ir.SourceInfo{Location: loc}}
@@ -918,7 +913,7 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 			SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 		}
 	}
-	methodSym := module.Bindings.NodeSymbols[selector.Name.ID()]
+	methodSym := module.Bindings.Symbol(selector.Name)
 	fnType, _ := exprResolvedType(module, selector).(*typeinfo.FuncType)
 	if methodSym == nil || fnType == nil || len(fnType.Params) == 0 {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: ir.InvalidType}
@@ -1173,7 +1168,7 @@ func lowerIdentExpr(module *project.Module, node *ast.Ident, typeID ir.TypeID) i
 	}
 	var sym *symbols.Symbol
 	if module != nil && module.Bindings != nil {
-		sym = module.Bindings.NodeSymbols[node.ID()]
+		sym = module.Bindings.Symbol(node)
 	}
 	if sym == nil {
 		return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}

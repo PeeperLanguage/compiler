@@ -93,14 +93,9 @@ func (c *checker) checkModule() {
 			if node == nil {
 				return true
 			}
-			var sym *symbols.Symbol
+			sym := c.module.Bindings.Symbol(node.Name)
 			if node.Receiver != nil {
-				if c.module.Bindings != nil {
-					sym = c.module.Bindings.MethodsByDecl[node.ID()]
-				}
 				c.checkReceiverFunction(node)
-			} else {
-				sym, _ = c.module.ModuleScope.Lookup(node.Name.Name)
 			}
 			if sym == nil {
 				return true

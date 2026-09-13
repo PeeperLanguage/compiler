@@ -91,12 +91,7 @@ func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult
 		if fn == nil {
 			continue
 		}
-		var sym *symbols.Symbol
-		if fn.Receiver != nil {
-			sym = module.Bindings.MethodsByDecl[fn.ID()]
-		} else if fn.Name != nil {
-			sym, _ = module.ModuleScope.Lookup(fn.Name.Name)
-		}
+		sym := module.Bindings.Symbol(fn.Name)
 		if sym == nil || sym.Scope == nil {
 			continue
 		}
@@ -458,7 +453,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 	if subject == nil {
 		return
 	}
-	scope := a.module.Bindings.BlockScopes[ast.NodeID(site.ScopeID)]
+	scope := a.module.Bindings.ScopeID(ast.NodeID(site.ScopeID))
 	if scope == nil {
 		scope = a.functionScope
 	}
@@ -567,7 +562,7 @@ func (a *flowAnalyzer) applySite(site *cfg.Site, st *flowState) *flowExpressionE
 	if site == nil || st == nil {
 		return events
 	}
-	scope := a.module.Bindings.BlockScopes[ast.NodeID(site.ScopeID)]
+	scope := a.module.Bindings.ScopeID(ast.NodeID(site.ScopeID))
 	if scope == nil {
 		scope = a.functionScope
 	}
@@ -586,7 +581,7 @@ func (a *flowAnalyzer) applySite(site *cfg.Site, st *flowState) *flowExpressionE
 	case cfg.SiteScopeExit:
 		block, _ := a.module.TypedASTNodes[ast.NodeID(site.NodeID)].(*ast.BlockStmt)
 		if block != nil {
-			blockScope := a.module.Bindings.BlockScopes[block.ID()]
+			blockScope := a.module.Bindings.Scope(block)
 			if blockScope == nil {
 				return events
 			}
@@ -605,7 +600,7 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 		if node.Name == nil {
 			return
 		}
-		if sym := a.module.Bindings.NodeSymbols[node.Name.ID()]; sym != nil {
+		if sym := a.module.Bindings.Symbol(node.Name); sym != nil {
 			typ, _ := symbols.GetSymbolType(sym)
 			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
@@ -613,7 +608,7 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 		if node.Name == nil {
 			return
 		}
-		if sym := a.module.Bindings.NodeSymbols[node.Name.ID()]; sym != nil {
+		if sym := a.module.Bindings.Symbol(node.Name); sym != nil {
 			typ, _ := symbols.GetSymbolType(sym)
 			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
@@ -634,7 +629,7 @@ func (a *flowAnalyzer) assignedSymbol(scope *symbols.Scope, expr ast.Expr) *symb
 	if !ok || ident == nil {
 		return nil
 	}
-	if sym := a.module.Bindings.NodeSymbols[ident.ID()]; sym != nil {
+	if sym := a.module.Bindings.Symbol(ident); sym != nil {
 		return sym
 	}
 	sym, _ := scope.Lookup(ident.Name)
@@ -809,7 +804,7 @@ func (a *flowAnalyzer) applyConditionEdge(site *cfg.Site, edge cfg.EdgeKind, st 
 	if condition == nil {
 		return
 	}
-	scope := a.module.Bindings.BlockScopes[ast.NodeID(site.ScopeID)]
+	scope := a.module.Bindings.ScopeID(ast.NodeID(site.ScopeID))
 	if scope == nil {
 		scope = a.functionScope
 	}

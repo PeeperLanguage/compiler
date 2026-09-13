@@ -205,7 +205,7 @@ Unknown effects must not be silently ignored.
 | Source structure | parser / `frontend/ast` | AST + stable node IDs |
 | Declaration catalog | collector | module symbols |
 | Type binding | binder | symbol type state / binding result |
-| Lexical/import resolution | resolver | `Bindings.NodeSymbols`, scopes |
+| Lexical/import resolution | resolver | `Bindings` symbol/scope identity |
 | Type rules and adaptation | typechecker | `typecheckresult.Result` |
 | Control topology | `ir/cfg` | typed blocks/sites/edges |
 | Variant/optional path facts | flow typechecker | `flowresult.Result` |

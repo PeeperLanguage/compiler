@@ -66,41 +66,24 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", ast.LocOf(fn), "")
 		return
 	}
+	kind := symbols.SymbolFunc
 	if fn.Receiver != nil {
-		receiverType := typeinfo.TypeFromSyntax(fn.Receiver.Type, typeinfo.SyntaxOptions{Target: c.ctx.Target})
-		targetType, ok := typeinfo.ReceiverTarget(receiverType)
-		if !ok {
-			return
-		}
-		targetKey := typeinfo.TypeText(targetType)
-		var previous *symbols.Symbol
-		for _, item := range c.module.Bindings.MethodsByReceiver[targetKey] {
-			if item != nil && item.Name == fn.Name.Name {
-				previous = item
-				break
-			}
-		}
-		if previous != nil {
-			message := "method `" + fn.Name.Name + "` already declared for `" + targetKey + "`"
-			c.ctx.Diagnostics.Add(problems.Redeclaration(message, fn.Name.Location, previous.Location))
-			return
-		}
-		sym := symbols.New(fn.Name.Name, symbols.SymbolMethod, fn, ast.LocOf(fn.Name))
-		sym.DefiningModule = c.module.ID
-		sym.Scope = symbols.NewScope(c.module.ModuleScope)
-		c.module.Bindings.MethodsByReceiver[targetKey] = append(c.module.Bindings.MethodsByReceiver[targetKey], sym)
-		c.module.Bindings.MethodsByDecl[fn.ID()] = sym
-		return
+		kind = symbols.SymbolMethod
 	}
-	sym := symbols.New(fn.Name.Name, symbols.SymbolFunc, fn, ast.LocOf(fn.Name))
+	sym := symbols.New(fn.Name.Name, kind, fn, ast.LocOf(fn.Name))
 	sym.DefiningModule = c.module.ID
 	sym.Scope = symbols.NewScope(c.module.ModuleScope)
+	c.module.Bindings.Bind(fn.Name, sym)
+	if fn.Receiver != nil {
+		// Receiver ownership is registered after binding resolves the semantic
+		// receiver type. Collection only publishes declaration identity.
+		return
+	}
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), fn.Name.Name, fn.Name.Location)
 		return
 	}
 }
-
 func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 	if c == nil || c.module == nil || decl == nil {
 		return
@@ -143,6 +126,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
+	c.module.Bindings.Bind(name, sym)
 	if enumDecl, ok := decl.(*ast.EnumDecl); ok {
 		sym.Scope = symbols.NewScope(nil)
 		if enumType, ok := enumDecl.Type.(*ast.EnumType); ok && enumType != nil {
@@ -157,7 +141,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 					problems.ReportRedeclaration(c.ctx.Diagnostics, sym.Scope, err.Error(), variant.Name.Name, variant.Name.Location)
 					continue
 				}
-				c.module.Bindings.NodeSymbols[variant.Name.ID()] = variantSymbol
+				c.module.Bindings.Bind(variant.Name, variantSymbol)
 			}
 		}
 	}
@@ -175,7 +159,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
-	c.module.Bindings.NodeSymbols[name.ID()] = sym
+	c.module.Bindings.Bind(name, sym)
 }
 
 func Collect(ctx *project.CompilerContext, module *project.Module) {

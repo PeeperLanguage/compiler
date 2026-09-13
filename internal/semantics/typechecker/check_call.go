@@ -67,7 +67,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 		c.module.Typechecking.EffectiveCallArguments[node.ID()] = effectiveArgs
 	}
 	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil && c.module.Bindings != nil {
-		if sym := c.module.Bindings.NodeSymbols[path.ID()]; sym != nil && sym.Kind == symbols.SymbolVariant {
+		if sym := c.module.Bindings.Symbol(path); sym != nil && sym.Kind == symbols.SymbolVariant {
 			for _, arg := range node.Args {
 				c.typeExpr(scope, arg, nil)
 			}
@@ -80,7 +80,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 		return c.typeSelectorCall(scope, selector, node)
 	}
 	if ident, ok := node.Callee.(*ast.Ident); ok && ident != nil && c.module.Bindings != nil {
-		if sym := c.module.Bindings.NodeSymbols[ident.ID()]; sym != nil && sym.CompilerOp != "" {
+		if sym := c.module.Bindings.Symbol(ident); sym != nil && sym.CompilerOp != "" {
 			definition, found := intrinsics.LookupFunction(sym.CompilerOp)
 			if !found {
 				panic(fmt.Sprintf("missing intrinsic definition for compiler operation %q", sym.CompilerOp))
@@ -336,7 +336,7 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 				c.module.Typechecking.ExprTypes[selector.ID()] = methodType
 			}
 			if methodSym != nil && c.module.Bindings != nil {
-				c.module.Bindings.NodeSymbols[selector.Name.ID()] = methodSym
+				c.module.Bindings.Bind(selector.Name, methodSym)
 			}
 		}
 		argTypes := make([]typeinfo.Type, 0, len(effectiveArgs)+1)
@@ -512,7 +512,7 @@ func (c *checker) callableSymbol(callee ast.Expr) *symbols.Symbol {
 	switch node := callee.(type) {
 	case *ast.Ident:
 		if c.module.Bindings != nil {
-			return c.module.Bindings.NodeSymbols[node.ID()]
+			return c.module.Bindings.Symbol(node)
 		}
 	case *ast.ScopeResolution:
 		qualifier, member, imported := node.ImportValueMember()
@@ -604,16 +604,16 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 		expanded, defaultClones, argumentClones := ast.SubstituteExpr(params[i].Default, substitutions)
 		if declModule != nil && declModule.Bindings != nil {
 			for clonedID, originalID := range defaultClones {
-				if resolved := declModule.Bindings.NodeSymbols[originalID]; resolved != nil {
-					c.module.Bindings.NodeSymbols[clonedID] = resolved
+				if resolved := declModule.Bindings.SymbolID(originalID); resolved != nil {
+					c.module.Bindings.BindID(clonedID, resolved)
 					c.module.Typechecking.ExpandedDefaultBindings[clonedID] = struct{}{}
 				}
 				copyExpressionEvidence(c.module, declModule, clonedID, originalID)
 			}
 		}
 		for clonedID, originalID := range argumentClones {
-			if resolved := c.module.Bindings.NodeSymbols[originalID]; resolved != nil {
-				c.module.Bindings.NodeSymbols[clonedID] = resolved
+			if resolved := c.module.Bindings.SymbolID(originalID); resolved != nil {
+				c.module.Bindings.BindID(clonedID, resolved)
 			}
 			if _, ok := c.module.Typechecking.ExpandedDefaultBindings[originalID]; ok {
 				c.module.Typechecking.ExpandedDefaultBindings[clonedID] = struct{}{}

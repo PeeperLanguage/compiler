@@ -89,12 +89,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 	for _, stmt := range module.AST.Stmts {
 		switch node := stmt.(type) {
 		case *ast.FnDecl:
-			var sym *symbols.Symbol
-			if node.Receiver != nil {
-				sym = module.Bindings.MethodsByDecl[node.ID()]
-			} else {
-				sym, _ = module.ModuleScope.Lookup(node.Name.Name)
-			}
+			sym := module.Bindings.Symbol(node.Name)
 			if sym == nil {
 				continue
 			}
@@ -142,7 +137,7 @@ func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) 
 			if flowSite == nil {
 				continue
 			}
-			resolvedScope := module.Bindings.BlockScopes[ast.NodeID(flowSite.ScopeID)]
+			resolvedScope := module.Bindings.ScopeID(ast.NodeID(flowSite.ScopeID))
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}
@@ -623,7 +618,7 @@ func (a *analyzer) matchSubjectCarrier(match typecheckresult.Match) (ast.Expr, *
 	if !direct {
 		return subject, nil
 	}
-	carrier := a.module.Bindings.NodeSymbols[ident.ID()]
+	carrier := a.module.Bindings.Symbol(ident)
 	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
 		return subject, nil
 	}

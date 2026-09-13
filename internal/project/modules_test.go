@@ -234,9 +234,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
 	module := &Module{Typechecking: typecheckresult.New()}
 	module.ResetSemanticData()
-	if module.Bindings == nil || module.Bindings.BlockScopes == nil || module.Bindings.NodeSymbols == nil ||
-		module.Bindings.MethodsByReceiver == nil || module.Bindings.MethodsByDecl == nil ||
-		module.Bindings.OperationFunctions == nil || module.Constants == nil || module.Constants.ModuleValues == nil ||
+	if module.Bindings == nil || module.Bindings.OperationFunctions() == nil || module.Constants == nil || module.Constants.ModuleValues == nil ||
 		module.Constants.QueryCache == nil || module.Typechecking != nil {
 		t.Fatalf("semantic reset = %#v", module)
 	}

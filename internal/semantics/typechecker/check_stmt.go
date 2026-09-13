@@ -20,7 +20,7 @@ func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, r
 	}
 	scope := parentScope
 	if c.module.Bindings != nil {
-		if s, ok := c.module.Bindings.BlockScopes[block.ID()]; ok && s != nil {
+		if s := c.module.Bindings.Scope(block); s != nil {
 			scope = s
 		}
 	}
@@ -206,7 +206,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			} else if arm.Binding != nil || arm.Discard {
 				fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchWholePayload, Type: resolved.Case.Payload, Discard: arm.Discard}
 				if arm.Binding != nil {
-					fieldEvidence.Binding = c.module.Bindings.NodeSymbols[arm.Binding.ID()]
+					fieldEvidence.Binding = c.module.Bindings.Symbol(arm.Binding)
 					if fieldEvidence.Binding != nil {
 						fieldEvidence.Binding.BindType(resolved.Case.Payload)
 					}
@@ -240,7 +240,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 						}
 						fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchPayloadField, Field: fieldIndex, Type: field.Type, Discard: pattern.Discard}
 						if !pattern.Discard && pattern.Binding != nil {
-							fieldEvidence.Binding = c.module.Bindings.NodeSymbols[pattern.Binding.ID()]
+							fieldEvidence.Binding = c.module.Bindings.Symbol(pattern.Binding)
 							if fieldEvidence.Binding != nil {
 								fieldEvidence.Binding.BindType(field.Type)
 							}
@@ -299,7 +299,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	case *ast.Ident:
 		var sym *symbols.Symbol
 		if c.module != nil && c.module.Bindings != nil {
-			sym = c.module.Bindings.NodeSymbols[target.ID()]
+			sym = c.module.Bindings.Symbol(target)
 		}
 		if sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol,
@@ -436,7 +436,7 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	if scope == nil || name == nil || c.module.Bindings == nil {
 		return
 	}
-	sym := c.module.Bindings.NodeSymbols[name.ID()]
+	sym := c.module.Bindings.Symbol(name)
 	if sym == nil {
 		return
 	}
@@ -523,10 +523,10 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	indexType := typeinfo.DefaultIntegerType()
 	evidence := typecheckresult.ForIteration{}
 	if node.Index != nil {
-		evidence.Index = c.module.Bindings.NodeSymbols[node.Index.ID()]
+		evidence.Index = c.module.Bindings.Symbol(node.Index)
 	}
 	if node.Value != nil {
-		evidence.Value = c.module.Bindings.NodeSymbols[node.Value.ID()]
+		evidence.Value = c.module.Bindings.Symbol(node.Value)
 	}
 	valid := node.Value != nil && node.Value.Name != "" && evidence.Value != nil
 	if node.Index != nil && (node.Index.Name == "" || evidence.Index == nil) {
@@ -766,21 +766,21 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 		Location: location,
 	}
 	expansion.Stmts = append(expansion.Stmts, checked)
-	bodyScope := c.module.Bindings.BlockScopes[node.Body.ID()]
+	bodyScope := c.module.Bindings.Scope(node.Body)
 	expansionScope := symbols.NewScope(scope)
-	c.module.Bindings.BlockScopes[expansion.ID()] = expansionScope
+	c.module.Bindings.SetScope(expansion, expansionScope)
 	iterationScope := bodyScope.InsertParent(expansionScope)
 
-	c.module.Bindings.BlockScopes[checked.Body.ID()] = iterationScope
-	c.module.Bindings.BlockScopes[stop.Then.ID()] = symbols.NewScope(iterationScope)
+	c.module.Bindings.SetScope(checked.Body, iterationScope)
+	c.module.Bindings.SetScope(stop.Then, symbols.NewScope(iterationScope))
 	resultSymbol := symbols.New(resultName, symbols.SymbolVar, result, location)
 	resultSymbol.Used = true
 	if err := iterationScope.Declare(resultSymbol); err != nil {
 		panic(err)
 	}
-	c.module.Bindings.NodeSymbols[result.Name.ID()] = resultSymbol
-	c.module.Bindings.NodeSymbols[stop.Cond.(*ast.BinaryExpr).Left.ID()] = resultSymbol
-	c.module.Bindings.NodeSymbols[item.Value.ID()] = resultSymbol
+	c.module.Bindings.Bind(result.Name, resultSymbol)
+	c.module.Bindings.Bind(stop.Cond.(*ast.BinaryExpr).Left, resultSymbol)
+	c.module.Bindings.Bind(item.Value, resultSymbol)
 
 	c.module.Typechecking.CheckedIterations[node.ID()] = expansion
 }
@@ -789,7 +789,7 @@ func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {
 	if typ == nil {
 		return
 	}
-	if sym := c.module.Bindings.NodeSymbols[name.ID()]; sym != nil {
+	if sym := c.module.Bindings.Symbol(name); sym != nil {
 		sym.BindType(typ)
 	}
 }

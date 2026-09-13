@@ -92,7 +92,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 		return nil
 	}
 	if module.Bindings != nil {
-		if sym := module.Bindings.NodeSymbols[ident.ID()]; sym != nil {
+		if sym := module.Bindings.Symbol(ident); sym != nil {
 			return sym
 		}
 	}
@@ -148,7 +148,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	curr := parent
 	for curr != nil {
 		if block, ok := curr.(*ast.BlockStmt); ok && module.Bindings != nil {
-			if s, ok := module.Bindings.BlockScopes[block.ID()]; ok && s != nil {
+			if s := module.Bindings.Scope(block); s != nil {
 				scope = s
 				break
 			}
@@ -196,13 +196,9 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	if module.Bindings == nil {
 		return nil
 	}
-	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		if methods, ok := module.Bindings.MethodsByReceiver[key]; ok {
-			for _, method := range methods {
-				if method != nil && method.Name == ident.Name {
-					return method
-				}
-			}
+	for _, method := range module.Bindings.Methods(baseType) {
+		if method != nil && method.Name == ident.Name {
+			return method
 		}
 	}
 	return nil

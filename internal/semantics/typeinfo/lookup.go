@@ -1,37 +1,19 @@
 package typeinfo
 
-import "slices"
-
-func GetMethodLookupKeys(baseType Type) []string {
-
-	keys := make([]string, 0, 4)
-	appendKey := func(typ Type) {
-		if typ == nil {
-			return
-		}
-		key := TypeText(typ)
-		if key == "" {
-			return
-		}
-		if slices.Contains(keys, key) {
-			return
-		}
-		keys = append(keys, key)
+// ReceiverIdentity returns the nominal declaration identity whose method set
+// owns typ. Pointer/reference carriers and transparent aliases do not create
+// separate method namespaces.
+func ReceiverIdentity(typ Type) (string, bool) {
+	target, ok := ReceiverTarget(typ)
+	if !ok || target == nil {
+		return "", false
 	}
-	appendType := func(typ Type) {
-		appendKey(typ)
-		if underlying := Underlying(typ); underlying != typ {
-			appendKey(underlying)
-		}
+	target = Unalias(target)
+	defined, ok := target.(*DefinedType)
+	if !ok || defined == nil || defined.Identity == "" {
+		return "", false
 	}
-	appendType(baseType)
-	if target, ok := PointerTarget(baseType); ok {
-		appendType(target)
-	}
-	if target, _, ok := ReferenceTarget(Underlying(baseType)); ok {
-		appendType(target)
-	}
-	return keys
+	return defined.Identity, true
 }
 
 func PointerTarget(t Type) (Type, bool) {

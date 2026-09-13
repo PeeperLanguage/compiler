@@ -57,8 +57,8 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-		Symbols:             module.Bindings.NodeSymbols,
-		Scopes:              module.Bindings.BlockScopes,
+		Symbol:              module.Bindings.SymbolID,
+		Scope:               module.Bindings.ScopeID,
 		CallArguments:       module.Typechecking.CallArgumentsOrSource,
 		ArmBindings:         module.Typechecking.ArmBindings,
 		StringConcatenation: module.Typechecking.StringConcatenation,
@@ -253,13 +253,13 @@ func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []st
 		}
 	}
 	if module != nil && module.Bindings != nil {
-		for _, scope := range module.Bindings.BlockScopes {
+		module.Bindings.ForEachScope(func(scope *symbols.Scope) {
 			for _, sym := range scope.Symbols() {
 				if sym != nil {
 					names[sym.ID] = sym.Name
 				}
 			}
-		}
+		})
 	}
 	out := make([]string, 0, len(cleanup))
 	for _, id := range cleanup {

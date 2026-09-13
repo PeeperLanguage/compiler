@@ -14,11 +14,11 @@ import (
 // cfg.BuildQueries, it declares narrow accessors so this package does not
 // import the artifacts that own them.
 type BuildQueries struct {
-	// Symbols resolves identifier occurrences, including declaration names, to
+	// Symbol resolves identifier occurrences, including declaration names, to
 	// the binding selected by resolution.
-	Symbols map[ast.NodeID]*symbols.Symbol
-	// Scopes resolves each CFG site's lexical context for expression effects.
-	Scopes map[ast.NodeID]*symbols.Scope
+	Symbol func(ast.NodeID) *symbols.Symbol
+	// Scope resolves each CFG site's lexical context for expression effects.
+	Scope func(ast.NodeID) *symbols.Scope
 	// CallArguments returns a call's effective arguments, including any the
 	// typechecker expanded from a default.
 	CallArguments func(*ast.CallExpr) []ast.Expr
@@ -49,7 +49,7 @@ type BuildQueries struct {
 // This is the only place that inspects syntax to decide what a construct does
 // to a binding. It runs after flow typing so published evidence is final.
 func Build(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node, queries BuildQueries) Result {
-	if graphs == nil || queries.Symbols == nil || queries.Scopes == nil {
+	if graphs == nil || queries.Symbol == nil || queries.Scope == nil {
 		return nil
 	}
 	result := make(Result, len(graphs.Functions))
@@ -85,7 +85,7 @@ func (b *builder) buildFunction(fn *ast.FnDecl) {
 	}
 	entry := b.graph.Entry.Sites[0].ID
 	if fn.Body != nil {
-		functionScope := b.queries.Scopes[fn.Body.ID()]
+		functionScope := b.queries.Scope(fn.Body.ID())
 		for _, param := range fn.ParamsWithReceiver() {
 			if param.Name == nil {
 				continue
@@ -128,7 +128,7 @@ func (b *builder) eachSite(visit func(*cfg.Block, *cfg.Site)) {
 func (b *builder) buildSite(block *cfg.Block, site *cfg.Site) {
 	stmt, _ := b.nodes[ast.NodeID(site.NodeID)].(ast.Stmt)
 	if stmt != nil {
-		b.publishStmt(site.ID, b.queries.Scopes[ast.NodeID(site.ScopeID)], stmt)
+		b.publishStmt(site.ID, b.queries.Scope(ast.NodeID(site.ScopeID)), stmt)
 	}
 	if site.Kind != cfg.SiteTerminator {
 		return
@@ -136,7 +136,7 @@ func (b *builder) buildSite(block *cfg.Block, site *cfg.Site) {
 	switch terminator := block.Terminator.(type) {
 	case *cfg.Branch:
 		if condition, ok := b.nodes[ast.NodeID(terminator.ConditionID)].(ast.Expr); ok {
-			b.value(site.ID, b.queries.Scopes[ast.NodeID(site.ScopeID)], condition, typeinfo.UseRead)
+			b.value(site.ID, b.queries.Scope(ast.NodeID(site.ScopeID)), condition, typeinfo.UseRead)
 		}
 	case *cfg.SwitchVariant:
 		// Arm payload bindings are published in the leading pass above; the
@@ -239,7 +239,7 @@ func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.S
 	if scope == nil || name == nil {
 		return
 	}
-	sym := b.queries.Symbols[name.ID()]
+	sym := b.queries.Symbol(name.ID())
 	if sym == nil {
 		return
 	}
@@ -264,7 +264,7 @@ func (b *builder) value(site cfg.SiteID, scope *symbols.Scope, expr ast.Expr, ki
 	case nil:
 		return
 	case *ast.Ident:
-		if sym := b.queries.Symbols[node.ID()]; sym != nil {
+		if sym := b.queries.Symbol(node.ID()); sym != nil {
 			b.emit(site, Use{Place: Place{Root: sym}, Node: node.ID(), Location: ast.LocOf(node), Kind: kind})
 		}
 	case *ast.AddressExpr:
@@ -376,7 +376,7 @@ func (b *builder) placeOf(scope *symbols.Scope, expr ast.Expr) (Place, bool) {
 	if !ok || ident == nil {
 		return Place{}, false
 	}
-	sym := b.queries.Symbols[ident.ID()]
+	sym := b.queries.Symbol(ident.ID())
 	if sym == nil && scope != nil {
 		sym, _ = scope.Lookup(ident.Name)
 	}
@@ -450,7 +450,7 @@ func (b *builder) writeTarget(site cfg.SiteID, scope *symbols.Scope, target ast.
 		if ident == nil || scope == nil {
 			return
 		}
-		sym := b.queries.Symbols[ident.ID()]
+		sym := b.queries.Symbol(ident.ID())
 		if sym == nil {
 			sym, _ = scope.Lookup(ident.Name)
 		}

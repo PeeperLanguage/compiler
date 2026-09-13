@@ -595,3 +595,62 @@ func TestUnaliasCanonicalizesChainsWithoutErasingNominalTypes(t *testing.T) {
 		t.Fatalf("Unalias(alias cycle) = %#v, want invalid", got)
 	}
 }
+
+func TestReceiverIdentityUsesNominalDeclarationIdentity(t *testing.T) {
+	left := &DefinedType{
+		Name:       "Item",
+		Identity:   "left::Item",
+		Kind:       DefinedKindStruct,
+		Underlying: &StructType{},
+	}
+	right := &DefinedType{
+		Name:       "Item",
+		Identity:   "right::Item",
+		Kind:       DefinedKindStruct,
+		Underlying: &StructType{},
+	}
+
+	leftID, leftOK := ReceiverIdentity(left)
+	rightID, rightOK := ReceiverIdentity(right)
+	if !leftOK || !rightOK {
+		t.Fatal("nominal receiver identities must resolve")
+	}
+	if leftID == rightID {
+		t.Fatalf("same display name must not merge distinct declarations: %q", leftID)
+	}
+}
+
+func TestReceiverIdentityCanonicalizesReceiverCarriers(t *testing.T) {
+	target := &DefinedType{
+		Name:       "Item",
+		Identity:   "pkg::Item",
+		Kind:       DefinedKindStruct,
+		Underlying: &StructType{},
+	}
+	alias := &DefinedType{
+		Name:       "Alias",
+		Identity:   "pkg::Alias",
+		Kind:       DefinedKindAlias,
+		Underlying: target,
+	}
+
+	for _, typ := range []Type{
+		target,
+		&OwnedPtrType{Target: target},
+		&RefType{Target: target},
+		&RefType{Mutable: true, Target: target},
+		alias,
+	} {
+		got, ok := ReceiverIdentity(typ)
+		if !ok {
+			t.Fatalf("ReceiverIdentity(%s) did not resolve", TypeText(typ))
+		}
+		if got != target.Identity {
+			t.Fatalf("ReceiverIdentity(%s) = %q, want %q", TypeText(typ), got, target.Identity)
+		}
+	}
+
+	if _, ok := ReceiverIdentity(&IntegerType{Signed: true, Bits: 32}); ok {
+		t.Fatal("non-nominal receiver must not have a method-set identity")
+	}
+}

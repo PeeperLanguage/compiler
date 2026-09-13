@@ -414,7 +414,7 @@ func completionScope(module *project.Module, line, col int) *symbols.Scope {
 		if !ok || !locContains(ast.LocOf(block), line, col) {
 			return true
 		}
-		if blockScope := module.Bindings.BlockScopes[block.ID()]; blockScope != nil {
+		if blockScope := module.Bindings.Scope(block); blockScope != nil {
 			scope = blockScope
 		}
 		return true
@@ -685,15 +685,13 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 			items = appendOperationCompletion(items, seen, methodSymbol, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
 		}
 	}
-	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		for _, method := range module.Bindings.MethodsByReceiver[key] {
-			if method == nil {
-				continue
-			}
-			fnType, callable := method.Type.(*typeinfo.FuncType)
-			if callable && strings.HasPrefix(method.Name, prefix) {
-				items = appendOperationCompletion(items, seen, method, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
-			}
+	for _, method := range module.Bindings.Methods(baseType) {
+		if method == nil {
+			continue
+		}
+		fnType, callable := method.Type.(*typeinfo.FuncType)
+		if callable && strings.HasPrefix(method.Name, prefix) {
+			items = appendOperationCompletion(items, seen, method, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
 		}
 	}
 
@@ -703,7 +701,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, pipe, preserveArguments)
 		}
 	}
-	for _, function := range operationFunctionsWithPrefix(module.Bindings.OperationFunctions, prefix) {
+	for _, function := range operationFunctionsWithPrefix(module.Bindings.OperationFunctions(), prefix) {
 		fnType, callable := function.Type.(*typeinfo.FuncType)
 		if !callable {
 			continue
@@ -717,7 +715,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 		if !found || imported == nil || imported.Bindings == nil {
 			continue
 		}
-		for _, function := range operationFunctionsWithPrefix(imported.Bindings.OperationFunctions, prefix) {
+		for _, function := range operationFunctionsWithPrefix(imported.Bindings.OperationFunctions(), prefix) {
 			fnType, callable := function.Type.(*typeinfo.FuncType)
 			if !function.IsPub || !callable {
 				continue

@@ -77,8 +77,8 @@ func TestResolvePublishesDiscardDeclarationSymbols(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	first := fn.Body.Stmts[0].(*ast.LetDecl)
 	second := fn.Body.Stmts[1].(*ast.LetDecl)
-	firstSymbol := module.Bindings.NodeSymbols[first.Name.ID()]
-	secondSymbol := module.Bindings.NodeSymbols[second.Name.ID()]
+	firstSymbol := module.Bindings.Symbol(first.Name)
+	secondSymbol := module.Bindings.Symbol(second.Name)
 	if firstSymbol == nil || secondSymbol == nil || firstSymbol == secondSymbol {
 		t.Fatalf("discard declaration symbols = (%#v, %#v), want distinct symbols", firstSymbol, secondSymbol)
 	}
@@ -95,7 +95,7 @@ func TestResolvePublishesAssignmentTargetSymbol(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	declaration := fn.Body.Stmts[0].(*ast.LetDecl)
 	target := fn.Body.Stmts[1].(*ast.AssignStmt).Target.(*ast.Ident)
-	resolved := module.Bindings.NodeSymbols[target.ID()]
+	resolved := module.Bindings.Symbol(target)
 	if resolved == nil || resolved.ASTNode != declaration {
 		t.Fatalf("assignment target = %#v, want declaration symbol for %#v", resolved, declaration)
 	}
@@ -117,7 +117,7 @@ fn main() {
 	okPath := fn.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit).Case
 	pendingPath := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.ScopeResolution)
 	for _, path := range []*ast.ScopeResolution{okPath, pendingPath} {
-		sym := module.Bindings.NodeSymbols[path.ID()]
+		sym := module.Bindings.Symbol(path)
 		if sym == nil {
 			t.Fatalf("resolved %s = nil, want child variant symbol", path.TypeText())
 		}
@@ -125,7 +125,7 @@ fn main() {
 		if sym.Kind != symbols.SymbolVariant || !variant || sym.Name != path.Segments[len(path.Segments)-1].Name.Name {
 			t.Fatalf("resolved %s = %#v, want child variant symbol", path.TypeText(), sym)
 		}
-		if module.Bindings.NodeSymbols[path.Segments[len(path.Segments)-1].Name.ID()] != sym {
+		if module.Bindings.Symbol(path.Segments[len(path.Segments)-1].Name) != sym {
 			t.Fatalf("final segment of %s does not resolve to variant symbol", path.TypeText())
 		}
 	}
@@ -158,7 +158,7 @@ fn main() {
 			t.Fatalf("invalid variant path %s", path.TypeText())
 		}
 		canonical, _ := result.Scope.LookupLocal(caseName.Name)
-		if got := module.Bindings.NodeSymbols[path.ID()]; got == nil || got != canonical {
+		if got := module.Bindings.Symbol(path); got == nil || got != canonical {
 			t.Fatalf("resolved %s = %#v, want canonical %#v", path.TypeText(), got, canonical)
 		}
 	}
@@ -206,11 +206,11 @@ fn Read(result: Result) -> i32 {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	binding := match.Arms[0].Fields[0].Binding
 	use := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-	bindingSymbol := module.Bindings.NodeSymbols[binding.ID()]
-	if bindingSymbol == nil || module.Bindings.NodeSymbols[use.ID()] != bindingSymbol {
-		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Bindings.NodeSymbols[use.ID()])
+	bindingSymbol := module.Bindings.Symbol(binding)
+	if bindingSymbol == nil || module.Bindings.Symbol(use) != bindingSymbol {
+		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Bindings.Symbol(use))
 	}
-	if _, found := module.Bindings.BlockScopes[match.Arms[0].Body.ID()].Lookup("payload"); !found {
+	if _, found := module.Bindings.Scope(match.Arms[0].Body).Lookup("payload"); !found {
 		t.Fatal("pattern binding missing from arm body scope")
 	}
 }

@@ -40,7 +40,7 @@ fn Alpha(value: Value, extra: i32) {}`
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	functions := module.Bindings.OperationFunctions
+	functions := module.Bindings.OperationFunctions()
 	if len(functions) != 2 || functions[0].Name != "Alpha" || functions[1].Name != "Zebra" {
 		t.Fatalf("operation functions = %#v, want [Alpha Zebra]", functions)
 	}

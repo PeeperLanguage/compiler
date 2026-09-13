@@ -153,10 +153,10 @@ write for an ident target, or reads of both for a projection target; `ExprStmt` 
 `ReturnStmt` as reads; a `*cfg.Branch` terminator site as reads of its condition; match arm
 bindings as initialized defines at the arm body's entry site.
 
-At this milestone, references resolved through `Bindings.NodeSymbols` while
+At this milestone, references resolved through the binding occurrence index while
 definitions resolved through the site's scope. A later symbol-table cleanup unified local
-declaration identity under `NodeSymbols` using declaration-name IDs, avoiding both parent
-scope name lookup and `Symbol.ASTNode` pointer scans.
+declaration identity through `Bindings.Bind` / `Bindings.Symbol` using declaration-name IDs,
+avoiding both parent-scope name lookup and `Symbol.ASTNode` pointer scans.
 
 Intercept `*ast.CallExpr` and walk `Typechecking.CallArgumentsOrSource(call)` so
 default-expanded arguments are covered.

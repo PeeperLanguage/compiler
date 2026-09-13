@@ -18,8 +18,8 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 
 - Every AST `Node` exposes `ID()` and `SetID()`.
 - Semantic side tables use `NodeID`, not AST pointer identity, as their key.
-- `bindingresult.Result.NodeSymbols` maps identifier/path node IDs, including binding declaration names, to symbols.
-- `bindingresult.Result.BlockScopes` maps block node IDs to lexical scopes.
+- `bindingresult.Result` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
+- The same result owns block-to-scope identity behind `SetScope` / `Scope`.
 - `typecheckresult.Result.ExprTypes` maps expression node IDs to semantic types.
 - `typecheckresult.Result.CaseTests` maps case-test node IDs to resolved case
   evidence.
@@ -69,20 +69,20 @@ This map records binding, type, place, intrinsic, and constant implementation ob
   not name-addressable.
 - `LookupLocal` is current-scope only; `Lookup` walks parents, so nearest scope
   wins and shadowing is lexical.
-- `Symbols` preserves declaration order; declaration identity comes from `NodeSymbols` rather than scanning symbol AST pointers.
+- `Symbols` preserves declaration order; declaration identity comes from the binding result rather than scanning symbol AST pointers.
 - `IsMutableBinding` combines lookup, kind, and `Symbol.IsMutable`.
 - `Parent` supports bounded analyses such as `place.LocalRoot`.
 - `InsertParent` inserts a generated parent without changing resolved child symbols.
 
 ## Binding result
 
-`internal/semantics/bindingresult/result.go` defines the staged graph. `New`
-initializes `BlockScopes`, `NodeSymbols`, `MethodsByReceiver`, `MethodsByDecl`,
-and `OperationFunctions`. Block IDs map to scopes; node IDs map to identifiers,
-including parameter and local declaration names, paths, variants, return origins,
-loop bindings, and match bindings. Receiver keys
-map to methods, declaration IDs map to method symbols, and binder sorts operation
-functions. Collection, binding, resolution, and typechecking share this result.
+`internal/semantics/bindingresult/result.go` owns the staged symbol/scope graph behind
+semantic operations. `Bind` / `Symbol` publish and query syntax identity; `SetScope` /
+`Scope` publish and query lexical scopes. `RegisterMethod` / `Methods` own receiver
+method membership using semantic nominal declaration identity, not display text, and
+`AddOperationFunction` owns the completion catalog. The backing indexes are private,
+so collection, binding, resolution, typechecking, HIR, and LSP depend on meaning rather
+than map layout.
 
 ## Collection
 
@@ -103,11 +103,12 @@ functions. Collection, binding, resolution, and typechecking share this result.
 - `collectNode` recognizes type declarations, functions, top-level lets, and
   top-level constants.
 - `collectFnDecl` creates `SymbolFunc` for ordinary functions.
-- A method gets `SymbolMethod`, a child scope parented by module scope, and entries
-  in `MethodsByReceiver` and `MethodsByDecl`.
-- Receiver syntax is converted with `typeinfo.TypeFromSyntax` and normalized by
-  `typeinfo.ReceiverTarget` before selecting the receiver key.
-- Duplicate methods for one receiver/name pair produce a redeclaration diagnostic.
+- A method gets `SymbolMethod`, a child scope parented by module scope, and its
+  declaration name is published through `Bindings.Bind`.
+- Collection does not invent a textual receiver key. Binder resolves the semantic
+  receiver type and then calls `Bindings.RegisterMethod`.
+- Duplicate methods for one semantic receiver/name pair produce a redeclaration
+  diagnostic after receiver binding.
 - Ordinary functions are declared in module scope; duplicate names are diagnosed.
 - `collectModuleBinding` creates `SymbolVar` or `SymbolConst` with
   `UnknownType`; binder later supplies an explicit type.
@@ -124,7 +125,7 @@ functions. Collection, binding, resolution, and typechecking share this result.
 - The symbol's `Type` is a `*typeinfo.DefinedType` shell.
 - Enum declarations get a separate child scope with `SymbolVariant` entries.
 - Each variant symbol points at the enum defined type.
-- Variant declaration identifiers are entered into `NodeSymbols` immediately.
+- Variant declaration identifiers are published through `Bindings.Bind` immediately.
 - `ctx.RegisterTypeDeclaration` retains declaration syntax and shell for generic
   substitution.
 - Underlying type structure is intentionally not completed by collection.
@@ -144,7 +145,8 @@ functions. Collection, binding, resolution, and typechecking share this result.
 ### Function and value types
 
 - `bindFunctionDecl` uses `typeinfo.FuncTypeFromDeclWithOptions`.
-- Method signatures are written through `MethodsByDecl`.
+- Method and ordinary-function declarations resolve through the same `Bindings.Symbol`
+  declaration identity. Method signatures are bound before receiver registration.
 - Ordinary function signatures are written to the module-scope symbol.
 - Functions with parameters are added to `OperationFunctions`.
 - `bindModuleBinding` binds an explicit source type through `TypeFromSyntax`.
@@ -226,7 +228,7 @@ binding state or type construction.
 - Resolver records top-level variable and constant symbol IDs in its local pending
   set before values resolve, then removes each ID after its initializer.
 - Functions resolve after top-level bindings.
-- Method symbols are found through `MethodsByDecl`; ordinary functions through
+- Method and ordinary-function symbols are found through declaration identity; ordinary functions also remain in
   module scope.
 - Function parameters are declared in the function-owned symbol scope.
 - A default parameter expression resolves before that parameter is declared.
@@ -352,7 +354,8 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
   `ReferenceValueTarget` answer receiver/pointer/reference shape questions.
 - Optional wrappers are transparent to `ReferenceValueTarget` but not to direct
   receiver and method lookup rules.
-- `GetMethodLookupKeys` derives base, underlying, pointee, and reference keys.
+- `ReceiverIdentity` normalizes aliases and pointer/reference carriers to the nominal
+  declaration identity that owns the method set.
 - `LookupStructField` centralizes field type and index lookup.
 - `LookupVariantCase` centralizes case lookup over a descriptor.
 - `CheckCompatibility` returns conversion kind and compatibility classification.

@@ -58,10 +58,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 
 	// 3. Check for unused local variables and parameters
 	if module.Bindings != nil {
-		for _, scope := range module.Bindings.BlockScopes {
-			if scope == nil {
-				continue
-			}
+		module.Bindings.ForEachScope(func(scope *symbols.Scope) {
 			for _, sym := range scope.Symbols() {
 				if sym.Name == "_" {
 					continue
@@ -89,6 +86,6 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 					WithCodeReplacement(sym.MutableLocation, "mut", "").
 					WithHelp("remove unnecessary `mut`")
 			}
-		}
+		})
 	}
 }

@@ -3059,7 +3059,7 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	if callee == nil || callee.Name != "len" {
 		t.Fatal("len function missing from parsed module")
 	}
-	resolved := module.Bindings.NodeSymbols[callee.ID()]
+	resolved := module.Bindings.Symbol(callee)
 	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
 		t.Fatalf("resolved function = %#v, want len intrinsic", resolved)
 	}

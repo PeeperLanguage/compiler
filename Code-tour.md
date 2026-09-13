@@ -156,7 +156,7 @@ scheduler enforces that by advancing everyone one rung at a time.
 | `Parsed` | syntax tree | `AST` |
 | `Collected` | top-level symbols, method sets | `Bindings`, `ModuleScope` |
 | `Bound` | operator/interface bindings | `Bindings` |
-| `Resolved` | every identifier → symbol | `Bindings.NodeSymbols` |
+| `Resolved` | every identifier → symbol | `Bindings` occurrence index |
 | `ConstEval` | compile-time constants | `Constants` |
 | `Typechecked` | types and typing decisions | `Typechecking`, `TypedASTNodes` |
 | `CFG` | blocks, sites, edges | `CFG` |
@@ -237,17 +237,17 @@ flowchart LR
     K --> T["typechecker<br/>types + decisions"]
 ```
 
-**Collector** walks top-level declarations and puts them in `ModuleScope`, plus builds
-method sets. **Binder** wires up operator functions and interface members. **Resolver**
-creates block scopes and maps every referencing identifier to its symbol:
+**Collector** walks top-level declarations and puts them in `ModuleScope`. **Binder**
+resolves declaration types, publishes method sets, and wires up operator/interface members.
+**Resolver** creates block scopes and maps every referencing identifier to its symbol:
 
 ```go
 // internal/semantics/resolver (simplified)
-module.Bindings.NodeSymbols[ident.ID()] = symbol
-module.Bindings.BlockScopes[block.ID()] = scope
+module.Bindings.Bind(ident, symbol)
+module.Bindings.SetScope(block, scope)
 ```
 
-> **Identity rule.** `NodeSymbols` records resolved syntax occurrences, including
+> **Identity rule.** `Bindings` records resolved syntax occurrences, including
 > declaration names and assignment targets. Lexical scopes remain responsible for name
 > lookup, shadowing, visibility, and declaration order; downstream phases use the
 > published node identity instead of rescanning symbols by AST pointer.

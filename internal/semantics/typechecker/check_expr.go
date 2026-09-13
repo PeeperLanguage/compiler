@@ -85,7 +85,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 	case *ast.Ident:
 		var sym *symbols.Symbol
 		if c.module != nil && c.module.Bindings != nil {
-			sym = c.module.Bindings.NodeSymbols[node.ID()]
+			sym = c.module.Bindings.Symbol(node)
 		}
 		if sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
@@ -488,11 +488,11 @@ func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedV
 		return resolvedNamedVariant{}, false
 	}
 	typePath, caseName, ok := path.EnumVariantMember()
-	caseSymbol := c.module.Bindings.NodeSymbols[path.ID()]
+	caseSymbol := c.module.Bindings.Symbol(path)
 	if !ok || caseName == nil || caseSymbol == nil || caseSymbol.Kind != symbols.SymbolVariant || caseSymbol.Name != caseName.Name {
 		return resolvedNamedVariant{}, false
 	}
-	qualifierSymbol := c.module.Bindings.NodeSymbols[typePath.ID()]
+	qualifierSymbol := c.module.Bindings.Symbol(typePath)
 	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
 		return resolvedNamedVariant{}, false
 	}
@@ -603,7 +603,7 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 	}
 	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {
 		if method.Symbol != nil && c.module.Bindings != nil {
-			c.module.Bindings.NodeSymbols[node.Name.ID()] = method.Symbol
+			c.module.Bindings.Bind(node.Name, method.Symbol)
 		}
 		return method.Type
 	}

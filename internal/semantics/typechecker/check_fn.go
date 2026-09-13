@@ -26,7 +26,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		if param.Name == nil {
 			continue
 		}
-		paramSym := c.module.Bindings.NodeSymbols[param.Name.ID()]
+		paramSym := c.module.Bindings.Symbol(param.Name)
 		if paramSym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
@@ -95,7 +95,7 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 		if !ok || ident == nil {
 			return true
 		}
-		sym := c.module.Bindings.NodeSymbols[ident.ID()]
+		sym := c.module.Bindings.Symbol(ident)
 		index, isParam := paramIndexes[sym]
 		if !isParam || index >= current || index < 0 || index >= len(params) {
 			return true
@@ -432,7 +432,11 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	if c.module == nil || c.module.Bindings == nil {
 		return
 	}
-	for _, method := range c.module.Bindings.MethodsByReceiver[decl.Name.Name] {
+	declSymbol := c.module.Bindings.Symbol(decl.Name)
+	if declSymbol == nil {
+		return
+	}
+	for _, method := range c.module.Bindings.Methods(declSymbol.Type) {
 		if method == nil || dataFields[method.Name] == nil {
 			continue
 		}

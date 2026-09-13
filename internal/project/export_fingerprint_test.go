@@ -124,7 +124,7 @@ func TestSemanticExportFingerprintIncludesPrivateFactsUsedByPublicDefault(t *tes
 		private := symbols.New("limit", symbols.SymbolConst, nil, nil)
 		private.Type = i32
 		bindings := bindingresult.New()
-		bindings.NodeSymbols[defaultIdent.ID()] = private
+		bindings.Bind(defaultIdent, private)
 		constValues := make(map[symbols.SymbolID]constvalue.Value)
 		constValues[private.ID], _ = constvalue.NewIntText(value, "i32")
 		return SemanticExportFingerprint(nil, fingerprintModule(t, fn, bindings, constValues))
@@ -158,7 +158,7 @@ func TestSemanticExportFingerprintTracksImportedConstantInDefault(t *testing.T) 
 		fn := symbols.New("Read", symbols.SymbolFunc, decl, nil)
 		fn.Type = &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}}
 		bindings := bindingresult.New()
-		bindings.NodeSymbols[defaultIdent.ID()] = imported
+		bindings.Bind(defaultIdent, imported)
 
 		consumer := fingerprintModule(t, fn, bindings, nil)
 		consumer.ID = moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "app"}
@@ -174,10 +174,12 @@ func TestSemanticExportFingerprintChangesWithPublicMethodSignature(t *testing.T)
 	makeMethod := func(returnType typeinfo.Type) string {
 		method := symbols.New("Read", symbols.SymbolMethod, nil, nil)
 		method.Type = &typeinfo.FuncType{Return: returnType}
+		receiver := &typeinfo.DefinedType{Name: "Buffer", Identity: "test::Buffer", Kind: typeinfo.DefinedKindStruct, Underlying: &typeinfo.StructType{}}
 		bindings := bindingresult.New()
-		bindings.MethodsByReceiver["Buffer"] = []*symbols.Symbol{method}
-		return SemanticExportFingerprint(nil, fingerprintModule(t,
-			symbols.New("Buffer", symbols.SymbolType, nil, nil), bindings, nil))
+		bindings.RegisterMethod(receiver, method)
+		typeSymbol := symbols.New("Buffer", symbols.SymbolType, nil, nil)
+		typeSymbol.Type = receiver
+		return SemanticExportFingerprint(nil, fingerprintModule(t, typeSymbol, bindings, nil))
 	}
 	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
 	i64 := &typeinfo.IntegerType{Signed: true, Bits: 64}

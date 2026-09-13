@@ -323,7 +323,7 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	if !ok || ident == nil {
 		return nil
 	}
-	sym := a.module.Bindings.NodeSymbols[ident.ID()]
+	sym := a.module.Bindings.Symbol(ident)
 	if _, reference := referenceMutability(sym); reference {
 		return sym
 	}
@@ -335,7 +335,7 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 		return []referenceLoan{}, false
 	}
 	if ident, ok := expr.(*ast.Ident); ok {
-		sym := a.module.Bindings.NodeSymbols[ident.ID()]
+		sym := a.module.Bindings.Symbol(ident)
 		if referenceHoldingSymbol(sym) {
 			if value, found := st.references[sym]; found {
 				return copyReferenceLoans(value), true
@@ -455,7 +455,7 @@ func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.Retur
 		if slot < 0 || slot >= len(params) || params[slot].Name == nil {
 			continue
 		}
-		if sym := a.module.Bindings.NodeSymbols[params[slot].Name.ID()]; sym != nil {
+		if sym := a.module.Bindings.Symbol(params[slot].Name); sym != nil {
 			allowed[sym] = struct{}{}
 		}
 	}

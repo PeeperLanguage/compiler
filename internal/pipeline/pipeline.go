@@ -457,7 +457,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 			value, ok := consteval.EvaluateExpr(
 				phaseCtx,
 				module,
-				module.Bindings.BlockScopes[ast.NodeID(scopeID)],
+				module.Bindings.ScopeID(ast.NodeID(scopeID)),
 				expr,
 				&typeinfo.BoolType{},
 			)
@@ -478,8 +478,8 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	}
 	if module.Phase < phase.Effects {
 		module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-			Symbols:             module.Bindings.NodeSymbols,
-			Scopes:              module.Bindings.BlockScopes,
+			Symbol:              module.Bindings.SymbolID,
+			Scope:               module.Bindings.ScopeID,
 			CallArguments:       module.Typechecking.CallArgumentsOrSource,
 			ArmBindings:         module.Typechecking.ArmBindings,
 			StringConcatenation: module.Typechecking.StringConcatenation,

@@ -79,7 +79,7 @@ fn main() {
 		result := loop.Body.Stmts[0].(*ast.LetDecl)
 		call := result.Value.(*ast.CallExpr)
 		selector := call.Callee.(*ast.SelectorExpr)
-		if module.Bindings.NodeSymbols[selector.Name.ID()] == nil {
+		if module.Bindings.Symbol(selector.Name) == nil {
 			t.Fatal("missing static method evidence")
 		}
 		if mutable, found := module.Typechecking.ReferenceArguments[selector.Expr.ID()]; !found || !mutable {
@@ -87,7 +87,7 @@ fn main() {
 		}
 		body := loop.Body.Stmts[2].(*ast.BlockStmt)
 		item := body.Stmts[0].(*ast.LetDecl)
-		if got := typeinfo.TypeText(module.Bindings.NodeSymbols[item.Name.ID()].Type); got != "i32" {
+		if got := typeinfo.TypeText(module.Bindings.Symbol(item.Name).Type); got != "i32" {
 			t.Fatalf("item type = %s", got)
 		}
 		ast.Inspect(expansion, func(node ast.Node) bool {

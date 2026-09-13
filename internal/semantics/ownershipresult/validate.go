@@ -181,7 +181,7 @@ func validateTypedNode(types *typecheckresult.Result, fnID ir.NodeID, where stri
 }
 
 func validateArmBody(bindings *bindingresult.Result, fnID ir.NodeID, where string, nodeID ir.NodeID) []string {
-	if _, scoped := bindings.BlockScopes[ast.NodeID(nodeID)]; scoped {
+	if bindings.ScopeID(ast.NodeID(nodeID)) != nil {
 		return nil
 	}
 	return []string{fmt.Sprintf("function %d plans a %s at node %d, which is not a block", fnID, where, nodeID)}

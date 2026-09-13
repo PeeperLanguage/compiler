@@ -242,7 +242,7 @@ when a selected file has no diagnostics, clearing old client diagnostics.
 `ast.Inspect` over imports and statements, maintaining a parent stack. It selects
 the deepest node containing the compiler source position and records parent links.
 
-`resolveIdentSymbol` first uses `module.Bindings.NodeSymbols`. It then handles
+`resolveIdentSymbol` first uses `module.Bindings.Symbol`. It then handles
 selector members, imported scope-resolution members and qualifiers, block/function
 scopes, and module scope. Selector lookup uses the effective expression type,
 struct field lookup, and receiver method lookup. `normalizedSelectorBaseType`

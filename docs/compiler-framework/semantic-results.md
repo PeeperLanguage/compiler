@@ -14,7 +14,7 @@ Completed slices:
 4. Intrinsic dispatch, string concatenation classification, and variant construction evidence moved into the same result. `CompilerCall` and `VariantConstruction` moved with their maps; eager constant evaluation treats a missing pre-typecheck result exactly like the previous empty proof map.
 5. Base `CaseTests` and `Matches` moved into `typecheckresult.Result`, along with `CaseTest`, `Match`, `MatchArm`, `MatchBinding`, explicit match projections, and canonical `MatchCases` validation. `flowresult.Result.CaseTests` uses `flowresult.CaseTest`, which embeds base case evidence and owns flow-only payload paths.
 6. Base `ExprTypes` moved into `typecheckresult.Result`. `Module.BaseExprType` is canonical base lookup; `Module.EffectiveExprType` gives flow evidence precedence and falls back to base evidence. `flowresult.Result.ExprTypes` remains distinct flow-refined evidence.
-7. Staged collection, binding, resolution, and type-dependent symbol evidence moved into `bindingresult.Result`: `BlockScopes`, `NodeSymbols`, `MethodsByReceiver`, `MethodsByDecl`, and `OperationFunctions`. Generated defaults and selectors write the same canonical node-symbol table; no precedence accessor or duplicate map exists.
+7. Staged collection, binding, resolution, and type-dependent symbol evidence moved behind `bindingresult.Result` operations. Syntax identity, scopes, nominal method sets, and operation-function catalogs are owned there; generated defaults and selectors publish through the same binding API. Method sets are keyed by semantic receiver identity rather than display text, and declaration lookup no longer needs a parallel method-declaration index.
 8. `SemanticInfo` and mixed `Module.ConstValues` storage were deleted. `Module.Constants` now owns `constantresult.Result`, physically separating authoritative post-typecheck `ModuleValues` from mutable pretypecheck/local `QueryCache` entries. `FinalizeValues` republishes top-level constants without duplicate cache entries; fingerprints and MIR consume only authoritative values. Module bindings carry defining identity, so foreign queries read owner publication without copying into consumer cache.
 9. Typechecker evidence cleanup removed redundant interface method name/owner keys, replaced copied match case descriptors with `CaseCount`, moved `PayloadPath` to flow-owned evidence, and made match field/whole-payload projection explicit with an invalid sentinel consumed exhaustively.
 
@@ -48,7 +48,7 @@ This table records pre-migration storage and problems; current ownership is trac
 
 | Field | Baseline writers / complete phase | Main consumers | Baseline contract problem |
 | --- | --- | --- | --- |
-| `BlockScopes` | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, HIR, LSP | Scope topology is resolver-owned, but contained symbols later gain types, `Used`, and `RequiresMutable` state consumed by usage/HIR. |
+| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, HIR, LSP | Scope topology is resolver-owned and exposed through `Bindings.Scope`; contained symbols later gain types, `Used`, and `RequiresMutable` state consumed by usage/HIR. |
 | `ResolvedSymbols` | collector, resolver, typechecker / `Typechecked` | typechecker, semantic fingerprint, flow, definite-init, ownership, HIR, LSP | Name suggests resolver result, but enum declarations, selectors, and expanded defaults have different writers. |
 | `ExpandedDefaultBindings` | typechecker / `Typechecked` | typechecker, ownership, HIR | Marker requires paired symbol provenance, with copied type/lowering evidence where available. Parsed reset can delete marker while retaining expanded AST. |
 | `ExprTypes` | typechecker / `Typechecked` | typechecker, const evaluation, flow, ownership, HIR, LSP | Base type is distinct from `Flow.ExprTypes`; direct base-map reads coexist with `EffectiveExprType` precedence. |
@@ -92,7 +92,7 @@ normal scopes and symbols instead.
 
 Resolver produces:
 
-- `BlockScopes`
+- block-scope identity, published through `Bindings.SetScope` / `Bindings.Scope`
 - most `ResolvedSymbols` entries.
 
 Typechecker later extends `ResolvedSymbols` for type-dependent selector resolution

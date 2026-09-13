@@ -129,23 +129,8 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 		Node:          cc.node,
 		Location:      ast.LocOf(cc.node),
 		ResolvedType:  resolved,
-		MethodSymbols: lookupMethodSet(cc.ctx, resolved, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
+		MethodSymbols: lookupMethodSet(cc.ctx, resolved),
 	}
-}
-
-func hoverMethodKeysForTypeNode(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node, resolved typeinfo.Type) []string {
-	keys := []string{typeinfo.TypeText(resolved)}
-	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
-		decl, ok := curr.(ast.TypeDecl)
-		if !ok {
-			continue
-		}
-		if name := decl.DeclName(); name != nil && name.Name != "" && name.Name != keys[0] {
-			keys = append(keys, name.Name)
-		}
-		break
-	}
-	return keys
 }
 
 func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr, bool) {
@@ -313,7 +298,7 @@ func declHoverSubject(cc *cursorContext, decl ast.Node, name *ast.Ident) *hoverS
 		subject.Symbol = resolveIdentSymbol(name, cc.parents, cc.module, cc.ctx)
 		if subject.Symbol != nil && subject.Symbol.Kind == symbols.SymbolType {
 			if typ, ok := symbols.GetSymbolType(subject.Symbol); ok {
-				subject.MethodSymbols = lookupMethodSet(cc.ctx, typ, []string{subject.Symbol.Name})
+				subject.MethodSymbols = lookupMethodSet(cc.ctx, typ)
 			}
 		}
 	}
@@ -403,7 +388,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 	}
 	if sym.Kind == symbols.SymbolType {
 		if typ, ok := symbols.GetSymbolType(sym); ok {
-			subject.MethodSymbols = lookupMethodSet(cc.ctx, typ, []string{sym.Name})
+			subject.MethodSymbols = lookupMethodSet(cc.ctx, typ)
 		}
 	}
 	return subject
@@ -423,10 +408,8 @@ func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, mo
 		return nil
 	}
 	parent := parents[ident.ID()]
-	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident && fn.Receiver != nil {
-		if sym, ok := module.Bindings.MethodsByDecl[fn.ID()]; ok && sym != nil {
-			return sym
-		}
+	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident {
+		return module.Bindings.Symbol(ident)
 	}
 	return nil
 }
@@ -462,18 +445,8 @@ func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.S
 	return sym
 }
 
-func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type, keys []string) []*symbols.Symbol {
-	if ctx == nil || typ == nil || len(keys) == 0 {
-		return nil
-	}
-	keySet := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-		keySet[key] = struct{}{}
-	}
-	if len(keySet) == 0 {
+func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type) []*symbols.Symbol {
+	if ctx == nil || typ == nil {
 		return nil
 	}
 	seen := make(map[string]struct{})
@@ -482,29 +455,26 @@ func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type, keys []str
 		if module == nil || module.Bindings == nil {
 			continue
 		}
-		for key := range keySet {
-			for _, sym := range module.Bindings.MethodsByReceiver[key] {
-				if sym == nil {
-					continue
-				}
-				signature := sym.Name
-				if typ, ok := symbols.GetSymbolType(sym); ok && typ != nil {
-					signature += "|" + typeinfo.TypeText(typ)
-				}
-				if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
-					signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
-				}
-				if _, ok := seen[signature]; ok {
-					continue
-				}
-				seen[signature] = struct{}{}
-				methods = append(methods, sym)
+		for _, sym := range module.Bindings.Methods(typ) {
+			if sym == nil {
+				continue
 			}
+			signature := sym.Name
+			if methodType, ok := symbols.GetSymbolType(sym); ok && methodType != nil {
+				signature += "|" + typeinfo.TypeText(methodType)
+			}
+			if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
+				signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
+			}
+			if _, ok := seen[signature]; ok {
+				continue
+			}
+			seen[signature] = struct{}{}
+			methods = append(methods, sym)
 		}
 	}
 	return methods
 }
-
 func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
 	if cc == nil || cc.node == nil || cc.module == nil || cc.module.Typechecking == nil {
 		return nil

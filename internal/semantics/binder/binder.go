@@ -1,10 +1,8 @@
 package binder
 
 import (
-	"cmp"
-	"slices"
-
 	"compiler/internal/frontend/ast"
+	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -46,9 +44,7 @@ func (b *binder) bindModule() {
 		}
 		return true
 	})
-	slices.SortFunc(b.module.Bindings.OperationFunctions, func(left, right *symbols.Symbol) int {
-		return cmp.Compare(left.Name, right.Name)
-	})
+	b.module.Bindings.SortOperationFunctions()
 }
 
 // Bind function and top-level declaration signatures into module scope.
@@ -57,16 +53,29 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 		return
 	}
 	fnType := typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
+	sym := b.module.Bindings.Symbol(fn.Name)
 	if fn.Receiver != nil {
-		if sym := b.module.Bindings.MethodsByDecl[fn.ID()]; sym != nil {
-			sym.BindType(fnType)
+		if sym == nil {
+			return
+		}
+		sym.BindType(fnType)
+		if len(fnType.Params) == 0 {
+			return
+		}
+		if previous := b.module.Bindings.RegisterMethod(fnType.Params[0], sym); previous != nil {
+			target, _ := typeinfo.ReceiverTarget(fnType.Params[0])
+			message := "method `" + sym.Name + "` already declared for `" + typeinfo.TypeText(target) + "`"
+			b.ctx.Diagnostics.Add(problems.Redeclaration(message, sym.Location, previous.Location))
 		}
 		return
 	}
-	if sym := b.moduleScopeSymbol(fn.Name.Name); sym != nil {
+	if sym == nil {
+		sym = b.moduleScopeSymbol(fn.Name.Name)
+	}
+	if sym != nil {
 		sym.BindType(fnType)
 		if len(fnType.Params) > 0 {
-			b.module.Bindings.OperationFunctions = append(b.module.Bindings.OperationFunctions, sym)
+			b.module.Bindings.AddOperationFunction(sym)
 		}
 	}
 }

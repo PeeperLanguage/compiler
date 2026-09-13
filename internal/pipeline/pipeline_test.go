@@ -742,7 +742,8 @@ func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
 		}
 	}
 	diag.AddError(diagnostics.ErrInvalidAssignment, "source error", nil, "")
-	entry.Bindings.NodeSymbols = nil
+	fn := entry.AST.Stmts[0].(*ast.FnDecl)
+	delete(entry.TypedASTNodes, fn.ID())
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Effects {
 		t.Fatalf("phase = %v, want Effects", entry.Phase)
 	}
@@ -2588,11 +2589,11 @@ fn main() -> i32 {
 			}
 
 			observed := make(map[symbols.CompilerOp]struct{})
-			for _, symbol := range entry.Bindings.NodeSymbols {
-				if symbol != nil && symbol.CompilerOp != "" {
+			entry.Bindings.ForEachSymbol(func(symbol *symbols.Symbol) {
+				if symbol.CompilerOp != "" {
 					observed[symbol.CompilerOp] = struct{}{}
 				}
-			}
+			})
 			for _, op := range intrinsics.Operations() {
 				if _, ok := observed[op]; !ok {
 					t.Errorf("registered intrinsic %q lacks successful semantic/HIR/MIR/LLVM exercise", op)

@@ -33,15 +33,13 @@ func SemanticExportFingerprint(ctx *CompilerContext, module *Module) string {
 		parts = append(parts, part)
 	}
 	if module.Bindings != nil {
-		for receiver, methods := range module.Bindings.MethodsByReceiver {
-			for _, method := range methods {
-				if method == nil || !method.IsPub {
-					continue
-				}
-				parts = append(parts, "method:"+receiver+":"+method.Name+":"+
-					semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(ctx, module, method))
+		module.Bindings.ForEachMethod(func(receiver string, method *symbols.Symbol) {
+			if method == nil || !method.IsPub {
+				return
 			}
-		}
+			parts = append(parts, "method:"+receiver+":"+method.Name+":"+
+				semanticTypeKey(method.Type, make(map[typeinfo.Type]bool))+semanticExportMetadata(ctx, module, method))
+		})
 	}
 	return ast.FingerprintParts(parts)
 }
@@ -81,7 +79,7 @@ func semanticExportMetadata(ctx *CompilerContext, module *Module, sym *symbols.S
 			if !ok || ident == nil || module.Bindings == nil {
 				return true
 			}
-			resolved := module.Bindings.NodeSymbols[ident.ID()]
+			resolved := module.Bindings.Symbol(ident)
 			if resolved == nil {
 				return true
 			}

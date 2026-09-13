@@ -126,7 +126,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 		var sym *symbols.Symbol
 		var found bool
 		if a.module != nil && a.module.Bindings != nil {
-			sym = a.module.Bindings.NodeSymbols[e.ID()]
+			sym = a.module.Bindings.Symbol(e)
 			found = sym != nil
 		}
 		if !found {

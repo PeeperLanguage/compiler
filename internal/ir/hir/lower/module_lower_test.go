@@ -65,7 +65,7 @@ func TestGenerateHIRDoesNotResolveMissingIdentifierBinding(t *testing.T) {
 	out := generateTestHIR(t, "hir_identifier_evidence_test"+peeper.SourceExt, "hir_identifier_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *project.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-		delete(module.Bindings.NodeSymbols, identifier.ID())
+		module.Bindings.Unbind(identifier)
 	})
 	returned := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value
 	invalid, ok := returned.(*ir.InvalidExpr)
@@ -185,7 +185,7 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 	fn := entry.AST.Stmts[0].(*ast.FnDecl)
 	call := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.CallExpr)
 	path := call.Callee.(*ast.ScopeResolution)
-	delete(entry.Bindings.NodeSymbols, path.ID())
+	entry.Bindings.Unbind(path)
 
 	out := GenerateHIR(ctx, entry)
 	loweredCall := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value.(*ir.Call)
@@ -204,7 +204,7 @@ fn (self: &mut Cursor) Next() -> ?i32 { return none; }
 fn main() {
 	let mut cursor = Cursor.{};
 	for item in cursor.Next() { if item == 1 { continue; } }
-}`, func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
+}`)
 	var loop *hir.For
 	for _, fn := range out.Funcs {
 		for _, stmt := range fn.Body.Stmts {
@@ -1320,8 +1320,7 @@ fn main() -> i32 {
 	let reader: &Reader = &counter;
 	return reader.read();
 }`
-	out := generateTestHIR(t, "hir_interface_evidence_test"+peeper.SourceExt, "hir_interface_evidence_test", src,
-		func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
+	out := generateTestHIR(t, "hir_interface_evidence_test"+peeper.SourceExt, "hir_interface_evidence_test", src)
 	mainFn := out.Funcs[len(out.Funcs)-1]
 	binding, ok := mainFn.Body.Stmts[1].(*hir.Binding)
 	if !ok {
@@ -1349,8 +1348,7 @@ fn main() -> i32 {
 	let counter: Counter = .{ value = 20 };
 	return use(&counter);
 }`
-	out := generateTestHIR(t, "hir_default_interface_evidence_test"+peeper.SourceExt, "hir_default_interface_evidence_test", src,
-		func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
+	out := generateTestHIR(t, "hir_default_interface_evidence_test"+peeper.SourceExt, "hir_default_interface_evidence_test", src)
 	mainFn := out.Funcs[len(out.Funcs)-1]
 	ret := mainFn.Body.Stmts[1].(*hir.Return)
 	call := ret.Value.(*ir.Call)
@@ -1413,7 +1411,7 @@ fn (self: &Counter) Read() -> i32 { return self.value; }
 fn main() -> i32 {
 	let counter: Counter = .{ value = 7 };
 	return counter.Read();
-}`, func(module *project.Module) { module.Bindings.MethodsByReceiver = nil })
+}`)
 	mainFn := out.Funcs[len(out.Funcs)-1]
 	ret := mainFn.Body.Stmts[1].(*hir.Return)
 	call, ok := ret.Value.(*ir.Call)

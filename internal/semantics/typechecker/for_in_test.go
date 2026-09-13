@@ -218,7 +218,7 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	binding := module.Bindings.NodeSymbols[loop.Value.ID()]
+	binding := module.Bindings.Symbol(loop.Value)
 	if binding == nil {
 		t.Fatal("missing resolved loop binding")
 	}
@@ -235,7 +235,7 @@ return total;
 	if reference == nil {
 		t.Fatal("missing loop binding reference")
 	}
-	if resolved := module.Bindings.NodeSymbols[reference.ID()]; resolved != binding {
+	if resolved := module.Bindings.Symbol(reference); resolved != binding {
 		t.Fatalf("loop reference resolved to %#v, want declaration symbol %#v", resolved, binding)
 	}
 }
@@ -265,7 +265,7 @@ return total;
 	if evidence.Cursor == nil || plan.Limit == nil || plan.Ordinal == nil {
 		t.Fatalf("range iteration evidence is incomplete = %#v", evidence)
 	}
-	if evidence.Index != module.Bindings.NodeSymbols[loop.Index.ID()] || evidence.Value != module.Bindings.NodeSymbols[loop.Value.ID()] {
+	if evidence.Index != module.Bindings.Symbol(loop.Index) || evidence.Value != module.Bindings.Symbol(loop.Value) {
 		t.Fatal("range evidence does not preserve source binding symbols")
 	}
 	for name, symbol := range map[string]string{

@@ -57,8 +57,8 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		t.Fatal("choose function CFG missing")
 	}
 	effects := effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-		Symbols:             module.Bindings.NodeSymbols,
-		Scopes:              module.Bindings.BlockScopes,
+		Symbol:              module.Bindings.SymbolID,
+		Scope:               module.Bindings.ScopeID,
 		CallArguments:       module.Typechecking.CallArgumentsOrSource,
 		ArmBindings:         module.Typechecking.ArmBindings,
 		StringConcatenation: module.Typechecking.StringConcatenation,
@@ -262,7 +262,7 @@ fn choose(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	binding := module.Bindings.NodeSymbols[match.Arms[0].Fields[0].Binding.ID()]
+	binding := module.Bindings.Symbol(match.Arms[0].Fields[0].Binding)
 	returnID := ir.NodeID(match.Arms[0].Body.Stmts[0].ID())
 	for _, block := range module.CFG.Function(ir.NodeID(fn.ID())).Blocks {
 		for _, cfgSite := range block.Sites {
