@@ -297,8 +297,11 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	}
 	switch target := node.Target.(type) {
 	case *ast.Ident:
-		sym, ok := scope.Lookup(target.Name)
-		if !ok || sym == nil {
+		var sym *symbols.Symbol
+		if c.module != nil && c.module.Bindings != nil {
+			sym = c.module.Bindings.NodeSymbols[target.ID()]
+		}
+		if sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol,
 				"unknown assignment target `"+target.Name+"`", ast.LocOf(target), "")
 			return

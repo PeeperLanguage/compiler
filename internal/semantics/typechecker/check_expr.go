@@ -84,15 +84,10 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.Ident:
 		var sym *symbols.Symbol
-		var ok bool
 		if c.module != nil && c.module.Bindings != nil {
 			sym = c.module.Bindings.NodeSymbols[node.ID()]
-			ok = sym != nil
 		}
-		if !ok {
-			sym, ok = scope.Lookup(node.Name)
-		}
-		if !ok || sym == nil {
+		if sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name), ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}

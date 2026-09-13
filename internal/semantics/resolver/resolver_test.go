@@ -66,6 +66,23 @@ func TestResolveRejectsLexicalSelfInitialization(t *testing.T) {
 	t.Fatalf("expected use-before-declaration diagnostic:\n%s", diag.EmitAllToString())
 }
 
+func TestResolvePublishesAssignmentTargetSymbol(t *testing.T) {
+	module, diag := checkResolveSource(t, `fn main() {
+	let mut value = 0;
+	value = 1;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	declaration := fn.Body.Stmts[0].(*ast.LetDecl)
+	target := fn.Body.Stmts[1].(*ast.AssignStmt).Target.(*ast.Ident)
+	resolved := module.Bindings.NodeSymbols[target.ID()]
+	if resolved == nil || resolved.ASTNode != declaration {
+		t.Fatalf("assignment target = %#v, want declaration symbol for %#v", resolved, declaration)
+	}
+}
+
 func TestResolveEnumVariantPathsToChildSymbols(t *testing.T) {
 	module, diag := checkResolveSource(t, `enum Result<T> {
 	Ok: { value: T },

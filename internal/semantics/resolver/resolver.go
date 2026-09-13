@@ -360,6 +360,7 @@ func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
+			r.module.Bindings.NodeSymbols[node.ID()] = sym
 			sym.Used = true
 			return
 		}

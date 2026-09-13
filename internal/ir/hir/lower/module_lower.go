@@ -511,7 +511,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 		typeID := loweredTypeID(ctx, module, exprResolvedType(module, expr))
 		return &ir.Place{Root: lowerASTExpr(ctx, module, scope, expr, nil), Type: typeID, Location: ast.LocOf(expr)}
 	}
-	root := lowerIdentExpr(ctx, module, scope, ident, ir.InvalidType)
+	root := lowerIdentExpr(ctx, module, ident, ir.InvalidType)
 	out := &ir.Place{
 		Root: root, Type: root.TypeID(), Location: ast.LocOf(expr),
 	}
@@ -720,19 +720,12 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.InvalidExpr{Message: "`none` requires optional context", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.Ident:
-		return lowerIdentExpr(ctx, module, scope, node, resolvedTypeID)
+		return lowerIdentExpr(ctx, module, node, resolvedTypeID)
 
 	case *ast.ScopeResolution:
 		var sym *symbols.Symbol
 		if module != nil && module.Bindings != nil {
 			sym = module.Bindings.NodeSymbols[node.ID()]
-		}
-		if sym == nil {
-			if qualifier, member, imported := node.ImportValueMember(); imported {
-				if resolved, ok := project.LookupImportedSymbol(ctx, module, qualifier.Name, member.Name); ok {
-					sym = resolved.Symbol
-				}
-			}
 		}
 		if sym != nil {
 			t := resolvedTypeID
@@ -1255,16 +1248,13 @@ func exprResolvedType(module *project.Module, expr ast.Expr) typeinfo.Type {
 	return module.EffectiveExprType(expr.ID())
 }
 
-func lowerIdentExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, node *ast.Ident, typeID ir.TypeID) ir.Expr {
+func lowerIdentExpr(ctx *project.CompilerContext, module *project.Module, node *ast.Ident, typeID ir.TypeID) ir.Expr {
 	if node == nil {
 		return &ir.InvalidExpr{Message: "nil identifier", Type: ir.InvalidType}
 	}
 	var sym *symbols.Symbol
 	if module != nil && module.Bindings != nil {
 		sym = module.Bindings.NodeSymbols[node.ID()]
-	}
-	if sym == nil && scope != nil {
-		sym, _ = scope.Lookup(node.Name)
 	}
 	if sym == nil {
 		return &ir.InvalidExpr{Message: "unresolved identifier: " + node.Name, Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(node)}}

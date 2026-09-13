@@ -61,6 +61,78 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	return out
 }
 
+func TestGenerateHIRDoesNotResolveMissingIdentifierBinding(t *testing.T) {
+	out := generateTestHIR(t, "hir_identifier_evidence_test"+peeper.SourceExt, "hir_identifier_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *project.Module) {
+		fn := module.AST.Stmts[0].(*ast.FnDecl)
+		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
+		delete(module.Bindings.NodeSymbols, identifier.ID())
+	})
+	returned := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value
+	invalid, ok := returned.(*ir.InvalidExpr)
+	if !ok || !strings.Contains(invalid.Message, "unresolved identifier") {
+		t.Fatalf("identifier without binding evidence = %#v, want invalid expression", returned)
+	}
+}
+
+func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+
+	const importedPath = "util" + peeper.SourceExt
+	importedSource := `fn Helper() -> i32 { return 1; }`
+	imported := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "util"},
+		FilePath: importedPath,
+		Content:  importedSource,
+		AST:      parser.New(importedPath, lexer.New(importedPath, importedSource, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	ctx.AddModule(imported)
+	collector.Collect(ctx, imported)
+	binder.Bind(ctx, imported)
+	resolver.Resolve(ctx, imported)
+	typechecker.Check(ctx, imported)
+
+	const entryPath = "main" + peeper.SourceExt
+	entrySource := "import \"util\";\nfn main() -> i32 { return util::Helper(); }"
+	entryAST := parser.New(entryPath, lexer.New(entryPath, entrySource, diag).Tokenize(), diag).ParseModule()
+	entry := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "main"},
+		FilePath: entryPath,
+		Content:  entrySource,
+		AST:      entryAST,
+		Imports: map[string]project.ResolvedImport{
+			"util": {ID: imported.ID, Decl: entryAST.Imports[0], FilePath: imported.FilePath},
+		},
+	}
+	ctx.AddModule(entry)
+	collector.Collect(ctx, entry)
+	binder.Bind(ctx, entry)
+	resolver.Resolve(ctx, entry)
+	typechecker.Check(ctx, entry)
+	entry.RebuildTypedASTIndex()
+	entry.CFG = cfg.BuildModule(entry.AST, cfg.BuildQueries{
+		MatchCases:          entry.Typechecking.MatchCases,
+		LoopGuaranteedEntry: entry.Typechecking.ForLoopGuaranteedEntry,
+		CheckedIterations:   entry.Typechecking.CheckedIterations,
+	})
+	entry.Flow = typechecker.CheckFlow(ctx, entry)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := entry.AST.Stmts[0].(*ast.FnDecl)
+	call := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.CallExpr)
+	path := call.Callee.(*ast.ScopeResolution)
+	delete(entry.Bindings.NodeSymbols, path.ID())
+
+	out := GenerateHIR(ctx, entry)
+	loweredCall := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value.(*ir.Call)
+	invalid, ok := loweredCall.Callee.(*ir.InvalidExpr)
+	if !ok || !strings.Contains(invalid.Message, "unresolved qualified identifier") {
+		t.Fatalf("imported identifier without binding evidence = %#v, want invalid callee", loweredCall.Callee)
+	}
+}
+
 func TestGenerateHIRConsumesCallIteratorEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_iterator_test"+peeper.SourceExt, "hir_iterator_test", `struct Cursor {}
 fn (self: &mut Cursor) Next() -> ?i32 { return none; }
