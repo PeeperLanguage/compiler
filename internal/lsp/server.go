@@ -319,6 +319,7 @@ func diagnosticNotifications(snapshot *diagnosticSnapshot) []Notification {
 	}
 
 	for _, diag := range snapshot.ctx.Diagnostics.Diagnostics() {
+		diag = diagnostics.ForPresentation(diag, diagnostics.PresentationOptions{})
 		filePath := diag.FilePath
 		if filePath == "" {
 			continue

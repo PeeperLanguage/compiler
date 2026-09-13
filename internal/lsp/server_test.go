@@ -2184,3 +2184,36 @@ func TestLSPDidChangePublishesInterfaceSeparatorErrorsAfterDebounce(t *testing.T
 		t.Fatalf("expected syntax diagnostics after invalid interface edit")
 	}
 }
+
+func TestDiagnosticNotificationsHideInternalCompilerDetail(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "main"+peeper.SourceExt)
+	bag := diagnostics.NewDiagnosticBag()
+	diag := diagnostics.NewError("lowered MIR is malformed: secret validator detail").WithCode(diagnostics.ErrInvalidEvidence)
+	diag.FilePath = filePath
+	bag.Add(diag)
+
+	notifications := diagnosticNotifications(&diagnosticSnapshot{
+		ctx:   &project.CompilerContext{Diagnostics: bag},
+		files: []string{filePath},
+	})
+	if len(notifications) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notifications))
+	}
+	params, ok := notifications[0].Params.(PublishDiagnosticsParams)
+	if !ok {
+		t.Fatalf("notification params type = %T", notifications[0].Params)
+	}
+	if len(params.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1", len(params.Diagnostics))
+	}
+	published := params.Diagnostics[0]
+	if published.Code != diagnostics.ErrInvalidEvidence {
+		t.Fatalf("code = %v, want %s", published.Code, diagnostics.ErrInvalidEvidence)
+	}
+	if strings.Contains(published.Message, "secret validator detail") {
+		t.Fatalf("LSP leaked internal detail: %q", published.Message)
+	}
+	if !strings.Contains(published.Message, "internal compiler failure") {
+		t.Fatalf("LSP message = %q, want generic ICE text", published.Message)
+	}
+}

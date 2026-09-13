@@ -326,9 +326,9 @@ func sortDiagnostics(diagnostics []*Diagnostic) {
 	})
 }
 
-func (db *DiagnosticBag) EmitAll() {
+func (db *DiagnosticBag) EmitAll(options PresentationOptions) {
 	emitter := NewEmitter(os.Stderr)
-	db.emitFiltered(emitter, func(*Diagnostic) bool { return true })
+	db.emitFiltered(emitter, func(*Diagnostic) bool { return true }, &options)
 }
 
 // EmitErrors prints only error diagnostics and an error-only summary.
@@ -336,10 +336,10 @@ func (db *DiagnosticBag) EmitErrors() {
 	emitter := NewEmitter(os.Stderr)
 	db.emitFiltered(emitter, func(diag *Diagnostic) bool {
 		return diag != nil && diag.Severity == Error
-	})
+	}, nil)
 }
 
-func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) bool) {
+func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) bool, presentation *PresentationOptions) {
 	diagnostics := db.Diagnostics()
 
 	filtered := diagnostics[:0]
@@ -361,6 +361,9 @@ func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) b
 	sortDiagnostics(filtered)
 
 	for _, diag := range filtered {
+		if presentation != nil {
+			diag = ForPresentation(diag, *presentation)
+		}
 		emitter.Emit(diag)
 	}
 
@@ -387,7 +390,7 @@ func (db *DiagnosticBag) emitAllToStringWithFormat(format colors.LogFormat) stri
 		highlighter: NewSyntaxHighlighter(true, logger),
 	}
 
-	db.emitFiltered(emitter, func(*Diagnostic) bool { return true })
+	db.emitFiltered(emitter, func(*Diagnostic) bool { return true }, nil)
 
 	return buf.String()
 }

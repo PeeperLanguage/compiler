@@ -222,6 +222,6 @@ func captureEmitErrors(bag *DiagnosticBag) string {
 	}
 	bag.emitFiltered(emitter, func(diag *Diagnostic) bool {
 		return diag != nil && diag.Severity == Error
-	})
+	}, nil)
 	return sb.String()
 }

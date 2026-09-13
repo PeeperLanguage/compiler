@@ -11,6 +11,29 @@ import (
 	"compiler/pkg/peeper"
 )
 
+func TestParseCommandArgsShowInternalErrors(t *testing.T) {
+	opts, err := parseCommandArgs("check", []string{"--show-internal-errors", "demo" + peeper.SourceExt}, false)
+	if err != nil {
+		t.Fatalf("parse command args: %v", err)
+	}
+	if !opts.showInternalErrors {
+		t.Fatal("expected show-internal-errors flag")
+	}
+}
+
+func TestParseBuildArgsShowInternalErrors(t *testing.T) {
+	flags, positional, err := parseBuildArgs("build", []string{"--show-internal-errors", "demo" + peeper.SourceExt})
+	if err != nil {
+		t.Fatalf("parse build args: %v", err)
+	}
+	if !flags.showInternalErrors {
+		t.Fatal("expected show-internal-errors flag")
+	}
+	if len(positional) != 1 || positional[0] != "demo"+peeper.SourceExt {
+		t.Fatalf("positional = %#v", positional)
+	}
+}
+
 func TestParseCommandArgsRunDebug(t *testing.T) {
 	opts, err := parseCommandArgs("run", []string{"--debug", "demo" + peeper.SourceExt}, true)
 	if err != nil {

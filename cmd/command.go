@@ -31,12 +31,12 @@ const (
 
 // emitAndCheckDiagnostics prints all pending diagnostics and returns errAlreadyReported
 // if any errors are present. Shared by build, run, and check commands.
-func emitAndCheckDiagnostics(ctx *project.CompilerContext) error {
+func emitAndCheckDiagnostics(ctx *project.CompilerContext, showInternalErrors bool) error {
 	if ctx == nil || ctx.Diagnostics == nil {
 		return fmt.Errorf("compiler diagnostics unavailable")
 	}
 	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
-		ctx.Diagnostics.EmitAll()
+		ctx.Diagnostics.EmitAll(diagnostics.PresentationOptions{ShowInternalErrors: showInternalErrors})
 	}
 	if ctx.Diagnostics.HasErrors() {
 		return errAlreadyReported
@@ -45,18 +45,20 @@ func emitAndCheckDiagnostics(ctx *project.CompilerContext) error {
 }
 
 type commandCommonFlags struct {
-	logFormat  *string
-	m32        *bool
-	targetOS   *string
-	targetArch *string
+	logFormat          *string
+	m32                *bool
+	targetOS           *string
+	targetArch         *string
+	showInternalErrors *bool
 }
 
 func addCommandCommonFlags(fs *flag.FlagSet) commandCommonFlags {
 	return commandCommonFlags{
-		logFormat:  fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
-		m32:        fs.Bool("m32", false, "target 32-bit ABI"),
-		targetOS:   fs.String("target-os", "", "target operating system (defaults to host GOOS)"),
-		targetArch: fs.String("target-arch", "", "target architecture (defaults to host GOARCH)"),
+		logFormat:          fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
+		m32:                fs.Bool("m32", false, "target 32-bit ABI"),
+		targetOS:           fs.String("target-os", "", "target operating system (defaults to host GOOS)"),
+		targetArch:         fs.String("target-arch", "", "target architecture (defaults to host GOARCH)"),
+		showInternalErrors: fs.Bool("show-internal-errors", false, "show compiler-internal diagnostic details"),
 	}
 }
 
@@ -84,10 +86,11 @@ func applyCommandCommonFlags(flags commandCommonFlags) (string, string, error) {
 }
 
 type commandOptions struct {
-	positional []string
-	targetOS   string
-	targetArch string
-	debugBuild bool
+	positional         []string
+	targetOS           string
+	targetArch         string
+	debugBuild         bool
+	showInternalErrors bool
 }
 
 func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptions, error) {
@@ -105,19 +108,21 @@ func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptio
 		return commandOptions{}, err
 	}
 	return commandOptions{
-		positional: fs.Args(),
-		targetOS:   targetOS,
-		targetArch: targetArch,
-		debugBuild: debugBuild,
+		positional:         fs.Args(),
+		targetOS:           targetOS,
+		targetArch:         targetArch,
+		debugBuild:         debugBuild,
+		showInternalErrors: *common.showInternalErrors,
 	}, nil
 }
 
 type buildFlags struct {
-	outputPath string
-	keepGen    bool
-	debugBuild bool
-	targetOS   string
-	targetArch string
+	outputPath         string
+	keepGen            bool
+	debugBuild         bool
+	targetOS           string
+	targetArch         string
+	showInternalErrors bool
 }
 
 func buildCommand(args []string) error {
@@ -145,7 +150,7 @@ func buildCommand(args []string) error {
 	}
 
 	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
-	if err := emitAndCheckDiagnostics(ctx); err != nil {
+	if err := emitAndCheckDiagnostics(ctx, opts.showInternalErrors); err != nil {
 		return err
 	}
 
@@ -182,11 +187,12 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 		return buildFlags{}, nil, err
 	}
 	return buildFlags{
-		outputPath: *outputPath,
-		keepGen:    *keepGen,
-		debugBuild: *debugBuild,
-		targetOS:   targetOS,
-		targetArch: targetArch,
+		outputPath:         *outputPath,
+		keepGen:            *keepGen,
+		debugBuild:         *debugBuild,
+		targetOS:           targetOS,
+		targetArch:         targetArch,
+		showInternalErrors: *common.showInternalErrors,
 	}, fs.Args(), nil
 }
 
@@ -214,7 +220,7 @@ func runCommand(args []string) error {
 	}
 
 	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
-	if err := emitAndCheckDiagnostics(ctx); err != nil {
+	if err := emitAndCheckDiagnostics(ctx, opts.showInternalErrors); err != nil {
 		return err
 	}
 
@@ -395,7 +401,7 @@ func checkCommand(args []string) error {
 		for _, filePath := range groups[key] {
 			compiler.CompileFile(ctx, filePath, nil)
 		}
-		if err := emitAndCheckDiagnostics(ctx); err != nil {
+		if err := emitAndCheckDiagnostics(ctx, opts.showInternalErrors); err != nil {
 			failed = true
 		}
 	}

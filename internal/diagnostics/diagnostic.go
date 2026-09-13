@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"strings"
+
 	"compiler/internal/source"
 	"compiler/pkg/colors"
 )
@@ -253,4 +255,31 @@ func (d *Diagnostic) WithNote(message string) *Diagnostic {
 
 func (d *Diagnostic) WithHelp(help string) *Diagnostic {
 	return d.WithText("help", help, colors.GREEN)
+}
+
+const internalCompilerFailureMessage = "internal compiler failure"
+
+type PresentationOptions struct {
+	ShowInternalErrors bool
+}
+
+// ForPresentation returns the diagnostic as it should be shown to a user.
+// Internal diagnostics retain their complete compiler detail in storage; the
+// default presentation only hides that detail at the output boundary.
+func ForPresentation(diag *Diagnostic, options PresentationOptions) *Diagnostic {
+	if diag == nil || options.ShowInternalErrors || !strings.HasPrefix(diag.Code, "ICE") {
+		return diag
+	}
+	presented := *diag
+	presented.Message = internalCompilerFailureMessage
+	presented.Labels = nil
+	presented.Extras = []DiagnosticExtra{{
+		Kind: ExtraText,
+		Text: DiagnosticText{
+			Kind:    "help",
+			Message: "rerun with --show-internal-errors to include compiler-internal details when reporting this issue",
+			Color:   colors.GREEN,
+		},
+	}}
+	return &presented
 }
