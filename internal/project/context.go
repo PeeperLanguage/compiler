@@ -80,8 +80,6 @@ type Config struct {
 	LibraryBaseDir string
 	// Optional explicit namespace -> root overrides.
 	LibraryRoots map[string]string
-	// Manifest alias -> dependency root.
-	DependencyRoots map[string]string
 	// Target operating system.
 	TargetOS string
 	// Target architecture.
@@ -154,9 +152,6 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		if _, err := os.Stat(root); err != nil && !os.IsNotExist(err) {
 			setupDiag.Add(diagnostics.NewWarning("failed to access library root for " + namespace + ": " + err.Error()))
 		}
-	}
-	if cfg.DependencyRoots == nil {
-		cfg.DependencyRoots = make(map[string]string)
 	}
 	globalScope := predeclaredScope(compilerTarget)
 	types := ir.NewTypeTable()
