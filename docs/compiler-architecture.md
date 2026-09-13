@@ -245,7 +245,7 @@ implementation of that policy.
 
 `ownership.referenceValueForExpr` is not a generic aggregate interpreter. It uses
 existing holder loans, `Flow.ResolvedValueOrigins`, reference types, struct payload
-syntax and `Typechecking.VariantConstructions` for currently accepted carriers.
+syntax and `Typechecking.VariantConstruction` evidence for currently accepted carriers.
 Pre-evaluation capture preserves loan identity before a move clears source state.
 Flow origin sets describe referents; they do not replace ownership's dynamic loan
 IDs, mutability, reservations/activation, liveness, joins or cleanup policy.

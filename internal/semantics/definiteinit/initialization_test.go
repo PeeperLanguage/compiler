@@ -42,7 +42,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   module.Typechecking.CheckedIterations,
+		CheckedIteration:    module.Typechecking.CheckedIteration,
 	})
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {

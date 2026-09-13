@@ -385,7 +385,7 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 		}
 		return loans, len(loans) > 0
 	}
-	construction, constructed := a.module.Typechecking.VariantConstructions[expr.ID()]
+	construction, constructed := a.module.Typechecking.VariantConstruction(expr.ID())
 	if !constructed || construction.Payload == nil {
 		return []referenceLoan{}, false
 	}

@@ -257,16 +257,14 @@ depend on, so nothing has to re-derive them:
 
 ```go
 // internal/semantics/typecheckresult/result.go (excerpt)
-type Result struct {
-    ExprTypes             map[ast.NodeID]typeinfo.Type       // the type of each expression
-    ValueUses             map[ast.NodeID]typeinfo.UseKind    // read / copy / move
-    ReferenceArguments    map[ast.NodeID]bool                // borrows; value = mutable
-    ImplicitConversions   map[ast.NodeID]typeinfo.Conversion
-    ImplicitCallArguments map[ast.NodeID]typeinfo.Type       // receiver/pipe adaptation
-    Matches               map[ast.NodeID]Match               // resolved case evidence
-    ForIterations         map[ast.NodeID]ForIteration        // loop lowering plan
-    // ...
-}
+result.RecordExprType(expr.ID(), typ)
+result.RecordImplicitConversion(expr.ID(), conversion)
+result.RecordForIteration(loop.ID(), iteration)
+
+// Later phases ask semantic questions; the backing indexes stay private.
+typ := result.ExprType(expr.ID())
+conversion, ok := result.ImplicitConversion(expr.ID())
+iteration, ok := result.ForIteration(loop.ID())
 ```
 
 ---
@@ -473,8 +471,8 @@ published evidence rather than re-deciding anything:
 
 ```go
 // internal/ir/hir/lower (simplified)
-conversion, converting := module.Typechecking.ImplicitConversions[expr.ID()]
-iteration := module.Typechecking.ForIterations[stmt.ID()]   // carrier, cursor, bounds
+conversion, converting := module.Typechecking.ImplicitConversion(expr.ID())
+iteration, found := module.Typechecking.ForIteration(stmt.ID()) // carrier, cursor, bounds
 ```
 
 **MIR** is flat: basic blocks, instructions, terminators — close to what a backend wants.

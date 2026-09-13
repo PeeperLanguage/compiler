@@ -141,7 +141,7 @@ Important statement evidence and rules:
 
 `check_expr.go` contains the expression dispatcher and expression-specific typing.
 `typeExpr` is the shared entry point. It calls `typeExprBase`, records the base type
-in `Typechecking.ExprTypes` during the base pass, then calls
+through `Typechecking.RecordExprType` during the base pass, then calls
 `effectiveExpressionType` when flow state exists. Recursive typing remains in
 `typeExprBase`, so the two passes share one syntax dispatch and do not implement two
 independent expression type systems.

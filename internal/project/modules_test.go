@@ -179,7 +179,7 @@ func moduleWithArtifacts() *Module {
 	}
 	module.ResetSemanticData()
 	module.Typechecking = typecheckresult.New()
-	module.Typechecking.ExprTypes[1] = typeinfo.DefaultIntegerType()
+	module.Typechecking.RecordExprType(1, typeinfo.DefaultIntegerType())
 	return module
 }
 

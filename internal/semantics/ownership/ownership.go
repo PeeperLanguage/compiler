@@ -241,7 +241,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		if node == nil || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
 			continue
 		}
-		match, found := a.module.Typechecking.Matches[ast.NodeID(node.cfgSite.NodeID)]
+		match, found := a.module.Typechecking.Match(ast.NodeID(node.cfgSite.NodeID))
 		if !found {
 			continue
 		}
@@ -537,7 +537,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, found := a.module.Typechecking.Matches[ast.NodeID(node.cfgSite.NodeID)]
+	match, found := a.module.Typechecking.Match(ast.NodeID(node.cfgSite.NodeID))
 	if !found {
 		return
 	}

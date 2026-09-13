@@ -39,7 +39,7 @@ fn Read(value: Box, pointer: *Box, reference: &Box) -> i32 {
 			return true
 		}
 		base := selector.Expr.(*ast.Ident).Name
-		access, published := module.Typechecking.StructFields[selector.ID()]
+		access, published := module.Typechecking.StructField(selector.ID())
 		if !published || access.Field != 0 || typeinfo.TypeText(access.Type) != "i32" {
 			t.Fatalf("%s field evidence = %#v", base, access)
 		}
@@ -93,7 +93,7 @@ fn main() -> i32 {
 			return true
 		}
 		for _, arg := range call.Args {
-			kind, found := module.Typechecking.ValueUses[arg.ID()]
+			kind, found := module.Typechecking.ValueUse(arg.ID())
 			uses[callee.Name] = append(uses[callee.Name], callUse{use: kind, found: found})
 		}
 		return true
@@ -133,7 +133,7 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 			if !ok {
 				return true
 			}
-			kind, found := module.Typechecking.ValueUses[lit.ID()]
+			kind, found := module.Typechecking.ValueUse(lit.ID())
 			if !found {
 				return true
 			}
@@ -167,7 +167,7 @@ fn main() -> i32 {
 			if !ok {
 				return true
 			}
-			kind, found := module.Typechecking.ValueUses[call.ID()]
+			kind, found := module.Typechecking.ValueUse(call.ID())
 			if !found {
 				return true
 			}
@@ -199,10 +199,10 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if len(module.Typechecking.Matches) != 1 {
-		t.Fatalf("published matches = %d, want 1", len(module.Typechecking.Matches))
+	if module.Typechecking.MatchCount() != 1 {
+		t.Fatalf("published matches = %d, want 1", module.Typechecking.MatchCount())
 	}
-	for _, match := range module.Typechecking.Matches {
+	module.Typechecking.ForEachMatch(func(_ ast.NodeID, match typecheckresult.Match) {
 		for _, arm := range match.Arms {
 			if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
 				t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
@@ -211,7 +211,7 @@ fn main() -> i32 {
 				t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
 			}
 		}
-	}
+	})
 }
 
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
@@ -409,12 +409,12 @@ fn main() {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	ok := fn.Body.Stmts[0].(*ast.LetDecl).Value
 	pending := fn.Body.Stmts[1].(*ast.LetDecl).Value
-	okEvidence, found := module.Typechecking.VariantConstructions[ok.ID()]
+	okEvidence, found := module.Typechecking.VariantConstruction(ok.ID())
 	if !found || typeinfo.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
 		okEvidence.Payload == nil || ast.ExprText(okEvidence.Value) != ".{code = 7, value = 42}" {
 		t.Fatalf("Ok construction evidence = %#v", okEvidence)
 	}
-	pendingEvidence, found := module.Typechecking.VariantConstructions[pending.ID()]
+	pendingEvidence, found := module.Typechecking.VariantConstruction(pending.ID())
 	if !found || typeinfo.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
 		pendingEvidence.Payload != nil || pendingEvidence.Value != nil {
 		t.Fatalf("Pending construction evidence = %#v", pendingEvidence)
@@ -542,7 +542,7 @@ fn Read(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	evidence, found := module.Typechecking.Matches[match.ID()]
+	evidence, found := module.Typechecking.Match(match.ID())
 	if !found || evidence.SubjectID != match.Subject.ID() || typeinfo.TypeText(evidence.EnumType) != "Result" || len(evidence.Arms) != 3 {
 		t.Fatalf("match evidence = %#v", evidence)
 	}
@@ -1689,7 +1689,7 @@ func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
 	index := ret.Value.(*ast.IndexExpr)
-	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprTypes[index.ID()]) {
+	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprType(index.ID())) {
 		t.Fatalf("index expression should have invalid semantic type")
 	}
 }
@@ -1739,7 +1739,7 @@ func TestArrayLiteralTypechecksExplicitLength(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprTypes[letDecl.Value.ID()]
+	got := module.Typechecking.ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[3]i32" {
 		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
 	}
@@ -1755,7 +1755,7 @@ func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprTypes[letDecl.Value.ID()]
+	got := module.Typechecking.ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[3]i32" {
 		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
 	}
@@ -1771,7 +1771,7 @@ func TestArrayLiteralTypechecksDynamicArray(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprTypes[letDecl.Value.ID()]
+	got := module.Typechecking.ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[]i32" {
 		t.Fatalf("array literal type = %s, want []i32", typeinfo.TypeText(got))
 	}
@@ -1798,9 +1798,9 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	}
 	for i, stmt := range fn.Body.Stmts[1:] {
 		call := stmt.(*ast.ExprStmt).Expr.(*ast.CallExpr)
-		fnType, ok := module.Typechecking.ExprTypes[call.Callee.ID()].(*typeinfo.FuncType)
+		fnType, ok := module.Typechecking.ExprType(call.Callee.ID()).(*typeinfo.FuncType)
 		if !ok {
-			t.Fatalf("operation %d callee type = %#v, want function", i, module.Typechecking.ExprTypes[call.Callee.ID()])
+			t.Fatalf("operation %d callee type = %#v, want function", i, module.Typechecking.ExprType(call.Callee.ID()))
 		}
 		if fnType.Return != nil {
 			t.Fatalf("operation %d return = %s, want void", i, typeinfo.TypeText(fnType.Return))
@@ -1923,7 +1923,7 @@ func TestAllocTypecheck(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[1].(*ast.LetDecl)
-	if got := typeinfo.TypeText(module.Typechecking.ExprTypes[letDecl.Value.ID()]); got != "*i32" {
+	if got := typeinfo.TypeText(module.Typechecking.ExprType(letDecl.Value.ID())); got != "*i32" {
 		t.Fatalf("alloc type = %s, want *i32", got)
 	}
 }
@@ -1975,7 +1975,7 @@ func TestArrayLiteralRejectsFloatPostfixLengthBeforeElementChecks(t *testing.T) 
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprTypes[letDecl.Value.ID()]) {
+	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprType(letDecl.Value.ID())) {
 		t.Fatalf("array literal should have invalid semantic type")
 	}
 }
@@ -3063,7 +3063,7 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
 		t.Fatalf("resolved function = %#v, want len intrinsic", resolved)
 	}
-	evidence, ok := module.Typechecking.CompilerCalls[call.ID()]
+	evidence, ok := module.Typechecking.CompilerCall(call.ID())
 	if !ok || evidence.Operation != symbols.CompilerOpLen || evidence.Kind != intrinsics.FunctionCollection {
 		t.Fatalf("compiler call evidence = %#v, want collection len", evidence)
 	}
@@ -3106,7 +3106,7 @@ fn main() {
 	if conversion == nil {
 		t.Fatal("reader interface conversion missing from parsed module")
 	}
-	implementations := module.Typechecking.InterfaceImplementations[conversion.ID()]
+	implementations := module.Typechecking.InterfaceImplementations(conversion.ID())
 	if len(implementations) != 1 {
 		t.Fatalf("implementation evidence = %#v, want one method", implementations)
 	}
@@ -3151,12 +3151,12 @@ fn main() -> i32 {
 	if len(call.Args) != 1 {
 		t.Fatalf("source argument count = %d, want 1", len(call.Args))
 	}
-	effectiveArgs := module.Typechecking.EffectiveCallArguments[call.ID()]
+	effectiveArgs := module.Typechecking.CallArgumentsOrSource(call)
 	if len(effectiveArgs) != 3 {
 		t.Fatalf("effective argument count = %d, want 3", len(effectiveArgs))
 	}
-	first := module.Typechecking.InterfaceImplementations[effectiveArgs[1].ID()]
-	second := module.Typechecking.InterfaceImplementations[effectiveArgs[2].ID()]
+	first := module.Typechecking.InterfaceImplementations(effectiveArgs[1].ID())
+	second := module.Typechecking.InterfaceImplementations(effectiveArgs[2].ID())
 	if effectiveArgs[1].ID() == effectiveArgs[2].ID() || len(first) != 1 || len(second) != 1 {
 		t.Fatalf("default evidence IDs/evidence = %d:%#v %d:%#v", effectiveArgs[1].ID(), first, effectiveArgs[2].ID(), second)
 	}

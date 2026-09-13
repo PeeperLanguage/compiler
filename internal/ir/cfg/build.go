@@ -30,11 +30,14 @@ type MatchCaseQuery func(ast.NodeID) ([]int, bool)
 // its first condition check.
 type LoopEntryQuery func(ast.NodeID) bool
 
+// CheckedIterationQuery supplies the checked statement expansion for an optional-producing loop.
+type CheckedIterationQuery func(ast.NodeID) *ast.BlockStmt
+
 // BuildQueries are semantic facts required to construct truthful CFG topology.
 type BuildQueries struct {
 	MatchCases          MatchCaseQuery
 	LoopGuaranteedEntry LoopEntryQuery
-	CheckedIterations   map[ast.NodeID]*ast.BlockStmt
+	CheckedIteration    CheckedIterationQuery
 }
 
 // BuildModule creates immutable control-flow topology from typed source syntax.
@@ -185,8 +188,8 @@ func (b *builder) buildStmt(stmt ast.Stmt, current *Block, scopeID ir.NodeID) *B
 		}
 		return join
 	case *ast.ForStmt:
-		if node.Iterable != nil {
-			if checked := b.queries.CheckedIterations[node.ID()]; checked != nil {
+		if node.Iterable != nil && b.queries.CheckedIteration != nil {
+			if checked := b.queries.CheckedIteration(node.ID()); checked != nil {
 				return b.buildStmt(checked, current, scopeID)
 			}
 		}

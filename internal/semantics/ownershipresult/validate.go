@@ -71,26 +71,26 @@ func (r Result) Validate(types *typecheckresult.Result, bindings *bindingresult.
 // with no kind is the gap the ownership fallback used to hide.
 func validateValueUses(types *typecheckresult.Result) []string {
 	problems := make([]string, 0)
-	for id, use := range types.ValueUses {
-		valueType, typed := types.ExprTypes[id]
-		if !typed {
+	types.ForEachValueUse(func(id ast.NodeID, use typeinfo.UseKind) {
+		valueType := types.ExprType(id)
+		if valueType == nil {
 			problems = append(problems, fmt.Sprintf("use kind published for node %d with no expression type", id))
-			continue
+			return
 		}
 		if use == typeinfo.UseCopy && typeinfo.OwnershipCapabilityOf(valueType).Copy == typeinfo.CopyNever {
 			problems = append(problems, fmt.Sprintf("node %d copies %s, which has no copy operation", id, typeinfo.TypeText(valueType)))
 		}
-	}
-	for callID, args := range types.EffectiveCallArguments {
+	})
+	types.ForEachCallArguments(func(callID ast.NodeID, args []ast.Expr) {
 		for index, arg := range args {
 			if arg == nil {
 				continue
 			}
-			if _, published := types.ValueUses[arg.ID()]; !published {
+			if _, published := types.ValueUse(arg.ID()); !published {
 				problems = append(problems, fmt.Sprintf("call %d argument %d has no published use kind", callID, index))
 			}
 		}
-	}
+	})
 	return problems
 }
 
@@ -174,7 +174,7 @@ func validateSymbols(fnID ir.NodeID, where string, ids []symbols.SymbolID) []str
 }
 
 func validateTypedNode(types *typecheckresult.Result, fnID ir.NodeID, where string, nodeID ir.NodeID) []string {
-	if _, typed := types.ExprTypes[ast.NodeID(nodeID)]; typed {
+	if types.ExprType(ast.NodeID(nodeID)) != nil {
 		return nil
 	}
 	return []string{fmt.Sprintf("function %d plans a %s at node %d with no expression type", fnID, where, nodeID)}

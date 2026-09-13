@@ -269,7 +269,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			"match is missing case `"+variant.Name+"`", ast.LocOf(node), "add one arm for every enum case")
 	}
 	if evidenceComplete && len(evidence.Arms) == len(node.Arms) {
-		c.module.Typechecking.Matches[node.ID()] = evidence
+		c.module.Typechecking.RecordMatch(node.ID(), evidence)
 	}
 }
 
@@ -650,7 +650,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				default:
 					c.expandCallIteration(scope, node)
 				}
-				if checked := c.module.Typechecking.CheckedIterations[node.ID()]; checked != nil {
+				if checked := c.module.Typechecking.CheckedIteration(node.ID()); checked != nil {
 					previous := c.reusedCall
 					c.reusedCall = call
 					c.checkStmt(scope, checked, returnType)
@@ -670,7 +670,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	if c.siteOnly {
 		return
 	}
-	delete(c.module.Typechecking.ForIterations, node.ID())
+	c.module.Typechecking.ForgetForIteration(node.ID())
 	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
 		location := ast.LocOf(node)
 		evidence.Cursor = symbols.New("$for.cursor", symbols.SymbolVar, nil, location)
@@ -691,7 +691,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			carrier.BindType(carrierType)
 			evidence.Plan = &typecheckresult.SequenceIteration{Carrier: carrier, CarrierType: carrierType}
 		}
-		c.module.Typechecking.ForIterations[node.ID()] = evidence
+		c.module.Typechecking.RecordForIteration(node.ID(), evidence)
 	}
 	c.loopDepth++
 	c.checkBlock(scope, node.Body, returnType)
@@ -782,7 +782,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	c.module.Bindings.Bind(stop.Cond.(*ast.BinaryExpr).Left, resultSymbol)
 	c.module.Bindings.Bind(item.Value, resultSymbol)
 
-	c.module.Typechecking.CheckedIterations[node.ID()] = expansion
+	c.module.Typechecking.RecordCheckedIteration(node.ID(), expansion)
 }
 
 func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {
@@ -888,7 +888,7 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
 				return temporary
 			}
-			if c.module.Typechecking.ImplicitCallArguments[source.ID()] != nil && !place.Addressable(scope, source, exprType, c.module.ExpandedDefaultBinding) {
+			if c.module.Typechecking.ImplicitCallArgument(source.ID()) != nil && !place.Addressable(scope, source, exprType, c.module.ExpandedDefaultBinding) {
 				if _, _, reference := typeinfo.ReferenceValueTarget(exprType(source)); !reference {
 					return source
 				}

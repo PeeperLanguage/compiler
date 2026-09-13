@@ -53,7 +53,7 @@ func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Co
 		conversion.Kind == typeinfo.ConversionIdentity || conversion.Compatibility != typeinfo.Compatible {
 		return
 	}
-	c.module.Typechecking.ImplicitConversions[expr.ID()] = conversion
+	c.module.Typechecking.RecordImplicitConversion(expr.ID(), conversion)
 }
 
 func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]typecheckresult.InterfaceImplementation, []string, bool) {
@@ -104,7 +104,7 @@ func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations [
 	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil {
 		return
 	}
-	c.module.Typechecking.InterfaceImplementations[expr.ID()] = implementations
+	c.module.Typechecking.RecordInterfaceImplementations(expr.ID(), implementations)
 }
 
 func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {

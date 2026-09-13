@@ -628,7 +628,7 @@ fn Read(input: i32 = value) -> i32 {
 	if call == nil || len(call.Args) != 0 {
 		t.Fatalf("source call after reset = %#v, want zero source arguments", call)
 	}
-	effectiveArgs := mainModule.Typechecking.EffectiveCallArguments[call.ID()]
+	effectiveArgs := mainModule.Typechecking.CallArgumentsOrSource(call)
 	if len(effectiveArgs) != 1 {
 		t.Fatalf("effective arguments after reset = %#v, want one rebuilt default", effectiveArgs)
 	}
@@ -636,7 +636,7 @@ fn Read(input: i32 = value) -> i32 {
 	if !ok || mainModule.Bindings == nil || mainModule.Bindings.Symbol(ident) == nil {
 		t.Fatalf("rebuilt default = %#v, want resolved imported identifier", effectiveArgs[0])
 	}
-	if _, ok := mainModule.Typechecking.ExpandedDefaultBindings[ident.ID()]; !ok {
+	if !mainModule.Typechecking.ExpandedDefaultBinding(ident.ID()) {
 		t.Fatalf("rebuilt default identifier %d missing declaration-binding provenance", ident.ID())
 	}
 }

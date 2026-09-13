@@ -42,7 +42,7 @@ func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.Di
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   module.Typechecking.CheckedIterations,
+		CheckedIteration:    module.Typechecking.CheckedIteration,
 	})
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
@@ -62,13 +62,13 @@ fn main() {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if len(module.Typechecking.CheckedIterations) != 2 || len(module.Typechecking.ForIterations) != 0 {
+	if module.Typechecking.CheckedIterationCount() != 2 || module.Typechecking.ForIterationCount() != 0 {
 		t.Fatalf("iteration evidence = %#v", module.Typechecking)
 	}
 	if err := module.CFG.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for id, expansion := range module.Typechecking.CheckedIterations {
+	module.Typechecking.ForEachCheckedIteration(func(id ast.NodeID, expansion *ast.BlockStmt) {
 		loop := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
 		if module.TypedASTNodes[expansion.ID()] != expansion {
 			t.Fatal("source scope not indexed")
@@ -82,7 +82,7 @@ fn main() {
 		if module.Bindings.Symbol(selector.Name) == nil {
 			t.Fatal("missing static method evidence")
 		}
-		if mutable, found := module.Typechecking.ReferenceArguments[selector.Expr.ID()]; !found || !mutable {
+		if mutable, found := module.Typechecking.ReferenceArgument(selector.Expr.ID()); !found || !mutable {
 			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
 		}
 		body := loop.Body.Stmts[2].(*ast.BlockStmt)
@@ -96,7 +96,7 @@ fn main() {
 			}
 			return true
 		})
-	}
+	})
 }
 
 func TestNamedEnumCaseTestsRefineExactFields(t *testing.T) {
@@ -121,7 +121,7 @@ fn Read(choice: Choice) -> i32 {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	leftBranch := fn.Body.Stmts[0].(*ast.IfStmt)
 	leftTest := leftBranch.Cond.(*ast.IsExpr)
-	baseTest, baseFound := module.Typechecking.CaseTests[leftTest.ID()]
+	baseTest, baseFound := module.Typechecking.CaseTest(leftTest.ID())
 	flowTest, flowFound := module.Flow.CaseTests[leftTest.ID()]
 	if !baseFound || !flowFound || baseTest.Case != 0 || flowTest.Case != baseTest.Case ||
 		flowTest.SubjectID != baseTest.SubjectID || flowTest.CaseCount != baseTest.CaseCount {

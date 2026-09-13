@@ -66,22 +66,22 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 			name: "use kind without a type",
 			want: "no expression type",
 			build: func(types *typecheckresult.Result, _ *CleanupPlan) {
-				types.ValueUses[7] = typeinfo.UseMove
+				types.RecordValueUse(7, typeinfo.UseMove)
 			},
 		},
 		{
 			name: "copy of a type with no copy operation",
 			want: "no copy operation",
 			build: func(types *typecheckresult.Result, _ *CleanupPlan) {
-				types.ExprTypes[7] = &typeinfo.StringType{}
-				types.ValueUses[7] = typeinfo.UseCopy
+				types.RecordExprType(7, &typeinfo.StringType{})
+				types.RecordValueUse(7, typeinfo.UseCopy)
 			},
 		},
 		{
 			name: "call argument with no use kind",
 			want: "no published use kind",
 			build: func(types *typecheckresult.Result, _ *CleanupPlan) {
-				types.EffectiveCallArguments[5] = []ast.Expr{argument}
+				types.RecordCallArguments(5, []ast.Expr{argument})
 			},
 		},
 		{
@@ -171,7 +171,7 @@ func TestValidateReportsProblemsDeterministically(t *testing.T) {
 		types := typecheckresult.New()
 		plan := emptyPlan()
 		for id := ast.NodeID(1); id <= 40; id++ {
-			types.ValueUses[id] = typeinfo.UseMove
+			types.RecordValueUse(id, typeinfo.UseMove)
 			plan.ProjectionBase[ir.NodeID(id)] = struct{}{}
 		}
 		err := Result{fnID: plan}.Validate(types, bindingresult.New(), graphs)

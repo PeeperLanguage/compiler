@@ -140,70 +140,346 @@ type CompilerCall struct {
 	Kind      intrinsics.FunctionKind
 }
 
-// Result owns base semantic evidence for one typecheck generation.
+// Result owns base semantic evidence for one typecheck generation. Backing
+// indexes are grouped by semantic domain and remain private so producers and
+// consumers depend on compiler operations rather than storage layout.
 type Result struct {
-	ExpandedDefaultBindings  map[ast.NodeID]struct{}
-	EffectiveCallArguments   map[ast.NodeID][]ast.Expr
-	InterfaceImplementations map[ast.NodeID][]InterfaceImplementation
-	ImplicitConversions      map[ast.NodeID]typeinfo.Conversion
-	ImplicitCallArguments    map[ast.NodeID]typeinfo.Type
-	CompilerCalls            map[ast.NodeID]CompilerCall
-	StringConcatenations     map[ast.NodeID]struct{}
-	StructFields             map[ast.NodeID]StructFieldAccess
-	VariantConstructions     map[ast.NodeID]VariantConstruction
-	CaseTests                map[ast.NodeID]CaseTest
-	Matches                  map[ast.NodeID]Match
-	ForIterations            map[ast.NodeID]ForIteration
-	// CheckedIterations contains optional-producing calls expanded into ordinary checked
-	// statements before CFG/flow/effects/ownership. These loops have no numeric
-	// cursor and never appear in the builtin ForIterations table. Source syntax
-	// stays unchanged; CFG, typed-node indexing and HIR consume this same tree.
-	// Each block contains the checked loop, which retains the source loop's ID.
-	// The block has its own scope ID; the whole call runs inside the loop.
-	CheckedIterations map[ast.NodeID]*ast.BlockStmt
-	ExprTypes         map[ast.NodeID]typeinfo.Type
-	// ValueUses classifies every ownership-relevant value use, keyed by the
-	// used expression's node ID. Reference parameters publish UseRead; the
-	// borrow machinery in ownership still governs them.
-	ValueUses map[ast.NodeID]typeinfo.UseKind
-	// ReferenceArguments records an argument whose parameter is a reference.
-	// Presence is the fact; the value reports whether that reference is mutable,
-	// which separates a shared borrow from a mutable reservation.
-	//
-	// The borrow follows from the parameter type, so it is invisible in the
-	// argument: passing a reference-typed value to a reference parameter writes
-	// no ampersand and produces no address expression.
-	ReferenceArguments map[ast.NodeID]bool
+	expressions expressionEvidence
+	calls       callEvidence
+	control     controlEvidence
+}
+
+type expressionEvidence struct {
+	types                    map[ast.NodeID]typeinfo.Type
+	expandedDefaultBindings  map[ast.NodeID]struct{}
+	interfaceImplementations map[ast.NodeID][]InterfaceImplementation
+	implicitConversions      map[ast.NodeID]typeinfo.Conversion
+	stringConcatenations     map[ast.NodeID]struct{}
+	structFields             map[ast.NodeID]StructFieldAccess
+	variantConstructions     map[ast.NodeID]VariantConstruction
+	valueUses                map[ast.NodeID]typeinfo.UseKind
+	referenceArguments       map[ast.NodeID]bool
+}
+
+type callEvidence struct {
+	effectiveArguments map[ast.NodeID][]ast.Expr
+	implicitArguments  map[ast.NodeID]typeinfo.Type
+	compilerCalls      map[ast.NodeID]CompilerCall
+}
+
+type controlEvidence struct {
+	caseTests         map[ast.NodeID]CaseTest
+	matches           map[ast.NodeID]Match
+	forIterations     map[ast.NodeID]ForIteration
+	checkedIterations map[ast.NodeID]*ast.BlockStmt
 }
 
 func New() *Result {
 	return &Result{
-		ExpandedDefaultBindings:  make(map[ast.NodeID]struct{}),
-		EffectiveCallArguments:   make(map[ast.NodeID][]ast.Expr),
-		InterfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
-		ImplicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
-		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
-		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
-		StringConcatenations:     make(map[ast.NodeID]struct{}),
-		StructFields:             make(map[ast.NodeID]StructFieldAccess),
-		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
-		CaseTests:                make(map[ast.NodeID]CaseTest),
-		Matches:                  make(map[ast.NodeID]Match),
-		ForIterations:            make(map[ast.NodeID]ForIteration),
-		CheckedIterations:        make(map[ast.NodeID]*ast.BlockStmt),
-		ExprTypes:                make(map[ast.NodeID]typeinfo.Type),
-		ValueUses:                make(map[ast.NodeID]typeinfo.UseKind),
-		ReferenceArguments:       make(map[ast.NodeID]bool),
+		expressions: expressionEvidence{
+			types:                    make(map[ast.NodeID]typeinfo.Type),
+			expandedDefaultBindings:  make(map[ast.NodeID]struct{}),
+			interfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
+			implicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
+			stringConcatenations:     make(map[ast.NodeID]struct{}),
+			structFields:             make(map[ast.NodeID]StructFieldAccess),
+			variantConstructions:     make(map[ast.NodeID]VariantConstruction),
+			valueUses:                make(map[ast.NodeID]typeinfo.UseKind),
+			referenceArguments:       make(map[ast.NodeID]bool),
+		},
+		calls: callEvidence{
+			effectiveArguments: make(map[ast.NodeID][]ast.Expr),
+			implicitArguments:  make(map[ast.NodeID]typeinfo.Type),
+			compilerCalls:      make(map[ast.NodeID]CompilerCall),
+		},
+		control: controlEvidence{
+			caseTests:         make(map[ast.NodeID]CaseTest),
+			matches:           make(map[ast.NodeID]Match),
+			forIterations:     make(map[ast.NodeID]ForIteration),
+			checkedIterations: make(map[ast.NodeID]*ast.BlockStmt),
+		},
+	}
+}
+
+func (r *Result) RecordExprType(id ast.NodeID, typ typeinfo.Type) {
+	if r == nil || id == 0 || typ == nil {
+		return
+	}
+	r.expressions.types[id] = typ
+}
+
+func (r *Result) ExprType(id ast.NodeID) typeinfo.Type {
+	if r == nil || id == 0 {
+		return nil
+	}
+	return r.expressions.types[id]
+}
+
+// ForgetExprType removes published evidence during invalidation/evidence-repair
+// tests. Normal typechecking overwrites or resets the complete result.
+func (r *Result) ForgetExprType(id ast.NodeID) {
+	if r != nil {
+		delete(r.expressions.types, id)
+	}
+}
+
+func (r *Result) MarkExpandedDefaultBinding(id ast.NodeID) {
+	if r != nil && id != 0 {
+		r.expressions.expandedDefaultBindings[id] = struct{}{}
+	}
+}
+
+func (r *Result) ExpandedDefaultBinding(id ast.NodeID) bool {
+	if r == nil || id == 0 {
+		return false
+	}
+	_, ok := r.expressions.expandedDefaultBindings[id]
+	return ok
+}
+
+func (r *Result) RecordInterfaceImplementations(id ast.NodeID, implementations []InterfaceImplementation) {
+	if r == nil || id == 0 || len(implementations) == 0 {
+		return
+	}
+	r.expressions.interfaceImplementations[id] = implementations
+}
+
+func (r *Result) InterfaceImplementations(id ast.NodeID) []InterfaceImplementation {
+	if r == nil || id == 0 {
+		return nil
+	}
+	return r.expressions.interfaceImplementations[id]
+}
+
+func (r *Result) InterfaceImplementationSiteCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.expressions.interfaceImplementations)
+}
+
+func (r *Result) RecordImplicitConversion(id ast.NodeID, conversion typeinfo.Conversion) {
+	if r != nil && id != 0 {
+		r.expressions.implicitConversions[id] = conversion
+	}
+}
+
+func (r *Result) ImplicitConversion(id ast.NodeID) (typeinfo.Conversion, bool) {
+	if r == nil || id == 0 {
+		return typeinfo.Conversion{}, false
+	}
+	conversion, ok := r.expressions.implicitConversions[id]
+	return conversion, ok
+}
+
+func (r *Result) MarkStringConcatenation(id ast.NodeID) {
+	if r != nil && id != 0 {
+		r.expressions.stringConcatenations[id] = struct{}{}
+	}
+}
+
+// StringConcatenation reports whether a binary expression was resolved as a
+// string concatenation, which consumes its left operand.
+func (r *Result) StringConcatenation(id ast.NodeID) bool {
+	if r == nil || id == 0 {
+		return false
+	}
+	_, found := r.expressions.stringConcatenations[id]
+	return found
+}
+
+func (r *Result) RecordStructField(id ast.NodeID, access StructFieldAccess) {
+	if r != nil && id != 0 {
+		r.expressions.structFields[id] = access
+	}
+}
+
+func (r *Result) StructField(id ast.NodeID) (StructFieldAccess, bool) {
+	if r == nil || id == 0 {
+		return StructFieldAccess{}, false
+	}
+	access, ok := r.expressions.structFields[id]
+	return access, ok
+}
+
+func (r *Result) ForgetStructField(id ast.NodeID) {
+	if r != nil {
+		delete(r.expressions.structFields, id)
+	}
+}
+
+func (r *Result) RecordVariantConstruction(id ast.NodeID, construction VariantConstruction) {
+	if r != nil && id != 0 {
+		r.expressions.variantConstructions[id] = construction
+	}
+}
+
+func (r *Result) VariantConstruction(id ast.NodeID) (VariantConstruction, bool) {
+	if r == nil || id == 0 {
+		return VariantConstruction{}, false
+	}
+	construction, ok := r.expressions.variantConstructions[id]
+	return construction, ok
+}
+
+func (r *Result) RecordValueUse(id ast.NodeID, use typeinfo.UseKind) {
+	if r != nil && id != 0 {
+		r.expressions.valueUses[id] = use
+	}
+}
+
+// ValueUse exposes the use kind the typechecker decided for one expression.
+// Coverage is call arguments today, so an absent answer is normal rather than
+// a missing decision.
+func (r *Result) ValueUse(id ast.NodeID) (typeinfo.UseKind, bool) {
+	if r == nil || id == 0 {
+		return typeinfo.UseRead, false
+	}
+	kind, found := r.expressions.valueUses[id]
+	return kind, found
+}
+
+func (r *Result) ForEachValueUse(fn func(ast.NodeID, typeinfo.UseKind)) {
+	if r == nil || fn == nil {
+		return
+	}
+	for id, use := range r.expressions.valueUses {
+		fn(id, use)
+	}
+}
+
+func (r *Result) RecordReferenceArgument(id ast.NodeID, mutable bool) {
+	if r != nil && id != 0 {
+		r.expressions.referenceArguments[id] = mutable
+	}
+}
+
+// ReferenceArgument reports whether an argument's parameter is a reference and,
+// when it is, whether that reference is mutable.
+func (r *Result) ReferenceArgument(id ast.NodeID) (mutable bool, found bool) {
+	if r == nil || id == 0 {
+		return false, false
+	}
+	mutable, found = r.expressions.referenceArguments[id]
+	return mutable, found
+}
+
+func (r *Result) RecordCallArguments(id ast.NodeID, args []ast.Expr) {
+	if r == nil || id == 0 {
+		return
+	}
+	r.calls.effectiveArguments[id] = args
+}
+
+func (r *Result) CallArguments(id ast.NodeID) ([]ast.Expr, bool) {
+	if r == nil || id == 0 {
+		return nil, false
+	}
+	args, ok := r.calls.effectiveArguments[id]
+	return args, ok
+}
+
+func (r *Result) ForEachCallArguments(fn func(ast.NodeID, []ast.Expr)) {
+	if r == nil || fn == nil {
+		return
+	}
+	for id, args := range r.calls.effectiveArguments {
+		fn(id, args)
+	}
+}
+
+// CallArgumentsOrSource returns published effective arguments when available.
+// Semantic phases that continue after diagnostics use source arguments when
+// typechecking could not publish complete call evidence.
+func (r *Result) CallArgumentsOrSource(call *ast.CallExpr) []ast.Expr {
+	if call == nil {
+		return nil
+	}
+	if args, found := r.CallArguments(call.ID()); found {
+		return args
+	}
+	return call.Args
+}
+
+func (r *Result) RecordImplicitCallArgument(id ast.NodeID, typ typeinfo.Type) {
+	if r != nil && id != 0 && typ != nil {
+		r.calls.implicitArguments[id] = typ
+	}
+}
+
+func (r *Result) ImplicitCallArgument(id ast.NodeID) typeinfo.Type {
+	if r == nil || id == 0 {
+		return nil
+	}
+	return r.calls.implicitArguments[id]
+}
+
+func (r *Result) HasImplicitCallArguments() bool {
+	return r != nil && len(r.calls.implicitArguments) != 0
+}
+
+func (r *Result) RecordCompilerCall(id ast.NodeID, call CompilerCall) {
+	if r != nil && id != 0 {
+		r.calls.compilerCalls[id] = call
+	}
+}
+
+func (r *Result) CompilerCall(id ast.NodeID) (CompilerCall, bool) {
+	if r == nil || id == 0 {
+		return CompilerCall{}, false
+	}
+	call, ok := r.calls.compilerCalls[id]
+	return call, ok
+}
+
+func (r *Result) RecordCaseTest(id ast.NodeID, test CaseTest) {
+	if r != nil && id != 0 {
+		r.control.caseTests[id] = test
+	}
+}
+
+func (r *Result) CaseTest(id ast.NodeID) (CaseTest, bool) {
+	if r == nil || id == 0 {
+		return CaseTest{}, false
+	}
+	test, ok := r.control.caseTests[id]
+	return test, ok
+}
+
+func (r *Result) RecordMatch(id ast.NodeID, match Match) {
+	if r != nil && id != 0 {
+		r.control.matches[id] = match
+	}
+}
+
+func (r *Result) Match(id ast.NodeID) (Match, bool) {
+	if r == nil || id == 0 {
+		return Match{}, false
+	}
+	match, ok := r.control.matches[id]
+	return match, ok
+}
+
+func (r *Result) MatchCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.control.matches)
+}
+
+func (r *Result) ForEachMatch(fn func(ast.NodeID, Match)) {
+	if r == nil || fn == nil {
+		return
+	}
+	for id, match := range r.control.matches {
+		fn(id, match)
 	}
 }
 
 // MatchCases exposes resolved case indexes without leaking match artifacts
 // into CFG's source-topology package.
 func (r *Result) MatchCases(id ast.NodeID) ([]int, bool) {
-	if r == nil {
-		return nil, false
-	}
-	match, found := r.Matches[id]
+	match, found := r.Match(id)
 	if !found {
 		return nil, false
 	}
@@ -217,45 +493,11 @@ func (r *Result) MatchCases(id ast.NodeID) ([]int, bool) {
 	return cases, true
 }
 
-// StringConcatenation reports whether a binary expression was resolved as a
-// string concatenation, which consumes its left operand.
-func (r *Result) StringConcatenation(id ast.NodeID) bool {
-	if r == nil {
-		return false
-	}
-	_, found := r.StringConcatenations[id]
-	return found
-}
-
-// ValueUse exposes the use kind the typechecker decided for one expression.
-// Coverage is call arguments today, so an absent answer is normal rather than
-// a missing decision.
-func (r *Result) ValueUse(id ast.NodeID) (typeinfo.UseKind, bool) {
-	if r == nil {
-		return typeinfo.UseRead, false
-	}
-	kind, found := r.ValueUses[id]
-	return kind, found
-}
-
-// ReferenceArgument reports whether an argument's parameter is a reference and,
-// when it is, whether that reference is mutable.
-func (r *Result) ReferenceArgument(id ast.NodeID) (mutable bool, found bool) {
-	if r == nil {
-		return false, false
-	}
-	mutable, found = r.ReferenceArguments[id]
-	return mutable, found
-}
-
 // ArmBindings exposes the payload symbols one match arm binds, without leaking
 // match artifacts into the effect producer. A discarded binding still binds
 // storage, so it is reported like any other.
-func (r *Result) ArmBindings(match ast.NodeID, caseIndex int) []*symbols.Symbol {
-	if r == nil {
-		return nil
-	}
-	evidence, found := r.Matches[match]
+func (r *Result) ArmBindings(matchID ast.NodeID, caseIndex int) []*symbols.Symbol {
+	evidence, found := r.Match(matchID)
 	if !found {
 		return nil
 	}
@@ -272,13 +514,46 @@ func (r *Result) ArmBindings(match ast.NodeID, caseIndex int) []*symbols.Symbol 
 	return bound
 }
 
+func (r *Result) RecordForIteration(id ast.NodeID, iteration ForIteration) {
+	if r != nil && id != 0 {
+		r.control.forIterations[id] = iteration
+	}
+}
+
+func (r *Result) ForgetForIteration(id ast.NodeID) {
+	if r != nil {
+		delete(r.control.forIterations, id)
+	}
+}
+
+func (r *Result) ForIteration(id ast.NodeID) (ForIteration, bool) {
+	if r == nil || id == 0 {
+		return ForIteration{}, false
+	}
+	iteration, ok := r.control.forIterations[id]
+	return iteration, ok
+}
+
+func (r *Result) ForIterationCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.control.forIterations)
+}
+
+func (r *Result) ForEachForIteration(fn func(ast.NodeID, ForIteration)) {
+	if r == nil || fn == nil {
+		return
+	}
+	for id, iteration := range r.control.forIterations {
+		fn(id, iteration)
+	}
+}
+
 // ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
 // body before its first condition check.
 func (r *Result) ForLoopGuaranteedEntry(id ast.NodeID) bool {
-	if r == nil {
-		return false
-	}
-	iteration, found := r.ForIterations[id]
+	iteration, found := r.ForIteration(id)
 	return found && iteration.GuaranteedEntry
 }
 
@@ -286,10 +561,7 @@ func (r *Result) ForLoopGuaranteedEntry(id ast.NodeID) bool {
 // the loop lifetime. Range loops have no carrier. Consumers ask this query
 // instead of inspecting the concrete iteration plan themselves.
 func (r *Result) SequenceCarrier(id ast.NodeID) (*symbols.Symbol, bool) {
-	if r == nil {
-		return nil, false
-	}
-	iteration, found := r.ForIterations[id]
+	iteration, found := r.ForIteration(id)
 	if !found {
 		return nil, false
 	}
@@ -300,17 +572,56 @@ func (r *Result) SequenceCarrier(id ast.NodeID) (*symbols.Symbol, bool) {
 	return sequence.Carrier, true
 }
 
-// CallArgumentsOrSource returns published effective arguments when available.
-// Semantic phases that continue after diagnostics use source arguments when
-// typechecking could not publish complete call evidence.
-func (r *Result) CallArgumentsOrSource(call *ast.CallExpr) []ast.Expr {
-	if call == nil {
+func (r *Result) RecordCheckedIteration(id ast.NodeID, expansion *ast.BlockStmt) {
+	if r != nil && id != 0 && expansion != nil {
+		r.control.checkedIterations[id] = expansion
+	}
+}
+
+func (r *Result) CheckedIteration(id ast.NodeID) *ast.BlockStmt {
+	if r == nil || id == 0 {
 		return nil
 	}
-	if r != nil {
-		if args, found := r.EffectiveCallArguments[call.ID()]; found {
-			return args
-		}
+	return r.control.checkedIterations[id]
+}
+
+func (r *Result) CheckedIterationCount() int {
+	if r == nil {
+		return 0
 	}
-	return call.Args
+	return len(r.control.checkedIterations)
+}
+
+func (r *Result) ForEachCheckedIteration(fn func(ast.NodeID, *ast.BlockStmt)) {
+	if r == nil || fn == nil {
+		return
+	}
+	for id, expansion := range r.control.checkedIterations {
+		fn(id, expansion)
+	}
+}
+
+// CloneReusableExpressionEvidenceFrom copies declaration-context facts that
+// remain valid when syntax is cloned during default substitution. Contextual
+// facts such as call-argument use, case subjects, and payload AST references
+// are intentionally recomputed for the cloned expression.
+func (r *Result) CloneReusableExpressionEvidenceFrom(dstID ast.NodeID, src *Result, srcID ast.NodeID) {
+	if r == nil || src == nil || dstID == 0 || srcID == 0 {
+		return
+	}
+	if typ := src.ExprType(srcID); typ != nil {
+		r.RecordExprType(dstID, typ)
+	}
+	if src.ExpandedDefaultBinding(srcID) {
+		r.MarkExpandedDefaultBinding(dstID)
+	}
+	if implementations := src.InterfaceImplementations(srcID); len(implementations) != 0 {
+		r.RecordInterfaceImplementations(dstID, implementations)
+	}
+	if conversion, ok := src.ImplicitConversion(srcID); ok {
+		r.RecordImplicitConversion(dstID, conversion)
+	}
+	if field, ok := src.StructField(srcID); ok {
+		r.RecordStructField(dstID, field)
+	}
 }

@@ -236,11 +236,11 @@ func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, cas
 	}
 	if c.flow == nil {
 		if c.module != nil && c.module.Typechecking != nil {
-			c.module.Typechecking.CaseTests[node.ID()] = test
+			c.module.Typechecking.RecordCaseTest(node.ID(), test)
 		}
 		return
 	}
-	base, found := c.module.Typechecking.CaseTests[node.ID()]
+	base, found := c.module.Typechecking.CaseTest(node.ID())
 	if !found || base.SubjectID != subject.ID() {
 		return
 	}
@@ -445,7 +445,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 	if a == nil || site == nil || st == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, found := a.module.Typechecking.Matches[ast.NodeID(site.NodeID)]
+	match, found := a.module.Typechecking.Match(ast.NodeID(site.NodeID))
 	if !found {
 		return
 	}
@@ -678,7 +678,7 @@ func (a *flowAnalyzer) updateOriginPlace(
 		}
 		return
 	}
-	construction, constructed := a.module.Typechecking.VariantConstructions[value.ID()]
+	construction, constructed := a.module.Typechecking.VariantConstruction(value.ID())
 	if !constructed || construction.Payload == nil || construction.Case < 0 {
 		source := c.resolveFlowPlace(scope, value, sourceState)
 		a.copyStoredOriginPlace(storage, source.ValueOrigins, typ, sourceState, st)

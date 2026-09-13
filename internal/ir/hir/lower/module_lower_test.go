@@ -48,7 +48,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   module.Typechecking.CheckedIterations,
+		CheckedIteration:    module.Typechecking.CheckedIteration,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
@@ -81,7 +81,7 @@ func TestGenerateHIRRequiresExpressionTypeEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_type_evidence_test"+peeper.SourceExt, "hir_type_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *project.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-		delete(module.Typechecking.ExprTypes, identifier.ID())
+		module.Typechecking.ForgetExprType(identifier.ID())
 		delete(module.Flow.ExprTypes, identifier.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
@@ -93,7 +93,7 @@ func TestGenerateHIRRequiresNumberTypeEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_number_evidence_test"+peeper.SourceExt, "hir_number_evidence_test", `fn Read() -> i32 { return 1; }`, func(module *project.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		number := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.NumberLit)
-		delete(module.Typechecking.ExprTypes, number.ID())
+		module.Typechecking.ForgetExprType(number.ID())
 		delete(module.Flow.ExprTypes, number.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "number literal missing resolved type evidence") {
@@ -105,7 +105,7 @@ func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_unary_evidence_test"+peeper.SourceExt, "hir_unary_evidence_test", `fn Read(value: i32) -> i32 { return -value; }`, func(module *project.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		unary := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.UnaryExpr)
-		delete(module.Typechecking.ExprTypes, unary.ID())
+		module.Typechecking.ForgetExprType(unary.ID())
 		delete(module.Flow.ExprTypes, unary.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
@@ -118,7 +118,7 @@ func TestGenerateHIRRequiresStructFieldEvidence(t *testing.T) {
 fn Read(box: Box) -> i32 { return box.value; }`, func(module *project.Module) {
 		fn := module.AST.Stmts[1].(*ast.FnDecl)
 		selector := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
-		delete(module.Typechecking.StructFields, selector.ID())
+		module.Typechecking.ForgetStructField(selector.ID())
 	})
 	returned := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value
 	if _, ok := returned.(*ir.InvalidExpr); !ok {
@@ -176,7 +176,7 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 	entry.CFG = cfg.BuildModule(entry.AST, cfg.BuildQueries{
 		MatchCases:          entry.Typechecking.MatchCases,
 		LoopGuaranteedEntry: entry.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   entry.Typechecking.CheckedIterations,
+		CheckedIteration:    entry.Typechecking.CheckedIteration,
 	})
 	entry.Flow = typechecker.CheckFlow(ctx, entry)
 	if diag.HasErrors() {
@@ -345,7 +345,8 @@ func TestGenerateHIRLowersSequenceForIntoStructuredSegments(t *testing.T) {
 
 func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_for_evidence_test"+peeper.SourceExt, "hir_for_evidence_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
-		module.Typechecking.ForIterations = make(map[ast.NodeID]typecheckresult.ForIteration)
+		loop := module.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
+		module.Typechecking.ForgetForIteration(loop.ID())
 	})
 	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
 	if !ok || !strings.Contains(invalid.Message, "missing semantic evidence") {
@@ -358,10 +359,10 @@ func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 // exhaustive, but a zero Plan is reachable if a producer ever publishes early.
 func TestGenerateHIRRejectsForInWithoutAnIterationPlan(t *testing.T) {
 	out := generateTestHIR(t, "hir_for_plan_test"+peeper.SourceExt, "hir_for_plan_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
-		for id, evidence := range module.Typechecking.ForIterations {
+		module.Typechecking.ForEachForIteration(func(id ast.NodeID, evidence typecheckresult.ForIteration) {
 			evidence.Plan = nil
-			module.Typechecking.ForIterations[id] = evidence
-		}
+			module.Typechecking.RecordForIteration(id, evidence)
+		})
 	})
 	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
 	if !ok || !strings.Contains(invalid.Message, "unknown for-in iteration evidence") {
@@ -1541,10 +1542,10 @@ fn Read(result: Result) -> i32 {
 		Result::Ok with { value = payload } => { return payload; }
 	}
 }`, func(module *project.Module) {
-		for _, match := range module.Typechecking.Matches {
+		module.Typechecking.ForEachMatch(func(id ast.NodeID, match typecheckresult.Match) {
 			match.Arms[0].Bindings[0].Projection = typecheckresult.MatchProjectionInvalid
-			return
-		}
+			module.Typechecking.RecordMatch(id, match)
+		})
 	})
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
 		t.Fatalf("unexpected HIR shape: %#v", out)

@@ -105,7 +105,7 @@ func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) 
 	if m == nil || m.Bindings == nil || m.Typechecking == nil || ident == nil {
 		return place.Binding{}, false
 	}
-	if _, ok := m.Typechecking.ExpandedDefaultBindings[ident.ID()]; !ok {
+	if !m.Typechecking.ExpandedDefaultBinding(ident.ID()) {
 		return place.Binding{}, false
 	}
 	return place.Binding{Symbol: m.Bindings.Symbol(ident)}, true
@@ -124,7 +124,7 @@ func (m *Module) RebuildTypedASTIndex() {
 		if sourceLoop, ok := node.(*ast.ForStmt); ok {
 			// An outer expansion still contains original nested loops. Do not
 			// overwrite their checked trees depending on map traversal order.
-			if sourceLoop.Iterable != nil && m.Typechecking.CheckedIterations[sourceLoop.ID()] != nil {
+			if sourceLoop.Iterable != nil && m.Typechecking.CheckedIteration(sourceLoop.ID()) != nil {
 				return false
 			}
 		}
@@ -133,14 +133,14 @@ func (m *Module) RebuildTypedASTIndex() {
 		}
 		return true
 	}
-	for _, loop := range m.Typechecking.CheckedIterations {
+	m.Typechecking.ForEachCheckedIteration(func(_ ast.NodeID, loop *ast.BlockStmt) {
 		ast.Inspect(loop, indexGenerated)
-	}
-	for _, args := range m.Typechecking.EffectiveCallArguments {
+	})
+	m.Typechecking.ForEachCallArguments(func(_ ast.NodeID, args []ast.Expr) {
 		for _, arg := range args {
 			ast.Inspect(arg, indexGenerated)
 		}
-	}
+	})
 }
 
 func (m *Module) ResetSemanticData() {
@@ -157,7 +157,7 @@ func (m *Module) BaseExprType(id ast.NodeID) typeinfo.Type {
 	if m == nil || m.Typechecking == nil {
 		return nil
 	}
-	return m.Typechecking.ExprTypes[id]
+	return m.Typechecking.ExprType(id)
 }
 
 // EffectiveExprType returns per-use flow refinement when available and falls

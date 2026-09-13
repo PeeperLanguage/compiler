@@ -20,16 +20,12 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - Semantic side tables use `NodeID`, not AST pointer identity, as their key.
 - `bindingresult.Result` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
 - The same result owns block-to-scope identity behind `SetScope` / `Scope`.
-- `typecheckresult.Result.ExprTypes` maps expression node IDs to semantic types.
-- `typecheckresult.Result.CaseTests` maps case-test node IDs to resolved case
-  evidence.
-- `typecheckresult.Result.Matches` maps match node IDs to arm and payload facts.
-- `typecheckresult.Result.VariantConstructions` maps variant expression IDs to
-  enum/case/payload facts.
-- `typecheckresult.Result.CompilerCalls` maps call node IDs to intrinsic dispatch.
-- `typecheckresult.Result.ExpandedDefaultBindings` marks generated default
-  expression identifiers whose symbol comes from the declaration module.
-- `typecheckresult.Result.EffectiveCallArguments` stores call-site expansions.
+- `typecheckresult.Result` owns base expression, call, and control evidence behind
+  semantic operations such as `RecordExprType` / `ExprType`, `RecordMatch` /
+  `Match`, and `RecordForIteration` / `ForIteration`.
+- Default-binding provenance, call expansion, conversions, interface proofs,
+  intrinsic dispatch, and selector decisions are likewise published and queried
+  through methods; their backing NodeID indexes are private.
 - Generated AST nodes are reindexed by `Module.RebuildTypedASTIndex`.
 - Default-expression cloning assigns fresh IDs while preserving whether an
   occurrence came from the default declaration or caller argument.

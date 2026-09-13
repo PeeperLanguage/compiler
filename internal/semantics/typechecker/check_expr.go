@@ -39,7 +39,7 @@ func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinf
 		return base
 	}
 	if c.module != nil && c.module.Typechecking != nil && c.flow == nil {
-		c.module.Typechecking.ExprTypes[expr.ID()] = base
+		c.module.Typechecking.RecordExprType(expr.ID(), base)
 	}
 	resolved := c.effectiveExpressionType(scope, expr, base, expected)
 	if c.flow != nil && resolved != nil {
@@ -325,7 +325,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		if leftString || rightString || leftView || rightView {
 			wantRight := &typeinfo.RefType{Target: &typeinfo.StringType{}}
 			if leftString && typeinfo.SameType(right, wantRight) {
-				c.module.Typechecking.StringConcatenations[node.ID()] = struct{}{}
+				c.module.Typechecking.MarkStringConcatenation(node.ID())
 				return &typeinfo.StringType{}
 			}
 			c.ctx.Diagnostics.Add(invalidOperationError(node,
@@ -452,7 +452,7 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 		return &typeinfo.InvalidType{}
 	}
 	if c.flow != nil {
-		test, found := c.module.Typechecking.CaseTests[node.ID()]
+		test, found := c.module.Typechecking.CaseTest(node.ID())
 		if !found {
 			return &typeinfo.InvalidType{}
 		}
@@ -595,9 +595,9 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 			} else if target, _, indirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); indirect {
 				dereferenceType = target
 			}
-			c.module.Typechecking.StructFields[node.ID()] = typecheckresult.StructFieldAccess{
+			c.module.Typechecking.RecordStructField(node.ID(), typecheckresult.StructFieldAccess{
 				Field: fieldIndex, Type: field.Type, DereferenceType: dereferenceType,
-			}
+			})
 		}
 		return field.Type
 	}
@@ -916,7 +916,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(site), "remove `with` and its value")
 			return &typeinfo.InvalidType{}
 		}
-		c.module.Typechecking.VariantConstructions[site.ID()] = typecheckresult.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
+		c.module.Typechecking.RecordVariantConstruction(site.ID(), typecheckresult.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex})
 		return resolved.EnumType
 	}
 	if !initialized {
@@ -939,12 +939,12 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 			fmt.Sprintf("cannot assign %s to enum variant payload of type %s", typeinfo.TypeText(valueType), typeinfo.TypeText(resolved.Case.Payload)), ast.LocOf(value), "")
 		return &typeinfo.InvalidType{}
 	}
-	c.module.Typechecking.VariantConstructions[site.ID()] = typecheckresult.VariantConstruction{
+	c.module.Typechecking.RecordVariantConstruction(site.ID(), typecheckresult.VariantConstruction{
 		EnumType: resolved.EnumType,
 		Case:     resolved.CaseIndex,
 		Payload:  resolved.Case.Payload,
 		Value:    value,
-	}
+	})
 	return resolved.EnumType
 }
 

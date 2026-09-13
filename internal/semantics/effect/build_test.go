@@ -42,7 +42,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   module.Typechecking.CheckedIterations,
+		CheckedIteration:    module.Typechecking.CheckedIteration,
 	})
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -477,7 +477,7 @@ fn choose(point: Point) -> i32 {
 	// The receiver parameter is a reference, so the typechecker recorded the
 	// adaptation. That evidence is what a future consumer reads to know the
 	// call borrows rather than moves.
-	if len(module.Typechecking.ImplicitCallArguments) == 0 {
+	if !module.Typechecking.HasImplicitCallArguments() {
 		t.Fatal("expected the implicit receiver borrow to be published")
 	}
 }

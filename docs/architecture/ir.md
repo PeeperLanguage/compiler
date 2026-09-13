@@ -274,7 +274,7 @@ cursors, limits or length conditions, bindings, indexed loads, and increments.
 
 `lowerPlace` turns identifiers, selectors, indexes, dereferences, fields, and
 variant payload paths into `ir.Place` projections. Ordinary selectors consume
-`Typechecking.StructFields` for selected slot, physical field type, and implicit
+`Typechecking.StructField` for selected slot, physical field type, and implicit
 dereference. This physical type remains distinct from flow-refined expression type.
 Flow-refined variant selectors consume `Flow.VariantFields`. HIR still chooses
 place load versus temporary field extraction from addressability. The lowerer does

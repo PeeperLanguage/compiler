@@ -139,7 +139,7 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 
 func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if e.module.Typechecking != nil {
-		if construction, ok := e.module.Typechecking.VariantConstructions[expr.ID()]; ok {
+		if construction, ok := e.module.Typechecking.VariantConstruction(expr.ID()); ok {
 			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
 				return nil, false
 			}
@@ -183,7 +183,7 @@ func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typei
 		if e.module.Typechecking == nil {
 			return nil, false
 		}
-		test, found := e.module.Typechecking.CaseTests[node.ID()]
+		test, found := e.module.Typechecking.CaseTest(node.ID())
 		if !found || test.Family != typeinfo.VariantFamilyNamed {
 			return nil, false
 		}

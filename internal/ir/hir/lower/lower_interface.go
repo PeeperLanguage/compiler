@@ -32,7 +32,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 		dataType = target
 	}
 	slots := make([]ir.InterfaceSlot, 0, len(iface.Methods))
-	implementations := module.Typechecking.InterfaceImplementations[expr.ID()]
+	implementations := module.Typechecking.InterfaceImplementations(expr.ID())
 	if len(implementations) != len(iface.Methods) {
 		return &ir.InvalidExpr{Message: "missing interface implementation evidence", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 	}

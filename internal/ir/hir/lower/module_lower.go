@@ -229,14 +229,14 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 		out.Stmts = append(out.Stmts, ifStmt)
 	case *ast.ForStmt:
 		if node.Iterable != nil {
-			if checked := module.Typechecking.CheckedIterations[node.ID()]; checked != nil {
+			if checked := module.Typechecking.CheckedIteration(node.ID()); checked != nil {
 				appendStmt(module, scope, out, checked, returnType, ctx)
 				return
 			}
 		}
 		out.Stmts = append(out.Stmts, lowerForStmt(ctx, module, scope, node, returnType))
 	case *ast.MatchStmt:
-		evidence, found := module.Typechecking.Matches[node.ID()]
+		evidence, found := module.Typechecking.Match(node.ID())
 		if !found || len(evidence.Arms) != len(node.Arms) {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "match statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
@@ -333,7 +333,7 @@ func lowerForStmt(ctx *project.CompilerContext, module *project.Module, scope *s
 
 	// Published evidence is complete by construction: the typechecker publishes
 	// only for a loop that typed cleanly. Absence is the one case to handle.
-	evidence, found := module.Typechecking.ForIterations[node.ID()]
+	evidence, found := module.Typechecking.ForIteration(node.ID())
 	if !found {
 		return &hir.Invalid{Message: "for-in statement missing semantic evidence", NodeID: hir.NodeID(node.ID()), Location: location}
 	}
@@ -449,7 +449,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 			}
 		}
 		if module != nil && module.Typechecking != nil {
-			if access, found := module.Typechecking.StructFields[selector.ID()]; found {
+			if access, found := module.Typechecking.StructField(selector.ID()); found {
 				out := lowerPlace(ctx, module, scope, selector.Expr)
 				if access.DereferenceType != nil {
 					out.Projections = append(out.Projections, ir.PlaceProjection{
@@ -617,7 +617,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	expectedTypeID := loweredTypeID(ctx, module, expectedType)
 	conversion, converting := typeinfo.Conversion{}, false
 	if module != nil && module.Typechecking != nil {
-		conversion, converting = module.Typechecking.ImplicitConversions[expr.ID()]
+		conversion, converting = module.Typechecking.ImplicitConversion(expr.ID())
 	}
 	if module != nil && module.Flow != nil {
 		if test, ok := module.Flow.CaseTests[expr.ID()]; ok {
@@ -659,7 +659,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			}
 		}
 	}
-	if construction, ok := module.Typechecking.VariantConstructions[expr.ID()]; ok {
+	if construction, ok := module.Typechecking.VariantConstruction(expr.ID()); ok {
 		variant := &ir.VariantMake{
 			Case: construction.Case,
 			Type: loweredTypeID(ctx, module, construction.EnumType),
@@ -716,7 +716,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.AddrOf{Place: lowerPlace(ctx, module, scope, node.Expr), Type: resolvedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.BinaryExpr:
-		if _, concat := module.Typechecking.StringConcatenations[node.ID()]; concat {
+		if module.Typechecking.StringConcatenation(node.ID()) {
 			return &ir.StringConcat{
 				Left:       lowerASTExpr(ctx, module, scope, node.Left, &typeinfo.StringType{}),
 				Right:      lowerASTExpr(ctx, module, scope, node.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}),
@@ -748,11 +748,11 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		return &ir.Binary{Op: node.Op, Left: left, Right: right, Type: resolvedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
 
 	case *ast.CallExpr:
-		effectiveArgs, ok := module.Typechecking.EffectiveCallArguments[node.ID()]
+		effectiveArgs, ok := module.Typechecking.CallArguments(node.ID())
 		if !ok {
 			return &ir.InvalidExpr{Message: "call missing effective argument evidence", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: loc}}
 		}
-		if compilerCall, ok := module.Typechecking.CompilerCalls[node.ID()]; ok {
+		if compilerCall, ok := module.Typechecking.CompilerCall(node.ID()); ok {
 			switch compilerCall.Kind {
 			case intrinsics.FunctionAlloc:
 				return lowerAllocCall(ctx, module, scope, node, effectiveArgs)
@@ -780,7 +780,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			if fnType != nil && len(args) < len(fnType.Params) {
 				paramExpected = fnType.Params[len(args)]
 			}
-			if implicit := module.Typechecking.ImplicitCallArguments[arg.ID()]; implicit != nil {
+			if implicit := module.Typechecking.ImplicitCallArgument(arg.ID()); implicit != nil {
 				args = append(args, lowerImplicitReferenceValue(ctx, module, scope, arg, implicit))
 			} else {
 				args = append(args, lowerASTExpr(ctx, module, scope, arg, paramExpected))
@@ -835,7 +835,7 @@ func lowerCollectionCall(ctx *project.CompilerContext, module *project.Module, s
 	}
 	value := effectiveArgs[0]
 	var receiver ir.Expr
-	if implicit := module.Typechecking.ImplicitCallArguments[value.ID()]; implicit != nil {
+	if implicit := module.Typechecking.ImplicitCallArgument(value.ID()); implicit != nil {
 		receiver = lowerImplicitReferenceValue(ctx, module, scope, value, implicit)
 	} else {
 		receiver = lowerASTExpr(ctx, module, scope, value, fnType.Params[0])
@@ -922,7 +922,7 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 		return &ir.InvalidExpr{Message: "selector method receiver missing", Type: ir.InvalidType}
 	}
 	var baseExpr ir.Expr
-	if implicit := module.Typechecking.ImplicitCallArguments[selector.Expr.ID()]; implicit != nil {
+	if implicit := module.Typechecking.ImplicitCallArgument(selector.Expr.ID()); implicit != nil {
 		baseExpr = lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, implicit)
 	} else {
 		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, nil)
@@ -959,7 +959,7 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		}
 	}
 	if module.Typechecking != nil {
-		if access, found := module.Typechecking.StructFields[selector.ID()]; found {
+		if access, found := module.Typechecking.StructField(selector.ID()); found {
 			exprType := func(expr ast.Expr) typeinfo.Type {
 				return exprResolvedType(module, expr)
 			}
@@ -1085,7 +1085,7 @@ func lowerDynamicArrayOwnerCall(ctx *project.CompilerContext, module *project.Mo
 	}
 	args := make([]ir.Expr, 0, len(effectiveArgs))
 	for i, arg := range effectiveArgs {
-		if implicit := module.Typechecking.ImplicitCallArguments[arg.ID()]; implicit != nil {
+		if implicit := module.Typechecking.ImplicitCallArgument(arg.ID()); implicit != nil {
 			args = append(args, lowerImplicitReferenceValue(ctx, module, scope, arg, implicit))
 		} else {
 			args = append(args, lowerASTExpr(ctx, module, scope, arg, fnType.Params[i]))

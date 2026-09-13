@@ -53,7 +53,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
 		MatchCases:          module.Typechecking.MatchCases,
 		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   module.Typechecking.CheckedIterations,
+		CheckedIteration:    module.Typechecking.CheckedIteration,
 	})
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
@@ -135,7 +135,7 @@ fn main() { `+loop+` }`)
 				if expanded {
 					fn := result.module.AST.Stmts[3].(*ast.FnDecl)
 					sourceLoop := fn.Body.Stmts[0].(*ast.ForStmt)
-					expansion := result.module.Typechecking.CheckedIterations[sourceLoop.ID()]
+					expansion := result.module.Typechecking.CheckedIteration(sourceLoop.ID())
 					if len(expansion.Stmts) != 1 {
 						t.Fatal("factory argument captured outside repeated call")
 					}
