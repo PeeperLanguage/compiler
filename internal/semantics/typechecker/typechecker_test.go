@@ -22,6 +22,41 @@ import (
 	"compiler/pkg/peeper"
 )
 
+func TestCheckPublishesStructFieldAccesses(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Box { value: i32 }
+fn Read(value: Box, pointer: *Box, reference: &Box) -> i32 {
+	return value.value + pointer.value + reference.value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+
+	found := map[string]bool{}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		base := selector.Expr.(*ast.Ident).Name
+		access, published := module.Typechecking.StructFields[selector.ID()]
+		if !published || access.Field != 0 || typeinfo.TypeText(access.Type) != "i32" {
+			t.Fatalf("%s field evidence = %#v", base, access)
+		}
+		indirect := access.DereferenceType != nil
+		if indirect != (base != "value") || indirect && typeinfo.TypeText(access.DereferenceType) != "Box" {
+			t.Fatalf("%s dereference type = %s", base, typeinfo.TypeText(access.DereferenceType))
+		}
+		found[base] = true
+		return true
+	})
+	for _, name := range []string{"value", "pointer", "reference"} {
+		if !found[name] {
+			t.Fatalf("missing %s field evidence", name)
+		}
+	}
+}
+
 func TestCheckCallPublishesValueUses(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Box { value: i32 }
 fn Take(box: Box) -> i32 { return box.value; }

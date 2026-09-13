@@ -90,9 +90,8 @@ func InterfaceTypeOf(t Type) (*InterfaceType, bool) {
 	return iface, ok && iface != nil
 }
 
-// LookupStructField centralizes field search so checker and lowerer agree on
-// struct layout. Checker needs the field type for validation; lowerer needs
-// the same field index to emit field access.
+// LookupStructField centralizes semantic field search. Typechecking publishes
+// the selected slot and type for lowering rather than asking lowering to search again.
 func LookupStructField(baseType Type, name string) (field Field, index int, ok bool) {
 	if baseType == nil || name == "" {
 		return Field{}, -1, false

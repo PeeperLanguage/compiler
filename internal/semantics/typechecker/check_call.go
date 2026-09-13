@@ -645,6 +645,9 @@ func copyExpressionEvidence(dst, src *project.Module, dstID, srcID ast.NodeID) {
 	if conversion, ok := src.Typechecking.ImplicitConversions[srcID]; ok {
 		dst.Typechecking.ImplicitConversions[dstID] = conversion
 	}
+	if field, ok := src.Typechecking.StructFields[srcID]; ok {
+		dst.Typechecking.StructFields[dstID] = field
+	}
 }
 
 func containsEffectfulExpression(expr ast.Expr) bool {

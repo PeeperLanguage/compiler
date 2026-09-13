@@ -127,6 +127,13 @@ type VariantConstruction struct {
 	Value    ast.Expr
 }
 
+// StructFieldAccess records ordinary field selection after pointer/reference normalization.
+type StructFieldAccess struct {
+	Field           int
+	Type            typeinfo.Type
+	DereferenceType typeinfo.Type
+}
+
 // CompilerCall records intrinsic dispatch selected by typechecking.
 type CompilerCall struct {
 	Operation symbols.CompilerOp
@@ -142,6 +149,7 @@ type Result struct {
 	ImplicitCallArguments    map[ast.NodeID]typeinfo.Type
 	CompilerCalls            map[ast.NodeID]CompilerCall
 	StringConcatenations     map[ast.NodeID]struct{}
+	StructFields             map[ast.NodeID]StructFieldAccess
 	VariantConstructions     map[ast.NodeID]VariantConstruction
 	CaseTests                map[ast.NodeID]CaseTest
 	Matches                  map[ast.NodeID]Match
@@ -177,6 +185,7 @@ func New() *Result {
 		ImplicitCallArguments:    make(map[ast.NodeID]typeinfo.Type),
 		CompilerCalls:            make(map[ast.NodeID]CompilerCall),
 		StringConcatenations:     make(map[ast.NodeID]struct{}),
+		StructFields:             make(map[ast.NodeID]StructFieldAccess),
 		VariantConstructions:     make(map[ast.NodeID]VariantConstruction),
 		CaseTests:                make(map[ast.NodeID]CaseTest),
 		Matches:                  make(map[ast.NodeID]Match),

@@ -179,11 +179,15 @@ Important types:
   closed `IterationPlan`.
 - `RangeIteration` and `SequenceIteration` hold plan-specific generated state.
 - `VariantConstruction` records enum type, case, payload type, and source value.
+- `StructFieldAccess` records an ordinary selector's field slot, physical field
+  type, and any type crossed by implicit pointer/reference dereference. Physical
+  field type remains distinct from flow-refined per-use expression type.
 - `CompilerCall` records intrinsic operation and function kind.
 `Result` maps `ast.NodeID` to:
 - expanded default bindings and effective call arguments;
 - interface implementations, implicit conversions, and implicit call argument types;
-- compiler calls, string-concatenation decisions, variant constructions, case tests;
+- compiler calls, string-concatenation decisions, ordinary struct fields, variant
+  constructions, and case tests;
 - matches, iteration plans, checked iteration rewrites, and expression types;
 - `ValueUses`, classifying ownership-relevant value uses;
 - `ReferenceArguments`, where presence means the call parameter borrows and the bool

@@ -273,10 +273,14 @@ statement: CFG owns their transfers.
 cursors, limits or length conditions, bindings, indexed loads, and increments.
 
 `lowerPlace` turns identifiers, selectors, indexes, dereferences, fields, and
-variant payload paths into `ir.Place` projections. `appendVariantPayloadPlace`
-uses flow payload facts to append payload projections. `lowerReferenceValue`
-chooses `AddrOf`, `SliceView`, or `TempBorrow` based on addressability and target
-shape.
+variant payload paths into `ir.Place` projections. Ordinary selectors consume
+`Typechecking.StructFields` for selected slot, physical field type, and implicit
+dereference. This physical type remains distinct from flow-refined expression type.
+Flow-refined variant selectors consume `Flow.VariantFields`. HIR still chooses
+place load versus temporary field extraction from addressability. The lowerer does
+not repeat ordinary field lookup by source name. `appendVariantPayloadPlace` uses
+flow payload facts to append payload projections. `lowerReferenceValue` chooses
+`AddrOf`, `SliceView`, or `TempBorrow` based on addressability and target shape.
 
 `lowerASTExpr` first reads the canonical resolved expression type and conversion
 side tables. It handles flow case tests, place loads, optional promotion,

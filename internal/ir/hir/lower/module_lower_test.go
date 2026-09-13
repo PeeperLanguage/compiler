@@ -113,6 +113,19 @@ func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRRequiresStructFieldEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_field_evidence_test"+peeper.SourceExt, "hir_field_evidence_test", `struct Box { value: i32 }
+fn Read(box: Box) -> i32 { return box.value; }`, func(module *project.Module) {
+		fn := module.AST.Stmts[1].(*ast.FnDecl)
+		selector := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
+		delete(module.Typechecking.StructFields, selector.ID())
+	})
+	returned := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value
+	if _, ok := returned.(*ir.InvalidExpr); !ok {
+		t.Fatalf("field without evidence = %#v, want invalid expression", returned)
+	}
+}
+
 func TestGenerateHIRRequiresResolvedExternSignature(t *testing.T) {
 	out := generateTestHIR(t, "hir_signature_evidence_test"+peeper.SourceExt, "hir_signature_evidence_test", `fn Read() -> i32;`, func(module *project.Module) {
 		symbol, _ := module.ModuleScope.Lookup("Read")

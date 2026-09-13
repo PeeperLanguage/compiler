@@ -587,7 +587,18 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
+	if field, fieldIndex, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
+		if c.flow == nil {
+			var dereferenceType typeinfo.Type
+			if target, indirect := typeinfo.PointerTarget(baseType); indirect {
+				dereferenceType = target
+			} else if target, _, indirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); indirect {
+				dereferenceType = target
+			}
+			c.module.Typechecking.StructFields[node.ID()] = typecheckresult.StructFieldAccess{
+				Field: fieldIndex, Type: field.Type, DereferenceType: dereferenceType,
+			}
+		}
 		return field.Type
 	}
 	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {

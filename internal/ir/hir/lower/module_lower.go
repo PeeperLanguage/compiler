@@ -453,26 +453,22 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 				return appendVariantPayloadPlace(ctx, module, selector, out)
 			}
 		}
-		baseType := exprResolvedType(module, selector.Expr)
-		if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
-			out := lowerPlace(ctx, module, scope, selector.Expr)
-			runtimeBase := typeinfo.Underlying(baseType)
-			target, indirect := typeinfo.PointerTarget(runtimeBase)
-			if !indirect {
-				target, _, indirect = typeinfo.ReferenceTarget(runtimeBase)
-			}
-			if indirect {
+		if module != nil && module.Typechecking != nil {
+			if access, found := module.Typechecking.StructFields[selector.ID()]; found {
+				out := lowerPlace(ctx, module, scope, selector.Expr)
+				if access.DereferenceType != nil {
+					out.Projections = append(out.Projections, ir.PlaceProjection{
+						Kind: ir.PlaceProjectionDeref, Type: loweredTypeID(ctx, module, access.DereferenceType), Location: ast.LocOf(selector.Expr),
+					})
+				}
 				out.Projections = append(out.Projections, ir.PlaceProjection{
-					Kind: ir.PlaceProjectionDeref, Type: loweredTypeID(ctx, module, target), Location: ast.LocOf(selector.Expr),
+					Kind: ir.PlaceProjectionField, FieldIndex: access.Field,
+					Type: loweredTypeID(ctx, module, access.Type), Location: ast.LocOf(selector),
 				})
+				out.Type = loweredTypeID(ctx, module, access.Type)
+				out.Location = ast.LocOf(selector)
+				return appendVariantPayloadPlace(ctx, module, selector, out)
 			}
-			out.Projections = append(out.Projections, ir.PlaceProjection{
-				Kind: ir.PlaceProjectionField, FieldIndex: fieldIndex,
-				Type: loweredTypeID(ctx, module, field.Type), Location: ast.LocOf(selector),
-			})
-			out.Type = loweredTypeID(ctx, module, field.Type)
-			out.Location = ast.LocOf(selector)
-			return appendVariantPayloadPlace(ctx, module, selector, out)
 		}
 	}
 	if index, ok := expr.(*ast.IndexExpr); ok && index != nil && index.Expr != nil && index.Index != nil {
@@ -967,23 +963,20 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
 		}
 	}
-	baseType := exprResolvedType(module, selector.Expr)
-	if field, fieldIndex, ok := typeinfo.LookupStructField(loweredRuntimeType(module, baseType, nil), selector.Name.Name); ok {
-		_, throughPtr := typeinfo.PointerTarget(baseType)
-		if !throughPtr {
-			_, _, throughPtr = typeinfo.ReferenceTarget(typeinfo.Underlying(baseType))
-		}
-		exprType := func(expr ast.Expr) typeinfo.Type {
-			return exprResolvedType(module, expr)
-		}
-		if throughPtr || place.Addressable(scope, selector.Expr, exprType, module.ExpandedDefaultBinding) {
-			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
-		}
-		return &ir.Field{
-			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
-			Index:      fieldIndex,
-			SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)},
-			Type:       loweredTypeID(ctx, module, field.Type),
+	if module.Typechecking != nil {
+		if access, found := module.Typechecking.StructFields[selector.ID()]; found {
+			exprType := func(expr ast.Expr) typeinfo.Type {
+				return exprResolvedType(module, expr)
+			}
+			if access.DereferenceType != nil || place.Addressable(scope, selector.Expr, exprType, module.ExpandedDefaultBinding) {
+				return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
+			}
+			return &ir.Field{
+				Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+				Index:      access.Field,
+				SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)},
+				Type:       loweredTypeID(ctx, module, access.Type),
+			}
 		}
 	}
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(selector)}}
