@@ -274,6 +274,6 @@ func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *proj
 		}
 	}
 	fieldSym := symbols.New(fieldName, symbols.SymbolField, fieldNode, location)
-	fieldSym.Type = field.Type
+	fieldSym.BindType(field.Type)
 	return fieldSym
 }

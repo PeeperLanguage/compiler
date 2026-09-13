@@ -27,7 +27,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 		}
 		imp := c.module.Imports[alias]
 		impSym := symbols.New(alias, symbols.SymbolImport, imp.Decl, ast.LocOf(imp.Decl))
-		impSym.Type = &typeinfo.UnknownType{}
+		impSym.BindType(&typeinfo.UnknownType{})
 		if err := c.module.ModuleScope.Declare(impSym); err != nil {
 			if c.ctx != nil && c.ctx.Diagnostics != nil {
 				c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()).WithCode(diagnostics.ErrAmbiguousImport))
@@ -121,7 +121,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 		TypeParameters: parameters,
 		// Underlying is filled by binder.
 	}
-	sym.Type = defined
+	sym.BindType(defined)
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
@@ -135,7 +135,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 					continue
 				}
 				variantSymbol := symbols.New(variant.Name.Name, symbols.SymbolVariant, variant.Name, variant.Name.Location)
-				variantSymbol.Type = defined
+				variantSymbol.BindType(defined)
 				variantSymbol.DefiningModule = c.module.ID
 				if err := sym.Scope.Declare(variantSymbol); err != nil {
 					problems.ReportRedeclaration(c.ctx.Diagnostics, sym.Scope, err.Error(), variant.Name.Name, variant.Name.Location)
@@ -154,7 +154,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 	}
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	sym.DefiningModule = c.module.ID
-	sym.Type = &typeinfo.UnknownType{} // binder fills real type
+	sym.BindType(&typeinfo.UnknownType{}) // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return

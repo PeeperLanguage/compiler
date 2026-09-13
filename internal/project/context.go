@@ -306,11 +306,11 @@ func declarePredeclaredConst(scope *symbols.Scope, name string) {
 	sym := symbols.New(name, symbols.SymbolConst, nil, ast.LocOf(nil))
 	switch name {
 	case "true", "false":
-		sym.Type = &typeinfo.BoolType{}
+		sym.BindType(&typeinfo.BoolType{})
 	case "none":
-		sym.Type = &typeinfo.NoneType{}
+		sym.BindType(&typeinfo.NoneType{})
 	default:
-		sym.Type = &typeinfo.UnknownType{}
+		sym.BindType(&typeinfo.UnknownType{})
 	}
 	sym.IsPub = true
 	if err := scope.Declare(sym); err != nil {
@@ -324,7 +324,7 @@ func declarePredeclaredType(scope *symbols.Scope, name string, typ typeinfo.Type
 		return
 	}
 	sym := symbols.New(name, symbols.SymbolType, nil, ast.LocOf(nil))
-	sym.Type = typ
+	sym.BindType(typ)
 	sym.IsPub = true
 	if err := scope.Declare(sym); err != nil {
 		panic(err)

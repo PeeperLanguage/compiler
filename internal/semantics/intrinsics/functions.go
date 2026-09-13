@@ -84,7 +84,7 @@ func (definition FunctionDefinition) Signature(baseType typeinfo.Type, compilerT
 func (definition FunctionDefinition) symbolWithType(fnType *typeinfo.FuncType) *symbols.Symbol {
 	sym := symbols.New(string(definition.Operation), symbols.SymbolFunc, nil, nil)
 	sym.CompilerOp = definition.Operation
-	sym.Type = fnType
+	sym.BindType(fnType)
 	sym.IsPub = true
 	return sym
 }

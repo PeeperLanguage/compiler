@@ -449,7 +449,7 @@ func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.S
 		return nil
 	}
 	sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
-	sym.Type = method.CallableType()
+	sym.BindType(method.CallableType())
 	return sym
 }
 
