@@ -185,14 +185,9 @@ func listOrphanCandidates(cachePath string, lockfile *manifest.Lockfile) ([]orph
 		return nil, err
 	}
 
-	referenced := make(map[string]struct{})
+	referenced := make(map[string]struct{}, len(lockfile.Packages))
 	for packageID := range lockfile.Packages {
 		referenced[packageID] = struct{}{}
-	}
-	if len(referenced) == 0 {
-		for packageID := range lockfile.Dependencies {
-			referenced[packageID] = struct{}{}
-		}
 	}
 
 	for packageID, path := range cached {

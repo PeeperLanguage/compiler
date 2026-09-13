@@ -49,9 +49,6 @@ func ListCommand(_ []string) error {
 
 	transitiveCount := 0
 	entries := lockfile.Packages
-	if len(entries) == 0 {
-		entries = lockfile.Dependencies
-	}
 	for _, entry := range entries {
 		if !entry.Direct {
 			transitiveCount++
