@@ -369,31 +369,28 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 			site:    expr,
 		}}, true
 	}
-	if literal, ok := expr.(*ast.StructLit); ok {
+	if a.module.Flow != nil {
+		slots, aggregate := a.module.Flow.AggregateSlots(expr.ID())
+		if !aggregate {
+			return []referenceLoan{}, false
+		}
 		var loans []referenceLoan
-		for _, field := range literal.Fields {
-			if field.Name == nil {
+		for _, slot := range slots {
+			value, _ := a.module.TypedASTNodes[slot.Value].(ast.Expr)
+			if value == nil {
 				continue
 			}
-			fieldLoans, found := a.referenceValueForExpr(field.Value, st)
+			fieldLoans, found := a.referenceValueForExpr(value, st)
 			if found {
 				for i := range fieldLoans {
-					fieldLoans[i].path = append([]place.OriginProjection{{Kind: place.OriginField, Field: field.Name.Name}}, fieldLoans[i].path...)
+					fieldLoans[i].path = append([]place.OriginProjection{slot.Projection}, fieldLoans[i].path...)
 				}
 				loans = append(loans, fieldLoans...)
 			}
 		}
 		return loans, len(loans) > 0
 	}
-	construction, constructed := a.module.Typechecking.VariantConstruction(expr.ID())
-	if !constructed || construction.Payload == nil {
-		return []referenceLoan{}, false
-	}
-	loans, found := a.referenceValueForExpr(construction.Value, st)
-	for i := range loans {
-		loans[i].path = append([]place.OriginProjection{{Kind: place.OriginVariantPayload, Case: construction.Case}}, loans[i].path...)
-	}
-	return loans, found
+	return []referenceLoan{}, false
 }
 
 // replaceReferenceField consumes flow's exact storage identity. Accepted local

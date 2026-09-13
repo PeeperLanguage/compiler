@@ -626,16 +626,25 @@ func (a *flowAnalyzer) updateOriginPlace(
 		if !structured || strct == nil {
 			return
 		}
+		slots := make([]flowresult.AggregateSlot, 0, len(literal.Fields))
 		for _, fieldValue := range literal.Fields {
-			if fieldValue.Name == nil {
+			if fieldValue.Name == nil || fieldValue.Value == nil {
 				continue
 			}
 			field, _, found := typeinfo.LookupStructField(strct, fieldValue.Name.Name)
 			if !found {
 				continue
 			}
+			slots = append(slots, flowresult.AggregateSlot{
+				Value: fieldValue.Value.ID(),
+				Projection: place.OriginProjection{
+					Kind:  place.OriginField,
+					Field: field.Name,
+				},
+			})
 			a.updateOriginPlace(c, scope, place.FieldOrigins(storage, field.Name), field.Type, fieldValue.Value, sourceState, st)
 		}
+		a.result.RecordAggregateSlots(value.ID(), slots)
 		return
 	}
 	construction, constructed := a.module.Typechecking.VariantConstruction(value.ID())
@@ -644,6 +653,13 @@ func (a *flowAnalyzer) updateOriginPlace(
 		a.copyStoredOriginPlace(storage, source.ValueOrigins, typ, sourceState, st)
 		return
 	}
+	a.result.RecordAggregateSlots(value.ID(), []flowresult.AggregateSlot{{
+		Value: construction.Value.ID(),
+		Projection: place.OriginProjection{
+			Kind: place.OriginVariantPayload,
+			Case: construction.Case,
+		},
+	}})
 	payloadStorage := place.VariantPayloadOrigins(storage, []int{construction.Case})
 	a.updateOriginPlace(c, scope, payloadStorage, construction.Payload, construction.Value, sourceState, st)
 }

@@ -42,12 +42,21 @@ type OriginResolution struct {
 	Value   []place.Origin
 }
 
+// AggregateSlot describes one direct value slot of an aggregate expression.
+// Projection is relative to the aggregate's storage; Value identifies the
+// expression whose reference provenance populates that slot.
+type AggregateSlot struct {
+	Value      ast.NodeID
+	Projection place.OriginProjection
+}
+
 type expressionEvidence struct {
 	types         map[ast.NodeID]typeinfo.Type
 	payloads      map[ast.NodeID]PayloadAccess
 	caseTests     map[ast.NodeID]CaseTest
 	variantFields map[ast.NodeID]VariantFieldAccess
 	origins       map[ast.NodeID]OriginResolution
+	aggregates    map[ast.NodeID][]AggregateSlot
 }
 
 // Result owns path-sensitive evidence for one flow generation. Backing maps
@@ -63,6 +72,7 @@ func New() *Result {
 		caseTests:     make(map[ast.NodeID]CaseTest),
 		variantFields: make(map[ast.NodeID]VariantFieldAccess),
 		origins:       make(map[ast.NodeID]OriginResolution),
+		aggregates:    make(map[ast.NodeID][]AggregateSlot),
 	}}
 }
 
@@ -175,4 +185,28 @@ func (r *Result) StorageOrigins(id ast.NodeID) []place.Origin {
 func (r *Result) ValueOrigins(id ast.NodeID) []place.Origin {
 	origins, _ := r.Origins(id)
 	return origins.Value
+}
+
+// RecordAggregateSlots publishes the direct slot decomposition Flow used when
+// storing an aggregate value. Recording an empty slice is meaningful: the
+// expression is an aggregate with no direct child slots.
+func (r *Result) RecordAggregateSlots(id ast.NodeID, slots []AggregateSlot) {
+	if r == nil || id == 0 {
+		return
+	}
+	r.expressions.aggregates[id] = append([]AggregateSlot(nil), slots...)
+}
+
+// AggregateSlots returns the direct slot decomposition published for an
+// aggregate expression. The bool distinguishes a known empty aggregate from
+// an expression that has no aggregate evidence.
+func (r *Result) AggregateSlots(id ast.NodeID) ([]AggregateSlot, bool) {
+	if r == nil || id == 0 {
+		return nil, false
+	}
+	slots, ok := r.expressions.aggregates[id]
+	if !ok {
+		return nil, false
+	}
+	return append([]AggregateSlot(nil), slots...), true
 }

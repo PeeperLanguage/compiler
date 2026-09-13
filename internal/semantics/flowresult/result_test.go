@@ -40,3 +40,38 @@ func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 		t.Fatal("origin query leaked mutable backing storage")
 	}
 }
+
+func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
+	result := New()
+	const id ast.NodeID = 11
+	slots := []AggregateSlot{{
+		Value: 12,
+		Projection: place.OriginProjection{
+			Kind:  place.OriginField,
+			Field: "value",
+		},
+	}}
+	result.RecordAggregateSlots(id, slots)
+
+	// Publication and queries own their slice so callers cannot mutate Flow's
+	// aggregate decomposition accidentally.
+	slots[0].Value = 13
+	got, ok := result.AggregateSlots(id)
+	if !ok || len(got) != 1 || got[0].Value != 12 || got[0].Projection.Field != "value" {
+		t.Fatalf("aggregate slots = %#v", got)
+	}
+	got[0].Projection.Field = "changed"
+	again, _ := result.AggregateSlots(id)
+	if again[0].Projection.Field != "value" {
+		t.Fatal("aggregate slot query leaked mutable backing storage")
+	}
+
+	const empty ast.NodeID = 14
+	result.RecordAggregateSlots(empty, nil)
+	if got, ok := result.AggregateSlots(empty); !ok || len(got) != 0 {
+		t.Fatalf("empty aggregate = %#v, %v", got, ok)
+	}
+	if _, ok := result.AggregateSlots(15); ok {
+		t.Fatal("missing aggregate evidence reported as present")
+	}
+}
