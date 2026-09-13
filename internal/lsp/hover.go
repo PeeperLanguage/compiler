@@ -124,12 +124,20 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	if resolved == nil {
 		return nil
 	}
+	methodType := resolved
+	if decl, ok := cc.parents[typeNode.ID()].(ast.TypeDecl); ok && decl != nil && decl.UnderlyingType() == typeNode {
+		if sym := cc.module.Bindings.Symbol(decl.DeclName()); sym != nil {
+			if declaredType, found := symbols.GetSymbolType(sym); found {
+				methodType = declaredType
+			}
+		}
+	}
 	return &hoverSubject{
 		Kind:          hoverSubjectType,
 		Node:          cc.node,
 		Location:      ast.LocOf(cc.node),
 		ResolvedType:  resolved,
-		MethodSymbols: lookupMethodSet(cc.ctx, resolved),
+		MethodSymbols: lookupMethodSet(cc.ctx, methodType),
 	}
 }
 
