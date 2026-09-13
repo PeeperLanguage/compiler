@@ -30,7 +30,7 @@ Key implementation files:
 - `internal/ir/cfg/analyze.go`: source-level control-flow diagnostics.
 - `internal/ir/cfg/validate.go`: CFG construction invariants.
 - `internal/ir/hir/model.go`: structured HIR statements and modules.
-- `internal/ir/hir/validate.go`: HIR shape validation.
+- `internal/ir/hir/validate.go`: HIR shape and published-evidence validation.
 - `internal/ir/hir/lower/module_lower.go`: module, statement, place, expression lowering.
 - `internal/ir/hir/lower/lower_types.go`: semantic-to-runtime type interning.
 - `internal/ir/hir/lower/lower_interface.go`: interface construction and slot types.
@@ -224,14 +224,16 @@ The result is `hir.Module`:
 - `Function` values with parameters, return `TypeID`, symbol/source identity, and
   a structured `*hir.Block` body.
 
-`lowerExternSignature` uses resolved function types when available, and otherwise
-uses syntax types as fallback. `lowerASTFunctionNamed` builds function metadata,
-parameters, and its body through `appendBlock`.
+`lowerExternSignature` and `lowerASTFunctionNamed` consume resolved function and
+parameter types. Missing signature evidence produces invalid HIR for validation;
+lowering does not reconstruct it from syntax. `lowerASTFunctionNamed` builds
+function metadata, parameters, and its body through `appendBlock`.
 
 ### Structured model
 
 HIR keeps source control structure explicit. `Stmt` is sealed and provides child
-traversal, text rendering, and source information. The statement set is:
+traversal, node-local artifact validation, text rendering, and source information.
+The statement set is:
 
 - `Block` with ordered statements and block identity;
 - `Binding` with name, constness, type, optional initializer, and symbol identity;
@@ -247,13 +249,19 @@ traversal, text rendering, and source information. The statement set is:
 symbol identity. HIR owns the semantic subject and case bodies; CFG owns the
 control-flow targets for the same match.
 
-`InspectStmt` traverses structured HIR in depth-first preorder. `Module.Text` and
-statement `appendText` provide textual output, not execution semantics.
+`InspectStmt` is the canonical depth-first preorder traversal and ignores plain or
+typed-nil statement slots. Each statement's `forEachChild` declares recursive
+structure. `Module.Text` and statement `appendText` provide textual output, not
+execution semantics.
 
-`hir.Module.Validate` checks artifact shape: functions and statement slots are
-non-nil, required `if`, loop, and case bodies exist, and optional loop segments
-are valid when present. It intentionally does not decide whether a source
-construct was lowered correctly; that decision belongs to HIR lowering.
+`hir.Module.Validate` uses `InspectStmt` once. Each sealed statement implements
+`validateSelf`, which checks only evidence and required slots owned by that node;
+adding a statement type therefore requires its validation contract before it can
+implement `Stmt`. Validation covers callable signatures, statement slots, required
+bodies, explicit invalid nodes, expression and place types, place projection shape,
+and variant-binding types. It does not re-derive whether a source construct was
+semantically legal or which construct should have been lowered; those decisions
+remain with semantic analysis and HIR lowering.
 
 ### HIR lowering details
 

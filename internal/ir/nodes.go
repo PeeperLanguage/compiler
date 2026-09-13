@@ -196,7 +196,7 @@ type StringFromBytes struct {
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
 	SourceInfo
-	Source       *Place
+	Place        *Place
 	Start        Expr
 	End          Expr
 	EndExclusive bool
@@ -375,7 +375,7 @@ func (e *StringFromBytes) forEachChild(visit func(Expr)) {
 }
 func (*SliceView) exprNode() {}
 func (e *SliceView) forEachChild(visit func(Expr)) {
-	e.Source.forEachChild(visit)
+	e.Place.forEachChild(visit)
 	visit(e.Start)
 	visit(e.End)
 }
@@ -751,10 +751,10 @@ func (e *StringFromBytes) TypeID() TypeID {
 }
 
 func (e *SliceView) String() string {
-	if e == nil || e.Source == nil {
+	if e == nil || e.Place == nil {
 		return ""
 	}
-	return "view(" + e.Source.String() + ")"
+	return "view(" + e.Place.String() + ")"
 }
 
 func (e *SliceView) TypeID() TypeID {

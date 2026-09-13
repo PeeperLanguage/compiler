@@ -911,8 +911,8 @@ func TestGenerateMIRLowersSliceView(t *testing.T) {
 			ReturnType: mirTypes.i32,
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.Binding{Name: "view", Value: &ir.SliceView{
-					Source: &ir.Place{Root: &ir.Ident{Name: "xs", Type: mirTypes.dynamicI32}, Type: mirTypes.dynamicI32},
-					Type:   mirTypes.refDynamicI32,
+					Place: &ir.Place{Root: &ir.Ident{Name: "xs", Type: mirTypes.dynamicI32}, Type: mirTypes.dynamicI32},
+					Type:  mirTypes.refDynamicI32,
 				}},
 				&hir.Return{Value: &ir.IntLit{Value: "0", Type: mirTypes.i32}},
 			}},
@@ -1028,7 +1028,7 @@ func TestGenerateMIRPreservesSliceViewRange(t *testing.T) {
 			ReturnType: mirTypes.i32,
 			Body: &hir.Block{Stmts: []hir.Stmt{
 				&hir.Binding{Name: "view", Value: &ir.SliceView{
-					Source:       &ir.Place{Root: &ir.Ident{Name: "xs", Type: mirTypes.refDynamicI32}, Type: mirTypes.refDynamicI32},
+					Place:        &ir.Place{Root: &ir.Ident{Name: "xs", Type: mirTypes.refDynamicI32}, Type: mirTypes.refDynamicI32},
 					Start:        &ir.IntLit{Value: "1", Type: mirTypes.i32},
 					End:          &ir.IntLit{Value: "3", Type: mirTypes.i32},
 					EndExclusive: true,
@@ -1533,7 +1533,7 @@ func TestGenerateMIRDropsTemporaryStringOwnerAfterViewUse(t *testing.T) {
 			ReturnType: mirTypes.void,
 			Body: &hir.Block{Stmts: []hir.Stmt{&hir.ExprStmt{Value: &ir.Len{
 				Value: &ir.SliceView{
-					Source: &ir.Place{
+					Place: &ir.Place{
 						Root: &ir.TempBorrow{
 							Value: &ir.Call{Callee: &ir.Ident{Name: "Make", Type: fnString}, Type: stringType},
 							Type:  refString,

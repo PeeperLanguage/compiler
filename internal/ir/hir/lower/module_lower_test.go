@@ -72,6 +72,55 @@ func TestGenerateHIRDoesNotResolveMissingIdentifierBinding(t *testing.T) {
 	if !ok || !strings.Contains(invalid.Message, "unresolved identifier") {
 		t.Fatalf("identifier without binding evidence = %#v, want invalid expression", returned)
 	}
+	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "invalid return value") {
+		t.Fatalf("Validate() = %v, want invalid return value", err)
+	}
+}
+
+func TestGenerateHIRRequiresExpressionTypeEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_type_evidence_test"+peeper.SourceExt, "hir_type_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *project.Module) {
+		fn := module.AST.Stmts[0].(*ast.FnDecl)
+		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
+		delete(module.Typechecking.ExprTypes, identifier.ID())
+		delete(module.Flow.ExprTypes, identifier.ID())
+	})
+	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
+		t.Fatalf("Validate() = %v, want invalid return type evidence", err)
+	}
+}
+
+func TestGenerateHIRRequiresNumberTypeEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_number_evidence_test"+peeper.SourceExt, "hir_number_evidence_test", `fn Read() -> i32 { return 1; }`, func(module *project.Module) {
+		fn := module.AST.Stmts[0].(*ast.FnDecl)
+		number := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.NumberLit)
+		delete(module.Typechecking.ExprTypes, number.ID())
+		delete(module.Flow.ExprTypes, number.ID())
+	})
+	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "number literal missing resolved type evidence") {
+		t.Fatalf("Validate() = %v, want invalid number type evidence", err)
+	}
+}
+
+func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
+	out := generateTestHIR(t, "hir_unary_evidence_test"+peeper.SourceExt, "hir_unary_evidence_test", `fn Read(value: i32) -> i32 { return -value; }`, func(module *project.Module) {
+		fn := module.AST.Stmts[0].(*ast.FnDecl)
+		unary := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.UnaryExpr)
+		delete(module.Typechecking.ExprTypes, unary.ID())
+		delete(module.Flow.ExprTypes, unary.ID())
+	})
+	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
+		t.Fatalf("Validate() = %v, want invalid unary type evidence", err)
+	}
+}
+
+func TestGenerateHIRRequiresResolvedExternSignature(t *testing.T) {
+	out := generateTestHIR(t, "hir_signature_evidence_test"+peeper.SourceExt, "hir_signature_evidence_test", `fn Read() -> i32;`, func(module *project.Module) {
+		symbol, _ := module.ModuleScope.Lookup("Read")
+		symbol.Type = nil
+	})
+	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "has invalid return type") {
+		t.Fatalf("Validate() = %v, want invalid extern signature evidence", err)
+	}
 }
 
 func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
@@ -130,6 +179,9 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 	invalid, ok := loweredCall.Callee.(*ir.InvalidExpr)
 	if !ok || !strings.Contains(invalid.Message, "unresolved qualified identifier") {
 		t.Fatalf("imported identifier without binding evidence = %#v, want invalid callee", loweredCall.Callee)
+	}
+	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "invalid return value") {
+		t.Fatalf("Validate() = %v, want invalid imported callee evidence", err)
 	}
 }
 
@@ -792,8 +844,8 @@ func TestGenerateHIRLowersFixedArrayRangeAsMutableSliceView(t *testing.T) {
 	if !ok || out.Types.Text(view.Type) != "&mut [..]i32" || view.EndExclusive {
 		t.Fatalf("expected inclusive mutable SliceView, got %#v", binding.Value)
 	}
-	if view.Source == nil || out.Types.Text(view.Source.Type) != "[4]i32" || len(view.Source.Projections) != 0 {
-		t.Fatalf("expected fixed-array source place, got %#v", view.Source)
+	if view.Place == nil || out.Types.Text(view.Place.Type) != "[4]i32" || len(view.Place.Projections) != 0 {
+		t.Fatalf("expected fixed-array source place, got %#v", view.Place)
 	}
 	start, startOK := view.Start.(*ir.IntLit)
 	end, endOK := view.End.(*ir.IntLit)
@@ -855,9 +907,9 @@ fn main() -> i32 {
 	byteBinding := mainFn.Body.Stmts[0].(*hir.Binding)
 	byteLoad := byteBinding.Value.(*ir.Load)
 	byteView := byteLoad.Place.Root.(*ir.SliceView)
-	byteOwner, ok := byteView.Source.Root.(*ir.TempBorrow)
+	byteOwner, ok := byteView.Place.Root.(*ir.TempBorrow)
 	if !ok {
-		t.Fatalf("temporary as_bytes source = %T, want TempBorrow", byteView.Source.Root)
+		t.Fatalf("temporary as_bytes source = %T, want TempBorrow", byteView.Place.Root)
 	}
 	if !byteOwner.Slice {
 		t.Fatal("temporary as_bytes borrow must use return-safe string view")
@@ -869,9 +921,9 @@ fn main() -> i32 {
 	sizeBinding := mainFn.Body.Stmts[1].(*hir.Binding)
 	rangeLen := sizeBinding.Value.(*ir.Len)
 	rangeView := rangeLen.Value.(*ir.SliceView)
-	rangeOwner, ok := rangeView.Source.Root.(*ir.TempBorrow)
+	rangeOwner, ok := rangeView.Place.Root.(*ir.TempBorrow)
 	if !ok {
-		t.Fatalf("temporary string range source = %T, want TempBorrow", rangeView.Source.Root)
+		t.Fatalf("temporary string range source = %T, want TempBorrow", rangeView.Place.Root)
 	}
 	if !rangeOwner.Slice {
 		t.Fatal("temporary string range borrow must use return-safe string view")
@@ -892,8 +944,8 @@ func TestGenerateHIRLowersStringBorrowsAsSliceViews(t *testing.T) {
 	if !ok || out.Types.Text(view.Type) != "&str" {
 		t.Fatalf("expected &str SliceView, got %#v", binding.Value)
 	}
-	if view.Source == nil || out.Types.Text(view.Source.Type) != "str" {
-		t.Fatalf("expected str source place, got %#v", view.Source)
+	if view.Place == nil || out.Types.Text(view.Place.Type) != "str" {
+		t.Fatalf("expected str source place, got %#v", view.Place)
 	}
 }
 

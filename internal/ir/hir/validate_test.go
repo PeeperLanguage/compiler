@@ -3,17 +3,20 @@ package hir
 import (
 	"strings"
 	"testing"
+
+	"compiler/internal/ir"
 )
 
 func wellFormedHIR() *Module {
 	return &Module{
 		Name: "probe",
 		Funcs: []*Function{{
-			Name: "choose",
+			Name:       "choose",
+			ReturnType: 1,
 			Body: &Block{Stmts: []Stmt{
-				&If{Then: &Block{}, Else: &Block{}},
+				&If{Cond: &ir.BoolLit{Type: 1}, Then: &Block{}, Else: &Block{}},
 				&For{Body: &Block{}},
-				&SwitchVariant{Cases: []VariantCaseBlock{{Case: 0, Body: &Block{}}}},
+				&SwitchVariant{Value: &ir.Ident{Name: "value", Type: 1}, Cases: []VariantCaseBlock{{Case: 0, Body: &Block{}}}},
 				&Return{},
 			}},
 		}},
@@ -45,6 +48,23 @@ func TestValidateReportsDefects(t *testing.T) {
 		want   string
 	}{
 		{
+			name:   "function with invalid return type",
+			damage: func(m *Module) { m.Funcs[0].ReturnType = ir.InvalidType },
+			want:   "function choose has invalid return type",
+		},
+		{
+			name:   "function with invalid parameter type",
+			damage: func(m *Module) { m.Funcs[0].Params = []ir.Param{{Name: "value"}} },
+			want:   "function choose has parameter 0 with invalid type",
+		},
+		{
+			name: "extern with invalid signature",
+			damage: func(m *Module) {
+				m.Externs = []Extern{{Name: "read", Params: []ir.Param{{Name: "value"}}, ReturnType: 1}}
+			},
+			want: "extern read has parameter 0 with invalid type",
+		},
+		{
 			name:   "function with no body",
 			damage: func(m *Module) { m.Funcs[0].Body = nil },
 			want:   "function choose has no body",
@@ -70,6 +90,60 @@ func TestValidateReportsDefects(t *testing.T) {
 				m.Funcs[0].Body.Stmts[2].(*SwitchVariant).Cases[0].Body = nil
 			},
 			want: "has a case 0 with no body",
+		},
+		{
+			name: "assignment with invalid projection type",
+			damage: func(m *Module) {
+				m.Funcs[0].Body.Stmts = append(m.Funcs[0].Body.Stmts, &Assign{
+					Target: &ir.Place{
+						Root: &ir.Ident{Name: "value", Type: 1}, Type: 1,
+						Projections: []ir.PlaceProjection{{Kind: ir.PlaceProjectionField}},
+					},
+					Value: &ir.BoolLit{Type: 1},
+				})
+			},
+			want: "assignment target projection 0 with invalid type",
+		},
+		{
+			name: "assignment with unknown projection kind",
+			damage: func(m *Module) {
+				m.Funcs[0].Body.Stmts = append(m.Funcs[0].Body.Stmts, &Assign{
+					Target: &ir.Place{
+						Root: &ir.Ident{Name: "value", Type: 1}, Type: 1,
+						Projections: []ir.PlaceProjection{{Kind: ir.PlaceProjectionKind(255), Type: 1}},
+					},
+					Value: &ir.BoolLit{Type: 1},
+				})
+			},
+			want: "assignment target projection 0 with unknown kind 255",
+		},
+		{
+			name: "variant binding with invalid type",
+			damage: func(m *Module) {
+				arm := &m.Funcs[0].Body.Stmts[2].(*SwitchVariant).Cases[0]
+				arm.PayloadType = 1
+				arm.Bindings = []VariantBinding{{Name: "payload"}}
+			},
+			want: "case 0 has binding 0 with invalid type",
+		},
+		{
+			name: "invalid nested expression",
+			damage: func(m *Module) {
+				m.Funcs[0].Body.Stmts[0].(*If).Cond = &ir.Binary{
+					Left: &ir.InvalidExpr{Message: "missing operand evidence"}, Right: &ir.BoolLit{Type: 1}, Type: 1,
+				}
+			},
+			want: "function choose has invalid if condition: missing operand evidence",
+		},
+		{
+			name:   "invalid expression type",
+			damage: func(m *Module) { m.Funcs[0].Body.Stmts[0].(*If).Cond = &ir.BoolLit{} },
+			want:   "function choose has if condition with invalid type",
+		},
+		{
+			name:   "explicit invalid statement",
+			damage: func(m *Module) { m.Funcs[0].Body.Stmts[3] = &Invalid{Message: "missing evidence"} },
+			want:   "function choose contains invalid statement: missing evidence",
 		},
 		{
 			name:   "typed-nil block statement in a block",

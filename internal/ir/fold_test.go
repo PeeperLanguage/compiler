@@ -169,7 +169,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		{name: "temporary borrow", expr: &TempBorrow{Value: foldable(), Slice: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "length", expr: &Len{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "string chars", expr: &StringChars{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "slice", expr: &SliceView{Source: place(), Start: foldable(), End: foldable(), EndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "slice", expr: &SliceView{Place: place(), Start: foldable(), End: foldable(), EndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "interface make", expr: &InterfaceMake{Value: foldable(), Slots: []InterfaceSlot{{MethodName: "method"}}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, Consumes: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "field", expr: &Field{Base: foldable(), Index: 3, DropBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},

@@ -787,7 +787,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.SliceView:
-		source := l.lowerPlace(e.Source, out)
+		source := l.lowerPlace(e.Place, out)
 		var start, end ValueRef
 		if e.Start != nil {
 			start = l.lowerExpr(e.Start, out)

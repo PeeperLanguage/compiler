@@ -7,6 +7,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
+	"compiler/pkg/typednil"
 )
 
 // NodeID identifies source AST node that produced this HIR node. It remains
@@ -42,7 +43,10 @@ type Function struct {
 
 type Stmt interface {
 	stmtNode()
+	// forEachChild declares recursive statement structure for InspectStmt.
 	forEachChild(func(Stmt))
+	// validateSelf checks only this statement; InspectStmt validates descendants.
+	validateSelf(*validator)
 	appendText(*strings.Builder, int)
 	sourceInfo() ir.SourceInfo
 }
@@ -184,7 +188,7 @@ func (s *SwitchVariant) forEachChild(visit func(Stmt)) {
 
 // InspectStmt traverses structured HIR in depth-first preorder.
 func InspectStmt(stmt Stmt, visit func(Stmt) bool) {
-	if stmt == nil || !visit(stmt) {
+	if typednil.IsNil(stmt) || !visit(stmt) {
 		return
 	}
 	stmt.forEachChild(func(child Stmt) { InspectStmt(child, visit) })

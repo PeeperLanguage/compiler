@@ -31,7 +31,7 @@ func TestInspectExprVisitsCompositeChildrenInOrder(t *testing.T) {
 		{name: "temporary borrow", expr: &TempBorrow{Value: ident("value")}, want: "value"},
 		{name: "length", expr: &Len{Value: ident("value")}, want: "value"},
 		{name: "string chars", expr: &StringChars{Value: ident("value")}, want: "value"},
-		{name: "slice view", expr: &SliceView{Source: place(), Start: ident("start"), End: ident("end")}, want: "root,index,start,end"},
+		{name: "slice view", expr: &SliceView{Place: place(), Start: ident("start"), End: ident("end")}, want: "root,index,start,end"},
 		{name: "interface make", expr: &InterfaceMake{Value: ident("value")}, want: "value"},
 		{name: "interface call", expr: &InterfaceCall{Base: ident("base"), Args: []Expr{ident("arg")}}, want: "base,arg"},
 		{name: "field", expr: &Field{Base: ident("base")}, want: "base"},

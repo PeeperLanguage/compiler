@@ -89,7 +89,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		}
 	case *SliceView:
 		return &SliceView{
-			Source:       FoldPlace(types, node.Source, env),
+			Place:        FoldPlace(types, node.Place, env),
 			Start:        FoldExpr(types, node.Start, env),
 			End:          FoldExpr(types, node.End, env),
 			EndExclusive: node.EndExclusive,
