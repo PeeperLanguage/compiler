@@ -58,9 +58,7 @@ func emitDropValueInline(b *llvmBuilder, value llvmValue, typeID ir.TypeID) {
 		doneLabel := fmt.Sprintf("drop_string_done_%d", id)
 		b.condBranch(canRelease, releaseLabel, doneLabel)
 		b.namedLabel(releaseLabel)
-		byteType := b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeByte})
-		size := emitAllocatorStorageSize(b, byteType, length)
-		emitAllocatorDeallocate(b, allocator, data, size, b.value("1", llvmScalarLayout("i32")))
+		emitAllocatorDeallocate(b, allocator, data, length, b.value("1", llvmScalarLayout("i32")))
 		b.branch(doneLabel)
 		b.namedLabel(doneLabel)
 		return
@@ -177,10 +175,8 @@ func emitInterfacePayloadReleaseThunk(out *strings.Builder, emitter *llvmEmitter
 	builder := newLLVMBuilder(out, emitter, -1)
 	builder.namedLabel("entry")
 	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
-	sizeLayout := emitter.layout(emitter.mod.Types.IndexType())
-	payloadEnd := builder.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 1)", dataLayout.Text, dataLayout.Text), llvmPointerLayout(dataLayout))
-	size := builder.cast("ptrtoint", payloadEnd, sizeLayout)
-	emitAllocatorDeallocate(builder, builder.value("%allocator", rawPointer), builder.value("%data", rawPointer), size, builder.value("8", llvmScalarLayout("i32")))
+	size, alignment := emitAllocatorTypeLayout(builder, makeVal.DataType)
+	emitAllocatorDeallocate(builder, builder.value("%allocator", rawPointer), builder.value("%data", rawPointer), size, alignment)
 	builder.retVoid(&llvmLayout{Text: "void", Kind: llvmLayoutVoid})
 	out.WriteString("}\n")
 }
@@ -246,9 +242,9 @@ func emitDynamicArrayDrop(b *llvmBuilder, value llvmValue, elem ir.TypeID) {
 	doneLabel := fmt.Sprintf("drop_array_done_%d", id)
 	b.condBranch(nonNull, releaseLabel, doneLabel)
 	b.namedLabel(releaseLabel)
-	size := emitAllocatorStorageSize(b, elem, capacity)
+	size, alignment := emitAllocatorArrayLayout(b, elem, capacity)
 	rawData := b.bitcast(data, llvmPointerLayout(llvmScalarLayout("i8")))
-	emitAllocatorDeallocate(b, allocator, rawData, size, b.value("8", llvmScalarLayout("i32")))
+	emitAllocatorDeallocate(b, allocator, rawData, size, alignment)
 	b.branch(doneLabel)
 	b.namedLabel(doneLabel)
 }
@@ -285,11 +281,9 @@ func emitDynamicArrayElementRangeDrop(b *llvmBuilder, data llvmValue, elem ir.Ty
 func emitOwnedPointerFree(b *llvmBuilder, value llvmValue, targetType ir.TypeID) {
 	data := b.extractField(value, llvmFieldData)
 	desc := b.extractField(value, llvmFieldAllocator)
-	targetLayout := b.emitter.layout(targetType)
 	rawData := b.bitcast(data, llvmPointerLayout(llvmScalarLayout("i8")))
-	payloadEnd := b.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 1)", targetLayout.Text, targetLayout.Text), llvmPointerLayout(targetLayout))
-	size := b.cast("ptrtoint", payloadEnd, b.emitter.layout(b.emitter.mod.Types.IndexType()))
-	emitAllocatorDeallocate(b, desc, rawData, size, b.value("8", llvmScalarLayout("i32")))
+	size, alignment := emitAllocatorTypeLayout(b, targetType)
+	emitAllocatorDeallocate(b, desc, rawData, size, alignment)
 }
 
 type runtimeTypeProperty uint8

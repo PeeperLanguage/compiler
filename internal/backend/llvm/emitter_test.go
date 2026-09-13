@@ -859,6 +859,7 @@ func TestGenerateLLVMIRLowersDynamicArrayAllocation(t *testing.T) {
 		"declare i8* @peeper_rt_v1_alloc(i64)",
 		"@llvm.umul.with.overflow.i64",
 		"ptrtoint i32* getelementptr",
+		"getelementptr ({ i8, i32 }, { i8, i32 }* null, i32 0, i32 1)",
 		"select i1",
 		"i64 1, i64",
 		"call i8* @peeper_rt_v1_alloc(i64",
@@ -1531,6 +1532,11 @@ func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.
 	if count := strings.Count(out, "@peeper_default_free_fn"); count < 2 {
 		t.Fatalf("expected nested payload and carrier storage deallocs through descriptor, got %d:\n%s", count, out)
 	}
+	physical := (&llvmEmitter{mod: mod, target: testLinuxAMD64}).layout(payload).Text
+	probe := "getelementptr ({ i8, " + physical + " }, { i8, " + physical + " }* null, i32 0, i32 1)"
+	if !strings.Contains(out, probe) {
+		t.Fatalf("interface payload release must derive alignment from payload layout %s:\n%s", physical, out)
+	}
 }
 
 func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
@@ -1660,7 +1666,7 @@ func TestGenerateLLVMIRDropsStringThroughAllocator(t *testing.T) {
 	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{
 		"extractvalue { i8*, i64, i8* } %value, 2",
-		"ptrtoint i8* getelementptr (i8, i8* null, i32 1) to i64",
+		"i64 %",
 		"i32 1)",
 		"call void %",
 	} {
@@ -3067,6 +3073,143 @@ func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
 		!strings.Contains(out, "void (i8*, i8*)*") ||
 		!strings.Contains(out, "call void %") {
 		t.Fatalf("expected consuming dispatch before allocator-backed carrier release, got:\n%s", out)
+	}
+}
+
+func TestAllocatorLayoutDerivesAlignmentFromPhysicalType(t *testing.T) {
+	for _, compilerTarget := range []target.Info{testLinux386, testLinuxAMD64} {
+		t.Run(compilerTarget.Arch, func(t *testing.T) {
+			types := newLLVMTypeFixture(compilerTarget.IndexBits)
+			nested := types.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{
+				{Name: "tag", Type: types.u8},
+				{Name: "wide", Type: types.u128},
+			}})
+			variant := types.table.Intern(ir.Type{
+				Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Payload", Identity: "test::Payload",
+				Cases: []ir.VariantCase{{Name: "Empty"}, {Name: "Value", Payload: nested}},
+			})
+			iface := types.table.Intern(ir.Type{Kind: ir.TypeInterface})
+			ownedIface := types.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
+
+			emitter := &llvmEmitter{mod: &mir.Module{Types: types.table}, target: compilerTarget}
+			for _, typeID := range []ir.TypeID{types.i32, types.u128, nested, variant, types.ownedI32, types.dynamicI32, ownedIface} {
+				var out strings.Builder
+				builder := newLLVMBuilder(&out, emitter, -1)
+				size, alignment := emitAllocatorTypeLayout(builder, typeID)
+				if size.Layout.Text != emitter.layout(types.table.IndexType()).Text || alignment.Layout.Text != "i32" {
+					t.Fatalf("type %s layout result = (%s, %s), want (usize, i32)", types.table.Text(typeID), size.Layout.Text, alignment.Layout.Text)
+				}
+				physical := emitter.layout(typeID).Text
+				probe := "getelementptr ({ i8, " + physical + " }, { i8, " + physical + " }* null, i32 0, i32 1)"
+				if !strings.Contains(out.String(), probe) {
+					t.Fatalf("type %s alignment is not derived from physical layout %s:\n%s", types.table.Text(typeID), physical, out.String())
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRUsesSameDerivedAlignmentForOwnedAllocationAndFree(t *testing.T) {
+	for _, compilerTarget := range []target.Info{testLinux386, testLinuxAMD64} {
+		t.Run(compilerTarget.Arch, func(t *testing.T) {
+			types := newLLVMTypeFixture(compilerTarget.IndexBits)
+			mod := &mir.Module{
+				Name: "alignment", Types: types.table,
+				Funcs: []*mir.Function{{
+					Name: "allocate_and_release", ReturnType: types.void,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{
+							&mir.Assign{Name: "p", Value: &mir.Alloc{Value: &mir.RefConst{Value: "42", Type: types.i32}, Type: types.ownedI32}},
+							&mir.Drop{Value: &mir.RefName{Name: "p", Type: types.ownedI32}},
+						},
+						Term: &mir.Ret{},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget, false)
+			probe := "getelementptr ({ i8, i32 }, { i8, i32 }* null, i32 0, i32 1)"
+			if count := strings.Count(out, probe); count < 2 {
+				t.Fatalf("allocation and free must both derive i32 alignment, got %d probes:\n%s", count, out)
+			}
+			if strings.Contains(out, "i32 8)") {
+				t.Fatalf("generic owned storage must not pass guessed alignment 8:\n%s", out)
+			}
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				return
+			}
+			cmd := exec.Command(clang, "-target", compilerTarget.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "alignment.o"), "-")
+			cmd.Stdin = strings.NewReader(out)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s layout-derived alignment LLVM is invalid: %v\n%s\n%s", compilerTarget.Arch, err, output, out)
+			}
+		})
+	}
+}
+
+func TestGenerateLLVMIRPreservesCustomAllocatorLayoutForAllocateAndFree(t *testing.T) {
+	types := newLLVMTypeFixture(target.Bits64)
+	allocator := types.table.Intern(ir.Type{Kind: ir.TypeAllocator})
+	mod := &mir.Module{
+		Name: "custom_allocator_alignment", Types: types.table,
+		Funcs: []*mir.Function{{
+			Name: "allocate_and_release", Params: []ir.Param{{Name: "allocator", Type: allocator}}, ReturnType: types.void,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{Name: "p", Value: &mir.Alloc{
+						Value:     &mir.RefConst{Value: "42", Type: types.i32},
+						Allocator: &mir.RefName{Name: "allocator", Type: allocator},
+						Type:      types.ownedI32,
+					}},
+					&mir.Drop{Value: &mir.RefName{Name: "p", Type: types.ownedI32}},
+				},
+				Term: &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	probe := "getelementptr ({ i8, i32 }, { i8, i32 }* null, i32 0, i32 1)"
+	if count := strings.Count(out, probe); count < 2 {
+		t.Fatalf("custom allocator allocate/free must consume the same derived alignment, got %d probes:\n%s", count, out)
+	}
+	for _, expected := range []string{
+		"bitcast i8* %allocator to i8**",
+		"insertvalue { i32*, i8* }",
+		"i8* %allocator, 1",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("custom allocator provenance missing %q:\n%s", expected, out)
+		}
+	}
+}
+
+func TestGenerateLLVMIRNormalizesZeroSizedOwnedStorageOnAllocateAndFree(t *testing.T) {
+	types := newLLVMTypeFixture(target.Bits64)
+	empty := types.table.Intern(ir.Type{Kind: ir.TypeStruct})
+	ownedEmpty := types.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: empty})
+	mod := &mir.Module{
+		Name: "zero_sized_alignment", Types: types.table,
+		Funcs: []*mir.Function{{
+			Name: "allocate_and_release", ReturnType: types.void,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{Name: "value", Value: &mir.ZeroValue{Type: empty}},
+					&mir.Assign{Name: "p", Value: &mir.Alloc{Value: &mir.RefName{Name: "value", Type: empty}, Type: ownedEmpty}},
+					&mir.Drop{Value: &mir.RefName{Name: "p", Type: ownedEmpty}},
+				},
+				Term: &mir.Ret{},
+			}},
+		}},
+	}
+	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if count := strings.Count(out, "getelementptr ({  }, {  }* null, i32 1)"); count < 2 {
+		t.Fatalf("zero-sized allocation and free must derive the same raw size, got %d size computations:\n%s", count, out)
+	}
+	if count := strings.Count(out, "select i1"); count < 2 {
+		t.Fatalf("zero-sized allocation and free must both normalize zero bytes to one, got %d normalizations:\n%s", count, out)
 	}
 }
 

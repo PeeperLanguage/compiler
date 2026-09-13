@@ -45,15 +45,18 @@ func emitAllocatorDeallocate(b *llvmBuilder, handle, raw, size, alignment llvmVa
 	b.call(deallocFn, []llvmValue{ctx, raw, size, alignment})
 }
 
-func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity llvmValue) llvmValue {
-	sizeLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
+func emitAllocatorTypeLayout(b *llvmBuilder, typeID ir.TypeID) (llvmValue, llvmValue) {
+	size, alignment := emitTypeSizeAndAlignment(b, typeID)
+	return normalizeAllocatorSize(b, size), alignment
+}
+
+func emitAllocatorArrayLayout(b *llvmBuilder, elemType ir.TypeID, capacity llvmValue) (llvmValue, llvmValue) {
+	elemSize, alignment := emitTypeSizeAndAlignment(b, elemType)
+	sizeLayout := elemSize.Layout
 	id := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("allocator_size_fail_%d", id)
 	sizeReadyLabel := fmt.Sprintf("allocator_size_ready_%d", id)
-	elemLayout := b.emitter.layout(elemType)
-	elemPtr := b.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 1)", elemLayout.Text, elemLayout.Text), llvmPointerLayout(elemLayout))
-	elemSize := b.cast("ptrtoint", elemPtr, sizeLayout)
 	overflowLayout := llvmAggregateLayout([]*llvmLayout{sizeLayout, llvmScalarLayout("i1")}, nil)
 	overflowFn := b.value("@llvm.umul.with.overflow."+sizeLayout.Text, llvmFunctionLayout(overflowLayout, []*llvmLayout{sizeLayout, sizeLayout}))
 	sizeAndOverflow := b.call(overflowFn, []llvmValue{elemSize, capacity})
@@ -63,8 +66,24 @@ func emitAllocatorStorageSize(b *llvmBuilder, elemType ir.TypeID, capacity llvmV
 	b.namedLabel(failLabel)
 	b.trap()
 	b.namedLabel(sizeReadyLabel)
-	zero := b.compare("icmp", "eq", size, b.value("0", sizeLayout))
-	return b.selectValue(zero, b.value("1", sizeLayout), size)
+	return normalizeAllocatorSize(b, size), alignment
+}
+
+func emitTypeSizeAndAlignment(b *llvmBuilder, typeID ir.TypeID) (llvmValue, llvmValue) {
+	layout := b.emitter.layout(typeID)
+	sizeLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
+	end := b.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 1)", layout.Text, layout.Text), llvmPointerLayout(layout))
+	size := b.cast("ptrtoint", end, sizeLayout)
+
+	probe := llvmAggregateLayout([]*llvmLayout{llvmScalarLayout("i8"), layout}, nil)
+	aligned := b.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 0, i32 1)", probe.Text, probe.Text), llvmPointerLayout(layout))
+	alignment := b.cast("ptrtoint", aligned, llvmScalarLayout("i32"))
+	return size, alignment
+}
+
+func normalizeAllocatorSize(b *llvmBuilder, size llvmValue) llvmValue {
+	zero := b.compare("icmp", "eq", size, b.value("0", size.Layout))
+	return b.selectValue(zero, b.value("1", size.Layout), size)
 }
 
 func allocatorHandleFromRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
