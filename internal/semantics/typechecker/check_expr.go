@@ -25,7 +25,7 @@ import (
 // Recursive typing stays in typeExprBase so both passes use one AST switch.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	if c.flow != nil && expr != nil {
-		delete(c.flow.result.Payloads, expr.ID())
+		c.flow.result.ForgetPayload(expr.ID())
 	}
 	base := c.typeExprBase(scope, expr, expected)
 	if call, ok := expr.(*ast.CallExpr); ok && c.flow != nil && c.flow.analyzer != nil {
@@ -43,7 +43,7 @@ func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinf
 	}
 	resolved := c.effectiveExpressionType(scope, expr, base, expected)
 	if c.flow != nil && resolved != nil {
-		c.flow.result.ExprTypes[expr.ID()] = resolved
+		c.flow.result.RecordExprType(expr.ID(), resolved)
 	}
 	return resolved
 }
@@ -633,14 +633,14 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 				payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
 				if field, fieldIndex, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
 					c.recordPayloadAccess(node.Expr, resolution, []int{caseIndex})
-					c.flow.result.Payloads[node.ID()] = flowresult.PayloadAccess{
+					c.flow.result.RecordPayload(node.ID(), flowresult.PayloadAccess{
 						CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins),
 						Cases:          []int{caseIndex},
-					}
-					c.flow.result.VariantFields[node.ID()] = flowresult.VariantFieldAccess{
+					})
+					c.flow.result.RecordVariantField(node.ID(), flowresult.VariantFieldAccess{
 						Carrier: node.Expr.ID(), Case: caseIndex, Payload: payload,
 						Field: fieldIndex, Type: field.Type,
-					}
+					})
 					return field.Type
 				}
 			}

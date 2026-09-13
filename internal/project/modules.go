@@ -167,7 +167,7 @@ func (m *Module) EffectiveExprType(id ast.NodeID) typeinfo.Type {
 		return nil
 	}
 	if m.Flow != nil {
-		if typ := m.Flow.ExprTypes[id]; typ != nil {
+		if typ := m.Flow.ExprType(id); typ != nil {
 			return typ
 		}
 	}

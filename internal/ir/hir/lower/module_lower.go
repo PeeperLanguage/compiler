@@ -437,7 +437,7 @@ func incrementSymbol(ctx *project.CompilerContext, module *project.Module, sym *
 func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr) *ir.Place {
 	if selector, ok := expr.(*ast.SelectorExpr); ok && selector != nil && selector.Expr != nil && selector.Name != nil {
 		if module != nil && module.Flow != nil {
-			if access, found := module.Flow.VariantFields[selector.ID()]; found {
+			if access, found := module.Flow.VariantField(selector.ID()); found {
 				out := lowerPlace(ctx, module, scope, selector.Expr)
 				out.Projections = append(out.Projections, ir.PlaceProjection{
 					Kind: ir.PlaceProjectionField, FieldIndex: access.Field,
@@ -510,8 +510,8 @@ func appendVariantPayloadPlace(ctx *project.CompilerContext, module *project.Mod
 	if ctx == nil || module == nil || module.Flow == nil || expr == nil || out == nil {
 		return out
 	}
-	payload := module.Flow.Payloads[expr.ID()]
-	if !payload.AppliesTo(module.Flow.ResolvedStorageOrigins[expr.ID()]) {
+	payload, _ := module.Flow.Payload(expr.ID())
+	if !payload.AppliesTo(module.Flow.StorageOrigins(expr.ID())) {
 		return out
 	}
 	for _, caseIndex := range payload.Cases {
@@ -620,7 +620,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 		conversion, converting = module.Typechecking.ImplicitConversion(expr.ID())
 	}
 	if module != nil && module.Flow != nil {
-		if test, ok := module.Flow.CaseTests[expr.ID()]; ok {
+		if test, ok := module.Flow.CaseTest(expr.ID()); ok {
 			subject, _ := module.TypedASTNodes[test.SubjectID].(ast.Expr)
 			membership := &ir.VariantIs{
 				Value: lowerASTExpr(ctx, module, scope, subject, nil),
@@ -632,7 +632,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 			}
 			return &ir.Unary{Op: "!", Arg: membership, Type: membership.Type}
 		}
-		if payload := module.Flow.Payloads[expr.ID()]; len(payload.Cases) > 0 && place.IsPlaceExpr(expr) {
+		if payload, _ := module.Flow.Payload(expr.ID()); len(payload.Cases) > 0 && place.IsPlaceExpr(expr) {
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, expr)}
 		}
 	}
@@ -954,7 +954,7 @@ func lowerSelectorExpr(ctx *project.CompilerContext, module *project.Module, sco
 		return &ir.InvalidExpr{Message: "invalid selector", Type: ir.InvalidType}
 	}
 	if module.Flow != nil {
-		if _, found := module.Flow.VariantFields[selector.ID()]; found {
+		if _, found := module.Flow.VariantField(selector.ID()); found {
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
 		}
 	}

@@ -82,7 +82,7 @@ func TestGenerateHIRRequiresExpressionTypeEvidence(t *testing.T) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
 		module.Typechecking.ForgetExprType(identifier.ID())
-		delete(module.Flow.ExprTypes, identifier.ID())
+		module.Flow.ForgetExprType(identifier.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
 		t.Fatalf("Validate() = %v, want invalid return type evidence", err)
@@ -94,7 +94,7 @@ func TestGenerateHIRRequiresNumberTypeEvidence(t *testing.T) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		number := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.NumberLit)
 		module.Typechecking.ForgetExprType(number.ID())
-		delete(module.Flow.ExprTypes, number.ID())
+		module.Flow.ForgetExprType(number.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "number literal missing resolved type evidence") {
 		t.Fatalf("Validate() = %v, want invalid number type evidence", err)
@@ -106,7 +106,7 @@ func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		unary := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.UnaryExpr)
 		module.Typechecking.ForgetExprType(unary.ID())
-		delete(module.Flow.ExprTypes, unary.ID())
+		module.Flow.ForgetExprType(unary.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
 		t.Fatalf("Validate() = %v, want invalid unary type evidence", err)

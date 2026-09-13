@@ -276,7 +276,7 @@ cursors, limits or length conditions, bindings, indexed loads, and increments.
 variant payload paths into `ir.Place` projections. Ordinary selectors consume
 `Typechecking.StructField` for selected slot, physical field type, and implicit
 dereference. This physical type remains distinct from flow-refined expression type.
-Flow-refined variant selectors consume `Flow.VariantFields`. HIR still chooses
+Flow-refined variant selectors consume `Flow.VariantField`. HIR still chooses
 place load versus temporary field extraction from addressability. The lowerer does
 not repeat ordinary field lookup by source name. `appendVariantPayloadPlace` uses
 flow payload facts to append payload projections. `lowerReferenceValue` chooses

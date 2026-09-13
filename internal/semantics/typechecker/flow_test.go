@@ -122,7 +122,7 @@ fn Read(choice: Choice) -> i32 {
 	leftBranch := fn.Body.Stmts[0].(*ast.IfStmt)
 	leftTest := leftBranch.Cond.(*ast.IsExpr)
 	baseTest, baseFound := module.Typechecking.CaseTest(leftTest.ID())
-	flowTest, flowFound := module.Flow.CaseTests[leftTest.ID()]
+	flowTest, flowFound := module.Flow.CaseTest(leftTest.ID())
 	if !baseFound || !flowFound || baseTest.Case != 0 || flowTest.Case != baseTest.Case ||
 		flowTest.SubjectID != baseTest.SubjectID || flowTest.CaseCount != baseTest.CaseCount {
 		t.Fatalf("case-test evidence = base %#v, flow %#v", baseTest, flowTest)
@@ -133,7 +133,7 @@ fn Read(choice: Choice) -> i32 {
 		if typ := module.EffectiveExprType(field.ID()); typeinfo.TypeText(typ) != "i32" {
 			t.Fatalf("refined field type = %s, want i32", typeinfo.TypeText(typ))
 		}
-		payload := module.Flow.Payloads[field.ID()]
+		payload, _ := module.Flow.Payload(field.ID())
 		if len(payload.Cases) != 1 {
 			t.Fatalf("field payload evidence = %#v, want one exact case", payload)
 		}
@@ -167,7 +167,7 @@ fn Read(result: Result) -> i32 {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	selector := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
 	fieldType := module.EffectiveExprType(selector.ID())
-	access, found := module.Flow.VariantFields[selector.ID()]
+	access, found := module.Flow.VariantField(selector.ID())
 	if !found || access.Case != 0 || typeinfo.TypeText(fieldType) != "i32" || typeinfo.TypeText(access.Type) != "i32" {
 		t.Fatalf("match field type = %s, access = %#v", typeinfo.TypeText(fieldType), access)
 	}
@@ -386,7 +386,7 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	state := flowState{variants: []variantStateFact{{origins: []place.Origin{{Root: global}}, cases: []int{1}, caseCount: 2}}}
 	analyzer := flowAnalyzer{
 		module: &project.Module{ModuleScope: moduleScope},
-		result: &flowresult.Result{ExprTypes: make(map[ast.NodeID]typeinfo.Type)},
+		result: flowresult.New(),
 	}
 
 	analyzer.invalidateCall(&checker{}, nil, &ast.CallExpr{Callee: &ast.Ident{Name: "Touch"}}, &state)

@@ -603,7 +603,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		if binding.ASTNode == nil || a.module.Flow == nil {
 			continue
 		}
-		origins := place.CloneOrigins(a.module.Flow.ResolvedValueOrigins[binding.ASTNode.ID()])
+		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(binding.ASTNode.ID()))
 		if mutable, reference := referenceMutability(binding); reference && len(origins) > 0 {
 			st.references[binding] = []referenceLoan{{
 				id: loanID{node: binding.ASTNode}, origins: origins, mutable: mutable, site: binding.ASTNode,

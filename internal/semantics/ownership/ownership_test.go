@@ -1380,10 +1380,10 @@ fn inspect(value: ?Token) {
 		Root:        value,
 		Projections: []place.OriginProjection{{Kind: place.OriginVariantPayload, Case: ir.OptionalPresentCase}},
 	}}
-	if got := result.module.Flow.ResolvedStorageOrigins[valueUse.ID()]; !place.SameOrigins(got, storage) {
+	if got := result.module.Flow.StorageOrigins(valueUse.ID()); !place.SameOrigins(got, storage) {
 		t.Fatalf("payload storage origins = %#v, want carrier %#v", got, storage)
 	}
-	if got := result.module.Flow.ResolvedValueOrigins[valueUse.ID()]; !place.SameOrigins(got, payload) {
+	if got := result.module.Flow.ValueOrigins(valueUse.ID()); !place.SameOrigins(got, payload) {
 		t.Fatalf("payload value origins = %#v, want %#v", got, payload)
 	}
 }

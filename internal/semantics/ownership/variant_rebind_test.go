@@ -58,14 +58,14 @@ fn probe(mut first: i32, mut second: i32) {
 			t.Fatalf("%s loan origins = %#v, want %s", loan.path[1].Field, loan.origins, want.Name)
 		}
 	}
-	storage := result.module.Flow.ResolvedStorageOrigins[assign.Target.ID()]
+	storage := result.module.Flow.StorageOrigins(assign.Target.ID())
 	if len(storage) != 1 || storage[0].Root != resource || !slices.Equal(storage[0].Projections, []place.OriginProjection{
 		{Kind: place.OriginVariantPayload, Case: 0}, {Kind: place.OriginField, Field: "value"},
 	}) {
 		t.Fatalf("assignment storage = %#v", storage)
 	}
 	binding := match.Arms[0].Fields[0].Binding
-	if got := result.module.Flow.ResolvedValueOrigins[binding.ID()]; !place.SameOrigins(got, []place.Origin{{Root: second}}) {
+	if got := result.module.Flow.ValueOrigins(binding.ID()); !place.SameOrigins(got, []place.Origin{{Root: second}}) {
 		t.Fatalf("match value origins = %#v, want second", got)
 	}
 }

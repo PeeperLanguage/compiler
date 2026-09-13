@@ -71,15 +71,7 @@ type flowAnalyzer struct {
 // CheckFlow runs variant/origin facts to fixed point, then records exact
 // per-use types through the existing checker implementation.
 func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult.Result {
-	result := &flowresult.Result{
-		SiteFacts:              make(map[ir.NodeID]map[cfg.SiteID]flowresult.Facts),
-		ExprTypes:              make(map[ast.NodeID]typeinfo.Type),
-		Payloads:               make(map[ast.NodeID]flowresult.PayloadAccess),
-		CaseTests:              make(map[ast.NodeID]flowresult.CaseTest),
-		VariantFields:          make(map[ast.NodeID]flowresult.VariantFieldAccess),
-		ResolvedStorageOrigins: make(map[ast.NodeID][]place.Origin),
-		ResolvedValueOrigins:   make(map[ast.NodeID][]place.Origin),
-	}
+	result := flowresult.New()
 	if ctx == nil || module == nil || module.CFG == nil || module.Bindings == nil || module.ModuleScope == nil {
 		return result
 	}
@@ -245,13 +237,13 @@ func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, cas
 		return
 	}
 	refined := flowresult.CaseTest{CaseTest: base}
-	if payload, ok := c.flow.result.Payloads[subject.ID()]; ok {
-		storage := c.flow.result.ResolvedStorageOrigins[subject.ID()]
+	if payload, ok := c.flow.result.Payload(subject.ID()); ok {
+		storage := c.flow.result.StorageOrigins(subject.ID())
 		if payload.AppliesTo(storage) {
 			refined.PayloadPath = append([]int(nil), payload.Cases...)
 		}
 	}
-	c.flow.result.CaseTests[node.ID()] = refined
+	c.flow.result.RecordCaseTest(node.ID(), refined)
 	if c.flow.events != nil {
 		c.flow.events.next++
 		c.flow.events.tests[node.ID()] = c.flow.events.next
@@ -264,11 +256,11 @@ func (c *checker) recordPayloadAccess(expr ast.Expr, resolution place.Resolution
 	}
 	direct := len(resolution.StorageOrigins) == 1 &&
 		resolution.StorageOrigins[0].Root != nil && len(resolution.StorageOrigins[0].Projections) == 0
-	c.flow.result.Payloads[expr.ID()] = flowresult.PayloadAccess{
+	c.flow.result.RecordPayload(expr.ID(), flowresult.PayloadAccess{
 		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins),
 		Cases:          append([]int(nil), cases...),
 		Direct:         direct,
-	}
+	})
 }
 
 func (c *checker) recordFlowResolution(expr ast.Expr, resolution place.Resolution) {
@@ -276,8 +268,7 @@ func (c *checker) recordFlowResolution(expr ast.Expr, resolution place.Resolutio
 		return
 	}
 	id := expr.ID()
-	c.flow.result.ResolvedStorageOrigins[id] = place.CloneOrigins(resolution.StorageOrigins)
-	c.flow.result.ResolvedValueOrigins[id] = place.CloneOrigins(resolution.ValueOrigins)
+	c.flow.result.RecordOrigins(id, resolution.StorageOrigins, resolution.ValueOrigins)
 }
 
 // recordedExprType reads an already typed operand without replaying calls or
@@ -287,7 +278,7 @@ func (c *checker) recordedExprType(expr ast.Expr) typeinfo.Type {
 		return nil
 	}
 	if c.flow != nil {
-		if typ := c.flow.result.ExprTypes[expr.ID()]; typ != nil {
+		if typ := c.flow.result.ExprType(expr.ID()); typ != nil {
 			return typ
 		}
 	}
@@ -336,7 +327,8 @@ func (c *checker) resolveFlowPlace(scope *symbols.Scope, expr ast.Expr, st flowS
 			if c.flow == nil || base == nil {
 				return nil
 			}
-			return c.flow.result.Payloads[base.ID()].Cases
+			payload, _ := c.flow.result.Payload(base.ID())
+			return payload.Cases
 		},
 	})
 }
@@ -409,10 +401,6 @@ func (a *flowAnalyzer) run() {
 			continue
 		}
 		input := copyFlowState(a.inStates[id])
-		if a.result.SiteFacts[a.graph.NodeID] == nil {
-			a.result.SiteFacts[a.graph.NodeID] = make(map[cfg.SiteID]flowresult.Facts)
-		}
-		a.result.SiteFacts[a.graph.NodeID][id] = snapshotFlowState(input)
 		next := copyFlowState(input)
 		events := a.applySite(site, &next)
 		for _, edge := range a.graph.SiteEdges.OutEdges(site.ID) {
@@ -506,8 +494,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, st *f
 		}
 		if field.Binding.ASTNode != nil {
 			id := field.Binding.ASTNode.ID()
-			a.result.ResolvedStorageOrigins[id] = place.MergeOrigins(a.result.ResolvedStorageOrigins[id], bindingOrigins)
-			a.result.ResolvedValueOrigins[id] = place.MergeOrigins(a.result.ResolvedValueOrigins[id], valueOrigins)
+			a.result.MergeOrigins(id, bindingOrigins, valueOrigins)
 		}
 	}
 }
@@ -528,33 +515,6 @@ func copyFlowState(src flowState) flowState {
 	dst.references = cloneOriginFacts(src.references)
 	dst.rawPointers = cloneOriginFacts(src.rawPointers)
 	return dst
-}
-
-func snapshotFlowState(st flowState) flowresult.Facts {
-	facts := flowresult.Facts{}
-	for _, fact := range st.variants {
-		dependencies := make([]symbols.SymbolID, 0, len(fact.dependencies))
-		for _, sym := range fact.dependencies {
-			if sym != nil {
-				dependencies = append(dependencies, sym.ID)
-			}
-		}
-		facts.Variants = append(facts.Variants, flowresult.VariantFact{
-			CarrierOrigins: place.CloneOrigins(fact.origins), Cases: append([]int(nil), fact.cases...),
-			CaseCount: fact.caseCount, Dependencies: dependencies,
-		})
-	}
-	for _, fact := range st.references {
-		facts.ReferenceOrigins = append(facts.ReferenceOrigins, flowresult.OriginFact{
-			StorageOrigins: place.CloneOrigins(fact.storage), ValueOrigins: place.CloneOrigins(fact.value),
-		})
-	}
-	for _, fact := range st.rawPointers {
-		facts.RawPointerOrigins = append(facts.RawPointerOrigins, flowresult.OriginFact{
-			StorageOrigins: place.CloneOrigins(fact.storage), ValueOrigins: place.CloneOrigins(fact.value),
-		})
-	}
-	return facts
 }
 
 func (a *flowAnalyzer) applySite(site *cfg.Site, st *flowState) *flowExpressionEvents {
@@ -616,7 +576,7 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 		sourceState := copyFlowState(*st)
 		resolution := c.resolveFlowPlace(scope, node.Target, *st)
 		invalidateVariantOrigins(st, resolution.StorageOrigins)
-		typ := a.result.ExprTypes[node.Target.ID()]
+		typ := a.result.ExprType(node.Target.ID())
 		if typ == nil {
 			typ = a.module.BaseExprType(node.Target.ID())
 		}
@@ -731,7 +691,7 @@ func (a *flowAnalyzer) invalidateCall(c *checker, scope *symbols.Scope, call *as
 	if call == nil || call.Callee == nil || st == nil {
 		return
 	}
-	calleeType := a.result.ExprTypes[call.Callee.ID()]
+	calleeType := a.result.ExprType(call.Callee.ID())
 	if calleeType == nil {
 		calleeType = a.module.BaseExprType(call.Callee.ID())
 	}
@@ -838,7 +798,7 @@ func (a *flowAnalyzer) impliedVariants(
 	if expr == nil {
 		return nil
 	}
-	if test, found := a.result.CaseTests[expr.ID()]; found {
+	if test, found := a.result.CaseTest(expr.ID()); found {
 		subject, _ := a.module.TypedASTNodes[test.SubjectID].(ast.Expr)
 		checker := &checker{ctx: a.ctx, module: a.module, flow: &flowCheck{result: a.result, state: &st}}
 		resolution := checker.resolveFlowPlace(scope, subject, st)

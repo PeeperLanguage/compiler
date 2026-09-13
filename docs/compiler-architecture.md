@@ -244,7 +244,7 @@ implementation of that policy.
 ### Reference provenance and holder-relative loans
 
 `ownership.referenceValueForExpr` is not a generic aggregate interpreter. It uses
-existing holder loans, `Flow.ResolvedValueOrigins`, reference types, struct payload
+existing holder loans, `Flow.ValueOrigins`, reference types, struct payload
 syntax and `Typechecking.VariantConstruction` evidence for currently accepted carriers.
 Pre-evaluation capture preserves loan identity before a move clears source state.
 Flow origin sets describe referents; they do not replace ownership's dynamic loan
@@ -253,7 +253,7 @@ IDs, mutability, reservations/activation, liveness, joins or cleanup policy.
 Each `referenceLoan.path` locates a slot relative to its holder, independently of
 `origins` (borrowed storage) and `id` (loan identity). Copies clone paths; equality
 and joins distinguish the same loan in different slots. Projected writes consume
-an exact `Flow.ResolvedStorageOrigins` destination and captured RHS loans to replace
+an exact `Flow.StorageOrigins` destination and captured RHS loans to replace
 one direct/optional enum reference field, including clearing it, while retaining
 sibling and copied-holder loans. Partial writes keep the carrier live. This is not
 full field-sensitive last-use analysis or support for nested stored-reference

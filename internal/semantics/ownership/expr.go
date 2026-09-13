@@ -43,7 +43,7 @@ func (a *analyzer) partialVariantPayloadMove(id ast.NodeID) bool {
 	if a == nil || a.module == nil || a.module.Flow == nil || id == 0 {
 		return false
 	}
-	payload, ok := a.module.Flow.Payloads[id]
+	payload, ok := a.module.Flow.Payload(id)
 	return ok && len(payload.Cases) > 0 && !payload.Direct
 }
 
@@ -108,8 +108,8 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 			return pointerOrigin{}, false
 		}
 		if a.module != nil && a.module.Flow != nil {
-			if origins, resolved := a.module.Flow.ResolvedValueOrigins[e.ID()]; resolved {
-				for _, origin := range origins {
+			if resolution, resolved := a.module.Flow.Origins(e.ID()); resolved {
+				for _, origin := range resolution.Value {
 					if origin.Root == nil {
 						continue
 					}

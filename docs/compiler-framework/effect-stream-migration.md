@@ -98,7 +98,7 @@ Still absent, with its trigger recorded:
 ### Result and phase
 
 `Result` is `map[ir.NodeID]SiteOps` and `SiteOps` is `map[cfg.SiteID][]Op` — function
-identity outer, site inner, following `flowresult.Result.SiteFacts`. A `cfg.SiteID` is
+identity outer, site inner. A `cfg.SiteID` is
 `{Block, Index}` and is only meaningful relative to one graph, so the outer key is
 required. It is a bare map type rather than a struct with one field, matching
 `ownershipresult.Result`, because `RULES.md` §1 forbids the single-field wrapper.

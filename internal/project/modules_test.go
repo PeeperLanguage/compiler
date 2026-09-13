@@ -171,7 +171,7 @@ func moduleWithArtifacts() *Module {
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		HIR:                       &hir.Module{},
 		CFG:                       &cfg.Module{Functions: []*cfg.Graph{{}}},
-		Flow:                      &flowresult.Result{ExprTypes: map[ast.NodeID]typeinfo.Type{1: typeinfo.DefaultIntegerType()}},
+		Flow:                      flowresult.New(),
 		Effects:                   effect.Result{1: {cfg.SiteID{}: {effect.Use{}}}},
 		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
@@ -180,6 +180,7 @@ func moduleWithArtifacts() *Module {
 	module.ResetSemanticData()
 	module.Typechecking = typecheckresult.New()
 	module.Typechecking.RecordExprType(1, typeinfo.DefaultIntegerType())
+	module.Flow.RecordExprType(1, &typeinfo.IntegerType{Signed: true, Bits: 64})
 	return module
 }
 
@@ -246,7 +247,7 @@ func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
 	if base == nil {
 		t.Fatal("typechecked module has no base expression type")
 	}
-	if got := module.EffectiveExprType(1); got != module.Flow.ExprTypes[1] {
+	if got := module.EffectiveExprType(1); got != module.Flow.ExprType(1) {
 		t.Fatalf("effective type = %#v, want flow refinement", got)
 	}
 

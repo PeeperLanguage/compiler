@@ -153,7 +153,7 @@ func (a *analyzer) checkStorageAccess(
 	origins := a.originsForExpr(expr)
 	if access == storageMutate && a.module != nil && a.module.Flow != nil {
 		// Replacing a reference slot mutates the carrier, not its old referent.
-		origins = a.module.Flow.ResolvedStorageOrigins[expr.ID()]
+		origins = a.module.Flow.StorageOrigins(expr.ID())
 	}
 	a.reportLoanConflict(
 		origins,
@@ -346,7 +346,7 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 	if ok {
 		if _, projected := expr.(*ast.SelectorExpr); projected && a.module.Flow != nil {
 			var value []referenceLoan
-			for _, storage := range a.module.Flow.ResolvedStorageOrigins[expr.ID()] {
+			for _, storage := range a.module.Flow.StorageOrigins(expr.ID()) {
 				for _, loan := range st.references[storage.Root] {
 					if slices.Equal(loan.path, storage.Projections) {
 						loan.path = nil
@@ -403,7 +403,7 @@ func (a *analyzer) replaceReferenceField(target ast.Expr, value storedReference,
 	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(target)); !reference || a.module.Flow == nil {
 		return
 	}
-	storage := a.module.Flow.ResolvedStorageOrigins[target.ID()]
+	storage := a.module.Flow.StorageOrigins(target.ID())
 	if len(storage) != 1 || len(storage[0].Projections) == 0 {
 		return
 	}
@@ -428,7 +428,7 @@ func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
 	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
 		return nil
 	}
-	return place.CloneOrigins(a.module.Flow.ResolvedValueOrigins[expr.ID()])
+	return place.CloneOrigins(a.module.Flow.ValueOrigins(expr.ID()))
 }
 
 func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state) {
