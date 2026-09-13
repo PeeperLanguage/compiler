@@ -895,7 +895,6 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.Collected,
 		phase.Bound,
 		phase.Resolved,
-		phase.ConstEval,
 		phase.Typechecked,
 		phase.CFG,
 		phase.FlowTyped,
@@ -956,7 +955,7 @@ fn main() -> i32 { return Value; }
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
-	for entry.Phase < phase.ConstEval {
+	for entry.Phase < phase.Resolved {
 		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
 		}
@@ -1324,17 +1323,12 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry.Phase = phase.Resolved
 	if moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatal("resolved importer should wait for typechecked import before consteval")
-	}
-
-	imported.Phase = phase.ConstEval
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatal("resolved importer should not read provisional import constants")
+		t.Fatal("resolved importer should wait for typechecked import before typechecking")
 	}
 
 	imported.Phase = phase.Typechecked
 	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatal("resolved importer should be ready for consteval when import constants are published")
+		t.Fatal("resolved importer should be ready for typechecking when import constants are published")
 	}
 }
 

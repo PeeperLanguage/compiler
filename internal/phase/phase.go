@@ -14,9 +14,6 @@ const (
 	Collected
 	Bound
 	Resolved
-	// ConstEval completes eager semantic evaluation. Expected-type queries may
-	// refine facts while typechecking.
-	ConstEval
 	// Typechecked includes final module const values and semantic API identity.
 	Typechecked
 	// CFG includes finalized topology and CFG diagnostics.
@@ -55,8 +52,6 @@ func (phase Phase) String() string {
 		return "bound"
 	case Resolved:
 		return "resolved"
-	case ConstEval:
-		return "const-eval"
 	case Typechecked:
 		return "typechecked"
 	case CFG:

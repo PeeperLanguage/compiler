@@ -19,19 +19,9 @@ type evaluator struct {
 	publishModuleValues bool
 }
 
-// Evaluate performs the eager semantic const prepass after name resolution.
-// Typechecking may still request expected-type-sensitive values through
-// EvaluateExpr before final symbol types are known.
-func Evaluate(ctx *project.CompilerContext, module *project.Module) {
-	if ctx == nil || module == nil || module.ModuleScope == nil {
-		return
-	}
-	e := newEvaluator(ctx, module, false)
-	e.evalModuleConstants()
-}
-
 // FinalizeValues recomputes and publishes authoritative module constants after
-// typechecking assigns final symbol types. Local query-cache entries remain mutable.
+// typechecking assigns final symbol types. Lazy query-cache entries accumulated
+// during typechecking remain mutable for local constants.
 func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return

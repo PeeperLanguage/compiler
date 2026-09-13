@@ -234,15 +234,14 @@ state. Re-entering later phases can corrupt results:
 
 - reset to `Collected`, then binder appends duplicate `OperationFunctions`;
 - reset to `Bound`, then resolver redeclares parameters in retained scopes;
-- reset to `Resolved`, then const evaluation can return stale cached values;
-- reset to `ConstEval`, then typechecker runs with retained proof maps and symbol
-  mutations.
+- reset to `Resolved`, then typechecking can reuse stale constant-query cache entries
+  and retained symbol mutations.
 
 Current production downgrade paths appear limited to exact-phase reuse or `Parsed`,
 so no production intermediate re-entry was established. `ResetModule` still claims
 general retained-phase behavior. Existing tests cover `Parsed` and later retained
-artifacts, but no reset/re-entry tests cover unsafe `Collected`, `Bound`, `Resolved`,
-or `ConstEval` checkpoints. Those intermediate checkpoints are presently
+artifacts, but no reset/re-entry tests cover unsafe `Collected`, `Bound`, or
+`Resolved` checkpoints. Those intermediate checkpoints are presently
 non-reconstructible. Result separation must give each artifact exact reset gate or
 reduce supported reset contract to safe checkpoints.
 

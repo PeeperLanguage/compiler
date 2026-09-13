@@ -328,8 +328,6 @@ func nextModulePhase(current phase.Phase) phase.Phase {
 	case phase.Bound:
 		return phase.Resolved
 	case phase.Resolved:
-		return phase.ConstEval
-	case phase.ConstEval:
 		return phase.Typechecked
 	case phase.Typechecked:
 		return phase.CFG
@@ -360,8 +358,6 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 		return phase.Parsed
 	case phase.Bound:
 		return phase.Bound
-	case phase.ConstEval:
-		return phase.Typechecked
 	case phase.Typechecked:
 		return phase.Typechecked
 	case phase.Resolved:
@@ -416,12 +412,6 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 	if module.Phase < phase.Resolved {
 		resolver.Resolve(phaseCtx, module)
 		module.Phase = phase.Resolved
-		ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < phase.ConstEval {
-		consteval.Evaluate(phaseCtx, module)
-		module.Phase = phase.ConstEval
 		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}

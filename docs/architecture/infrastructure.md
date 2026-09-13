@@ -216,12 +216,13 @@ The scheduler never advances a module more than one phase per call.
 
 The per-module sequence is:
 
-`Parsed -> Collected -> Bound -> Resolved -> ConstEval -> Typechecked -> CFG ->`
+`Parsed -> Collected -> Bound -> Resolved -> Typechecked -> CFG ->`
 `FlowTyped -> Effects -> DefiniteInit -> Ownership -> Usage -> HIR -> MIR -> Backend`.
 
 `advanceModulePhase` owns the dispatch. Collection builds declarations; binding fills
-symbol/type state; resolution fills imports and names; constant evaluation publishes
-values; typechecking publishes semantic types and the semantic export fingerprint;
+symbol/type state; resolution fills imports and names; typechecking performs lazy
+expected-type constant queries, publishes final module constants, semantic types, and
+the semantic export fingerprint;
 CFG builds and validates topology; flow typing refines types and origins; effects
 publish ordered storage/value actions; definite-init and ownership analyze evidence;
 HIR and MIR lower; LLVM backend emits text. HIR/MIR/backend are blocked when active
