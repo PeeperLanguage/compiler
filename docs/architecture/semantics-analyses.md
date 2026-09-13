@@ -461,11 +461,11 @@ move/drop correctness; that is `ownership.Check`'s analysis and would duplicate 
 - unused private module-level functions, types, constants, and bindings, excluding
   prelude symbols, `main`, public names, imports, and `_`;
 - unused local variables, constants, parameters, and receivers from binding scopes;
-- mutable bindings marked mutable but never modified, using `RequiresMutable` and
+- mutable bindings marked mutable but never modified, using `RequiresMutable()` and
   `MutableLocation`.
-The resolver/typechecker set symbol `Used`, `RequiresMutable`, and related symbol
-state. Usage converts those flags into warnings with locations, replacement edits, and
-help text. It is deliberately later than semantic validity and does not participate in
+Resolver/type lookup call `MarkUsed`, while typechecking calls `RequireMutable`; the
+backing usage bits remain private to `symbols.Symbol`. Usage converts those decisions
+into warnings with locations, replacement edits, and help text. It is deliberately later than semantic validity and does not participate in
 flow, initialization, ownership, or cleanup.
 
 ## End-to-end data flow

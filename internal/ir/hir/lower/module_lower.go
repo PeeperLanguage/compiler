@@ -1247,7 +1247,7 @@ func callableName(module *project.Module, sym *symbols.Symbol) (string, bool) {
 }
 
 func shouldDiscardBindingValue(sym *symbols.Symbol) bool {
-	if sym == nil || sym.Used {
+	if sym == nil || sym.IsUsed() {
 		return false
 	}
 	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {

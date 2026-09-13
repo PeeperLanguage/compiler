@@ -118,7 +118,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 			}
 			if source, ok := funcScope.Lookup(name); ok && source != nil && source.Kind == symbols.SymbolParam {
 				r.module.Bindings.Bind(origin, source)
-				source.Used = true
+				source.MarkUsed()
 			}
 		}
 	}
@@ -254,7 +254,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
 			r.module.Bindings.Bind(node, sym)
-			sym.Used = true
+			sym.MarkUsed()
 			if sym.Kind == symbols.SymbolImport {
 				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", ast.LocOf(node), "")
 				return
@@ -350,7 +350,7 @@ func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
 			r.module.Bindings.Bind(node, sym)
-			sym.Used = true
+			sym.MarkUsed()
 			return
 		}
 		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
@@ -431,9 +431,9 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown variant `"+caseName.Name+"` in enum `"+enumSymbol.Name+"`", ast.LocOf(caseName), "")
 		return true
 	}
-	qualifierSymbol.Used = true
-	enumSymbol.Used = true
-	variant.Used = true
+	qualifierSymbol.MarkUsed()
+	enumSymbol.MarkUsed()
+	variant.MarkUsed()
 	r.module.Bindings.Bind(enumName, qualifierSymbol)
 	r.module.Bindings.Bind(path, variant)
 	r.module.Bindings.Bind(caseName, variant)

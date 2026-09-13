@@ -481,7 +481,7 @@ func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr
 	}
 	if addressable {
 		if mutableBinding != nil {
-			mutableBinding.RequiresMutable = true
+			mutableBinding.RequireMutable()
 		}
 		return true
 	}

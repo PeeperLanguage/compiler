@@ -241,7 +241,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 			return &typeinfo.InvalidType{}
 		}
 		if mutableBinding != nil {
-			mutableBinding.RequiresMutable = true
+			mutableBinding.RequireMutable()
 		}
 		return &typeinfo.RefType{Mutable: true, Target: valueType}
 	}
@@ -746,7 +746,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		mutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 	}
 	if mutableBinding != nil {
-		mutableBinding.RequiresMutable = true
+		mutableBinding.RequireMutable()
 	}
 	return &typeinfo.RefType{
 		Mutable: mutable,

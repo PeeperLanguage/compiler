@@ -212,7 +212,7 @@ Unknown effects must not be silently ignored.
 | Evaluation/storage actions | `semantics/effect` | ordered `effect.Result` |
 | Definite initialization | `semantics/definiteinit` | diagnostics |
 | Move/borrow/drop analysis | `semantics/ownership` | `ownershipresult.Result` |
-| Lexical usage warnings | `semantics/usage` | diagnostics from symbol `Used` / `RequiresMutable` flags |
+| Lexical usage warnings | `semantics/usage` | diagnostics from symbol usage/mutability state exposed by `IsUsed` / `RequiresMutable` |
 | High-level lowering | `ir/hir/lower` | HIR |
 | Mid-level lowering | `ir/mir` | MIR |
 | Physical layout/codegen | backend | backend IR |
@@ -268,8 +268,8 @@ separate typing limitations, not resolved by this reference-field repair.
 ### Lexical usage, not runtime liveness
 
 `semantics/usage.Analyze` emits unused/import/private/local/parameter and unnecessary
-`mut` warnings from symbol flags. Resolver and project type/import lookup mark
-`Used`; typechecking marks `RequiresMutable`. Type-only/import references and source
+`mut` warnings from symbol-owned usage state. Resolver and project type/import lookup call
+`MarkUsed`; typechecking calls `RequireMutable`. The backing bits are private to `symbols.Symbol`. Type-only/import references and source
 uses outside reachable runtime paths are not equivalent to effect-stream uses.
 Ownership liveness remains a separate CFG/effect analysis. Moving usage to reachable
 CFG effects would change warning policy and needs explicit design/approval; it is

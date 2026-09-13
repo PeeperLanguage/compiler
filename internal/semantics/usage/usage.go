@@ -17,7 +17,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 	// 1. Check for unused imports in ModuleScope
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
-			if !sym.Used {
+			if !sym.IsUsed() {
 				ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedImport,
 					fmt.Sprintf("unused import `%s`", sym.Name), sym.Location, "")
 			}
@@ -35,7 +35,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			// Only the exact discard binding `_` suppresses unused warnings.
-			if !symbols.IsPubName(sym.Name) && !sym.Used && sym.Name != "_" {
+			if !symbols.IsPubName(sym.Name) && !sym.IsUsed() && sym.Name != "_" {
 				var code string
 				var msg string
 				switch sym.Kind {
@@ -63,7 +63,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				if sym.Name == "_" {
 					continue
 				}
-				if !sym.Used {
+				if !sym.IsUsed() {
 					switch sym.Kind {
 					case symbols.SymbolParam:
 						name := "parameter"
@@ -78,7 +78,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 					}
 					continue
 				}
-				if !sym.IsMutable() || sym.RequiresMutable || sym.MutableLocation == nil {
+				if !sym.IsMutable() || sym.RequiresMutable() || sym.MutableLocation == nil {
 					continue
 				}
 				ctx.Diagnostics.AddWarning(diagnostics.WarnUnmodifiedMutable,

@@ -322,7 +322,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 				).WithSecondaryLabel(sym.Location, "make this binding mutable")
 				return
 			}
-			sym.RequiresMutable = true
+			sym.RequireMutable()
 		default:
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 				"invalid assignment target `"+target.Name+"`", ast.LocOf(target), "")
@@ -347,7 +347,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			mutable, sharedReference, mutableBinding = c.mutableAddressableExpr(scope, target.Expr)
 			if mutable {
 				if mutableBinding != nil {
-					mutableBinding.RequiresMutable = true
+					mutableBinding.RequireMutable()
 				}
 				return
 			}
@@ -399,7 +399,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	}
 	if mutable, _, mutableBinding := c.mutableAddressableExpr(scope, target.Expr); mutable {
 		if mutableBinding != nil {
-			mutableBinding.RequiresMutable = true
+			mutableBinding.RequireMutable()
 		}
 		return true
 	}
@@ -785,7 +785,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	c.module.Bindings.SetScope(checked.Body, iterationScope)
 	c.module.Bindings.SetScope(stop.Then, symbols.NewScope(iterationScope))
 	resultSymbol := symbols.New(resultName, symbols.SymbolVar, result, location)
-	resultSymbol.Used = true
+	resultSymbol.MarkUsed()
 	if err := iterationScope.Declare(resultSymbol); err != nil {
 		panic(err)
 	}

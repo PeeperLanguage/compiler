@@ -54,8 +54,8 @@ type Symbol struct {
 	IsPub           bool
 	Mutable         bool
 	IsReceiver      bool
-	Used            bool
-	RequiresMutable bool
+	used            bool
+	requiresMutable bool
 	CompilerOp      CompilerOp
 	DefiningModule  moduleid.ID
 	Location        *source.Location
@@ -91,6 +91,26 @@ func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 		return nil, false
 	}
 	return sym.Type, true
+}
+
+func (s *Symbol) MarkUsed() {
+	if s != nil {
+		s.used = true
+	}
+}
+
+func (s *Symbol) IsUsed() bool {
+	return s != nil && s.used
+}
+
+func (s *Symbol) RequireMutable() {
+	if s != nil {
+		s.requiresMutable = true
+	}
+}
+
+func (s *Symbol) RequiresMutable() bool {
+	return s != nil && s.requiresMutable
 }
 
 func (s *Symbol) IsMutable() bool {

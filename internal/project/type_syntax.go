@@ -31,7 +31,7 @@ func TypeSyntaxOptions(ctx *CompilerContext, module *Module, selfType typeinfo.T
 			if !found || sym == nil || sym.Kind != symbols.SymbolType {
 				return nil, false
 			}
-			sym.Used = true
+			sym.MarkUsed()
 			return symbols.GetSymbolType(sym)
 		},
 		ResolveQualified: func(moduleName, memberName string) (typeinfo.Type, bool) {

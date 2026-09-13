@@ -119,7 +119,7 @@ Ownership is roughly 1900 lines with loans, NLL borrow-ending, and fifteen diagn
 The vocabulary is proved against one small consumer first.
 
 `usage` is **not** part of this and needs no migration: it has no AST switch and no state,
-it scans `sym.Used` flags.
+it reads symbol usage through `sym.IsUsed()`.
 
 Each step ends with its gate green and one commit. Do not start a step before the previous
 gate passes. Prefix every command with

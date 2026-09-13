@@ -48,14 +48,14 @@ This table records pre-migration storage and problems; current ownership is trac
 
 | Field | Baseline writers / complete phase | Main consumers | Baseline contract problem |
 | --- | --- | --- | --- |
-| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, HIR, LSP | Scope topology is resolver-owned and exposed through `Bindings.Scope`; contained symbols later gain types, `Used`, and `RequiresMutable` state consumed by usage/HIR. |
+| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, HIR, LSP | Scope topology is resolver-owned and exposed through `Bindings.Scope`; contained symbols later gain types and private usage/mutability state consumed through symbol methods by usage/HIR. |
 | `ResolvedSymbols` | collector, resolver, typechecker / `Typechecked` | typechecker, semantic fingerprint, flow, definite-init, ownership, HIR, LSP | Name suggests resolver result, but enum declarations, selectors, and expanded defaults have different writers. |
 | `ExpandedDefaultBindings` | typechecker / `Typechecked` | typechecker, ownership, HIR | Marker requires paired symbol provenance, with copied type/lowering evidence where available. Parsed reset can delete marker while retaining expanded AST. |
 | `ExprTypes` | typechecker / `Typechecked` | typechecker, const evaluation, flow, ownership, HIR, LSP | Base type is distinct from flow-refined expression evidence; `EffectiveExprType` gives refined evidence precedence. |
 | `CaseTests` | typechecker / `Typechecked` | const evaluation and flow transfer | Uses `flowresult` type but is stored in base semantic aggregate; flow creates second case-test map. |
 | `Matches` | typechecker / `Typechecked` | CFG, flow, definite-init, ownership, HIR | Uses `flowresult` type despite being base typechecker evidence. Presence can coexist with some diagnostics. |
 | `ConstValues` | constant evaluation, post-typecheck finalization, later constant queries / no global completion phase | const evaluator cache, semantic fingerprint, CFG and HIR expression evaluation, MIR | One map mixes finalized module constants with working-cache entries that can still appear during CFG/HIR. |
-| `MethodSets` | collector membership; binder/resolver/typechecker mutate symbols / `Typechecked` symbol state | typechecker, semantic fingerprint, LSP | Catalog ownership differs from mutable `Type`, `Used`, `Initializing`, and `RequiresMutable` state of symbols inside it. |
+| `MethodSets` | collector membership; binder/resolver/typechecker mutate symbols / `Typechecked` symbol state | typechecker, semantic fingerprint, LSP | Catalog ownership differs from staged mutable `Type` and private usage/mutability state of symbols inside it; resolver pending state is resolver-local. |
 | `MethodSymbol` | collector mapping; binder/resolver/typechecker mutate symbol / `Typechecked` symbol state | binder, resolver, typechecker, flow, ownership, HIR, LSP | Stable declaration identity is collection output; pointed-to mutable symbol state advances later. |
 | `InterfaceImplementations` | typechecker / `Typechecked` | HIR | Clear typechecker proof; strongest first extraction candidate. |
 | `ImplicitConversions` | typechecker / `Typechecked` | HIR | Clear typechecker proof. |
@@ -185,9 +185,9 @@ Maps are not only ownership concern. Many results point to same `*symbols.Symbol
 and `*symbols.Scope` graph. State mutates across phases:
 
 - binder sets symbol types;
-- resolver tracks pending declarations locally and sets `Used` and scope contents;
-- typechecker may infer types and set `RequiresMutable`;
-- usage and HIR consume later state.
+- resolver tracks pending declarations locally, marks usage through `MarkUsed`, and completes scope contents;
+- typechecker may infer types and records mutability demand through `RequireMutable`;
+- usage and HIR consume that state through `IsUsed` / `RequiresMutable`.
 
 LSP shallow reuse preserves these pointers. Splitting maps into result structs does
 not make symbols immutable or reset-safe. Migration needs explicit stable identity,
