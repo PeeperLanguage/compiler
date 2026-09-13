@@ -17,9 +17,9 @@ const maxReportedProblems = 10
 // be typed, and explicit invalid nodes must not survive clean-source lowering.
 //
 // It does not re-derive meaning. Whether the right statement was lowered for a
-// construct is lowering's decision; that every statement kind is handled at all
-// is held by the dispatch contract in internal/contracts. What is left is the
-// shape and evidence consistency, which nothing else checks before MIR/backend.
+// construct is lowering's decision. HIR statement membership itself requires
+// each node to implement validateSelf, while lowering rejects unsupported syntax;
+// this validator checks shape and evidence consistency before MIR/backend.
 //
 // A failure is a compiler bug, not a source error.
 func (m *Module) Validate() error {

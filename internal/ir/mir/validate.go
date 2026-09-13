@@ -16,9 +16,9 @@ const maxReportedProblems = 10
 //
 // It deliberately does not re-derive meaning. Whether the right instruction was
 // emitted for a construct is lowering's decision, and re-deciding it here would
-// be a second implementation of the thing being validated. That a node kind is
-// classified at all is held by the dispatch contract in internal/contracts, not
-// here.
+// be a second implementation of the thing being validated. MIR node families are
+// sealed; lowering/backend dispatch rejects unknown members rather than silently
+// accepting them.
 //
 // A failure is a compiler bug rather than a source error: MIR is built from
 // evidence that earlier phases already accepted.

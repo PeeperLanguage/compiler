@@ -47,7 +47,6 @@ invoked as an external tool. Peeper does not link anything by hand.
 | `internal/semantics` | Collector, binder, resolver, const eval, typechecker, effects, definite init, ownership, usage, plus the artifact packages |
 | `internal/ir` | `cfg`, `hir`, `mir`, and the shared `ir` node/type model |
 | `internal/backend/llvm` | MIR → LLVM IR text |
-| `internal/contracts` | Test-tier contracts that force a decision for every node kind |
 | `internal/toolchain` | Finds `clang` and the sysroot; builds its command lines |
 | `internal/diagnostics` | Errors, warnings, source rendering, phase attribution |
 | `runtime/` | `peeper_rt.c` — the C runtime linked into every binary |
@@ -222,8 +221,7 @@ func (s *ForStmt) forEachChild(visit func(Node)) {
 }
 ```
 
-Forgetting a field in `forEachChild` makes it invisible to `ast.Inspect`. A contract test
-parses this package and fails naming the field you missed — see §13.
+Forgetting a field in `forEachChild` makes it invisible to `ast.Inspect`, so traversal behavior is covered by ordinary AST tests and source fixtures rather than a second parser for the compiler implementation.
 
 ---
 
@@ -546,20 +544,12 @@ the link working on platforms with tight argument limits.
 
 The compiler is built so that *forgetting* something fails loudly.
 
-```mermaid
-flowchart TD
-    N["you add an AST node kind"] --> C1["contracts: 8 statement sites<br/>fail by name"]
-    T["you add a typeinfo.Type"] --> C2["contracts: capability, identity,<br/>lowering fail by name"]
-    I["you add a mir.Instr"] --> C3["contracts: lowering and backend<br/>fail by name"]
-    A["a phase publishes evidence"] --> V["validators check its shape<br/>at the phase boundary"]
-```
-
 | Guard | Where | Catches |
 | --- | --- | --- |
-| Child traversal contract | `internal/contracts` | a node field missing from `forEachChild` |
-| Syntax-boundary dispatch contract | `internal/contracts` | a new node kind omitted by a true syntax-aware owner |
-| Semantic type contract | Go type system + `internal/contracts` | missing child/ownership structure or a required representation decision |
-| Lowered node contract | `internal/contracts` | an HIR/MIR kind nothing lowers or emits |
+| AST traversal tests | `frontend/ast` tests + source fixtures | broken child traversal behavior |
+| Sealed semantic type contract | Go type system | missing child/ownership behavior on a new semantic type |
+| HIR validation + required node methods | `internal/ir/hir` | malformed or incomplete HIR nodes |
+| MIR/backend rejecting dispatch | `internal/ir/mir`, `backend/llvm` | unsupported lowered nodes fail loudly |
 | `cfg.Validate` | `internal/ir/cfg` | malformed topology |
 | `effect.Validate` | `internal/semantics/effect` | operations with no symbol, unbalanced calls |
 | `ownershipresult.Validate` | `internal/semantics/ownershipresult` | evidence that contradicts published types |

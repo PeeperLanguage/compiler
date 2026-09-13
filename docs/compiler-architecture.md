@@ -336,7 +336,7 @@ Then make explicit decisions only where representation semantics genuinely diffe
 - HIR/backend type lowering;
 - syntax conversion if source has new type syntax.
 
-`internal/contracts/type_dispatch_test.go` currently guards these type-kind extension
+Focused typeinfo/IR tests guard the remaining type-kind extension
 points rather than generic containment or ownership traversal.
 
 ## Current graph-backed analysis path
@@ -349,10 +349,10 @@ Different mistakes are caught at different boundaries:
 
 | Mistake | Guard |
 | --- | --- |
-| AST child omitted | AST child completeness contracts/tests |
+| AST child omitted | AST traversal tests + source fixtures |
 | semantic type child/ownership method omitted | sealed `typeinfo.Type` compile-time contract |
 | incorrect child relation or capability composition | structural tests + capability golden/cycle tests |
-| semantic type missing representation decision | focused type dispatch contract |
+| semantic type missing representation decision | sealed type methods + focused representation tests |
 | malformed graph topology | CFG/graph validators and tests |
 | malformed effect evidence | `effect.Result.Validate` |
 | new effect ignored by an exhaustive consumer | `effect.Visitor` compile-time contract |
@@ -363,14 +363,11 @@ Different mistakes are caught at different boundaries:
 Effect validation checks node membership and expression categories, not whether
 an existing syntax case emitted every required operation. Definition, write-owner,
 and iteration-owner IDs remain generic source identities; consumers do not need
-a particular declaration syntax. Dispatch contracts catch missing kind decisions;
-producer ordering tests and source fixtures catch missing or reordered operations.
+a particular declaration syntax. Rejecting dispatch boundaries catch unsupported kinds during execution; producer ordering tests and source fixtures catch missing or reordered operations.
 Each non-nil CFG function requires an outer effect and cleanup-plan entry; those
 per-function artifacts may be empty when no operations or cleanup are needed.
 
-Source-parsing contract tests are retained only where Go's type system cannot
-express a closed extension boundary more directly. They are not the primary
-architecture.
+Compiler correctness does not depend on parsing its own Go source. Closed families use sealed interfaces and required methods where that improves clarity; remaining dispatch sites reject unknown members loudly and are covered by behavior tests.
 
 ## Architecture review risks
 
@@ -391,7 +388,7 @@ Potential regressions under current design include:
 Required Go version is declared in [`go.mod`](../go.mod).
 
 ```bash
-go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/contracts
+go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/ir/hir ./internal/ir/mir
 go test -count=1 ./...
 go vet ./...
 go test -race -count=1 ./internal/graph ./internal/project ./internal/pipeline

@@ -172,9 +172,9 @@ func (b *builder) buildMatchArms(site *cfg.Site, terminator *cfg.SwitchVariant) 
 
 // publishStmt publishes one statement's effects in evaluation order.
 //
-// CFG construction panics on a statement it does not place, and this is now the
-// single producer of statement meaning, so it takes the same policy: a new kind
-// must be handled here or declared inert in internal/contracts.
+// CFG construction panics on a statement it does not place, and this is the
+// single producer of statement meaning. A new evaluative kind must be handled
+// here; the default panic keeps unknown syntax from silently losing effects.
 func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.Stmt) {
 	switch node := stmt.(type) {
 	case *ast.LetDecl:
@@ -257,8 +257,8 @@ func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.S
 // the value. A projection reads its base, a literal moves what it stores, and a
 // call argument takes the typechecker's published decision.
 //
-// This is the expression dispatch site for published effects. A new expression
-// kind must be handled here or declared inert in internal/contracts.
+// This is the expression dispatch site for published effects. Unknown expression
+// kinds fail loudly instead of silently losing ownership-relevant operations.
 func (b *builder) value(site cfg.SiteID, scope *symbols.Scope, expr ast.Expr, kind typeinfo.UseKind) {
 	switch node := expr.(type) {
 	case nil:

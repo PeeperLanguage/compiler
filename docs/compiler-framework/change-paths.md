@@ -87,7 +87,7 @@ Then add only representation-specific decisions that truly differ, for example:
 - HIR/backend lowering;
 - source-type conversion if new syntax is involved.
 
-`internal/contracts/type_dispatch_test.go` guards the remaining closed type-kind sites.
+Sealed type methods and focused type/IR tests guard the remaining closed type-kind sites.
 Do not add new private recursive type-child walkers to satisfy one query.
 
 ## Path 3 — add a graph-backed analysis

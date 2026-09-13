@@ -71,7 +71,7 @@ them.
 
 `Op` is sealed by an unexported marker method, the same idiom as `cfg.Terminator` and
 `typecheckresult.IterationPlan`. Go cannot make a consumer's type switch exhaustive, so
-`internal/contracts` carries that half.
+Rejecting dispatch defaults and behavior tests carry that half without parsing compiler source.
 
 ### What the vocabulary grew, and why
 
@@ -194,19 +194,20 @@ Gate: focused tests, then full suite, then `go run ./scripts/bundle.go` and the 
 fixtures. **Zero diagnostic changes.**
 Commit: `Consume published effects in definite initialization`
 
-### Step 4 — contract and validator — **done**
+### Step 4 — validator — **done**
 
-Add the producer to `statementSites` in `internal/contracts/node_dispatch_test.go` with
-`inertDeclarations: true`; remove the `checkReads` entry, whose function no longer exists.
 Add `effect/validate.go` following `cfg/validate.go` literally — accumulate, sort, truncate
-at ten — and state in its doc comment what it does not re-derive.
+at ten — and state in its doc comment what it does not re-derive. Producer dispatch rejects
+unsupported syntax directly; effect consumers use the sealed `Op` family and `Visitor`
+methods where exhaustive behavior matters.
 
-Mutation-prove both: delete a producer case and confirm the named contract failure; corrupt
-an op and confirm the validator message. Restore both, and record the outputs in the commit
-body. Update the counts in `change-paths.md`.
+The original migration also added a source-parsing dispatch contract. That guard was later
+deleted: parsing the compiler's Go implementation duplicated its architecture and made
+correctness depend on source shape. Behavioral tests plus compiler-enforced interfaces are
+the maintained contract now.
 
 Gate: full suite plus race on `internal/project`, `internal/pipeline`, `internal/lsp`.
-Commit: `Require a phase decision for every published effect`
+Commit: `Require valid published effects`
 
 ## Behavior changes found, not fixed here
 

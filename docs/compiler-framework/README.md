@@ -57,8 +57,8 @@ those contracts to actual semantic boundaries.
 - Structural consumers reuse canonical traversal.
 - Generic analyses consume semantic operations.
 - A new semantic type is sealed until it declares structure + ownership policy.
-- Remaining source-inspection contracts guard only closed sets that Go cannot make
-  exhaustive directly.
+- Closed families use sealed interfaces and required methods where those make omissions
+  compile-time failures; remaining dispatch sites reject unknown members loudly.
 - Artifact validators reject malformed evidence at producer boundaries.
 
 See [`change-paths.md`](change-paths.md) for historical evidence that motivated
