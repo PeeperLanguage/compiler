@@ -13,7 +13,7 @@ func emitDrop(b *llvmBuilder, instr *mir.Drop) {
 	if b == nil || instr == nil || instr.Value == nil {
 		return
 	}
-	emitDropValue(b, emitRef(b, instr.Value), mirRefType(instr.Value))
+	emitDropValue(b, emitRef(b, instr.Value), instr.Value.TypeID())
 }
 
 func emitDropValue(b *llvmBuilder, value llvmValue, typeID ir.TypeID) {

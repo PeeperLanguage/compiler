@@ -472,7 +472,7 @@ func emitVariantSwitch(b *llvmBuilder, term *mir.SwitchVariant) {
 		}
 		return
 	}
-	variant, ok := b.emitter.mod.Types.Type(mirRefType(term.Value))
+	variant, ok := b.emitter.mod.Types.Type(term.Value.TypeID())
 	if !ok || variant.Kind != ir.TypeVariant {
 		b.emitter.markInvalid("variant switch requires variant subject")
 		return
@@ -636,8 +636,8 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 				}
 				if drop, ok := instr.(*mir.Drop); ok && drop != nil {
 					dropUsed = true
-					freeRuntimeUsed = freeRuntimeUsed || typeNeedsRawFreeID(mod.Types, mirRefType(drop.Value))
-					if typeCarriesAllocatorID(mod.Types, mirRefType(drop.Value)) {
+					freeRuntimeUsed = freeRuntimeUsed || typeNeedsRawFreeID(mod.Types, drop.Value.TypeID())
+					if typeCarriesAllocatorID(mod.Types, drop.Value.TypeID()) {
 						allocUsed = true
 						allocatorRuntimeUsed = true
 					}
@@ -821,7 +821,7 @@ func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function) []stackLocalSlot
 				order = append(order, assign.Name)
 			}
 			counts[assign.Name]++
-			if typ := mirValueType(assign.Value); typ != ir.InvalidType {
+			if typ := assign.Value.TypeID(); typ != ir.InvalidType {
 				types[assign.Name] = typ
 			}
 			switch value := assign.Value.(type) {

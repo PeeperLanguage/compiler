@@ -7,7 +7,6 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
-	"compiler/internal/ir/mir"
 )
 
 type llvmLayoutKind uint8
@@ -514,55 +513,4 @@ func interfaceVtableLength(types *ir.TypeTable, interfaceType ir.TypeID, methodC
 		return methodCount + 2
 	}
 	return methodCount + 1
-}
-
-func mirValueType(expr mir.ValueExpr) ir.TypeID {
-	switch v := expr.(type) {
-	case *mir.Move:
-		return mirRefType(v.Src)
-	case *mir.Unary:
-		return v.Type
-	case *mir.Binary:
-		return v.Type
-	case *mir.StringConcat:
-		return v.Type
-	case *mir.Cast:
-		return v.Type
-	case *mir.AddrOf:
-		return v.Type
-	case *mir.SliceView:
-		return v.Type
-	case *mir.Load:
-		return v.Type
-	case *mir.Len:
-		return v.Type
-	case *mir.StringChars:
-		return v.Type
-	case *mir.StringFromBytes:
-		return v.Type
-	case *mir.Field:
-		return v.Type
-	case *mir.StructLit:
-		return v.Type
-	case *mir.ArrayLit:
-		return v.Type
-	case *mir.DynamicArrayAlloc:
-		return v.Type
-	case *mir.ZeroValue:
-		return v.Type
-	case *mir.VariantMake:
-		return v.Type
-	case *mir.VariantIs:
-		return v.Type
-	case *mir.InterfaceMake:
-		return v.Type
-	case *mir.InterfaceCall:
-		return v.Type
-	case *mir.StringLiteral:
-		return v.Type
-	case *mir.Call:
-		return v.Type
-	default:
-		return ir.InvalidType
-	}
 }

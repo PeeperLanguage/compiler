@@ -43,7 +43,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	if b == nil || printInstr == nil || printInstr.Value == nil {
 		return
 	}
-	typeID := mirRefType(printInstr.Value)
+	typeID := printInstr.Value.TypeID()
 	typ, typeOK := b.emitter.mod.Types.Type(typeID)
 	if !typeOK {
 		b.emitter.markInvalid("print reached LLVM with invalid type")
@@ -186,7 +186,7 @@ func placeNeedsRootAddr(types *ir.TypeTable, place *mir.Place) bool {
 	case mir.PlaceProjectionVariantPayload:
 		return true
 	case mir.PlaceProjectionIndex:
-		rootType, ok := types.Type(mirRefType(place.Root))
+		rootType, ok := types.Type(place.Root.TypeID())
 		if !ok {
 			return false
 		}
@@ -227,7 +227,7 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 	if addressed {
 		current, hasCurrent = emitPlaceRootAddr(b, place.Root)
 	}
-	currentType := mirRefType(place.Root)
+	currentType := place.Root.TypeID()
 	for _, projection := range place.Projections {
 		b.setLocation(projection.Location)
 		switch projection.Kind {
@@ -309,7 +309,7 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) llvmValue {
 	}
 
 	argRef := emitRef(b, cast.Arg)
-	fromType := mirRefType(cast.Arg)
+	fromType := cast.Arg.TypeID()
 	toType := cast.Type
 	from, fromOK := b.emitter.mod.Types.Type(fromType)
 	to, toOK := b.emitter.mod.Types.Type(toType)
@@ -532,7 +532,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 		case *mir.Binary:
 			left := emitRef(b, e.Left)
 			right := emitRef(b, e.Right)
-			leftType := mirRefType(e.Left)
+			leftType := e.Left.TypeID()
 			opcode := ""
 			switch e.Op {
 			case "+":
@@ -594,8 +594,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 					}
 				}
 				shiftCount := right
-				if mirRefType(e.Right) != mirRefType(e.Left) {
-					shiftCount = emitCast(b, &mir.Cast{Arg: e.Right, Type: mirRefType(e.Left), Location: e.Right.SourceLocation()})
+				if e.Right.TypeID() != e.Left.TypeID() {
+					shiftCount = emitCast(b, &mir.Cast{Arg: e.Right, Type: e.Left.TypeID(), Location: e.Right.SourceLocation()})
 				}
 				return b.arithmetic(opcode, left, shiftCount)
 			case "==", "!=", "<", "<=", ">", ">=":
@@ -709,7 +709,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			return b.insertVariantPayload(value, emitRef(b, e.Payload), e.Case)
 		case *mir.VariantIs:
 			value := emitRef(b, e.Value)
-			variant, ok := b.emitter.mod.Types.Type(mirRefType(e.Value))
+			variant, ok := b.emitter.mod.Types.Type(e.Value.TypeID())
 			if _, caseOK := variant.VariantCase(e.Case); !ok || variant.Kind != ir.TypeVariant || !caseOK {
 				b.emitter.markInvalid("variant test has invalid type or case")
 				return b.value("false", llvmScalarLayout("i1"))
@@ -723,8 +723,8 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			value := emitRef(b, e.Value)
 			dataPtr := value
 			var allocator llvmValue
-			if valueTypeInfo, isOwned := b.emitter.mod.Types.Type(mirRefType(e.Value)); isOwned && valueTypeInfo.Kind == ir.TypeOwnedPtr {
-				if !isOwnedInterfaceType(b.emitter.mod.Types, mirRefType(e.Value)) {
+			if valueTypeInfo, isOwned := b.emitter.mod.Types.Type(e.Value.TypeID()); isOwned && valueTypeInfo.Kind == ir.TypeOwnedPtr {
+				if !isOwnedInterfaceType(b.emitter.mod.Types, e.Value.TypeID()) {
 					dataPtr = b.extractField(value, llvmFieldData)
 					allocator = b.extractField(value, llvmFieldAllocator)
 				}
@@ -751,7 +751,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			}
 			result := b.call(fn, args)
 			if consumesOwnedInterfaceStorage(b.emitter.mod.Types, e) {
-				emitInterfaceStorageRelease(b, mirRefType(e.Base), emitRef(b, e.Base), data)
+				emitInterfaceStorageRelease(b, e.Base.TypeID(), emitRef(b, e.Base), data)
 			}
 			return result
 		default:
@@ -766,7 +766,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 		b.invariant("reference emission requires MIR value")
 	}
 	return withLLVMLocation(b, ref.SourceLocation(), func() llvmValue {
-		refType := mirRefType(ref)
+		refType := ref.TypeID()
 		layout := b.emitter.layout(refType)
 		if layout == nil {
 			b.invariant("reference has unsupported type %s", b.emitter.mod.Types.Text(refType))
@@ -887,7 +887,7 @@ func emitCondRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 	}
 	return withLLVMLocation(b, ref.SourceLocation(), func() llvmValue {
 		val := emitRef(b, ref)
-		refType := mirRefType(ref)
+		refType := ref.TypeID()
 		if typ, ok := b.emitter.mod.Types.Type(refType); ok && typ.Kind == ir.TypeBool {
 			return val
 		}
@@ -898,19 +898,8 @@ func emitCondRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 	})
 }
 
-func mirRefType(ref mir.ValueRef) ir.TypeID {
-	switch v := ref.(type) {
-	case *mir.RefConst:
-		return v.Type
-	case *mir.RefName:
-		return v.Type
-	default:
-		return ir.InvalidType
-	}
-}
-
 func emitLogicalNot(b *llvmBuilder, arg llvmValue, ref mir.ValueRef) llvmValue {
-	if typ, ok := b.emitter.mod.Types.Type(mirRefType(ref)); ok && typ.Kind == ir.TypeBool {
+	if typ, ok := b.emitter.mod.Types.Type(ref.TypeID()); ok && typ.Kind == ir.TypeBool {
 		return b.arithmetic("xor", arg, b.value("true", arg.Layout))
 	}
 	cmp := emitCondRef(b, ref)
@@ -1003,7 +992,7 @@ func recordCallDecl(decls map[string]callDecl, defined map[string]struct{}, call
 	}
 	params := make([]ir.TypeID, 0, len(call.Args))
 	for _, arg := range call.Args {
-		params = append(params, mirRefType(arg))
+		params = append(params, arg.TypeID())
 	}
 	decls[name] = callDecl{Name: name, ReturnType: call.Type, Params: params}
 }

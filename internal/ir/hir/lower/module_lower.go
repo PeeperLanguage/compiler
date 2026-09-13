@@ -474,7 +474,7 @@ func lowerPlace(ctx *project.CompilerContext, module *project.Module, scope *sym
 				}
 			}
 			out := lowerPlace(ctx, module, scope, index.Expr)
-			baseType := loweredRuntimeType(exprResolvedType(module, index.Expr), nil)
+			baseType := exprResolvedType(module, index.Expr)
 			if target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); reference {
 				baseType = target
 			}
@@ -648,7 +648,7 @@ func lowerASTExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	}
 	if expectedType != nil && resolvedType != nil && converting && conversion.Compatibility == typeinfo.Compatible {
 		switch conversion.Kind {
-		case typeinfo.ConversionNumeric, typeinfo.ConversionStruct:
+		case typeinfo.ConversionNumeric, typeinfo.ConversionReference, typeinfo.ConversionStruct:
 			if expectedTypeID != resolvedTypeID {
 				value := lowerASTExpr(ctx, module, scope, expr, nil)
 				return &ir.Cast{Expr: value, Type: expectedTypeID, SourceInfo: ir.SourceInfo{Location: loc}}
@@ -920,7 +920,7 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	if implicit := module.Typechecking.ImplicitCallArgument(selector.Expr.ID()); implicit != nil {
 		baseExpr = lowerImplicitReferenceValue(ctx, module, scope, selector.Expr, implicit)
 	} else {
-		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, nil)
+		baseExpr = lowerASTExpr(ctx, module, scope, selector.Expr, fnType.Params[0])
 	}
 	args := make([]ir.Expr, 0, len(effectiveArgs)+1)
 	args = append(args, baseExpr)

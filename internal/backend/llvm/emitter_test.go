@@ -2231,7 +2231,7 @@ func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
 					{
 						ID: 0,
 						Instrs: []mir.Instr{
-							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefConst{Value: "0", Type: llvmTypes.i32}, Type: llvmTypes.i32}},
+							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefConst{Value: "0", Type: llvmTypes.i32}}},
 						},
 						Term: &mir.Jump{TargetID: 1},
 					},
@@ -2256,7 +2256,7 @@ func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
 								Right: &mir.RefConst{Value: "1", Type: llvmTypes.i32},
 								Type:  llvmTypes.i32,
 							}},
-							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefName{Name: "next", Type: llvmTypes.i32}, Type: llvmTypes.i32}},
+							&mir.Assign{Name: "n", Value: &mir.Move{Src: &mir.RefName{Name: "next", Type: llvmTypes.i32}}},
 						},
 						Term: &mir.Jump{TargetID: 1},
 					},

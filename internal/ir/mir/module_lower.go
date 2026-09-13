@@ -43,14 +43,7 @@ func (l *lowerer) structCastFields(arg ValueRef, target ir.TypeID, loc *source.L
 	if l == nil || l.module == nil || l.module.Types == nil || arg == nil || out == nil {
 		return nil, false
 	}
-	sourceID := ir.InvalidType
-	switch value := arg.(type) {
-	case *RefConst:
-		sourceID = value.Type
-	case *RefName:
-		sourceID = value.Type
-	}
-	source, ok := l.module.Types.Type(sourceID)
+	source, ok := l.module.Types.Type(arg.TypeID())
 	if !ok || source.Kind != ir.TypeStruct {
 		return nil, false
 	}
@@ -1004,12 +997,8 @@ func (l *lowerer) nextTemp() string {
 }
 
 func asValueExpr(ref ValueRef) ValueExpr {
-	switch node := ref.(type) {
-	case *RefConst:
-		return &Move{Src: ref, Type: node.Type}
-	case *RefName:
-		return &Move{Src: ref, Type: node.Type}
-	default:
-		panic(fmt.Sprintf("MIR lowering: unhandled value reference %T", ref))
+	if ref == nil {
+		panic("MIR lowering: nil value reference")
 	}
+	return &Move{Src: ref}
 }

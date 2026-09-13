@@ -197,16 +197,6 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 					t.Fatalf("condition = %#v, want target-sized cursor and length", cond)
 				}
 
-				refType := func(ref mir.ValueRef) ir.TypeID {
-					switch value := ref.(type) {
-					case *mir.RefConst:
-						return value.Type
-					case *mir.RefName:
-						return value.Type
-					default:
-						return ir.InvalidType
-					}
-				}
 				foundCompare := false
 				foundIndexMove := false
 				foundProjection := false
@@ -219,16 +209,16 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 							}
 							switch value := assign.Value.(type) {
 							case *mir.Binary:
-								if value.Op == "<" && refType(value.Left) == cursor.Type && refType(value.Right) == cursor.Type {
+								if value.Op == "<" && value.Left.TypeID() == cursor.Type && value.Right.TypeID() == cursor.Type {
 									foundCompare = true
 								}
 							case *mir.Move:
-								if assign.Name == index.Name && value.Type == cursor.Type && refType(value.Src) == cursor.Type {
+								if assign.Name == index.Name && value.TypeID() == cursor.Type && value.Src.TypeID() == cursor.Type {
 									foundIndexMove = true
 								}
 							case *mir.Load:
 								if value.Place != nil && len(value.Place.Projections) == 1 && value.Place.Projections[0].Kind == mir.PlaceProjectionIndex &&
-									refType(value.Place.Projections[0].Index) == cursor.Type {
+									value.Place.Projections[0].Index.TypeID() == cursor.Type {
 									foundProjection = true
 								}
 							}

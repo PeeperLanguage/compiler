@@ -138,12 +138,14 @@ type Drop struct {
 
 type ValueExpr interface {
 	valueExprNode()
+	TypeID() ir.TypeID
 	Text() string
 	SourceLocation() *source.Location
 }
 
 type ValueRef interface {
 	valueRefNode()
+	TypeID() ir.TypeID
 	Text() string
 	SourceLocation() *source.Location
 }
@@ -191,7 +193,6 @@ type StringConcat struct {
 
 type Move struct {
 	Src      ValueRef
-	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -423,6 +424,36 @@ func (*StringLiteral) valueExprNode()     {}
 func (*RefConst) valueRefNode()           {}
 func (*RefName) valueRefNode()            {}
 
+func (r *RefConst) TypeID() ir.TypeID      { return r.Type }
+func (r *RefName) TypeID() ir.TypeID       { return r.Type }
+func (v *StringLiteral) TypeID() ir.TypeID { return v.Type }
+func (v *Move) TypeID() ir.TypeID {
+	if v == nil || v.Src == nil {
+		return ir.InvalidType
+	}
+	return v.Src.TypeID()
+}
+func (v *Unary) TypeID() ir.TypeID             { return v.Type }
+func (v *Binary) TypeID() ir.TypeID            { return v.Type }
+func (v *StringConcat) TypeID() ir.TypeID      { return v.Type }
+func (v *Cast) TypeID() ir.TypeID              { return v.Type }
+func (v *AddrOf) TypeID() ir.TypeID            { return v.Type }
+func (v *SliceView) TypeID() ir.TypeID         { return v.Type }
+func (v *Load) TypeID() ir.TypeID              { return v.Type }
+func (v *Len) TypeID() ir.TypeID               { return v.Type }
+func (v *StringChars) TypeID() ir.TypeID       { return v.Type }
+func (v *StringFromBytes) TypeID() ir.TypeID   { return v.Type }
+func (v *Field) TypeID() ir.TypeID             { return v.Type }
+func (v *StructLit) TypeID() ir.TypeID         { return v.Type }
+func (v *ArrayLit) TypeID() ir.TypeID          { return v.Type }
+func (v *DynamicArrayAlloc) TypeID() ir.TypeID { return v.Type }
+func (v *Alloc) TypeID() ir.TypeID             { return v.Type }
+func (v *ZeroValue) TypeID() ir.TypeID         { return v.Type }
+func (v *VariantMake) TypeID() ir.TypeID       { return v.Type }
+func (v *VariantIs) TypeID() ir.TypeID         { return v.Type }
+func (v *InterfaceMake) TypeID() ir.TypeID     { return v.Type }
+func (v *InterfaceCall) TypeID() ir.TypeID     { return v.Type }
+
 func (i *Assign) SourceLocation() *source.Location            { return i.Location }
 func (i *Store) SourceLocation() *source.Location             { return i.Location }
 func (i *Print) SourceLocation() *source.Location             { return i.Location }
@@ -634,6 +665,7 @@ type Call struct {
 }
 
 func (c *Call) valueExprNode()                   {}
+func (c *Call) TypeID() ir.TypeID                { return c.Type }
 func (c *Call) SourceLocation() *source.Location { return c.Location }
 func (c *Call) Text() string {
 	var b strings.Builder

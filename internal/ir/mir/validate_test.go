@@ -3,18 +3,22 @@ package mir
 import (
 	"strings"
 	"testing"
+
+	"compiler/internal/ir"
 )
 
 // wellFormed is one function with a branch and a join, the smallest shape that
 // exercises every kind of transfer check.
 func wellFormed() *Module {
+	types := ir.NewTypeTable()
+	voidType := types.Intern(ir.Type{Kind: ir.TypeVoid})
+	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
 	return &Module{
-		Name: "probe",
+		Name: "probe", Types: types,
 		Funcs: []*Function{{
-			Name:    "choose",
-			EntryID: 0,
+			Name: "choose", ReturnType: voidType, EntryID: 0,
 			Blocks: []*Block{
-				{ID: 0, Term: &Branch{ThenID: 1, ElseID: 2}},
+				{ID: 0, Term: &Branch{Cond: &RefConst{Value: "true", Type: boolType}, ThenID: 1, ElseID: 2}},
 				{ID: 1, Term: &Jump{TargetID: 3}},
 				{ID: 2, Term: &Jump{TargetID: 3}},
 				{ID: 3, Term: &Ret{}},
@@ -86,6 +90,76 @@ func TestValidateReportsDefects(t *testing.T) {
 			},
 			want: "selects case 0 twice",
 		},
+		{
+			name:   "module without type table",
+			damage: func(m *Module) { m.Types = nil },
+			want:   "module with typed MIR artifacts has no type table",
+		},
+		{
+			name: "branch on non-bool value",
+			damage: func(m *Module) {
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				m.Funcs[0].Blocks[0].Term = &Branch{Cond: &RefConst{Value: "1", Type: i32}, ThenID: 1, ElseID: 2}
+			},
+			want: "branches on non-bool",
+		},
+		{
+			name: "store type mismatch",
+			damage: func(m *Module) {
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
+				m.Funcs[0].Blocks[0].Instrs = []Instr{&Store{
+					Place: &Place{Root: &RefName{Name: "slot", Type: i32}, Type: i32},
+					Value: &RefConst{Value: "true", Type: boolean},
+				}}
+			},
+			want: "stores type#",
+		},
+		{
+			name: "call argument type mismatch",
+			damage: func(m *Module) {
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
+				voidType := m.Funcs[0].ReturnType
+				fnType := m.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{i32}, Return: voidType})
+				m.Funcs[0].Blocks[0].Instrs = []Instr{&Call{
+					Callee: &RefName{Name: "callee", Type: fnType},
+					Args:   []ValueRef{&RefConst{Value: "true", Type: boolean}},
+					Type:   voidType,
+				}}
+			},
+			want: "argument 0 has type#",
+		},
+		{
+			name: "dynamic array operation without reference carrier",
+			damage: func(m *Module) {
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				array := m.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
+				m.Funcs[0].Blocks[0].Instrs = []Instr{&DynamicArrayOp{
+					Array: &RefName{Name: "values", Type: array}, ArrayType: array,
+				}}
+			},
+			want: "does not reference array type#",
+		},
+		{
+			name: "index projection element mismatch",
+			damage: func(m *Module) {
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
+				array := m.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "1"})
+				m.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Name: "value", Value: &Load{
+					Place: &Place{
+						Root: &RefName{Name: "values", Type: array},
+						Projections: []PlaceProjection{{
+							Kind: PlaceProjectionIndex, Index: &RefConst{Value: "0", Type: i32}, Type: boolean,
+						}},
+						Type: boolean,
+					},
+					Type: boolean,
+				}}}
+			},
+			want: "indexes incompatible type#",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -113,6 +187,31 @@ func TestValidateReportsDefectsDeterministically(t *testing.T) {
 		if got := module.Validate(); got.Error() != first.Error() {
 			t.Fatalf("Validate() = %v, want the stable report %v", got, first)
 		}
+	}
+}
+
+func TestValidateChecksModuleArtifactsWithoutFunctions(t *testing.T) {
+	types := ir.NewTypeTable()
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	module := &Module{Types: types, InterfaceThunks: []*InterfaceThunk{{
+		Name: "broken", SlotType: ir.TypeID(999), FuncType: i32, DataType: i32,
+	}}}
+	if err := module.Validate(); err == nil || !strings.Contains(err.Error(), "invalid slot type#999") {
+		t.Fatalf("Validate() = %v, want invalid interface thunk slot type", err)
+	}
+}
+
+func TestValidateRejectsTypedArtifactsWithoutTypeTable(t *testing.T) {
+	module := &Module{InterfaceThunks: []*InterfaceThunk{{Name: "broken"}}}
+	if err := module.Validate(); err == nil || !strings.Contains(err.Error(), "typed MIR artifacts has no type table") {
+		t.Fatalf("Validate() = %v, want missing type table", err)
+	}
+}
+
+func TestValidateRejectsNilStaticEntryWithoutFunctions(t *testing.T) {
+	module := &Module{StaticData: []*StaticEntry{nil}}
+	if err := module.Validate(); err == nil || !strings.Contains(err.Error(), "nil static entry at 0") {
+		t.Fatalf("Validate() = %v, want nil static entry", err)
 	}
 }
 

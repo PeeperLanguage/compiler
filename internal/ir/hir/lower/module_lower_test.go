@@ -1153,6 +1153,55 @@ func TestGenerateHIRLowersDynamicArrayLiteral(t *testing.T) {
 	}
 }
 
+func TestGenerateHIRPreservesNominalElementTypeInIndexPlace(t *testing.T) {
+	const filePath = "hir_named_array_index_test" + peeper.SourceExt
+	const src = `struct Box { value: i32 }
+fn first(values: []Box) -> i32 {
+	return values[0].value;
+}`
+	out := generateTestHIR(t, filePath, "hir_named_array_index_test", src)
+	ret := out.Funcs[0].Body.Stmts[0].(*hir.Return)
+	load, ok := ret.Value.(*ir.Load)
+	if !ok || load.Place == nil || len(load.Place.Projections) != 2 {
+		t.Fatalf("indexed field return = %#v, want indexed field place", ret.Value)
+	}
+	array, ok := out.Types.Type(load.Place.Root.TypeID())
+	if !ok || array.Kind != ir.TypeArray {
+		t.Fatalf("index root type = %q, want array", out.Types.Text(load.Place.Root.TypeID()))
+	}
+	if got := load.Place.Projections[0].Type; got != array.Elem {
+		t.Fatalf("index element type#%d, want nominal array element type#%d", got, array.Elem)
+	}
+}
+
+func TestGenerateHIRMaterializesSharedReferenceReceiverConversion(t *testing.T) {
+	const filePath = "hir_reference_receiver_conversion_test" + peeper.SourceExt
+	const src = `struct Counter { value: i32 }
+fn (self: &Counter) read() -> i32 { return self.value; }
+fn (self: &mut Counter) readShared() -> i32 { return self.read(); }`
+	out := generateTestHIR(t, filePath, "hir_reference_receiver_conversion_test", src)
+	if len(out.Funcs) != 2 {
+		t.Fatalf("function count = %d, want 2", len(out.Funcs))
+	}
+	ret := out.Funcs[1].Body.Stmts[0].(*hir.Return)
+	call, ok := ret.Value.(*ir.Call)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("shared receiver call = %#v, want one-argument call", ret.Value)
+	}
+	cast, ok := call.Args[0].(*ir.Cast)
+	if !ok {
+		t.Fatalf("receiver = %#v, want explicit reference conversion", call.Args[0])
+	}
+	from, ok := out.Types.Type(cast.Expr.TypeID())
+	if !ok || from.Kind != ir.TypeReference || !from.Mutable {
+		t.Fatalf("receiver source type = %q, want mutable reference", out.Types.Text(cast.Expr.TypeID()))
+	}
+	to, ok := out.Types.Type(cast.Type)
+	if !ok || to.Kind != ir.TypeReference || to.Mutable || to.Elem != from.Elem {
+		t.Fatalf("receiver conversion = %q -> %q, want &mut T -> &T", out.Types.Text(cast.Expr.TypeID()), out.Types.Text(cast.Type))
+	}
+}
+
 func TestGenerateHIRLowersDynamicArrayBorrowsAsOwnerReferences(t *testing.T) {
 	const filePath = "hir_slice_view_test" + peeper.SourceExt
 	const src = `struct Bucket {

@@ -85,13 +85,13 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (llvmV
 	baseValue := emitRef(b, base)
 	data := b.extractField(baseValue, llvmFieldData)
 	itab := b.extractField(baseValue, llvmFieldDispatch)
-	slotLayout, ok := b.emitter.interfaceSlotLayout(mirRefType(base), slot)
+	slotLayout, ok := b.emitter.interfaceSlotLayout(base.TypeID(), slot)
 	if !ok {
 		return llvmValue{}, llvmValue{}, false
 	}
 	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
 	vtable := b.bitcast(itab, llvmPointerLayout(rawPointer))
-	methodOffset := interfaceMethodVtableSlotID(b.emitter.mod.Types, mirRefType(base), slot)
+	methodOffset := interfaceMethodVtableSlotID(b.emitter.mod.Types, base.TypeID(), slot)
 	fnPtrPtr := b.gep(b.pointerPlace(vtable), b.value(strconv.Itoa(methodOffset), llvmScalarLayout("i32")), true)
 	fnI8 := b.load(fnPtrPtr)
 	fn := b.bitcast(fnI8, slotLayout)
@@ -134,7 +134,7 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	}
 	b.call(fn, args)
 	if consumesOwnedInterfaceStorage(b.emitter.mod.Types, call) {
-		emitInterfaceStorageRelease(b, mirRefType(call.Base), emitRef(b, call.Base), data)
+		emitInterfaceStorageRelease(b, call.Base.TypeID(), emitRef(b, call.Base), data)
 	}
 }
 
@@ -142,5 +142,5 @@ func consumesOwnedInterfaceStorage(types *ir.TypeTable, call *mir.InterfaceCall)
 	if call == nil || !call.Consumes {
 		return false
 	}
-	return isOwnedInterfaceType(types, mirRefType(call.Base))
+	return isOwnedInterfaceType(types, call.Base.TypeID())
 }
