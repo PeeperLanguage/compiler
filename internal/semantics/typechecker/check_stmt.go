@@ -415,24 +415,29 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	var (
 		declType typeinfo.Type
 		typeNode ast.TypeExpr // AST node for the type annotation (for diagnostics)
+		name     *ast.Ident
 		value    ast.Expr
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
 		declType = typeinfo.TypeFromSyntax(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
+		name = bind.Name
 		value = bind.Value
 	case *ast.ConstDecl:
 		declType = typeinfo.TypeFromSyntax(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
 		typeNode = bind.Type
+		name = bind.Name
 		value = bind.Value
 	default:
 		return
 	}
 
-	// Look up the symbol declared in this exact scope by the resolver.
-	sym, found := scope.LookupNode(node)
-	if !found || sym == nil {
+	if scope == nil || name == nil || c.module.Bindings == nil {
+		return
+	}
+	sym := c.module.Bindings.NodeSymbols[name.ID()]
+	if sym == nil {
 		return
 	}
 	if declType != nil && c.rejectUnsizedType(declType, typeNode, "binding") {
@@ -777,8 +782,6 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	c.module.Bindings.NodeSymbols[stop.Cond.(*ast.BinaryExpr).Left.ID()] = resultSymbol
 	c.module.Bindings.NodeSymbols[item.Value.ID()] = resultSymbol
 
-	itemSymbol := c.module.Bindings.NodeSymbols[node.Value.ID()]
-	itemSymbol.ASTNode = item
 	c.module.Typechecking.CheckedIterations[node.ID()] = expansion
 }
 

@@ -455,7 +455,7 @@ func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.Retur
 		if slot < 0 || slot >= len(params) || params[slot].Name == nil {
 			continue
 		}
-		if sym, ok := a.functionScope.LookupNode(params[slot].Name); ok && sym != nil {
+		if sym := a.module.Bindings.NodeSymbols[params[slot].Name.ID()]; sym != nil {
 			allowed[sym] = struct{}{}
 		}
 	}

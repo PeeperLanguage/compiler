@@ -185,7 +185,7 @@ Maps are not only ownership concern. Many results point to same `*symbols.Symbol
 and `*symbols.Scope` graph. State mutates across phases:
 
 - binder sets symbol types;
-- resolver sets `Initializing`, `Used`, and scope contents;
+- resolver tracks pending declarations locally and sets `Used` and scope contents;
 - typechecker may infer types and set `RequiresMutable`;
 - usage and HIR consume later state.
 

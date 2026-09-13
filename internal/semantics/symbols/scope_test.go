@@ -46,10 +46,8 @@ func TestScopeSymbolsOrder(t *testing.T) {
 
 func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 	s := NewScope(nil)
-	firstNode := &ast.LetDecl{}
-	secondNode := &ast.LetDecl{}
-	first := New("_", SymbolVar, firstNode, ast.LocOf(nil))
-	second := New("_", SymbolVar, secondNode, ast.LocOf(nil))
+	first := New("_", SymbolVar, nil, ast.LocOf(nil))
+	second := New("_", SymbolVar, nil, ast.LocOf(nil))
 	if err := s.Declare(first); err != nil {
 		t.Fatalf("declare first discard failed: %v", err)
 	}
@@ -62,9 +60,6 @@ func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 	got := s.Symbols()
 	if len(got) != 2 || got[0] != first || got[1] != second {
 		t.Fatalf("unexpected discard symbol order: %#v", got)
-	}
-	if sym, ok := s.LookupNode(secondNode); !ok || sym != second {
-		t.Fatalf("lookup by AST node failed: %#v", sym)
 	}
 }
 

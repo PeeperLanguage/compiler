@@ -54,7 +54,6 @@ type Symbol struct {
 	IsPub           bool
 	Mutable         bool
 	IsReceiver      bool
-	Initializing    bool
 	Used            bool
 	RequiresMutable bool
 	CompilerOp      CompilerOp

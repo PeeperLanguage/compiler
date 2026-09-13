@@ -153,12 +153,10 @@ write for an ident target, or reads of both for a projection target; `ExprStmt` 
 `ReturnStmt` as reads; a `*cfg.Branch` terminator site as reads of its condition; match arm
 bindings as initialized defines at the arm body's entry site.
 
-**References** resolve through `Bindings.NodeSymbols`. **Definitions do not**: the
-resolver indexes references only, so a declaration name and an assignment target are absent
-from that map and resolve through the site's scope, exactly as definite initialization did.
-Reproducing that split is what keeps the step free of behavior change. Unifying it needs
-separate approval, because scope lookup by name walks parents and can bind a shadowed
-symbol.
+At this milestone, references resolved through `Bindings.NodeSymbols` while
+definitions resolved through the site's scope. A later symbol-table cleanup unified local
+declaration identity under `NodeSymbols` using declaration-name IDs, avoiding both parent
+scope name lookup and `Symbol.ASTNode` pointer scans.
 
 Intercept `*ast.CallExpr` and walk `Typechecking.CallArgumentsOrSource(call)` so
 default-expanded arguments are covered.

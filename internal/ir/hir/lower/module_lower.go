@@ -60,7 +60,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 		resolvedFnType, _ := fnType.(*typeinfo.FuncType)
 		emittedName, _ := callableName(module, sym)
 		if fn.Body == nil {
-			params, returnType := lowerExternSignature(ctx, module, sym.Scope, fn.ParamsWithReceiver(), resolvedFnType)
+			params, returnType := lowerExternSignature(ctx, module, fn.ParamsWithReceiver(), resolvedFnType)
 			out.Externs = append(out.Externs, hir.Extern{
 				Name:       emittedName,
 				Params:     params,
@@ -80,7 +80,7 @@ func GenerateHIR(ctx *project.CompilerContext, module *project.Module) *hir.Modu
 	return out
 }
 
-func lowerExternSignature(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, params []ast.Param, resolvedFnType *typeinfo.FuncType) ([]ir.Param, ir.TypeID) {
+func lowerExternSignature(ctx *project.CompilerContext, module *project.Module, params []ast.Param, resolvedFnType *typeinfo.FuncType) ([]ir.Param, ir.TypeID) {
 	loweredParams := make([]ir.Param, 0, len(params))
 	for i, param := range params {
 		name := ""
@@ -93,7 +93,7 @@ func lowerExternSignature(ctx *project.CompilerContext, module *project.Module, 
 		}
 		var symbolID symbols.SymbolID
 		if param.Name != nil {
-			if sym, ok := scope.LookupNode(param.Name); ok && sym != nil {
+			if sym := module.Bindings.NodeSymbols[param.Name.ID()]; sym != nil {
 				symbolID = sym.ID
 			}
 		}
@@ -133,8 +133,8 @@ func lowerASTFunctionNamed(ctx *project.CompilerContext, module *project.Module,
 		var symbolID symbols.SymbolID
 		var paramType typeinfo.Type
 		if param.Name != nil {
-			sym, ok := funcScope.LookupNode(param.Name)
-			if ok && sym != nil {
+			sym := module.Bindings.NodeSymbols[param.Name.ID()]
+			if sym != nil {
 				name = symbolName(module, sym)
 				symbolID = sym.ID
 				if t, ok := symbols.GetSymbolType(sym); ok {
@@ -181,8 +181,8 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing name", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		sym, ok := scope.LookupNode(node)
-		if !ok || sym == nil {
+		sym := module.Bindings.NodeSymbols[node.Name.ID()]
+		if sym == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "let binding missing symbol: " + node.Name.Name, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
@@ -201,8 +201,8 @@ func appendStmt(module *project.Module, scope *symbols.Scope, out *hir.Block, st
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing name", NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}
-		sym, ok := scope.LookupNode(node)
-		if !ok || sym == nil {
+		sym := module.Bindings.NodeSymbols[node.Name.ID()]
+		if sym == nil {
 			out.Stmts = append(out.Stmts, &hir.Invalid{Message: "const binding missing symbol: " + node.Name.Name, NodeID: hir.NodeID(node.ID()), Location: ast.LocOf(node)})
 			return
 		}

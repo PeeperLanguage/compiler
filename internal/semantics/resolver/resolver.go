@@ -13,8 +13,9 @@ import (
 )
 
 type resolver struct {
-	ctx    *project.CompilerContext
-	module *project.Module
+	ctx             *project.CompilerContext
+	module          *project.Module
+	pendingBindings map[symbols.SymbolID]struct{}
 }
 
 func (r *resolver) resolveModule() {
@@ -53,7 +54,7 @@ func (r *resolver) markPendingTopLevelBindings() {
 		}
 		switch sym.Kind {
 		case symbols.SymbolVar, symbols.SymbolConst:
-			sym.Initializing = true
+			r.pendingBindings[sym.ID] = struct{}{}
 		}
 	}
 }
@@ -69,7 +70,7 @@ func (r *resolver) resolveTopLevelBinding(name *ast.Ident, value ast.Expr) {
 	if value != nil {
 		r.resolveExpr(r.module.ModuleScope, value)
 	}
-	sym.Initializing = false
+	delete(r.pendingBindings, sym.ID)
 }
 
 func (r *resolver) resolveFunction(fn *ast.FnDecl) {
@@ -109,6 +110,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 			problems.ReportRedeclaration(r.ctx.Diagnostics, funcScope, err.Error(), param.Name.Name, param.Name.Location)
 			return
 		}
+		r.module.Bindings.NodeSymbols[param.Name.ID()] = paramSym
 	}
 	if fn.ReturnOrigins != nil {
 		for _, origin := range fn.ReturnOrigins.Sources {
@@ -174,14 +176,10 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			r.resolveExpr(scope, node.Iterable)
 			bodyScope := symbols.NewScope(scope)
 			if node.Index != nil {
-				if binding := r.resolveLocalBinding(bodyScope, node.Index, symbols.SymbolVar, nil, node.Index, ast.LocOf(node.Index)); binding != nil {
-					r.module.Bindings.NodeSymbols[node.Index.ID()] = binding
-				}
+				r.resolveLocalBinding(bodyScope, node.Index, symbols.SymbolVar, nil, node.Index, ast.LocOf(node.Index))
 			}
 			if node.Value != nil {
-				if binding := r.resolveLocalBinding(bodyScope, node.Value, symbols.SymbolVar, nil, node.Value, ast.LocOf(node.Value)); binding != nil {
-					r.module.Bindings.NodeSymbols[node.Value.ID()] = binding
-				}
+				r.resolveLocalBinding(bodyScope, node.Value, symbols.SymbolVar, nil, node.Value, ast.LocOf(node.Value))
 			}
 			r.resolveBlock(bodyScope, node.Body)
 			return
@@ -200,17 +198,13 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			}
 			armScope := symbols.NewScope(scope)
 			if arm.Binding != nil && !arm.Discard {
-				if binding := r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location); binding != nil {
-					r.module.Bindings.NodeSymbols[arm.Binding.ID()] = binding
-				}
+				r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location)
 			}
 			for _, field := range arm.Fields {
 				if field.Discard {
 					continue
 				}
-				if binding := r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location); binding != nil {
-					r.module.Bindings.NodeSymbols[field.Binding.ID()] = binding
-				}
+				r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)
 			}
 			r.resolveBlock(armScope, arm.Body)
 		}
@@ -227,21 +221,21 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 	}
 }
 
-func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) *symbols.Symbol {
+func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
 	if declaration, ok := node.(*ast.LetDecl); ok {
 		sym.MutableLocation = declaration.MutableLocation
 	}
-	sym.Initializing = true
 	if err := scope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(r.ctx.Diagnostics, scope, err.Error(), name.Name, loc)
-		return nil
+		return
 	}
+	r.module.Bindings.NodeSymbols[name.ID()] = sym
+	r.pendingBindings[sym.ID] = struct{}{}
 	if value != nil {
 		r.resolveExpr(scope, value)
 	}
-	sym.Initializing = false
-	return sym
+	delete(r.pendingBindings, sym.ID)
 }
 
 func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
@@ -270,7 +264,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", ast.LocOf(node), "")
 				return
 			}
-			if sym.Initializing {
+			if _, pending := r.pendingBindings[sym.ID]; pending {
 				msg := "symbol `" + node.Name + "` used before it's defined"
 				r.ctx.Diagnostics.Add(
 					diagnostics.NewError(msg).
@@ -351,7 +345,7 @@ func Resolve(ctx *project.CompilerContext, module *project.Module) {
 	if module == nil || ctx == nil {
 		return
 	}
-	r := &resolver{module: module, ctx: ctx}
+	r := &resolver{module: module, ctx: ctx, pendingBindings: make(map[symbols.SymbolID]struct{})}
 	r.resolveModule()
 }
 

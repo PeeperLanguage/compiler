@@ -18,7 +18,7 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 
 - Every AST `Node` exposes `ID()` and `SetID()`.
 - Semantic side tables use `NodeID`, not AST pointer identity, as their key.
-- `bindingresult.Result.NodeSymbols` maps identifier/path node IDs to symbols.
+- `bindingresult.Result.NodeSymbols` maps identifier/path node IDs, including binding declaration names, to symbols.
 - `bindingresult.Result.BlockScopes` maps block node IDs to lexical scopes.
 - `typecheckresult.Result.ExprTypes` maps expression node IDs to semantic types.
 - `typecheckresult.Result.CaseTests` maps case-test node IDs to resolved case
@@ -46,8 +46,8 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - Symbol identity is pointer-stable through semantic handoff; consumers compare
   symbol pointers or IDs rather than names when identity matters.
 - A `symbols.Symbol` contains name, kind, semantic type, visibility, mutability,
-  initialization state, usage state, compiler operation, defining module,
-  source location, AST node, and an optional child scope.
+  usage state, compiler operation, defining module, source location, AST node,
+  and an optional child scope.
 - `Symbol.Kind` includes import, variable, constant, type, function, method,
   parameter, field, static, variant, error member, and unknown.
 - `Symbol.IsPub` is derived from the first rune of the name being uppercase.
@@ -69,7 +69,7 @@ This map records binding, type, place, intrinsic, and constant implementation ob
   not name-addressable.
 - `LookupLocal` is current-scope only; `Lookup` walks parents, so nearest scope
   wins and shadowing is lexical.
-- `LookupNode` searches stored AST nodes; `Symbols` preserves declaration order.
+- `Symbols` preserves declaration order; declaration identity comes from `NodeSymbols` rather than scanning symbol AST pointers.
 - `IsMutableBinding` combines lookup, kind, and `Symbol.IsMutable`.
 - `Parent` supports bounded analyses such as `place.LocalRoot`.
 - `InsertParent` inserts a generated parent without changing resolved child symbols.
@@ -79,7 +79,8 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 `internal/semantics/bindingresult/result.go` defines the staged graph. `New`
 initializes `BlockScopes`, `NodeSymbols`, `MethodsByReceiver`, `MethodsByDecl`,
 and `OperationFunctions`. Block IDs map to scopes; node IDs map to identifiers,
-paths, variants, return origins, loop bindings, and match bindings. Receiver keys
+including parameter and local declaration names, paths, variants, return origins,
+loop bindings, and match bindings. Receiver keys
 map to methods, declaration IDs map to method symbols, and binder sorts operation
 functions. Collection, binding, resolution, and typechecking share this result.
 
@@ -222,8 +223,8 @@ binding state or type construction.
 
 - `Resolve(ctx, module)` creates a resolver and calls `resolveModule`.
 - `resolveModule` creates a binding result if collection did not create one.
-- Top-level variables and constants are marked initializing before their values
-  resolve, then cleared after each initializer.
+- Resolver records top-level variable and constant symbol IDs in its local pending
+  set before values resolve, then removes each ID after its initializer.
 - Functions resolve after top-level bindings.
 - Method symbols are found through `MethodsByDecl`; ordinary functions through
   module scope.
@@ -232,8 +233,8 @@ binding state or type construction.
 - This makes receiver and earlier parameters visible, while rejecting self and
   later-parameter references at the declaration boundary.
 - Receiver is represented as the first parameter and marked `IsReceiver`.
-- Return-origin identifiers are recorded in `NodeSymbols` and mark their source
-  parameter used.
+- Parameter declaration identifiers and return-origin identifiers are recorded in
+  `NodeSymbols`; return origins also mark their source parameter used.
 - Function bodies resolve using the function scope.
 
 ### Blocks and declarations
@@ -241,7 +242,8 @@ binding state or type construction.
 - `resolveBlock` records the block ID -> scope mapping.
 - Explicit nested blocks receive `NewScope(parent)`.
 - Local lets and constants are declared by `resolveLocalBinding` before resolving
-  their initializer, with `Initializing` set during the initializer.
+  their initializer. Their declaration-name ID maps to the symbol in `NodeSymbols`,
+  while their symbol ID is held in resolver's pending set during the initializer.
 - Loop index/value bindings are declared in a body scope.
 - Match arm bindings and field bindings are declared in arm scopes.
 - Unsupported declaration statements inside blocks produce a diagnostic.
@@ -253,7 +255,7 @@ binding state or type construction.
 - An identifier uses `Scope.Lookup`, records its symbol under the identifier ID,
   and marks the symbol used.
 - Import aliases cannot be used as unqualified values.
-- A symbol used while `Initializing` produces `ErrUseBeforeDecl`.
+- A symbol found in resolver's pending set produces `ErrUseBeforeDecl`.
 - Missing names go through unresolved-symbol reporting.
 - Selectors resolve their base; indexes resolve base then index; calls resolve
   callee then arguments.

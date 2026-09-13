@@ -3,8 +3,6 @@ package symbols
 import (
 	"errors"
 	"fmt"
-
-	"compiler/internal/frontend/ast"
 )
 
 type Scope struct {
@@ -73,19 +71,6 @@ func (s *Scope) Lookup(name string) (*Symbol, bool) {
 				return sym, true
 			}
 			return nil, false
-		}
-	}
-	return nil, false
-}
-
-func (s *Scope) LookupNode(node ast.Node) (*Symbol, bool) {
-	if s == nil || node == nil {
-		return nil, false
-	}
-	for _, id := range s.order {
-		sym := s.byID[id]
-		if sym != nil && sym.ASTNode == node {
-			return sym, true
 		}
 	}
 	return nil, false

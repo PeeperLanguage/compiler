@@ -26,8 +26,8 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		if param.Name == nil {
 			continue
 		}
-		paramSym, ok := funcScope.LookupNode(param.Name)
-		if !ok || paramSym == nil {
+		paramSym := c.module.Bindings.NodeSymbols[param.Name.ID()]
+		if paramSym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
 		}

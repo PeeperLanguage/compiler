@@ -14,13 +14,10 @@ import (
 // cfg.BuildQueries, it declares narrow accessors so this package does not
 // import the artifacts that own them.
 type BuildQueries struct {
-	// Symbols resolves a referenced identifier to its binding. The resolver
-	// indexes references only, so a declaration name and an assignment target
-	// are absent here and resolve through Scopes instead.
+	// Symbols resolves identifier occurrences, including declaration names, to
+	// the binding selected by resolution.
 	Symbols map[ast.NodeID]*symbols.Symbol
-	// Scopes resolves a CFG site's lexical scope, which is how a definition
-	// reaches its symbol. Definitions and references genuinely use two different
-	// mechanisms today; this producer reproduces that rather than changing it.
+	// Scopes resolves each CFG site's lexical context for expression effects.
 	Scopes map[ast.NodeID]*symbols.Scope
 	// CallArguments returns a call's effective arguments, including any the
 	// typechecker expanded from a default.
@@ -181,9 +178,9 @@ func (b *builder) buildMatchArms(site *cfg.Site, terminator *cfg.SwitchVariant) 
 func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.Stmt) {
 	switch node := stmt.(type) {
 	case *ast.LetDecl:
-		b.buildBinding(site, scope, node, node.Value)
+		b.buildBinding(site, scope, node, node.Name, node.Value)
 	case *ast.ConstDecl:
-		b.buildBinding(site, scope, node, node.Value)
+		b.buildBinding(site, scope, node, node.Name, node.Value)
 	case *ast.AssignStmt:
 		b.value(site, scope, node.Value, typeinfo.UseMove)
 		b.writeTarget(site, scope, node.Target, node.ID(), node.Value)
@@ -237,13 +234,13 @@ func (b *builder) publishStmt(site cfg.SiteID, scope *symbols.Scope, stmt ast.St
 
 // buildBinding publishes a declaration's initializer reads before the define
 // they initialize, so `let x = x` reads an outer binding rather than itself.
-func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.Stmt, value ast.Expr) {
+func (b *builder) buildBinding(site cfg.SiteID, scope *symbols.Scope, decl ast.Stmt, name *ast.Ident, value ast.Expr) {
 	b.value(site, scope, value, typeinfo.UseMove)
-	if scope == nil {
+	if scope == nil || name == nil {
 		return
 	}
-	sym, found := scope.LookupNode(decl)
-	if !found || sym == nil {
+	sym := b.queries.Symbols[name.ID()]
+	if sym == nil {
 		return
 	}
 	valueID := ast.NodeID(0)

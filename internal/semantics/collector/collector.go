@@ -173,7 +173,9 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 	sym.Type = &typeinfo.UnknownType{} // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
+		return
 	}
+	c.module.Bindings.NodeSymbols[name.ID()] = sym
 }
 
 func Collect(ctx *project.CompilerContext, module *project.Module) {

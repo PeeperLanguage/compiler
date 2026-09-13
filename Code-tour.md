@@ -247,9 +247,10 @@ module.Bindings.NodeSymbols[ident.ID()] = symbol
 module.Bindings.BlockScopes[block.ID()] = scope
 ```
 
-> **Gotcha worth knowing.** `NodeSymbols` indexes *references*, not definitions. A
-> declaration name and an assignment target are resolved through the block scope instead
-> (`scope.LookupNode`, `scope.Lookup`). Two mechanisms, deliberately.
+> **Identity rule.** `NodeSymbols` records resolved syntax occurrences, including
+> declaration names and assignment targets. Lexical scopes remain responsible for name
+> lookup, shadowing, visibility, and declaration order; downstream phases use the
+> published node identity instead of rescanning symbols by AST pointer.
 
 **The typechecker** does more than check types — it *publishes decisions* later phases
 depend on, so nothing has to re-derive them:

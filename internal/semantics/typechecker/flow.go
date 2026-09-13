@@ -602,12 +602,18 @@ func (a *flowAnalyzer) applyStatementEffects(c *checker, scope *symbols.Scope, s
 	}
 	switch node := stmt.(type) {
 	case *ast.LetDecl:
-		if sym, found := scope.LookupNode(node); found {
+		if node.Name == nil {
+			return
+		}
+		if sym := a.module.Bindings.NodeSymbols[node.Name.ID()]; sym != nil {
 			typ, _ := symbols.GetSymbolType(sym)
 			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}
 	case *ast.ConstDecl:
-		if sym, found := scope.LookupNode(node); found {
+		if node.Name == nil {
+			return
+		}
+		if sym := a.module.Bindings.NodeSymbols[node.Name.ID()]; sym != nil {
 			typ, _ := symbols.GetSymbolType(sym)
 			a.updateOriginPlace(c, scope, []place.Origin{{Root: sym}}, typ, node.Value, copyFlowState(*st), st)
 		}

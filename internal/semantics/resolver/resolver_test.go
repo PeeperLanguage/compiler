@@ -66,6 +66,24 @@ func TestResolveRejectsLexicalSelfInitialization(t *testing.T) {
 	t.Fatalf("expected use-before-declaration diagnostic:\n%s", diag.EmitAllToString())
 }
 
+func TestResolvePublishesDiscardDeclarationSymbols(t *testing.T) {
+	module, diag := checkResolveSource(t, `fn main() {
+	let _ = 1;
+	let _ = 2;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	first := fn.Body.Stmts[0].(*ast.LetDecl)
+	second := fn.Body.Stmts[1].(*ast.LetDecl)
+	firstSymbol := module.Bindings.NodeSymbols[first.Name.ID()]
+	secondSymbol := module.Bindings.NodeSymbols[second.Name.ID()]
+	if firstSymbol == nil || secondSymbol == nil || firstSymbol == secondSymbol {
+		t.Fatalf("discard declaration symbols = (%#v, %#v), want distinct symbols", firstSymbol, secondSymbol)
+	}
+}
+
 func TestResolvePublishesAssignmentTargetSymbol(t *testing.T) {
 	module, diag := checkResolveSource(t, `fn main() {
 	let mut value = 0;
