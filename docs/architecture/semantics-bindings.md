@@ -68,7 +68,6 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - `Symbols` preserves declaration order; declaration identity comes from the binding result rather than scanning symbol AST pointers.
 - `IsMutableBinding` combines lookup, kind, and `Symbol.IsMutable`.
 - `Parent` supports bounded analyses such as `place.LocalRoot`.
-- `InsertParent` inserts a generated parent without changing resolved child symbols.
 
 ## Binding result
 

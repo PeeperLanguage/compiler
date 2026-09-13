@@ -69,14 +69,24 @@ fn main() {
 		t.Fatal(err)
 	}
 	module.Typechecking.ForEachCheckedIteration(func(id ast.NodeID, expansion *ast.BlockStmt) {
-		loop := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
+		checked := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
+		sourceLoop := module.TypedASTNodes[id].(*ast.ForStmt)
 		if module.TypedASTNodes[expansion.ID()] != expansion {
-			t.Fatal("source scope not indexed")
+			t.Fatal("checked expansion not indexed")
 		}
-		if module.TypedASTNodes[id] != loop || loop.Iterable != nil || loop.Cond != nil {
-			t.Fatalf("checked loop not indexed: %#v", loop)
+		if checked.ID() == id || module.TypedASTNodes[checked.ID()] != checked || checked.Iterable != nil || checked.Cond != nil {
+			t.Fatalf("checked loop identity not isolated: %#v", checked)
 		}
-		result := loop.Body.Stmts[0].(*ast.LetDecl)
+		if sourceLoop.ID() != id || sourceLoop.Iterable == nil {
+			t.Fatalf("source loop index replaced by checked loop: %#v", sourceLoop)
+		}
+		expansionScope := module.Bindings.Scope(expansion)
+		checkedScope := module.Bindings.Scope(checked.Body)
+		sourceBodyScope := module.Bindings.Scope(sourceLoop.Body)
+		if sourceBodyScope == nil || sourceBodyScope.Parent() == expansionScope || sourceBodyScope.Parent() == checkedScope {
+			t.Fatal("checked iteration mutated source body scope parent")
+		}
+		result := checked.Body.Stmts[0].(*ast.LetDecl)
 		call := result.Value.(*ast.CallExpr)
 		selector := call.Callee.(*ast.SelectorExpr)
 		if module.Bindings.Symbol(selector.Name) == nil {
@@ -85,8 +95,10 @@ fn main() {
 		if mutable, found := module.Typechecking.ReferenceArgument(selector.Expr.ID()); !found || !mutable {
 			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
 		}
-		body := loop.Body.Stmts[2].(*ast.BlockStmt)
-		item := body.Stmts[0].(*ast.LetDecl)
+		item := checked.Body.Stmts[2].(*ast.LetDecl)
+		if item.Name == sourceLoop.Value || item.Name.ID() == sourceLoop.Value.ID() {
+			t.Fatal("checked iteration reused source binding syntax")
+		}
 		if got := typeinfo.TypeText(module.Bindings.Symbol(item.Name).Type); got != "i32" {
 			t.Fatalf("item type = %s", got)
 		}

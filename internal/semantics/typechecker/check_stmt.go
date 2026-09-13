@@ -746,7 +746,11 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	}
 	item := &ast.LetDecl{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
-		Name:         node.Value,
+		Name: &ast.Ident{
+			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			Name:         node.Value.Name,
+			Location:     location,
+		},
 		Value: &ast.Ident{
 			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
 			Name:         resultName,
@@ -754,22 +758,19 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 		},
 		Location: location,
 	}
-	body := *node.Body
-	body.Stmts = append([]ast.Stmt{item}, node.Body.Stmts...)
 	checked := &ast.ForStmt{
-		NodeIDHolder: node.NodeIDHolder,
+		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
 		Body: &ast.BlockStmt{
 			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
-			Stmts:        []ast.Stmt{result, stop, &body},
+			Stmts:        []ast.Stmt{result, stop, item, node.Body},
 			Location:     location,
 		},
 		Location: location,
 	}
 	expansion.Stmts = append(expansion.Stmts, checked)
-	bodyScope := c.module.Bindings.Scope(node.Body)
 	expansionScope := symbols.NewScope(scope)
 	c.module.Bindings.SetScope(expansion, expansionScope)
-	iterationScope := bodyScope.InsertParent(expansionScope)
+	iterationScope := symbols.NewScope(expansionScope)
 
 	c.module.Bindings.SetScope(checked.Body, iterationScope)
 	c.module.Bindings.SetScope(stop.Then, symbols.NewScope(iterationScope))
@@ -781,6 +782,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	c.module.Bindings.Bind(result.Name, resultSymbol)
 	c.module.Bindings.Bind(stop.Cond.(*ast.BinaryExpr).Left, resultSymbol)
 	c.module.Bindings.Bind(item.Value, resultSymbol)
+	c.module.Bindings.Bind(item.Name, c.module.Bindings.Symbol(node.Value))
 
 	c.module.Typechecking.RecordCheckedIteration(node.ID(), expansion)
 }
