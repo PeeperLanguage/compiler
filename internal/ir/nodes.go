@@ -224,6 +224,7 @@ type InterfaceCall struct {
 	SourceInfo
 	Base     Expr
 	Slot     int
+	SlotType TypeID
 	Args     []Expr
 	Consumes bool
 	Type     TypeID

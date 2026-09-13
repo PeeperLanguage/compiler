@@ -139,14 +139,21 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 				return l.invalid("interface method reached IR lowering with invalid receiver")
 			}
 			params := make([]ir.TypeField, 0, len(method.Params)-1)
+			slotParams := []ir.TypeID{l.ctx.Types.Intern(ir.Type{Kind: ir.TypeRawPtr})}
 			for _, param := range method.Params[1:] {
-				params = append(params, ir.TypeField{Name: param.Name, Type: l.intern(param.Type)})
+				paramType := l.intern(param.Type)
+				if paramType == ir.InvalidType {
+					return l.invalid("interface method reached IR lowering with invalid parameter type")
+				}
+				params = append(params, ir.TypeField{Name: param.Name, Type: paramType})
+				slotParams = append(slotParams, paramType)
 			}
 			returnType := l.intern(method.Return)
 			if returnType == ir.InvalidType {
 				returnType = l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
 			}
-			methods = append(methods, ir.TypeMethod{Name: method.Name, Receiver: receiver, Params: params, Return: returnType})
+			slotType := l.ctx.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: slotParams, Return: returnType})
+			methods = append(methods, ir.TypeMethod{Name: method.Name, Receiver: receiver, Params: params, Return: returnType, SlotType: slotType})
 		}
 		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: methods})
 	case *typeinfo.FuncType:

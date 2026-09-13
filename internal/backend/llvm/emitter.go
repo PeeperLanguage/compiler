@@ -118,7 +118,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				if isOwnedInterfaceType(mod.Types, makeVal.Type) {
 					fmt.Fprintf(&b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceSymbolName("iface_release", mod.Types, makeVal.Type, makeVal.DataType))
 				}
-				for i, slot := range makeVal.Slots {
+				for _, slot := range makeVal.Slots {
 					b.WriteString(", ")
 					refName, ok := slot.(*mir.RefName)
 					slotName := ""
@@ -127,8 +127,9 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					} else {
 						slotName = "null"
 					}
-					slotLayout, ok := emitter.interfaceSlotLayout(makeVal.Type, i)
-					if !ok {
+					slotLayout := emitter.layout(slot.TypeID())
+					if slotLayout == nil || slotLayout.Kind != llvmLayoutFunction {
+						emitter.markInvalid("interface slot reached LLVM without published function type")
 						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
 					}
 					if slotName == "null" {

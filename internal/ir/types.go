@@ -55,6 +55,7 @@ type TypeMethod struct {
 	Receiver MethodReceiver
 	Params   []TypeField
 	Return   TypeID
+	SlotType TypeID
 }
 
 type VariantFamily uint8
@@ -259,6 +260,36 @@ func (t *TypeTable) Type(id TypeID) (Type, bool) {
 	return t.types[id], true
 }
 
+// InterfaceMethod returns one published interface method descriptor from an
+// interface value or carrier type. The descriptor owns the method slot ABI
+// TypeID, so consumers never reconstruct slot function shape.
+func (t *TypeTable) InterfaceMethod(id TypeID, slot int) (TypeMethod, bool) {
+	typ, ok := t.interfaceType(id)
+	if !ok || slot < 0 || slot >= len(typ.Methods) {
+		return TypeMethod{}, false
+	}
+	return typ.Methods[slot], true
+}
+
+func (t *TypeTable) InterfaceMethodCount(id TypeID) (int, bool) {
+	typ, ok := t.interfaceType(id)
+	if !ok {
+		return 0, false
+	}
+	return len(typ.Methods), true
+}
+
+func (t *TypeTable) interfaceType(id TypeID) (Type, bool) {
+	typ, ok := t.Type(id)
+	if !ok {
+		return Type{}, false
+	}
+	if typ.Kind == TypeReference || typ.Kind == TypeOwnedPtr {
+		typ, ok = t.Type(typ.Elem)
+	}
+	return typ, ok && typ.Kind == TypeInterface
+}
+
 // NamedTypeIDs returns completed identified composites in stable TypeID order.
 // Backends use this to declare recursive aggregate shells before all uses.
 func (t *TypeTable) NamedTypeIDs() []TypeID {
@@ -438,7 +469,7 @@ func descriptorKey(typ Type) string {
 		fmt.Fprintf(&b, "|f:%q:%d", field.Name, field.Type)
 	}
 	for _, method := range typ.Methods {
-		fmt.Fprintf(&b, "|m:%q:%d:%d", method.Name, method.Receiver, method.Return)
+		fmt.Fprintf(&b, "|m:%q:%d:%d:%d", method.Name, method.Receiver, method.Return, method.SlotType)
 		for _, param := range method.Params {
 			fmt.Fprintf(&b, ":%q:%d", param.Name, param.Type)
 		}

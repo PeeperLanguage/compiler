@@ -78,15 +78,16 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 // It extracts data pointer and itab pointer from interface value, loads
 // function pointer from requested slot, then bitcasts it to callable LLVM type.
 // Callers reuse this for both expression-form and discarded-result calls.
-func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (llvmValue, llvmValue, bool) {
-	if b == nil || base == nil {
+func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int, slotType ir.TypeID) (llvmValue, llvmValue, bool) {
+	if b == nil || base == nil || slotType == ir.InvalidType {
 		return llvmValue{}, llvmValue{}, false
 	}
 	baseValue := emitRef(b, base)
 	data := b.extractField(baseValue, llvmFieldData)
 	itab := b.extractField(baseValue, llvmFieldDispatch)
-	slotLayout, ok := b.emitter.interfaceSlotLayout(base.TypeID(), slot)
-	if !ok {
+	slotLayout := b.emitter.layout(slotType)
+	if slotLayout == nil || slotLayout.Kind != llvmLayoutFunction {
+		b.emitter.markInvalid("interface call reached LLVM without published slot function type")
 		return llvmValue{}, llvmValue{}, false
 	}
 	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
@@ -123,7 +124,7 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	if b == nil || call == nil {
 		return
 	}
-	data, fn, ok := emitInterfaceCallTarget(b, call.Base, call.Slot)
+	data, fn, ok := emitInterfaceCallTarget(b, call.Base, call.Slot, call.SlotType)
 	if !ok {
 		return
 	}

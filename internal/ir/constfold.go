@@ -107,6 +107,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return &InterfaceCall{
 			Base:       FoldExpr(types, node.Base, env),
 			Slot:       node.Slot,
+			SlotType:   node.SlotType,
 			Args:       foldExprs(types, node.Args, env),
 			Consumes:   node.Consumes,
 			Type:       node.Type,

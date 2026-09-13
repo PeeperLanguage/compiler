@@ -391,36 +391,6 @@ func interfaceTypeID(types *ir.TypeTable, id ir.TypeID) (ir.TypeID, bool) {
 	return id, ok && typ.Kind == ir.TypeInterface
 }
 
-func (e *llvmEmitter) interfaceSlotLayout(id ir.TypeID, slot int) (*llvmLayout, bool) {
-	if e == nil || e.mod == nil || e.mod.Types == nil {
-		return nil, false
-	}
-	interfaceID, ok := interfaceTypeID(e.mod.Types, id)
-	if !ok {
-		return nil, false
-	}
-	iface, _ := e.mod.Types.Type(interfaceID)
-	if slot < 0 || slot >= len(iface.Methods) {
-		return nil, false
-	}
-	method := iface.Methods[slot]
-	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
-	params := make([]*llvmLayout, 0, len(method.Params)+1)
-	params = append(params, rawPointer)
-	for _, param := range method.Params {
-		llvmParam, ok := e.layoutType(param.Type, false)
-		if !ok {
-			return nil, false
-		}
-		params = append(params, llvmParam)
-	}
-	ret, ok := e.layoutType(method.Return, false)
-	if !ok {
-		return nil, false
-	}
-	return llvmFunctionLayout(ret, params), true
-}
-
 func interfaceMethodVtableSlotID(types *ir.TypeTable, id ir.TypeID, methodSlot int) int {
 	offset := interfaceReleaseVtableSlot
 	if isOwnedInterfaceType(types, id) {

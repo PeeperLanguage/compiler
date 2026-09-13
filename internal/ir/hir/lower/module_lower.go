@@ -886,6 +886,11 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 	}
 	baseType := exprResolvedType(module, selector.Expr)
 	if iface, slot, ok := lookupInterfaceMethod(module, baseType, selector.Name.Name); ok {
+		interfaceType := loweredTypeID(ctx, baseType)
+		loweredMethod, lowered := ctx.Types.InterfaceMethod(interfaceType, slot)
+		if !lowered || loweredMethod.Name != iface.Name || loweredMethod.SlotType == ir.InvalidType {
+			return &ir.InvalidExpr{Message: "missing lowered interface slot evidence", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)}}
+		}
 		args := make([]ir.Expr, 0, len(effectiveArgs))
 		for i, arg := range effectiveArgs {
 			var argExpected typeinfo.Type
@@ -902,9 +907,10 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 		return &ir.InterfaceCall{
 			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Slot:       slot,
+			SlotType:   loweredMethod.SlotType,
 			Args:       args,
 			Consumes:   consumes,
-			Type:       loweredReturnTypeID(ctx, iface.Return),
+			Type:       loweredMethod.Return,
 			SourceInfo: ir.SourceInfo{Location: ast.LocOf(call)},
 		}
 	}

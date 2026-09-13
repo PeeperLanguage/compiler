@@ -1355,6 +1355,10 @@ fn consume(counter: *Counter) -> i32 {
 	if !ok || !call.Consumes {
 		t.Fatalf("expected consuming interface call marker, got %#v", ret.Value)
 	}
+	method, ok := out.Types.InterfaceMethod(call.Base.TypeID(), call.Slot)
+	if !ok || call.SlotType != method.SlotType {
+		t.Fatalf("interface call slot type = type#%d, want published type#%d", call.SlotType, method.SlotType)
+	}
 }
 
 func TestGenerateHIRSupportsInterfaceCarrierMethodParameters(t *testing.T) {
@@ -1392,6 +1396,14 @@ fn main() -> i32 {
 	consumer, ok := call.Args[0].(*ir.InterfaceMake)
 	if !ok || len(consumer.Slots) != 1 || consumer.Slots[0].SlotType == ir.InvalidType {
 		t.Fatalf("expected interface carrier slot, got %#v", call.Args[0])
+	}
+	method, ok := out.Types.InterfaceMethod(consumer.Type, 0)
+	if !ok || consumer.Slots[0].SlotType != method.SlotType {
+		t.Fatalf("interface carrier slot type = type#%d, want published type#%d", consumer.Slots[0].SlotType, method.SlotType)
+	}
+	slot, ok := out.Types.Type(method.SlotType)
+	if !ok || slot.Kind != ir.TypeFunction || len(slot.Params) != 2 || slot.Params[1] != method.Params[0].Type || slot.Return != method.Return {
+		t.Fatalf("published interface slot does not preserve parameter/return ABI: %#v", slot)
 	}
 }
 

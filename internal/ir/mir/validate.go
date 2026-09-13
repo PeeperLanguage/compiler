@@ -45,12 +45,18 @@ func (m *Module) Validate() error {
 				continue
 			}
 			for role, id := range map[string]ir.TypeID{
-				"slot": thunk.SlotType, "function": thunk.FuncType, "data": thunk.DataType,
+				"interface": thunk.InterfaceType, "slot": thunk.SlotType, "function": thunk.FuncType, "data": thunk.DataType,
 			} {
 				if _, ok := m.Types.Type(id); !ok {
 					problems = append(problems, fmt.Sprintf("interface thunk %s has invalid %s type#%d", thunk.Name, role, id))
 				}
 			}
+			if method, ok := m.Types.InterfaceMethod(thunk.InterfaceType, thunk.Slot); !ok {
+				problems = append(problems, fmt.Sprintf("interface thunk %s targets invalid slot %d on type#%d", thunk.Name, thunk.Slot, thunk.InterfaceType))
+			} else if method.SlotType != thunk.SlotType {
+				problems = append(problems, fmt.Sprintf("interface thunk %s has slot type#%d, want published type#%d", thunk.Name, thunk.SlotType, method.SlotType))
+			}
+			problems = append(problems, validateInterfaceSlotType(m.Types, thunk.SlotType, "interface thunk "+thunk.Name)...)
 		}
 	}
 	for _, fn := range m.Funcs {
@@ -342,8 +348,18 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 	case *InterfaceMake:
 		problems = append(problems, validateValueRef(types, node.Value, where+" interface value")...)
 		problems = append(problems, validateKnownType(types, node.DataType, where+" interface data type")...)
+		methodCount, interfaceOK := types.InterfaceMethodCount(node.Type)
+		if !interfaceOK {
+			problems = append(problems, fmt.Sprintf("%s constructs non-interface carrier type#%d", where, node.Type))
+		} else if len(node.Slots) != methodCount {
+			problems = append(problems, fmt.Sprintf("%s has %d interface slots, want %d", where, len(node.Slots), methodCount))
+		}
 		for index, slot := range node.Slots {
 			problems = append(problems, validateValueRef(types, slot, fmt.Sprintf("%s interface slot %d", where, index))...)
+			method, ok := types.InterfaceMethod(node.Type, index)
+			if ok && slot != nil && slot.TypeID() != method.SlotType {
+				problems = append(problems, fmt.Sprintf("%s interface slot %d has type#%d, want published type#%d", where, index, slot.TypeID(), method.SlotType))
+			}
 		}
 	case *InterfaceCall:
 		problems = append(problems, validateInterfaceCall(types, node, where)...)
@@ -395,10 +411,59 @@ func validateInterfaceCall(types *ir.TypeTable, call *InterfaceCall, where strin
 	for index, arg := range call.Args {
 		problems = append(problems, validateValueRef(types, arg, fmt.Sprintf("%s interface argument %d", where, index))...)
 	}
-	if call.Slot < 0 {
-		problems = append(problems, fmt.Sprintf("%s has negative interface slot %d", where, call.Slot))
+	if call.Base == nil || types == nil {
+		return problems
+	}
+	method, ok := types.InterfaceMethod(call.Base.TypeID(), call.Slot)
+	if !ok {
+		return append(problems, fmt.Sprintf("%s targets invalid interface slot %d on type#%d", where, call.Slot, call.Base.TypeID()))
+	}
+	if call.SlotType != method.SlotType {
+		problems = append(problems, fmt.Sprintf("%s has slot type#%d, want published type#%d", where, call.SlotType, method.SlotType))
+	}
+	problems = append(problems, validateInterfaceSlotType(types, call.SlotType, where)...)
+	slotType, slotOK := types.Type(call.SlotType)
+	if !slotOK || slotType.Kind != ir.TypeFunction {
+		return problems
+	}
+	wantArgs := len(slotType.Params) - 1
+	if wantArgs < 0 {
+		wantArgs = 0
+	}
+	if len(call.Args) != wantArgs {
+		problems = append(problems, fmt.Sprintf("%s has %d interface arguments, want %d", where, len(call.Args), wantArgs))
+	}
+	for index, arg := range call.Args {
+		param := index + 1
+		if param < len(slotType.Params) && arg != nil && arg.TypeID() != slotType.Params[param] {
+			problems = append(problems, fmt.Sprintf("%s interface argument %d has type#%d, want type#%d", where, index, arg.TypeID(), slotType.Params[param]))
+		}
+	}
+	if call.Type != slotType.Return {
+		problems = append(problems, fmt.Sprintf("%s returns type#%d, want slot result type#%d", where, call.Type, slotType.Return))
 	}
 	return problems
+}
+
+func validateInterfaceSlotType(types *ir.TypeTable, slotType ir.TypeID, where string) []string {
+	if types == nil {
+		return nil
+	}
+	fn, ok := types.Type(slotType)
+	if !ok {
+		return []string{fmt.Sprintf("%s has invalid interface slot type#%d", where, slotType)}
+	}
+	if fn.Kind != ir.TypeFunction {
+		return []string{fmt.Sprintf("%s interface slot type#%d is not a function", where, slotType)}
+	}
+	if len(fn.Params) == 0 {
+		return []string{fmt.Sprintf("%s interface slot type#%d has no erased receiver", where, slotType)}
+	}
+	receiver, ok := types.Type(fn.Params[0])
+	if !ok || receiver.Kind != ir.TypeRawPtr {
+		return []string{fmt.Sprintf("%s interface slot type#%d receiver is not rawptr", where, slotType)}
+	}
+	return nil
 }
 
 func validateStructLiteral(types *ir.TypeTable, value *StructLit, where string) []string {

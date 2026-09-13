@@ -43,7 +43,7 @@ type llvmTypeFixture struct {
 	refSliceI32, mutRefSliceI32, mutRefFixed4I32                 ir.TypeID
 	valueStruct, refValueStruct                                  ir.TypeID
 	ownedValueStruct, fnI32, fnVoid, fnBoolVoid                  ir.TypeID
-	fnRawptrI32                                                  ir.TypeID
+	fnRawptrI32, fnRawptrVoid                                    ir.TypeID
 }
 
 var llvmTypes = newLLVMTypeFixture(target.Bits64)
@@ -92,6 +92,7 @@ func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 		fnVoid:            table.Intern(ir.Type{Kind: ir.TypeFunction, Return: void}),
 		fnBoolVoid:        table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{boolType}, Return: void}),
 		fnRawptrI32:       table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: i32}),
+		fnRawptrVoid:      table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: void}),
 	}
 }
 
@@ -1465,7 +1466,7 @@ func TestGenerateLLVMIRAcceptsRawExternBoundaries(t *testing.T) {
 }
 
 func TestGenerateLLVMIRUsesCarriedAllocatorForInterfaceDrops(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Receiver: ir.MethodReceiverValue, Return: llvmTypes.void}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Receiver: ir.MethodReceiverValue, Return: llvmTypes.void, SlotType: llvmTypes.fnRawptrVoid}}})
 	ownedIface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	optionalOwnedIface := llvmTypes.table.Intern(ir.OptionalVariant(ownedIface))
 	for _, tt := range []struct {
@@ -1540,7 +1541,7 @@ func TestGenerateLLVMIROwnedInterfaceAdoptsAllocationAndDropsPayload(t *testing.
 }
 
 func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32, SlotType: llvmTypes.fnRawptrI32}}})
 	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: iface})
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -1564,9 +1565,10 @@ func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
 							Type:     interfaceType,
 						}},
 						&mir.Assign{Name: "result", Value: &mir.InterfaceCall{
-							Base: &mir.RefName{Name: "reader", Type: interfaceType},
-							Slot: 0,
-							Type: llvmTypes.i32,
+							Base:     &mir.RefName{Name: "reader", Type: interfaceType},
+							Slot:     0,
+							SlotType: llvmTypes.fnRawptrI32,
+							Type:     llvmTypes.i32,
 						}},
 					},
 					Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: llvmTypes.i32}},
@@ -1583,16 +1585,18 @@ func TestGenerateLLVMIRInterfaceMethodUsesSlotAfterDrop(t *testing.T) {
 }
 
 func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.T) {
-	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32}}})
+	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32, SlotType: llvmTypes.fnRawptrI32}}})
 	functionType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{interfaceType}, Return: llvmTypes.i32})
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		InterfaceThunks: []*mir.InterfaceThunk{{
-			Name:     "interface_thunk",
-			SlotType: llvmTypes.fnRawptrI32,
-			FuncName: "consume_interface",
-			FuncType: functionType,
-			DataType: llvmTypes.valueStruct,
+			Name:          "interface_thunk",
+			InterfaceType: interfaceType,
+			Slot:          0,
+			SlotType:      llvmTypes.fnRawptrI32,
+			FuncName:      "consume_interface",
+			FuncType:      functionType,
+			DataType:      llvmTypes.valueStruct,
 		}},
 		Funcs: []*mir.Function{{
 			Name:       "consume_interface",
@@ -1613,7 +1617,7 @@ func TestGenerateLLVMIRInterfaceThunkUsesActualInterfaceReceiverType(t *testing.
 }
 
 func TestInterfaceSymbolsDistinguishOwnedAndBorrowedABI(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "read", Receiver: ir.MethodReceiverShared, Return: llvmTypes.i32, SlotType: llvmTypes.fnRawptrI32}}})
 	owned := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	borrowed := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: iface})
 
@@ -3048,7 +3052,7 @@ func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
 }
 
 func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
-	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Receiver: ir.MethodReceiverValue, Return: llvmTypes.void}}})
+	iface := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{Name: "take", Receiver: ir.MethodReceiverValue, Return: llvmTypes.void, SlotType: llvmTypes.fnRawptrVoid}}})
 	interfaceType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
@@ -3061,6 +3065,7 @@ func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
 				Instrs: []mir.Instr{&mir.InterfaceCall{
 					Base:     &mir.RefName{Name: "value", Type: interfaceType},
 					Slot:     0,
+					SlotType: llvmTypes.fnRawptrVoid,
 					Consumes: true,
 					Type:     llvmTypes.void,
 				}},

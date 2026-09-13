@@ -223,3 +223,55 @@ func TestValidateAcceptsEmptyModule(t *testing.T) {
 		t.Fatalf("Validate() = %v, want nil for a module with no functions", err)
 	}
 }
+
+func interfaceValidationFixture() (*Module, ir.TypeID, ir.TypeID, ir.TypeID) {
+	types := ir.NewTypeTable()
+	voidType := types.Intern(ir.Type{Kind: ir.TypeVoid})
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	rawptr := types.Intern(ir.Type{Kind: ir.TypeRawPtr})
+	slotType := types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: voidType})
+	wrongSlotType := types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: i32})
+	iface := types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: []ir.TypeMethod{{
+		Name: "take", Receiver: ir.MethodReceiverValue, Return: voidType, SlotType: slotType,
+	}}})
+	carrier := types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: iface})
+	module := &Module{
+		Name: "interface_validation", Types: types,
+		Funcs: []*Function{{
+			Name: "consume", Params: []ir.Param{{Name: "value", Type: carrier}}, ReturnType: voidType,
+			Blocks: []*Block{{ID: 0, Instrs: []Instr{&InterfaceCall{
+				Base: &RefName{Name: "value", Type: carrier}, Slot: 0, SlotType: slotType, Type: voidType,
+			}}, Term: &Ret{}}},
+		}},
+	}
+	return module, carrier, slotType, wrongSlotType
+}
+
+func TestValidateRejectsInterfaceCallSlotIndexMismatch(t *testing.T) {
+	module, _, _, _ := interfaceValidationFixture()
+	call := module.Funcs[0].Blocks[0].Instrs[0].(*InterfaceCall)
+	call.Slot = 1
+	if err := module.Validate(); err == nil || !strings.Contains(err.Error(), "targets invalid interface slot 1") {
+		t.Fatalf("Validate() = %v, want invalid interface slot", err)
+	}
+}
+
+func TestValidateRejectsInterfaceCallSlotTypeMismatch(t *testing.T) {
+	module, _, _, wrongSlotType := interfaceValidationFixture()
+	call := module.Funcs[0].Blocks[0].Instrs[0].(*InterfaceCall)
+	call.SlotType = wrongSlotType
+	if err := module.Validate(); err == nil || !strings.Contains(err.Error(), "want published type#") {
+		t.Fatalf("Validate() = %v, want published interface slot type mismatch", err)
+	}
+}
+
+func TestValidateRejectsInterfaceConstructionSlotTypeMismatch(t *testing.T) {
+	module, carrier, _, wrongSlotType := interfaceValidationFixture()
+	module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Name: "erased", Value: &InterfaceMake{
+		Value: &RefName{Name: "value", Type: carrier}, DataType: carrier,
+		Slots: []ValueRef{&RefName{Name: "thunk", Type: wrongSlotType}}, Type: carrier,
+	}}}
+	if err := module.Validate(); err == nil || !strings.Contains(err.Error(), "want published type#") {
+		t.Fatalf("Validate() = %v, want published construction slot type mismatch", err)
+	}
+}

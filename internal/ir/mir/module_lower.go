@@ -892,7 +892,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			wrapperName := ir.InterfaceThunkName(l.module.Types.ABIKey(slot.InterfaceType), l.module.Types.ABIKey(dataType), slot.MethodName, index)
 			slot.WrapperName = wrapperName
 			slot.DataType = dataType
-			l.registerInterfaceThunk(slot)
+			l.registerInterfaceThunk(slot, index)
 			slots = append(slots, &RefName{Name: wrapperName, Type: slot.SlotType})
 		}
 		name := l.nextTemp()
@@ -910,7 +910,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeID(), Location: e.Origin().Location}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, SlotType: e.SlotType, Args: args, Consumes: e.Consumes, Type: e.TypeID(), Location: e.Origin().Location}
 		if l.isVoid(call.Type) {
 			l.appendInstr(out, call)
 			return nil
@@ -953,7 +953,7 @@ func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
 		for _, arg := range e.Args {
 			args = append(args, l.lowerExpr(arg, out))
 		}
-		call := &InterfaceCall{Base: base, Slot: e.Slot, Args: args, Consumes: e.Consumes, Type: e.TypeID()}
+		call := &InterfaceCall{Base: base, Slot: e.Slot, SlotType: e.SlotType, Args: args, Consumes: e.Consumes, Type: e.TypeID()}
 		l.appendInstr(out, call)
 		return true
 	default:
@@ -972,7 +972,7 @@ func interfaceDataType(types *ir.TypeTable, id ir.TypeID) ir.TypeID {
 	return id
 }
 
-func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {
+func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot, index int) {
 	if l == nil || l.module == nil || slot.WrapperName == "" {
 		return
 	}
@@ -982,11 +982,13 @@ func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot) {
 		}
 	}
 	thunk := &InterfaceThunk{
-		Name:     slot.WrapperName,
-		SlotType: slot.SlotType,
-		FuncName: slot.FuncName,
-		FuncType: slot.FuncType,
-		DataType: slot.DataType,
+		Name:          slot.WrapperName,
+		InterfaceType: slot.InterfaceType,
+		Slot:          index,
+		SlotType:      slot.SlotType,
+		FuncName:      slot.FuncName,
+		FuncType:      slot.FuncType,
+		DataType:      slot.DataType,
 	}
 	l.module.InterfaceThunks = append(l.module.InterfaceThunks, thunk)
 }

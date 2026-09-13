@@ -221,7 +221,10 @@ func TestFoldExprPreservesCompositeMetadata(t *testing.T) {
 	}{
 		{name: "temporary borrow", expr: &TempBorrow{Value: value, Slice: true}, check: func(expr Expr) bool { return expr.(*TempBorrow).Slice }},
 		{name: "interface make", expr: &InterfaceMake{Value: value, Slots: slots}, check: func(expr Expr) bool { return len(expr.(*InterfaceMake).Slots) == 1 }},
-		{name: "interface call", expr: &InterfaceCall{Base: value, Slot: 3, Consumes: true}, check: func(expr Expr) bool { node := expr.(*InterfaceCall); return node.Slot == 3 && node.Consumes }},
+		{name: "interface call", expr: &InterfaceCall{Base: value, Slot: 3, SlotType: i32, Consumes: true}, check: func(expr Expr) bool {
+			node := expr.(*InterfaceCall)
+			return node.Slot == 3 && node.SlotType == i32 && node.Consumes
+		}},
 		{name: "field", expr: &Field{Base: value, Index: 4, DropBase: true}, check: func(expr Expr) bool { node := expr.(*Field); return node.Index == 4 && node.DropBase }},
 		{name: "array", expr: &ArrayLit{Values: []Expr{value}, Dynamic: true}, check: func(expr Expr) bool { return expr.(*ArrayLit).Dynamic }},
 		{name: "print", expr: &Print{Value: value, Newline: true}, check: func(expr Expr) bool { return expr.(*Print).Newline }},

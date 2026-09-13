@@ -740,7 +740,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			}
 			return b.insertField(current, allocator, llvmFieldAllocator)
 		case *mir.InterfaceCall:
-			data, fn, ok := emitInterfaceCallTarget(b, e.Base, e.Slot)
+			data, fn, ok := emitInterfaceCallTarget(b, e.Base, e.Slot, e.SlotType)
 			if !ok {
 				return b.value("0", b.emitter.layout(e.Type))
 			}

@@ -20,11 +20,13 @@ type Module struct {
 }
 
 type InterfaceThunk struct {
-	Name     string
-	SlotType ir.TypeID
-	FuncName string
-	FuncType ir.TypeID
-	DataType ir.TypeID
+	Name          string
+	InterfaceType ir.TypeID
+	Slot          int
+	SlotType      ir.TypeID
+	FuncName      string
+	FuncType      ir.TypeID
+	DataType      ir.TypeID
 }
 
 type StaticEntry struct {
@@ -339,6 +341,7 @@ type InterfaceMake struct {
 type InterfaceCall struct {
 	Base     ValueRef
 	Slot     int
+	SlotType ir.TypeID
 	Args     []ValueRef
 	Consumes bool
 	Type     ir.TypeID
