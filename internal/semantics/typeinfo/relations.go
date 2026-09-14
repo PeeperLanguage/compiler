@@ -319,6 +319,8 @@ func traversedChildState(relation TypeChildRelation, stored bool, traversal type
 		return stored, true
 	case TypeChildMethodReceiver, TypeChildCallableParameter, TypeChildCallableReturn:
 		return false, traversal.followCallable
+	case TypeChildTypeParameter, TypeChildTypeArgument:
+		return false, false
 	default:
 		panic("typeinfo: unknown semantic type child relation")
 	}

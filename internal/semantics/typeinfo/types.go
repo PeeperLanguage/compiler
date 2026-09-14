@@ -8,7 +8,7 @@ import (
 type Type interface {
 	TypeNode()
 	Text() string
-	forEachChild(func(TypeChild) bool) bool
+	description() typeDescription
 	ownershipShape() ownershipShape
 }
 

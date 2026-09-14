@@ -252,5 +252,5 @@ func typeArgumentIdentity(typ typeinfo.Type) string {
 			return "parameter:" + value.OwnerIdentity + ":" + strconv.Itoa(value.Index) + ":" + value.Text()
 		}
 	}
-	return semanticTypeKey(typ, make(map[typeinfo.Type]bool))
+	return typeinfo.SemanticKey(typ)
 }

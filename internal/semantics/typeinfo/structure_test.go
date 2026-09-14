@@ -8,6 +8,7 @@ import (
 func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 	i32 := &IntegerType{Signed: true, Bits: 32}
 	text := &StringType{}
+	parameter := &TypeParameterType{Name: "T", OwnerIdentity: "Box", Index: 0}
 	receiver := &RefType{Target: i32}
 	tests := []struct {
 		name string
@@ -16,8 +17,16 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 	}{
 		{
 			name: "defined",
-			typ:  &DefinedType{Underlying: i32},
-			want: []TypeChild{{Type: i32, Relation: TypeChildUnderlying}},
+			typ: &DefinedType{
+				Underlying:     i32,
+				TypeParameters: []*TypeParameterType{parameter},
+				TypeArguments:  []Type{text},
+			},
+			want: []TypeChild{
+				{Type: i32, Relation: TypeChildUnderlying},
+				{Type: parameter, Relation: TypeChildTypeParameter},
+				{Type: text, Relation: TypeChildTypeArgument},
+			},
 		},
 		{
 			name: "owned target",
@@ -97,10 +106,10 @@ func TestLeafTypeTraversalCompletesWithoutYield(t *testing.T) {
 		&FloatType{}, &BoolType{}, &CStrType{}, &StringType{}, &NoneType{},
 		&AllocatorType{}, &NamedType{}, &TypeParameterType{}, &RawPtrType{},
 	} {
-		if !typ.forEachChild(func(TypeChild) bool {
+		if !ForEachChild(typ, func(TypeChild) bool {
 			t.Errorf("leaf %T yielded a child", typ)
 			return false
-		}) || !typ.forEachChild(nil) {
+		}) || !ForEachChild(typ, nil) {
 			t.Errorf("leaf %T traversal did not complete", typ)
 		}
 	}

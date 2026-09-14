@@ -97,12 +97,15 @@ Under current AST contract, each node declares children once. Semantic stages ma
 
 ### Semantic types: `typeinfo.ForEachChild`
 
-`typeinfo.Type` is sealed inside `typeinfo` and requires two structural contracts:
+`typeinfo.Type` is sealed inside `typeinfo` and requires two composition contracts:
 
-- `forEachChild` — immediate semantic children and their `TypeChildRelation`;
+- `description` — local semantic identity plus ordered child slots and their
+  `TypeChildRelation`;
 - `ownershipShape` — how copy/drop semantics compose over those children.
 
-`typeinfo.ForEachChild` is the semantic-type equivalent of `ast.Inspect`.
+`typeinfo.ForEachChild` projects present children from `description`; semantic
+fingerprinting consumes the same description, including absent slots.
+`ForEachChild` is the semantic-type equivalent of `ast.Inspect`.
 Containment and ownership capability queries consume this structure. Sizing and
 lowerability intentionally keep separate recursion policies because recursive
 cycles mean different things to those queries.
@@ -322,7 +325,8 @@ Under current design, new syntax does not require new effect kind when existing 
 Under current sealed interface, new type first satisfies `typeinfo.Type`:
 
 1. `TypeNode` and `Text`;
-2. `forEachChild` with correct `TypeChildRelation` for every contained type;
+2. `description` with semantic attributes and correct `TypeChildRelation` for
+   every contained type slot;
 3. `ownershipShape` describing leaf/container ownership policy.
 
 Once this is done, recursive containment and copy/drop propagation compose through
@@ -332,7 +336,6 @@ Then make explicit decisions only where representation semantics genuinely diffe
 
 - `SameType` / compatibility;
 - sizing/lowerability when shape has special rules;
-- exported semantic fingerprint;
 - HIR/backend type lowering;
 - syntax conversion if source has new type syntax.
 

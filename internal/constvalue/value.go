@@ -5,12 +5,14 @@ import (
 	"strconv"
 
 	"compiler/pkg/numeric"
+	"compiler/pkg/typednil"
 )
 
 type Value interface {
 	constValueNode()
 	Truthy() bool
 	TypeText() string
+	semanticKey() string
 }
 
 type IntConst struct {
@@ -102,7 +104,7 @@ func NewVariant(nominalIdentity, typeID string, caseIndex int, fieldValues []Val
 	}
 	fields := make([]Value, len(fieldValues))
 	for index, field := range fieldValues {
-		if field == nil {
+		if field == nil || typednil.IsNil(field) {
 			return nil, false
 		}
 		fields[index] = field

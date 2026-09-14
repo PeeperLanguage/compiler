@@ -39,7 +39,8 @@ copy/drop behavior follows automatically.
 | Concern | API |
 | --- | --- |
 | AST recursion | `ast.Inspect` / node `forEachChild` |
-| semantic type structure | `typeinfo.ForEachChild` / `TypeChildRelation` |
+| semantic type description | sealed `typeinfo.Type.description` |
+| semantic type traversal | `typeinfo.ForEachChild` / `TypeChildRelation` |
 | type ownership composition | sealed `typeinfo.Type.ownershipShape` |
 | place/projection grammar | `place.Project`, `place.Decompose` |
 | graph adjacency | `graph.Directed` |
@@ -56,7 +57,8 @@ those contracts to actual semantic boundaries.
 
 - Structural consumers reuse canonical traversal.
 - Generic analyses consume semantic operations.
-- A new semantic type is sealed until it declares structure + ownership policy.
+- A new semantic type is sealed until it declares semantic/child description +
+  ownership policy.
 - Closed families use sealed interfaces and required methods where those make omissions
   compile-time failures; remaining dispatch sites reject unknown members loudly.
 - Artifact validators reject malformed evidence at producer boundaries.

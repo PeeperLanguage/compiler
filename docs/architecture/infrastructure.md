@@ -245,9 +245,10 @@ There are three source/semantic identity layers:
   symbols, types, mutability, methods, attributes/link names, default-expression
   syntax and resolved facts, and published constant values.
 
-`SemanticExportFingerprint` uses `SemanticExportFingerprint(ctx, module)`. Recursive
-semantic types are guarded by a visiting set. Constants use defining-module values
-through `PublishedConstant`, so imported constant changes affect the fingerprint.
+`SemanticExportFingerprint` uses `SemanticExportFingerprint(ctx, module)`.
+`typeinfo` and `constvalue` own collision-safe semantic keys; recursive semantic
+types are guarded by a visiting set. Constants use defining-module values through
+`PublishedConstant`, so imported constant changes affect the fingerprint.
 
 The workspace index uses content hashes to avoid work for byte-identical files.
 Changed import/export syntax propagates dirtiness through reverse dependents; body-only

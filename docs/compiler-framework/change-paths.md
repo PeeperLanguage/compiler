@@ -72,18 +72,18 @@ A semantic type is not complete until it satisfies the sealed `typeinfo.Type` co
 The first edits are therefore local to `internal/semantics/typeinfo`:
 
 1. add the type and its `TypeNode`/`Text` behavior;
-2. enumerate immediate contained types in `forEachChild` with correct
-   `TypeChildRelation` values;
+2. declare local semantic attributes and ordered child slots in `description`,
+   using correct `TypeChildRelation` values;
 3. declare `ownershipShape` — whether it is a leaf/container and how copy/drop composes.
 
-That is the structural extension point. After it is correct, recursive containment and
-copy/drop propagation use the canonical traversal automatically.
+That is the structural extension point. `ForEachChild` and semantic fingerprinting
+derive from the same description; recursive containment and copy/drop propagation
+use the canonical traversal automatically.
 
 Then add only representation-specific decisions that truly differ, for example:
 
 - equality/compatibility;
 - sizing or lowerability with special cycle/ABI rules;
-- exported semantic fingerprinting;
 - HIR/backend lowering;
 - source-type conversion if new syntax is involved.
 

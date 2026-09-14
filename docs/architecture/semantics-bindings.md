@@ -277,11 +277,11 @@ binding state or type construction.
 
 `internal/semantics/typeinfo` is a sealed semantic type model. Its non-test files
 are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
-`structure.go`, `capabilities.go`, and `capability_walk.go`.
+`structure.go`, `semantic_key.go`, `capabilities.go`, and `capability_walk.go`.
 
 ### Type nodes
 
-- `Type` requires `TypeNode`, `Text`, `forEachChild`, and `ownershipShape`.
+- `Type` requires `TypeNode`, `Text`, `description`, and `ownershipShape`.
 - Primitive nodes include invalid, unknown, integer, byte, char, float, bool,
   cstr, string, none, and allocator types.
 - `NamedType` represents unresolved or builtin-like names.
@@ -329,9 +329,13 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 
 ### Structural traversal and capability queries
 
-- `ForEachChild` exposes immediate child types with `TypeChildRelation`.
+- Each type's private description owns local semantic attributes and ordered
+  child slots once. `SemanticKey` serializes that description with
+  collision-safe framing.
+- `ForEachChild` exposes present description children with `TypeChildRelation`.
 - Relations distinguish underlying, owned, borrowed, optional, array, field,
-  enum payload, receiver, parameter, and return edges.
+  enum payload, receiver, parameter, return, generic-parameter, and
+  generic-argument edges.
 - Consumers choose recursion policy; type structure is not reimplemented in each
   analysis.
 - `IsSizedType` and `IsLowerableType` intentionally have separate cycle rules.

@@ -121,6 +121,9 @@ func IsSizedType(t Type) bool {
 			defer delete(visiting, defined)
 			result := false
 			ForEachChild(defined, func(child TypeChild) bool {
+				if child.Relation != TypeChildUnderlying {
+					return true
+				}
 				result = check(child.Type)
 				return false
 			})
