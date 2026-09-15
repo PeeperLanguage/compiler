@@ -324,7 +324,7 @@ Under current design, new syntax does not require new effect kind when existing 
 
 Under current sealed interface, new type first satisfies `typeinfo.Type`:
 
-1. `TypeNode` and `Text`;
+1. `Text`;
 2. `description` with semantic attributes and correct `TypeChildRelation` for
    every contained type slot;
 3. `ownershipShape` describing leaf/container ownership policy.

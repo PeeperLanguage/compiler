@@ -71,7 +71,7 @@ search-and-remember exercise. It must never fall through as an accidental no-op.
 A semantic type is not complete until it satisfies the sealed `typeinfo.Type` contract.
 The first edits are therefore local to `internal/semantics/typeinfo`:
 
-1. add the type and its `TypeNode`/`Text` behavior;
+1. add the type and its `Text` behavior;
 2. declare local semantic attributes and ordered child slots in `description`,
    using correct `TypeChildRelation` values;
 3. declare `ownershipShape` — whether it is a leaf/container and how copy/drop composes.

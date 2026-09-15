@@ -81,37 +81,22 @@ func (*AllocatorType) description() typeDescription { return describeType("alloc
 func (*RawPtrType) description() typeDescription    { return describeType("rawptr") }
 
 func (t *IntegerType) description() typeDescription {
-	if t == nil {
-		return describeType("integer")
-	}
 	return describeType("integer", strconv.FormatBool(t.Signed), strconv.Itoa(t.Bits))
 }
 
 func (t *FloatType) description() typeDescription {
-	if t == nil {
-		return describeType("float")
-	}
 	return describeType("float", strconv.Itoa(t.Bits))
 }
 
 func (t *NamedType) description() typeDescription {
-	if t == nil {
-		return describeType("named")
-	}
 	return describeType("named", t.Name)
 }
 
 func (t *TypeParameterType) description() typeDescription {
-	if t == nil {
-		return describeType("parameter")
-	}
 	return describeType("parameter", t.OwnerIdentity, strconv.Itoa(t.Index), t.Name)
 }
 
 func (t *DefinedType) description() typeDescription {
-	if t == nil {
-		return describeType("defined")
-	}
 	description := describeType("defined", strconv.Itoa(int(t.Kind)), t.Identity, t.Name)
 	description.children = make([]TypeChild, 0, 1+len(t.TypeParameters)+len(t.TypeArguments))
 	description.children = append(description.children, TypeChild{Type: t.Underlying, Relation: TypeChildUnderlying})
@@ -125,16 +110,10 @@ func (t *DefinedType) description() typeDescription {
 }
 
 func (t *OwnedPtrType) description() typeDescription {
-	if t == nil {
-		return describeType("owned")
-	}
 	return typeDescription{kind: "owned", children: []TypeChild{{Type: t.Target, Relation: TypeChildOwnedTarget}}}
 }
 
 func (t *RefType) description() typeDescription {
-	if t == nil {
-		return describeType("ref")
-	}
 	return typeDescription{
 		kind:       "ref",
 		attributes: []string{strconv.FormatBool(t.Mutable)},
@@ -143,16 +122,10 @@ func (t *RefType) description() typeDescription {
 }
 
 func (t *OptionalType) description() typeDescription {
-	if t == nil {
-		return describeType("optional")
-	}
 	return typeDescription{kind: "optional", children: []TypeChild{{Type: t.Inner, Relation: TypeChildOptionalPayload}}}
 }
 
 func (t *ArrayType) description() typeDescription {
-	if t == nil {
-		return describeType("array")
-	}
 	return typeDescription{
 		kind:       "array",
 		attributes: []string{strconv.Itoa(int(t.Shape)), t.Len},
@@ -161,9 +134,6 @@ func (t *ArrayType) description() typeDescription {
 }
 
 func (t *FuncType) description() typeDescription {
-	if t == nil {
-		return describeType("func")
-	}
 	description := typeDescription{
 		kind:       "func",
 		attributes: make([]string, 0, len(t.Params)+2),
@@ -183,9 +153,6 @@ func (t *FuncType) description() typeDescription {
 }
 
 func (t *StructType) description() typeDescription {
-	if t == nil {
-		return describeType("struct")
-	}
 	description := typeDescription{
 		kind:       "struct",
 		attributes: make([]string, 0, len(t.Fields)),
@@ -199,9 +166,6 @@ func (t *StructType) description() typeDescription {
 }
 
 func (t *InterfaceType) description() typeDescription {
-	if t == nil {
-		return describeType("interface")
-	}
 	description := typeDescription{kind: "interface", attributes: []string{strconv.Itoa(len(t.Methods))}}
 	for _, method := range t.Methods {
 		description.attributes = append(description.attributes, method.Name, strconv.Itoa(len(method.Params)))
@@ -220,9 +184,6 @@ func (t *InterfaceType) description() typeDescription {
 }
 
 func (t *EnumType) description() typeDescription {
-	if t == nil {
-		return describeType("enum")
-	}
 	description := typeDescription{
 		kind:       "enum",
 		attributes: make([]string, 0, len(t.Cases)),

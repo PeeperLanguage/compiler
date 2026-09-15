@@ -2,7 +2,6 @@ package project
 
 import (
 	"slices"
-	"strconv"
 	"strings"
 
 	"compiler/internal/diagnostics"
@@ -246,10 +245,6 @@ func typeArgumentIdentity(typ typeinfo.Type) string {
 	case *typeinfo.DefinedType:
 		if value != nil && value.Identity != "" {
 			return "defined:" + value.Identity
-		}
-	case *typeinfo.TypeParameterType:
-		if value != nil {
-			return "parameter:" + value.OwnerIdentity + ":" + strconv.Itoa(value.Index) + ":" + value.Text()
 		}
 	}
 	return typeinfo.SemanticKey(typ)

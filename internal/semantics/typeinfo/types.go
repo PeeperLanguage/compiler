@@ -6,7 +6,6 @@ import (
 )
 
 type Type interface {
-	TypeNode()
 	Text() string
 	description() typeDescription
 	ownershipShape() ownershipShape
@@ -165,30 +164,6 @@ type InterfaceType struct {
 type EnumType struct {
 	Cases []VariantCase
 }
-
-func (*InvalidType) TypeNode()       {}
-func (*UnknownType) TypeNode()       {}
-func (*IntegerType) TypeNode()       {}
-func (*ByteType) TypeNode()          {}
-func (*CharType) TypeNode()          {}
-func (*FloatType) TypeNode()         {}
-func (*BoolType) TypeNode()          {}
-func (*CStrType) TypeNode()          {}
-func (*StringType) TypeNode()        {}
-func (*NoneType) TypeNode()          {}
-func (*AllocatorType) TypeNode()     {}
-func (*NamedType) TypeNode()         {}
-func (*TypeParameterType) TypeNode() {}
-func (*DefinedType) TypeNode()       {}
-func (*OwnedPtrType) TypeNode()      {}
-func (*RawPtrType) TypeNode()        {}
-func (*RefType) TypeNode()           {}
-func (*OptionalType) TypeNode()      {}
-func (*ArrayType) TypeNode()         {}
-func (*FuncType) TypeNode()          {}
-func (*StructType) TypeNode()        {}
-func (*InterfaceType) TypeNode()     {}
-func (*EnumType) TypeNode()          {}
 
 func (*InvalidType) Text() string { return "<invalid>" }
 func (*UnknownType) Text() string { return "<unknown>" }

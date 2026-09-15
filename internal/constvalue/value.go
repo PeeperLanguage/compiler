@@ -9,7 +9,6 @@ import (
 )
 
 type Value interface {
-	constValueNode()
 	Truthy() bool
 	TypeText() string
 	semanticKey() string
@@ -43,12 +42,6 @@ type VariantConst struct {
 	caseIndex       int
 	fieldValues     []Value
 }
-
-func (*IntConst) constValueNode()     {}
-func (*FloatConst) constValueNode()   {}
-func (*BoolConst) constValueNode()    {}
-func (*StringConst) constValueNode()  {}
-func (*VariantConst) constValueNode() {}
 
 func NewInt(value *big.Int, typeID string) (*IntConst, bool) {
 	out, ok := NormalizeInteger(value, typeID)
