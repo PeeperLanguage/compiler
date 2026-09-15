@@ -75,17 +75,16 @@ func New(name string, kind Kind, node ast.Node, location *source.Location) *Symb
 	}
 }
 
-func (s *Symbol) BindType(typ typeinfo.Type) bool {
+func (s *Symbol) BindType(typ typeinfo.Type) {
 	if s == nil || typ == nil {
-		return false
+		return
 	}
 	s.Type = typ
-	return true
 }
 
-// SymbolType returns the semantic type stored on sym, or (nil, false) if sym
-// carries no type.
-// This is the canonical single-source-of-truth lookup shared across all passes.
+// GetSymbolType returns semantic type stored on sym, or (nil, false) when sym
+// is nil or carries no type. It is a nil-safe accessor; phase ownership remains
+// with the code that publishes and consumes each symbol type.
 func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 	if sym == nil || sym.Type == nil {
 		return nil, false
