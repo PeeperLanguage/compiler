@@ -49,6 +49,68 @@ func TestTypeFromSyntaxUsesExplicitTargetForSizeIntegers(t *testing.T) {
 	}
 }
 
+func TestNumericInfoUsesNarrowTypeCapability(t *testing.T) {
+	alias := &DefinedType{
+		Kind:       DefinedKindAlias,
+		Underlying: &IntegerType{Signed: false, Bits: 16},
+	}
+	tests := []struct {
+		name       string
+		typ        Type
+		wantFamily NumericFamily
+		wantBits   int
+		wantOK     bool
+	}{
+		{name: "signed integer", typ: &IntegerType{Signed: true, Bits: 32}, wantFamily: NumericSigned, wantBits: 32, wantOK: true},
+		{name: "unsigned alias", typ: alias, wantFamily: NumericUnsigned, wantBits: 16, wantOK: true},
+		{name: "byte", typ: &ByteType{}, wantFamily: NumericByte, wantBits: 8, wantOK: true},
+		{name: "float", typ: &FloatType{Bits: 64}, wantFamily: NumericFloat, wantBits: 64, wantOK: true},
+		{name: "named integer", typ: &NamedType{Name: "i8"}, wantFamily: NumericSigned, wantBits: 8, wantOK: true},
+		{name: "named float", typ: &NamedType{Name: "f32"}, wantFamily: NumericFloat, wantBits: 32, wantOK: true},
+		{name: "nonnumeric", typ: &StringType{}},
+		{name: "typed nil", typ: (*IntegerType)(nil)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			family, bits, ok := NumericInfo(test.typ)
+			if family != test.wantFamily || bits != test.wantBits || ok != test.wantOK {
+				t.Fatalf("NumericInfo(%T) = (%v, %d, %v), want (%v, %d, %v)", test.typ, family, bits, ok, test.wantFamily, test.wantBits, test.wantOK)
+			}
+		})
+	}
+}
+
+func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
+	i32 := &IntegerType{Signed: true, Bits: 32}
+	u32 := &IntegerType{Signed: false, Bits: 32}
+
+	leftStruct := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
+	rightStruct := &StructType{Fields: []Field{{Name: "y", Type: u32}, {Name: "x", Type: i32}}}
+	if !SameType(leftStruct, rightStruct) {
+		t.Fatal("struct equality must remain field-name based and order independent")
+	}
+
+	leftFunction := &FuncType{
+		Params:        []Type{i32},
+		Return:        &RefType{Target: i32},
+		ReturnOrigins: &ReturnOriginContract{Sources: []int{0, 1}},
+	}
+	rightFunction := &FuncType{
+		Params:        []Type{&IntegerType{Signed: true, Bits: 32}},
+		Return:        &RefType{Target: &IntegerType{Signed: true, Bits: 32}},
+		ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0}},
+	}
+	if !SameType(leftFunction, rightFunction) {
+		t.Fatal("function equality must preserve set-like return-origin comparison")
+	}
+
+	leftParameter := &TypeParameterType{Name: "T", OwnerIdentity: "left", Index: 0}
+	rightParameter := &TypeParameterType{Name: "T", OwnerIdentity: "right", Index: 0}
+	if SameType(leftParameter, rightParameter) {
+		t.Fatal("type parameters from different owners must remain distinct")
+	}
+}
+
 func TestPointerTypeTextAndEquality(t *testing.T) {
 	ownedA := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
 	ownedB := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
@@ -494,13 +556,15 @@ func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
 		t.Fatalf("optional descriptor = %#v", optional)
 	}
 
-	named, ok := VariantDescriptorOf(&DefinedType{
-		Name:       "Status",
-		Underlying: &EnumType{Cases: []VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
-	})
+	enum := &EnumType{Cases: []VariantCase{{Name: "Ready"}, {Name: "Waiting"}}}
+	named, ok := VariantDescriptorOf(&DefinedType{Name: "Status", Underlying: enum})
 	if !ok || named.Family != VariantFamilyNamed || named.Identity != "Status" || len(named.Cases) != 2 ||
 		named.Cases[0].Name != "Ready" || named.Cases[1].Name != "Waiting" {
 		t.Fatalf("named descriptor = %#v", named)
+	}
+	named.Cases[0].Name = "Changed"
+	if enum.Cases[0].Name != "Ready" {
+		t.Fatal("variant descriptor must not expose enum case storage")
 	}
 }
 

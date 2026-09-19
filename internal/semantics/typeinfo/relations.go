@@ -6,6 +6,8 @@ import (
 	"compiler/pkg/numeric"
 )
 
+// SameType preserves nominal declaration identity and transparent aliases before
+// delegating intrinsic equality to the normalized semantic type.
 func SameType(left, right Type) bool {
 	if left == right {
 		return true
@@ -18,72 +20,10 @@ func SameType(left, right Type) bool {
 	}
 	left = Underlying(left)
 	right = Underlying(right)
-	switch l := left.(type) {
-	case *InvalidType:
-		_, ok := right.(*InvalidType)
-		return ok
-	case *UnknownType:
-		_, ok := right.(*UnknownType)
-		return ok
-	case *IntegerType:
-		r, ok := right.(*IntegerType)
-		return ok && r != nil && l.Signed == r.Signed && l.Bits == r.Bits
-	case *ByteType:
-		_, ok := right.(*ByteType)
-		return ok
-	case *CharType:
-		_, ok := right.(*CharType)
-		return ok
-	case *BoolType:
-		_, ok := right.(*BoolType)
-		return ok
-	case *CStrType:
-		_, ok := right.(*CStrType)
-		return ok
-	case *StringType:
-		_, ok := right.(*StringType)
-		return ok
-	case *NoneType:
-		_, ok := right.(*NoneType)
-		return ok
-	case *AllocatorType:
-		_, ok := right.(*AllocatorType)
-		return ok
-	case *FloatType:
-		r, ok := right.(*FloatType)
-		return ok && r != nil && l.Bits == r.Bits
-	case *NamedType:
-		r, ok := right.(*NamedType)
-		return ok && r != nil && l.Name == r.Name
-	case *TypeParameterType:
-		r, ok := right.(*TypeParameterType)
-		return ok && r != nil && l.OwnerIdentity == r.OwnerIdentity && l.Index == r.Index
-	case *OwnedPtrType:
-		r, ok := right.(*OwnedPtrType)
-		return ok && r != nil && SameType(l.Target, r.Target)
-	case *RawPtrType:
-		_, ok := right.(*RawPtrType)
-		return ok
-	case *RefType:
-		r, ok := right.(*RefType)
-		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
-	case *OptionalType:
-		r, ok := right.(*OptionalType)
-		return ok && r != nil && SameType(l.Inner, r.Inner)
-	case *ArrayType:
-		r, ok := right.(*ArrayType)
-		return ok && r != nil && l.Len == r.Len && l.Shape == r.Shape && SameType(l.Elem, r.Elem)
-	case *FuncType:
-		return checkFuncCompatibility(l, right) == Compatible
-	case *StructType:
-		return checkStructCompatibility(l, right) == Compatible
-	case *InterfaceType:
-		return checkInterfaceCompatibility(l, right) == Compatible
-	case *EnumType:
-		return checkEnumCompatibility(l, right) == Compatible
-	default:
-		return left == nil && right == nil
+	if left == nil {
+		return right == nil
 	}
+	return left.sameType(right)
 }
 
 func sameNominalEnum(left, right Type) (same, nominal bool) {
@@ -136,45 +76,57 @@ const (
 	NumericFloat
 )
 
+type numericType interface {
+	numericInfo() (family NumericFamily, bits int, ok bool)
+}
+
 func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
-	t = Underlying(t)
-	switch typ := t.(type) {
-	case *IntegerType:
-		if typ == nil {
-			return NumericInvalid, 0, false
-		}
-		if typ.Signed {
-			return NumericSigned, typ.Bits, true
-		}
-		return NumericUnsigned, typ.Bits, true
-	case *ByteType:
+	numeric, ok := Underlying(t).(numericType)
+	if !ok {
+		return NumericInvalid, 0, false
+	}
+	return numeric.numericInfo()
+}
+
+func (t *IntegerType) numericInfo() (NumericFamily, int, bool) {
+	if t == nil {
+		return NumericInvalid, 0, false
+	}
+	if t.Signed {
+		return NumericSigned, t.Bits, true
+	}
+	return NumericUnsigned, t.Bits, true
+}
+
+func (*ByteType) numericInfo() (NumericFamily, int, bool) {
+	return NumericByte, 8, true
+}
+
+func (t *FloatType) numericInfo() (NumericFamily, int, bool) {
+	if t == nil {
+		return NumericInvalid, 0, false
+	}
+	return NumericFloat, t.Bits, true
+}
+
+func (t *NamedType) numericInfo() (NumericFamily, int, bool) {
+	if t == nil {
+		return NumericInvalid, 0, false
+	}
+	if t.Name == "byte" {
 		return NumericByte, 8, true
-	case *FloatType:
-		if typ == nil {
-			return NumericInvalid, 0, false
+	}
+	if signed, bits, ok := numeric.ParseIntegerTypeName(t.Name); ok {
+		if signed {
+			return NumericSigned, bits, true
 		}
-		return NumericFloat, typ.Bits, true
-	case *NamedType:
-		if typ == nil {
-			return NumericInvalid, 0, false
-		}
-		if typ.Name == "byte" {
-			return NumericByte, 8, true
-		}
-		if signed, bits, ok := numeric.ParseIntegerTypeName(typ.Name); ok {
-			if signed {
-				return NumericSigned, bits, true
-			}
-			return NumericUnsigned, bits, true
-		}
-		switch typ.Name {
-		case "f32":
-			return NumericFloat, 32, true
-		case "f64":
-			return NumericFloat, 64, true
-		default:
-			return NumericInvalid, 0, false
-		}
+		return NumericUnsigned, bits, true
+	}
+	switch t.Name {
+	case "f32":
+		return NumericFloat, 32, true
+	case "f64":
+		return NumericFloat, 64, true
 	default:
 		return NumericInvalid, 0, false
 	}

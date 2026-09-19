@@ -10,6 +10,7 @@ type Type interface {
 	description() typeDescription
 	ownershipShape() ownershipShape
 	rebuildChildren([]TypeChild) Type
+	sameType(Type) bool
 }
 
 type InvalidType struct{}
@@ -300,9 +301,12 @@ func Underlying(t Type) Type {
 	}
 }
 
+type variantType interface {
+	variantDescriptor() (VariantDescriptor, bool)
+}
+
 // VariantDescriptorOf is source semantics' canonical variant classification.
-// It preserves nominal identity before inspecting a defined enum's underlying
-// representation, while optionals remain structural source types.
+// Variant types own their cases; this boundary adds declaration identity.
 func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 	identity := ""
 	if enumIdentity, nominal := nominalEnumIdentity(t); nominal {
@@ -313,31 +317,45 @@ func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 			identity = defined.Name
 		}
 	}
-	t = Underlying(t)
-	switch variant := t.(type) {
-	case *OptionalType:
-		if variant == nil || variant.Inner == nil {
-			return VariantDescriptor{}, false
-		}
-		return VariantDescriptor{
-			Family: VariantFamilyOptional,
-			Cases: []VariantCase{
-				{Name: "Absent"},
-				{Name: "Present", Payload: variant.Inner},
-			},
-		}, true
-	case *EnumType:
-		if variant == nil || len(variant.Cases) == 0 {
-			return VariantDescriptor{}, false
-		}
-		if identity == "" {
-			identity = variant.Text()
-		}
-		cases := append([]VariantCase(nil), variant.Cases...)
-		return VariantDescriptor{Family: VariantFamilyNamed, Identity: identity, Cases: cases}, true
-	default:
+	underlying := Underlying(t)
+	variant, ok := underlying.(variantType)
+	if !ok {
 		return VariantDescriptor{}, false
 	}
+	descriptor, ok := variant.variantDescriptor()
+	if !ok {
+		return VariantDescriptor{}, false
+	}
+	if descriptor.Family == VariantFamilyNamed {
+		if identity == "" {
+			identity = TypeText(underlying)
+		}
+		descriptor.Identity = identity
+	}
+	return descriptor, true
+}
+
+func (t *OptionalType) variantDescriptor() (VariantDescriptor, bool) {
+	if t == nil || t.Inner == nil {
+		return VariantDescriptor{}, false
+	}
+	return VariantDescriptor{
+		Family: VariantFamilyOptional,
+		Cases: []VariantCase{
+			{Name: "Absent"},
+			{Name: "Present", Payload: t.Inner},
+		},
+	}, true
+}
+
+func (t *EnumType) variantDescriptor() (VariantDescriptor, bool) {
+	if t == nil || len(t.Cases) == 0 {
+		return VariantDescriptor{}, false
+	}
+	return VariantDescriptor{
+		Family: VariantFamilyNamed,
+		Cases:  append([]VariantCase(nil), t.Cases...),
+	}, true
 }
 
 func (t *OwnedPtrType) Text() string {
