@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/moduleid"
+
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -47,32 +48,17 @@ func (ctx *CompilerContext) RegisterTypeDeclaration(module *Module, declaration 
 }
 
 func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, arguments []typeinfo.Type, node ast.TypeExpr, chain []typeInstantiationFrame) typeinfo.Type {
-	if ctx == nil || base == nil || len(arguments) != len(base.TypeParameters) {
+	if ctx == nil {
 		return &typeinfo.InvalidType{}
 	}
-	canonicalArguments := make([]typeinfo.Type, len(arguments))
-	for index, argument := range arguments {
-		canonicalArguments[index] = typeinfo.Unalias(argument)
-		if typeinfo.IsInvalid(canonicalArguments[index]) {
-			return &typeinfo.InvalidType{}
-		}
-	}
-	declarationArguments := true
-	for index, argument := range canonicalArguments {
-		if argument != base.TypeParameters[index] {
-			declarationArguments = false
-			break
-		}
+	canonicalArguments, declarationArguments, ok := canonicalTypeApplication(base, arguments)
+	if !ok {
+		return &typeinfo.InvalidType{}
 	}
 	if declarationArguments {
 		return base
 	}
-
-	argumentKeys := make([]string, len(canonicalArguments))
-	for index, argument := range canonicalArguments {
-		argumentKeys[index] = typeArgumentIdentity(argument)
-	}
-	identity := base.Identity + "<" + strings.Join(argumentKeys, ",") + ">"
+	identity := typeInstanceIdentity(base, canonicalArguments)
 	applicationText := (&typeinfo.DefinedType{Name: base.Name, TypeArguments: canonicalArguments}).Text()
 	for _, origin := range chain {
 		if origin.declarationIdentity != base.Identity {
@@ -161,12 +147,15 @@ func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, argument
 }
 
 func (ctx *CompilerContext) typeInstanceUnderlying(declarationModule *Module, declaration namedTypeDeclaration, instance *typeinfo.DefinedType, chain []typeInstantiationFrame) typeinfo.Type {
-	opts := TypeSyntaxOptions(ctx, declarationModule, nil, true)
-	opts.TypeParameters = typeinfo.TypeParameterBindings(declaration.base.TypeParameters, instance.TypeArguments)
-	opts.Instantiate = func(nestedBase *typeinfo.DefinedType, nestedArguments []typeinfo.Type, nestedNode ast.TypeExpr) typeinfo.Type {
-		return ctx.instantiateType(nestedBase, nestedArguments, nestedNode, chain)
+	syntax := declaration.syntax.UnderlyingType()
+	context := TypeContext{
+		AllowAbstractSelf: true,
+		TypeParameters:    typeinfo.TypeParameterBindings(declaration.base.TypeParameters, instance.TypeArguments),
 	}
-	return typeinfo.TypeFromSyntax(declaration.syntax.UnderlyingType(), opts)
+	if _, ok := declaration.syntax.(*ast.InterfaceDecl); ok {
+		context.NamedInterfaceRoot = syntax
+	}
+	return resolveType(ctx, declarationModule, syntax, context, chain)
 }
 
 // CompleteTypeInstances rebuilds cached instances in place after binder fills
@@ -238,6 +227,59 @@ func (ctx *CompilerContext) finishTypeInstance(identity string, instance *typein
 	}
 	close(cached.ready)
 	ctx.mu.Unlock()
+}
+
+func canonicalTypeApplication(base *typeinfo.DefinedType, arguments []typeinfo.Type) (canonical []typeinfo.Type, declarationArguments, ok bool) {
+	if base == nil || len(arguments) != len(base.TypeParameters) {
+		return nil, false, false
+	}
+	canonical = make([]typeinfo.Type, len(arguments))
+	for index, argument := range arguments {
+		canonical[index] = typeinfo.Unalias(argument)
+		if typeinfo.IsInvalid(canonical[index]) {
+			return nil, false, false
+		}
+	}
+	declarationArguments = true
+	for index, argument := range canonical {
+		if argument != base.TypeParameters[index] {
+			declarationArguments = false
+			break
+		}
+	}
+	return canonical, declarationArguments, true
+}
+
+func typeInstanceIdentity(base *typeinfo.DefinedType, arguments []typeinfo.Type) string {
+	argumentKeys := make([]string, len(arguments))
+	for index, argument := range arguments {
+		argumentKeys[index] = typeArgumentIdentity(argument)
+	}
+	return base.Identity + "<" + strings.Join(argumentKeys, ",") + ">"
+}
+
+// lookupTypeInstance performs an observational cache lookup. Loading means no
+// complete instance is available yet; unlike instantiateType, this operation
+// never creates a shell, waits for completion, emits diagnostics, or mutates state.
+func (ctx *CompilerContext) lookupTypeInstance(base *typeinfo.DefinedType, arguments []typeinfo.Type) TypeQueryResult {
+	if ctx == nil {
+		return TypeQueryResult{Type: &typeinfo.InvalidType{}, Status: TypeQueryInvalid}
+	}
+	canonicalArguments, declarationArguments, ok := canonicalTypeApplication(base, arguments)
+	if !ok {
+		return TypeQueryResult{Type: &typeinfo.InvalidType{}, Status: TypeQueryInvalid}
+	}
+	if declarationArguments {
+		return TypeQueryResult{Type: base, Status: TypeQueryAvailable}
+	}
+	identity := typeInstanceIdentity(base, canonicalArguments)
+	ctx.mu.RLock()
+	cached, found := ctx.typeInstances[identity]
+	ctx.mu.RUnlock()
+	if !found || !cached.complete || cached.typ == nil {
+		return TypeQueryResult{Status: TypeQueryLoading}
+	}
+	return TypeQueryResult{Type: cached.typ, Status: TypeQueryAvailable}
 }
 
 func typeArgumentIdentity(typ typeinfo.Type) string {

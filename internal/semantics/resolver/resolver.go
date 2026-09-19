@@ -461,6 +461,7 @@ func (r *resolver) lookupImportedMember(qualifierNode, memberNode *ast.Ident, si
 		r.reportGlobalQualifier(resolved.Symbol, qualifier, site)
 		return nil, false
 	}
+	r.module.RecordImportedUse(qualifier, resolved.Symbol)
 	r.reportGlobalQualifier(resolved.Symbol, qualifier, site)
 	return resolved.Symbol, true
 }

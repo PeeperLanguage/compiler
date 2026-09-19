@@ -327,81 +327,12 @@ func traversedChildState(relation TypeChildRelation, stored bool, traversal type
 }
 
 func ReplaceAbstractSelf(t Type, ownerType Type) Type {
-	switch typ := t.(type) {
-	case *NamedType:
-		if typ != nil && typ.Name == "Self" {
-			return ownerType
-		}
-		return t
-	case *OwnedPtrType:
-		if typ == nil {
-			return nil
-		}
-		return &OwnedPtrType{Target: ReplaceAbstractSelf(typ.Target, ownerType)}
-	case *RawPtrType:
-		if typ == nil {
-			return nil
-		}
-		return &RawPtrType{}
-	case *RefType:
-		if typ == nil {
-			return nil
-		}
-		return &RefType{Mutable: typ.Mutable, Target: ReplaceAbstractSelf(typ.Target, ownerType)}
-	case *OptionalType:
-		if typ == nil {
-			return nil
-		}
-		return NewOptional(ReplaceAbstractSelf(typ.Inner, ownerType))
-	case *ArrayType:
-		if typ == nil {
-			return nil
-		}
-		return &ArrayType{Len: typ.Len, Shape: typ.Shape, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
-	case *FuncType:
-		if typ == nil {
-			return nil
-		}
-		params := make([]Type, 0, len(typ.Params))
-		for _, param := range typ.Params {
-			params = append(params, ReplaceAbstractSelf(param, ownerType))
-		}
-		return &FuncType{
-			Params:        params,
-			ParamNames:    append([]string(nil), typ.ParamNames...),
-			Return:        ReplaceAbstractSelf(typ.Return, ownerType),
-			ReturnOrigins: typ.ReturnOrigins,
-		}
-	case *StructType:
-		if typ == nil {
-			return nil
-		}
-		fields := make([]Field, 0, len(typ.Fields))
-		for _, field := range typ.Fields {
-			fields = append(fields, Field{Name: field.Name, Type: ReplaceAbstractSelf(field.Type, ownerType)})
-		}
-		return &StructType{Fields: fields}
-	case *InterfaceType:
-		if typ == nil {
-			return nil
-		}
-		methods := make([]Method, 0, len(typ.Methods))
-		for _, method := range typ.Methods {
-			params := make([]Field, 0, len(method.Params))
-			for _, param := range method.Params {
-				params = append(params, Field{Name: param.Name, Type: ReplaceAbstractSelf(param.Type, ownerType)})
-			}
-			methods = append(methods, Method{
-				Name:          method.Name,
-				Params:        params,
-				Return:        ReplaceAbstractSelf(method.Return, ownerType),
-				ReturnOrigins: method.ReturnOrigins,
-			})
-		}
-		return &InterfaceType{Methods: methods}
-	default:
-		return t
+	if named, ok := t.(*NamedType); ok && named != nil && named.Name == "Self" {
+		return ownerType
 	}
+	return TransformChildren(t, func(child TypeChild) Type {
+		return ReplaceAbstractSelf(child.Type, ownerType)
+	})
 }
 
 func IsInvalid(typ Type) bool {

@@ -27,9 +27,6 @@ func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedM
 		return out, false
 	}
 	out.Import = imp
-	if impSym, ok := currentModule.ModuleScope.LookupLocal(importedModule); ok && impSym != nil {
-		impSym.MarkUsed()
-	}
 	imported, ok := ctx.ModuleByID(imp.ID)
 	if !ok || imported == nil || imported.ModuleScope == nil {
 		return out, false
@@ -39,7 +36,6 @@ func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedM
 	if !found || sym == nil {
 		return out, false
 	}
-	sym.MarkUsed()
 	out.Symbol = sym
 	return out, true
 }

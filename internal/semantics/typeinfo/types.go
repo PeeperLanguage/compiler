@@ -9,6 +9,7 @@ type Type interface {
 	Text() string
 	description() typeDescription
 	ownershipShape() ownershipShape
+	rebuildChildren([]TypeChild) Type
 }
 
 type InvalidType struct{}

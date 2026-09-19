@@ -25,16 +25,17 @@ const (
 // hoverSubject is the normalized cursor target after resolution. It hides how
 // the cursor was found so the renderer can stay flat and data-driven.
 type hoverSubject struct {
-	Kind           hoverSubjectKind
-	Node           ast.Node
-	Location       *source.Location
-	Symbol         *symbols.Symbol
-	ExprType       typeinfo.Type
-	ResolvedType   typeinfo.Type
-	Decl           ast.Node
-	ResolvedImport *project.ResolvedImport
-	Attribute      *ast.Attribute
-	MethodSymbols  []*symbols.Symbol
+	Kind            hoverSubjectKind
+	Node            ast.Node
+	Location        *source.Location
+	Symbol          *symbols.Symbol
+	ExprType        typeinfo.Type
+	ResolvedType    typeinfo.Type
+	TypeQueryStatus project.TypeQueryStatus
+	Decl            ast.Node
+	ResolvedImport  *project.ResolvedImport
+	Attribute       *ast.Attribute
+	MethodSymbols   []*symbols.Symbol
 }
 
 func (s *ServerState) resolveHoverSubject(filePath string, position source.Position) *hoverSubject {
@@ -119,25 +120,27 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	if !ok || typeNode == nil {
 		return nil
 	}
-	selfType, allowAbstractSelf := hoverTypeSyntaxContext(typeNode, cc.parents)
-	resolved := typeinfo.TypeFromSyntax(typeNode, project.TypeSyntaxOptions(cc.ctx, cc.module, selfType, allowAbstractSelf))
-	if resolved == nil {
+	query := project.QueryType(cc.ctx, cc.module, typeNode, hoverTypeSyntaxContext(typeNode, cc.parents))
+	if query.Status == project.TypeQueryAvailable && query.Type == nil {
 		return nil
 	}
-	methodType := resolved
-	if decl, ok := cc.parents[typeNode.ID()].(ast.TypeDecl); ok && decl != nil && decl.UnderlyingType() == typeNode {
-		if sym := cc.module.Bindings.Symbol(decl.DeclName()); sym != nil {
-			if declaredType, found := symbols.GetSymbolType(sym); found {
-				methodType = declaredType
+	methodType := query.Type
+	if query.Status == project.TypeQueryAvailable {
+		if decl, ok := cc.parents[typeNode.ID()].(ast.TypeDecl); ok && decl != nil && decl.UnderlyingType() == typeNode {
+			if sym := cc.module.Bindings.Symbol(decl.DeclName()); sym != nil {
+				if declaredType, found := symbols.GetSymbolType(sym); found {
+					methodType = declaredType
+				}
 			}
 		}
 	}
 	return &hoverSubject{
-		Kind:          hoverSubjectType,
-		Node:          cc.node,
-		Location:      ast.LocOf(cc.node),
-		ResolvedType:  resolved,
-		MethodSymbols: lookupMethodSet(cc.ctx, methodType),
+		Kind:            hoverSubjectType,
+		Node:            cc.node,
+		Location:        ast.LocOf(cc.node),
+		ResolvedType:    methodType,
+		TypeQueryStatus: query.Status,
+		MethodSymbols:   lookupMethodSet(cc.ctx, methodType),
 	}
 }
 
@@ -179,14 +182,16 @@ func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr
 	return nil, false
 }
 
-func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) (typeinfo.Type, bool) {
+func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) project.TypeContext {
 	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
-		switch curr.(type) {
-		case *ast.InterfaceDecl:
-			return nil, true
+		if decl, ok := curr.(*ast.InterfaceDecl); ok {
+			return project.TypeContext{
+				AllowAbstractSelf:  true,
+				NamedInterfaceRoot: decl.UnderlyingType(),
+			}
 		}
 	}
-	return nil, false
+	return project.TypeContext{}
 }
 
 func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
@@ -378,7 +383,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 	}
 	sym := resolveDeclNameSymbol(ident, cc.parents, cc.module)
 	if sym == nil {
-		sym = resolveInterfaceMethodNameSymbol(ident, cc.parents, cc.ctx, cc.module)
+		sym = resolveInterfaceMethodNameSymbol(ident, cc.parents, cc.module)
 	}
 	if sym == nil {
 		sym = resolveIdentSymbol(ident, cc.parents, cc.module, cc.ctx)
@@ -422,17 +427,21 @@ func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, mo
 	return nil
 }
 
-func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, ctx *project.CompilerContext, module *project.Module) *symbols.Symbol {
-	if ident == nil || ctx == nil || module == nil {
+func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module) *symbols.Symbol {
+	if ident == nil || module == nil || module.Bindings == nil {
 		return nil
 	}
 	iface, ok := parents[ident.ID()].(*ast.InterfaceType)
 	if !ok || iface == nil {
 		return nil
 	}
-	opts := project.TypeSyntaxOptions(ctx, module, nil, true)
-	resolved, ok := typeinfo.TypeFromSyntax(iface, opts).(*typeinfo.InterfaceType)
-	if !ok || resolved == nil {
+	decl, ok := parents[iface.ID()].(*ast.InterfaceDecl)
+	if !ok || decl == nil {
+		return nil
+	}
+	declarationType, _ := symbols.GetSymbolType(module.Bindings.Symbol(decl.Name))
+	resolved, _ := typeinfo.Underlying(declarationType).(*typeinfo.InterfaceType)
+	if resolved == nil {
 		return nil
 	}
 	for i, method := range iface.Methods {
@@ -525,6 +534,15 @@ func renderHoverSubject(subject *hoverSubject) string {
 		}
 		text = fmt.Sprintf("(expr): %s", typeinfo.TypeText(subject.ExprType))
 	case hoverSubjectType:
+		switch subject.TypeQueryStatus {
+		case project.TypeQueryLoading:
+			text = "(type) <loading...>"
+		case project.TypeQueryInvalid:
+			text = "(type) <invalid>"
+		}
+		if text != "" {
+			break
+		}
 		if subject.ResolvedType == nil {
 			return ""
 		}

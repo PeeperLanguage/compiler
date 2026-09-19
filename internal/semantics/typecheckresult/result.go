@@ -648,6 +648,29 @@ func (r *Result) ForEachCheckedIteration(fn func(ast.NodeID, *ast.BlockStmt)) {
 	}
 }
 
+// ForEachGeneratedNode visits every AST node synthesized and retained by
+// typechecking. Consumers that build a node index should not know which
+// evidence records contain generated roots.
+func (r *Result) ForEachGeneratedNode(fn func(ast.Node)) {
+	if r == nil || fn == nil {
+		return
+	}
+	visit := func(node ast.Node) bool {
+		if node != nil {
+			fn(node)
+		}
+		return true
+	}
+	r.ForEachCheckedIteration(func(_ ast.NodeID, expansion *ast.BlockStmt) {
+		ast.Inspect(expansion, visit)
+	})
+	r.ForEachCallArguments(func(_ ast.NodeID, args []ast.Expr) {
+		for _, argument := range args {
+			ast.Inspect(argument, visit)
+		}
+	})
+}
+
 // CloneReusableExpressionEvidenceFrom copies declaration-context facts that
 // remain valid when syntax is cloned during default substitution. Contextual
 // facts such as call-argument use, case subjects, and payload AST references

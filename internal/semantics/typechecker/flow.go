@@ -87,7 +87,7 @@ func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult
 		if sym == nil || sym.Scope == nil {
 			continue
 		}
-		fnType := typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(ctx, module, nil, false))
+		fnType, _ := sym.Type.(*typeinfo.FuncType)
 		analyzer := &flowAnalyzer{
 			ctx: ctx, module: module, functionScope: sym.Scope,
 			graph: graph, result: result, sites: make(map[cfg.SiteID]*cfg.Site),

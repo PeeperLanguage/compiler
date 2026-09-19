@@ -8,7 +8,6 @@ import (
 	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/project"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -439,10 +438,9 @@ func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.Retur
 	if !found {
 		return
 	}
-	fnType := typeinfo.FuncTypeFromDeclWithOptions(
-		a.function,
-		project.TypeSyntaxOptions(a.ctx, a.module, nil, false),
-	)
+	functionSymbol := a.module.Bindings.Symbol(a.function.Name)
+	functionType, _ := symbols.GetSymbolType(functionSymbol)
+	fnType, _ := functionType.(*typeinfo.FuncType)
 	if fnType == nil || fnType.ReturnOrigins == nil {
 		return
 	}

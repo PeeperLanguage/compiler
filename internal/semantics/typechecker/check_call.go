@@ -322,7 +322,7 @@ func (c *checker) checkOptionalAllocatorArity(scope *symbols.Scope, node *ast.Ca
 
 func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorExpr, call *ast.CallExpr) typeinfo.Type {
 	baseType := c.typePayloadExpr(scope, selector.Expr, nil)
-	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
+	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) || typeinfo.ContainsInvalid(baseType) {
 		return &typeinfo.InvalidType{}
 	}
 	method, ok := c.lookupCallableMember(baseType, selector.Name.Name)

@@ -37,6 +37,39 @@ func checkResolveSource(t *testing.T, src string) (*project.Module, *diagnostics
 	return module, diag
 }
 
+func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	dependencyID := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "dep"}
+	private := symbols.New("hidden", symbols.SymbolFunc, nil, nil)
+	dependency := &project.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
+	if err := dependency.ModuleScope.Declare(private); err != nil {
+		t.Fatalf("declare private imported symbol: %v", err)
+	}
+	module := &project.Module{
+		ID:          moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "main"},
+		ModuleScope: symbols.NewScope(nil),
+		Imports:     map[string]project.ResolvedImport{"dep": {ID: dependencyID}},
+	}
+	alias := symbols.New("dep", symbols.SymbolImport, nil, nil)
+	if err := module.ModuleScope.Declare(alias); err != nil {
+		t.Fatalf("declare import alias: %v", err)
+	}
+	ctx.AddModule(dependency)
+	ctx.AddModule(module)
+
+	r := &resolver{ctx: ctx, module: module}
+	if symbol, ok := r.lookupImportedMember(&ast.Ident{Name: "dep"}, &ast.Ident{Name: "hidden"}, &ast.Ident{Name: "hidden"}); ok || symbol != nil {
+		t.Fatalf("private imported symbol = (%#v, %t), want rejected", symbol, ok)
+	}
+	if alias.IsUsed() || private.IsUsed() {
+		t.Fatal("rejected private import published usage")
+	}
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "not exported") {
+		t.Fatalf("missing private import diagnostic:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestUnresolvedIdentifierSuggestionPrefersNearestScope(t *testing.T) {
 	src := `const for: i32 = 1;
 

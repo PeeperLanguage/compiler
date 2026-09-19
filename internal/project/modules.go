@@ -99,6 +99,23 @@ func (m *Module) TypeDeclarationIdentity(name string) string {
 	return m.ID.String() + "::" + name
 }
 
+// RecordImportedUse publishes usage only after a source semantic phase has
+// resolved alias::member successfully. Query and tooling paths must not call it.
+func (m *Module) RecordImportedUse(alias string, target *symbols.Symbol) {
+	if m == nil || m.ModuleScope == nil || target == nil {
+		return
+	}
+	if _, imported := m.Imports[alias]; !imported {
+		return
+	}
+	aliasSymbol, found := m.ModuleScope.LookupLocal(alias)
+	if !found || aliasSymbol == nil || aliasSymbol.Kind != symbols.SymbolImport {
+		return
+	}
+	aliasSymbol.MarkUsed()
+	target.MarkUsed()
+}
+
 // ExpandedDefaultBinding resolves declaration-module symbols paired with generated
 // default-expression markers. Local remains false for caller escape analysis.
 func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
@@ -120,19 +137,8 @@ func (m *Module) RebuildTypedASTIndex() {
 	if m.Typechecking == nil {
 		return
 	}
-	indexGenerated := func(node ast.Node) bool {
-		if node != nil {
-			m.TypedASTNodes[node.ID()] = node
-		}
-		return true
-	}
-	m.Typechecking.ForEachCheckedIteration(func(_ ast.NodeID, loop *ast.BlockStmt) {
-		ast.Inspect(loop, indexGenerated)
-	})
-	m.Typechecking.ForEachCallArguments(func(_ ast.NodeID, args []ast.Expr) {
-		for _, arg := range args {
-			ast.Inspect(arg, indexGenerated)
-		}
+	m.Typechecking.ForEachGeneratedNode(func(node ast.Node) {
+		m.TypedASTNodes[node.ID()] = node
 	})
 }
 

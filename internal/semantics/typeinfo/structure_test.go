@@ -88,6 +88,57 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 	}
 }
 
+func TestTransformChildrenPreservesTypeMetadataAndSlots(t *testing.T) {
+	original := &FuncType{
+		Params:        []Type{&IntegerType{Signed: true, Bits: 32}},
+		ParamNames:    []string{"value"},
+		ReturnOrigins: &ReturnOriginContract{Sources: []int{0}},
+	}
+	transformed := TransformChildren(original, func(child TypeChild) Type {
+		if integer, ok := child.Type.(*IntegerType); ok && integer != nil {
+			return &IntegerType{Signed: integer.Signed, Bits: 64}
+		}
+		return child.Type
+	})
+	fn, ok := transformed.(*FuncType)
+	if !ok || len(fn.Params) != 1 {
+		t.Fatalf("transformed type = %#v", transformed)
+	}
+	if TypeText(fn.Params[0]) != "i64" || fn.ParamNames[0] != "value" {
+		t.Fatalf("transformed function metadata = %#v", fn)
+	}
+	if fn.Return != nil || fn.ReturnOrigins == nil || !reflect.DeepEqual(fn.ReturnOrigins.Sources, []int{0}) {
+		t.Fatalf("transformed function slots = %#v", fn)
+	}
+}
+
+func TestTransformChildrenLeavesNominalTypesAtomic(t *testing.T) {
+	defined := &DefinedType{
+		Name:       "Node",
+		Identity:   "test::Node",
+		Underlying: &StructType{Fields: []Field{{Name: "value", Type: &NamedType{Name: "Self"}}}},
+	}
+	got := TransformChildren(defined, func(child TypeChild) Type {
+		t.Fatalf("nominal type yielded child %v", child.Relation)
+		return nil
+	})
+	if got != defined {
+		t.Fatalf("nominal transform changed identity: got %p want %p", got, defined)
+	}
+}
+
+func TestReplaceAbstractSelfUsesCanonicalChildTransform(t *testing.T) {
+	resolved := &DefinedType{Name: "Buffer", Identity: "test::Buffer"}
+	method := &FuncType{
+		Params: []Type{&RefType{Target: &NamedType{Name: "Self"}}},
+		Return: &OptionalType{Inner: &NamedType{Name: "Self"}},
+	}
+	got, ok := ReplaceAbstractSelf(method, resolved).(*FuncType)
+	if !ok || TypeText(got.Params[0]) != "&Buffer" || TypeText(got.Return) != "?Buffer" {
+		t.Fatalf("replaced function = %#v", got)
+	}
+}
+
 func TestTypeStructureDrivesRecursiveContainment(t *testing.T) {
 	stored := &StructType{Fields: []Field{{Name: "borrow", Type: &RefType{Target: &IntegerType{Signed: true, Bits: 32}}}}}
 	wrapped := &OptionalType{Inner: &ArrayType{Len: "2", Elem: stored}}

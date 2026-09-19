@@ -25,57 +25,47 @@ func DefaultIntegerType() Type {
 }
 
 func LiteralFitsType(value string, typ Type) bool {
-	switch t := Underlying(typ).(type) {
-	case *IntegerType:
-		return numeric.FitsIntegerLiteral(value, t.Bits, t.Signed)
-	case *FloatType:
+	family, bits, ok := NumericInfo(typ)
+	if !ok {
+		return false
+	}
+	switch family {
+	case NumericSigned, NumericUnsigned, NumericByte:
+		return numeric.FitsIntegerLiteral(value, bits, family == NumericSigned)
+	case NumericFloat:
 		if numeric.IsFloat(value) {
-			return numeric.FitsFloatLiteral(value, t.Bits)
+			return numeric.FitsFloatLiteral(value, bits)
 		}
-		return numeric.FitsIntegerLiteralInFloat(value, t.Bits)
-	case *ByteType:
-		return numeric.FitsIntegerLiteral(value, 8, false)
+		return numeric.FitsIntegerLiteralInFloat(value, bits)
 	default:
 		return false
 	}
 }
 
 func IsIntegral(t Type) bool {
-	t = Underlying(t)
-	switch t.(type) {
-	case *IntegerType, *ByteType:
-		return true
-	default:
-		return false
-	}
+	family, _, ok := NumericInfo(t)
+	return ok && family != NumericFloat
 }
 
 func IsArithmetic(t Type) bool {
-	t = Underlying(t)
-	switch t.(type) {
-	case *IntegerType, *ByteType, *FloatType:
-		return true
-	default:
-		return false
-	}
+	_, _, ok := NumericInfo(t)
+	return ok
 }
 
 func IsOrderable(t Type) bool {
-	t = Underlying(t)
-	switch t.(type) {
-	case *IntegerType, *ByteType, *CharType, *FloatType:
+	if _, _, ok := NumericInfo(t); ok {
 		return true
-	default:
-		return false
 	}
+	_, ok := Underlying(t).(*CharType)
+	return ok
 }
 
 func IsEquatable(t Type) bool {
-	t = Underlying(t)
-	switch t.(type) {
-	case *IntegerType, *ByteType, *CharType, *FloatType, *BoolType, *CStrType, *RawPtrType, *StringType, *NoneType, *AllocatorType:
+	if _, _, ok := NumericInfo(t); ok {
 		return true
-	case *OptionalType:
+	}
+	switch Underlying(t).(type) {
+	case *CharType, *BoolType, *CStrType, *RawPtrType, *StringType, *NoneType, *AllocatorType, *OptionalType:
 		return true
 	default:
 		return false

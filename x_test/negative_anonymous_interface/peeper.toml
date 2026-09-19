@@ -1,0 +1,9 @@
+name = "negative_anonymous_interface"
+build = "program"
+entry = "src/main.peep"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["anonymous interface types are not supported yet"]
+stderr_excludes = ["parameter type is not lowerable", "unknown method `read`"]

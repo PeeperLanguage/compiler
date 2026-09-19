@@ -496,49 +496,11 @@ func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedV
 	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
 		return resolvedNamedVariant{}, false
 	}
-	qualifierType, ok := symbols.GetSymbolType(qualifierSymbol)
-	if !ok || qualifierType == nil {
+	if _, ok := symbols.GetSymbolType(qualifierSymbol); !ok {
 		return resolvedNamedVariant{}, false
 	}
 
-	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
-	switch node := typePath.(type) {
-	case *ast.NamedType:
-		resolveNamed := opts.ResolveNamed
-		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
-			if name == node.Name {
-				return qualifierType, true
-			}
-			return resolveNamed(name)
-		}
-	case *ast.AppliedType:
-		if node.Name == nil {
-			return resolvedNamedVariant{}, false
-		}
-		resolveNamed := opts.ResolveNamed
-		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
-			if name == node.Name.Name {
-				return qualifierType, true
-			}
-			return resolveNamed(name)
-		}
-	case *ast.ScopeResolution:
-		qualifier, member, imported := node.ImportMember()
-		if !imported {
-			return resolvedNamedVariant{}, false
-		}
-		resolveQualified := opts.ResolveQualified
-		opts.ResolveQualified = func(moduleName, memberName string) (typeinfo.Type, bool) {
-			if moduleName == qualifier.Name && memberName == member.Name {
-				return qualifierType, true
-			}
-			return resolveQualified(moduleName, memberName)
-		}
-	default:
-		return resolvedNamedVariant{}, false
-	}
-
-	enumType := typeinfo.TypeFromSyntax(typePath, opts)
+	enumType := project.ResolveType(c.ctx, c.module, typePath, project.TypeContext{})
 	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
 	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return resolvedNamedVariant{}, false
@@ -828,7 +790,7 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 		return &typeinfo.InvalidType{}
 	}
 	if node.Type != nil {
-		targetType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		targetType := project.ResolveType(c.ctx, c.module, node.Type, project.TypeContext{})
 		targetStruct, ok := typeinfo.Underlying(targetType).(*typeinfo.StructType)
 		if !ok || targetStruct == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -992,7 +954,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	arrayType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	arrayType := project.ResolveType(c.ctx, c.module, node.Type, project.TypeContext{})
 	if typeinfo.IsInvalidOrUnknown(arrayType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -1037,7 +999,7 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	if c == nil || node == nil {
 		return nil
 	}
-	targetType := typeinfo.TypeFromSyntax(node.TypeExpr, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	targetType := project.ResolveType(c.ctx, c.module, node.TypeExpr, project.TypeContext{})
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
 		return &typeinfo.InvalidType{}

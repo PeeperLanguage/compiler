@@ -17,13 +17,17 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if c == nil || sym == nil || fn == nil {
 		return
 	}
-	c.checkFunctionShape(fn)
+	fnType, ok := sym.Type.(*typeinfo.FuncType)
+	if !ok || fnType == nil {
+		return
+	}
+	c.checkFunctionShape(fn, fnType)
 	if sym.Scope == nil {
 		return
 	}
 	funcScope := sym.Scope
-	for _, param := range fn.ParamsWithReceiver() {
-		if param.Name == nil {
+	for index, param := range fn.ParamsWithReceiver() {
+		if param.Name == nil || index >= len(fnType.Params) {
 			continue
 		}
 		paramSym := c.module.Bindings.Symbol(param.Name)
@@ -31,17 +35,15 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
 		}
-		paramSym.BindType(typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false)))
+		paramSym.BindType(fnType.Params[index])
 	}
-	c.checkDefaultParameters(funcScope, fn)
-	if fn.Body == nil {
-		return
+	c.checkDefaultParameters(funcScope, fn, fnType)
+	if fn.Body != nil {
+		c.checkBlock(funcScope, fn.Body, fnType.Return)
 	}
-	returnType := typeinfo.TypeFromSyntax(fn.ReturnType, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
-	c.checkBlock(funcScope, fn.Body, returnType)
 }
 
-func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl) {
+func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl, fnType *typeinfo.FuncType) {
 	if c == nil || scope == nil || fn == nil {
 		return
 	}
@@ -60,7 +62,10 @@ func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidDeclaration,
 				"receiver cannot have a default value", ast.LocOf(param.Default), "")
 		}
-		paramType := typeinfo.TypeFromSyntax(param.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		if i >= len(fnType.Params) {
+			continue
+		}
+		paramType := fnType.Params[i]
 		if paramType == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"defaulted parameter requires an explicit type", ast.LocOf(param.Name), "")
@@ -72,11 +77,11 @@ func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl) {
 			c.ctx.Diagnostics.Add(typeMismatchError(param.Default,
 				fmt.Sprintf("cannot implicitly convert %s to %s", typeinfo.TypeText(defaultType), typeinfo.TypeText(paramType))))
 		}
-		c.rejectOwnedParameterReferences(scope, fn, i, param.Default)
+		c.rejectOwnedParameterReferences(scope, fn, fnType, i, param.Default)
 	}
 }
 
-func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, current int, expr ast.Expr) {
+func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, fnType *typeinfo.FuncType, current int, expr ast.Expr) {
 	if c == nil || c.module == nil || c.module.Bindings == nil || fn == nil || expr == nil {
 		return
 	}
@@ -100,7 +105,10 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 		if !isParam || index >= current || index < 0 || index >= len(params) {
 			return true
 		}
-		paramType := typeinfo.TypeFromSyntax(params[index].Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		if index >= len(fnType.Params) {
+			return true
+		}
+		paramType := fnType.Params[index]
 		if typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 			return true
 		}
@@ -113,12 +121,10 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 	})
 }
 
-func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
-	if decl == nil {
+func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType) {
+	if decl == nil || fnType == nil {
 		return
 	}
-	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
-	fnType := typeinfo.FuncTypeFromDeclWithOptions(decl, opts)
 	if _, external := ast.FunctionLinkName(decl, ""); external {
 		type externTypeSite struct {
 			typ  typeinfo.Type
@@ -148,8 +154,14 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl) {
 	if !c.checkCallableReturn(decl.ReturnType, decl, fnType, decl.ReturnOrigins, false) {
 		return
 	}
-	for _, param := range decl.ParamsWithReceiver() {
-		paramType := typeinfo.TypeFromSyntax(param.Type, opts)
+	for index, param := range decl.ParamsWithReceiver() {
+		if index >= len(fnType.Params) {
+			continue
+		}
+		paramType := fnType.Params[index]
+		if typeinfo.ContainsInvalid(paramType) {
+			continue
+		}
 		if c.rejectUnsizedType(paramType, param.Type, "parameter") {
 			return
 		}
@@ -261,10 +273,10 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 
 func (c *checker) checkFunctionTypeContracts() {
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
-		opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
+		context := project.TypeContext{}
 		allowTypeParameters := false
 		if typeDecl, ok := decl.(ast.TypeDecl); ok && len(typeDecl.DeclarationTypeParams()) > 0 {
-			opts = c.typeDeclSyntaxOptions(typeDecl, false)
+			context = c.typeContextForDecl(typeDecl, false)
 			allowTypeParameters = true
 		}
 		ast.Inspect(decl, func(node ast.Node) bool {
@@ -272,7 +284,7 @@ func (c *checker) checkFunctionTypeContracts() {
 			if !ok || fnTypeSyntax == nil {
 				return true
 			}
-			fnType, _ := typeinfo.TypeFromSyntax(fnTypeSyntax, opts).(*typeinfo.FuncType)
+			fnType, _ := project.ResolveType(c.ctx, c.module, fnTypeSyntax, context).(*typeinfo.FuncType)
 			c.checkCallableReturn(fnTypeSyntax.Return, fnTypeSyntax, fnType, fnTypeSyntax.ReturnOrigins, allowTypeParameters)
 			return true
 		})
@@ -284,7 +296,7 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 	if decl == nil {
 		return
 	}
-	opts := c.typeDeclSyntaxOptions(decl, false)
+	context := c.typeContextForDecl(decl, false)
 	switch node := decl.(type) {
 	case *ast.StructDecl:
 		strct, ok := node.Type.(*ast.StructType)
@@ -292,12 +304,12 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 			return
 		}
 		for _, field := range strct.Fields {
-			fieldType := typeinfo.TypeFromSyntax(field.Type, opts)
+			fieldType := project.ResolveType(c.ctx, c.module, field.Type, context)
 			c.rejectReferenceStorage(fieldType, field.Type, "struct fields", true)
 			c.rejectUnsizedType(fieldType, field.Type, "struct field")
 		}
 	case *ast.TypeAliasDecl:
-		typ := typeinfo.TypeFromSyntax(node.Type, opts)
+		typ := project.ResolveType(c.ctx, c.module, node.Type, context)
 		c.rejectReferenceStorage(typ, node.Type, "array or heap-owned type aliases", false)
 	}
 }
@@ -313,20 +325,20 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
 		return
 	}
-	resolvedIface, _ := typeinfo.TypeFromSyntax(iface, c.typeDeclSyntaxOptions(decl, false)).(*typeinfo.InterfaceType)
+	resolvedIface, _ := project.ResolveType(c.ctx, c.module, iface, c.typeContextForDecl(decl, false)).(*typeinfo.InterfaceType)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	for methodIndex, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", method.Location, "")
 			continue
 		}
-		receiverOpts := c.typeDeclSyntaxOptions(decl, true)
+		receiverContext := c.typeContextForDecl(decl, true)
 		if method.Receiver == nil {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Name,
 				"iface methods require Self, &Self, or &mut Self receiver"))
 			continue
 		}
-		receiverType := typeinfo.TypeFromSyntax(method.Receiver.Type, receiverOpts)
+		receiverType := project.ResolveType(c.ctx, c.module, method.Receiver.Type, receiverContext)
 		receiverTarget, ok := typeinfo.ReceiverTarget(receiverType)
 		receiverSelf, abstractSelf := receiverTarget.(*typeinfo.NamedType)
 		_, ownedReceiver := typeinfo.PointerTarget(receiverType)
@@ -334,9 +346,9 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Receiver.Type,
 				"iface method receiver must be Self, &Self, or &mut Self"))
 		}
-		opts := c.typeDeclSyntaxOptions(decl, false)
+		context := c.typeContextForDecl(decl, false)
 		for _, param := range method.Params {
-			paramType := typeinfo.TypeFromSyntax(param.Type, opts)
+			paramType := project.ResolveType(c.ctx, c.module, param.Type, context)
 			if c.rejectUnsizedType(paramType, param.Type, "interface method parameter") {
 				continue
 			}
@@ -373,7 +385,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		c.ctx.Diagnostics.Add(invalidTypeError(decl, "enum requires at least one variant"))
 		return
 	}
-	opts := c.typeDeclSyntaxOptions(decl, false)
+	context := c.typeContextForDecl(decl, false)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	dataFields := make(map[string]*source.Location)
 	for _, variant := range enumType.Variants {
@@ -386,11 +398,11 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		if variant.Payload == nil {
 			continue
 		}
-		payloadType := typeinfo.TypeFromSyntax(variant.Payload, opts)
+		payloadType := project.ResolveType(c.ctx, c.module, variant.Payload, context)
 		payload, isStruct := typeinfo.Underlying(payloadType).(*typeinfo.StructType)
 		inlinePayload, inline := variant.Payload.(*ast.StructType)
 		if !isStruct {
-			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
+			c.checkEnumPayloadType(variant.Payload, context, allowTypeParameters, "enum variant payload")
 			continue
 		}
 		if inline && len(inlinePayload.Fields) == 0 {
@@ -398,7 +410,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			continue
 		}
 		if !inline {
-			c.checkEnumPayloadType(variant.Payload, opts, allowTypeParameters, "enum variant payload")
+			c.checkEnumPayloadType(variant.Payload, context, allowTypeParameters, "enum variant payload")
 			for _, field := range payload.Fields {
 				if field.Name == "" {
 					continue
@@ -423,7 +435,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			if dataFields[field.Name.Name] == nil {
 				dataFields[field.Name.Name] = field.Name.Location
 			}
-			c.checkEnumPayloadType(field.Type, opts, allowTypeParameters, "enum variant field")
+			c.checkEnumPayloadType(field.Type, context, allowTypeParameters, "enum variant field")
 		}
 	}
 	if decl.Name == nil {
@@ -445,8 +457,8 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	}
 }
 
-func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, opts typeinfo.SyntaxOptions, allowTypeParameters bool, context string) {
-	payloadType := typeinfo.TypeFromSyntax(syntax, opts)
+func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, typeContext project.TypeContext, allowTypeParameters bool, context string) {
+	payloadType := project.ResolveType(c.ctx, c.module, syntax, typeContext)
 	if c.rejectUnsizedType(payloadType, syntax, context) {
 		return
 	}
@@ -458,20 +470,23 @@ func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, opts typeinfo.Syntax
 	}
 }
 
-func (c *checker) typeDeclSyntaxOptions(decl ast.TypeDecl, allowAbstractSelf bool) typeinfo.SyntaxOptions {
-	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, allowAbstractSelf)
+func (c *checker) typeContextForDecl(decl ast.TypeDecl, allowAbstractSelf bool) project.TypeContext {
+	context := project.TypeContext{AllowAbstractSelf: allowAbstractSelf}
+	if iface, ok := decl.(*ast.InterfaceDecl); ok {
+		context.NamedInterfaceRoot = iface.UnderlyingType()
+	}
 	if c == nil || c.module == nil || c.module.ModuleScope == nil || decl == nil || decl.DeclName() == nil {
-		return opts
+		return context
 	}
 	sym, ok := c.module.ModuleScope.LookupLocal(decl.DeclName().Name)
 	if !ok || sym == nil {
-		return opts
+		return context
 	}
 	defined, ok := sym.Type.(*typeinfo.DefinedType)
 	if ok && defined != nil {
-		opts.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
+		context.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
 	}
-	return opts
+	return context
 }
 
 func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {
@@ -483,7 +498,7 @@ func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {
 			"receiver function requires a named receiver", ast.LocOf(fn.Receiver.Type), "")
 		return
 	}
-	receiverType := typeinfo.TypeFromSyntax(fn.Receiver.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	receiverType := project.ResolveType(c.ctx, c.module, fn.Receiver.Type, project.TypeContext{})
 	targetType, ok := typeinfo.ReceiverTarget(receiverType)
 	defined, named := targetType.(*typeinfo.DefinedType)
 	if !ok || !named || defined == nil || !isValidReceiverType(receiverType, defined) {
@@ -564,7 +579,7 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 					break
 				}
 			}
-			expectedType := typeinfo.TypeFromSyntax(spec.Type, typeinfo.SyntaxOptions{Target: c.ctx.Target, AllowAbstractSelf: true})
+			expectedType := project.ResolveType(c.ctx, c.module, spec.Type, project.TypeContext{AllowAbstractSelf: true})
 			argType := c.typeExpr(c.module.ModuleScope, arg, expectedType)
 			if typeinfo.IsInvalidOrUnknown(argType) {
 				validArgs = false

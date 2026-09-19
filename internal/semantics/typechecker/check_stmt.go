@@ -420,12 +420,12 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
-		declType = typeinfo.TypeFromSyntax(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		declType = project.ResolveType(c.ctx, c.module, bind.Type, project.TypeContext{})
 		typeNode = bind.Type
 		name = bind.Name
 		value = bind.Value
 	case *ast.ConstDecl:
-		declType = typeinfo.TypeFromSyntax(bind.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		declType = project.ResolveType(c.ctx, c.module, bind.Type, project.TypeContext{})
 		typeNode = bind.Type
 		name = bind.Name
 		value = bind.Value

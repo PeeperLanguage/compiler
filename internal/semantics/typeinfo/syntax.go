@@ -7,25 +7,55 @@ import (
 	"compiler/pkg/numeric"
 )
 
-type SyntaxOptions struct {
-	Target             target.Info
-	SelfType           Type
-	AllowAbstractSelf  bool
-	TypeParameters     map[string]Type
-	ResolveNamed       func(name string) (Type, bool)
-	ResolveQualified   func(moduleName, memberName string) (Type, bool)
-	Instantiate        func(base *DefinedType, arguments []Type, node ast.TypeExpr) Type
-	InvalidSelf        func(node *ast.NamedType) Type
-	InvalidArrayLen    func(node *ast.NumberLit) Type
-	InvalidApplication func(node ast.TypeExpr, name string, want, got int) Type
+// SyntaxResolver supplies project-owned name lookup and generic instantiation
+// while typeinfo owns the single AST-to-semantic-type mapping.
+type SyntaxResolver interface {
+	ResolveNamed(node ast.TypeExpr) (Type, bool)
+	ResolveQualified(node *ast.ScopeResolution) (Type, bool)
+	Instantiate(base *DefinedType, arguments []Type, node ast.TypeExpr) Type
 }
 
-func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
+type SyntaxIssueKind uint8
+
+const (
+	SyntaxInvalidSelf SyntaxIssueKind = iota
+	SyntaxInvalidArrayLength
+	SyntaxInvalidApplication
+	SyntaxAnonymousInterface
+)
+
+type SyntaxIssue struct {
+	Kind SyntaxIssueKind
+	Node ast.Node
+	Name string
+	Want int
+	Got  int
+}
+
+type SyntaxContext struct {
+	Target            target.Info
+	SelfType          Type
+	AllowAbstractSelf bool
+	TypeParameters    map[string]Type
+	// NamedInterfaceRoot identifies exact syntax owned by an interface
+	// declaration. Nested interface syntax remains anonymous.
+	NamedInterfaceRoot ast.TypeExpr
+	Resolver           SyntaxResolver
+	Issues             *[]SyntaxIssue
+}
+
+func (context SyntaxContext) recordIssue(kind SyntaxIssueKind, node ast.Node, name string, want, got int) {
+	if context.Issues != nil {
+		*context.Issues = append(*context.Issues, SyntaxIssue{Kind: kind, Node: node, Name: name, Want: want, Got: got})
+	}
+}
+
+func TypeFromSyntax(node ast.TypeExpr, context SyntaxContext) Type {
 	if node == nil {
 		return nil
 	}
-	if !opts.Target.Valid() {
-		opts.Target = target.Host()
+	if !context.Target.Valid() {
+		context.Target = target.Host()
 	}
 	switch typ := node.(type) {
 	case *ast.NamedType:
@@ -33,45 +63,42 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			return nil
 		}
 		if typ.Name == "Self" {
-			if opts.SelfType != nil {
-				return opts.SelfType
+			if context.SelfType != nil {
+				return context.SelfType
 			}
-			if opts.AllowAbstractSelf {
+			if context.AllowAbstractSelf {
 				return &NamedType{Name: "Self"}
 			}
-			if opts.InvalidSelf != nil {
-				return opts.InvalidSelf(typ)
-			}
+			context.recordIssue(SyntaxInvalidSelf, typ, "", 0, 0)
 			return &InvalidType{}
 		}
-		if parameter := opts.TypeParameters[typ.Name]; parameter != nil {
+		if parameter := context.TypeParameters[typ.Name]; parameter != nil {
 			return parameter
 		}
-		return applyTypeArguments(typ, resolveTypeName(typ.Name, opts), nil, opts)
+		return applyTypeArguments(typ, resolveTypeName(typ, context), nil, context)
 	case *ast.AppliedType:
 		if typ == nil || typ.Name == nil {
 			return nil
 		}
 		arguments := make([]Type, len(typ.TypeArgs))
 		for index, argument := range typ.TypeArgs {
-			arguments[index] = TypeFromSyntax(argument, opts)
+			arguments[index] = TypeFromSyntax(argument, context)
 		}
-		if opts.TypeParameters[typ.Name.Name] != nil {
-			return applyTypeArguments(typ, &NamedType{Name: typ.Name.Name}, arguments, opts)
+		if context.TypeParameters[typ.Name.Name] != nil {
+			return applyTypeArguments(typ, &NamedType{Name: typ.Name.Name}, arguments, context)
 		}
-		return applyTypeArguments(typ, resolveTypeName(typ.Name.Name, opts), arguments, opts)
+		return applyTypeArguments(typ, resolveTypeName(typ, context), arguments, context)
 	case *ast.ScopeResolution:
 		if typ == nil {
 			return nil
 		}
-		qualifier, member, imported := typ.ImportMember()
-		if imported && opts.ResolveQualified != nil {
-			if resolved, ok := opts.ResolveQualified(qualifier.Name, member.Name); ok && resolved != nil {
+		if _, _, imported := typ.ImportMember(); imported && context.Resolver != nil {
+			if resolved, ok := context.Resolver.ResolveQualified(typ); ok && resolved != nil {
 				arguments := make([]Type, len(typ.Segments[1].TypeArgs))
 				for index, argument := range typ.Segments[1].TypeArgs {
-					arguments[index] = TypeFromSyntax(argument, opts)
+					arguments[index] = TypeFromSyntax(argument, context)
 				}
-				return applyTypeArguments(typ, resolved, arguments, opts)
+				return applyTypeArguments(typ, resolved, arguments, context)
 			}
 		}
 		return &NamedType{Name: typ.TypeText()}
@@ -79,7 +106,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
-		return &OwnedPtrType{Target: TypeFromSyntax(typ.Target, opts)}
+		return &OwnedPtrType{Target: TypeFromSyntax(typ.Target, context)}
 	case *ast.RawPtrType:
 		if typ == nil {
 			return nil
@@ -89,12 +116,12 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
-		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target, opts)}
+		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target, context)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil
 		}
-		return NewOptional(TypeFromSyntax(typ.Inner, opts))
+		return NewOptional(TypeFromSyntax(typ.Inner, context))
 	case *ast.ArrayType:
 		if typ == nil {
 			return nil
@@ -104,27 +131,21 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			lengthType := DefaultNumberType(typ.Len.Value)
 			if typ.Len.ExplicitType != "" {
 				var ok bool
-				lengthType, ok = NumericTypeFromName(typ.Len.ExplicitType, opts.Target)
+				lengthType, ok = NumericTypeFromName(typ.Len.ExplicitType, context.Target)
 				if !ok {
-					if opts.InvalidArrayLen != nil {
-						return opts.InvalidArrayLen(typ.Len)
-					}
+					context.recordIssue(SyntaxInvalidArrayLength, typ.Len, "", 0, 0)
 					return &InvalidType{}
 				}
 			}
-			indexType, indexTypeOK := NumericTypeFromName("usize", opts.Target)
+			indexType, indexTypeOK := NumericTypeFromName("usize", context.Target)
 			if !IsIntegral(lengthType) || !LiteralFitsType(typ.Len.Value, lengthType) ||
 				!indexTypeOK || !LiteralFitsType(typ.Len.Value, indexType) {
-				if opts.InvalidArrayLen != nil {
-					return opts.InvalidArrayLen(typ.Len)
-				}
+				context.recordIssue(SyntaxInvalidArrayLength, typ.Len, "", 0, 0)
 				return &InvalidType{}
 			}
 			canonical, err := numeric.CanonicalizeIntegerLiteral(typ.Len.Value)
 			if err != nil {
-				if opts.InvalidArrayLen != nil {
-					return opts.InvalidArrayLen(typ.Len)
-				}
+				context.recordIssue(SyntaxInvalidArrayLength, typ.Len, "", 0, 0)
 				return &InvalidType{}
 			}
 			length = canonical
@@ -136,7 +157,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		case ast.ArraySlice:
 			shape = ArraySlice
 		}
-		return &ArrayType{Len: length, Shape: shape, Elem: TypeFromSyntax(typ.Elem, opts)}
+		return &ArrayType{Len: length, Shape: shape, Elem: TypeFromSyntax(typ.Elem, context)}
 	case *ast.FuncType:
 		if typ == nil {
 			return nil
@@ -144,13 +165,13 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		params := make([]Type, 0, len(typ.Params))
 		paramNames := make([]string, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, TypeFromSyntax(param.Type, opts))
+			params = append(params, TypeFromSyntax(param.Type, context))
 			paramNames = append(paramNames, parameterName(param))
 		}
 		return &FuncType{
 			Params:        params,
 			ParamNames:    paramNames,
-			Return:        TypeFromSyntax(typ.Return, opts),
+			Return:        TypeFromSyntax(typ.Return, context),
 			ReturnOrigins: returnOriginContract(typ.ReturnOrigins, typ.Params, false),
 		}
 	case *ast.StructType:
@@ -165,7 +186,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 			fields = append(fields, Field{
 				Name: name,
-				Type: TypeFromSyntax(field.Type, opts),
+				Type: TypeFromSyntax(field.Type, context),
 			})
 		}
 		return &StructType{Fields: fields}
@@ -173,16 +194,20 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 		if typ == nil {
 			return nil
 		}
-		receiverOpts := opts
-		receiverOpts.AllowAbstractSelf = true
-		methodOpts := opts
-		methodOpts.AllowAbstractSelf = false
+		if context.NamedInterfaceRoot != typ {
+			context.recordIssue(SyntaxAnonymousInterface, typ, "", 0, 0)
+			return &InvalidType{}
+		}
+		receiverContext := context
+		receiverContext.AllowAbstractSelf = true
+		methodContext := context
+		methodContext.AllowAbstractSelf = false
 		methods := make([]Method, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
 			params := make([]Field, 0, len(method.Params)+1)
 			originParams := make([]ast.Param, 0, len(method.Params)+1)
 			if method.Receiver != nil {
-				params = append(params, Field{Name: "self", Type: TypeFromSyntax(method.Receiver.Type, receiverOpts)})
+				params = append(params, Field{Name: "self", Type: TypeFromSyntax(method.Receiver.Type, receiverContext)})
 				originParams = append(originParams, *method.Receiver)
 			}
 			for _, param := range method.Params {
@@ -192,7 +217,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 				}
 				params = append(params, Field{
 					Name: name,
-					Type: TypeFromSyntax(param.Type, methodOpts),
+					Type: TypeFromSyntax(param.Type, methodContext),
 				})
 				originParams = append(originParams, param)
 			}
@@ -203,7 +228,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			methods = append(methods, Method{
 				Name:          name,
 				Params:        params,
-				Return:        TypeFromSyntax(method.ReturnType, methodOpts),
+				Return:        TypeFromSyntax(method.ReturnType, methodContext),
 				ReturnOrigins: returnOriginContract(method.ReturnOrigins, originParams, method.Receiver != nil),
 			})
 		}
@@ -219,7 +244,7 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 			}
 			semanticCase := VariantCase{Name: variant.Name.Name}
 			if variant.Payload != nil {
-				semanticCase.Payload = TypeFromSyntax(variant.Payload, opts)
+				semanticCase.Payload = TypeFromSyntax(variant.Payload, context)
 			}
 			cases = append(cases, semanticCase)
 		}
@@ -229,9 +254,13 @@ func TypeFromSyntax(node ast.TypeExpr, opts SyntaxOptions) Type {
 	}
 }
 
-func resolveTypeName(name string, opts SyntaxOptions) Type {
-	if opts.ResolveNamed != nil {
-		if resolved, ok := opts.ResolveNamed(name); ok && resolved != nil {
+func resolveTypeName(node ast.TypeExpr, context SyntaxContext) Type {
+	name := node.TypeText()
+	if applied, ok := node.(*ast.AppliedType); ok && applied.Name != nil {
+		name = applied.Name.Name
+	}
+	if context.Resolver != nil {
+		if resolved, ok := context.Resolver.ResolveNamed(node); ok && resolved != nil {
 			return resolved
 		}
 	}
@@ -253,13 +282,13 @@ func resolveTypeName(name string, opts SyntaxOptions) Type {
 	case "Allocator":
 		return &AllocatorType{}
 	}
-	if signed, bits, ok := token.ParseIntegerBuiltin(name, opts.Target); ok {
+	if signed, bits, ok := token.ParseIntegerBuiltin(name, context.Target); ok {
 		return &IntegerType{Signed: signed, Bits: bits}
 	}
 	return &NamedType{Name: name}
 }
 
-func applyTypeArguments(node ast.TypeExpr, base Type, arguments []Type, opts SyntaxOptions) Type {
+func applyTypeArguments(node ast.TypeExpr, base Type, arguments []Type, context SyntaxContext) Type {
 	defined, named := base.(*DefinedType)
 	want := 0
 	if named && defined != nil {
@@ -268,21 +297,19 @@ func applyTypeArguments(node ast.TypeExpr, base Type, arguments []Type, opts Syn
 	got := len(arguments)
 	if want != got || got > 0 && !named {
 		name := TypeText(base)
-		if opts.InvalidApplication != nil {
-			return opts.InvalidApplication(node, name, want, got)
-		}
+		context.recordIssue(SyntaxInvalidApplication, node, name, want, got)
 		return &InvalidType{}
 	}
 	if got == 0 {
 		return base
 	}
-	if opts.Instantiate != nil {
-		return opts.Instantiate(defined, arguments, node)
+	if context.Resolver != nil {
+		return context.Resolver.Instantiate(defined, arguments, node)
 	}
 	return &InvalidType{}
 }
 
-func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType {
+func FuncTypeFromDecl(decl *ast.FnDecl, context SyntaxContext) *FuncType {
 	if decl == nil {
 		return nil
 	}
@@ -290,7 +317,7 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 	paramNames := make([]string, 0, len(decl.ParamsWithReceiver()))
 	allParams := decl.ParamsWithReceiver()
 	for i, param := range allParams {
-		params = append(params, TypeFromSyntax(param.Type, opts))
+		params = append(params, TypeFromSyntax(param.Type, context))
 		name := parameterName(param)
 		if decl.Receiver != nil && i == 0 {
 			name = "self"
@@ -300,7 +327,7 @@ func FuncTypeFromDeclWithOptions(decl *ast.FnDecl, opts SyntaxOptions) *FuncType
 	return &FuncType{
 		Params:        params,
 		ParamNames:    paramNames,
-		Return:        TypeFromSyntax(decl.ReturnType, opts),
+		Return:        TypeFromSyntax(decl.ReturnType, context),
 		ReturnOrigins: returnOriginContract(decl.ReturnOrigins, allParams, decl.Receiver != nil),
 	}
 }

@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+type syntaxTestResolver struct {
+	resolveNamed func(ast.TypeExpr) (Type, bool)
+}
+
+func (r syntaxTestResolver) ResolveNamed(node ast.TypeExpr) (Type, bool) {
+	if r.resolveNamed == nil {
+		return nil, false
+	}
+	return r.resolveNamed(node)
+}
+
+func (syntaxTestResolver) ResolveQualified(*ast.ScopeResolution) (Type, bool) {
+	return nil, false
+}
+
+func (syntaxTestResolver) Instantiate(*DefinedType, []Type, ast.TypeExpr) Type {
+	return &InvalidType{}
+}
+
 func TestTypeFromSyntaxUsesExplicitTargetForSizeIntegers(t *testing.T) {
 	target32, err := target.New("linux", "386")
 	if err != nil {
@@ -23,7 +42,7 @@ func TestTypeFromSyntaxUsesExplicitTargetForSizeIntegers(t *testing.T) {
 		{target: target32, bits: 32},
 		{target: target64, bits: 64},
 	} {
-		typ, ok := TypeFromSyntax(&ast.NamedType{Name: "usize"}, SyntaxOptions{Target: tt.target}).(*IntegerType)
+		typ, ok := TypeFromSyntax(&ast.NamedType{Name: "usize"}, SyntaxContext{Target: tt.target}).(*IntegerType)
 		if !ok || typ.Signed || typ.Bits != tt.bits {
 			t.Fatalf("usize type = %#v, want u%d", typ, tt.bits)
 		}
@@ -285,10 +304,30 @@ func TestFuncTypeTextIncludesParams(t *testing.T) {
 	}
 }
 
+func TestTypeFromSyntaxRejectsAnonymousInterface(t *testing.T) {
+	iface := &ast.InterfaceType{}
+	issues := make([]SyntaxIssue, 0, 1)
+	if typ := TypeFromSyntax(iface, SyntaxContext{Issues: &issues}); !IsInvalid(typ) {
+		t.Fatalf("anonymous interface type = %T, want invalid", typ)
+	}
+	if len(issues) != 1 || issues[0].Kind != SyntaxAnonymousInterface {
+		t.Fatalf("anonymous interface issues = %#v", issues)
+	}
+
+	if typ := TypeFromSyntax(iface, SyntaxContext{NamedInterfaceRoot: iface}); IsInvalid(typ) {
+		t.Fatalf("declared interface type = %T, want valid interface", typ)
+	}
+
+	ref := &ast.RefType{Target: iface}
+	if typ := TypeFromSyntax(ref, SyntaxContext{NamedInterfaceRoot: ref}); !ContainsInvalid(typ) {
+		t.Fatalf("nested anonymous interface type = %T, want invalid", typ)
+	}
+}
+
 func TestTypeFromSyntaxPreservesFuncTypeParams(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
 		Params: []ast.Param{{Type: &ast.NamedType{Name: "Buffer"}}},
-	}, SyntaxOptions{}).(*FuncType)
+	}, SyntaxContext{}).(*FuncType)
 	if got := fn.Text(); got != "fn(Buffer)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
@@ -299,7 +338,7 @@ func TestTypeFromSyntaxPreservesReferenceReturnContract(t *testing.T) {
 		Params:        []ast.Param{{Name: &ast.Ident{Name: "value"}, Type: &ast.RefType{Target: &ast.NamedType{Name: "i32"}}}},
 		Return:        &ast.RefType{Target: &ast.NamedType{Name: "i32"}},
 		ReturnOrigins: &ast.ReturnOriginClause{Sources: []*ast.Ident{{Name: "value"}}},
-	}, SyntaxOptions{}).(*FuncType)
+	}, SyntaxContext{}).(*FuncType)
 	if fn.ReturnOrigins == nil || !slices.Equal(fn.ReturnOrigins.Sources, []int{0}) {
 		t.Fatalf("return origins: %#v", fn.ReturnOrigins)
 	}
@@ -329,7 +368,7 @@ func TestReturnOriginSourcesMapDirectAndMethodSlots(t *testing.T) {
 func TestTypeFromSyntaxAllowsAbstractSelf(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
 		Params: []ast.Param{{Type: &ast.NamedType{Name: "Self"}}},
-	}, SyntaxOptions{AllowAbstractSelf: true}).(*FuncType)
+	}, SyntaxContext{AllowAbstractSelf: true}).(*FuncType)
 	if got := fn.Text(); got != "fn(Self)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Self)")
 	}
@@ -339,10 +378,11 @@ func TestTypeFromSyntaxAppliesResolversRecursively(t *testing.T) {
 	resolved := &DefinedType{Name: "Resolved"}
 	typ := TypeFromSyntax(&ast.RefType{
 		Target: &ast.OptionalType{Inner: &ast.NamedType{Name: "Alias"}},
-	}, SyntaxOptions{
-		ResolveNamed: func(name string) (Type, bool) {
-			return resolved, name == "Alias"
-		},
+	}, SyntaxContext{
+		Resolver: syntaxTestResolver{resolveNamed: func(node ast.TypeExpr) (Type, bool) {
+			name, ok := node.(*ast.NamedType)
+			return resolved, ok && name.Name == "Alias"
+		}},
 	})
 
 	ref, ok := typ.(*RefType)
@@ -359,24 +399,19 @@ func TestTypeFromSyntaxAppliesResolversRecursively(t *testing.T) {
 }
 
 func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
-	invalidCalls := 0
+	issues := make([]SyntaxIssue, 0)
 	typ := TypeFromSyntax(&ast.ArrayType{
 		Len:  &ast.NumberLit{Value: "3", ExplicitType: "f32"},
 		Elem: &ast.NamedType{Name: "i32"},
-	}, SyntaxOptions{
-		InvalidArrayLen: func(*ast.NumberLit) Type {
-			invalidCalls++
-			return &InvalidType{}
-		},
-	})
-	if !IsInvalidOrUnknown(typ) || invalidCalls != 1 {
-		t.Fatalf("array type = %T, invalid callbacks = %d", typ, invalidCalls)
+	}, SyntaxContext{Issues: &issues})
+	if !IsInvalidOrUnknown(typ) || len(issues) != 1 || issues[0].Kind != SyntaxInvalidArrayLength {
+		t.Fatalf("array type = %T, issues = %#v", typ, issues)
 	}
 
 	valid := TypeFromSyntax(&ast.ArrayType{
 		Len:  &ast.NumberLit{Value: "3", ExplicitType: "u8"},
 		Elem: &ast.NamedType{Name: "i32"},
-	}, SyntaxOptions{})
+	}, SyntaxContext{})
 	if TypeText(valid) != "[3]i32" {
 		t.Fatalf("valid array type = %s, want [3]i32", TypeText(valid))
 	}
@@ -384,7 +419,7 @@ func TestTypeFromSyntaxRejectsInvalidArrayLengthType(t *testing.T) {
 	hexadecimal := TypeFromSyntax(&ast.ArrayType{
 		Len:  &ast.NumberLit{Value: "0x2"},
 		Elem: &ast.NamedType{Name: "i32"},
-	}, SyntaxOptions{})
+	}, SyntaxContext{})
 	if TypeText(hexadecimal) != "[2]i32" {
 		t.Fatalf("hexadecimal array type = %s, want [2]i32", TypeText(hexadecimal))
 	}
@@ -403,7 +438,7 @@ func TestTypeFromSyntaxRequiresArrayLengthToFitTargetIndex(t *testing.T) {
 		return TypeFromSyntax(&ast.ArrayType{
 			Len:  &ast.NumberLit{Value: length, ExplicitType: "u64"},
 			Elem: &ast.NamedType{Name: "u8"},
-		}, SyntaxOptions{Target: compilerTarget})
+		}, SyntaxContext{Target: compilerTarget})
 	}
 	if got := TypeText(arrayType("4294967295", target32)); got != "[4294967295]u8" {
 		t.Fatalf("32-bit maximum array type = %s", got)

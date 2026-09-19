@@ -1,0 +1,9 @@
+fn use(reader: &iface {
+    fn (&Self) read() -> i32
+}) -> i32 {
+    return reader.read();
+}
+
+fn main() -> i32 {
+    return 0;
+}

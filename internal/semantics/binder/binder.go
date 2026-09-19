@@ -52,7 +52,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
 	}
-	fnType := typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
+	fnType := project.ResolveFunctionType(b.ctx, b.module, fn, project.TypeContext{})
 	sym := b.module.Bindings.Symbol(fn.Name)
 	if fn.Receiver != nil {
 		if sym == nil {
@@ -94,7 +94,7 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 		return
 	}
 	b.bindModuleScopeType(name.Name,
-		typeinfo.TypeFromSyntax(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
+		project.ResolveType(b.ctx, b.module, typ, project.TypeContext{}))
 }
 
 // Bind named type declarations using one stable shell per symbol.
@@ -124,9 +124,14 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
 		}
 		sym.BindType(defined)
 	}
-	opts := project.TypeSyntaxOptions(b.ctx, b.module, nil, true)
-	opts.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
-	defined.Underlying = typeinfo.TypeFromSyntax(typ, opts)
+	context := project.TypeContext{
+		AllowAbstractSelf: true,
+		TypeParameters:    typeinfo.TypeParameterBindings(defined.TypeParameters, nil),
+	}
+	if _, ok := decl.(*ast.InterfaceDecl); ok {
+		context.NamedInterfaceRoot = typ
+	}
+	defined.Underlying = project.ResolveType(b.ctx, b.module, typ, context)
 	return defined
 }
 

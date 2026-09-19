@@ -69,6 +69,34 @@ func ForEachChild(typ Type, yield func(TypeChild) bool) bool {
 	return true
 }
 
+// TransformChildren applies one structural rewrite to every immediate child
+// slot, including nil slots. It deliberately does not recurse: analyses own
+// cycle and nominal-type policies, while this operation preserves one type's
+// metadata and shape.
+func TransformChildren(typ Type, transform func(TypeChild) Type) Type {
+	if typ == nil || typednil.IsNil(typ) || transform == nil {
+		return typ
+	}
+	if _, nominal := typ.(nominalType); nominal {
+		return typ
+	}
+	children := typ.description().children
+	if len(children) == 0 {
+		return typ
+	}
+	transformed := make([]TypeChild, len(children))
+	for index, child := range children {
+		transformed[index] = child
+		transformed[index].Type = transform(child)
+	}
+	return typ.rebuildChildren(transformed)
+}
+
+type nominalType interface {
+	Type
+	nominal()
+}
+
 func (*InvalidType) description() typeDescription   { return describeType("invalid") }
 func (*UnknownType) description() typeDescription   { return describeType("unknown") }
 func (*ByteType) description() typeDescription      { return describeType("byte") }
@@ -205,4 +233,116 @@ func appendOriginAttributes(attributes []string, origins *ReturnOriginContract) 
 		attributes = append(attributes, strconv.Itoa(source))
 	}
 	return attributes
+}
+
+func (t *InvalidType) rebuildChildren([]TypeChild) Type       { return t }
+func (t *UnknownType) rebuildChildren([]TypeChild) Type       { return t }
+func (t *IntegerType) rebuildChildren([]TypeChild) Type       { return t }
+func (t *ByteType) rebuildChildren([]TypeChild) Type          { return t }
+func (t *CharType) rebuildChildren([]TypeChild) Type          { return t }
+func (t *FloatType) rebuildChildren([]TypeChild) Type         { return t }
+func (t *BoolType) rebuildChildren([]TypeChild) Type          { return t }
+func (t *CStrType) rebuildChildren([]TypeChild) Type          { return t }
+func (t *StringType) rebuildChildren([]TypeChild) Type        { return t }
+func (t *NoneType) rebuildChildren([]TypeChild) Type          { return t }
+func (t *AllocatorType) rebuildChildren([]TypeChild) Type     { return t }
+func (t *NamedType) rebuildChildren([]TypeChild) Type         { return t }
+func (t *TypeParameterType) rebuildChildren([]TypeChild) Type { return t }
+func (t *RawPtrType) rebuildChildren([]TypeChild) Type        { return t }
+func (t *DefinedType) rebuildChildren([]TypeChild) Type       { return t }
+func (*DefinedType) nominal()                                 {}
+
+func (t *OwnedPtrType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != 1 {
+		return t
+	}
+	return &OwnedPtrType{Target: children[0].Type}
+}
+
+func (t *RefType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != 1 {
+		return t
+	}
+	return &RefType{Mutable: t.Mutable, Target: children[0].Type}
+}
+
+func (t *OptionalType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != 1 {
+		return t
+	}
+	return NewOptional(children[0].Type)
+}
+
+func (t *ArrayType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != 1 {
+		return t
+	}
+	return &ArrayType{Len: t.Len, Shape: t.Shape, Elem: children[0].Type}
+}
+
+func (t *FuncType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != len(t.Params)+1 {
+		return t
+	}
+	params := make([]Type, len(t.Params))
+	for index := range params {
+		params[index] = children[index].Type
+	}
+	return &FuncType{
+		Params:        params,
+		ParamNames:    append([]string(nil), t.ParamNames...),
+		Return:        children[len(params)].Type,
+		ReturnOrigins: t.ReturnOrigins,
+	}
+}
+
+func (t *StructType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != len(t.Fields) {
+		return t
+	}
+	fields := make([]Field, len(t.Fields))
+	for index, field := range t.Fields {
+		fields[index] = Field{Name: field.Name, Type: children[index].Type}
+	}
+	return &StructType{Fields: fields}
+}
+
+func (t *InterfaceType) rebuildChildren(children []TypeChild) Type {
+	if t == nil {
+		return t
+	}
+	methods := make([]Method, len(t.Methods))
+	childIndex := 0
+	for methodIndex, method := range t.Methods {
+		methods[methodIndex] = method
+		methods[methodIndex].Params = append([]Field(nil), method.Params...)
+		for parameterIndex := range method.Params {
+			if childIndex >= len(children) {
+				return t
+			}
+			methods[methodIndex].Params[parameterIndex].Type = children[childIndex].Type
+			childIndex++
+		}
+		if childIndex >= len(children) {
+			return t
+		}
+		methods[methodIndex].Return = children[childIndex].Type
+		childIndex++
+	}
+	if childIndex != len(children) {
+		return t
+	}
+	return &InterfaceType{Methods: methods}
+}
+
+func (t *EnumType) rebuildChildren(children []TypeChild) Type {
+	if t == nil || len(children) != len(t.Cases) {
+		return t
+	}
+	cases := make([]VariantCase, len(t.Cases))
+	for index, variant := range t.Cases {
+		cases[index] = variant
+		cases[index].Payload = children[index].Type
+	}
+	return &EnumType{Cases: cases}
 }
