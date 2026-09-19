@@ -277,11 +277,13 @@ binding state or type construction.
 
 `internal/semantics/typeinfo` is a sealed semantic type model. Its non-test files
 are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
-`structure.go`, `semantic_key.go`, `capabilities.go`, and `capability_walk.go`.
+`structure.go`, `semantic_key.go`, `equality.go`, `representation.go`,
+`capabilities.go`, and `ownership.go`.
 
 ### Type nodes
 
-- `Type` requires `TypeNode`, `Text`, `description`, and `ownershipShape`.
+- `Type` requires human-facing `Text`, compiler-facing `structure`, immutable
+  `withChildren`, and intrinsic equality, representation, and ownership operations.
 - Primitive nodes include invalid, unknown, integer, byte, char, float, bool,
   cstr, string, none, and allocator types.
 - `NamedType` represents unresolved or builtin-like names.
@@ -329,21 +331,20 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 
 ### Structural traversal and capability queries
 
-- Each type's private description owns local semantic attributes and ordered
-  child slots once. `SemanticKey` serializes that description with
-  collision-safe framing.
-- `ForEachChild` exposes present description children with `TypeChildRelation`.
+- Each type's private structure owns local semantic attributes and ordered child
+  slots once. `SemanticKey` serializes that structure with collision-safe framing.
+- `ForEachChild` exposes present structure children with `TypeChildRelation`.
 - Relations distinguish underlying, owned, borrowed, optional, array, field,
   enum payload, receiver, parameter, return, generic-parameter, and
   generic-argument edges.
 - Consumers choose recursion policy; type structure is not reimplemented in each
   analysis.
-- `IsSizedType` and `IsLowerableType` intentionally have separate cycle rules.
-- `OwnershipCapabilityOf` uses `ownershipShape` and one generic copy/drop walk.
+- `IsSizedType`, `IsLowerableType`, and `OwnershipCapabilityOf` delegate to
+  required per-type operations with independent query-owned cycle state.
 - Primitive scalar values are implicitly copyable; strings and owned storage are
   not implicitly copyable and require drop handling.
-- Optional, array, struct, interface, and enum ownership composes according to
-  their declared shape and child relations.
+- Optional, array, struct, interface, and enum ownership methods compose child
+  capabilities through canonical `ForEachChild` structure.
 - `UseKind` is the per-expression ownership classification published by typecheck.
 - Capability results constrain but do not replace per-use `ValueUses` evidence.
 

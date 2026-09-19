@@ -182,7 +182,7 @@ func TestNilTypeTraversalAndOwnership(t *testing.T) {
 		}) {
 			t.Errorf("nil %T traversal did not complete", typ)
 		}
-		if got := ownershipCapability(typ); got != (OwnershipCapability{Copy: CopyExplicit}) {
+		if got := OwnershipCapabilityOf(typ); got != (OwnershipCapability{Copy: CopyExplicit}) {
 			t.Errorf("nil %T capability = %+v; want explicit copy, no drop", typ, got)
 		}
 	}

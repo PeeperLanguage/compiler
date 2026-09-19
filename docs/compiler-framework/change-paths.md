@@ -15,7 +15,7 @@ Before adding a switch or recursive walk, ask what fact you need and who already
 | --- | --- |
 | AST children | node `forEachChild` + `ast.Inspect` |
 | semantic type children | `typeinfo.ForEachChild` |
-| copy/drop composition | sealed `typeinfo.Type.ownershipShape` |
+| copy/drop composition | sealed `typeinfo.Type.ownership` |
 | storage projection | `place.Project` / `place.Decompose` |
 | graph adjacency | `graph.Directed` |
 | fixed-point scheduling | `graph.Worklist` |
@@ -71,19 +71,18 @@ search-and-remember exercise. It must never fall through as an accidental no-op.
 A semantic type is not complete until it satisfies the sealed `typeinfo.Type` contract.
 The first edits are therefore local to `internal/semantics/typeinfo`:
 
-1. add the type and its `Text` behavior;
-2. declare local semantic attributes and ordered child slots in `description`,
-   using correct `TypeChildRelation` values;
-3. declare `ownershipShape` — whether it is a leaf/container and how copy/drop composes.
+1. add human-facing `Text` behavior;
+2. declare semantic attributes and ordered child slots in `structure`, using correct
+   `TypeChildRelation` values;
+3. implement `withChildren` for immutable structural transformation;
+4. implement required `isSameType`, `isSized`, `isLowerable`, and `ownership` behavior.
 
-That is the structural extension point. `ForEachChild` and semantic fingerprinting
-derive from the same description; recursive containment and copy/drop propagation
-use the canonical traversal automatically.
+`ForEachChild` and semantic fingerprinting derive from the same structure. Each
+intrinsic query owns its cycle policy and reuses canonical children where needed.
 
-Then add only representation-specific decisions that truly differ, for example:
+Then add decisions owned outside the type model, for example:
 
-- equality/compatibility;
-- sizing or lowerability with special cycle/ABI rules;
+- compatibility and conversions;
 - HIR/backend lowering;
 - source-type conversion if new syntax is involved.
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// leafTypes covers every base case the three ownership predicates distinguish.
+// leafTypes covers every ownership base case.
 func leafTypes() []Type {
 	return []Type{
 		&IntegerType{}, &ByteType{}, &CharType{}, &FloatType{}, &BoolType{},
@@ -21,7 +21,7 @@ func leafTypes() []Type {
 }
 
 // wrap produces every one-level composite around a type, so the matrix reaches
-// the recursive branches of all three predicates.
+// every recursive ownership rule.
 func wrap(inner Type) []Type {
 	return []Type{
 		&OptionalType{Inner: inner},
@@ -75,7 +75,7 @@ func TestOwnershipCapabilityMatchesGolden(t *testing.T) {
 	}
 	var b strings.Builder
 	for _, typ := range matrix {
-		got := ownershipCapability(typ)
+		got := OwnershipCapabilityOf(typ)
 		switch got.Copy {
 		case CopyImplicit:
 			b.WriteByte('i')
@@ -115,7 +115,7 @@ func TestOwnershipCapabilityWalkTerminatesOnRecursiveType(t *testing.T) {
 	// Bulk storage never copies implicitly, and the guard firing on the second
 	// visit is what makes the self-reference terminate without a drop claim.
 	want := OwnershipCapability{Copy: CopyExplicit}
-	if got := ownershipCapability(node); got != want {
+	if got := OwnershipCapabilityOf(node); got != want {
 		t.Fatalf("recursive type: capability = %+v, want %+v", got, want)
 	}
 }
@@ -126,7 +126,7 @@ func TestOwnershipCapabilityWalkVisitsRepeatedTypeTwice(t *testing.T) {
 	owned := &DefinedType{Name: "Owned", Underlying: &OwnedPtrType{Target: &IntegerType{}}}
 	pair := &StructType{Fields: []Field{{Name: "a", Type: owned}, {Name: "b", Type: owned}}}
 
-	got := ownershipCapability(pair)
+	got := OwnershipCapabilityOf(pair)
 	if !got.Drop {
 		t.Fatalf("repeated owned field: walk = %+v, want a drop obligation", got)
 	}

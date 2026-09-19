@@ -181,7 +181,7 @@ func checkStructCompatibility(dst, src Type) Compatibility {
 	if !ok || right == nil || len(left.Fields) != len(right.Fields) {
 		return Incompatible
 	}
-	if !left.sameType(right) {
+	if !left.isSameType(right) {
 		return Incompatible
 	}
 	if dstNominal {

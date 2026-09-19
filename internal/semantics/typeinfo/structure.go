@@ -34,17 +34,17 @@ type TypeChild struct {
 	Relation TypeChildRelation
 }
 
-// typeDescription is the canonical local description of one semantic type.
+// typeStructure is the canonical local structure of one semantic type.
 // Semantic identity consumes all fields; structural analyses project only
 // present children through ForEachChild.
-type typeDescription struct {
+type typeStructure struct {
 	kind       string
 	attributes []string
 	children   []TypeChild
 }
 
-func describeType(kind string, attributes ...string) typeDescription {
-	return typeDescription{kind: kind, attributes: attributes}
+func newTypeStructure(kind string, attributes ...string) typeStructure {
+	return typeStructure{kind: kind, attributes: attributes}
 }
 
 // ForEachChild visits the immediate semantic children of typ in source/semantic
@@ -58,7 +58,7 @@ func ForEachChild(typ Type, yield func(TypeChild) bool) bool {
 	if typ == nil || typednil.IsNil(typ) || yield == nil {
 		return true
 	}
-	for _, child := range typ.description().children {
+	for _, child := range typ.structure().children {
 		if child.Type == nil || typednil.IsNil(child.Type) {
 			continue
 		}
@@ -80,7 +80,7 @@ func TransformChildren(typ Type, transform func(TypeChild) Type) Type {
 	if _, nominal := typ.(nominalType); nominal {
 		return typ
 	}
-	children := typ.description().children
+	children := typ.structure().children
 	if len(children) == 0 {
 		return typ
 	}
@@ -89,7 +89,7 @@ func TransformChildren(typ Type, transform func(TypeChild) Type) Type {
 		transformed[index] = child
 		transformed[index].Type = transform(child)
 	}
-	return typ.rebuildChildren(transformed)
+	return typ.withChildren(transformed)
 }
 
 type nominalType interface {
@@ -97,72 +97,72 @@ type nominalType interface {
 	nominal()
 }
 
-func (*InvalidType) description() typeDescription   { return describeType("invalid") }
-func (*UnknownType) description() typeDescription   { return describeType("unknown") }
-func (*ByteType) description() typeDescription      { return describeType("byte") }
-func (*CharType) description() typeDescription      { return describeType("char") }
-func (*BoolType) description() typeDescription      { return describeType("bool") }
-func (*CStrType) description() typeDescription      { return describeType("cstr") }
-func (*StringType) description() typeDescription    { return describeType("string") }
-func (*NoneType) description() typeDescription      { return describeType("none") }
-func (*AllocatorType) description() typeDescription { return describeType("allocator") }
-func (*RawPtrType) description() typeDescription    { return describeType("rawptr") }
+func (*InvalidType) structure() typeStructure   { return newTypeStructure("invalid") }
+func (*UnknownType) structure() typeStructure   { return newTypeStructure("unknown") }
+func (*ByteType) structure() typeStructure      { return newTypeStructure("byte") }
+func (*CharType) structure() typeStructure      { return newTypeStructure("char") }
+func (*BoolType) structure() typeStructure      { return newTypeStructure("bool") }
+func (*CStrType) structure() typeStructure      { return newTypeStructure("cstr") }
+func (*StringType) structure() typeStructure    { return newTypeStructure("string") }
+func (*NoneType) structure() typeStructure      { return newTypeStructure("none") }
+func (*AllocatorType) structure() typeStructure { return newTypeStructure("allocator") }
+func (*RawPtrType) structure() typeStructure    { return newTypeStructure("rawptr") }
 
-func (t *IntegerType) description() typeDescription {
-	return describeType("integer", strconv.FormatBool(t.Signed), strconv.Itoa(t.Bits))
+func (t *IntegerType) structure() typeStructure {
+	return newTypeStructure("integer", strconv.FormatBool(t.Signed), strconv.Itoa(t.Bits))
 }
 
-func (t *FloatType) description() typeDescription {
-	return describeType("float", strconv.Itoa(t.Bits))
+func (t *FloatType) structure() typeStructure {
+	return newTypeStructure("float", strconv.Itoa(t.Bits))
 }
 
-func (t *NamedType) description() typeDescription {
-	return describeType("named", t.Name)
+func (t *NamedType) structure() typeStructure {
+	return newTypeStructure("named", t.Name)
 }
 
-func (t *TypeParameterType) description() typeDescription {
-	return describeType("parameter", t.OwnerIdentity, strconv.Itoa(t.Index), t.Name)
+func (t *TypeParameterType) structure() typeStructure {
+	return newTypeStructure("parameter", t.OwnerIdentity, strconv.Itoa(t.Index), t.Name)
 }
 
-func (t *DefinedType) description() typeDescription {
-	description := describeType("defined", strconv.Itoa(int(t.Kind)), t.Identity, t.Name)
-	description.children = make([]TypeChild, 0, 1+len(t.TypeParameters)+len(t.TypeArguments))
-	description.children = append(description.children, TypeChild{Type: t.Underlying, Relation: TypeChildUnderlying})
+func (t *DefinedType) structure() typeStructure {
+	structure := newTypeStructure("defined", strconv.Itoa(int(t.Kind)), t.Identity, t.Name)
+	structure.children = make([]TypeChild, 0, 1+len(t.TypeParameters)+len(t.TypeArguments))
+	structure.children = append(structure.children, TypeChild{Type: t.Underlying, Relation: TypeChildUnderlying})
 	for _, parameter := range t.TypeParameters {
-		description.children = append(description.children, TypeChild{Type: parameter, Relation: TypeChildTypeParameter})
+		structure.children = append(structure.children, TypeChild{Type: parameter, Relation: TypeChildTypeParameter})
 	}
 	for _, argument := range t.TypeArguments {
-		description.children = append(description.children, TypeChild{Type: argument, Relation: TypeChildTypeArgument})
+		structure.children = append(structure.children, TypeChild{Type: argument, Relation: TypeChildTypeArgument})
 	}
-	return description
+	return structure
 }
 
-func (t *OwnedPtrType) description() typeDescription {
-	return typeDescription{kind: "owned", children: []TypeChild{{Type: t.Target, Relation: TypeChildOwnedTarget}}}
+func (t *OwnedPtrType) structure() typeStructure {
+	return typeStructure{kind: "owned", children: []TypeChild{{Type: t.Target, Relation: TypeChildOwnedTarget}}}
 }
 
-func (t *RefType) description() typeDescription {
-	return typeDescription{
+func (t *RefType) structure() typeStructure {
+	return typeStructure{
 		kind:       "ref",
 		attributes: []string{strconv.FormatBool(t.Mutable)},
 		children:   []TypeChild{{Type: t.Target, Relation: TypeChildBorrowedTarget}},
 	}
 }
 
-func (t *OptionalType) description() typeDescription {
-	return typeDescription{kind: "optional", children: []TypeChild{{Type: t.Inner, Relation: TypeChildOptionalPayload}}}
+func (t *OptionalType) structure() typeStructure {
+	return typeStructure{kind: "optional", children: []TypeChild{{Type: t.Inner, Relation: TypeChildOptionalPayload}}}
 }
 
-func (t *ArrayType) description() typeDescription {
-	return typeDescription{
+func (t *ArrayType) structure() typeStructure {
+	return typeStructure{
 		kind:       "array",
 		attributes: []string{strconv.Itoa(int(t.Shape)), t.Len},
 		children:   []TypeChild{{Type: t.Elem, Relation: TypeChildArrayElement}},
 	}
 }
 
-func (t *FuncType) description() typeDescription {
-	description := typeDescription{
+func (t *FuncType) structure() typeStructure {
+	structure := typeStructure{
 		kind:       "func",
 		attributes: make([]string, 0, len(t.Params)+2),
 		children:   make([]TypeChild, 0, len(t.Params)+1),
@@ -172,56 +172,56 @@ func (t *FuncType) description() typeDescription {
 		if index < len(t.ParamNames) {
 			name = t.ParamNames[index]
 		}
-		description.attributes = append(description.attributes, name)
-		description.children = append(description.children, TypeChild{Type: param, Relation: TypeChildCallableParameter})
+		structure.attributes = append(structure.attributes, name)
+		structure.children = append(structure.children, TypeChild{Type: param, Relation: TypeChildCallableParameter})
 	}
-	description.attributes = appendOriginAttributes(description.attributes, t.ReturnOrigins)
-	description.children = append(description.children, TypeChild{Type: t.Return, Relation: TypeChildCallableReturn})
-	return description
+	structure.attributes = appendOriginAttributes(structure.attributes, t.ReturnOrigins)
+	structure.children = append(structure.children, TypeChild{Type: t.Return, Relation: TypeChildCallableReturn})
+	return structure
 }
 
-func (t *StructType) description() typeDescription {
-	description := typeDescription{
+func (t *StructType) structure() typeStructure {
+	structure := typeStructure{
 		kind:       "struct",
 		attributes: make([]string, 0, len(t.Fields)),
 		children:   make([]TypeChild, 0, len(t.Fields)),
 	}
 	for _, field := range t.Fields {
-		description.attributes = append(description.attributes, field.Name)
-		description.children = append(description.children, TypeChild{Type: field.Type, Relation: TypeChildStructField})
+		structure.attributes = append(structure.attributes, field.Name)
+		structure.children = append(structure.children, TypeChild{Type: field.Type, Relation: TypeChildStructField})
 	}
-	return description
+	return structure
 }
 
-func (t *InterfaceType) description() typeDescription {
-	description := typeDescription{kind: "interface", attributes: []string{strconv.Itoa(len(t.Methods))}}
+func (t *InterfaceType) structure() typeStructure {
+	structure := typeStructure{kind: "interface", attributes: []string{strconv.Itoa(len(t.Methods))}}
 	for _, method := range t.Methods {
-		description.attributes = append(description.attributes, method.Name, strconv.Itoa(len(method.Params)))
+		structure.attributes = append(structure.attributes, method.Name, strconv.Itoa(len(method.Params)))
 		for index, param := range method.Params {
-			description.attributes = append(description.attributes, param.Name)
+			structure.attributes = append(structure.attributes, param.Name)
 			relation := TypeChildCallableParameter
 			if index == 0 {
 				relation = TypeChildMethodReceiver
 			}
-			description.children = append(description.children, TypeChild{Type: param.Type, Relation: relation})
+			structure.children = append(structure.children, TypeChild{Type: param.Type, Relation: relation})
 		}
-		description.attributes = appendOriginAttributes(description.attributes, method.ReturnOrigins)
-		description.children = append(description.children, TypeChild{Type: method.Return, Relation: TypeChildCallableReturn})
+		structure.attributes = appendOriginAttributes(structure.attributes, method.ReturnOrigins)
+		structure.children = append(structure.children, TypeChild{Type: method.Return, Relation: TypeChildCallableReturn})
 	}
-	return description
+	return structure
 }
 
-func (t *EnumType) description() typeDescription {
-	description := typeDescription{
+func (t *EnumType) structure() typeStructure {
+	structure := typeStructure{
 		kind:       "enum",
 		attributes: make([]string, 0, len(t.Cases)),
 		children:   make([]TypeChild, 0, len(t.Cases)),
 	}
 	for _, variant := range t.Cases {
-		description.attributes = append(description.attributes, variant.Name)
-		description.children = append(description.children, TypeChild{Type: variant.Payload, Relation: TypeChildEnumPayload})
+		structure.attributes = append(structure.attributes, variant.Name)
+		structure.children = append(structure.children, TypeChild{Type: variant.Payload, Relation: TypeChildEnumPayload})
 	}
-	return description
+	return structure
 }
 
 func appendOriginAttributes(attributes []string, origins *ReturnOriginContract) []string {
@@ -235,52 +235,52 @@ func appendOriginAttributes(attributes []string, origins *ReturnOriginContract) 
 	return attributes
 }
 
-func (t *InvalidType) rebuildChildren([]TypeChild) Type       { return t }
-func (t *UnknownType) rebuildChildren([]TypeChild) Type       { return t }
-func (t *IntegerType) rebuildChildren([]TypeChild) Type       { return t }
-func (t *ByteType) rebuildChildren([]TypeChild) Type          { return t }
-func (t *CharType) rebuildChildren([]TypeChild) Type          { return t }
-func (t *FloatType) rebuildChildren([]TypeChild) Type         { return t }
-func (t *BoolType) rebuildChildren([]TypeChild) Type          { return t }
-func (t *CStrType) rebuildChildren([]TypeChild) Type          { return t }
-func (t *StringType) rebuildChildren([]TypeChild) Type        { return t }
-func (t *NoneType) rebuildChildren([]TypeChild) Type          { return t }
-func (t *AllocatorType) rebuildChildren([]TypeChild) Type     { return t }
-func (t *NamedType) rebuildChildren([]TypeChild) Type         { return t }
-func (t *TypeParameterType) rebuildChildren([]TypeChild) Type { return t }
-func (t *RawPtrType) rebuildChildren([]TypeChild) Type        { return t }
-func (t *DefinedType) rebuildChildren([]TypeChild) Type       { return t }
-func (*DefinedType) nominal()                                 {}
+func (t *InvalidType) withChildren([]TypeChild) Type       { return t }
+func (t *UnknownType) withChildren([]TypeChild) Type       { return t }
+func (t *IntegerType) withChildren([]TypeChild) Type       { return t }
+func (t *ByteType) withChildren([]TypeChild) Type          { return t }
+func (t *CharType) withChildren([]TypeChild) Type          { return t }
+func (t *FloatType) withChildren([]TypeChild) Type         { return t }
+func (t *BoolType) withChildren([]TypeChild) Type          { return t }
+func (t *CStrType) withChildren([]TypeChild) Type          { return t }
+func (t *StringType) withChildren([]TypeChild) Type        { return t }
+func (t *NoneType) withChildren([]TypeChild) Type          { return t }
+func (t *AllocatorType) withChildren([]TypeChild) Type     { return t }
+func (t *NamedType) withChildren([]TypeChild) Type         { return t }
+func (t *TypeParameterType) withChildren([]TypeChild) Type { return t }
+func (t *RawPtrType) withChildren([]TypeChild) Type        { return t }
+func (t *DefinedType) withChildren([]TypeChild) Type       { return t }
+func (*DefinedType) nominal()                              {}
 
-func (t *OwnedPtrType) rebuildChildren(children []TypeChild) Type {
+func (t *OwnedPtrType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != 1 {
 		return t
 	}
 	return &OwnedPtrType{Target: children[0].Type}
 }
 
-func (t *RefType) rebuildChildren(children []TypeChild) Type {
+func (t *RefType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != 1 {
 		return t
 	}
 	return &RefType{Mutable: t.Mutable, Target: children[0].Type}
 }
 
-func (t *OptionalType) rebuildChildren(children []TypeChild) Type {
+func (t *OptionalType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != 1 {
 		return t
 	}
 	return NewOptional(children[0].Type)
 }
 
-func (t *ArrayType) rebuildChildren(children []TypeChild) Type {
+func (t *ArrayType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != 1 {
 		return t
 	}
 	return &ArrayType{Len: t.Len, Shape: t.Shape, Elem: children[0].Type}
 }
 
-func (t *FuncType) rebuildChildren(children []TypeChild) Type {
+func (t *FuncType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != len(t.Params)+1 {
 		return t
 	}
@@ -296,7 +296,7 @@ func (t *FuncType) rebuildChildren(children []TypeChild) Type {
 	}
 }
 
-func (t *StructType) rebuildChildren(children []TypeChild) Type {
+func (t *StructType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != len(t.Fields) {
 		return t
 	}
@@ -307,7 +307,7 @@ func (t *StructType) rebuildChildren(children []TypeChild) Type {
 	return &StructType{Fields: fields}
 }
 
-func (t *InterfaceType) rebuildChildren(children []TypeChild) Type {
+func (t *InterfaceType) withChildren(children []TypeChild) Type {
 	if t == nil {
 		return t
 	}
@@ -335,7 +335,7 @@ func (t *InterfaceType) rebuildChildren(children []TypeChild) Type {
 	return &InterfaceType{Methods: methods}
 }
 
-func (t *EnumType) rebuildChildren(children []TypeChild) Type {
+func (t *EnumType) withChildren(children []TypeChild) Type {
 	if t == nil || len(children) != len(t.Cases) {
 		return t
 	}

@@ -97,29 +97,30 @@ Under current AST contract, each node declares children once. Semantic stages ma
 
 ### Semantic types: `typeinfo.ForEachChild`
 
-`typeinfo.Type` is sealed inside `typeinfo` and requires two composition contracts:
+`typeinfo.Type` is sealed inside `typeinfo` and requires explicit intrinsic
+operations:
 
-- `description` — local semantic identity plus ordered child slots and their
+- `structure` — local semantic identity plus ordered child slots and their
   `TypeChildRelation`;
-- `ownershipShape` — how copy/drop semantics compose over those children.
+- `withChildren` — immutable replacement of immediate child slots;
+- `isSameType`, `isSized`, `isLowerable`, and `ownership` — operation-specific
+  behavior that new types must implement.
 
-`typeinfo.ForEachChild` projects present children from `description`; semantic
-fingerprinting consumes the same description, including absent slots.
+`typeinfo.ForEachChild` projects present children from `structure`; semantic
+fingerprinting consumes the same structure, including absent slots.
 `ForEachChild` is the semantic-type equivalent of `ast.Inspect`.
 Containment and ownership capability queries consume this structure. Sizing and
 lowerability intentionally keep separate recursion policies because recursive
 cycles mean different things to those queries.
 
-Consequence: adding a new composite semantic type cannot satisfy `typeinfo.Type`
-until it declares child structure and ownership composition. Nested ownership/drop
-then propagates through generic machinery. This enforces method presence, not
-correct child enumeration or ownership policy; behavioral tests remain necessary.
+Consequence: adding a semantic type cannot satisfy `typeinfo.Type` until it
+declares structure, immutable rebuilding, equality, representation, and ownership
+behavior. Required methods enforce presence; behavioral tests still prove each
+implementation's policy.
 
-Typed-nil capability inputs retain explicit-copy/no-drop answers. `isNilType` uses
-bounded pointer reflection before ownership dispatch: nil scalar and owned-pointer
-receivers otherwise return ordinary non-nil facts. This guard avoids an exhaustive
-type-kind switch or nil-only interface. Traversal methods separately
-handle nil receivers; this is not a compiler-wide typed-nil validation guarantee.
+Typed-nil ownership inputs retain explicit-copy/no-drop answers. The ownership
+query checks `typednil.IsNil` before dispatch, while structural traversal separately
+skips typed-nil children. This is not a compiler-wide typed-nil validation guarantee.
 
 ### Places: `place.Project` / `place.Decompose`
 
@@ -324,18 +325,15 @@ Under current design, new syntax does not require new effect kind when existing 
 
 Under current sealed interface, new type first satisfies `typeinfo.Type`:
 
-1. `Text`;
-2. `description` with semantic attributes and correct `TypeChildRelation` for
-   every contained type slot;
-3. `ownershipShape` describing leaf/container ownership policy.
+1. `Text` for human-facing rendering;
+2. `structure` with semantic attributes and correct `TypeChildRelation` for every
+   contained type slot;
+3. `withChildren` for immutable structural transformation;
+4. `isSameType`, `isSized`, `isLowerable`, and `ownership` for intrinsic behavior.
 
-Once this is done, recursive containment and copy/drop propagation compose through
-the declared structure.
+Then make explicit decisions only where another owner genuinely differs:
 
-Then make explicit decisions only where representation semantics genuinely differ:
-
-- `SameType` / compatibility;
-- sizing/lowerability when shape has special rules;
+- compatibility and conversions;
 - HIR/backend type lowering;
 - syntax conversion if source has new type syntax.
 

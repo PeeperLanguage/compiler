@@ -675,7 +675,7 @@ func TestVariantDescriptorUsesEnumIdentityThroughTransparentAlias(t *testing.T) 
 	}
 }
 
-func TestUnaliasCanonicalizesChainsWithoutErasingNominalTypes(t *testing.T) {
+func TestAliasCanonicalizationPreservesNominalTypesAndRejectsCycles(t *testing.T) {
 	integer := &IntegerType{Signed: true, Bits: 32}
 	inner := &DefinedType{Name: "Inner", Kind: DefinedKindAlias, Underlying: integer}
 	outer := &DefinedType{Name: "Outer", Kind: DefinedKindAlias, Underlying: inner}
@@ -692,6 +692,15 @@ func TestUnaliasCanonicalizesChainsWithoutErasingNominalTypes(t *testing.T) {
 	cycle.Underlying = cycle
 	if got := Unalias(cycle); !IsInvalid(got) {
 		t.Fatalf("Unalias(alias cycle) = %#v, want invalid", got)
+	}
+	if got := Underlying(cycle); !IsInvalid(got) {
+		t.Fatalf("Underlying(alias cycle) = %#v, want invalid", got)
+	}
+	if SameType(cycle, integer) {
+		t.Fatal("alias cycle must not equal a concrete type")
+	}
+	if _, ok := VariantDescriptorOf(cycle); ok {
+		t.Fatal("alias cycle must not publish a variant descriptor")
 	}
 }
 

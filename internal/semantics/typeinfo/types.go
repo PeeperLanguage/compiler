@@ -6,11 +6,18 @@ import (
 )
 
 type Type interface {
+	// Text returns source-like text for diagnostics and other human-facing output.
 	Text() string
-	description() typeDescription
-	ownershipShape() ownershipShape
-	rebuildChildren([]TypeChild) Type
-	sameType(Type) bool
+	// structure returns immediate compiler-facing metadata and child relationships.
+	structure() typeStructure
+	isLowerable(*lowerQuery, bool) bool
+	isSized(*sizeQuery) bool
+	// ownership classifies copy and drop behavior using query-owned cycle state.
+	ownership(*ownershipQuery, bool) OwnershipCapability
+	// withChildren returns the same type shape with replaced immediate children.
+	// It does not mutate the receiver.
+	withChildren([]TypeChild) Type
+	isSameType(Type) bool
 }
 
 type InvalidType struct{}
@@ -292,11 +299,16 @@ func Unalias(t Type) Type {
 }
 
 func Underlying(t Type) Type {
+	seen := make(map[*DefinedType]struct{})
 	for {
 		defined, ok := t.(*DefinedType)
 		if !ok || defined == nil || defined.Underlying == nil {
 			return t
 		}
+		if _, found := seen[defined]; found {
+			return &InvalidType{}
+		}
+		seen[defined] = struct{}{}
 		t = defined.Underlying
 	}
 }

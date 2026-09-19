@@ -2,106 +2,106 @@ package typeinfo
 
 import "slices"
 
-func (*InvalidType) sameType(other Type) bool {
+func (*InvalidType) isSameType(other Type) bool {
 	_, ok := other.(*InvalidType)
 	return ok
 }
 
-func (*UnknownType) sameType(other Type) bool {
+func (*UnknownType) isSameType(other Type) bool {
 	_, ok := other.(*UnknownType)
 	return ok
 }
 
-func (t *IntegerType) sameType(other Type) bool {
+func (t *IntegerType) isSameType(other Type) bool {
 	right, ok := other.(*IntegerType)
 	return ok && t != nil && right != nil && t.Signed == right.Signed && t.Bits == right.Bits
 }
 
-func (*ByteType) sameType(other Type) bool {
+func (*ByteType) isSameType(other Type) bool {
 	_, ok := other.(*ByteType)
 	return ok
 }
 
-func (*CharType) sameType(other Type) bool {
+func (*CharType) isSameType(other Type) bool {
 	_, ok := other.(*CharType)
 	return ok
 }
 
-func (t *FloatType) sameType(other Type) bool {
+func (t *FloatType) isSameType(other Type) bool {
 	right, ok := other.(*FloatType)
 	return ok && t != nil && right != nil && t.Bits == right.Bits
 }
 
-func (*BoolType) sameType(other Type) bool {
+func (*BoolType) isSameType(other Type) bool {
 	_, ok := other.(*BoolType)
 	return ok
 }
 
-func (*CStrType) sameType(other Type) bool {
+func (*CStrType) isSameType(other Type) bool {
 	_, ok := other.(*CStrType)
 	return ok
 }
 
-func (*StringType) sameType(other Type) bool {
+func (*StringType) isSameType(other Type) bool {
 	_, ok := other.(*StringType)
 	return ok
 }
 
-func (*NoneType) sameType(other Type) bool {
+func (*NoneType) isSameType(other Type) bool {
 	_, ok := other.(*NoneType)
 	return ok
 }
 
-func (*AllocatorType) sameType(other Type) bool {
+func (*AllocatorType) isSameType(other Type) bool {
 	_, ok := other.(*AllocatorType)
 	return ok
 }
 
-func (t *NamedType) sameType(other Type) bool {
+func (t *NamedType) isSameType(other Type) bool {
 	right, ok := other.(*NamedType)
 	return ok && t != nil && right != nil && t.Name == right.Name
 }
 
-func (t *TypeParameterType) sameType(other Type) bool {
+func (t *TypeParameterType) isSameType(other Type) bool {
 	right, ok := other.(*TypeParameterType)
 	return ok && t != nil && right != nil &&
 		t.OwnerIdentity == right.OwnerIdentity && t.Index == right.Index
 }
 
-func (*DefinedType) sameType(Type) bool {
+func (*DefinedType) isSameType(Type) bool {
 	// SameType handles nominal identity before unwrapping complete definitions.
 	// Distinct incomplete definitions have no structural evidence to compare.
 	return false
 }
 
-func (t *OwnedPtrType) sameType(other Type) bool {
+func (t *OwnedPtrType) isSameType(other Type) bool {
 	right, ok := other.(*OwnedPtrType)
 	return ok && t != nil && right != nil && SameType(t.Target, right.Target)
 }
 
-func (*RawPtrType) sameType(other Type) bool {
+func (*RawPtrType) isSameType(other Type) bool {
 	_, ok := other.(*RawPtrType)
 	return ok
 }
 
-func (t *RefType) sameType(other Type) bool {
+func (t *RefType) isSameType(other Type) bool {
 	right, ok := other.(*RefType)
 	return ok && t != nil && right != nil &&
 		t.Mutable == right.Mutable && SameType(t.Target, right.Target)
 }
 
-func (t *OptionalType) sameType(other Type) bool {
+func (t *OptionalType) isSameType(other Type) bool {
 	right, ok := other.(*OptionalType)
 	return ok && t != nil && right != nil && SameType(t.Inner, right.Inner)
 }
 
-func (t *ArrayType) sameType(other Type) bool {
+func (t *ArrayType) isSameType(other Type) bool {
 	right, ok := other.(*ArrayType)
 	return ok && t != nil && right != nil &&
 		t.Len == right.Len && t.Shape == right.Shape && SameType(t.Elem, right.Elem)
 }
 
-func (t *FuncType) sameType(other Type) bool {
+func (t *FuncType) isSameType(other Type) bool {
 	right, ok := other.(*FuncType)
 	if !ok || t == nil || right == nil || len(t.Params) != len(right.Params) {
 		return false
@@ -114,9 +114,9 @@ func (t *FuncType) sameType(other Type) bool {
 	return SameType(t.Return, right.Return) && sameReturnOriginContract(t.ReturnOrigins, right.ReturnOrigins)
 }
 
-// sameType compares structural fields by name because source struct identity is
+// isSameType compares structural fields by name because source struct identity is
 // independent of declaration order. Nominal identity is handled by SameType.
-func (t *StructType) sameType(other Type) bool {
+func (t *StructType) isSameType(other Type) bool {
 	right, ok := other.(*StructType)
 	if !ok || t == nil || right == nil || len(t.Fields) != len(right.Fields) {
 		return false
@@ -141,7 +141,7 @@ func (t *StructType) sameType(other Type) bool {
 	return len(rightFields) == 0
 }
 
-func (t *InterfaceType) sameType(other Type) bool {
+func (t *InterfaceType) isSameType(other Type) bool {
 	right, ok := other.(*InterfaceType)
 	if !ok || t == nil || right == nil || len(t.Methods) != len(right.Methods) {
 		return false
@@ -164,7 +164,7 @@ func (t *InterfaceType) sameType(other Type) bool {
 	return true
 }
 
-func (t *EnumType) sameType(other Type) bool {
+func (t *EnumType) isSameType(other Type) bool {
 	right, ok := other.(*EnumType)
 	if !ok || t == nil || right == nil || len(t.Cases) != len(right.Cases) {
 		return false

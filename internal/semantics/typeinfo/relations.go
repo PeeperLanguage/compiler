@@ -23,7 +23,7 @@ func SameType(left, right Type) bool {
 	if left == nil {
 		return right == nil
 	}
-	return left.sameType(right)
+	return left.isSameType(right)
 }
 
 func sameNominalEnum(left, right Type) (same, nominal bool) {
@@ -36,20 +36,11 @@ func sameNominalEnum(left, right Type) (same, nominal bool) {
 }
 
 func nominalEnumIdentity(typ Type) (string, bool) {
-	for {
-		defined, ok := typ.(*DefinedType)
-		if !ok || defined == nil {
-			return "", false
-		}
-		switch defined.Kind {
-		case DefinedKindAlias:
-			typ = defined.Underlying
-		case DefinedKindEnum:
-			return defined.Identity, true
-		default:
-			return "", false
-		}
+	defined, ok := Unalias(typ).(*DefinedType)
+	if !ok || defined == nil || defined.Kind != DefinedKindEnum {
+		return "", false
 	}
+	return defined.Identity, true
 }
 
 func sameNominalStruct(left, right Type) (same, nominal bool) {
