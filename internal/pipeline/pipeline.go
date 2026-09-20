@@ -15,6 +15,7 @@ import (
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
@@ -34,7 +35,7 @@ import (
 	"compiler/internal/semantics/usage"
 )
 
-// Run the central lex -> parse -> analyze -> HIR -> MIR -> LLVM flow.
+// Run the central lex -> parse -> analyze -> THIR -> HIR -> MIR -> LLVM flow.
 func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	if ctx == nil || entry == nil {
 		return errors.New("empty pipeline")
@@ -419,6 +420,13 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.Phase < phase.Typechecked {
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
+		module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
+		if !phaseDiag.HasErrors() {
+			if err := module.THIR.Validate(); err != nil {
+				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
+					"typed source representation is malformed: "+err.Error(), nil, "")
+			}
+		}
 		module.RebuildTypedASTIndex()
 		module.SemanticExportFingerprint = project.SemanticExportFingerprint(ctx, module)
 		module.Phase = phase.Typechecked

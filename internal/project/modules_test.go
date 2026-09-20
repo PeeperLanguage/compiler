@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
@@ -171,6 +172,7 @@ func moduleWithArtifacts() *module.Module {
 		SemanticExportFingerprint: "semantic API",
 		ModuleScope:               symbols.NewScope(nil),
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
+		THIR:                      &thir.Module{},
 		HIR:                       &hir.Module{},
 		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{}}},
 		Flow:                      flowresult.New(),
@@ -195,6 +197,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		typechecking bool
 		exportAPI    bool
 		astNodes     bool
+		thir         bool
 		hir          bool
 		cfg          bool
 		flow         bool
@@ -204,15 +207,15 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		llvm         bool
 	}{
 		{phase: phase.Parsed},
-		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true},
-		{phase: phase.CFG, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true},
-		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, effects: true},
-		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.HIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true},
+		{phase: phase.CFG, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true},
+		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true},
+		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true},
+		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.HIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, hir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
@@ -220,6 +223,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.Bindings != nil) != test.bindings || (module.Constants != nil) != test.constants ||
 			(module.Typechecking != nil) != test.typechecking ||
+			(module.THIR != nil) != test.thir ||
 			(module.HIR != nil) != test.hir ||
 			(module.TypedASTNodes != nil) != test.astNodes ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||

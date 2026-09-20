@@ -5,6 +5,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/bindingresult"
@@ -61,6 +62,7 @@ type Module struct {
 	// TypedASTNodes indexes source and typechecker-generated expressions.
 	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
+	THIR *thir.Module
 	HIR  *hir.Module
 	CFG  *cfg.Module
 	Flow *flowresult.Result
@@ -216,6 +218,7 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	}
 	if retained < phase.Typechecked {
 		m.Typechecking = nil
+		m.THIR = nil
 		m.SemanticExportFingerprint = ""
 		m.TypedASTNodes = nil
 	}
