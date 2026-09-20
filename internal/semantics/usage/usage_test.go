@@ -69,7 +69,7 @@ fn GetValue() -> i32 { return 42; }`
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)
 	typechecker.Check(ctx, mod)
-	Analyze(ctx, mod)
+	Analyze(diag, mod, moduleid.ID{})
 	return diag
 }
 

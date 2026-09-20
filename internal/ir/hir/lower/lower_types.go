@@ -3,21 +3,20 @@ package lower
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
-	"compiler/internal/project"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func loweredTypeID(ctx *project.CompilerContext, t typeinfo.Type) ir.TypeID {
-	if ctx == nil || ctx.Types == nil || t == nil {
+func loweredTypeID(ctx *lowering, t typeinfo.Type) ir.TypeID {
+	if ctx == nil || ctx.types == nil || t == nil {
 		return ir.InvalidType
 	}
 	interner := runtimeTypeInterner{ctx: ctx, active: make(map[string]ir.TypeID)}
 	return interner.intern(t)
 }
 
-func loweredReturnTypeID(ctx *project.CompilerContext, t typeinfo.Type) ir.TypeID {
+func loweredReturnTypeID(ctx *lowering, t typeinfo.Type) ir.TypeID {
 	if t == nil {
-		return ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
+		return ctx.types.Intern(ir.Type{Kind: ir.TypeVoid})
 	}
 	return loweredTypeID(ctx, t)
 }
@@ -26,12 +25,12 @@ func loweredReturnTypeID(ctx *project.CompilerContext, t typeinfo.Type) ir.TypeI
 // composites reserve identity before child descent so legal pointer/reference
 // recursion closes on one canonical TypeID.
 type runtimeTypeInterner struct {
-	ctx    *project.CompilerContext
+	ctx    *lowering
 	active map[string]ir.TypeID
 }
 
 func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
-	if l == nil || l.ctx == nil || l.ctx.Types == nil || t == nil {
+	if l == nil || l.ctx == nil || l.ctx.types == nil || t == nil {
 		return ir.InvalidType
 	}
 	if defined, ok := t.(*typeinfo.DefinedType); ok {
@@ -46,7 +45,7 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 			}
 		}
 		if descriptor.Family == typeinfo.VariantFamilyOptional {
-			return l.ctx.Types.Intern(ir.OptionalVariant(cases[ir.OptionalPresentCase].Payload))
+			return l.ctx.types.Intern(ir.OptionalVariant(cases[ir.OptionalPresentCase].Payload))
 		}
 		return l.invalid("named variant reached IR lowering without declaration identity")
 	}
@@ -57,48 +56,48 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: typ.Signed, Bits: typ.Bits})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: typ.Signed, Bits: typ.Bits})
 	case *typeinfo.ByteType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeByte})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeByte})
 	case *typeinfo.CharType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeChar})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeChar})
 	case *typeinfo.FloatType:
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeFloat, Bits: typ.Bits})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeFloat, Bits: typ.Bits})
 	case *typeinfo.BoolType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeBool})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeBool})
 	case *typeinfo.CStrType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeCStr})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeCStr})
 	case *typeinfo.StringType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeString})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeString})
 	case *typeinfo.NoneType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeVoid})
 	case *typeinfo.AllocatorType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeAllocator})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeAllocator})
 	case *typeinfo.NamedType:
 		return l.invalid("unresolved named type reached IR lowering")
 	case *typeinfo.OwnedPtrType:
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: l.intern(typ.Target)})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: l.intern(typ.Target)})
 	case *typeinfo.RawPtrType:
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeRawPtr})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeRawPtr})
 	case *typeinfo.RefType:
 		if typ == nil {
 			return ir.InvalidType
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: typ.Mutable, Elem: l.intern(typ.Target)})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: typ.Mutable, Elem: l.intern(typ.Target)})
 	case *typeinfo.ArrayType:
 		if typ == nil {
 			return ir.InvalidType
 		}
 		if typ.Shape == typeinfo.ArraySlice {
-			return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeSlice, Elem: l.intern(typ.Elem)})
+			return l.ctx.types.Intern(ir.Type{Kind: ir.TypeSlice, Elem: l.intern(typ.Elem)})
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeArray, Length: typ.Len, Elem: l.intern(typ.Elem)})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeArray, Length: typ.Len, Elem: l.intern(typ.Elem)})
 	case *typeinfo.StructType:
 		if typ == nil {
 			return ir.InvalidType
@@ -107,7 +106,7 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 		for _, field := range typ.Fields {
 			fields = append(fields, ir.TypeField{Name: field.Name, Type: l.intern(field.Type)})
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: fields})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: fields})
 	case *typeinfo.InterfaceType:
 		if typ == nil {
 			return ir.InvalidType
@@ -127,7 +126,7 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 				return l.invalid("interface method reached IR lowering with invalid receiver")
 			}
 			params := make([]ir.TypeField, 0, len(method.Params))
-			slotParams := []ir.TypeID{l.ctx.Types.Intern(ir.Type{Kind: ir.TypeRawPtr})}
+			slotParams := []ir.TypeID{l.ctx.types.Intern(ir.Type{Kind: ir.TypeRawPtr})}
 			for _, param := range method.Params {
 				paramType := l.intern(param.Type)
 				if paramType == ir.InvalidType {
@@ -138,12 +137,12 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 			}
 			returnType := l.intern(method.Return)
 			if returnType == ir.InvalidType {
-				returnType = l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
+				returnType = l.ctx.types.Intern(ir.Type{Kind: ir.TypeVoid})
 			}
-			slotType := l.ctx.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: slotParams, Return: returnType})
+			slotType := l.ctx.types.Intern(ir.Type{Kind: ir.TypeFunction, Params: slotParams, Return: returnType})
 			methods = append(methods, ir.TypeMethod{Name: method.Name, Receiver: receiver, Params: params, Return: returnType, SlotType: slotType})
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: methods})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: methods})
 	case *typeinfo.FuncType:
 		if typ == nil {
 			return ir.InvalidType
@@ -154,9 +153,9 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 		}
 		returnType := l.intern(typ.Return)
 		if returnType == ir.InvalidType {
-			returnType = l.ctx.Types.Intern(ir.Type{Kind: ir.TypeVoid})
+			returnType = l.ctx.types.Intern(ir.Type{Kind: ir.TypeVoid})
 		}
-		return l.ctx.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: params, Return: returnType})
+		return l.ctx.types.Intern(ir.Type{Kind: ir.TypeFunction, Params: params, Return: returnType})
 	default:
 		return ir.InvalidType
 	}
@@ -213,14 +212,14 @@ func (l *runtimeTypeInterner) internDefined(defined *typeinfo.DefinedType) ir.Ty
 }
 
 func (l *runtimeTypeInterner) internNamed(shell ir.Type, descriptor func() (ir.Type, bool)) ir.TypeID {
-	id, err := l.ctx.Types.ReserveNamed(shell)
+	id, err := l.ctx.types.ReserveNamed(shell)
 	if err != nil {
 		return l.invalid(err.Error())
 	}
-	if _, complete := l.ctx.Types.Type(id); complete {
+	if _, complete := l.ctx.types.Type(id); complete {
 		return id
 	}
-	key := l.ctx.Types.ABIKey(id)
+	key := l.ctx.types.ABIKey(id)
 	if activeID, active := l.active[key]; active {
 		return activeID
 	}
@@ -230,15 +229,15 @@ func (l *runtimeTypeInterner) internNamed(shell ir.Type, descriptor func() (ir.T
 	if !valid {
 		return l.invalid("named type " + shell.Name + " has invalid runtime descriptor")
 	}
-	if err := l.ctx.Types.CompleteNamed(id, typ); err != nil {
+	if err := l.ctx.types.CompleteNamed(id, typ); err != nil {
 		return l.invalid(err.Error())
 	}
 	return id
 }
 
 func (l *runtimeTypeInterner) invalid(message string) ir.TypeID {
-	if l != nil && l.ctx != nil && l.ctx.Diagnostics != nil {
-		l.ctx.Diagnostics.Add(diagnostics.NewError(message).WithCode(diagnostics.ErrInvalidType))
+	if l != nil && l.ctx != nil && l.ctx.diagnostics != nil {
+		l.ctx.diagnostics.Add(diagnostics.NewError(message).WithCode(diagnostics.ErrInvalidType))
 	}
 	return ir.InvalidType
 }

@@ -24,7 +24,7 @@ func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
 		return false
 	}
 	if typeinfo.OwnershipCapabilityOf(a.exprType(projection)).Drop {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"ownership-bearing projection from temporary must be bound before use", ast.LocOf(projection), "")
 		return true
 	}
@@ -143,10 +143,10 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 }
 
 func (a *analyzer) reportPointerEscape(expr ast.Expr, origin pointerOrigin) {
-	if a == nil || a.ctx == nil || a.ctx.Diagnostics == nil || origin.root == nil {
+	if a == nil || a.diagnostics == nil || origin.root == nil {
 		return
 	}
-	diag := a.ctx.Diagnostics.AddError(diagnostics.ErrPointerEscape,
+	diag := a.diagnostics.AddError(diagnostics.ErrPointerEscape,
 		"cannot return pointer to local storage", ast.LocOf(expr), "")
 	if origin.root.Location != nil {
 		diag.WithSecondaryLabel(origin.root.Location, "local storage declared here")

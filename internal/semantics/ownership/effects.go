@@ -308,16 +308,16 @@ func (a *analyzer) applyProjectedUse(op effect.Use, st state, loans *loanContext
 		return
 	}
 	if a.partialVariantPayloadMove(op.Node) {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"move-only variant payload cannot be moved from partial place; borrow it instead", op.Location, "")
 		return
 	}
 	if projection, projected := place.Project(syntax); projected && projection.Step.Kind == place.OriginIndex {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", op.Location, "")
 		return
 	}
-	a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+	a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 		"move-only subexpression must be bound before it can be consumed", op.Location, "")
 }
 
@@ -393,7 +393,7 @@ func (a *analyzer) reportUseAfterMove(sym *symbols.Symbol, st state, op effect.U
 	if !moved {
 		return false
 	}
-	diag := a.ctx.Diagnostics.AddError(diagnostics.ErrUseAfterMove, "value used after move", op.Location, "")
+	diag := a.diagnostics.AddError(diagnostics.ErrUseAfterMove, "value used after move", op.Location, "")
 	if site != nil {
 		diag.WithSecondaryLabel(ast.LocOf(site), "moved here")
 	}
@@ -411,12 +411,12 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effect.Use, st state, sy
 	case typeinfo.UseCopy:
 		if symType, typed := symbols.GetSymbolType(sym); typed {
 			if _, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && mutable {
-				a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+				a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 					"mutable reference cannot be copied; pass it directly to transfer or reborrow", op.Location, "")
 				return
 			}
 		}
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires a consuming context", op.Location, "")
 	case typeinfo.UseMove:
 		st.moved[sym] = syntax

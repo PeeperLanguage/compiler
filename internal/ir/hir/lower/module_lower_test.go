@@ -58,7 +58,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	for _, prepare := range beforeLower {
 		prepare(module)
 	}
-	out := GenerateHIR(ctx, module)
+	out := GenerateHIR(ctx.Types, ctx.Diagnostics, module)
 	return out
 }
 
@@ -205,7 +205,7 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 	path := call.Callee.(*ast.ScopeResolution)
 	entry.Bindings.Unbind(path)
 
-	out := GenerateHIR(ctx, entry)
+	out := GenerateHIR(ctx.Types, ctx.Diagnostics, entry)
 	loweredCall := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value.(*ir.Call)
 	invalid, ok := loweredCall.Callee.(*ir.InvalidExpr)
 	if !ok || !strings.Contains(invalid.Message, "unresolved qualified identifier") {
@@ -1550,7 +1550,7 @@ fn main() { let ignored = make(); }`)
 
 func TestLoweredTypeIDUsesSharedVariantDescriptor(t *testing.T) {
 	types := ir.NewTypeTable()
-	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
+	ctx := &lowering{types: types, diagnostics: diagnostics.NewDiagnosticBag()}
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
 	optionalID := loweredTypeID(ctx, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
 	if direct := types.Intern(ir.OptionalVariant(i32)); optionalID != direct {
@@ -1706,7 +1706,7 @@ fn Read(code: Code) -> i32 {
 
 func TestLoweredTypeIDDoesNotPublishNamedTypeWithInvalidChild(t *testing.T) {
 	types := ir.NewTypeTable()
-	ctx := &project.CompilerContext{Types: types, Diagnostics: diagnostics.NewDiagnosticBag()}
+	ctx := &lowering{types: types, diagnostics: diagnostics.NewDiagnosticBag()}
 	broken := &typeinfo.DefinedType{
 		Name: "Broken", Identity: "test::Broken",
 		Underlying: &typeinfo.StructType{Fields: []typeinfo.Field{{
@@ -1719,7 +1719,7 @@ func TestLoweredTypeIDDoesNotPublishNamedTypeWithInvalidChild(t *testing.T) {
 	if ids := types.NamedTypeIDs(); len(ids) != 0 {
 		t.Fatalf("invalid named descriptor published as %#v", ids)
 	}
-	if !ctx.Diagnostics.HasErrors() || !strings.Contains(ctx.Diagnostics.EmitAllToString(), "unresolved named type reached IR lowering") {
-		t.Fatalf("invalid child diagnostic missing:\n%s", ctx.Diagnostics.EmitAllToString())
+	if !ctx.diagnostics.HasErrors() || !strings.Contains(ctx.diagnostics.EmitAllToString(), "unresolved named type reached IR lowering") {
+		t.Fatalf("invalid child diagnostic missing:\n%s", ctx.diagnostics.EmitAllToString())
 	}
 }

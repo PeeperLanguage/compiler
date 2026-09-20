@@ -10,7 +10,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/module"
-	"compiler/internal/project"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
@@ -28,7 +27,7 @@ type site struct {
 }
 
 type analyzer struct {
-	ctx                    *project.CompilerContext
+	diagnostics            *diagnostics.DiagnosticBag
 	module                 *module.Module
 	graph                  *cfg.ControlFlowGraph
 	sites                  map[cfg.SiteID]*site
@@ -59,9 +58,9 @@ type state struct {
 // Check runs flow-sensitive ownership checks after typechecking has populated
 // expression types and scopes. Keeping this phase outside the checker prevents
 // value-flow rules from becoming ad hoc type rules.
-func Check(ctx *project.CompilerContext, module *module.Module) ownershipresult.Result {
+func Check(diag *diagnostics.DiagnosticBag, module *module.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
+	if diag == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
 		return result
 	}
 	for _, graph := range module.CFG.Functions {
@@ -83,7 +82,7 @@ func Check(ctx *project.CompilerContext, module *module.Module) ownershipresult.
 			continue
 		}
 		if ownershipTrackedSymbol(sym) {
-			ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+			diag.AddError(diagnostics.ErrInvalidAssignment,
 				"ownership-tracked module bindings are not supported", ast.LocOf(sym.ASTNode), "")
 		}
 	}
@@ -97,20 +96,20 @@ func Check(ctx *project.CompilerContext, module *module.Module) ownershipresult.
 			scope := sym.Scope
 			graph := module.CFG.Function(ir.NodeID(node.ID()))
 			if graph != nil {
-				checkFunction(ctx, module, node, scope, graph, result[graph.NodeID])
+				checkFunction(diag, module, node, scope, graph, result[graph.NodeID])
 			}
 		}
 	}
 	return result
 }
 
-func checkFunction(ctx *project.CompilerContext, module *module.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
-	if ctx == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
+func checkFunction(diag *diagnostics.DiagnosticBag, module *module.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
+	if diag == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
 	sites, order := indexSites(module, cfgFn, scope)
 	(&analyzer{
-		ctx:           ctx,
+		diagnostics:   diag,
 		module:        module,
 		graph:         cfgFn,
 		sites:         sites,
@@ -362,7 +361,7 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (s
 	}
 	if mismatch && !a.reportedJoin[nodeID] {
 		a.reportedJoin[nodeID] = true
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
+		a.diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"ownership state differs across control-flow paths", ast.LocOf(node.stmt), "").
 			WithHelp("move or reinitialize ownership-tracked values on every path")
 	}
@@ -562,7 +561,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		}
 	}
 	if movesCarrier && carrier == nil {
-		a.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(subject), "")
 	}
 	if movesCarrier && carrier != nil {

@@ -141,7 +141,7 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 			continue
 		}
 		usageDiag := diag.BeginPhase(phase.Usage, module.ID.String())
-		usage.Analyze(ctx.WithDiagnostics(usageDiag), module)
+		usage.Analyze(usageDiag, module, preludeID)
 		module.Phase = phase.Usage
 		ctx.Metrics.AddPhaseAdvance()
 	}
@@ -498,7 +498,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return true
 	}
 	if module.Phase < phase.Ownership {
-		module.Ownership = ownership.Check(phaseCtx, module)
+		module.Ownership = ownership.Check(phaseDiag, module)
 		// Published evidence is only checkable once the module is otherwise
 		// error-free: broken source legitimately leaves evidence incomplete,
 		// and reporting that as a compiler bug would bury the real diagnostic.
@@ -519,7 +519,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		modhir := lower.GenerateHIR(phaseCtx, module)
+		modhir := lower.GenerateHIR(ctx.Types, phaseDiag, module)
 		if modhir == nil {
 			return false
 		}

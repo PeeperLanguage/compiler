@@ -4,12 +4,11 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/module"
-	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *module.Module, scope *symbols.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+func maybeLowerInterfaceExpr(ctx *lowering, module *module.Module, scope *symbols.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
 	if expectedType == nil {
 		return nil
 	}
@@ -46,7 +45,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *module.Module
 		if implementation.Symbol == nil || implementation.Symbol.Name != method.Name || implementation.CallableType == nil {
 			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 		}
-		loweredMethod, ok := ctx.Types.InterfaceMethod(interfaceType, index)
+		loweredMethod, ok := ctx.types.InterfaceMethod(interfaceType, index)
 		if !ok || loweredMethod.Name != method.Name || loweredMethod.SlotType == ir.InvalidType {
 			return &ir.InvalidExpr{Message: "missing lowered interface slot evidence", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 		}

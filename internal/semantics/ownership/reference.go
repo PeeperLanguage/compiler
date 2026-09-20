@@ -220,7 +220,7 @@ func (a *analyzer) reportLoanConflict(
 	case storageDestroy:
 		message = "cannot destroy storage while it is borrowed"
 	}
-	diag := a.ctx.Diagnostics.AddError(diagnostics.ErrBorrowConflict, message, ast.LocOf(site), "conflicting access")
+	diag := a.diagnostics.AddError(diagnostics.ErrBorrowConflict, message, ast.LocOf(site), "conflicting access")
 	addLoanConflictLabels(diag, conflict, reservedConflict, nil)
 }
 
@@ -248,7 +248,7 @@ func (a *analyzer) activateCallReservations(call ast.Node, mark int, loans *loan
 			continue
 		}
 
-		diag := a.ctx.Diagnostics.AddError(
+		diag := a.diagnostics.AddError(
 			diagnostics.ErrBorrowConflict,
 			"cannot activate mutable borrow while storage is borrowed",
 			ast.LocOf(call),
@@ -458,7 +458,7 @@ func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.Retur
 		if _, declared := allowed[origin.Root]; declared {
 			continue
 		}
-		diagnostic := a.ctx.Diagnostics.AddError(
+		diagnostic := a.diagnostics.AddError(
 			diagnostics.ErrInvalidReturn,
 			"returned reference originates outside declared `from` sources",
 			ast.LocOf(stmt.Value),

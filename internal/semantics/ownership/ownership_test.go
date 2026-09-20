@@ -27,7 +27,6 @@ import (
 
 type ownershipResult struct {
 	*diagnostics.DiagnosticBag
-	ctx    *project.CompilerContext
 	module *module.Module
 }
 
@@ -68,8 +67,8 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 		ReferenceArgument:   module.Typechecking.ReferenceArgument,
 		SequenceCarrier:     module.Typechecking.SequenceCarrier,
 	})
-	module.Ownership = Check(ctx, module)
-	return &ownershipResult{DiagnosticBag: diag, ctx: ctx, module: module}
+	module.Ownership = Check(diag, module)
+	return &ownershipResult{DiagnosticBag: diag, module: module}
 }
 
 func TestCallIterationUsesOrdinaryCallGuards(t *testing.T) {
@@ -171,7 +170,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 	cleanup := cleanupPlanForFunction(t, result, fn)
 	sites, order := indexSites(result.module, cfgFn, scope)
 	analysis := &analyzer{
-		ctx:           result.ctx,
+		diagnostics:   result.DiagnosticBag,
 		module:        result.module,
 		graph:         cfgFn,
 		sites:         sites,
@@ -363,7 +362,7 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.MatchFieldDrops[staleID] = []int{0}
 	plan.MatchWholePayloadDrops[staleID] = struct{}{}
 
-	result.module.Ownership = Check(result.ctx, result.module)
+	result.module.Ownership = Check(result.DiagnosticBag, result.module)
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
 		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 ||

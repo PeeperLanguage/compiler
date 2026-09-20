@@ -5,13 +5,12 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/module"
-	"compiler/internal/prelude"
-	"compiler/internal/project"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 )
 
-func Analyze(ctx *project.CompilerContext, module *module.Module) {
-	if ctx == nil || module == nil || module.ModuleScope == nil {
+func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID moduleid.ID) {
+	if diag == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
 
@@ -19,7 +18,7 @@ func Analyze(ctx *project.CompilerContext, module *module.Module) {
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
 			if !sym.IsUsed() {
-				ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedImport,
+				diag.AddWarning(diagnostics.WarnUnusedImport,
 					fmt.Sprintf("unused import `%s`", sym.Name), sym.Location, "")
 			}
 		}
@@ -27,7 +26,7 @@ func Analyze(ctx *project.CompilerContext, module *module.Module) {
 
 	// 2. Check for unused private module-level symbols (functions, types, constants, variables)
 	// Do not warn about prelude/global symbols since they represent a library
-	if module.ID != prelude.ModuleID(ctx) {
+	if module.ID != preludeID {
 		for _, sym := range module.ModuleScope.Symbols() {
 			if sym.Kind == symbols.SymbolImport {
 				continue
@@ -52,7 +51,7 @@ func Analyze(ctx *project.CompilerContext, module *module.Module) {
 				default:
 					continue
 				}
-				ctx.Diagnostics.AddWarning(code, msg, sym.Location, "")
+				diag.AddWarning(code, msg, sym.Location, "")
 			}
 		}
 	}
@@ -71,10 +70,10 @@ func Analyze(ctx *project.CompilerContext, module *module.Module) {
 						if sym.IsReceiver {
 							name = "receiver"
 						}
-						ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
+						diag.AddWarning(diagnostics.WarnUnusedParameter,
 							fmt.Sprintf("unused %s `%s`", name, sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 					case symbols.SymbolVar, symbols.SymbolConst:
-						ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
+						diag.AddWarning(diagnostics.WarnUnusedLocal,
 							fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 					}
 					continue
@@ -82,7 +81,7 @@ func Analyze(ctx *project.CompilerContext, module *module.Module) {
 				if !sym.IsMutable() || sym.RequiresMutable() || sym.MutableLocation == nil {
 					continue
 				}
-				ctx.Diagnostics.AddWarning(diagnostics.WarnUnmodifiedMutable,
+				diag.AddWarning(diagnostics.WarnUnmodifiedMutable,
 					fmt.Sprintf("mutable binding `%s` is never modified", sym.Name), sym.MutableLocation, "remove unnecessary `mut`").
 					WithCodeReplacement(sym.MutableLocation, "mut", "").
 					WithHelp("remove unnecessary `mut`")
