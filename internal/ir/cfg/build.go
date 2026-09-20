@@ -10,7 +10,7 @@ import (
 )
 
 type builder struct {
-	fn      *Graph
+	fn      *ControlFlowGraph
 	queries BuildQueries
 	nextID  int
 	scopes  []*ast.BlockStmt
@@ -46,8 +46,8 @@ func BuildModule(source *ast.Module, queries BuildQueries) *Module {
 		return nil
 	}
 	module := &Module{
-		Functions: make([]*Graph, 0),
-		byNodeID:  make(map[ir.NodeID]*Graph),
+		Functions: make([]*ControlFlowGraph, 0),
+		byNodeID:  make(map[ir.NodeID]*ControlFlowGraph),
 	}
 	ast.ForEachDecl(source, func(decl ast.Decl) bool {
 		fn, ok := decl.(*ast.FnDecl)
@@ -66,12 +66,12 @@ func BuildModule(source *ast.Module, queries BuildQueries) *Module {
 	return module
 }
 
-func buildFunction(source *ast.FnDecl, queries BuildQueries) *Graph {
+func buildFunction(source *ast.FnDecl, queries BuildQueries) *ControlFlowGraph {
 	name := ""
 	if source.Name != nil {
 		name = source.Name.Name
 	}
-	fn := &Graph{
+	fn := &ControlFlowGraph{
 		NodeID:         ir.NodeID(source.ID()),
 		Name:           name,
 		Location:       ast.LocOf(source),
@@ -309,7 +309,7 @@ func statementSite(node ast.Node, scopeID ir.NodeID) *Site {
 	}
 }
 
-func finalizeGraph(fn *Graph) {
+func finalizeGraph(fn *ControlFlowGraph) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
@@ -323,7 +323,7 @@ func finalizeGraph(fn *Graph) {
 	finalizeSites(fn)
 }
 
-func finalizeSites(fn *Graph) {
+func finalizeSites(fn *ControlFlowGraph) {
 	if fn == nil {
 		return
 	}
@@ -382,14 +382,14 @@ func finalizeSites(fn *Graph) {
 	}
 }
 
-func connectBlockSite(fn *Graph, from *Site, target *Block, kind EdgeKind, caseIndex int) {
+func connectBlockSite(fn *ControlFlowGraph, from *Site, target *Block, kind EdgeKind, caseIndex int) {
 	if target == nil || len(target.Sites) == 0 {
 		return
 	}
 	connectSites(fn, from, target.Sites[0], kind, caseIndex)
 }
 
-func connectSites(fn *Graph, from, to *Site, kind EdgeKind, caseIndex int) {
+func connectSites(fn *ControlFlowGraph, from, to *Site, kind EdgeKind, caseIndex int) {
 	if fn == nil || fn.SiteEdges == nil || from == nil || to == nil {
 		return
 	}
@@ -410,7 +410,7 @@ func markReachable(block *Block, seen map[int]bool) {
 	}
 }
 
-func rebuildBlockTopology(fn *Graph) {
+func rebuildBlockTopology(fn *ControlFlowGraph) {
 	if fn == nil {
 		return
 	}

@@ -218,7 +218,7 @@ func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDec
 	return plan
 }
 
-func scopeExitSiteID(t *testing.T, graph *cfg.Graph, blockID ast.NodeID) cfg.SiteID {
+func scopeExitSiteID(t *testing.T, graph *cfg.ControlFlowGraph, blockID ast.NodeID) cfg.SiteID {
 	t.Helper()
 	var id cfg.SiteID
 	found := false

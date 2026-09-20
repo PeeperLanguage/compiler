@@ -17,7 +17,7 @@ func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition 
 	}
 }
 
-func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
+func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
@@ -59,7 +59,7 @@ func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.Diagn
 	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(branch.Location, msg))
 }
 
-func reportMissingReturn(fn *Graph, diag *diagnostics.DiagnosticBag) {
+func reportMissingReturn(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || diag == nil {
 		return
 	}
@@ -84,7 +84,7 @@ func reportMissingReturn(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	diag.Add(diagnostic)
 }
 
-func findMissingReturnBranches(fn *Graph) []*Block {
+func findMissingReturnBranches(fn *ControlFlowGraph) []*Block {
 	if fn == nil || fn.Entry == nil || fn.Exit == nil {
 		return nil
 	}
@@ -154,7 +154,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 	return found
 }
 
-func predecessorBlocks(fn *Graph, block *Block) []*Block {
+func predecessorBlocks(fn *ControlFlowGraph, block *Block) []*Block {
 	if fn == nil || fn.BlockEdges == nil || block == nil {
 		return nil
 	}

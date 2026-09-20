@@ -170,7 +170,7 @@ func moduleWithArtifacts() *Module {
 		ModuleScope:               symbols.NewScope(nil),
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		HIR:                       &hir.Module{},
-		CFG:                       &cfg.Module{Functions: []*cfg.Graph{{}}},
+		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{}}},
 		Flow:                      flowresult.New(),
 		Effects:                   effect.Result{1: {cfg.SiteID{}: {effect.Use{}}}},
 		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},

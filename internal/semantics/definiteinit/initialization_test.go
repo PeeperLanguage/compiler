@@ -67,6 +67,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		ReferenceArgument:   module.Typechecking.ReferenceArgument,
 		SequenceCarrier:     module.Typechecking.SequenceCarrier,
 	})
+	module.Effects = effects
 	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module
 }
@@ -98,8 +99,8 @@ func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if result == nil || len(result.In) == 0 || len(result.Out) == 0 {
-		t.Fatalf("initialization result = %#v, want per-site states", result)
+	if result == nil || len(result.In) == 0 {
+		t.Fatalf("initialization result = %#v, want per-site input states", result)
 	}
 }
 
@@ -269,14 +270,15 @@ fn choose(result: Result) -> i32 {
 			if cfgSite.NodeID != returnID {
 				continue
 			}
-			// The binding is published as an initialized define at the arm
-			// block's first site, which is this return's own site, so it lands
-			// in Out rather than In. It used to be applied on the case edge and
-			// so appeared in In. The read of `payload` in the arm body is
-			// covered either way, because a site's effects are replayed in
-			// evaluation order and the define precedes the read.
-			if _, initialized := result.Out[cfgSite.ID][binding.ID]; !initialized {
-				t.Fatalf("pattern binding absent at arm return: state=%#v", result.Out[cfgSite.ID])
+			// The initialized define and read share this site. Input therefore
+			// excludes the binding; transfer applies the define before the read.
+			in := result.In[cfgSite.ID]
+			if _, initialized := in[binding.ID]; initialized {
+				t.Fatalf("pattern binding unexpectedly initialized before arm return: state=%#v", in)
+			}
+			out := transfer(module.Effects[ir.NodeID(fn.ID())][cfgSite.ID], in)
+			if _, initialized := out[binding.ID]; !initialized {
+				t.Fatalf("pattern binding absent after arm return transfer: state=%#v", out)
 			}
 			return
 		}

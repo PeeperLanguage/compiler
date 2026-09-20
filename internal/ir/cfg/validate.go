@@ -32,7 +32,7 @@ func (m *Module) Validate() error {
 			problems = append(problems, "module holds a nil function graph")
 			continue
 		}
-		problems = append(problems, validateGraph(fn)...)
+		problems = append(problems, validateControlFlowGraph(fn)...)
 	}
 	if len(problems) == 0 {
 		return nil
@@ -48,7 +48,7 @@ func (m *Module) Validate() error {
 	return errors.New(strings.Join(problems, "; "))
 }
 
-func validateGraph(fn *Graph) []string {
+func validateControlFlowGraph(fn *ControlFlowGraph) []string {
 	problems := validateBlockIdentity(fn)
 	// Every later check indexes blocks by ID, so a broken index makes their
 	// output noise rather than evidence.
@@ -65,7 +65,7 @@ func validateGraph(fn *Graph) []string {
 // validateBlockIdentity checks the promise every other check depends on: block
 // IDs are dense indexes into Blocks, and entry and exit are blocks of this
 // graph rather than of another one.
-func validateBlockIdentity(fn *Graph) []string {
+func validateBlockIdentity(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	for index, block := range fn.Blocks {
 		if block == nil {
@@ -94,7 +94,7 @@ func validateBlockIdentity(fn *Graph) []string {
 
 // validateTermination checks that control leaves every reachable block. The
 // exit block is the one exception: it is where control stops.
-func validateTermination(fn *Graph) []string {
+func validateTermination(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	for _, block := range fn.Blocks {
 		if block == fn.Exit {
@@ -129,7 +129,7 @@ func validateTermination(fn *Graph) []string {
 // Which cases a switch should carry is a typechecking decision; that two
 // targets claim the same one is a topology defect, because the second is
 // unreachable through the edge that names it.
-func validateVariantCases(fn *Graph, block *Block, term *SwitchVariant) []string {
+func validateVariantCases(fn *ControlFlowGraph, block *Block, term *SwitchVariant) []string {
 	problems := make([]string, 0)
 	seen := make(map[int]bool, len(term.Targets))
 	for _, target := range term.Targets {
@@ -147,7 +147,7 @@ func validateVariantCases(fn *Graph, block *Block, term *SwitchVariant) []string
 // validateBlockAdjacency checks that block-level predecessors record exactly
 // the transfers terminators make. A consumer walking backwards must see the
 // same graph as one walking forwards.
-func validateBlockAdjacency(fn *Graph) []string {
+func validateBlockAdjacency(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	if fn.BlockEdges == nil {
 		return append(problems, fmt.Sprintf("function %d has no block topology", fn.NodeID))
@@ -180,7 +180,7 @@ func validateBlockAdjacency(fn *Graph) []string {
 // block owns at least one, each carries the identity its position implies, and
 // every site edge resolves, agrees with the terminator that produced it, and is
 // recorded from both ends.
-func validateSites(fn *Graph) []string {
+func validateSites(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	for _, block := range fn.Blocks {
 		if len(block.Sites) == 0 {
@@ -207,7 +207,7 @@ func validateSites(fn *Graph) []string {
 	return validateSiteEdges(fn)
 }
 
-func validateSiteEdges(fn *Graph) []string {
+func validateSiteEdges(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	if fn.SiteEdges == nil {
 		return append(problems, fmt.Sprintf("function %d has no site topology", fn.NodeID))
@@ -244,10 +244,10 @@ func validateSiteEdges(fn *Graph) []string {
 		}
 	}
 	for _, edge := range fn.SiteEdges.Edges() {
-		if siteAt(fn, edge.From) == nil {
+		if fn.Site(edge.From) == nil {
 			problems = append(problems, fmt.Sprintf("function %d edge leaves %v, which is not a site", fn.NodeID, edge.From))
 		}
-		if siteAt(fn, edge.To) == nil {
+		if fn.Site(edge.To) == nil {
 			problems = append(problems, fmt.Sprintf("function %d edge transfers to %v, which is not a site", fn.NodeID, edge.To))
 		}
 		if !expected[edge] {
@@ -264,7 +264,7 @@ func validateSiteEdges(fn *Graph) []string {
 // validateReachability checks the flag consumers trust against the traversal it
 // claims to summarize. Analyze reports unreachable user code from this flag, so
 // a stale flag turns a construction defect into a wrong diagnostic.
-func validateReachability(fn *Graph) []string {
+func validateReachability(fn *ControlFlowGraph) []string {
 	seen := make(map[int]bool, len(fn.Blocks))
 	var walk func(block *Block)
 	walk = func(block *Block) {
@@ -290,19 +290,8 @@ func validateReachability(fn *Graph) []string {
 	return problems
 }
 
-func ownsBlock(fn *Graph, block *Block) bool {
+func ownsBlock(fn *ControlFlowGraph, block *Block) bool {
 	return block.ID >= 0 && block.ID < len(fn.Blocks) && fn.Blocks[block.ID] == block
-}
-
-func siteAt(fn *Graph, id SiteID) *Site {
-	if id.Block < 0 || id.Block >= len(fn.Blocks) {
-		return nil
-	}
-	block := fn.Blocks[id.Block]
-	if id.Index < 0 || id.Index >= len(block.Sites) {
-		return nil
-	}
-	return block.Sites[id.Index]
 }
 
 func edgeKindName(kind EdgeKind) string {

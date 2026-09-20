@@ -199,19 +199,20 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if module.Typechecking.MatchCount() != 1 {
-		t.Fatalf("published matches = %d, want 1", module.Typechecking.MatchCount())
+	main := module.AST.Stmts[2].(*ast.FnDecl)
+	matchStmt := main.Body.Stmts[1].(*ast.MatchStmt)
+	match, found := module.Typechecking.Match(matchStmt.ID())
+	if !found {
+		t.Fatal("match evidence was not published")
 	}
-	module.Typechecking.ForEachMatch(func(_ ast.NodeID, match typecheckresult.Match) {
-		for _, arm := range match.Arms {
-			if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
-				t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
-			}
-			if arm.Case == 1 && arm.CarrierUse != typeinfo.UseRead {
-				t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
-			}
+	for _, arm := range match.Arms {
+		if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
+			t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
 		}
-	})
+		if arm.Case == 1 && arm.CarrierUse != typeinfo.UseRead {
+			t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
+		}
+	}
 }
 
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {

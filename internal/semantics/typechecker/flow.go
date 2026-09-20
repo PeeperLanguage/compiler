@@ -61,10 +61,9 @@ type flowAnalyzer struct {
 	ctx           *project.CompilerContext
 	module        *project.Module
 	functionScope *symbols.Scope
-	graph         *cfg.Graph
+	graph         *cfg.ControlFlowGraph
 	returnType    typeinfo.Type
 	result        *flowresult.Result
-	sites         map[cfg.SiteID]*cfg.Site
 	inStates      map[cfg.SiteID]flowState
 }
 
@@ -90,8 +89,7 @@ func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult
 		fnType, _ := sym.Type.(*typeinfo.FuncType)
 		analyzer := &flowAnalyzer{
 			ctx: ctx, module: module, functionScope: sym.Scope,
-			graph: graph, result: result, sites: make(map[cfg.SiteID]*cfg.Site),
-			inStates: make(map[cfg.SiteID]flowState),
+			graph: graph, result: result, inStates: make(map[cfg.SiteID]flowState),
 		}
 		if fnType != nil {
 			analyzer.returnType = fnType.Return
@@ -345,7 +343,6 @@ func (a *flowAnalyzer) run() {
 		}
 		for _, site := range block.Sites {
 			if site != nil {
-				a.sites[site.ID] = site
 				order = append(order, site.ID)
 				disconnected[site.ID] = !block.Reachable
 			}
@@ -396,7 +393,7 @@ func (a *flowAnalyzer) run() {
 			}
 			continue
 		}
-		site := a.sites[id]
+		site := a.graph.Site(id)
 		if site == nil {
 			continue
 		}
@@ -404,7 +401,7 @@ func (a *flowAnalyzer) run() {
 		next := copyFlowState(input)
 		events := a.applySite(site, &next)
 		for _, edge := range a.graph.SiteEdges.OutEdges(site.ID) {
-			if a.sites[edge.To] == nil {
+			if a.graph.Site(edge.To) == nil {
 				continue
 			}
 			out := copyFlowState(next)

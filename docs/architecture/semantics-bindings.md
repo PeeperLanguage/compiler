@@ -49,8 +49,10 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - `Symbol.IsPub` is derived from the first rune of the name being uppercase.
 - `Symbol.BindType` writes the semantic type once a phase has one.
 - `symbols.GetSymbolType` is the shared type read path; absent type returns false.
-- `Symbol.IsMutable` uses parameter state for parameters and `LetDecl` state for
-  other let bindings.
+- `symbols.New` publishes `LetDecl` mutability and its source location onto the
+  symbol once. Parameter construction publishes the same facts from parameter syntax.
+- `Symbol.IsMutable` reads the published symbol fact; consumers do not rediscover
+  mutability from declaration syntax.
 - `DefiningModule` distinguishes declaration-module symbols from caller symbols.
 - `CompilerOp` identifies compiler-owned functions such as `alloc`, `append`,
   `reserve`, `resize`, `shrink`, `len`, `as_bytes`, `as_chars`, and `from_bytes`.
@@ -59,10 +61,10 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 
 `internal/semantics/symbols/scope.go` owns lexical lookup.
 
-- A `Scope` stores parent, name -> `SymbolID`, ID -> symbol, and declaration order.
+- A `Scope` stores its parent, name -> symbol lookup, and symbols in declaration order.
 - `NewScope(parent)` links one lexical scope to its parent.
-- `Declare` rejects duplicate non-underscore names; `_` stays ordered/by ID but is
-  not name-addressable.
+- `Declare` rejects duplicate non-underscore names; `_` stays ordered but is not
+  name-addressable.
 - `LookupLocal` is current-scope only; `Lookup` walks parents, so nearest scope
   wins and shadowing is lexical.
 - `Symbols` preserves declaration order; declaration identity comes from the binding result rather than scanning symbol AST pointers.
@@ -129,8 +131,10 @@ than map layout.
 
 `internal/semantics/binder/binder.go` fills collected type state and signatures.
 
-- `binder` holds compiler context and module.
-- `binder.Bind` requires AST and module scope, then calls `bindModule`.
+- `binder` holds compiler context, module, and one type-declaration dependency graph
+  whose lifetime is the current bind.
+- `binder.Bind` requires AST and module scope, creates the fresh type graph, then calls
+  `bindModule`. `CompilerContext.ImportGraph` remains reserved for import dependencies.
 - `bindModule` computes type declaration order before binding definitions.
 - It binds ordered declarations, then performs one legal completion-cycle pass.
 - It calls `ctx.CompleteTypeInstances` for completed generic bases.

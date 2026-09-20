@@ -46,48 +46,48 @@ func TestValidateAcceptsConstructedTopology(t *testing.T) {
 func TestValidateRejectsTopologyDefects(t *testing.T) {
 	tests := []struct {
 		name   string
-		damage func(*Graph)
+		damage func(*ControlFlowGraph)
 		want   string
 	}{
 		{
 			name:   "block identity does not match its index",
-			damage: func(fn *Graph) { fn.Blocks[2].ID = 99 },
+			damage: func(fn *ControlFlowGraph) { fn.Blocks[2].ID = 99 },
 			want:   "identifies as b99",
 		},
 		{
 			name:   "entry belongs to another graph",
-			damage: func(fn *Graph) { fn.Entry = &Block{ID: 0} },
+			damage: func(fn *ControlFlowGraph) { fn.Entry = &Block{ID: 0} },
 			want:   "entry b0 is not one of its blocks",
 		},
 		{
 			name:   "exit is missing",
-			damage: func(fn *Graph) { fn.Exit = nil },
+			damage: func(fn *ControlFlowGraph) { fn.Exit = nil },
 			want:   "has no exit block",
 		},
 		{
 			name: "a reachable block leaves control nowhere",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.Entry.Terminator = nil
 			},
 			want: "reachable block b0 has no terminator",
 		},
 		{
 			name: "the exit block terminates",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.Exit.Terminator = &Jump{Target: fn.Entry}
 			},
 			want: "carries a terminator",
 		},
 		{
 			name: "a transfer leaves the graph",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.Entry.Terminator = &Jump{Target: &Block{ID: 7}}
 			},
 			want: "is not one of its blocks",
 		},
 		{
 			name: "a variant switch claims one case twice",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.Entry.Terminator = &SwitchVariant{Targets: []VariantTarget{
 					{Case: 0, Target: fn.Exit}, {Case: 0, Target: fn.Exit},
 				}}
@@ -96,69 +96,69 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		},
 		{
 			name: "a predecessor records a transfer that does not exist",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.BlockEdges.AddEdge(BlockEdge{From: fn.Blocks[2].ID, To: fn.Exit.ID})
 			},
 			want: "but the terminator does not",
 		},
 		{
 			name:   "block edge with foreign source",
-			damage: func(fn *Graph) { fn.BlockEdges.AddEdge(BlockEdge{From: 99, To: fn.Exit.ID}) },
+			damage: func(fn *ControlFlowGraph) { fn.BlockEdges.AddEdge(BlockEdge{From: 99, To: fn.Exit.ID}) },
 			want:   "but the terminator does not",
 		},
 		{
 			name:   "block edge with foreign target",
-			damage: func(fn *Graph) { fn.BlockEdges.AddEdge(BlockEdge{From: fn.Entry.ID, To: 99}) },
+			damage: func(fn *ControlFlowGraph) { fn.BlockEdges.AddEdge(BlockEdge{From: fn.Entry.ID, To: 99}) },
 			want:   "but the terminator does not",
 		},
 		{
 			name:   "entirely foreign block edge",
-			damage: func(fn *Graph) { fn.BlockEdges.AddEdge(BlockEdge{From: 98, To: 99}) },
+			damage: func(fn *ControlFlowGraph) { fn.BlockEdges.AddEdge(BlockEdge{From: 98, To: 99}) },
 			want:   "but the terminator does not",
 		},
 		{
 			name:   "entirely foreign site edge",
-			damage: func(fn *Graph) { fn.SiteEdges.AddEdge(Edge{From: SiteID{Block: 98}, To: SiteID{Block: 99}}) },
+			damage: func(fn *ControlFlowGraph) { fn.SiteEdges.AddEdge(Edge{From: SiteID{Block: 98}, To: SiteID{Block: 99}}) },
 			want:   "which is not a site",
 		},
 		{
 			name: "missing site edges",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.SiteEdges = graphcore.NewDirected(func(edge Edge) (SiteID, SiteID) { return edge.From, edge.To })
 			},
 			want: "absent from site topology",
 		},
 		{
 			name: "branch edge names wrong valid target",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				rewriteFirstSiteEdge(fn, func(edge Edge) Edge { edge.To = fn.Entry.Sites[0].ID; return edge })
 			},
 			want: "not described by its block sites or terminator",
 		},
 		{
 			name: "branch edge carries spurious case metadata",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				rewriteFirstSiteEdge(fn, func(edge Edge) Edge { edge.Case = 99; return edge })
 			},
 			want: "not described by its block sites or terminator",
 		},
 		{
 			name: "a transfer goes unrecorded by its target",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })
 			},
 			want: "absent from block topology",
 		},
 		{
 			name: "a site carries the wrong identity",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.Entry.Sites[0].ID = SiteID{Block: 4, Index: 6}
 			},
 			want: "identifies as b4[6]",
 		},
 		{
 			name: "a scope exit names no scope",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				for _, block := range fn.Blocks {
 					for _, site := range block.Sites {
 						if site.Kind == SiteScopeExit {
@@ -173,7 +173,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		},
 		{
 			name: "a site edge points at no site",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				rewriteFirstSiteEdge(fn, func(edge Edge) Edge {
 					edge.To = SiteID{Block: 42, Index: 0}
 					return edge
@@ -183,7 +183,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		},
 		{
 			name: "a branch leaves on a plain sequence edge",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				rewriteFirstSiteEdge(fn, func(edge Edge) Edge {
 					edge.Kind = EdgeNormal
 					return edge
@@ -193,7 +193,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		},
 		{
 			name: "reachability disagrees with entry traversal",
-			damage: func(fn *Graph) {
+			damage: func(fn *ControlFlowGraph) {
 				fn.Blocks[len(fn.Blocks)-1].Reachable = !fn.Blocks[len(fn.Blocks)-1].Reachable
 			},
 			want: "entry traversal says",
@@ -240,7 +240,7 @@ func TestValidateReportsDefectsDeterministically(t *testing.T) {
 	}
 }
 
-func rewriteFirstSiteEdge(fn *Graph, rewrite func(Edge) Edge) {
+func rewriteFirstSiteEdge(fn *ControlFlowGraph, rewrite func(Edge) Edge) {
 	replacement := graphcore.NewDirected(func(edge Edge) (SiteID, SiteID) { return edge.From, edge.To })
 	rewritten := false
 	for _, block := range fn.Blocks {

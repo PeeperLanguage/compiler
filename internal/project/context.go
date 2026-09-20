@@ -52,8 +52,8 @@ type CompilerContext struct {
 	typeDeclarations map[string]*Module
 	// Concrete semantic application identity -> canonical instance.
 	typeInstances map[string]namedTypeInstance
-	// Shared compiler dependency graph.
-	Graph *graph.Graph
+	// Import dependencies shared by module loading and pipeline scheduling.
+	ImportGraph *graph.DependencyGraph
 
 	// Guards module indexes.
 	mu *sync.RWMutex
@@ -163,7 +163,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		Diagnostics:           diag,
 		CompletedProjectPhase: phase.Setup,
 		GlobalScope:           globalScope,
-		Graph:                 graph.New(GraphEdgeImport),
+		ImportGraph:           graph.NewDependencyGraph(GraphEdgeImport),
 		mu:                    &sync.RWMutex{},
 
 		modules:                 make(map[moduleid.ID]*Module),

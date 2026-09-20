@@ -46,7 +46,7 @@ runtime jobs or production data flow.
 - module and canonical-file indexes;
 - semantic-export baselines supplied by an incremental client;
 - generic declaration and concrete-instance indexes;
-- the shared import `graph.Graph`;
+- the shared import `graph.DependencyGraph`;
 - `*sync.RWMutex`, guarding module indexes and related context maps.
 
 `New` creates a minimal config. `NewWithConfig` fills defaults, normalizes target
@@ -329,14 +329,16 @@ traversal to supplied IDs, uses temporary/done DFS states, returns dependency-fi
 postorder, and reports directed cycles by extracting the active stack segment.
 Components traverse both successor and predecessor edges.
 
-`graph.Graph` is the synchronized domain facade. Its mutex protects `Directed`; its
-`edgeKind` supplies a default filter. It rejects empty domain node IDs, supports
-edge-kind filters, and exposes the same topology queries. `project` uses edge kind
+`graph.DependencyGraph` is the synchronized dependency facade. Its mutex protects
+`Directed`; its `edgeKind` supplies a default filter. It rejects empty domain node IDs,
+supports edge-kind filters, and exposes dependency topology queries. Edges point from
+a dependent to what it requires. `project.CompilerContext.ImportGraph` uses edge kind
 `import`; the pipeline stores module IDs as `graph.NodeID`.
 
-The loader adds import edges. The pipeline adds prelude edges. Invalidation walks
-`Graph.Predecessors(changed)` because predecessors are importers/dependents under
-this edge orientation. Workspace components use weak connectivity to limit reuse and
+The loader adds import edges. The pipeline adds prelude edges. `TransitiveDependents`
+walks reverse adjacency once for all changed roots, excluding roots and deduplicating
+cycles. Pipeline invalidation and LSP reuse consume that closure while retaining their
+own phase/hash policy. Workspace components use weak connectivity to limit reuse and
 invalidation to a related module set.
 
 `graph.Worklist[Node]` is the canonical FIFO fixed-point queue. `queued` prevents
@@ -353,7 +355,7 @@ mechanism but retain their own lattice, join, transfer, direction, and diagnosti
 - `DiagnosticBag.mu` protects phase/module groups, active flags, counts, snapshots,
   and source-cache access where applicable. Scoped writers share the same mutex and
   group maps; callers do not hold context locks while emitting diagnostics.
-- `graph.Graph.mu` protects its `Directed` adjacency. `Directed` itself has no lock;
+- `graph.DependencyGraph.mu` protects its `Directed` adjacency. `Directed` itself has no lock;
   phase-local users may use it without synchronization, while long-lived graph users
   must provide one.
 - `CompileMetrics.mu` protects counters and snapshots.

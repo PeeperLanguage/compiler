@@ -196,7 +196,7 @@ func validateNode[T ast.Node](where, kind string, missingSymbol bool, node ast.N
 	return problems
 }
 
-func graphSites(graph *cfg.Graph) map[cfg.SiteID]struct{} {
+func graphSites(graph *cfg.ControlFlowGraph) map[cfg.SiteID]struct{} {
 	sites := make(map[cfg.SiteID]struct{})
 	for _, block := range graph.Blocks {
 		if block == nil {

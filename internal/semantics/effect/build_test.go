@@ -477,7 +477,10 @@ fn choose(point: Point) -> i32 {
 	// The receiver parameter is a reference, so the typechecker recorded the
 	// adaptation. That evidence is what a future consumer reads to know the
 	// call borrows rather than moves.
-	if !module.Typechecking.HasImplicitCallArguments() {
+	binding := fn.Body.Stmts[0].(*ast.LetDecl)
+	call := binding.Value.(*ast.CallExpr)
+	selector := call.Callee.(*ast.SelectorExpr)
+	if module.Typechecking.ImplicitCallArgument(selector.Expr.ID()) == nil {
 		t.Fatal("expected the implicit receiver borrow to be published")
 	}
 }

@@ -65,7 +65,7 @@ type Symbol struct {
 }
 
 func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
-	return &Symbol{
+	sym := &Symbol{
 		ID:       SymbolID(nextSymbolID.Add(1)),
 		Name:     name,
 		Kind:     kind,
@@ -73,6 +73,11 @@ func New(name string, kind Kind, node ast.Node, location *source.Location) *Symb
 		Location: location,
 		ASTNode:  node,
 	}
+	if declaration, ok := node.(*ast.LetDecl); ok && declaration != nil {
+		sym.Mutable = declaration.IsMutable
+		sym.MutableLocation = declaration.MutableLocation
+	}
+	return sym
 }
 
 func (s *Symbol) BindType(typ typeinfo.Type) {
@@ -113,14 +118,7 @@ func (s *Symbol) RequiresMutable() bool {
 }
 
 func (s *Symbol) IsMutable() bool {
-	if s == nil {
-		return false
-	}
-	if s.Kind == SymbolParam {
-		return s.Mutable
-	}
-	decl, ok := s.ASTNode.(*ast.LetDecl)
-	return ok && decl != nil && decl.IsMutable
+	return s != nil && s.Mutable
 }
 
 func IsPubName(name string) bool {

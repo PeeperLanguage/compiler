@@ -19,7 +19,7 @@ func TestRenderSymbolKinds(t *testing.T) {
 		context symbolRenderContext
 		want    string
 	}{
-		{name: "mutable variable", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolVar, Type: i32, ASTNode: &ast.LetDecl{IsMutable: true}}, want: "(var) mut value: i32"},
+		{name: "mutable variable", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolVar, Type: i32, Mutable: true}, want: "(var) mut value: i32"},
 		{name: "mutable parameter", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolParam, Type: i32, Mutable: true}, want: "(param) mut value: i32"},
 		{name: "constant", symbol: &symbols.Symbol{Name: "Limit", Kind: symbols.SymbolConst, Type: i32}, want: "(const) Limit: i32"},
 		{name: "static", symbol: &symbols.Symbol{Name: "Global", Kind: symbols.SymbolStatic, Type: i32}, want: "(static) Global: i32"},

@@ -67,8 +67,8 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	if preludeID.Valid() {
 		for _, mod := range ctx.Modules() {
 			if mod != nil && mod.ID != preludeID {
-				if ctx.Graph != nil {
-					ctx.Graph.AddEdge(graph.NodeID(mod.ID.String()), graph.NodeID(preludeID.String()))
+				if ctx.ImportGraph != nil {
+					ctx.ImportGraph.AddEdge(graph.NodeID(mod.ID.String()), graph.NodeID(preludeID.String()))
 				}
 			}
 		}
@@ -90,8 +90,8 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 		orderedIDs []graph.NodeID
 		cycles     [][]graph.NodeID
 	)
-	if ctx.Graph != nil {
-		orderedIDs, cycles = ctx.Graph.TopoSort(moduleIDs)
+	if ctx.ImportGraph != nil {
+		orderedIDs, cycles = ctx.ImportGraph.TopoSort(moduleIDs)
 	}
 	if len(cycles) > 0 {
 		for _, cycle := range cycles {
@@ -568,17 +568,16 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 // invalidateSemanticDependents applies semantic API changes only between
 // parallel scheduler batches, after dependency type information is final.
 func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*project.Module) {
-	if ctx == nil || ctx.Graph == nil {
+	if ctx == nil || ctx.ImportGraph == nil {
 		return
 	}
-	queue := make([]graph.NodeID, 0)
-	seen := make(map[graph.NodeID]struct{})
 	modules := make(map[graph.NodeID]*project.Module)
 	for _, module := range ctx.Modules() {
 		if module != nil && module.ID.Valid() {
 			modules[graph.NodeID(module.ID.String())] = module
 		}
 	}
+	changed := make([]graph.NodeID, 0)
 	for _, module := range advanced {
 		if module == nil || module.Phase != phase.Typechecked {
 			continue
@@ -587,25 +586,14 @@ func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*proj
 		if !ok || baseline == module.SemanticExportFingerprint {
 			continue
 		}
-		id := graph.NodeID(module.ID.String())
-		queue = append(queue, id)
-		seen[id] = struct{}{}
+		changed = append(changed, graph.NodeID(module.ID.String()))
 	}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, dependentID := range ctx.Graph.Predecessors(current) {
-			if _, found := seen[dependentID]; found {
-				continue
-			}
-			seen[dependentID] = struct{}{}
-			queue = append(queue, dependentID)
-			dependent, found := modules[dependentID]
-			if !found || dependent == nil || dependent.Phase < phase.Typechecked {
-				continue
-			}
-			ctx.ResetModule(dependent, phase.Parsed)
-			ctx.Metrics.AddDowngradedModule()
+	for _, dependentID := range ctx.ImportGraph.TransitiveDependents(changed) {
+		dependent, found := modules[dependentID]
+		if !found || dependent == nil || dependent.Phase < phase.Typechecked {
+			continue
 		}
+		ctx.ResetModule(dependent, phase.Parsed)
+		ctx.Metrics.AddDowngradedModule()
 	}
 }

@@ -25,7 +25,7 @@ const (
 // Legal completion cycles get one bounded completion pass after every shell is
 // populated. Only value edges are illegal cycles.
 func (b *binder) typeDeclarationOrder() ([]ast.TypeDecl, []ast.TypeDecl) {
-	if b == nil || b.ctx == nil || b.ctx.Graph == nil || b.ctx.Diagnostics == nil || b.module == nil || b.module.ModuleScope == nil {
+	if b == nil || b.ctx == nil || b.typeGraph == nil || b.ctx.Diagnostics == nil || b.module == nil || b.module.ModuleScope == nil {
 		return nil, nil
 	}
 	var nodeIDs []graph.NodeID
@@ -46,7 +46,7 @@ func (b *binder) typeDeclarationOrder() ([]ast.TypeDecl, []ast.TypeDecl) {
 		return true
 	})
 	// Only value-layout edges participate in illegal cycle detection.
-	_, cycles := b.ctx.Graph.TopoSort(nodeIDs, graphEdgeTypeValueRef)
+	_, cycles := b.typeGraph.TopoSort(nodeIDs, graphEdgeTypeValueRef)
 	illegal := make(map[graph.NodeID]bool)
 	for _, cycle := range cycles {
 		if len(cycle) == 0 {
@@ -77,7 +77,7 @@ func (b *binder) typeDeclarationOrder() ([]ast.TypeDecl, []ast.TypeDecl) {
 			"break the cycle with indirection such as a pointer",
 		)
 	}
-	order, completionCycles := b.ctx.Graph.TopoSort(nodeIDs, graphEdgeTypeCompletionRef)
+	order, completionCycles := b.typeGraph.TopoSort(nodeIDs, graphEdgeTypeCompletionRef)
 	ordered := make([]ast.TypeDecl, 0, len(order))
 	for _, id := range order {
 		ordered = append(ordered, declarations[id])
@@ -104,7 +104,7 @@ func typeDeclNodeID(moduleID moduleid.ID, name string) graph.NodeID {
 }
 
 func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect bool, parameters []ast.TypeParam) {
-	if b == nil || b.ctx == nil || b.ctx.Graph == nil || b.module == nil || owner == "" || typ == nil {
+	if b == nil || b.ctx == nil || b.typeGraph == nil || b.module == nil || owner == "" || typ == nil {
 		return
 	}
 	switch node := typ.(type) {
@@ -174,11 +174,11 @@ func (b *binder) addTypeDeclEdge(owner, target graph.NodeID, indirect, complete 
 	if indirect {
 		kind = graphEdgeTypeIndirectRef
 	}
-	b.ctx.Graph.AddEdge(owner, target, kind)
+	b.typeGraph.AddEdge(owner, target, kind)
 	// Nominal references only need their collected shell. Aliases and applied
 	// declarations must finish first, even when used behind an indirection.
 	if complete && owner != target {
-		b.ctx.Graph.AddEdge(owner, target, graphEdgeTypeCompletionRef)
+		b.typeGraph.AddEdge(owner, target, graphEdgeTypeCompletionRef)
 	}
 }
 

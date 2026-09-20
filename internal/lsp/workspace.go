@@ -39,7 +39,7 @@ type workspaceIndex struct {
 	rootDir     string
 	modules     map[string]*workspaceModule
 	components  []workspaceComponent
-	imports     *graph.Graph
+	imports     *graph.DependencyGraph
 	parsedFiles int
 }
 
@@ -173,7 +173,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		delete(w.modules, filePath)
 	}
 
-	g := graph.New(project.GraphEdgeImport)
+	g := graph.NewDependencyGraph(project.GraphEdgeImport)
 	for _, module := range w.modules {
 		for _, target := range module.importTargets {
 			if _, ok := w.modules[target]; !ok {
@@ -258,7 +258,7 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 		return dirty
 	}
 	component := w.componentFiles(filePath)
-	propagate := make([]string, 0)
+	changedSurfaces := make([]graph.NodeID, 0)
 	for member := range component {
 		current := w.modules[member]
 		if current == nil {
@@ -267,7 +267,7 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 		cachedModule := cached[member]
 		if cachedModule == nil {
 			dirty[member] = struct{}{}
-			propagate = append(propagate, member)
+			changedSurfaces = append(changedSurfaces, graph.NodeID(member))
 			continue
 		}
 		if cachedModule.ContentHash == current.contentHash {
@@ -275,27 +275,15 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 		}
 		dirty[member] = struct{}{}
 		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
-			propagate = append(propagate, member)
+			changedSurfaces = append(changedSurfaces, graph.NodeID(member))
 		}
 	}
-	seen := make(map[string]struct{}, len(propagate))
-	for len(propagate) > 0 {
-		current := propagate[0]
-		propagate = propagate[1:]
-		if _, ok := seen[current]; ok {
+	for _, dependentID := range w.imports.TransitiveDependents(changedSurfaces) {
+		dependent := string(dependentID)
+		if _, ok := component[dependent]; !ok {
 			continue
 		}
-		seen[current] = struct{}{}
-		for dependent := range w.reverseDependents(current) {
-			if _, ok := component[dependent]; !ok {
-				continue
-			}
-			if _, ok := dirty[dependent]; ok {
-				continue
-			}
-			dirty[dependent] = struct{}{}
-			propagate = append(propagate, dependent)
-		}
+		dirty[dependent] = struct{}{}
 	}
 	if len(dirty) == 0 {
 		filePath = project.CanonicalPath(filePath)
@@ -316,7 +304,7 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project
 	// "what is still reusable after this edit?" decision, while handlers only
 	// clone/reset and seed whichever phase this function authorizes.
 	component := w.componentFiles(filePath)
-	propagate := make([]string, 0)
+	changedSurfaces := make([]graph.NodeID, 0)
 	for cachedPath, cachedModule := range cached {
 		if cachedModule == nil || cachedModule.FilePath == "" {
 			continue
@@ -337,35 +325,26 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project
 		// Body-only edits stay local to changed modules and do not downgrade
 		// importers inside same component.
 		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
-			propagate = append(propagate, cachedPath)
+			changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
 		}
 	}
 
-	seen := make(map[string]struct{}, len(propagate))
-	for len(propagate) > 0 {
-		current := propagate[0]
-		propagate = propagate[1:]
-		if _, ok := seen[current]; ok {
+	for _, dependentID := range w.imports.TransitiveDependents(changedSurfaces) {
+		dependent := string(dependentID)
+		if _, ok := component[dependent]; !ok {
 			continue
 		}
-		seen[current] = struct{}{}
-		for dependent := range w.reverseDependents(current) {
-			if _, ok := component[dependent]; !ok {
-				continue
-			}
-			cachedModule := cached[dependent]
-			currentModule := w.modules[dependent]
-			if cachedModule == nil || currentModule == nil {
-				continue
-			}
-			if cachedModule.ContentHash != currentModule.contentHash {
-				continue
-			}
-			// Dependents with unchanged text can skip reparsing, but they must
-			// rerun semantic/lowering phases because upstream module surface moved.
-			phases[dependent] = phase.Parsed
-			propagate = append(propagate, dependent)
+		cachedModule := cached[dependent]
+		currentModule := w.modules[dependent]
+		if cachedModule == nil || currentModule == nil {
+			continue
 		}
+		if cachedModule.ContentHash != currentModule.contentHash {
+			continue
+		}
+		// Dependents with unchanged text can skip reparsing, but they must
+		// rerun semantic/lowering phases because upstream module surface moved.
+		phases[dependent] = phase.Parsed
 	}
 
 	return phases
@@ -383,7 +362,7 @@ func (w *workspaceIndex) hasDiskBackedFiles() bool {
 	return true
 }
 
-func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Graph) []workspaceComponent {
+func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.DependencyGraph) []workspaceComponent {
 	if len(modules) == 0 {
 		return nil
 	}
@@ -420,33 +399,6 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Grap
 	}
 
 	return components
-}
-
-func (w *workspaceIndex) reverseDependents(filePath string) map[string]struct{} {
-	out := make(map[string]struct{})
-	if w == nil || w.imports == nil {
-		return out
-	}
-	filePath = project.CanonicalPath(filePath)
-	if filePath == "" {
-		return out
-	}
-	queue := []string{filePath}
-	seen := map[string]struct{}{filePath: {}}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, dependent := range w.imports.Predecessors(graph.NodeID(current)) {
-			file := string(dependent)
-			if _, ok := seen[file]; ok {
-				continue
-			}
-			seen[file] = struct{}{}
-			out[file] = struct{}{}
-			queue = append(queue, file)
-		}
-	}
-	return out
 }
 
 func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {

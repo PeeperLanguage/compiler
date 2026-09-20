@@ -138,7 +138,7 @@ build on this contract.
 `internal/graph.Directed` owns directed adjacency and reverse adjacency once.
 Domain graphs keep semantic edge data on top:
 
-- import/type dependency graphs use `graph.Graph`;
+- import/type dependency graphs use `graph.DependencyGraph`;
 - CFG owns `cfg.Edge` kinds/case metadata while storing site/block topology in
   `graph.Directed`.
 

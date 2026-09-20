@@ -29,7 +29,7 @@ type site struct {
 type analyzer struct {
 	ctx                    *project.CompilerContext
 	module                 *project.Module
-	graph                  *cfg.Graph
+	graph                  *cfg.ControlFlowGraph
 	sites                  map[cfg.SiteID]*site
 	order                  []cfg.SiteID
 	effects                effect.SiteOps
@@ -103,7 +103,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 	return result
 }
 
-func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.Graph, cleanup *ownershipresult.CleanupPlan) {
+func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
 	if ctx == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
@@ -122,7 +122,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 	}).run()
 }
 
-func indexSites(module *project.Module, cfgFn *cfg.Graph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+func indexSites(module *project.Module, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
 	if module == nil || module.Bindings == nil || cfgFn == nil || scope == nil {

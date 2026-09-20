@@ -13,6 +13,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
@@ -27,6 +28,40 @@ import (
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
+
+func TestInvalidateSemanticDependentsUsesImportClosure(t *testing.T) {
+	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
+	ctx.Metrics = &project.CompileMetrics{}
+	leaf := &project.Module{
+		ID:                        moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "leaf"},
+		Phase:                     phase.Typechecked,
+		SemanticExportFingerprint: "new surface",
+	}
+	middle := &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "middle"}, Phase: phase.Typechecked}
+	root := &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "root"}, Phase: phase.Typechecked}
+	unrelated := &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "unrelated"}, Phase: phase.Typechecked}
+	for _, module := range []*project.Module{leaf, middle, root, unrelated} {
+		ctx.AddModule(module)
+	}
+	ctx.ImportGraph.AddEdge(graph.NodeID(root.ID.String()), graph.NodeID(middle.ID.String()))
+	ctx.ImportGraph.AddEdge(graph.NodeID(middle.ID.String()), graph.NodeID(leaf.ID.String()))
+	ctx.SetSemanticExportBaseline(leaf.ID, "old surface")
+
+	invalidateSemanticDependents(ctx, []*project.Module{leaf})
+
+	if leaf.Phase != phase.Typechecked {
+		t.Fatalf("changed module phase = %v, want %v", leaf.Phase, phase.Typechecked)
+	}
+	if middle.Phase != phase.Parsed || root.Phase != phase.Parsed {
+		t.Fatalf("dependent phases = (%v, %v), want (%v, %v)", middle.Phase, root.Phase, phase.Parsed, phase.Parsed)
+	}
+	if unrelated.Phase != phase.Typechecked {
+		t.Fatalf("unrelated module phase = %v, want %v", unrelated.Phase, phase.Typechecked)
+	}
+	if got := ctx.Metrics.Snapshot().ModulesDowngraded; got != 2 {
+		t.Fatalf("downgraded modules = %d, want 2", got)
+	}
+}
 
 func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
 	return &project.Module{

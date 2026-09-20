@@ -13,8 +13,7 @@ import (
 type state map[symbols.SymbolID]struct{}
 
 type functionResult struct {
-	In  map[cfg.SiteID]state
-	Out map[cfg.SiteID]state
+	In map[cfg.SiteID]state
 }
 
 // Check diagnoses reads not initialized on every reachable CFG predecessor.
@@ -33,12 +32,22 @@ func Check(graphs *cfg.Module, effects effect.Result, diag *diagnostics.Diagnost
 	}
 }
 
-func analyzeFunction(graph *cfg.Graph, ops effect.SiteOps, diag *diagnostics.DiagnosticBag) *functionResult {
-	result := &functionResult{In: make(map[cfg.SiteID]state), Out: make(map[cfg.SiteID]state)}
+func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diagnostics.DiagnosticBag) *functionResult {
+	result := &functionResult{In: make(map[cfg.SiteID]state)}
 	if graph == nil || graph.Entry == nil || len(graph.Entry.Sites) == 0 {
 		return result
 	}
-	sites, order := indexSites(graph)
+	order := make([]cfg.SiteID, 0)
+	for _, block := range graph.Blocks {
+		if block == nil || !block.Reachable {
+			continue
+		}
+		for _, site := range block.Sites {
+			if site != nil {
+				order = append(order, site.ID)
+			}
+		}
+	}
 	tracked := trackedSymbols(ops, order)
 
 	// Parameters and match payload bindings arrive as initialized defines at the
@@ -51,14 +60,13 @@ func analyzeFunction(graph *cfg.Graph, ops effect.SiteOps, diag *diagnostics.Dia
 		if !pending {
 			break
 		}
-		site := sites[id]
-		if site == nil {
+		site := graph.Site(id)
+		if site == nil || !graph.Blocks[id.Block].Reachable {
 			continue
 		}
 		out := transfer(ops[id], result.In[id])
-		result.Out[id] = out
 		for _, edge := range graph.SiteEdges.OutEdges(site.ID) {
-			if sites[edge.To] == nil {
+			if graph.Site(edge.To) == nil || !graph.Blocks[edge.To.Block].Reachable {
 				continue
 			}
 			edgeState := copyState(out)
@@ -82,24 +90,6 @@ func analyzeFunction(graph *cfg.Graph, ops effect.SiteOps, diag *diagnostics.Dia
 		}
 	}
 	return result
-}
-
-func indexSites(graph *cfg.Graph) (map[cfg.SiteID]*cfg.Site, []cfg.SiteID) {
-	sites := make(map[cfg.SiteID]*cfg.Site)
-	order := make([]cfg.SiteID, 0)
-	for _, block := range graph.Blocks {
-		if block == nil || !block.Reachable {
-			continue
-		}
-		for _, site := range block.Sites {
-			if site == nil {
-				continue
-			}
-			sites[site.ID] = site
-			order = append(order, site.ID)
-		}
-	}
-	return sites, order
 }
 
 // trackedSymbols is the diagnosable universe: a binding this function defines.

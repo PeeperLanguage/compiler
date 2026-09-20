@@ -11,6 +11,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/graph"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/collector"
@@ -111,6 +112,96 @@ struct B { a: A }`,
 				t.Fatalf("cycle diagnostic = %v, want %v:\n%s", foundCycle, test.wantCycle, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestBindUsesFreshTypeDependencyGraph(t *testing.T) {
+	const filePath = "binder_repeated_type_graph_test" + peeper.SourceExt
+	const firstSource = `struct A { b: B }
+struct B {}`
+	const secondSource = `struct A {}
+struct B { a: A }`
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	importer := graph.NodeID("local:importer")
+	imported := graph.NodeID("local:imported")
+	ctx.ImportGraph.AddEdge(importer, imported)
+	module := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
+		FilePath: filePath,
+		Content:  firstSource,
+		AST:      parser.New(filePath, lexer.New(filePath, firstSource, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	collector.Collect(ctx, module)
+	Bind(ctx, module)
+	if diag.HasErrors() {
+		t.Fatalf("first bind diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if degree := ctx.ImportGraph.InDegree(imported); degree != 1 {
+		t.Fatalf("imported module in-degree = %d, want 1", degree)
+	}
+	for _, name := range []string{"A", "B"} {
+		if degree := ctx.ImportGraph.InDegree(typeDeclNodeID(module.ID, name), graphEdgeTypeValueRef); degree != 0 {
+			t.Fatalf("compiler import graph retained %d binder type edges for %s", degree, name)
+		}
+	}
+
+	module.Content = secondSource
+	module.AST = parser.New(filePath, lexer.New(filePath, secondSource, diag).Tokenize(), diag).ParseModule()
+	collector.Collect(ctx, module)
+	Bind(ctx, module)
+	if diag.HasErrors() {
+		t.Fatalf("second bind retained stale type dependencies:\n%s", diag.EmitAllToString())
+	}
+	if degree := ctx.ImportGraph.InDegree(imported); degree != 1 {
+		t.Fatalf("imported module in-degree after rebind = %d, want 1", degree)
+	}
+	for _, name := range []string{"A", "B"} {
+		if degree := ctx.ImportGraph.InDegree(typeDeclNodeID(module.ID, name), graphEdgeTypeValueRef); degree != 0 {
+			t.Fatalf("compiler import graph retained %d binder type edges for %s after rebind", degree, name)
+		}
+	}
+}
+
+func TestBindResolvesImportedTypeAliasesWithLocalGraph(t *testing.T) {
+	const dependencyPath = "binder_imported_alias_dependency" + peeper.SourceExt
+	const dependencySource = `type Alias = i32;`
+	const consumerPath = "binder_imported_alias_consumer" + peeper.SourceExt
+	const consumerSource = `type Local = dep::Alias;
+fn Use(value: Local) {}`
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	dependency := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(dependencyPath, peeper.SourceExt)},
+		FilePath: dependencyPath,
+		Content:  dependencySource,
+		AST:      parser.New(dependencyPath, lexer.New(dependencyPath, dependencySource, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]project.ResolvedImport),
+	}
+	ctx.AddModule(dependency)
+	collector.Collect(ctx, dependency)
+	Bind(ctx, dependency)
+
+	consumer := &project.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(consumerPath, peeper.SourceExt)},
+		FilePath: consumerPath,
+		Content:  consumerSource,
+		AST:      parser.New(consumerPath, lexer.New(consumerPath, consumerSource, diag).Tokenize(), diag).ParseModule(),
+		Imports: map[string]project.ResolvedImport{
+			"dep": {ID: dependency.ID, FilePath: dependency.FilePath},
+		},
+	}
+	collector.Collect(ctx, consumer)
+	Bind(ctx, consumer)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	local, ok := consumer.ModuleScope.LookupLocal("Local")
+	if !ok || local == nil || !typeinfo.SameType(typeinfo.Unalias(local.Type), &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+		t.Fatalf("imported alias resolved as %#v, want i32", local)
 	}
 }
 

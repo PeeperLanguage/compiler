@@ -376,10 +376,13 @@ func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 // exhaustive, but a zero Plan is reachable if a producer ever publishes early.
 func TestGenerateHIRRejectsForInWithoutAnIterationPlan(t *testing.T) {
 	out := generateTestHIR(t, "hir_for_plan_test"+peeper.SourceExt, "hir_for_plan_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
-		module.Typechecking.ForEachForIteration(func(id ast.NodeID, evidence typecheckresult.ForIteration) {
-			evidence.Plan = nil
-			module.Typechecking.RecordForIteration(id, evidence)
-		})
+		loop := module.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
+		evidence, found := module.Typechecking.ForIteration(loop.ID())
+		if !found {
+			t.Fatal("for-in iteration evidence was not published")
+		}
+		evidence.Plan = nil
+		module.Typechecking.RecordForIteration(loop.ID(), evidence)
 	})
 	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
 	if !ok || !strings.Contains(invalid.Message, "unknown for-in iteration evidence") {
@@ -1637,10 +1640,14 @@ fn Read(result: Result) -> i32 {
 		Result::Ok with { value = payload } => { return payload; }
 	}
 }`, func(module *project.Module) {
-		module.Typechecking.ForEachMatch(func(id ast.NodeID, match typecheckresult.Match) {
-			match.Arms[0].Bindings[0].Projection = typecheckresult.MatchProjectionInvalid
-			module.Typechecking.RecordMatch(id, match)
-		})
+		fn := module.AST.Stmts[1].(*ast.FnDecl)
+		matchStmt := fn.Body.Stmts[0].(*ast.MatchStmt)
+		match, found := module.Typechecking.Match(matchStmt.ID())
+		if !found {
+			t.Fatal("match evidence was not published")
+		}
+		match.Arms[0].Bindings[0].Projection = typecheckresult.MatchProjectionInvalid
+		module.Typechecking.RecordMatch(matchStmt.ID(), match)
 	})
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
 		t.Fatalf("unexpected HIR shape: %#v", out)

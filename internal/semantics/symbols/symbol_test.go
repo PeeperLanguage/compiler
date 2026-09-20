@@ -18,6 +18,15 @@ func TestNewHandlesTypedNilNode(t *testing.T) {
 	}
 }
 
+func TestNewPublishesLetMutability(t *testing.T) {
+	location := ast.LocOf(&ast.Ident{})
+	declaration := &ast.LetDecl{IsMutable: true, MutableLocation: location}
+	sym := New("value", SymbolVar, declaration, nil)
+	if !sym.IsMutable() || sym.MutableLocation != location {
+		t.Fatalf("let mutability = (%v, %#v), want (true, %#v)", sym.IsMutable(), sym.MutableLocation, location)
+	}
+}
+
 func TestFunctionScopeHasConcreteType(t *testing.T) {
 	sym := New("main", SymbolFunc, nil, nil)
 	var scope *Scope = sym.Scope

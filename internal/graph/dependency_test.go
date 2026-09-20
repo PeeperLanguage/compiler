@@ -12,7 +12,7 @@ const (
 )
 
 func TestAlgorithmsIgnoreEmptyNodeIDs(t *testing.T) {
-	g := New(testEdgeImport)
+	g := NewDependencyGraph(testEdgeImport)
 	g.AddEdge("a", "b")
 	g.AddEdge("b", "a", testEdgeMetadata)
 	for _, tc := range []struct {
@@ -52,7 +52,7 @@ func TestAlgorithmsIgnoreEmptyNodeIDs(t *testing.T) {
 }
 
 func TestTopoSortOrdersImportDependencies(t *testing.T) {
-	g := New(testEdgeImport)
+	g := NewDependencyGraph(testEdgeImport)
 	g.AddEdge("a", "b")
 	g.AddEdge("b", "c")
 
@@ -66,7 +66,7 @@ func TestTopoSortOrdersImportDependencies(t *testing.T) {
 }
 
 func TestTopoSortReportsCycles(t *testing.T) {
-	g := New(testEdgeImport)
+	g := NewDependencyGraph(testEdgeImport)
 	g.AddEdge("a", "b")
 	g.AddEdge("b", "a")
 
@@ -76,32 +76,40 @@ func TestTopoSortReportsCycles(t *testing.T) {
 	}
 }
 
-func TestGraphDegreeAndPredecessorQueries(t *testing.T) {
-	g := New(testEdgeImport)
+func TestDependencyGraphQueries(t *testing.T) {
+	g := NewDependencyGraph(testEdgeImport)
 	g.AddEdge("a", "b")
 	g.AddEdge("c", "b")
 	g.AddEdge("a", "c", testEdgeMetadata)
 
-	if got := g.OutDegree("a"); got != 1 {
-		t.Fatalf("unexpected out degree: %d", got)
-	}
 	if got := g.InDegree("b"); got != 2 {
 		t.Fatalf("unexpected in degree: %d", got)
 	}
-	preds := g.Predecessors("b")
-	if !slices.Contains(preds, NodeID("a")) || !slices.Contains(preds, NodeID("c")) {
-		t.Fatalf("unexpected predecessors: %v", preds)
+	if got := g.TransitiveDependents([]NodeID{"b"}); !slices.Equal(got, []NodeID{"a", "c"}) {
+		t.Fatalf("import dependents = %v, want [a c]", got)
 	}
-	if got := g.Successors("a", testEdgeMetadata); !slices.Equal(got, []NodeID{"c"}) {
-		t.Fatalf("metadata successors = %v, want [c]", got)
+	if got := g.TransitiveDependents([]NodeID{"c"}, testEdgeMetadata); !slices.Equal(got, []NodeID{"a"}) {
+		t.Fatalf("metadata dependents = %v, want [a]", got)
 	}
-	if got := g.OutDegree("a", testEdgeMetadata); got != 1 {
-		t.Fatalf("metadata out degree = %d, want 1", got)
+}
+
+func TestTransitiveDependentsExcludeRootsAcrossCycles(t *testing.T) {
+	g := NewDependencyGraph(testEdgeImport)
+	g.AddEdge("middle", "leaf")
+	g.AddEdge("other", "leaf")
+	g.AddEdge("root", "middle")
+	g.AddEdge("leaf", "root")
+
+	if got := g.TransitiveDependents([]NodeID{"leaf"}); !slices.Equal(got, []NodeID{"middle", "other", "root"}) {
+		t.Fatalf("dependents = %v, want [middle other root]", got)
+	}
+	if got := g.TransitiveDependents([]NodeID{"leaf", "middle", "", "leaf"}); !slices.Equal(got, []NodeID{"other", "root"}) {
+		t.Fatalf("multi-root dependents = %v, want [other root]", got)
 	}
 }
 
 func TestWeaklyConnectedComponents(t *testing.T) {
-	g := New(testEdgeImport)
+	g := NewDependencyGraph(testEdgeImport)
 	g.AddEdge("a", "b")
 	g.AddEdge("c", "d")
 
@@ -116,7 +124,7 @@ func TestWeaklyConnectedComponents(t *testing.T) {
 }
 
 func TestAlgorithmsPreserveCallerProvidedIsolatedNodes(t *testing.T) {
-	g := New(testEdgeImport)
+	g := NewDependencyGraph(testEdgeImport)
 	ids := []NodeID{"connected", "dependency", "isolated"}
 	g.AddEdge("connected", "dependency")
 

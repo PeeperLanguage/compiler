@@ -151,8 +151,8 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
 		module.Imports[alias] = resolvedImport
-		if l.ctx.Graph != nil {
-			l.ctx.Graph.AddEdge(graph.NodeID(module.ID.String()), graph.NodeID(resolved.ID.String()))
+		if l.ctx.ImportGraph != nil {
+			l.ctx.ImportGraph.AddEdge(graph.NodeID(module.ID.String()), graph.NodeID(resolved.ID.String()))
 		}
 
 		if existing, ok := l.ctx.ModuleByID(resolved.ID); ok {

@@ -71,7 +71,7 @@ func Build(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node, queries BuildQueri
 type builder struct {
 	nodes   map[ast.NodeID]ast.Node
 	queries BuildQueries
-	graph   *cfg.Graph
+	graph   *cfg.ControlFlowGraph
 	ops     SiteOps
 }
 

@@ -165,6 +165,9 @@ The distinction matters:
 - use block integer IDs only for graph block topology;
 - use `ScopeID` to associate a point with lexical cleanup scope.
 
+`Graph.Site` resolves a `SiteID` through its block and site positions. It returns nil
+for IDs outside the graph or incomplete block/site structure.
+
 ### Terminators and edges
 
 CFG terminators are sealed by `Terminator`:

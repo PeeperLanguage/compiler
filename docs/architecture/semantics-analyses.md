@@ -217,11 +217,12 @@ the same `typeExprBase` dispatch and adds `effectiveExpressionType` around it.
 - `flowState`: reachability, variant facts, reference origins, raw-pointer origins;
 - `flowCheck`: result, current state, analyzer, and expression event log;
 - `flowExpressionEvents`: ordered case tests and calls within one site;
-- `flowAnalyzer`: function graph, function scope, site index, input states, and result.
+- `flowAnalyzer`: function graph, function scope, input states, and result.
 `CheckFlow` initializes every `flowresult.Result` map, then analyzes each body-backed
 function graph. Function parameters that are reference values seed present optional
-layers and value origins. `flowAnalyzer.run` indexes all sites, seeds entry and
-otherwise disconnected sites, and runs a worklist to a fixed point.
+layers and value origins. `flowAnalyzer.run` collects site IDs in graph order, seeds
+entry and otherwise disconnected sites, and runs a worklist to a fixed point. Sites
+are resolved positionally through `Graph.Site` rather than copied into another index.
 At each site, flow snapshots the incoming facts under the function node and `SiteID`,
 then applies the site. Terminator edges refine the outgoing state using true/false
 condition facts or variant case facts. States merge by intersection-like proof:

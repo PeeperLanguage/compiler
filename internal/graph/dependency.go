@@ -15,20 +15,22 @@ type edge struct {
 	kind EdgeKind
 }
 
-type Graph struct {
+// DependencyGraph is the synchronized graph for dependency relationships.
+// An edge points from a dependent to the node it requires.
+type DependencyGraph struct {
 	mu       sync.RWMutex
 	edgeKind EdgeKind
 	directed *Directed[NodeID, edge]
 }
 
-func New(edgeKind EdgeKind) *Graph {
-	return &Graph{
+func NewDependencyGraph(edgeKind EdgeKind) *DependencyGraph {
+	return &DependencyGraph{
 		edgeKind: edgeKind,
 		directed: NewDirected(func(edge edge) (NodeID, NodeID) { return edge.from, edge.to }),
 	}
 }
 
-func (g *Graph) AddEdge(from, to NodeID, kinds ...EdgeKind) {
+func (g *DependencyGraph) AddEdge(from, to NodeID, kinds ...EdgeKind) {
 	if g == nil || from == "" || to == "" {
 		return
 	}
@@ -44,34 +46,48 @@ func (g *Graph) AddEdge(from, to NodeID, kinds ...EdgeKind) {
 	g.directed.AddEdge(edge{from: from, to: to, kind: kind})
 }
 
-func (g *Graph) Successors(id NodeID, kinds ...EdgeKind) []NodeID {
-	if g == nil || id == "" {
+// TransitiveDependents returns every node that directly or indirectly depends
+// on one of roots. Roots are excluded, including when a dependency cycle leads
+// back to one, and each dependent appears once in breadth-first discovery order.
+func (g *DependencyGraph) TransitiveDependents(roots []NodeID, kinds ...EdgeKind) []NodeID {
+	if g == nil || len(roots) == 0 {
 		return nil
 	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	return g.directed.Successors(id, g.edgeFilter(kinds))
-}
-
-func (g *Graph) Predecessors(id NodeID, kinds ...EdgeKind) []NodeID {
-	if g == nil || id == "" {
+	roots = nonEmptyNodeIDs(roots)
+	if len(roots) == 0 {
 		return nil
 	}
+
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.directed.Predecessors(id, g.edgeFilter(kinds))
-}
 
-func (g *Graph) OutDegree(id NodeID, kinds ...EdgeKind) int {
-	if g == nil || id == "" {
-		return 0
+	seen := make(map[NodeID]struct{}, len(roots))
+	work := NewWorklist[NodeID]()
+	for _, root := range roots {
+		seen[root] = struct{}{}
+		work.Add(root)
 	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	return g.directed.OutDegree(id, g.edgeFilter(kinds))
+
+	var dependents []NodeID
+	include := g.edgeFilter(kinds)
+	for {
+		current, pending := work.Next()
+		if !pending {
+			break
+		}
+		for _, dependent := range g.directed.Predecessors(current, include) {
+			if _, found := seen[dependent]; found {
+				continue
+			}
+			seen[dependent] = struct{}{}
+			dependents = append(dependents, dependent)
+			work.Add(dependent)
+		}
+	}
+	return dependents
 }
 
-func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
+func (g *DependencyGraph) InDegree(id NodeID, kinds ...EdgeKind) int {
 	if g == nil || id == "" {
 		return 0
 	}
@@ -80,7 +96,7 @@ func (g *Graph) InDegree(id NodeID, kinds ...EdgeKind) int {
 	return g.directed.InDegree(id, g.edgeFilter(kinds))
 }
 
-func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID) {
+func (g *DependencyGraph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID) {
 	if g == nil || len(ids) == 0 {
 		return nil, nil
 	}
@@ -89,7 +105,7 @@ func (g *Graph) TopoSort(ids []NodeID, kinds ...EdgeKind) ([]NodeID, [][]NodeID)
 	return g.directed.TopoSort(nonEmptyNodeIDs(ids), g.edgeFilter(kinds))
 }
 
-func (g *Graph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]NodeID {
+func (g *DependencyGraph) WeaklyConnectedComponents(ids []NodeID, kinds ...EdgeKind) [][]NodeID {
 	if g == nil || len(ids) == 0 {
 		return nil
 	}
@@ -114,7 +130,7 @@ func nonEmptyNodeIDs(ids []NodeID) []NodeID {
 	return filtered
 }
 
-func (g *Graph) edgeFilter(kinds []EdgeKind) func(edge) bool {
+func (g *DependencyGraph) edgeFilter(kinds []EdgeKind) func(edge) bool {
 	allowed := kindSet(kinds, g.edgeKind)
 	if len(allowed) == 0 {
 		return nil

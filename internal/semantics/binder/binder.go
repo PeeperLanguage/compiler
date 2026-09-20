@@ -2,6 +2,7 @@ package binder
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/graph"
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
@@ -9,15 +10,20 @@ import (
 )
 
 type binder struct {
-	ctx    *project.CompilerContext
-	module *project.Module
+	ctx       *project.CompilerContext
+	module    *project.Module
+	typeGraph *graph.DependencyGraph
 }
 
 func Bind(ctx *project.CompilerContext, module *project.Module) {
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil {
 		return
 	}
-	b := &binder{ctx: ctx, module: module}
+	b := &binder{
+		ctx:       ctx,
+		module:    module,
+		typeGraph: graph.NewDependencyGraph(""),
+	}
 	b.bindModule()
 }
 

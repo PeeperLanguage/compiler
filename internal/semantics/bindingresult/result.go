@@ -74,13 +74,6 @@ func (r *Result) SetScope(node ast.Node, scope *symbols.Scope) {
 	r.blockScopes[node.ID()] = scope
 }
 
-func (r *Result) SetScopeID(id ast.NodeID, scope *symbols.Scope) {
-	if r == nil || id == 0 || scope == nil {
-		return
-	}
-	r.blockScopes[id] = scope
-}
-
 func (r *Result) Scope(node ast.Node) *symbols.Scope {
 	if r == nil || node == nil {
 		return nil

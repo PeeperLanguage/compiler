@@ -28,8 +28,31 @@ func TestModuleIndexesFunctionBySourceIdentity(t *testing.T) {
 	if len(module.Functions) != 1 || module.Function(ir.NodeID(1)) != module.Functions[0] {
 		t.Fatalf("CFG function index = %#v, want source NodeID lookup", module)
 	}
-	if _, found := reflect.TypeOf(Graph{}).FieldByName("Cleanup"); found {
+	if _, found := reflect.TypeOf(ControlFlowGraph{}).FieldByName("Cleanup"); found {
 		t.Fatal("CFG graph retains ownership cleanup output")
+	}
+}
+
+func TestGraphSiteResolvesPositionSafely(t *testing.T) {
+	site := &Site{}
+	graph := &ControlFlowGraph{Blocks: []*Block{{Sites: []*Site{site}}, nil}}
+	if got := graph.Site(SiteID{}); got != site {
+		t.Fatalf("site lookup = %#v, want %#v", got, site)
+	}
+	for _, id := range []SiteID{
+		{Block: -1},
+		{Block: 0, Index: -1},
+		{Block: 0, Index: 1},
+		{Block: 1},
+		{Block: 2},
+	} {
+		if got := graph.Site(id); got != nil {
+			t.Fatalf("invalid site lookup %v = %#v, want nil", id, got)
+		}
+	}
+	var missing *ControlFlowGraph
+	if got := missing.Site(SiteID{}); got != nil {
+		t.Fatalf("nil graph site lookup = %#v, want nil", got)
 	}
 }
 
@@ -116,7 +139,7 @@ func TestFinalizeSitesLabelsVariantCaseEdges(t *testing.T) {
 			{Case: 1, Target: second},
 		},
 	}}
-	graph := &Graph{Entry: entry, Exit: &Block{ID: 3}, Blocks: []*Block{entry, first, second}}
+	graph := &ControlFlowGraph{Entry: entry, Exit: &Block{ID: 3}, Blocks: []*Block{entry, first, second}}
 	finalizeSites(graph)
 	edges := graph.SiteEdges.OutEdges(entry.Sites[0].ID)
 	if len(entry.Sites) != 1 || len(edges) != 2 {
@@ -502,7 +525,7 @@ func TestAnalyzeDoesNotReportConstantLoopCondition(t *testing.T) {
 	}
 }
 
-func loopBlock(t *testing.T, graph *Graph, loopID ir.NodeID, origin BlockOrigin) *Block {
+func loopBlock(t *testing.T, graph *ControlFlowGraph, loopID ir.NodeID, origin BlockOrigin) *Block {
 	t.Helper()
 	var found *Block
 	for _, block := range graph.Blocks {

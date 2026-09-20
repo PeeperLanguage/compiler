@@ -218,9 +218,6 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 
 func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
 	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
-	if declaration, ok := node.(*ast.LetDecl); ok {
-		sym.MutableLocation = declaration.MutableLocation
-	}
 	if err := scope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(r.ctx.Diagnostics, scope, err.Error(), name.Name, loc)
 		return

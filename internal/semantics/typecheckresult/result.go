@@ -262,13 +262,6 @@ func (r *Result) InterfaceImplementations(id ast.NodeID) []InterfaceImplementati
 	return r.expressions.interfaceImplementations[id]
 }
 
-func (r *Result) InterfaceImplementationSiteCount() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.expressions.interfaceImplementations)
-}
-
 func (r *Result) RecordImplicitConversion(id ast.NodeID, conversion typeinfo.Conversion) {
 	if r != nil && id != 0 {
 		r.expressions.implicitConversions[id] = conversion
@@ -461,10 +454,6 @@ func (r *Result) ImplicitCallArgument(id ast.NodeID) typeinfo.Type {
 	return r.calls.implicitArguments[id]
 }
 
-func (r *Result) HasImplicitCallArguments() bool {
-	return r != nil && len(r.calls.implicitArguments) != 0
-}
-
 func (r *Result) RecordCompilerCall(id ast.NodeID, call CompilerCall) {
 	if r != nil && id != 0 {
 		r.calls.compilerCalls[id] = call
@@ -505,22 +494,6 @@ func (r *Result) Match(id ast.NodeID) (Match, bool) {
 	}
 	match, ok := r.control.matches[id]
 	return match, ok
-}
-
-func (r *Result) MatchCount() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.control.matches)
-}
-
-func (r *Result) ForEachMatch(fn func(ast.NodeID, Match)) {
-	if r == nil || fn == nil {
-		return
-	}
-	for id, match := range r.control.matches {
-		fn(id, match)
-	}
 }
 
 // MatchCases exposes resolved case indexes without leaking match artifacts
@@ -581,22 +554,6 @@ func (r *Result) ForIteration(id ast.NodeID) (ForIteration, bool) {
 	return iteration, ok
 }
 
-func (r *Result) ForIterationCount() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.control.forIterations)
-}
-
-func (r *Result) ForEachForIteration(fn func(ast.NodeID, ForIteration)) {
-	if r == nil || fn == nil {
-		return
-	}
-	for id, iteration := range r.control.forIterations {
-		fn(id, iteration)
-	}
-}
-
 // ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
 // body before its first condition check.
 func (r *Result) ForLoopGuaranteedEntry(id ast.NodeID) bool {
@@ -630,13 +587,6 @@ func (r *Result) CheckedIteration(id ast.NodeID) *ast.BlockStmt {
 		return nil
 	}
 	return r.control.checkedIterations[id]
-}
-
-func (r *Result) CheckedIterationCount() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.control.checkedIterations)
 }
 
 func (r *Result) ForEachCheckedIteration(fn func(ast.NodeID, *ast.BlockStmt)) {

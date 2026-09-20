@@ -62,13 +62,15 @@ fn main() {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if module.Typechecking.CheckedIterationCount() != 2 || module.Typechecking.ForIterationCount() != 0 {
-		t.Fatalf("iteration evidence = %#v", module.Typechecking)
-	}
 	if err := module.CFG.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	checkedCount := 0
 	module.Typechecking.ForEachCheckedIteration(func(id ast.NodeID, expansion *ast.BlockStmt) {
+		checkedCount++
+		if _, found := module.Typechecking.ForIteration(id); found {
+			t.Errorf("source loop %d has both checked and ordinary iteration evidence", id)
+		}
 		checked := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
 		sourceLoop := module.TypedASTNodes[id].(*ast.ForStmt)
 		if module.TypedASTNodes[expansion.ID()] != expansion {
@@ -109,6 +111,9 @@ fn main() {
 			return true
 		})
 	})
+	if checkedCount != 2 {
+		t.Fatalf("checked iterations = %d, want 2", checkedCount)
+	}
 }
 
 func TestNamedEnumCaseTestsRefineExactFields(t *testing.T) {

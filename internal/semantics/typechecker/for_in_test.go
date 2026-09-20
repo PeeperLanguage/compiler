@@ -41,8 +41,10 @@ func TestCallIterationRecognition(t *testing.T) {
 				header = "item in cursor.Next()"
 			}
 			module, diag := checkTypeModule(t, "struct Cursor {}\n"+test.method+"\nfn main() { "+binding+" for "+header+" {} }")
+			main := module.AST.Stmts[len(module.AST.Stmts)-1].(*ast.FnDecl)
+			loop := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.ForStmt)
 			if test.diagnostic == "" {
-				if diag.HasErrors() || module.Typechecking.CheckedIterationCount() != 1 {
+				if diag.HasErrors() || module.Typechecking.CheckedIteration(loop.ID()) == nil {
 					t.Fatalf("missing checked iteration:\n%s", diag.EmitAllToString())
 				}
 			} else if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), test.diagnostic) {
@@ -87,8 +89,9 @@ fn main() {
 	if len(effective) != 2 {
 		t.Fatalf("effective arguments = %d, want 2", len(effective))
 	}
-	if got := module.Typechecking.InterfaceImplementationSiteCount(); got != 2 {
-		t.Fatalf("interface evidence entries = %d, want declaration default plus one call expansion", got)
+	produce := module.AST.Stmts[3].(*ast.FnDecl)
+	if implementations := module.Typechecking.InterfaceImplementations(produce.Params[1].Default.ID()); len(implementations) != 1 {
+		t.Fatalf("declaration default evidence = %#v, want one implementation", implementations)
 	}
 	if implementations := module.Typechecking.InterfaceImplementations(effective[1].ID()); len(implementations) != 1 {
 		t.Fatalf("effective default evidence = %#v, want one implementation", implementations)
@@ -160,20 +163,24 @@ fn main() { let mut cursor = Cursor.{ value = 1 }; __LOOP__ }`,
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, implicit := range []bool{false, true} {
-				loop := test.explicit
+				loopSource := test.explicit
 				if implicit {
-					loop = test.implicit
+					loopSource = test.implicit
 				}
-				module, diag := checkTypeModule(t, strings.Replace(test.source, "__LOOP__", loop, 1))
+				module, diag := checkTypeModule(t, strings.Replace(test.source, "__LOOP__", loopSource, 1))
 				if diag.HasErrors() {
 					t.Fatalf("implicit=%v unexpected diagnostics:\n%s", implicit, diag.EmitAllToString())
 				}
-				expectedExpansions := 0
+				checkedCount := 0
+				module.Typechecking.ForEachCheckedIteration(func(ast.NodeID, *ast.BlockStmt) {
+					checkedCount++
+				})
+				expectedCount := 0
 				if implicit {
-					expectedExpansions = 1
+					expectedCount = 1
 				}
-				if got := module.Typechecking.CheckedIterationCount(); got != expectedExpansions {
-					t.Fatalf("implicit=%v checked expansions = %d", implicit, got)
+				if checkedCount != expectedCount {
+					t.Fatalf("implicit=%v checked expansions=%d, want %d", implicit, checkedCount, expectedCount)
 				}
 			}
 		})

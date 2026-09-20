@@ -139,7 +139,7 @@ func GenerateMIR(in *hir.Module, graphs *cfg.Module, ownership ownershipresult.R
 
 // lowerCFGFunction converts one normalized CFG into MIR without rebuilding
 // branches or loops from structured HIR.
-func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.Graph, statements map[ir.NodeID]hir.Stmt, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
+func lowerCFGFunction(mod *Module, sourceFn *hir.Function, graph *cfg.ControlFlowGraph, statements map[ir.NodeID]hir.Stmt, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
 	if mod == nil || sourceFn == nil || graph == nil || graph.Entry == nil {
 		return nil, false
 	}

@@ -8,23 +8,23 @@ import (
 
 // Module owns canonical function CFG identity for one source module.
 type Module struct {
-	Functions []*Graph
-	byNodeID  map[ir.NodeID]*Graph
+	Functions []*ControlFlowGraph
+	byNodeID  map[ir.NodeID]*ControlFlowGraph
 }
 
 // Function returns one graph by source function identity.
-func (m *Module) Function(id ir.NodeID) *Graph {
+func (m *Module) Function(id ir.NodeID) *ControlFlowGraph {
 	if m == nil {
 		return nil
 	}
 	return m.byNodeID[id]
 }
 
-// Graph is finalized by BuildModule. Terminators and ordered block sites define
+// ControlFlowGraph is finalized by BuildModule. Terminators and ordered block sites define
 // control flow; BlockEdges and SiteEdges are derived traversal indexes. Consumers
 // must not mutate topology after publication: rebuild the CFG before publishing
 // a new generation, since site IDs and downstream evidence depend on it.
-type Graph struct {
+type ControlFlowGraph struct {
 	NodeID         ir.NodeID
 	Name           string
 	Location       *source.Location
@@ -44,6 +44,19 @@ type Graph struct {
 type SiteID struct {
 	Block int
 	Index int
+}
+
+// Site resolves an ID by its position in this graph. Invalid IDs and incomplete
+// graph structure return nil so topology consumers can reject malformed edges.
+func (g *ControlFlowGraph) Site(id SiteID) *Site {
+	if g == nil || id.Block < 0 || id.Block >= len(g.Blocks) {
+		return nil
+	}
+	block := g.Blocks[id.Block]
+	if block == nil || id.Index < 0 || id.Index >= len(block.Sites) {
+		return nil
+	}
+	return block.Sites[id.Index]
 }
 
 type EdgeKind uint8
