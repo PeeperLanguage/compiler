@@ -148,7 +148,8 @@ func (t *InterfaceType) isSameType(other Type) bool {
 	}
 	for index, method := range t.Methods {
 		otherMethod := right.Methods[index]
-		if method.Name != otherMethod.Name || len(method.Params) != len(otherMethod.Params) {
+		if method.Name != otherMethod.Name || method.Receiver != otherMethod.Receiver ||
+			len(method.Params) != len(otherMethod.Params) {
 			return false
 		}
 		for parameterIndex := range method.Params {

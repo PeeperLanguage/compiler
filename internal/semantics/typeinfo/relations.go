@@ -166,13 +166,6 @@ func Assignable(dst, src Type) bool {
 	return CheckCompatibility(dst, src).Compatibility == Compatible
 }
 
-func ContainsAbstractSelf(t Type) bool {
-	return containsType(t, typeTraversal{followCallable: true}, func(candidate Type, _ bool) bool {
-		named, ok := candidate.(*NamedType)
-		return ok && named != nil && named.Name == "Self"
-	})
-}
-
 func ContainsTypeParameter(t Type) bool {
 	return containsType(t, typeTraversal{followDefined: true, followCallable: true}, func(candidate Type, _ bool) bool {
 		_, ok := candidate.(*TypeParameterType)
@@ -260,22 +253,13 @@ func traversedChildState(relation TypeChildRelation, stored bool, traversal type
 		return stored, !traversal.referenceLeaf
 	case TypeChildOptionalPayload:
 		return stored, true
-	case TypeChildMethodReceiver, TypeChildCallableParameter, TypeChildCallableReturn:
+	case TypeChildCallableParameter, TypeChildCallableReturn:
 		return false, traversal.followCallable
 	case TypeChildTypeParameter, TypeChildTypeArgument:
 		return false, false
 	default:
 		panic("typeinfo: unknown semantic type child relation")
 	}
-}
-
-func ReplaceAbstractSelf(t Type, ownerType Type) Type {
-	if named, ok := t.(*NamedType); ok && named != nil && named.Name == "Self" {
-		return ownerType
-	}
-	return TransformChildren(t, func(child TypeChild) Type {
-		return ReplaceAbstractSelf(child.Type, ownerType)
-	})
 }
 
 func IsInvalid(typ Type) bool {

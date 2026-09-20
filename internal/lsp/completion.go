@@ -680,7 +680,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *project.Modu
 			if method.Name == "" || !strings.HasPrefix(method.Name, prefix) {
 				continue
 			}
-			fnType, _ := typeinfo.ReplaceAbstractSelf(method.CallableType(), baseType).(*typeinfo.FuncType)
+			fnType := method.CallableTypeFor(baseType)
 			methodSymbol := &symbols.Symbol{Name: method.Name, Kind: symbols.SymbolMethod, Type: fnType}
 			items = appendOperationCompletion(items, seen, methodSymbol, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
 		}

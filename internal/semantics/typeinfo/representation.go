@@ -205,14 +205,11 @@ func (t *InterfaceType) isLowerable(q *lowerQuery, throughIndirection bool) bool
 		return false
 	}
 	for _, method := range t.Methods {
-		if len(method.Params) == 0 {
+		if method.Receiver == MethodReceiverInvalid {
 			return false
 		}
 	}
 	return ForEachChild(t, func(child TypeChild) bool {
-		if child.Relation == TypeChildMethodReceiver {
-			return true
-		}
-		return !ContainsAbstractSelf(child.Type) && q.check(child.Type, throughIndirection)
+		return q.check(child.Type, throughIndirection)
 	})
 }

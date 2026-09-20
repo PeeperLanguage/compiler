@@ -894,16 +894,12 @@ func lowerSelectorMethodCall(ctx *project.CompilerContext, module *project.Modul
 		args := make([]ir.Expr, 0, len(effectiveArgs))
 		for i, arg := range effectiveArgs {
 			var argExpected typeinfo.Type
-			if i+1 < len(iface.Params) {
-				argExpected = iface.Params[i+1].Type
+			if i < len(iface.Params) {
+				argExpected = iface.Params[i].Type
 			}
 			args = append(args, lowerASTExpr(ctx, module, scope, arg, argExpected))
 		}
-		consumes := false
-		if len(iface.Params) > 0 {
-			_, _, borrowedReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(iface.Params[0].Type))
-			consumes = !borrowedReceiver
-		}
+		consumes := iface.Receiver == typeinfo.MethodReceiverValue
 		return &ir.InterfaceCall{
 			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
 			Slot:       slot,

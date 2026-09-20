@@ -102,7 +102,6 @@ operations:
 
 - `structure` — local semantic identity plus ordered child slots and their
   `TypeChildRelation`;
-- `withChildren` — immutable replacement of immediate child slots;
 - `isSameType`, `isSized`, `isLowerable`, and `ownership` — operation-specific
   behavior that new types must implement.
 
@@ -114,9 +113,8 @@ lowerability intentionally keep separate recursion policies because recursive
 cycles mean different things to those queries.
 
 Consequence: adding a semantic type cannot satisfy `typeinfo.Type` until it
-declares structure, immutable rebuilding, equality, representation, and ownership
-behavior. Required methods enforce presence; behavioral tests still prove each
-implementation's policy.
+declares structure, equality, representation, and ownership behavior. Required
+methods enforce presence; behavioral tests still prove each implementation's policy.
 
 Typed-nil ownership inputs retain explicit-copy/no-drop answers. The ownership
 query checks `typednil.IsNil` before dispatch, while structural traversal separately
@@ -328,8 +326,7 @@ Under current sealed interface, new type first satisfies `typeinfo.Type`:
 1. `Text` for human-facing rendering;
 2. `structure` with semantic attributes and correct `TypeChildRelation` for every
    contained type slot;
-3. `withChildren` for immutable structural transformation;
-4. `isSameType`, `isSized`, `isLowerable`, and `ownership` for intrinsic behavior.
+3. `isSameType`, `isSized`, `isLowerable`, and `ownership` for intrinsic behavior.
 
 Then make explicit decisions only where another owner genuinely differs:
 

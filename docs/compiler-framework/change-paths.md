@@ -74,8 +74,7 @@ The first edits are therefore local to `internal/semantics/typeinfo`:
 1. add human-facing `Text` behavior;
 2. declare semantic attributes and ordered child slots in `structure`, using correct
    `TypeChildRelation` values;
-3. implement `withChildren` for immutable structural transformation;
-4. implement required `isSameType`, `isSized`, `isLowerable`, and `ownership` behavior.
+3. implement required `isSameType`, `isSized`, `isLowerable`, and `ownership` behavior.
 
 `ForEachChild` and semantic fingerprinting derive from the same structure. Each
 intrinsic query owns its cycle policy and reuses canonical children where needed.

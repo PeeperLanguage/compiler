@@ -332,17 +332,13 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "interface method name required", method.Location, "")
 			continue
 		}
-		receiverContext := c.typeContextForDecl(decl, true)
 		if method.Receiver == nil {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Name,
 				"iface methods require Self, &Self, or &mut Self receiver"))
 			continue
 		}
-		receiverType := project.ResolveType(c.ctx, c.module, method.Receiver.Type, receiverContext)
-		receiverTarget, ok := typeinfo.ReceiverTarget(receiverType)
-		receiverSelf, abstractSelf := receiverTarget.(*typeinfo.NamedType)
-		_, ownedReceiver := typeinfo.PointerTarget(receiverType)
-		if !ok || ownedReceiver || !abstractSelf || receiverSelf == nil || receiverSelf.Name != "Self" {
+		if resolvedIface != nil && methodIndex < len(resolvedIface.Methods) &&
+			resolvedIface.Methods[methodIndex].Receiver == typeinfo.MethodReceiverInvalid {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Receiver.Type,
 				"iface method receiver must be Self, &Self, or &mut Self"))
 		}

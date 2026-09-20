@@ -204,10 +204,11 @@ func TypeFromSyntax(node ast.TypeExpr, context SyntaxContext) Type {
 		methodContext.AllowAbstractSelf = false
 		methods := make([]Method, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
-			params := make([]Field, 0, len(method.Params)+1)
+			receiver := MethodReceiverInvalid
+			params := make([]Field, 0, len(method.Params))
 			originParams := make([]ast.Param, 0, len(method.Params)+1)
 			if method.Receiver != nil {
-				params = append(params, Field{Name: "self", Type: TypeFromSyntax(method.Receiver.Type, receiverContext)})
+				receiver = methodReceiverOf(TypeFromSyntax(method.Receiver.Type, receiverContext))
 				originParams = append(originParams, *method.Receiver)
 			}
 			for _, param := range method.Params {
@@ -227,6 +228,7 @@ func TypeFromSyntax(node ast.TypeExpr, context SyntaxContext) Type {
 			}
 			methods = append(methods, Method{
 				Name:          name,
+				Receiver:      receiver,
 				Params:        params,
 				Return:        TypeFromSyntax(method.ReturnType, methodContext),
 				ReturnOrigins: returnOriginContract(method.ReturnOrigins, originParams, method.Receiver != nil),
@@ -252,6 +254,23 @@ func TypeFromSyntax(node ast.TypeExpr, context SyntaxContext) Type {
 	default:
 		return nil
 	}
+}
+
+func methodReceiverOf(typ Type) MethodReceiver {
+	typ = Underlying(typ)
+	receiver := MethodReceiverValue
+	if ref, ok := typ.(*RefType); ok && ref != nil {
+		receiver = MethodReceiverShared
+		if ref.Mutable {
+			receiver = MethodReceiverMutable
+		}
+		typ = Underlying(ref.Target)
+	}
+	self, ok := typ.(*NamedType)
+	if !ok || self == nil || self.Name != "Self" {
+		return MethodReceiverInvalid
+	}
+	return receiver
 }
 
 func resolveTypeName(node ast.TypeExpr, context SyntaxContext) Type {

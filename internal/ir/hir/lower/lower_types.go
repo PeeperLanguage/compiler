@@ -114,33 +114,21 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 		}
 		methods := make([]ir.TypeMethod, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
-			if len(method.Params) == 0 {
-				return l.invalid("interface method reached IR lowering without receiver")
-			}
 			receiver := ir.MethodReceiverInvalid
-			switch semanticReceiver := typeinfo.Underlying(method.Params[0].Type).(type) {
-			case *typeinfo.NamedType:
-				if semanticReceiver != nil && semanticReceiver.Name == "Self" {
-					receiver = ir.MethodReceiverValue
-				}
-			case *typeinfo.RefType:
-				if semanticReceiver == nil {
-					break
-				}
-				self, selfOK := typeinfo.Underlying(semanticReceiver.Target).(*typeinfo.NamedType)
-				if selfOK && self != nil && self.Name == "Self" {
-					receiver = ir.MethodReceiverShared
-					if semanticReceiver.Mutable {
-						receiver = ir.MethodReceiverMutable
-					}
-				}
+			switch method.Receiver {
+			case typeinfo.MethodReceiverValue:
+				receiver = ir.MethodReceiverValue
+			case typeinfo.MethodReceiverShared:
+				receiver = ir.MethodReceiverShared
+			case typeinfo.MethodReceiverMutable:
+				receiver = ir.MethodReceiverMutable
 			}
 			if receiver == ir.MethodReceiverInvalid {
 				return l.invalid("interface method reached IR lowering with invalid receiver")
 			}
-			params := make([]ir.TypeField, 0, len(method.Params)-1)
+			params := make([]ir.TypeField, 0, len(method.Params))
 			slotParams := []ir.TypeID{l.ctx.Types.Intern(ir.Type{Kind: ir.TypeRawPtr})}
-			for _, param := range method.Params[1:] {
+			for _, param := range method.Params {
 				paramType := l.intern(param.Type)
 				if paramType == ir.InvalidType {
 					return l.invalid("interface method reached IR lowering with invalid parameter type")
@@ -327,9 +315,10 @@ func loweredRuntimeType(t typeinfo.Type, seen map[*typeinfo.DefinedType]struct{}
 				})
 			}
 			methods = append(methods, typeinfo.Method{
-				Name:   method.Name,
-				Params: params,
-				Return: loweredRuntimeType(method.Return, seen),
+				Name:     method.Name,
+				Receiver: method.Receiver,
+				Params:   params,
+				Return:   loweredRuntimeType(method.Return, seen),
 			})
 		}
 		return &typeinfo.InterfaceType{Methods: methods}

@@ -341,19 +341,50 @@ func TestStoredReferenceTraversalStopsAtDirectReferent(t *testing.T) {
 	}
 }
 
-func TestContainsAbstractSelfDoesNotExpandResolvedTypes(t *testing.T) {
-	resolved := &DefinedType{
-		Name: "Resolved",
-		Underlying: &InterfaceType{Methods: []Method{{
-			Name: "read",
-			Params: []Field{{
-				Name: "self",
-				Type: &NamedType{Name: "Self"},
-			}},
-		}}},
+func TestMethodCallableTypeMaterializesReceiverEvidence(t *testing.T) {
+	owner := &DefinedType{Name: "Buffer", Identity: "test::Buffer"}
+	value := &IntegerType{Signed: true, Bits: 32}
+	origins := &ReturnOriginContract{Sources: []int{0, 1}}
+	for _, test := range []struct {
+		name     string
+		receiver MethodReceiver
+		abstract string
+		bound    string
+	}{
+		{name: "value", receiver: MethodReceiverValue, abstract: "Self", bound: "Buffer"},
+		{name: "shared", receiver: MethodReceiverShared, abstract: "&Self", bound: "&Buffer"},
+		{name: "mutable", receiver: MethodReceiverMutable, abstract: "&mut Self", bound: "&mut Buffer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			method := Method{
+				Name:          "write",
+				Receiver:      test.receiver,
+				Params:        []Field{{Name: "value", Type: value}},
+				Return:        value,
+				ReturnOrigins: origins,
+			}
+			abstract := method.CallableType()
+			bound := method.CallableTypeFor(owner)
+			if len(abstract.Params) != 2 || TypeText(abstract.Params[0]) != test.abstract ||
+				abstract.ParamNames[0] != "self" || abstract.ParamNames[1] != "value" {
+				t.Fatalf("abstract callable = %#v, want receiver %s and value parameter", abstract, test.abstract)
+			}
+			if len(bound.Params) != 2 || TypeText(bound.Params[0]) != test.bound ||
+				bound.Params[1] != value || bound.Return != value || bound.ReturnOrigins != origins {
+				t.Fatalf("bound callable = %#v, want receiver %s with preserved signature", bound, test.bound)
+			}
+		})
 	}
-	if ContainsAbstractSelf(resolved) {
-		t.Fatalf("resolved defined type should not be treated as an abstract Self occurrence")
+}
+
+func TestInterfaceReceiverEvidenceAffectsIdentity(t *testing.T) {
+	shared := &InterfaceType{Methods: []Method{{Name: "read", Receiver: MethodReceiverShared}}}
+	mutable := &InterfaceType{Methods: []Method{{Name: "read", Receiver: MethodReceiverMutable}}}
+	if SameType(shared, mutable) {
+		t.Fatal("different interface receiver modes must not compare equal")
+	}
+	if SemanticKey(shared) == SemanticKey(mutable) {
+		t.Fatal("different interface receiver modes must not share semantic key")
 	}
 }
 
@@ -383,6 +414,22 @@ func TestTypeFromSyntaxRejectsAnonymousInterface(t *testing.T) {
 	ref := &ast.RefType{Target: iface}
 	if typ := TypeFromSyntax(ref, SyntaxContext{NamedInterfaceRoot: ref}); !ContainsInvalid(typ) {
 		t.Fatalf("nested anonymous interface type = %T, want invalid", typ)
+	}
+}
+
+func TestTypeFromSyntaxPublishesInterfaceReceiverEvidence(t *testing.T) {
+	ifaceSyntax := &ast.InterfaceType{Methods: []ast.TypeMethod{{
+		Name: &ast.Ident{Name: "write"},
+		Receiver: &ast.Param{Type: &ast.RefType{
+			Mutable: true,
+			Target:  &ast.NamedType{Name: "Self"},
+		}},
+		Params: []ast.Param{{Name: &ast.Ident{Name: "value"}, Type: &ast.NamedType{Name: "i32"}}},
+	}}}
+	iface := TypeFromSyntax(ifaceSyntax, SyntaxContext{NamedInterfaceRoot: ifaceSyntax}).(*InterfaceType)
+	if len(iface.Methods) != 1 || iface.Methods[0].Receiver != MethodReceiverMutable ||
+		len(iface.Methods[0].Params) != 1 || iface.Methods[0].Params[0].Name != "value" {
+		t.Fatalf("interface receiver evidence = %#v", iface.Methods)
 	}
 }
 

@@ -282,8 +282,8 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 
 ### Type nodes
 
-- `Type` requires human-facing `Text`, compiler-facing `structure`, immutable
-  `withChildren`, and intrinsic equality, representation, and ownership operations.
+- `Type` requires human-facing `Text`, compiler-facing `structure`, and intrinsic
+  equality, representation, and ownership operations.
 - Primitive nodes include invalid, unknown, integer, byte, char, float, bool,
   cstr, string, none, and allocator types.
 - `NamedType` represents unresolved or builtin-like names.
@@ -309,8 +309,10 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
   `usize` representability.
 - Function, struct, interface, and enum syntax recursively construct semantic
   children.
-- Interface receiver syntax permits abstract `Self`; method syntax does not.
-- `FuncTypeFromDeclWithOptions` includes an explicit receiver as parameter zero.
+- Interface receiver syntax permits abstract `Self`; ordinary method syntax does not.
+- Interface methods publish value/shared/mutable `MethodReceiver` evidence instead
+  of retaining an encoded `Self` type in ordinary parameters.
+- `Method.CallableTypeFor` materializes concrete receiver as parameter zero.
 - `returnOriginContract` converts source names to parameter slots.
 - `ReturnOriginSources` maps a call's contract slots back to receiver/argument AST.
 
@@ -335,8 +337,7 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
   slots once. `SemanticKey` serializes that structure with collision-safe framing.
 - `ForEachChild` exposes present structure children with `TypeChildRelation`.
 - Relations distinguish underlying, owned, borrowed, optional, array, field,
-  enum payload, receiver, parameter, return, generic-parameter, and
-  generic-argument edges.
+  enum payload, parameter, return, generic-parameter, and generic-argument edges.
 - Consumers choose recursion policy; type structure is not reimplemented in each
   analysis.
 - `IsSizedType`, `IsLowerableType`, and `OwnershipCapabilityOf` delegate to

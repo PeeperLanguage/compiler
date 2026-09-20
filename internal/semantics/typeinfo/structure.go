@@ -8,7 +8,7 @@ import (
 
 // TypeChildRelation describes why one semantic type contains another. The
 // relation is structural evidence, not an analysis result: ownership, sizing,
-// lowerability, substitution, and future queries may interpret the same child
+// lowerability, containment, and identity queries may interpret the same child
 // differently while sharing one canonical declaration of where that child is.
 type TypeChildRelation uint8
 
@@ -20,7 +20,6 @@ const (
 	TypeChildArrayElement
 	TypeChildStructField
 	TypeChildEnumPayload
-	TypeChildMethodReceiver
 	TypeChildCallableParameter
 	TypeChildCallableReturn
 	TypeChildTypeParameter
@@ -67,34 +66,6 @@ func ForEachChild(typ Type, yield func(TypeChild) bool) bool {
 		}
 	}
 	return true
-}
-
-// TransformChildren applies one structural rewrite to every immediate child
-// slot, including nil slots. It deliberately does not recurse: analyses own
-// cycle and nominal-type policies, while this operation preserves one type's
-// metadata and shape.
-func TransformChildren(typ Type, transform func(TypeChild) Type) Type {
-	if typ == nil || typednil.IsNil(typ) || transform == nil {
-		return typ
-	}
-	if _, nominal := typ.(nominalType); nominal {
-		return typ
-	}
-	children := typ.structure().children
-	if len(children) == 0 {
-		return typ
-	}
-	transformed := make([]TypeChild, len(children))
-	for index, child := range children {
-		transformed[index] = child
-		transformed[index].Type = transform(child)
-	}
-	return typ.withChildren(transformed)
-}
-
-type nominalType interface {
-	Type
-	nominal()
 }
 
 func (*InvalidType) structure() typeStructure   { return newTypeStructure("invalid") }
@@ -196,14 +167,11 @@ func (t *StructType) structure() typeStructure {
 func (t *InterfaceType) structure() typeStructure {
 	structure := typeStructure{kind: "interface", attributes: []string{strconv.Itoa(len(t.Methods))}}
 	for _, method := range t.Methods {
-		structure.attributes = append(structure.attributes, method.Name, strconv.Itoa(len(method.Params)))
-		for index, param := range method.Params {
+		structure.attributes = append(structure.attributes,
+			method.Name, strconv.Itoa(int(method.Receiver)), strconv.Itoa(len(method.Params)))
+		for _, param := range method.Params {
 			structure.attributes = append(structure.attributes, param.Name)
-			relation := TypeChildCallableParameter
-			if index == 0 {
-				relation = TypeChildMethodReceiver
-			}
-			structure.children = append(structure.children, TypeChild{Type: param.Type, Relation: relation})
+			structure.children = append(structure.children, TypeChild{Type: param.Type, Relation: TypeChildCallableParameter})
 		}
 		structure.attributes = appendOriginAttributes(structure.attributes, method.ReturnOrigins)
 		structure.children = append(structure.children, TypeChild{Type: method.Return, Relation: TypeChildCallableReturn})
@@ -233,116 +201,4 @@ func appendOriginAttributes(attributes []string, origins *ReturnOriginContract) 
 		attributes = append(attributes, strconv.Itoa(source))
 	}
 	return attributes
-}
-
-func (t *InvalidType) withChildren([]TypeChild) Type       { return t }
-func (t *UnknownType) withChildren([]TypeChild) Type       { return t }
-func (t *IntegerType) withChildren([]TypeChild) Type       { return t }
-func (t *ByteType) withChildren([]TypeChild) Type          { return t }
-func (t *CharType) withChildren([]TypeChild) Type          { return t }
-func (t *FloatType) withChildren([]TypeChild) Type         { return t }
-func (t *BoolType) withChildren([]TypeChild) Type          { return t }
-func (t *CStrType) withChildren([]TypeChild) Type          { return t }
-func (t *StringType) withChildren([]TypeChild) Type        { return t }
-func (t *NoneType) withChildren([]TypeChild) Type          { return t }
-func (t *AllocatorType) withChildren([]TypeChild) Type     { return t }
-func (t *NamedType) withChildren([]TypeChild) Type         { return t }
-func (t *TypeParameterType) withChildren([]TypeChild) Type { return t }
-func (t *RawPtrType) withChildren([]TypeChild) Type        { return t }
-func (t *DefinedType) withChildren([]TypeChild) Type       { return t }
-func (*DefinedType) nominal()                              {}
-
-func (t *OwnedPtrType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != 1 {
-		return t
-	}
-	return &OwnedPtrType{Target: children[0].Type}
-}
-
-func (t *RefType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != 1 {
-		return t
-	}
-	return &RefType{Mutable: t.Mutable, Target: children[0].Type}
-}
-
-func (t *OptionalType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != 1 {
-		return t
-	}
-	return NewOptional(children[0].Type)
-}
-
-func (t *ArrayType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != 1 {
-		return t
-	}
-	return &ArrayType{Len: t.Len, Shape: t.Shape, Elem: children[0].Type}
-}
-
-func (t *FuncType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != len(t.Params)+1 {
-		return t
-	}
-	params := make([]Type, len(t.Params))
-	for index := range params {
-		params[index] = children[index].Type
-	}
-	return &FuncType{
-		Params:        params,
-		ParamNames:    append([]string(nil), t.ParamNames...),
-		Return:        children[len(params)].Type,
-		ReturnOrigins: t.ReturnOrigins,
-	}
-}
-
-func (t *StructType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != len(t.Fields) {
-		return t
-	}
-	fields := make([]Field, len(t.Fields))
-	for index, field := range t.Fields {
-		fields[index] = Field{Name: field.Name, Type: children[index].Type}
-	}
-	return &StructType{Fields: fields}
-}
-
-func (t *InterfaceType) withChildren(children []TypeChild) Type {
-	if t == nil {
-		return t
-	}
-	methods := make([]Method, len(t.Methods))
-	childIndex := 0
-	for methodIndex, method := range t.Methods {
-		methods[methodIndex] = method
-		methods[methodIndex].Params = append([]Field(nil), method.Params...)
-		for parameterIndex := range method.Params {
-			if childIndex >= len(children) {
-				return t
-			}
-			methods[methodIndex].Params[parameterIndex].Type = children[childIndex].Type
-			childIndex++
-		}
-		if childIndex >= len(children) {
-			return t
-		}
-		methods[methodIndex].Return = children[childIndex].Type
-		childIndex++
-	}
-	if childIndex != len(children) {
-		return t
-	}
-	return &InterfaceType{Methods: methods}
-}
-
-func (t *EnumType) withChildren(children []TypeChild) Type {
-	if t == nil || len(children) != len(t.Cases) {
-		return t
-	}
-	cases := make([]VariantCase, len(t.Cases))
-	for index, variant := range t.Cases {
-		cases[index] = variant
-		cases[index].Payload = children[index].Type
-	}
-	return &EnumType{Cases: cases}
 }

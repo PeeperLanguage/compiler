@@ -71,15 +71,14 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 	implementations := make([]typecheckresult.InterfaceImplementation, 0, len(iface.Methods))
 	missing := make([]string, 0)
 	for _, required := range iface.Methods {
-		requiredType := typeinfo.ReplaceAbstractSelf(required.CallableType(), owner)
+		fnType := required.CallableTypeFor(owner)
 		actual, ok := c.lookupDeclaredCallableMember(owner, required.Name)
 		actualType, callable := actual.Type.(*typeinfo.FuncType)
-		if !ok || actual.Symbol == nil || !callable || actualType == nil || !typeinfo.SameType(requiredType, actualType) {
+		if !ok || actual.Symbol == nil || !callable || actualType == nil || !typeinfo.SameType(fnType, actualType) {
 			missing = append(missing, required.Name)
 			continue
 		}
-		fnType, ok := requiredType.(*typeinfo.FuncType)
-		if !ok || fnType == nil || len(fnType.Params) == 0 {
+		if len(fnType.Params) == 0 {
 			missing = append(missing, required.Name)
 			continue
 		}
@@ -228,8 +227,8 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); ok {
 		selfType = target
 	}
-	fnType, _ := typeinfo.ReplaceAbstractSelf(method.CallableType(), selfType).(*typeinfo.FuncType)
-	if fnType == nil || len(fnType.Params) == 0 {
+	fnType := method.CallableTypeFor(selfType)
+	if len(fnType.Params) == 0 {
 		return fnType
 	}
 	if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0])); !referenceReceiver {

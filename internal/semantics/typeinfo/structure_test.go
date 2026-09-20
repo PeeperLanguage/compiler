@@ -9,7 +9,7 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 	i32 := &IntegerType{Signed: true, Bits: 32}
 	text := &StringType{}
 	parameter := &TypeParameterType{Name: "T", OwnerIdentity: "Box", Index: 0}
-	receiver := &RefType{Target: i32}
+
 	tests := []struct {
 		name string
 		typ  Type
@@ -66,11 +66,12 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 		{
 			name: "interface methods",
 			typ: &InterfaceType{Methods: []Method{{
-				Name:   "read",
-				Params: []Field{{Name: "self", Type: receiver}},
-				Return: text,
+				Name:     "read",
+				Receiver: MethodReceiverShared,
+				Params:   []Field{{Name: "value", Type: i32}},
+				Return:   text,
 			}}},
-			want: []TypeChild{{Type: receiver, Relation: TypeChildMethodReceiver}, {Type: text, Relation: TypeChildCallableReturn}},
+			want: []TypeChild{{Type: i32, Relation: TypeChildCallableParameter}, {Type: text, Relation: TypeChildCallableReturn}},
 		},
 	}
 
@@ -85,57 +86,6 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 				t.Fatalf("ForEachChild(%T) = %#v, want %#v", test.typ, got, test.want)
 			}
 		})
-	}
-}
-
-func TestTransformChildrenPreservesTypeMetadataAndSlots(t *testing.T) {
-	original := &FuncType{
-		Params:        []Type{&IntegerType{Signed: true, Bits: 32}},
-		ParamNames:    []string{"value"},
-		ReturnOrigins: &ReturnOriginContract{Sources: []int{0}},
-	}
-	transformed := TransformChildren(original, func(child TypeChild) Type {
-		if integer, ok := child.Type.(*IntegerType); ok && integer != nil {
-			return &IntegerType{Signed: integer.Signed, Bits: 64}
-		}
-		return child.Type
-	})
-	fn, ok := transformed.(*FuncType)
-	if !ok || len(fn.Params) != 1 {
-		t.Fatalf("transformed type = %#v", transformed)
-	}
-	if TypeText(fn.Params[0]) != "i64" || fn.ParamNames[0] != "value" {
-		t.Fatalf("transformed function metadata = %#v", fn)
-	}
-	if fn.Return != nil || fn.ReturnOrigins == nil || !reflect.DeepEqual(fn.ReturnOrigins.Sources, []int{0}) {
-		t.Fatalf("transformed function slots = %#v", fn)
-	}
-}
-
-func TestTransformChildrenLeavesNominalTypesAtomic(t *testing.T) {
-	defined := &DefinedType{
-		Name:       "Node",
-		Identity:   "test::Node",
-		Underlying: &StructType{Fields: []Field{{Name: "value", Type: &NamedType{Name: "Self"}}}},
-	}
-	got := TransformChildren(defined, func(child TypeChild) Type {
-		t.Fatalf("nominal type yielded child %v", child.Relation)
-		return nil
-	})
-	if got != defined {
-		t.Fatalf("nominal transform changed identity: got %p want %p", got, defined)
-	}
-}
-
-func TestReplaceAbstractSelfUsesCanonicalChildTransform(t *testing.T) {
-	resolved := &DefinedType{Name: "Buffer", Identity: "test::Buffer"}
-	method := &FuncType{
-		Params: []Type{&RefType{Target: &NamedType{Name: "Self"}}},
-		Return: &OptionalType{Inner: &NamedType{Name: "Self"}},
-	}
-	got, ok := ReplaceAbstractSelf(method, resolved).(*FuncType)
-	if !ok || TypeText(got.Params[0]) != "&Buffer" || TypeText(got.Return) != "?Buffer" {
-		t.Fatalf("replaced function = %#v", got)
 	}
 }
 

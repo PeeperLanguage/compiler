@@ -14,9 +14,6 @@ type Type interface {
 	isSized(*sizeQuery) bool
 	// ownership classifies copy and drop behavior using query-owned cycle state.
 	ownership(*ownershipQuery, bool) OwnershipCapability
-	// withChildren returns the same type shape with replaced immediate children.
-	// It does not mutate the receiver.
-	withChildren([]TypeChild) Type
 	isSameType(Type) bool
 }
 
@@ -144,25 +141,68 @@ type StructType struct {
 	Fields []Field
 }
 
+// MethodReceiver is the source-level carrier required by an interface method.
+// It is semantic evidence consumed by conformance, call binding, and lowering;
+// those phases must not rediscover it from an encoded `Self` type.
+type MethodReceiver uint8
+
+const (
+	MethodReceiverInvalid MethodReceiver = iota
+	MethodReceiverValue
+	MethodReceiverShared
+	MethodReceiverMutable
+)
+
 type Method struct {
 	Name          string
+	Receiver      MethodReceiver
 	Params        []Field
 	Return        Type
 	ReturnOrigins *ReturnOriginContract
 }
 
+// CallableType returns the abstract interface signature used for source-facing
+// display and declaration checks. Receiver remains `Self` in slot zero.
 func (m Method) CallableType() *FuncType {
-	params := make([]Type, len(m.Params))
-	paramNames := make([]string, len(m.Params))
+	return m.callableType(&NamedType{Name: "Self"})
+}
+
+// CallableTypeFor materializes the method signature for one concrete receiver
+// owner while preserving receiver slot zero and return-origin indexes.
+func (m Method) CallableTypeFor(owner Type) *FuncType {
+	return m.callableType(owner)
+}
+
+func (m Method) callableType(owner Type) *FuncType {
+	params := make([]Type, len(m.Params)+1)
+	paramNames := make([]string, len(m.Params)+1)
+	params[0] = m.Receiver.typeFor(owner)
+	paramNames[0] = "self"
 	for i, param := range m.Params {
-		params[i] = param.Type
-		paramNames[i] = param.Name
+		params[i+1] = param.Type
+		paramNames[i+1] = param.Name
 	}
 	return &FuncType{
 		Params:        params,
 		ParamNames:    paramNames,
 		Return:        m.Return,
 		ReturnOrigins: m.ReturnOrigins,
+	}
+}
+
+func (r MethodReceiver) typeFor(owner Type) Type {
+	if owner == nil {
+		return &InvalidType{}
+	}
+	switch r {
+	case MethodReceiverValue:
+		return owner
+	case MethodReceiverShared:
+		return &RefType{Target: owner}
+	case MethodReceiverMutable:
+		return &RefType{Mutable: true, Target: owner}
+	default:
+		return &InvalidType{}
 	}
 }
 
@@ -493,11 +533,10 @@ func (t *InterfaceType) Text() string {
 			b.WriteString("; ")
 		}
 		b.WriteString(method.Name)
-		b.WriteString("(")
-		for j, param := range method.Params {
-			if j > 0 {
-				b.WriteString(", ")
-			}
+		b.WriteString("(self: ")
+		b.WriteString(TypeText(method.Receiver.typeFor(&NamedType{Name: "Self"})))
+		for _, param := range method.Params {
+			b.WriteString(", ")
 			b.WriteString(param.Name)
 			if param.Name != "" {
 				b.WriteString(": ")
