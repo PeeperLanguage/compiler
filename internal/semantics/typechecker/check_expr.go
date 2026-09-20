@@ -12,7 +12,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/problems"
 	"compiler/internal/semantics/consteval"
-	"compiler/internal/semantics/flowresult"
+
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
@@ -21,31 +21,56 @@ import (
 	"compiler/pkg/numeric"
 )
 
-// typeExpr records canonical base typing, then applies per-use flow refinement.
-// Recursive typing stays in typeExprBase so both passes use one AST switch.
+// typeExpr records canonical base typing, then applies syntax-context optional
+// unwrapping needed while checking payload operations. Path-sensitive
+// refinement runs later over THIR and never re-enters this checker.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
-	if c.flow != nil && expr != nil {
-		c.flow.result.ForgetPayload(expr.ID())
-	}
 	base := c.typeExprBase(scope, expr, expected)
-	if call, ok := expr.(*ast.CallExpr); ok && c.flow != nil && c.flow.analyzer != nil {
-		c.flow.analyzer.invalidateCall(c, scope, call, c.flow.state)
-		if c.flow.events != nil {
-			c.flow.events.next++
-			c.flow.events.calls = append(c.flow.events.calls, flowCallEvent{order: c.flow.events.next, call: call})
-		}
-	}
 	if base == nil || expr == nil {
 		return base
 	}
-	if c.module != nil && c.module.Typechecking != nil && c.flow == nil {
+	if c.module != nil && c.module.Typechecking != nil {
 		c.module.Typechecking.RecordExprType(expr.ID(), base)
 	}
-	resolved := c.effectiveExpressionType(scope, expr, base, expected)
-	if c.flow != nil && resolved != nil {
-		c.flow.result.RecordExprType(expr.ID(), resolved)
+	return c.effectiveExpressionType(expr, base, expected)
+}
+
+func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	c.payloadContext++
+	defer func() { c.payloadContext-- }()
+	return c.typeExpr(scope, expr, expected)
+}
+
+func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	previous := c.wholeCarrierExpr
+	c.wholeCarrierExpr = expr
+	defer func() { c.wholeCarrierExpr = previous }()
+	return c.typeExpr(scope, expr, expected)
+}
+
+func (c *checker) effectiveExpressionType(expr ast.Expr, base, expected typeinfo.Type) typeinfo.Type {
+	if c == nil || expr == nil || base == nil || c.wholeCarrierExpr == expr || !isOptionalType(base) {
+		return base
 	}
-	return resolved
+	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
+	required := payloadDepthForExpected(base, expected)
+	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
+		required = optionalLayerCount(base)
+	}
+	if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
+		return base
+	}
+	return unwrapOptionalLayers(base, required)
+}
+
+func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
+	if c == nil || c.module == nil || c.module.Typechecking == nil || node == nil || subject == nil {
+		return
+	}
+	c.module.Typechecking.RecordCaseTest(node.ID(), typecheckresult.CaseTest{
+		SubjectID: subject.ID(), Case: caseIndex, CaseWhenTrue: caseWhenTrue,
+		CaseCount: caseCount, Family: family,
+	})
 }
 
 func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
@@ -451,14 +476,7 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
-	if c.flow != nil {
-		test, found := c.module.Typechecking.CaseTest(node.ID())
-		if !found {
-			return &typeinfo.InvalidType{}
-		}
-		c.recordCaseTest(node, node.Value, test.Case, test.CaseCount, test.CaseWhenTrue, test.Family)
-		return &typeinfo.BoolType{}
-	}
+
 	resolved, ok := c.resolveNamedVariant(node.Case)
 	if !ok {
 		return &typeinfo.InvalidType{}
@@ -550,17 +568,15 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 		return &typeinfo.InvalidType{}
 	}
 	if field, fieldIndex, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
-		if c.flow == nil {
-			var dereferenceType typeinfo.Type
-			if target, indirect := typeinfo.PointerTarget(baseType); indirect {
-				dereferenceType = target
-			} else if target, _, indirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); indirect {
-				dereferenceType = target
-			}
-			c.module.Typechecking.RecordStructField(node.ID(), typecheckresult.StructFieldAccess{
-				Field: fieldIndex, Type: field.Type, DereferenceType: dereferenceType,
-			})
+		var dereferenceType typeinfo.Type
+		if target, indirect := typeinfo.PointerTarget(baseType); indirect {
+			dereferenceType = target
+		} else if target, _, indirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); indirect {
+			dereferenceType = target
 		}
+		c.module.Typechecking.RecordStructField(node.ID(), typecheckresult.StructFieldAccess{
+			Field: fieldIndex, Type: field.Type, DereferenceType: dereferenceType,
+		})
 		return field.Type
 	}
 	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {
@@ -583,29 +599,11 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 				}
 			}
 		}
-		if c.flow == nil && deferred != nil {
+		if deferred != nil {
 			if conflictingTypes {
 				return &typeinfo.UnknownType{}
 			}
 			return deferred
-		}
-		if c.flow != nil {
-			resolution := c.resolveFlowPlace(scope, node.Expr, *c.flow.state)
-			if caseIndex, exact := provenVariantCase(c.flow.state.variants, resolution.StorageOrigins, len(descriptor.Cases)); exact {
-				payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
-				if field, fieldIndex, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
-					c.recordPayloadAccess(node.Expr, resolution, []int{caseIndex})
-					c.flow.result.RecordPayload(node.ID(), flowresult.PayloadAccess{
-						CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins),
-						Cases:          []int{caseIndex},
-					})
-					c.flow.result.RecordVariantField(node.ID(), flowresult.VariantFieldAccess{
-						Carrier: node.Expr.ID(), Case: caseIndex, Payload: payload,
-						Field: fieldIndex, Type: field.Type,
-					})
-					return field.Type
-				}
-			}
 		}
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).

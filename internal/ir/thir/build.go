@@ -50,7 +50,11 @@ type builder struct {
 }
 
 func (b *builder) function(source *ast.FnDecl) *Function {
-	function := &Function{Source: sourceInfo(source)}
+	function := &Function{
+		Source:         sourceInfo(source),
+		ReturnTypeText: ast.TypeText(source.ReturnType),
+		ReturnsValue:   source.ReturnType != nil,
+	}
 	if source.Name != nil {
 		function.Name = source.Name.Name
 		function.Symbol = b.symbol(source.Name)
@@ -93,9 +97,9 @@ func (b *builder) statement(statement ast.Stmt) Stmt {
 	case *ast.BlockStmt:
 		return b.block(node)
 	case *ast.LetDecl:
-		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), Value: b.expression(node.Value)}
+		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), Inferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ConstDecl:
-		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), Constant: true, Value: b.expression(node.Value)}
+		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), Constant: true, Inferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ExprStmt:
 		return &ExprStmt{StmtInfo: stmtInfo(node), Value: b.expression(node.Expr)}
 	case *ast.AssignStmt:
@@ -267,7 +271,10 @@ func (b *builder) expression(expression ast.Expr) Expr {
 		result = &Unary{ExprInfo: info, Op: node.Op, Value: b.expression(node.Expr)}
 	case *ast.BinaryExpr:
 		concat := b.typing != nil && b.typing.StringConcatenation(node.ID())
-		result = &Binary{ExprInfo: info, Left: b.expression(node.Left), Op: node.Op, Right: b.expression(node.Right), StringConcat: concat}
+		result = &Binary{
+			ExprInfo: info, Left: b.expression(node.Left), Op: node.Op,
+			Right: b.expression(node.Right), StringConcat: concat, Test: b.caseTest(node.ID()),
+		}
 	case *ast.IsExpr:
 		result = &Is{ExprInfo: info, Value: b.expression(node.Value), Test: b.caseTest(node.ID())}
 	case *ast.CallExpr:

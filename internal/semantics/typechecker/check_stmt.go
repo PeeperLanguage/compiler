@@ -77,9 +77,6 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
 		}
-		if c.siteOnly {
-			return
-		}
 		c.checkBlock(scope, node.Then, returnType)
 		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ForStmt:
@@ -93,16 +90,10 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool"))
 			}
 		}
-		if c.siteOnly {
-			return
-		}
 		c.loopDepth++
 		c.checkBlock(scope, node.Body, returnType)
 		c.loopDepth--
 	case *ast.BreakStmt, *ast.ContinueStmt:
-		if c.siteOnly {
-			return
-		}
 		if c.loopDepth == 0 {
 			jump := "break"
 			if _, ok := stmt.(*ast.ContinueStmt); ok {
@@ -135,7 +126,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		return
 	}
 	subjectType := c.requireValueType(node.Subject, c.typeWholeCarrierExpr(scope, node.Subject, nil), "match subject")
-	if c.siteOnly || typeinfo.IsInvalidOrUnknown(subjectType) {
+	if typeinfo.IsInvalidOrUnknown(subjectType) {
 		return
 	}
 	descriptor, named := typeinfo.VariantDescriptorOf(subjectType)
@@ -329,7 +320,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			return
 		}
 	case *ast.SelectorExpr:
-		baseType := c.recordedExprType(target.Expr)
+		baseType := c.module.BaseExprType(target.Expr.ID())
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
 			return
 		}
@@ -379,7 +370,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	if typeinfo.IsInvalidOrUnknown(targetType) {
 		return true
 	}
-	baseType := c.recordedExprType(target.Expr)
+	baseType := c.module.BaseExprType(target.Expr.ID())
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return true
 	}
@@ -642,7 +633,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			}
 			evidence.ElementType = elem
 		} else {
-			if valid && !c.siteOnly {
+			if valid {
 				call, callExpr := node.Iterable.(*ast.CallExpr)
 				optional, optionalResult := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
 				switch {
@@ -676,9 +667,6 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	}
 	if node.Value != nil {
 		c.bindLoopVariable(node.Value, elemType)
-	}
-	if c.siteOnly {
-		return
 	}
 	c.module.Typechecking.ForgetForIteration(node.ID())
 	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {

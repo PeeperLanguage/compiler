@@ -10,10 +10,9 @@ import (
 )
 
 type checker struct {
-	ctx                 *project.CompilerContext
-	module              *module.Module
-	flow                *flowCheck
-	siteOnly            bool
+	ctx    *project.CompilerContext
+	module *module.Module
+
 	payloadContext      int
 	optionalTestContext int
 	wholeCarrierExpr    ast.Expr

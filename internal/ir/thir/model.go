@@ -42,12 +42,14 @@ func (m *Module) Function(id ir.NodeID) *Function {
 // Function retains semantic signature and lexical body. A nil Body denotes an
 // external declaration, not an incomplete function.
 type Function struct {
-	Name       string
-	Symbol     *symbols.Symbol
-	Params     []Param
-	ReturnType typeinfo.Type
-	Body       *Block
-	Source     ir.SourceInfo
+	Name           string
+	Symbol         *symbols.Symbol
+	Params         []Param
+	ReturnType     typeinfo.Type
+	ReturnTypeText string
+	ReturnsValue   bool
+	Body           *Block
+	Source         ir.SourceInfo
 }
 
 type Param struct {
@@ -65,9 +67,69 @@ type Node interface {
 	validateSelf() error
 }
 
+// ControlFlowBuilder is implemented by CFG construction. Statement-owned
+// dispatch keeps that operation exhaustive without moving topology policy into
+// THIR or requiring a central concrete-statement switch.
+type ControlFlowBuilder interface {
+	BuildBlock(*Block)
+	BuildBinding(*Binding)
+	BuildExprStmt(*ExprStmt)
+	BuildAssign(*Assign)
+	BuildReturn(*Return)
+	BuildIf(*If)
+	BuildFor(*For)
+	BuildBreak(*Break)
+	BuildContinue(*Continue)
+	BuildMatch(*Match)
+	BuildInvalidStmt(*InvalidStmt)
+}
+
+// FlowAnalyzer is implemented by flow typing. Node-owned dispatch makes every
+// THIR statement and expression an explicit part of flow semantics while the
+// analysis package retains all refinement and transfer policy.
+type FlowAnalyzer interface {
+	AnalyzeBlock(*Block)
+	AnalyzeBinding(*Binding)
+	AnalyzeExprStmt(*ExprStmt)
+	AnalyzeAssign(*Assign)
+	AnalyzeReturn(*Return)
+	AnalyzeIf(*If)
+	AnalyzeFor(*For)
+	AnalyzeBreak(*Break)
+	AnalyzeContinue(*Continue)
+	AnalyzeMatch(*Match)
+	AnalyzeInvalidStmt(*InvalidStmt)
+
+	AnalyzeInvalidExpr(*InvalidExpr) typeinfo.Type
+	AnalyzeNumberLiteral(*NumberLiteral) typeinfo.Type
+	AnalyzeStringLiteral(*StringLiteral) typeinfo.Type
+	AnalyzeByteLiteral(*ByteLiteral) typeinfo.Type
+	AnalyzeCharLiteral(*CharLiteral) typeinfo.Type
+	AnalyzeBoolLiteral(*BoolLiteral) typeinfo.Type
+	AnalyzeNoneLiteral(*NoneLiteral) typeinfo.Type
+	AnalyzeIdent(*Ident) typeinfo.Type
+	AnalyzeQualifiedIdent(*QualifiedIdent) typeinfo.Type
+	AnalyzeField(*Field) typeinfo.Type
+	AnalyzeIndex(*Index) typeinfo.Type
+	AnalyzeRange(*Range) typeinfo.Type
+	AnalyzeStructLiteral(*StructLiteral) typeinfo.Type
+	AnalyzeVariant(*Variant) typeinfo.Type
+	AnalyzeArrayLiteral(*ArrayLiteral) typeinfo.Type
+	AnalyzeAddress(*Address) typeinfo.Type
+	AnalyzeUnary(*Unary) typeinfo.Type
+	AnalyzeBinary(*Binary) typeinfo.Type
+	AnalyzeIs(*Is) typeinfo.Type
+	AnalyzeCall(*Call) typeinfo.Type
+	AnalyzeFree(*Free) typeinfo.Type
+	AnalyzePrint(*Print) typeinfo.Type
+	AnalyzeCast(*Cast) typeinfo.Type
+}
+
 type Stmt interface {
 	Node
 	stmtNode()
+	BuildControlFlow(ControlFlowBuilder)
+	AnalyzeFlow(FlowAnalyzer)
 }
 
 type Expr interface {
@@ -75,6 +137,7 @@ type Expr interface {
 	exprNode()
 	ExprType() typeinfo.Type
 	ExprPlace() *Place
+	AnalyzeFlow(FlowAnalyzer) typeinfo.Type
 }
 
 type StmtInfo struct {
@@ -148,6 +211,7 @@ type Binding struct {
 	StmtInfo
 	Symbol   *symbols.Symbol
 	Constant bool
+	Inferred bool
 	Value    Expr
 }
 
@@ -229,6 +293,7 @@ type InvalidStmt struct {
 // range and sequence iteration without consulting typechecker evidence.
 type IterationPlan interface {
 	iterationPlan()
+	IsGuaranteedEntry() bool
 }
 
 type RangeIteration struct {
@@ -240,6 +305,9 @@ type RangeIteration struct {
 }
 
 func (*RangeIteration) iterationPlan() {}
+func (p *RangeIteration) IsGuaranteedEntry() bool {
+	return p != nil && p.GuaranteedEntry
+}
 
 type SequenceIteration struct {
 	ElementType     typeinfo.Type
@@ -252,6 +320,9 @@ type SequenceIteration struct {
 }
 
 func (*SequenceIteration) iterationPlan() {}
+func (p *SequenceIteration) IsGuaranteedEntry() bool {
+	return p != nil && p.GuaranteedEntry
+}
 
 type InvalidExpr struct {
 	ExprInfo
@@ -374,6 +445,7 @@ type Binary struct {
 	Op           string
 	Right        Expr
 	StringConcat bool
+	Test         *CaseTest
 }
 
 type Is struct {

@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -39,12 +40,9 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
 	module.RebuildTypedASTIndex()
-	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Typechecking.MatchCases,
-		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIteration:    module.Typechecking.CheckedIteration,
-	})
+	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
 }
@@ -398,6 +396,7 @@ func TestClearFlowScopeRemovesOnlyExitedBindingFacts(t *testing.T) {
 func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	moduleScope := symbols.NewScope(nil)
 	global := symbols.New("maybe", symbols.SymbolVar, &ast.LetDecl{IsMutable: true, IsModuleVar: true}, nil)
+	global.Mutable = true
 	if err := moduleScope.Declare(global); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +406,7 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 		result: flowresult.New(),
 	}
 
-	analyzer.invalidateCall(&checker{}, nil, &ast.CallExpr{Callee: &ast.Ident{Name: "Touch"}}, &state)
+	analyzer.invalidateCall(&thir.Call{Callee: &thir.Ident{}}, &state)
 
 	if len(state.variants) != 0 {
 		t.Fatalf("variant facts after call = %#v, want mutable module fact invalidated", state.variants)

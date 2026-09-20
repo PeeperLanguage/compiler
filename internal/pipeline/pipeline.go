@@ -434,11 +434,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return true
 	}
 	if module.Phase < phase.CFG {
-		module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-			MatchCases:          module.Typechecking.MatchCases,
-			LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-			CheckedIteration:    module.Typechecking.CheckedIteration,
-		})
+		module.CFG = cfg.BuildModule(module.THIR)
 		// Structure is checkable regardless of source validity: CFG construction
 		// promises the same topology for a program that will not compile, and a
 		// malformed graph misleads every phase that reads it, including Analyze

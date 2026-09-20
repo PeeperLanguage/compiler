@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -39,12 +40,9 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
 	module.RebuildTypedASTIndex()
-	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Typechecking.MatchCases,
-		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIteration:    module.Typechecking.CheckedIteration,
-	})
+	module.CFG = cfg.BuildModule(module.THIR)
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
 		t.Fatal("choose function symbol missing")

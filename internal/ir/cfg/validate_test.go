@@ -25,7 +25,7 @@ func branchingModule(t *testing.T) *Module {
 		Location: location,
 	}
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{branch}}
-	module := BuildModule(testModule(body, nil), BuildQueries{})
+	module := BuildModule(testModule(body, nil))
 	if module == nil || len(module.Functions) != 1 {
 		t.Fatalf("test fixture built %#v, want one function graph", module)
 	}

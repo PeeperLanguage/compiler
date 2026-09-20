@@ -3,17 +3,18 @@ package cfg
 import (
 	"fmt"
 
-	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/source"
+	"compiler/pkg/typednil"
 )
 
 type builder struct {
 	fn      *ControlFlowGraph
-	queries BuildQueries
+	current *Block
 	nextID  int
-	scopes  []*ast.BlockStmt
+	scopes  []*thir.Block
 	loops   []loopContext
 }
 
@@ -23,68 +24,46 @@ type loopContext struct {
 	scopeDepth     int
 }
 
-// MatchCaseQuery supplies typechecker-resolved case indexes in source arm order.
-type MatchCaseQuery func(ast.NodeID) ([]int, bool)
-
-// LoopEntryQuery supplies typechecker proof that a loop executes its body before
-// its first condition check.
-type LoopEntryQuery func(ast.NodeID) bool
-
-// CheckedIterationQuery supplies the checked statement expansion for an optional-producing loop.
-type CheckedIterationQuery func(ast.NodeID) *ast.BlockStmt
-
-// BuildQueries are semantic facts required to construct truthful CFG topology.
-type BuildQueries struct {
-	MatchCases          MatchCaseQuery
-	LoopGuaranteedEntry LoopEntryQuery
-	CheckedIteration    CheckedIterationQuery
-}
-
-// BuildModule creates immutable control-flow topology from typed source syntax.
-func BuildModule(source *ast.Module, queries BuildQueries) *Module {
+// BuildModule creates immutable control-flow topology from THIR.
+func BuildModule(source *thir.Module) *Module {
 	if source == nil {
 		return nil
 	}
 	module := &Module{
-		Functions: make([]*ControlFlowGraph, 0),
-		byNodeID:  make(map[ir.NodeID]*ControlFlowGraph),
+		Functions: make([]*ControlFlowGraph, 0, len(source.Functions)),
+		byNodeID:  make(map[ir.NodeID]*ControlFlowGraph, len(source.Functions)),
 	}
-	ast.ForEachDecl(source, func(decl ast.Decl) bool {
-		fn, ok := decl.(*ast.FnDecl)
-		if !ok || fn == nil || fn.Body == nil {
-			return true
+	for _, function := range source.Functions {
+		if function == nil || function.Body == nil {
+			continue
 		}
-		graph := buildFunction(fn, queries)
+		graph := buildFunction(function)
 		finalizeGraph(graph)
 		if module.byNodeID[graph.NodeID] != nil {
 			panic(fmt.Sprintf("CFG construction: duplicate function NodeID %d", graph.NodeID))
 		}
 		module.Functions = append(module.Functions, graph)
 		module.byNodeID[graph.NodeID] = graph
-		return true
-	})
+	}
 	return module
 }
 
-func buildFunction(source *ast.FnDecl, queries BuildQueries) *ControlFlowGraph {
-	name := ""
-	if source.Name != nil {
-		name = source.Name.Name
-	}
+func buildFunction(source *thir.Function) *ControlFlowGraph {
 	fn := &ControlFlowGraph{
-		NodeID:         ir.NodeID(source.ID()),
-		Name:           name,
-		Location:       ast.LocOf(source),
-		ReturnTypeText: ast.TypeText(source.ReturnType),
-		ReturnsValue:   source.ReturnType != nil,
+		NodeID:         source.Source.NodeID,
+		Name:           source.Name,
+		Location:       source.Source.Location,
+		ReturnTypeText: source.ReturnTypeText,
+		ReturnsValue:   source.ReturnsValue,
 		Blocks:         make([]*Block, 0),
 	}
-	b := &builder{fn: fn, queries: queries}
-	fn.Entry = b.newBlock(BlockNormal, ast.LocOf(source.Body))
-	fn.Exit = b.newBlock(BlockNormal, ast.LocOf(source))
-	next := b.buildBlock(source.Body, fn.Entry)
-	if next != nil && next.Terminator == nil {
-		next.Terminator = &Jump{Target: fn.Exit}
+	b := &builder{fn: fn}
+	fn.Entry = b.newBlock(BlockNormal, source.Body.Source.Location)
+	fn.Exit = b.newBlock(BlockNormal, source.Source.Location)
+	b.current = fn.Entry
+	b.buildBlockBody(source.Body)
+	if b.current != nil && b.current.Terminator == nil {
+		b.current.Terminator = &Jump{Target: fn.Exit}
 	}
 	return fn
 }
@@ -96,216 +75,254 @@ func (b *builder) newBlock(origin BlockOrigin, location *source.Location) *Block
 	return block
 }
 
-func (b *builder) buildBlock(block *ast.BlockStmt, current *Block) *Block {
+// buildBlockBody preserves lexical scope entry/exit around a block while
+// allowing terminated paths to continue as disconnected recovery blocks.
+func (b *builder) buildBlockBody(block *thir.Block) {
 	if b == nil || block == nil {
-		return current
+		return
 	}
 	b.scopes = append(b.scopes, block)
 	defer func() { b.scopes = b.scopes[:len(b.scopes)-1] }()
 
-	next := current
-	scopeID := ir.NodeID(block.ID())
-	for _, stmt := range block.Stmts {
-		if next == nil {
-			next = b.newBlock(BlockNormal, ast.LocOf(stmt))
+	for _, statement := range block.Stmts {
+		if b.current == nil {
+			b.current = b.newBlock(BlockNormal, statement.SourceInfo().Location)
 		}
-		next = b.buildStmt(stmt, next, scopeID)
+		statement.BuildControlFlow(b)
 	}
-	if next != nil && block.ID() != 0 {
-		next.Sites = append(next.Sites, &Site{
+	if b.current != nil && block.Source.NodeID != 0 {
+		b.current.Sites = append(b.current.Sites, &Site{
 			Kind:     SiteScopeExit,
-			NodeID:   ir.NodeID(block.ID()),
-			ScopeID:  scopeID,
-			Location: ast.LocOf(block),
+			NodeID:   block.Source.NodeID,
+			ScopeID:  block.Source.NodeID,
+			Location: block.Source.Location,
 		})
 	}
-	return next
 }
 
-func (b *builder) buildStmt(stmt ast.Stmt, current *Block, scopeID ir.NodeID) *Block {
-	switch node := stmt.(type) {
-	case nil:
-		return current
-	case *ast.BlockStmt:
-		end := b.buildBlock(node, current)
-		if end == nil {
-			return nil
-		}
-		continuation := b.newBlock(BlockNormal, ast.LocOf(node))
-		end.Terminator = &Jump{Target: continuation}
-		return continuation
-	case *ast.LetDecl, *ast.ConstDecl, *ast.ExprStmt, *ast.AssignStmt, *ast.BadStmt:
-		current.Sites = append(current.Sites, statementSite(node, scopeID))
-		return current
-	case *ast.ReturnStmt:
-		current.Sites = append(current.Sites, statementSite(node, scopeID))
-		current.Terminator = &Return{NodeID: ir.NodeID(node.ID())}
-		return nil
-	case *ast.BreakStmt, *ast.ContinueStmt:
-		current.Sites = append(current.Sites, statementSite(node, scopeID))
-		if len(b.loops) == 0 {
-			return current
-		}
-		loop := b.loops[len(b.loops)-1]
-		b.appendLoopScopeExits(current, loop.scopeDepth)
-		if _, ok := node.(*ast.BreakStmt); ok {
-			current.Terminator = &Jump{Target: loop.breakTarget}
-		} else {
-			current.Terminator = &Jump{Target: loop.continueTarget}
-		}
-		return nil
-	case *ast.IfStmt:
-		thenBlock := b.newBlock(BlockThen, ast.LocOf(node))
-		elseBlock := b.newBlock(BlockElse, ast.LocOf(node))
-		join := b.newBlock(BlockNormal, ast.LocOf(node))
+func (b *builder) BuildBlock(block *thir.Block) {
+	b.buildBlockBody(block)
+	if b.current == nil {
+		return
+	}
+	continuation := b.newBlock(BlockNormal, block.Source.Location)
+	b.current.Terminator = &Jump{Target: continuation}
+	b.current = continuation
+}
+
+func (b *builder) BuildBinding(statement *thir.Binding) {
+	b.appendStatement(statement.Source)
+}
+
+func (b *builder) BuildExprStmt(statement *thir.ExprStmt) {
+	b.appendStatement(statement.Source)
+}
+
+func (b *builder) BuildAssign(statement *thir.Assign) {
+	b.appendStatement(statement.Source)
+}
+
+func (b *builder) BuildInvalidStmt(statement *thir.InvalidStmt) {
+	b.appendStatement(statement.Source)
+}
+
+func (b *builder) BuildReturn(statement *thir.Return) {
+	b.appendStatement(statement.Source)
+	b.current.Terminator = &Return{NodeID: statement.Source.NodeID}
+	b.current = nil
+}
+
+func (b *builder) BuildBreak(statement *thir.Break) {
+	b.buildLoopJump(statement.Source, true)
+}
+
+func (b *builder) BuildContinue(statement *thir.Continue) {
+	b.buildLoopJump(statement.Source, false)
+}
+
+func (b *builder) buildLoopJump(source ir.SourceInfo, breaking bool) {
+	b.appendStatement(source)
+	if len(b.loops) == 0 {
+		return
+	}
+	loop := b.loops[len(b.loops)-1]
+	b.appendLoopScopeExits(b.current, loop.scopeDepth)
+	target := loop.continueTarget
+	if breaking {
+		target = loop.breakTarget
+	}
+	b.current.Terminator = &Jump{Target: target}
+	b.current = nil
+}
+
+func (b *builder) BuildIf(statement *thir.If) {
+	source := statement.Source
+	scopeID := b.currentScopeID()
+	thenBlock := b.newBlock(BlockThen, source.Location)
+	elseBlock := b.newBlock(BlockElse, source.Location)
+	join := b.newBlock(BlockNormal, source.Location)
+	conditionID := ir.NodeID(0)
+	if !typednil.IsNil(statement.Condition) {
+		conditionID = statement.Condition.SourceInfo().NodeID
+	}
+	b.current.Terminator = &Branch{
+		NodeID:      source.NodeID,
+		ConditionID: conditionID,
+		ScopeID:     scopeID,
+		Location:    source.Location,
+		TrueTarget:  thenBlock,
+		FalseTarget: elseBlock,
+	}
+
+	b.current = thenBlock
+	b.buildBlockBody(statement.Then)
+	thenEnd := b.current
+	if thenEnd != nil && thenEnd.Terminator == nil {
+		thenEnd.Terminator = &Jump{Target: join}
+	}
+
+	b.current = elseBlock
+	if !typednil.IsNil(statement.Else) {
+		statement.Else.BuildControlFlow(b)
+	}
+	elseEnd := b.current
+	if elseEnd != nil && elseEnd.Terminator == nil {
+		elseEnd.Terminator = &Jump{Target: join}
+	}
+
+	b.current = join
+	if thenEnd == nil && elseEnd == nil {
+		b.current = nil
+	}
+}
+
+func (b *builder) BuildFor(statement *thir.For) {
+	if statement.Checked != nil {
+		b.BuildBlock(statement.Checked)
+		return
+	}
+
+	source := statement.Source
+	scopeID := b.currentScopeID()
+	init := b.newBlock(BlockLoopInit, source.Location)
+	bodyBlock := b.newBlock(BlockLoopBody, source.Location)
+	latch := b.newBlock(BlockLoopLatch, source.Location)
+	exit := b.newBlock(BlockLoopExit, source.Location)
+	init.NodeID = source.NodeID
+	bodyBlock.NodeID = source.NodeID
+	latch.NodeID = source.NodeID
+	exit.NodeID = source.NodeID
+	b.current.Terminator = &Jump{Target: init}
+
+	latchTarget := bodyBlock
+	if !typednil.IsNil(statement.Condition) || !typednil.IsNil(statement.Iterable) {
+		header := b.newBlock(BlockLoop, source.Location)
+		header.NodeID = source.NodeID
 		conditionID := ir.NodeID(0)
-		if node.Cond != nil {
-			conditionID = ir.NodeID(node.Cond.ID())
+		if !typednil.IsNil(statement.Condition) {
+			conditionID = statement.Condition.SourceInfo().NodeID
 		}
-		current.Terminator = &Branch{
-			NodeID:      ir.NodeID(node.ID()),
+		initTarget := header
+		if statement.Iteration != nil && statement.Iteration.IsGuaranteedEntry() {
+			initTarget = bodyBlock
+		}
+		init.Terminator = &Jump{Target: initTarget}
+		header.Terminator = &Branch{
+			NodeID:      source.NodeID,
 			ConditionID: conditionID,
 			ScopeID:     scopeID,
-			Location:    ast.LocOf(node),
-			TrueTarget:  thenBlock,
-			FalseTarget: elseBlock,
+			Location:    source.Location,
+			TrueTarget:  bodyBlock,
+			FalseTarget: exit,
 		}
-
-		thenEnd := b.buildBlock(node.Then, thenBlock)
-		thenFallsThrough := thenEnd != nil
-		if thenEnd != nil && thenEnd.Terminator == nil {
-			thenEnd.Terminator = &Jump{Target: join}
-		}
-
-		elseEnd := b.buildStmt(node.Else, elseBlock, scopeID)
-		elseFallsThrough := elseEnd != nil
-		if elseEnd != nil && elseEnd.Terminator == nil {
-			elseEnd.Terminator = &Jump{Target: join}
-		}
-
-		if !thenFallsThrough && !elseFallsThrough {
-			return nil
-		}
-		return join
-	case *ast.ForStmt:
-		if node.Iterable != nil && b.queries.CheckedIteration != nil {
-			if checked := b.queries.CheckedIteration(node.ID()); checked != nil {
-				return b.buildStmt(checked, current, scopeID)
-			}
-		}
-		loopID := ir.NodeID(node.ID())
-		init := b.newBlock(BlockLoopInit, ast.LocOf(node))
-		bodyBlock := b.newBlock(BlockLoopBody, ast.LocOf(node))
-		latch := b.newBlock(BlockLoopLatch, ast.LocOf(node))
-		exit := b.newBlock(BlockLoopExit, ast.LocOf(node))
-		init.NodeID = loopID
-		bodyBlock.NodeID = loopID
-		latch.NodeID = loopID
-		exit.NodeID = loopID
-		current.Terminator = &Jump{Target: init}
-
-		latchTarget := bodyBlock
-		if node.Cond != nil || node.Iterable != nil {
-			header := b.newBlock(BlockLoop, ast.LocOf(node))
-			header.NodeID = loopID
-			conditionID := ir.NodeID(0)
-			if node.Cond != nil {
-				conditionID = ir.NodeID(node.Cond.ID())
-			}
-			initTarget := header
-			if b.queries.LoopGuaranteedEntry != nil && b.queries.LoopGuaranteedEntry(node.ID()) {
-				initTarget = bodyBlock
-			}
-			init.Terminator = &Jump{Target: initTarget}
-			header.Terminator = &Branch{
-				NodeID:      loopID,
-				ConditionID: conditionID,
-				ScopeID:     scopeID,
-				Location:    ast.LocOf(node),
-				TrueTarget:  bodyBlock,
-				FalseTarget: exit,
-			}
-			latchTarget = header
-		} else {
-			init.Terminator = &Jump{Target: bodyBlock}
-		}
-
-		b.loops = append(b.loops, loopContext{
-			continueTarget: latch,
-			breakTarget:    exit,
-			scopeDepth:     len(b.scopes),
-		})
-		bodyEnd := b.buildBlock(node.Body, bodyBlock)
-		b.loops = b.loops[:len(b.loops)-1]
-		if bodyEnd != nil && bodyEnd.Terminator == nil {
-			bodyEnd.Terminator = &Jump{Target: latch}
-		}
-		latch.Terminator = &Jump{Target: latchTarget}
-		return exit
-	case *ast.MatchStmt:
-		var cases []int
-		found := false
-		if b.queries.MatchCases != nil {
-			cases, found = b.queries.MatchCases(node.ID())
-		}
-		if !found || len(cases) != len(node.Arms) {
-			// Invalid source may not have complete semantic evidence. Preserve one
-			// recovery site so diagnostics can be published without inventing tags.
-			current.Sites = append(current.Sites, statementSite(node, scopeID))
-			return current
-		}
-		join := b.newBlock(BlockNormal, ast.LocOf(node))
-		targets := make([]VariantTarget, 0, len(node.Arms))
-		fallsThrough := false
-		for armIndex, arm := range node.Arms {
-			armBlock := b.newBlock(BlockNormal, ast.LocOf(arm))
-			targets = append(targets, VariantTarget{Case: cases[armIndex], Target: armBlock})
-			armEnd := b.buildBlock(arm.Body, armBlock)
-			if armEnd != nil {
-				fallsThrough = true
-				if armEnd.Terminator == nil {
-					armEnd.Terminator = &Jump{Target: join}
-				}
-			}
-		}
-		current.Terminator = &SwitchVariant{
-			NodeID: ir.NodeID(node.ID()), ScopeID: scopeID,
-			Location: ast.LocOf(node), Targets: targets,
-		}
-		if !fallsThrough {
-			return nil
-		}
-		return join
-	case *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl, *ast.TypeAliasDecl,
-		*ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
-		current.Sites = append(current.Sites, statementSite(node, scopeID))
-		return current
-	default:
-		panic(fmt.Sprintf("CFG construction: unhandled AST statement %T", stmt))
+		latchTarget = header
+	} else {
+		init.Terminator = &Jump{Target: bodyBlock}
 	}
+
+	b.loops = append(b.loops, loopContext{
+		continueTarget: latch,
+		breakTarget:    exit,
+		scopeDepth:     len(b.scopes),
+	})
+	b.current = bodyBlock
+	b.buildBlockBody(statement.Body)
+	b.loops = b.loops[:len(b.loops)-1]
+	if b.current != nil && b.current.Terminator == nil {
+		b.current.Terminator = &Jump{Target: latch}
+	}
+	latch.Terminator = &Jump{Target: latchTarget}
+	b.current = exit
+}
+
+func (b *builder) BuildMatch(statement *thir.Match) {
+	valid := statement.EnumType != nil && statement.CaseCount > 0 && len(statement.Arms) > 0
+	for _, arm := range statement.Arms {
+		valid = valid && arm.Case >= 0 && arm.Case < statement.CaseCount && arm.Body != nil
+	}
+	if !valid {
+		// Invalid source may not have complete semantic evidence. Preserve one
+		// recovery site so diagnostics can be published without inventing tags.
+		b.appendStatement(statement.Source)
+		return
+	}
+
+	scopeID := b.currentScopeID()
+	entry := b.current
+	join := b.newBlock(BlockNormal, statement.Source.Location)
+	targets := make([]VariantTarget, 0, len(statement.Arms))
+	fallsThrough := false
+	for _, arm := range statement.Arms {
+		armBlock := b.newBlock(BlockNormal, arm.Source.Location)
+		targets = append(targets, VariantTarget{Case: arm.Case, Target: armBlock})
+		b.current = armBlock
+		b.buildBlockBody(arm.Body)
+		if b.current != nil {
+			fallsThrough = true
+			if b.current.Terminator == nil {
+				b.current.Terminator = &Jump{Target: join}
+			}
+		}
+	}
+	entry.Terminator = &SwitchVariant{
+		NodeID: statement.Source.NodeID, ScopeID: scopeID,
+		Location: statement.Source.Location, Targets: targets,
+	}
+	if fallsThrough {
+		b.current = join
+	} else {
+		b.current = nil
+	}
+}
+
+func (b *builder) appendStatement(source ir.SourceInfo) {
+	b.current.Sites = append(b.current.Sites, &Site{
+		Kind:     SiteStatement,
+		NodeID:   source.NodeID,
+		ScopeID:  b.currentScopeID(),
+		Location: source.Location,
+	})
+}
+
+func (b *builder) currentScopeID() ir.NodeID {
+	if len(b.scopes) == 0 {
+		return 0
+	}
+	return b.scopes[len(b.scopes)-1].Source.NodeID
 }
 
 func (b *builder) appendLoopScopeExits(current *Block, scopeDepth int) {
 	for index := len(b.scopes) - 1; index >= scopeDepth; index-- {
 		scope := b.scopes[index]
-		if scope.ID() == 0 {
+		if scope.Source.NodeID == 0 {
 			continue
 		}
 		current.Sites = append(current.Sites, &Site{
 			Kind:     SiteScopeExit,
-			NodeID:   ir.NodeID(scope.ID()),
-			ScopeID:  ir.NodeID(scope.ID()),
-			Location: ast.LocOf(scope),
+			NodeID:   scope.Source.NodeID,
+			ScopeID:  scope.Source.NodeID,
+			Location: scope.Source.Location,
 		})
-	}
-}
-
-func statementSite(node ast.Node, scopeID ir.NodeID) *Site {
-	return &Site{
-		Kind:     SiteStatement,
-		NodeID:   ir.NodeID(node.ID()),
-		ScopeID:  scopeID,
-		Location: ast.LocOf(node),
 	}
 }
 

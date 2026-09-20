@@ -56,16 +56,13 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 }
 
 func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
-	if c.flow == nil && c.reusedCall == node {
+	if c.reusedCall == node {
 		if typ := c.module.Typechecking.ExprType(node.ID()); typ != nil {
 			return typ
 		}
 	}
-	effectiveArgs := c.module.Typechecking.CallArgumentsOrSource(node)
-	if c.flow == nil {
-		effectiveArgs = append([]ast.Expr(nil), node.Args...)
-		c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
-	}
+	effectiveArgs := append([]ast.Expr(nil), node.Args...)
+	c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
 	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil && c.module.Bindings != nil {
 		if sym := c.module.Bindings.Symbol(path); sym != nil && sym.Kind == symbols.SymbolVariant {
 			for _, arg := range node.Args {
@@ -101,11 +98,9 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 		}
 	}
 	calleeType := c.typePayloadExpr(scope, node.Callee, nil)
-	if c.flow == nil {
-		if sym, declModule := c.defaultCallDeclaration(node.Callee); sym != nil {
-			effectiveArgs = c.expandCallDefaults(node, effectiveArgs, sym, declModule)
-			c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
-		}
+	if sym, declModule := c.defaultCallDeclaration(node.Callee); sym != nil {
+		effectiveArgs = c.expandCallDefaults(node, effectiveArgs, sym, declModule)
+		c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
 	}
 	argTypes := make([]typeinfo.Type, 0, len(effectiveArgs))
 	fnType, _ := calleeType.(*typeinfo.FuncType)
@@ -328,8 +323,8 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 	method, ok := c.lookupCallableMember(baseType, selector.Name.Name)
 	if ok {
 		methodType, methodSym := method.Type, method.Symbol
-		effectiveArgs := c.module.Typechecking.CallArgumentsOrSource(call)
-		if methodSym != nil && methodSym.CompilerOp == "" && c.flow == nil {
+		effectiveArgs := append([]ast.Expr(nil), call.Args...)
+		if methodSym != nil && methodSym.CompilerOp == "" {
 			effectiveArgs = c.expandCallDefaults(call, effectiveArgs, methodSym, c.module)
 			c.module.Typechecking.RecordCallArguments(call.ID(), effectiveArgs)
 		}

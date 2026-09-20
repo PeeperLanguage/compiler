@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -49,12 +50,9 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
 	module.RebuildTypedASTIndex()
-	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Typechecking.MatchCases,
-		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIteration:    module.Typechecking.CheckedIteration,
-	})
+	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
 		Symbol:              module.Bindings.SymbolID,

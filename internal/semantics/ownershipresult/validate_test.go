@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
@@ -25,7 +26,7 @@ func buildGraph(t *testing.T, sourceText string) (*cfg.Module, ir.NodeID) {
 	const file = "validate_test" + ".peep"
 	diag := diagnostics.NewDiagnosticBag()
 	source := parser.New(file, lexer.New(file, sourceText, diag).Tokenize(), diag).ParseModule()
-	graphs := cfg.BuildModule(source, cfg.BuildQueries{})
+	graphs := cfg.BuildModule(thir.Build("test", file, source, nil, nil))
 	if graphs == nil || len(graphs.Functions) == 0 {
 		t.Fatalf("no CFG built: %s", diag.EmitAllToString())
 	}

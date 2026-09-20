@@ -10,9 +10,8 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-// BuildQueries supplies the published facts this producer needs. Like
-// cfg.BuildQueries, it declares narrow accessors so this package does not
-// import the artifacts that own them.
+// BuildQueries supplies narrow accessors to published facts without importing
+// the artifacts that own them.
 type BuildQueries struct {
 	// Symbol resolves identifier occurrences, including declaration names, to
 	// the binding selected by resolution.

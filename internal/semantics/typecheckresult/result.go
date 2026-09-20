@@ -496,23 +496,6 @@ func (r *Result) Match(id ast.NodeID) (Match, bool) {
 	return match, ok
 }
 
-// MatchCases exposes resolved case indexes without leaking match artifacts
-// into CFG's source-topology package.
-func (r *Result) MatchCases(id ast.NodeID) ([]int, bool) {
-	match, found := r.Match(id)
-	if !found {
-		return nil, false
-	}
-	cases := make([]int, len(match.Arms))
-	for index, arm := range match.Arms {
-		if arm.Case < 0 || arm.Case >= match.CaseCount {
-			return nil, false
-		}
-		cases[index] = arm.Case
-	}
-	return cases, true
-}
-
 // ArmBindings exposes the payload symbols one match arm binds, without leaking
 // match artifacts into the effect producer. A discarded binding still binds
 // storage, so it is reported like any other.
@@ -552,13 +535,6 @@ func (r *Result) ForIteration(id ast.NodeID) (ForIteration, bool) {
 	}
 	iteration, ok := r.control.forIterations[id]
 	return iteration, ok
-}
-
-// ForLoopGuaranteedEntry exposes typechecker proof that one loop executes its
-// body before its first condition check.
-func (r *Result) ForLoopGuaranteedEntry(id ast.NodeID) bool {
-	iteration, found := r.ForIteration(id)
-	return found && iteration.GuaranteedEntry
 }
 
 // SequenceCarrier exposes the hidden carrier a typed sequence loop keeps for

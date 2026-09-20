@@ -12,6 +12,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -45,12 +46,9 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
 	module.RebuildTypedASTIndex()
-	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Typechecking.MatchCases,
-		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIteration:    module.Typechecking.CheckedIteration,
-	})
+	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -190,12 +188,9 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 	binder.Bind(ctx, entry)
 	resolver.Resolve(ctx, entry)
 	typechecker.Check(ctx, entry)
+	entry.THIR = thir.Build(entry.ID.ImportPath, entry.FilePath, entry.AST, entry.Bindings, entry.Typechecking)
 	entry.RebuildTypedASTIndex()
-	entry.CFG = cfg.BuildModule(entry.AST, cfg.BuildQueries{
-		MatchCases:          entry.Typechecking.MatchCases,
-		LoopGuaranteedEntry: entry.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIteration:    entry.Typechecking.CheckedIteration,
-	})
+	entry.CFG = cfg.BuildModule(entry.THIR)
 	entry.Flow = typechecker.CheckFlow(ctx, entry)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())

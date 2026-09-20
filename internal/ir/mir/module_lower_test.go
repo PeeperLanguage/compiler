@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -77,7 +78,7 @@ func constantLookup(values map[symbols.SymbolID]constvalue.Value) func(symbols.S
 }
 
 // cfgForHIR gives synthetic HIR unit fixtures source-shaped control flow.
-// Production always builds CFG from typed AST before HIR exists.
+// Production always builds CFG from THIR before HIR exists.
 func cfgForHIR(module *hir.Module) *cfg.Module {
 	if module == nil {
 		return nil
@@ -185,7 +186,7 @@ func cfgForHIR(module *hir.Module) *cfg.Module {
 			Location:     fn.Location,
 		})
 	}
-	return cfg.BuildModule(source, cfg.BuildQueries{})
+	return cfg.BuildModule(thir.Build("test", "", source, nil, nil))
 }
 
 func TestGenerateMIRAddsImplicitVoidReturn(t *testing.T) {
