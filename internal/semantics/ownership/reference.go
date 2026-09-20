@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -330,6 +331,42 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 	return nil
 }
 
+func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceLoan, bool) {
+	if expr == nil {
+		return []referenceLoan{}, false
+	}
+	if ident, ok := expr.(*thir.Ident); ok && ident.Symbol != nil && referenceHoldingSymbol(ident.Symbol) {
+		if value, found := st.references[ident.Symbol]; found {
+			return copyReferenceLoans(value), true
+		}
+	}
+	if _, mutable, ok := typeinfo.ReferenceValueTarget(expr.ExprType()); ok {
+		origins := a.module.Flow.ValueOrigins(ast.NodeID(expr.SourceInfo().NodeID))
+		if len(origins) == 0 {
+			return []referenceLoan{}, false
+		}
+		return []referenceLoan{{id: loanID{node: a.module.TypedASTNodes[ast.NodeID(expr.SourceInfo().NodeID)]}, origins: origins, mutable: mutable}}, true
+	}
+	if a.module.Flow != nil {
+		slots, aggregate := a.module.Flow.AggregateSlots(ast.NodeID(expr.SourceInfo().NodeID))
+		if aggregate {
+			var loans []referenceLoan
+			for _, slot := range slots {
+				fieldLoans, found := a.referenceValueForTHIR(slot.ValueExpr, st)
+				if !found {
+					continue
+				}
+				for i := range fieldLoans {
+					fieldLoans[i].path = append([]place.OriginProjection{slot.Projection}, fieldLoans[i].path...)
+				}
+				loans = append(loans, fieldLoans...)
+			}
+			return loans, len(loans) > 0
+		}
+	}
+	return []referenceLoan{}, false
+}
+
 func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLoan, bool) {
 	if a == nil || expr == nil {
 		return []referenceLoan{}, false
@@ -376,11 +413,11 @@ func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLo
 		}
 		var loans []referenceLoan
 		for _, slot := range slots {
-			value, _ := a.module.TypedASTNodes[slot.Value].(ast.Expr)
+			value := slot.ValueExpr
 			if value == nil {
 				continue
 			}
-			fieldLoans, found := a.referenceValueForExpr(value, st)
+			fieldLoans, found := a.referenceValueForTHIR(value, st)
 			if found {
 				for i := range fieldLoans {
 					fieldLoans[i].path = append([]place.OriginProjection{slot.Projection}, fieldLoans[i].path...)

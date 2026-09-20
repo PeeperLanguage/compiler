@@ -4,6 +4,7 @@ package flowresult
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
@@ -47,6 +48,7 @@ type OriginResolution struct {
 // expression whose reference provenance populates that slot.
 type AggregateSlot struct {
 	Value      ast.NodeID
+	ValueExpr  thir.Expr
 	Projection place.OriginProjection
 }
 

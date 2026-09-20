@@ -747,7 +747,7 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 			}
 			semanticField := semantic.Fields[field.Index]
 			slots = append(slots, flowresult.AggregateSlot{
-				Value:      ast.NodeID(field.Value.SourceInfo().NodeID),
+				Value: ast.NodeID(field.Value.SourceInfo().NodeID), ValueExpr: field.Value,
 				Projection: place.OriginProjection{Kind: place.OriginField, Field: semanticField.Name},
 			})
 			a.updateOriginPlace(place.FieldOrigins(storage, semanticField.Name), semanticField.Type, field.Value, sourceState, state)
@@ -758,7 +758,7 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 			return
 		}
 		a.result.RecordAggregateSlots(ast.NodeID(expression.Source.NodeID), []flowresult.AggregateSlot{{
-			Value:      ast.NodeID(expression.Payload.SourceInfo().NodeID),
+			Value: ast.NodeID(expression.Payload.SourceInfo().NodeID), ValueExpr: expression.Payload,
 			Projection: place.OriginProjection{Kind: place.OriginVariantPayload, Case: expression.Case},
 		}})
 		var payloadType typeinfo.Type
