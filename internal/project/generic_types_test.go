@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -157,10 +158,10 @@ func TestResolveTypeCreatesGenericInstance(t *testing.T) {
 	}
 }
 
-func genericQueryContext(t *testing.T) (*CompilerContext, *Module, *typeinfo.DefinedType) {
+func genericQueryContext(t *testing.T) (*CompilerContext, *module.Module, *typeinfo.DefinedType) {
 	t.Helper()
 	ctx := New(".", ".peep", diagnostics.NewDiagnosticBag())
-	module := &Module{
+	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
 	}

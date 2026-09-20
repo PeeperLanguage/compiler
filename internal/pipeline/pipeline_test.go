@@ -18,6 +18,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/prelude"
@@ -32,22 +33,22 @@ import (
 func TestInvalidateSemanticDependentsUsesImportClosure(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
 	ctx.Metrics = &project.CompileMetrics{}
-	leaf := &project.Module{
+	leaf := &module.Module{
 		ID:                        moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "leaf"},
 		Phase:                     phase.Typechecked,
 		SemanticExportFingerprint: "new surface",
 	}
-	middle := &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "middle"}, Phase: phase.Typechecked}
-	root := &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "root"}, Phase: phase.Typechecked}
-	unrelated := &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "unrelated"}, Phase: phase.Typechecked}
-	for _, module := range []*project.Module{leaf, middle, root, unrelated} {
+	middle := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "middle"}, Phase: phase.Typechecked}
+	root := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "root"}, Phase: phase.Typechecked}
+	unrelated := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "unrelated"}, Phase: phase.Typechecked}
+	for _, module := range []*module.Module{leaf, middle, root, unrelated} {
 		ctx.AddModule(module)
 	}
 	ctx.ImportGraph.AddEdge(graph.NodeID(root.ID.String()), graph.NodeID(middle.ID.String()))
 	ctx.ImportGraph.AddEdge(graph.NodeID(middle.ID.String()), graph.NodeID(leaf.ID.String()))
 	ctx.SetSemanticExportBaseline(leaf.ID, "old surface")
 
-	invalidateSemanticDependents(ctx, []*project.Module{leaf})
+	invalidateSemanticDependents(ctx, []*module.Module{leaf})
 
 	if leaf.Phase != phase.Typechecked {
 		t.Fatalf("changed module phase = %v, want %v", leaf.Phase, phase.Typechecked)
@@ -63,19 +64,19 @@ func TestInvalidateSemanticDependentsUsesImportClosure(t *testing.T) {
 	}
 }
 
-func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
-	return &project.Module{
+func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *module.Module {
+	return &module.Module{
 		ID: moduleid.ID{
 			Origin:     string(project.ModuleOriginLocal),
 			ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
 		},
 		FilePath: filePath,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 }
 
-func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string, afterRun ...func(*project.Module)) *diagnostics.DiagnosticBag {
+func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string, afterRun ...func(*module.Module)) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const preludePath = "core/global" + peeper.SourceExt
 	const entryPath = "entry" + peeper.SourceExt
@@ -123,7 +124,7 @@ func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string)
 		ProjectName: "app",
 		Extension:   peeper.SourceExt,
 	}, diag)
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
 		FilePath: entryPath,
 	}
@@ -206,7 +207,7 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 			}, "", `fn main() {
 	let items = [1]i32{1};
 	for index, value in items {}
-}`, func(entry *project.Module) {
+}`, func(entry *module.Module) {
 				if entry.HIR == nil || entry.MIR == nil || len(entry.HIR.Funcs) != 1 || len(entry.HIR.Funcs[0].Body.Stmts) != 2 {
 					t.Fatalf("pipeline artifacts missing: HIR=%v MIR=%v", entry.HIR != nil, entry.MIR != nil)
 				}
@@ -291,7 +292,7 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 		let second = alloc(i);
 		if i == 1 { break; }
 	}
-}`, func(entry *project.Module) {
+}`, func(entry *module.Module) {
 		fn := entry.AST.Stmts[0].(*ast.FnDecl)
 		loop := fn.Body.Stmts[0].(*ast.ForStmt)
 		continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
@@ -479,11 +480,11 @@ fn main() -> i32 {
 		Extension:      peeper.SourceExt,
 		LibraryBaseDir: libraryBase,
 	}, diag)
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
 		FilePath: entryPath,
 		Content:  entrySrc,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 
 	if err := Run(ctx, entry); err != nil {
@@ -525,11 +526,11 @@ func preludeQualifierPipeline(t *testing.T, libraryFile, librarySrc, entrySrc st
 	if err := prelude.Load(ctx); err != nil {
 		t.Fatalf("load prelude: %v", err)
 	}
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
 		FilePath: entryPath,
 		Content:  entrySrc,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -1087,7 +1088,7 @@ fn main() -> i32 {
 	}
 }
 
-func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, want bool) {
+func assertPipelineBoolConst(t *testing.T, module *module.Module, name string, want bool) {
 	t.Helper()
 	sym, found := module.ModuleScope.LookupLocal(name)
 	if !found || sym == nil {
@@ -1199,25 +1200,25 @@ fn main() -> i32 {
 func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	tests := []struct {
 		name   string
-		module *project.Module
+		module *module.Module
 		want   string
 	}{
-		{name: "blocked prerequisite", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
-		{name: "missing MIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.HIR}, want: "HIR phase"},
+		{name: "blocked prerequisite", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
+		{name: "missing HIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
+		{name: "missing MIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.HIR}, want: "HIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[moduleid.ID]string{test.module.ID: ""}, phase.Backend)
+			err := requireScheduledModulesAtLeast([]*module.Module{test.module}, map[moduleid.ID]string{test.module.ID: ""}, phase.Backend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }
@@ -1325,7 +1326,7 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry := parseModuleSource("main"+peeper.SourceExt, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
 	entry.Phase = phase.Parsed
-	entry.Imports = map[string]project.ResolvedImport{
+	entry.Imports = map[string]module.ResolvedImport{
 		"util": {
 			ID:       imported.ID,
 			FilePath: imported.FilePath,
@@ -1388,7 +1389,7 @@ fn main() -> i32 {
 		t.Fatalf("mkdir src dir: %v", err)
 	}
 
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
 		FilePath: mainPath,
 	}
@@ -1457,7 +1458,7 @@ fn Value() -> i32 {
 
 	mainPath := filepath.Join(srcDir, peeper.MainFileName)
 	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
 		FilePath: mainPath,
 	}
@@ -3258,9 +3259,9 @@ func TestModuleLoaderReportsSameIdentityFromDifferentFiles(t *testing.T) {
 	}
 	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
 
-	loader.enqueue(&project.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", ContentProvided: true})
 	loader.wg.Wait()
-	loader.enqueue(&project.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", ContentProvided: true})
 	loader.wg.Wait()
 
 	ambiguous := 0
@@ -3300,7 +3301,7 @@ func TestModuleLoaderLabelsImportSiteOnIdentityConflict(t *testing.T) {
 		t.Fatalf("resolve import: %v", err)
 	}
 	// Claim the identity for a different file so the import below conflicts.
-	ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: filepath.Join(srcDir, "other"+peeper.SourceExt)})
+	ctx.AddModule(&module.Module{ID: resolved.ID, FilePath: filepath.Join(srcDir, "other"+peeper.SourceExt)})
 
 	entryPath := filepath.Join(srcDir, "entry"+peeper.SourceExt)
 	entrySrc := "import \"app/shared\";\n"
@@ -3336,9 +3337,9 @@ func TestModuleLoaderSamePathDoubleEnqueueIsQuietDedupe(t *testing.T) {
 	}
 	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
 
-	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
 	loader.wg.Wait()
-	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
 	loader.wg.Wait()
 
 	if diag.HasErrors() {

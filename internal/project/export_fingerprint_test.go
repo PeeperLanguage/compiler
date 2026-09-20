@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/constantresult"
@@ -17,7 +18,7 @@ func fingerprintModule(
 	exported *symbols.Symbol,
 	bindings *bindingresult.Result,
 	constValues map[symbols.SymbolID]constvalue.Value,
-) *Module {
+) *module.Module {
 	t.Helper()
 	scope := symbols.NewScope(nil)
 	if err := scope.Declare(exported); err != nil {
@@ -30,7 +31,7 @@ func fingerprintModule(
 	for id, value := range constValues {
 		constants.Publish(id, value)
 	}
-	return &Module{ModuleScope: scope, Bindings: bindings, Constants: constants}
+	return &module.Module{ModuleScope: scope, Bindings: bindings, Constants: constants}
 }
 
 func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) {
@@ -68,7 +69,7 @@ func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T
 		constant, _ := constvalue.NewIntText(value, "i32")
 		constants := constantresult.New()
 		constants.Publish(sym.ID, constant)
-		return SemanticExportFingerprint(nil, &Module{ModuleScope: scope, Constants: constants})
+		return SemanticExportFingerprint(nil, &module.Module{ModuleScope: scope, Constants: constants})
 	}
 	if fingerprint("1") == fingerprint("2") {
 		t.Fatal("binding-independent const value did not change semantic fingerprint")
@@ -88,7 +89,7 @@ func TestSemanticExportFingerprintIgnoresQueryCache(t *testing.T) {
 		constant, _ := constvalue.NewIntText(value, "i32")
 		constants := constantresult.New()
 		constants.Cache(sym.ID, constant)
-		return SemanticExportFingerprint(nil, &Module{ModuleScope: scope, Constants: constants})
+		return SemanticExportFingerprint(nil, &module.Module{ModuleScope: scope, Constants: constants})
 	}
 	if fingerprint("1") != fingerprint("2") {
 		t.Fatal("query-cache-only value changed semantic fingerprint")
@@ -148,7 +149,7 @@ func TestSemanticExportFingerprintTracksImportedConstantInDefault(t *testing.T) 
 		ownerConstants := constantresult.New()
 		published, _ := constvalue.NewIntText(value, "i32")
 		ownerConstants.Publish(imported.ID, published)
-		ctx.AddModule(&Module{ID: ownerID, FilePath: "lib.peep", Constants: ownerConstants})
+		ctx.AddModule(&module.Module{ID: ownerID, FilePath: "lib.peep", Constants: ownerConstants})
 
 		defaultIdent := &ast.Ident{Name: "K"}
 		decl := &ast.FnDecl{

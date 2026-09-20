@@ -9,6 +9,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
+	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/internal/toolchain"
@@ -17,7 +18,7 @@ import (
 )
 
 // Compile one entry file with a fresh compiler project.
-func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *project.Module) {
+func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *module.Module) {
 	sourceProject, err := manifest.ResolveSourceFileProject(path)
 	rootDir := sourceProject.RootDir
 	projectName := sourceProject.ProjectName
@@ -42,7 +43,7 @@ func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (co
 }
 
 // Build final output after successful compilation.
-func buildExecutable(ctx *project.CompilerContext, entry *project.Module, outputPath string) error {
+func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputPath string) error {
 	if ctx != nil && ctx.Diagnostics != nil && ctx.Diagnostics.HasErrors() {
 		return fmt.Errorf("cannot build with existing diagnostics errors")
 	}

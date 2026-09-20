@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
@@ -57,7 +58,7 @@ func TestHoverAndCompletionDoNotConsumeUsageEvidence(t *testing.T) {
 
 func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, nil)
-	module := &project.Module{ModuleScope: symbols.NewScope(nil), Bindings: bindingresult.New()}
+	module := &module.Module{ModuleScope: symbols.NewScope(nil), Bindings: bindingresult.New()}
 	base := &typeinfo.DefinedType{
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
@@ -91,7 +92,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 
 func TestTypeHoverShowsLoadingForUnavailableGenericInstance(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, nil)
-	module := &project.Module{ModuleScope: symbols.NewScope(nil)}
+	module := &module.Module{ModuleScope: symbols.NewScope(nil)}
 	base := &typeinfo.DefinedType{
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},

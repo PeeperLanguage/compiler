@@ -13,6 +13,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
@@ -252,7 +253,7 @@ func (w *workspaceIndex) componentForFile(filePath string) (workspaceComponent, 
 	return workspaceComponent{}, false
 }
 
-func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.Module) map[string]struct{} {
+func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*module.Module) map[string]struct{} {
 	dirty := make(map[string]struct{})
 	if w == nil {
 		return dirty
@@ -294,7 +295,7 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 	return dirty
 }
 
-func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project.Module) map[string]phase.Phase {
+func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*module.Module) map[string]phase.Phase {
 	phases := make(map[string]phase.Phase)
 	if w == nil || len(cached) == 0 {
 		return phases

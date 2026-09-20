@@ -9,6 +9,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
@@ -145,7 +146,7 @@ func (s *ServerState) completionOverlays(currentFile string) map[string]string {
 	return overlays
 }
 
-func compileCompletionSource(cfg project.Config, overlays map[string]string, filePath, content string) (*project.CompilerContext, *project.Module) {
+func compileCompletionSource(cfg project.Config, overlays map[string]string, filePath, content string) (*project.CompilerContext, *module.Module) {
 	ctx := compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
 	for overlayPath, overlayContent := range overlays {
 		compiler.AddSource(ctx, overlayPath, overlayContent)
@@ -378,7 +379,7 @@ func isCompletionBoundary(ch byte) bool {
 	}
 }
 
-func lexicalCompletionItems(module *project.Module, cursor source.Position, prefix string, replacement Range) []CompletionItem {
+func lexicalCompletionItems(module *module.Module, cursor source.Position, prefix string, replacement Range) []CompletionItem {
 	if module == nil || module.ModuleScope == nil || module.Bindings == nil {
 		return []CompletionItem{}
 	}
@@ -407,7 +408,7 @@ func lexicalCompletionItems(module *project.Module, cursor source.Position, pref
 	return sortCompletionItems(items)
 }
 
-func completionScope(module *project.Module, line, col int) *symbols.Scope {
+func completionScope(module *module.Module, line, col int) *symbols.Scope {
 	scope := module.ModuleScope
 	walkModuleAST(module, func(node ast.Node, _ ast.Node) bool {
 		block, ok := node.(*ast.BlockStmt)
@@ -430,7 +431,7 @@ func declaredAfterCursor(sym *symbols.Symbol, cursor source.Position) bool {
 	return start.Line > cursor.Line || start.Line == cursor.Line && start.Column > cursor.Column
 }
 
-func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Module, qualifier, prefix string, replacement Range) []CompletionItem {
+func qualifiedCompletionItems(ctx *project.CompilerContext, module *module.Module, qualifier, prefix string, replacement Range) []CompletionItem {
 	if ctx == nil || module == nil {
 		return []CompletionItem{}
 	}
@@ -460,7 +461,7 @@ func qualifiedCompletionItems(ctx *project.CompilerContext, module *project.Modu
 	return sortCompletionItems(items)
 }
 
-func completionEnumSymbol(ctx *project.CompilerContext, module *project.Module, qualifier string) *symbols.Symbol {
+func completionEnumSymbol(ctx *project.CompilerContext, module *module.Module, qualifier string) *symbols.Symbol {
 	segments := completionQualifierSegments(qualifier)
 	if len(segments) == 0 || len(segments) > 2 {
 		return nil
@@ -527,7 +528,7 @@ func completionQualifierSegments(qualifier string) []string {
 	return segments
 }
 
-func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Module, cursor source.Position, replacement Range) ([]CompletionItem, bool) {
+func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module, cursor source.Position, replacement Range) ([]CompletionItem, bool) {
 	if module == nil || module.Typechecking == nil {
 		return nil, false
 	}
@@ -617,7 +618,7 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *project.Modul
 	return sortCompletionItems(items), true
 }
 
-func operationCompletionItems(ctx *project.CompilerContext, module *project.Module, cursorPosition source.Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
+func operationCompletionItems(ctx *project.CompilerContext, module *module.Module, cursorPosition source.Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
 	var selector *ast.SelectorExpr
 	var piped *ast.CallExpr
 	cursor := buildCursorContext(ctx, module, cursorPosition)

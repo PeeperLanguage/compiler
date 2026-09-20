@@ -4,6 +4,7 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/symbols"
@@ -13,7 +14,7 @@ import (
 
 type evaluator struct {
 	ctx                 *project.CompilerContext
-	module              *project.Module
+	module              *module.Module
 	constants           *constantresult.Result
 	inProgress          map[symbols.SymbolID]struct{}
 	publishModuleValues bool
@@ -22,7 +23,7 @@ type evaluator struct {
 // FinalizeValues recomputes and publishes authoritative module constants after
 // typechecking assigns final symbol types. Lazy query-cache entries accumulated
 // during typechecking remain mutable for local constants.
-func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
+func FinalizeValues(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
@@ -38,7 +39,7 @@ func FinalizeValues(ctx *project.CompilerContext, module *project.Module) {
 
 // EvaluateExpr computes one semantic constant using expected type information
 // available at the query site. It is valid during and after typechecking.
-func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func EvaluateExpr(ctx *project.CompilerContext, module *module.Module, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if ctx == nil || module == nil || expr == nil {
 		return nil, false
 	}
@@ -49,7 +50,7 @@ func EvaluateExpr(ctx *project.CompilerContext, module *project.Module, scope *s
 	return e.evalExpr(scope, expr, expected)
 }
 
-func newEvaluator(ctx *project.CompilerContext, module *project.Module, publishModuleValues bool) *evaluator {
+func newEvaluator(ctx *project.CompilerContext, module *module.Module, publishModuleValues bool) *evaluator {
 	if module.Constants == nil {
 		module.Constants = constantresult.New()
 	}

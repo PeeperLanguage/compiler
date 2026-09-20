@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
@@ -507,7 +508,7 @@ func (c *checker) matchesImplicitCallTarget(target, arg typeinfo.Type) bool {
 		typeinfo.SameType(slice.Elem, array.Elem)
 }
 
-func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *project.Module) {
+func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *module.Module) {
 	if c == nil || c.module == nil || callee == nil {
 		return nil, nil
 	}
@@ -527,7 +528,7 @@ func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *pro
 	return nil, nil
 }
 
-func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *symbols.Symbol, declModule *project.Module) []ast.Expr {
+func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *symbols.Symbol, declModule *module.Module) []ast.Expr {
 	effectiveArgs := append([]ast.Expr(nil), args...)
 	if c == nil || c.module == nil || c.module.Bindings == nil || c.module.Typechecking == nil || call == nil || sym == nil {
 		return effectiveArgs
@@ -617,7 +618,7 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 	return effectiveArgs
 }
 
-func copyExpressionEvidence(dst, src *project.Module, dstID, srcID ast.NodeID) {
+func copyExpressionEvidence(dst, src *module.Module, dstID, srcID ast.NodeID) {
 	if dst == nil || dst.Typechecking == nil || src == nil || src.Typechecking == nil {
 		return
 	}

@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -20,18 +21,18 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func analyzeInitializationSource(t *testing.T, source string) (*functionResult, *diagnostics.DiagnosticBag, *project.Module) {
+func analyzeInitializationSource(t *testing.T, source string) (*functionResult, *diagnostics.DiagnosticBag, *module.Module) {
 	t.Helper()
 	const filePath = "definite_init_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, source)
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "definite_init_test"},
 		FilePath: filePath,
 		Content:  source,
 		AST:      parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)

@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -25,7 +26,7 @@ func TestCallableSymbolsKeepDefiningModuleIdentity(t *testing.T) {
 fn Value() -> i32 { return 1; }
 fn (self: Counter) Read() -> i32 { return self.value; }`
 	diag := diagnostics.NewDiagnosticBag()
-	module := &project.Module{
+	module := &module.Module{
 		ID: moduleid.ID{
 			Origin:     string(project.ModuleOriginDependency),
 			Namespace:  "vendor",
@@ -35,7 +36,7 @@ fn (self: Counter) Read() -> i32 { return self.value; }`
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx := project.New(".", peeper.SourceExt, diag)
 	Collect(ctx, module)
@@ -61,12 +62,12 @@ func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
 	const filePath = "collector_type_identity_test" + peeper.SourceExt
 	const src = `enum Status { Ready }`
 	diag := diagnostics.NewDiagnosticBag()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx := project.New(".", peeper.SourceExt, diag)
 	Collect(ctx, module)
@@ -93,12 +94,12 @@ func TestCollectedEnumOwnsOrderedVariantSymbols(t *testing.T) {
 }
 type Alias = Result<i32>;`
 	diag := diagnostics.NewDiagnosticBag()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx := project.New(".", peeper.SourceExt, diag)
 	Collect(ctx, module)
@@ -139,12 +140,12 @@ func TestCollectedEnumRejectsDuplicateVariants(t *testing.T) {
 	const filePath = "collector_enum_duplicate_test" + peeper.SourceExt
 	const src = `enum Status { Ready, Ready }`
 	diag := diagnostics.NewDiagnosticBag()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx := project.New(".", peeper.SourceExt, diag)
 	Collect(ctx, module)
@@ -169,12 +170,12 @@ fn main() -> i32 {
 		t.Fatalf("expected one parsed import decl")
 	}
 
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "collector_import_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports: map[string]project.ResolvedImport{
+		Imports: map[string]module.ResolvedImport{
 			"external": {
 				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 				FilePath: "external" + peeper.SourceExt,
@@ -210,12 +211,12 @@ fn Platform() -> i32 {
 	diag.AddSourceContent(filePath, src)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux"}, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "collector_target_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 
 	Collect(ctx, module)
@@ -248,12 +249,12 @@ func TestTargetOSImplMethodsStillCollide(t *testing.T) {
 	diag.AddSourceContent(filePath, src)
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux"}, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "collector_method_target_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 
 	Collect(ctx, module)

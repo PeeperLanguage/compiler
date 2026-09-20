@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/bindingresult"
@@ -14,7 +15,7 @@ import (
 
 type resolver struct {
 	ctx             *project.CompilerContext
-	module          *project.Module
+	module          *module.Module
 	pendingBindings map[symbols.SymbolID]struct{}
 }
 
@@ -333,7 +334,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	}
 }
 
-func Resolve(ctx *project.CompilerContext, module *project.Module) {
+func Resolve(ctx *project.CompilerContext, module *module.Module) {
 	if module == nil || ctx == nil {
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/flowresult"
@@ -59,7 +60,7 @@ type edgeVariantFact struct {
 
 type flowAnalyzer struct {
 	ctx           *project.CompilerContext
-	module        *project.Module
+	module        *module.Module
 	functionScope *symbols.Scope
 	graph         *cfg.ControlFlowGraph
 	returnType    typeinfo.Type
@@ -69,7 +70,7 @@ type flowAnalyzer struct {
 
 // CheckFlow runs variant/origin facts to fixed point, then records exact
 // per-use types through the existing checker implementation.
-func CheckFlow(ctx *project.CompilerContext, module *project.Module) *flowresult.Result {
+func CheckFlow(ctx *project.CompilerContext, module *module.Module) *flowresult.Result {
 	result := flowresult.New()
 	if ctx == nil || module == nil || module.CFG == nil || module.Bindings == nil || module.ModuleScope == nil {
 		return result

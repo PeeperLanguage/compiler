@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -33,7 +34,7 @@ type hoverSubject struct {
 	ResolvedType    typeinfo.Type
 	TypeQueryStatus project.TypeQueryStatus
 	Decl            ast.Node
-	ResolvedImport  *project.ResolvedImport
+	ResolvedImport  *module.ResolvedImport
 	Attribute       *ast.Attribute
 	MethodSymbols   []*symbols.Symbol
 }
@@ -416,7 +417,7 @@ func documentedDeclAncestor(node ast.Node, parents map[ast.NodeID]ast.Node) ast.
 	return nil
 }
 
-func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module) *symbols.Symbol {
+func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
 	if ident == nil || module == nil || module.Bindings == nil {
 		return nil
 	}
@@ -427,7 +428,7 @@ func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, mo
 	return nil
 }
 
-func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module) *symbols.Symbol {
+func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
 	if ident == nil || module == nil || module.Bindings == nil {
 		return nil
 	}

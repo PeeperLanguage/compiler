@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/target"
@@ -37,19 +38,19 @@ type TypeQueryResult struct {
 
 type syntaxResolver struct {
 	ctx    *CompilerContext
-	module *Module
+	module *module.Module
 	query  *TypeQueryResult
 	chain  []typeInstantiationFrame
 }
 
-func ResolveType(ctx *CompilerContext, module *Module, node ast.TypeExpr, context TypeContext) typeinfo.Type {
+func ResolveType(ctx *CompilerContext, module *module.Module, node ast.TypeExpr, context TypeContext) typeinfo.Type {
 	return resolveType(ctx, module, node, context, nil)
 }
 
 // QueryType resolves syntax without publishing source evidence or creating
 // generic instances. Loading means valid semantic evidence may exist later;
 // Invalid means the syntax resolved to an invalid semantic type.
-func QueryType(ctx *CompilerContext, module *Module, node ast.TypeExpr, context TypeContext) TypeQueryResult {
+func QueryType(ctx *CompilerContext, module *module.Module, node ast.TypeExpr, context TypeContext) TypeQueryResult {
 	result := TypeQueryResult{Status: TypeQueryAvailable}
 	resolver := syntaxResolver{ctx: ctx, module: module, query: &result}
 	result.Type = typeinfo.TypeFromSyntax(node, resolver.context(context, syntaxTarget(ctx), nil))
@@ -62,7 +63,7 @@ func QueryType(ctx *CompilerContext, module *Module, node ast.TypeExpr, context 
 	return result
 }
 
-func ResolveFunctionType(ctx *CompilerContext, module *Module, fn *ast.FnDecl, context TypeContext) *typeinfo.FuncType {
+func ResolveFunctionType(ctx *CompilerContext, module *module.Module, fn *ast.FnDecl, context TypeContext) *typeinfo.FuncType {
 	if fn == nil {
 		return nil
 	}
@@ -74,7 +75,7 @@ func ResolveFunctionType(ctx *CompilerContext, module *Module, fn *ast.FnDecl, c
 	return fnType
 }
 
-func resolveType(ctx *CompilerContext, module *Module, node ast.TypeExpr, context TypeContext, chain []typeInstantiationFrame) typeinfo.Type {
+func resolveType(ctx *CompilerContext, module *module.Module, node ast.TypeExpr, context TypeContext, chain []typeInstantiationFrame) typeinfo.Type {
 	resolver := syntaxResolver{ctx: ctx, module: module, chain: chain}
 	issues := make([]typeinfo.SyntaxIssue, 0, 1)
 	typ := typeinfo.TypeFromSyntax(node, resolver.context(context, syntaxTarget(ctx), &issues))

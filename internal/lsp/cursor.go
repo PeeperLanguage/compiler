@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -13,7 +14,7 @@ import (
 // rename share one AST walk instead of rebuilding parent maps separately.
 type cursorContext struct {
 	ctx     *project.CompilerContext
-	module  *project.Module
+	module  *module.Module
 	node    ast.Node
 	line    int
 	col     int
@@ -33,7 +34,7 @@ func locContains(loc *source.Location, line, col int) bool {
 	return true
 }
 
-func walkModuleAST(module *project.Module, visit func(ast.Node, ast.Node) bool) {
+func walkModuleAST(module *module.Module, visit func(ast.Node, ast.Node) bool) {
 	if module == nil || module.AST == nil || visit == nil {
 		return
 	}
@@ -63,7 +64,7 @@ func walkModuleAST(module *project.Module, visit func(ast.Node, ast.Node) bool) 
 	}
 }
 
-func buildCursorContext(ctx *project.CompilerContext, module *project.Module, position source.Position) *cursorContext {
+func buildCursorContext(ctx *project.CompilerContext, module *module.Module, position source.Position) *cursorContext {
 	if ctx == nil || module == nil || module.AST == nil {
 		return nil
 	}
@@ -87,7 +88,7 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, po
 	return cc
 }
 
-func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
+func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
 	if ident == nil || module == nil {
 		return nil
 	}
@@ -182,7 +183,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	return nil
 }
 
-func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
+func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
 	if sel == nil || ident == nil || module == nil || ctx == nil {
 		return nil
 	}
@@ -204,7 +205,7 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	return nil
 }
 
-func selectorBaseType(expr ast.Expr, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
+func selectorBaseType(expr ast.Expr, parents map[ast.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
 	if expr == nil || module == nil {
 		return nil, false
 	}

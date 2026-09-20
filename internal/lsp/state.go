@@ -8,6 +8,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
@@ -24,7 +25,7 @@ type ServerState struct {
 	LastMetrics       project.CompileMetrics
 	lastCtxGeneration uint64
 	workspace         *workspaceIndex
-	modules           map[string]*project.Module
+	modules           map[string]*module.Module
 	diagVersion       map[string]uint64
 	diagGeneration    uint64
 	documentVersions  map[string]int
@@ -33,7 +34,7 @@ type ServerState struct {
 func NewServerState() *ServerState {
 	return &ServerState{
 		Cache:            make(map[string]string),
-		modules:          make(map[string]*project.Module),
+		modules:          make(map[string]*module.Module),
 		diagVersion:      make(map[string]uint64),
 		documentVersions: make(map[string]int),
 	}
@@ -129,7 +130,7 @@ func (s *ServerState) workspaceDiagnosticSnapshots() []*diagnosticSnapshot {
 	return snapshots
 }
 
-func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *project.Module) {
+func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *module.Module) {
 	if s == nil {
 		return nil, nil
 	}
@@ -138,7 +139,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *pr
 	return s.recompileLocked(entryFile)
 }
 
-func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContext, *project.Module) {
+func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContext, *module.Module) {
 	canonicalEntry := project.CanonicalPath(entryFile)
 	diagBag := diagnostics.NewDiagnosticBag()
 	sourceProject, err := manifest.ResolveSourceFileProject(entryFile)
@@ -208,7 +209,7 @@ func (s *ServerState) retainCompiledContext(ctx *project.CompilerContext) {
 	s.lastCtxGeneration = s.diagGeneration
 }
 
-func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerContext, *project.Module) {
+func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerContext, *module.Module) {
 	if s == nil {
 		return nil, nil
 	}
@@ -354,7 +355,7 @@ func (s *ServerState) captureModules(ctx *project.CompilerContext) {
 		return
 	}
 	if s.modules == nil {
-		s.modules = make(map[string]*project.Module)
+		s.modules = make(map[string]*module.Module)
 	}
 	for _, module := range ctx.Modules() {
 		if module == nil || module.FilePath == "" || module.AST == nil || module.Phase < phase.Parsed {

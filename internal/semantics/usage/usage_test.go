@@ -9,6 +9,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -32,12 +33,12 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 }
 fn GetValue() -> i32 { return 42; }`
 		extAST := parser.New("external"+peeper.SourceExt, lexer.New("external"+peeper.SourceExt, extSrc, diag).Tokenize(), diag).ParseModule()
-		extMod := &project.Module{
+		extMod := &module.Module{
 			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 			FilePath: "external" + peeper.SourceExt,
 			Content:  extSrc,
 			AST:      extAST,
-			Imports:  make(map[string]project.ResolvedImport),
+			Imports:  make(map[string]module.ResolvedImport),
 		}
 		ctx.AddModule(extMod)
 		collector.Collect(ctx, extMod)
@@ -48,27 +49,27 @@ fn GetValue() -> i32 { return 42; }`
 
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	modAST := parser.New(filePath, stream, diag).ParseModule()
-	module := &project.Module{
+	mod := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "usage_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 
 	if setupImports {
-		module.Imports["external"] = project.ResolvedImport{
+		mod.Imports["external"] = module.ResolvedImport{
 			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 			FilePath: "external" + peeper.SourceExt,
 		}
 	}
 
-	ctx.AddModule(module)
-	collector.Collect(ctx, module)
-	binder.Bind(ctx, module)
-	resolver.Resolve(ctx, module)
-	typechecker.Check(ctx, module)
-	Analyze(ctx, module)
+	ctx.AddModule(mod)
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+	typechecker.Check(ctx, mod)
+	Analyze(ctx, mod)
 	return diag
 }
 

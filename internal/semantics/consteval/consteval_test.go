@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -18,18 +19,18 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func constevalModule(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func constevalModule(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "consteval_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "consteval_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -41,7 +42,7 @@ func constevalModule(t *testing.T, src string) (*project.Module, *diagnostics.Di
 
 func TestFinalizeValuesInitializesOnlyConstantResult(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
-	module := &project.Module{ModuleScope: symbols.NewScope(nil)}
+	module := &module.Module{ModuleScope: symbols.NewScope(nil)}
 
 	FinalizeValues(project.New(".", peeper.SourceExt, diag), module)
 
@@ -176,12 +177,12 @@ func TestFinalizeValuesRecomputesLazyConstantsWithFinalSymbolTypes(t *testing.T)
 	const filePath = "consteval_test" + peeper.SourceExt
 	src := `const Value = 1;`
 	diag.AddSourceContent(filePath, src)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "consteval_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -247,18 +248,18 @@ fn main() {
 func TestEvaluateReadsForeignPublishedConstantWithoutConsumerCache(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
-	parse := func(filePath, importPath, src string) *project.Module {
-		module := &project.Module{
+	parse := func(filePath, importPath, src string) *module.Module {
+		module := &module.Module{
 			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: importPath},
 			FilePath: filePath,
 			Content:  src,
 			AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-			Imports:  make(map[string]project.ResolvedImport),
+			Imports:  make(map[string]module.ResolvedImport),
 		}
 		ctx.AddModule(module)
 		return module
 	}
-	resolve := func(module *project.Module) {
+	resolve := func(module *module.Module) {
 		collector.Collect(ctx, module)
 		binder.Bind(ctx, module)
 		resolver.Resolve(ctx, module)
@@ -327,7 +328,7 @@ func TestEvaluateStringConst(t *testing.T) {
 	}
 }
 
-func assertIntConst(t *testing.T, module *project.Module, name, want, wantType string) {
+func assertIntConst(t *testing.T, module *module.Module, name, want, wantType string) {
 	t.Helper()
 	sym, ok := module.ModuleScope.LookupLocal(name)
 	if !ok || sym == nil {
@@ -340,7 +341,7 @@ func assertIntConst(t *testing.T, module *project.Module, name, want, wantType s
 	}
 }
 
-func evaluatedConst(module *project.Module, id symbols.SymbolID) constvalue.Value {
+func evaluatedConst(module *module.Module, id symbols.SymbolID) constvalue.Value {
 	if value := module.Constants.Published(id); value != nil {
 		return value
 	}
@@ -348,7 +349,7 @@ func evaluatedConst(module *project.Module, id symbols.SymbolID) constvalue.Valu
 	return value
 }
 
-func assertBoolConst(t *testing.T, module *project.Module, name string, want bool) {
+func assertBoolConst(t *testing.T, module *module.Module, name string, want bool) {
 	t.Helper()
 	sym, ok := module.ModuleScope.LookupLocal(name)
 	if !ok || sym == nil {

@@ -6,15 +6,10 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
-
 	"compiler/internal/semantics/typeinfo"
 )
-
-type namedTypeDeclaration struct {
-	syntax ast.TypeDecl
-	base   *typeinfo.DefinedType
-}
 
 type namedTypeInstance struct {
 	ownerModuleID moduleid.ID
@@ -33,17 +28,13 @@ type typeInstantiationFrame struct {
 
 // RegisterTypeDeclaration records collection's reusable declaration artifact
 // and indexes it for concrete substitution in the current context.
-func (ctx *CompilerContext) RegisterTypeDeclaration(module *Module, declaration ast.TypeDecl, base *typeinfo.DefinedType) {
-	if ctx == nil || module == nil || declaration == nil || base == nil || base.Identity == "" {
+func (ctx *CompilerContext) RegisterTypeDeclaration(owner *module.Module, declaration ast.TypeDecl, base *typeinfo.DefinedType) {
+	if ctx == nil || owner == nil || declaration == nil || base == nil || base.Identity == "" {
 		return
 	}
-	artifact := namedTypeDeclaration{syntax: declaration, base: base}
 	ctx.mu.Lock()
-	if module.namedTypeDeclarations == nil {
-		module.namedTypeDeclarations = make(map[string]namedTypeDeclaration)
-	}
-	module.namedTypeDeclarations[base.Identity] = artifact
-	ctx.typeDeclarations[base.Identity] = module
+	owner.RecordTypeDeclaration(base.Identity, module.TypeDeclaration{Syntax: declaration, Base: base})
+	ctx.typeDeclarations[base.Identity] = owner
 	ctx.mu.Unlock()
 }
 
@@ -102,11 +93,12 @@ func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, argument
 		return &typeinfo.InvalidType{}
 	}
 	declarationModule, ok := ctx.typeDeclarations[base.Identity]
-	declaration := namedTypeDeclaration{}
-	if ok && declarationModule != nil {
-		declaration = declarationModule.namedTypeDeclarations[base.Identity]
+	declaration := module.TypeDeclaration{}
+	declarationOK := false
+	if declarationModule != nil {
+		declaration, declarationOK = declarationModule.TypeDeclaration(base.Identity)
 	}
-	if !ok || declarationModule == nil || declaration.syntax == nil || declaration.base != base {
+	if !ok || declarationModule == nil || !declarationOK || declaration.Syntax == nil || declaration.Base != base {
 		ctx.mu.Unlock()
 		if ctx.Diagnostics != nil {
 			ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -146,13 +138,13 @@ func (ctx *CompilerContext) instantiateType(base *typeinfo.DefinedType, argument
 	return instance
 }
 
-func (ctx *CompilerContext) typeInstanceUnderlying(declarationModule *Module, declaration namedTypeDeclaration, instance *typeinfo.DefinedType, chain []typeInstantiationFrame) typeinfo.Type {
-	syntax := declaration.syntax.UnderlyingType()
+func (ctx *CompilerContext) typeInstanceUnderlying(declarationModule *module.Module, declaration module.TypeDeclaration, instance *typeinfo.DefinedType, chain []typeInstantiationFrame) typeinfo.Type {
+	syntax := declaration.Syntax.UnderlyingType()
 	context := TypeContext{
 		AllowAbstractSelf: true,
-		TypeParameters:    typeinfo.TypeParameterBindings(declaration.base.TypeParameters, instance.TypeArguments),
+		TypeParameters:    typeinfo.TypeParameterBindings(declaration.Base.TypeParameters, instance.TypeArguments),
 	}
-	if _, ok := declaration.syntax.(*ast.InterfaceDecl); ok {
+	if _, ok := declaration.Syntax.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = syntax
 	}
 	return resolveType(ctx, declarationModule, syntax, context, chain)
@@ -189,19 +181,20 @@ func (ctx *CompilerContext) CompleteTypeInstances(bases []*typeinfo.DefinedType)
 		ctx.mu.RLock()
 		cached := ctx.typeInstances[identity]
 		declarationModule := ctx.typeDeclarations[cached.base.Identity]
-		declaration := namedTypeDeclaration{}
+		declaration := module.TypeDeclaration{}
+		declarationOK := false
 		if declarationModule != nil {
-			declaration = declarationModule.namedTypeDeclarations[cached.base.Identity]
+			declaration, declarationOK = declarationModule.TypeDeclaration(cached.base.Identity)
 		}
 		ctx.mu.RUnlock()
-		if declarationModule == nil || declaration.syntax == nil || declaration.base != cached.base {
+		if declarationModule == nil || !declarationOK || declaration.Syntax == nil || declaration.Base != cached.base {
 			continue
 		}
 		chain := []typeInstantiationFrame{{
 			declarationIdentity: cached.base.Identity,
 			applicationIdentity: identity,
 			applicationText:     cached.typ.Text(),
-			node:                declaration.syntax.UnderlyingType(),
+			node:                declaration.Syntax.UnderlyingType(),
 		}}
 		underlying := ctx.typeInstanceUnderlying(declarationModule, declaration, cached.typ, chain)
 		if !typeinfo.ContainsInvalid(underlying) {

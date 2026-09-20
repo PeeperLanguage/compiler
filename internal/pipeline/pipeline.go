@@ -15,6 +15,7 @@ import (
 	"compiler/internal/ir/hir/fold"
 	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	preludepkg "compiler/internal/prelude"
@@ -34,7 +35,7 @@ import (
 )
 
 // Run the central lex -> parse -> analyze -> HIR -> MIR -> LLVM flow.
-func Run(ctx *project.CompilerContext, entry *project.Module) error {
+func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	if ctx == nil || entry == nil {
 		return errors.New("empty pipeline")
 	}
@@ -75,7 +76,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	}
 
 	modules := ctx.Modules()
-	moduleIndex := make(map[graph.NodeID]*project.Module, len(modules))
+	moduleIndex := make(map[graph.NodeID]*module.Module, len(modules))
 	moduleIDs := make([]graph.NodeID, 0, len(modules))
 	for _, mod := range modules {
 		if mod == nil || !mod.ID.Valid() {
@@ -116,14 +117,14 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 		return nil
 	}
 
-	orderedModules := make([]*project.Module, 0, len(orderedIDs))
+	orderedModules := make([]*module.Module, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		module := moduleIndex[id]
 		if module != nil && module.ID.Valid() {
 			orderedModules = append(orderedModules, module)
 		}
 	}
-	var prelude *project.Module
+	var prelude *module.Module
 	if preludeID.Valid() {
 		prelude = moduleIndex[graph.NodeID(preludeID.String())]
 	}
@@ -175,7 +176,7 @@ func Run(ctx *project.CompilerContext, entry *project.Module) error {
 	return nil
 }
 
-func validateProgramEntrypoint(entry *project.Module, diag *diagnostics.DiagnosticBag) {
+func validateProgramEntrypoint(entry *module.Module, diag *diagnostics.DiagnosticBag) {
 	const message = "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`"
 	if entry == nil || entry.ModuleScope == nil {
 		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, nil, "")
@@ -199,7 +200,7 @@ func validateProgramEntrypoint(entry *project.Module, diag *diagnostics.Diagnost
 	}
 }
 
-func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*project.Module, prelude *project.Module, preludeInjected bool, lastPhase phase.Phase, diag *diagnostics.DiagnosticBag) bool {
+func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*module.Module, prelude *module.Module, preludeInjected bool, lastPhase phase.Phase, diag *diagnostics.DiagnosticBag) bool {
 	for {
 		if !preludeInjected && prelude != nil && prelude.ModuleScope != nil && prelude.Phase >= phase.Collected {
 			// Inject prelude as soon as its module scope exists. Other modules can
@@ -209,7 +210,7 @@ func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*proje
 			preludeInjected = true
 		}
 
-		ready := make([]*project.Module, 0, len(orderedModules))
+		ready := make([]*module.Module, 0, len(orderedModules))
 		for _, module := range orderedModules {
 			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && moduleReadyForNextPhase(ctx, module, prelude, preludeInjected) {
 				ready = append(ready, module)
@@ -221,12 +222,12 @@ func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*proje
 
 		var wg sync.WaitGroup
 		progress := make(chan bool, len(ready))
-		for _, module := range ready {
+		for _, mod := range ready {
 			wg.Add(1)
-			go func(module *project.Module) {
+			go func(mod *module.Module) {
 				defer wg.Done()
-				progress <- advanceModulePhase(ctx, module, diag)
-			}(module)
+				progress <- advanceModulePhase(ctx, mod, diag)
+			}(mod)
 		}
 		wg.Wait()
 		close(progress)
@@ -245,7 +246,7 @@ func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*proje
 
 // injectPreludeSymbols keeps repeated pipeline runs idempotent while exposing
 // a real collision between compiler-owned globals and prelude declarations.
-func injectPreludeSymbols(ctx *project.CompilerContext, prelude *project.Module, diag *diagnostics.DiagnosticBag) {
+func injectPreludeSymbols(ctx *project.CompilerContext, prelude *module.Module, diag *diagnostics.DiagnosticBag) {
 	if ctx == nil || ctx.GlobalScope == nil || prelude == nil || prelude.ModuleScope == nil {
 		return
 	}
@@ -264,7 +265,7 @@ func injectPreludeSymbols(ctx *project.CompilerContext, prelude *project.Module,
 
 // requireScheduledModulesAtLeast reports scheduled modules that stalled before
 // a required project-wide phase barrier without user diagnostics.
-func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[moduleid.ID]string, phase phase.Phase) error {
+func requireScheduledModulesAtLeast(modules []*module.Module, scheduled map[moduleid.ID]string, phase phase.Phase) error {
 	for _, module := range modules {
 		if module == nil || module.Phase >= phase {
 			continue
@@ -281,7 +282,7 @@ func requireScheduledModulesAtLeast(modules []*project.Module, scheduled map[mod
 	return nil
 }
 
-func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *project.Module, preludeInjected bool) bool {
+func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *module.Module, preludeInjected bool) bool {
 	if ctx == nil || module == nil || module.AST == nil || module.Phase >= phase.Backend {
 		return false
 	}
@@ -305,7 +306,7 @@ func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *proj
 	return true
 }
 
-func preludeReadyForPhase(module, prelude *project.Module, preludeInjected bool, next phase.Phase) bool {
+func preludeReadyForPhase(module, prelude *module.Module, preludeInjected bool, next phase.Phase) bool {
 	if module == nil || prelude == nil || module.ID == prelude.ID {
 		return true
 	}
@@ -384,7 +385,7 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 // advanceModulePhase moves one module exactly one phase forward. Serial Run uses
 // same kernel that future dependency-aware scheduling will reuse, so phase
 // prerequisites stay centralized in one place.
-func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, diag *diagnostics.DiagnosticBag) bool {
+func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, diag *diagnostics.DiagnosticBag) bool {
 	if ctx == nil || module == nil || module.AST == nil {
 		return false
 	}
@@ -567,11 +568,11 @@ func advanceModulePhase(ctx *project.CompilerContext, module *project.Module, di
 
 // invalidateSemanticDependents applies semantic API changes only between
 // parallel scheduler batches, after dependency type information is final.
-func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*project.Module) {
+func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*module.Module) {
 	if ctx == nil || ctx.ImportGraph == nil {
 		return
 	}
-	modules := make(map[graph.NodeID]*project.Module)
+	modules := make(map[graph.NodeID]*module.Module)
 	for _, module := range ctx.Modules() {
 		if module != nil && module.ID.Valid() {
 			modules[graph.NodeID(module.ID.String())] = module

@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -13,7 +14,7 @@ import (
 // SemanticExportFingerprint identifies compiler-visible semantic facts exported by module.
 // Constant values resolve through their defining module, so an exported default that
 // references an imported constant still changes when that constant changes.
-func SemanticExportFingerprint(ctx *CompilerContext, module *Module) string {
+func SemanticExportFingerprint(ctx *CompilerContext, module *module.Module) string {
 	if module == nil || module.ModuleScope == nil {
 		return ast.FingerprintParts(nil)
 	}
@@ -44,7 +45,7 @@ func SemanticExportFingerprint(ctx *CompilerContext, module *Module) string {
 	return ast.FingerprintParts(parts)
 }
 
-func semanticExportMetadata(ctx *CompilerContext, module *Module, sym *symbols.Symbol) string {
+func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *symbols.Symbol) string {
 	decl, ok := sym.ASTNode.(ast.Decl)
 	if !ok || decl == nil {
 		return ""

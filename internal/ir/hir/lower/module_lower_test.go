@@ -12,6 +12,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -24,11 +25,11 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower ...func(*project.Module)) *hir.Module {
+func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower ...func(*module.Module)) *hir.Module {
 	t.Helper()
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID: moduleid.ID{
 			Origin:     string(project.ModuleOriginLocal),
 			ImportPath: importPath,
@@ -37,7 +38,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 		IsEntry:  true,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -62,7 +63,7 @@ func generateTestHIR(t *testing.T, filePath, importPath, src string, beforeLower
 }
 
 func TestGenerateHIRDoesNotResolveMissingIdentifierBinding(t *testing.T) {
-	out := generateTestHIR(t, "hir_identifier_evidence_test"+peeper.SourceExt, "hir_identifier_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_identifier_evidence_test"+peeper.SourceExt, "hir_identifier_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
 		module.Bindings.Unbind(identifier)
@@ -78,7 +79,7 @@ func TestGenerateHIRDoesNotResolveMissingIdentifierBinding(t *testing.T) {
 }
 
 func TestGenerateHIRRequiresExpressionTypeEvidence(t *testing.T) {
-	out := generateTestHIR(t, "hir_type_evidence_test"+peeper.SourceExt, "hir_type_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_type_evidence_test"+peeper.SourceExt, "hir_type_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
 		module.Typechecking.ForgetExprType(identifier.ID())
@@ -90,7 +91,7 @@ func TestGenerateHIRRequiresExpressionTypeEvidence(t *testing.T) {
 }
 
 func TestGenerateHIRRequiresNumberTypeEvidence(t *testing.T) {
-	out := generateTestHIR(t, "hir_number_evidence_test"+peeper.SourceExt, "hir_number_evidence_test", `fn Read() -> i32 { return 1; }`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_number_evidence_test"+peeper.SourceExt, "hir_number_evidence_test", `fn Read() -> i32 { return 1; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		number := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.NumberLit)
 		module.Typechecking.ForgetExprType(number.ID())
@@ -102,7 +103,7 @@ func TestGenerateHIRRequiresNumberTypeEvidence(t *testing.T) {
 }
 
 func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
-	out := generateTestHIR(t, "hir_unary_evidence_test"+peeper.SourceExt, "hir_unary_evidence_test", `fn Read(value: i32) -> i32 { return -value; }`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_unary_evidence_test"+peeper.SourceExt, "hir_unary_evidence_test", `fn Read(value: i32) -> i32 { return -value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		unary := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.UnaryExpr)
 		module.Typechecking.ForgetExprType(unary.ID())
@@ -115,7 +116,7 @@ func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
 
 func TestGenerateHIRRequiresStructFieldEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_field_evidence_test"+peeper.SourceExt, "hir_field_evidence_test", `struct Box { value: i32 }
-fn Read(box: Box) -> i32 { return box.value; }`, func(module *project.Module) {
+fn Read(box: Box) -> i32 { return box.value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[1].(*ast.FnDecl)
 		selector := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
 		module.Typechecking.ForgetStructField(selector.ID())
@@ -131,7 +132,7 @@ func TestGenerateHIRRequiresStructLiteralOrderingEvidence(t *testing.T) {
 	left: i32,
 	right: i32,
 }
-fn Read() -> Pair { return Pair.{ right = 2, left = 1 }; }`, func(module *project.Module) {
+fn Read() -> Pair { return Pair.{ right = 2, left = 1 }; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[1].(*ast.FnDecl)
 		literal := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.StructLit)
 		module.Typechecking.ForgetStructLiteralFields(literal.ID())
@@ -144,7 +145,7 @@ fn Read() -> Pair { return Pair.{ right = 2, left = 1 }; }`, func(module *projec
 }
 
 func TestGenerateHIRRequiresResolvedExternSignature(t *testing.T) {
-	out := generateTestHIR(t, "hir_signature_evidence_test"+peeper.SourceExt, "hir_signature_evidence_test", `fn Read() -> i32;`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_signature_evidence_test"+peeper.SourceExt, "hir_signature_evidence_test", `fn Read() -> i32;`, func(module *module.Module) {
 		symbol, _ := module.ModuleScope.Lookup("Read")
 		symbol.Type = nil
 	})
@@ -159,12 +160,12 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 
 	const importedPath = "util" + peeper.SourceExt
 	importedSource := `fn Helper() -> i32 { return 1; }`
-	imported := &project.Module{
+	imported := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "util"},
 		FilePath: importedPath,
 		Content:  importedSource,
 		AST:      parser.New(importedPath, lexer.New(importedPath, importedSource, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(imported)
 	collector.Collect(ctx, imported)
@@ -175,12 +176,12 @@ func TestGenerateHIRDoesNotResolveMissingImportedBinding(t *testing.T) {
 	const entryPath = "main" + peeper.SourceExt
 	entrySource := "import \"util\";\nfn main() -> i32 { return util::Helper(); }"
 	entryAST := parser.New(entryPath, lexer.New(entryPath, entrySource, diag).Tokenize(), diag).ParseModule()
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "main"},
 		FilePath: entryPath,
 		Content:  entrySource,
 		AST:      entryAST,
-		Imports: map[string]project.ResolvedImport{
+		Imports: map[string]module.ResolvedImport{
 			"util": {ID: imported.ID, Decl: entryAST.Imports[0], FilePath: imported.FilePath},
 		},
 	}
@@ -361,7 +362,7 @@ func TestGenerateHIRLowersSequenceForIntoStructuredSegments(t *testing.T) {
 }
 
 func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
-	out := generateTestHIR(t, "hir_for_evidence_test"+peeper.SourceExt, "hir_for_evidence_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_for_evidence_test"+peeper.SourceExt, "hir_for_evidence_test", `fn main() { for value in 0..2 {} }`, func(module *module.Module) {
 		loop := module.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
 		module.Typechecking.ForgetForIteration(loop.ID())
 	})
@@ -375,7 +376,7 @@ func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 // admits: IterationPlan is closed, so a consumer's switch over the two plans is
 // exhaustive, but a zero Plan is reachable if a producer ever publishes early.
 func TestGenerateHIRRejectsForInWithoutAnIterationPlan(t *testing.T) {
-	out := generateTestHIR(t, "hir_for_plan_test"+peeper.SourceExt, "hir_for_plan_test", `fn main() { for value in 0..2 {} }`, func(module *project.Module) {
+	out := generateTestHIR(t, "hir_for_plan_test"+peeper.SourceExt, "hir_for_plan_test", `fn main() { for value in 0..2 {} }`, func(module *module.Module) {
 		loop := module.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
 		evidence, found := module.Typechecking.ForIteration(loop.ID())
 		if !found {
@@ -1639,7 +1640,7 @@ fn Read(result: Result) -> i32 {
 	match result {
 		Result::Ok with { value = payload } => { return payload; }
 	}
-}`, func(module *project.Module) {
+}`, func(module *module.Module) {
 		fn := module.AST.Stmts[1].(*ast.FnDecl)
 		matchStmt := fn.Body.Stmts[0].(*ast.MatchStmt)
 		match, found := module.Typechecking.Match(matchStmt.ID())

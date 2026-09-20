@@ -9,6 +9,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -20,18 +21,18 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) {
+func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	t.Helper()
 	const filePath = "effect_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, source)
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "effect_test"},
 		FilePath: filePath,
 		Content:  source,
 		AST:      parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -72,7 +73,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *project.Module) 
 
 // publishedOps flattens one function's effects in site order so a test can
 // state the published sequence without naming SiteIDs.
-func publishedOps(t *testing.T, result effect.Result, module *project.Module, name string) []string {
+func publishedOps(t *testing.T, result effect.Result, module *module.Module, name string) []string {
 	t.Helper()
 	symbol, found := module.ModuleScope.Lookup(name)
 	if !found || symbol == nil {

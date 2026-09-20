@@ -8,21 +8,10 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/moduleid"
+	"compiler/internal/module"
 	"compiler/pkg/manifest"
 	"compiler/pkg/remotes"
 )
-
-// Canonical file-backed import after resolver lookup.
-type ResolvedImport struct {
-	// Canonical imported module identity.
-	ID moduleid.ID
-	// Source import declaration, when resolved from parsed syntax.
-	Decl *ast.ImportDecl
-	// Absolute slash-separated source path.
-	FilePath string
-}
 
 // ImportCandidate is one source-level import path visible from a compiler
 // context. Continuing candidates are directories or roots which need more path.
@@ -232,7 +221,7 @@ func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, namespace, fi
 }
 
 // ResolveImportPath resolves an import path to a module file.
-func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, error) {
+func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*module.ResolvedImport, error) {
 	if ctx == nil {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "nil compiler context"}
 	}
@@ -314,7 +303,7 @@ func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, 
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
 	}
 
-	return &ResolvedImport{ID: id, FilePath: absPath}, nil
+	return &module.ResolvedImport{ID: id, FilePath: absPath}, nil
 }
 
 func splitNamespacedImportPath(importPath string) (string, string, bool) {

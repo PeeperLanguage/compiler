@@ -3,6 +3,7 @@ package binder
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
+	"compiler/internal/module"
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
@@ -11,11 +12,11 @@ import (
 
 type binder struct {
 	ctx       *project.CompilerContext
-	module    *project.Module
+	module    *module.Module
 	typeGraph *graph.DependencyGraph
 }
 
-func Bind(ctx *project.CompilerContext, module *project.Module) {
+func Bind(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil {
 		return
 	}

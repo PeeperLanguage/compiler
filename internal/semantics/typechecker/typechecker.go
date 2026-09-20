@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
@@ -10,7 +11,7 @@ import (
 
 type checker struct {
 	ctx                 *project.CompilerContext
-	module              *project.Module
+	module              *module.Module
 	flow                *flowCheck
 	siteOnly            bool
 	payloadContext      int
@@ -106,7 +107,7 @@ func (c *checker) checkModule() {
 	})
 }
 
-func Check(ctx *project.CompilerContext, module *project.Module) {
+func Check(ctx *project.CompilerContext, module *module.Module) {
 	if module == nil || ctx == nil {
 		return
 	}
@@ -117,7 +118,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) {
 // CanAdaptFirstCallArgument reports whether argType can occupy a function's
 // first parameter through ordinary assignment or method/pipe adaptation.
 // Addressability and mutability remain call-site checks, not discovery filters.
-func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *project.Module, paramType, argType typeinfo.Type) bool {
+func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *module.Module, paramType, argType typeinfo.Type) bool {
 	if ctx == nil || module == nil || paramType == nil || argType == nil {
 		return false
 	}

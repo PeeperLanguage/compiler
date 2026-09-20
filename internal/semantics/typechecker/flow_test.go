@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -20,18 +21,18 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "flow_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "flow_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -402,7 +403,7 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	}
 	state := flowState{variants: []variantStateFact{{origins: []place.Origin{{Root: global}}, cases: []int{1}, caseCount: 2}}}
 	analyzer := flowAnalyzer{
-		module: &project.Module{ModuleScope: moduleScope},
+		module: &module.Module{ModuleScope: moduleScope},
 		result: flowresult.New(),
 	}
 

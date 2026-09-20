@@ -4,12 +4,13 @@ import (
 	"fmt"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/module"
 	"compiler/internal/prelude"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 )
 
-func Analyze(ctx *project.CompilerContext, module *project.Module) {
+func Analyze(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}

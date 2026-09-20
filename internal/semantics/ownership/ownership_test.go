@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -27,7 +28,7 @@ import (
 type ownershipResult struct {
 	*diagnostics.DiagnosticBag
 	ctx    *project.CompilerContext
-	module *project.Module
+	module *module.Module
 }
 
 func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
@@ -37,12 +38,12 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "ownership_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -243,7 +244,7 @@ func scopeExitSiteID(t *testing.T, graph *cfg.ControlFlowGraph, blockID ast.Node
 	return id
 }
 
-func cleanupSymbolNames(module *project.Module, cleanup []symbols.SymbolID) []string {
+func cleanupSymbolNames(module *module.Module, cleanup []symbols.SymbolID) []string {
 	names := make(map[symbols.SymbolID]string)
 	if module != nil && module.ModuleScope != nil {
 		for _, sym := range module.ModuleScope.Symbols() {

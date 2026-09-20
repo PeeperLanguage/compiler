@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -16,19 +17,19 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func checkResolveSource(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkResolveSource(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "resolver_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "resolver_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -42,14 +43,14 @@ func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, diag)
 	dependencyID := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "dep"}
 	private := symbols.New("hidden", symbols.SymbolFunc, nil, nil)
-	dependency := &project.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
+	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
 	if err := dependency.ModuleScope.Declare(private); err != nil {
 		t.Fatalf("declare private imported symbol: %v", err)
 	}
-	module := &project.Module{
+	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
-		Imports:     map[string]project.ResolvedImport{"dep": {ID: dependencyID}},
+		Imports:     map[string]module.ResolvedImport{"dep": {ID: dependencyID}},
 	}
 	alias := symbols.New("dep", symbols.SymbolImport, nil, nil)
 	if err := module.ModuleScope.Declare(alias); err != nil {

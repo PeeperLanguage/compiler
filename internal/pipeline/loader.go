@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/prelude"
@@ -24,7 +25,7 @@ type moduleLoader struct {
 	wg        sync.WaitGroup
 }
 
-func (l *moduleLoader) Load(entry *project.Module) error {
+func (l *moduleLoader) Load(entry *module.Module) error {
 	if l == nil || l.ctx == nil {
 		return errors.New("nil module loader")
 	}
@@ -36,7 +37,7 @@ func (l *moduleLoader) Load(entry *project.Module) error {
 	return nil
 }
 
-func (l *moduleLoader) enqueue(module *project.Module) {
+func (l *moduleLoader) enqueue(module *module.Module) {
 	if l == nil || l.ctx == nil || module == nil {
 		return
 	}
@@ -69,7 +70,7 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	go l.loadModule(module)
 }
 
-func (l *moduleLoader) loadModule(module *project.Module) {
+func (l *moduleLoader) loadModule(module *module.Module) {
 	defer l.wg.Done()
 	if module == nil || l == nil {
 		return
@@ -113,14 +114,14 @@ func (l *moduleLoader) loadModule(module *project.Module) {
 	l.resolveImports(module, loadDiag)
 }
 
-func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.DiagnosticBag) {
-	if module == nil || module.AST == nil {
+func (l *moduleLoader) resolveImports(mod *module.Module, diag *diagnostics.DiagnosticBag) {
+	if mod == nil || mod.AST == nil {
 		return
 	}
-	if module.Imports == nil {
-		module.Imports = make(map[string]project.ResolvedImport)
+	if mod.Imports == nil {
+		mod.Imports = make(map[string]module.ResolvedImport)
 	}
-	for _, imp := range module.AST.Imports {
+	for _, imp := range mod.AST.Imports {
 		rawPath, ok := ast.ImportPathFromDecl(imp)
 		if !ok {
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "invalid import path")
@@ -136,7 +137,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "missing import alias")
 			continue
 		}
-		if existing, ok := module.Imports[alias]; ok && existing.ID != resolved.ID {
+		if existing, ok := mod.Imports[alias]; ok && existing.ID != resolved.ID {
 			l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
 		}
@@ -150,9 +151,9 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 		}
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
-		module.Imports[alias] = resolvedImport
+		mod.Imports[alias] = resolvedImport
 		if l.ctx.ImportGraph != nil {
-			l.ctx.ImportGraph.AddEdge(graph.NodeID(module.ID.String()), graph.NodeID(resolved.ID.String()))
+			l.ctx.ImportGraph.AddEdge(graph.NodeID(mod.ID.String()), graph.NodeID(resolved.ID.String()))
 		}
 
 		if existing, ok := l.ctx.ModuleByID(resolved.ID); ok {
@@ -163,7 +164,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			// owns the conflict policy; only this site knows which import caused
 			// it, so it labels the diagnostic the registry recorded.
 			if existing.FilePath != "" && existing.FilePath != project.CanonicalPath(resolved.FilePath) {
-				if conflict := l.ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath}); conflict != nil {
+				if conflict := l.ctx.AddModule(&module.Module{ID: resolved.ID, FilePath: resolved.FilePath}); conflict != nil {
 					conflict.WithPrimaryLabel(ast.LocOf(imp), "conflicting import")
 				}
 				continue
@@ -171,7 +172,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.enqueue(existing)
 			continue
 		}
-		l.enqueue(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath})
+		l.enqueue(&module.Module{ID: resolved.ID, FilePath: resolved.FilePath})
 	}
 }
 

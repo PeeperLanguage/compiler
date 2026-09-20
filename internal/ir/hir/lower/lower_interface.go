@@ -3,12 +3,13 @@ package lower
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Module, scope *symbols.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
+func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *module.Module, scope *symbols.Scope, expr ast.Expr, expectedType typeinfo.Type) ir.Expr {
 	if expectedType == nil {
 		return nil
 	}
@@ -66,7 +67,7 @@ func maybeLowerInterfaceExpr(ctx *project.CompilerContext, module *project.Modul
 	}
 }
 
-func lookupInterfaceMethod(module *project.Module, baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
+func lookupInterfaceMethod(module *module.Module, baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
 	iface, ok := typeinfo.InterfaceTypeOf(loweredRuntimeType(baseType, nil))
 	if !ok {
 		return nil, -1, false

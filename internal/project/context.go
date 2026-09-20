@@ -11,6 +11,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
@@ -43,13 +44,13 @@ type CompilerContext struct {
 	GlobalScope *symbols.Scope
 
 	// Canonical module identity -> module.
-	modules map[moduleid.ID]*Module
+	modules map[moduleid.ID]*module.Module
 	// Canonical file path -> module identity.
 	fileIndex map[string]moduleid.ID
 	// Prior semantic API fingerprints supplied by incremental clients.
 	semanticExportBaselines map[moduleid.ID]string
 	// Named declaration identity -> collected module declaration index.
-	typeDeclarations map[string]*Module
+	typeDeclarations map[string]*module.Module
 	// Concrete semantic application identity -> canonical instance.
 	typeInstances map[string]namedTypeInstance
 	// Import dependencies shared by module loading and pipeline scheduling.
@@ -166,10 +167,10 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		ImportGraph:           graph.NewDependencyGraph(GraphEdgeImport),
 		mu:                    &sync.RWMutex{},
 
-		modules:                 make(map[moduleid.ID]*Module),
+		modules:                 make(map[moduleid.ID]*module.Module),
 		fileIndex:               make(map[string]moduleid.ID),
 		semanticExportBaselines: make(map[moduleid.ID]string),
-		typeDeclarations:        make(map[string]*Module),
+		typeDeclarations:        make(map[string]*module.Module),
 		typeInstances:           make(map[string]namedTypeInstance),
 	}
 }
@@ -185,11 +186,11 @@ func (ctx *CompilerContext) WithDiagnostics(diag *diagnostics.DiagnosticBag) *Co
 }
 
 // ResetModule invalidates module artifacts and downstream diagnostics together.
-func (ctx *CompilerContext) ResetModule(module *Module, retained phase.Phase) {
+func (ctx *CompilerContext) ResetModule(module *module.Module, retained phase.Phase) {
 	if ctx == nil || module == nil {
 		return
 	}
-	module.resetToPhase(retained)
+	module.ResetToPhase(retained)
 	ctx.mu.Lock()
 	for identity, instance := range ctx.typeInstances {
 		if instance.ownerModuleID == module.ID {

@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
@@ -19,18 +20,18 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := New(".", peeper.SourceExt, diag)
 	dependencyID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "dep"}
-	dependency := &Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
+	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
 	target := symbols.New("Thing", symbols.SymbolType, nil, nil)
 	target.IsPub = false
 	target.BindType(&typeinfo.DefinedType{Name: "Thing", Identity: "dep::Thing", Kind: typeinfo.DefinedKindStruct})
 	if err := dependency.ModuleScope.Declare(target); err != nil {
 		t.Fatalf("declare imported type: %v", err)
 	}
-	module := &Module{
+	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
 		Bindings:    bindingresult.New(),
-		Imports: map[string]ResolvedImport{
+		Imports: map[string]module.ResolvedImport{
 			"dep": {ID: dependencyID},
 		},
 	}
@@ -78,10 +79,10 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 
 func TestQualifiedTypeResolutionDoesNotMarkInvalidQualifierUsed(t *testing.T) {
 	ctx := New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
-	module := &Module{
+	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
-		Imports:     make(map[string]ResolvedImport),
+		Imports:     make(map[string]module.ResolvedImport),
 	}
 	local := symbols.New("local", symbols.SymbolVar, nil, nil)
 	if err := module.ModuleScope.Declare(local); err != nil {

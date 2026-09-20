@@ -9,6 +9,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -222,12 +223,12 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -237,7 +238,7 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	return diag
 }
 
-func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const (
 		filePath     = "typechecker_test" + peeper.SourceExt
@@ -250,12 +251,12 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	ctx := project.New(".", peeper.SourceExt, diag)
 
 	extAST := parser.New(externalPath, lexer.New(externalPath, externalSrc, diag).Tokenize(), diag).ParseModule()
-	extModule := &project.Module{
+	extModule := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 		FilePath: externalPath,
 		Content:  externalSrc,
 		AST:      extAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(extModule)
 	collector.Collect(ctx, extModule)
@@ -264,12 +265,12 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	Check(ctx, extModule)
 
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports: map[string]project.ResolvedImport{
+		Imports: map[string]module.ResolvedImport{
 			"external": {
 				ID:       extModule.ID,
 				FilePath: externalPath,
@@ -350,19 +351,19 @@ func TestAllocArityReportsSourceArguments(t *testing.T) {
 	}
 }
 
-func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkTypeModule(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "typechecker_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
@@ -3199,7 +3200,7 @@ fn valid() -> i32 {
 
 func TestCanAdaptFirstCallArgumentUsesCallConversionRules(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
-	module := &project.Module{}
+	module := &module.Module{}
 	element, ok := typeinfo.NumericTypeFromName("i32", ctx.Target)
 	if !ok {
 		t.Fatal("missing i32 type")

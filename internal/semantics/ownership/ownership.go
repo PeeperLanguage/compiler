@@ -9,6 +9,7 @@ import (
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
@@ -28,7 +29,7 @@ type site struct {
 
 type analyzer struct {
 	ctx                    *project.CompilerContext
-	module                 *project.Module
+	module                 *module.Module
 	graph                  *cfg.ControlFlowGraph
 	sites                  map[cfg.SiteID]*site
 	order                  []cfg.SiteID
@@ -58,7 +59,7 @@ type state struct {
 // Check runs flow-sensitive ownership checks after typechecking has populated
 // expression types and scopes. Keeping this phase outside the checker prevents
 // value-flow rules from becoming ad hoc type rules.
-func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult.Result {
+func Check(ctx *project.CompilerContext, module *module.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
 		return result
@@ -103,7 +104,7 @@ func Check(ctx *project.CompilerContext, module *project.Module) ownershipresult
 	return result
 }
 
-func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
+func checkFunction(ctx *project.CompilerContext, module *module.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
 	if ctx == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
@@ -122,7 +123,7 @@ func checkFunction(ctx *project.CompilerContext, module *project.Module, fn *ast
 	}).run()
 }
 
-func indexSites(module *project.Module, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+func indexSites(module *module.Module, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
 	if module == nil || module.Bindings == nil || cfgFn == nil || scope == nil {

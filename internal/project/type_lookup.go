@@ -2,6 +2,7 @@ package project
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -9,15 +10,15 @@ import (
 // ImportedSymbolLookup bundles import/module/symbol so one foreign lookup can
 // serve resolver, checker, and lowerer without repeating import traversal.
 type ImportedSymbolLookup struct {
-	Import ResolvedImport
-	Module *Module
+	Import module.ResolvedImport
+	Module *module.Module
 	Symbol *symbols.Symbol
 }
 
 // LookupImportedSymbol walks alias -> import -> module -> symbol once.
 // Resolver uses the symbol for export checks, checker uses it for type lookup,
 // and lowerer uses it for stable IR naming. One kernel keeps those phases in sync.
-func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedModule, symbolName string) (ImportedSymbolLookup, bool) {
+func LookupImportedSymbol(ctx *CompilerContext, currentModule *module.Module, importedModule, symbolName string) (ImportedSymbolLookup, bool) {
 	out := ImportedSymbolLookup{}
 	if ctx == nil || currentModule == nil || currentModule.ModuleScope == nil || importedModule == "" || symbolName == "" {
 		return out, false
@@ -43,7 +44,7 @@ func LookupImportedSymbol(ctx *CompilerContext, currentModule *Module, importedM
 // CanonicalEnumDeclaration resolves a semantic type through transparent
 // aliases while retaining the qualifier's owner and declaration-owned variant
 // scope. The separate owners preserve alias spelling without copying cases.
-func CanonicalEnumDeclaration(ctx *CompilerContext, typ typeinfo.Type) (*Module, *symbols.Symbol, bool) {
+func CanonicalEnumDeclaration(ctx *CompilerContext, typ typeinfo.Type) (*module.Module, *symbols.Symbol, bool) {
 	if ctx == nil || typ == nil {
 		return nil, nil, false
 	}
@@ -57,7 +58,7 @@ func CanonicalEnumDeclaration(ctx *CompilerContext, typ typeinfo.Type) (*Module,
 	}
 
 	ctx.mu.RLock()
-	ownerOf := func(defined *typeinfo.DefinedType) *Module {
+	ownerOf := func(defined *typeinfo.DefinedType) *module.Module {
 		owner := ctx.typeDeclarations[defined.Identity]
 		if owner == nil {
 			instance, found := ctx.typeInstances[defined.Identity]

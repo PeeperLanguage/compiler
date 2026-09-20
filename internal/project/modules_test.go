@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/effect"
@@ -24,7 +25,7 @@ func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
 	filePath := filepath.Join("nested", "..", "main.peep")
 	want := CanonicalPath(filePath)
 	id := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "test"}
-	module := &Module{ID: id, FilePath: filePath}
+	module := &module.Module{ID: id, FilePath: filePath}
 
 	ctx.AddModule(module)
 
@@ -40,7 +41,7 @@ func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
 
 func TestCompilerContextRejectsZeroModuleID(t *testing.T) {
 	ctx := New(".", ".peep", nil)
-	module := &Module{FilePath: "zero.peep"}
+	module := &module.Module{FilePath: "zero.peep"}
 
 	ctx.AddModule(module)
 
@@ -61,12 +62,12 @@ func TestCompilerContextReportsConflictingFileIdentity(t *testing.T) {
 	const shared = "shared.peep"
 	firstID := moduleid.ID{Origin: "stdlib", Namespace: "core", ImportPath: "global"}
 	secondID := moduleid.ID{Origin: "stdlib", Namespace: "core", ImportPath: "prelude/global"}
-	first := &Module{ID: firstID, FilePath: shared}
+	first := &module.Module{ID: firstID, FilePath: shared}
 
 	if reported := ctx.AddModule(first); reported != nil {
 		t.Fatalf("clean registration returned a conflict: %#v", reported)
 	}
-	conflict := ctx.AddModule(&Module{ID: secondID, FilePath: shared})
+	conflict := ctx.AddModule(&module.Module{ID: secondID, FilePath: shared})
 	if conflict == nil {
 		t.Fatal("conflicting registration returned no diagnostic for the caller to label")
 	}
@@ -96,13 +97,13 @@ func TestCompilerContextRejectsIdentityRelocationWithoutCorruptingIndexes(t *tes
 	ctx := New(".", ".peep", diag)
 	idA := moduleid.ID{Origin: "local", ImportPath: "a"}
 	idB := moduleid.ID{Origin: "local", ImportPath: "b"}
-	first := &Module{ID: idA, FilePath: "a.peep"}
+	first := &module.Module{ID: idA, FilePath: "a.peep"}
 	ctx.AddModule(first)
-	ctx.AddModule(&Module{ID: idB, FilePath: "b.peep"})
+	ctx.AddModule(&module.Module{ID: idB, FilePath: "b.peep"})
 
 	// Moving A onto B's file must be rejected, and rejection must not disturb
 	// the indexes A already owns.
-	if conflict := ctx.AddModule(&Module{ID: idA, FilePath: "b.peep"}); conflict == nil {
+	if conflict := ctx.AddModule(&module.Module{ID: idA, FilePath: "b.peep"}); conflict == nil {
 		t.Fatal("rejected relocation returned no diagnostic for the caller to label")
 	}
 
@@ -127,12 +128,12 @@ func TestCompilerContextRejectsSecondFileForSameIdentity(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := New(".", ".peep", diag)
 	id := moduleid.ID{Origin: "local", ImportPath: "foo"}
-	first := &Module{ID: id, FilePath: "foo.peep"}
+	first := &module.Module{ID: id, FilePath: "foo.peep"}
 	ctx.AddModule(first)
 
 	// Case-differing extensions reduce to one logical identity; the second file
 	// must not silently take over the identity.
-	ctx.AddModule(&Module{ID: id, FilePath: "foo.PEEP"})
+	ctx.AddModule(&module.Module{ID: id, FilePath: "foo.PEEP"})
 
 	if got, ok := ctx.ModuleByID(id); !ok || got != first {
 		t.Fatal("second file for one identity replaced the first registration")
@@ -146,8 +147,8 @@ func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
 	ctx := New(".", ".peep", nil)
 	firstID := moduleid.ID{Origin: "local", Namespace: "ab", Dependency: "c", ImportPath: "value"}
 	secondID := moduleid.ID{Origin: "local", Namespace: "a", Dependency: "bc", ImportPath: "value"}
-	first := &Module{ID: firstID}
-	second := &Module{ID: secondID}
+	first := &module.Module{ID: firstID}
+	second := &module.Module{ID: secondID}
 
 	ctx.AddModule(first)
 	ctx.AddModule(second)
@@ -163,8 +164,8 @@ func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
 	}
 }
 
-func moduleWithArtifacts() *Module {
-	module := &Module{
+func moduleWithArtifacts() *module.Module {
+	module := &module.Module{
 		Phase:                     phase.Backend,
 		SemanticExportFingerprint: "semantic API",
 		ModuleScope:               symbols.NewScope(nil),
@@ -214,7 +215,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
-		module.resetToPhase(test.phase)
+		module.ResetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.Bindings != nil) != test.bindings || (module.Constants != nil) != test.constants ||
 			(module.Typechecking != nil) != test.typechecking ||
@@ -233,7 +234,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 }
 
 func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
-	module := &Module{Typechecking: typecheckresult.New()}
+	module := &module.Module{Typechecking: typecheckresult.New()}
 	module.ResetSemanticData()
 	if module.Bindings == nil || module.Bindings.OperationFunctions() == nil || module.Constants == nil || module.Typechecking != nil {
 		t.Fatalf("semantic reset = %#v", module)
@@ -260,23 +261,23 @@ func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
 	if got := module.EffectiveExprType(1); got != base {
 		t.Fatalf("effective type without flow = %#v, want base type %#v", got, base)
 	}
-	module.resetToPhase(phase.Typechecked)
+	module.ResetToPhase(phase.Typechecked)
 	if module.BaseExprType(1) != base {
 		t.Fatal("typechecked reset discarded base expression type")
 	}
-	module.resetToPhase(phase.Parsed)
+	module.ResetToPhase(phase.Parsed)
 	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
 		t.Fatal("parsed reset retained expression type evidence")
 	}
 }
 
 func TestModuleExprTypeEvidenceHandlesMissingTypecheckResult(t *testing.T) {
-	var module *Module
-	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
+	var mod *module.Module
+	if mod.BaseExprType(1) != nil || mod.EffectiveExprType(1) != nil {
 		t.Fatal("nil module returned expression type evidence")
 	}
-	module = &Module{}
-	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
+	mod = &module.Module{}
+	if mod.BaseExprType(1) != nil || mod.EffectiveExprType(1) != nil {
 		t.Fatal("module without typecheck result returned expression type evidence")
 	}
 }
@@ -284,7 +285,7 @@ func TestModuleExprTypeEvidenceHandlesMissingTypecheckResult(t *testing.T) {
 func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 	module := moduleWithArtifacts()
 	graph := module.CFG.Functions[0]
-	module.resetToPhase(phase.CFG)
+	module.ResetToPhase(phase.CFG)
 	if module.CFG.Functions[0] != graph {
 		t.Fatal("phase reset cloned immutable CFG")
 	}
@@ -319,7 +320,7 @@ func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
 	ctx := New(".", ".peep", nil)
 	ownerID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"}
 	otherID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "other"}
-	module := &Module{ID: ownerID}
+	owner := &module.Module{ID: ownerID}
 	ctx.typeInstances["owner::Box<i32>"] = namedTypeInstance{
 		ownerModuleID: ownerID,
 		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
@@ -329,7 +330,7 @@ func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
 		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
 	}
 
-	ctx.ResetModule(&Module{ID: module.ID}, phase.Parsed)
+	ctx.ResetModule(&module.Module{ID: owner.ID}, phase.Parsed)
 
 	if _, found := ctx.typeInstances["owner::Box<i32>"]; found {
 		t.Fatal("reset retained instance owned by reset module")
@@ -340,7 +341,7 @@ func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
 }
 
 func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
-	module := &Module{
+	module := &module.Module{
 		ID:    moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"},
 		Phase: phase.Collected,
 	}
@@ -352,13 +353,13 @@ func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
 	fresh := New(".", ".peep", nil)
 	fresh.AddModule(module)
 	registeredModule, found := fresh.typeDeclarations[base.Identity]
-	registered := module.namedTypeDeclarations[base.Identity]
-	if !found || registeredModule != module || registered.base != base || registered.syntax != declaration {
+	registered, retained := module.TypeDeclaration(base.Identity)
+	if !found || registeredModule != module || !retained || registered.Base != base || registered.Syntax != declaration {
 		t.Fatalf("reindexed declaration module = %#v, artifact = %#v", registeredModule, registered)
 	}
 
 	fresh.ResetModule(module, phase.Parsed)
-	if module.namedTypeDeclarations != nil {
+	if _, retained := module.TypeDeclaration(base.Identity); retained {
 		t.Fatal("reset below collection retained module declaration artifact")
 	}
 	if _, found := fresh.typeDeclarations[base.Identity]; found {
@@ -370,8 +371,8 @@ func TestCompilerContextPathlessReplacementClearsFileIndex(t *testing.T) {
 	ctx := New(".", ".peep", nil)
 	id := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "x"}
 
-	ctx.AddModule(&Module{ID: id, FilePath: "x.peep"})
-	ctx.AddModule(&Module{ID: id})
+	ctx.AddModule(&module.Module{ID: id, FilePath: "x.peep"})
+	ctx.AddModule(&module.Module{ID: id})
 
 	if _, found := ctx.ModuleByFile("x.peep"); found {
 		t.Fatal("stale file index survived pathless replacement")

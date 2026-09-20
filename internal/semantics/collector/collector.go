@@ -3,16 +3,16 @@ package collector
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/problems"
 	"compiler/internal/project"
-
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
 type collector struct {
 	ctx    *project.CompilerContext
-	module *project.Module
+	module *module.Module
 }
 
 func (c *collector) collectModule(mod *ast.Module) {
@@ -162,7 +162,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 	c.module.Bindings.Bind(name, sym)
 }
 
-func Collect(ctx *project.CompilerContext, module *project.Module) {
+func Collect(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.AST == nil {
 		return
 	}
