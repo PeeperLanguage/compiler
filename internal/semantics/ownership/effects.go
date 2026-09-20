@@ -8,12 +8,13 @@ import (
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 // callFrame remembers where a call's loans start, so completing the call can
 // give back the temporaries its arguments created.
 type callFrame struct {
-	call      ast.Node
+	location  *source.Location
 	temporary int
 	reserved  int
 }
@@ -82,9 +83,8 @@ func (*ownershipEffectVisitor) VisitDiscard(effect.Discard) {
 }
 
 func (v *ownershipEffectVisitor) VisitCallBegin(op effect.CallBegin) {
-	call := v.a.module.TypedASTNodes[op.Node]
 	v.calls = append(v.calls, callFrame{
-		call: call, temporary: len(v.loans.temporary), reserved: len(v.loans.reserved),
+		location: op.Location, temporary: len(v.loans.temporary), reserved: len(v.loans.reserved),
 	})
 }
 
@@ -96,7 +96,7 @@ func (v *ownershipEffectVisitor) VisitCallEnd(effect.CallEnd) {
 	v.calls = v.calls[:len(v.calls)-1]
 	// Reservations activate as the call starts, which is observable only once
 	// its arguments are evaluated; argument temporaries die with the call.
-	v.a.activateCallReservations(frame.call, frame.reserved, v.loans)
+	v.a.activateCallReservations(frame.location, frame.reserved, v.loans)
 	v.loans.temporary = v.loans.temporary[:frame.temporary]
 	v.loans.reserved = v.loans.reserved[:frame.reserved]
 }
@@ -368,8 +368,8 @@ func (a *analyzer) installArgumentLoan(borrowed ast.Expr, op effect.Borrow, loan
 		return
 	}
 	var call ast.Node
-	if len(calls) > 0 && calls[len(calls)-1].call != nil {
-		call = calls[len(calls)-1].call
+	if len(calls) > 0 && calls[len(calls)-1].location != nil {
+		call = nil
 	}
 	loan := referenceLoan{
 		id:      loanID{node: borrowed},

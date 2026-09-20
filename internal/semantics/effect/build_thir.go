@@ -107,7 +107,7 @@ func (b *thirBuilder) buildMatchBindings(terminator *cfg.SwitchVariant) {
 			for _, binding := range arm.Bindings {
 				if binding.Symbol != nil {
 					b.ops[edge.To] = append(b.ops[edge.To], Define{
-						Symbol: binding.Symbol, Node: nodeID(terminator.NodeID), Initialized: true, OnEntry: true,
+						Symbol: binding.Symbol, Source: match, Node: nodeID(terminator.NodeID), Initialized: true, OnEntry: true,
 					})
 				}
 			}
@@ -124,14 +124,14 @@ func (b *thirBuilder) BuildBindingEffects(statement *thir.Binding) {
 	b.expression(statement.Value, typeinfo.UseMove)
 	if statement.Symbol != nil {
 		value := astNodeID(statement.Value)
-		b.emit(Define{Symbol: statement.Symbol, Node: nodeID(statement.Source.NodeID), Value: value, Initialized: statement.Value != nil})
+		b.emit(Define{Symbol: statement.Symbol, Source: statement, Node: nodeID(statement.Source.NodeID), Value: value, ValueExpr: statement.Value, Initialized: statement.Value != nil})
 	}
 }
 
 func (b *thirBuilder) BuildExprStmtEffects(statement *thir.ExprStmt) {
 	b.expression(statement.Value, typeinfo.UseRead)
 	if statement.Value != nil {
-		b.emit(Discard{Place: b.place(statement.Value), Node: nodeID(statement.Value.SourceInfo().NodeID), Location: statement.Value.SourceInfo().Location})
+		b.emit(Discard{Source: statement.Value, Place: b.place(statement.Value), Node: nodeID(statement.Value.SourceInfo().NodeID), Location: statement.Value.SourceInfo().Location})
 	}
 }
 
@@ -141,7 +141,7 @@ func (b *thirBuilder) BuildAssignEffects(statement *thir.Assign) {
 		return
 	}
 	b.placeOperands(statement.Target)
-	b.emit(Write{Place: b.place(statement.Target), Node: nodeID(statement.Target.SourceInfo().NodeID), Owner: nodeID(statement.Source.NodeID), Value: astNodeID(statement.Value), Location: statement.Target.SourceInfo().Location})
+	b.emit(Write{Place: b.place(statement.Target), Target: statement.Target, Node: nodeID(statement.Target.SourceInfo().NodeID), Owner: nodeID(statement.Source.NodeID), Value: astNodeID(statement.Value), ValueExpr: statement.Value, Location: statement.Target.SourceInfo().Location})
 }
 
 func (b *thirBuilder) BuildReturnEffects(statement *thir.Return) {
@@ -155,7 +155,7 @@ func (b *thirBuilder) BuildForEffects(statement *thir.For) {
 	}
 	b.expression(statement.Iterable, typeinfo.UseRead)
 	if sequence, ok := statement.Iteration.(*thir.SequenceIteration); ok && sequence.Carrier != nil {
-		b.emit(Iterate{Loop: nodeID(statement.Source.NodeID), Place: b.place(statement.Iterable), Node: nodeID(statement.Iterable.SourceInfo().NodeID), Carrier: sequence.Carrier, Location: statement.Iterable.SourceInfo().Location})
+		b.emit(Iterate{Loop: nodeID(statement.Source.NodeID), Place: b.place(statement.Iterable), Node: nodeID(statement.Iterable.SourceInfo().NodeID), Source: statement.Iterable, Carrier: sequence.Carrier, Location: statement.Iterable.SourceInfo().Location})
 	}
 }
 func (b *thirBuilder) BuildMatchEffects(statement *thir.Match) {
@@ -173,7 +173,7 @@ func (b *thirBuilder) BuildQualifiedIdentEffects(*thir.QualifiedIdent) {}
 
 func (b *thirBuilder) BuildIdentEffects(expr *thir.Ident) {
 	if expr.Symbol != nil {
-		b.emit(Use{Place: b.place(expr), Node: nodeID(expr.SourceInfo().NodeID), Location: expr.SourceInfo().Location, Kind: b.use})
+		b.emit(Use{Place: b.place(expr), Node: nodeID(expr.SourceInfo().NodeID), Source: expr, Location: expr.SourceInfo().Location, Kind: b.use})
 	}
 }
 
@@ -223,7 +223,7 @@ func (b *thirBuilder) BuildBinaryEffects(expr *thir.Binary) {
 func (b *thirBuilder) BuildIsEffects(expr *thir.Is) { b.expression(expr.Value, typeinfo.UseRead) }
 
 func (b *thirBuilder) BuildCallEffects(expr *thir.Call) {
-	b.emit(CallBegin{Node: nodeID(expr.SourceInfo().NodeID), Location: expr.SourceInfo().Location})
+	b.emit(CallBegin{Node: nodeID(expr.SourceInfo().NodeID), Source: expr, Location: expr.SourceInfo().Location})
 	if field, method := expr.Callee.(*thir.Field); method {
 		b.argument(field.Base)
 	} else {
@@ -261,7 +261,7 @@ func (b *thirBuilder) argument(expr thir.Expr) {
 			operand = address.Value
 		}
 		b.placeOperands(operand)
-		b.emit(Borrow{Place: b.place(operand), Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), Location: expr.SourceInfo().Location, Mutable: mutable, Argument: true})
+		b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, Mutable: mutable, Argument: true})
 		return
 	}
 	use, _ := expr.UseKind()
@@ -305,13 +305,13 @@ func (b *thirBuilder) place(expr thir.Expr) Place {
 		return Place{Root: qualified.Symbol}
 	}
 	if semantic := expr.ExprPlace(); semantic != nil {
-		out := Place{Root: semantic.Root, Temporary: nodeIDExpr(semantic.Temporary), Projections: make([]place.OriginProjection, 0, len(semantic.Projections))}
+		out := Place{Root: semantic.Root, Temporary: nodeIDExpr(semantic.Temporary), TemporaryExpr: semantic.Temporary, Projections: make([]place.OriginProjection, 0, len(semantic.Projections))}
 		for _, projection := range semantic.Projections {
 			out.Projections = append(out.Projections, originProjection(projection))
 		}
 		return out
 	}
-	return Place{Temporary: nodeID(expr.SourceInfo().NodeID)}
+	return Place{Temporary: nodeID(expr.SourceInfo().NodeID), TemporaryExpr: expr}
 }
 
 func (b *thirBuilder) borrow(expr thir.Expr, operand, bounds thir.Expr, mutable, raw bool) {
@@ -319,7 +319,7 @@ func (b *thirBuilder) borrow(expr thir.Expr, operand, bounds thir.Expr, mutable,
 	if bounds != nil {
 		b.expression(bounds, typeinfo.UseRead)
 	}
-	b.emit(Borrow{Place: b.place(operand), Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), Location: expr.SourceInfo().Location, Mutable: mutable, Raw: raw})
+	b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, Mutable: mutable, Raw: raw})
 }
 
 func (b *thirBuilder) mutableReference(expr thir.Expr) bool {

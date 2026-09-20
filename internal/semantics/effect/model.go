@@ -13,6 +13,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -34,6 +35,7 @@ type Op interface {
 // which also stores a value, from a declaration that leaves storage empty.
 type Define struct {
 	Symbol *symbols.Symbol
+	Source thir.Node
 	// Node is the declaration, which is where a diagnostic about the binding
 	// itself belongs.
 	Node ast.NodeID
@@ -42,6 +44,7 @@ type Define struct {
 	// that track reference/pointer provenance can therefore update the binding
 	// from this operation without rediscovering declaration syntax.
 	Value       ast.NodeID
+	ValueExpr   thir.Expr
 	Initialized bool
 	// OnEntry marks a binding that already exists when the site begins rather
 	// than being established by it: a function parameter, or a match payload
@@ -58,7 +61,8 @@ type Define struct {
 // reason Use does: `a.b = x` writes a field, and an assignment target takes a
 // mutating access whether it is a whole binding or a projection out of one.
 type Write struct {
-	Place Place
+	Place  Place
+	Target thir.Expr
 	// Node is the assignment target.
 	Node ast.NodeID
 	// Owner is the source construct performing the replacement. Cleanup plans
@@ -66,8 +70,9 @@ type Write struct {
 	// expression used for diagnostics and place typing.
 	Owner ast.NodeID
 	// Value is the expression whose value is stored into Place.
-	Value    ast.NodeID
-	Location *source.Location
+	Value     ast.NodeID
+	ValueExpr thir.Expr
+	Location  *source.Location
 }
 
 // Place identifies storage: a root binding and the projections taken from it to
@@ -87,8 +92,9 @@ type Place struct {
 	// Ownership needs the distinction because a temporary has nobody to own it:
 	// a projection out of one has to be bound before use, and a discarded one
 	// dies where it is produced.
-	Temporary   ast.NodeID
-	Projections []place.OriginProjection
+	Temporary     ast.NodeID
+	TemporaryExpr thir.Expr
+	Projections   []place.OriginProjection
 }
 
 // Use reads a binding's value. Node is the reading identifier rather than the
@@ -100,6 +106,7 @@ type Place struct {
 type Use struct {
 	Place    Place
 	Node     ast.NodeID
+	Source   thir.Expr
 	Location *source.Location
 	// Kind is what happens to the value here: observed, duplicated, or
 	// consumed. The producer decides it from the position the value occupies
@@ -115,15 +122,17 @@ type Use struct {
 // both a borrow and a separate read of the same place would charge that place
 // twice.
 type Borrow struct {
-	Place Place
+	Place  Place
+	Source thir.Expr
 	// Node is the source expression that creates the borrow (an AddressExpr or
 	// an adapted call argument). Operand is the place expression actually
 	// borrowed. Keeping both identities means consumers never have to peel
 	// syntax to rediscover that relationship.
-	Node     ast.NodeID
-	Operand  ast.NodeID
-	Location *source.Location
-	Mutable  bool
+	Node        ast.NodeID
+	Operand     ast.NodeID
+	OperandExpr thir.Expr
+	Location    *source.Location
+	Mutable     bool
 	// Argument marks a borrow handed to a call. It outlives the expression that
 	// wrote it, because the callee holds it for as long as the call runs, so a
 	// consumer tracking loans records one rather than only checking an access.
@@ -141,6 +150,7 @@ type Iterate struct {
 	Loop     ast.NodeID
 	Place    Place
 	Node     ast.NodeID
+	Source   thir.Expr
 	Carrier  *symbols.Symbol
 	Location *source.Location
 }
@@ -155,6 +165,7 @@ type Iterate struct {
 // uses cannot express it. Calls nest, so the pair nests too.
 type CallBegin struct {
 	Node     ast.NodeID
+	Source   thir.Expr
 	Location *source.Location
 }
 
@@ -165,6 +176,7 @@ type CallEnd struct {
 // Discard is a value produced and dropped, as an expression statement does.
 // The value never reaches a binding, so anything owned in it dies here.
 type Discard struct {
+	Source thir.Expr
 	// Place is what was discarded, so a consumer can tell a dropped temporary
 	// from a statement that merely names storage.
 	Place    Place

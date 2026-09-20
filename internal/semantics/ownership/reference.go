@@ -12,6 +12,7 @@ import (
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 type loanID struct {
@@ -224,8 +225,8 @@ func (a *analyzer) reportLoanConflict(
 	addLoanConflictLabels(diag, conflict, reservedConflict, nil)
 }
 
-func (a *analyzer) activateCallReservations(call ast.Node, mark int, loans *loanContext) {
-	if a == nil || call == nil || loans == nil || mark >= len(loans.reserved) {
+func (a *analyzer) activateCallReservations(location *source.Location, mark int, loans *loanContext) {
+	if a == nil || location == nil || loans == nil || mark >= len(loans.reserved) {
 		return
 	}
 	current := loans.reserved[mark:]
@@ -251,13 +252,13 @@ func (a *analyzer) activateCallReservations(call ast.Node, mark int, loans *loan
 		diag := a.diagnostics.AddError(
 			diagnostics.ErrBorrowConflict,
 			"cannot activate mutable borrow while storage is borrowed",
-			ast.LocOf(call),
+			location,
 			"mutable borrow activates here",
 		)
 		if reservation.loan.site != nil {
 			diag.WithSecondaryLabel(ast.LocOf(reservation.loan.site), "mutable borrow reserved here")
 		}
-		addLoanConflictLabels(diag, conflict, reservedConflict, call)
+		addLoanConflictLabels(diag, conflict, reservedConflict, nil)
 	}
 }
 
