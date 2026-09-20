@@ -472,17 +472,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return true
 	}
 	if module.Phase < phase.Effects {
-		module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-			Symbol:              module.Bindings.SymbolID,
-			Scope:               module.Bindings.ScopeID,
-			CallArguments:       module.Typechecking.CallArgumentsOrSource,
-			ArmBindings:         module.Typechecking.ArmBindings,
-			StringConcatenation: module.Typechecking.StringConcatenation,
-			ValueUse:            module.Typechecking.ValueUse,
-			ExprType:            module.EffectiveExprType,
-			ReferenceArgument:   module.Typechecking.ReferenceArgument,
-			SequenceCarrier:     module.Typechecking.SequenceCarrier,
-		})
+		module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
 		// Broken source can legitimately leave effect evidence incomplete; report
 		// evidence shape only for an otherwise clean module.
 		if !phaseDiag.HasErrors() {

@@ -55,17 +55,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	if graph == nil {
 		t.Fatal("choose function CFG missing")
 	}
-	effects := effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-		Symbol:              module.Bindings.SymbolID,
-		Scope:               module.Bindings.ScopeID,
-		CallArguments:       module.Typechecking.CallArgumentsOrSource,
-		ArmBindings:         module.Typechecking.ArmBindings,
-		StringConcatenation: module.Typechecking.StringConcatenation,
-		ValueUse:            module.Typechecking.ValueUse,
-		ExprType:            module.EffectiveExprType,
-		ReferenceArgument:   module.Typechecking.ReferenceArgument,
-		SequenceCarrier:     module.Typechecking.SequenceCarrier,
-	})
+	effects := effect.BuildTHIR(module.THIR, module.CFG)
 	module.Effects = effects
 	result := analyzeFunction(graph, effects[graph.NodeID], diag)
 	return result, diag, module

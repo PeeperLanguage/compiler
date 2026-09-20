@@ -87,6 +87,44 @@ type ControlFlowBuilder interface {
 // FlowAnalyzer is implemented by flow typing. Node-owned dispatch makes every
 // THIR statement and expression an explicit part of flow semantics while the
 // analysis package retains all refinement and transfer policy.
+type EffectBuilder interface {
+	BuildBlockEffects(*Block)
+	BuildBindingEffects(*Binding)
+	BuildExprStmtEffects(*ExprStmt)
+	BuildAssignEffects(*Assign)
+	BuildReturnEffects(*Return)
+	BuildIfEffects(*If)
+	BuildForEffects(*For)
+	BuildBreakEffects(*Break)
+	BuildContinueEffects(*Continue)
+	BuildMatchEffects(*Match)
+	BuildInvalidStmtEffects(*InvalidStmt)
+
+	BuildInvalidExprEffects(*InvalidExpr)
+	BuildNumberLiteralEffects(*NumberLiteral)
+	BuildStringLiteralEffects(*StringLiteral)
+	BuildByteLiteralEffects(*ByteLiteral)
+	BuildCharLiteralEffects(*CharLiteral)
+	BuildBoolLiteralEffects(*BoolLiteral)
+	BuildNoneLiteralEffects(*NoneLiteral)
+	BuildIdentEffects(*Ident)
+	BuildQualifiedIdentEffects(*QualifiedIdent)
+	BuildFieldEffects(*Field)
+	BuildIndexEffects(*Index)
+	BuildRangeEffects(*Range)
+	BuildStructLiteralEffects(*StructLiteral)
+	BuildVariantEffects(*Variant)
+	BuildArrayLiteralEffects(*ArrayLiteral)
+	BuildAddressEffects(*Address)
+	BuildUnaryEffects(*Unary)
+	BuildBinaryEffects(*Binary)
+	BuildIsEffects(*Is)
+	BuildCallEffects(*Call)
+	BuildFreeEffects(*Free)
+	BuildPrintEffects(*Print)
+	BuildCastEffects(*Cast)
+}
+
 type FlowAnalyzer interface {
 	AnalyzeBlock(*Block)
 	AnalyzeBinding(*Binding)
@@ -130,6 +168,7 @@ type Stmt interface {
 	stmtNode()
 	BuildControlFlow(ControlFlowBuilder)
 	AnalyzeFlow(FlowAnalyzer)
+	BuildEffects(EffectBuilder)
 }
 
 type Expr interface {
@@ -137,7 +176,10 @@ type Expr interface {
 	exprNode()
 	ExprType() typeinfo.Type
 	ExprPlace() *Place
+	UseKind() (typeinfo.UseKind, bool)
+	ReferenceArgInfo() (bool, bool)
 	AnalyzeFlow(FlowAnalyzer) typeinfo.Type
+	BuildEffects(EffectBuilder)
 }
 
 type StmtInfo struct {
@@ -165,6 +207,12 @@ func (e ExprInfo) exprNode()                 {}
 func (e ExprInfo) SourceInfo() ir.SourceInfo { return e.Source }
 func (e ExprInfo) ExprType() typeinfo.Type   { return e.Type }
 func (e ExprInfo) ExprPlace() *Place         { return e.Place }
+func (e ExprInfo) UseKind() (typeinfo.UseKind, bool) {
+	return e.Use, e.HasUse
+}
+func (e ExprInfo) ReferenceArgInfo() (bool, bool) {
+	return e.ReferenceArgumentMutable, e.ReferenceArgument
+}
 
 type InterfaceImplementation struct {
 	Symbol       *symbols.Symbol

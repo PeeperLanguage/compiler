@@ -54,17 +54,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	module.RebuildTypedASTIndex()
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(ctx, module)
-	module.Effects = effect.Build(module.CFG, module.TypedASTNodes, effect.BuildQueries{
-		Symbol:              module.Bindings.SymbolID,
-		Scope:               module.Bindings.ScopeID,
-		CallArguments:       module.Typechecking.CallArgumentsOrSource,
-		ArmBindings:         module.Typechecking.ArmBindings,
-		StringConcatenation: module.Typechecking.StringConcatenation,
-		ValueUse:            module.Typechecking.ValueUse,
-		ExprType:            module.EffectiveExprType,
-		ReferenceArgument:   module.Typechecking.ReferenceArgument,
-		SequenceCarrier:     module.Typechecking.SequenceCarrier,
-	})
+	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
 	module.Ownership = Check(diag, module)
 	return &ownershipResult{DiagnosticBag: diag, module: module}
 }

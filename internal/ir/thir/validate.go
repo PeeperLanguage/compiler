@@ -101,8 +101,8 @@ func (p *Place) validate() error {
 		}
 		switch projection.Kind {
 		case PlaceField:
-			if projection.Name == "" || projection.Field < 0 {
-				return fmt.Errorf("field projection %d is unresolved", index)
+			if projection.Name == "" {
+				return fmt.Errorf("field projection %d has no field name", index)
 			}
 		case PlaceIndex:
 			if typednil.IsNil(projection.Index) {

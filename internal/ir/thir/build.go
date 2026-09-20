@@ -311,12 +311,14 @@ func (b *builder) fieldExpression(source *ast.SelectorExpr, info ExprInfo) Expr 
 			field.Access = &FieldAccess{Field: access.Field, DereferenceType: access.DereferenceType}
 		}
 	}
-	if field.Access != nil {
-		if projection, projected := place.Project(source); projected {
-			field.ExprInfo.Place = projectPlace(field.Base, PlaceProjection{
-				Kind: PlaceField, Name: projection.Step.Field, Field: field.Access.Field, Type: field.ExprInfo.Type,
-			}, field.ExprInfo.Type)
+	if projection, projected := place.Project(source); projected {
+		fieldIndex := -1
+		if field.Access != nil {
+			fieldIndex = field.Access.Field
 		}
+		field.ExprInfo.Place = projectPlace(field.Base, PlaceProjection{
+			Kind: PlaceField, Name: projection.Step.Field, Field: fieldIndex, Type: field.ExprInfo.Type,
+		}, field.ExprInfo.Type)
 	}
 	return field
 }
