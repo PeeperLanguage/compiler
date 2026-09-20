@@ -110,25 +110,6 @@ func TestBoolConversionClassification(t *testing.T) {
 	}
 }
 
-func TestCompatibilityString(t *testing.T) {
-	tests := []struct {
-		compat Compatibility
-		want   string
-	}{
-		{Compatible, "compatible"},
-		{ExplicitCastable, "explicit_castable"},
-		{Incompatible, "incompatible"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			if got := tt.compat.String(); got != tt.want {
-				t.Errorf("Compatibility.String() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
 	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &NoneType{}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
 		t.Fatalf("optional none compat = %v, want compatible", got)

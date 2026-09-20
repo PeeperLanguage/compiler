@@ -17,7 +17,7 @@ type sizeQuery struct {
 }
 
 func (q *sizeQuery) check(t Type) bool {
-	if t == nil {
+	if t == nil || typednil.IsNil(t) {
 		return false
 	}
 	return t.isSized(q)
@@ -54,15 +54,7 @@ func (t *DefinedType) isSized(q *sizeQuery) bool {
 	q.visiting[t] = true
 	defer delete(q.visiting, t)
 
-	result := false
-	ForEachChild(t, func(child TypeChild) bool {
-		if child.Relation != TypeChildUnderlying {
-			return true
-		}
-		result = q.check(child.Type)
-		return false
-	})
-	return result
+	return q.check(t.Underlying)
 }
 
 func (t *OwnedPtrType) isSized(*sizeQuery) bool { return t != nil && t.Target != nil }
@@ -70,27 +62,11 @@ func (t *RawPtrType) isSized(*sizeQuery) bool   { return t != nil }
 func (t *RefType) isSized(*sizeQuery) bool      { return t != nil && t.Target != nil }
 
 func (t *OptionalType) isSized(q *sizeQuery) bool {
-	if t == nil {
-		return false
-	}
-	result := false
-	ForEachChild(t, func(child TypeChild) bool {
-		result = q.check(child.Type)
-		return false
-	})
-	return result
+	return t != nil && q.check(t.Inner)
 }
 
 func (t *ArrayType) isSized(q *sizeQuery) bool {
-	if t == nil || t.Elem == nil || t.Shape == ArraySlice {
-		return false
-	}
-	result := false
-	ForEachChild(t, func(child TypeChild) bool {
-		result = q.check(child.Type)
-		return false
-	})
-	return result
+	return t != nil && t.Shape != ArraySlice && q.check(t.Elem)
 }
 
 func (t *FuncType) isSized(q *sizeQuery) bool   { return q.allChildren(t) }
@@ -109,7 +85,7 @@ type lowerQuery struct {
 
 func (q *lowerQuery) check(t Type, throughIndirection bool) bool {
 	t = Underlying(t)
-	if t == nil {
+	if t == nil || typednil.IsNil(t) {
 		return false
 	}
 	if _, found := q.visiting[t]; found {
@@ -165,27 +141,14 @@ func (t *RefType) isLowerable(q *lowerQuery, _ bool) bool {
 }
 
 func (t *OptionalType) isLowerable(q *lowerQuery, throughIndirection bool) bool {
-	if t == nil || t.Inner == nil {
-		return false
-	}
-	result := false
-	ForEachChild(t, func(child TypeChild) bool {
-		result = q.check(child.Type, throughIndirection)
-		return false
-	})
-	return result
+	return t != nil && q.check(t.Inner, throughIndirection)
 }
 
 func (t *ArrayType) isLowerable(q *lowerQuery, throughIndirection bool) bool {
-	if t == nil || t.Shape == ArraySlice || (t.Shape != ArrayOwner && t.Len == "") || t.Elem == nil {
+	if t == nil || t.Shape == ArraySlice || (t.Shape != ArrayOwner && t.Len == "") {
 		return false
 	}
-	result := false
-	ForEachChild(t, func(child TypeChild) bool {
-		result = q.check(child.Type, throughIndirection)
-		return false
-	})
-	return result
+	return q.check(t.Elem, throughIndirection)
 }
 
 func (t *FuncType) isLowerable(q *lowerQuery, throughIndirection bool) bool {

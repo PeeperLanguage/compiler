@@ -116,7 +116,7 @@ func TestLeafTypeTraversalCompletesWithoutYield(t *testing.T) {
 	}
 }
 
-func TestNilTypeTraversalAndOwnership(t *testing.T) {
+func TestNilTypeTraversalOwnershipAndRepresentation(t *testing.T) {
 	for _, typ := range []Type{
 		nil, (*InvalidType)(nil), (*UnknownType)(nil), (*IntegerType)(nil),
 		(*ByteType)(nil), (*CharType)(nil), (*FloatType)(nil), (*BoolType)(nil),
@@ -134,6 +134,12 @@ func TestNilTypeTraversalAndOwnership(t *testing.T) {
 		}
 		if got := OwnershipCapabilityOf(typ); got != (OwnershipCapability{Copy: CopyExplicit}) {
 			t.Errorf("nil %T capability = %+v; want explicit copy, no drop", typ, got)
+		}
+		if IsSizedType(typ) {
+			t.Errorf("nil %T is sized", typ)
+		}
+		if IsLowerableType(typ) {
+			t.Errorf("nil %T is lowerable", typ)
 		}
 	}
 }

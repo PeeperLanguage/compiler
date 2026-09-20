@@ -121,15 +121,7 @@ func (*FuncType) ownership(*ownershipQuery, bool) OwnershipCapability {
 }
 
 func (t *DefinedType) ownership(q *ownershipQuery, enumPayload bool) OwnershipCapability {
-	result := OwnershipCapability{Copy: CopyExplicit}
-	ForEachChild(t, func(child TypeChild) bool {
-		if child.Relation != TypeChildUnderlying {
-			return true
-		}
-		result = q.check(child.Type, enumPayload)
-		return false
-	})
-	return result
+	return q.check(t.Underlying, enumPayload)
 }
 
 // An owned pointer owns its allocation as one value. Its pointee remains a
@@ -146,28 +138,18 @@ func (t *RefType) ownership(*ownershipQuery, bool) OwnershipCapability {
 }
 
 func (t *OptionalType) ownership(q *ownershipQuery, _ bool) OwnershipCapability {
-	result := OwnershipCapability{Copy: CopyExplicit}
-	ForEachChild(t, func(child TypeChild) bool {
-		// Optional payloads are ordinary value storage. Being nested in an enum
-		// does not turn bulk payload storage into implicit-copy data.
-		result = q.check(child.Type, false)
-		return false
-	})
-	return result
+	// Optional payloads are ordinary value storage. Being nested in an enum
+	// does not turn bulk payload storage into implicit-copy data.
+	return q.check(t.Inner, false)
 }
 
 func (t *ArrayType) ownership(q *ownershipQuery, _ bool) OwnershipCapability {
 	if t.Shape == ArrayOwner {
 		return OwnershipCapability{Copy: CopyNever, Drop: true}
 	}
-	result := OwnershipCapability{Copy: CopyExplicit}
-	ForEachChild(t, func(child TypeChild) bool {
-		// Fixed and slice arrays remain bulk storage, but never-copy and drop
-		// obligations still propagate from their element.
-		result = mergeOwnership(result, q.check(child.Type, false))
-		return false
-	})
-	return result
+	// Fixed and slice arrays remain bulk storage, but never-copy and drop
+	// obligations still propagate from their element.
+	return mergeOwnership(OwnershipCapability{Copy: CopyExplicit}, q.check(t.Elem, false))
 }
 
 func (t *StructType) ownership(q *ownershipQuery, enumPayload bool) OwnershipCapability {

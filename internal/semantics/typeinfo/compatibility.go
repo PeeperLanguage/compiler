@@ -32,20 +32,6 @@ type Conversion struct {
 	Compatibility Compatibility
 }
 
-// String returns the string representation of the Compatibility value
-func (c Compatibility) String() string {
-	switch c {
-	case Compatible:
-		return "compatible"
-	case ExplicitCastable:
-		return "explicit_castable"
-	case Incompatible:
-		return "incompatible"
-	default:
-		return "unknown"
-	}
-}
-
 // CheckCompatibility classifies conversion from src to dst without
 // checker-specific context such as method-set lookup.
 func CheckCompatibility(dst, src Type) Conversion {
