@@ -483,7 +483,7 @@ func completionEnumSymbol(ctx *project.CompilerContext, module *module.Module, q
 		if module.ModuleScope != nil {
 			sym, _ = module.ModuleScope.Lookup(typeName)
 		}
-	} else if resolved, ok := project.LookupImportedSymbol(ctx, module, segments[0], typeName); ok {
+	} else if resolved, ok := ctx.TypeResolver.LookupImportedSymbol(module, segments[0], typeName); ok {
 		sym = resolved.Symbol
 	}
 	if sym == nil || sym.Kind != symbols.SymbolType {
@@ -493,7 +493,7 @@ func completionEnumSymbol(ctx *project.CompilerContext, module *module.Module, q
 	if !ok {
 		return nil
 	}
-	_, enumSymbol, ok := project.CanonicalEnumDeclaration(ctx, typ)
+	_, enumSymbol, ok := ctx.TypeResolver.CanonicalEnumDeclaration(typ)
 	if !ok {
 		return nil
 	}
@@ -554,7 +554,7 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module
 	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return nil, false
 	}
-	owner, enumSymbol, ok := project.CanonicalEnumDeclaration(ctx, subjectType)
+	owner, enumSymbol, ok := ctx.TypeResolver.CanonicalEnumDeclaration(subjectType)
 	if !ok {
 		return nil, false
 	}

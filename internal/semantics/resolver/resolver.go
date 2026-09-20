@@ -419,7 +419,7 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 	}
 
 	qualifierType, _ := symbols.GetSymbolType(qualifierSymbol)
-	_, enumSymbol, declaredEnum := project.CanonicalEnumDeclaration(r.ctx, qualifierType)
+	_, enumSymbol, declaredEnum := r.ctx.TypeResolver.CanonicalEnumDeclaration(qualifierType)
 	if !declaredEnum {
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "variant qualifier must resolve to a named enum", ast.LocOf(enumName), "use an enum declaration or transparent enum alias")
 		return true
@@ -441,7 +441,7 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 func (r *resolver) lookupImportedMember(qualifierNode, memberNode *ast.Ident, site ast.Node) (*symbols.Symbol, bool) {
 	qualifier := qualifierNode.Name
 	member := memberNode.Name
-	resolved, ok := project.LookupImportedSymbol(r.ctx, r.module, qualifier, member)
+	resolved, ok := r.ctx.TypeResolver.LookupImportedSymbol(r.module, qualifier, member)
 	if !ok || resolved.Symbol == nil {
 		if _, exists := r.module.Imports[qualifier]; !exists {
 			r.ctx.Diagnostics.AddError(diagnostics.ErrModuleNotFound, "unknown import alias `"+qualifier+"`", ast.LocOf(site), "")

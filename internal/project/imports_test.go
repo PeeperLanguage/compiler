@@ -12,6 +12,7 @@ import (
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -46,14 +47,14 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 		{Name: &ast.Ident{Name: "Thing"}},
 	}}
 
-	QueryType(ctx, module, node, TypeContext{})
-	ResolveType(ctx, module, node, TypeContext{})
+	ctx.TypeResolver.Query(module, node, typeresolution.Context{})
+	ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{})
 	if alias.IsUsed() || target.IsUsed() || module.Bindings.Symbol(node) != nil {
 		t.Fatal("private imported type published usage or binding")
 	}
 
 	target.IsPub = true
-	if got := QueryType(ctx, module, node, TypeContext{}); got.Status != TypeQueryAvailable || got.Type != target.Type {
+	if got := ctx.TypeResolver.Query(module, node, typeresolution.Context{}); got.Status != typeresolution.QueryAvailable || got.Type != target.Type {
 		t.Fatalf("query result = %#v, want available imported type %#v", got, target.Type)
 	}
 	if alias.IsUsed() || target.IsUsed() {
@@ -63,7 +64,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 		t.Fatal("qualified query published a source binding")
 	}
 
-	if got := ResolveType(ctx, module, node, TypeContext{}); got != target.Type {
+	if got := ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{}); got != target.Type {
 		t.Fatalf("source type = %#v, want imported type %#v", got, target.Type)
 	}
 	if !alias.IsUsed() || !target.IsUsed() {
@@ -93,7 +94,7 @@ func TestQualifiedTypeResolutionDoesNotMarkInvalidQualifierUsed(t *testing.T) {
 		{Name: &ast.Ident{Name: "Thing"}},
 	}}
 
-	ResolveType(ctx, module, node, TypeContext{})
+	ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{})
 	if local.IsUsed() {
 		t.Fatal("invalid qualified type marked local qualifier used")
 	}

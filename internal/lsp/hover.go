@@ -9,6 +9,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/source"
 )
 
@@ -32,7 +33,7 @@ type hoverSubject struct {
 	Symbol          *symbols.Symbol
 	ExprType        typeinfo.Type
 	ResolvedType    typeinfo.Type
-	TypeQueryStatus project.TypeQueryStatus
+	TypeQueryStatus typeresolution.QueryStatus
 	Decl            ast.Node
 	ResolvedImport  *module.ResolvedImport
 	Attribute       *ast.Attribute
@@ -121,12 +122,12 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	if !ok || typeNode == nil {
 		return nil
 	}
-	query := project.QueryType(cc.ctx, cc.module, typeNode, hoverTypeSyntaxContext(typeNode, cc.parents))
-	if query.Status == project.TypeQueryAvailable && query.Type == nil {
+	query := cc.ctx.TypeResolver.Query(cc.module, typeNode, hoverTypeSyntaxContext(typeNode, cc.parents))
+	if query.Status == typeresolution.QueryAvailable && query.Type == nil {
 		return nil
 	}
 	methodType := query.Type
-	if query.Status == project.TypeQueryAvailable {
+	if query.Status == typeresolution.QueryAvailable {
 		if decl, ok := cc.parents[typeNode.ID()].(ast.TypeDecl); ok && decl != nil && decl.UnderlyingType() == typeNode {
 			if sym := cc.module.Bindings.Symbol(decl.DeclName()); sym != nil {
 				if declaredType, found := symbols.GetSymbolType(sym); found {
@@ -183,16 +184,16 @@ func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr
 	return nil, false
 }
 
-func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) project.TypeContext {
+func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) typeresolution.Context {
 	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
 		if decl, ok := curr.(*ast.InterfaceDecl); ok {
-			return project.TypeContext{
+			return typeresolution.Context{
 				AllowAbstractSelf:  true,
 				NamedInterfaceRoot: decl.UnderlyingType(),
 			}
 		}
 	}
-	return project.TypeContext{}
+	return typeresolution.Context{}
 }
 
 func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
@@ -536,9 +537,9 @@ func renderHoverSubject(subject *hoverSubject) string {
 		text = fmt.Sprintf("(expr): %s", typeinfo.TypeText(subject.ExprType))
 	case hoverSubjectType:
 		switch subject.TypeQueryStatus {
-		case project.TypeQueryLoading:
+		case typeresolution.QueryLoading:
 			text = "(type) <loading...>"
-		case project.TypeQueryInvalid:
+		case typeresolution.QueryInvalid:
 			text = "(type) <invalid>"
 		}
 		if text != "" {

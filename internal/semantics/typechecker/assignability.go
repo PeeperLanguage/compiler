@@ -6,7 +6,6 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
@@ -296,7 +295,7 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 		if !imported {
 			return &typeinfo.InvalidType{}
 		}
-		resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name)
+		resolved, ok := c.ctx.TypeResolver.LookupImportedSymbol(c.module, qualifier.Name, member.Name)
 		if !ok || resolved.Symbol == nil {
 			return &typeinfo.InvalidType{}
 		}

@@ -17,6 +17,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -49,10 +50,8 @@ type CompilerContext struct {
 	fileIndex map[string]moduleid.ID
 	// Prior semantic API fingerprints supplied by incremental clients.
 	semanticExportBaselines map[moduleid.ID]string
-	// Named declaration identity -> collected module declaration index.
-	typeDeclarations map[string]*module.Module
-	// Concrete semantic application identity -> canonical instance.
-	typeInstances map[string]namedTypeInstance
+	// Semantic type construction and generic instance ownership.
+	TypeResolver *typeresolution.Resolver
 	// Import dependencies shared by module loading and pipeline scheduling.
 	ImportGraph *graph.DependencyGraph
 
@@ -157,7 +156,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 	globalScope := predeclaredScope(compilerTarget)
 	types := ir.NewTypeTable()
 	types.SetIndexType(types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: compilerTarget.IndexBits}))
-	return &CompilerContext{
+	ctx := &CompilerContext{
 		Config:                cfg,
 		Target:                compilerTarget,
 		Types:                 types,
@@ -170,9 +169,9 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		modules:                 make(map[moduleid.ID]*module.Module),
 		fileIndex:               make(map[string]moduleid.ID),
 		semanticExportBaselines: make(map[moduleid.ID]string),
-		typeDeclarations:        make(map[string]*module.Module),
-		typeInstances:           make(map[string]namedTypeInstance),
 	}
+	ctx.TypeResolver = typeresolution.New(compilerTarget, ctx)
+	return ctx
 }
 
 // WithDiagnostics creates a phase-scoped context view sharing compiler state.
@@ -190,24 +189,10 @@ func (ctx *CompilerContext) ResetModule(module *module.Module, retained phase.Ph
 	if ctx == nil || module == nil {
 		return
 	}
+	if ctx.TypeResolver != nil {
+		ctx.TypeResolver.ResetModule(module, retained)
+	}
 	module.ResetToPhase(retained)
-	ctx.mu.Lock()
-	for identity, instance := range ctx.typeInstances {
-		if instance.ownerModuleID == module.ID {
-			if !instance.complete && instance.ready != nil {
-				close(instance.ready)
-			}
-			delete(ctx.typeInstances, identity)
-		}
-	}
-	if retained < phase.Collected {
-		for identity, owner := range ctx.typeDeclarations {
-			if owner != nil && owner.ID == module.ID {
-				delete(ctx.typeDeclarations, identity)
-			}
-		}
-	}
-	ctx.mu.Unlock()
 	if ctx.Diagnostics != nil && module.ID.Valid() {
 		ctx.Diagnostics.DiscardModuleAfter(module.ID.String(), retained)
 	}

@@ -9,7 +9,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/moduleid"
-	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -207,7 +206,7 @@ func (b *binder) lookupQualifiedTypeDeclNodeID(node *ast.ScopeResolution) (graph
 	if !imported {
 		return "", false
 	}
-	resolved, ok := project.LookupImportedSymbol(b.ctx, b.module, qualifier.Name, member.Name)
+	resolved, ok := b.ctx.TypeResolver.LookupImportedSymbol(b.module, qualifier.Name, member.Name)
 	if !ok || resolved.Module == nil || resolved.Symbol == nil || resolved.Symbol.Kind != symbols.SymbolType {
 		return "", false
 	}

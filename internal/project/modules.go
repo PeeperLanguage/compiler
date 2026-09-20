@@ -10,7 +10,6 @@ import (
 	"compiler/internal/graph"
 	compilation "compiler/internal/module"
 	"compiler/internal/moduleid"
-	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 )
 
@@ -124,10 +123,8 @@ func (ctx *CompilerContext) AddModule(module *compilation.Module) *diagnostics.D
 	// Fresh LSP/compiler contexts re-register retained module snapshots. Their
 	// collected declarations are authoritative artifacts; this derived index must
 	// therefore be rebuilt even when collection does not run again.
-	if module.Phase >= phase.Collected {
-		for _, identity := range module.TypeDeclarationIdentities() {
-			ctx.typeDeclarations[identity] = module
-		}
+	if ctx.TypeResolver != nil {
+		ctx.TypeResolver.RegisterModule(module)
 	}
 	ctx.mu.Unlock()
 	return nil

@@ -6,12 +6,12 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 )
 
 func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -420,12 +420,12 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	)
 	switch bind := node.(type) {
 	case *ast.LetDecl:
-		declType = project.ResolveType(c.ctx, c.module, bind.Type, project.TypeContext{})
+		declType = c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, bind.Type, typeresolution.Context{})
 		typeNode = bind.Type
 		name = bind.Name
 		value = bind.Value
 	case *ast.ConstDecl:
-		declType = project.ResolveType(c.ctx, c.module, bind.Type, project.TypeContext{})
+		declType = c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, bind.Type, typeresolution.Context{})
 		typeNode = bind.Type
 		name = bind.Name
 		value = bind.Value

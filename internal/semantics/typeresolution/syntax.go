@@ -1,4 +1,4 @@
-package project
+package typeresolution
 
 import (
 	"fmt"
@@ -11,115 +11,117 @@ import (
 	"compiler/internal/target"
 )
 
-// TypeContext carries type construction facts that vary per conversion.
-type TypeContext struct {
+// Context carries type construction facts that vary per conversion.
+type Context struct {
 	SelfType           typeinfo.Type
 	AllowAbstractSelf  bool
 	TypeParameters     map[string]typeinfo.Type
 	NamedInterfaceRoot ast.TypeExpr
 }
 
-// TypeQueryStatus distinguishes resolved semantic evidence from temporary cache
+// QueryStatus distinguishes resolved semantic evidence from temporary cache
 // unavailability and genuine invalidity.
-type TypeQueryStatus uint8
+type QueryStatus uint8
 
 const (
-	TypeQueryAvailable TypeQueryStatus = iota
-	TypeQueryLoading
-	TypeQueryInvalid
+	QueryAvailable QueryStatus = iota
+	QueryLoading
+	QueryInvalid
 )
 
-// TypeQueryResult is the observational result of type syntax lookup. Type is
-// nil while loading and when no syntax was supplied.
-type TypeQueryResult struct {
+// QueryResult is the observational result of type syntax lookup. Type is nil
+// while loading and when no syntax was supplied.
+type QueryResult struct {
 	Type   typeinfo.Type
-	Status TypeQueryStatus
+	Status QueryStatus
 }
 
 type syntaxResolver struct {
-	ctx    *CompilerContext
-	module *module.Module
-	query  *TypeQueryResult
-	chain  []typeInstantiationFrame
+	resolver *Resolver
+	module   *module.Module
+	query    *QueryResult
+	diag     *diagnostics.DiagnosticBag
+	chain    []typeInstantiationFrame
 }
 
-func ResolveType(ctx *CompilerContext, module *module.Module, node ast.TypeExpr, context TypeContext) typeinfo.Type {
-	return resolveType(ctx, module, node, context, nil)
+func (r *Resolver) Resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, node ast.TypeExpr, context Context) typeinfo.Type {
+	return r.resolve(diag, mod, node, context, nil)
 }
 
-// QueryType resolves syntax without publishing source evidence or creating
-// generic instances. Loading means valid semantic evidence may exist later;
-// Invalid means the syntax resolved to an invalid semantic type.
-func QueryType(ctx *CompilerContext, module *module.Module, node ast.TypeExpr, context TypeContext) TypeQueryResult {
-	result := TypeQueryResult{Status: TypeQueryAvailable}
-	resolver := syntaxResolver{ctx: ctx, module: module, query: &result}
-	result.Type = typeinfo.TypeFromSyntax(node, resolver.context(context, syntaxTarget(ctx), nil))
+// Query resolves syntax without publishing source evidence or creating generic
+// instances. Loading means valid evidence may exist later; Invalid means syntax
+// resolved to an invalid semantic type.
+func (r *Resolver) Query(mod *module.Module, node ast.TypeExpr, context Context) QueryResult {
+	result := QueryResult{Status: QueryAvailable}
+	syntax := syntaxResolver{resolver: r, module: mod, query: &result}
+	result.Type = typeinfo.TypeFromSyntax(node, syntax.context(context, r.compilerTarget(), nil))
 	if typeinfo.ContainsInvalid(result.Type) {
-		result.Status = TypeQueryInvalid
+		result.Status = QueryInvalid
 	}
-	if result.Status == TypeQueryLoading {
+	if result.Status == QueryLoading {
 		result.Type = nil
 	}
 	return result
 }
 
-func ResolveFunctionType(ctx *CompilerContext, module *module.Module, fn *ast.FnDecl, context TypeContext) *typeinfo.FuncType {
+func (r *Resolver) ResolveFunction(diag *diagnostics.DiagnosticBag, mod *module.Module, fn *ast.FnDecl, context Context) *typeinfo.FuncType {
 	if fn == nil {
 		return nil
 	}
 	issues := make([]typeinfo.SyntaxIssue, 0, 1)
-	resolver := syntaxResolver{ctx: ctx, module: module}
-	compilerTarget := syntaxTarget(ctx)
-	fnType := typeinfo.FuncTypeFromDecl(fn, resolver.context(context, compilerTarget, &issues))
-	reportSyntaxIssues(ctx, compilerTarget, issues)
+	syntax := syntaxResolver{resolver: r, module: mod, diag: diag}
+	compilerTarget := r.compilerTarget()
+	fnType := typeinfo.FuncTypeFromDecl(fn, syntax.context(context, compilerTarget, &issues))
+	reportSyntaxIssues(diag, compilerTarget.IndexBits, issues)
 	return fnType
 }
 
-func resolveType(ctx *CompilerContext, module *module.Module, node ast.TypeExpr, context TypeContext, chain []typeInstantiationFrame) typeinfo.Type {
-	resolver := syntaxResolver{ctx: ctx, module: module, chain: chain}
+func (r *Resolver) resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, node ast.TypeExpr, context Context, chain []typeInstantiationFrame) typeinfo.Type {
+	syntax := syntaxResolver{resolver: r, module: mod, diag: diag, chain: chain}
 	issues := make([]typeinfo.SyntaxIssue, 0, 1)
-	typ := typeinfo.TypeFromSyntax(node, resolver.context(context, syntaxTarget(ctx), &issues))
-	reportSyntaxIssues(ctx, syntaxTarget(ctx), issues)
+	compilerTarget := r.compilerTarget()
+	typ := typeinfo.TypeFromSyntax(node, syntax.context(context, compilerTarget, &issues))
+	reportSyntaxIssues(diag, compilerTarget.IndexBits, issues)
 	return typ
 }
 
-func syntaxTarget(ctx *CompilerContext) target.Info {
-	if ctx != nil && ctx.Target.Valid() {
-		return ctx.Target
+func (r *Resolver) compilerTarget() target.Info {
+	if r != nil && r.target.Valid() {
+		return r.target
 	}
 	return target.Host()
 }
 
-func reportSyntaxIssues(ctx *CompilerContext, compilerTarget target.Info, issues []typeinfo.SyntaxIssue) {
-	if ctx == nil || ctx.Diagnostics == nil {
+func reportSyntaxIssues(diag *diagnostics.DiagnosticBag, indexBits int, issues []typeinfo.SyntaxIssue) {
+	if diag == nil {
 		return
 	}
 	for _, issue := range issues {
 		switch issue.Kind {
 		case typeinfo.SyntaxInvalidSelf:
-			ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+			diag.AddError(diagnostics.ErrInvalidType,
 				"`Self` can only be used as an iface method receiver", ast.LocOf(issue.Node), "")
 		case typeinfo.SyntaxInvalidArrayLength:
-			ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
-				fmt.Sprintf("array length must be an integer literal that fits its explicit type and target usize (u%d)", compilerTarget.IndexBits),
+			diag.AddError(diagnostics.ErrInvalidType,
+				fmt.Sprintf("array length must be an integer literal that fits its explicit type and target usize (u%d)", indexBits),
 				ast.LocOf(issue.Node), "invalid array length")
 		case typeinfo.SyntaxInvalidApplication:
 			word := "arguments"
 			if issue.Want == 1 {
 				word = "argument"
 			}
-			ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+			diag.AddError(diagnostics.ErrInvalidType,
 				fmt.Sprintf("type `%s` expects %d type %s, got %d", issue.Name, issue.Want, word, issue.Got),
 				ast.LocOf(issue.Node), "use exact explicit type arguments")
 		case typeinfo.SyntaxAnonymousInterface:
-			ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
+			diag.AddError(diagnostics.ErrInvalidType,
 				"anonymous interface types are not supported yet", ast.LocOf(issue.Node),
 				"declare a named interface and use &Name, &mut Name, or *Name")
 		}
 	}
 }
 
-func (r syntaxResolver) context(context TypeContext, compilerTarget target.Info, issues *[]typeinfo.SyntaxIssue) typeinfo.SyntaxContext {
+func (r syntaxResolver) context(context Context, compilerTarget target.Info, issues *[]typeinfo.SyntaxIssue) typeinfo.SyntaxContext {
 	return typeinfo.SyntaxContext{
 		Target:             compilerTarget,
 		SelfType:           context.SelfType,
@@ -157,7 +159,7 @@ func (r syntaxResolver) ResolveNamed(node ast.TypeExpr) (typeinfo.Type, bool) {
 }
 
 func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (typeinfo.Type, bool) {
-	if node == nil || r.module == nil {
+	if node == nil || r.module == nil || r.resolver == nil {
 		return nil, false
 	}
 	qualifier, member, imported := node.ImportMember()
@@ -172,7 +174,7 @@ func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (typeinfo.Ty
 			return symbols.GetSymbolType(sym)
 		}
 	}
-	resolved, ok := LookupImportedSymbol(r.ctx, r.module, qualifier.Name, member.Name)
+	resolved, ok := r.resolver.LookupImportedSymbol(r.module, qualifier.Name, member.Name)
 	if !ok || resolved.Symbol == nil || resolved.Symbol.Kind != symbols.SymbolType || !resolved.Symbol.IsPub {
 		return nil, false
 	}
@@ -187,28 +189,27 @@ func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (typeinfo.Ty
 
 func (r syntaxResolver) Instantiate(base *typeinfo.DefinedType, arguments []typeinfo.Type, node ast.TypeExpr) typeinfo.Type {
 	if r.query != nil {
-		instance := r.ctx.lookupTypeInstance(base, arguments)
-		// Invalid dominates loading when nested applications report both states.
+		instance := r.resolver.lookupTypeInstance(base, arguments)
 		switch instance.Status {
-		case TypeQueryInvalid:
-			r.query.Status = TypeQueryInvalid
-		case TypeQueryLoading:
-			if r.query.Status == TypeQueryAvailable {
-				r.query.Status = TypeQueryLoading
+		case QueryInvalid:
+			r.query.Status = QueryInvalid
+		case QueryLoading:
+			if r.query.Status == QueryAvailable {
+				r.query.Status = QueryLoading
 			}
 		}
 		if instance.Type != nil {
 			return instance.Type
 		}
-		if instance.Status == TypeQueryLoading {
+		if instance.Status == QueryLoading {
 			return &typeinfo.UnknownType{}
 		}
 		return &typeinfo.InvalidType{}
 	}
-	if r.ctx == nil {
+	if r.resolver == nil {
 		return &typeinfo.InvalidType{}
 	}
-	return r.ctx.instantiateType(base, arguments, node, r.chain)
+	return r.resolver.instantiateType(r.diag, base, arguments, node, r.chain)
 }
 
 func (r syntaxResolver) record(sym *symbols.Symbol) {

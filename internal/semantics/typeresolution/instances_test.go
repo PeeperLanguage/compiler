@@ -1,4 +1,4 @@
-package project
+package typeresolution
 
 import (
 	"testing"
@@ -7,9 +7,18 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
+	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/target"
 )
+
+type testModules map[moduleid.ID]*module.Module
+
+func (m testModules) ModuleByID(id moduleid.ID) (*module.Module, bool) {
+	mod, ok := m[id]
+	return mod, ok
+}
 
 func TestTypeArgumentIdentityUsesCanonicalParameterKey(t *testing.T) {
 	parameter := &typeinfo.TypeParameterType{Name: "T", OwnerIdentity: "pkg::Box", Index: 1}
@@ -31,24 +40,24 @@ func TestQueryTypeQualifiedSyntaxWithoutModuleDoesNotPanic(t *testing.T) {
 		{Name: &ast.Ident{Name: "Thing"}},
 	}}
 
-	got := QueryType(nil, nil, node, TypeContext{})
-	if got.Status != TypeQueryAvailable || got.Type == nil || got.Type.Text() != "dep::Thing" {
+	got := New(target.Host(), nil).Query(nil, node, Context{})
+	if got.Status != QueryAvailable || got.Type == nil || got.Type.Text() != "dep::Thing" {
 		t.Fatalf("qualified query result = %#v, want available unresolved qualified name", got)
 	}
 }
 
 func TestQueryTypeKeepsInvalidGenericApplicationDistinctFromLoading(t *testing.T) {
-	ctx, module, _ := genericQueryContext(t)
+	resolver, _, mod, _ := genericQueryContext(t)
 	node := &ast.NamedType{Name: "Box"}
 
-	got := QueryType(ctx, module, node, TypeContext{})
-	if got.Status != TypeQueryInvalid || !typeinfo.IsInvalid(got.Type) {
+	got := resolver.Query(mod, node, Context{})
+	if got.Status != QueryInvalid || !typeinfo.IsInvalid(got.Type) {
 		t.Fatalf("invalid generic query result = %#v, want invalid", got)
 	}
 }
 
 func TestQueryTypeDoesNotCreateOrDiagnoseGenericInstance(t *testing.T) {
-	ctx, module, _ := genericQueryContext(t)
+	resolver, diag, mod, _ := genericQueryContext(t)
 	node := &ast.AppliedType{
 		Name: &ast.Ident{Name: "Box"},
 		TypeArgs: []ast.TypeExpr{
@@ -56,30 +65,30 @@ func TestQueryTypeDoesNotCreateOrDiagnoseGenericInstance(t *testing.T) {
 		},
 	}
 
-	got := QueryType(ctx, module, node, TypeContext{})
-	symbol, found := module.ModuleScope.LookupLocal("Box")
+	got := resolver.Query(mod, node, Context{})
+	symbol, found := mod.ModuleScope.LookupLocal("Box")
 	if !found || symbol == nil {
 		t.Fatal("generic type symbol missing")
 	}
 	if symbol.IsUsed() {
 		t.Fatal("query marked generic type symbol used")
 	}
-	if got.Status != TypeQueryLoading || got.Type != nil {
+	if got.Status != QueryLoading || got.Type != nil {
 		t.Fatalf("uncached query result = %#v, want loading without type", got)
 	}
-	if len(ctx.typeInstances) != 0 {
-		t.Fatalf("query created %d generic instances", len(ctx.typeInstances))
+	if len(resolver.instances) != 0 {
+		t.Fatalf("query created %d generic instances", len(resolver.instances))
 	}
-	if ctx.Diagnostics.HasErrors() {
-		t.Fatalf("query emitted diagnostics: %s", ctx.Diagnostics.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("query emitted diagnostics: %s", diag.EmitAllToString())
 	}
 }
 
 func TestQueryTypeDoesNotReturnIncompleteCachedGenericInstance(t *testing.T) {
-	ctx, module, base := genericQueryContext(t)
+	resolver, _, mod, base := genericQueryContext(t)
 	argument := &typeinfo.IntegerType{Signed: true, Bits: 32}
 	identity := typeInstanceIdentity(base, []typeinfo.Type{argument})
-	ctx.typeInstances[identity] = namedTypeInstance{
+	resolver.instances[identity] = namedTypeInstance{
 		base: base,
 		typ: &typeinfo.DefinedType{
 			Name:           base.Name,
@@ -97,13 +106,13 @@ func TestQueryTypeDoesNotReturnIncompleteCachedGenericInstance(t *testing.T) {
 		},
 	}
 
-	if got := QueryType(ctx, module, node, TypeContext{}); got.Status != TypeQueryLoading || got.Type != nil {
+	if got := resolver.Query(mod, node, Context{}); got.Status != QueryLoading || got.Type != nil {
 		t.Fatalf("incomplete cached query result = %#v, want loading without type", got)
 	}
 }
 
 func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
-	ctx, module, base := genericQueryContext(t)
+	resolver, diag, mod, base := genericQueryContext(t)
 	argument := &typeinfo.IntegerType{Signed: true, Bits: 32}
 	identity := typeInstanceIdentity(base, []typeinfo.Type{argument})
 	cached := &typeinfo.DefinedType{
@@ -113,7 +122,7 @@ func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
 		TypeParameters: base.TypeParameters,
 		TypeArguments:  []typeinfo.Type{argument},
 	}
-	ctx.typeInstances[identity] = namedTypeInstance{base: base, typ: cached, complete: true}
+	resolver.instances[identity] = namedTypeInstance{base: base, typ: cached, complete: true}
 	node := &ast.AppliedType{
 		Name: &ast.Ident{Name: "Box"},
 		TypeArgs: []ast.TypeExpr{
@@ -121,17 +130,17 @@ func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
 		},
 	}
 
-	if got := QueryType(ctx, module, node, TypeContext{}); got.Status != TypeQueryAvailable || got.Type != cached {
+	if got := resolver.Query(mod, node, Context{}); got.Status != QueryAvailable || got.Type != cached {
 		t.Fatalf("cached query result = %#v, want available type %p", got, cached)
 	}
-	if ctx.Diagnostics.HasErrors() {
-		t.Fatalf("query emitted diagnostics: %s", ctx.Diagnostics.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("query emitted diagnostics: %s", diag.EmitAllToString())
 	}
 }
 
 func TestResolveTypeCreatesGenericInstance(t *testing.T) {
-	ctx, module, base := genericQueryContext(t)
-	ctx.RegisterTypeDeclaration(module, &ast.StructDecl{
+	resolver, diag, mod, base := genericQueryContext(t)
+	resolver.RegisterTypeDeclaration(mod, &ast.StructDecl{
 		Name: &ast.Ident{Name: "Box"},
 		Type: &ast.StructType{},
 	}, base)
@@ -142,27 +151,50 @@ func TestResolveTypeCreatesGenericInstance(t *testing.T) {
 		},
 	}
 
-	got := ResolveType(ctx, module, node, TypeContext{})
+	got := resolver.Resolve(diag, mod, node, Context{})
 	if typeinfo.IsInvalid(got) {
 		t.Fatalf("source type resolution returned invalid type: %#v", got)
 	}
-	if len(ctx.typeInstances) != 1 {
-		t.Fatalf("source resolution created %d generic instances, want 1", len(ctx.typeInstances))
+	if len(resolver.instances) != 1 {
+		t.Fatalf("source resolution created %d generic instances, want 1", len(resolver.instances))
 	}
-	symbol, found := module.ModuleScope.LookupLocal("Box")
+	symbol, found := mod.ModuleScope.LookupLocal("Box")
 	if !found || symbol == nil || !symbol.IsUsed() {
 		t.Fatal("source resolution did not mark generic type symbol used")
 	}
-	if ctx.Diagnostics.HasErrors() {
-		t.Fatalf("source resolution emitted diagnostics: %s", ctx.Diagnostics.EmitAllToString())
+	if diag.HasErrors() {
+		t.Fatalf("source resolution emitted diagnostics: %s", diag.EmitAllToString())
 	}
 }
 
-func genericQueryContext(t *testing.T) (*CompilerContext, *module.Module, *typeinfo.DefinedType) {
+func TestResetModulePurgesOnlyOwnedNamedTypeInstances(t *testing.T) {
+	resolver := New(target.Host(), nil)
+	ownerID := moduleid.ID{Origin: "local", ImportPath: "owner"}
+	otherID := moduleid.ID{Origin: "local", ImportPath: "other"}
+	resolver.instances["owner::Box<i32>"] = namedTypeInstance{
+		ownerModuleID: ownerID,
+		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
+	}
+	resolver.instances["other::Box<i32>"] = namedTypeInstance{
+		ownerModuleID: otherID,
+		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
+	}
+
+	resolver.ResetModule(&module.Module{ID: ownerID}, phase.Parsed)
+
+	if _, found := resolver.instances["owner::Box<i32>"]; found {
+		t.Fatal("reset retained instance owned by reset module")
+	}
+	if _, found := resolver.instances["other::Box<i32>"]; !found {
+		t.Fatal("reset removed instance owned by another module")
+	}
+}
+
+func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *module.Module, *typeinfo.DefinedType) {
 	t.Helper()
-	ctx := New(".", ".peep", diagnostics.NewDiagnosticBag())
-	module := &module.Module{
-		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
+	diag := diagnostics.NewDiagnosticBag()
+	mod := &module.Module{
+		ID:          moduleid.ID{Origin: "local", ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
 	}
 	base := &typeinfo.DefinedType{
@@ -171,8 +203,9 @@ func genericQueryContext(t *testing.T) (*CompilerContext, *module.Module, *typei
 	}
 	symbol := symbols.New("Box", symbols.SymbolType, nil, nil)
 	symbol.BindType(base)
-	if err := module.ModuleScope.Declare(symbol); err != nil {
+	if err := mod.ModuleScope.Declare(symbol); err != nil {
 		t.Fatalf("declare generic type: %v", err)
 	}
-	return ctx, module, base
+	modules := testModules{mod.ID: mod}
+	return New(target.Host(), modules), diag, mod, base
 }

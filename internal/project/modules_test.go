@@ -18,6 +18,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 )
 
 func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
@@ -316,54 +317,38 @@ func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.
 	}
 }
 
-func TestCompilerContextResetPurgesOwnedNamedTypeInstances(t *testing.T) {
-	ctx := New(".", ".peep", nil)
-	ownerID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"}
-	otherID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "other"}
-	owner := &module.Module{ID: ownerID}
-	ctx.typeInstances["owner::Box<i32>"] = namedTypeInstance{
-		ownerModuleID: ownerID,
-		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
-	}
-	ctx.typeInstances["other::Box<i32>"] = namedTypeInstance{
-		ownerModuleID: otherID,
-		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
-	}
-
-	ctx.ResetModule(&module.Module{ID: owner.ID}, phase.Parsed)
-
-	if _, found := ctx.typeInstances["owner::Box<i32>"]; found {
-		t.Fatal("reset retained instance owned by reset module")
-	}
-	if _, found := ctx.typeInstances["other::Box<i32>"]; !found {
-		t.Fatal("reset removed instance owned by another module")
-	}
-}
-
 func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
-	module := &module.Module{
-		ID:    moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"},
-		Phase: phase.Collected,
+	mod := &module.Module{
+		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"},
+		Phase:       phase.Collected,
+		ModuleScope: symbols.NewScope(nil),
 	}
-	base := &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box", Kind: typeinfo.DefinedKindStruct}
-	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}}
+	base := &typeinfo.DefinedType{
+		Name: "Box", Identity: "owner::Box", Kind: typeinfo.DefinedKindStruct,
+		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "owner::Box", Index: 0}},
+	}
+	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}, Type: &ast.StructType{}}
+	symbol := symbols.New("Box", symbols.SymbolType, declaration, nil)
+	symbol.BindType(base)
+	if err := mod.ModuleScope.Declare(symbol); err != nil {
+		t.Fatalf("declare retained generic type: %v", err)
+	}
 	original := New(".", ".peep", nil)
-	original.RegisterTypeDeclaration(module, declaration, base)
+	original.TypeResolver.RegisterTypeDeclaration(mod, declaration, base)
 
 	fresh := New(".", ".peep", nil)
-	fresh.AddModule(module)
-	registeredModule, found := fresh.typeDeclarations[base.Identity]
-	registered, retained := module.TypeDeclaration(base.Identity)
-	if !found || registeredModule != module || !retained || registered.Base != base || registered.Syntax != declaration {
-		t.Fatalf("reindexed declaration module = %#v, artifact = %#v", registeredModule, registered)
+	fresh.AddModule(mod)
+	resolved := fresh.TypeResolver.Resolve(fresh.Diagnostics, mod, &ast.AppliedType{
+		Name:     &ast.Ident{Name: "Box"},
+		TypeArgs: []ast.TypeExpr{&ast.NamedType{Name: "i32"}},
+	}, typeresolution.Context{})
+	if typeinfo.IsInvalid(resolved) {
+		t.Fatalf("retained generic declaration did not reindex: %#v", resolved)
 	}
 
-	fresh.ResetModule(module, phase.Parsed)
-	if _, retained := module.TypeDeclaration(base.Identity); retained {
+	fresh.ResetModule(mod, phase.Parsed)
+	if _, retained := mod.TypeDeclaration(base.Identity); retained {
 		t.Fatal("reset below collection retained module declaration artifact")
-	}
-	if _, found := fresh.typeDeclarations[base.Identity]; found {
-		t.Fatal("reset below collection retained context declaration index")
 	}
 }
 

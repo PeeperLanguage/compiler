@@ -11,13 +11,13 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/problems"
-	"compiler/internal/project"
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/numeric"
 )
 
@@ -500,7 +500,7 @@ func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedV
 		return resolvedNamedVariant{}, false
 	}
 
-	enumType := project.ResolveType(c.ctx, c.module, typePath, project.TypeContext{})
+	enumType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, typePath, typeresolution.Context{})
 	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
 	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return resolvedNamedVariant{}, false
@@ -790,7 +790,7 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 		return &typeinfo.InvalidType{}
 	}
 	if node.Type != nil {
-		targetType := project.ResolveType(c.ctx, c.module, node.Type, project.TypeContext{})
+		targetType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, typeresolution.Context{})
 		targetStruct, ok := typeinfo.Underlying(targetType).(*typeinfo.StructType)
 		if !ok || targetStruct == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -954,7 +954,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	arrayType := project.ResolveType(c.ctx, c.module, node.Type, project.TypeContext{})
+	arrayType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, typeresolution.Context{})
 	if typeinfo.IsInvalidOrUnknown(arrayType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -999,7 +999,7 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	if c == nil || node == nil {
 		return nil
 	}
-	targetType := project.ResolveType(c.ctx, c.module, node.TypeExpr, project.TypeContext{})
+	targetType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.TypeExpr, typeresolution.Context{})
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
 		return &typeinfo.InvalidType{}

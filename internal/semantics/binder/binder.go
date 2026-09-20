@@ -8,6 +8,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 )
 
 type binder struct {
@@ -39,7 +40,7 @@ func (b *binder) bindModule() {
 			completed = append(completed, defined)
 		}
 	}
-	b.ctx.CompleteTypeInstances(completed)
+	b.ctx.TypeResolver.CompleteTypeInstances(b.ctx.Diagnostics, completed)
 	ast.ForEachDecl(b.module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
@@ -59,7 +60,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
 	}
-	fnType := project.ResolveFunctionType(b.ctx, b.module, fn, project.TypeContext{})
+	fnType := b.ctx.TypeResolver.ResolveFunction(b.ctx.Diagnostics, b.module, fn, typeresolution.Context{})
 	sym := b.module.Bindings.Symbol(fn.Name)
 	if fn.Receiver != nil {
 		if sym == nil {
@@ -101,7 +102,7 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 		return
 	}
 	b.bindModuleScopeType(name.Name,
-		project.ResolveType(b.ctx, b.module, typ, project.TypeContext{}))
+		b.ctx.TypeResolver.Resolve(b.ctx.Diagnostics, b.module, typ, typeresolution.Context{}))
 }
 
 // Bind named type declarations using one stable shell per symbol.
@@ -131,14 +132,14 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
 		}
 		sym.BindType(defined)
 	}
-	context := project.TypeContext{
+	context := typeresolution.Context{
 		AllowAbstractSelf: true,
 		TypeParameters:    typeinfo.TypeParameterBindings(defined.TypeParameters, nil),
 	}
 	if _, ok := decl.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = typ
 	}
-	defined.Underlying = project.ResolveType(b.ctx, b.module, typ, context)
+	defined.Underlying = b.ctx.TypeResolver.Resolve(b.ctx.Diagnostics, b.module, typ, context)
 	return defined
 }
 

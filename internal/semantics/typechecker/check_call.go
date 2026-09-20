@@ -7,7 +7,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
-	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -520,7 +519,7 @@ func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *mod
 	case *ast.ScopeResolution:
 		qualifier, member, imported := node.ImportValueMember()
 		if imported {
-			if resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name); ok {
+			if resolved, ok := c.ctx.TypeResolver.LookupImportedSymbol(c.module, qualifier.Name, member.Name); ok {
 				return resolved.Symbol, resolved.Module
 			}
 		}

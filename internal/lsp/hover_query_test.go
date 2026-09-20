@@ -12,6 +12,7 @@ import (
 	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/peeper"
 )
 
@@ -82,7 +83,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 		node:    typeNode,
 		parents: map[ast.NodeID]ast.Node{typeNode.ID(): declaration},
 	})
-	if subject == nil || subject.TypeQueryStatus != project.TypeQueryInvalid {
+	if subject == nil || subject.TypeQueryStatus != typeresolution.QueryInvalid {
 		t.Fatalf("invalid declaration hover subject = %#v", subject)
 	}
 	if rendered := renderHoverSubject(subject); !strings.Contains(rendered, "<invalid>") || strings.Contains(rendered, "Alias") {
@@ -118,7 +119,7 @@ func TestTypeHoverShowsLoadingForUnavailableGenericInstance(t *testing.T) {
 	}
 
 	subject := resolveTypeHoverSubject(context)
-	if subject == nil || subject.TypeQueryStatus != project.TypeQueryLoading {
+	if subject == nil || subject.TypeQueryStatus != typeresolution.QueryLoading {
 		t.Fatalf("unavailable generic hover subject = %#v, want loading", subject)
 	}
 	rendered := renderHoverSubject(subject)

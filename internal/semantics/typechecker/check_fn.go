@@ -7,9 +7,9 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/problems"
-	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/source"
 )
 
@@ -273,7 +273,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 
 func (c *checker) checkFunctionTypeContracts() {
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
-		context := project.TypeContext{}
+		context := typeresolution.Context{}
 		allowTypeParameters := false
 		if typeDecl, ok := decl.(ast.TypeDecl); ok && len(typeDecl.DeclarationTypeParams()) > 0 {
 			context = c.typeContextForDecl(typeDecl, false)
@@ -284,7 +284,7 @@ func (c *checker) checkFunctionTypeContracts() {
 			if !ok || fnTypeSyntax == nil {
 				return true
 			}
-			fnType, _ := project.ResolveType(c.ctx, c.module, fnTypeSyntax, context).(*typeinfo.FuncType)
+			fnType, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, fnTypeSyntax, context).(*typeinfo.FuncType)
 			c.checkCallableReturn(fnTypeSyntax.Return, fnTypeSyntax, fnType, fnTypeSyntax.ReturnOrigins, allowTypeParameters)
 			return true
 		})
@@ -304,12 +304,12 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 			return
 		}
 		for _, field := range strct.Fields {
-			fieldType := project.ResolveType(c.ctx, c.module, field.Type, context)
+			fieldType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, field.Type, context)
 			c.rejectReferenceStorage(fieldType, field.Type, "struct fields", true)
 			c.rejectUnsizedType(fieldType, field.Type, "struct field")
 		}
 	case *ast.TypeAliasDecl:
-		typ := project.ResolveType(c.ctx, c.module, node.Type, context)
+		typ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, context)
 		c.rejectReferenceStorage(typ, node.Type, "array or heap-owned type aliases", false)
 	}
 }
@@ -325,7 +325,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
 		return
 	}
-	resolvedIface, _ := project.ResolveType(c.ctx, c.module, iface, c.typeContextForDecl(decl, false)).(*typeinfo.InterfaceType)
+	resolvedIface, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, iface, c.typeContextForDecl(decl, false)).(*typeinfo.InterfaceType)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	for methodIndex, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
@@ -344,7 +344,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		}
 		context := c.typeContextForDecl(decl, false)
 		for _, param := range method.Params {
-			paramType := project.ResolveType(c.ctx, c.module, param.Type, context)
+			paramType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, param.Type, context)
 			if c.rejectUnsizedType(paramType, param.Type, "interface method parameter") {
 				continue
 			}
@@ -394,7 +394,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		if variant.Payload == nil {
 			continue
 		}
-		payloadType := project.ResolveType(c.ctx, c.module, variant.Payload, context)
+		payloadType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, variant.Payload, context)
 		payload, isStruct := typeinfo.Underlying(payloadType).(*typeinfo.StructType)
 		inlinePayload, inline := variant.Payload.(*ast.StructType)
 		if !isStruct {
@@ -453,8 +453,8 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	}
 }
 
-func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, typeContext project.TypeContext, allowTypeParameters bool, context string) {
-	payloadType := project.ResolveType(c.ctx, c.module, syntax, typeContext)
+func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, typeContext typeresolution.Context, allowTypeParameters bool, context string) {
+	payloadType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, syntax, typeContext)
 	if c.rejectUnsizedType(payloadType, syntax, context) {
 		return
 	}
@@ -466,8 +466,8 @@ func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, typeContext project.
 	}
 }
 
-func (c *checker) typeContextForDecl(decl ast.TypeDecl, allowAbstractSelf bool) project.TypeContext {
-	context := project.TypeContext{AllowAbstractSelf: allowAbstractSelf}
+func (c *checker) typeContextForDecl(decl ast.TypeDecl, allowAbstractSelf bool) typeresolution.Context {
+	context := typeresolution.Context{AllowAbstractSelf: allowAbstractSelf}
 	if iface, ok := decl.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = iface.UnderlyingType()
 	}
@@ -494,7 +494,7 @@ func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {
 			"receiver function requires a named receiver", ast.LocOf(fn.Receiver.Type), "")
 		return
 	}
-	receiverType := project.ResolveType(c.ctx, c.module, fn.Receiver.Type, project.TypeContext{})
+	receiverType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, fn.Receiver.Type, typeresolution.Context{})
 	targetType, ok := typeinfo.ReceiverTarget(receiverType)
 	defined, named := targetType.(*typeinfo.DefinedType)
 	if !ok || !named || defined == nil || !isValidReceiverType(receiverType, defined) {
@@ -575,7 +575,7 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 					break
 				}
 			}
-			expectedType := project.ResolveType(c.ctx, c.module, spec.Type, project.TypeContext{AllowAbstractSelf: true})
+			expectedType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, spec.Type, typeresolution.Context{AllowAbstractSelf: true})
 			argType := c.typeExpr(c.module.ModuleScope, arg, expectedType)
 			if typeinfo.IsInvalidOrUnknown(argType) {
 				validArgs = false
