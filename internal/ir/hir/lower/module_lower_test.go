@@ -22,7 +22,6 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
@@ -81,7 +80,8 @@ func TestGenerateHIRRequiresExpressionTypeEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_type_evidence_test"+peeper.SourceExt, "hir_type_evidence_test", `fn Read(value: i32) -> i32 { return value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		identifier := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-		module.Typechecking.ForgetExprType(identifier.ID())
+		typed := module.THIR.Node(ir.NodeID(identifier.ID())).(*thir.Ident)
+		typed.Type = nil
 		module.Flow.ForgetExprType(identifier.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
@@ -93,7 +93,8 @@ func TestGenerateHIRRequiresNumberTypeEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_number_evidence_test"+peeper.SourceExt, "hir_number_evidence_test", `fn Read() -> i32 { return 1; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		number := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.NumberLit)
-		module.Typechecking.ForgetExprType(number.ID())
+		typed := module.THIR.Node(ir.NodeID(number.ID())).(*thir.NumberLiteral)
+		typed.Type = nil
 		module.Flow.ForgetExprType(number.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "number literal missing resolved type evidence") {
@@ -105,7 +106,8 @@ func TestGenerateHIRRequiresUnaryTypeEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_unary_evidence_test"+peeper.SourceExt, "hir_unary_evidence_test", `fn Read(value: i32) -> i32 { return -value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[0].(*ast.FnDecl)
 		unary := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.UnaryExpr)
-		module.Typechecking.ForgetExprType(unary.ID())
+		typed := module.THIR.Node(ir.NodeID(unary.ID())).(*thir.Unary)
+		typed.Type = nil
 		module.Flow.ForgetExprType(unary.ID())
 	})
 	if err := out.Validate(); err == nil || !strings.Contains(err.Error(), "return value with invalid type") {
@@ -360,30 +362,15 @@ func TestGenerateHIRLowersSequenceForIntoStructuredSegments(t *testing.T) {
 func TestGenerateHIRRejectsForInWithoutSemanticEvidence(t *testing.T) {
 	out := generateTestHIR(t, "hir_for_evidence_test"+peeper.SourceExt, "hir_for_evidence_test", `fn main() { for value in 0..2 {} }`, func(module *module.Module) {
 		loop := module.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
-		module.Typechecking.ForgetForIteration(loop.ID())
+		typedLoop, _ := module.THIR.Node(ir.NodeID(loop.ID())).(*thir.For)
+		if typedLoop == nil {
+			t.Fatal("THIR iteration evidence was not published")
+		}
+		typedLoop.Iteration = nil
 	})
 	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
 	if !ok || !strings.Contains(invalid.Message, "missing semantic evidence") {
 		t.Fatalf("for-in without evidence = %#v", out.Funcs[0].Body.Stmts[0])
-	}
-}
-
-// A published record with no plan is the one malformed shape the type still
-// admits: IterationPlan is closed, so a consumer's switch over the two plans is
-// exhaustive, but a zero Plan is reachable if a producer ever publishes early.
-func TestGenerateHIRRejectsForInWithoutAnIterationPlan(t *testing.T) {
-	out := generateTestHIR(t, "hir_for_plan_test"+peeper.SourceExt, "hir_for_plan_test", `fn main() { for value in 0..2 {} }`, func(module *module.Module) {
-		loop := module.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
-		evidence, found := module.Typechecking.ForIteration(loop.ID())
-		if !found {
-			t.Fatal("for-in iteration evidence was not published")
-		}
-		evidence.Plan = nil
-		module.Typechecking.RecordForIteration(loop.ID(), evidence)
-	})
-	invalid, ok := out.Funcs[0].Body.Stmts[0].(*hir.Invalid)
-	if !ok || !strings.Contains(invalid.Message, "unknown for-in iteration evidence") {
-		t.Fatalf("for-in without an iteration plan = %#v", out.Funcs[0].Body.Stmts[0])
 	}
 }
 
@@ -1625,12 +1612,11 @@ fn Read(result: Result) -> i32 {
 }`, func(module *module.Module) {
 		fn := module.AST.Stmts[1].(*ast.FnDecl)
 		matchStmt := fn.Body.Stmts[0].(*ast.MatchStmt)
-		match, found := module.Typechecking.Match(matchStmt.ID())
-		if !found {
-			t.Fatal("match evidence was not published")
+		match, _ := module.THIR.Node(ir.NodeID(matchStmt.ID())).(*thir.Match)
+		if match == nil {
+			t.Fatal("THIR match evidence was not published")
 		}
-		match.Arms[0].Bindings[0].Projection = typecheckresult.MatchProjectionInvalid
-		module.Typechecking.RecordMatch(matchStmt.ID(), match)
+		match.Arms[0].Bindings[0].Projection = thir.MatchProjection(255)
 	})
 	if out == nil || len(out.Funcs) != 1 || len(out.Funcs[0].Body.Stmts) != 1 {
 		t.Fatalf("unexpected HIR shape: %#v", out)

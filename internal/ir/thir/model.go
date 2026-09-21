@@ -178,6 +178,7 @@ type Expr interface {
 	ExprPlace() *Place
 	UseKind() (typeinfo.UseKind, bool)
 	ReferenceArgInfo() (bool, bool)
+	LowerExpression(ExpressionLowerer) ir.Expr
 	AnalyzeFlow(FlowAnalyzer) typeinfo.Type
 	BuildEffects(EffectBuilder)
 }

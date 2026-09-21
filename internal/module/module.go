@@ -2,6 +2,7 @@ package module
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
@@ -182,7 +183,15 @@ func (m *Module) ResetSemanticData() {
 
 // BaseExprType returns canonical base typechecker evidence when available.
 func (m *Module) BaseExprType(id ast.NodeID) typeinfo.Type {
-	if m == nil || m.Typechecking == nil {
+	if m == nil || id == 0 {
+		return nil
+	}
+	if m.THIR != nil {
+		if expr, ok := m.THIR.Node(ir.NodeID(id)).(thir.Expr); ok && expr != nil {
+			return expr.ExprType()
+		}
+	}
+	if m.Typechecking == nil {
 		return nil
 	}
 	return m.Typechecking.ExprType(id)
