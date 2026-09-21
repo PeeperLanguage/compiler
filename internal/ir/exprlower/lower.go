@@ -226,7 +226,7 @@ func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
 func (l *lowerer) LowerVariant(e *thir.Variant) ir.Expr {
 	out := &ir.VariantMake{Case: e.Case, Type: l.typeID(l.effectiveType(e))}
 	if e.Payload != nil {
-		out.Payload = l.lower(e.Payload, e.Payload.ExprType(), true)
+		out.Payload = l.lower(e.Payload, e.PayloadType, true)
 	}
 	return out
 }

@@ -1,0 +1,15 @@
+enum Wide {
+    Value: i64
+}
+
+fn main() -> i32 {
+    let wide = Wide::Value with 7i32;
+    match wide {
+        Wide::Value with value => {
+            if value != 7i64 {
+                return 1;
+            }
+            return 0;
+        }
+    }
+}

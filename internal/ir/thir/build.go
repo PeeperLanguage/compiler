@@ -206,7 +206,10 @@ func (b *builder) expression(expression ast.Expr) Expr {
 			if info.Type == nil {
 				info.Type = construction.EnumType
 			}
-			return &Variant{ExprInfo: info, Case: construction.Case, Payload: b.expression(construction.Value)}
+			return &Variant{
+				ExprInfo: info, Case: construction.Case,
+				Payload: b.expression(construction.Value), PayloadType: construction.Payload,
+			}
 		}
 	}
 

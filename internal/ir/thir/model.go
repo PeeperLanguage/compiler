@@ -471,8 +471,9 @@ type StructField struct {
 
 type Variant struct {
 	ExprInfo
-	Case    int
-	Payload Expr
+	Case        int
+	Payload     Expr
+	PayloadType typeinfo.Type
 }
 
 type ArrayLiteral struct {

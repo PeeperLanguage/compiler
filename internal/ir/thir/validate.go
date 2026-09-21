@@ -281,6 +281,9 @@ func (e *Variant) validateSelf() error {
 	if e.Case < 0 {
 		return fmt.Errorf("variant construction is unresolved")
 	}
+	if typednil.IsNil(e.Payload) != (e.PayloadType == nil) {
+		return fmt.Errorf("variant payload and expected type must be published together")
+	}
 	return nil
 }
 

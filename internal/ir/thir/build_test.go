@@ -16,6 +16,7 @@ import (
 	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
@@ -167,6 +168,35 @@ fn First() -> i32 {
 	}
 	if _, ok := checked.Checked.Stmts[0].(*thir.For); !ok {
 		t.Fatalf("checked expansion root = %T, want generated loop", checked.Checked.Stmts[0])
+	}
+}
+
+func TestBuildPreservesVariantPayloadExpectedType(t *testing.T) {
+	mod := buildTypedModule(t, `
+enum Wide { Value: i64 }
+fn make() -> Wide { return Wide::Value with 7i32; }
+`)
+
+	var variant *thir.Variant
+	for _, function := range mod.THIR.Functions {
+		if function == nil || function.Body == nil {
+			continue
+		}
+		thir.Inspect(function.Body, func(node thir.Node) bool {
+			if construction, ok := node.(*thir.Variant); ok {
+				variant = construction
+			}
+			return true
+		})
+	}
+	if variant == nil {
+		t.Fatal("variant construction missing from THIR")
+	}
+	if got := typeinfo.TypeText(variant.PayloadType); got != "i64" {
+		t.Fatalf("variant payload expected type = %s, want i64", got)
+	}
+	if got := typeinfo.TypeText(variant.Payload.ExprType()); got != "i32" {
+		t.Fatalf("variant payload source type = %s, want i32", got)
 	}
 }
 
