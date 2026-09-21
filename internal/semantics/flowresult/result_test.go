@@ -45,7 +45,6 @@ func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
 	result := New()
 	const id ast.NodeID = 11
 	slots := []AggregateSlot{{
-		Value: 12,
 		Projection: place.OriginProjection{
 			Kind:  place.OriginField,
 			Field: "value",
@@ -55,9 +54,9 @@ func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
 
 	// Publication and queries own their slice so callers cannot mutate Flow's
 	// aggregate decomposition accidentally.
-	slots[0].Value = 13
+	slots[0].Projection.Field = "changed"
 	got, ok := result.AggregateSlots(id)
-	if !ok || len(got) != 1 || got[0].Value != 12 || got[0].Projection.Field != "value" {
+	if !ok || len(got) != 1 || got[0].Projection.Field != "value" {
 		t.Fatalf("aggregate slots = %#v", got)
 	}
 	got[0].Projection.Field = "changed"

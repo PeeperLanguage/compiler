@@ -13,6 +13,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/thir"
+	"compiler/internal/ir/typelower"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -600,20 +601,6 @@ fn read(value: ?i32, other: Holder) -> i32 {
 	}
 	return 0;
 }`)
-}
-
-func TestLoweredRuntimeTypeDoesNotInventUseSiteVariantIdentity(t *testing.T) {
-	typ := &typeinfo.DefinedType{
-		Name:       "Status",
-		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}}},
-	}
-	lowered, ok := loweredRuntimeType(typ, nil).(*typeinfo.DefinedType)
-	if !ok || lowered == nil {
-		t.Fatalf("lowered type = %T, want DefinedType", lowered)
-	}
-	if lowered.Identity != "" {
-		t.Fatalf("lowered type invented use-site identity %q", lowered.Identity)
-	}
 }
 
 func TestGenerateHIRCompletesRecursiveNamedStructType(t *testing.T) {
@@ -1547,11 +1534,11 @@ func TestLoweredTypeIDUsesSharedVariantDescriptor(t *testing.T) {
 	types := ir.NewTypeTable()
 	ctx := &lowering{types: types, diagnostics: diagnostics.NewDiagnosticBag()}
 	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
-	optionalID := loweredTypeID(ctx, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	optionalID := typelower.Type(ctx.types, ctx.diagnostics, &typeinfo.OptionalType{Inner: &typeinfo.IntegerType{Signed: true, Bits: 32}})
 	if direct := types.Intern(ir.OptionalVariant(i32)); optionalID != direct {
 		t.Fatalf("semantic optional ID = %d, direct optional ID = %d", optionalID, direct)
 	}
-	enumID := loweredTypeID(ctx, &typeinfo.DefinedType{
+	enumID := typelower.Type(ctx.types, ctx.diagnostics, &typeinfo.DefinedType{
 		Name:       "Status",
 		Underlying: &typeinfo.EnumType{Cases: []typeinfo.VariantCase{{Name: "Ready"}, {Name: "Waiting"}}},
 	})
@@ -1708,7 +1695,7 @@ func TestLoweredTypeIDDoesNotPublishNamedTypeWithInvalidChild(t *testing.T) {
 			Name: "missing", Type: &typeinfo.NamedType{Name: "Missing"},
 		}}},
 	}
-	if id := loweredTypeID(ctx, broken); id != ir.InvalidType {
+	if id := typelower.Type(ctx.types, ctx.diagnostics, broken); id != ir.InvalidType {
 		t.Fatalf("invalid named descriptor lowered as TypeID %d", id)
 	}
 	if ids := types.NamedTypeIDs(); len(ids) != 0 {

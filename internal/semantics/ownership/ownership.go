@@ -9,12 +9,12 @@ import (
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -241,8 +241,8 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		if node == nil || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
 			continue
 		}
-		match, found := a.module.Typechecking.Match(ast.NodeID(node.cfgSite.NodeID))
-		if !found {
+		match, _ := a.module.THIR.Node(node.cfgSite.NodeID).(*thir.Match)
+		if match == nil {
 			continue
 		}
 		_, carrier := a.matchSubjectCarrier(match)
@@ -254,7 +254,8 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		movesByJoin := make(map[cfg.SiteID]bool)
 		armsByJoin := make(map[cfg.SiteID]map[ast.NodeID]struct{})
 		for _, arm := range match.Arms {
-			for _, exit := range scopeExits[arm.BodyID] {
+			bodyID := ast.NodeID(arm.Body.SourceInfo().NodeID)
+			for _, exit := range scopeExits[bodyID] {
 				if exit == nil || exit.cfgSite == nil {
 					continue
 				}
@@ -273,7 +274,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 						if armsByJoin[join] == nil {
 							armsByJoin[join] = make(map[ast.NodeID]struct{})
 						}
-						armsByJoin[join][arm.BodyID] = struct{}{}
+						armsByJoin[join][bodyID] = struct{}{}
 						movesByJoin[join] = movesByJoin[join] || arm.CarrierUse == typeinfo.UseMove
 						break
 					}
@@ -537,12 +538,18 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, found := a.module.Typechecking.Match(ast.NodeID(node.cfgSite.NodeID))
-	if !found {
+	match, _ := a.module.THIR.Node(node.cfgSite.NodeID).(*thir.Match)
+	if match == nil {
 		return
 	}
-	arm, found := match.Arm(edge.Case)
-	if !found || arm.Payload == nil {
+	var arm *thir.MatchArm
+	for index := range match.Arms {
+		if match.Arms[index].Case == edge.Case {
+			arm = &match.Arms[index]
+			break
+		}
+	}
+	if arm == nil || arm.Payload == nil {
 		return
 	}
 	subject, carrier := a.matchSubjectCarrier(match)
@@ -553,9 +560,9 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	listed := make(map[int]bool, len(arm.Bindings))
 	for _, field := range arm.Bindings {
 		switch field.Projection {
-		case typecheckresult.MatchPayloadField:
+		case thir.MatchPayloadField:
 			listed[field.Field] = field.Discard
-		case typecheckresult.MatchWholePayload:
+		case thir.MatchWholePayload:
 		default:
 			panic("ownership: invalid match binding projection")
 		}
@@ -565,17 +572,14 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(subject), "")
 	}
 	if movesCarrier && carrier != nil {
-		moveSite, _ := a.module.TypedASTNodes[arm.ArmID]
-		if moveSite == nil {
-			moveSite = subject
-		}
+		moveSite := subject
 		a.reportLoanConflict(a.originsForExpr(subject), nil, storageConsume, moveSite, a.newLoanContext(node, st))
 		st.moved[carrier] = moveSite
 		delete(st.live, carrier)
 		delete(st.references, carrier)
-		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == typecheckresult.MatchWholePayload {
+		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == thir.MatchWholePayload {
 			if arm.Bindings[0].Discard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).Drop {
-				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.BodyID)] = struct{}{}
+				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.Body.SourceInfo().NodeID)] = struct{}{}
 			}
 		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
 			drops := make([]int, 0)
@@ -587,12 +591,12 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 				}
 			}
 			if len(drops) > 0 {
-				a.cleanup.MatchFieldDrops[ir.NodeID(arm.BodyID)] = drops
+				a.cleanup.MatchFieldDrops[ir.NodeID(arm.Body.SourceInfo().NodeID)] = drops
 			}
 		}
 	}
 	for _, field := range arm.Bindings {
-		binding := field.Binding
+		binding := field.Symbol
 		if binding == nil {
 			continue
 		}
@@ -612,13 +616,19 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	}
 }
 
-func (a *analyzer) matchSubjectCarrier(match typecheckresult.Match) (ast.Expr, *symbols.Symbol) {
-	subject, _ := a.module.TypedASTNodes[match.SubjectID].(ast.Expr)
-	ident, direct := subject.(*ast.Ident)
-	if !direct {
+func (a *analyzer) matchSubjectCarrier(match *thir.Match) (ast.Expr, *symbols.Symbol) {
+	if a == nil || a.module == nil || match == nil || match.Subject == nil {
+		return nil, nil
+	}
+	subject, _ := a.module.TypedASTNodes[ast.NodeID(match.Subject.SourceInfo().NodeID)].(ast.Expr)
+	if subject == nil {
+		return nil, nil
+	}
+	ident, direct := match.Subject.(*thir.Ident)
+	if !direct || ident == nil {
 		return subject, nil
 	}
-	carrier := a.module.Bindings.Symbol(ident)
+	carrier := ident.Symbol
 	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
 		return subject, nil
 	}

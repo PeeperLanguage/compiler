@@ -3,6 +3,7 @@ package lower
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/ir/typelower"
 	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -12,7 +13,7 @@ func maybeLowerInterfaceExpr(ctx *lowering, module *module.Module, scope *symbol
 	if expectedType == nil {
 		return nil
 	}
-	expectedRuntime := loweredRuntimeType(expectedType, nil)
+	expectedRuntime := typeinfo.Underlying(expectedType)
 	iface, ok := typeinfo.InterfaceTypeOf(expectedRuntime)
 	if !ok {
 		return nil
@@ -21,7 +22,7 @@ func maybeLowerInterfaceExpr(ctx *lowering, module *module.Module, scope *symbol
 	if resolved == nil {
 		return nil
 	}
-	resolvedRuntime := loweredRuntimeType(resolved, nil)
+	resolvedRuntime := typeinfo.Underlying(resolved)
 	if _, ok := typeinfo.InterfaceTypeOf(resolvedRuntime); ok {
 		return nil
 	}
@@ -31,7 +32,7 @@ func maybeLowerInterfaceExpr(ctx *lowering, module *module.Module, scope *symbol
 	} else if target, ok := typeinfo.PointerTarget(typeinfo.Underlying(resolvedRuntime)); ok {
 		dataType = target
 	}
-	interfaceType := loweredTypeID(ctx, expectedType)
+	interfaceType := typelower.Type(ctx.types, ctx.diagnostics, expectedType)
 	if interfaceType == ir.InvalidType {
 		return &ir.InvalidExpr{Message: "invalid interface runtime type", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(expr)}}
 	}
@@ -54,8 +55,8 @@ func maybeLowerInterfaceExpr(ctx *lowering, module *module.Module, scope *symbol
 			MethodName:    method.Name,
 			SlotType:      loweredMethod.SlotType,
 			FuncName:      symbolName(module, implementation.Symbol),
-			FuncType:      loweredTypeID(ctx, implementation.CallableType),
-			DataType:      loweredTypeID(ctx, dataType),
+			FuncType:      typelower.Type(ctx.types, ctx.diagnostics, implementation.CallableType),
+			DataType:      typelower.Type(ctx.types, ctx.diagnostics, dataType),
 		})
 	}
 	return &ir.InterfaceMake{
@@ -67,7 +68,7 @@ func maybeLowerInterfaceExpr(ctx *lowering, module *module.Module, scope *symbol
 }
 
 func lookupInterfaceMethod(module *module.Module, baseType typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
-	iface, ok := typeinfo.InterfaceTypeOf(loweredRuntimeType(baseType, nil))
+	iface, ok := typeinfo.InterfaceTypeOf(baseType)
 	if !ok {
 		return nil, -1, false
 	}

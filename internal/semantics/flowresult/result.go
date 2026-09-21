@@ -6,7 +6,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -23,8 +22,12 @@ func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
 }
 
 type CaseTest struct {
-	typecheckresult.CaseTest
-	PayloadPath []int
+	SubjectID    ast.NodeID
+	Case         int
+	CaseWhenTrue bool
+	CaseCount    int
+	Family       typeinfo.VariantFamily
+	PayloadPath  []int
 }
 
 type VariantFieldAccess struct {
@@ -44,10 +47,9 @@ type OriginResolution struct {
 }
 
 // AggregateSlot describes one direct value slot of an aggregate expression.
-// Projection is relative to the aggregate's storage; Value identifies the
+// Projection is relative to aggregate storage; ValueExpr carries the typed
 // expression whose reference provenance populates that slot.
 type AggregateSlot struct {
-	Value      ast.NodeID
 	ValueExpr  thir.Expr
 	Projection place.OriginProjection
 }

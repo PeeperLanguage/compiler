@@ -12,7 +12,6 @@ import (
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/typednil"
@@ -526,10 +525,10 @@ func (a *flowAnalyzer) recordCaseTest(expr thir.Expr, test *thir.CaseTest) {
 	if test == nil {
 		return
 	}
-	refined := flowresult.CaseTest{CaseTest: typecheckresult.CaseTest{
+	refined := flowresult.CaseTest{
 		SubjectID: ast.NodeID(test.SubjectID), Case: test.Case, CaseWhenTrue: test.CaseWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
-	}}
+	}
 	if payload, ok := a.result.Payload(ast.NodeID(test.SubjectID)); ok {
 		storage := a.result.StorageOrigins(ast.NodeID(test.SubjectID))
 		if payload.AppliesTo(storage) {
@@ -747,7 +746,7 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 			}
 			semanticField := semantic.Fields[field.Index]
 			slots = append(slots, flowresult.AggregateSlot{
-				Value: ast.NodeID(field.Value.SourceInfo().NodeID), ValueExpr: field.Value,
+				ValueExpr:  field.Value,
 				Projection: place.OriginProjection{Kind: place.OriginField, Field: semanticField.Name},
 			})
 			a.updateOriginPlace(place.FieldOrigins(storage, semanticField.Name), semanticField.Type, field.Value, sourceState, state)
@@ -758,7 +757,7 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 			return
 		}
 		a.result.RecordAggregateSlots(ast.NodeID(expression.Source.NodeID), []flowresult.AggregateSlot{{
-			Value: ast.NodeID(expression.Payload.SourceInfo().NodeID), ValueExpr: expression.Payload,
+			ValueExpr:  expression.Payload,
 			Projection: place.OriginProjection{Kind: place.OriginVariantPayload, Case: expression.Case},
 		}})
 		var payloadType typeinfo.Type

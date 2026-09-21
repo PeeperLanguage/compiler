@@ -15,6 +15,7 @@ type Type interface {
 	// ownership classifies copy and drop behavior using query-owned cycle state.
 	ownership(*ownershipQuery, bool) OwnershipCapability
 	isSameType(Type) bool
+	VisitRuntimeType(RuntimeTypeVisitor)
 }
 
 type InvalidType struct{}

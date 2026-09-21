@@ -332,13 +332,16 @@ func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
 }
 
 func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceLoan, bool) {
-	if expr == nil {
+	if a == nil || a.module == nil || expr == nil {
 		return []referenceLoan{}, false
 	}
 	if ident, ok := expr.(*thir.Ident); ok && ident.Symbol != nil && referenceHoldingSymbol(ident.Symbol) {
 		if value, found := st.references[ident.Symbol]; found {
 			return copyReferenceLoans(value), true
 		}
+	}
+	if a.module.Flow == nil {
+		return []referenceLoan{}, false
 	}
 	if _, mutable, ok := typeinfo.ReferenceValueTarget(expr.ExprType()); ok {
 		origins := a.module.Flow.ValueOrigins(ast.NodeID(expr.SourceInfo().NodeID))
@@ -347,22 +350,20 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 		}
 		return []referenceLoan{{id: loanID{node: a.module.TypedASTNodes[ast.NodeID(expr.SourceInfo().NodeID)]}, origins: origins, mutable: mutable}}, true
 	}
-	if a.module.Flow != nil {
-		slots, aggregate := a.module.Flow.AggregateSlots(ast.NodeID(expr.SourceInfo().NodeID))
-		if aggregate {
-			var loans []referenceLoan
-			for _, slot := range slots {
-				fieldLoans, found := a.referenceValueForTHIR(slot.ValueExpr, st)
-				if !found {
-					continue
-				}
-				for i := range fieldLoans {
-					fieldLoans[i].path = append([]place.OriginProjection{slot.Projection}, fieldLoans[i].path...)
-				}
-				loans = append(loans, fieldLoans...)
+	slots, aggregate := a.module.Flow.AggregateSlots(ast.NodeID(expr.SourceInfo().NodeID))
+	if aggregate {
+		var loans []referenceLoan
+		for _, slot := range slots {
+			fieldLoans, found := a.referenceValueForTHIR(slot.ValueExpr, st)
+			if !found {
+				continue
 			}
-			return loans, len(loans) > 0
+			for i := range fieldLoans {
+				fieldLoans[i].path = append([]place.OriginProjection{slot.Projection}, fieldLoans[i].path...)
+			}
+			loans = append(loans, fieldLoans...)
 		}
+		return loans, len(loans) > 0
 	}
 	return []referenceLoan{}, false
 }
