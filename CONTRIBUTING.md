@@ -78,7 +78,7 @@ Language features and behavior changes require Peeper source coverage under
 - retain focused Go tests near affected compiler packages.
 
 Backend or ABI changes need coverage for every affected target width. Semantic
-acceptance changes must prove downstream HIR, MIR, and backend lowerability.
+acceptance changes must prove downstream THIR, MIR, and backend lowerability.
 
 ## Commits
 

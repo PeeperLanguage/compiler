@@ -45,7 +45,7 @@ Expected edits:
 5. **CFG** — only when control topology differs.
 6. **Effect publisher** — map evaluation to existing `Define`/`Write`/`Use`/`Borrow`/
    `Iterate`/`Discard`/call-boundary operations.
-7. **HIR** — lower the source construct when no existing source lowering covers it.
+7. **THIR/MIR** — publish typed source evidence and lower the construct when no existing MIR shape covers it.
 
 Do **not** add a corresponding AST case to definite initialization, ordinary ownership
 state transitions, liveness, or cleanup. If one of those needs syntax to understand the
@@ -82,7 +82,7 @@ intrinsic query owns its cycle policy and reuses canonical children where needed
 Then add decisions owned outside the type model, for example:
 
 - compatibility and conversions;
-- HIR/backend lowering;
+- MIR/backend lowering;
 - source-type conversion if new syntax is involved.
 
 Sealed type methods and focused type/IR tests guard the remaining closed type-kind sites.

@@ -12,7 +12,7 @@ server, and executable source fixtures.
 - Static semantic analysis with explicit compiler phases.
 - Ownership, move, borrow, pointer, and reference checks.
 - Scalars, aggregates, arrays, slices, optionals, interfaces, and modules.
-- HIR and MIR lowering to LLVM IR and native executables through Clang.
+- THIR and MIR lowering to LLVM IR and native executables through Clang.
 - Project manifests, dependency commands, source checking, and an LSP server.
 
 See the [open roadmap](https://github.com/PeeperLanguage/compiler/issues) for

@@ -32,7 +32,7 @@ type CompilerContext struct {
 	Config Config
 	// Immutable target metadata shared by semantic and backend phases.
 	Target target.Info
-	// Canonical runtime types shared by HIR, MIR, and backend lowering.
+	// Canonical runtime types shared by MIR and backend lowering.
 	Types *ir.TypeTable
 	// Shared diagnostic stream.
 	Diagnostics *diagnostics.DiagnosticBag

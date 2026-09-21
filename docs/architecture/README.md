@@ -11,7 +11,7 @@ See [`../compiler-architecture.md`](../compiler-architecture.md) for current ove
 | [Frontend](frontend.md) | Lexer, tokens, parser, AST, source locations, node identity, traversal, cloning |
 | [Semantics: bindings](semantics-bindings.md) | Collection, binding, resolution, symbols, scopes, types, places, constants, semantic result models |
 | [Semantics: analyses](semantics-analyses.md) | Typechecking, flow typing, CFG-driven effects, definite initialization, ownership, cleanup, usage |
-| [IR](ir.md) | Core IR types, CFG, HIR, HIR lowering/folding, MIR |
+| [IR](ir.md) | Core IR types, THIR, CFG, expression/type lowering, MIR |
 | [Backend](backend.md) | Target descriptions, physical layouts, ABI decisions, LLVM emission |
 | [Infrastructure](infrastructure.md) | Modules, pipeline scheduling, project state, diagnostics, graphs, source, toolchains |
 | [LSP](lsp.md) | Server state, document snapshots, incremental compilation, requests, diagnostics, symbols |
@@ -29,10 +29,10 @@ flowchart TD
     AST --> Bind[collector/binder/resolver]
     Bind --> Types[typeinfo and symbols]
     Types --> Check[typechecker evidence]
-    Check --> CFG[cfg]
+    Check --> THIR[THIR]
+    THIR --> CFG[cfg]
     CFG --> Analyses[flow effects init ownership usage]
-    Analyses --> HIR[HIR lowering]
-    HIR --> MIR[MIR]
+    Analyses --> MIR[direct MIR lowering]
     MIR --> Backend[target and LLVM]
     Backend --> Output[Executable or emitted IR]
 ```
@@ -46,7 +46,7 @@ flowchart TD
 | module ID | `internal/moduleid` | Cross-module identity, imports, caches, invalidation |
 | `cfg.SiteID` | CFG construction | Per-statement and terminator analysis sites |
 | `ir.NodeID` | derived from source AST identity | IR statement, block, and expression provenance |
-| `ir.TypeID` | shared IR type interning | Runtime type identity consumed by HIR, MIR, and backend layout |
+| `ir.TypeID` | shared IR type interning | Runtime type identity consumed by MIR and backend layout |
 
 Identity changes require checking every producer and consumer. Source AST identity and generated identity currently have different tooling and semantic requirements; see frontend and semantics maps for observed behavior.
 
@@ -78,7 +78,7 @@ docs/
 2. Find syntax ownership in [Frontend](frontend.md).
 3. Find binding/type ownership in [Semantics: bindings](semantics-bindings.md).
 4. Find the semantic evidence and analysis consumers in [Semantics: analyses](semantics-analyses.md).
-5. Verify CFG, HIR, MIR, and backend lowerability in [IR](ir.md) and [Backend](backend.md).
+5. Verify THIR, CFG, MIR, and backend lowerability in [IR](ir.md) and [Backend](backend.md).
 6. Add positive and negative `x_test/` fixtures plus focused phase tests.
 7. Update the affected map when ownership or data flow changes.
 
@@ -91,7 +91,7 @@ docs/
 | Wrong type refinement | [Semantics: analyses](semantics-analyses.md), typechecker flow section |
 | Missing cleanup or move error | [Semantics: analyses](semantics-analyses.md), ownership/effect sections |
 | Wrong control flow | [IR](ir.md), CFG section |
-| Wrong HIR/MIR shape | [IR](ir.md), lowering sections |
+| Wrong THIR/MIR shape | [IR](ir.md), lowering sections |
 | Invalid layout or emitted LLVM | [Backend](backend.md) |
 | Stale diagnostics or hover | [LSP](lsp.md) and [Infrastructure](infrastructure.md) |
 | CLI, package, or fixture failure | [CLI and packages](cli-and-packages.md) |

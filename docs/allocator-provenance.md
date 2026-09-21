@@ -24,7 +24,7 @@ Current source model already has correct ownership timing:
 - `typeinfo.NeedsDrop` classifies values requiring cleanup.
 - ownership analysis decides when moves invalidate values and where `Drop`
   actions occur.
-- HIR and MIR carry explicit `Drop` operations.
+- THIR/MIR lowering carries explicit `Drop` operations.
 - LLVM recursively destroys payloads, then releases through owner-carried
   allocator descriptors.
 - dynamic-array allocation, growth, and release use the originating allocator;
@@ -82,7 +82,7 @@ source semantics.
 Each LLVM module emits a private default descriptor with internal bridge thunks.
 The thunks may call current `malloc` and `free`; portable runtime work may
 replace them with `peeper_rt_*` calls without changing source types, owner
-layouts, HIR, or MIR. Internal linkage prevents duplicate bridge definitions
+layouts, or MIR. Internal linkage prevents duplicate bridge definitions
 when imported Peeper modules are linked together.
 
 ### Destruction selects allocator from owner
@@ -176,7 +176,7 @@ created its bytes.
 retains its allocator provenance through moves and optional wrapping.
 
 Flow typing runs after CFG construction and records payload-access and resolved
-origin evidence before ownership. Ownership consumes that evidence. HIR and MIR
+origin evidence before ownership. Ownership consumes that evidence. THIR/MIR
 represent presence tests and payload projections explicitly; backend lowering
 does not rediscover `none` comparisons or infer optional layout from emitted
 text.
@@ -188,7 +188,7 @@ share that target-sized layout.
 Recursive named owner layouts reserve identified aggregate shells before child
 layout. Their private drop functions recurse through calls and release each
 owned pointer with its carried allocator descriptor. Direct by-value recursive
-storage is rejected before HIR.
+storage is rejected before MIR.
 
 Empty dynamic arrays carry chosen allocator even while `data`, length, and
 capacity are zero. This lets later `append` or `reserve` allocate through same
@@ -240,15 +240,15 @@ allocator. Nested owners inside payload retain and use their own handles.
   current payload ownership, until enum representation and foreign ABI rules are
   explicit. Raw-pointer and `cstr` bridges remain separate approved boundaries.
 
-### HIR
+### THIR and MIR
 
-Add explicit allocation expression containing allocator, value, result type, and
+Publish explicit allocation evidence containing allocator, value, result type, and
 source location. Do not lower `alloc` as ordinary call or backend-recognized
 symbol.
 
 Keep `Drop` unchanged. Extend dynamic-array and interface construction values to
-carry allocator source when required. Default allocator selection becomes
-explicit HIR data rather than hidden LLVM choice.
+carry allocator source when required. Default allocator selection becomes explicit
+MIR data rather than hidden LLVM choice.
 
 ### MIR
 
@@ -308,7 +308,7 @@ invalid-IR error, not user type error.
 
 Implement trailing declaration defaults through canonical call-site expansion as
 specified in `docs/default-parameters.md`. Preserve full-arity function ABI and
-make ownership/HIR consume one shared expanded-argument plan.
+make ownership and direct MIR lowering consume one shared expanded-argument plan.
 
 Stop for review when direct, imported, extern, and concrete-method calls support
 omitted suffix arguments; function values do not; runtime evaluation order and
@@ -328,7 +328,7 @@ default descriptor, while source fixture proves unchanged type semantics.
 ### Step 3: Explicit allocation
 
 Add builtin `Allocator`, core default entrypoint, shadowable `alloc`, explicit
-HIR/MIR allocation, heap-storage validation, and positive/negative fixtures.
+MIR allocation, heap-storage validation, and positive/negative fixtures.
 
 Stop for review when typed owned pointers can be constructed without raw casts
 or generic syntax, and shadowing does not reserve runtime symbols.

@@ -4,7 +4,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
@@ -64,7 +63,6 @@ type Module struct {
 	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
 	THIR *thir.Module
-	HIR  *hir.Module
 	CFG  *cfg.Module
 	Flow *flowresult.Result
 	// Effects is the published semantic meaning of each CFG site, produced once
@@ -242,9 +240,6 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	}
 	if retained < phase.Ownership {
 		m.Ownership = nil
-	}
-	if retained < phase.HIR {
-		m.HIR = nil
 	}
 	if retained < phase.MIR {
 		m.MIR = nil

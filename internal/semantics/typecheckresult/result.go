@@ -226,14 +226,6 @@ func (r *Result) ExprType(id ast.NodeID) typeinfo.Type {
 	return r.expressions.types[id]
 }
 
-// ForgetExprType removes published evidence during invalidation/evidence-repair
-// tests. Normal typechecking overwrites or resets the complete result.
-func (r *Result) ForgetExprType(id ast.NodeID) {
-	if r != nil {
-		delete(r.expressions.types, id)
-	}
-}
-
 func (r *Result) MarkExpandedDefaultBinding(id ast.NodeID) {
 	if r != nil && id != 0 {
 		r.expressions.expandedDefaultBindings[id] = struct{}{}
@@ -306,12 +298,6 @@ func (r *Result) StructField(id ast.NodeID) (StructFieldAccess, bool) {
 	return access, ok
 }
 
-func (r *Result) ForgetStructField(id ast.NodeID) {
-	if r != nil {
-		delete(r.expressions.structFields, id)
-	}
-}
-
 func (r *Result) RecordConstantIndex(id ast.NodeID, value ConstantIndex) {
 	if r == nil || id == 0 || value.Text == "" || value.Type == nil {
 		return
@@ -340,12 +326,6 @@ func (r *Result) StructLiteralFields(id ast.NodeID) ([]ast.Expr, bool) {
 	}
 	fields, ok := r.expressions.structLiteralFields[id]
 	return append([]ast.Expr(nil), fields...), ok
-}
-
-func (r *Result) ForgetStructLiteralFields(id ast.NodeID) {
-	if r != nil {
-		delete(r.expressions.structLiteralFields, id)
-	}
 }
 
 func (r *Result) RecordVariantConstruction(id ast.NodeID, construction VariantConstruction) {

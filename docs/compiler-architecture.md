@@ -48,8 +48,7 @@ parse
   -> definite initialization
   -> ownership + cleanup
   -> usage
-  -> HIR
-  -> MIR
+  -> direct MIR lowering from THIR/CFG/evidence
   -> backend
 ```
 
@@ -69,7 +68,7 @@ stable identity.
         +------------------+------------------+
         | syntax-aware semantic owners        |
         | resolver, typechecker, CFG builder, |
-        | effect publisher, HIR lowering      |
+        | effect publisher, THIR/MIR lowering |
         +------------------+------------------+
                            |
              canonical semantic evidence
@@ -215,7 +214,7 @@ Unknown effects must not be silently ignored.
 | Definite initialization | `semantics/definiteinit` | diagnostics |
 | Move/borrow/drop analysis | `semantics/ownership` | `ownershipresult.Result` |
 | Lexical usage warnings | `semantics/usage` | diagnostics from symbol usage/mutability state exposed by `IsUsed` / `RequiresMutable` |
-| High-level lowering | `ir/hir/lower` | HIR |
+| Typed-source lowering | `ir/thir`, `ir/exprlower` | THIR/shared expressions |
 | Mid-level lowering | `ir/mir` | MIR |
 | Physical layout/codegen | backend | backend IR |
 
@@ -229,7 +228,7 @@ These phases currently inspect syntax to establish distinct semantics:
 - typechecker: type rules, conversions, calls, loop/match semantics;
 - CFG builder: source control constructs -> topology;
 - effect publisher: evaluation order and value/storage action;
-- HIR lowering: source construct -> executable high-level IR;
+- THIR/MIR lowering: typed source construct and CFG site -> executable MIR;
 - ownership reference capture: bounded value-shape interpretation plus published
   type/flow evidence, preserving live loans before effects can move source values.
 
@@ -262,8 +261,8 @@ full field-sensitive last-use analysis or support for nested stored-reference
 aggregates/arrays. Those storage restrictions remain typechecker-owned.
 
 Flow typing must retain recorded assignment-operand types and variant payload
-proofs for HIR; retyping an already checked operand can erase that evidence. HIR
-consumes published payload/projection facts; backend typed-store invariants remain
+proofs for THIR/MIR; retyping an already checked operand can erase that evidence. THIR/MIR
+consume published payload/projection facts; backend typed-store invariants remain
 strict. Single-case enum selectors and optional-array index assignment have known
 separate typing limitations, not resolved by this reference-field repair.
 
@@ -301,7 +300,7 @@ Current edit points:
 3. typechecker decision/evidence;
 4. CFG only if topology differs;
 5. effect publisher maps construct to existing operations;
-6. HIR lowering.
+6. THIR/MIR lowering.
 
 Generic mechanics stay unchanged; audit reference capture if the feature introduces
 a new accepted reference-bearing value shape.
@@ -331,7 +330,7 @@ Under current sealed interface, new type first satisfies `typeinfo.Type`:
 Then make explicit decisions only where another owner genuinely differs:
 
 - compatibility and conversions;
-- HIR/backend type lowering;
+- MIR/backend type lowering;
 - syntax conversion if source has new type syntax.
 
 Focused typeinfo/IR tests guard the remaining type-kind extension
@@ -355,7 +354,7 @@ Different mistakes are caught at different boundaries:
 | malformed effect evidence | `effect.Result.Validate` |
 | new effect ignored by an exhaustive consumer | `effect.Visitor` compile-time contract |
 | malformed cleanup evidence | `ownershipresult.Validate` |
-| malformed HIR/MIR | IR validators |
+| malformed THIR/MIR | THIR/MIR validators |
 | wrong language behavior | package tests + `x_test` source fixtures |
 
 Effect validation checks node membership and expression categories, not whether
@@ -386,7 +385,7 @@ Potential regressions under current design include:
 Required Go version is declared in [`go.mod`](../go.mod).
 
 ```bash
-go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/ir/hir ./internal/ir/mir
+go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/ir/thir ./internal/ir/mir
 go test -count=1 ./...
 go vet ./...
 go test -race -count=1 ./internal/graph ./internal/project ./internal/pipeline

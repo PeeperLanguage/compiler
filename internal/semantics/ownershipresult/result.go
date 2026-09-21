@@ -6,7 +6,7 @@ import (
 	"compiler/internal/semantics/symbols"
 )
 
-// CleanupPlan records ownership effects at CFG and stable HIR source sites.
+// CleanupPlan records ownership effects at CFG and stable THIR source sites.
 //
 // It is the only source of drop obligations over source values: lowering reads
 // the plan and never decides a drop for itself. The two other drops in the
@@ -34,5 +34,5 @@ type CleanupPlan struct {
 	MatchWholePayloadDrops map[ir.NodeID]struct{}
 }
 
-// Result stores ownership output by stable HIR function identity.
+// Result stores ownership output by stable THIR function identity.
 type Result map[ir.NodeID]*CleanupPlan

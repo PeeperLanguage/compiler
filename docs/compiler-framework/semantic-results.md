@@ -10,7 +10,7 @@ Completed slices:
 
 1. Parsed AST remains immutable during default expansion. `typecheckresult.Result` publishes source-plus-default arguments through its call-evidence API, and `Module.RebuildTypedASTIndex` indexes source and generated expression trees.
 2. `Module.Typechecking` now owns one `typecheckresult.Result` per base-typecheck generation. Expression, call, and control indexes are private; semantic phases publish/query evidence through named operations. The old `project.SemanticInfo` compatibility maps remain deleted.
-3. `typechecker.Check` publishes a fresh result, `resetToPhase` discards it below `Typechecked`, partial semantic consumers use its canonical effective-argument fallback, and HIR consumes its evidence strictly.
+3. `typechecker.Check` publishes a fresh result, `resetToPhase` discards it below `Typechecked`, partial semantic consumers use its canonical effective-argument fallback, and THIR/MIR consume its evidence strictly.
 4. Intrinsic dispatch, string concatenation classification, and variant construction evidence moved into the same result. `CompilerCall` and `VariantConstruction` moved with their maps; constant queries tolerate a missing pre-typecheck result exactly like the previous empty proof map.
 5. Base `CaseTests` and `Matches` moved into `typecheckresult.Result`, along with `CaseTest`, `Match`, `MatchArm`, `MatchBinding`, explicit match projections, and canonical `MatchCases` validation. `flowresult.Result` publishes refined `CaseTest` evidence through its flow API; that type embeds base case evidence and owns flow-only payload paths.
 6. Base expression types moved behind `typecheckresult.Result.RecordExprType` / `ExprType`. `Module.BaseExprType` is canonical base lookup; `Module.EffectiveExprType` gives flow evidence precedence and falls back to base evidence. `flowresult.Result.ExprType` remains distinct flow-refined evidence.
@@ -30,7 +30,7 @@ decision needs a compile-time value. After base typechecking, `FinalizeValues`
 recomputes top-level constants with final symbol types and publishes them exclusively
 through `Publish`, removing their provisional cache entries. Imports and prelude reach
 `Typechecked` before consumer constant evaluation, so foreign symbols read defining-
-module publication directly. Later CFG/flow/HIR queries may add only consumer-local
+module publication directly. Later CFG/flow/MIR queries may add only consumer-local
 entries to the query cache.
 
 `Module.resetToPhase` follows approved production contract:
@@ -50,21 +50,21 @@ This table records pre-migration storage and problems; current ownership is trac
 
 | Field | Baseline writers / complete phase | Main consumers | Baseline contract problem |
 | --- | --- | --- | --- |
-| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, HIR, LSP | Scope topology is resolver-owned and exposed through `Bindings.Scope`; contained symbols later gain types and private usage/mutability state consumed through symbol methods by usage/HIR. |
-| `ResolvedSymbols` | collector, resolver, typechecker / `Typechecked` | typechecker, semantic fingerprint, flow, definite-init, ownership, HIR, LSP | Name suggests resolver result, but enum declarations, selectors, and expanded defaults have different writers. |
-| `ExpandedDefaultBindings` | typechecker / `Typechecked` | typechecker, ownership, HIR | Marker requires paired symbol provenance, with copied type/lowering evidence where available. Parsed reset can delete marker while retaining expanded AST. |
-| `ExprTypes` | typechecker / `Typechecked` | typechecker, const evaluation, flow, ownership, HIR, LSP | Base type is distinct from flow-refined expression evidence; `EffectiveExprType` gives refined evidence precedence. |
+| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, THIR/MIR, LSP | Scope topology is resolver-owned and exposed through `Bindings.Scope`; contained symbols later gain types and private usage/mutability state consumed through symbol methods by usage/THIR/MIR. |
+| `ResolvedSymbols` | collector, resolver, typechecker / `Typechecked` | typechecker, semantic fingerprint, flow, definite-init, ownership, THIR/MIR, LSP | Name suggests resolver result, but enum declarations, selectors, and expanded defaults have different writers. |
+| `ExpandedDefaultBindings` | typechecker / `Typechecked` | typechecker, ownership, THIR/MIR | Marker requires paired symbol provenance, with copied type/lowering evidence where available. Parsed reset can delete marker while retaining expanded AST. |
+| `ExprTypes` | typechecker / `Typechecked` | typechecker, const evaluation, flow, ownership, THIR/MIR, LSP | Base type is distinct from flow-refined expression evidence; `EffectiveExprType` gives refined evidence precedence. |
 | `CaseTests` | typechecker / `Typechecked` | const evaluation and flow transfer | Uses `flowresult` type but is stored in base semantic aggregate; flow creates second case-test map. |
-| `Matches` | typechecker / `Typechecked` | CFG, flow, definite-init, ownership, HIR | Uses `flowresult` type despite being base typechecker evidence. Presence can coexist with some diagnostics. |
-| `ConstValues` | constant evaluation, post-typecheck finalization, later constant queries / no global completion phase | const evaluator cache, semantic fingerprint, CFG and HIR expression evaluation, MIR | One map mixes finalized module constants with working-cache entries that can still appear during CFG/HIR. |
+| `Matches` | typechecker / `Typechecked` | CFG, flow, definite-init, ownership, THIR/MIR | Uses `flowresult` type despite being base typechecker evidence. Presence can coexist with some diagnostics. |
+| `ConstValues` | constant evaluation, post-typecheck finalization, later constant queries / no global completion phase | const evaluator cache, semantic fingerprint, CFG and MIR expression evaluation | One map mixes finalized module constants with working-cache entries that can still appear during CFG/MIR. |
 | `MethodSets` | collector membership; binder/resolver/typechecker mutate symbols / `Typechecked` symbol state | typechecker, semantic fingerprint, LSP | Catalog ownership differs from staged mutable `Type` and private usage/mutability state of symbols inside it; resolver pending state is resolver-local. |
-| `MethodSymbol` | collector mapping; binder/resolver/typechecker mutate symbol / `Typechecked` symbol state | binder, resolver, typechecker, flow, ownership, HIR, LSP | Stable declaration identity is collection output; pointed-to mutable symbol state advances later. |
-| `InterfaceImplementations` | typechecker / `Typechecked` | HIR | Clear typechecker proof; strongest first extraction candidate. |
-| `ImplicitConversions` | typechecker / `Typechecked` | HIR | Clear typechecker proof. |
-| `ImplicitCallArguments` | typechecker / `Typechecked` | typechecker borrow checks, HIR | Clear typechecker call-adaptation proof. |
-| `CompilerCalls` | typechecker / `Typechecked` | HIR | Clear typechecker dispatch proof; entry may coexist with later call diagnostics. |
-| `StringConcatenations` | typechecker / `Typechecked` | ownership, HIR | Clear typechecker operation-classification proof. |
-| `VariantConstructions` | typechecker / `Typechecked` | const evaluation, flow, ownership, HIR | Clear typechecker construction proof. |
+| `MethodSymbol` | collector mapping; binder/resolver/typechecker mutate symbols / `Typechecked` symbol state | binder, resolver, typechecker, flow, ownership, THIR/MIR, LSP | Stable declaration identity is collection output; pointed-to mutable symbol state advances later. |
+| `InterfaceImplementations` | typechecker / `Typechecked` | THIR/MIR | Clear typechecker proof; strongest first extraction candidate. |
+| `ImplicitConversions` | typechecker / `Typechecked` | THIR/MIR | Clear typechecker proof. |
+| `ImplicitCallArguments` | typechecker / `Typechecked` | typechecker borrow checks, THIR/MIR | Clear typechecker call-adaptation proof. |
+| `CompilerCalls` | typechecker / `Typechecked` | THIR/MIR | Clear typechecker dispatch proof; entry may coexist with later call diagnostics. |
+| `StringConcatenations` | typechecker / `Typechecked` | ownership, THIR/MIR | Clear typechecker operation-classification proof. |
+| `VariantConstructions` | typechecker / `Typechecked` | const evaluation, flow, ownership, THIR/MIR | Clear typechecker construction proof. |
 | `OperationFunctions` | binder append and sort / `Bound` | LSP completion | Binder-owned catalog derived from collected top-level function symbols. |
 
 ## Exact producer groups
@@ -106,7 +106,7 @@ a resolver-only result unchanged.
 Constant evaluation owns `ConstValues`, but map mixes two lifetimes:
 
 1. finalized module-scope constants after typechecking calls `FinalizeValues`;
-2. lazy working-cache entries created by later constant queries during CFG and HIR.
+1. lazy working-cache entries created by later constant queries during CFG and MIR.
 
 `FinalizeValues` deletes and recomputes module constants but intentionally retains
 local cache entries. `EvaluateExpr` can add entries after `Typechecked`, so map has no
@@ -139,7 +139,7 @@ in separate `ownershipresult.Result`.
 
 Current downstream phases mostly consume recorded evidence correctly:
 
-- HIR consumes conversions, compiler-call dispatch, interface slots, string
+- THIR/MIR consume conversions, compiler-call dispatch, interface slots, string
   concatenation, variant construction, expanded defaults, match evidence, and
   resolved symbols.
 - ownership consumes resolved symbols, expanded-default provenance, operation
@@ -154,7 +154,7 @@ phases resolve methods, conversions, variants, or call adaptation again.
 
 Some consumers intentionally or defensively fall back when evidence is missing:
 
-- HIR and ownership may perform lexical symbol lookup for identifiers.
+- THIR/MIR and ownership may perform lexical symbol lookup for identifiers.
 - flow assignment lookup may fall back to scope lookup.
 - LSP symbol/type queries reconstruct import, field, or lexical context when exact
   semantic evidence is unavailable.
@@ -166,8 +166,7 @@ both categories mechanically.
 ### Partial results after diagnostics
 
 Pipeline advances modules through CFG, flow, definite initialization, and ownership
-before project error gate. HIR alone is suppressed when diagnostics already contain
-errors. Therefore `Module.Phase == Typechecked` does not mean every typechecker proof
+before project error gate. MIR is suppressed when diagnostics already contain errors. Therefore `Module.Phase == Typechecked` does not mean every typechecker proof
 exists or whole result is valid.
 
 Missing evidence may mean:
@@ -189,7 +188,7 @@ and `*symbols.Scope` graph. State mutates across phases:
 - binder sets symbol types;
 - resolver tracks pending declarations locally, marks usage through `MarkUsed`, and completes scope contents;
 - typechecker may infer types and records mutability demand through `RequireMutable`;
-- usage and HIR consume that state through `IsUsed` / `RequiresMutable`.
+- usage and THIR/MIR consume that state through `IsUsed` / `RequiresMutable`.
 
 LSP shallow reuse preserves these pointers. Splitting maps into result structs does
 not make symbols immutable or reset-safe. Migration needs explicit stable identity,
@@ -259,7 +258,7 @@ can still alias:
 - module scope
 - semantic maps
 - typed AST index
-- CFG/HIR/MIR artifacts
+- CFG/THIR/MIR artifacts
 
 LSP compilation is mostly serialized, so no concrete race was reproduced. Still,
 old context does not mean immutable snapshot: new compilation can mutate AST and
@@ -334,7 +333,7 @@ may populate lazy entries only when a constant query is needed; finalization
 recomputes top-level constants with final symbol types and publishes them atomically,
 removing any provisional entry for the same symbol. Foreign symbols resolve their
 defining module and read its published value without consumer caching. Fingerprinting
-and MIR consume only published values; CFG/HIR queries do not duplicate them.
+and MIR consume only published values; CFG/THIR queries do not duplicate them.
 
 ### Candidate D: typechecker result
 
@@ -408,4 +407,4 @@ Maintainer approved these directions before product migration:
 10. **Synthetic IDs:** Are practical atomic uniqueness and schedule dependence enough,
     or should namespace/wrap guarantees become enforced invariants?
 
-Approved answers: parsed AST immutable; exact artifact reuse or reset to `Parsed`; one staged binding table; smallest coherent typechecker slices; old LSP generations immutable; partial semantic evidence may continue through semantic analyses but not HIR/backend; missing mandatory evidence on valid input is invariant failure; symbol identity is stable per generation and read-only after typecheck; finalized module constants differ from mutable query cache; synthetic IDs require namespace/wrap enforcement before persistence.
+Approved answers: parsed AST immutable; exact artifact reuse or reset to `Parsed`; one staged binding table; smallest coherent typechecker slices; old LSP generations immutable; partial semantic evidence may continue through semantic analyses but not MIR/backend; missing mandatory evidence on valid input is invariant failure; symbol identity is stable per generation and read-only after typecheck; finalized module constants differ from mutable query cache; synthetic IDs require namespace/wrap enforcement before persistence.

@@ -108,7 +108,7 @@ Its phase artifacts are:
 - `ModuleScope`, `Bindings`, `Constants`, and `Typechecking`;
 - `Imports`, mapping aliases to `ResolvedImport`;
 - `CFG`, `Flow`, `Effects`, and `Ownership`;
-- `HIR`, `MIR`, and emitted `LLVMIR`;
+- `THIR`, `CFG`, `MIR`, and emitted `LLVMIR`;
 - collected generic declaration syntax and semantic shells.
 
 `RebuildTypedASTIndex` indexes source AST nodes, checked loop expansions, and
@@ -134,7 +134,8 @@ artifacts through `retained` and clears downstream artifacts:
 - below `FlowTyped`: flow result;
 - below `Effects`: effects;
 - below `Ownership`: ownership result;
-- below `HIR`: HIR;
+- below `Typechecked`: THIR;
+- below `CFG`: CFG;
 - below `MIR`: MIR;
 - below `Backend`: LLVM IR.
 
@@ -206,7 +207,7 @@ The pipeline then runs these project jobs:
 | Ownership-through | ordered modules and import readiness | phases through `Ownership`; symbols, bindings, types, CFG, flow, effects, ownership. |
 | Usage | ownership-ready modules | usage diagnostics and `Usage` module/project barrier. |
 | Entrypoint check | entry module scope and function type | optional `ErrInvalidEntrypoint`. |
-| Backend-through | usage-ready modules and clean diagnostics | HIR, MIR, LLVM IR, `Backend` module/project barrier. |
+| Backend-through | usage-ready modules and clean diagnostics | MIR, LLVM IR, `Backend` module/project barrier. |
 | Finalize | all MIR modules | runtime-symbol validation and `Finalize` project phase. |
 
 `advanceModulesThrough` repeatedly gathers modules whose next phase is ready, runs
@@ -217,7 +218,7 @@ The scheduler never advances a module more than one phase per call.
 The per-module sequence is:
 
 `Parsed -> Collected -> Bound -> Resolved -> Typechecked -> CFG ->`
-`FlowTyped -> Effects -> DefiniteInit -> Ownership -> Usage -> HIR -> MIR -> Backend`.
+`FlowTyped -> Effects -> DefiniteInit -> Ownership -> Usage -> MIR -> Backend`.
 
 `advanceModulePhase` owns the dispatch. Collection builds declarations; binding fills
 symbol/type state; resolution fills imports and names; typechecking performs lazy
@@ -225,8 +226,8 @@ expected-type constant queries, publishes final module constants, semantic types
 the semantic export fingerprint;
 CFG builds and validates topology; flow typing refines types and origins; effects
 publish ordered storage/value actions; definite-init and ownership analyze evidence;
-HIR and MIR lower; LLVM backend emits text. HIR/MIR/backend are blocked when active
-errors exist. Each successful advance increments metrics.
+MIR lowers directly from THIR, CFG, and published evidence; LLVM backend emits text.
+MIR/backend are blocked when active errors exist. Each successful advance increments metrics.
 
 `usage` is run as a separate project barrier because its diagnostics consume the
 completed ownership state. `requireScheduledModulesAtLeast` turns a scheduler stall

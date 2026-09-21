@@ -45,8 +45,8 @@ This map records command-line, packaging, dependency, and support implementation
     LLVM IR to temporary files, compiles objects, writes a response file, links,
     and atomically publishes the output.
   - `runCompilerTool` preserves tool output when a compiler or linker fails.
-- `cmd/dump.go`: `-keep-gen` artifact publication. `saveIRs` writes HIR, MIR,
-  and LLVM IR under an identity-encoded tree; `moduleArtifactBase` includes
+- `cmd/dump.go`: `-keep-gen` artifact publication. `saveIRs` writes MIR and
+  LLVM IR under an identity-encoded tree; `moduleArtifactBase` includes
   origin, namespace, dependency, and import path so distinct modules cannot
   collide; `replacePath` stages and swaps the complete directory.
 - `cmd/doctor.go`: installation report. `doctorReport` can be printed or JSON;

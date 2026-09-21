@@ -7,7 +7,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
@@ -173,13 +172,13 @@ func moduleWithArtifacts() *module.Module {
 		ModuleScope:               symbols.NewScope(nil),
 		TypedASTNodes:             map[ast.NodeID]ast.Node{1: &ast.BadStmt{}},
 		THIR:                      &thir.Module{},
-		HIR:                       &hir.Module{},
-		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{}}},
-		Flow:                      flowresult.New(),
-		Effects:                   effect.Result{1: {cfg.SiteID{}: {effect.Use{}}}},
-		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
-		MIR:                       &mir.Module{},
-		LLVMIR:                    "stale IR",
+
+		CFG:       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{}}},
+		Flow:      flowresult.New(),
+		Effects:   effect.Result{1: {cfg.SiteID{}: {effect.Use{}}}},
+		Ownership: ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
+		MIR:       &mir.Module{},
+		LLVMIR:    "stale IR",
 	}
 	module.ResetSemanticData()
 	module.Typechecking = typecheckresult.New()
@@ -198,13 +197,13 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		exportAPI    bool
 		astNodes     bool
 		thir         bool
-		hir          bool
-		cfg          bool
-		flow         bool
-		effects      bool
-		ownership    bool
-		mir          bool
-		llvm         bool
+
+		cfg       bool
+		flow      bool
+		effects   bool
+		ownership bool
+		mir       bool
+		llvm      bool
 	}{
 		{phase: phase.Parsed},
 		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true},
@@ -213,9 +212,9 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true},
 		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
 		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.HIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, hir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, hir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
+
+		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, astNodes: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
@@ -224,7 +223,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.Bindings != nil) != test.bindings || (module.Constants != nil) != test.constants ||
 			(module.Typechecking != nil) != test.typechecking ||
 			(module.THIR != nil) != test.thir ||
-			(module.HIR != nil) != test.hir ||
+
 			(module.TypedASTNodes != nil) != test.astNodes ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
@@ -316,7 +315,7 @@ func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.
 	if len(got) != 2 || got[0].Message != "a parse" || got[1].Message != "b type" {
 		t.Fatalf("diagnostics after context reset = %#v", got)
 	}
-	if module.Phase != phase.Parsed || module.CFG != nil || module.HIR != nil {
+	if module.Phase != phase.Parsed || module.CFG != nil || module.MIR != nil {
 		t.Fatalf("module artifacts after reset = %#v", module)
 	}
 }

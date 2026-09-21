@@ -93,12 +93,6 @@ func (r *Result) ExprType(id ast.NodeID) typeinfo.Type {
 	return r.expressions.types[id]
 }
 
-func (r *Result) ForgetExprType(id ast.NodeID) {
-	if r != nil {
-		delete(r.expressions.types, id)
-	}
-}
-
 func (r *Result) RecordPayload(id ast.NodeID, payload PayloadAccess) {
 	if r != nil && id != 0 {
 		r.expressions.payloads[id] = payload

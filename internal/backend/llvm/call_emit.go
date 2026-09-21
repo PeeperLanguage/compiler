@@ -99,6 +99,23 @@ func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int, slotTy
 	return data, fn, true
 }
 
+func emitCallArguments(b *llvmBuilder, args []mir.ValueRef) []llvmValue {
+	values := make([]llvmValue, len(args))
+	for i, arg := range args {
+		values[i] = emitRef(b, arg)
+	}
+	return values
+}
+
+func emitInterfaceCallArguments(b *llvmBuilder, data llvmValue, args []mir.ValueRef) []llvmValue {
+	values := make([]llvmValue, 1, len(args)+1)
+	values[0] = data
+	for _, arg := range args {
+		values = append(values, emitRef(b, arg))
+	}
+	return values
+}
+
 // emitDiscardedCall handles statement-form direct calls such as `foo();`.
 // MIR represents these as plain call instructions, not assignments, so backend
 // must emit the side effect even though no SSA result is bound.
@@ -106,10 +123,7 @@ func emitDiscardedCall(b *llvmBuilder, call *mir.Call) {
 	if b == nil || call == nil {
 		return
 	}
-	args := make([]llvmValue, len(call.Args))
-	for i, arg := range call.Args {
-		args[i] = emitRef(b, arg)
-	}
+	args := emitCallArguments(b, call.Args)
 	callee := emitRef(b, call.Callee)
 	if callee.Layout.Kind != llvmLayoutFunction {
 		b.emitter.markInvalid("call reached LLVM without function type")
@@ -128,11 +142,7 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	if !ok {
 		return
 	}
-	args := make([]llvmValue, 1, len(call.Args)+1)
-	args[0] = data
-	for _, arg := range call.Args {
-		args = append(args, emitRef(b, arg))
-	}
+	args := emitInterfaceCallArguments(b, data, call.Args)
 	b.call(fn, args)
 	if consumesOwnedInterfaceStorage(b.emitter.mod.Types, call) {
 		emitInterfaceStorageRelease(b, call.Base.TypeID(), emitRef(b, call.Base), data)

@@ -629,10 +629,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 		case *mir.StringConcat:
 			return emitStringConcat(b, e)
 		case *mir.Call:
-			args := make([]llvmValue, len(e.Args))
-			for i, arg := range e.Args {
-				args[i] = emitRef(b, arg)
-			}
+			args := emitCallArguments(b, e.Args)
 			callee := emitRef(b, e.Callee)
 			if callee.Layout.Kind != llvmLayoutFunction {
 				b.emitter.markInvalid("call reached LLVM without function type")
@@ -744,11 +741,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 			if !ok {
 				return b.value("0", b.emitter.layout(e.Type))
 			}
-			args := make([]llvmValue, 1, len(e.Args)+1)
-			args[0] = data
-			for _, arg := range e.Args {
-				args = append(args, emitRef(b, arg))
-			}
+			args := emitInterfaceCallArguments(b, data, e.Args)
 			result := b.call(fn, args)
 			if consumesOwnedInterfaceStorage(b.emitter.mod.Types, e) {
 				emitInterfaceStorageRelease(b, e.Base.TypeID(), emitRef(b, e.Base), data)

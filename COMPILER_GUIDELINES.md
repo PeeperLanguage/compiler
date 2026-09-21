@@ -112,7 +112,7 @@ Current tagged-variant narrowing flow is documented in architecture maps. When r
 
 ## 6. Centralize Structural Traversal
 
-Do not duplicate exhaustive AST, HIR, MIR, expression, place, type, or member
+Do not duplicate exhaustive AST, THIR, MIR, expression, place, type, or member
 walks for analyses that only need traversal.
 
 A node-owning package can expose structural traversal when this removes repeated recursion. Prefer designs that make missing child coverage fail compilation or a focused completeness test. Unknown closed node kinds should fail clearly rather than be skipped silently.

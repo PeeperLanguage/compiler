@@ -176,7 +176,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	common := addCommandCommonFlags(fs)
 	outputPath := fs.String("o", "", "compile and link to executable")
-	keepGen := fs.Bool("keep-gen", false, "keep generated HIR, MIR, and LLVM IR in _gen directory")
+	keepGen := fs.Bool("keep-gen", false, "keep generated MIR and LLVM IR in _gen directory")
 	fs.BoolVar(keepGen, "k", false, "alias for -keep-gen")
 	debugBuild := fs.Bool("debug", false, debugBuildUsage)
 	if err := fs.Parse(args); err != nil {

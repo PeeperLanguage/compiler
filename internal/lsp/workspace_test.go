@@ -235,7 +235,7 @@ func TestServerStateReplaysErrorsBeforeLowering(t *testing.T) {
 	if mod == nil || second == nil || !second.Diagnostics.HasErrors() {
 		t.Fatal("reused compile lost semantic error")
 	}
-	if mod.HIR != nil || mod.MIR != nil || mod.LLVMIR != "" {
+	if mod.MIR != nil || mod.LLVMIR != "" {
 		t.Fatal("reused erroneous module continued into lowering")
 	}
 }

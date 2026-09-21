@@ -12,8 +12,6 @@ import (
 	"compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/ir/hir/fold"
-	"compiler/internal/ir/hir/lower"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
@@ -35,7 +33,7 @@ import (
 	"compiler/internal/semantics/usage"
 )
 
-// Run the central lex -> parse -> analyze -> THIR -> HIR -> MIR -> LLVM flow.
+// Run the central lex -> parse -> analyze -> THIR -> MIR -> LLVM flow.
 func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	if ctx == nil || entry == nil {
 		return errors.New("empty pipeline")
@@ -344,8 +342,6 @@ func nextModulePhase(current phase.Phase) phase.Phase {
 	case phase.Ownership:
 		return phase.Usage
 	case phase.Usage:
-		return phase.HIR
-	case phase.HIR:
 		return phase.MIR
 	case phase.MIR:
 		return phase.Backend
@@ -376,7 +372,7 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 		return phase.DefiniteInit
 	case phase.Usage:
 		return phase.Ownership
-	case phase.HIR:
+	case phase.MIR:
 		return phase.Usage
 	default:
 		return phase.None
@@ -509,31 +505,19 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.Phase < phase.Usage {
 		return false
 	}
-	if module.Phase < phase.HIR {
-		if diag != nil && diag.HasErrors() {
-			return false
-		}
-		modhir := lower.GenerateHIR(ctx.Types, phaseDiag, module)
-		if modhir == nil {
-			return false
-		}
-		module.HIR = fold.ApplyTypedExpressionFolding(modhir)
-		if err := module.HIR.Validate(); err != nil {
-			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
-				"lowered HIR is malformed: "+err.Error(), nil, "")
-		}
-		module.Phase = phase.HIR
-		ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.HIR == nil {
-		return false
-	}
 	if module.Phase < phase.MIR {
 		if diag != nil && diag.HasErrors() {
 			return false
 		}
-		module.MIR = mir.GenerateMIR(module.HIR, module.CFG, module.Ownership, module.ModuleScope, module.Constants.Published)
+		module.MIR = mir.GenerateMIR(mir.LoweringInput{
+			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
+			CFG: module.CFG, Flow: module.Flow, Ownership: module.Ownership,
+			Scope: module.ModuleScope, Constants: module.Constants,
+			ModuleID: module.ID, Entry: module.IsEntry,
+		})
+		if module.MIR == nil {
+			return false
+		}
 		if err := module.MIR.Validate(); err != nil {
 			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
 				"lowered MIR is malformed: "+err.Error(), nil, "")

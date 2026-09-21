@@ -73,7 +73,7 @@ deferred until interface call metadata has the same canonical expansion path.
 ### Call-site expansion
 
 Compiler expands omitted suffix at call site. Callee always receives full
-parameter list. HIR, MIR, LLVM signatures, function pointers, vtables, and
+parameter list. THIR/MIR, LLVM signatures, function pointers, vtables, and
 extern ABI do not gain optional parameters, presence flags, overload wrappers,
 or alternate entrypoints.
 
@@ -173,7 +173,7 @@ All later call consumers use this plan:
 - typechecker arity and assignability
 - return-origin source mapping
 - ownership call consumption and two-phase borrow ordering
-- HIR call lowering
+- THIR/MIR call lowering
 - LSP call diagnostics when applicable
 
 Do not independently append defaults in each phase.
@@ -181,11 +181,11 @@ Do not independently append defaults in each phase.
 Explicit arguments belong to caller module. Default expressions are validated in
 declaration scope, then lowered from their call-site substitution. This keeps
 private declaration checks at the declaration boundary while making substituted
-arguments visible to ownership and HIR in the caller.
+arguments visible to ownership and THIR/MIR in the caller.
 
-### HIR and lower phases
+### THIR/MIR and lower phases
 
-HIR call contains full argument list after expansion. Default expressions lower
+THIR call contains full argument list after expansion. Default expressions lower
 through normal expression lowering using declaring module semantic context.
 MIR and backend remain unaware that argument was omitted in source.
 
@@ -234,7 +234,7 @@ expressions. Incremental workspace fingerprints include default expression.
   explicit/default evaluation order, two-phase calls unaffected
 - origins: expanded argument positions remain correct; reference defaults follow
   existing borrow/origin rules
-- HIR/MIR/backend: full argument list and unchanged function ABI
+- THIR/MIR/backend: full argument list and unchanged function ABI
 - LSP/workspace: hover text, rename traversal, fingerprint invalidation
 - `x_test/`: positive runtime evaluation-order/default-suppression fixture and
   negative syntax/type/reference/function-value fixtures

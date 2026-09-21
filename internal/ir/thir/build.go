@@ -313,11 +313,15 @@ func (b *builder) fieldExpression(source *ast.SelectorExpr, info ExprInfo) Expr 
 	}
 	if projection, projected := place.Project(source); projected {
 		fieldIndex := -1
+		var dereferenceType typeinfo.Type
 		if field.Access != nil {
 			fieldIndex = field.Access.Field
+			dereferenceType = field.Access.DereferenceType
 		}
 		field.ExprInfo.Place = projectPlace(field.Base, PlaceProjection{
-			Kind: PlaceField, Name: projection.Step.Field, Field: fieldIndex, Type: field.ExprInfo.Type,
+			Source: field.Source, BaseSource: field.Base.SourceInfo(),
+			Kind: PlaceField, Name: projection.Step.Field, Field: fieldIndex,
+			DereferenceType: dereferenceType, Type: field.ExprInfo.Type,
 		}, field.ExprInfo.Type)
 	}
 	return field
@@ -333,6 +337,7 @@ func (b *builder) indexExpression(source *ast.IndexExpr, info ExprInfo) Expr {
 	if _, ranged := source.Index.(*ast.RangeExpr); !ranged && index.Index != nil {
 		if _, projected := place.Project(source); projected {
 			index.ExprInfo.Place = projectPlace(index.Base, PlaceProjection{
+				Source: index.Source, BaseSource: index.Base.SourceInfo(),
 				Kind: PlaceIndex, Index: index.Index, ConstantIndex: index.Constant, Type: index.ExprInfo.Type,
 			}, index.ExprInfo.Type)
 		}
@@ -369,7 +374,6 @@ func (b *builder) callExpression(source *ast.CallExpr, info ExprInfo) Expr {
 	arguments := source.Args
 	if b.typing != nil {
 		arguments = b.typing.CallArgumentsOrSource(source)
-		call.ImplicitArgument = b.typing.ImplicitCallArgument(source.ID())
 		if compilerCall, found := b.typing.CompilerCall(source.ID()); found {
 			call.CompilerCall = &CompilerCall{Operation: compilerCall.Operation, Kind: compilerCall.Kind}
 		}
@@ -388,7 +392,7 @@ func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
 	info.Type = b.typing.ExprType(expression.ID())
 	if conversion, found := b.typing.ImplicitConversion(expression.ID()); found {
 		copied := conversion
-		info.Conversion = &copied
+		info.conversion = &copied
 	}
 	if use, found := b.typing.ValueUse(expression.ID()); found {
 		info.Use = use
@@ -398,8 +402,9 @@ func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
 		info.ReferenceArgument = true
 		info.ReferenceArgumentMutable = mutable
 	}
+	info.ImplicitReference = b.typing.ImplicitCallArgument(expression.ID())
 	for _, implementation := range b.typing.InterfaceImplementations(expression.ID()) {
-		info.InterfaceImplementations = append(info.InterfaceImplementations, InterfaceImplementation{
+		info.interfaceImplementations = append(info.interfaceImplementations, InterfaceImplementation{
 			Symbol: implementation.Symbol, CallableType: implementation.CallableType,
 		})
 	}

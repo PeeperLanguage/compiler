@@ -14,7 +14,7 @@ typechecker.Check
   -> definiteinit.Check
   -> ownership.Check
   -> usage.Analyze
-  -> HIR/MIR lowering
+  -> direct THIR/CFG/evidence-to-MIR lowering
 ```
 
 `internal/pipeline/pipeline.go` advances one phase at a time. Typechecking creates
@@ -27,8 +27,8 @@ and scopes.
 The pipeline validates published effects immediately after building them. It validates
 ownership output after ownership runs, but only when that phase has no source errors;
 incomplete evidence on invalid source is not reported as an internal evidence error.
-HIR and MIR are not semantic analyses: they consume the analysis artifacts. MIR uses
-`ownershipresult.CleanupPlan` for source-level drops.
+MIR is not a semantic analysis: it consumes THIR, CFG, and analysis artifacts.
+MIR uses `ownershipresult.CleanupPlan` for source-level drops.
 
 ## Source inventory
 
@@ -45,8 +45,7 @@ AST nodes have stable `ast.NodeID` values. Typechecking results use them as keys
 expression types, calls, conversions, match evidence, iteration evidence, variant
 construction, value-use classification, and reference-argument classification.
 Flow results use them for expression resolutions, payload access, case tests, variant
-fields, and per-function site-fact containers. Cleanup entries keyed by an AST/HIR
-program event use `ir.NodeID`, whose source identities are derived from AST IDs.
+fields, and per-function site-fact containers. Cleanup entries keyed by a source program event use `ir.NodeID`, whose source identities are derived from AST IDs.
 `NodeID` identifies source meaning or a source event. It does not identify an ordered
 execution point. A return statement, assignment statement, match body, or discarded
 expression can therefore be a `NodeID` key in a cleanup plan.
@@ -504,7 +503,7 @@ AST + bindings + symbols
         +--> ownership.Check: move/borrow/liveness state + CleanupPlan
                                       |
                                       v
-                         HIR/MIR lowering consumes planned drops
+                         direct MIR lowering consumes planned drops
 ```
 The stable identity rule is strict: `NodeID` carries source semantic identity and
 source-event cleanup keys; `SiteID` carries ordered CFG execution identity. Effects,

@@ -44,15 +44,6 @@ func (r *Result) BindID(id ast.NodeID, sym *symbols.Symbol) {
 	r.nodeSymbols[id] = sym
 }
 
-// Unbind removes stale syntax identity during invalidation or evidence-repair
-// tests. Normal semantic production only adds bindings within a generation.
-func (r *Result) Unbind(node ast.Node) {
-	if r == nil || node == nil {
-		return
-	}
-	delete(r.nodeSymbols, node.ID())
-}
-
 func (r *Result) Symbol(node ast.Node) *symbols.Symbol {
 	if r == nil || node == nil {
 		return nil
@@ -95,17 +86,6 @@ func (r *Result) ForEachScope(fn func(*symbols.Scope)) {
 	for _, scope := range r.blockScopes {
 		if scope != nil {
 			fn(scope)
-		}
-	}
-}
-
-func (r *Result) ForEachSymbol(fn func(*symbols.Symbol)) {
-	if r == nil || fn == nil {
-		return
-	}
-	for _, sym := range r.nodeSymbols {
-		if sym != nil {
-			fn(sym)
 		}
 	}
 }

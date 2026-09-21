@@ -78,7 +78,7 @@ semantic operations. `Bind` / `Symbol` publish and query syntax identity; `SetSc
 `Scope` publish and query lexical scopes. `RegisterMethod` / `Methods` own receiver
 method membership using semantic nominal declaration identity, not display text, and
 `AddOperationFunction` owns the completion catalog. The backing indexes are private,
-so collection, binding, resolution, typechecking, HIR, and LSP depend on meaning rather
+so collection, binding, resolution, typechecking, THIR, and LSP depend on meaning rather than map layout.
 than map layout.
 
 ## Collection
@@ -498,7 +498,7 @@ contract for later phases.
    where a typing decision needs one.
 6. Constant finalization recomputes typed module constants and publishes authoritative
    values for cross-module use.
-7. Place resolution, CFG, flow, effects, ownership, HIR, MIR, and backend consume
+7. Place resolution, THIR, CFG, flow, effects, ownership, MIR, and backend consume
    these artifacts through explicit queries.
 8. No downstream phase should perform a second independent name lookup, type
    adaptation, variant-case discovery, intrinsic dispatch, or constant fold when

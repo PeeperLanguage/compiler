@@ -19,10 +19,10 @@ flowchart LR
     LEX --> PAR[parser]
     PAR --> AST[AST]
     AST --> SEM[semantic analysis]
-    SEM --> CFG[control-flow graph]
+    SEM --> THIR[THIR]
+    THIR --> CFG[control-flow graph]
     CFG --> ANA[flow · effects · ownership]
-    ANA --> HIR[HIR]
-    HIR --> MIR[MIR]
+    ANA --> MIR[MIR]
     MIR --> LL["LLVM IR text"]
     LL --> CLANG["clang"]
     CLANG --> OBJ["object files"]
@@ -131,7 +131,7 @@ flowchart TD
     Setup --> Load --> Parsed --> Collected --> Bound --> Resolved
     Resolved --> Typechecked --> CFG --> FlowTyped
     FlowTyped --> Effects --> DefiniteInit --> Ownership --> Usage
-    Usage --> HIR --> MIR --> Backend --> Finalize
+    Usage --> MIR --> Backend --> Finalize
 ```
 
 ```go
@@ -156,14 +156,14 @@ scheduler enforces that by advancing everyone one rung at a time.
 | `Collected` | top-level symbols, method sets | `Bindings`, `ModuleScope` |
 | `Bound` | operator/interface bindings | `Bindings` |
 | `Resolved` | every identifier → symbol | `Bindings` occurrence index |
-| `Typechecked` | types, typing decisions, finalized module constants | `Typechecking`, `Constants`, `TypedASTNodes` |
+| `Typechecked` | types, typing decisions, finalized constants, typed source IR | `Typechecking`, `Constants`, `THIR` |
 | `CFG` | blocks, sites, edges | `CFG` |
 | `FlowTyped` | per-use narrowing | `Flow` |
 | `Effects` | ordered semantic effects | `Effects` |
 | `DefiniteInit` | *diagnostics only* | — |
 | `Ownership` | drop plan | `Ownership` |
 | `Usage` | *warnings only* | — |
-| `HIR` | typed high-level IR | `HIR` |
+
 | `MIR` | flat, block-structured IR | `MIR` |
 | `Backend` | LLVM IR text | `LLVMIR` |
 
@@ -461,16 +461,14 @@ Lowering *reads* this plan. It never decides a drop for itself.
 
 ---
 
-## 11. Lowering: HIR → MIR
+## 11. Lowering: THIR + CFG → MIR
 
-**HIR** is typed and still structured — `If`, `For`, `Block` are real nodes. It consumes
-published evidence rather than re-deciding anything:
+**THIR** is typed and structured. It carries symbols, conversions, places, ordered
+arguments, match arms, and iteration plans published by semantic analysis.
 
-```go
-// internal/ir/hir/lower (simplified)
-conversion, converting := module.Typechecking.ImplicitConversion(expr.ID())
-iteration, found := module.Typechecking.ForIteration(stmt.ID()) // carrier, cursor, bounds
-```
+**CFG** owns execution topology. **MIR** lowering joins CFG sites to THIR nodes by
+`ir.NodeID`, lowers expressions through `internal/ir/exprlower`, and reads ownership
+cleanup plans. It does not re-read AST or reconstruct control flow.
 
 **MIR** is flat: basic blocks, instructions, terminators — close to what a backend wants.
 
@@ -480,14 +478,14 @@ type Instr interface{ instrNode() }       // Assign Store Print Drop DynamicArra
 type Terminator interface{ termNode() }   // Jump Branch SwitchVariant Ret
 ```
 
-Both sets are **sealed** by unexported marker methods, so an instruction can never be used
-where a terminator belongs. MIR lowering walks CFG sites and consumes the cleanup plan to
-place drops.
+MIR instructions and terminators are **sealed** by unexported marker methods, so an
+instruction can never be used where a terminator belongs. MIR lowering walks CFG sites
+and consumes cleanup plans to place drops.
 
 ```mermaid
 flowchart LR
-    A["AST<br/>structured, untyped"] --> H["HIR<br/>structured, typed"]
-    H --> M["MIR<br/>flat blocks + terminators"]
+    A["AST + evidence"] --> T["THIR<br/>structured, typed"]
+    T --> M["MIR<br/>flat blocks + terminators"]
     M --> L["LLVM IR text"]
 ```
 
@@ -547,7 +545,7 @@ The compiler is built so that *forgetting* something fails loudly.
 | --- | --- | --- |
 | AST traversal tests | `frontend/ast` tests + source fixtures | broken child traversal behavior |
 | Sealed semantic type contract | Go type system | missing child/ownership behavior on a new semantic type |
-| HIR validation + required node methods | `internal/ir/hir` | malformed or incomplete HIR nodes |
+| THIR validation + required operation methods | `internal/ir/thir` | malformed evidence or missing consumer support |
 | MIR/backend rejecting dispatch | `internal/ir/mir`, `backend/llvm` | unsupported lowered nodes fail loudly |
 | `cfg.Validate` | `internal/ir/cfg` | malformed topology |
 | `effect.Validate` | `internal/semantics/effect` | operations with no symbol, unbalanced calls |
@@ -576,7 +574,7 @@ For a new syntax construct, in order:
 5. **typechecker** — the type rule, and *publish* whatever later phases will need.
 6. **CFG** — only if the control-flow shape is genuinely new.
 7. **effects** — one case in `publishStmt`/`value` saying what it does to bindings.
-8. **HIR/MIR** — only if no existing lowering shape can represent it.
+8. **THIR/MIR** — only if no existing lowering shape can represent it.
 
 Steps 1–6 are unavoidable: where a name lives and what types are legal *is* the feature.
 Step 7 is what buys you definite initialization, ownership, liveness, drops and usage

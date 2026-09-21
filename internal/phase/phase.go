@@ -29,7 +29,6 @@ const (
 	Ownership
 	// Usage records completion of usage diagnostics at project barrier.
 	Usage
-	HIR
 	MIR
 	Backend
 	// Finalize contains checks spanning completed module backends.
@@ -66,8 +65,6 @@ func (phase Phase) String() string {
 		return "ownership"
 	case Usage:
 		return "usage"
-	case HIR:
-		return "HIR"
 	case MIR:
 		return "MIR"
 	case Backend:

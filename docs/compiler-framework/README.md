@@ -20,7 +20,7 @@ Peeper uses four complementary mechanisms:
    `effect.Visitor` makes the semantic operation set exhaustive for consumers.
 3. **Generic mechanics** — `graph.Worklist` and shared graph topology remove
    repeated scheduling/adjacency code without hiding phase-specific lattices.
-4. **Explicit true extension points** — resolver/typechecker/CFG/effect/HIR and
+4. **Explicit true extension points** — resolver/typechecker/THIR/CFG/effect/MIR and
    semantic type representation decisions remain exhaustive where behavior really
    differs.
 

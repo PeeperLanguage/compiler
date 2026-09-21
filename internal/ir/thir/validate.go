@@ -77,7 +77,7 @@ func (e ExprInfo) validate(requireType bool) error {
 			return err
 		}
 	}
-	for index, implementation := range e.InterfaceImplementations {
+	for index, implementation := range e.interfaceImplementations {
 		if implementation.Symbol == nil || implementation.CallableType == nil {
 			return fmt.Errorf("interface implementation %d is incomplete", index)
 		}

@@ -28,8 +28,8 @@ parser.New(file, stream, diagnostics)
 - `parser` consumes tokens, constructs syntax nodes, reports diagnostics,
   recovers, and assigns IDs.
 - `ast` owns node types, traversal, locations, cloning, indexing, and surfaces.
-- Frontend output is syntax; binding, type resolution, control flow, ownership,
-  HIR, MIR, and backend work happen after parsing.
+- Frontend output is syntax; binding, type resolution, THIR, control flow,
+  ownership, MIR, and backend work happen after parsing.
 
 `Lexer.Tokenize` returns a copy of its token slice. `ParseModule` retains
 parser-produced nodes, including recovery nodes.

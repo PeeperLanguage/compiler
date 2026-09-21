@@ -383,7 +383,7 @@ string comparison never consumes owners and never compares allocator identity.
 Optional values may only be compared with `none`; references, owned pointers,
 arrays, structs, interfaces, borrowed slices, and borrowed `&str` views reject all
 comparison operators. Named enums use `is` and `match` instead of equality or
-ordering. Rejected comparisons emit diagnostics before HIR generation.
+ordering. Rejected comparisons emit diagnostics before MIR generation.
 
 Expression precedence, highest to lowest, is:
 
@@ -656,7 +656,7 @@ but may never return an undeclared local or parameter origin.
 The clause is required even when only one source is possible. It is part of
 function-type compatibility and imported callable metadata, so extern and
 interface declarations do not require a body for origin inference. It is erased
-before HIR and has no runtime representation.
+before MIR and has no runtime representation.
 
 Invalid:
 

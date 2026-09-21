@@ -8,7 +8,7 @@ import (
 )
 
 // TypeID identifies one runtime type in a compilation's TypeTable. IDs never
-// cross compilation contexts; semantic types are interned when HIR is formed.
+// cross compilation contexts; semantic types are interned during runtime type lowering.
 type TypeID uint32
 
 const InvalidType TypeID = 0
@@ -215,8 +215,8 @@ func (t *TypeTable) CompleteNamed(id TypeID, typ Type) error {
 }
 
 // LookupABIKey bridges finalized semantic identity into an already-interned IR
-// type. It never parses text or creates a type; HIR lowering remains the only
-// semantic-to-IR type construction boundary.
+// type. It never parses text or creates a type; typelower remains the only
+// semantic-to-runtime-IR type construction boundary.
 func (t *TypeTable) LookupABIKey(key string) (TypeID, bool) {
 	if t == nil {
 		return InvalidType, false

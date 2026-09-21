@@ -16,7 +16,6 @@ import (
 	"compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
@@ -208,31 +207,9 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 	let items = [1]i32{1};
 	for index, value in items {}
 }`, func(entry *module.Module) {
-				if entry.HIR == nil || entry.MIR == nil || len(entry.HIR.Funcs) != 1 || len(entry.HIR.Funcs[0].Body.Stmts) != 2 {
-					t.Fatalf("pipeline artifacts missing: HIR=%v MIR=%v", entry.HIR != nil, entry.MIR != nil)
+				if entry.MIR == nil || len(entry.MIR.Funcs) != 1 {
+					t.Fatalf("pipeline MIR missing: %#v", entry.MIR)
 				}
-				loop, ok := entry.HIR.Funcs[0].Body.Stmts[1].(*hir.For)
-				if !ok || loop.Init == nil || len(loop.Init.Stmts) != 2 || loop.Bindings == nil || len(loop.Bindings.Stmts) != 2 {
-					t.Fatalf("loop = %#v, want sequence segments", entry.HIR.Funcs[0].Body.Stmts[1])
-				}
-				cursor := loop.Init.Stmts[1].(*hir.Binding)
-				index := loop.Bindings.Stmts[0].(*hir.Binding)
-				if gotCursor, gotIndex := entry.HIR.Types.Text(cursor.Type), entry.HIR.Types.Text(index.Type); gotCursor != test.typeText || gotIndex != test.typeText {
-					t.Fatalf("cursor/index types = %s/%s, want %s/%s", gotCursor, gotIndex, test.typeText, test.typeText)
-				}
-				indexValue, ok := index.Value.(*ir.Ident)
-				if !ok || indexValue.Type != cursor.Type {
-					t.Fatalf("index binding = %#v, want direct cursor value", index)
-				}
-				cond, ok := loop.Cond.(*ir.Binary)
-				if !ok {
-					t.Fatalf("condition = %#v, want binary bounds check", loop.Cond)
-				}
-				length, ok := cond.Right.(*ir.Len)
-				if !ok || cond.Left.TypeID() != cursor.Type || length.Type != cursor.Type {
-					t.Fatalf("condition = %#v, want target-sized cursor and length", cond)
-				}
-
 				foundCompare := false
 				foundIndexMove := false
 				foundProjection := false
@@ -245,16 +222,16 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 							}
 							switch value := assign.Value.(type) {
 							case *mir.Binary:
-								if value.Op == "<" && value.Left.TypeID() == cursor.Type && value.Right.TypeID() == cursor.Type {
+								if value.Op == "<" && entry.MIR.Types.Text(value.Left.TypeID()) == test.typeText && entry.MIR.Types.Text(value.Right.TypeID()) == test.typeText {
 									foundCompare = true
 								}
 							case *mir.Move:
-								if assign.Name == index.Name && value.TypeID() == cursor.Type && value.Src.TypeID() == cursor.Type {
+								if entry.MIR.Types.Text(value.TypeID()) == test.typeText && value.TypeID() == value.Src.TypeID() {
 									foundIndexMove = true
 								}
 							case *mir.Load:
 								if value.Place != nil && len(value.Place.Projections) == 1 && value.Place.Projections[0].Kind == mir.PlaceProjectionIndex &&
-									value.Place.Projections[0].Index.TypeID() == cursor.Type {
+									entry.MIR.Types.Text(value.Place.Projections[0].Index.TypeID()) == test.typeText {
 									foundProjection = true
 								}
 							}
@@ -697,7 +674,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineSemanticErrorStopsBeforeUsageAndHIR(t *testing.T) {
+func TestPipelineSemanticErrorStopsBeforeUsageAndMIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `#[extern("puts")]
 fn puts(msg: cstr) -> i32 {
@@ -736,13 +713,13 @@ fn main() -> i32 {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
 	if entry.Phase != phase.Ownership {
-		t.Fatalf("expected pipeline to finish mandatory semantics and stop before Usage/HIR, got phase %v", entry.Phase)
+		t.Fatalf("expected pipeline to finish mandatory semantics and stop before Usage/MIR, got phase %v", entry.Phase)
 	}
 	if ctx.CompletedProjectPhase != phase.Ownership {
 		t.Fatalf("completed project phase = %v, want Ownership", ctx.CompletedProjectPhase)
 	}
-	if entry.HIR != nil {
-		t.Fatalf("semantic error produced HIR: %#v", entry.HIR)
+	if entry.MIR != nil {
+		t.Fatalf("semantic error produced MIR: %#v", entry.MIR)
 	}
 	if entry.CFG == nil || len(entry.CFG.Functions) == 0 {
 		t.Fatal("expected canonical CFG despite extern definition error")
@@ -778,7 +755,7 @@ func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
 	}
 }
 
-func TestPipelineRejectsUnsupportedComparisonsBeforeHIR(t *testing.T) {
+func TestPipelineRejectsUnsupportedComparisonsBeforeMIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Pair {
 	value: i32
@@ -813,11 +790,11 @@ fn main() -> i32 {
 	if !diag.HasErrors() {
 		t.Fatal("expected unsupported struct comparison diagnostic")
 	}
-	if entry.HIR != nil {
-		t.Fatalf("unsupported comparison produced HIR: %#v", entry.HIR)
+	if entry.MIR != nil {
+		t.Fatalf("unsupported comparison produced MIR: %#v", entry.MIR)
 	}
 	if entry.Phase != phase.Ownership {
-		t.Fatalf("expected pipeline to stop before HIR at Ownership, got phase %v", entry.Phase)
+		t.Fatalf("expected pipeline to stop before MIR at Ownership, got phase %v", entry.Phase)
 	}
 }
 
@@ -954,8 +931,8 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		if wantPhase == phase.Effects && entry.Effects == nil {
 			t.Fatal("effects phase must retain published site effects")
 		}
-		if wantPhase < phase.HIR && entry.HIR != nil {
-			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)
+		if wantPhase < phase.MIR && entry.MIR != nil {
+			t.Fatalf("phase %v produced MIR before mandatory semantics completed", wantPhase)
 		}
 	}
 	if advanceModulePhase(ctx, entry, diag) {
@@ -963,7 +940,6 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 	entry.Phase = phase.Usage
 	for _, wantPhase := range []phase.Phase{
-		phase.HIR,
 		phase.MIR,
 		phase.Backend,
 	} {
@@ -1147,8 +1123,8 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
 		}
 	}
-	if entry.HIR != nil {
-		t.Fatalf("CFG phase produced HIR: %#v", entry.HIR)
+	if entry.MIR != nil {
+		t.Fatalf("CFG phase produced MIR: %#v", entry.MIR)
 	}
 	for _, item := range diag.Diagnostics() {
 		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
@@ -1204,8 +1180,8 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 		want   string
 	}{
 		{name: "blocked prerequisite", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
-		{name: "missing MIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.HIR}, want: "HIR phase"},
+		{name: "missing MIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
+		{name: "missing backend", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.MIR}, want: "MIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1967,8 +1943,8 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected generic pipeline diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
-		t.Fatal("generic named type did not reach HIR, MIR, and LLVM")
+	if entry.MIR == nil || entry.LLVMIR == "" {
+		t.Fatal("generic named type did not reach MIR and LLVM")
 	}
 }
 
@@ -2611,22 +2587,28 @@ fn main() -> i32 {
 			}
 
 			observed := make(map[symbols.CompilerOp]struct{})
-			entry.Bindings.ForEachSymbol(func(symbol *symbols.Symbol) {
-				if symbol.CompilerOp != "" {
-					observed[symbol.CompilerOp] = struct{}{}
-				}
-			})
+			for _, stmt := range entry.AST.Stmts {
+				ast.Inspect(stmt, func(node ast.Node) bool {
+					if node != nil {
+						symbol := entry.Bindings.Symbol(node)
+						if symbol != nil && symbol.CompilerOp != "" {
+							observed[symbol.CompilerOp] = struct{}{}
+						}
+					}
+					return true
+				})
+			}
 			for _, op := range intrinsics.Operations() {
 				if _, ok := observed[op]; !ok {
-					t.Errorf("registered intrinsic %q lacks successful semantic/HIR/MIR/LLVM exercise", op)
+					t.Errorf("registered intrinsic %q lacks successful semantic/MIR/LLVM exercise", op)
 				}
 				delete(observed, op)
 			}
 			for op := range observed {
 				t.Errorf("lowered intrinsic %q is absent from compiler registry", op)
 			}
-			if entry.Phase != phase.Backend || entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
-				t.Fatalf("intrinsic program stopped before backend: phase=%v HIR=%v MIR=%v LLVM=%v", entry.Phase, entry.HIR != nil, entry.MIR != nil, entry.LLVMIR != "")
+			if entry.Phase != phase.Backend || entry.MIR == nil || entry.LLVMIR == "" {
+				t.Fatalf("intrinsic program stopped before backend: phase=%v MIR=%v LLVM=%v", entry.Phase, entry.MIR != nil, entry.LLVMIR != "")
 			}
 			mirText := entry.MIR.Text()
 			for _, marker := range []string{"call ", "store ", " = addr ", " = load ", " = view ", "cast ", " = alloc ", "drop ", " != ", "ret "} {

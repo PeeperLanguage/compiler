@@ -176,6 +176,9 @@ type Expr interface {
 	exprNode()
 	ExprType() typeinfo.Type
 	ExprPlace() *Place
+	Conversion() *typeinfo.Conversion
+	ImplicitReferenceType() typeinfo.Type
+	InterfaceImplementations() []InterfaceImplementation
 	UseKind() (typeinfo.UseKind, bool)
 	ReferenceArgInfo() (bool, bool)
 	LowerExpression(ExpressionLowerer) ir.Expr
@@ -194,20 +197,26 @@ func (s StmtInfo) SourceInfo() ir.SourceInfo { return s.Source }
 type ExprInfo struct {
 	Source                   ir.SourceInfo
 	Type                     typeinfo.Type
-	Conversion               *typeinfo.Conversion
+	conversion               *typeinfo.Conversion
 	Use                      typeinfo.UseKind
 	HasUse                   bool
 	ReferenceArgument        bool
 	ReferenceArgumentMutable bool
-	InterfaceImplementations []InterfaceImplementation
+	ImplicitReference        typeinfo.Type
+	interfaceImplementations []InterfaceImplementation
 	Place                    *Place
 }
 
-func (e ExprInfo) thirNode()                 {}
-func (e ExprInfo) exprNode()                 {}
-func (e ExprInfo) SourceInfo() ir.SourceInfo { return e.Source }
-func (e ExprInfo) ExprType() typeinfo.Type   { return e.Type }
-func (e ExprInfo) ExprPlace() *Place         { return e.Place }
+func (e ExprInfo) thirNode()                            {}
+func (e ExprInfo) exprNode()                            {}
+func (e ExprInfo) SourceInfo() ir.SourceInfo            { return e.Source }
+func (e ExprInfo) ExprType() typeinfo.Type              { return e.Type }
+func (e ExprInfo) ExprPlace() *Place                    { return e.Place }
+func (e ExprInfo) Conversion() *typeinfo.Conversion     { return e.conversion }
+func (e ExprInfo) ImplicitReferenceType() typeinfo.Type { return e.ImplicitReference }
+func (e ExprInfo) InterfaceImplementations() []InterfaceImplementation {
+	return e.interfaceImplementations
+}
 func (e ExprInfo) UseKind() (typeinfo.UseKind, bool) {
 	return e.Use, e.HasUse
 }
@@ -237,12 +246,15 @@ const (
 )
 
 type PlaceProjection struct {
-	Kind          PlaceProjectionKind
-	Name          string
-	Field         int
-	Index         Expr
-	ConstantIndex *ConstantIndex
-	Type          typeinfo.Type
+	Source          ir.SourceInfo
+	BaseSource      ir.SourceInfo
+	Kind            PlaceProjectionKind
+	Name            string
+	Field           int
+	Index           Expr
+	ConstantIndex   *ConstantIndex
+	DereferenceType typeinfo.Type
+	Type            typeinfo.Type
 }
 
 type ConstantIndex struct {
@@ -513,11 +525,10 @@ type CaseTest struct {
 
 type Call struct {
 	ExprInfo
-	Callee           Expr
-	Args             []Expr
-	Piped            bool
-	CompilerCall     *CompilerCall
-	ImplicitArgument typeinfo.Type
+	Callee       Expr
+	Args         []Expr
+	Piped        bool
+	CompilerCall *CompilerCall
 }
 
 type CompilerCall struct {
