@@ -430,30 +430,31 @@ func lowerPlace(ctx *lowering, module *module.Module, scope *symbols.Scope, expr
 				return appendVariantPayloadPlace(ctx, module, selector, out)
 			}
 		}
-		if module != nil && module.Typechecking != nil {
-			if access, found := module.Typechecking.StructField(selector.ID()); found {
-				out := lowerPlace(ctx, module, scope, selector.Expr)
-				if access.DereferenceType != nil {
-					out.Projections = append(out.Projections, ir.PlaceProjection{
-						Kind: ir.PlaceProjectionDeref, Type: typelower.Type(ctx.types, ctx.diagnostics, access.DereferenceType), Location: ast.LocOf(selector.Expr),
-					})
-				}
+		field, _ := module.THIR.Node(ir.NodeID(selector.ID())).(*thir.Field)
+		if field != nil && field.Access != nil {
+			access := field.Access
+			out := lowerPlace(ctx, module, scope, selector.Expr)
+			if access.DereferenceType != nil {
 				out.Projections = append(out.Projections, ir.PlaceProjection{
-					Kind: ir.PlaceProjectionField, FieldIndex: access.Field,
-					Type: typelower.Type(ctx.types, ctx.diagnostics, access.Type), Location: ast.LocOf(selector),
+					Kind: ir.PlaceProjectionDeref, Type: typelower.Type(ctx.types, ctx.diagnostics, access.DereferenceType), Location: ast.LocOf(selector.Expr),
 				})
-				out.Type = typelower.Type(ctx.types, ctx.diagnostics, access.Type)
-				out.Location = ast.LocOf(selector)
-				return appendVariantPayloadPlace(ctx, module, selector, out)
 			}
+			out.Projections = append(out.Projections, ir.PlaceProjection{
+				Kind: ir.PlaceProjectionField, FieldIndex: access.Field,
+				Type: typelower.Type(ctx.types, ctx.diagnostics, field.ExprType()), Location: ast.LocOf(selector),
+			})
+			out.Type = typelower.Type(ctx.types, ctx.diagnostics, field.ExprType())
+			out.Location = ast.LocOf(selector)
+			return appendVariantPayloadPlace(ctx, module, selector, out)
 		}
 	}
 	if index, ok := expr.(*ast.IndexExpr); ok && index != nil && index.Expr != nil && index.Index != nil {
 		if _, slicing := index.Index.(*ast.RangeExpr); !slicing {
 			indexExpr := lowerASTExpr(ctx, module, scope, index.Index, typeinfo.DefaultIntegerType())
-			if constant, ok := module.Typechecking.ConstantIndex(index.ID()); ok {
+			typedIndex, _ := module.THIR.Node(ir.NodeID(index.ID())).(*thir.Index)
+			if typedIndex != nil && typedIndex.Constant != nil {
 				indexExpr = &ir.IntLit{
-					Value: constant.Text, Type: typelower.Type(ctx.types, ctx.diagnostics, constant.Type),
+					Value: typedIndex.Constant.Text, Type: typelower.Type(ctx.types, ctx.diagnostics, typedIndex.Constant.Type),
 					SourceInfo: ir.SourceInfo{Location: ast.LocOf(index.Index)},
 				}
 			}
@@ -939,20 +940,19 @@ func lowerSelectorExpr(ctx *lowering, module *module.Module, scope *symbols.Scop
 			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
 		}
 	}
-	if module.Typechecking != nil {
-		if access, found := module.Typechecking.StructField(selector.ID()); found {
-			exprType := func(expr ast.Expr) typeinfo.Type {
-				return exprResolvedType(module, expr)
-			}
-			if access.DereferenceType != nil || place.Addressable(scope, selector.Expr, exprType, module.ExpandedDefaultBinding) {
-				return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
-			}
-			return &ir.Field{
-				Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
-				Index:      access.Field,
-				SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)},
-				Type:       typelower.Type(ctx.types, ctx.diagnostics, access.Type),
-			}
+	field, _ := module.THIR.Node(ir.NodeID(selector.ID())).(*thir.Field)
+	if field != nil && field.Access != nil {
+		exprType := func(expr ast.Expr) typeinfo.Type {
+			return exprResolvedType(module, expr)
+		}
+		if field.Access.DereferenceType != nil || place.Addressable(scope, selector.Expr, exprType, module.ExpandedDefaultBinding) {
+			return &ir.Load{Place: lowerPlace(ctx, module, scope, selector), SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)}}
+		}
+		return &ir.Field{
+			Base:       lowerASTExpr(ctx, module, scope, selector.Expr, nil),
+			Index:      field.Access.Field,
+			SourceInfo: ir.SourceInfo{NodeID: ir.NodeID(selector.ID()), Location: ast.LocOf(selector)},
+			Type:       typelower.Type(ctx.types, ctx.diagnostics, field.ExprType()),
 		}
 	}
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: ir.InvalidType, SourceInfo: ir.SourceInfo{Location: ast.LocOf(selector)}}

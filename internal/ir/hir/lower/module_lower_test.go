@@ -120,7 +120,8 @@ func TestGenerateHIRRequiresStructFieldEvidence(t *testing.T) {
 fn Read(box: Box) -> i32 { return box.value; }`, func(module *module.Module) {
 		fn := module.AST.Stmts[1].(*ast.FnDecl)
 		selector := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
-		module.Typechecking.ForgetStructField(selector.ID())
+		field := module.THIR.Node(ir.NodeID(selector.ID())).(*thir.Field)
+		field.Access = nil
 	})
 	returned := out.Funcs[0].Body.Stmts[0].(*hir.Return).Value
 	if _, ok := returned.(*ir.InvalidExpr); !ok {
