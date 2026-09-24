@@ -134,13 +134,13 @@ func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
 	if start == nil {
 		return nil
 	}
-	mutable := p.match(token.MUT)
+	isMutable := p.match(token.MUT)
 	target := p.parseTypeExpr()
 	if target == nil {
 		return nil
 	}
 	return reg(p, &ast.RefType{
-		IsMutable: mutable,
+		IsMutable: isMutable,
 		Target:    target,
 		Location:  source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
 	})

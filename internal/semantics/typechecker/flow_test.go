@@ -402,7 +402,7 @@ func TestClearFlowScopeRemovesOnlyExitedBindingFacts(t *testing.T) {
 func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	moduleScope := symbols.NewScope(nil)
 	global := symbols.New("maybe", symbols.SymbolVar, &ast.LetDecl{IsMutable: true, IsModuleVar: true}, nil)
-	global.Mutable = true
+	global.AllowsMutation = true
 	if err := moduleScope.Declare(global); err != nil {
 		t.Fatal(err)
 	}
@@ -422,11 +422,11 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 func TestMergeVariantFactsUnionsPossibleCases(t *testing.T) {
 	root := symbols.New("value", symbols.SymbolVar, nil, nil)
 	origins := []place.Origin{{Root: root}}
-	left := flowState{reachable: true, variants: []variantStateFact{{origins: origins, cases: []int{0}, caseCount: 3}}}
-	right := flowState{reachable: true, variants: []variantStateFact{{origins: origins, cases: []int{1}, caseCount: 3}}}
+	left := flowState{isReachable: true, variants: []variantStateFact{{origins: origins, cases: []int{0}, caseCount: 3}}}
+	right := flowState{isReachable: true, variants: []variantStateFact{{origins: origins, cases: []int{1}, caseCount: 3}}}
 
 	merged := mergeFlowStates(left, right)
-	if !merged.reachable || len(merged.variants) != 1 || !sameCaseSet(merged.variants[0].cases, []int{0, 1}) {
+	if !merged.isReachable || len(merged.variants) != 1 || !caseSetsEqual(merged.variants[0].cases, []int{0, 1}) {
 		t.Fatalf("merged variant facts = %#v", merged)
 	}
 }
@@ -439,7 +439,7 @@ func TestInvalidateVariantFactsPreservesCaseForPayloadDescendant(t *testing.T) {
 	mutated[0].Projections = append(mutated[0].Projections, place.OriginProjection{Kind: place.OriginField, Field: "field"})
 
 	invalidateVariantOrigins(&state, mutated)
-	if len(state.variants) != 1 || !sameCaseSet(state.variants[0].cases, []int{1}) {
+	if len(state.variants) != 1 || !caseSetsEqual(state.variants[0].cases, []int{1}) {
 		t.Fatalf("payload mutation invalidated carrier case = %#v", state.variants)
 	}
 }
@@ -461,7 +461,7 @@ func TestMergeFlowStatesTreatsMissingOriginAsUnknown(t *testing.T) {
 	rightState.rawPointers = setOriginFact(rightState.rawPointers, pointerOrigins, []place.Origin{{Root: right}})
 	known := mergeFlowStates(leftState, rightState)
 	want := []place.Origin{{Root: left}, {Root: right}}
-	if got := originValues(known.rawPointers, pointerOrigins); !place.SameOrigins(got, want) {
+	if got := originValues(known.rawPointers, pointerOrigins); !place.AreSameOrigins(got, want) {
 		t.Fatalf("known predecessor origins = %#v, want %#v", got, want)
 	}
 }

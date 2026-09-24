@@ -93,8 +93,8 @@ func dynamicArraySignature(op symbols.CompilerOp, baseType typeinfo.Type, compil
 	var elementType typeinfo.Type = &typeinfo.NamedType{Name: "T"}
 	var arrayType typeinfo.Type = &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: elementType}
 	if baseType != nil {
-		if targetType, mutable, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); referenced {
-			if !mutable {
+		if targetType, isMutable, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); referenced {
+			if !isMutable {
 				return nil
 			}
 			baseType = targetType
@@ -151,7 +151,7 @@ func fromBytesSignature(op symbols.CompilerOp, baseType typeinfo.Type, _ target.
 		panic("missing from_bytes intrinsic signature")
 	}
 	bytes := &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
-	if baseType != nil && !typeinfo.SameType(baseType, bytes) {
+	if baseType != nil && !typeinfo.IsSameType(baseType, bytes) {
 		return nil
 	}
 	return &typeinfo.FuncType{

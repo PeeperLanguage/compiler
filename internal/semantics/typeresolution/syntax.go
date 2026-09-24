@@ -86,7 +86,7 @@ func (r *Resolver) resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, 
 }
 
 func (r *Resolver) compilerTarget() target.Info {
-	if r != nil && r.target.Valid() {
+	if r != nil && r.target.IsValid() {
 		return r.target
 	}
 	return target.Host()

@@ -54,7 +54,7 @@ func TypeFromSyntax(node ast.TypeExpr, context SyntaxContext) Type {
 	if node == nil {
 		return nil
 	}
-	if !context.Target.Valid() {
+	if !context.Target.IsValid() {
 		context.Target = target.Host()
 	}
 	switch typ := node.(type) {
@@ -308,13 +308,13 @@ func resolveTypeName(node ast.TypeExpr, context SyntaxContext) Type {
 }
 
 func applyTypeArguments(node ast.TypeExpr, base Type, arguments []Type, context SyntaxContext) Type {
-	defined, named := base.(*DefinedType)
+	defined, isNamed := base.(*DefinedType)
 	want := 0
-	if named && defined != nil {
+	if isNamed && defined != nil {
 		want = len(defined.TypeParameters)
 	}
 	got := len(arguments)
-	if want != got || got > 0 && !named {
+	if want != got || got > 0 && !isNamed {
 		name := TypeText(base)
 		context.recordIssue(SyntaxInvalidApplication, node, name, want, got)
 		return &InvalidType{}

@@ -98,7 +98,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state)
 		if scope == nil {
 			return nil
 		}
-		if _, raw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !raw {
+		if _, isRaw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !isRaw {
 			return nil
 		}
 		if a.module != nil && a.module.Flow != nil {
@@ -152,11 +152,11 @@ func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbo
 			}
 		}
 	case *thir.Field:
-		if _, pointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !pointer {
+		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !isPointer {
 			return a.localPointerRoot(scope, e.Base)
 		}
 	case *thir.Index:
-		if _, pointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !pointer {
+		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !isPointer {
 			return a.localPointerRoot(scope, e.Base)
 		}
 	}

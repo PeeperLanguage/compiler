@@ -18,7 +18,7 @@ import (
 )
 
 // Compile one entry file with a fresh compiler project.
-func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *module.Module) {
+func compileEntry(path string, isDebugBuild bool, targetOS, targetArch string) (compilerContext *project.CompilerContext, program *module.Module) {
 	sourceProject, err := manifest.ResolveSourceFileProject(path)
 	rootDir := sourceProject.RootDir
 	projectName := sourceProject.ProjectName
@@ -28,7 +28,7 @@ func compileEntry(path string, debugBuild bool, targetOS, targetArch string) (co
 		Extension:         peeper.SourceExt,
 		TargetOS:          targetOS,
 		TargetArch:        targetArch,
-		BuildDebug:        debugBuild,
+		IsDebugBuild:      isDebugBuild,
 		RequireEntrypoint: true,
 	}
 	compilerContext = compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
@@ -54,7 +54,7 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 	if len(modules) == 0 {
 		return fmt.Errorf("no modules compiled")
 	}
-	if !ctx.Target.Valid() {
+	if !ctx.Target.IsValid() {
 		return fmt.Errorf("compiler target is unavailable")
 	}
 
@@ -72,7 +72,7 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 	if err != nil {
 		return err
 	}
-	if !profile.Managed {
+	if !profile.IsManaged {
 		fmt.Fprintf(os.Stderr, "warning: no managed Peeper toolchain profile; using %s from PATH\n", profile.ClangPath)
 	}
 
@@ -90,7 +90,7 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 			return fmt.Errorf("write llvm ir: %w", err)
 		}
 		objectPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.o", i))
-		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.BuildDebug), "compile LLVM module "+module.ID.ImportPath); err != nil {
+		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.IsDebugBuild), "compile LLVM module "+module.ID.ImportPath); err != nil {
 			return err
 		}
 		objectPaths = append(objectPaths, objectPath)

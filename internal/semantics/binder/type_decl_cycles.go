@@ -96,24 +96,24 @@ func (b *binder) typeDeclarationOrder() ([]ast.TypeDecl, []ast.TypeDecl) {
 }
 
 func typeDeclNodeID(moduleID moduleid.ID, name string) graph.NodeID {
-	if !moduleID.Valid() || name == "" {
+	if !moduleID.IsValid() || name == "" {
 		return ""
 	}
 	return graph.NodeID("type:" + moduleID.String() + ":" + name)
 }
 
-func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect bool, parameters []ast.TypeParam) {
+func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, throughIndirection bool, parameters []ast.TypeParam) {
 	if b == nil || b.ctx == nil || b.typeGraph == nil || b.module == nil || owner == "" || typ == nil {
 		return
 	}
 	switch node := typ.(type) {
 	case *ast.NamedType:
-		target, alias := b.lookupTypeDeclNodeID(node.Name, parameters)
-		b.addTypeDeclEdge(owner, target, indirect, alias)
+		target, isAlias := b.lookupTypeDeclNodeID(node.Name, parameters)
+		b.addTypeDeclEdge(owner, target, throughIndirection, isAlias)
 	case *ast.AppliedType:
 		if node.Name != nil {
 			target, _ := b.lookupTypeDeclNodeID(node.Name.Name, parameters)
-			b.addTypeDeclEdge(owner, target, indirect, true)
+			b.addTypeDeclEdge(owner, target, throughIndirection, true)
 		}
 		// Arguments must be canonical before instance keys are computed. An
 		// argument occurrence alone does not establish an inline layout edge.
@@ -121,8 +121,8 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 			b.addTypeDeclEdges(owner, argument, true, parameters)
 		}
 	case *ast.ScopeResolution:
-		target, alias := b.lookupQualifiedTypeDeclNodeID(node)
-		b.addTypeDeclEdge(owner, target, indirect, alias || len(node.Segments[len(node.Segments)-1].TypeArgs) > 0)
+		target, isAlias := b.lookupQualifiedTypeDeclNodeID(node)
+		b.addTypeDeclEdge(owner, target, throughIndirection, isAlias || len(node.Segments[len(node.Segments)-1].TypeArgs) > 0)
 		for _, segment := range node.Segments {
 			for _, argument := range segment.TypeArgs {
 				b.addTypeDeclEdges(owner, argument, true, parameters)
@@ -132,7 +132,7 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 		// Raw pointers carry no pointee layout dependency.
 	case *ast.EnumType:
 		for _, variant := range node.Variants {
-			b.addTypeDeclEdges(owner, variant.Payload, indirect, parameters)
+			b.addTypeDeclEdges(owner, variant.Payload, throughIndirection, parameters)
 		}
 	case *ast.OwnedPtrType:
 		// Pointer target is not a layout dependency.
@@ -141,12 +141,12 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 		// Reference target is not owned inline storage.
 		b.addTypeDeclEdges(owner, node.Target, true, parameters)
 	case *ast.OptionalType:
-		b.addTypeDeclEdges(owner, node.Inner, indirect, parameters)
+		b.addTypeDeclEdges(owner, node.Inner, throughIndirection, parameters)
 	case *ast.ArrayType:
-		b.addTypeDeclEdges(owner, node.Elem, indirect || node.Shape != ast.ArrayFixed || node.Len == nil, parameters)
+		b.addTypeDeclEdges(owner, node.Elem, throughIndirection || node.Shape != ast.ArrayFixed || node.Len == nil, parameters)
 	case *ast.StructType:
 		for _, field := range node.Fields {
-			b.addTypeDeclEdges(owner, field.Type, indirect, parameters)
+			b.addTypeDeclEdges(owner, field.Type, throughIndirection, parameters)
 		}
 	case *ast.FuncType:
 		for _, param := range node.Params {
@@ -165,18 +165,18 @@ func (b *binder) addTypeDeclEdges(owner graph.NodeID, typ ast.TypeExpr, indirect
 	}
 }
 
-func (b *binder) addTypeDeclEdge(owner, target graph.NodeID, indirect, complete bool) {
+func (b *binder) addTypeDeclEdge(owner, target graph.NodeID, throughIndirection, needsCompletedType bool) {
 	if target == "" {
 		return
 	}
 	kind := graphEdgeTypeValueRef
-	if indirect {
+	if throughIndirection {
 		kind = graphEdgeTypeIndirectRef
 	}
 	b.typeGraph.AddEdge(owner, target, kind)
 	// Nominal references only need their collected shell. Aliases and applied
 	// declarations must finish first, even when used behind an indirection.
-	if complete && owner != target {
+	if needsCompletedType && owner != target {
 		b.typeGraph.AddEdge(owner, target, graphEdgeTypeCompletionRef)
 	}
 }

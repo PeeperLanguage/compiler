@@ -122,7 +122,7 @@ func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
 		TypeParameters: base.TypeParameters,
 		TypeArguments:  []typeinfo.Type{argument},
 	}
-	resolver.instances[identity] = namedTypeInstance{base: base, typ: cached, complete: true}
+	resolver.instances[identity] = namedTypeInstance{base: base, typ: cached, isComplete: true}
 	node := &ast.AppliedType{
 		Name: &ast.Ident{Name: "Box"},
 		TypeArgs: []ast.TypeExpr{

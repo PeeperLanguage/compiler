@@ -66,14 +66,14 @@ func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 func TestScopeMutableBindingIncludesParameters(t *testing.T) {
 	s := NewScope(nil)
 	param := New("value", SymbolParam, nil, ast.LocOf(nil))
-	param.Mutable = true
+	param.AllowsMutation = true
 	if err := s.Declare(param); err != nil {
 		t.Fatalf("declare mutable param failed: %v", err)
 	}
 	if !s.IsMutableBinding("value") {
 		t.Fatalf("mutable parameter should be a mutable binding")
 	}
-	param.Mutable = false
+	param.AllowsMutation = false
 	if s.IsMutableBinding("value") {
 		t.Fatalf("immutable parameter should not be a mutable binding")
 	}

@@ -107,8 +107,8 @@ func (e *llvmEmitter) layoutType(id ir.TypeID, allowRecursiveShell bool) (*llvmL
 	if e.layoutBuilding == nil {
 		e.layoutBuilding = make(map[ir.TypeID]bool)
 	}
-	named := typ.Identity != "" && (typ.Kind == ir.TypeStruct || typ.Kind == ir.TypeVariant && typ.Family == ir.VariantFamilyNamed)
-	if named {
+	isNamed := typ.Identity != "" && (typ.Kind == ir.TypeStruct || typ.Kind == ir.TypeVariant && typ.Family == ir.VariantFamilyNamed)
+	if isNamed {
 		shell := &llvmLayout{Text: namedLLVMTypeName(e.mod.Types, id), Kind: llvmLayoutAggregate}
 		e.layouts[id] = shell
 		e.layoutBuilding[id] = true
@@ -141,7 +141,7 @@ func (e *llvmEmitter) reportUnsupportedType(id ir.TypeID) {
 	if e == nil || e.mod == nil || e.mod.Types == nil {
 		return
 	}
-	e.invalid = true
+	e.isInvalid = true
 	if e.badTypes == nil {
 		e.badTypes = make(map[string]struct{})
 	}
@@ -294,7 +294,7 @@ func (e *llvmEmitter) variantLayout(typ ir.Type) (*llvmLayout, bool) {
 	if len(typ.Cases) == 0 {
 		return nil, false
 	}
-	if payload, optional := typ.OptionalPayload(); optional {
+	if payload, isOptional := typ.OptionalPayload(); isOptional {
 		payloadLayout, ok := e.layoutType(payload, false)
 		if !ok {
 			return nil, false
@@ -407,7 +407,7 @@ func dynamicArrayElementType(types *ir.TypeTable, id ir.TypeID) (ir.TypeID, bool
 	return typ.Elem, true
 }
 
-func integerInfoID(types *ir.TypeTable, id ir.TypeID) (signed bool, bits int, ok bool) {
+func integerInfoID(types *ir.TypeTable, id ir.TypeID) (isSigned bool, bits int, ok bool) {
 	typ, ok := types.Type(id)
 	if !ok {
 		return false, 0, false
@@ -461,7 +461,7 @@ func (e *llvmEmitter) markInvalid(msg string) {
 	if e == nil {
 		return
 	}
-	e.invalid = true
+	e.isInvalid = true
 	if e.diag != nil {
 		e.diag.Add(diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidType))
 	}

@@ -44,9 +44,9 @@ type Module struct {
 	IsEntry bool
 	// Loaded source text.
 	Content string
-	// ContentProvided distinguishes an explicit empty source from a module that
+	// HasProvidedContent distinguishes an explicit empty source from a module that
 	// still needs to load its source from FilePath.
-	ContentProvided bool
+	HasProvidedContent bool
 	// Reserved for incremental builds.
 	ContentHash string
 	// Stable syntax-derived import surface for invalidation.
@@ -85,7 +85,7 @@ type Module struct {
 
 // TypeDeclarationIdentity anchors nominal type identity at its declaring module.
 func (m *Module) TypeDeclarationIdentity(name string) string {
-	if m == nil || !m.ID.Valid() || name == "" {
+	if m == nil || !m.ID.IsValid() || name == "" {
 		return name
 	}
 	return m.ID.String() + "::" + name

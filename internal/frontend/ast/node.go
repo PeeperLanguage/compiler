@@ -67,7 +67,7 @@ type Expr interface {
 	// newID assigns a fresh NodeID and records whether its source belongs to
 	// the default declaration or caller argument. Ident deep-clones a matching
 	// replacement so each expanded occurrence remains a tree.
-	copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr
+	copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, wasFromArgument bool) Expr
 	// exprText returns a stable, source-like text representation.
 	// Payloads such as literal values, operator text, and type
 	// annotations are included so the output is suitable for

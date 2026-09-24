@@ -66,7 +66,7 @@ func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *sy
 	if !ok || fn == nil {
 		return metadata
 	}
-	if linkName, external := ast.FunctionLinkName(fn, sym.Name); external {
+	if linkName, isExternal := ast.FunctionLinkName(fn, sym.Name); isExternal {
 		metadata += ":link=" + linkName
 	}
 	for index, param := range fn.Params {

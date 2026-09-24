@@ -16,7 +16,7 @@ type namedTypeInstance struct {
 	base          *typeinfo.DefinedType
 	typ           *typeinfo.DefinedType
 	ready         chan struct{}
-	complete      bool
+	isComplete    bool
 }
 
 type typeInstantiationFrame struct {
@@ -76,7 +76,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 	}
 
 	r.mu.Lock()
-	if cached, ok := r.instances[identity]; ok && cached.typ != nil && cached.complete {
+	if cached, ok := r.instances[identity]; ok && cached.typ != nil && cached.isComplete {
 		r.mu.Unlock()
 		return cached.typ
 	}
@@ -87,7 +87,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		r.mu.RLock()
 		cached, ok = r.instances[identity]
 		r.mu.RUnlock()
-		if ok && cached.typ != nil && cached.complete {
+		if ok && cached.typ != nil && cached.isComplete {
 			return cached.typ
 		}
 		return &typeinfo.InvalidType{}
@@ -170,7 +170,7 @@ func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases 
 	r.mu.RLock()
 	identities := make([]string, 0)
 	for identity, cached := range r.instances {
-		if cached.complete && cached.typ != nil && selected[cached.base] {
+		if cached.isComplete && cached.typ != nil && selected[cached.base] {
 			identities = append(identities, identity)
 		}
 	}
@@ -213,7 +213,7 @@ func (r *Resolver) finishTypeInstance(identity string, instance *typeinfo.Define
 		return
 	}
 	if valid {
-		cached.complete = true
+		cached.isComplete = true
 		r.instances[identity] = cached
 	} else {
 		delete(r.instances, identity)
@@ -269,7 +269,7 @@ func (r *Resolver) lookupTypeInstance(base *typeinfo.DefinedType, arguments []ty
 	r.mu.RLock()
 	cached, found := r.instances[identity]
 	r.mu.RUnlock()
-	if !found || !cached.complete || cached.typ == nil {
+	if !found || !cached.isComplete || cached.typ == nil {
 		return QueryResult{Status: QueryLoading}
 	}
 	return QueryResult{Type: cached.typ, Status: QueryAvailable}

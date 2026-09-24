@@ -13,7 +13,7 @@ type symbolRenderContext struct {
 	Type        typeinfo.Type
 	ImportPath  string
 	Declaration ast.Node
-	Embedded    bool
+	IsEmbedded  bool
 }
 
 func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
@@ -30,7 +30,7 @@ func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
 	}
 
 	var b strings.Builder
-	if !context.Embedded {
+	if !context.IsEmbedded {
 		b.WriteString("(")
 		b.WriteString(string(sym.Kind))
 		b.WriteString(") ")
@@ -47,7 +47,7 @@ func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
 	callable, isCallable := typ.(*typeinfo.FuncType)
 	if (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) && isCallable && callable != nil {
 		declaration := sym.ASTNode
-		if _, interfaceDeclaration := context.Declaration.(*ast.InterfaceDecl); interfaceDeclaration || declaration == nil {
+		if _, isInterfaceDeclaration := context.Declaration.(*ast.InterfaceDecl); isInterfaceDeclaration || declaration == nil {
 			declaration = context.Declaration
 		}
 		var receiver *ast.Param

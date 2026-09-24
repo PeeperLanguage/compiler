@@ -56,7 +56,7 @@ fn probe(mut first: i32, mut second: i32) {
 		} else if loan.path[1].Field != "sibling" {
 			t.Fatalf("unexpected field path: %#v", loan.path)
 		}
-		if !place.SameOrigins(loan.origins, []place.Origin{{Root: want}}) {
+		if !place.AreSameOrigins(loan.origins, []place.Origin{{Root: want}}) {
 			t.Fatalf("%s loan origins = %#v, want %s", loan.path[1].Field, loan.origins, want.Name)
 		}
 	}
@@ -71,7 +71,7 @@ fn probe(mut first: i32, mut second: i32) {
 	if source := typedMatch.Arms[0].Bindings[0].Source; source.NodeID != ir.NodeID(binding.ID()) || source.Location != ast.LocOf(binding) {
 		t.Fatalf("match binding THIR source = %#v, want binding identity and location", source)
 	}
-	if got := result.module.Flow.ValueOrigins(binding.ID()); !place.SameOrigins(got, []place.Origin{{Root: second}}) {
+	if got := result.module.Flow.ValueOrigins(binding.ID()); !place.AreSameOrigins(got, []place.Origin{{Root: second}}) {
 		t.Fatalf("match value origins = %#v, want second", got)
 	}
 }

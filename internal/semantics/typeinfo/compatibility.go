@@ -41,7 +41,7 @@ func CheckCompatibility(dst, src Type) Conversion {
 	if IsInvalid(dst) || IsInvalid(src) || IsUnknown(dst) || IsUnknown(src) {
 		return Conversion{Kind: ConversionRecovery, Compatibility: Compatible}
 	}
-	if SameType(dst, src) {
+	if IsSameType(dst, src) {
 		return Conversion{Kind: ConversionIdentity, Compatibility: Compatible}
 	}
 	if _, ok := Underlying(dst).(*BoolType); ok && IsArithmetic(src) {
@@ -79,7 +79,7 @@ func CheckCompatibility(dst, src Type) Conversion {
 //   - Cross-class numeric conversions are explicit
 func checkNumericCompatibility(dst, src Type) Compatibility {
 	// Same type: always compatible
-	if SameType(dst, src) {
+	if IsSameType(dst, src) {
 		return Compatible
 	}
 
@@ -126,7 +126,7 @@ func checkRefCompatibility(dst, src Type) Compatibility {
 	if !ok || right == nil {
 		return Incompatible
 	}
-	if !SameType(left.Target, right.Target) {
+	if !IsSameType(left.Target, right.Target) {
 		return Incompatible
 	}
 	if left.IsMutable && !right.IsMutable {
@@ -143,12 +143,12 @@ func checkOptionalCompatibility(dst, src Type) Compatibility {
 	if _, ok := Underlying(src).(*NoneType); ok {
 		return Compatible
 	}
-	if SameType(left.Inner, src) {
+	if IsSameType(left.Inner, src) {
 		return Compatible
 	}
 	right, ok := Underlying(src).(*OptionalType)
 	if ok && right != nil {
-		if SameType(left.Inner, right.Inner) {
+		if IsSameType(left.Inner, right.Inner) {
 			return Compatible
 		}
 		return Incompatible

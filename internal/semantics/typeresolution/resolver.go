@@ -27,7 +27,7 @@ type Resolver struct {
 }
 
 func New(compilerTarget target.Info, modules moduleLookup) *Resolver {
-	if !compilerTarget.Valid() {
+	if !compilerTarget.IsValid() {
 		compilerTarget = target.Host()
 	}
 	return &Resolver{
@@ -60,7 +60,7 @@ func (r *Resolver) ResetModule(mod *module.Module, retained phase.Phase) {
 	r.mu.Lock()
 	for identity, instance := range r.instances {
 		if instance.ownerModuleID == mod.ID {
-			if !instance.complete && instance.ready != nil {
+			if !instance.isComplete && instance.ready != nil {
 				close(instance.ready)
 			}
 			delete(r.instances, identity)

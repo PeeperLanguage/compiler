@@ -15,12 +15,12 @@ func IsBuiltinType(name string) bool {
 	}
 }
 
-func ParseIntegerBuiltin(name string, targetInfo target.Info) (signed bool, bits int, ok bool) {
+func ParseIntegerBuiltin(name string, targetInfo target.Info) (isSigned bool, bits int, ok bool) {
 	switch name {
 	case "isize":
-		return true, targetInfo.PointerBits, targetInfo.Valid()
+		return true, targetInfo.PointerBits, targetInfo.IsValid()
 	case "usize":
-		return false, targetInfo.PointerBits, targetInfo.Valid()
+		return false, targetInfo.PointerBits, targetInfo.IsValid()
 	}
 	return numeric.ParseIntegerTypeName(name)
 }

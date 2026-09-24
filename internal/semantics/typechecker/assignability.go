@@ -12,7 +12,7 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-func (c *checker) assignable(dst, src typeinfo.Type, site ast.Expr) bool {
+func (c *checker) isAssignable(dst, src typeinfo.Type, site ast.Expr) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
@@ -72,8 +72,8 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 	for _, required := range iface.Methods {
 		fnType := required.CallableTypeFor(owner)
 		actual, ok := c.lookupDeclaredCallableMember(owner, required.Name)
-		actualType, callable := actual.Type.(*typeinfo.FuncType)
-		if !ok || actual.Symbol == nil || !callable || actualType == nil || !typeinfo.SameType(fnType, actualType) {
+		actualType, isCallable := actual.Type.(*typeinfo.FuncType)
+		if !ok || actual.Symbol == nil || !isCallable || actualType == nil || !typeinfo.IsSameType(fnType, actualType) {
 			missing = append(missing, required.Name)
 			continue
 		}
@@ -133,22 +133,22 @@ func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
 	if paramType == nil || selfType == nil {
 		return false
 	}
-	if typeinfo.SameType(paramType, selfType) {
+	if typeinfo.IsSameType(paramType, selfType) {
 		return true
 	}
 	target, ok := typeinfo.PointerTarget(paramType)
 	if ok {
-		return typeinfo.SameType(target, selfType)
+		return typeinfo.IsSameType(target, selfType)
 	}
 	target, _, ok = typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
-	return ok && typeinfo.SameType(target, selfType)
+	return ok && typeinfo.IsSameType(target, selfType)
 }
 
 func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
 	if c == nil || target == nil || arg == nil {
 		return false
 	}
-	return typeinfo.SameType(target, arg) || c.assignable(target, arg, nil) || c.assignable(arg, target, nil)
+	return typeinfo.IsSameType(target, arg) || c.isAssignable(target, arg, nil) || c.isAssignable(arg, target, nil)
 }
 
 type callableMember struct {

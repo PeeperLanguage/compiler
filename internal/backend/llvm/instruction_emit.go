@@ -23,7 +23,7 @@ type llvmEmitter struct {
 	layouts         map[ir.TypeID]*llvmLayout
 	layoutBuilding  map[ir.TypeID]bool
 	dropHelpers     map[ir.TypeID]string
-	invalid         bool
+	isInvalid       bool
 	externalGlobals map[string]ir.TypeID
 	debug           *llvmDebugEmitter
 }
@@ -145,10 +145,10 @@ func emitIndexPtr(b *llvmBuilder, base llvmValue, baseType ir.TypeID, addressed 
 	}
 	length, lengthErr := strconv.Atoi(target.Length)
 	var index llvmValue
-	if indexConst, constant := indexRef.(*mir.RefConst); constant {
+	if indexConst, isConstant := indexRef.(*mir.RefConst); isConstant {
 		parsedIndex, indexErr := strconv.Atoi(indexConst.Value)
 		if lengthErr != nil || indexErr != nil || parsedIndex < 0 || parsedIndex >= length {
-			b.emitter.invalid = true
+			b.emitter.isInvalid = true
 			if b.emitter.diag != nil {
 				b.emitter.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, target.Length, nil))
 			}
@@ -221,10 +221,10 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 	previousLocation := b.debugLocationID
 	defer func() { b.debugLocationID = previousLocation }()
 
-	addressed := placeNeedsRootAddr(b.emitter.mod.Types, place)
+	isAddressed := placeNeedsRootAddr(b.emitter.mod.Types, place)
 	current := llvmPlace{}
 	hasCurrent := false
-	if addressed {
+	if isAddressed {
 		current, hasCurrent = emitPlaceRootAddr(b, place.Root)
 	}
 	currentType := place.Root.TypeID()
@@ -245,7 +245,7 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 			}
 			current = b.pointerPlace(value)
 			hasCurrent = true
-			addressed = true
+			isAddressed = true
 		case mir.PlaceProjectionField:
 			if !hasCurrent {
 				b.emitter.markInvalid("field place requires addressable storage")
@@ -258,12 +258,12 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 				base = b.pointerValue(current)
 			}
 			var ok bool
-			current, ok = emitIndexPtr(b, base, currentType, addressed, projection.Index)
+			current, ok = emitIndexPtr(b, base, currentType, isAddressed, projection.Index)
 			if !ok {
 				return llvmPlace{}, false
 			}
 			hasCurrent = true
-			addressed = true
+			isAddressed = true
 		case mir.PlaceProjectionVariantPayload:
 			if !hasCurrent {
 				b.emitter.markInvalid("variant payload place requires addressable storage")
@@ -281,7 +281,7 @@ func emitPlacePtr(b *llvmBuilder, place *mir.Place) (llvmPlace, bool) {
 		}
 		currentType = projection.Type
 	}
-	if addressed && hasCurrent {
+	if isAddressed && hasCurrent {
 		return current, true
 	}
 	b.setLocation(place.Location)

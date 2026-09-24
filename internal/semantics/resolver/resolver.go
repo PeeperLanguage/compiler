@@ -99,7 +99,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 			r.resolveExpr(funcScope, param.Default)
 		}
 		paramSym := symbols.New(param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
-		paramSym.Mutable = param.IsMutable
+		paramSym.AllowsMutation = param.IsMutable
 		paramSym.MutableLocation = param.MutableLocation
 		paramSym.IsReceiver = fn.Receiver != nil && i == 0
 		if err := funcScope.Declare(paramSym); err != nil {

@@ -343,7 +343,7 @@ func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
 	return NewInt(out, left.TypeText())
 }
 
-func integerConstantType(typeID string) (signed bool, bits int, ok bool) {
+func integerConstantType(typeID string) (isSigned bool, bits int, ok bool) {
 	if typeID == "byte" {
 		return false, 8, true
 	}

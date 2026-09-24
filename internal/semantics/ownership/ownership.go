@@ -163,12 +163,12 @@ func (a *analyzer) run() {
 		if ownershipTrackedSymbol(sym) {
 			entryState.live[sym] = struct{}{}
 		}
-		if mutable, reference := referenceMutability(sym); reference {
+		if isMutable, isReference := referenceMutability(sym); isReference {
 			entryState.references[sym] = []referenceLoan{{
-				id:      loanID{parameter: sym},
-				origins: []place.Origin{{Root: sym}},
-				mutable: mutable,
-				site:    parameter.Source,
+				id:        loanID{parameter: sym},
+				origins:   []place.Origin{{Root: sym}},
+				isMutable: isMutable,
+				site:      parameter.Source,
 			}}
 		}
 	}
@@ -323,14 +323,14 @@ func releaseIterationLoans(st state, loans *loanContext, loopID ast.NodeID) {
 	}
 }
 
-func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (state, bool) {
-	if !exists {
+func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, hasExistingState bool) (state, bool) {
+	if !hasExistingState {
 		return copyState(src), true
 	}
 	node := a.sites[nodeID]
 	if node == nil || node.cfgSite == nil || a.graph.SiteEdges.InDegree(node.cfgSite.ID, nil) <= 1 {
 		if maps.Equal(dst.moved, src.moved) && maps.Equal(dst.live, src.live) && maps.Equal(dst.pointers, src.pointers) &&
-			sameReferenceValues(dst.references, src.references) {
+			areSameReferenceValues(dst.references, src.references) {
 			return dst, false
 		}
 		return copyState(src), true
@@ -466,7 +466,7 @@ func (a *analyzer) checkScopeDestruction(scope *symbols.Scope, site ir.SourceInf
 		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst && sym.Kind != symbols.SymbolParam) {
 			continue
 		}
-		if _, reference := referenceMutability(sym); reference {
+		if _, isReference := referenceMutability(sym); isReference {
 			continue
 		}
 		a.reportLoanConflict([]place.Origin{{Root: sym}}, nil, storageDestroy, site, loans)
@@ -598,9 +598,9 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			continue
 		}
 		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(ast.NodeID(field.Source.NodeID)))
-		if mutable, reference := referenceMutability(binding); reference && len(origins) > 0 {
+		if isMutable, isReference := referenceMutability(binding); isReference && len(origins) > 0 {
 			st.references[binding] = []referenceLoan{{
-				id: loanID{node: field.Source.NodeID}, origins: origins, mutable: mutable, site: field.Source,
+				id: loanID{node: field.Source.NodeID}, origins: origins, isMutable: isMutable, site: field.Source,
 			}}
 		}
 	}
@@ -610,8 +610,8 @@ func matchSubjectCarrier(match *thir.Match) (thir.Expr, *symbols.Symbol) {
 	if match == nil || match.Subject == nil {
 		return nil, nil
 	}
-	ident, direct := match.Subject.(*thir.Ident)
-	if !direct || ident == nil {
+	ident, isIdent := match.Subject.(*thir.Ident)
+	if !isIdent || ident == nil {
 		return match.Subject, nil
 	}
 	carrier := ident.Symbol

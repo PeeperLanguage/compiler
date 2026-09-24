@@ -20,7 +20,7 @@ type originStateFact struct {
 }
 
 type flowState struct {
-	reachable   bool
+	isReachable bool
 	variants    []variantStateFact
 	references  []originStateFact
 	rawPointers []originStateFact
@@ -35,7 +35,7 @@ func payloadDepthForExpected(src, expected typeinfo.Type) int {
 	if src == nil || expected == nil {
 		return 0
 	}
-	if _, optional := typeinfo.Underlying(expected).(*typeinfo.OptionalType); optional {
+	if _, isOptional := typeinfo.Underlying(expected).(*typeinfo.OptionalType); isOptional {
 		return 0
 	}
 	current := src
@@ -75,12 +75,12 @@ func unwrapOptionalLayers(typ typeinfo.Type, depth int) typeinfo.Type {
 }
 
 func newFlowState() flowState {
-	return flowState{reachable: true}
+	return flowState{isReachable: true}
 }
 
 func copyFlowState(src flowState) flowState {
 	dst := newFlowState()
-	dst.reachable = src.reachable
+	dst.isReachable = src.isReachable
 	for _, fact := range src.variants {
 		dst.variants = append(dst.variants, variantStateFact{
 			origins: place.CloneOrigins(fact.origins), cases: append([]int(nil), fact.cases...), caseCount: fact.caseCount,
@@ -105,7 +105,7 @@ func provenOptionalPayloadCases(facts []variantStateFact, origins []place.Origin
 	current := place.CloneOrigins(origins)
 	for {
 		fact, found := variantFact(facts, current)
-		if !found || !sameCaseSet(fact.cases, []int{ir.OptionalPresentCase}) {
+		if !found || !caseSetsEqual(fact.cases, []int{ir.OptionalPresentCase}) {
 			return path
 		}
 		path = append(path, ir.OptionalPresentCase)
@@ -114,11 +114,11 @@ func provenOptionalPayloadCases(facts []variantStateFact, origins []place.Origin
 }
 
 func restrictVariantFact(st *flowState, added variantStateFact) {
-	if st == nil || !st.reachable || len(added.origins) == 0 || added.caseCount <= 0 {
+	if st == nil || !st.isReachable || len(added.origins) == 0 || added.caseCount <= 0 {
 		return
 	}
 	if len(added.cases) == 0 {
-		st.reachable = false
+		st.isReachable = false
 		st.variants = nil
 		return
 	}
@@ -126,15 +126,15 @@ func restrictVariantFact(st *flowState, added variantStateFact) {
 		return
 	}
 	for index := range st.variants {
-		if place.SameOrigins(st.variants[index].origins, added.origins) {
+		if place.AreSameOrigins(st.variants[index].origins, added.origins) {
 			if st.variants[index].caseCount != added.caseCount {
-				st.reachable = false
+				st.isReachable = false
 				st.variants = nil
 				return
 			}
 			st.variants[index].cases = intersectCaseSets(st.variants[index].cases, added.cases)
 			if len(st.variants[index].cases) == 0 {
-				st.reachable = false
+				st.isReachable = false
 				st.variants = nil
 				return
 			}
@@ -152,7 +152,7 @@ func alternateEdgeVariantFacts(left, right []edgeVariantFact) []edgeVariantFact 
 	out := make([]edgeVariantFact, 0)
 	for _, leftFact := range left {
 		for _, rightFact := range right {
-			if !place.SameOrigins(leftFact.variant.origins, rightFact.variant.origins) || leftFact.variant.caseCount != rightFact.variant.caseCount {
+			if !place.AreSameOrigins(leftFact.variant.origins, rightFact.variant.origins) || leftFact.variant.caseCount != rightFact.variant.caseCount {
 				continue
 			}
 			cases := unionCaseSets(leftFact.variant.cases, rightFact.variant.cases)
@@ -178,7 +178,7 @@ func mergeVariantFacts(left, right []variantStateFact) []variantStateFact {
 	out := make([]variantStateFact, 0)
 	for _, leftFact := range left {
 		for _, rightFact := range right {
-			if !place.SameOrigins(leftFact.origins, rightFact.origins) || leftFact.caseCount != rightFact.caseCount {
+			if !place.AreSameOrigins(leftFact.origins, rightFact.origins) || leftFact.caseCount != rightFact.caseCount {
 				continue
 			}
 			cases := unionCaseSets(leftFact.cases, rightFact.cases)
@@ -196,10 +196,10 @@ func mergeVariantFacts(left, right []variantStateFact) []variantStateFact {
 }
 
 func mergeFlowStates(left, right flowState) flowState {
-	if !left.reachable {
+	if !left.isReachable {
 		return copyFlowState(right)
 	}
-	if !right.reachable {
+	if !right.isReachable {
 		return copyFlowState(left)
 	}
 	merged := newFlowState()
@@ -209,18 +209,18 @@ func mergeFlowStates(left, right flowState) flowState {
 	return merged
 }
 
-func sameFlowState(left, right flowState) bool {
-	if left.reachable != right.reachable || len(left.variants) != len(right.variants) || len(left.references) != len(right.references) ||
+func flowStatesEqual(left, right flowState) bool {
+	if left.isReachable != right.isReachable || len(left.variants) != len(right.variants) || len(left.references) != len(right.references) ||
 		len(left.rawPointers) != len(right.rawPointers) {
 		return false
 	}
 	for _, fact := range left.variants {
 		rightFact, found := variantFact(right.variants, fact.origins)
-		if !found || rightFact.caseCount != fact.caseCount || !sameCaseSet(rightFact.cases, fact.cases) {
+		if !found || rightFact.caseCount != fact.caseCount || !caseSetsEqual(rightFact.cases, fact.cases) {
 			return false
 		}
 	}
-	if !sameOriginFacts(left.references, right.references) || !sameOriginFacts(left.rawPointers, right.rawPointers) {
+	if !originFactsEqual(left.references, right.references) || !originFactsEqual(left.rawPointers, right.rawPointers) {
 		return false
 	}
 	return true
@@ -228,7 +228,7 @@ func sameFlowState(left, right flowState) bool {
 
 func variantFact(facts []variantStateFact, origins []place.Origin) (variantStateFact, bool) {
 	for _, fact := range facts {
-		if place.SameOrigins(fact.origins, origins) {
+		if place.AreSameOrigins(fact.origins, origins) {
 			return fact, true
 		}
 	}
@@ -247,7 +247,7 @@ func cloneOriginFacts(facts []originStateFact) []originStateFact {
 
 func originValues(facts []originStateFact, storage []place.Origin) []place.Origin {
 	for _, fact := range facts {
-		if place.SameOrigins(fact.storage, storage) {
+		if place.AreSameOrigins(fact.storage, storage) {
 			return place.CloneOrigins(fact.value)
 		}
 	}
@@ -259,7 +259,7 @@ func setOriginFact(facts []originStateFact, storage, value []place.Origin) []ori
 		return facts
 	}
 	for index := range facts {
-		if place.SameOrigins(facts[index].storage, storage) {
+		if place.AreSameOrigins(facts[index].storage, storage) {
 			facts[index].value = place.CloneOrigins(value)
 			return facts
 		}
@@ -282,12 +282,12 @@ func mergeOriginFacts(left, right []originStateFact) []originStateFact {
 	return merged
 }
 
-func sameOriginFacts(left, right []originStateFact) bool {
+func originFactsEqual(left, right []originStateFact) bool {
 	if len(left) != len(right) {
 		return false
 	}
 	for _, fact := range left {
-		if !place.SameOrigins(fact.value, originValues(right, fact.storage)) {
+		if !place.AreSameOrigins(fact.value, originValues(right, fact.storage)) {
 			return false
 		}
 	}
@@ -314,7 +314,7 @@ func variantCasesExcept(caseCount, excluded int) []int {
 	return cases
 }
 
-func sameCaseSet(left, right []int) bool {
+func caseSetsEqual(left, right []int) bool {
 	if len(left) != len(right) {
 		return false
 	}

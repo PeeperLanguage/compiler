@@ -51,11 +51,11 @@ func (l *runtimeTypeInterner) internNamed(shell ir.Type, descriptor func() (ir.T
 	if err != nil {
 		return l.invalid(err.Error())
 	}
-	if _, complete := l.ctx.types.Type(id); complete {
+	if _, isComplete := l.ctx.types.Type(id); isComplete {
 		return id
 	}
 	key := l.ctx.types.ABIKey(id)
-	if activeID, active := l.active[key]; active {
+	if activeID, isActive := l.active[key]; isActive {
 		return activeID
 	}
 	l.active[key] = id

@@ -52,8 +52,8 @@ const (
 )
 
 type DevConfig struct {
-	MockRemote bool
-	MockPath   string
+	UsesMockRemote bool
+	MockPath       string
 }
 
 type Dependency struct {
@@ -122,7 +122,7 @@ func ProgramEntryPath(root string) string {
 	return filepath.Join(SourceDir(root), peeper.MainFileName)
 }
 
-func PathWithinSourceDir(root, path string) bool {
+func IsPathWithinSourceDir(root, path string) bool {
 	root, err := filepath.Abs(SourceDir(root))
 	if err != nil {
 		return false
@@ -170,7 +170,7 @@ func ResolveSourceFileProject(path string) (SourceFileProject, error) {
 
 	ctx.RootDir = loadedProject.RootDir
 	ctx.ProjectName = loadedProject.File.Package.Name
-	if !PathWithinSourceDir(ctx.RootDir, path) {
+	if !IsPathWithinSourceDir(ctx.RootDir, path) {
 		return ctx, fmt.Errorf("project source files must stay under %s", SourceDir(ctx.RootDir))
 	}
 
@@ -251,7 +251,7 @@ func Load(path string) (*File, error) {
 		if mockRemote, ok, err := toml.LookupKey[bool](dev, "mock_remote"); err != nil {
 			return nil, fmt.Errorf("dev.mock_remote: %w", err)
 		} else if ok {
-			manifest.Dev.MockRemote = mockRemote
+			manifest.Dev.UsesMockRemote = mockRemote
 		}
 		if mockPath, ok, err := toml.LookupKey[string](dev, "mock_path"); err != nil {
 			return nil, fmt.Errorf("dev.mock_path: %w", err)
@@ -377,7 +377,7 @@ func marshalManifest(file *File) ([]byte, error) {
 	if len(file.Dependencies) > 0 {
 		renderDependenciesSection(&builder, file.Dependencies)
 	}
-	if file.Dev.MockRemote || file.Dev.MockPath != "" {
+	if file.Dev.UsesMockRemote || file.Dev.MockPath != "" {
 		renderDevSection(&builder, &file.Dev)
 	}
 	if !strings.HasSuffix(builder.String(), "\n") {
@@ -411,7 +411,7 @@ func renderDependenciesSection(builder *strings.Builder, deps map[string]Depende
 
 func renderDevSection(builder *strings.Builder, dev *DevConfig) {
 	builder.WriteString("\n[dev]\n")
-	fmt.Fprintf(builder, "mock_remote = %t\n", dev.MockRemote)
+	fmt.Fprintf(builder, "mock_remote = %t\n", dev.UsesMockRemote)
 	if dev.MockPath != "" {
 		fmt.Fprintf(builder, "mock_path = %s\n", strconv.Quote(dev.MockPath))
 	}

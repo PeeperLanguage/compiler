@@ -22,9 +22,9 @@ type updatePlan struct {
 }
 
 type orphanCandidate struct {
-	PackageID string
-	Path      string
-	InLock    bool
+	PackageID    string
+	Path         string
+	IsInLockfile bool
 }
 
 type prunedDependency struct {
@@ -63,7 +63,7 @@ func prepareUpdateScanContext(args []string) (*updateScanContext, error) {
 	}
 
 	devConfig := file.Dev
-	if devConfig.MockRemote && devConfig.MockPath != "" {
+	if devConfig.UsesMockRemote && devConfig.MockPath != "" {
 		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
 	}
 
@@ -174,9 +174,9 @@ func listOrphanCandidates(cachePath string, lockfile *manifest.Lockfile) ([]orph
 			return nil, fmt.Errorf("invalid lockfile package %q: %w", packageID, err)
 		}
 		candidates[packageID] = orphanCandidate{
-			PackageID: packageID,
-			Path:      path,
-			InLock:    true,
+			PackageID:    packageID,
+			Path:         path,
+			IsInLockfile: true,
 		}
 	}
 
@@ -200,9 +200,9 @@ func listOrphanCandidates(cachePath string, lockfile *manifest.Lockfile) ([]orph
 			continue
 		}
 		candidates[packageID] = orphanCandidate{
-			PackageID: packageID,
-			Path:      path,
-			InLock:    false,
+			PackageID:    packageID,
+			Path:         path,
+			IsInLockfile: false,
 		}
 	}
 

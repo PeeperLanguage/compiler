@@ -131,13 +131,13 @@ func (c *checker) typeFromBytesCall(scope *symbols.Scope, node *ast.CallExpr, de
 		}
 	}
 	bytesType := c.typeExpr(scope, node.Args[0], fnType.Params[0])
-	if !typeinfo.IsInvalidOrUnknown(bytesType) && !typeinfo.SameType(bytesType, fnType.Params[0]) {
+	if !typeinfo.IsInvalidOrUnknown(bytesType) && !typeinfo.IsSameType(bytesType, fnType.Params[0]) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.Args[0],
 			"`from_bytes` requires a shared byte-slice view `&[..]byte`"))
 	}
 	if len(node.Args) == 2 {
 		allocatorType := c.typeExpr(scope, node.Args[1], fnType.Params[1])
-		if !typeinfo.IsInvalidOrUnknown(allocatorType) && !c.assignable(fnType.Params[1], allocatorType, node.Args[1]) {
+		if !typeinfo.IsInvalidOrUnknown(allocatorType) && !c.isAssignable(fnType.Params[1], allocatorType, node.Args[1]) {
 			c.ctx.Diagnostics.Add(typeMismatchError(node.Args[1],
 				fmt.Sprintf("cannot implicitly convert %s to Allocator", typeinfo.TypeText(allocatorType))))
 		}
@@ -260,7 +260,7 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 	allocType := &typeinfo.AllocatorType{}
 	if len(node.Args) > 1 {
 		allocatorValueType := c.typeExpr(scope, node.Args[1], allocType)
-		if allocatorValueType != nil && !c.assignable(allocType, allocatorValueType, node.Args[1]) {
+		if allocatorValueType != nil && !c.isAssignable(allocType, allocatorValueType, node.Args[1]) {
 			d := typeMismatchError(node.Args[1],
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(allocatorValueType), typeinfo.TypeText(allocType)))
@@ -281,16 +281,16 @@ func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
 		return
 	}
 	use := typeinfo.UseMove
-	_, mutable, reference := typeinfo.ReferenceValueTarget(paramType)
-	if reference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
+	_, isMutable, isReference := typeinfo.ReferenceValueTarget(paramType)
+	if isReference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 		use = typeinfo.UseRead
 	}
 	c.module.Typechecking.RecordValueUse(arg.ID(), use)
 	// A reference parameter borrows its argument. The use kind cannot carry
 	// that: an implicit-copy argument publishes UseRead too, so a consumer could
 	// not tell a borrow from a plain read.
-	if reference {
-		c.module.Typechecking.RecordReferenceArgument(arg.ID(), mutable)
+	if isReference {
+		c.module.Typechecking.RecordReferenceArgument(arg.ID(), isMutable)
 	}
 }
 
@@ -449,7 +449,7 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 			conversion = argExpr
 			site = argExpr
 		}
-		if !c.assignable(paramType, argType, conversion) {
+		if !c.isAssignable(paramType, argType, conversion) {
 			d := typeMismatchError(site,
 				fmt.Sprintf("cannot implicitly convert %s to %s",
 					typeinfo.TypeText(argType), typeinfo.TypeText(paramType)))
@@ -463,24 +463,24 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 // acceptImplicitCallArgument is the single semantic gate for method receivers
 // and piped argument zero. Ordinary call arguments remain explicit.
 func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr, argType, paramType typeinfo.Type) bool {
-	refTarget, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
-	if !reference || !c.matchesImplicitCallTarget(refTarget, argType) {
+	refTarget, isMutable, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
+	if !isReference || !c.matchesImplicitCallTarget(refTarget, argType) {
 		return false
 	}
-	addressable := place.Addressable(scope, expr, func(e ast.Expr) typeinfo.Type {
+	isAddressable := place.IsAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
 	}, c.module.ExpandedDefaultBinding)
 	var mutableBinding *symbols.Symbol
-	if mutable {
-		addressable, _, mutableBinding = c.mutableAddressableExpr(scope, expr)
+	if isMutable {
+		isAddressable, _, mutableBinding = c.mutableAddressableExpr(scope, expr)
 	}
-	if addressable {
+	if isAddressable {
 		if mutableBinding != nil {
 			mutableBinding.RequireMutable()
 		}
 		return true
 	}
-	if mutable {
+	if isMutable {
 		if site, msg, ok := c.mutableImplicitArgumentDiagnostic(scope, expr); ok {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment, msg, ast.LocOf(site), "immutable binding defined here")
 			return true
@@ -496,10 +496,10 @@ func (c *checker) matchesImplicitCallTarget(target, arg typeinfo.Type) bool {
 		return true
 	}
 	slice, sliceTarget := typeinfo.Underlying(target).(*typeinfo.ArrayType)
-	array, arrayArg := typeinfo.Underlying(arg).(*typeinfo.ArrayType)
-	return sliceTarget && arrayArg && slice != nil && array != nil &&
+	array, isArrayArg := typeinfo.Underlying(arg).(*typeinfo.ArrayType)
+	return sliceTarget && isArrayArg && slice != nil && array != nil &&
 		slice.Shape == typeinfo.ArraySlice && array.Shape != typeinfo.ArraySlice &&
-		typeinfo.SameType(slice.Elem, array.Elem)
+		typeinfo.IsSameType(slice.Elem, array.Elem)
 }
 
 func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *module.Module) {

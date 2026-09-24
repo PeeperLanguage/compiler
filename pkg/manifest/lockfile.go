@@ -25,7 +25,7 @@ type LockfileEntry struct {
 	Version      string   `json:"version"`
 	ResolvedURL  string   `json:"resolved_url,omitempty"`
 	Checksum     string   `json:"checksum,omitempty"`
-	Direct       bool     `json:"direct,omitempty"`
+	IsDirect     bool     `json:"direct,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	Dependencies []string `json:"dependencies,omitempty"`
 	UsedBy       []string `json:"used_by,omitempty"`
@@ -284,7 +284,7 @@ func (l *Lockfile) RemoveDirectDependency(alias string) {
 	if l.isStillDirect(packageID) {
 		return
 	}
-	entry.Direct = false
+	entry.IsDirect = false
 	l.SetDependency(packageID, entry)
 }
 
@@ -312,13 +312,13 @@ func (l *Lockfile) SetDirectDependency(alias, packageID string) {
 	ensureDirectDepsMap(l)
 	if previous, ok := l.DirectDeps[alias]; ok && previous != packageID {
 		if entry, found := l.GetDependency(previous); found {
-			entry.Direct = false
+			entry.IsDirect = false
 			l.SetDependency(previous, entry)
 		}
 	}
 	l.DirectDeps[alias] = packageID
 	if entry, found := l.GetDependency(packageID); found {
-		entry.Direct = true
+		entry.IsDirect = true
 		l.SetDependency(packageID, entry)
 	}
 }
@@ -388,7 +388,7 @@ func (l *Lockfile) GetUnusedDependencies() []string {
 	}
 	unused := make([]string, 0)
 	for key, entry := range l.Packages {
-		if !entry.Direct && len(entry.UsedBy) == 0 {
+		if !entry.IsDirect && len(entry.UsedBy) == 0 {
 			unused = append(unused, key)
 		}
 	}
@@ -557,7 +557,7 @@ func reconcileDirectFlags(lock *Lockfile) {
 	}
 	ensurePackagesMap(lock)
 	for key, entry := range lock.Packages {
-		entry.Direct = false
+		entry.IsDirect = false
 		lock.Packages[key] = entry
 	}
 	for _, packageID := range lock.DirectDeps {
@@ -565,7 +565,7 @@ func reconcileDirectFlags(lock *Lockfile) {
 		if !ok {
 			continue
 		}
-		entry.Direct = true
+		entry.IsDirect = true
 		lock.Packages[packageID] = entry
 	}
 }

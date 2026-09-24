@@ -76,7 +76,7 @@ func (*DefinedType) isSameType(Type) bool {
 
 func (t *OwnedPtrType) isSameType(other Type) bool {
 	right, ok := other.(*OwnedPtrType)
-	return ok && t != nil && right != nil && SameType(t.Target, right.Target)
+	return ok && t != nil && right != nil && IsSameType(t.Target, right.Target)
 }
 
 func (*RawPtrType) isSameType(other Type) bool {
@@ -87,18 +87,18 @@ func (*RawPtrType) isSameType(other Type) bool {
 func (t *RefType) isSameType(other Type) bool {
 	right, ok := other.(*RefType)
 	return ok && t != nil && right != nil &&
-		t.IsMutable == right.IsMutable && SameType(t.Target, right.Target)
+		t.IsMutable == right.IsMutable && IsSameType(t.Target, right.Target)
 }
 
 func (t *OptionalType) isSameType(other Type) bool {
 	right, ok := other.(*OptionalType)
-	return ok && t != nil && right != nil && SameType(t.Inner, right.Inner)
+	return ok && t != nil && right != nil && IsSameType(t.Inner, right.Inner)
 }
 
 func (t *ArrayType) isSameType(other Type) bool {
 	right, ok := other.(*ArrayType)
 	return ok && t != nil && right != nil &&
-		t.Len == right.Len && t.Shape == right.Shape && SameType(t.Elem, right.Elem)
+		t.Len == right.Len && t.Shape == right.Shape && IsSameType(t.Elem, right.Elem)
 }
 
 func (t *FuncType) isSameType(other Type) bool {
@@ -107,11 +107,11 @@ func (t *FuncType) isSameType(other Type) bool {
 		return false
 	}
 	for index := range t.Params {
-		if !SameType(t.Params[index], right.Params[index]) {
+		if !IsSameType(t.Params[index], right.Params[index]) {
 			return false
 		}
 	}
-	return SameType(t.Return, right.Return) && sameReturnOriginContract(t.ReturnOrigins, right.ReturnOrigins)
+	return IsSameType(t.Return, right.Return) && returnOriginContractsEqual(t.ReturnOrigins, right.ReturnOrigins)
 }
 
 // isSameType compares structural fields by name because source struct identity is
@@ -133,7 +133,7 @@ func (t *StructType) isSameType(other Type) bool {
 	}
 	for _, field := range t.Fields {
 		rightType, found := rightFields[field.Name]
-		if !found || !SameType(field.Type, rightType) {
+		if !found || !IsSameType(field.Type, rightType) {
 			return false
 		}
 		delete(rightFields, field.Name)
@@ -153,12 +153,12 @@ func (t *InterfaceType) isSameType(other Type) bool {
 			return false
 		}
 		for parameterIndex := range method.Params {
-			if !SameType(method.Params[parameterIndex].Type, otherMethod.Params[parameterIndex].Type) {
+			if !IsSameType(method.Params[parameterIndex].Type, otherMethod.Params[parameterIndex].Type) {
 				return false
 			}
 		}
-		if !SameType(method.Return, otherMethod.Return) ||
-			!sameReturnOriginContract(method.ReturnOrigins, otherMethod.ReturnOrigins) {
+		if !IsSameType(method.Return, otherMethod.Return) ||
+			!returnOriginContractsEqual(method.ReturnOrigins, otherMethod.ReturnOrigins) {
 			return false
 		}
 	}
@@ -172,14 +172,14 @@ func (t *EnumType) isSameType(other Type) bool {
 	}
 	for index, variant := range t.Cases {
 		otherVariant := right.Cases[index]
-		if variant.Name != otherVariant.Name || !SameType(variant.Payload, otherVariant.Payload) {
+		if variant.Name != otherVariant.Name || !IsSameType(variant.Payload, otherVariant.Payload) {
 			return false
 		}
 	}
 	return true
 }
 
-func sameReturnOriginContract(left, right *ReturnOriginContract) bool {
+func returnOriginContractsEqual(left, right *ReturnOriginContract) bool {
 	if left == nil || right == nil {
 		return left == right
 	}

@@ -41,7 +41,7 @@ func (l *moduleLoader) enqueue(module *module.Module) {
 	if l == nil || l.ctx == nil || module == nil {
 		return
 	}
-	if !module.ID.Valid() {
+	if !module.ID.IsValid() {
 		return
 	}
 
@@ -89,14 +89,14 @@ func (l *moduleLoader) loadModule(module *module.Module) {
 		l.resolveImports(module, loadDiag)
 		return
 	}
-	if !module.ContentProvided && module.Content == "" && module.FilePath != "" {
+	if !module.HasProvidedContent && module.Content == "" && module.FilePath != "" {
 		content, err := os.ReadFile(module.FilePath)
 		if err != nil {
 			l.addImportError(loadDiag, nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
 			return
 		}
 		module.Content = string(content)
-		module.ContentProvided = true
+		module.HasProvidedContent = true
 	}
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)

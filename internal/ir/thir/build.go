@@ -293,10 +293,10 @@ func (b *builder) expression(expression ast.Expr) Expr {
 	case *ast.UnaryExpr:
 		result = &Unary{ExprInfo: info, Op: node.Op, Value: b.expression(node.Expr)}
 	case *ast.BinaryExpr:
-		concat := b.typing != nil && b.typing.StringConcatenation(node.ID())
+		isStringConcatenation := b.typing != nil && b.typing.StringConcatenation(node.ID())
 		result = &Binary{
 			ExprInfo: info, Left: b.expression(node.Left), Op: node.Op,
-			Right: b.expression(node.Right), IsStringConcatenation: concat, Test: b.caseTest(node.ID()),
+			Right: b.expression(node.Right), IsStringConcatenation: isStringConcatenation, Test: b.caseTest(node.ID()),
 		}
 	case *ast.IsExpr:
 		result = &Is{ExprInfo: info, Value: b.expression(node.Value), Test: b.caseTest(node.ID())}
@@ -421,9 +421,9 @@ func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
 		info.Use = use
 		info.HasUse = true
 	}
-	if mutable, found := b.typing.ReferenceArgument(expression.ID()); found {
+	if isMutable, found := b.typing.ReferenceArgument(expression.ID()); found {
 		info.HasReferenceArgument = true
-		info.IsReferenceArgumentMutable = mutable
+		info.IsReferenceArgumentMutable = isMutable
 	}
 	info.ImplicitReference = b.typing.ImplicitCallArgument(expression.ID())
 	for _, implementation := range b.typing.InterfaceImplementations(expression.ID()) {

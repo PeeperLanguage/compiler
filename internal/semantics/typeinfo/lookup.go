@@ -24,7 +24,7 @@ func PointerTarget(t Type) (Type, bool) {
 	return nil, false
 }
 
-func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
+func ReferenceTarget(t Type) (target Type, isMutable bool, ok bool) {
 	ref, ok := t.(*RefType)
 	if !ok || ref == nil || ref.Target == nil {
 		return nil, false, false
@@ -35,7 +35,7 @@ func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
 // ReferenceValueTarget recognizes direct references and reference values made
 // nullable through optional wrappers. ReferenceTarget stays direct so pointer,
 // receiver, and method lookup rules do not treat optionals as transparent.
-func ReferenceValueTarget(t Type) (target Type, mutable bool, ok bool) {
+func ReferenceValueTarget(t Type) (target Type, isMutable bool, ok bool) {
 	for {
 		t = Underlying(t)
 		optional, optionalValue := t.(*OptionalType)

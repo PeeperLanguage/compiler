@@ -59,14 +59,14 @@ func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
 	resolve := func(*ast.Ident) (Binding, bool) {
 		return Binding{Symbol: resolvedValue}, true
 	}
-	if !Addressable(scope, projection, nil, resolve) {
+	if !IsAddressable(scope, projection, nil, resolve) {
 		t.Fatal("Addressable() rejected resolved binding")
 	}
 
 	resolve = func(*ast.Ident) (Binding, bool) {
 		return Binding{Symbol: symbols.New("value", symbols.SymbolFunc, nil, nil)}, true
 	}
-	if Addressable(scope, projection, nil, resolve) {
+	if IsAddressable(scope, projection, nil, resolve) {
 		t.Fatal("Addressable() fell back to shadowed scope binding")
 	}
 }
@@ -91,7 +91,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 				}
 				return nil
 			}
-			if got := Addressable(scope, projection, exprType, nil); got != test.want {
+			if got := IsAddressable(scope, projection, exprType, nil); got != test.want {
 				t.Fatalf("Addressable() = %v, want %v", got, test.want)
 			}
 		})
@@ -117,7 +117,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 				return nil
 			}
 			mutable, shared, _ := MutableAddressable(scope, projection, exprType, nil)
-			if mutable != test.want || !typeinfo.SameType(shared, test.shared) {
+			if mutable != test.want || !typeinfo.IsSameType(shared, test.shared) {
 				t.Fatalf("MutableAddressable() = (%v, %v), want (%v, %v)", mutable, shared, test.want, test.shared)
 			}
 		})
@@ -179,7 +179,7 @@ func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 		},
 	})
 	want := []Origin{{Root: declarationValue}}
-	if !SameOrigins(resolved.StorageOrigins, want) || !SameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
+	if !AreSameOrigins(resolved.StorageOrigins, want) || !AreSameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
 		t.Fatalf("resolution = %#v, want stable declaration binding", resolved)
 	}
 }
@@ -207,7 +207,7 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	resolved := Resolve(scope, index, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
 		ReferenceOrigins: func(storage []Origin) []Origin {
-			if SameOrigins(storage, []Origin{{Root: reference}}) {
+			if AreSameOrigins(storage, []Origin{{Root: reference}}) {
 				return []Origin{{Root: value}}
 			}
 			return nil
@@ -218,10 +218,10 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 		{Kind: OriginField, Field: "items"},
 		{Kind: OriginIndex, Index: "1"},
 	}}}
-	if !SameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
+	if !AreSameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
 		t.Fatalf("resolution = %#v, want stable value origins %#v", resolved, want)
 	}
-	if !SameOrigins(Resolve(scope, base, ResolveOptions{
+	if !AreSameOrigins(Resolve(scope, base, ResolveOptions{
 		ReferenceOrigins: func([]Origin) []Origin { return []Origin{{Root: value}} },
 	}).StorageOrigins, []Origin{{Root: reference}}) {
 		t.Fatal("reference carrier storage did not retain binding identity")
@@ -248,14 +248,14 @@ func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
 	resolved := Resolve(scope, field, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
 		ReferenceOrigins: func(storage []Origin) []Origin {
-			if SameOrigins(storage, wantStorage) {
+			if AreSameOrigins(storage, wantStorage) {
 				return []Origin{{Root: value}}
 			}
 			return nil
 		},
 	})
-	if !SameOrigins(resolved.StorageOrigins, wantStorage) ||
-		!SameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.IsStable {
+	if !AreSameOrigins(resolved.StorageOrigins, wantStorage) ||
+		!AreSameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.IsStable {
 		t.Fatalf("projected reference resolution = %#v", resolved)
 	}
 }
@@ -279,7 +279,7 @@ func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 	})
 	storage := []Origin{{Root: carrier}}
 	payload := VariantPayloadOrigins(storage, []int{ir.OptionalPresentCase})
-	if !SameOrigins(resolved.StorageOrigins, storage) || !SameOrigins(resolved.ValueOrigins, payload) {
+	if !AreSameOrigins(resolved.StorageOrigins, storage) || !AreSameOrigins(resolved.ValueOrigins, payload) {
 		t.Fatalf("address resolution = %#v, want carrier storage and payload value %#v", resolved, payload)
 	}
 }
@@ -315,7 +315,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 		{Kind: OriginPointee},
 		{Kind: OriginField, Field: "value"},
 	}}}
-	if !SameOrigins(ownerResolution.ValueOrigins, wantOwner) {
+	if !AreSameOrigins(ownerResolution.ValueOrigins, wantOwner) {
 		t.Fatalf("owned optional resolution = %#v, want %#v", ownerResolution, wantOwner)
 	}
 
@@ -329,7 +329,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 			return typeinfo.DefaultIntegerType()
 		},
 		ReferenceOrigins: func(storage []Origin) []Origin {
-			if !SameOrigins(storage, []Origin{{Root: reference}}) {
+			if !AreSameOrigins(storage, []Origin{{Root: reference}}) {
 				return nil
 			}
 			return []Origin{{Root: referent}}
@@ -342,7 +342,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 		},
 	})
 	wantReference := []Origin{{Root: referent, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
-	if !SameOrigins(referenceResolution.ValueOrigins, wantReference) {
+	if !AreSameOrigins(referenceResolution.ValueOrigins, wantReference) {
 		t.Fatalf("optional reference resolution = %#v, want %#v", referenceResolution, wantReference)
 	}
 }
@@ -378,7 +378,7 @@ func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T)
 		{Kind: OriginPointee},
 		{Kind: OriginWildcard},
 	}}}
-	if !SameOrigins(resolved.ValueOrigins, want) || resolved.IsStable {
+	if !AreSameOrigins(resolved.ValueOrigins, want) || resolved.IsStable {
 		t.Fatalf("resolution = %#v, want unstable origins %#v", resolved, want)
 	}
 }
@@ -400,7 +400,7 @@ func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
 		ConstantIndex: func(ast.Expr) (string, bool) { return "", false },
 	})
 	want := []Origin{{Root: values, Projections: []OriginProjection{{Kind: OriginBindingIndex, Binding: index}}}}
-	if !resolved.IsStable || !SameOrigins(resolved.StorageOrigins, want) ||
+	if !resolved.IsStable || !AreSameOrigins(resolved.StorageOrigins, want) ||
 		len(resolved.Dependencies) != 1 || resolved.Dependencies[0] != index {
 		t.Fatalf("resolution = %#v, want binding-dependent stable index", resolved)
 	}
@@ -416,7 +416,7 @@ func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
 	}
 
 	merged := MergeOrigins(left, right)
-	if len(merged) != 2 || !SameOrigins(merged, []Origin{left[0], right[1]}) {
+	if len(merged) != 2 || !AreSameOrigins(merged, []Origin{left[0], right[1]}) {
 		t.Fatalf("merged origins = %#v", merged)
 	}
 	merged[0].Projections[0].Field = "changed"
@@ -473,7 +473,7 @@ func TestVariantPayloadOriginsPreserveExactCasePath(t *testing.T) {
 		{Kind: OriginVariantPayload, Case: 2},
 		{Kind: OriginVariantPayload, Case: 1},
 	}}}
-	if !SameOrigins(origins, want) {
+	if !AreSameOrigins(origins, want) {
 		t.Fatalf("variant payload origins = %#v, want %#v", origins, want)
 	}
 }

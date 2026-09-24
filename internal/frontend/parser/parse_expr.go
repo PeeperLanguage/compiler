@@ -179,7 +179,7 @@ func parsePipeExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 			WithPrimaryLabel(loc, "write `value |> function(...)`"))
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(right))})
 	}
-	if _, method := call.Callee.(*ast.SelectorExpr); method {
+	if _, isMethod := call.Callee.(*ast.SelectorExpr); isMethod {
 		loc := ast.LocOf(call.Callee)
 		p.diag.Add(diagnostics.NewError("pipe cannot call a method").
 			WithCode(diagnostics.ErrInvalidExpression).
@@ -218,10 +218,10 @@ func (p *Parser) parseExpr(precedence uint8) ast.Expr {
 }
 
 func (p *Parser) parseExprWithControlHeader(precedence uint8, enabled bool) ast.Expr {
-	controlHeader := p.controlHeader
-	p.controlHeader = enabled
+	controlHeader := p.isControlHeader
+	p.isControlHeader = enabled
 	expr := p.parseExpr(precedence)
-	p.controlHeader = controlHeader
+	p.isControlHeader = controlHeader
 	return expr
 }
 
@@ -417,7 +417,7 @@ func (p *Parser) parseIndexOperand() ast.Expr {
 
 func (p *Parser) parseRangeExpr(start ast.Expr) ast.Expr {
 	tok := p.current()
-	exclusive := tok.Kind == token.DOTDOT
+	isEndExclusive := tok.Kind == token.DOTDOT
 	p.advance()
 	var end ast.Expr
 	if !p.at(token.RBRACK) {
@@ -439,7 +439,7 @@ func (p *Parser) parseRangeExpr(start ast.Expr) ast.Expr {
 	return reg(p, &ast.RangeExpr{
 		Start:          start,
 		End:            end,
-		IsEndExclusive: exclusive,
+		IsEndExclusive: isEndExclusive,
 		Location:       source.NewLocation(p.filePath, startPos, endPos),
 	})
 }
@@ -449,13 +449,13 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	if start == nil {
 		return nil
 	}
-	dynamic := p.match(token.RBRACK)
-	inferred := false
+	isDynamic := p.match(token.RBRACK)
+	hasInferredLength := false
 	var length *ast.NumberLit
-	if !dynamic {
+	if !isDynamic {
 		if p.current().Kind == token.IDENT && p.current().Literal == "_" {
 			p.advance()
-			inferred = true
+			hasInferredLength = true
 		} else {
 			if !p.at(token.NUMBER) {
 				p.consume(token.NUMBER, "expected array literal length")
@@ -485,14 +485,14 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	if !ok {
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem))})
 	}
-	if inferred {
+	if hasInferredLength {
 		length = reg(p, &ast.NumberLit{
 			Value:    fmt.Sprintf("%d", len(values)),
 			Location: source.NewLocation(p.filePath, start.Start, start.End),
 		})
 	}
 	shape := ast.ArrayFixed
-	if dynamic {
+	if isDynamic {
 		shape = ast.ArrayOwner
 	}
 	typ := reg(p, &ast.ArrayType{
@@ -504,7 +504,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	return reg(p, &ast.ArrayLit{
 		Type:              typ,
 		Values:            values,
-		HasInferredLength: inferred,
+		HasInferredLength: hasInferredLength,
 		Location:          source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
@@ -526,7 +526,7 @@ func (p *Parser) parseIdentExpr() ast.Expr {
 	if !p.at(token.LBRACE) {
 		return path
 	}
-	if p.controlHeader && !p.variantLiteralPrecedesControlBody() {
+	if p.isControlHeader && !p.variantLiteralPrecedesControlBody() {
 		return path
 	}
 	_, end, _ := p.parseStructLiteralFields("expected '{' after enum variant", "expected '}' after enum variant literal")

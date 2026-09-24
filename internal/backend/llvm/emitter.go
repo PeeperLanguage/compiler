@@ -22,11 +22,11 @@ const (
 // It emits module text in LLVM order: static data, helper itabs, declarations,
 // thunks, then function bodies. It also keeps one emitter state object so type
 // lowering failures and deferred external globals are reported consistently.
-func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info, debugBuild bool) string {
+func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info, isDebugBuild bool) string {
 	if mod == nil {
 		return ""
 	}
-	if !targetInfo.Valid() {
+	if !targetInfo.IsValid() {
 		if diag != nil {
 			diag.Add(diagnostics.NewError("invalid LLVM target").WithCode(diagnostics.ErrInvalidType))
 		}
@@ -42,7 +42,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		target:          targetInfo,
 		badTypes:        make(map[string]struct{}),
 		externalGlobals: make(map[string]ir.TypeID),
-		debug:           newLLVMDebugEmitter(mod, targetInfo.OS, debugBuild),
+		debug:           newLLVMDebugEmitter(mod, targetInfo.OS, isDebugBuild),
 	}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
@@ -587,11 +587,11 @@ func validateExternOwnership(mod *mir.Module, diag *diagnostics.DiagnosticBag) b
 		if fn == nil || fn.Blocks != nil {
 			continue
 		}
-		owned := typeNeedsDrop(mod.Types, fn.ReturnType)
+		isOwned := typeNeedsDrop(mod.Types, fn.ReturnType)
 		for _, param := range fn.Params {
-			owned = owned || typeNeedsDrop(mod.Types, param.Type)
+			isOwned = isOwned || typeNeedsDrop(mod.Types, param.Type)
 		}
-		if !owned {
+		if !isOwned {
 			continue
 		}
 		valid = false
@@ -739,7 +739,7 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 // External globals are collected while lowering refs, so they cannot be emitted
 // earlier with full type information.
 func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
-	if emitter != nil && emitter.invalid {
+	if emitter != nil && emitter.isInvalid {
 		return ""
 	}
 	if b == nil {

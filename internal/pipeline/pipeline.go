@@ -63,7 +63,7 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 
 	// Ensure topo-sort puts prelude first by making all non-prelude modules
 	// depend on it. This removes the need for any special-case ordering logic.
-	if preludeID.Valid() {
+	if preludeID.IsValid() {
 		for _, mod := range ctx.Modules() {
 			if mod != nil && mod.ID != preludeID {
 				if ctx.ImportGraph != nil {
@@ -77,7 +77,7 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	moduleIndex := make(map[graph.NodeID]*module.Module, len(modules))
 	moduleIDs := make([]graph.NodeID, 0, len(modules))
 	for _, mod := range modules {
-		if mod == nil || !mod.ID.Valid() {
+		if mod == nil || !mod.ID.IsValid() {
 			continue
 		}
 		id := graph.NodeID(mod.ID.String())
@@ -118,12 +118,12 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	orderedModules := make([]*module.Module, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		module := moduleIndex[id]
-		if module != nil && module.ID.Valid() {
+		if module != nil && module.ID.IsValid() {
 			orderedModules = append(orderedModules, module)
 		}
 	}
 	var prelude *module.Module
-	if preludeID.Valid() {
+	if preludeID.IsValid() {
 		prelude = moduleIndex[graph.NodeID(preludeID.String())]
 	}
 	preludeInjected := advanceModulesThrough(ctx, orderedModules, prelude, prelude == nil, phase.Ownership, diag)
@@ -218,7 +218,7 @@ func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*modul
 
 		ready := make([]*module.Module, 0, len(orderedModules))
 		for _, module := range orderedModules {
-			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && moduleReadyForNextPhase(ctx, module, prelude, preludeInjected) {
+			if module != nil && module.Phase < lastPhase && nextModulePhase(module.Phase) <= lastPhase && IsModuleReadyForNextPhase(ctx, module, prelude, preludeInjected) {
 				ready = append(ready, module)
 			}
 		}
@@ -238,12 +238,12 @@ func advanceModulesThrough(ctx *project.CompilerContext, orderedModules []*modul
 		wg.Wait()
 		close(progress)
 
-		advanced := false
+		didAdvance := false
 		for ok := range progress {
-			advanced = advanced || ok
+			didAdvance = didAdvance || ok
 		}
 		invalidateSemanticDependents(ctx, ready)
-		if !advanced {
+		if !didAdvance {
 			break
 		}
 	}
@@ -288,7 +288,7 @@ func requireScheduledModulesAtLeast(modules []*module.Module, scheduled map[modu
 	return nil
 }
 
-func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *module.Module, preludeInjected bool) bool {
+func IsModuleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *module.Module, preludeInjected bool) bool {
 	if ctx == nil || module == nil || module.Phase >= phase.Backend {
 		return false
 	}
@@ -296,7 +296,7 @@ func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *modu
 	if next == phase.None || !moduleHasPhaseInput(module, next) {
 		return false
 	}
-	if !preludeReadyForPhase(module, prelude, preludeInjected, next) {
+	if !IsPreludeReadyForPhase(module, prelude, preludeInjected, next) {
 		return false
 	}
 	required := importPrerequisitePhase(next)
@@ -319,7 +319,7 @@ func moduleHasPhaseInput(module *module.Module, next phase.Phase) bool {
 	return module.THIR != nil
 }
 
-func preludeReadyForPhase(module, prelude *module.Module, preludeInjected bool, next phase.Phase) bool {
+func IsPreludeReadyForPhase(module, prelude *module.Module, preludeInjected bool, next phase.Phase) bool {
 	if module == nil || prelude == nil || module.ID == prelude.ID {
 		return true
 	}
@@ -560,7 +560,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if diag != nil && diag.HasErrors() {
 		return false
 	}
-	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, ctx.Target, ctx.Config.BuildDebug)
+	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, ctx.Target, ctx.Config.IsDebugBuild)
 	module.Phase = phase.Backend
 	ctx.Metrics.AddPhaseAdvance()
 	return true
@@ -574,7 +574,7 @@ func invalidateSemanticDependents(ctx *project.CompilerContext, advanced []*modu
 	}
 	modules := make(map[graph.NodeID]*module.Module)
 	for _, module := range ctx.Modules() {
-		if module != nil && module.ID.Valid() {
+		if module != nil && module.ID.IsValid() {
 			modules[graph.NodeID(module.ID.String())] = module
 		}
 	}

@@ -16,7 +16,7 @@ type ID struct {
 	ImportPath string
 }
 
-func (id ID) Valid() bool {
+func (id ID) IsValid() bool {
 	return id.Origin != "" && id.ImportPath != ""
 }
 

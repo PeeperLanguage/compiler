@@ -75,7 +75,7 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 	if e == nil || e.module == nil || sym == nil {
 		return nil, false
 	}
-	if ownerID := sym.DefiningModule; ownerID.Valid() && ownerID != e.module.ID {
+	if ownerID := sym.DefiningModule; ownerID.IsValid() && ownerID != e.module.ID {
 		value := e.ctx.PublishedConstant(e.module, sym)
 		return value, value != nil
 	}
@@ -133,14 +133,14 @@ func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typei
 			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
 				return nil, false
 			}
-			descriptor, variant := typeinfo.VariantDescriptorOf(construction.EnumType)
-			if !variant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
+			descriptor, isVariant := typeinfo.VariantDescriptorOf(construction.EnumType)
+			if !isVariant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
 				return nil, false
 			}
 			if construction.Value != nil {
 				if literal, ok := construction.Value.(*ast.StructLit); ok {
-					payload, structured := typeinfo.Underlying(construction.Payload).(*typeinfo.StructType)
-					if !structured || payload == nil {
+					payload, isStructured := typeinfo.Underlying(construction.Payload).(*typeinfo.StructType)
+					if !isStructured || payload == nil {
 						return nil, false
 					}
 					valuesByName := make(map[string]ast.Expr, len(literal.Fields))
@@ -178,8 +178,8 @@ func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typei
 			return nil, false
 		}
 		value, ok := e.evalExpr(scope, node.Value, e.module.BaseExprType(node.Value.ID()))
-		variant, constant := value.(*constvalue.VariantConst)
-		if !ok || !constant || variant == nil {
+		variant, isConstant := value.(*constvalue.VariantConst)
+		if !ok || !isConstant || variant == nil {
 			return nil, false
 		}
 		matched := variant.CaseIndex() == test.Case

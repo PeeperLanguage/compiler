@@ -42,8 +42,8 @@ func Host() Info {
 	return info
 }
 
-// Valid reports whether Info has a complete supported target identity.
-func (i Info) Valid() bool {
+// IsValid reports whether Info has a complete supported target identity.
+func (i Info) IsValid() bool {
 	return i.OS != "" && i.Arch != "" && i.LLVMTriple != "" &&
 		(i.PointerBits == Bits32 || i.PointerBits == Bits64) && i.IndexBits == i.PointerBits
 }

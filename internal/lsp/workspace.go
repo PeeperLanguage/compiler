@@ -74,7 +74,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		rootDir := filepath.Dir(filePath)
 		projectName := ""
 		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
-			if !manifest.PathWithinSourceDir(loadedProject.RootDir, filePath) {
+			if !manifest.IsPathWithinSourceDir(loadedProject.RootDir, filePath) {
 				continue
 			}
 			rootDir = loadedProject.RootDir
@@ -417,7 +417,7 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 		if filepath.Ext(path) != peeper.SourceExt {
 			continue
 		}
-		if rootDir != "" && !project.PathWithinRoot(rootDir, path) {
+		if rootDir != "" && !project.IsPathWithinRoot(rootDir, path) {
 			continue
 		}
 		fileSet[path] = struct{}{}

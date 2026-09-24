@@ -508,12 +508,12 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		if target == nil || target.Root == nil {
 			return false
 		}
-		dropTarget := false
+		shouldDropTarget := false
 		if l.cleanup != nil {
-			_, dropTarget = l.cleanup.BeforeAssign[statement.Source.NodeID]
+			_, shouldDropTarget = l.cleanup.BeforeAssign[statement.Source.NodeID]
 		}
-		if ident, direct := target.Root.(*ir.Ident); direct && len(target.Projections) == 0 {
-			if dropTarget {
+		if ident, isIdent := target.Root.(*ir.Ident); isIdent && len(target.Projections) == 0 {
+			if shouldDropTarget {
 				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ident.Origin().Location}})
 			}
 			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
@@ -521,7 +521,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 			return true
 		}
 		place := l.lowerPlace(target, &l.current.Instrs)
-		if dropTarget {
+		if shouldDropTarget {
 			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeID(), target.Location)})
 		}
 		l.appendInstr(&l.current.Instrs, &Store{Place: place, Value: value})
@@ -543,8 +543,8 @@ func discardBinding(binding *thir.Binding) bool {
 	if typ, ok := symbols.GetSymbolType(binding.Symbol); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 		return false
 	}
-	_, call := binding.Value.(*thir.Call)
-	return binding.Symbol.Kind == symbols.SymbolVar && call
+	_, isCall := binding.Value.(*thir.Call)
+	return binding.Symbol.Kind == symbols.SymbolVar && isCall
 }
 
 func (l *lowerer) lowerExprStatement(expr thir.Expr) bool {

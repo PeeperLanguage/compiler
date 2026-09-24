@@ -131,7 +131,7 @@ func (t *RefType) isLowerable(q *lowerQuery, _ bool) bool {
 	if t == nil || t.Target == nil {
 		return false
 	}
-	if _, nested := Underlying(t.Target).(*RefType); nested {
+	if _, isNested := Underlying(t.Target).(*RefType); isNested {
 		return false
 	}
 	if target, ok := Underlying(t.Target).(*ArrayType); ok && target != nil && target.Shape == ArraySlice {

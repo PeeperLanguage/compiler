@@ -436,7 +436,7 @@ return total;
 		t.Fatalf("carrier type = %s, want &[3]i32", got)
 	}
 	wantCursor, ok := typeinfo.NumericTypeFromName("usize", target.Host())
-	if !ok || !typeinfo.SameType(evidence.Cursor.Type, wantCursor) {
+	if !ok || !typeinfo.IsSameType(evidence.Cursor.Type, wantCursor) {
 		t.Fatalf("cursor type = %s, want target usize", typeinfo.TypeText(evidence.Cursor.Type))
 	}
 	if got := typeinfo.TypeText(evidence.ElementType); got != "i32" {

@@ -12,16 +12,16 @@ func TestIDStringFramesComponentsWithoutCollisions(t *testing.T) {
 
 func TestIDDependsOnLogicalIdentityOnly(t *testing.T) {
 	id := ID{Origin: "local", ImportPath: "app/math/counter"}
-	if id.String() == "" || !id.Valid() {
+	if id.String() == "" || !id.IsValid() {
 		t.Fatalf("valid module identity = %#v", id)
 	}
-	if (ID{}).Valid() {
+	if (ID{}).IsValid() {
 		t.Fatal("zero module identity accepted as valid")
 	}
-	if (ID{Origin: "local"}).Valid() {
+	if (ID{Origin: "local"}).IsValid() {
 		t.Fatal("module identity without import path accepted as valid")
 	}
-	if (ID{ImportPath: "app/math/counter"}).Valid() {
+	if (ID{ImportPath: "app/math/counter"}).IsValid() {
 		t.Fatal("module identity without origin accepted as valid")
 	}
 }

@@ -36,7 +36,7 @@ func CleanupCommand(_ []string) error {
 	removed := map[string]struct{}{}
 	fmt.Printf("Found %d orphaned dependencies:\n", len(candidates))
 	for _, candidate := range candidates {
-		if candidate.InLock {
+		if candidate.IsInLockfile {
 			lockfile.RemoveDependency(candidate.PackageID)
 		}
 	}

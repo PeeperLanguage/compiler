@@ -206,7 +206,7 @@ func (c *checker) typeUnaryExpr(scope *symbols.Scope, node *ast.UnaryExpr, expec
 		return &typeinfo.InvalidType{}
 	}
 	if node.Op == "!" {
-		if !typeinfo.SameType(argType, &typeinfo.BoolType{}) {
+		if !typeinfo.IsSameType(argType, &typeinfo.BoolType{}) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Expr, "`!` operand must be bool"))
 			return nil
 		}
@@ -237,7 +237,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 		valueType = c.typeWholeCarrierExpr(scope, node.Expr, nil)
 	} else {
 		var valueExpected typeinfo.Type
-		if target, _, reference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(expected)); reference {
+		if target, _, isReference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(expected)); isReference {
 			valueExpected = target
 		}
 		valueType = c.typeExpr(scope, node.Expr, valueExpected)
@@ -249,10 +249,10 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	exprType := func(expr ast.Expr) typeinfo.Type {
 		return c.module.EffectiveExprType(expr.ID())
 	}
-	addressable := place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+	isAddressable := place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		mutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
-		if addressable && !mutable {
+		isMutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+		if isAddressable && !isMutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
 			if sharedReference != nil {
@@ -260,7 +260,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 			}
 			return &typeinfo.InvalidType{}
 		}
-		if _, _, nested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); nested {
+		if _, _, isNested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); isNested {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
@@ -270,13 +270,13 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 		}
 		return &typeinfo.RefType{IsMutable: true, Target: valueType}
 	}
-	if node.Mode == ast.AddressRaw && !addressable {
+	if node.Mode == ast.AddressRaw && !isAddressable {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 			"address operator requires addressable storage", ast.LocOf(node.Expr), "")
 		return &typeinfo.InvalidType{}
 	}
 	if node.Mode == ast.AddressShared {
-		if _, _, nested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); nested {
+		if _, _, isNested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); isNested {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
@@ -349,7 +349,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		leftView, rightView := isStringView(left), isStringView(right)
 		if leftString || rightString || leftView || rightView {
 			wantRight := &typeinfo.RefType{Target: &typeinfo.StringType{}}
-			if leftString && typeinfo.SameType(right, wantRight) {
+			if leftString && typeinfo.IsSameType(right, wantRight) {
 				c.module.Typechecking.MarkStringConcatenation(node.ID())
 				return &typeinfo.StringType{}
 			}
@@ -422,7 +422,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		c.recordImplicitConversion(node.Left, typeinfo.CheckCompatibility(commonType, left))
 		c.recordImplicitConversion(node.Right, typeinfo.CheckCompatibility(commonType, right))
 	}
-	if commonType == nil && !c.assignable(left, right, node.Right) && !c.assignable(right, left, node.Left) {
+	if commonType == nil && !c.isAssignable(left, right, node.Right) && !c.isAssignable(right, left, node.Left) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
 				typeinfo.TypeText(left), typeinfo.TypeText(right))))
@@ -435,7 +435,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	}
 	switch node.Op {
 	case "&&", "||":
-		if !typeinfo.SameType(left, &typeinfo.BoolType{}) || !typeinfo.SameType(right, &typeinfo.BoolType{}) {
+		if !typeinfo.IsSameType(left, &typeinfo.BoolType{}) || !typeinfo.IsSameType(right, &typeinfo.BoolType{}) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node, "logical operators require bool operands"))
 			return nil
 		}
@@ -457,7 +457,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 	}
 
-	if !c.validBinaryTypes(node.Op, exprType) {
+	if !c.areValidBinaryTypes(node.Op, exprType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported operand type for operator `"+node.Op+"`"))
 		return nil
@@ -481,7 +481,7 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 	if !ok {
 		return &typeinfo.InvalidType{}
 	}
-	if !typeinfo.SameType(valueType, resolved.EnumType) {
+	if !typeinfo.IsSameType(valueType, resolved.EnumType) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(resolved.EnumType), typeinfo.TypeText(valueType))))
 		return &typeinfo.InvalidType{}
@@ -569,9 +569,9 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 	}
 	if field, fieldIndex, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
 		var dereferenceType typeinfo.Type
-		if target, indirect := typeinfo.PointerTarget(baseType); indirect {
+		if target, isIndirect := typeinfo.PointerTarget(baseType); isIndirect {
 			dereferenceType = target
-		} else if target, _, indirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); indirect {
+		} else if target, _, isIndirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); isIndirect {
 			dereferenceType = target
 		}
 		c.module.Typechecking.RecordStructField(node.ID(), typecheckresult.StructFieldAccess{
@@ -585,8 +585,8 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 		}
 		return method.Type
 	}
-	descriptor, variant := typeinfo.VariantDescriptorOf(baseType)
-	if variant && descriptor.Family == typeinfo.VariantFamilyNamed {
+	descriptor, isVariant := typeinfo.VariantDescriptorOf(baseType)
+	if isVariant && descriptor.Family == typeinfo.VariantFamilyNamed {
 		var deferred typeinfo.Type
 		conflictingTypes := false
 		for _, variantCase := range descriptor.Cases {
@@ -594,7 +594,7 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 			if field, _, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
 				if deferred == nil {
 					deferred = field.Type
-				} else if !typeinfo.SameType(deferred, field.Type) {
+				} else if !typeinfo.IsSameType(deferred, field.Type) {
 					conflictingTypes = true
 				}
 			}
@@ -694,22 +694,22 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		return c.typeExpr(scope, expr, nil)
 	}
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		if !place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 				"slicing requires addressable array storage"))
 			return &typeinfo.InvalidType{}
 		}
 	}
-	mutable := shape == indexableMutableSliceView
+	isMutable := shape == indexableMutableSliceView
 	var mutableBinding *symbols.Symbol
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		mutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 	}
 	if mutableBinding != nil {
 		mutableBinding.RequireMutable()
 	}
 	return &typeinfo.RefType{
-		IsMutable: mutable,
+		IsMutable: isMutable,
 		Target:    &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: elem},
 	}
 }
@@ -859,7 +859,7 @@ func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields 
 			valid = false
 			continue
 		}
-		if !c.assignable(targetField.Type, valueType, field.Value) {
+		if !c.isAssignable(targetField.Type, valueType, field.Value) {
 			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
@@ -904,7 +904,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
-	if !c.assignable(resolved.Case.Payload, valueType, value) {
+	if !c.isAssignable(resolved.Case.Payload, valueType, value) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to enum variant payload of type %s", typeinfo.TypeText(valueType), typeinfo.TypeText(resolved.Case.Payload)), ast.LocOf(value), "")
 		return &typeinfo.InvalidType{}
@@ -984,7 +984,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 		if typeinfo.IsInvalidOrUnknown(valueType) {
 			continue
 		}
-		if !c.assignable(array.Elem, valueType, value) {
+		if !c.isAssignable(array.Elem, valueType, value) {
 			c.ctx.Diagnostics.Add(typeMismatchError(value,
 				fmt.Sprintf("cannot assign %s to array element of type %s",
 					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))))
@@ -1083,7 +1083,7 @@ func integerRangeHint(t *typeinfo.IntegerType) string {
 	return fmt.Sprintf("%s range: 0 to 2^%d-1", typeinfo.TypeText(t), t.Bits)
 }
 
-func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
+func (c *checker) areValidBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {
 	case "+", "-", "*", "/":
 		return typeinfo.IsArithmetic(typ)

@@ -99,7 +99,7 @@ func IsPlaceExpr(expr ast.Expr) bool {
 	return identified && ident != nil
 }
 
-func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
+func IsAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
@@ -128,10 +128,10 @@ func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, res
 			return true
 		}
 	}
-	return Addressable(scope, projection.Base, exprType, resolve)
+	return IsAddressable(scope, projection.Base, exprType, resolve)
 }
 
-func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
+func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (isMutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
 	if scope == nil || expr == nil {
 		return false, nil, nil
 	}
@@ -172,8 +172,8 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 		if _, ok := typeinfo.PointerTarget(baseType); ok {
 			return true, nil, nil
 		}
-		if target, mutable, ok := typeinfo.ReferenceTarget(baseType); ok {
-			if mutable {
+		if target, isMutable, ok := typeinfo.ReferenceTarget(baseType); ok {
+			if isMutable {
 				return true, nil, nil
 			}
 			return false, target, nil

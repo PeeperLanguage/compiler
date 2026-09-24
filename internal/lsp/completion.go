@@ -45,17 +45,17 @@ const (
 )
 
 type parsedCompletionContext struct {
-	kind         completionContextKind
-	prefix       string
-	qualifier    string
-	start        int
-	end          int
-	rewriteStart int
-	cursor       int
-	pipe         bool
-	sentinel     string
-	sentinelAt   int
-	callSuffix   completionCallSuffixKind
+	kind             completionContextKind
+	prefix           string
+	qualifier        string
+	start            int
+	end              int
+	rewriteStart     int
+	cursor           int
+	isPipeCompletion bool
+	sentinel         string
+	sentinelAt       int
+	callSuffix       completionCallSuffixKind
 }
 
 type completionCallSuffixKind uint8
@@ -114,7 +114,7 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 		if !ok {
 			return []CompletionItem{}, nil
 		}
-		return operationCompletionItems(sentinelCtx, sentinelModule, semanticPosition, parsed.prefix, replacement, rewrite, parsed.pipe, parsed.callSuffix == completionCallArguments), nil
+		return operationCompletionItems(sentinelCtx, sentinelModule, semanticPosition, parsed.prefix, replacement, rewrite, parsed.isPipeCompletion, parsed.callSuffix == completionCallArguments), nil
 	case completionNames:
 		semanticCursor := source.NewPosition()
 		semanticCursor.Advance(sourceText[:parsed.cursor])
@@ -209,7 +209,7 @@ func parseCompletionContext(text string, position Position) parsedCompletionCont
 			sentinelCall = "()"
 		}
 		sentinel := text[:start] + completionSentinel + sentinelCall + text[identifierEnd:]
-		return parsedCompletionContext{kind: completionOperation, prefix: prefix, start: start, end: editEnd, rewriteStart: rewriteStart, cursor: offset, pipe: true, sentinel: sentinel, sentinelAt: start, callSuffix: callSuffix}
+		return parsedCompletionContext{kind: completionOperation, prefix: prefix, start: start, end: editEnd, rewriteStart: rewriteStart, cursor: offset, isPipeCompletion: true, sentinel: sentinel, sentinelAt: start, callSuffix: callSuffix}
 	}
 	if start >= 2 && text[start-2:start] == "::" {
 		qualifierEnd := start - 2
@@ -392,7 +392,7 @@ func lexicalCompletionItems(module *module.Module, cursor source.Position, prefi
 			if sym == nil || sym.Name == "_" || !strings.HasPrefix(sym.Name, prefix) {
 				continue
 			}
-			if localScope && declaredAfterCursor(sym, cursor) {
+			if localScope && isDeclaredAfterCursor(sym, cursor) {
 				continue
 			}
 			if _, exists := seen[sym.Name]; exists {
@@ -423,7 +423,7 @@ func completionScope(module *module.Module, line, col int) *symbols.Scope {
 	return scope
 }
 
-func declaredAfterCursor(sym *symbols.Symbol, cursor source.Position) bool {
+func isDeclaredAfterCursor(sym *symbols.Symbol, cursor source.Position) bool {
 	if sym == nil || sym.Location == nil || sym.Location.Start == nil {
 		return false
 	}
@@ -618,7 +618,7 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module
 	return sortCompletionItems(items), true
 }
 
-func operationCompletionItems(ctx *project.CompilerContext, module *module.Module, cursorPosition source.Position, prefix string, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
+func operationCompletionItems(ctx *project.CompilerContext, module *module.Module, cursorPosition source.Position, prefix string, replacement, rewrite Range, isPipeCall, preserveArguments bool) []CompletionItem {
 	var selector *ast.SelectorExpr
 	var piped *ast.CallExpr
 	cursor := buildCursorContext(ctx, module, cursorPosition)
@@ -631,8 +631,8 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			break
 		}
 		if call, ok := node.(*ast.CallExpr); ok && call.IsPiped {
-			callee, identifier := call.Callee.(*ast.Ident)
-			if identifier && callee.Name == completionSentinel {
+			callee, isIdentifier := call.Callee.(*ast.Ident)
+			if isIdentifier && callee.Name == completionSentinel {
 				piped = call
 				break
 			}
@@ -653,7 +653,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 
 	seen := make(map[string]struct{})
 	var items []CompletionItem
-	if !pipe {
+	if !isPipeCall {
 		fieldType := baseType
 		if target, ok := typeinfo.PointerTarget(fieldType); ok {
 			fieldType = target
@@ -683,32 +683,32 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			}
 			fnType := method.CallableTypeFor(baseType)
 			methodSymbol := &symbols.Symbol{Name: method.Name, Kind: symbols.SymbolMethod, Type: fnType}
-			items = appendOperationCompletion(items, seen, methodSymbol, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+			items = appendOperationCompletion(items, seen, methodSymbol, method.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
 	for _, method := range module.Bindings.Methods(baseType) {
 		if method == nil {
 			continue
 		}
-		fnType, callable := method.Type.(*typeinfo.FuncType)
-		if callable && strings.HasPrefix(method.Name, prefix) {
-			items = appendOperationCompletion(items, seen, method, method.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+		fnType, isCallable := method.Type.(*typeinfo.FuncType)
+		if isCallable && strings.HasPrefix(method.Name, prefix) {
+			items = appendOperationCompletion(items, seen, method, method.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
 
 	for _, function := range intrinsics.ApplicableFunctionSymbols(baseType, ctx.Target) {
-		fnType, callable := function.Type.(*typeinfo.FuncType)
-		if callable && strings.HasPrefix(function.Name, prefix) {
-			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+		fnType, isCallable := function.Type.(*typeinfo.FuncType)
+		if isCallable && strings.HasPrefix(function.Name, prefix) {
+			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
 	for _, function := range operationFunctionsWithPrefix(module.Bindings.OperationFunctions(), prefix) {
-		fnType, callable := function.Type.(*typeinfo.FuncType)
-		if !callable {
+		fnType, isCallable := function.Type.(*typeinfo.FuncType)
+		if !isCallable {
 			continue
 		}
 		if typechecker.CanAdaptFirstCallArgument(ctx, module, fnType.Params[0], baseType) {
-			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, pipe, preserveArguments)
+			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
 	for alias, resolved := range module.Imports {
@@ -717,13 +717,13 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			continue
 		}
 		for _, function := range operationFunctionsWithPrefix(imported.Bindings.OperationFunctions(), prefix) {
-			fnType, callable := function.Type.(*typeinfo.FuncType)
-			if !function.IsPub || !callable {
+			fnType, isCallable := function.Type.(*typeinfo.FuncType)
+			if !function.IsPub || !isCallable {
 				continue
 			}
 			if typechecker.CanAdaptFirstCallArgument(ctx, module, fnType.Params[0], baseType) {
 				name := alias + "::" + function.Name
-				items = appendOperationCompletion(items, seen, function, name, fnType, replacement, rewrite, pipe, preserveArguments)
+				items = appendOperationCompletion(items, seen, function, name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 			}
 		}
 	}
@@ -741,7 +741,7 @@ func operationFunctionsWithPrefix(functions []*symbols.Symbol, prefix string) []
 	return functions[start:end]
 }
 
-func appendOperationCompletion(items []CompletionItem, seen map[string]struct{}, sym *symbols.Symbol, name string, fnType *typeinfo.FuncType, replacement, rewrite Range, pipe, preserveArguments bool) []CompletionItem {
+func appendOperationCompletion(items []CompletionItem, seen map[string]struct{}, sym *symbols.Symbol, name string, fnType *typeinfo.FuncType, replacement, rewrite Range, isPipeCall, preserveArguments bool) []CompletionItem {
 	if fnType == nil || len(fnType.Params) == 0 {
 		return items
 	}
@@ -757,12 +757,12 @@ func appendOperationCompletion(items []CompletionItem, seen map[string]struct{},
 	}
 	editRange := replacement
 	newText := call
-	function := sym.Kind == symbols.SymbolFunc
-	preferred := pipe == function
-	if pipe && !function {
+	isFunction := sym.Kind == symbols.SymbolFunc
+	preferred := isPipeCall == isFunction
+	if isPipeCall && !isFunction {
 		editRange = rewrite
 		newText = "." + call
-	} else if !pipe && function {
+	} else if !isPipeCall && isFunction {
 		editRange = rewrite
 		newText = " |> " + call
 	}
@@ -797,7 +797,7 @@ func importCompletionItems(candidates []project.ImportCandidate, replacement Ran
 	for _, candidate := range candidates {
 		kind := completionKindFile
 		sortPrefix := "1"
-		if candidate.Continuing {
+		if candidate.CanContinue {
 			kind = completionKindFolder
 			sortPrefix = "0"
 		}

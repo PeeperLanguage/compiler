@@ -12,7 +12,7 @@ import (
 )
 
 type llvmDebugEmitter struct {
-	enabled        bool
+	isEnabled      bool
 	fileID         int
 	compileUnitID  int
 	emptyTupleID   int
@@ -42,7 +42,7 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 		dir = ""
 	}
 	d := &llvmDebugEmitter{
-		enabled:     true,
+		isEnabled:   true,
 		subprograms: make(map[*mir.Function]int),
 		locations:   make(map[string]int),
 	}
@@ -60,7 +60,7 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 }
 
 func (d *llvmDebugEmitter) define(format string, args ...any) int {
-	if d == nil || !d.enabled {
+	if d == nil || !d.isEnabled {
 		return -1
 	}
 	id := d.nextID
@@ -74,7 +74,7 @@ func (d *llvmDebugEmitter) define(format string, args ...any) int {
 }
 
 func (d *llvmDebugEmitter) functionID(fn *mir.Function) int {
-	if d == nil || !d.enabled || fn == nil || fn.Location == nil {
+	if d == nil || !d.isEnabled || fn == nil || fn.Location == nil {
 		return -1
 	}
 	if id, ok := d.subprograms[fn]; ok {
@@ -96,7 +96,7 @@ func (d *llvmDebugEmitter) functionID(fn *mir.Function) int {
 }
 
 func (d *llvmDebugEmitter) locationID(loc *source.Location, scopeID int) int {
-	if d == nil || !d.enabled || scopeID < 0 || loc == nil {
+	if d == nil || !d.isEnabled || scopeID < 0 || loc == nil {
 		return -1
 	}
 	line, col := locationLineCol(loc)
@@ -110,7 +110,7 @@ func (d *llvmDebugEmitter) locationID(loc *source.Location, scopeID int) int {
 }
 
 func (d *llvmDebugEmitter) appendModuleMetadata(b *strings.Builder) {
-	if d == nil || !d.enabled || b == nil {
+	if d == nil || !d.isEnabled || b == nil {
 		return
 	}
 	b.WriteString("\n!llvm.dbg.cu = !{!")

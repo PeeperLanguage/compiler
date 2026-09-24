@@ -25,12 +25,12 @@ type loanID struct {
 type referenceLoan struct {
 	// path identifies the slot within the holder, not the borrowed storage.
 	// One loan can occupy multiple enum fields and survive replacement of one.
-	path    []place.OriginProjection
-	id      loanID
-	origins []place.Origin
-	mutable bool
-	site    ir.SourceInfo
-	loop    ast.NodeID
+	path      []place.OriginProjection
+	id        loanID
+	origins   []place.Origin
+	isMutable bool
+	site      ir.SourceInfo
+	loop      ast.NodeID
 }
 
 type loanFact struct {
@@ -175,7 +175,7 @@ func (a *analyzer) reportLoanConflict(
 		if (exempt != nil && fact.holder == exempt) || !place.OriginsOverlap(origins, fact.loan.origins) {
 			return false
 		}
-		return fact.loan.mutable || access.requiresExclusiveAccess()
+		return fact.loan.isMutable || access.requiresExclusiveAccess()
 	}
 	var conflict *loanFact
 	reservedConflict := false
@@ -262,15 +262,15 @@ func (a *analyzer) activateCallReservations(location *source.Location, mark int,
 func addLoanConflictLabels(
 	diag *diagnostics.Diagnostic,
 	conflict *loanFact,
-	reservationConflict bool,
+	hasReservationConflict bool,
 ) {
 	if diag == nil || conflict == nil {
 		return
 	}
 	borrowKind := "shared borrow created here"
-	if reservationConflict {
+	if hasReservationConflict {
 		borrowKind = "mutable borrow reserved here"
-	} else if conflict.loan.mutable {
+	} else if conflict.loan.isMutable {
 		borrowKind = "mutable borrow created here"
 	}
 	if conflict.loan.site.Location != nil {
@@ -281,7 +281,7 @@ func addLoanConflictLabels(
 		return
 	}
 	keepingMessage := "borrow remains live until this use"
-	if reservationConflict {
+	if hasReservationConflict {
 		keepingMessage = "mutable borrow activates when this call starts"
 	} else if conflict.holder == nil {
 		keepingMessage = "borrow remains active until this call completes"
@@ -312,7 +312,7 @@ func referenceHolder(expr thir.Expr) *symbols.Symbol {
 		return nil
 	}
 	sym := expr.ExprPlace().Root
-	if _, reference := referenceMutability(sym); reference {
+	if _, isReference := referenceMutability(sym); isReference {
 		return sym
 	}
 	return nil
@@ -331,7 +331,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 		return []referenceLoan{}, false
 	}
 	id := ast.NodeID(expr.SourceInfo().NodeID)
-	if _, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr)); ok {
+	if _, isMutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr)); ok {
 		if _, projected := expr.(*thir.Field); projected {
 			var value []referenceLoan
 			for _, storage := range a.module.Flow.StorageOrigins(id) {
@@ -350,10 +350,10 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 		if len(origins) == 0 {
 			return []referenceLoan{}, false
 		}
-		return []referenceLoan{{id: loanID{node: expr.SourceInfo().NodeID}, origins: origins, mutable: mutable, site: expr.SourceInfo()}}, true
+		return []referenceLoan{{id: loanID{node: expr.SourceInfo().NodeID}, origins: origins, isMutable: isMutable, site: expr.SourceInfo()}}, true
 	}
-	slots, aggregate := a.module.Flow.AggregateSlots(id)
-	if aggregate {
+	slots, hasAggregateSlots := a.module.Flow.AggregateSlots(id)
+	if hasAggregateSlots {
 		var loans []referenceLoan
 		for _, slot := range slots {
 			fieldLoans, found := a.referenceValueForTHIR(slot.ValueExpr, st)
@@ -374,7 +374,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 // enum reference fields are direct/optional; nested reference aggregates remain
 // rejected by typechecking. Other holders and sibling slots retain their loans.
 func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st state) {
-	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(target)); !reference || a.module.Flow == nil {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(target)); !isReference || a.module.Flow == nil {
 		return
 	}
 	storage := a.module.Flow.StorageOrigins(ast.NodeID(target.SourceInfo().NodeID))
@@ -409,7 +409,7 @@ func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st state) {
 	if a == nil || a.function == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
-	if _, _, reference := typeinfo.ReferenceValueTarget(a.module.EffectiveExprType(ast.NodeID(stmt.Value.SourceInfo().NodeID))); !reference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(a.module.EffectiveExprType(ast.NodeID(stmt.Value.SourceInfo().NodeID))); !isReference {
 		return
 	}
 	value, found := a.referenceValueForTHIR(stmt.Value, st)
@@ -448,15 +448,15 @@ func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value []referenceL
 	if sym == nil {
 		return
 	}
-	mutable, reference := referenceMutability(sym)
-	if (!reference && !referenceHoldingSymbol(sym)) || !hasValue {
+	isMutable, isReference := referenceMutability(sym)
+	if (!isReference && !referenceHoldingSymbol(sym)) || !hasValue {
 		delete(st.references, sym)
 		return
 	}
 	value = copyReferenceLoans(value)
-	if reference {
+	if isReference {
 		for i := range value {
-			value[i].mutable = mutable
+			value[i].isMutable = isMutable
 		}
 	}
 	st.references[sym] = value
@@ -467,8 +467,8 @@ func referenceMutability(sym *symbols.Symbol) (bool, bool) {
 	if !ok {
 		return false, false
 	}
-	_, mutable, reference := typeinfo.ReferenceValueTarget(typ)
-	return mutable, reference
+	_, isMutable, isReference := typeinfo.ReferenceValueTarget(typ)
+	return isMutable, isReference
 }
 
 func referenceHoldingSymbol(sym *symbols.Symbol) bool {
@@ -486,13 +486,13 @@ func copyReferenceLoans(value []referenceLoan) []referenceLoan {
 	return copyValue
 }
 
-func sameReferenceValues(left, right map[*symbols.Symbol][]referenceLoan) bool {
+func areSameReferenceValues(left, right map[*symbols.Symbol][]referenceLoan) bool {
 	if len(left) != len(right) {
 		return false
 	}
 	for sym, leftValue := range left {
 		rightValue, ok := right[sym]
-		if !ok || !sameReferenceLoans(leftValue, rightValue) {
+		if !ok || !areSameReferenceLoans(leftValue, rightValue) {
 			return false
 		}
 	}
@@ -518,7 +518,7 @@ func mergeReferenceValues(dst, src map[*symbols.Symbol][]referenceLoan) bool {
 				continue
 			}
 			merged := place.MergeOrigins(dstValue[index].origins, srcLoan.origins)
-			if !place.SameOrigins(dstValue[index].origins, merged) {
+			if !place.AreSameOrigins(dstValue[index].origins, merged) {
 				dstValue[index].origins = merged
 				changed = true
 			}
@@ -536,7 +536,7 @@ func referenceOrigins(loans []referenceLoan) []place.Origin {
 	return origins
 }
 
-func sameReferenceLoans(left, right []referenceLoan) bool {
+func areSameReferenceLoans(left, right []referenceLoan) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -546,8 +546,8 @@ func sameReferenceLoans(left, right []referenceLoan) bool {
 			return false
 		}
 		rightLoan := right[index]
-		if leftLoan.mutable != rightLoan.mutable || leftLoan.site != rightLoan.site || leftLoan.loop != rightLoan.loop ||
-			!place.SameOrigins(leftLoan.origins, rightLoan.origins) {
+		if leftLoan.isMutable != rightLoan.isMutable || leftLoan.site != rightLoan.site || leftLoan.loop != rightLoan.loop ||
+			!place.AreSameOrigins(leftLoan.origins, rightLoan.origins) {
 			return false
 		}
 	}

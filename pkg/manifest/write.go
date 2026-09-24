@@ -81,11 +81,11 @@ func syncDirectory(dir string) error {
 }
 
 type dependencyFileState struct {
-	path      string
-	data      []byte
-	mode      os.FileMode
-	exists    bool
-	directory bool
+	path        string
+	data        []byte
+	mode        os.FileMode
+	doesExist   bool
+	isDirectory bool
 }
 
 // SaveDependencyState publishes manifest and lockfile as one returned-error
@@ -141,10 +141,10 @@ func captureDependencyFile(path string, defaultMode os.FileMode) (dependencyFile
 	if err != nil {
 		return state, fmt.Errorf("inspect %s: %w", filepath.Base(path), err)
 	}
-	state.exists = true
+	state.doesExist = true
 	state.mode = info.Mode().Perm()
-	state.directory = info.IsDir()
-	if state.directory {
+	state.isDirectory = info.IsDir()
+	if state.isDirectory {
 		return state, nil
 	}
 	state.data, err = os.ReadFile(path)
@@ -157,10 +157,10 @@ func captureDependencyFile(path string, defaultMode os.FileMode) (dependencyFile
 func rollbackDependencyState(publishErr error, states ...dependencyFileState) error {
 	errs := []error{publishErr}
 	for _, state := range states {
-		if state.directory {
+		if state.isDirectory {
 			continue
 		}
-		if !state.exists {
+		if !state.doesExist {
 			if err := os.Remove(state.path); err != nil && !os.IsNotExist(err) {
 				errs = append(errs, fmt.Errorf("remove new %s during rollback: %w", filepath.Base(state.path), err))
 			}

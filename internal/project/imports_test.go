@@ -207,12 +207,12 @@ func TestImportCandidatesEnumeratesRootsAndImmediateChildren(t *testing.T) {
 	}, nil)
 
 	assertImportCandidates(t, ctx.ImportCandidates("", files[0]), []ImportCandidate{
-		{ImportPath: "app/", Continuing: true},
-		{ImportPath: "core:", Continuing: true},
-		{ImportPath: "vendor:", Continuing: true},
+		{ImportPath: "app/", CanContinue: true},
+		{ImportPath: "core:", CanContinue: true},
+		{ImportPath: "vendor:", CanContinue: true},
 	})
 	assertImportCandidates(t, ctx.ImportCandidates("app/", files[0]), []ImportCandidate{
-		{ImportPath: "app/nested/", Continuing: true},
+		{ImportPath: "app/nested/", CanContinue: true},
 		{ImportPath: "app/util", FilePath: CanonicalPath(files[1])},
 	})
 	assertImportCandidates(t, ctx.ImportCandidates("vendor:json/", files[0]), []ImportCandidate{
@@ -233,7 +233,7 @@ func TestImportCandidatesFiltersPartialRootsAndMissingNamespaces(t *testing.T) {
 		},
 	}, nil)
 
-	assertImportCandidates(t, ctx.ImportCandidates("ap", ""), []ImportCandidate{{ImportPath: "app/", Continuing: true}})
+	assertImportCandidates(t, ctx.ImportCandidates("ap", ""), []ImportCandidate{{ImportPath: "app/", CanContinue: true}})
 	assertImportCandidates(t, ctx.ImportCandidates("missing:", ""), nil)
 	assertImportCandidates(t, ctx.ImportCandidates("unknown:", ""), nil)
 	assertImportCandidates(t, ctx.ImportCandidates("app/.hidden/", ""), nil)

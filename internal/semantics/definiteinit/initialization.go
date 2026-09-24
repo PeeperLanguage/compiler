@@ -75,7 +75,7 @@ func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diag
 			if exists {
 				merged = intersectState(current, edgeState)
 			}
-			if exists && equalState(current, merged) {
+			if exists && AreStatesEqual(current, merged) {
 				continue
 			}
 			result.In[edge.To] = merged
@@ -85,7 +85,7 @@ func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diag
 	// Reporting walks declaration order rather than worklist order so diagnostics
 	// are deterministic. A site absent from In was never reached.
 	for _, id := range order {
-		if initialized, reachable := result.In[id]; reachable {
+		if initialized, isReachable := result.In[id]; isReachable {
 			checkAccesses(ops[id], initialized, tracked, diag)
 		}
 	}
@@ -110,7 +110,7 @@ func trackedSymbols(ops effect.SiteOps, order []cfg.SiteID) map[symbols.SymbolID
 // terminates.
 func transfer(ops []effect.Op, in state) state {
 	out := copyState(in)
-	visitor := &initializationVisitor{current: out, applyState: true}
+	visitor := &initializationVisitor{current: out, shouldApplyState: true}
 	for _, op := range ops {
 		effect.Visit(op, visitor)
 	}
@@ -126,7 +126,7 @@ func checkAccesses(ops []effect.Op, initialized state, tracked map[symbols.Symbo
 	}
 	visitor := &initializationVisitor{
 		current: initialized, tracked: tracked, diag: diag,
-		applyState: true, reportAccesses: true,
+		shouldApplyState: true, shouldReportAccesses: true,
 	}
 	visitor.current = copyState(initialized)
 	for _, op := range ops {
@@ -138,18 +138,18 @@ func checkAccesses(ops []effect.Op, initialized state, tracked map[symbols.Symbo
 // definite initialization. Adding a new effect does not compile until this
 // analysis explicitly classifies it.
 type initializationVisitor struct {
-	current        state
-	tracked        map[symbols.SymbolID]string
-	diag           *diagnostics.DiagnosticBag
-	applyState     bool
-	reportAccesses bool
+	current              state
+	tracked              map[symbols.SymbolID]string
+	diag                 *diagnostics.DiagnosticBag
+	shouldApplyState     bool
+	shouldReportAccesses bool
 }
 
 func (v *initializationVisitor) VisitDefine(op effect.Define) {
 	if op.Symbol != nil && v.tracked != nil {
 		v.tracked[op.Symbol.ID] = op.Symbol.Name
 	}
-	if v.applyState && op.IsInitialized && op.Symbol != nil {
+	if v.shouldApplyState && op.IsInitialized && op.Symbol != nil {
 		v.current[op.Symbol.ID] = struct{}{}
 	}
 }
@@ -159,26 +159,26 @@ func (v *initializationVisitor) VisitWrite(op effect.Write) {
 		return
 	}
 	if len(op.Place.Projections) > 0 {
-		if v.reportAccesses {
+		if v.shouldReportAccesses {
 			reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
 				"assign a complete value to this symbol before writing through a projection")
 		}
 		return
 	}
-	if v.applyState {
+	if v.shouldApplyState {
 		v.current[op.Place.Root.ID] = struct{}{}
 	}
 }
 
 func (v *initializationVisitor) VisitUse(op effect.Use) {
-	if v.reportAccesses {
+	if v.shouldReportAccesses {
 		reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
 			"assign a value before reading this symbol")
 	}
 }
 
 func (v *initializationVisitor) VisitBorrow(op effect.Borrow) {
-	if v.reportAccesses {
+	if v.shouldReportAccesses {
 		reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
 			"assign a value before reading this symbol")
 	}
@@ -193,8 +193,8 @@ func reportUninitializedAccess(at effect.Place, location *source.Location, curre
 	if at.Root == nil {
 		return
 	}
-	name, local := tracked[at.Root.ID]
-	if !local {
+	name, isLocal := tracked[at.Root.ID]
+	if !isLocal {
 		return
 	}
 	if _, present := current[at.Root.ID]; present {
@@ -229,7 +229,7 @@ func intersectState(left, right state) state {
 	return intersection
 }
 
-func equalState(left, right state) bool {
+func AreStatesEqual(left, right state) bool {
 	if len(left) != len(right) {
 		return false
 	}

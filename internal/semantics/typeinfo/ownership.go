@@ -55,13 +55,13 @@ type ownershipQuery struct {
 	visiting map[Type]bool
 }
 
-func (q *ownershipQuery) check(t Type, enumPayload bool) OwnershipCapability {
+func (q *ownershipQuery) check(t Type, isEnumPayload bool) OwnershipCapability {
 	if t == nil || typednil.IsNil(t) || q.visiting[t] {
 		return OwnershipCapability{Copy: CopyExplicit}
 	}
 	q.visiting[t] = true
 	defer delete(q.visiting, t)
-	return t.ownership(q, enumPayload)
+	return t.ownership(q, isEnumPayload)
 }
 
 // mergeOwnership combines stored children using CopyClass severity and one
@@ -120,8 +120,8 @@ func (*FuncType) ownership(*ownershipQuery, bool) OwnershipCapability {
 	return OwnershipCapability{Copy: CopyExplicit}
 }
 
-func (t *DefinedType) ownership(q *ownershipQuery, enumPayload bool) OwnershipCapability {
-	return q.check(t.Underlying, enumPayload)
+func (t *DefinedType) ownership(q *ownershipQuery, isEnumPayload bool) OwnershipCapability {
+	return q.check(t.Underlying, isEnumPayload)
 }
 
 // An owned pointer owns its allocation as one value. Its pointee remains a
@@ -152,9 +152,9 @@ func (t *ArrayType) ownership(q *ownershipQuery, _ bool) OwnershipCapability {
 	return mergeOwnership(OwnershipCapability{Copy: CopyExplicit}, q.check(t.Elem, false))
 }
 
-func (t *StructType) ownership(q *ownershipQuery, enumPayload bool) OwnershipCapability {
+func (t *StructType) ownership(q *ownershipQuery, isEnumPayload bool) OwnershipCapability {
 	result := OwnershipCapability{Copy: CopyExplicit}
-	if enumPayload {
+	if isEnumPayload {
 		result.Copy = CopyImplicit
 	}
 	ForEachChild(t, func(child TypeChild) bool {

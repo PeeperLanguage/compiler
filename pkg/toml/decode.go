@@ -7,10 +7,10 @@ import (
 )
 
 type fieldOptions struct {
-	name       string
-	ignore     bool
-	inline     bool
-	defaultTop bool
+	name               string
+	isIgnored          bool
+	isInline           bool
+	defaultsToTopLevel bool
 }
 
 func As[T any](value Value) (T, error) {
@@ -42,12 +42,12 @@ func decodeDataIntoStruct(target reflect.Value, data Data) error {
 			continue
 		}
 		opts := parseFieldOptions(field)
-		if opts.ignore {
+		if opts.isIgnored {
 			continue
 		}
 
 		dest := target.Field(i)
-		if opts.defaultTop {
+		if opts.defaultsToTopLevel {
 			if section, ok := data.Sections["default"]; ok {
 				if err := assignValue(dest, section); err != nil {
 					return fmt.Errorf("decode default into field %q: %w", field.Name, err)
@@ -56,7 +56,7 @@ func decodeDataIntoStruct(target reflect.Value, data Data) error {
 			continue
 		}
 
-		if opts.inline {
+		if opts.isInline {
 			if err := assignValue(dest, data.Sections); err != nil {
 				return fmt.Errorf("decode inline field %q: %w", field.Name, err)
 			}
@@ -133,12 +133,12 @@ func decodeTableIntoStruct(target reflect.Value, table Table) error {
 			continue
 		}
 		opts := parseFieldOptions(field)
-		if opts.ignore {
+		if opts.isIgnored {
 			continue
 		}
 
 		fieldValue := target.Field(i)
-		if opts.inline {
+		if opts.isInline {
 			if err := assignValue(fieldValue, table); err != nil {
 				return fmt.Errorf("inline field %q: %w", field.Name, err)
 			}
@@ -205,7 +205,7 @@ func assignSlice(target reflect.Value, raw any) error {
 func parseFieldOptions(field reflect.StructField) fieldOptions {
 	tag := field.Tag.Get("toml")
 	if tag == "-" {
-		return fieldOptions{ignore: true}
+		return fieldOptions{isIgnored: true}
 	}
 
 	opts := fieldOptions{}
@@ -220,9 +220,9 @@ func parseFieldOptions(field reflect.StructField) fieldOptions {
 	for _, part := range parts[1:] {
 		switch strings.TrimSpace(part) {
 		case "inline":
-			opts.inline = true
+			opts.isInline = true
 		case "default":
-			opts.defaultTop = true
+			opts.defaultsToTopLevel = true
 		}
 	}
 	return opts

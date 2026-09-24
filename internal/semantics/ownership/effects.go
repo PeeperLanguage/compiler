@@ -23,8 +23,8 @@ type callFrame struct {
 // that expression is evaluated. Evaluation can move the source binding, so
 // consumers must snapshot provenance before replaying the site's effects.
 type storedReference struct {
-	loans   []referenceLoan
-	present bool
+	loans     []referenceLoan
+	isPresent bool
 }
 
 // applyEffects runs one site's published operations in evaluation order.
@@ -124,11 +124,11 @@ func (v *storedReferenceVisitor) capture(value thir.Expr) {
 		return
 	}
 	valueID := ast.NodeID(value.SourceInfo().NodeID)
-	if _, captured := v.values[valueID]; captured {
+	if _, isCaptured := v.values[valueID]; isCaptured {
 		return
 	}
 	loans, present := v.a.referenceValueForTHIR(value, v.st)
-	v.values[valueID] = storedReference{loans: loans, present: present}
+	v.values[valueID] = storedReference{loans: loans, isPresent: present}
 }
 
 func (v *storedReferenceVisitor) VisitDefine(op effect.Define)  { v.capture(op.ValueExpr) }
@@ -151,7 +151,7 @@ func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, ref
 		value := op.ValueExpr
 		reference := references[op.Value]
 		a.updatePointerSymbol(op.Symbol, node.scope, value, st)
-		a.updateReferenceSymbol(op.Symbol, reference.loans, reference.present, st)
+		a.updateReferenceSymbol(op.Symbol, reference.loans, reference.isPresent, st)
 	} else if !op.IsOnEntry {
 		// An ordinary declaration without an initializer establishes empty
 		// storage. Entry bindings already carry state seeded by the edge/function
@@ -220,7 +220,7 @@ func (a *analyzer) applyWriteEffect(
 	value := op.ValueExpr
 	reference := references[op.Value]
 	a.updatePointerSymbol(sym, node.scope, value, st)
-	a.updateReferenceSymbol(sym, reference.loans, reference.present, st)
+	a.updateReferenceSymbol(sym, reference.loans, reference.isPresent, st)
 }
 
 // applyIterateEffect installs the long-lived shared access a sequence loop
@@ -276,7 +276,7 @@ func (a *analyzer) applyUse(node *site, op effect.Use, st state, loans *loanCont
 func (a *analyzer) applyWholeUse(node *site, op effect.Use, st state, loans *loanContext, syntax thir.Expr) {
 	sym := op.Place.Root
 	a.applyUseKind(sym, op, st, syntax)
-	if _, reference := referenceMutability(sym); reference {
+	if _, isReference := referenceMutability(sym); isReference {
 		loans.useReference(sym)
 		return
 	}
@@ -298,7 +298,7 @@ func (a *analyzer) applyProjectedUse(op effect.Use, st state, loans *loanContext
 	// Reaching through a binding spends it the same way naming it does, so a
 	// reference reached through here is one use closer to its last.
 	if sym := op.Place.Root; sym != nil {
-		if _, reference := referenceMutability(sym); reference || referenceHoldingSymbol(sym) {
+		if _, isReference := referenceMutability(sym); isReference || referenceHoldingSymbol(sym) {
 			loans.useReference(sym)
 		}
 	}
@@ -344,7 +344,7 @@ func (a *analyzer) applyBorrow(op effect.Borrow, st state, loans *loanContext) {
 		return
 	}
 	if sym := op.Place.Root; sym != nil {
-		if _, reference := referenceMutability(sym); reference || referenceHoldingSymbol(sym) {
+		if _, isReference := referenceMutability(sym); isReference || referenceHoldingSymbol(sym) {
 			loans.useReference(sym)
 		}
 	}
@@ -367,10 +367,10 @@ func (a *analyzer) installArgumentLoan(borrowed thir.Expr, op effect.Borrow, loa
 		return
 	}
 	loan := referenceLoan{
-		id:      loanID{node: borrowed.SourceInfo().NodeID},
-		origins: origins,
-		mutable: op.IsMutable,
-		site:    op.OperandExpr.SourceInfo(),
+		id:        loanID{node: borrowed.SourceInfo().NodeID},
+		origins:   origins,
+		isMutable: op.IsMutable,
+		site:      op.OperandExpr.SourceInfo(),
 	}
 	if op.IsMutable {
 		loans.reserved = append(loans.reserved, loanFact{
@@ -383,8 +383,8 @@ func (a *analyzer) installArgumentLoan(borrowed thir.Expr, op effect.Borrow, loa
 }
 
 func (a *analyzer) reportUseAfterMove(sym *symbols.Symbol, st state, op effect.Use) bool {
-	site, moved := st.moved[sym]
-	if !moved {
+	site, isMoved := st.moved[sym]
+	if !isMoved {
 		return false
 	}
 	diag := a.diagnostics.AddError(diagnostics.ErrUseAfterMove, "value used after move", op.Location, "")
@@ -404,7 +404,7 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effect.Use, st state, sy
 	switch op.Kind {
 	case typeinfo.UseCopy:
 		if symType, typed := symbols.GetSymbolType(sym); typed {
-			if _, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && mutable {
+			if _, isMutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && isMutable {
 				a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 					"mutable reference cannot be copied; pass it directly to transfer or reborrow", op.Location, "")
 				return

@@ -85,11 +85,11 @@ type Config struct {
 	// Target architecture.
 	TargetArch string
 	// Emit debug-friendly artifacts.
-	BuildDebug bool
+	IsDebugBuild bool
 	// Require an executable program entrypoint before backend lowering.
 	RequireEntrypoint bool
 	// Compile test entry points.
-	TestMode bool
+	IsTestMode bool
 	// Optional single test name.
 	TestName string
 }
@@ -193,7 +193,7 @@ func (ctx *CompilerContext) ResetModule(module *module.Module, retained phase.Ph
 		ctx.TypeResolver.ResetModule(module, retained)
 	}
 	module.ResetToPhase(retained)
-	if ctx.Diagnostics != nil && module.ID.Valid() {
+	if ctx.Diagnostics != nil && module.ID.IsValid() {
 		ctx.Diagnostics.DiscardModuleAfter(module.ID.String(), retained)
 	}
 }
@@ -248,7 +248,7 @@ func (ctx *CompilerContext) ModuleOriginForFile(filePath string) (ModuleOrigin, 
 		if !ok {
 			continue
 		}
-		if PathWithinRoot(manifest.SourceDir(root), canonical) {
+		if IsPathWithinRoot(manifest.SourceDir(root), canonical) {
 			return ModuleOriginStdlib, namespace
 		}
 	}

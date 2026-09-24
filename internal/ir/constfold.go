@@ -264,15 +264,15 @@ func ConstValueOf(types *TypeTable, expr Expr) (constvalue.Value, bool) {
 			if payload, ok := node.Payload.(*StructLit); ok {
 				fields = make([]constvalue.Value, len(payload.Fields))
 				for index, field := range payload.Fields {
-					value, constant := ConstValueOf(types, field)
-					if !constant {
+					value, isConstant := ConstValueOf(types, field)
+					if !isConstant {
 						return nil, false
 					}
 					fields[index] = value
 				}
 			} else {
-				value, constant := ConstValueOf(types, node.Payload)
-				if !constant {
+				value, isConstant := ConstValueOf(types, node.Payload)
+				if !isConstant {
 					return nil, false
 				}
 				fields = []constvalue.Value{value}

@@ -73,7 +73,7 @@ func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl, f
 		}
 		defaultType := c.typeExpr(scope, param.Default, paramType)
 		defaultType = c.requireValueType(param.Default, defaultType, "default value")
-		if !typeinfo.IsInvalidOrUnknown(defaultType) && !c.assignable(paramType, defaultType, param.Default) {
+		if !typeinfo.IsInvalidOrUnknown(defaultType) && !c.isAssignable(paramType, defaultType, param.Default) {
 			c.ctx.Diagnostics.Add(typeMismatchError(param.Default,
 				fmt.Sprintf("cannot implicitly convert %s to %s", typeinfo.TypeText(defaultType), typeinfo.TypeText(paramType))))
 		}
@@ -112,7 +112,7 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 		if typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 			return true
 		}
-		if _, _, reference := typeinfo.ReferenceValueTarget(paramType); reference {
+		if _, _, isReference := typeinfo.ReferenceValueTarget(paramType); isReference {
 			return true
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -125,7 +125,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType
 	if decl == nil || fnType == nil {
 		return
 	}
-	if _, external := ast.FunctionLinkName(decl, ""); external {
+	if _, isExternal := ast.FunctionLinkName(decl, ""); isExternal {
 		type externTypeSite struct {
 			typ  typeinfo.Type
 			site ast.Node
@@ -243,8 +243,8 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 				continue
 			}
 			seen[slot] = struct{}{}
-			_, sourceMutable, borrowed := typeinfo.ReferenceValueTarget(fnType.Params[slot])
-			if !borrowed {
+			_, sourceMutable, isBorrowed := typeinfo.ReferenceValueTarget(fnType.Params[slot])
+			if !isBorrowed {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 					"reference return source must be a borrowed parameter", sourceSite, "")
 				valid = false
@@ -496,14 +496,14 @@ func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {
 	}
 	receiverType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, fn.Receiver.Type, typeresolution.Context{})
 	targetType, ok := typeinfo.ReceiverTarget(receiverType)
-	defined, named := targetType.(*typeinfo.DefinedType)
-	if !ok || !named || defined == nil || !isValidReceiverType(receiverType, defined) {
+	defined, isNamed := targetType.(*typeinfo.DefinedType)
+	if !ok || !isNamed || defined == nil || !isValidReceiverType(receiverType, defined) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
 			"receiver target must be a concrete named type declared in current module", ast.LocOf(fn.Receiver.Type), "")
 		return
 	}
-	sym, local := c.module.ModuleScope.LookupLocal(defined.Name)
-	if !local || sym == nil || !typeinfo.SameType(sym.Type, defined) {
+	sym, isLocal := c.module.ModuleScope.LookupLocal(defined.Name)
+	if !isLocal || sym == nil || !typeinfo.IsSameType(sym.Type, defined) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
 			"receiver target must be declared in current module", ast.LocOf(fn.Receiver.Type), "")
 		return
@@ -581,9 +581,9 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 				validArgs = false
 				break
 			}
-			if !typeinfo.SameType(argType, expectedType) &&
-				!c.assignable(expectedType, argType, arg) &&
-				!c.assignable(argType, expectedType, arg) {
+			if !typeinfo.IsSameType(argType, expectedType) &&
+				!c.isAssignable(expectedType, argType, arg) &&
+				!c.isAssignable(argType, expectedType, arg) {
 				validArgs = false
 				break
 			}

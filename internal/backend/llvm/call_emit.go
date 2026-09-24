@@ -51,7 +51,7 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 	builder := newLLVMBuilder(out, emitter, -1)
 	rawReceiver := builder.value("%p0", slotLayout.Parameters[0])
 	callArgs := make([]llvmValue, 0, len(actualLayout.Parameters))
-	if llvmPointerLike(actualLayout.Parameters[0]) {
+	if isLLVMPointerLike(actualLayout.Parameters[0]) {
 		callArgs = append(callArgs, builder.bitcast(rawReceiver, actualLayout.Parameters[0]))
 	} else {
 		receiverPtr := builder.bitcast(rawReceiver, llvmPointerLayout(actualLayout.Parameters[0]))

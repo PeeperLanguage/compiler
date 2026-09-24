@@ -34,7 +34,7 @@ type DiagnosticBag struct {
 
 type diagnosticGroup struct {
 	diagnostics []*Diagnostic
-	active      bool
+	isActive    bool
 }
 
 // NewDiagnosticBag creates a new diagnostic bag.
@@ -53,7 +53,7 @@ func (db *DiagnosticBag) BeginPhase(producingPhase phase.Phase, moduleScope stri
 	if db.groups[producingPhase] == nil {
 		db.groups[producingPhase] = make(map[string]diagnosticGroup)
 	}
-	db.groups[producingPhase][moduleScope] = diagnosticGroup{active: true}
+	db.groups[producingPhase][moduleScope] = diagnosticGroup{isActive: true}
 	db.mu.Unlock()
 	return scoped
 }
@@ -99,7 +99,7 @@ func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleScope stri
 		if group, ok := modules[moduleScope]; ok {
 			copiedGroups[producingPhase] = diagnosticGroup{
 				diagnostics: append([]*Diagnostic(nil), group.diagnostics...),
-				active:      active,
+				isActive:    active,
 			}
 		}
 	}
@@ -139,7 +139,7 @@ func (db *DiagnosticBag) ActivateModuleRange(moduleScope string, first, last pha
 		if !ok {
 			continue
 		}
-		group.active = true
+		group.isActive = true
 		modules[moduleScope] = group
 	}
 }
@@ -165,7 +165,7 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 		if newLoc != nil && newLoc.Start != nil {
 			for _, modules := range db.groups {
 				for _, group := range modules {
-					if !group.active {
+					if !group.isActive {
 						continue
 					}
 					for _, existing := range group.diagnostics {
@@ -192,7 +192,7 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	}
 	group := db.groups[db.phase][db.moduleScope]
 	group.diagnostics = append(group.diagnostics, diag)
-	group.active = true
+	group.isActive = true
 	db.groups[db.phase][db.moduleScope] = group
 }
 
@@ -239,7 +239,7 @@ func (db *DiagnosticBag) countLocked(severity Severity) int {
 	count := 0
 	for _, modules := range db.groups {
 		for _, group := range modules {
-			if !group.active {
+			if !group.isActive {
 				continue
 			}
 			for _, diagnostic := range group.diagnostics {
@@ -271,7 +271,7 @@ func (db *DiagnosticBag) Diagnostics() []*Diagnostic {
 		slices.Sort(moduleScopes)
 		for _, moduleScope := range moduleScopes {
 			group := modules[moduleScope]
-			if group.active {
+			if group.isActive {
 				result = append(result, group.diagnostics...)
 			}
 		}

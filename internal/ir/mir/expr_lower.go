@@ -194,13 +194,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
 		value := l.load(out, place, e.TypeID(), e.Origin().Location)
-		dropRoot := e.DropsRoot
+		shouldDropRoot := e.DropsRoot
 		if l.cleanup != nil {
 			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
-				dropRoot = true
+				shouldDropRoot = true
 			}
 		}
-		if dropRoot {
+		if shouldDropRoot {
 			l.appendInstr(out, &Drop{Value: place.Root, Location: e.Place.Root.Origin().Location})
 		}
 		return value
@@ -277,13 +277,13 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: e.Origin().Location}})
-		dropBase := e.DropsBase
+		shouldDropBase := e.DropsBase
 		if l.cleanup != nil {
 			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
-				dropBase = true
+				shouldDropBase = true
 			}
 		}
-		if dropBase {
+		if shouldDropBase {
 			l.appendInstr(out, &Drop{Value: base, Location: e.Base.Origin().Location})
 		}
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}

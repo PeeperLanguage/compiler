@@ -238,7 +238,7 @@ mock_path = "./mock"
 			}
 			lock := manifest.NewLockfile()
 			packageID := "github.com/acme/pkg@v1.0.0"
-			lock.SetDependency(packageID, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: "github.com/acme/pkg", Direct: true})
+			lock.SetDependency(packageID, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: "github.com/acme/pkg", IsDirect: true})
 			lock.SetDirectDependency("pkg", packageID)
 			if err := manifest.SaveLockfile(root, lock); err != nil {
 				t.Fatal(err)

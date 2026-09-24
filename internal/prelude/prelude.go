@@ -54,16 +54,16 @@ func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*mod
 		return nil, false
 	}
 	id := ModuleID(ctx)
-	if !id.Valid() {
+	if !id.IsValid() {
 		// Without derivable identity the module can never register, so reporting
 		// success here would hand callers a module every path silently drops.
 		return nil, false
 	}
 	return &module.Module{
-		ID:              id,
-		FilePath:        preludePath,
-		Content:         content,
-		ContentProvided: true,
+		ID:                 id,
+		FilePath:           preludePath,
+		Content:            content,
+		HasProvidedContent: true,
 	}, true
 }
 

@@ -83,9 +83,9 @@ func Run(in io.ReadCloser, out io.Writer) error {
 			result = InitializeResult{
 				Capabilities: ServerCapabilities{
 					TextDocumentSync:   1, // Full Sync
-					HoverProvider:      true,
-					DefinitionProvider: true,
-					RenameProvider:     true,
+					SupportsHover:      true,
+					SupportsDefinition: true,
+					SupportsRename:     true,
 					CompletionProvider: &CompletionOptions{
 						TriggerCharacters: []string{".", "|", ">", ":", "/", "\""},
 					},

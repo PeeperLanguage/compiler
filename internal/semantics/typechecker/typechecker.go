@@ -122,9 +122,9 @@ func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *module.Modu
 		return false
 	}
 	checker := &checker{ctx: ctx, module: module}
-	if checker.assignable(paramType, argType, nil) {
+	if checker.isAssignable(paramType, argType, nil) {
 		return true
 	}
-	target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
-	return reference && checker.matchesImplicitCallTarget(target, argType)
+	target, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
+	return isReference && checker.matchesImplicitCallTarget(target, argType)
 }

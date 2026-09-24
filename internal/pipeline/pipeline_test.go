@@ -899,11 +899,11 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 }`
 
 	cfg := project.Config{
-		RootDir:    ".",
-		Extension:  peeper.SourceExt,
-		TargetOS:   "linux",
-		TargetArch: "amd64",
-		BuildDebug: true,
+		RootDir:      ".",
+		Extension:    peeper.SourceExt,
+		TargetOS:     "linux",
+		TargetArch:   "amd64",
+		IsDebugBuild: true,
 	}
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
@@ -1253,7 +1253,7 @@ func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T)
 
 	syntax := entry.AST
 	entry.AST = nil
-	if moduleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
 		t.Fatal("collection advanced without syntax")
 	}
 	entry.AST = syntax
@@ -1265,7 +1265,7 @@ func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T)
 	typed := entry.THIR
 	entry.AST = nil
 	entry.ResetToPhase(phase.Typechecked)
-	if entry.THIR != typed || !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if entry.THIR != typed || !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatal("typechecked reset did not preserve THIR readiness without AST")
 	}
 	for entry.Phase < phase.Ownership {
@@ -1277,7 +1277,7 @@ func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T)
 		t.Fatalf("post-typing diagnostics without AST: %s", diag.EmitAllToString())
 	}
 	entry.ResetToPhase(phase.Resolved)
-	if entry.THIR != nil || moduleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
+	if entry.THIR != nil || IsModuleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
 		t.Fatal("typechecking advanced without AST after semantic reset")
 	}
 }
@@ -1458,38 +1458,38 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	}
 	ctx.AddModule(entry)
 
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("parsed importer should be ready for collector when import is parsed")
 	}
 
 	entry.Phase = phase.Collected
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("collected importer should wait for bound import before binder")
 	}
 
 	imported.Phase = phase.Bound
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("collected importer should be ready for binder when import is bound")
 	}
 
 	entry.Phase = phase.Bound
 	imported.Phase = phase.Parsed
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("bound importer should wait for collected import before resolver")
 	}
 
 	imported.Phase = phase.Collected
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("bound importer should be ready for resolver when import is collected")
 	}
 
 	entry.Phase = phase.Resolved
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatal("resolved importer should wait for typechecked import before typechecking")
 	}
 
 	imported.Phase = phase.Typechecked
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatal("resolved importer should be ready for typechecking when import constants are published")
 	}
 }
@@ -3389,9 +3389,9 @@ func TestModuleLoaderReportsSameIdentityFromDifferentFiles(t *testing.T) {
 	}
 	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
 
-	loader.enqueue(&module.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
-	loader.enqueue(&module.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
 
 	ambiguous := 0
@@ -3467,9 +3467,9 @@ func TestModuleLoaderSamePathDoubleEnqueueIsQuietDedupe(t *testing.T) {
 	}
 	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
 
-	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
-	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
 
 	if diag.HasErrors() {

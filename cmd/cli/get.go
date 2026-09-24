@@ -82,7 +82,7 @@ func prepareInstallContext() (*installContext, error) {
 	}
 
 	devConfig := file.Dev
-	if devConfig.MockRemote && devConfig.MockPath != "" {
+	if devConfig.UsesMockRemote && devConfig.MockPath != "" {
 		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
 	}
 
@@ -184,7 +184,7 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 		Version:      version,
 		ResolvedURL:  repoPath,
 		Checksum:     checksum,
-		Direct:       directAlias != "",
+		IsDirect:     directAlias != "",
 		Description:  packageManifest.Package.Name,
 		Dependencies: existingDependencies,
 		UsedBy:       usedBy,
@@ -233,19 +233,19 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 	return nil
 }
 
-func ensurePackageContent(httpClient *http.Client, cachePath, repoPath, version string, devConfig *manifest.DevConfig, entry manifest.LockfileEntry, locked bool) (string, string, error) {
+func ensurePackageContent(httpClient *http.Client, cachePath, repoPath, version string, devConfig *manifest.DevConfig, entry manifest.LockfileEntry, isLocked bool) (string, string, error) {
 	modulePath, err := registry.GetModulePath(cachePath, repoPath, version)
 	if err != nil {
 		return "", "", err
 	}
 	expectedChecksum := ""
-	if locked && entry.Checksum != "" {
+	if isLocked && entry.Checksum != "" {
 		checksum, hashErr := registry.ModuleChecksum(modulePath)
 		if hashErr == nil && checksum == entry.Checksum {
 			return modulePath, checksum, nil
 		}
 		expectedChecksum = entry.Checksum
-	} else if locked {
+	} else if isLocked {
 		if _, statErr := os.Lstat(modulePath); statErr == nil {
 			expectedChecksum, err = registry.ModuleChecksum(modulePath)
 			if err != nil {

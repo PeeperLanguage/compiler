@@ -18,7 +18,7 @@ type PayloadAccess struct {
 // AppliesTo distinguishes payload layers of an expression from projections
 // used to reach that expression through an enclosing variant payload.
 func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
-	return len(p.Cases) > 0 && place.SameOrigins(p.CarrierOrigins, storage)
+	return len(p.Cases) > 0 && place.AreSameOrigins(p.CarrierOrigins, storage)
 }
 
 type CaseTest struct {

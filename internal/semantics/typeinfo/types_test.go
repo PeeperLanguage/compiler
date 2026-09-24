@@ -86,7 +86,7 @@ func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
 
 	leftStruct := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
 	rightStruct := &StructType{Fields: []Field{{Name: "y", Type: u32}, {Name: "x", Type: i32}}}
-	if !SameType(leftStruct, rightStruct) {
+	if !IsSameType(leftStruct, rightStruct) {
 		t.Fatal("struct equality must remain field-name based and order independent")
 	}
 
@@ -100,13 +100,13 @@ func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
 		Return:        &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}},
 		ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0}},
 	}
-	if !SameType(leftFunction, rightFunction) {
+	if !IsSameType(leftFunction, rightFunction) {
 		t.Fatal("function equality must preserve set-like return-origin comparison")
 	}
 
 	leftParameter := &TypeParameterType{Name: "T", OwnerIdentity: "left", Index: 0}
 	rightParameter := &TypeParameterType{Name: "T", OwnerIdentity: "right", Index: 0}
-	if SameType(leftParameter, rightParameter) {
+	if IsSameType(leftParameter, rightParameter) {
 		t.Fatal("type parameters from different owners must remain distinct")
 	}
 }
@@ -138,7 +138,7 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	if got := dynArray.Text(); got != "[]str" {
 		t.Fatalf("dynamic array text: got %q want %q", got, "[]str")
 	}
-	if !SameType(ownedA, ownedB) {
+	if !IsSameType(ownedA, ownedB) {
 		t.Fatalf("owned pointers with equal targets should match")
 	}
 }
@@ -380,7 +380,7 @@ func TestMethodCallableTypeMaterializesReceiverEvidence(t *testing.T) {
 func TestInterfaceReceiverEvidenceAffectsIdentity(t *testing.T) {
 	shared := &InterfaceType{Methods: []Method{{Name: "read", Receiver: MethodReceiverShared}}}
 	mutable := &InterfaceType{Methods: []Method{{Name: "read", Receiver: MethodReceiverMutable}}}
-	if SameType(shared, mutable) {
+	if IsSameType(shared, mutable) {
 		t.Fatal("different interface receiver modes must not compare equal")
 	}
 	if SemanticKey(shared) == SemanticKey(mutable) {
@@ -699,10 +699,10 @@ func TestNamedEnumCompatibilityUsesDeclarationAndArguments(t *testing.T) {
 		Name: "Status", Identity: "left::Status", Kind: DefinedKindEnum,
 		Underlying: &EnumType{Cases: cases},
 	}
-	if SameType(left, right) || Assignable(left, right) {
+	if IsSameType(left, right) || Assignable(left, right) {
 		t.Fatal("different enum declarations must remain nominally distinct")
 	}
-	if !SameType(left, leftAgain) || !Assignable(left, leftAgain) {
+	if !IsSameType(left, leftAgain) || !Assignable(left, leftAgain) {
 		t.Fatal("same enum declaration and arguments must be compatible")
 	}
 }
@@ -743,7 +743,7 @@ func TestAliasCanonicalizationPreservesNominalTypesAndRejectsCycles(t *testing.T
 	if got := Underlying(cycle); !IsInvalid(got) {
 		t.Fatalf("Underlying(alias cycle) = %#v, want invalid", got)
 	}
-	if SameType(cycle, integer) {
+	if IsSameType(cycle, integer) {
 		t.Fatal("alias cycle must not equal a concrete type")
 	}
 	if _, ok := VariantDescriptorOf(cycle); ok {

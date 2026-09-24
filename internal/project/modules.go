@@ -39,7 +39,7 @@ func CanonicalPath(path string) string {
 	return filepath.ToSlash(clean)
 }
 
-func PathWithinRoot(rootPath, path string) bool {
+func IsPathWithinRoot(rootPath, path string) bool {
 	rootPath = CanonicalPath(rootPath)
 	path = CanonicalPath(path)
 	if rootPath == "" || path == "" {
@@ -78,10 +78,10 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *compilat
 		return nil
 	}
 	return &compilation.Module{
-		ID:              id,
-		FilePath:        filePath,
-		Content:         content,
-		ContentProvided: true,
+		ID:                 id,
+		FilePath:           filePath,
+		Content:            content,
+		HasProvidedContent: true,
 	}
 }
 
@@ -89,7 +89,7 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *compilat
 // validation, file indexing, and retained type-declaration reindexing are one
 // atomic operation so rejected or replaced modules cannot leave stale indexes.
 func (ctx *CompilerContext) AddModule(module *compilation.Module) *diagnostics.Diagnostic {
-	if ctx == nil || module == nil || !module.ID.Valid() {
+	if ctx == nil || module == nil || !module.ID.IsValid() {
 		return nil
 	}
 	module.FilePath = CanonicalPath(module.FilePath)
@@ -139,7 +139,7 @@ func (ctx *CompilerContext) PublishedConstant(module *compilation.Module, sym *s
 		return nil
 	}
 	owner := module
-	if ownerID := sym.DefiningModule; ownerID.Valid() && (module == nil || ownerID != module.ID) {
+	if ownerID := sym.DefiningModule; ownerID.IsValid() && (module == nil || ownerID != module.ID) {
 		if ctx == nil {
 			return nil
 		}
@@ -156,7 +156,7 @@ func (ctx *CompilerContext) PublishedConstant(module *compilation.Module, sym *s
 
 // ModuleByID resolves canonical module identity.
 func (ctx *CompilerContext) ModuleByID(id moduleid.ID) (*compilation.Module, bool) {
-	if ctx == nil || !id.Valid() {
+	if ctx == nil || !id.IsValid() {
 		return nil, false
 	}
 	ctx.mu.RLock()
@@ -167,7 +167,7 @@ func (ctx *CompilerContext) ModuleByID(id moduleid.ID) (*compilation.Module, boo
 
 // SetSemanticExportBaseline records prior semantic API state for incremental comparison.
 func (ctx *CompilerContext) SetSemanticExportBaseline(id moduleid.ID, fingerprint string) {
-	if ctx == nil || !id.Valid() || fingerprint == "" {
+	if ctx == nil || !id.IsValid() || fingerprint == "" {
 		return
 	}
 	ctx.mu.Lock()
@@ -177,7 +177,7 @@ func (ctx *CompilerContext) SetSemanticExportBaseline(id moduleid.ID, fingerprin
 
 // SemanticExportBaseline returns prior semantic API state when supplied by a client.
 func (ctx *CompilerContext) SemanticExportBaseline(id moduleid.ID) (string, bool) {
-	if ctx == nil || !id.Valid() {
+	if ctx == nil || !id.IsValid() {
 		return "", false
 	}
 	ctx.mu.RLock()

@@ -182,7 +182,7 @@ func (b *thirBuilder) BuildFieldEffects(expr *thir.Field) { b.project(expr, b.us
 func (b *thirBuilder) BuildIndexEffects(expr *thir.Index) {
 	if expr.Index != nil {
 		if _, ranged := expr.Index.(*thir.Range); ranged {
-			b.borrow(expr, expr.Base, expr.Index, b.mutableReference(expr), false)
+			b.borrow(expr, expr.Base, expr.Index, b.isMutableReference(expr), false)
 			return
 		}
 	}
@@ -224,7 +224,7 @@ func (b *thirBuilder) BuildIsEffects(expr *thir.Is) { b.expression(expr.Value, t
 
 func (b *thirBuilder) BuildCallEffects(expr *thir.Call) {
 	b.emit(CallBegin{Node: nodeID(expr.SourceInfo().NodeID), Source: expr, Location: expr.SourceInfo().Location})
-	if field, method := expr.Callee.(*thir.Field); method {
+	if field, isMethod := expr.Callee.(*thir.Field); isMethod {
 		b.argument(field.Base)
 	} else {
 		b.expression(expr.Callee, typeinfo.UseRead)
@@ -255,13 +255,13 @@ func (b *thirBuilder) argument(expr thir.Expr) {
 	if expr == nil {
 		return
 	}
-	if mutable, reference := expr.ReferenceArgInfo(); reference {
+	if isMutable, isReference := expr.ReferenceArgInfo(); isReference {
 		operand := expr
 		if address, ok := expr.(*thir.Address); ok {
 			operand = address.Value
 		}
 		b.placeOperands(operand)
-		b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: mutable, IsCallArgument: true})
+		b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: isMutable, IsCallArgument: true})
 		return
 	}
 	use, _ := expr.UseKind()
@@ -288,7 +288,7 @@ func (b *thirBuilder) placeOperands(expr thir.Expr) {
 			b.expression(place.Temporary, typeinfo.UseRead)
 			return
 		}
-		if _, binding := expr.(*thir.Ident); !binding {
+		if _, isBinding := expr.(*thir.Ident); !isBinding {
 			b.expression(expr, typeinfo.UseRead)
 		}
 	}
@@ -314,24 +314,24 @@ func (b *thirBuilder) place(expr thir.Expr) Place {
 	return Place{Temporary: nodeID(expr.SourceInfo().NodeID), TemporaryExpr: expr}
 }
 
-func (b *thirBuilder) borrow(expr thir.Expr, operand, bounds thir.Expr, mutable, raw bool) {
+func (b *thirBuilder) borrow(expr thir.Expr, operand, bounds thir.Expr, isMutable, isRaw bool) {
 	b.placeOperands(operand)
 	if bounds != nil {
 		b.expression(bounds, typeinfo.UseRead)
 	}
-	b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: mutable, IsRaw: raw})
+	b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: isMutable, IsRaw: isRaw})
 }
 
-func (b *thirBuilder) mutableReference(expr thir.Expr) bool {
+func (b *thirBuilder) isMutableReference(expr thir.Expr) bool {
 	if expr == nil || expr.ExprType() == nil {
 		return false
 	}
-	_, mutable, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(expr.ExprType()))
-	return reference && mutable
+	_, isMutable, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(expr.ExprType()))
+	return isReference && isMutable
 }
 
-func ternaryUse(condition bool, yes, no typeinfo.UseKind) typeinfo.UseKind {
-	if condition {
+func ternaryUse(isConditionTrue bool, yes, no typeinfo.UseKind) typeinfo.UseKind {
+	if isConditionTrue {
 		return yes
 	}
 	return no

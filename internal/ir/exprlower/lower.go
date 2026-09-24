@@ -59,13 +59,13 @@ func LowerImplicitReference(ctx Context, expr thir.Expr, result typeinfo.Type) i
 		return &ir.InvalidExpr{Message: "nil reference expression", Type: ir.InvalidType}
 	}
 	l := &lowerer{ctx: ctx}
-	if _, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(l.effectiveType(expr))); reference {
+	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(l.effectiveType(expr))); isReference {
 		return l.lower(expr, nil, true)
 	}
 	return ir.WithOrigin(l.referenceValue(expr, result), expr.SourceInfo())
 }
 
-func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, conversions bool) ir.Expr {
+func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions bool) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
@@ -84,7 +84,7 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, conversions bool
 			return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
 		}
 	}
-	if conversions {
+	if applyConversions {
 		if converted := l.conversion(expr, expected, resolved); converted != nil {
 			return ir.WithOrigin(converted, origin)
 		}
@@ -103,7 +103,7 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 	conversion := expr.Conversion()
 	if conversion != nil && conversion.Compatibility == typeinfo.Compatible && conversion.Kind == typeinfo.ConversionOptional {
 		optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
-		if ok && optional != nil && optional.Inner != nil && !isNone(expr) && typeinfo.SameType(optional.Inner, resolved) {
+		if ok && optional != nil && optional.Inner != nil && !isNone(expr) && typeinfo.IsSameType(optional.Inner, resolved) {
 			return &ir.VariantMake{Case: ir.OptionalPresentCase, Payload: l.lower(expr, optional.Inner, false), Type: l.typeID(expected)}
 		}
 	}
@@ -179,7 +179,7 @@ func (l *lowerer) LowerBoolLiteral(e *thir.BoolLiteral) ir.Expr {
 func (l *lowerer) LowerNoneLiteral(e *thir.NoneLiteral) ir.Expr {
 	id := l.typeID(l.effectiveType(e))
 	if typ, ok := l.ctx.Types.Type(id); ok {
-		if _, optional := typ.OptionalPayload(); optional {
+		if _, isOptional := typ.OptionalPayload(); isOptional {
 			return &ir.VariantMake{Case: ir.OptionalAbsentCase, Type: id}
 		}
 	}
@@ -432,18 +432,18 @@ func (l *lowerer) referenceValue(expr thir.Expr, result typeinfo.Type) ir.Expr {
 	if !ok {
 		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: ir.InvalidType}
 	}
-	slice := false
+	isSlice := false
 	switch t := typeinfo.Underlying(target).(type) {
 	case *typeinfo.StringType:
-		slice = true
+		isSlice = true
 	case *typeinfo.ArrayType:
-		slice = t.Shape == typeinfo.ArraySlice
+		isSlice = t.Shape == typeinfo.ArraySlice
 	}
 	if expr.ExprPlace() == nil {
-		return &ir.TempBorrow{Value: l.lower(expr, target, true), IsSlice: slice, Type: id}
+		return &ir.TempBorrow{Value: l.lower(expr, target, true), IsSlice: isSlice, Type: id}
 	}
 	place := l.place(expr)
-	if slice {
+	if isSlice {
 		return &ir.SliceView{Place: place, Type: id}
 	}
 	return &ir.AddrOf{Place: place, Type: id}
@@ -458,7 +458,7 @@ func (l *lowerer) slice(index *thir.Index, r *thir.Range) ir.Expr {
 	}
 	resultType := l.effectiveType(index)
 	source := l.place(index.Base)
-	if target, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType)); reference {
+	if target, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType)); isReference {
 		if _, stringRange := typeinfo.Underlying(target).(*typeinfo.StringType); stringRange {
 			root := l.referenceValue(index.Base, resultType)
 			source = &ir.Place{Root: root, Type: root.TypeID(), Location: index.Base.SourceInfo().Location}
@@ -564,9 +564,9 @@ func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr
 		return nil
 	}
 	data := typeinfo.Underlying(resolved)
-	if target, _, reference := typeinfo.ReferenceTarget(data); reference {
+	if target, _, isReference := typeinfo.ReferenceTarget(data); isReference {
 		data = target
-	} else if target, pointer := typeinfo.PointerTarget(data); pointer {
+	} else if target, isPointer := typeinfo.PointerTarget(data); isPointer {
 		data = target
 	}
 	interfaceID := l.typeID(expected)
@@ -607,27 +607,27 @@ func lookupInterfaceMethod(t typeinfo.Type, name string) (*typeinfo.Method, int,
 }
 func isNone(expr thir.Expr) bool { _, ok := expr.(*thir.NoneLiteral); return ok }
 
-func SymbolName(module moduleid.ID, entry bool, sym *symbols.Symbol) string {
+func SymbolName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) string {
 	if sym == nil {
 		return ""
 	}
 	if sym.CompilerOp == "" && (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) {
-		name, external := CallableName(module, entry, sym)
-		if external {
+		name, isExternal := CallableName(module, isEntryModule, sym)
+		if isExternal {
 			return name
 		}
 		return fmt.Sprintf("%s$%d", name, sym.ID)
 	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
 }
-func CallableName(module moduleid.ID, entry bool, sym *symbols.Symbol) (string, bool) {
+func CallableName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) (string, bool) {
 	if sym == nil || (sym.Kind != symbols.SymbolFunc && sym.Kind != symbols.SymbolMethod) {
 		return "", false
 	}
 	if sym.ExternalLinkName != nil {
 		return *sym.ExternalLinkName, true
 	}
-	if entry && sym.Kind == symbols.SymbolFunc && sym.Name == "main" && sym.DefiningModule == module {
+	if isEntryModule && sym.Kind == symbols.SymbolFunc && sym.Name == "main" && sym.DefiningModule == module {
 		return "main", false
 	}
 	receiver := ""

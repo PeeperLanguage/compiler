@@ -106,7 +106,7 @@ func (a *flowAnalyzer) run() {
 		if !ok {
 			continue
 		}
-		if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
+		if _, _, isReference := typeinfo.ReferenceValueTarget(typ); isReference {
 			carrier := []place.Origin{{Root: sym}}
 			cases := make([]int, optionalLayerCount(typ))
 			for index := range cases {
@@ -158,7 +158,7 @@ func (a *flowAnalyzer) run() {
 				a.applyConditionEdge(site, edge.Kind, &out, events)
 				a.applyVariantCaseEdge(site, edge, &out)
 			}
-			if !out.reachable {
+			if !out.isReachable {
 				continue
 			}
 			current, exists := a.inStates[edge.To]
@@ -166,7 +166,7 @@ func (a *flowAnalyzer) run() {
 			if exists {
 				merged = mergeFlowStates(current, out)
 			}
-			if exists && sameFlowState(current, merged) {
+			if exists && flowStatesEqual(current, merged) {
 				continue
 			}
 			a.inStates[edge.To] = merged
@@ -237,9 +237,9 @@ func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type 
 	if applied > 0 {
 		a.recordPayload(expr, resolution, payloadCases)
 	}
-	if _, _, reference := typeinfo.ReferenceValueTarget(resolved); reference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(resolved); isReference {
 		resolution.ValueOrigins = place.CloneOrigins(resolution.ValueOrigins)
-	} else if _, raw := typeinfo.Underlying(resolved).(*typeinfo.RawPtrType); !raw {
+	} else if _, isRaw := typeinfo.Underlying(resolved).(*typeinfo.RawPtrType); !isRaw {
 		resolution.ValueOrigins = place.VariantPayloadOrigins(resolution.StorageOrigins, payloadCases)
 	}
 	a.recordResolution(expr, resolution)
@@ -372,8 +372,8 @@ func (a *flowAnalyzer) AnalyzeField(expr *thir.Field) typeinfo.Type {
 	if ident, ok := expr.Base.(*thir.Ident); ok && ident.Symbol != nil {
 		baseType, _ = symbols.GetSymbolType(ident.Symbol)
 	}
-	descriptor, variant := typeinfo.VariantDescriptorOf(baseType)
-	if !variant || descriptor.Family != typeinfo.VariantFamilyNamed {
+	descriptor, isVariant := typeinfo.VariantDescriptorOf(baseType)
+	if !isVariant || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return a.finish(expr, expr.ExprType())
 	}
 	resolution := a.resolve(expr.Base, *a.state)
@@ -451,7 +451,7 @@ func (a *flowAnalyzer) AnalyzeAddress(expr *thir.Address) typeinfo.Type {
 	var expected typeinfo.Type
 	if expr.Mode == thir.AddressRaw {
 		demand = flowCarrier
-	} else if target, _, reference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(a.expected)); reference {
+	} else if target, _, isReference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(a.expected)); isReference {
 		expected = target
 	}
 	a.analyze(expr.Value, expected, demand)
@@ -488,7 +488,7 @@ func (a *flowAnalyzer) AnalyzeCall(expr *thir.Call) typeinfo.Type {
 	calleeType := a.analyze(expr.Callee, nil, flowPayload)
 	fn, _ := typeinfo.Underlying(calleeType).(*typeinfo.FuncType)
 	offset := 0
-	if _, method := expr.Callee.(*thir.Field); method {
+	if _, isMethod := expr.Callee.(*thir.Field); isMethod {
 		offset = 1
 	}
 	for index, argument := range expr.Args {
@@ -547,9 +547,9 @@ func (a *flowAnalyzer) recordPayload(expr thir.Expr, resolution place.Resolution
 	if typednil.IsNil(expr) || len(cases) == 0 {
 		return
 	}
-	direct := len(resolution.StorageOrigins) == 1 && resolution.StorageOrigins[0].Root != nil && len(resolution.StorageOrigins[0].Projections) == 0
+	isDirect := len(resolution.StorageOrigins) == 1 && resolution.StorageOrigins[0].Root != nil && len(resolution.StorageOrigins[0].Projections) == 0
 	a.result.RecordPayload(ast.NodeID(expr.SourceInfo().NodeID), flowresult.PayloadAccess{
-		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: append([]int(nil), cases...), IsDirect: direct,
+		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: append([]int(nil), cases...), IsDirect: isDirect,
 	})
 }
 
@@ -595,7 +595,7 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 		base := a.resolve(node.Base, state)
 		origins := appendIndirectOrigins(a.projectedBaseOrigins(base, node.Base), a.expressionType(node.Base))
 		dependencies := append([]*symbols.Symbol(nil), base.Dependencies...)
-		stable := base.IsStable
+		isStable := base.IsStable
 		switch {
 		case node.Constant != nil:
 			origins = appendOrigin(origins, place.OriginProjection{Kind: place.OriginIndex, Index: node.Constant.Text})
@@ -612,11 +612,11 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 			dependencies = append(dependencies, binding)
 		default:
 			origins = appendOrigin(origins, place.OriginProjection{Kind: place.OriginWildcard})
-			stable = false
+			isStable = false
 		}
 		return a.resolveStored(node.ExprType(), place.Resolution{
 			StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins),
-			Dependencies: dependencies, IsStable: stable && len(origins) > 0,
+			Dependencies: dependencies, IsStable: isStable && len(origins) > 0,
 		}, state)
 	case *thir.Call:
 		return place.Resolution{ValueOrigins: a.callOrigins(node, state)}
@@ -637,9 +637,9 @@ func (a *flowAnalyzer) resolveSymbol(symbol *symbols.Symbol, typ typeinfo.Type, 
 }
 
 func (a *flowAnalyzer) resolveStored(typ typeinfo.Type, resolution place.Resolution, state flowState) place.Resolution {
-	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(typ); isReference {
 		resolution.ValueOrigins = place.CloneOrigins(originValues(state.references, resolution.StorageOrigins))
-	} else if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
+	} else if _, isRaw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); isRaw {
 		resolution.ValueOrigins = place.CloneOrigins(originValues(state.rawPointers, resolution.StorageOrigins))
 	}
 	return resolution
@@ -647,7 +647,7 @@ func (a *flowAnalyzer) resolveStored(typ typeinfo.Type, resolution place.Resolut
 
 func (a *flowAnalyzer) projectedBaseOrigins(base place.Resolution, expr thir.Expr) []place.Origin {
 	origins := base.ValueOrigins
-	if _, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(a.expressionType(expr))); reference {
+	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(a.expressionType(expr))); isReference {
 		return origins
 	}
 	if payload, ok := a.result.Payload(ast.NodeID(expr.SourceInfo().NodeID)); ok {
@@ -657,7 +657,7 @@ func (a *flowAnalyzer) projectedBaseOrigins(base place.Resolution, expr thir.Exp
 }
 
 func appendIndirectOrigins(origins []place.Origin, typ typeinfo.Type) []place.Origin {
-	if _, owned := typeinfo.PointerTarget(typeinfo.Underlying(typ)); !owned {
+	if _, isOwned := typeinfo.PointerTarget(typeinfo.Underlying(typ)); !isOwned {
 		return origins
 	}
 	return appendOrigin(origins, place.OriginProjection{Kind: place.OriginPointee})
@@ -699,11 +699,11 @@ func (a *flowAnalyzer) callOrigins(call *thir.Call, state flowState) []place.Ori
 	if fn == nil || fn.ReturnOrigins == nil {
 		return nil
 	}
-	field, method := call.Callee.(*thir.Field)
+	field, isMethod := call.Callee.(*thir.Field)
 	var origins []place.Origin
 	for _, slot := range fn.ReturnOrigins.Sources {
 		var source thir.Expr
-		if method {
+		if isMethod {
 			if slot == 0 {
 				source = field.Base
 			} else if slot > 0 && slot <= len(call.Args) {
@@ -725,11 +725,11 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 	}
 	state.references = invalidateOriginFacts(state.references, storage)
 	state.rawPointers = invalidateOriginFacts(state.rawPointers, storage)
-	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(typ); isReference {
 		state.references = setOriginFact(state.references, storage, a.resolve(value, sourceState).ValueOrigins)
 	}
-	if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
-		if origins, known := a.rawPointerOrigins(value, sourceState); known {
+	if _, isRawPointer := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); isRawPointer {
+		if origins, isKnown := a.rawPointerOrigins(value, sourceState); isKnown {
 			state.rawPointers = setOriginFact(state.rawPointers, storage, origins)
 		}
 	}
@@ -775,20 +775,20 @@ func (a *flowAnalyzer) copyStoredOriginPlace(destination, source []place.Origin,
 	if state == nil || len(destination) == 0 || len(source) == 0 {
 		return
 	}
-	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(typ); isReference {
 		if value := originValues(sourceState.references, source); len(value) > 0 {
 			state.references = setOriginFact(state.references, destination, value)
 		}
 		return
 	}
-	if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw {
+	if _, isRaw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); isRaw {
 		if value := originValues(sourceState.rawPointers, source); len(value) > 0 {
 			state.rawPointers = setOriginFact(state.rawPointers, destination, value)
 		}
 		return
 	}
-	descriptor, variant := typeinfo.VariantDescriptorOf(typ)
-	if !variant || descriptor.Family != typeinfo.VariantFamilyNamed {
+	descriptor, isVariant := typeinfo.VariantDescriptorOf(typ)
+	if !isVariant || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return
 	}
 	for caseIndex, variantCase := range descriptor.Cases {
@@ -827,17 +827,17 @@ func (a *flowAnalyzer) invalidateCall(call *thir.Call, state *flowState) {
 	}
 	fn, _ := typeinfo.Underlying(a.expressionType(call.Callee)).(*typeinfo.FuncType)
 	args := append([]thir.Expr(nil), call.Args...)
-	if field, method := call.Callee.(*thir.Field); method {
+	if field, isMethod := call.Callee.(*thir.Field); isMethod {
 		args = append([]thir.Expr{field.Base}, args...)
 	}
 	if fn != nil && len(fn.Params) == len(args) {
 		for index, argument := range args {
 			param := fn.Params[index]
-			if _, mutable, reference := typeinfo.ReferenceValueTarget(param); reference && mutable {
+			if _, isMutable, isReference := typeinfo.ReferenceValueTarget(param); isReference && isMutable {
 				invalidateVariantOrigins(state, a.resolve(argument, *state).ValueOrigins)
 			}
-			if _, raw := typeinfo.Underlying(param).(*typeinfo.RawPtrType); raw {
-				if origins, known := a.rawPointerOrigins(argument, *state); known {
+			if _, isRaw := typeinfo.Underlying(param).(*typeinfo.RawPtrType); isRaw {
+				if origins, isKnown := a.rawPointerOrigins(argument, *state); isKnown {
 					invalidateVariantOrigins(state, origins)
 				} else {
 					state.variants = nil
@@ -898,14 +898,14 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 		}
 		storage := []place.Origin{{Root: binding.Symbol}}
 		valueOrigins := fieldOrigins
-		if _, _, reference := typeinfo.ReferenceValueTarget(binding.Type); reference {
+		if _, _, isReference := typeinfo.ReferenceValueTarget(binding.Type); isReference {
 			valueOrigins = originValues(state.references, fieldOrigins)
 			if len(valueOrigins) == 0 {
 				valueOrigins = fieldOrigins
 			}
 			state.references = setOriginFact(state.references, storage, valueOrigins)
 		}
-		if _, raw := typeinfo.Underlying(binding.Type).(*typeinfo.RawPtrType); raw {
+		if _, isRaw := typeinfo.Underlying(binding.Type).(*typeinfo.RawPtrType); isRaw {
 			valueOrigins = originValues(state.rawPointers, fieldOrigins)
 			if len(valueOrigins) == 0 {
 				valueOrigins = fieldOrigins
@@ -940,8 +940,8 @@ func (a *flowAnalyzer) applyConditionEdge(site *cfg.Site, edge cfg.EdgeKind, sta
 				a.invalidateCall(call.call, &filtered)
 			}
 		}
-		if !filtered.reachable {
-			state.reachable = false
+		if !filtered.isReachable {
+			state.isReachable = false
 			return
 		}
 		if len(filtered.variants) > 0 {
@@ -1014,7 +1014,7 @@ func (a *flowAnalyzer) constrainEdgeVariantFacts(state flowState, events *flowEv
 	for _, candidate := range right {
 		found := false
 		for index := range merged {
-			if !place.SameOrigins(merged[index].variant.origins, candidate.variant.origins) {
+			if !place.AreSameOrigins(merged[index].variant.origins, candidate.variant.origins) {
 				continue
 			}
 			found = true
@@ -1047,7 +1047,7 @@ func (a *flowAnalyzer) variantFactInvalidatedBetween(state flowState, events *fl
 	filtered := copyFlowState(state)
 	filtered.variants = nil
 	restrictVariantFact(&filtered, fact.variant)
-	if !filtered.reachable {
+	if !filtered.isReachable {
 		return false
 	}
 	for _, call := range events.calls {

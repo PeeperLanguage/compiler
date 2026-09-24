@@ -29,7 +29,7 @@ func llvmLayoutsMatch(left, right *llvmLayout) bool {
 	return left != nil && right != nil && left.Kind == right.Kind && left.Text == right.Text
 }
 
-func llvmPointerLike(layout *llvmLayout) bool {
+func isLLVMPointerLike(layout *llvmLayout) bool {
 	return layout != nil && (layout.Kind == llvmLayoutPointer || layout.Kind == llvmLayoutFunction)
 }
 
@@ -227,7 +227,7 @@ func (b *llvmBuilder) cast(opcode string, value llvmValue, target *llvmLayout) l
 }
 
 func (b *llvmBuilder) bitcast(value llvmValue, target *llvmLayout) llvmValue {
-	if !llvmPointerLike(value.Layout) || !llvmPointerLike(target) {
+	if !isLLVMPointerLike(value.Layout) || !isLLVMPointerLike(target) {
 		b.invariant("bitcast requires pointers, got %s to %s", value.Layout.Text, target.Text)
 	}
 	result := b.nextValue(target)
@@ -246,20 +246,20 @@ func (b *llvmBuilder) pointerPlace(value llvmValue) llvmPlace {
 	return b.place(value.Text, value.Layout.Pointee)
 }
 
-func (b *llvmBuilder) gep(base llvmPlace, index llvmValue, inbounds bool) llvmPlace {
+func (b *llvmBuilder) gep(base llvmPlace, index llvmValue, isInBounds bool) llvmPlace {
 	if index.Layout == nil || index.Layout.Kind != llvmLayoutScalar {
 		b.invariant("GEP index requires scalar, got %s", index.Layout.Text)
 	}
 	result := b.nextPlace(base.Pointee)
 	opcode := "getelementptr"
-	if inbounds {
+	if isInBounds {
 		opcode += " inbounds"
 	}
 	b.line(fmt.Sprintf("%s = %s %s, %s* %s, %s %s", result.Text, opcode, base.Pointee.Text, base.Pointee.Text, base.Text, index.Layout.Text, index.Text))
 	return result
 }
 
-func (b *llvmBuilder) arrayElement(base llvmPlace, index llvmValue, inbounds bool) llvmPlace {
+func (b *llvmBuilder) arrayElement(base llvmPlace, index llvmValue, isInBounds bool) llvmPlace {
 	if base.Pointee == nil || base.Pointee.Kind != llvmLayoutArray || base.Pointee.Element == nil {
 		b.invariant("array GEP requires array place, got %s", base.Pointee.Text)
 	}
@@ -268,7 +268,7 @@ func (b *llvmBuilder) arrayElement(base llvmPlace, index llvmValue, inbounds boo
 	}
 	result := b.nextPlace(base.Pointee.Element)
 	opcode := "getelementptr"
-	if inbounds {
+	if isInBounds {
 		opcode += " inbounds"
 	}
 	b.line(fmt.Sprintf("%s = %s %s, %s* %s, i32 0, %s %s", result.Text, opcode, base.Pointee.Text, base.Pointee.Text, base.Text, index.Layout.Text, index.Text))

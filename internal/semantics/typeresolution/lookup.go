@@ -62,7 +62,7 @@ func (r *Resolver) CanonicalEnumDeclaration(typ typeinfo.Type) (*module.Module, 
 	if !found || declaration == nil || declaration.Scope == nil {
 		return nil, nil, false
 	}
-	if _, enum := declaration.ASTNode.(*ast.EnumDecl); !enum {
+	if _, isEnum := declaration.ASTNode.(*ast.EnumDecl); !isEnum {
 		return nil, nil, false
 	}
 	return qualifierOwner, declaration, true
@@ -82,7 +82,7 @@ func (r *Resolver) typeOwner(defined *typeinfo.DefinedType) *module.Module {
 	if owner != nil {
 		return owner
 	}
-	if !found || instance.typ != defined || !instance.complete || r.modules == nil {
+	if !found || instance.typ != defined || !instance.isComplete || r.modules == nil {
 		return nil
 	}
 	owner, _ = r.modules.ModuleByID(instance.ownerModuleID)

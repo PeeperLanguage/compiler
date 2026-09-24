@@ -576,7 +576,7 @@ func TestStructuredControlClassifiesEveryBlockOrigin(t *testing.T) {
 		{BlockLoopBody, "loop body", true},
 		{BlockLoopLatch, "loop latch", true},
 	} {
-		if got := structuredControl(test.origin); got != test.want {
+		if got := isStructuredControl(test.origin); got != test.want {
 			t.Errorf("structuredControl(%s) = %t, want %t", test.name, got, test.want)
 		}
 	}

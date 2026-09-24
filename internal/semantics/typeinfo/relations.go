@@ -6,17 +6,17 @@ import (
 	"compiler/pkg/numeric"
 )
 
-// SameType preserves nominal declaration identity and transparent aliases before
+// IsSameType preserves nominal declaration identity and transparent aliases before
 // delegating intrinsic equality to the normalized semantic type.
-func SameType(left, right Type) bool {
+func IsSameType(left, right Type) bool {
 	if left == right {
 		return true
 	}
-	if same, nominal := sameNominalEnum(left, right); nominal {
-		return same
+	if isSame, isNominal := isSameNominalEnum(left, right); isNominal {
+		return isSame
 	}
-	if same, nominal := sameNominalStruct(left, right); nominal {
-		return same
+	if isSame, isNominal := isSameNominalStruct(left, right); isNominal {
+		return isSame
 	}
 	left = Underlying(left)
 	right = Underlying(right)
@@ -26,7 +26,7 @@ func SameType(left, right Type) bool {
 	return left.isSameType(right)
 }
 
-func sameNominalEnum(left, right Type) (same, nominal bool) {
+func isSameNominalEnum(left, right Type) (isSame, isNominal bool) {
 	leftIdentity, leftNominal := nominalEnumIdentity(left)
 	rightIdentity, rightNominal := nominalEnumIdentity(right)
 	if !leftNominal && !rightNominal {
@@ -43,7 +43,7 @@ func nominalEnumIdentity(typ Type) (string, bool) {
 	return defined.Identity, true
 }
 
-func sameNominalStruct(left, right Type) (same, nominal bool) {
+func isSameNominalStruct(left, right Type) (isSame, isNominal bool) {
 	leftType, leftNominal := nominalStructType(left)
 	rightType, rightNominal := nominalStructType(right)
 	if !leftNominal && !rightNominal {
@@ -127,7 +127,7 @@ func (t *NamedType) numericInfo() (NumericFamily, int, bool) {
 // to semantic numeric identity. Arbitrary float widths stay rejected until the
 // language has a representation independent from LLVM's target float set.
 func NumericTypeFromName(name string, targetInfo target.Info) (Type, bool) {
-	if !targetInfo.Valid() {
+	if !targetInfo.IsValid() {
 		targetInfo = target.Host()
 	}
 	if signed, bits, ok := token.ParseIntegerBuiltin(name, targetInfo); ok {
@@ -150,7 +150,7 @@ func CommonNumericType(a, b Type) Type {
 	if _, _, ok := NumericInfo(b); !ok {
 		return nil
 	}
-	if SameType(a, b) {
+	if IsSameType(a, b) {
 		return a
 	}
 	if checkNumericCompatibility(a, b) == Compatible {
@@ -187,7 +187,7 @@ func ContainsReference(t Type) bool {
 }
 
 func ContainsStoredReference(t Type) bool {
-	return containsType(t, typeTraversal{followDefined: true, referenceLeaf: true}, func(candidate Type, stored bool) bool {
+	return containsType(t, typeTraversal{followDefined: true, stopAtReference: true}, func(candidate Type, stored bool) bool {
 		_, ok := candidate.(*RefType)
 		return stored && ok
 	})
@@ -201,15 +201,15 @@ func ContainsNamedEnum(t Type) bool {
 }
 
 type typeTraversal struct {
-	followDefined  bool
-	followCallable bool
-	referenceLeaf  bool
+	followDefined   bool
+	followCallable  bool
+	stopAtReference bool
 }
 
 func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool) bool {
 	type visitKey struct {
 		typeValue Type
-		stored    bool
+		isStored  bool
 	}
 	seen := make(map[visitKey]struct{})
 	var visit func(Type, bool) bool
@@ -220,7 +220,7 @@ func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool
 		if matches(current, stored) {
 			return true
 		}
-		key := visitKey{typeValue: current, stored: stored}
+		key := visitKey{typeValue: current, isStored: stored}
 		if _, found := seen[key]; found {
 			return false
 		}
@@ -250,7 +250,7 @@ func traversedChildState(relation TypeChildRelation, stored bool, traversal type
 	case TypeChildOwnedTarget, TypeChildArrayElement, TypeChildStructField, TypeChildEnumPayload:
 		return true, true
 	case TypeChildBorrowedTarget:
-		return stored, !traversal.referenceLeaf
+		return stored, !traversal.stopAtReference
 	case TypeChildOptionalPayload:
 		return stored, true
 	case TypeChildCallableParameter, TypeChildCallableReturn:

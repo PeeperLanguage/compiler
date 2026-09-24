@@ -393,7 +393,7 @@ func TestParseCompletionContextDuringNaturalPipeTyping(t *testing.T) {
 	} {
 		clean, position := markerPosition(t, source)
 		parsed := parseCompletionContext(clean, position)
-		if parsed.kind != completionOperation || !parsed.pipe || !strings.Contains(parsed.sentinel, completionSentinel+"(") {
+		if parsed.kind != completionOperation || !parsed.isPipeCompletion || !strings.Contains(parsed.sentinel, completionSentinel+"(") {
 			t.Fatalf("pipe context for %q = %#v", source, parsed)
 		}
 	}

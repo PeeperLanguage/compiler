@@ -147,9 +147,9 @@ func resolveStoredExpressionOrigins(expr ast.Expr, resolved Resolution, opts Res
 }
 
 func resolveStoredValueOrigins(typ typeinfo.Type, resolved Resolution, opts ResolveOptions) Resolution {
-	if _, _, reference := typeinfo.ReferenceValueTarget(typ); reference && opts.ReferenceOrigins != nil {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(typ); isReference && opts.ReferenceOrigins != nil {
 		resolved.ValueOrigins = CloneOrigins(opts.ReferenceOrigins(resolved.StorageOrigins))
-	} else if _, raw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); raw && opts.RawPointerOrigins != nil {
+	} else if _, isRaw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); isRaw && opts.RawPointerOrigins != nil {
 		resolved.ValueOrigins = CloneOrigins(opts.RawPointerOrigins(resolved.StorageOrigins))
 	}
 	return resolved
@@ -181,7 +181,7 @@ func MergeOrigins(left, right []Origin) []Origin {
 	for _, candidate := range right {
 		found := false
 		for _, existing := range merged {
-			if sameOrigin(existing, candidate) {
+			if areSameOrigin(existing, candidate) {
 				found = true
 				break
 			}
@@ -194,14 +194,14 @@ func MergeOrigins(left, right []Origin) []Origin {
 	return merged
 }
 
-func SameOrigins(left, right []Origin) bool {
+func AreSameOrigins(left, right []Origin) bool {
 	if len(left) != len(right) {
 		return false
 	}
 	for _, candidate := range left {
 		found := false
 		for _, existing := range right {
-			if sameOrigin(existing, candidate) {
+			if areSameOrigin(existing, candidate) {
 				found = true
 				break
 			}
@@ -232,7 +232,7 @@ func appendIndirectProjection(origins []Origin, base ast.Expr, exprType ExprType
 	if exprType == nil {
 		return origins
 	}
-	if _, owned := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); !owned {
+	if _, isOwned := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); !isOwned {
 		return origins
 	}
 	return appendOriginProjection(origins, OriginProjection{Kind: OriginPointee})
@@ -248,7 +248,7 @@ func appendVariantPayloadProjections(
 		return origins
 	}
 	if exprType != nil {
-		if _, _, reference := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(base))); reference {
+		if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(base))); isReference {
 			return origins
 		}
 	}
@@ -281,7 +281,7 @@ func appendOriginProjection(origins []Origin, projection OriginProjection) []Ori
 	return out
 }
 
-func sameOrigin(left, right Origin) bool {
+func areSameOrigin(left, right Origin) bool {
 	if left.Root != right.Root || len(left.Projections) != len(right.Projections) {
 		return false
 	}

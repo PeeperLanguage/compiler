@@ -118,7 +118,7 @@ func TestFunctionSignatureInstantiatesDynamicArrayOwner(t *testing.T) {
 				if i == 0 {
 					want = &typeinfo.RefType{Target: want, IsMutable: true}
 				}
-				if !typeinfo.SameType(fnType.Params[i], want) {
+				if !typeinfo.IsSameType(fnType.Params[i], want) {
 					t.Fatalf("%s parameter %d = %s, want %s", test.op, i, typeinfo.TypeText(fnType.Params[i]), typeinfo.TypeText(want))
 				}
 			}
@@ -133,7 +133,7 @@ func TestCollectionFunctionSignatures(t *testing.T) {
 	lenDefinition, ok := LookupFunction(symbols.CompilerOpLen)
 	lenType := lenDefinition.Signature(stringType, compilerTarget)
 	sizeType, sizeOK := typeinfo.NumericTypeFromName("usize", compilerTarget)
-	if !ok || lenDefinition.Kind != FunctionCollection || !sizeOK || lenType == nil || len(lenType.Params) != 1 || typeinfo.TypeText(lenType.Params[0]) != "&str" || !typeinfo.SameType(lenType.Return, sizeType) {
+	if !ok || lenDefinition.Kind != FunctionCollection || !sizeOK || lenType == nil || len(lenType.Params) != 1 || typeinfo.TypeText(lenType.Params[0]) != "&str" || !typeinfo.IsSameType(lenType.Return, sizeType) {
 		t.Fatalf("len(str) signature = %#v", lenType)
 	}
 	byteDefinition, ok := LookupFunction(symbols.CompilerOpAsBytes)

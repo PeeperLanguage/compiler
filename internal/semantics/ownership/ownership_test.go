@@ -415,8 +415,8 @@ func TestStoredReferenceUsesTHIRValueWithoutAST(t *testing.T) {
 	analysis := &analyzer{module: result.module}
 	captured := analysis.captureStoredReferences([]effect.Op{effect.Define{Value: valueID, ValueExpr: binding.Value}}, newState())
 	value := captured[valueID]
-	if !value.present || len(value.loans) != 1 || value.loans[0].id.node != ir.NodeID(valueID) ||
-		!place.SameOrigins(value.loans[0].origins, []place.Origin{{Root: fn.Params[0].Symbol}}) ||
+	if !value.isPresent || len(value.loans) != 1 || value.loans[0].id.node != ir.NodeID(valueID) ||
+		!place.AreSameOrigins(value.loans[0].origins, []place.Origin{{Root: fn.Params[0].Symbol}}) ||
 		value.loans[0].site != binding.Value.SourceInfo() || value.loans[0].site.Location == nil {
 		t.Fatalf("THIR reference provenance = %#v, want parameter loan", value)
 	}
@@ -1431,10 +1431,10 @@ fn inspect(value: ?Token) {
 		Root:        value,
 		Projections: []place.OriginProjection{{Kind: place.OriginVariantPayload, Case: ir.OptionalPresentCase}},
 	}}
-	if got := result.module.Flow.StorageOrigins(valueUse.ID()); !place.SameOrigins(got, storage) {
+	if got := result.module.Flow.StorageOrigins(valueUse.ID()); !place.AreSameOrigins(got, storage) {
 		t.Fatalf("payload storage origins = %#v, want carrier %#v", got, storage)
 	}
-	if got := result.module.Flow.ValueOrigins(valueUse.ID()); !place.SameOrigins(got, payload) {
+	if got := result.module.Flow.ValueOrigins(valueUse.ID()); !place.AreSameOrigins(got, payload) {
 		t.Fatalf("payload value origins = %#v, want %#v", got, payload)
 	}
 }
@@ -1509,7 +1509,7 @@ fn inspect(mut holder: Holder) {
 		{Kind: place.OriginField, Field: "values"},
 		{Kind: place.OriginIndex, Index: "1"},
 	}}}
-	if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[second]); !place.SameOrigins(got, want) {
+	if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[second]); !place.AreSameOrigins(got, want) {
 		t.Fatalf("second origins = %#v, want %#v", got, want)
 	}
 }
@@ -1531,7 +1531,7 @@ func TestReferenceOriginsCanonicalizeEquivalentConstantIndexes(t *testing.T) {
 	want := []place.Origin{{Root: values, Projections: []place.OriginProjection{{Kind: place.OriginIndex, Index: "1"}}}}
 	for _, name := range []string{"decimal", "padded", "hexadecimal"} {
 		sym, _ := analysis.functionScope.Lookup(name)
-		if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[sym]); !place.SameOrigins(got, want) {
+		if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[sym]); !place.AreSameOrigins(got, want) {
 			t.Fatalf("%s origins = %#v, want %#v", name, got, want)
 		}
 	}
@@ -1568,7 +1568,7 @@ fn parameter(maybe: ?&i32) {
 	value, _ := local.functionScope.Lookup("value")
 	copied, _ := local.functionScope.Lookup("copied")
 	want := []place.Origin{{Root: value}}
-	if got := referenceOrigins(local.inStates[localUse.cfgSite.ID].references[copied]); !place.SameOrigins(got, want) {
+	if got := referenceOrigins(local.inStates[localUse.cfgSite.ID].references[copied]); !place.AreSameOrigins(got, want) {
 		t.Fatalf("copied optional origins = %#v, want %#v", got, want)
 	}
 	if _, live := local.symbolLiveIn[localUse.cfgSite.ID][copied]; !live {
@@ -1579,7 +1579,7 @@ fn parameter(maybe: ?&i32) {
 	mutableFn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	mutableUse := analysisNodeForStmt(t, mutable, mutableFn.Body.Stmts[1])
 	maybeMutable, _ := mutable.functionScope.Lookup("maybe")
-	if tracked := mutable.inStates[mutableUse.cfgSite.ID].references[maybeMutable]; len(tracked) != 1 || !tracked[0].mutable {
+	if tracked := mutable.inStates[mutableUse.cfgSite.ID].references[maybeMutable]; len(tracked) != 1 || !tracked[0].isMutable {
 		t.Fatalf("optional mutable reference lost mutable loan kind")
 	}
 
@@ -1596,7 +1596,7 @@ fn parameter(maybe: ?&i32) {
 	parameterUse := analysisNodeForStmt(t, parameter, parameterFn.Body.Stmts[0])
 	maybeParameter, _ := parameter.functionScope.Lookup("maybe")
 	parameterValue := parameter.inStates[parameterUse.cfgSite.ID].references[maybeParameter]
-	if !place.SameOrigins(referenceOrigins(parameterValue), []place.Origin{{Root: maybeParameter}}) {
+	if !place.AreSameOrigins(referenceOrigins(parameterValue), []place.Origin{{Root: maybeParameter}}) {
 		t.Fatalf("optional reference parameter origins = %#v", referenceOrigins(parameterValue))
 	}
 	if _, live := parameter.symbolLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
@@ -1623,7 +1623,7 @@ func TestReferenceOriginsUnionAtConditionalJoin(t *testing.T) {
 	right, _ := analysis.functionScope.Lookup("right")
 	want := []place.Origin{{Root: left}, {Root: right}}
 	selectedValue := analysis.inStates[copyNode.cfgSite.ID].references[selected]
-	if got := referenceOrigins(selectedValue); !place.SameOrigins(got, want) {
+	if got := referenceOrigins(selectedValue); !place.AreSameOrigins(got, want) {
 		t.Fatalf("joined origins = %#v, want %#v", got, want)
 	}
 	if len(selectedValue) != 2 {

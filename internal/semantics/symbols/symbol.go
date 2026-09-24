@@ -47,22 +47,22 @@ const (
 )
 
 type Symbol struct {
-	ID               SymbolID
-	Name             string
-	Kind             Kind
-	Type             typeinfo.Type
-	IsPub            bool
-	Mutable          bool
-	IsReceiver       bool
-	used             bool
-	requiresMutable  bool
-	CompilerOp       CompilerOp
-	ExternalLinkName *string
-	DefiningModule   moduleid.ID
-	Location         *source.Location
-	MutableLocation  *source.Location
-	ASTNode          ast.Node
-	Scope            *Scope
+	ID                     SymbolID
+	Name                   string
+	Kind                   Kind
+	Type                   typeinfo.Type
+	IsPub                  bool
+	AllowsMutation         bool
+	IsReceiver             bool
+	isUsed                 bool
+	requiresMutableBinding bool
+	CompilerOp             CompilerOp
+	ExternalLinkName       *string
+	DefiningModule         moduleid.ID
+	Location               *source.Location
+	MutableLocation        *source.Location
+	ASTNode                ast.Node
+	Scope                  *Scope
 }
 
 func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
@@ -75,11 +75,11 @@ func New(name string, kind Kind, node ast.Node, location *source.Location) *Symb
 		ASTNode:  node,
 	}
 	if declaration, ok := node.(*ast.LetDecl); ok && declaration != nil {
-		sym.Mutable = declaration.IsMutable
+		sym.AllowsMutation = declaration.IsMutable
 		sym.MutableLocation = declaration.MutableLocation
 	}
 	if declaration, ok := node.(*ast.FnDecl); ok && (kind == SymbolFunc || kind == SymbolMethod) {
-		if name, external := ast.FunctionLinkName(declaration, sym.Name); external {
+		if name, isExternal := ast.FunctionLinkName(declaration, sym.Name); isExternal {
 			sym.ExternalLinkName = &name
 		}
 	}
@@ -105,26 +105,26 @@ func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 
 func (s *Symbol) MarkUsed() {
 	if s != nil {
-		s.used = true
+		s.isUsed = true
 	}
 }
 
 func (s *Symbol) IsUsed() bool {
-	return s != nil && s.used
+	return s != nil && s.isUsed
 }
 
 func (s *Symbol) RequireMutable() {
 	if s != nil {
-		s.requiresMutable = true
+		s.requiresMutableBinding = true
 	}
 }
 
 func (s *Symbol) RequiresMutable() bool {
-	return s != nil && s.requiresMutable
+	return s != nil && s.requiresMutableBinding
 }
 
 func (s *Symbol) IsMutable() bool {
-	return s != nil && s.Mutable
+	return s != nil && s.AllowsMutation
 }
 
 func IsPubName(name string) bool {

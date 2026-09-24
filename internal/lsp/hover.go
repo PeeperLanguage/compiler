@@ -631,7 +631,7 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 			method := &t.Methods[i]
 			methodSymbol := &symbols.Symbol{Name: method.Name, Kind: symbols.SymbolMethod, Type: method.CallableType()}
 			b.WriteString("  ")
-			b.WriteString(renderSymbol(methodSymbol, symbolRenderContext{Embedded: true}))
+			b.WriteString(renderSymbol(methodSymbol, symbolRenderContext{IsEmbedded: true}))
 			b.WriteString(",\n")
 		}
 		b.WriteString("}")
@@ -675,7 +675,7 @@ func formatHoverMethods(methods []*symbols.Symbol) string {
 		if method == nil {
 			continue
 		}
-		signature := renderSymbol(method, symbolRenderContext{Embedded: true})
+		signature := renderSymbol(method, symbolRenderContext{IsEmbedded: true})
 		if signature == "" {
 			continue
 		}

@@ -123,7 +123,7 @@ func findMissingReturnBranches(fn *ControlFlowGraph) []*Block {
 	found := make([]*Block, 0)
 	seen := make(map[*Block]bool)
 	for block := range reachesExit {
-		if structuredControl(block.Origin) {
+		if isStructuredControl(block.Origin) {
 			if !seen[block] {
 				found = append(found, block)
 				seen[block] = true
@@ -139,7 +139,7 @@ func findMissingReturnBranches(fn *ControlFlowGraph) []*Block {
 				continue
 			}
 			traceSeen[current] = true
-			if structuredControl(current.Origin) {
+			if isStructuredControl(current.Origin) {
 				if !seen[current] {
 					found = append(found, current)
 					seen[current] = true
@@ -167,12 +167,12 @@ func predecessorBlocks(fn *ControlFlowGraph, block *Block) []*Block {
 	return blocks
 }
 
-// structuredControl reports whether a block is part of a structured construct
+// isStructuredControl reports whether a block is part of a structured construct
 // rather than a plain continuation. Missing-return reporting walks back to the
 // nearest such block to name the branch that falls through. A loop exit is a
 // continuation despite carrying a loop role: the code after the loop lives
 // there, and reporting it would name the wrong branch.
-func structuredControl(origin BlockOrigin) bool {
+func isStructuredControl(origin BlockOrigin) bool {
 	switch origin {
 	case BlockNormal, BlockLoopExit:
 		return false
@@ -220,10 +220,10 @@ func locContains(outer, inner *source.Location) bool {
 	if inner.Filename != nil {
 		innerFile = *inner.Filename
 	}
-	return outerFile == innerFile && !posLess(inner.Start, outer.Start) && !posLess(outer.End, inner.End)
+	return outerFile == innerFile && !isPositionBefore(inner.Start, outer.Start) && !isPositionBefore(outer.End, inner.End)
 }
 
-func posLess(left, right *source.Position) bool {
+func isPositionBefore(left, right *source.Position) bool {
 	if left == nil || right == nil {
 		return false
 	}
@@ -236,14 +236,14 @@ func posLess(left, right *source.Position) bool {
 func sortMissingBranches(blocks []*Block) {
 	for index := range blocks {
 		for other := index + 1; other < len(blocks); other++ {
-			if blocks[index] != nil && blocks[other] != nil && laterLoc(blocks[other].Location, blocks[index].Location) {
+			if blocks[index] != nil && blocks[other] != nil && isLaterLocation(blocks[other].Location, blocks[index].Location) {
 				blocks[index], blocks[other] = blocks[other], blocks[index]
 			}
 		}
 	}
 }
 
-func laterLoc(left, right *source.Location) bool {
+func isLaterLocation(left, right *source.Location) bool {
 	if left == nil || left.Start == nil {
 		return false
 	}

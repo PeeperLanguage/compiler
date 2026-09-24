@@ -63,7 +63,7 @@ func TestInfoUsesArchitectureWidthAndTriple(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !info.Valid() || info.PointerBits != tt.bits || info.IndexBits != tt.bits || info.LLVMTriple != tt.want {
+			if !info.IsValid() || info.PointerBits != tt.bits || info.IndexBits != tt.bits || info.LLVMTriple != tt.want {
 				t.Fatalf("Info = %#v", info)
 			}
 		})

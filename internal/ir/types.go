@@ -125,20 +125,20 @@ func (t Type) OptionalPayload() (TypeID, bool) {
 // TypeTable is owned by one CompilerContext. It is canonical storage for IR
 // types, their diagnostics text, and ABI identity.
 type TypeTable struct {
-	mu        sync.RWMutex
-	types     []Type
-	ids       map[string]TypeID
-	abiKeys   map[string]TypeID
-	complete  []bool
-	indexType TypeID
+	mu         sync.RWMutex
+	types      []Type
+	ids        map[string]TypeID
+	abiKeys    map[string]TypeID
+	isComplete []bool
+	indexType  TypeID
 }
 
 func NewTypeTable() *TypeTable {
 	return &TypeTable{
-		types:    []Type{{Name: "<invalid>"}},
-		ids:      make(map[string]TypeID),
-		abiKeys:  make(map[string]TypeID),
-		complete: []bool{false},
+		types:      []Type{{Name: "<invalid>"}},
+		ids:        make(map[string]TypeID),
+		abiKeys:    make(map[string]TypeID),
+		isComplete: []bool{false},
 	}
 }
 
@@ -154,7 +154,7 @@ func (t *TypeTable) Intern(typ Type) TypeID {
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(typ))
-	t.complete = append(t.complete, true)
+	t.isComplete = append(t.isComplete, true)
 	t.ids[key] = id
 	t.abiKeys[t.abiKeyLocked(id)] = id
 	return id
@@ -178,7 +178,7 @@ func (t *TypeTable) ReserveNamed(shell Type) (TypeID, error) {
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(shell))
-	t.complete = append(t.complete, false)
+	t.isComplete = append(t.isComplete, false)
 	t.ids[key] = id
 	return id, nil
 }
@@ -202,14 +202,14 @@ func (t *TypeTable) CompleteNamed(id TypeID, typ Type) error {
 	if !shellOK || shellKey != key {
 		return fmt.Errorf("completing named IR TypeID %d with mismatched identity", id)
 	}
-	if t.complete[id] {
+	if t.isComplete[id] {
 		if descriptorKey(t.types[id]) != descriptorKey(typ) {
 			return fmt.Errorf("named IR type %q completed with conflicting descriptor", typ.Name)
 		}
 		return nil
 	}
 	t.types[id] = cloneType(typ)
-	t.complete[id] = true
+	t.isComplete[id] = true
 	t.abiKeys[t.abiKeyLocked(id)] = id
 	return nil
 }
@@ -254,7 +254,7 @@ func (t *TypeTable) Type(id TypeID) (Type, bool) {
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if id == InvalidType || int(id) >= len(t.types) || !t.complete[id] {
+	if id == InvalidType || int(id) >= len(t.types) || !t.isComplete[id] {
 		return Type{}, false
 	}
 	return t.types[id], true
@@ -300,10 +300,10 @@ func (t *TypeTable) NamedTypeIDs() []TypeID {
 	defer t.mu.RUnlock()
 	ids := make([]TypeID, 0)
 	for index := 1; index < len(t.types); index++ {
-		if !t.complete[index] {
+		if !t.isComplete[index] {
 			continue
 		}
-		if _, named := identifiedTypeKey(t.types[index]); named {
+		if _, isNamed := identifiedTypeKey(t.types[index]); isNamed {
 			ids = append(ids, TypeID(index))
 		}
 	}
@@ -359,7 +359,7 @@ func (t *TypeTable) textLocked(id TypeID) string {
 		}
 		return prefix + t.textLocked(typ.Elem)
 	case TypeVariant:
-		if payload, optional := typ.OptionalPayload(); optional {
+		if payload, isOptional := typ.OptionalPayload(); isOptional {
 			return "?" + t.textLocked(payload)
 		}
 		if typ.Family == VariantFamilyNamed && typ.Name != "" {

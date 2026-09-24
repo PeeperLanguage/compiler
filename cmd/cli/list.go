@@ -50,14 +50,14 @@ func ListCommand(_ []string) error {
 	transitiveCount := 0
 	entries := lockfile.Packages
 	for _, entry := range entries {
-		if !entry.Direct {
+		if !entry.IsDirect {
 			transitiveCount++
 		}
 	}
 	if transitiveCount > 0 {
 		fmt.Printf("\nTransitive dependencies (%d):\n", transitiveCount)
 		for depName, entry := range entries {
-			if !entry.Direct {
+			if !entry.IsDirect {
 				fmt.Printf("  %s @ %s\n", depName, entry.Version)
 				if len(entry.UsedBy) > 0 {
 					fmt.Printf("    Used by: %v\n", entry.UsedBy)

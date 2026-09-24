@@ -362,7 +362,7 @@ type variantType interface {
 // Variant types own their cases; this boundary adds declaration identity.
 func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 	identity := ""
-	if enumIdentity, nominal := nominalEnumIdentity(t); nominal {
+	if enumIdentity, isNominal := nominalEnumIdentity(t); isNominal {
 		identity = enumIdentity
 	} else if defined, ok := t.(*DefinedType); ok && defined != nil && defined.Kind != DefinedKindAlias {
 		identity = defined.Identity

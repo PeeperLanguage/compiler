@@ -26,12 +26,12 @@ func buildTypedModule(t *testing.T, source string) *module.Module {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	mod := &module.Module{
-		ID:              moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "thir_test"},
-		FilePath:        filePath,
-		Content:         source,
-		ContentProvided: true,
-		AST:             parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
-		Imports:         make(map[string]module.ResolvedImport),
+		ID:                 moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "thir_test"},
+		FilePath:           filePath,
+		Content:            source,
+		HasProvidedContent: true,
+		AST:                parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
+		Imports:            make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(mod)
 	collector.Collect(ctx, mod)

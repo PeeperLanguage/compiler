@@ -40,28 +40,28 @@ var highlightNumberPattern = regexp.MustCompile("^" + numeric.NumberTokenPattern
 
 // SyntaxHighlighter provides syntax highlighting for Peeper code snippets
 type SyntaxHighlighter struct {
-	enabled bool
-	logger  *colors.Logger
+	isEnabled bool
+	logger    *colors.Logger
 }
 
 // NewSyntaxHighlighter creates a new syntax highlighter
 func NewSyntaxHighlighter(enabled bool, logger *colors.Logger) *SyntaxHighlighter {
-	return &SyntaxHighlighter{enabled: enabled, logger: logger}
+	return &SyntaxHighlighter{isEnabled: enabled, logger: logger}
 }
 
 // Enable turns on syntax highlighting
 func (sh *SyntaxHighlighter) Enable() {
-	sh.enabled = true
+	sh.isEnabled = true
 }
 
 // Disable turns off syntax highlighting
 func (sh *SyntaxHighlighter) Disable() {
-	sh.enabled = false
+	sh.isEnabled = false
 }
 
 // IsEnabled returns whether syntax highlighting is enabled
 func (sh *SyntaxHighlighter) IsEnabled() bool {
-	return sh.enabled
+	return sh.isEnabled
 }
 
 // Token represents a highlighted token
@@ -73,7 +73,7 @@ type Token struct {
 // Highlight applies syntax highlighting to a line of code
 // Returns a slice of tokens with their associated colors
 func (sh *SyntaxHighlighter) Highlight(line string) []Token {
-	if !sh.enabled {
+	if !sh.isEnabled {
 		return []Token{{Text: line, Color: colors.WHITE}}
 	}
 
@@ -197,7 +197,7 @@ func (sh *SyntaxHighlighter) Highlight(line string) []Token {
 
 // HighlightLine returns a highlighted line as a string ready for printing
 func (sh *SyntaxHighlighter) HighlightLine(line string) string {
-	if !sh.enabled {
+	if !sh.isEnabled {
 		return line
 	}
 
@@ -214,7 +214,7 @@ func (sh *SyntaxHighlighter) HighlightLine(line string) string {
 // HighlightWithColor applies syntax highlighting and returns colored string
 // This is useful for printing directly to output
 func (sh *SyntaxHighlighter) HighlightWithColor(line string, writer io.Writer) {
-	if !sh.enabled {
+	if !sh.isEnabled {
 		fmt.Fprint(writer, line)
 		return
 	}
@@ -228,7 +228,7 @@ func (sh *SyntaxHighlighter) HighlightWithColor(line string, writer io.Writer) {
 // HighlightWithBaseColor applies syntax highlighting with a base color override.
 // Tokens that are normally white inherit the base color.
 func (sh *SyntaxHighlighter) HighlightWithBaseColor(line string, writer io.Writer, base colors.COLOR) {
-	if !sh.enabled {
+	if !sh.isEnabled {
 		if base != "" {
 			sh.logger.Fprint(writer, base, line)
 		} else {

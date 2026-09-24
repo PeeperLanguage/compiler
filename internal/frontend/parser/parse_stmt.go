@@ -305,7 +305,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 		}
 		var fields []ast.MatchPatternField
 		var binding *ast.Ident
-		discard := false
+		isDiscard := false
 		hasData := p.match(token.WITH)
 		endPos := ast.EndOf(casePath)
 		if hasData {
@@ -314,7 +314,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 				fields, end, _ = p.parseMatchPatternFields()
 				endPos = end.End
 			} else if p.at(token.IDENT) && p.current().Literal == "_" {
-				discard = true
+				isDiscard = true
 				endPos = p.advance().End
 			} else {
 				binding = p.parseIdent()
@@ -339,7 +339,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 		arms = append(arms, reg(p, &ast.MatchArm{
 			Case:      casePath,
 			Binding:   binding,
-			IsDiscard: discard,
+			IsDiscard: isDiscard,
 			Fields:    fields,
 			HasData:   hasData,
 			Body:      body,

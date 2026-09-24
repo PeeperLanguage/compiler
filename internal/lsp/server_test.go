@@ -1146,7 +1146,7 @@ func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
 		Return:     &typeinfo.BoolType{},
 	}
 
-	got := renderSymbol(sym, symbolRenderContext{Embedded: true})
+	got := renderSymbol(sym, symbolRenderContext{IsEmbedded: true})
 	want := "fn (self: &str) contains(needle: byte) -> bool"
 	if got != want {
 		t.Fatalf("synthetic method hover = %q, want %q", got, want)

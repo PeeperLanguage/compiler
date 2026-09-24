@@ -58,7 +58,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		if c.rejectTemporaryBorrowEscape(scope, node.Value, "return") {
 			return
 		}
-		if !c.assignable(returnType, retType, node.Value) {
+		if !c.isAssignable(returnType, retType, node.Value) {
 			d := typeMismatchError(node.Value,
 				fmt.Sprintf("cannot return %s from function returning %s",
 					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)))
@@ -129,8 +129,8 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 	if typeinfo.IsInvalidOrUnknown(subjectType) {
 		return
 	}
-	descriptor, named := typeinfo.VariantDescriptorOf(subjectType)
-	if !named || descriptor.Family != typeinfo.VariantFamilyNamed {
+	descriptor, isNamed := typeinfo.VariantDescriptorOf(subjectType)
+	if !isNamed || descriptor.Family != typeinfo.VariantFamilyNamed {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
 			"match subject must be a named enum, got "+typeinfo.TypeText(subjectType)))
 		return
@@ -168,7 +168,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			c.checkBlock(scope, arm.Body, returnType)
 			continue
 		}
-		if !typeinfo.SameType(subjectType, resolved.EnumType) {
+		if !typeinfo.IsSameType(subjectType, resolved.EnumType) {
 			evidenceComplete = false
 			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
 				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(resolved.EnumType))))
@@ -280,7 +280,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	if c.rejectTemporaryBorrowEscape(scope, node.Value, "assignment") {
 		return
 	}
-	if !c.assignable(targetType, valueType, node.Value) {
+	if !c.isAssignable(targetType, valueType, node.Value) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
@@ -328,15 +328,15 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			sharedReference typeinfo.Type
 			mutableBinding  *symbols.Symbol
 		)
-		if refTarget, mutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); ok {
-			if mutable {
+		if refTarget, isMutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); ok {
+			if isMutable {
 				return
 			}
 			sharedReference = refTarget
 		} else {
-			var mutable bool
-			mutable, sharedReference, mutableBinding = c.mutableAddressableExpr(scope, target.Expr)
-			if mutable {
+			var isMutable bool
+			isMutable, sharedReference, mutableBinding = c.mutableAddressableExpr(scope, target.Expr)
+			if isMutable {
 				if mutableBinding != nil {
 					mutableBinding.RequireMutable()
 				}
@@ -388,7 +388,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	if shape == indexableMutableSliceView {
 		return true
 	}
-	if mutable, _, mutableBinding := c.mutableAddressableExpr(scope, target.Expr); mutable {
+	if isMutable, _, mutableBinding := c.mutableAddressableExpr(scope, target.Expr); isMutable {
 		if mutableBinding != nil {
 			mutableBinding.RequireMutable()
 		}
@@ -492,7 +492,7 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 		sym.BindType(&typeinfo.InvalidType{})
 		return
 	}
-	if declType != nil && !c.assignable(declType, valType, value) {
+	if declType != nil && !c.isAssignable(declType, valType, value) {
 		d := typeMismatchError(value,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valType), typeinfo.TypeText(declType)))
@@ -579,7 +579,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				c.ctx.Diagnostics.Add(typeMismatchError(rangeExpr,
 					"range bounds of type "+typeinfo.TypeText(startType)+" and "+typeinfo.TypeText(endType)+" have no common integer type"))
 			} else {
-				if !c.assignable(elemType, startType, rangeExpr.Start) || !c.assignable(elemType, endType, rangeExpr.End) {
+				if !c.isAssignable(elemType, startType, rangeExpr.Start) || !c.isAssignable(elemType, endType, rangeExpr.End) {
 					valid = false
 				}
 			}
@@ -615,7 +615,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				exprType := func(expr ast.Expr) typeinfo.Type {
 					return c.typeExpr(scope, expr, nil)
 				}
-				if !place.Addressable(scope, node.Iterable, exprType, c.module.ExpandedDefaultBinding) {
+				if !place.IsAddressable(scope, node.Iterable, exprType, c.module.ExpandedDefaultBinding) {
 					valid = false
 					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
 						"for-in requires addressable array storage"))
@@ -626,7 +626,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
 					"for-in requires copyable sequence elements; iterate indexes and borrow move-only elements explicitly"))
 			}
-			if _, array := typeinfo.Underlying(iterableType).(*typeinfo.ArrayType); array {
+			if _, isArray := typeinfo.Underlying(iterableType).(*typeinfo.ArrayType); isArray {
 				carrierType = &typeinfo.RefType{Target: iterableType}
 			} else {
 				carrierType = iterableType
@@ -634,14 +634,14 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			evidence.ElementType = elem
 		} else {
 			if valid {
-				call, callExpr := node.Iterable.(*ast.CallExpr)
-				optional, optionalResult := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
+				call, isCallExpression := node.Iterable.(*ast.CallExpr)
+				optional, isOptionalResultType := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
 				switch {
-				case !callExpr:
+				case !isCallExpression:
 					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+typeinfo.TypeText(iterableType)).
 						WithHelp("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
 						WithNote("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
-				case !optionalResult || optional.Inner == nil:
+				case !isOptionalResultType || optional.Inner == nil:
 					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "iterator call must return an optional item").
 						WithHelp("return an optional type, such as `?i32`: return an item to continue, or `none` to end the loop"))
 				case node.Index != nil:
@@ -810,7 +810,7 @@ func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context st
 func (c *checker) rejectBindingReferenceStorage(scope *symbols.Scope, typ typeinfo.Type, site ast.Node) bool {
 	moduleBinding := c != nil && c.module != nil && scope == c.module.ModuleScope
 	if !moduleBinding {
-		if descriptor, variant := typeinfo.VariantDescriptorOf(typ); variant && descriptor.Family == typeinfo.VariantFamilyNamed {
+		if descriptor, isVariant := typeinfo.VariantDescriptorOf(typ); isVariant && descriptor.Family == typeinfo.VariantFamilyNamed {
 			for _, variantCase := range descriptor.Cases {
 				payload, _ := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
 				if payload == nil {
@@ -872,12 +872,12 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 		}
 		return c.module.BaseExprType(node.ID())
 	}
-	if _, _, reference := typeinfo.ReferenceValueTarget(exprType(expr)); !reference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(exprType(expr)); !isReference {
 		return nil
 	}
 	switch node := expr.(type) {
 	case *ast.AddressExpr:
-		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
 			return nil
 		}
 		return node
@@ -888,8 +888,8 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
 				return temporary
 			}
-			if c.module.Typechecking.ImplicitCallArgument(source.ID()) != nil && !place.Addressable(scope, source, exprType, c.module.ExpandedDefaultBinding) {
-				if _, _, reference := typeinfo.ReferenceValueTarget(exprType(source)); !reference {
+			if c.module.Typechecking.ImplicitCallArgument(source.ID()) != nil && !place.IsAddressable(scope, source, exprType, c.module.ExpandedDefaultBinding) {
+				if _, _, isReference := typeinfo.ReferenceValueTarget(exprType(source)); !isReference {
 					return source
 				}
 			}
@@ -900,14 +900,14 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
 			return node
 		}
 	case *ast.IndexExpr:
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
 			return node
 		}
 	}

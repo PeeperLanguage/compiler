@@ -21,13 +21,13 @@ import (
 )
 
 type Parser struct {
-	filePath      string
-	stream        []token.Token
-	diag          *diagnostics.DiagnosticBag
-	pos           int
-	nodeID        ast.NodeID
-	context       []string // parsing context stack for error messages
-	controlHeader bool
+	filePath        string
+	stream          []token.Token
+	diag            *diagnostics.DiagnosticBag
+	pos             int
+	nodeID          ast.NodeID
+	context         []string // parsing context stack for error messages
+	isControlHeader bool
 }
 
 const (

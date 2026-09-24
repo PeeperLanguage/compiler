@@ -368,20 +368,20 @@ func (r *Result) ForEachValueUse(fn func(ast.NodeID, typeinfo.UseKind)) {
 	}
 }
 
-func (r *Result) RecordReferenceArgument(id ast.NodeID, mutable bool) {
+func (r *Result) RecordReferenceArgument(id ast.NodeID, isMutable bool) {
 	if r != nil && id != 0 {
-		r.expressions.referenceArguments[id] = mutable
+		r.expressions.referenceArguments[id] = isMutable
 	}
 }
 
 // ReferenceArgument reports whether an argument's parameter is a reference and,
 // when it is, whether that reference is mutable.
-func (r *Result) ReferenceArgument(id ast.NodeID) (mutable bool, found bool) {
+func (r *Result) ReferenceArgument(id ast.NodeID) (isMutable bool, found bool) {
 	if r == nil || id == 0 {
 		return false, false
 	}
-	mutable, found = r.expressions.referenceArguments[id]
-	return mutable, found
+	isMutable, found = r.expressions.referenceArguments[id]
+	return isMutable, found
 }
 
 func (r *Result) RecordCallArguments(id ast.NodeID, args []ast.Expr) {
