@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
+	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/effect"
@@ -17,7 +18,7 @@ import (
 )
 
 type loanID struct {
-	node      ast.Node
+	node      ir.NodeID
 	parameter *symbols.Symbol
 }
 
@@ -28,19 +29,14 @@ type referenceLoan struct {
 	id      loanID
 	origins []place.Origin
 	mutable bool
-	site    ast.Node
+	site    ir.SourceInfo
 	loop    ast.NodeID
-}
-
-type symbolUse struct {
-	symbol *symbols.Symbol
-	site   ast.Node
 }
 
 type loanFact struct {
 	loan         referenceLoan
 	holder       *symbols.Symbol
-	keepingAlive ast.Node
+	keepingAlive ir.SourceInfo
 }
 
 type loanContext struct {
@@ -48,7 +44,7 @@ type loanContext struct {
 	temporary  []loanFact
 	reserved   []loanFact
 	remaining  map[*symbols.Symbol]int
-	liveOut    map[*symbols.Symbol]ast.Node
+	liveOut    map[*symbols.Symbol]ir.SourceInfo
 }
 
 type storageAccess uint8
@@ -80,8 +76,8 @@ func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
 		remaining: make(map[*symbols.Symbol]int),
 		liveOut:   a.symbolLiveOut[node.cfgSite.ID],
 	}
-	for _, use := range a.symbolUseSequence(node, referenceHoldingSymbol) {
-		ctx.remaining[use.symbol]++
+	for _, sym := range a.symbolUseSequence(node, referenceHoldingSymbol) {
+		ctx.remaining[sym]++
 	}
 	for sym, value := range st.references {
 		keepingAlive, live := a.symbolLiveIn[node.cfgSite.ID][sym]
@@ -134,17 +130,17 @@ func (ctx *loanContext) removeHolder(sym *symbols.Symbol) {
 	ctx.persistent = kept
 }
 
-func (ctx *loanContext) addTemporary(value []referenceLoan, call ast.Node) {
+func (ctx *loanContext) addTemporary(value []referenceLoan) {
 	if ctx == nil {
 		return
 	}
 	for _, loan := range value {
-		ctx.temporary = append(ctx.temporary, loanFact{loan: loan, keepingAlive: call})
+		ctx.temporary = append(ctx.temporary, loanFact{loan: loan})
 	}
 }
 
 func (a *analyzer) checkStorageAccess(
-	expr ast.Expr,
+	expr thir.Expr,
 	loans *loanContext,
 	access storageAccess,
 ) {
@@ -154,13 +150,13 @@ func (a *analyzer) checkStorageAccess(
 	origins := a.originsForExpr(expr)
 	if access == storageMutate && a.module != nil && a.module.Flow != nil {
 		// Replacing a reference slot mutates the carrier, not its old referent.
-		origins = a.module.Flow.StorageOrigins(expr.ID())
+		origins = a.module.Flow.StorageOrigins(ast.NodeID(expr.SourceInfo().NodeID))
 	}
 	a.reportLoanConflict(
 		origins,
-		a.referenceHolder(expr),
+		referenceHolder(expr),
 		access,
-		expr,
+		expr.SourceInfo(),
 		loans,
 	)
 }
@@ -169,7 +165,7 @@ func (a *analyzer) reportLoanConflict(
 	origins []place.Origin,
 	exempt *symbols.Symbol,
 	access storageAccess,
-	site ast.Node,
+	site ir.SourceInfo,
 	loans *loanContext,
 ) {
 	if a == nil || len(origins) == 0 || loans == nil {
@@ -222,8 +218,8 @@ func (a *analyzer) reportLoanConflict(
 	case storageDestroy:
 		message = "cannot destroy storage while it is borrowed"
 	}
-	diag := a.diagnostics.AddError(diagnostics.ErrBorrowConflict, message, ast.LocOf(site), "conflicting access")
-	addLoanConflictLabels(diag, conflict, reservedConflict, nil)
+	diag := a.diagnostics.AddError(diagnostics.ErrBorrowConflict, message, site.Location, "conflicting access")
+	addLoanConflictLabels(diag, conflict, reservedConflict)
 }
 
 func (a *analyzer) activateCallReservations(location *source.Location, mark int, loans *loanContext) {
@@ -256,10 +252,10 @@ func (a *analyzer) activateCallReservations(location *source.Location, mark int,
 			location,
 			"mutable borrow activates here",
 		)
-		if reservation.loan.site != nil {
-			diag.WithSecondaryLabel(ast.LocOf(reservation.loan.site), "mutable borrow reserved here")
+		if reservation.loan.site.Location != nil {
+			diag.WithSecondaryLabel(reservation.loan.site.Location, "mutable borrow reserved here")
 		}
-		addLoanConflictLabels(diag, conflict, reservedConflict, nil)
+		addLoanConflictLabels(diag, conflict, reservedConflict)
 	}
 }
 
@@ -267,7 +263,6 @@ func addLoanConflictLabels(
 	diag *diagnostics.Diagnostic,
 	conflict *loanFact,
 	reservationConflict bool,
-	excludedKeepingAlive ast.Node,
 ) {
 	if diag == nil || conflict == nil {
 		return
@@ -278,11 +273,11 @@ func addLoanConflictLabels(
 	} else if conflict.loan.mutable {
 		borrowKind = "mutable borrow created here"
 	}
-	if conflict.loan.site != nil {
-		diag.WithSecondaryLabel(ast.LocOf(conflict.loan.site), borrowKind)
+	if conflict.loan.site.Location != nil {
+		diag.WithSecondaryLabel(conflict.loan.site.Location, borrowKind)
 	}
-	if conflict.keepingAlive == nil || conflict.keepingAlive == conflict.loan.site ||
-		conflict.keepingAlive == excludedKeepingAlive {
+	if conflict.keepingAlive.NodeID == 0 || conflict.keepingAlive.NodeID == conflict.loan.site.NodeID ||
+		conflict.keepingAlive.Location == nil {
 		return
 	}
 	keepingMessage := "borrow remains live until this use"
@@ -291,7 +286,7 @@ func addLoanConflictLabels(
 	} else if conflict.holder == nil {
 		keepingMessage = "borrow remains active until this call completes"
 	}
-	diag.WithSecondaryLabel(ast.LocOf(conflict.keepingAlive), keepingMessage)
+	diag.WithSecondaryLabel(conflict.keepingAlive.Location, keepingMessage)
 }
 
 func overlappingLoan(origins []place.Origin, facts []loanFact, exempt *symbols.Symbol) *loanFact {
@@ -306,25 +301,17 @@ func overlappingLoan(origins []place.Origin, facts []loanFact, exempt *symbols.S
 	return nil
 }
 
-func (a *analyzer) referenceHolder(expr ast.Expr) *symbols.Symbol {
-	if a == nil || a.module == nil || a.module.Bindings == nil || expr == nil {
+func referenceHolder(expr thir.Expr) *symbols.Symbol {
+	if expr == nil {
 		return nil
 	}
-	if address, taken := expr.(*ast.AddressExpr); taken {
-		if address == nil {
-			return nil
-		}
-		expr = address.Expr
+	if address, taken := expr.(*thir.Address); taken {
+		expr = address.Value
 	}
-	root, _, ok := place.Decompose(expr)
-	if !ok {
+	if expr == nil || expr.ExprPlace() == nil {
 		return nil
 	}
-	ident, ok := root.(*ast.Ident)
-	if !ok || ident == nil {
-		return nil
-	}
-	sym := a.module.Bindings.Symbol(ident)
+	sym := expr.ExprPlace().Root
 	if _, reference := referenceMutability(sym); reference {
 		return sym
 	}
@@ -343,14 +330,29 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 	if a.module.Flow == nil {
 		return []referenceLoan{}, false
 	}
-	if _, mutable, ok := typeinfo.ReferenceValueTarget(expr.ExprType()); ok {
-		origins := a.module.Flow.ValueOrigins(ast.NodeID(expr.SourceInfo().NodeID))
+	id := ast.NodeID(expr.SourceInfo().NodeID)
+	if _, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr)); ok {
+		if _, projected := expr.(*thir.Field); projected {
+			var value []referenceLoan
+			for _, storage := range a.module.Flow.StorageOrigins(id) {
+				for _, loan := range st.references[storage.Root] {
+					if slices.Equal(loan.path, storage.Projections) {
+						loan.path = nil
+						value = append(value, loan)
+					}
+				}
+			}
+			if len(value) > 0 {
+				return copyReferenceLoans(value), true
+			}
+		}
+		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(id))
 		if len(origins) == 0 {
 			return []referenceLoan{}, false
 		}
-		return []referenceLoan{{id: loanID{node: a.module.TypedASTNodes[ast.NodeID(expr.SourceInfo().NodeID)]}, origins: origins, mutable: mutable}}, true
+		return []referenceLoan{{id: loanID{node: expr.SourceInfo().NodeID}, origins: origins, mutable: mutable, site: expr.SourceInfo()}}, true
 	}
-	slots, aggregate := a.module.Flow.AggregateSlots(ast.NodeID(expr.SourceInfo().NodeID))
+	slots, aggregate := a.module.Flow.AggregateSlots(id)
 	if aggregate {
 		var loans []referenceLoan
 		for _, slot := range slots {
@@ -368,77 +370,14 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 	return []referenceLoan{}, false
 }
 
-func (a *analyzer) referenceValueForExpr(expr ast.Expr, st state) ([]referenceLoan, bool) {
-	if a == nil || expr == nil {
-		return []referenceLoan{}, false
-	}
-	if ident, ok := expr.(*ast.Ident); ok {
-		sym := a.module.Bindings.Symbol(ident)
-		if referenceHoldingSymbol(sym) {
-			if value, found := st.references[sym]; found {
-				return copyReferenceLoans(value), true
-			}
-		}
-	}
-	_, mutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr))
-	if ok {
-		if _, projected := expr.(*ast.SelectorExpr); projected && a.module.Flow != nil {
-			var value []referenceLoan
-			for _, storage := range a.module.Flow.StorageOrigins(expr.ID()) {
-				for _, loan := range st.references[storage.Root] {
-					if slices.Equal(loan.path, storage.Projections) {
-						loan.path = nil
-						value = append(value, loan)
-					}
-				}
-			}
-			if len(value) > 0 {
-				return copyReferenceLoans(value), true
-			}
-		}
-		origins := a.originsForExpr(expr)
-		if len(origins) == 0 {
-			return []referenceLoan{}, false
-		}
-		return []referenceLoan{{
-			id:      loanID{node: expr},
-			origins: origins,
-			mutable: mutable,
-			site:    expr,
-		}}, true
-	}
-	if a.module.Flow != nil {
-		slots, aggregate := a.module.Flow.AggregateSlots(expr.ID())
-		if !aggregate {
-			return []referenceLoan{}, false
-		}
-		var loans []referenceLoan
-		for _, slot := range slots {
-			value := slot.ValueExpr
-			if value == nil {
-				continue
-			}
-			fieldLoans, found := a.referenceValueForTHIR(value, st)
-			if found {
-				for i := range fieldLoans {
-					fieldLoans[i].path = append([]place.OriginProjection{slot.Projection}, fieldLoans[i].path...)
-				}
-				loans = append(loans, fieldLoans...)
-			}
-		}
-		return loans, len(loans) > 0
-	}
-	return []referenceLoan{}, false
-}
-
 // replaceReferenceField consumes flow's exact storage identity. Accepted local
 // enum reference fields are direct/optional; nested reference aggregates remain
 // rejected by typechecking. Other holders and sibling slots retain their loans.
-func (a *analyzer) replaceReferenceField(target ast.Expr, value storedReference, st state) {
+func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st state) {
 	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(target)); !reference || a.module.Flow == nil {
 		return
 	}
-	storage := a.module.Flow.StorageOrigins(target.ID())
+	storage := a.module.Flow.StorageOrigins(ast.NodeID(target.SourceInfo().NodeID))
 	if len(storage) != 1 || len(storage[0].Projections) == 0 {
 		return
 	}
@@ -459,38 +398,33 @@ func (a *analyzer) replaceReferenceField(target ast.Expr, value storedReference,
 	a.updateReferenceSymbol(destination.Root, kept, len(kept) > 0, st)
 }
 
-func (a *analyzer) originsForExpr(expr ast.Expr) []place.Origin {
+func (a *analyzer) originsForExpr(expr thir.Expr) []place.Origin {
 	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
 		return nil
 	}
-	return place.CloneOrigins(a.module.Flow.ValueOrigins(expr.ID()))
+	return place.CloneOrigins(a.module.Flow.ValueOrigins(ast.NodeID(expr.SourceInfo().NodeID)))
 }
 
-func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state) {
-	if a == nil || a.function == nil || scope == nil || stmt == nil || stmt.Value == nil {
+func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st state) {
+	if a == nil || a.function == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
-	if _, _, reference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !reference {
+	if _, _, reference := typeinfo.ReferenceValueTarget(a.module.EffectiveExprType(ast.NodeID(stmt.Value.SourceInfo().NodeID))); !reference {
 		return
 	}
-	value, found := a.referenceValueForExpr(stmt.Value, st)
+	value, found := a.referenceValueForTHIR(stmt.Value, st)
 	if !found {
 		return
 	}
-	functionSymbol := a.module.Bindings.Symbol(a.function.Name)
-	functionType, _ := symbols.GetSymbolType(functionSymbol)
+	functionType, _ := symbols.GetSymbolType(a.function.Symbol)
 	fnType, _ := functionType.(*typeinfo.FuncType)
 	if fnType == nil || fnType.ReturnOrigins == nil {
 		return
 	}
-	params := a.function.ParamsWithReceiver()
 	allowed := make(map[*symbols.Symbol]struct{}, len(fnType.ReturnOrigins.Sources))
 	for _, slot := range fnType.ReturnOrigins.Sources {
-		if slot < 0 || slot >= len(params) || params[slot].Name == nil {
-			continue
-		}
-		if sym := a.module.Bindings.Symbol(params[slot].Name); sym != nil {
-			allowed[sym] = struct{}{}
+		if slot >= 0 && slot < len(a.function.Params) && a.function.Params[slot].Symbol != nil {
+			allowed[a.function.Params[slot].Symbol] = struct{}{}
 		}
 	}
 	for _, origin := range referenceOrigins(value) {
@@ -500,11 +434,11 @@ func (a *analyzer) validateReferenceReturn(scope *symbols.Scope, stmt *ast.Retur
 		diagnostic := a.diagnostics.AddError(
 			diagnostics.ErrInvalidReturn,
 			"returned reference originates outside declared `from` sources",
-			ast.LocOf(stmt.Value),
+			stmt.Value.SourceInfo().Location,
 			"undeclared return origin",
 		)
-		if a.function.ReturnOrigins != nil {
-			diagnostic.WithSecondaryLabel(a.function.ReturnOrigins.Location, "declared return origins")
+		if a.function.ReturnOriginsLocation != nil {
+			diagnostic.WithSecondaryLabel(a.function.ReturnOriginsLocation, "declared return origins")
 		}
 		return
 	}
@@ -633,8 +567,8 @@ func (a *analyzer) computeSymbolLiveness() {
 	if a == nil || a.sites == nil {
 		return
 	}
-	a.symbolLiveIn = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
-	a.symbolLiveOut = make(map[cfg.SiteID]map[*symbols.Symbol]ast.Node, len(a.order))
+	a.symbolLiveIn = make(map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo, len(a.order))
+	a.symbolLiveOut = make(map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo, len(a.order))
 	work := graphcore.NewWorklist[cfg.SiteID]()
 	for _, id := range slices.Backward(a.order) {
 		work.Add(id)
@@ -645,7 +579,7 @@ func (a *analyzer) computeSymbolLiveness() {
 			break
 		}
 
-		out := make(map[*symbols.Symbol]ast.Node)
+		out := make(map[*symbols.Symbol]ir.SourceInfo)
 		node := a.sites[id]
 		if node == nil || node.cfgSite == nil {
 			continue
@@ -677,10 +611,9 @@ func (a *analyzer) computeSymbolLiveness() {
 // A write also counts as a use when the written symbol needs dropping: the
 // pre-assignment drop reads the old value, so the target must stay live up to
 // the assignment that replaces it. That is ownership policy and stays here.
-func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast.Node, map[*symbols.Symbol]struct{}) {
+func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ir.SourceInfo, map[*symbols.Symbol]struct{}) {
 	visitor := &livenessEffectVisitor{
-		a:           a,
-		uses:        make(map[*symbols.Symbol]ast.Node),
+		uses:        make(map[*symbols.Symbol]ir.SourceInfo),
 		definitions: make(map[*symbols.Symbol]struct{}),
 	}
 	if a == nil || a.module == nil || node == nil || node.cfgSite == nil {
@@ -693,24 +626,19 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ast
 }
 
 type livenessEffectVisitor struct {
-	a           *analyzer
-	uses        map[*symbols.Symbol]ast.Node
+	uses        map[*symbols.Symbol]ir.SourceInfo
 	definitions map[*symbols.Symbol]struct{}
 }
 
-func (v *livenessEffectVisitor) recordUse(sym *symbols.Symbol, at ast.NodeID) {
-	if sym == nil || v.a == nil || v.a.module == nil {
-		return
-	}
-	syntax, found := v.a.module.TypedASTNodes[at]
-	if !found {
+func (v *livenessEffectVisitor) recordUse(sym *symbols.Symbol, at ir.SourceInfo) {
+	if sym == nil || at.NodeID == 0 {
 		return
 	}
 	if previous, seen := v.uses[sym]; seen {
-		v.uses[sym] = earlierNode(previous, syntax)
+		v.uses[sym] = earlierSource(previous, at)
 		return
 	}
-	v.uses[sym] = syntax
+	v.uses[sym] = at
 }
 
 func (v *livenessEffectVisitor) VisitDefine(op effect.Define) {
@@ -726,24 +654,24 @@ func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
 		return
 	}
 	if len(op.Place.Projections) > 0 {
-		v.recordUse(op.Place.Root, op.Node)
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
 		return
 	}
 	v.definitions[op.Place.Root] = struct{}{}
 	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
-		v.recordUse(op.Place.Root, op.Node)
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
 	}
 }
 
 func (v *livenessEffectVisitor) VisitUse(op effect.Use) {
 	if trackedLiveSymbol(op.Place.Root) {
-		v.recordUse(op.Place.Root, op.Node)
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
 	}
 }
 
 func (v *livenessEffectVisitor) VisitBorrow(op effect.Borrow) {
 	if trackedLiveSymbol(op.Place.Root) {
-		v.recordUse(op.Place.Root, op.Node)
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
 	}
 }
 
@@ -758,11 +686,11 @@ func (*livenessEffectVisitor) VisitCallEnd(effect.CallEnd)     {}
 // walk it replaced enumerated eight statement kinds and missed ForStmt.Iterable,
 // which applyStmt does handle, so liveness and borrow-ending saw a different
 // program than the effect analysis did. One producer means they cannot disagree.
-func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) bool) []symbolUse {
+func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) bool) []*symbols.Symbol {
 	if a == nil || a.module == nil || node == nil || node.cfgSite == nil || include == nil {
 		return nil
 	}
-	visitor := &useSequenceEffectVisitor{a: a, include: include}
+	visitor := &useSequenceEffectVisitor{include: include}
 	for _, op := range a.effects[node.cfgSite.ID] {
 		effect.Visit(op, visitor)
 	}
@@ -770,37 +698,31 @@ func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) b
 }
 
 type useSequenceEffectVisitor struct {
-	a       *analyzer
 	include func(*symbols.Symbol) bool
-	uses    []symbolUse
+	uses    []*symbols.Symbol
 }
 
-func (v *useSequenceEffectVisitor) record(at effect.Place, node ast.NodeID) {
-	if !v.include(at.Root) {
-		return
+func (v *useSequenceEffectVisitor) record(at effect.Place) {
+	if v.include(at.Root) {
+		v.uses = append(v.uses, at.Root)
 	}
-	syntax, found := v.a.module.TypedASTNodes[node]
-	if !found {
-		return
-	}
-	v.uses = append(v.uses, symbolUse{symbol: at.Root, site: syntax})
 }
 
 func (*useSequenceEffectVisitor) VisitDefine(effect.Define)       {}
 func (*useSequenceEffectVisitor) VisitWrite(effect.Write)         {}
-func (v *useSequenceEffectVisitor) VisitUse(op effect.Use)        { v.record(op.Place, op.Node) }
-func (v *useSequenceEffectVisitor) VisitBorrow(op effect.Borrow)  { v.record(op.Place, op.Node) }
+func (v *useSequenceEffectVisitor) VisitUse(op effect.Use)        { v.record(op.Place) }
+func (v *useSequenceEffectVisitor) VisitBorrow(op effect.Borrow)  { v.record(op.Place) }
 func (*useSequenceEffectVisitor) VisitIterate(effect.Iterate)     {}
 func (*useSequenceEffectVisitor) VisitDiscard(effect.Discard)     {}
 func (*useSequenceEffectVisitor) VisitCallBegin(effect.CallBegin) {}
 func (*useSequenceEffectVisitor) VisitCallEnd(effect.CallEnd)     {}
 
-func mergeSymbolLiveSets(dst, src map[*symbols.Symbol]ast.Node) {
+func mergeSymbolLiveSets(dst, src map[*symbols.Symbol]ir.SourceInfo) {
 	for sym, site := range src {
 		if previous, found := dst[sym]; !found {
 			dst[sym] = site
 		} else {
-			dst[sym] = earlierNode(previous, site)
+			dst[sym] = earlierSource(previous, site)
 		}
 	}
 }
@@ -809,19 +731,17 @@ func trackedLiveSymbol(sym *symbols.Symbol) bool {
 	return referenceHoldingSymbol(sym) || ownershipTrackedSymbol(sym)
 }
 
-func earlierNode(left, right ast.Node) ast.Node {
-	if left == nil {
+func earlierSource(left, right ir.SourceInfo) ir.SourceInfo {
+	if left.NodeID == 0 {
 		return right
 	}
-	if right == nil {
+	if right.NodeID == 0 {
 		return left
 	}
-	leftLoc := ast.LocOf(left)
-	rightLoc := ast.LocOf(right)
-	if leftLoc == nil || leftLoc.Start == nil {
+	if left.Location == nil || left.Location.Start == nil {
 		return right
 	}
-	if rightLoc == nil || rightLoc.Start == nil || leftLoc.Start.Index <= rightLoc.Start.Index {
+	if right.Location == nil || right.Location.Start == nil || left.Location.Start.Index <= right.Location.Start.Index {
 		return left
 	}
 	return right

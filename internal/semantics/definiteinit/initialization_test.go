@@ -40,8 +40,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
-	module.RebuildTypedASTIndex()
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {

@@ -10,7 +10,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
@@ -187,14 +186,22 @@ func validateProgramEntrypoint(entry *module.Module, diag *diagnostics.Diagnosti
 		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, nil, "")
 		return
 	}
-	decl, declOK := sym.ASTNode.(*ast.FnDecl)
+	var function *thir.Function
+	if entry.THIR != nil {
+		for _, candidate := range entry.THIR.Functions {
+			if candidate != nil && candidate.Symbol == sym {
+				function = candidate
+				break
+			}
+		}
+	}
 	fnType, typeOK := sym.Type.(*typeinfo.FuncType)
 	validReturn := typeOK && fnType.Return == nil
 	if typeOK && fnType.Return != nil {
 		integer, ok := fnType.Return.(*typeinfo.IntegerType)
 		validReturn = ok && integer.Signed && integer.Bits == 32
 	}
-	if !declOK || decl == nil || decl.Receiver != nil || decl.Body == nil || len(decl.TypeParams) != 0 || !typeOK || len(fnType.Params) != 0 || !validReturn {
+	if function == nil || !function.IsEntrypointShape || !typeOK || len(fnType.Params) != 0 || !validReturn {
 		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, sym.Location, "invalid program entrypoint")
 	}
 }
@@ -282,11 +289,11 @@ func requireScheduledModulesAtLeast(modules []*module.Module, scheduled map[modu
 }
 
 func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *module.Module, preludeInjected bool) bool {
-	if ctx == nil || module == nil || module.AST == nil || module.Phase >= phase.Backend {
+	if ctx == nil || module == nil || module.Phase >= phase.Backend {
 		return false
 	}
 	next := nextModulePhase(module.Phase)
-	if next == phase.None {
+	if next == phase.None || !moduleHasPhaseInput(module, next) {
 		return false
 	}
 	if !preludeReadyForPhase(module, prelude, preludeInjected, next) {
@@ -303,6 +310,13 @@ func moduleReadyForNextPhase(ctx *project.CompilerContext, module, prelude *modu
 		}
 	}
 	return true
+}
+
+func moduleHasPhaseInput(module *module.Module, next phase.Phase) bool {
+	if next <= phase.Typechecked {
+		return module.AST != nil
+	}
+	return module.THIR != nil
 }
 
 func preludeReadyForPhase(module, prelude *module.Module, preludeInjected bool, next phase.Phase) bool {
@@ -383,14 +397,14 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 // same kernel that future dependency-aware scheduling will reuse, so phase
 // prerequisites stay centralized in one place.
 func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, diag *diagnostics.DiagnosticBag) bool {
-	if ctx == nil || module == nil || module.AST == nil {
+	if ctx == nil || module == nil {
 		return false
 	}
 	if module.Phase >= phase.Backend {
 		return false
 	}
 	next := nextModulePhase(module.Phase)
-	if next == phase.None || next == phase.Usage {
+	if next == phase.None || next == phase.Usage || !moduleHasPhaseInput(module, next) {
 		return false
 	}
 	phaseDiag := diag.BeginPhase(next, module.ID.String())
@@ -416,14 +430,24 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.Phase < phase.Typechecked {
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
-		module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
+		module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking,
+			func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
+				// Constant evaluation may cache local constants and diagnose cycles.
+				// Keep diagnostics at their original CFG boundary, not Typechecked.
+				pending := diagnostics.NewDiagnosticBag()
+				value, ok := consteval.EvaluateExpr(phaseCtx.WithDiagnostics(pending), module, scope, expr, &typeinfo.BoolType{})
+				if !ok {
+					return nil, pending.Diagnostics()
+				}
+				truth := value != nil && value.Truthy()
+				return &truth, pending.Diagnostics()
+			})
 		if !phaseDiag.HasErrors() {
 			if err := module.THIR.Validate(); err != nil {
 				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
 					"typed source representation is malformed: "+err.Error(), nil, "")
 			}
 		}
-		module.RebuildTypedASTIndex()
 		module.SemanticExportFingerprint = project.SemanticExportFingerprint(ctx, module)
 		module.Phase = phase.Typechecked
 		ctx.Metrics.AddPhaseAdvance()
@@ -439,20 +463,18 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 			phaseDiag.AddError(diagnostics.ErrInvalidTopology,
 				"control-flow topology is malformed: "+err.Error(), nil, "")
 		}
-		cfg.Analyze(module.CFG, phaseDiag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
-			node := module.TypedASTNodes[ast.NodeID(conditionID)]
-			expr, ok := node.(ast.Expr)
-			if !ok {
+		cfg.Analyze(module.CFG, phaseDiag, func(branch *cfg.Branch) (bool, bool) {
+			statement, ok := module.THIR.Node(branch.NodeID).(*thir.If)
+			if !ok || statement == nil {
 				return false, false
 			}
-			value, ok := consteval.EvaluateExpr(
-				phaseCtx,
-				module,
-				module.Bindings.ScopeID(ast.NodeID(scopeID)),
-				expr,
-				&typeinfo.BoolType{},
-			)
-			return value != nil && value.Truthy(), ok
+			for _, pending := range statement.ConditionDiagnostics {
+				phaseDiag.Add(pending)
+			}
+			if statement.ConstantCondition == nil {
+				return false, false
+			}
+			return *statement.ConstantCondition, true
 		})
 		module.Phase = phase.CFG
 		ctx.Metrics.AddPhaseAdvance()
@@ -472,7 +494,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		// Broken source can legitimately leave effect evidence incomplete; report
 		// evidence shape only for an otherwise clean module.
 		if !phaseDiag.HasErrors() {
-			if err := module.Effects.Validate(module.CFG, module.TypedASTNodes); err != nil {
+			if err := module.Effects.Validate(module.CFG, module.THIR); err != nil {
 				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
 					"published semantic effects are malformed: "+err.Error(), nil, "")
 			}

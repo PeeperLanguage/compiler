@@ -21,7 +21,7 @@ func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *thir.Module {
 		Body:         body,
 		Location:     location,
 	}
-	return thir.Build("test", "cfg_test.peep", &ast.Module{Stmts: []ast.Stmt{fn}}, nil, nil)
+	return thir.Build("test", "cfg_test.peep", &ast.Module{Stmts: []ast.Stmt{fn}}, nil, nil, nil)
 }
 
 func TestModuleIndexesFunctionBySourceIdentity(t *testing.T) {
@@ -500,9 +500,9 @@ func TestAnalyzeReportsConstantIfCondition(t *testing.T) {
 		Location:     location,
 	}}}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(BuildModule(testModule(body, nil)), diag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
-		if conditionID != 31 || scopeID != 10 {
-			t.Fatalf("constant condition query = (%d, %d), want (31, 10)", conditionID, scopeID)
+	Analyze(BuildModule(testModule(body, nil)), diag, func(branch *Branch) (bool, bool) {
+		if branch.NodeID != 30 || branch.ConditionID != 31 || branch.ScopeID != 10 {
+			t.Fatalf("constant condition query = (%d, %d, %d), want (30, 31, 10)", branch.NodeID, branch.ConditionID, branch.ScopeID)
 		}
 		return false, true
 	})
@@ -521,7 +521,7 @@ func TestAnalyzeDoesNotReportConstantLoopCondition(t *testing.T) {
 	}}}
 	diag := diagnostics.NewDiagnosticBag()
 	queries := 0
-	Analyze(BuildModule(testModule(body, nil)), diag, func(ir.NodeID, ir.NodeID) (bool, bool) {
+	Analyze(BuildModule(testModule(body, nil)), diag, func(*Branch) (bool, bool) {
 		queries++
 		return false, true
 	})

@@ -206,7 +206,7 @@ func (s *Match) validateSelf() error {
 			return fmt.Errorf("match arm %d is incomplete", index)
 		}
 		for bindingIndex, binding := range arm.Bindings {
-			if binding.Type == nil || binding.Symbol == nil {
+			if binding.Type == nil || (!binding.Discard && binding.Symbol == nil) {
 				return fmt.Errorf("match arm %d binding %d is incomplete", index, bindingIndex)
 			}
 		}

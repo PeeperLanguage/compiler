@@ -47,21 +47,22 @@ const (
 )
 
 type Symbol struct {
-	ID              SymbolID
-	Name            string
-	Kind            Kind
-	Type            typeinfo.Type
-	IsPub           bool
-	Mutable         bool
-	IsReceiver      bool
-	used            bool
-	requiresMutable bool
-	CompilerOp      CompilerOp
-	DefiningModule  moduleid.ID
-	Location        *source.Location
-	MutableLocation *source.Location
-	ASTNode         ast.Node
-	Scope           *Scope
+	ID               SymbolID
+	Name             string
+	Kind             Kind
+	Type             typeinfo.Type
+	IsPub            bool
+	Mutable          bool
+	IsReceiver       bool
+	used             bool
+	requiresMutable  bool
+	CompilerOp       CompilerOp
+	ExternalLinkName *string
+	DefiningModule   moduleid.ID
+	Location         *source.Location
+	MutableLocation  *source.Location
+	ASTNode          ast.Node
+	Scope            *Scope
 }
 
 func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
@@ -76,6 +77,11 @@ func New(name string, kind Kind, node ast.Node, location *source.Location) *Symb
 	if declaration, ok := node.(*ast.LetDecl); ok && declaration != nil {
 		sym.Mutable = declaration.IsMutable
 		sym.MutableLocation = declaration.MutableLocation
+	}
+	if declaration, ok := node.(*ast.FnDecl); ok && (kind == SymbolFunc || kind == SymbolMethod) {
+		if name, external := ast.FunctionLinkName(declaration, sym.Name); external {
+			sym.ExternalLinkName = &name
+		}
 	}
 	return sym
 }

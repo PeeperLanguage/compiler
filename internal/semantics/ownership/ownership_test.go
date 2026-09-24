@@ -1,6 +1,7 @@
 package ownership
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -50,13 +51,36 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
-	module.RebuildTypedASTIndex()
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(ctx, module)
 	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
 	module.Ownership = Check(diag, module)
 	return &ownershipResult{DiagnosticBag: diag, module: module}
+}
+
+func TestOwnershipCheckWithoutAST(t *testing.T) {
+	for _, src := range []string{
+		`struct Box { held: *i32 }
+fn make() -> Box { return Box.{ held = alloc(1) }; }
+fn main() { let value = make(); let other = value; }`,
+		`fn bad() -> rawptr { let value: i32 = 1; return @value; }`,
+		`fn bad() -> rawptr { let value: i32 = 1; let ptr: rawptr = @value; return ptr; }`,
+		`fn borrow(mut value: i32) { let held = &value; value = 2; print(held); }`,
+	} {
+		result := checkOwnershipSource(t, src)
+		withASTDiagnostics := diagnostics.NewDiagnosticBag()
+		withAST := Check(withASTDiagnostics, result.module)
+		result.module.AST = nil
+		withoutASTDiagnostics := diagnostics.NewDiagnosticBag()
+		withoutAST := Check(withoutASTDiagnostics, result.module)
+		if !reflect.DeepEqual(withoutASTDiagnostics.Diagnostics(), withASTDiagnostics.Diagnostics()) {
+			t.Errorf("diagnostics changed without AST: want %#v, got %#v", withASTDiagnostics.Diagnostics(), withoutASTDiagnostics.Diagnostics())
+		}
+		if !reflect.DeepEqual(withoutAST, withAST) {
+			t.Errorf("cleanup changed without AST: want %#v, got %#v", withAST, withoutAST)
+		}
+	}
 }
 
 func TestCallIterationUsesOrdinaryCallGuards(t *testing.T) {
@@ -165,7 +189,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		order:         order,
 		effects:       result.module.Effects[cfgFn.NodeID],
 		cleanup:       cleanup,
-		function:      fn,
+		function:      result.module.THIR.Function(ir.NodeID(fn.ID())),
 		functionScope: scope,
 		reportedJoin:  make(map[cfg.SiteID]bool),
 	}
@@ -177,7 +201,7 @@ func analysisNodeForStmt(t *testing.T, analysis *analyzer, stmt ast.Stmt) *site 
 	t.Helper()
 	for _, node := range analysis.sites {
 		if node != nil && node.cfgSite != nil &&
-			(node.cfgSite.Kind == cfg.SiteStatement || node.cfgSite.Kind == cfg.SiteTerminator) && node.stmt == stmt {
+			(node.cfgSite.Kind == cfg.SiteStatement || node.cfgSite.Kind == cfg.SiteTerminator) && node.stmt != nil && node.stmt.SourceInfo().NodeID == ir.NodeID(stmt.ID()) {
 			return node
 		}
 	}
@@ -356,6 +380,45 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 ||
 		len(plan.MatchFieldDrops) != 0 || len(plan.MatchWholePayloadDrops) != 0 {
 		t.Fatalf("stale ownership plans survived rerun: %#v", plan)
+	}
+}
+
+func TestProjectionBaseCleanupUsesTHIREvidence(t *testing.T) {
+	result := checkOwnershipSource(t, `struct Box { value: i32, held: *i32 }
+fn MakeBox() -> Box { return Box.{ value = 7, held = alloc(0) }; }
+fn ReadTemporaryField() -> i32 { return MakeBox().value; }`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.THIR.Function(ir.NodeID(result.module.AST.Stmts[2].ID()))
+	projection := fn.Body.Stmts[0].(*thir.Return).Value.(*thir.Field)
+	result.module.AST = nil
+	cleanup := &ownershipresult.CleanupPlan{ProjectionBase: make(map[ir.NodeID]struct{})}
+	analysis := &analyzer{diagnostics: result.DiagnosticBag, module: result.module, cleanup: cleanup}
+	if analysis.planProjectionBaseDrop(projection, projection.Base) {
+		t.Fatal("scalar projection wrongly rejected")
+	}
+	if _, found := cleanup.ProjectionBase[projection.SourceInfo().NodeID]; !found {
+		t.Fatal("temporary projection lost base cleanup without typed AST index")
+	}
+}
+
+func TestStoredReferenceUsesTHIRValueWithoutAST(t *testing.T) {
+	result := checkOwnershipSource(t, `fn probe(value: i32) { let reference = &value; }`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+	fn := result.module.THIR.Function(ir.NodeID(result.module.AST.Stmts[0].ID()))
+	binding := fn.Body.Stmts[0].(*thir.Binding)
+	valueID := ast.NodeID(binding.Value.SourceInfo().NodeID)
+	result.module.AST = nil
+	analysis := &analyzer{module: result.module}
+	captured := analysis.captureStoredReferences([]effect.Op{effect.Define{Value: valueID, ValueExpr: binding.Value}}, newState())
+	value := captured[valueID]
+	if !value.present || len(value.loans) != 1 || value.loans[0].id.node != ir.NodeID(valueID) ||
+		!place.SameOrigins(value.loans[0].origins, []place.Origin{{Root: fn.Params[0].Symbol}}) ||
+		value.loans[0].site != binding.Value.SourceInfo() || value.loans[0].site.Location == nil {
+		t.Fatalf("THIR reference provenance = %#v, want parameter loan", value)
 	}
 }
 
@@ -1594,6 +1657,38 @@ fn inspect(mut value: i32) {
 	}
 }
 
+func TestReferenceLivenessUsesEffectsWithoutAST(t *testing.T) {
+	result := checkOwnershipSource(t, `fn Read(_: &i32) {}
+fn inspect(value: i32) {
+	let reference = &value;
+	Read(reference);
+}`)
+	if result.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
+	}
+	analysis := inspectFunctionAnalysis(t, result, "inspect")
+	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	call := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
+	reference, _ := analysis.functionScope.Lookup("reference")
+	var expected ir.SourceInfo
+	for _, op := range analysis.effects[call.cfgSite.ID] {
+		if borrow, ok := op.(effect.Borrow); ok && borrow.Place.Root == reference {
+			expected = borrow.Source.SourceInfo()
+		}
+	}
+	if expected.NodeID == 0 || expected.Location == nil {
+		t.Fatal("reference use has no THIR source")
+	}
+	result.module.AST = nil
+	analysis.computeSymbolLiveness()
+	if got, live := analysis.symbolLiveIn[call.cfgSite.ID][reference]; !live || got != expected {
+		t.Fatalf("live reference site = %#v (live=%v), want %#v", got, live, expected)
+	}
+	if uses := analysis.symbolUseSequence(call, referenceHoldingSymbol); len(uses) != 1 || uses[0] != reference {
+		t.Fatalf("reference use sequence = %v, want reference", uses)
+	}
+}
+
 func TestReferenceLivenessEndsAfterConditionalUse(t *testing.T) {
 	result := checkOwnershipSource(t, `fn inspect(value: i32) {
 	let maybe: ?&i32 = &value;
@@ -1660,7 +1755,7 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	var exit *site
 	for _, node := range analysis.sites {
-		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block == fn.Body {
+		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil && node.block.SourceInfo().NodeID == ir.NodeID(fn.Body.ID()) {
 			exit = node
 			break
 		}
@@ -2453,6 +2548,40 @@ fn local(source: &i32) -> &i32 from source {
 	if !hasOwnershipCode(result, diagnostics.ErrInvalidReturn) ||
 		strings.Count(result.EmitAllToString(), "outside declared `from` sources") != 2 {
 		t.Fatalf("expected undeclared return-origin diagnostics:\n%s", result.EmitAllToString())
+	}
+}
+
+func TestReferenceReturnOriginsUseTHIRFunction(t *testing.T) {
+	result := checkOwnershipSource(t, `fn wrong(left: &i32, right: &i32) -> &i32 from left {
+	return right;
+}`)
+	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
+	typed := result.module.THIR.Function(ir.NodeID(fn.ID()))
+	if typed == nil || typed.ReturnOriginsLocation != fn.ReturnOrigins.Location {
+		t.Fatal("return-origin diagnostic location lost during THIR construction")
+	}
+	result.module.AST = nil
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(result.module.FilePath, result.module.Content)
+	Check(diag, result.module)
+	if text := diag.EmitAllToString(); !strings.Contains(text, "outside declared `from` sources") {
+		t.Fatalf("THIR return-origin diagnostic missing:\n%s", text)
+	}
+	found := false
+	for _, diagnostic := range diag.Diagnostics() {
+		if diagnostic.Code != diagnostics.ErrInvalidReturn {
+			continue
+		}
+		found = true
+		if len(diagnostic.Labels) == 0 || diagnostic.Labels[0].Location != typed.Body.Stmts[0].(*thir.Return).Value.SourceInfo().Location {
+			t.Fatalf("THIR return-origin diagnostic lost primary expression location: %#v", diagnostic.Labels)
+		}
+		if fn.ReturnOrigins.Location != nil && (len(diagnostic.Labels) < 2 || diagnostic.Labels[1].Location != typed.ReturnOriginsLocation) {
+			t.Fatalf("THIR return-origin diagnostic lost declared-origin location: %#v", diagnostic.Labels)
+		}
+	}
+	if !found {
+		t.Fatal("THIR return-origin diagnostic not recorded")
 	}
 }
 

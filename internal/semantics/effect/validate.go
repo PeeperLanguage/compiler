@@ -9,6 +9,8 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
+	"compiler/pkg/typednil"
 )
 
 const maxReportedProblems = 10
@@ -21,9 +23,12 @@ const maxReportedProblems = 10
 // here would be a second implementation of the thing being validated. Dispatch
 // contracts check node-kind coverage, not what each case publishes. Required
 // operations and their order are covered by producer tests and source fixtures.
-func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) error {
+func (r Result) Validate(graphs *cfg.Module, source *thir.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
+	}
+	if source == nil {
+		return errors.New("typed THIR is missing for effect validation")
 	}
 	problems := make([]string, 0)
 	sitesByFunction := make(map[ir.NodeID]map[cfg.SiteID]struct{})
@@ -49,7 +54,7 @@ func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) erro
 				problems = append(problems, fmt.Sprintf("function %d publishes effects at site %v, which the graph does not contain", fn, site))
 				continue
 			}
-			problems = append(problems, validateOps(fn, site, ops, nodes)...)
+			problems = append(problems, validateOps(fn, site, ops, source)...)
 		}
 	}
 	if len(problems) == 0 {
@@ -64,8 +69,8 @@ func (r Result) Validate(graphs *cfg.Module, nodes map[ast.NodeID]ast.Node) erro
 	return errors.New(strings.Join(problems, "; "))
 }
 
-func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, nodes map[ast.NodeID]ast.Node) []string {
-	visitor := &validationVisitor{fn: fn, site: site, nodes: nodes}
+func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, source *thir.Module) []string {
+	visitor := &validationVisitor{fn: fn, site: site, source: source}
 	for index, op := range ops {
 		visitor.index = index
 		Visit(op, visitor)
@@ -80,7 +85,7 @@ type validationVisitor struct {
 	fn       ir.NodeID
 	site     cfg.SiteID
 	index    int
-	nodes    map[ast.NodeID]ast.Node
+	source   *thir.Module
 	problems []string
 	open     []ast.NodeID
 }
@@ -91,26 +96,44 @@ func (v *validationVisitor) where() string {
 
 func (v *validationVisitor) VisitDefine(op Define) {
 	where := v.where()
-	v.problems = append(v.problems, validateNode[ast.Node](where, "define", op.Symbol == nil, op.Node, v.nodes)...)
-	if op.Value != 0 {
-		v.problems = append(v.problems, validateNode[ast.Expr](where, "define value", false, op.Value, v.nodes)...)
+	if op.Symbol == nil {
+		v.problems = append(v.problems, where+" is a define with no symbol")
+	}
+	if op.OnEntry && op.Source == nil {
+		matched := false
+		if function := v.source.Function(v.fn); function != nil {
+			for _, parameter := range function.Params {
+				if parameter.Source.NodeID == ir.NodeID(op.Node) && parameter.Symbol == op.Symbol {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
+			v.problems = append(v.problems, fmt.Sprintf("%s is a define naming parameter %d not in typed THIR", where, op.Node))
+		}
+	} else {
+		v.problems = append(v.problems, validateNode[thir.Node](where, "define", op.Node, op.Source, v.source)...)
+	}
+	if op.Value != 0 || op.ValueExpr != nil {
+		v.problems = append(v.problems, validateNode[thir.Expr](where, "define value", op.Value, op.ValueExpr, v.source)...)
 	}
 }
 
 func (v *validationVisitor) VisitWrite(op Write) {
 	where := v.where()
-	v.problems = append(v.problems, validatePlace(where, "write", op.Place, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "write", false, op.Node, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Node](where, "write owner", false, op.Owner, v.nodes)...)
-	if op.Value != 0 {
-		v.problems = append(v.problems, validateNode[ast.Expr](where, "write value", false, op.Value, v.nodes)...)
+	v.problems = append(v.problems, validatePlace(where, "write", op.Place, v.source)...)
+	v.problems = append(v.problems, validateNode[thir.Expr](where, "write", op.Node, op.Target, v.source)...)
+	v.problems = append(v.problems, validateNode[*thir.Assign](where, "write owner", op.Owner, v.source.Node(ir.NodeID(op.Owner)), v.source)...)
+	if op.Value != 0 || op.ValueExpr != nil {
+		v.problems = append(v.problems, validateNode[thir.Expr](where, "write value", op.Value, op.ValueExpr, v.source)...)
 	}
 }
 
 func (v *validationVisitor) VisitUse(op Use) {
 	where := v.where()
-	v.problems = append(v.problems, validatePlace(where, "use", op.Place, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "use", false, op.Node, v.nodes)...)
+	v.problems = append(v.problems, validatePlace(where, "use", op.Place, v.source)...)
+	v.problems = append(v.problems, validateNode[thir.Expr](where, "use", op.Node, op.Source, v.source)...)
 	if op.Location == nil {
 		v.problems = append(v.problems, where+" is a use with no source location to report against")
 	}
@@ -118,9 +141,9 @@ func (v *validationVisitor) VisitUse(op Use) {
 
 func (v *validationVisitor) VisitBorrow(op Borrow) {
 	where := v.where()
-	v.problems = append(v.problems, validatePlace(where, "borrow", op.Place, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "borrow", false, op.Node, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "borrow operand", false, op.Operand, v.nodes)...)
+	v.problems = append(v.problems, validatePlace(where, "borrow", op.Place, v.source)...)
+	v.problems = append(v.problems, validateNode[thir.Expr](where, "borrow", op.Node, op.Source, v.source)...)
+	v.problems = append(v.problems, validateNode[thir.Expr](where, "borrow operand", op.Operand, op.OperandExpr, v.source)...)
 	if op.Location == nil {
 		v.problems = append(v.problems, where+" is a borrow with no source location to report against")
 	}
@@ -128,9 +151,12 @@ func (v *validationVisitor) VisitBorrow(op Borrow) {
 
 func (v *validationVisitor) VisitIterate(op Iterate) {
 	where := v.where()
-	v.problems = append(v.problems, validatePlace(where, "iteration", op.Place, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "iteration", op.Carrier == nil, op.Node, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Node](where, "iteration owner", false, op.Loop, v.nodes)...)
+	v.problems = append(v.problems, validatePlace(where, "iteration", op.Place, v.source)...)
+	v.problems = append(v.problems, validateNode[thir.Expr](where, "iteration", op.Node, op.Source, v.source)...)
+	if op.Carrier == nil {
+		v.problems = append(v.problems, where+" is an iteration with no symbol")
+	}
+	v.problems = append(v.problems, validateNode[*thir.For](where, "iteration owner", op.Loop, v.source.Node(ir.NodeID(op.Loop)), v.source)...)
 	if op.Location == nil {
 		v.problems = append(v.problems, where+" is an iteration with no source location to report against")
 	}
@@ -138,8 +164,8 @@ func (v *validationVisitor) VisitIterate(op Iterate) {
 
 func (v *validationVisitor) VisitDiscard(op Discard) {
 	where := v.where()
-	v.problems = append(v.problems, validatePlace(where, "discard", op.Place, v.nodes)...)
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "discard", false, op.Node, v.nodes)...)
+	v.problems = append(v.problems, validatePlace(where, "discard", op.Place, v.source)...)
+	v.problems = append(v.problems, validateNode[thir.Expr](where, "discard", op.Node, op.Source, v.source)...)
 	if op.Location == nil {
 		v.problems = append(v.problems, where+" is a discard with no source location to report against")
 	}
@@ -147,7 +173,7 @@ func (v *validationVisitor) VisitDiscard(op Discard) {
 
 func (v *validationVisitor) VisitCallBegin(op CallBegin) {
 	where := v.where()
-	v.problems = append(v.problems, validateNode[ast.Expr](where, "call start", false, op.Node, v.nodes)...)
+	v.problems = append(v.problems, validateNode[*thir.Call](where, "call start", op.Node, op.Source, v.source)...)
 	v.open = append(v.open, op.Node)
 }
 
@@ -166,7 +192,7 @@ func (v *validationVisitor) VisitCallEnd(op CallEnd) {
 // validatePlace enforces that a place names exactly one root. A place with
 // neither names nothing; one with both would let a consumer reach two different
 // answers depending on which field it read.
-func validatePlace(where, kind string, at Place, nodes map[ast.NodeID]ast.Node) []string {
+func validatePlace(where, kind string, at Place, source *thir.Module) []string {
 	switch {
 	case at.Root == nil && at.Temporary == 0:
 		return []string{fmt.Sprintf("%s is a %s whose place names neither a binding nor a temporary", where, kind)}
@@ -174,26 +200,23 @@ func validatePlace(where, kind string, at Place, nodes map[ast.NodeID]ast.Node) 
 		return []string{fmt.Sprintf("%s is a %s whose place names both binding %s and temporary %d",
 			where, kind, at.Root.Name, at.Temporary)}
 	case at.Temporary != 0:
-		return validateNode[ast.Expr](where, kind+" temporary", false, at.Temporary, nodes)
+		return validateNode[thir.Expr](where, kind+" temporary", at.Temporary, at.TemporaryExpr, source)
 	}
 	return nil
 }
 
-func validateNode[T ast.Node](where, kind string, missingSymbol bool, node ast.NodeID, nodes map[ast.NodeID]ast.Node) []string {
-	problems := make([]string, 0, 2)
-	if missingSymbol {
-		problems = append(problems, fmt.Sprintf("%s is a %s with no symbol", where, kind))
+func validateNode[T thir.Node](where, kind string, node ast.NodeID, carried thir.Node, source *thir.Module) []string {
+	indexed := source.Node(ir.NodeID(node))
+	if indexed == nil {
+		return []string{fmt.Sprintf("%s is a %s naming node %d, which is not in the typed THIR", where, kind, node)}
 	}
-	if nodes == nil {
-		return problems
+	if _, ok := indexed.(T); !ok {
+		return []string{fmt.Sprintf("%s is a %s naming node %d with unexpected node type %T", where, kind, node, indexed)}
 	}
-	syntax, exists := nodes[node]
-	if !exists {
-		problems = append(problems, fmt.Sprintf("%s is a %s naming node %d, which is not in the typed AST", where, kind, node))
-	} else if _, ok := syntax.(T); !ok {
-		problems = append(problems, fmt.Sprintf("%s is a %s naming node %d with unexpected node type %T", where, kind, node, syntax))
+	if typednil.IsNil(carried) || carried != indexed {
+		return []string{fmt.Sprintf("%s is a %s whose THIR source does not match node %d", where, kind, node)}
 	}
-	return problems
+	return nil
 }
 
 func graphSites(graph *cfg.ControlFlowGraph) map[cfg.SiteID]struct{} {

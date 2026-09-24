@@ -27,6 +27,29 @@ func TestNewPublishesLetMutability(t *testing.T) {
 	}
 }
 
+func TestNewPublishesExternalLinkNameWithoutRetainingSyntaxLookup(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		attributes []ast.Attribute
+		body       *ast.BlockStmt
+	}{
+		{name: "external default", attributes: []ast.Attribute{{Name: ast.AttributeExtern}}},
+		{name: "external renamed", attributes: []ast.Attribute{{Name: ast.AttributeExtern, Args: []ast.Expr{&ast.StringLit{Value: "native_main"}}}}},
+		{name: "external empty", attributes: []ast.Attribute{{Name: ast.AttributeExtern, Args: []ast.Expr{&ast.StringLit{Value: ""}}}}},
+		{name: "body not external", attributes: []ast.Attribute{{Name: ast.AttributeExtern}}, body: &ast.BlockStmt{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			declaration := &ast.FnDecl{Attributed: ast.Attributed{Attributes: test.attributes}, Body: test.body}
+			sym := New("main", SymbolFunc, declaration, nil)
+			sym.ASTNode = nil
+			want, external := ast.FunctionLinkName(declaration, "main")
+			if external != (sym.ExternalLinkName != nil) || external && *sym.ExternalLinkName != want {
+				t.Fatalf("external link = %#v, want (%q, %t)", sym.ExternalLinkName, want, external)
+			}
+		})
+	}
+}
+
 func TestFunctionScopeHasConcreteType(t *testing.T) {
 	sym := New("main", SymbolFunc, nil, nil)
 	var scope *Scope = sym.Scope

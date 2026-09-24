@@ -59,8 +59,6 @@ type Module struct {
 	Phase phase.Phase
 	// Parsed syntax tree.
 	AST *ast.Module
-	// TypedASTNodes indexes source and typechecker-generated expressions.
-	TypedASTNodes map[ast.NodeID]ast.Node
 	// Canonical IR slots.
 	THIR *thir.Module
 	CFG  *cfg.Module
@@ -156,20 +154,6 @@ func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) 
 	return place.Binding{Symbol: m.Bindings.Symbol(ident)}, true
 }
 
-// RebuildTypedASTIndex publishes canonical node lookup after typechecking.
-func (m *Module) RebuildTypedASTIndex() {
-	if m == nil {
-		return
-	}
-	m.TypedASTNodes = ast.Index(m.AST)
-	if m.Typechecking == nil {
-		return
-	}
-	m.Typechecking.ForEachGeneratedNode(func(node ast.Node) {
-		m.TypedASTNodes[node.ID()] = node
-	})
-}
-
 func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
@@ -227,7 +211,6 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 		m.Typechecking = nil
 		m.THIR = nil
 		m.SemanticExportFingerprint = ""
-		m.TypedASTNodes = nil
 	}
 	if retained < phase.CFG {
 		m.CFG = nil

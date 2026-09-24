@@ -2,13 +2,12 @@ package cfg
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/ir"
 	"compiler/internal/problems"
 	"compiler/internal/source"
 )
 
 // Analyze emits control-flow diagnostics without mutating finalized topology.
-func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
+func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition func(*Branch) (bool, bool)) {
 	if module == nil {
 		return
 	}
@@ -17,7 +16,7 @@ func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition 
 	}
 }
 
-func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
+func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, constantCondition func(*Branch) (bool, bool)) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
@@ -27,7 +26,7 @@ func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, cons
 				continue
 			}
 			if branch, ok := block.Terminator.(*Branch); ok && block.Origin != BlockLoop && constantCondition != nil {
-				if value, found := constantCondition(branch.ConditionID, branch.ScopeID); found {
+				if value, found := constantCondition(branch); found {
 					reportConstantCondition(branch, value, diag)
 				}
 			}

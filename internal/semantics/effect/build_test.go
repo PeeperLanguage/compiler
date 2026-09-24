@@ -40,8 +40,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
-	module.RebuildTypedASTIndex()
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -53,7 +52,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	if err := module.CFG.Validate(); err != nil {
 		t.Fatalf("constructed CFG rejected: %v", err)
 	}
-	if err := result.Validate(module.CFG, module.TypedASTNodes); err != nil {
+	if err := result.Validate(module.CFG, module.THIR); err != nil {
 		t.Fatalf("published effects rejected: %v", err)
 	}
 	return result, module
@@ -222,6 +221,32 @@ fn probe(i: i32) -> i32 { return make()[i]; }`,
 			got := publishedOps(t, result, module, "probe")
 			if !sameOps(got, test.want) {
 				t.Fatalf("published %v, want %v", got, test.want)
+			}
+			projected := 0
+			for _, sites := range result {
+				for _, ops := range sites {
+					for _, op := range ops {
+						use, ok := op.(effect.Use)
+						if !ok {
+							continue
+						}
+						if use.Source == nil || use.Source.SourceInfo().NodeID != ir.NodeID(use.Node) ||
+							use.Source.SourceInfo().Location != use.Location || module.THIR.Node(ir.NodeID(use.Node)) != use.Source {
+							t.Fatalf("use %d lost canonical THIR source: %#v", use.Node, use)
+						}
+						if use.Place.Temporary != 0 && (use.Place.TemporaryExpr == nil ||
+							use.Place.TemporaryExpr.SourceInfo().NodeID != ir.NodeID(use.Place.Temporary)) {
+							t.Fatalf("use %d lost temporary expression: %#v", use.Node, use.Place)
+						}
+						switch use.Source.(type) {
+						case *thir.Field, *thir.Index:
+							projected++
+						}
+					}
+				}
+			}
+			if test.name == "nested read" && projected == 0 {
+				t.Fatal("projection fixture emitted no projected use")
 			}
 		})
 	}

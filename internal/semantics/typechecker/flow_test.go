@@ -7,6 +7,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
@@ -40,8 +41,7 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking)
-	module.RebuildTypedASTIndex()
+	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = CheckFlow(ctx, module)
 	return module, diag
@@ -71,12 +71,24 @@ fn main() {
 			t.Errorf("source loop %d has both checked and ordinary iteration evidence", id)
 		}
 		checked := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
-		sourceLoop := module.TypedASTNodes[id].(*ast.ForStmt)
-		if module.TypedASTNodes[expansion.ID()] != expansion {
-			t.Fatal("checked expansion not indexed")
+		var sourceLoop *ast.ForStmt
+		ast.Inspect(module.AST.Stmts[len(module.AST.Stmts)-1], func(node ast.Node) bool {
+			if loop, ok := node.(*ast.ForStmt); ok && loop.ID() == id {
+				sourceLoop = loop
+			}
+			return true
+		})
+		if sourceLoop == nil {
+			t.Fatalf("source loop %d missing", id)
 		}
-		if checked.ID() == id || module.TypedASTNodes[checked.ID()] != checked || checked.Iterable != nil || checked.Cond != nil {
+		if _, ok := module.THIR.Node(ir.NodeID(expansion.ID())).(*thir.Block); !ok {
+			t.Fatal("checked expansion missing from THIR")
+		}
+		if checked.ID() == id || checked.Iterable != nil || checked.Cond != nil {
 			t.Fatalf("checked loop identity not isolated: %#v", checked)
+		}
+		if _, ok := module.THIR.Node(ir.NodeID(checked.ID())).(*thir.For); !ok {
+			t.Fatal("checked loop missing from THIR")
 		}
 		if sourceLoop.ID() != id || sourceLoop.Iterable == nil {
 			t.Fatalf("source loop index replaced by checked loop: %#v", sourceLoop)
@@ -103,12 +115,6 @@ fn main() {
 		if got := typeinfo.TypeText(module.Bindings.Symbol(item.Name).Type); got != "i32" {
 			t.Fatalf("item type = %s", got)
 		}
-		ast.Inspect(expansion, func(node ast.Node) bool {
-			if node != nil && module.TypedASTNodes[node.ID()] == nil {
-				t.Errorf("generated node %T/%d not indexed", node, node.ID())
-			}
-			return true
-		})
 	})
 	if checkedCount != 2 {
 		t.Fatalf("checked iterations = %d, want 2", checkedCount)

@@ -270,7 +270,7 @@ func (b *thirBuilder) argument(expr thir.Expr) {
 
 func (b *thirBuilder) project(expr thir.Expr, kind typeinfo.UseKind) {
 	b.placeOperands(expr)
-	b.emit(Use{Place: b.place(expr), Node: nodeID(expr.SourceInfo().NodeID), Location: expr.SourceInfo().Location, Kind: kind})
+	b.emit(Use{Place: b.place(expr), Node: nodeID(expr.SourceInfo().NodeID), Source: expr, Location: expr.SourceInfo().Location, Kind: kind})
 }
 
 func (b *thirBuilder) placeOperands(expr thir.Expr) {

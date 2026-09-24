@@ -7,6 +7,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/symbols"
 )
@@ -21,7 +22,7 @@ const validationSource = `fn bump(start: i32) -> i32 {
 // negative case below could pass against a fixture that was already broken.
 func TestValidateAcceptsPublishedEffects(t *testing.T) {
 	result, module := buildEffects(t, validationSource)
-	if err := result.Validate(module.CFG, module.TypedASTNodes); err != nil {
+	if err := result.Validate(module.CFG, module.THIR); err != nil {
 		t.Fatalf("Validate() = %v, want nil for a published artifact", err)
 	}
 }
@@ -33,7 +34,7 @@ fn second() {}`)
 		t.Fatalf("CFG functions = %d, want 2", len(module.CFG.Functions))
 	}
 	delete(result, module.CFG.Functions[1].NodeID)
-	if err := result.Validate(module.CFG, module.TypedASTNodes); err == nil || !strings.Contains(err.Error(), "no published effects") {
+	if err := result.Validate(module.CFG, module.THIR); err == nil || !strings.Contains(err.Error(), "no published effects") {
 		t.Fatalf("Validate() = %v, want missing-function evidence error", err)
 	}
 }
@@ -73,7 +74,7 @@ func TestValidateReportsDefects(t *testing.T) {
 			damage: func(result effect.Result, fn ir.NodeID, site cfg.SiteID) {
 				result[fn][site] = []effect.Op{effect.Write{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: 999999}}
 			},
-			want: "which is not in the typed AST",
+			want: "which is not in the typed THIR",
 		},
 		{
 			name: "effects at a site the graph does not contain",
@@ -95,7 +96,7 @@ func TestValidateReportsDefects(t *testing.T) {
 			result, module := buildEffects(t, validationSource)
 			fn, site := anySite(t, result)
 			test.damage(result, fn, site)
-			err := result.Validate(module.CFG, module.TypedASTNodes)
+			err := result.Validate(module.CFG, module.THIR)
 			if err == nil {
 				t.Fatalf("Validate() = nil, want a report containing %q", test.want)
 			}
@@ -106,52 +107,49 @@ func TestValidateReportsDefects(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsWrongExpressionIdentity(t *testing.T) {
+func TestValidateRejectsDamagedTHIREvidence(t *testing.T) {
 	result, module := buildEffects(t, validationSource)
 	fn, site := anySite(t, result)
-	function := module.TypedASTNodes[ast.NodeID(fn)].(*ast.FnDecl)
-	expr := function.Params[0].Name
-	target := function.Body.Stmts[1].(*ast.AssignStmt).Target
-	root := effect.Place{Root: &symbols.Symbol{Name: "count"}}
+	function := module.THIR.Function(ir.NodeID(fn))
+	binding := function.Body.Stmts[0].(*thir.Binding)
+	assignment := function.Body.Stmts[1].(*thir.Assign)
+	target := assignment.Target
+	root := effect.Place{Root: binding.Symbol}
+	bindingID := ast.NodeID(binding.Source.NodeID)
+	assignID := ast.NodeID(assignment.Source.NodeID)
+	targetID := ast.NodeID(target.SourceInfo().NodeID)
 	for _, test := range []struct {
 		name string
 		ops  []effect.Op
+		want string
 	}{
-		{"define value", []effect.Op{effect.Define{Symbol: root.Root, Node: function.ID(), Value: expr.ID(), Initialized: true}}},
-		{"write target", []effect.Op{effect.Write{Place: root, Node: expr.ID(), Owner: function.Body.ID()}}},
-		{"write value", []effect.Op{effect.Write{Place: root, Node: target.ID(), Owner: function.Body.ID(), Value: expr.ID()}}},
-		{"use", []effect.Op{effect.Use{Place: root, Node: expr.ID(), Location: ast.LocOf(expr)}}},
-		{"borrow", []effect.Op{effect.Borrow{Place: root, Node: expr.ID(), Operand: target.ID(), Location: ast.LocOf(expr)}}},
-		{"borrow operand", []effect.Op{effect.Borrow{Place: root, Node: target.ID(), Operand: expr.ID(), Location: ast.LocOf(target)}}},
-		{"iteration", []effect.Op{effect.Iterate{Place: root, Node: expr.ID(), Loop: function.Body.ID(), Carrier: root.Root, Location: ast.LocOf(expr)}}},
-		{"discard", []effect.Op{effect.Discard{Place: root, Node: expr.ID(), Location: ast.LocOf(expr)}}},
-		{"call start", []effect.Op{effect.CallBegin{Node: expr.ID(), Location: ast.LocOf(expr)}, effect.CallEnd{Node: expr.ID()}}},
-		{"temporary", []effect.Op{effect.Use{Place: effect.Place{Temporary: expr.ID()}, Node: target.ID(), Location: ast.LocOf(target)}}},
+		{"define source", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: assignID}}, "does not match node"},
+		{"define value", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: bindingID, Value: assignID, ValueExpr: binding.Value}}, "unexpected node type"},
+		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: ast.NodeID(function.Params[0].Source.NodeID), OnEntry: true}}, "not in typed THIR"},
+		{"write target", []effect.Op{effect.Write{Place: root, Node: assignID, Target: target, Owner: assignID}}, "unexpected node type"},
+		{"write owner", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: bindingID}}, "unexpected node type"},
+		{"write value", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: assignID, Value: assignID, ValueExpr: assignment.Value}}, "unexpected node type"},
+		{"use", []effect.Op{effect.Use{Place: root, Node: assignID, Source: target, Location: target.SourceInfo().Location}}, "unexpected node type"},
+		{"missing use source", []effect.Op{effect.Use{Place: root, Node: targetID, Location: target.SourceInfo().Location}}, "does not match node"},
+		{"borrow operand", []effect.Op{effect.Borrow{Place: root, Source: target, Node: targetID, Operand: assignID, OperandExpr: target, Location: target.SourceInfo().Location}}, "unexpected node type"},
+		{"iteration owner", []effect.Op{effect.Iterate{Place: root, Source: target, Node: targetID, Loop: bindingID, Carrier: binding.Symbol, Location: target.SourceInfo().Location}}, "unexpected node type"},
+		{"discard", []effect.Op{effect.Discard{Place: root, Node: assignID, Source: target, Location: target.SourceInfo().Location}}, "unexpected node type"},
+		{"call start", []effect.Op{effect.CallBegin{Node: targetID, Source: target}, effect.CallEnd{Node: targetID}}, "unexpected node type"},
+		{"temporary", []effect.Op{effect.Use{Place: effect.Place{Temporary: assignID, TemporaryExpr: target}, Node: targetID, Source: target, Location: target.SourceInfo().Location}}, "unexpected node type"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			published := effect.Result{fn: effect.SiteOps{site: test.ops}}
-			if err := published.Validate(module.CFG, module.TypedASTNodes); err != nil {
-				t.Fatalf("well-shaped operation rejected: %v", err)
-			}
-			nodes := make(map[ast.NodeID]ast.Node, len(module.TypedASTNodes))
-			for id, node := range module.TypedASTNodes {
-				nodes[id] = node
-			}
-			nodes[expr.ID()] = &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: expr.ID()}}
-			if err := published.Validate(module.CFG, nodes); err == nil || !strings.Contains(err.Error(), "unexpected node type") {
-				t.Fatalf("wrong expression identity: got %v", err)
+			if err := published.Validate(module.CFG, module.THIR); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() = %v, want %q", err, test.want)
 			}
 		})
 	}
 }
 
-func TestValidateRejectsNilIndexedNode(t *testing.T) {
+func TestValidateRejectsMissingTHIR(t *testing.T) {
 	result, module := buildEffects(t, validationSource)
-	for id := range module.TypedASTNodes {
-		module.TypedASTNodes[id] = nil
-	}
-	if err := result.Validate(module.CFG, module.TypedASTNodes); err == nil {
-		t.Fatal("nil indexed nodes accepted")
+	if err := result.Validate(module.CFG, nil); err == nil || !strings.Contains(err.Error(), "typed THIR is missing") {
+		t.Fatalf("Validate() = %v, want missing THIR", err)
 	}
 }
 

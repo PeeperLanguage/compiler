@@ -3,6 +3,7 @@ package thir
 import (
 	"fmt"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/semantics/bindingresult"
@@ -16,11 +17,11 @@ import (
 // Build materializes base-typechecked syntax into one self-contained semantic
 // tree. It does not resolve names or infer types: missing published evidence is
 // represented explicitly and rejected by Validate for otherwise-clean source.
-func Build(name, filePath string, source *ast.Module, bindings *bindingresult.Result, typing *typecheckresult.Result) *Module {
+func Build(name, filePath string, source *ast.Module, bindings *bindingresult.Result, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
 	if source == nil {
 		return nil
 	}
-	builder := &builder{bindings: bindings, typing: typing}
+	builder := &builder{bindings: bindings, typing: typing, constantCondition: constantCondition}
 	module := &Module{Name: name, FilePath: filePath, Functions: make([]*Function, 0), byNodeID: make(map[ir.NodeID]Node)}
 	ast.ForEachDecl(source, func(declaration ast.Decl) bool {
 		function, ok := declaration.(*ast.FnDecl)
@@ -45,15 +46,21 @@ func Build(name, filePath string, source *ast.Module, bindings *bindingresult.Re
 }
 
 type builder struct {
-	bindings *bindingresult.Result
-	typing   *typecheckresult.Result
+	bindings          *bindingresult.Result
+	typing            *typecheckresult.Result
+	currentScope      *symbols.Scope
+	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
 }
 
 func (b *builder) function(source *ast.FnDecl) *Function {
 	function := &Function{
-		Source:         sourceInfo(source),
-		ReturnTypeText: ast.TypeText(source.ReturnType),
-		ReturnsValue:   source.ReturnType != nil,
+		Source:            sourceInfo(source),
+		IsEntrypointShape: source.Receiver == nil && source.Body != nil && len(source.TypeParams) == 0,
+		ReturnTypeText:    ast.TypeText(source.ReturnType),
+		ReturnsValue:      source.ReturnType != nil,
+	}
+	if source.ReturnOrigins != nil {
+		function.ReturnOriginsLocation = source.ReturnOrigins.Location
 	}
 	if source.Name != nil {
 		function.Name = source.Name.Name
@@ -82,6 +89,9 @@ func (b *builder) block(source *ast.BlockStmt) *Block {
 		return nil
 	}
 	block := &Block{StmtInfo: stmtInfo(source), Scope: b.scope(source), Stmts: make([]Stmt, 0, len(source.Stmts))}
+	previousScope := b.currentScope
+	b.currentScope = block.Scope
+	defer func() { b.currentScope = previousScope }()
 	for _, statement := range source.Stmts {
 		if lowered := b.statement(statement); lowered != nil {
 			block.Stmts = append(block.Stmts, lowered)
@@ -107,7 +117,13 @@ func (b *builder) statement(statement ast.Stmt) Stmt {
 	case *ast.ReturnStmt:
 		return &Return{StmtInfo: stmtInfo(node), Value: b.expression(node.Value)}
 	case *ast.IfStmt:
-		return &If{StmtInfo: stmtInfo(node), Condition: b.expression(node.Cond), Then: b.block(node.Then), Else: b.statement(node.Else)}
+		statement := &If{StmtInfo: stmtInfo(node), Condition: b.expression(node.Cond)}
+		if b.constantCondition != nil {
+			statement.ConstantCondition, statement.ConditionDiagnostics = b.constantCondition(node.Cond, b.currentScope)
+		}
+		statement.Then = b.block(node.Then)
+		statement.Else = b.statement(node.Else)
+		return statement
 	case *ast.ForStmt:
 		return b.forStatement(node)
 	case *ast.BreakStmt:
@@ -182,12 +198,16 @@ func (b *builder) matchStatement(source *ast.MatchStmt) Stmt {
 			CarrierUse: arm.CarrierUse, Body: b.block(sourceArm.Body),
 		}
 		for _, binding := range arm.Bindings {
+			var bindingSource ir.SourceInfo
+			if binding.Binding != nil {
+				bindingSource = sourceInfo(binding.Binding.ASTNode)
+			}
 			projection := MatchPayloadField
 			if binding.Projection == typecheckresult.MatchWholePayload {
 				projection = MatchWholePayload
 			}
 			lowered.Bindings = append(lowered.Bindings, MatchBinding{
-				Projection: projection, Field: binding.Field, Type: binding.Type,
+				Source: bindingSource, Projection: projection, Field: binding.Field, Type: binding.Type,
 				Symbol: binding.Binding, Discard: binding.Discard,
 			})
 		}
@@ -235,7 +255,7 @@ func (b *builder) expression(expression ast.Expr) Expr {
 		if isStorageSymbol(symbol) {
 			info.Place = &Place{Root: symbol, Type: info.Type}
 		}
-		result = &Ident{ExprInfo: info, Name: node.Name, Symbol: symbol}
+		result = &Ident{ExprInfo: info, Name: node.Name, Symbol: symbol, IsExpandedDefaultBinding: b.typing != nil && b.typing.ExpandedDefaultBinding(node.ID())}
 	case *ast.ScopeResolution:
 		symbol := b.symbol(node)
 		if info.Type == nil && symbol != nil {

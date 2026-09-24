@@ -26,7 +26,7 @@ func buildGraph(t *testing.T, sourceText string) (*cfg.Module, ir.NodeID) {
 	const file = "validate_test" + ".peep"
 	diag := diagnostics.NewDiagnosticBag()
 	source := parser.New(file, lexer.New(file, sourceText, diag).Tokenize(), diag).ParseModule()
-	graphs := cfg.BuildModule(thir.Build("test", file, source, nil, nil))
+	graphs := cfg.BuildModule(thir.Build("test", file, source, nil, nil, nil))
 	if graphs == nil || len(graphs.Functions) == 0 {
 		t.Fatalf("no CFG built: %s", diag.EmitAllToString())
 	}

@@ -396,6 +396,40 @@ fn (self: App) main() {}`},
 	}
 }
 
+func TestValidateEntrypointWithoutAST(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		valid        bool
+	}{
+		{"ordinary", `fn main() -> i32 { return 0; }`, true},
+		{"generic", `fn main<T>() {}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := diagnostics.NewDiagnosticBag()
+			entry := parseModuleSource("entry"+peeper.SourceExt, test.source, diag)
+			entry.Phase = phase.Parsed
+			ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+			ctx.AddModule(entry)
+			for entry.Phase < phase.Typechecked {
+				if !advanceModulePhase(ctx, entry, diag) {
+					t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+				}
+			}
+			symbol, found := entry.ModuleScope.LookupLocal("main")
+			if !found || symbol == nil {
+				t.Fatal("missing main symbol")
+			}
+			entry.AST = nil
+			symbol.ASTNode = nil
+			check := diagnostics.NewDiagnosticBag()
+			validateProgramEntrypoint(entry, check)
+			if valid := !check.HasErrors(); valid != test.valid {
+				t.Fatalf("entrypoint validity = %v, want %v: %s", valid, test.valid, check.EmitAllToString())
+			}
+		})
+	}
+}
+
 func TestPipelineAcceptsBuildEntrypointReturns(t *testing.T) {
 	tests := []struct {
 		name string
@@ -745,10 +779,12 @@ func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
 		}
 	}
 	diag.AddError(diagnostics.ErrInvalidAssignment, "source error", nil, "")
-	fn := entry.AST.Stmts[0].(*ast.FnDecl)
-	delete(entry.TypedASTNodes, fn.ID())
+	entry.THIR.Functions = nil
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Effects {
 		t.Fatalf("phase = %v, want Effects", entry.Phase)
+	}
+	if len(entry.Effects) != 0 {
+		t.Fatalf("damaged THIR produced effects: %#v", entry.Effects)
 	}
 	if hasDiagnosticCode(diag, diagnostics.ErrInvalidEvidence) {
 		t.Fatalf("source-error recovery reported invalid evidence:\n%s", diag.EmitAllToString())
@@ -1118,10 +1154,19 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
 
-	for entry.Phase < phase.CFG {
+	for entry.Phase < phase.Typechecked {
 		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
 		}
+	}
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
+			t.Fatal("constant-condition warning emitted before CFG phase")
+		}
+	}
+	entry.AST = nil
+	if !advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("CFG phase requires AST")
 	}
 	if entry.MIR != nil {
 		t.Fatalf("CFG phase produced MIR: %#v", entry.MIR)
@@ -1132,6 +1177,109 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 		}
 	}
 	t.Fatalf("constant-condition diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
+}
+
+func TestPipelinePublishesLocalConstantConditions(t *testing.T) {
+	for _, test := range []struct {
+		name, value string
+		warning     string
+	}{
+		{"true", "true", diagnostics.WarnConstantConditionTrue},
+		{"false", "false", diagnostics.WarnConstantConditionFalse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := diagnostics.NewDiagnosticBag()
+			entry := parseModuleSource("entry"+peeper.SourceExt, "fn main() { const Flag = "+test.value+"; if Flag { print(1); } }", diag)
+			entry.Phase = phase.Parsed
+			ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+			ctx.AddModule(entry)
+			for entry.Phase < phase.Typechecked {
+				if !advanceModulePhase(ctx, entry, diag) {
+					t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+				}
+			}
+			entry.AST = nil
+			if !advanceModulePhase(ctx, entry, diag) {
+				t.Fatal("CFG phase requires AST")
+			}
+			for _, item := range diag.Diagnostics() {
+				if item.Code == test.warning {
+					return
+				}
+			}
+			t.Fatalf("missing %s: %s", test.warning, diag.EmitAllToString())
+		})
+	}
+}
+
+func TestPipelineDefersConstantEvaluationCycleToCFG(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	entry := parseModuleSource("entry"+peeper.SourceExt, `fn main() {
+		const First: bool = Second;
+		const Second: bool = First;
+		if First { print(1); }
+	}`, diag)
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+	for entry.Phase < phase.Typechecked {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Code == diagnostics.ErrCircularDependency {
+			t.Fatal("constant evaluation cycle emitted before CFG phase")
+		}
+	}
+	entry.AST = nil
+	if !advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("CFG phase requires AST")
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Code == diagnostics.ErrCircularDependency {
+			return
+		}
+	}
+	t.Fatalf("missing constant evaluation cycle: %s", diag.EmitAllToString())
+}
+
+func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	entry := parseModuleSource("entry"+peeper.SourceExt, `fn main() -> i32 { return 0; }`, diag)
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	syntax := entry.AST
+	entry.AST = nil
+	if moduleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("collection advanced without syntax")
+	}
+	entry.AST = syntax
+	for entry.Phase < phase.Typechecked {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	typed := entry.THIR
+	entry.AST = nil
+	entry.ResetToPhase(phase.Typechecked)
+	if entry.THIR != typed || !moduleReadyForNextPhase(ctx, entry, nil, true) {
+		t.Fatal("typechecked reset did not preserve THIR readiness without AST")
+	}
+	for entry.Phase < phase.Ownership {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("post-typing phase stopped without AST at %v", entry.Phase)
+		}
+	}
+	if diag.HasErrors() {
+		t.Fatalf("post-typing diagnostics without AST: %s", diag.EmitAllToString())
+	}
+	entry.ResetToPhase(phase.Resolved)
+	if entry.THIR != nil || moduleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("typechecking advanced without AST after semantic reset")
+	}
 }
 
 func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.T) {

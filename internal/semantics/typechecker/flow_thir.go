@@ -912,8 +912,8 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 			}
 			state.rawPointers = setOriginFact(state.rawPointers, storage, valueOrigins)
 		}
-		if binding.Symbol.ASTNode != nil {
-			a.result.MergeOrigins(binding.Symbol.ASTNode.ID(), storage, valueOrigins)
+		if binding.Source.NodeID != 0 {
+			a.result.MergeOrigins(ast.NodeID(binding.Source.NodeID), storage, valueOrigins)
 		}
 	}
 }

@@ -21,8 +21,8 @@ import (
 type site struct {
 	cfgSite  *cfg.Site
 	cfgBlock *cfg.Block
-	stmt     ast.Stmt
-	block    *ast.BlockStmt
+	stmt     thir.Stmt
+	block    *thir.Block
 	scope    *symbols.Scope
 }
 
@@ -34,24 +34,19 @@ type analyzer struct {
 	order                  []cfg.SiteID
 	effects                effect.SiteOps
 	cleanup                *ownershipresult.CleanupPlan
-	function               *ast.FnDecl
+	function               *thir.Function
 	functionScope          *symbols.Scope
 	reportedJoin           map[cfg.SiteID]bool
 	inStates               map[cfg.SiteID]state
-	symbolLiveIn           map[cfg.SiteID]map[*symbols.Symbol]ast.Node
-	symbolLiveOut          map[cfg.SiteID]map[*symbols.Symbol]ast.Node
+	symbolLiveIn           map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
+	symbolLiveOut          map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
 	deadMatchCarrierAtExit map[cfg.SiteID]*symbols.Symbol
 }
 
-type pointerOrigin struct {
-	root *symbols.Symbol
-	site ast.Node
-}
-
 type state struct {
-	moved      map[*symbols.Symbol]ast.Node
+	moved      map[*symbols.Symbol]ir.SourceInfo
 	live       map[*symbols.Symbol]struct{}
-	pointers   map[*symbols.Symbol]pointerOrigin
+	pointers   map[*symbols.Symbol]*symbols.Symbol
 	references map[*symbols.Symbol][]referenceLoan
 }
 
@@ -60,7 +55,7 @@ type state struct {
 // value-flow rules from becoming ad hoc type rules.
 func Check(diag *diagnostics.DiagnosticBag, module *module.Module) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if diag == nil || module == nil || module.AST == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
+	if diag == nil || module == nil || module.THIR == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
 		return result
 	}
 	for _, graph := range module.CFG.Functions {
@@ -83,27 +78,22 @@ func Check(diag *diagnostics.DiagnosticBag, module *module.Module) ownershipresu
 		}
 		if ownershipTrackedSymbol(sym) {
 			diag.AddError(diagnostics.ErrInvalidAssignment,
-				"ownership-tracked module bindings are not supported", ast.LocOf(sym.ASTNode), "")
+				"ownership-tracked module bindings are not supported", sym.Location, "")
 		}
 	}
-	for _, stmt := range module.AST.Stmts {
-		switch node := stmt.(type) {
-		case *ast.FnDecl:
-			sym := module.Bindings.Symbol(node.Name)
-			if sym == nil {
-				continue
-			}
-			scope := sym.Scope
-			graph := module.CFG.Function(ir.NodeID(node.ID()))
-			if graph != nil {
-				checkFunction(diag, module, node, scope, graph, result[graph.NodeID])
-			}
+	for _, fn := range module.THIR.Functions {
+		if fn == nil || fn.Symbol == nil || fn.Body == nil {
+			continue
+		}
+		graph := module.CFG.Function(fn.Source.NodeID)
+		if graph != nil {
+			checkFunction(diag, module, fn, fn.Symbol.Scope, graph, result[graph.NodeID])
 		}
 	}
 	return result
 }
 
-func checkFunction(diag *diagnostics.DiagnosticBag, module *module.Module, fn *ast.FnDecl, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
+func checkFunction(diag *diagnostics.DiagnosticBag, module *module.Module, fn *thir.Function, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
 	if diag == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
@@ -128,7 +118,6 @@ func indexSites(module *module.Module, cfgFn *cfg.ControlFlowGraph, scope *symbo
 	if module == nil || module.Bindings == nil || cfgFn == nil || scope == nil {
 		return sites, order
 	}
-	nodes := module.TypedASTNodes
 	for _, block := range cfgFn.Blocks {
 		if block == nil || !block.Reachable {
 			continue
@@ -144,11 +133,11 @@ func indexSites(module *module.Module, cfgFn *cfg.ControlFlowGraph, scope *symbo
 			indexed := &site{cfgSite: flowSite, cfgBlock: block, scope: resolvedScope}
 			switch flowSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
-				if stmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(ast.Stmt); ok && stmt != nil {
+				if stmt, ok := module.THIR.Node(flowSite.NodeID).(thir.Stmt); ok && stmt != nil {
 					indexed.stmt = stmt
 				}
 			case cfg.SiteScopeExit:
-				if blockStmt, ok := nodes[ast.NodeID(flowSite.NodeID)].(*ast.BlockStmt); ok && blockStmt != nil {
+				if blockStmt, ok := module.THIR.Node(flowSite.NodeID).(*thir.Block); ok && blockStmt != nil {
 					indexed.block = blockStmt
 				}
 			}
@@ -166,7 +155,8 @@ func (a *analyzer) run() {
 	a.computeSymbolLiveness()
 	a.planDeadMatchCarrierCleanup()
 	entryState := newState()
-	for _, sym := range a.functionScope.Symbols() {
+	for _, parameter := range a.function.Params {
+		sym := parameter.Symbol
 		if sym == nil || sym.Kind != symbols.SymbolParam {
 			continue
 		}
@@ -178,7 +168,7 @@ func (a *analyzer) run() {
 				id:      loanID{parameter: sym},
 				origins: []place.Origin{{Root: sym}},
 				mutable: mutable,
-				site:    sym.ASTNode,
+				site:    parameter.Source,
 			}}
 		}
 	}
@@ -233,7 +223,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 	scopeExits := make(map[ast.NodeID][]*site)
 	for _, node := range a.sites {
 		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil {
-			scopeExits[node.block.ID()] = append(scopeExits[node.block.ID()], node)
+			scopeExits[ast.NodeID(node.block.SourceInfo().NodeID)] = append(scopeExits[ast.NodeID(node.block.SourceInfo().NodeID)], node)
 		}
 	}
 
@@ -245,7 +235,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		if match == nil {
 			continue
 		}
-		_, carrier := a.matchSubjectCarrier(match)
+		_, carrier := matchSubjectCarrier(match)
 		if carrier == nil {
 			continue
 		}
@@ -363,7 +353,7 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (s
 	if mismatch && !a.reportedJoin[nodeID] {
 		a.reportedJoin[nodeID] = true
 		a.diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"ownership state differs across control-flow paths", ast.LocOf(node.stmt), "").
+			"ownership state differs across control-flow paths", node.cfgSite.Location, "").
 			WithHelp("move or reinitialize ownership-tracked values on every path")
 	}
 	for sym, site := range src.moved {
@@ -388,9 +378,9 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, exists bool) (s
 
 func newState() state {
 	return state{
-		moved:      make(map[*symbols.Symbol]ast.Node),
+		moved:      make(map[*symbols.Symbol]ir.SourceInfo),
 		live:       make(map[*symbols.Symbol]struct{}),
-		pointers:   make(map[*symbols.Symbol]pointerOrigin),
+		pointers:   make(map[*symbols.Symbol]*symbols.Symbol),
 		references: make(map[*symbols.Symbol][]referenceLoan),
 	}
 }
@@ -399,16 +389,16 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	if a == nil || node == nil || node.cfgSite == nil || node.block == nil || node.scope == nil {
 		return
 	}
-	a.checkScopeDestruction(node.scope, node.block, loans)
+	a.checkScopeDestruction(node.scope, node.block.SourceInfo(), loans)
 	delete(a.cleanup.AfterScope, node.cfgSite.ID)
 	cleanup := cleanupSymbols(node.scope, st)
 	if carrier := a.deadMatchCarrierAtExit[node.cfgSite.ID]; carrier != nil {
 		if _, live := st.live[carrier]; live {
-			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block, loans)
+			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block.SourceInfo(), loans)
 			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
 				cleanup = append(cleanup, carrier)
 			}
-			st.moved[carrier] = node.block
+			st.moved[carrier] = node.block.SourceInfo()
 			delete(st.live, carrier)
 			delete(st.references, carrier)
 		}
@@ -452,23 +442,23 @@ func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
 	return cleanup
 }
 
-func (a *analyzer) cleanupBeforeReturn(scope *symbols.Scope, stmt *ast.ReturnStmt, st state, loans *loanContext) {
+func (a *analyzer) cleanupBeforeReturn(scope *symbols.Scope, stmt *thir.Return, st state, loans *loanContext) {
 	if a == nil || stmt == nil {
 		return
 	}
-	delete(a.cleanup.BeforeReturn, ir.NodeID(stmt.ID()))
+	delete(a.cleanup.BeforeReturn, stmt.SourceInfo().NodeID)
 	cleanup := make([]*symbols.Symbol, 0)
 	for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
-		a.checkScopeDestruction(current, stmt, loans)
+		a.checkScopeDestruction(current, stmt.SourceInfo(), loans)
 		cleanup = append(cleanup, cleanupSymbols(current, st)...)
 		clearScopeOwnership(current, st)
 	}
 	if len(cleanup) > 0 {
-		a.cleanup.BeforeReturn[ir.NodeID(stmt.ID())] = symbolIDs(cleanup)
+		a.cleanup.BeforeReturn[stmt.SourceInfo().NodeID] = symbolIDs(cleanup)
 	}
 }
 
-func (a *analyzer) checkScopeDestruction(scope *symbols.Scope, site ast.Node, loans *loanContext) {
+func (a *analyzer) checkScopeDestruction(scope *symbols.Scope, site ir.SourceInfo, loans *loanContext) {
 	if a == nil || scope == nil || loans == nil {
 		return
 	}
@@ -516,9 +506,9 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	// evaluating the returned value can move its source. Storage transitions for
 	// declarations and assignments are published effects and require no syntax
 	// cases here.
-	if s, ok := node.stmt.(*ast.ReturnStmt); ok {
+	if s, ok := node.stmt.(*thir.Return); ok {
 		a.checkPointerEscape(scope, s.Value, st)
-		a.validateReferenceReturn(scope, s, st)
+		a.validateReferenceReturn(s, st)
 	}
 
 	// Evaluation and generic storage transitions come from published effects.
@@ -528,7 +518,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	// Return remains the one ownership statement policy whose checks straddle
 	// evaluation: provenance is validated above before the value can move, while
 	// cleanup happens after its effects have executed.
-	if s, ok := node.stmt.(*ast.ReturnStmt); ok {
+	if s, ok := node.stmt.(*thir.Return); ok {
 		releaseIterationLoans(st, loans, 0)
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	}
@@ -552,7 +542,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if arm == nil || arm.Payload == nil {
 		return
 	}
-	subject, carrier := a.matchSubjectCarrier(match)
+	subject, carrier := matchSubjectCarrier(match)
 	if subject == nil {
 		return
 	}
@@ -569,12 +559,12 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	}
 	if movesCarrier && carrier == nil {
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"move-only variant payload cannot be moved from partial place; borrow it instead", ast.LocOf(subject), "")
+			"move-only variant payload cannot be moved from partial place; borrow it instead", subject.SourceInfo().Location, "")
 	}
 	if movesCarrier && carrier != nil {
 		moveSite := subject
-		a.reportLoanConflict(a.originsForExpr(subject), nil, storageConsume, moveSite, a.newLoanContext(node, st))
-		st.moved[carrier] = moveSite
+		a.reportLoanConflict(a.originsForExpr(subject), nil, storageConsume, moveSite.SourceInfo(), a.newLoanContext(node, st))
+		st.moved[carrier] = moveSite.SourceInfo()
 		delete(st.live, carrier)
 		delete(st.references, carrier)
 		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == thir.MatchWholePayload {
@@ -604,35 +594,31 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			delete(st.moved, binding)
 			st.live[binding] = struct{}{}
 		}
-		if binding.ASTNode == nil || a.module.Flow == nil {
+		if field.Source.NodeID == 0 || a.module.Flow == nil {
 			continue
 		}
-		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(binding.ASTNode.ID()))
+		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(ast.NodeID(field.Source.NodeID)))
 		if mutable, reference := referenceMutability(binding); reference && len(origins) > 0 {
 			st.references[binding] = []referenceLoan{{
-				id: loanID{node: binding.ASTNode}, origins: origins, mutable: mutable, site: binding.ASTNode,
+				id: loanID{node: field.Source.NodeID}, origins: origins, mutable: mutable, site: field.Source,
 			}}
 		}
 	}
 }
 
-func (a *analyzer) matchSubjectCarrier(match *thir.Match) (ast.Expr, *symbols.Symbol) {
-	if a == nil || a.module == nil || match == nil || match.Subject == nil {
-		return nil, nil
-	}
-	subject, _ := a.module.TypedASTNodes[ast.NodeID(match.Subject.SourceInfo().NodeID)].(ast.Expr)
-	if subject == nil {
+func matchSubjectCarrier(match *thir.Match) (thir.Expr, *symbols.Symbol) {
+	if match == nil || match.Subject == nil {
 		return nil, nil
 	}
 	ident, direct := match.Subject.(*thir.Ident)
 	if !direct || ident == nil {
-		return subject, nil
+		return match.Subject, nil
 	}
 	carrier := ident.Symbol
 	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
-		return subject, nil
+		return match.Subject, nil
 	}
-	return subject, carrier
+	return match.Subject, carrier
 }
 
 func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {

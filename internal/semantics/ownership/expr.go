@@ -3,8 +3,7 @@ package ownership
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/ir"
-	"compiler/internal/semantics/place"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -16,27 +15,30 @@ func storageAccessForUse(typ typeinfo.Type, use typeinfo.UseKind) storageAccess 
 	return storageRead
 }
 
-func (a *analyzer) planProjectionBaseDrop(projection, base ast.Expr) bool {
-	if a == nil || a.cleanup == nil || projection == nil || base == nil {
+func (a *analyzer) planProjectionBaseDrop(projection, base thir.Expr) bool {
+	if a == nil || a.cleanup == nil || a.module == nil || projection == nil || base == nil {
 		return false
 	}
-	if place.IsPlaceExpr(base) || !typeinfo.OwnershipCapabilityOf(a.exprType(base)).Drop {
+	if storage := base.ExprPlace(); storage != nil && storage.Root != nil {
+		return false
+	}
+	if !typeinfo.OwnershipCapabilityOf(a.exprType(base)).Drop {
 		return false
 	}
 	if typeinfo.OwnershipCapabilityOf(a.exprType(projection)).Drop {
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"ownership-bearing projection from temporary must be bound before use", ast.LocOf(projection), "")
+			"ownership-bearing projection from temporary must be bound before use", projection.SourceInfo().Location, "")
 		return true
 	}
-	a.cleanup.ProjectionBase[ir.NodeID(projection.ID())] = struct{}{}
+	a.cleanup.ProjectionBase[projection.SourceInfo().NodeID] = struct{}{}
 	return false
 }
 
-func (a *analyzer) exprType(expr ast.Expr) typeinfo.Type {
+func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
 	if a == nil || a.module == nil || expr == nil {
 		return nil
 	}
-	return a.module.EffectiveExprType(expr.ID())
+	return a.module.EffectiveExprType(ast.NodeID(expr.SourceInfo().NodeID))
 }
 
 func (a *analyzer) partialVariantPayloadMove(id ast.NodeID) bool {
@@ -47,7 +49,7 @@ func (a *analyzer) partialVariantPayloadMove(id ast.NodeID) bool {
 	return ok && len(payload.Cases) > 0 && !payload.Direct
 }
 
-func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value ast.Expr, st state) {
+func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value thir.Expr, st state) {
 	if sym == nil || st.pointers == nil {
 		return
 	}
@@ -60,55 +62,47 @@ func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope
 		delete(st.pointers, sym)
 		return
 	}
-	if origin, ok := a.pointerOrigin(scope, value, st); ok {
+	if origin := a.pointerOrigin(scope, value, st); origin != nil {
 		st.pointers[sym] = origin
 		return
 	}
 	delete(st.pointers, sym)
 }
 
-func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr ast.Expr, st state) {
+func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr thir.Expr, st state) {
 	if expr == nil {
 		return
 	}
-	if origin, ok := a.pointerOrigin(scope, expr, st); ok {
+	if origin := a.pointerOrigin(scope, expr, st); origin != nil {
 		a.reportPointerEscape(expr, origin)
 		return
 	}
 	switch e := expr.(type) {
-	case *ast.StructLit:
-		a.checkLiteralPointerEscapes(scope, e.Fields, st)
-	case *ast.VariantLit:
+	case *thir.StructLiteral:
+		for _, field := range e.Fields {
+			a.checkPointerEscape(scope, field.Value, st)
+		}
+	case *thir.Variant:
 		a.checkPointerEscape(scope, e.Payload, st)
 	}
 }
 
-func (a *analyzer) checkLiteralPointerEscapes(scope *symbols.Scope, fields []ast.StructLitField, st state) {
-	for _, field := range fields {
-		a.checkPointerEscape(scope, field.Value, st)
-	}
-}
-
-func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) (pointerOrigin, bool) {
+func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state) *symbols.Symbol {
 	switch e := expr.(type) {
-	case *ast.AddressExpr:
-		if e.Mode != ast.AddressRaw {
-			return pointerOrigin{}, false
+	case *thir.Address:
+		if e.Mode != thir.AddressRaw {
+			return nil
 		}
-		root, ok := place.LocalRoot(scope, a.module.ModuleScope, e.Expr, a.exprType, a.module.ExpandedDefaultBinding)
-		if !ok || root == nil {
-			return pointerOrigin{}, false
-		}
-		return pointerOrigin{root: root, site: e}, true
-	case *ast.Ident:
+		return a.localPointerRoot(scope, e.Value)
+	case *thir.Ident:
 		if scope == nil {
-			return pointerOrigin{}, false
+			return nil
 		}
 		if _, raw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !raw {
-			return pointerOrigin{}, false
+			return nil
 		}
 		if a.module != nil && a.module.Flow != nil {
-			if resolution, resolved := a.module.Flow.Origins(e.ID()); resolved {
+			if resolution, resolved := a.module.Flow.Origins(ast.NodeID(e.SourceInfo().NodeID)); resolved {
 				for _, origin := range resolution.Value {
 					if origin.Root == nil {
 						continue
@@ -116,40 +110,67 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr ast.Expr, st state) 
 					for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
 						local, found := current.LookupLocal(origin.Root.Name)
 						if found && local == origin.Root {
-							return pointerOrigin{root: origin.Root, site: e}, true
+							return origin.Root
 						}
 					}
 				}
-				return pointerOrigin{}, false
+				return nil
 			}
 		}
-		var sym *symbols.Symbol
-		var found bool
-		if a.module != nil && a.module.Bindings != nil {
-			sym = a.module.Bindings.Symbol(e)
-			found = sym != nil
+		sym := e.Symbol
+		if sym == nil {
+			sym, _ = scope.Lookup(e.Name)
 		}
-		if !found {
-			sym, found = scope.Lookup(e.Name)
-		}
-		if !found || sym == nil {
-			return pointerOrigin{}, false
-		}
-		origin, ok := st.pointers[sym]
-		return origin, ok
+		return st.pointers[sym]
 	default:
-		return pointerOrigin{}, false
+		return nil
 	}
 }
 
-func (a *analyzer) reportPointerEscape(expr ast.Expr, origin pointerOrigin) {
-	if a == nil || a.diagnostics == nil || origin.root == nil {
+// localPointerRoot retains declaration-module locality for expanded defaults
+// and stops at pointer projections, as place.LocalRoot does for source syntax.
+func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbols.Symbol {
+	if a == nil || a.module == nil || scope == nil || expr == nil {
+		return nil
+	}
+	switch e := expr.(type) {
+	case *thir.Ident:
+		if e.IsExpandedDefaultBinding {
+			return nil
+		}
+		if e.Symbol != nil {
+			for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+				if local, found := current.LookupLocal(e.Name); found && local == e.Symbol {
+					return local
+				}
+			}
+			return nil
+		}
+		for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+			if local, found := current.LookupLocal(e.Name); found {
+				return local
+			}
+		}
+	case *thir.Field:
+		if _, pointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !pointer {
+			return a.localPointerRoot(scope, e.Base)
+		}
+	case *thir.Index:
+		if _, pointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !pointer {
+			return a.localPointerRoot(scope, e.Base)
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) reportPointerEscape(expr thir.Expr, origin *symbols.Symbol) {
+	if a == nil || a.diagnostics == nil || origin == nil {
 		return
 	}
 	diag := a.diagnostics.AddError(diagnostics.ErrPointerEscape,
-		"cannot return pointer to local storage", ast.LocOf(expr), "")
-	if origin.root.Location != nil {
-		diag.WithSecondaryLabel(origin.root.Location, "local storage declared here")
+		"cannot return pointer to local storage", expr.SourceInfo().Location, "")
+	if origin.Location != nil {
+		diag.WithSecondaryLabel(origin.Location, "local storage declared here")
 	}
 	diag.WithHelp("allocate the value with an explicit allocator before returning a pointer to it")
 }

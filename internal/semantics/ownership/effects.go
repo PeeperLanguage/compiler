@@ -4,8 +4,8 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -71,7 +71,7 @@ func (v *ownershipEffectVisitor) VisitUse(op effect.Use) {
 }
 
 func (v *ownershipEffectVisitor) VisitBorrow(op effect.Borrow) {
-	v.a.applyBorrow(v.node, op, v.st, v.loans, v.calls)
+	v.a.applyBorrow(op, v.st, v.loans)
 }
 
 func (v *ownershipEffectVisitor) VisitIterate(op effect.Iterate) {
@@ -119,20 +119,20 @@ type storedReferenceVisitor struct {
 	values map[ast.NodeID]storedReference
 }
 
-func (v *storedReferenceVisitor) capture(valueID ast.NodeID) {
-	if valueID == 0 {
+func (v *storedReferenceVisitor) capture(value thir.Expr) {
+	if value == nil {
 		return
 	}
+	valueID := ast.NodeID(value.SourceInfo().NodeID)
 	if _, captured := v.values[valueID]; captured {
 		return
 	}
-	value, _ := v.a.module.TypedASTNodes[valueID].(ast.Expr)
-	loans, present := v.a.referenceValueForExpr(value, v.st)
+	loans, present := v.a.referenceValueForTHIR(value, v.st)
 	v.values[valueID] = storedReference{loans: loans, present: present}
 }
 
-func (v *storedReferenceVisitor) VisitDefine(op effect.Define)  { v.capture(op.Value) }
-func (v *storedReferenceVisitor) VisitWrite(op effect.Write)    { v.capture(op.Value) }
+func (v *storedReferenceVisitor) VisitDefine(op effect.Define)  { v.capture(op.ValueExpr) }
+func (v *storedReferenceVisitor) VisitWrite(op effect.Write)    { v.capture(op.ValueExpr) }
 func (*storedReferenceVisitor) VisitUse(effect.Use)             {}
 func (*storedReferenceVisitor) VisitBorrow(effect.Borrow)       {}
 func (*storedReferenceVisitor) VisitIterate(effect.Iterate)     {}
@@ -148,7 +148,7 @@ func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, ref
 		return
 	}
 	if op.Value != 0 {
-		value, _ := a.module.TypedASTNodes[op.Value].(ast.Expr)
+		value := op.ValueExpr
 		reference := references[op.Value]
 		a.updatePointerSymbol(op.Symbol, node.scope, value, st)
 		a.updateReferenceSymbol(op.Symbol, reference.loans, reference.present, st)
@@ -178,7 +178,7 @@ func (a *analyzer) applyWriteEffect(
 	if op.Owner != 0 {
 		delete(a.cleanup.BeforeAssign, ir.NodeID(op.Owner))
 	}
-	target, _ := a.module.TypedASTNodes[op.Node].(ast.Expr)
+	target := op.Target
 	if target == nil {
 		return
 	}
@@ -217,7 +217,7 @@ func (a *analyzer) applyWriteEffect(
 	if op.Value == 0 {
 		return
 	}
-	value, _ := a.module.TypedASTNodes[op.Value].(ast.Expr)
+	value := op.ValueExpr
 	reference := references[op.Value]
 	a.updatePointerSymbol(sym, node.scope, value, st)
 	a.updateReferenceSymbol(sym, reference.loans, reference.present, st)
@@ -231,7 +231,7 @@ func (a *analyzer) applyIterateEffect(op effect.Iterate, st state, loans *loanCo
 	if op.Carrier == nil || op.Node == 0 {
 		return
 	}
-	iterable, _ := a.module.TypedASTNodes[op.Node].(ast.Expr)
+	iterable := op.Source
 	if iterable == nil {
 		return
 	}
@@ -241,25 +241,24 @@ func (a *analyzer) applyIterateEffect(op effect.Iterate, st state, loans *loanCo
 		if value, found := st.references[op.Place.Root]; found {
 			origins = referenceOrigins(value)
 		}
-	} else if value, hasValue := a.referenceValueForExpr(iterable, st); hasValue {
+	} else if value, hasValue := a.referenceValueForTHIR(op.Source, st); hasValue {
 		origins = referenceOrigins(value)
 	}
 	if len(origins) == 0 {
 		return
 	}
 	st.references[op.Carrier] = []referenceLoan{{
-		id: loanID{node: iterable}, origins: origins, site: iterable, loop: op.Loop,
+		id: loanID{node: ir.NodeID(op.Node)}, origins: origins, site: op.Source.SourceInfo(), loop: op.Loop,
 	}}
 }
 
 func (a *analyzer) applyUse(node *site, op effect.Use, st state, loans *loanContext) {
-	syntax, _ := a.module.TypedASTNodes[op.Node].(ast.Expr)
+	syntax := op.Source
 	if op.Place.Root == nil {
 		// A value with no owner. Only a projection out of one has an effect
 		// here, and it is that the projection must be bound before use. The
 		// effect place already names the temporary base; do not peel syntax.
-		base, _ := a.module.TypedASTNodes[op.Place.Temporary].(ast.Expr)
-		a.planProjectionBaseDrop(syntax, base)
+		a.planProjectionBaseDrop(op.Source, op.Place.TemporaryExpr)
 		return
 	}
 	if a.reportUseAfterMove(op.Place.Root, st, op) {
@@ -274,7 +273,7 @@ func (a *analyzer) applyUse(node *site, op effect.Use, st state, loans *loanCont
 
 // applyWholeUse is the effect of using a binding entire: its move state changes,
 // and the storage it names is accessed.
-func (a *analyzer) applyWholeUse(node *site, op effect.Use, st state, loans *loanContext, syntax ast.Expr) {
+func (a *analyzer) applyWholeUse(node *site, op effect.Use, st state, loans *loanContext, syntax thir.Expr) {
 	sym := op.Place.Root
 	a.applyUseKind(sym, op, st, syntax)
 	if _, reference := referenceMutability(sym); reference {
@@ -292,7 +291,7 @@ func (a *analyzer) applyWholeUse(node *site, op effect.Use, st state, loans *loa
 // applyProjectedUse is the effect of using part of a binding. Consuming a part
 // is what a partial move is, and the language does not allow it out of a
 // move-only place.
-func (a *analyzer) applyProjectedUse(op effect.Use, st state, loans *loanContext, syntax ast.Expr) {
+func (a *analyzer) applyProjectedUse(op effect.Use, st state, loans *loanContext, syntax thir.Expr) {
 	if syntax == nil {
 		return
 	}
@@ -312,7 +311,7 @@ func (a *analyzer) applyProjectedUse(op effect.Use, st state, loans *loanContext
 			"move-only variant payload cannot be moved from partial place; borrow it instead", op.Location, "")
 		return
 	}
-	if projection, projected := place.Project(syntax); projected && projection.Step.Kind == place.OriginIndex {
+	if _, indexed := syntax.(*thir.Index); indexed {
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", op.Location, "")
 		return
@@ -324,7 +323,7 @@ func (a *analyzer) applyProjectedUse(op effect.Use, st state, loans *loanContext
 // applyBorrow records a reference taken to a place. A mutable borrow taken while
 // a call is being evaluated is a reservation rather than a borrow: it does not
 // take effect until the call it is an argument to actually starts.
-func (a *analyzer) applyBorrow(node *site, op effect.Borrow, st state, loans *loanContext, calls []callFrame) {
+func (a *analyzer) applyBorrow(op effect.Borrow, st state, loans *loanContext) {
 	if op.Place.Root != nil && a.reportUseAfterMove(op.Place.Root, st, effect.Use{
 		Place: op.Place, Node: op.Node, Location: op.Location, Kind: typeinfo.UseRead,
 	}) {
@@ -349,43 +348,38 @@ func (a *analyzer) applyBorrow(node *site, op effect.Borrow, st state, loans *lo
 			loans.useReference(sym)
 		}
 	}
-	borrowed, _ := a.module.TypedASTNodes[op.Operand].(ast.Expr)
+	borrowed := op.OperandExpr
 	if borrowed == nil {
 		return
 	}
 	a.checkStorageAccess(borrowed, loans, access)
 	if op.Argument {
-		a.installArgumentLoan(borrowed, op, loans, calls)
+		a.installArgumentLoan(borrowed, op, loans)
 	}
 }
 
 // installArgumentLoan records the loan a call holds on an argument for as long
 // as it runs. A mutable one is reserved until the call starts; a shared one is
 // a temporary that dies when the call completes.
-func (a *analyzer) installArgumentLoan(borrowed ast.Expr, op effect.Borrow, loans *loanContext, calls []callFrame) {
+func (a *analyzer) installArgumentLoan(borrowed thir.Expr, op effect.Borrow, loans *loanContext) {
 	origins := a.originsForExpr(borrowed)
 	if len(origins) == 0 {
 		return
 	}
-	var call ast.Node
-	if len(calls) > 0 && calls[len(calls)-1].location != nil {
-		call = nil
-	}
 	loan := referenceLoan{
-		id:      loanID{node: borrowed},
+		id:      loanID{node: borrowed.SourceInfo().NodeID},
 		origins: origins,
 		mutable: op.Mutable,
-		site:    borrowed,
+		site:    op.OperandExpr.SourceInfo(),
 	}
 	if op.Mutable {
 		loans.reserved = append(loans.reserved, loanFact{
-			loan:         loan,
-			holder:       a.referenceHolder(borrowed),
-			keepingAlive: call,
+			loan:   loan,
+			holder: referenceHolder(borrowed),
 		})
 		return
 	}
-	loans.addTemporary([]referenceLoan{loan}, call)
+	loans.addTemporary([]referenceLoan{loan})
 }
 
 func (a *analyzer) reportUseAfterMove(sym *symbols.Symbol, st state, op effect.Use) bool {
@@ -394,8 +388,8 @@ func (a *analyzer) reportUseAfterMove(sym *symbols.Symbol, st state, op effect.U
 		return false
 	}
 	diag := a.diagnostics.AddError(diagnostics.ErrUseAfterMove, "value used after move", op.Location, "")
-	if site != nil {
-		diag.WithSecondaryLabel(ast.LocOf(site), "moved here")
+	if site.Location != nil {
+		diag.WithSecondaryLabel(site.Location, "moved here")
 	}
 	return true
 }
@@ -403,7 +397,7 @@ func (a *analyzer) reportUseAfterMove(sym *symbols.Symbol, st state, op effect.U
 // applyUseKind is what happens to a binding's value at one use: a move leaves it
 // dead, and a copy is rejected for anything the language will not duplicate. A
 // read leaves it as it was.
-func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effect.Use, st state, syntax ast.Expr) {
+func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effect.Use, st state, syntax thir.Expr) {
 	if !ownershipTrackedSymbol(sym) {
 		return
 	}
@@ -419,7 +413,7 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effect.Use, st state, sy
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires a consuming context", op.Location, "")
 	case typeinfo.UseMove:
-		st.moved[sym] = syntax
+		st.moved[sym] = syntax.SourceInfo()
 		delete(st.live, sym)
 	}
 }

@@ -624,10 +624,8 @@ func CallableName(module moduleid.ID, entry bool, sym *symbols.Symbol) (string, 
 	if sym == nil || (sym.Kind != symbols.SymbolFunc && sym.Kind != symbols.SymbolMethod) {
 		return "", false
 	}
-	if fn, ok := sym.ASTNode.(*ast.FnDecl); ok {
-		if name, external := ast.FunctionLinkName(fn, sym.Name); external {
-			return name, true
-		}
+	if sym.ExternalLinkName != nil {
+		return *sym.ExternalLinkName, true
 	}
 	if entry && sym.Kind == symbols.SymbolFunc && sym.Name == "main" && sym.DefiningModule == module {
 		return "main", false

@@ -4,10 +4,12 @@
 package thir
 
 import (
+	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 // Module contains every callable declaration in one typed source module.
@@ -42,14 +44,16 @@ func (m *Module) Function(id ir.NodeID) *Function {
 // Function retains semantic signature and lexical body. A nil Body denotes an
 // external declaration, not an incomplete function.
 type Function struct {
-	Name           string
-	Symbol         *symbols.Symbol
-	Params         []Param
-	ReturnType     typeinfo.Type
-	ReturnTypeText string
-	ReturnsValue   bool
-	Body           *Block
-	Source         ir.SourceInfo
+	Name                  string
+	Symbol                *symbols.Symbol
+	IsEntrypointShape     bool
+	Params                []Param
+	ReturnType            typeinfo.Type
+	ReturnOriginsLocation *source.Location
+	ReturnTypeText        string
+	ReturnsValue          bool
+	Body                  *Block
+	Source                ir.SourceInfo
 }
 
 type Param struct {
@@ -294,9 +298,11 @@ type Return struct {
 
 type If struct {
 	StmtInfo
-	Condition Expr
-	Then      *Block
-	Else      Stmt
+	Condition            Expr
+	Then                 *Block
+	Else                 Stmt
+	ConstantCondition    *bool
+	ConditionDiagnostics []*diagnostics.Diagnostic
 }
 
 type For struct {
@@ -338,6 +344,7 @@ const (
 )
 
 type MatchBinding struct {
+	Source     ir.SourceInfo
 	Projection MatchProjection
 	Field      int
 	Type       typeinfo.Type
@@ -421,8 +428,9 @@ type NoneLiteral struct{ ExprInfo }
 
 type Ident struct {
 	ExprInfo
-	Name   string
-	Symbol *symbols.Symbol
+	Name                     string
+	Symbol                   *symbols.Symbol
+	IsExpandedDefaultBinding bool
 }
 
 type QualifiedIdent struct {

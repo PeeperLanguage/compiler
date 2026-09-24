@@ -42,7 +42,7 @@ func buildTypedModule(t *testing.T, source string) *module.Module {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	mod.THIR = thir.Build(mod.ID.ImportPath, mod.FilePath, mod.AST, mod.Bindings, mod.Typechecking)
+	mod.THIR = thir.Build(mod.ID.ImportPath, mod.FilePath, mod.AST, mod.Bindings, mod.Typechecking, nil)
 	if err := mod.THIR.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -133,6 +133,34 @@ fn main() -> i32 {
 	rangePlan, ok := loop.Iteration.(*thir.RangeIteration)
 	if loop == nil || !ok || rangePlan.Cursor == nil || rangePlan.Limit == nil || loop.Index == nil || loop.Value == nil {
 		t.Fatalf("range iteration = %#v", loop)
+	}
+}
+
+func TestBuildValidatesDiscardedMatchPayload(t *testing.T) {
+	mod := buildTypedModule(t, `
+enum Result { Value: i32, Empty }
+fn read(result: Result) -> i32 {
+    match result {
+        Result::Value with _ => { return 1; }
+        Result::Empty => { return 0; }
+    }
+}`)
+	match, ok := mod.THIR.Functions[0].Body.Stmts[0].(*thir.Match)
+	if !ok || len(match.Arms[0].Bindings) != 1 {
+		t.Fatalf("discarded match evidence = %#v", match)
+	}
+	binding := &match.Arms[0].Bindings[0]
+	if !binding.Discard || binding.Symbol != nil || binding.Type == nil {
+		t.Fatalf("discarded binding = %#v", binding)
+	}
+	binding.Discard = false
+	if err := mod.THIR.Validate(); err == nil {
+		t.Fatal("missing non-discard symbol was accepted")
+	}
+	binding.Discard = true
+	binding.Type = nil
+	if err := mod.THIR.Validate(); err == nil {
+		t.Fatal("missing discard type was accepted")
 	}
 }
 
