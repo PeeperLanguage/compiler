@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,51 @@ func TestReleaseHostsMatchToolchainPlannerOutputs(t *testing.T) {
 	for _, host := range supportedReleaseHosts {
 		if !planned[host] {
 			t.Fatalf("planner omits supported release host %s/%s", host.os, host.arch)
+		}
+	}
+}
+
+func TestReleaseHostsMatchWorkflowJobs(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflow)
+	// Restrict matches to job headers, not target strings in shell snippets or comments.
+	headers := regexp.MustCompile(`(?m)^  ([a-z][a-z0-9_]*):$`).FindAllStringSubmatchIndex(text, -1)
+	jobs := make(map[releaseHost]bool)
+	for i, header := range headers {
+		name := text[header[2]:header[3]]
+		target, isHost := strings.CutPrefix(name, "host_")
+		if !isHost {
+			continue
+		}
+		osName, arch, valid := strings.Cut(target, "_")
+		if !valid || osName == "" || arch == "" {
+			t.Fatalf("invalid release host job %q", name)
+		}
+		end := len(text)
+		if i+1 < len(headers) {
+			end = headers[i+1][0]
+		}
+		body := text[header[1]:end]
+		if !strings.Contains(body, "\n    uses: ./.github/workflows/release-host.yml\n") ||
+			!strings.Contains(body, "\n      os: "+osName+"\n") ||
+			!strings.Contains(body, "\n      arch: "+arch+"\n") {
+			t.Fatalf("release host job %q has mismatched workflow or os/arch inputs", name)
+		}
+		host := releaseHost{os: osName, arch: arch}
+		if jobs[host] {
+			t.Fatalf("workflow repeats release host %s/%s", host.os, host.arch)
+		}
+		jobs[host] = true
+	}
+	if len(jobs) != len(supportedReleaseHosts) {
+		t.Fatalf("workflow schedules %d release hosts, Go supports %d", len(jobs), len(supportedReleaseHosts))
+	}
+	for _, host := range supportedReleaseHosts {
+		if !jobs[host] {
+			t.Fatalf("workflow omits supported release host %s/%s", host.os, host.arch)
 		}
 	}
 }
