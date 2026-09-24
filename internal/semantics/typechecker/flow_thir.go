@@ -2,7 +2,6 @@ package typechecker
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
@@ -199,7 +198,7 @@ func (a *flowAnalyzer) analyze(expr thir.Expr, expected typeinfo.Type, demand fl
 	if typednil.IsNil(expr) {
 		return nil
 	}
-	a.result.ForgetPayload(ast.NodeID(expr.SourceInfo().NodeID))
+	a.result.ForgetPayload(expr.SourceInfo().NodeID)
 	previousExpected, previousDemand := a.expected, a.demand
 	a.expected, a.demand = expected, demand
 	typ := expr.AnalyzeFlow(a)
@@ -211,7 +210,7 @@ func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type 
 	if typednil.IsNil(expr) || base == nil {
 		return base
 	}
-	id := ast.NodeID(expr.SourceInfo().NodeID)
+	id := expr.SourceInfo().NodeID
 	resolution := a.resolve(expr, *a.state)
 	if a.demand == flowCarrier {
 		a.recordResolution(expr, resolution)
@@ -354,7 +353,7 @@ func (a *flowAnalyzer) AnalyzeIdent(expr *thir.Ident) typeinfo.Type {
 	}
 	resolved := a.finish(expr, typ)
 	if refined {
-		a.result.RecordExprType(ast.NodeID(expr.SourceInfo().NodeID), resolved)
+		a.result.RecordExprType(expr.SourceInfo().NodeID, resolved)
 	}
 	return resolved
 }
@@ -382,14 +381,14 @@ func (a *flowAnalyzer) AnalyzeField(expr *thir.Field) typeinfo.Type {
 		payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
 		if field, fieldIndex, found := typeinfo.LookupStructField(payload, expr.Name); found {
 			a.recordPayload(expr.Base, resolution, []int{caseIndex})
-			a.result.RecordPayload(ast.NodeID(expr.Source.NodeID), flowresult.PayloadAccess{
+			a.result.RecordPayload(expr.Source.NodeID, flowresult.PayloadAccess{
 				CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: []int{caseIndex},
 			})
-			a.result.RecordVariantField(ast.NodeID(expr.Source.NodeID), flowresult.VariantFieldAccess{
-				Carrier: ast.NodeID(expr.Base.SourceInfo().NodeID), Case: caseIndex,
+			a.result.RecordVariantField(expr.Source.NodeID, flowresult.VariantFieldAccess{
+				Carrier: expr.Base.SourceInfo().NodeID, Case: caseIndex,
 				Payload: payload, Field: fieldIndex, Type: field.Type,
 			})
-			a.result.RecordExprType(ast.NodeID(expr.Source.NodeID), field.Type)
+			a.result.RecordExprType(expr.Source.NodeID, field.Type)
 			return a.finish(expr, field.Type)
 		}
 	}
@@ -526,17 +525,17 @@ func (a *flowAnalyzer) recordCaseTest(expr thir.Expr, test *thir.CaseTest) {
 		return
 	}
 	refined := flowresult.CaseTest{
-		SubjectID: ast.NodeID(test.SubjectID), Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
+		SubjectID: test.SubjectID, Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
-	if payload, ok := a.result.Payload(ast.NodeID(test.SubjectID)); ok {
-		storage := a.result.StorageOrigins(ast.NodeID(test.SubjectID))
+	if payload, ok := a.result.Payload(test.SubjectID); ok {
+		storage := a.result.StorageOrigins(test.SubjectID)
 		if payload.AppliesTo(storage) {
 			refined.PayloadPath = append([]int(nil), payload.Cases...)
 		}
 	}
 	id := expr.SourceInfo().NodeID
-	a.result.RecordCaseTest(ast.NodeID(id), refined)
+	a.result.RecordCaseTest(id, refined)
 	if a.events != nil {
 		a.events.next++
 		a.events.tests[id] = a.events.next
@@ -548,20 +547,20 @@ func (a *flowAnalyzer) recordPayload(expr thir.Expr, resolution place.Resolution
 		return
 	}
 	isDirect := len(resolution.StorageOrigins) == 1 && resolution.StorageOrigins[0].Root != nil && len(resolution.StorageOrigins[0].Projections) == 0
-	a.result.RecordPayload(ast.NodeID(expr.SourceInfo().NodeID), flowresult.PayloadAccess{
+	a.result.RecordPayload(expr.SourceInfo().NodeID, flowresult.PayloadAccess{
 		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: append([]int(nil), cases...), IsDirect: isDirect,
 	})
 }
 
 func (a *flowAnalyzer) recordResolution(expr thir.Expr, resolution place.Resolution) {
-	a.result.RecordOrigins(ast.NodeID(expr.SourceInfo().NodeID), resolution.StorageOrigins, resolution.ValueOrigins)
+	a.result.RecordOrigins(expr.SourceInfo().NodeID, resolution.StorageOrigins, resolution.ValueOrigins)
 }
 
 func (a *flowAnalyzer) expressionType(expr thir.Expr) typeinfo.Type {
 	if typednil.IsNil(expr) {
 		return nil
 	}
-	if typ := a.result.ExprType(ast.NodeID(expr.SourceInfo().NodeID)); typ != nil {
+	if typ := a.result.ExprType(expr.SourceInfo().NodeID); typ != nil {
 		return typ
 	}
 	return expr.ExprType()
@@ -574,7 +573,7 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 	switch node := expr.(type) {
 	case *thir.Address:
 		resolved := a.resolve(node.Value, state)
-		if payload, ok := a.result.Payload(ast.NodeID(node.Value.SourceInfo().NodeID)); ok {
+		if payload, ok := a.result.Payload(node.Value.SourceInfo().NodeID); ok {
 			resolved.ValueOrigins = place.VariantPayloadOrigins(resolved.StorageOrigins, payload.Cases)
 		}
 		return resolved
@@ -650,7 +649,7 @@ func (a *flowAnalyzer) projectedBaseOrigins(base place.Resolution, expr thir.Exp
 	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(a.expressionType(expr))); isReference {
 		return origins
 	}
-	if payload, ok := a.result.Payload(ast.NodeID(expr.SourceInfo().NodeID)); ok {
+	if payload, ok := a.result.Payload(expr.SourceInfo().NodeID); ok {
 		origins = place.VariantPayloadOrigins(origins, payload.Cases)
 	}
 	return origins
@@ -751,12 +750,12 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 			})
 			a.updateOriginPlace(place.FieldOrigins(storage, semanticField.Name), semanticField.Type, field.Value, sourceState, state)
 		}
-		a.result.RecordAggregateSlots(ast.NodeID(expression.Source.NodeID), slots)
+		a.result.RecordAggregateSlots(expression.Source.NodeID, slots)
 	case *thir.Variant:
 		if typednil.IsNil(expression.Payload) || expression.Case < 0 {
 			return
 		}
-		a.result.RecordAggregateSlots(ast.NodeID(expression.Source.NodeID), []flowresult.AggregateSlot{{
+		a.result.RecordAggregateSlots(expression.Source.NodeID, []flowresult.AggregateSlot{{
 			ValueExpr:  expression.Payload,
 			Projection: place.OriginProjection{Kind: place.OriginVariantPayload, Case: expression.Case},
 		}})
@@ -913,7 +912,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 			state.rawPointers = setOriginFact(state.rawPointers, storage, valueOrigins)
 		}
 		if binding.Source.NodeID != 0 {
-			a.result.MergeOrigins(ast.NodeID(binding.Source.NodeID), storage, valueOrigins)
+			a.result.MergeOrigins(binding.Source.NodeID, storage, valueOrigins)
 		}
 	}
 }
@@ -954,8 +953,8 @@ func (a *flowAnalyzer) impliedVariants(expr thir.Expr, truth bool, state flowSta
 	if typednil.IsNil(expr) {
 		return nil
 	}
-	if test, found := a.result.CaseTest(ast.NodeID(expr.SourceInfo().NodeID)); found {
-		subject, _ := a.source.Node(ir.NodeID(test.SubjectID)).(thir.Expr)
+	if test, found := a.result.CaseTest(expr.SourceInfo().NodeID); found {
+		subject, _ := a.source.Node(test.SubjectID).(thir.Expr)
 		resolution := a.resolve(subject, state)
 		if !resolution.IsStable || len(resolution.StorageOrigins) == 0 {
 			if test.Family == typeinfo.VariantFamilyOptional {

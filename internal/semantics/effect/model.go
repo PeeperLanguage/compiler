@@ -10,7 +10,6 @@
 package effect
 
 import (
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
@@ -38,12 +37,12 @@ type Define struct {
 	Source thir.Node
 	// Node is the declaration, which is where a diagnostic about the binding
 	// itself belongs.
-	Node ast.NodeID
+	Node ir.NodeID
 	// Value names the initializer whose value enters Symbol. It is zero for a
 	// declaration without an initializer and for OnEntry bindings. Consumers
 	// that track reference/pointer provenance can therefore update the binding
 	// from this operation without rediscovering declaration syntax.
-	Value         ast.NodeID
+	Value         ir.NodeID
 	ValueExpr     thir.Expr
 	IsInitialized bool
 	// IsOnEntry marks a binding that already exists when the site begins rather
@@ -64,13 +63,13 @@ type Write struct {
 	Place  Place
 	Target thir.Expr
 	// Node is the assignment target.
-	Node ast.NodeID
+	Node ir.NodeID
 	// Owner is the source construct performing the replacement. Cleanup plans
 	// key pre-assignment drops by this identity, while Node remains the target
 	// expression used for diagnostics and place typing.
-	Owner ast.NodeID
+	Owner ir.NodeID
 	// Value is the expression whose value is stored into Place.
-	Value     ast.NodeID
+	Value     ir.NodeID
 	ValueExpr thir.Expr
 	Location  *source.Location
 }
@@ -92,7 +91,7 @@ type Place struct {
 	// Ownership needs the distinction because a temporary has nobody to own it:
 	// a projection out of one has to be bound before use, and a discarded one
 	// dies where it is produced.
-	Temporary     ast.NodeID
+	Temporary     ir.NodeID
 	TemporaryExpr thir.Expr
 	Projections   []place.OriginProjection
 }
@@ -105,7 +104,7 @@ type Place struct {
 // for assignment-access diagnostics; Define currently needs no location.
 type Use struct {
 	Place    Place
-	Node     ast.NodeID
+	Node     ir.NodeID
 	Source   thir.Expr
 	Location *source.Location
 	// Kind is what happens to the value here: observed, duplicated, or
@@ -128,8 +127,8 @@ type Borrow struct {
 	// an adapted call argument). Operand is the place expression actually
 	// borrowed. Keeping both identities means consumers never have to peel
 	// syntax to rediscover that relationship.
-	Node        ast.NodeID
-	Operand     ast.NodeID
+	Node        ir.NodeID
+	Operand     ir.NodeID
 	OperandExpr thir.Expr
 	Location    *source.Location
 	IsMutable   bool
@@ -147,9 +146,9 @@ type Borrow struct {
 // evaluation order; Iterate adds only the lifetime fact that lasts until the
 // loop exit. Range loops publish no Iterate operation.
 type Iterate struct {
-	Loop     ast.NodeID
+	Loop     ir.NodeID
 	Place    Place
-	Node     ast.NodeID
+	Node     ir.NodeID
 	Source   thir.Expr
 	Carrier  *symbols.Symbol
 	Location *source.Location
@@ -164,13 +163,13 @@ type Iterate struct {
 // consumer modelling temporaries needs that boundary, and a flat sequence of
 // uses cannot express it. Calls nest, so the pair nests too.
 type CallBegin struct {
-	Node     ast.NodeID
+	Node     ir.NodeID
 	Source   thir.Expr
 	Location *source.Location
 }
 
 type CallEnd struct {
-	Node ast.NodeID
+	Node ir.NodeID
 }
 
 // Discard is a value produced and dropped, as an expression statement does.
@@ -180,7 +179,7 @@ type Discard struct {
 	// Place is what was discarded, so a consumer can tell a dropped temporary
 	// from a statement that merely names storage.
 	Place    Place
-	Node     ast.NodeID
+	Node     ir.NodeID
 	Location *source.Location
 }
 

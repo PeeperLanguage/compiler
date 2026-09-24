@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
@@ -30,7 +29,7 @@ type referenceLoan struct {
 	origins   []place.Origin
 	isMutable bool
 	site      ir.SourceInfo
-	loop      ast.NodeID
+	loop      ir.NodeID
 }
 
 type loanFact struct {
@@ -150,7 +149,7 @@ func (a *analyzer) checkStorageAccess(
 	origins := a.originsForExpr(expr)
 	if access == storageMutate && a.module != nil && a.module.Flow != nil {
 		// Replacing a reference slot mutates the carrier, not its old referent.
-		origins = a.module.Flow.StorageOrigins(ast.NodeID(expr.SourceInfo().NodeID))
+		origins = a.module.Flow.StorageOrigins(expr.SourceInfo().NodeID)
 	}
 	a.reportLoanConflict(
 		origins,
@@ -330,7 +329,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 	if a.module.Flow == nil {
 		return []referenceLoan{}, false
 	}
-	id := ast.NodeID(expr.SourceInfo().NodeID)
+	id := expr.SourceInfo().NodeID
 	if _, isMutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr)); ok {
 		if _, projected := expr.(*thir.Field); projected {
 			var value []referenceLoan
@@ -377,7 +376,7 @@ func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference
 	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(target)); !isReference || a.module.Flow == nil {
 		return
 	}
-	storage := a.module.Flow.StorageOrigins(ast.NodeID(target.SourceInfo().NodeID))
+	storage := a.module.Flow.StorageOrigins(target.SourceInfo().NodeID)
 	if len(storage) != 1 || len(storage[0].Projections) == 0 {
 		return
 	}
@@ -402,14 +401,14 @@ func (a *analyzer) originsForExpr(expr thir.Expr) []place.Origin {
 	if a == nil || a.module == nil || a.module.Flow == nil || expr == nil {
 		return nil
 	}
-	return place.CloneOrigins(a.module.Flow.ValueOrigins(ast.NodeID(expr.SourceInfo().NodeID)))
+	return place.CloneOrigins(a.module.Flow.ValueOrigins(expr.SourceInfo().NodeID))
 }
 
 func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st state) {
 	if a == nil || a.function == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
-	if _, _, isReference := typeinfo.ReferenceValueTarget(a.module.EffectiveExprType(ast.NodeID(stmt.Value.SourceInfo().NodeID))); !isReference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !isReference {
 		return
 	}
 	value, found := a.referenceValueForTHIR(stmt.Value, st)
@@ -654,24 +653,24 @@ func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
 		return
 	}
 	if len(op.Place.Projections) > 0 {
-		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 		return
 	}
 	v.definitions[op.Place.Root] = struct{}{}
 	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
-		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 	}
 }
 
 func (v *livenessEffectVisitor) VisitUse(op effect.Use) {
 	if trackedLiveSymbol(op.Place.Root) {
-		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 	}
 }
 
 func (v *livenessEffectVisitor) VisitBorrow(op effect.Borrow) {
 	if trackedLiveSymbol(op.Place.Root) {
-		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
+		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 	}
 }
 

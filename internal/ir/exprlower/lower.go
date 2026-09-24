@@ -8,7 +8,6 @@ import (
 	"unicode/utf8"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/ir/typelower"
@@ -72,15 +71,15 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	origin := expr.SourceInfo()
 	resolved := l.effectiveType(expr)
 	if l.ctx.Flow != nil {
-		if test, ok := l.ctx.Flow.CaseTest(ast.NodeID(origin.NodeID)); ok {
-			subject, _ := l.ctx.Source.Node(ir.NodeID(test.SubjectID)).(thir.Expr)
+		if test, ok := l.ctx.Flow.CaseTest(origin.NodeID); ok {
+			subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
 			membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
 			if test.MatchesWhenTrue {
 				return ir.WithOrigin(membership, origin)
 			}
 			return ir.WithOrigin(&ir.Unary{Op: "!", Arg: membership, Type: membership.Type}, origin)
 		}
-		if payload, _ := l.ctx.Flow.Payload(ast.NodeID(origin.NodeID)); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
+		if payload, _ := l.ctx.Flow.Payload(origin.NodeID); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
 			return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
 		}
 	}
@@ -124,7 +123,7 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 
 func (l *lowerer) effectiveType(expr thir.Expr) typeinfo.Type {
 	if l.ctx.Flow != nil {
-		if typ := l.ctx.Flow.ExprType(ast.NodeID(expr.SourceInfo().NodeID)); typ != nil {
+		if typ := l.ctx.Flow.ExprType(expr.SourceInfo().NodeID); typ != nil {
 			return typ
 		}
 	}
@@ -497,7 +496,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 		fieldIndex := projection.Field
 		projectionType := projection.Type
 		if l.ctx.Flow != nil && projection.Kind == thir.PlaceField {
-			if access, found := l.ctx.Flow.VariantField(ast.NodeID(projection.Source.NodeID)); found {
+			if access, found := l.ctx.Flow.VariantField(projection.Source.NodeID); found {
 				fieldIndex = access.Field
 				projectionType = access.Type
 			}
@@ -532,7 +531,7 @@ func (l *lowerer) appendPayloadProjections(place *ir.Place, source ir.SourceInfo
 	if l.ctx.Flow == nil || place == nil || source.NodeID == 0 {
 		return
 	}
-	id := ast.NodeID(source.NodeID)
+	id := source.NodeID
 	payload, _ := l.ctx.Flow.Payload(id)
 	if !payload.AppliesTo(l.ctx.Flow.StorageOrigins(id)) {
 		return

@@ -410,12 +410,12 @@ func TestStoredReferenceUsesTHIRValueWithoutAST(t *testing.T) {
 	}
 	fn := result.module.THIR.Function(ir.NodeID(result.module.AST.Stmts[0].ID()))
 	binding := fn.Body.Stmts[0].(*thir.Binding)
-	valueID := ast.NodeID(binding.Value.SourceInfo().NodeID)
+	valueID := binding.Value.SourceInfo().NodeID
 	result.module.AST = nil
 	analysis := &analyzer{module: result.module}
 	captured := analysis.captureStoredReferences([]effect.Op{effect.Define{Value: valueID, ValueExpr: binding.Value}}, newState())
 	value := captured[valueID]
-	if !value.isPresent || len(value.loans) != 1 || value.loans[0].id.node != ir.NodeID(valueID) ||
+	if !value.isPresent || len(value.loans) != 1 || value.loans[0].id.node != valueID ||
 		!place.AreSameOrigins(value.loans[0].origins, []place.Origin{{Root: fn.Params[0].Symbol}}) ||
 		value.loans[0].site != binding.Value.SourceInfo() || value.loans[0].site.Location == nil {
 		t.Fatalf("THIR reference provenance = %#v, want parameter loan", value)
@@ -1431,10 +1431,10 @@ fn inspect(value: ?Token) {
 		Root:        value,
 		Projections: []place.OriginProjection{{Kind: place.OriginVariantPayload, Case: ir.OptionalPresentCase}},
 	}}
-	if got := result.module.Flow.StorageOrigins(valueUse.ID()); !place.AreSameOrigins(got, storage) {
+	if got := result.module.Flow.StorageOrigins(ir.NodeID(valueUse.ID())); !place.AreSameOrigins(got, storage) {
 		t.Fatalf("payload storage origins = %#v, want carrier %#v", got, storage)
 	}
-	if got := result.module.Flow.ValueOrigins(valueUse.ID()); !place.AreSameOrigins(got, payload) {
+	if got := result.module.Flow.ValueOrigins(ir.NodeID(valueUse.ID())); !place.AreSameOrigins(got, payload) {
 		t.Fatalf("payload value origins = %#v, want %#v", got, payload)
 	}
 }

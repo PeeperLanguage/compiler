@@ -2,7 +2,7 @@ package ownership
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -38,10 +38,15 @@ func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
 	if a == nil || a.module == nil || expr == nil {
 		return nil
 	}
-	return a.module.EffectiveExprType(ast.NodeID(expr.SourceInfo().NodeID))
+	if a.module.Flow != nil {
+		if typ := a.module.Flow.ExprType(expr.SourceInfo().NodeID); typ != nil {
+			return typ
+		}
+	}
+	return expr.ExprType()
 }
 
-func (a *analyzer) partialVariantPayloadMove(id ast.NodeID) bool {
+func (a *analyzer) partialVariantPayloadMove(id ir.NodeID) bool {
 	if a == nil || a.module == nil || a.module.Flow == nil || id == 0 {
 		return false
 	}
@@ -102,7 +107,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state)
 			return nil
 		}
 		if a.module != nil && a.module.Flow != nil {
-			if resolution, resolved := a.module.Flow.Origins(ast.NodeID(e.SourceInfo().NodeID)); resolved {
+			if resolution, resolved := a.module.Flow.Origins(e.SourceInfo().NodeID); resolved {
 				for _, origin := range resolution.Value {
 					if origin.Root == nil {
 						continue

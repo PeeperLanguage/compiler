@@ -3,7 +3,7 @@ package flowresult
 import (
 	"testing"
 
-	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 )
@@ -13,7 +13,7 @@ func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 	first := symbols.New("first", symbols.SymbolVar, nil, nil)
 	second := symbols.New("second", symbols.SymbolVar, nil, nil)
 	third := symbols.New("third", symbols.SymbolVar, nil, nil)
-	const id ast.NodeID = 7
+	const id ir.NodeID = 7
 
 	storage := []place.Origin{{Root: first}}
 	value := []place.Origin{{Root: second}}
@@ -43,7 +43,7 @@ func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 
 func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
 	result := New()
-	const id ast.NodeID = 11
+	const id ir.NodeID = 11
 	slots := []AggregateSlot{{
 		Projection: place.OriginProjection{
 			Kind:  place.OriginField,
@@ -65,7 +65,7 @@ func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
 		t.Fatal("aggregate slot query leaked mutable backing storage")
 	}
 
-	const empty ast.NodeID = 14
+	const empty ir.NodeID = 14
 	result.RecordAggregateSlots(empty, nil)
 	if got, ok := result.AggregateSlots(empty); !ok || len(got) != 0 {
 		t.Fatalf("empty aggregate = %#v, %v", got, ok)

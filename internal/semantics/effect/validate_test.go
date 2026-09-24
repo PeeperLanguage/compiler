@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
@@ -115,9 +114,9 @@ func TestValidateRejectsDamagedTHIREvidence(t *testing.T) {
 	assignment := function.Body.Stmts[1].(*thir.Assign)
 	target := assignment.Target
 	root := effect.Place{Root: binding.Symbol}
-	bindingID := ast.NodeID(binding.Source.NodeID)
-	assignID := ast.NodeID(assignment.Source.NodeID)
-	targetID := ast.NodeID(target.SourceInfo().NodeID)
+	bindingID := ir.NodeID(binding.Source.NodeID)
+	assignID := ir.NodeID(assignment.Source.NodeID)
+	targetID := ir.NodeID(target.SourceInfo().NodeID)
 	for _, test := range []struct {
 		name string
 		ops  []effect.Op
@@ -125,7 +124,7 @@ func TestValidateRejectsDamagedTHIREvidence(t *testing.T) {
 	}{
 		{"define source", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: assignID}}, "does not match node"},
 		{"define value", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: bindingID, Value: assignID, ValueExpr: binding.Value}}, "unexpected node type"},
-		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: ast.NodeID(function.Params[0].Source.NodeID), IsOnEntry: true}}, "not in typed THIR"},
+		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: ir.NodeID(function.Params[0].Source.NodeID), IsOnEntry: true}}, "not in typed THIR"},
 		{"write target", []effect.Op{effect.Write{Place: root, Node: assignID, Target: target, Owner: assignID}}, "unexpected node type"},
 		{"write owner", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: bindingID}}, "unexpected node type"},
 		{"write value", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: assignID, Value: assignID, ValueExpr: assignment.Value}}, "unexpected node type"},

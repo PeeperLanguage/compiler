@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
@@ -87,7 +86,7 @@ type validationVisitor struct {
 	index    int
 	source   *thir.Module
 	problems []string
-	open     []ast.NodeID
+	open     []ir.NodeID
 }
 
 func (v *validationVisitor) where() string {
@@ -103,7 +102,7 @@ func (v *validationVisitor) VisitDefine(op Define) {
 		matched := false
 		if function := v.source.Function(v.fn); function != nil {
 			for _, parameter := range function.Params {
-				if parameter.Source.NodeID == ir.NodeID(op.Node) && parameter.Symbol == op.Symbol {
+				if parameter.Source.NodeID == op.Node && parameter.Symbol == op.Symbol {
 					matched = true
 					break
 				}
@@ -124,7 +123,7 @@ func (v *validationVisitor) VisitWrite(op Write) {
 	where := v.where()
 	v.problems = append(v.problems, validatePlace(where, "write", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "write", op.Node, op.Target, v.source)...)
-	v.problems = append(v.problems, validateNode[*thir.Assign](where, "write owner", op.Owner, v.source.Node(ir.NodeID(op.Owner)), v.source)...)
+	v.problems = append(v.problems, validateNode[*thir.Assign](where, "write owner", op.Owner, v.source.Node(op.Owner), v.source)...)
 	if op.Value != 0 || op.ValueExpr != nil {
 		v.problems = append(v.problems, validateNode[thir.Expr](where, "write value", op.Value, op.ValueExpr, v.source)...)
 	}
@@ -156,7 +155,7 @@ func (v *validationVisitor) VisitIterate(op Iterate) {
 	if op.Carrier == nil {
 		v.problems = append(v.problems, where+" is an iteration with no symbol")
 	}
-	v.problems = append(v.problems, validateNode[*thir.For](where, "iteration owner", op.Loop, v.source.Node(ir.NodeID(op.Loop)), v.source)...)
+	v.problems = append(v.problems, validateNode[*thir.For](where, "iteration owner", op.Loop, v.source.Node(op.Loop), v.source)...)
 	if op.Location == nil {
 		v.problems = append(v.problems, where+" is an iteration with no source location to report against")
 	}
@@ -205,8 +204,8 @@ func validatePlace(where, kind string, at Place, source *thir.Module) []string {
 	return nil
 }
 
-func validateNode[T thir.Node](where, kind string, node ast.NodeID, carried thir.Node, source *thir.Module) []string {
-	indexed := source.Node(ir.NodeID(node))
+func validateNode[T thir.Node](where, kind string, node ir.NodeID, carried thir.Node, source *thir.Module) []string {
+	indexed := source.Node(node)
 	if indexed == nil {
 		return []string{fmt.Sprintf("%s is a %s naming node %d, which is not in the typed THIR", where, kind, node)}
 	}

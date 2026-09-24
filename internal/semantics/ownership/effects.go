@@ -2,7 +2,6 @@ package ownership
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/effect"
@@ -54,7 +53,7 @@ type ownershipEffectVisitor struct {
 	node             *site
 	st               state
 	loans            *loanContext
-	storedReferences map[ast.NodeID]storedReference
+	storedReferences map[ir.NodeID]storedReference
 	calls            []callFrame
 }
 
@@ -105,8 +104,8 @@ func (v *ownershipEffectVisitor) VisitCallEnd(effect.CallEnd) {
 // that a Define or Write will store. This runs before any operation at the site
 // so a move performed while evaluating the source cannot erase the value that
 // is about to enter the destination.
-func (a *analyzer) captureStoredReferences(ops []effect.Op, st state) map[ast.NodeID]storedReference {
-	visitor := &storedReferenceVisitor{a: a, st: st, values: make(map[ast.NodeID]storedReference)}
+func (a *analyzer) captureStoredReferences(ops []effect.Op, st state) map[ir.NodeID]storedReference {
+	visitor := &storedReferenceVisitor{a: a, st: st, values: make(map[ir.NodeID]storedReference)}
 	for _, op := range ops {
 		effect.Visit(op, visitor)
 	}
@@ -116,14 +115,14 @@ func (a *analyzer) captureStoredReferences(ops []effect.Op, st state) map[ast.No
 type storedReferenceVisitor struct {
 	a      *analyzer
 	st     state
-	values map[ast.NodeID]storedReference
+	values map[ir.NodeID]storedReference
 }
 
 func (v *storedReferenceVisitor) capture(value thir.Expr) {
 	if value == nil {
 		return
 	}
-	valueID := ast.NodeID(value.SourceInfo().NodeID)
+	valueID := value.SourceInfo().NodeID
 	if _, isCaptured := v.values[valueID]; isCaptured {
 		return
 	}
@@ -143,7 +142,7 @@ func (*storedReferenceVisitor) VisitCallEnd(effect.CallEnd)     {}
 // applyDefineEffect makes a newly defined binding own the value published by
 // the semantic producer. The declaration syntax is irrelevant here: any future
 // construct that publishes Define inherits the same ownership transition.
-func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, references map[ast.NodeID]storedReference) {
+func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, references map[ir.NodeID]storedReference) {
 	if op.Symbol == nil {
 		return
 	}
@@ -173,10 +172,10 @@ func (a *analyzer) applyWriteEffect(
 	op effect.Write,
 	st state,
 	loans *loanContext,
-	references map[ast.NodeID]storedReference,
+	references map[ir.NodeID]storedReference,
 ) {
 	if op.Owner != 0 {
-		delete(a.cleanup.BeforeAssign, ir.NodeID(op.Owner))
+		delete(a.cleanup.BeforeAssign, op.Owner)
 	}
 	target := op.Target
 	if target == nil {
@@ -193,7 +192,7 @@ func (a *analyzer) applyWriteEffect(
 		}
 		a.checkStorageAccess(target, loans, storageMutate)
 		if op.Owner != 0 && typeinfo.OwnershipCapabilityOf(a.exprType(target)).NeedsDrop {
-			a.cleanup.BeforeAssign[ir.NodeID(op.Owner)] = struct{}{}
+			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
 		if op.Value != 0 {
 			a.replaceReferenceField(target, references[op.Value], st)
@@ -207,7 +206,7 @@ func (a *analyzer) applyWriteEffect(
 	}
 	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 		if _, live := st.live[sym]; live && op.Owner != 0 {
-			a.cleanup.BeforeAssign[ir.NodeID(op.Owner)] = struct{}{}
+			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
 	}
 	if ownershipTrackedSymbol(sym) {
@@ -248,7 +247,7 @@ func (a *analyzer) applyIterateEffect(op effect.Iterate, st state, loans *loanCo
 		return
 	}
 	st.references[op.Carrier] = []referenceLoan{{
-		id: loanID{node: ir.NodeID(op.Node)}, origins: origins, site: op.Source.SourceInfo(), loop: op.Loop,
+		id: loanID{node: op.Node}, origins: origins, site: op.Source.SourceInfo(), loop: op.Loop,
 	}}
 }
 

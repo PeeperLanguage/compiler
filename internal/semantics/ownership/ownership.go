@@ -186,7 +186,7 @@ func (a *analyzer) run() {
 		// Iterate effect, so releasing by loop ID is harmless and avoids asking
 		// typechecker what kind of loop produced this CFG exit.
 		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockLoopExit {
-			releaseIterationLoans(next, nil, ast.NodeID(node.cfgBlock.NodeID))
+			releaseIterationLoans(next, nil, node.cfgBlock.NodeID)
 		}
 		if node != nil {
 			switch node.cfgSite.Kind {
@@ -220,10 +220,10 @@ func (a *analyzer) run() {
 
 func (a *analyzer) planDeadMatchCarrierCleanup() {
 	a.deadMatchCarrierAtExit = make(map[cfg.SiteID]*symbols.Symbol)
-	scopeExits := make(map[ast.NodeID][]*site)
+	scopeExits := make(map[ir.NodeID][]*site)
 	for _, node := range a.sites {
 		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil {
-			scopeExits[ast.NodeID(node.block.SourceInfo().NodeID)] = append(scopeExits[ast.NodeID(node.block.SourceInfo().NodeID)], node)
+			scopeExits[node.block.SourceInfo().NodeID] = append(scopeExits[node.block.SourceInfo().NodeID], node)
 		}
 	}
 
@@ -242,9 +242,9 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 
 		exitsByJoin := make(map[cfg.SiteID][]*site)
 		movesByJoin := make(map[cfg.SiteID]bool)
-		armsByJoin := make(map[cfg.SiteID]map[ast.NodeID]struct{})
+		armsByJoin := make(map[cfg.SiteID]map[ir.NodeID]struct{})
 		for _, arm := range match.Arms {
-			bodyID := ast.NodeID(arm.Body.SourceInfo().NodeID)
+			bodyID := arm.Body.SourceInfo().NodeID
 			for _, exit := range scopeExits[bodyID] {
 				if exit == nil || exit.cfgSite == nil {
 					continue
@@ -262,7 +262,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 					if joinNode.cfgSite.Kind != cfg.SiteScopeExit {
 						exitsByJoin[join] = append(exitsByJoin[join], exit)
 						if armsByJoin[join] == nil {
-							armsByJoin[join] = make(map[ast.NodeID]struct{})
+							armsByJoin[join] = make(map[ir.NodeID]struct{})
 						}
 						armsByJoin[join][bodyID] = struct{}{}
 						movesByJoin[join] = movesByJoin[join] || arm.CarrierUse == typeinfo.UseMove
@@ -304,7 +304,7 @@ func copyState(src state) state {
 
 // releaseIterationLoans ends synthetic carrier borrows when control leaves
 // their loop. A zero loop ID releases all active loops, as required by return.
-func releaseIterationLoans(st state, loans *loanContext, loopID ast.NodeID) {
+func releaseIterationLoans(st state, loans *loanContext, loopID ir.NodeID) {
 	matches := func(loan referenceLoan) bool {
 		return loan.loop != 0 && (loopID == 0 || loan.loop == loopID)
 	}
@@ -489,8 +489,8 @@ func (a *analyzer) planDiscardedDrops(node *site) {
 		if !isDiscard || discard.Place.Root != nil {
 			continue
 		}
-		if typeinfo.OwnershipCapabilityOf(a.module.EffectiveExprType(discard.Node)).NeedsDrop {
-			a.cleanup.DiscardedValue[ir.NodeID(discard.Node)] = struct{}{}
+		if typeinfo.OwnershipCapabilityOf(a.exprType(discard.Source)).NeedsDrop {
+			a.cleanup.DiscardedValue[discard.Node] = struct{}{}
 		}
 	}
 }
@@ -597,7 +597,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		if field.Source.NodeID == 0 || a.module.Flow == nil {
 			continue
 		}
-		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(ast.NodeID(field.Source.NodeID)))
+		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(field.Source.NodeID))
 		if isMutable, isReference := referenceMutability(binding); isReference && len(origins) > 0 {
 			st.references[binding] = []referenceLoan{{
 				id: loanID{node: field.Source.NodeID}, origins: origins, isMutable: isMutable, site: field.Source,
